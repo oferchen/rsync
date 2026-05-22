@@ -569,3 +569,52 @@ jobs:
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       timeout_minutes: 30
+
+  # ===========================================================================
+  # Parallel-receive-delta + dist profile guardrail (PIP-9.d)
+  # ---------------------------------------------------------------------------
+  # Guards against the receiver corruption surfaced by PIP-4 (#4720) where
+  # `parallel_threshold/file_1.txt` got wrong bytes when the
+  # `parallel-receive-delta` feature was active. The bug only repros under
+  # the `dist` profile (LTO + panic=abort); `release` masks it. Non-required
+  # while the cell bakes - promotion to required check tracked under PIP-9.f.
+  # Design: docs/design/pip-9-parallel-receive-delta-wire-up-2026-05-22.md.
+  # ===========================================================================
+  parallel-receive-delta-dist:
+    name: parallel-receive-delta (dist profile, non-required)
+    runs-on: ubuntu-latest
+    needs: lint
+    timeout-minutes: 30
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-parallel-receive-delta-dist-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+          key: parallel-receive-delta-dist
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2
+        with:
+          tool: cargo-nextest
+
+      # Build the workspace with `--profile dist --features parallel-receive-delta`.
+      # The dist profile (LTO + panic=abort) is the only profile under which the
+      # PIP-4 corruption surfaced; pinning it here makes regressions visible.
+      - name: Build workspace (--profile dist --features parallel-receive-delta)
+        run: cargo build --locked --workspace --profile dist --features parallel-receive-delta
+
+      # Run the `parallel_threshold` interop scenario added by PIP-9.c. If that
+      # scenario hasn't landed yet the filter matches zero tests; `--no-tests=pass`
+      # keeps the cell green on zero matches so the build alone gates regressions.
+      - name: Test parallel_threshold interop (--profile dist --features parallel-receive-delta)
+        run: cargo nextest run --locked --workspace --cargo-profile dist --features parallel-receive-delta --no-tests=pass -E 'test(parallel_threshold)'
