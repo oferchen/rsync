@@ -366,6 +366,10 @@ fn commit_file(
 ///
 /// This mirrors the pattern used in `engine::local_copy::executor::file::guard`
 /// for local-copy temp-file commits.
+// TODO: SEC-1.j receiver wiring - DirSandbox not in scope, defer pending
+// `DiskCommitConfig` carrying an `Arc<DirSandbox>` across the cross-thread
+// message boundary; `BackupConfig::make_backup` needs the same plumbing
+// for the backup rename hardening.
 fn rename_with_io_uring_fallback(old_path: &Path, new_path: &Path) -> io::Result<()> {
     if let Some(result) = fast_io::try_rename_via_io_uring(old_path, new_path) {
         return result;
@@ -476,6 +480,9 @@ fn make_backup(file_path: &Path, config: &BackupConfig) -> io::Result<()> {
         }
     }
 
+    // TODO: SEC-1.j receiver wiring - DirSandbox not in scope, defer pending
+    // `BackupConfig` carrying an `Arc<DirSandbox>` across the cross-thread
+    // message boundary into the disk-commit thread.
     fs::rename(file_path, &backup_path)?;
     // upstream: backup.c:216-217 - DEBUG_GTE(BACKUP, 1) on the RENAME success
     // branch of link_or_rename. disk_commit always uses rename here.

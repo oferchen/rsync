@@ -181,10 +181,19 @@ pub struct ResponseContext<'a> {
     /// SEC-1.f-j cutover sites can resolve relative names against a
     /// sandboxed dirfd via `*at` syscalls instead of re-walking paths
     /// through the kernel. `None` when the receiver could not open the
-    /// destination root (e.g. it does not exist yet). This PR (SEC-1.e)
-    /// only wires the carrier; no syscalls are migrated yet.
+    /// destination root (e.g. it does not exist yet).
     #[cfg(unix)]
     pub sandbox: Option<&'a fast_io::DirSandbox>,
+    /// Destination tree root anchor for the SEC-1.j leaf-rename detector.
+    ///
+    /// `process_file_response` uses this together with `sandbox` to route
+    /// the temp -> final rename through `renameat(dirfd, leaf, dirfd,
+    /// leaf)` when both the temp and final names are single-component
+    /// leaves beneath this root, so a TOCTOU symlink swap on either leaf
+    /// cannot redirect the commit. Multi-component / cross-tree cases
+    /// keep the path-based fallback. `None` when no anchor is available.
+    #[cfg(unix)]
+    pub dest_dir: Option<&'a std::path::Path>,
 }
 
 /// Reads and validates the echoed NDX and sum_head from the sender response.
