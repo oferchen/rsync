@@ -43,9 +43,9 @@ fn enospc_during_spill_propagates_as_io_error() {
         SpillError::UnsupportedCompression(tag) => {
             panic!("expected I/O error, got unsupported compression tag 0x{tag:02x}")
         }
-        SpillError::PriorSpillsLost { dir, count } => panic!(
-            "expected I/O error, got prior-spills-lost {dir:?} count={count}"
-        ),
+        SpillError::PriorSpillsLost { dir, count } => {
+            panic!("expected I/O error, got prior-spills-lost {dir:?} count={count}")
+        }
     }
     assert!(err.is_out_of_space(), "is_out_of_space should be true");
 }
