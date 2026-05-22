@@ -1,3 +1,9 @@
+//! Crate-internal representation of parsed `--chmod` clauses.
+//!
+//! Defines the [`Clause`] tree, [`Operation`] variants, [`PermSpec`] flag set,
+//! and [`TargetSelector`]/[`WhoMask`] helpers consumed by the parser and the
+//! evaluator. None of these types are exposed in the public API.
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TargetSelector {
     All,
