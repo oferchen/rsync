@@ -1,0 +1,73 @@
+# CODEOWNERS - oc-rsync
+#
+# GitHub uses this file to automatically request reviews from the listed
+# owners whenever a pull request modifies a matching path. The project is
+# solo-maintained today, so every rule resolves to @oferchen; the per-path
+# structure is in place so future contributors can be added without
+# reorganising the file.
+#
+# Syntax reference:
+#   https://docs.github.com/en/repositories/managing-your-repositories-settings-and-features/customizing-your-repository/about-code-owners
+#
+# Rules are evaluated top-to-bottom; the LAST matching pattern for a given
+# path wins. Keep the catch-all first and add more specific rules below it.
+
+# ---------------------------------------------------------------------------
+# Default ownership - catch-all for every path not matched by a later rule.
+# ---------------------------------------------------------------------------
+*                                       @oferchen
+
+# ---------------------------------------------------------------------------
+# Security-sensitive code paths
+# ---------------------------------------------------------------------------
+
+# SEC-1 chain - sandbox + at_syscalls helpers (CVE-2026-29518 / CVE-2026-43619 mitigation)
+/crates/fast_io/src/dir_sandbox/        @oferchen
+/crates/fast_io/src/landlock.rs         @oferchen
+/crates/fast_io/src/landlock_stub.rs    @oferchen
+
+# Daemon - connection lifecycle + privilege drop
+/crates/daemon/                         @oferchen
+
+# Wire protocol
+/crates/protocol/                       @oferchen
+
+# Receiver pipeline
+/crates/transfer/                       @oferchen
+
+# Engine (delta apply + concurrent_delta)
+/crates/engine/                         @oferchen
+
+# ---------------------------------------------------------------------------
+# Security policy + advisories
+# ---------------------------------------------------------------------------
+/SECURITY.md                            @oferchen
+/docs/design/sec-*                      @oferchen
+/docs/audits/                           @oferchen
+
+# ---------------------------------------------------------------------------
+# Release docs + runbooks
+# ---------------------------------------------------------------------------
+/docs/runbooks/                         @oferchen
+/.github/RELEASE_NOTES_BETA.md          @oferchen
+/.github/RELEASE_TEMPLATE.md            @oferchen
+/CHANGELOG.md                           @oferchen
+
+# ---------------------------------------------------------------------------
+# CI / build infrastructure
+# ---------------------------------------------------------------------------
+/.github/workflows/                     @oferchen
+/Cargo.toml                             @oferchen
+/Cargo.lock                             @oferchen
+
+# ---------------------------------------------------------------------------
+# Notes
+# ---------------------------------------------------------------------------
+# - Patterns follow GitHub CODEOWNERS syntax (gitignore-style globs anchored
+#   with a leading '/' for repo-relative matches).
+# - Path-prefix rules (trailing '/') cover every file under that directory.
+# - Adding a new owner: append " @new-handle" to the relevant line(s); CODEOWNERS
+#   accepts multiple owners per pattern, all of whom will be auto-requested.
+# - Patterns referencing files that do not yet exist (e.g. landlock.rs) are
+#   inert until those files land, ensuring review routing is in place ahead
+#   of the SEC-1 work landing.
