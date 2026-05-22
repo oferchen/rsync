@@ -1,15 +1,25 @@
 # Parallel receive-side delta apply: default-on decision (#1368 followup)
 
-> **DEFERRED pending PIP-7 fix (2026-05-22)**: the default-on flip described
-> below has been reverted on master after the PIP-4 (#4720) interop scenario
-> `parallel-threshold-trip` surfaced receiver-side corruption that writes
-> wrong bytes for the first dispatched file once the file count crosses
-> `PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD = 100`. The feature remains compiled
-> and opt-in via `--features parallel-receive-delta`; default builds no
-> longer enable it. Track the receiver-corruption investigation in
-> `docs/design/pip-7-parallel-receive-delta-receiver-corruption-2026-05-22.md`.
-> The remainder of this document is preserved as the historical default-on
-> rationale and should be re-validated before any re-promotion.
+> **HISTORICAL - superseded by PIP-7 (#4730) + PIP-8 (2026-05-22)**: the
+> default-on flip described below was reverted after the PIP-4 (#4720)
+> interop scenario `parallel-threshold-trip` surfaced receiver-side
+> corruption on the first dispatched file once the file count crossed
+> `PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD = 100`. The PIP-7 investigation
+> proved the dispatch scaffolding was a side-effect-only no-op (the
+> swapped pipeline had 1 writer and 0 readers), and PIP-8 tore out the
+> dead scaffolding entirely. `enable_parallel_receive_delta`,
+> `dispatch_receiver_strategy`, `select_receiver_strategy`,
+> `ReceiverStrategy`, the `PARALLEL_RECEIVE_*` thresholds, the
+> `OC_RSYNC_FORCE_PARALLEL` env knob, and the `delta_pipeline` field on
+> `ReceiverContext` no longer exist. The feature flag stays defined as
+> a no-op so the `ParallelDeltaApplier` /
+> `ParallelDeltaPipeline` / `DeltaConsumer` types remain compiled for
+> bench and fuzz coverage. The proper RJN-3 fan-out integration is
+> tracked by PIP-9
+> (`docs/design/pip-9-parallel-receive-delta-wire-up-2026-05-22.md`).
+> The remainder of this document is preserved as the historical
+> default-on rationale only; the cited APIs are gone and the Path B
+> heuristic must be re-designed against the eventual RJN-3 wiring.
 
 Tracking issue: #1368 followup. Companion to
 `docs/design/parallel-receive-delta-application.md` (the umbrella design)

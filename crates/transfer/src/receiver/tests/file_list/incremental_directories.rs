@@ -172,7 +172,6 @@ fn transfer_stats_has_incremental_fields() {
         literal_data: 0,
         matched_data: 0,
         redo_count: 0,
-        receiver_strategy_chosen: Default::default(),
     };
 
     assert_eq!(stats.entries_received, 100);

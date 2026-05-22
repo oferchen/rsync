@@ -1,13 +1,19 @@
 # PIP-4 closure - interop suite exercises parallel-receive-delta via PIP-5 default flip
 
-> **DEFERRED pending PIP-7 fix (2026-05-22)**: this closure note is
-> superseded. The PIP-4 `parallel-threshold-trip` interop scenario surfaced
-> receiver-side corruption when the file count crosses
-> `PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD = 100`, and the PIP-5 default
-> flip has been reverted on master. Claims below that say default builds
-> exercise the parallel-receive-delta path no longer hold; the path is
-> opt-in via `--features parallel-receive-delta` until the receiver fix
-> lands. See `docs/design/pip-7-parallel-receive-delta-receiver-corruption-2026-05-22.md`.
+> **SUPERSEDED by PIP-7 (#4730) + PIP-8 (2026-05-22)**: this closure note
+> is historical. The PIP-4 `parallel-threshold-trip` interop scenario
+> surfaced receiver-side corruption, the PIP-5 default flip was reverted,
+> and PIP-7 proved the dispatch scaffolding was a side-effect-only no-op.
+> PIP-8 tore out the dead scaffolding entirely; the
+> `parallel-receive-delta` feature flag is now a no-op pending PIP-9's
+> proper RJN-3 fan-out wire-up
+> (`docs/design/pip-9-parallel-receive-delta-wire-up-2026-05-22.md`).
+> Claims below that say default builds exercise the parallel-receive-delta
+> path are historical and no longer hold; the cited
+> `dispatch_receiver_strategy` / `enable_parallel_receive_delta` APIs
+> no longer exist. See
+> `docs/design/pip-7-parallel-receive-delta-receiver-corruption-2026-05-22.md`
+> for the full investigation and resolution.
 
 Date: 2026-05-21
 Scope: closure note for PIP-4 ("Re-run full upstream interop suite against

@@ -93,8 +93,9 @@ embedded-ssh = ["dep:tokio", "rsync_io/embedded-ssh"]
 async = ["dep:tokio", "engine/async", "transfer/async"]
 
 # Parallel receive-side delta apply (#1368). Forwards through transfer to
-# engine; the receiver dispatches per-transfer via the Path B heuristic
-# documented in `docs/design/parallel-receive-delta-default-on.md`.
+# engine. Currently a no-op flag pending PIP-9 wire-up; PIP-8 removed the
+# dead receiver dispatch scaffolding. See
+# `docs/design/pip-9-parallel-receive-delta-wire-up-2026-05-22.md`.
 parallel-receive-delta = ["transfer/parallel-receive-delta", "engine/parallel-receive-delta"]
 
 # Async SSH transport: wires `rsync_io::ssh::AsyncSshTransport` into the client
