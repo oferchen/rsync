@@ -1,0 +1,224 @@
+//! Integration coverage for the SSC-3 `ssh_config` compression lookup.
+//!
+//! These tests drive `SshCommand::has_ssh_compression()` through the
+//! `ssh-config-parse` code path by pointing `HOME` (and `USERPROFILE`
+//! on Windows) at a temporary directory containing a synthetic
+//! `~/.ssh/config`, or by passing a `-F <override>` SSH option. They
+//! never touch the real user config.
+//!
+//! Tests share a process-global `ENV_LOCK` because they mutate
+//! environment variables, which are not thread-safe.
+
+#![cfg(feature = "ssh-config-parse")]
+
+use std::env;
+use std::ffi::{OsStr, OsString};
+use std::fs;
+use std::sync::Mutex;
+
+use rsync_io::ssh::SshCommand;
+use tempfile::TempDir;
+
+/// Serialises every test in this binary; environment mutation is not
+/// thread-safe in Rust 2024.
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+/// RAII guard that scopes an environment-variable mutation to the
+/// surrounding test. Mirrors the inline pattern used by
+/// `crates/cli/src/frontend/arguments/env.rs`.
+struct EnvGuard {
+    key: &'static str,
+    previous: Option<OsString>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: &OsStr) -> Self {
+        let previous = env::var_os(key);
+        // SAFETY: every caller holds `ENV_LOCK`, so no other thread can
+        // observe a torn read or invoke a concurrent setenv. set_var is
+        // unsafe in Rust 2024 only because of cross-thread races, which
+        // the mutex prevents.
+        #[allow(unsafe_code)]
+        unsafe {
+            env::set_var(key, value);
+        }
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        // SAFETY: the surrounding test still holds `ENV_LOCK` when the
+        // guard drops, so restoration cannot race a concurrent reader
+        // or writer.
+        #[allow(unsafe_code)]
+        unsafe {
+            if let Some(value) = self.previous.take() {
+                env::set_var(self.key, value);
+            } else {
+                env::remove_var(self.key);
+            }
+        }
+    }
+}
+
+/// Writes `body` to `dir/.ssh/config`.
+fn write_ssh_config(dir: &TempDir, body: &str) {
+    let ssh_dir = dir.path().join(".ssh");
+    fs::create_dir_all(&ssh_dir).expect("create .ssh");
+    fs::write(ssh_dir.join("config"), body).expect("write ssh_config");
+}
+
+/// Returns an `SshCommand` carrying no SSH options so the argv check
+/// is always inconclusive and the ssh_config lookup is exercised.
+fn plain_cmd() -> SshCommand {
+    SshCommand::new("example.com")
+}
+
+#[test]
+fn top_level_compression_yes_in_home_config() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home = TempDir::new().expect("tempdir");
+    write_ssh_config(&home, "Compression yes\n");
+    let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
+    let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
+
+    assert!(plain_cmd().has_ssh_compression());
+}
+
+#[test]
+fn host_star_block_compression_yes_in_home_config() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home = TempDir::new().expect("tempdir");
+    write_ssh_config(&home, "Host *\n  Compression yes\n");
+    let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
+    let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
+
+    assert!(plain_cmd().has_ssh_compression());
+}
+
+#[test]
+fn per_host_block_without_host_star_returns_false() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home = TempDir::new().expect("tempdir");
+    // Deferred behaviour: per-host `Host foo` blocks need runtime
+    // context (the host we are connecting to plus full OpenSSH pattern
+    // semantics) the warning site does not have. Match blocks are
+    // skipped for the same reason. The lookup is intentionally
+    // conservative to avoid noisy false positives.
+    write_ssh_config(&home, "Host foo.example.com\n  Compression yes\n");
+    let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
+    let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
+
+    assert!(!plain_cmd().has_ssh_compression());
+}
+
+#[test]
+fn compression_no_returns_false() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home = TempDir::new().expect("tempdir");
+    write_ssh_config(&home, "Compression no\n");
+    let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
+    let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
+
+    assert!(!plain_cmd().has_ssh_compression());
+}
+
+#[test]
+fn malformed_config_falls_back_to_false() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home = TempDir::new().expect("tempdir");
+    // Lines without a value, stray separators, and unrecognised
+    // Compression values must not abort the transfer. The lookup logs
+    // and returns false so the caller falls back to argv-only.
+    write_ssh_config(
+        &home,
+        "Compression\n===\nHost\n  Compression yes-but-not-quite\n",
+    );
+    let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
+    let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
+
+    assert!(!plain_cmd().has_ssh_compression());
+}
+
+#[test]
+fn empty_config_returns_false() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home = TempDir::new().expect("tempdir");
+    write_ssh_config(&home, "");
+    let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
+    let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
+
+    assert!(!plain_cmd().has_ssh_compression());
+}
+
+#[test]
+fn missing_config_returns_false() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home = TempDir::new().expect("tempdir");
+    // No .ssh directory under HOME.
+    let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
+    let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
+
+    assert!(!plain_cmd().has_ssh_compression());
+}
+
+#[test]
+fn dash_f_override_wins_over_home_config() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home = TempDir::new().expect("tempdir");
+    // `~/.ssh/config` disables compression. The `-F` override is
+    // consulted first and flips the answer to true.
+    write_ssh_config(&home, "Compression no\n");
+    let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
+    let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
+
+    let override_dir = TempDir::new().expect("tempdir");
+    let override_path = override_dir.path().join("override.config");
+    fs::write(&override_path, "Compression yes\n").expect("write override");
+
+    let mut command = plain_cmd();
+    command.push_option("-F");
+    command.push_option(override_path.as_os_str());
+
+    assert!(command.has_ssh_compression());
+}
+
+#[test]
+fn dash_f_combined_form_is_honoured() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home = TempDir::new().expect("tempdir");
+    let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
+    let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
+
+    let override_dir = TempDir::new().expect("tempdir");
+    let override_path = override_dir.path().join("override.config");
+    fs::write(&override_path, "Compression yes\n").expect("write override");
+
+    let mut combined = OsString::from("-F");
+    combined.push(override_path.as_os_str());
+
+    let mut command = plain_cmd();
+    command.push_option(combined);
+
+    assert!(command.has_ssh_compression());
+}
+
+#[test]
+fn argv_dash_c_still_wins_when_config_disables() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home = TempDir::new().expect("tempdir");
+    write_ssh_config(&home, "Compression no\n");
+    let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
+    let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
+
+    // The argv path short-circuits the config lookup, so `-C` on the
+    // rsync invocation continues to fire the SSC-1 warning even when
+    // ssh_config disables compression.
+    let mut command = plain_cmd();
+    command.push_option("-C");
+    assert!(command.has_ssh_compression());
+
+    // Sanity: without -C, the same config keeps the answer false.
+    assert!(!plain_cmd().has_ssh_compression());
+}

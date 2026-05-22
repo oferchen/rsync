@@ -90,6 +90,8 @@ mod async_stderr_drain;
 mod async_transport;
 mod aux_channel;
 mod builder;
+#[cfg(feature = "ssh-config-parse")]
+mod config_lookup;
 mod connect;
 mod connection;
 /// Embedded SSH transport using the russh library.
