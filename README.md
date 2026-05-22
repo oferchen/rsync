@@ -422,9 +422,11 @@ See [`SECURITY.md`](./SECURITY.md) for full status, advisory cross-references, a
 
 ## Contributing
 
-1. Fork and create a feature branch
-2. Run `cargo fmt`, `cargo clippy`, and `cargo nextest run`
-3. Open a PR describing behavioral changes and interop impact
+1. Fork and create a feature branch.
+2. Run `cargo fmt --all` locally; CI handles `clippy` and `nextest`.
+3. Open a PR with a conventional-commit prefix describing behavioural changes and interop impact.
+
+See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for the full local-vs-CI workflow, feature-flag conventions, and PR guidelines.
 
 ---
 
