@@ -5,7 +5,7 @@
 //! `receiver.c:240`.
 
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use engine::signature::FileSignature;
@@ -19,6 +19,19 @@ use crate::map_file::AdaptiveMapStrategy;
 use crate::map_file::BufferedMap;
 use crate::map_file::MapFile;
 use crate::token_buffer::TokenBuffer;
+
+/// Same-fs detection cache for the IUD-10 `copy_file_range` fast path.
+///
+/// Resolved lazily on the first COPY token (so we don't pay a `metadata()`
+/// syscall when the receiver never produces a COPY large enough to dispatch)
+/// and cached for the remainder of the file - both fds are stable for the
+/// lifetime of `DeltaApplicator`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SameFsCache {
+    Unresolved,
+    SameFs,
+    DifferentFs,
+}
 
 /// Basis-file mapping strategy: adaptive (mmap above 1 MiB) on Unix,
 /// buffered sliding window elsewhere.
@@ -132,6 +145,9 @@ pub struct DeltaApplicator<'a> {
     basis_map: Option<MapFile<BasisMapStrategy>>,
     /// Reusable buffer for literal token data to avoid per-token allocations.
     token_buffer: TokenBuffer,
+    /// Cached same-filesystem decision for the IUD-10 `copy_file_range`
+    /// fast path. Resolved on first eligible COPY token, then reused.
+    same_fs: SameFsCache,
     stats: DeltaApplyResult,
 }
 
@@ -189,6 +205,7 @@ impl<'a> DeltaApplicator<'a> {
             basis_signature,
             basis_map,
             token_buffer: TokenBuffer::with_default_capacity(),
+            same_fs: SameFsCache::Unresolved,
             stats: DeltaApplyResult::default(),
         })
     }
@@ -301,6 +318,41 @@ impl<'a> DeltaApplicator<'a> {
             self.stats.bytes_written
         );
 
+        // IUD-10 fast path: when no checksum is being accumulated (CSUM_NONE)
+        // and no sparse rewrite is in flight, hand the basis-to-dest copy off
+        // to `copy_file_range(2)` instead of bouncing bytes through userspace.
+        // upstream rsync 3.4.1 does not use copy_file_range; this is an
+        // oc-rsync-only optimization that produces byte-identical output.
+        if Self::should_try_kernel_copy(
+            &self.checksum_verifier,
+            self.sparse_state.as_ref(),
+            bytes_to_copy,
+        ) {
+            if let Some(basis_file) = basis_map.buffered_basis_file() {
+                let dest_off = self.stats.bytes_written;
+                let dispatched = Self::try_copy_basis_range(
+                    basis_file,
+                    offset,
+                    &self.output,
+                    dest_off,
+                    bytes_to_copy,
+                    &mut self.same_fs,
+                )?;
+                if dispatched == bytes_to_copy {
+                    // Kernel honoured the full range. copy_file_range does
+                    // not advance the destination file position, so seek
+                    // forward to keep subsequent literal writes contiguous.
+                    self.output.seek(SeekFrom::Start(dest_off + dispatched as u64))?;
+                    self.stats.bytes_written += dispatched as u64;
+                    self.stats.matched_bytes += dispatched as u64;
+                    self.stats.block_tokens += 1;
+                    return Ok(());
+                }
+                // Partial or zero dispatch: fall through to read+write. The
+                // destination position has not been touched (no seek issued).
+            }
+        }
+
         let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
 
         self.checksum_verifier.update(block_data);
@@ -315,6 +367,70 @@ impl<'a> DeltaApplicator<'a> {
         self.stats.matched_bytes += bytes_to_copy as u64;
         self.stats.block_tokens += 1;
         Ok(())
+    }
+
+    /// Predicate gating the IUD-10 `copy_file_range` fast path.
+    ///
+    /// Returns `true` when in-kernel copy is safe to attempt:
+    /// - the checksum verifier is `None` (no per-byte digest to maintain),
+    /// - no sparse rewrite is active (sparse needs zero-run scanning),
+    /// - the COPY range is at least `COPY_BASIS_RANGE_MIN_BYTES` so the
+    ///   syscall overhead pays off.
+    #[inline]
+    fn should_try_kernel_copy(
+        verifier: &ChecksumVerifier,
+        sparse: Option<&SparseWriteState>,
+        bytes_to_copy: usize,
+    ) -> bool {
+        if !verifier.is_noop() {
+            return false;
+        }
+        if sparse.is_some() {
+            return false;
+        }
+        bytes_to_copy >= fast_io::COPY_BASIS_RANGE_MIN_BYTES
+    }
+
+    /// Resolves same-filesystem placement (cached) and dispatches the kernel
+    /// copy on the first call when the basis and destination share an `st_dev`.
+    ///
+    /// Returns the byte count actually written by the kernel. `Ok(0)` is the
+    /// caller's signal to fall back to read+write; the wrapper guarantees the
+    /// destination has not been mutated in that case.
+    fn try_copy_basis_range(
+        basis_file: &File,
+        basis_off: u64,
+        dest_file: &File,
+        dest_off: u64,
+        bytes_to_copy: usize,
+        cache: &mut SameFsCache,
+    ) -> io::Result<usize> {
+        if *cache == SameFsCache::Unresolved {
+            *cache = Self::resolve_same_fs(basis_file, dest_file);
+        }
+        if *cache == SameFsCache::DifferentFs {
+            return Ok(0);
+        }
+        fast_io::copy_basis_range(basis_file, basis_off, dest_file, dest_off, bytes_to_copy)
+    }
+
+    /// Computes the same-filesystem decision once per file. On non-Unix
+    /// targets the kernel-copy fast path is unreachable, so the result is
+    /// always `DifferentFs`.
+    fn resolve_same_fs(basis: &File, dest: &File) -> SameFsCache {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            match (basis.metadata(), dest.metadata()) {
+                (Ok(b), Ok(d)) if b.dev() == d.dev() => SameFsCache::SameFs,
+                _ => SameFsCache::DifferentFs,
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (basis, dest);
+            SameFsCache::DifferentFs
+        }
     }
 
     /// Reads and applies a single token from the reader.
@@ -559,5 +675,61 @@ mod tests {
             DeltaApplicator::new(out, &config, verifier, None, None).expect("construct applicator");
         assert!(!applicator.has_basis());
         assert!(!applicator.basis_uses_mmap());
+    }
+
+    #[test]
+    fn should_try_kernel_copy_requires_noop_verifier() {
+        // CSUM_NONE -> fast path eligible.
+        let none = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::None);
+        assert!(DeltaApplicator::should_try_kernel_copy(
+            &none,
+            None,
+            fast_io::COPY_BASIS_RANGE_MIN_BYTES,
+        ));
+        // Any active digest -> declined; the fast path cannot feed the
+        // verifier without re-reading the bytes it just elided.
+        let md5 = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::MD5);
+        assert!(!DeltaApplicator::should_try_kernel_copy(
+            &md5,
+            None,
+            fast_io::COPY_BASIS_RANGE_MIN_BYTES,
+        ));
+    }
+
+    #[test]
+    fn should_try_kernel_copy_declines_when_sparse() {
+        let none = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::None);
+        let sparse = SparseWriteState::new();
+        // Sparse needs zero-run scanning; cannot delegate to kernel copy.
+        assert!(!DeltaApplicator::should_try_kernel_copy(
+            &none,
+            Some(&sparse),
+            fast_io::COPY_BASIS_RANGE_MIN_BYTES,
+        ));
+    }
+
+    #[test]
+    fn should_try_kernel_copy_declines_below_min_bytes() {
+        let none = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::None);
+        // Tiny ranges hit the syscall-cost wall before they amortize.
+        assert!(!DeltaApplicator::should_try_kernel_copy(
+            &none,
+            None,
+            fast_io::COPY_BASIS_RANGE_MIN_BYTES - 1,
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_same_fs_marks_two_files_in_same_tempdir() {
+        // Both files in the same tempdir live on the same filesystem under
+        // every supported test runner; the resolver must agree.
+        let dir = tempdir().expect("tempdir");
+        let a = File::create(dir.path().join("a")).expect("create a");
+        let b = File::create(dir.path().join("b")).expect("create b");
+        assert_eq!(
+            DeltaApplicator::resolve_same_fs(&a, &b),
+            SameFsCache::SameFs,
+        );
     }
 }

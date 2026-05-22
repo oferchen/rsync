@@ -107,4 +107,12 @@ impl MapStrategy for AdaptiveMapStrategy {
             Self::Mmap(m) => m.file_size(),
         }
     }
+
+    #[inline]
+    fn buffered_file(&self) -> Option<&std::fs::File> {
+        match self {
+            Self::Buffered(b) => b.buffered_file(),
+            Self::Mmap(_) => None,
+        }
+    }
 }
