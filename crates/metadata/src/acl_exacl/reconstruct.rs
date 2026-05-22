@@ -8,7 +8,6 @@ use exacl::AclEntry;
 use protocol::acl::{
     IdAccess, NAME_IS_USER, NO_ENTRY, RsyncAcl, trace_acl_gid_remap, trace_acl_uid_remap,
 };
-use rustix::process::{RawGid, RawUid};
 
 use super::perms::rsync_perms_to_exacl;
 use crate::id_lookup::{
@@ -154,15 +153,9 @@ fn resolve_ida_id(ida: &IdAccess) -> u32 {
     if let Some(name_bytes) = ida.name.as_deref() {
         let name_str = String::from_utf8_lossy(name_bytes);
         let resolved = if is_user {
-            lookup_user_by_name(name_bytes)
-                .ok()
-                .flatten()
-                .map(|uid| uid as u32)
+            lookup_user_by_name(name_bytes).ok().flatten()
         } else {
-            lookup_group_by_name(name_bytes)
-                .ok()
-                .flatten()
-                .map(|gid| gid as u32)
+            lookup_group_by_name(name_bytes).ok().flatten()
         };
         let mapped = resolved.unwrap_or(wire);
         if is_user {
@@ -177,9 +170,9 @@ fn resolve_ida_id(ida: &IdAccess) -> u32 {
     // debug line. Probe local NSS so the emission can report a name when one
     // exists.
     let resolved_name = if is_user {
-        lookup_user_name(wire as RawUid).ok().flatten()
+        lookup_user_name(wire).ok().flatten()
     } else {
-        lookup_group_name(wire as RawGid).ok().flatten()
+        lookup_group_name(wire).ok().flatten()
     };
     let name_str = resolved_name
         .as_deref()
