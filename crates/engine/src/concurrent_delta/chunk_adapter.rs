@@ -459,8 +459,7 @@ mod tests {
         let bytes = vec![1u8, 2, 3, 4];
         let via_new = DeltaChunkAdapter::new()
             .from_delta_work(&work, ChunkPayload::literal(0, bytes.clone()));
-        let via_literal =
-            DeltaChunkAdapter.from_delta_work(&work, ChunkPayload::literal(0, bytes));
+        let via_literal = DeltaChunkAdapter.from_delta_work(&work, ChunkPayload::literal(0, bytes));
 
         assert_eq!(via_new.data, via_literal.data);
         assert_eq!(via_new.ndx, via_literal.ndx);
