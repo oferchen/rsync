@@ -44,6 +44,21 @@ pub struct DiskCommitConfig {
     pub do_fsync: bool,
     /// Whether to use sparse file writing.
     pub use_sparse: bool,
+    /// Destination tree root used to anchor SEC-1.r/SEC-1.j cross-thread
+    /// `*at` syscalls. `None` when the destination root could not be opened
+    /// at receiver setup or when running on a platform without the carrier.
+    pub dest_dir: Option<PathBuf>,
+    /// SEC-1.r parent-dirfd carrier rooted at the destination tree.
+    ///
+    /// `Arc` so the disk-commit thread can outlive the borrow on the
+    /// receiver's `PipelineSetup::sandbox`. When `Some`, the temp-file
+    /// create and the temp-file unlink-on-drop route through
+    /// `openat` / `unlinkat` instead of path-based syscalls so a TOCTOU
+    /// symlink swap on the temp parent cannot redirect the create or the
+    /// cleanup. `None` on non-Unix targets and on Unix when the receiver
+    /// could not open the destination root.
+    #[cfg(unix)]
+    pub sandbox: Option<Arc<fast_io::DirSandbox>>,
     /// Temporary directory for staging received files before final placement.
     /// Shared across all files in a transfer session.
     pub temp_dir: Option<PathBuf>,
@@ -101,6 +116,9 @@ impl Default for DiskCommitConfig {
         Self {
             do_fsync: false,
             use_sparse: false,
+            dest_dir: None,
+            #[cfg(unix)]
+            sandbox: None,
             temp_dir: None,
             file_list: None,
             metadata_opts: None,

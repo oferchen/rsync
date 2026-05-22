@@ -21,7 +21,10 @@ use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
 use crate::map_file::MapFile;
 use crate::pipeline::PendingTransfer;
 use crate::reader::ServerReader;
+#[cfg(not(unix))]
 use crate::temp_guard::open_tmpfile;
+#[cfg(unix)]
+use crate::temp_guard::open_tmpfile_sandboxed;
 use crate::token_buffer::TokenBuffer;
 use crate::token_reader::{DeltaToken, LiteralData, TokenReader};
 
@@ -88,6 +91,14 @@ pub fn process_file_response<R: Read>(
             false,
         )
     } else {
+        // SEC-1.r: route the temp-file create + drop-cleanup through the
+        // `ResponseContext` sandbox carrier when both the temp parent and
+        // the temp leaf reduce to a single component beneath `ctx.dest_dir`.
+        // --temp-dir or multi-component paths take the path-based fallback.
+        #[cfg(unix)]
+        let (f, guard) =
+            open_tmpfile_sandboxed(&file_path, ctx.config.temp_dir, ctx.sandbox, ctx.dest_dir)?;
+        #[cfg(not(unix))]
         let (f, guard) = open_tmpfile(&file_path, ctx.config.temp_dir)?;
         (f, guard, true)
     };
@@ -314,7 +325,7 @@ pub fn process_file_response<R: Read>(
                     ),
                 };
                 fast_io::renameat_via_sandbox_or_fallback(
-                    ctx.sandbox,
+                    ctx.sandbox.map(std::sync::Arc::as_ref),
                     sandbox_dest_dir,
                     &temp_rel,
                     temp_path,
