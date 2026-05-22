@@ -76,7 +76,6 @@ fn clear_default_acl_works_on_directory() {
 fn is_unsupported_error_detects_common_messages() {
     let patterns = [
         "operation not supported",
-        "No such file or directory",
         "Invalid argument",
         "No data available",
     ];
@@ -93,7 +92,9 @@ fn is_unsupported_error_detects_common_messages() {
 #[cfg(unix)]
 #[test]
 fn is_unsupported_error_detects_os_error_codes() {
-    let codes = [libc::ENOTSUP, libc::ENOENT, libc::EINVAL, libc::EPERM];
+    // upstream: lib/sysacls.c:2778-2799 - no_acl_syscall_error swallows
+    // ENOSYS, ENOTSUP, EINVAL; ENOENT only on macOS.
+    let codes = [libc::ENOTSUP, libc::ENOSYS, libc::EINVAL, libc::ENODATA];
 
     for code in codes {
         let err = std::io::Error::from_raw_os_error(code);
@@ -102,6 +103,31 @@ fn is_unsupported_error_detects_os_error_codes() {
             "should detect OS error code {code} as unsupported"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn is_unsupported_error_surfaces_eperm() {
+    // upstream: acls.c:994-997 - EPERM from sys_acl_set_file surfaces via
+    // rsyserr(FERROR_XFER, ...) rather than being swallowed. Without this,
+    // a non-root receiver carrying an unmappable UID in a named ACL entry
+    // would silently drop the entire ACL apply.
+    let err = std::io::Error::from_raw_os_error(libc::EPERM);
+    assert!(
+        !is_unsupported_error(&err),
+        "EPERM must propagate to caller as a real ACL apply failure"
+    );
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+#[test]
+fn is_unsupported_error_surfaces_enoent_on_linux_freebsd() {
+    // upstream: lib/sysacls.c:2780-2782 - the ENOENT swallow is macOS-only.
+    let err = std::io::Error::from_raw_os_error(libc::ENOENT);
+    assert!(
+        !is_unsupported_error(&err),
+        "ENOENT must propagate on Linux/FreeBSD (macOS-only quirk upstream)"
+    );
 }
 
 #[test]
@@ -162,6 +188,96 @@ fn rsync_acl_to_entries_named_user_and_group() {
     assert_eq!(named[1].kind, AclEntryKind::Group);
     assert_eq!(named[1].name, "100");
     assert_eq!(named[1].perms, Perm::READ | Perm::EXECUTE);
+}
+
+#[cfg(unix)]
+#[test]
+fn rsync_acl_to_entries_preserves_unmappable_named_user() {
+    // upstream: uidlist.c:282 - recv_add_id falls back to id2 = id when
+    // user_to_uid(name, ...) fails, and acls.c:404 hands that raw id to
+    // sys_acl_set_info(). The entry must reach setfacl, not be dropped.
+    use protocol::acl::IdAccess;
+
+    // Pick a UID that is overwhelmingly unlikely to exist locally.
+    let unmappable_uid = 0x7FFF_FF42_u32;
+    let unknown_name = b"oc_rsync_test_no_such_user_zzz".to_vec();
+
+    let mut acl = RsyncAcl::from_mode(0o755);
+    acl.names
+        .push(IdAccess::user_with_name(unmappable_uid, 0x07, unknown_name));
+
+    let entries = rsync_acl_to_entries(&acl);
+    let named: Vec<_> = entries.iter().filter(|e| !e.name.is_empty()).collect();
+    assert_eq!(
+        named.len(),
+        1,
+        "named user with unresolvable wire name must not be dropped"
+    );
+    assert_eq!(named[0].kind, AclEntryKind::User);
+    assert_eq!(
+        named[0].name,
+        unmappable_uid.to_string(),
+        "unmappable wire UID must pass through verbatim (upstream id2 = id)"
+    );
+    assert_eq!(named[0].perms, Perm::READ | Perm::WRITE | Perm::EXECUTE);
+}
+
+#[cfg(unix)]
+#[test]
+fn rsync_acl_to_entries_remap_emits_own_debug() {
+    // upstream: uidlist.c:287-291 - DEBUG_GTE(OWN, 2) emits
+    // "uid %u(%s) maps to %u" / "gid %u(%s) maps to %u" for every
+    // remap attempt, including the unmappable-id fallthrough.
+    use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+    use protocol::acl::IdAccess;
+
+    let mut cfg = VerbosityConfig::default();
+    cfg.debug.own = 2;
+    init(cfg);
+    let _ = drain_events();
+
+    let unmappable_uid = 0x7FFF_FF11_u32;
+    let unmappable_gid = 0x7FFF_FF22_u32;
+
+    let mut acl = RsyncAcl::from_mode(0o755);
+    acl.names.push(IdAccess::user_with_name(
+        unmappable_uid,
+        0x07,
+        b"oc_rsync_test_ghost_user".to_vec(),
+    ));
+    acl.names.push(IdAccess::group_with_name(
+        unmappable_gid,
+        0x05,
+        b"oc_rsync_test_ghost_group".to_vec(),
+    ));
+
+    let _ = rsync_acl_to_entries(&acl);
+
+    let messages: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Debug {
+                flag: DebugFlag::Own,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+    let expected_uid = format!(
+        "uid {unmappable_uid}(oc_rsync_test_ghost_user) maps to {unmappable_uid}"
+    );
+    let expected_gid = format!(
+        "gid {unmappable_gid}(oc_rsync_test_ghost_group) maps to {unmappable_gid}"
+    );
+    assert!(
+        messages.iter().any(|m| m == &expected_uid),
+        "missing UID remap emission {expected_uid:?}: {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|m| m == &expected_gid),
+        "missing GID remap emission {expected_gid:?}: {messages:?}"
+    );
 }
 
 #[test]

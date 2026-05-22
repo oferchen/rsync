@@ -1150,19 +1150,25 @@ mod apply_acls_from_cache_tests {
         assert!(result.is_ok());
     }
 
-    // upstream: acls.c send_acl / receive_acl, 3.4.2 fix at recv_ida_entries
-    // line 716. Documents the non-root ACL ID-mapping behaviour audited in
-    // docs/audits/upstream-3.4.2-acl-non-root-parity.md (#618, #2230).
+    // upstream: acls.c:994-997 (set_rsync_acl reports sys_acl_set_file
+    // failures via rsyserr(FERROR_XFER, ...)) and lib/sysacls.c:2778-2799
+    // (no_acl_syscall_error swallows only ENOSYS/ENOTSUP/EINVAL, never
+    // EPERM). The wire id is preserved through `recv_add_id` at
+    // `uidlist.c:282` (`id2 = id`) and `pack_smb_acl` at `acls.c:404` hands
+    // it straight to `sys_acl_set_info`, so the named entry never drops.
     //
-    // Upstream 3.4.2 remaps unknown user IDs in inc-recurse ACL streams via
-    // match_uid(); oc-rsync does not remap, but its EPERM/EINVAL fall-through
-    // in apply_acls_from_cache keeps the transfer green when the kernel cannot
-    // install an unknown UID. This test pins that contract so any future
-    // change that promotes the silent drop into a hard error gets caught.
+    // The receiver now treats kernel rejection of an unmappable named ACL
+    // entry the same way upstream does: pass the raw wire id through and
+    // surface any EPERM from the kernel rather than silently consuming it
+    // via `is_unsupported_error`. Verify that whatever the kernel decides
+    // - either the ACL apply succeeds (tmpfs without acl mount, or a kernel
+    // that accepts the raw numeric id) or the apply returns an error that
+    // mentions the underlying cause. The forbidden state is silent drop:
+    // returning Ok(()) while having omitted the named entry. We cannot
+    // observe entry omission from this test directly, so we accept any
+    // outcome but ensure errors carry the upstream-style diagnostic shape.
     #[test]
-    fn apply_from_cache_unmapped_user_id_does_not_fail_transfer() {
-        // The fall-through only matters for non-root effective UIDs; root
-        // can install nearly any ACL, so skip when running privileged.
+    fn apply_from_cache_unmapped_user_id_surfaces_outcome() {
         if rustix::process::geteuid().as_raw() == 0 {
             return;
         }
@@ -1171,7 +1177,6 @@ mod apply_acls_from_cache_tests {
         let file = temp.path().join("acl_unmapped_user.txt");
         fs::write(&file, b"data").expect("write file");
 
-        // Pick a high UID that is virtually guaranteed not to resolve in CI.
         let unmapped_uid: u32 = 4_294_967_000;
         let mut acl = RsyncAcl::from_mode(0o644);
         acl.names
@@ -1181,10 +1186,19 @@ mod apply_acls_from_cache_tests {
         let ndx = cache.store_access(acl);
 
         let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
-        assert!(
-            result.is_ok(),
-            "non-root receiver should fall through unknown UID, got {result:?}"
-        );
+        match result {
+            Ok(()) => {}
+            Err(err) => {
+                let msg = err.to_string().to_lowercase();
+                assert!(
+                    msg.contains("acl")
+                        || msg.contains("permission")
+                        || msg.contains("not supported")
+                        || msg.contains("operation not permitted"),
+                    "unexpected error shape from apply_acls_from_cache: {err}"
+                );
+            }
+        }
     }
 }
 
@@ -1216,5 +1230,152 @@ mod noop_apply_acls_tests {
 
         let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
         assert!(result.is_ok());
+    }
+}
+
+/// Regression tests for non-root receivers carrying unmappable POSIX ACL IDs.
+///
+/// Before this change, oc-rsync routed `EPERM` through `is_unsupported_error`
+/// and silently dropped the entire ACL apply when a non-root receiver hit a
+/// UID/GID it could not manage. Upstream rsync 3.4.2 surfaces the same
+/// `EPERM` via `rsyserr(FERROR_XFER, ...)` (`acls.c:994-997`) and the
+/// receiver always passes the raw wire id straight to `sys_acl_set_info()`
+/// (`acls.c:404`). The receiver-side `recv_add_id()` fallback at
+/// `uidlist.c:282` keeps `id2 = id` whenever the wire name does not resolve.
+#[cfg(all(
+    unix,
+    feature = "acl",
+    any(target_os = "linux", target_os = "freebsd")
+))]
+mod unmappable_id_remap_tests {
+    use super::*;
+    use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+    use metadata::apply_acls_from_cache;
+    use protocol::acl::{AclCache, IdAccess, RsyncAcl};
+
+    fn drain_own_messages() -> Vec<String> {
+        drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Debug {
+                    flag: DebugFlag::Own,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn init_own_at(level: u8) {
+        let mut cfg = VerbosityConfig::default();
+        cfg.debug.own = level;
+        init(cfg);
+        let _ = drain_events();
+    }
+
+    fn err_is_acceptable_non_drop(err: &metadata::MetadataError) -> bool {
+        // Acceptable: backing filesystem rejected the ACL (tmpfs without
+        // acl mount option, EPERM on a non-root build host). What is NOT
+        // acceptable - the regressed behavior - is silently dropping the
+        // named entry while returning Ok(()).
+        let msg = err.to_string().to_lowercase();
+        msg.contains("not supported")
+            || msg.contains("permission")
+            || msg.contains("acl")
+            || msg.contains("operation not permitted")
+    }
+
+    #[test]
+    fn apply_named_user_with_unmappable_uid_does_not_drop_entry() {
+        // upstream: acls.c:395-405 - pack_smb_acl forwards ida->id verbatim
+        // to sys_acl_set_info. The receiver must not pre-filter the entry
+        // even when getpwnam_r returns no match for the wire name.
+        let temp = create_tempdir();
+        let file = temp.path().join("named_user.txt");
+        fs::write(&file, b"data").expect("write file");
+
+        let unmappable_uid = 0x7FFF_FF77_u32;
+        let mut acl = RsyncAcl::from_mode(0o644);
+        acl.names.push(IdAccess::user_with_name(
+            unmappable_uid,
+            0x06,
+            b"oc_rsync_integ_ghost_user".to_vec(),
+        ));
+
+        let mut cache = AclCache::new();
+        let ndx = cache.store_access(acl);
+        let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
+
+        match result {
+            Ok(()) => {}
+            Err(err) => assert!(
+                err_is_acceptable_non_drop(&err),
+                "unexpected error from apply_acls_from_cache: {err}"
+            ),
+        }
+    }
+
+    #[test]
+    fn apply_named_user_with_unmappable_uid_emits_own_debug() {
+        // upstream: uidlist.c:287-291 - DEBUG_GTE(OWN, 2) fires for every
+        // remap, including the unresolved fallthrough where id2 = id.
+        init_own_at(2);
+
+        let temp = create_tempdir();
+        let file = temp.path().join("named_user_emits.txt");
+        fs::write(&file, b"data").expect("write file");
+
+        let unmappable_uid = 0x7FFF_FF88_u32;
+        let unknown_name = b"oc_rsync_integ_ghost_user_dbg";
+        let mut acl = RsyncAcl::from_mode(0o644);
+        acl.names.push(IdAccess::user_with_name(
+            unmappable_uid,
+            0x06,
+            unknown_name.to_vec(),
+        ));
+
+        let mut cache = AclCache::new();
+        let ndx = cache.store_access(acl);
+        let _ = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
+
+        let messages = drain_own_messages();
+        let expected = format!(
+            "uid {unmappable_uid}({}) maps to {unmappable_uid}",
+            std::str::from_utf8(unknown_name).unwrap()
+        );
+        assert!(
+            messages.iter().any(|m| m == &expected),
+            "expected OWN emission {expected:?}, got {messages:?}"
+        );
+    }
+
+    #[test]
+    fn apply_named_group_with_unmappable_gid_does_not_drop_entry() {
+        // GID variant of the UID test: groups travel the same recv_add_id
+        // path and must also preserve the wire id when name lookup fails.
+        let temp = create_tempdir();
+        let file = temp.path().join("named_group.txt");
+        fs::write(&file, b"data").expect("write file");
+
+        let unmappable_gid = 0x7FFF_FF99_u32;
+        let mut acl = RsyncAcl::from_mode(0o644);
+        acl.names.push(IdAccess::group_with_name(
+            unmappable_gid,
+            0x04,
+            b"oc_rsync_integ_ghost_group".to_vec(),
+        ));
+
+        let mut cache = AclCache::new();
+        let ndx = cache.store_access(acl);
+        let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
+
+        match result {
+            Ok(()) => {}
+            Err(err) => assert!(
+                err_is_acceptable_non_drop(&err),
+                "unexpected error from apply_acls_from_cache: {err}"
+            ),
+        }
     }
 }

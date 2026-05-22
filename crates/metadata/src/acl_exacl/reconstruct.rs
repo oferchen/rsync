@@ -5,9 +5,15 @@
 //! before applying the ACL to the destination filesystem.
 
 use exacl::AclEntry;
-use protocol::acl::{NAME_IS_USER, NO_ENTRY, RsyncAcl};
+use protocol::acl::{
+    IdAccess, NAME_IS_USER, NO_ENTRY, RsyncAcl, trace_acl_gid_remap, trace_acl_uid_remap,
+};
+use rustix::process::{RawGid, RawUid};
 
 use super::perms::rsync_perms_to_exacl;
+use crate::id_lookup::{
+    lookup_group_by_name, lookup_group_name, lookup_user_by_name, lookup_user_name,
+};
 
 /// Reconstructs a full ACL from stripped wire data and the file mode.
 ///
@@ -55,10 +61,26 @@ pub(super) fn reconstruct_acl(acl: &RsyncAcl, mode: Option<u32>) -> RsyncAcl {
 /// named user/group entries are emitted as extended ACL entries since the
 /// base permissions are managed separately through file mode bits.
 ///
+/// # Unmappable IDs
+///
+/// Named user/group entries always pass through to the destination ACL even
+/// when the receiver cannot resolve the UID/GID locally. The function never
+/// drops a named entry: an unresolved wire ID is forwarded to `setfacl`
+/// verbatim, mirroring upstream's `recv_add_id()` fallback at
+/// `uidlist.c:282` (`id2 = id`) and `match_uid()`/`match_gid()` semantics at
+/// `uidlist.c:297-337`. The receiver-side ID resolution happens here so the
+/// upstream `--debug=own2` line (`"uid %u(%s) maps to %u"`,
+/// `uidlist.c:287-291`) reaches operators investigating non-root ACL
+/// restores, which previously dropped silently.
+///
 /// # Upstream Reference
 ///
-/// Mirrors `set_rsync_acl()` in `acls.c` lines 835-928 which reconstructs
-/// a system ACL from the wire protocol `rsync_acl` struct.
+/// - `acls.c:395-405` `pack_smb_acl` - passes `ida->id` straight to
+///   `sys_acl_set_info()` without dropping unresolved IDs.
+/// - `acls.c:705-721` `recv_ida_entries` - calls `match_uid`/`match_gid` on
+///   incoming named entries.
+/// - `uidlist.c:243-294` `recv_add_id` - falls back to the raw wire id when
+///   the name does not resolve; emits the `DEBUG_GTE(OWN, 2)` mapping line.
 pub(super) fn rsync_acl_to_entries(acl: &RsyncAcl) -> Vec<AclEntry> {
     let mut entries = Vec::new();
 
@@ -96,7 +118,8 @@ pub(super) fn rsync_acl_to_entries(acl: &RsyncAcl) -> Vec<AclEntry> {
 
     for ida in acl.names.iter() {
         let perms = rsync_perms_to_exacl(ida.permissions() as u8);
-        let name = ida.id.to_string();
+        let mapped_id = resolve_ida_id(ida);
+        let name = mapped_id.to_string();
 
         if ida.access & NAME_IS_USER != 0 {
             entries.push(AclEntry::allow_user(&name, perms, None));
@@ -106,4 +129,66 @@ pub(super) fn rsync_acl_to_entries(acl: &RsyncAcl) -> Vec<AclEntry> {
     }
 
     entries
+}
+
+/// Resolves the local UID/GID for a wire ACL entry, mirroring upstream's
+/// `match_uid`/`match_gid` + `recv_add_id` fallback chain.
+///
+/// 1. When the sender shipped a name, try local NSS (`getpwnam_r`/`getgrnam_r`)
+///    and use the resolved id when found - matches `recv_add_id()`
+///    `user_to_uid(name, ...)`/`group_to_gid(name, ...)` at
+///    `uidlist.c:273-280`.
+/// 2. When no name was shipped, probe the wire id against local NSS
+///    (`getpwuid_r`/`getgrgid_r`) so the upstream `DEBUG_GTE(OWN, 2)`
+///    mapping line fires for both resolved and unresolved entries (the
+///    upstream debug emission runs unconditionally inside `recv_add_id` at
+///    `uidlist.c:287-291`).
+/// 3. Always return the chosen id (resolved or unchanged wire id). Upstream
+///    falls back to `id2 = id` at `uidlist.c:282` and the receiver still
+///    calls `sys_acl_set_info()` with whatever id is in `ida->id`
+///    (`acls.c:404`), so unmappable IDs flow through to the kernel.
+fn resolve_ida_id(ida: &IdAccess) -> u32 {
+    let is_user = ida.access & NAME_IS_USER != 0;
+    let wire = ida.id;
+
+    if let Some(name_bytes) = ida.name.as_deref() {
+        let name_str = String::from_utf8_lossy(name_bytes);
+        let resolved = if is_user {
+            lookup_user_by_name(name_bytes)
+                .ok()
+                .flatten()
+                .map(|uid| uid as u32)
+        } else {
+            lookup_group_by_name(name_bytes)
+                .ok()
+                .flatten()
+                .map(|gid| gid as u32)
+        };
+        let mapped = resolved.unwrap_or(wire);
+        if is_user {
+            trace_acl_uid_remap(wire, &name_str, mapped);
+        } else {
+            trace_acl_gid_remap(wire, &name_str, mapped);
+        }
+        return mapped;
+    }
+
+    // No wire name: upstream's recv_add_id sets id2 = id but still emits the
+    // debug line. Probe local NSS so the emission can report a name when one
+    // exists.
+    let resolved_name = if is_user {
+        lookup_user_name(wire as RawUid).ok().flatten()
+    } else {
+        lookup_group_name(wire as RawGid).ok().flatten()
+    };
+    let name_str = resolved_name
+        .as_deref()
+        .map(String::from_utf8_lossy)
+        .unwrap_or_default();
+    if is_user {
+        trace_acl_uid_remap(wire, &name_str, wire);
+    } else {
+        trace_acl_gid_remap(wire, &name_str, wire);
+    }
+    wire
 }
