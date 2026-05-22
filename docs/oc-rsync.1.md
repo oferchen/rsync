@@ -1190,6 +1190,62 @@ authentication, and prefer read-only modules where possible.
 
 For full security details, see the SECURITY.md file in the source distribution.
 
+## Daemon Sandboxing
+
+The daemon layers two independent defenses around each module connection. Both
+engage automatically; neither requires `oc-rsyncd.conf` changes.
+
+**Landlock LSM defense-in-depth (Linux)**
+:   On Linux 5.13+ with the `landlock` Cargo feature compiled in (default for
+    Linux distro builds), the daemon engages a per-connection kernel
+    allowlist over `module.path` immediately after
+    `apply_module_privilege_restrictions` returns. The allowlist is layered
+    above the SEC-1 `*at`-syscall chain
+    (**openat2**(2) with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`,
+    **fstatat**(2), **unlinkat**(2), **mkdirat**(2), **symlinkat**(2),
+    **linkat**(2), **fchmodat**(2), **fchownat**(2), **utimensat**(2),
+    **renameat**(2)) and prevents any future missed call site from reaching
+    paths outside the module tree, because the kernel rejects the syscall
+    regardless of which userspace routine issued it. Best-effort ABI
+    downgrade per `landlock::ABI::set_best_effort(true)` selects the highest
+    ruleset the running kernel understands:
+
+    - **v3** on Linux 6.2+: READ, WRITE, CREATE, DELETE, RENAME, SYMLINK,
+      REFER, TRUNCATE.
+    - **v2** on Linux 5.19+: v3 minus TRUNCATE.
+    - **v1** on Linux 5.13+: v2 minus REFER (no cross-hierarchy rename).
+    - On pre-5.13 kernels the daemon logs a single WARN and continues with
+      the SEC-1 `*at` chain as the sole defense.
+
+    The active ABI level is recorded in the daemon log so operators can
+    confirm v3 enforcement on production kernels.
+
+**Hook inheritance**
+:   Name converters and **pre-xfer-exec** / **post-xfer-exec** hooks spawned
+    by the daemon inherit the Landlock ruleset, because `restrict_self()`
+    applies to the whole thread and to every child process forked from it.
+    Hooks therefore **cannot** access paths outside `module.path`, even when
+    the unix user they run as has filesystem permission elsewhere. If a hook
+    requires auxiliary paths (a shared log directory, a state file under
+    **/var/lib**, an audit pipe), either build the daemon without the
+    `landlock` Cargo feature or relocate the auxiliary path inside the
+    module tree so the kernel allowlist covers it.
+
+**Client path rejection**
+:   `--temp-dir`, `--partial-dir`, and `--backup-dir` paths supplied by the
+    client are validated against `module.path` at the wire-protocol layer.
+    Paths that resolve outside the module tree are rejected with an
+    `@ERROR` reply before the transfer begins. This is stricter than
+    upstream rsync, which silently widens the chroot to accommodate
+    out-of-tree client operands. The stricter posture matches the SEC-1
+    mitigation goal: every receiver write stays under the dirfd-anchored
+    sandbox. Clients that need auxiliary paths must place them inside the
+    module tree.
+
+Refer to **SECURITY.md** in the source distribution for full CVE status,
+including the SEC-1 (CVE-2026-29518 / CVE-2026-43619) progress matrix and
+the SEC-1.p Landlock design note.
+
 # SEE ALSO
 
 rsync(1), rsyncd.conf(5), ssh(1)
