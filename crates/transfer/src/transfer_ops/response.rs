@@ -281,10 +281,53 @@ pub fn process_file_response<R: Read>(
         // On Linux 5.11+ with io_uring, submits IORING_OP_RENAMEAT instead of
         // synchronous rename(2). Falls back to std::fs::rename on all other
         // platforms or when the kernel lacks the opcode.
+        //
+        // SEC-1.j: when the sandbox is plumbed and both temp leaf + final
+        // leaf are single components beneath `dest_dir`, route through
+        // `renameat(dirfd, leaf, dirfd, leaf)` so a TOCTOU swap on either
+        // leaf cannot redirect the commit. The io_uring fast path is
+        // preserved by trying it first; the sandbox routing is the SEC-1.j
+        // hardening for the synchronous fallback. Multi-component /
+        // cross-tree cases keep the path-based `std::fs::rename`.
         if let Some(result) = fast_io::try_rename_via_io_uring(cleanup_guard.path(), &file_path) {
             result?;
         } else {
-            fs::rename(cleanup_guard.path(), &file_path)?;
+            #[cfg(unix)]
+            {
+                let temp_path = cleanup_guard.path();
+                let (sandbox_dest_dir, temp_rel, final_rel) = match ctx.dest_dir {
+                    Some(dest_dir) => {
+                        let temp_rel = temp_path
+                            .strip_prefix(dest_dir)
+                            .map(std::path::Path::to_path_buf)
+                            .unwrap_or_else(|_| temp_path.to_path_buf());
+                        let final_rel = file_path
+                            .strip_prefix(dest_dir)
+                            .map(std::path::Path::to_path_buf)
+                            .unwrap_or_else(|_| file_path.clone());
+                        (dest_dir, temp_rel, final_rel)
+                    }
+                    None => (
+                        std::path::Path::new(""),
+                        temp_path.to_path_buf(),
+                        file_path.clone(),
+                    ),
+                };
+                fast_io::renameat_via_sandbox_or_fallback(
+                    ctx.sandbox,
+                    sandbox_dest_dir,
+                    &temp_rel,
+                    temp_path,
+                    sandbox_dest_dir,
+                    &final_rel,
+                    &file_path,
+                    true,
+                )?;
+            }
+            #[cfg(not(unix))]
+            {
+                fs::rename(cleanup_guard.path(), &file_path)?;
+            }
         }
     } else if ctx.config.inplace {
         // Inplace: truncate to final size.
