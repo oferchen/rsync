@@ -267,13 +267,19 @@ mod tests {
     #[test]
     fn extracts_split_dash_f() {
         let opts = vec![OsString::from("-F"), OsString::from("/tmp/custom")];
-        assert_eq!(extract_dash_f_path(&opts), Some(PathBuf::from("/tmp/custom")));
+        assert_eq!(
+            extract_dash_f_path(&opts),
+            Some(PathBuf::from("/tmp/custom"))
+        );
     }
 
     #[test]
     fn extracts_combined_dash_f() {
         let opts = vec![OsString::from("-F/tmp/custom")];
-        assert_eq!(extract_dash_f_path(&opts), Some(PathBuf::from("/tmp/custom")));
+        assert_eq!(
+            extract_dash_f_path(&opts),
+            Some(PathBuf::from("/tmp/custom"))
+        );
     }
 
     #[test]
