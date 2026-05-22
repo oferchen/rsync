@@ -575,13 +575,17 @@ fn is_not_empty(err: &io::Error) -> bool {
 #[cfg(unix)]
 fn plan_directory_to_relative(plan_directory: &Path) -> &Path {
     use std::path::Component;
-    let stripped = plan_directory.components().skip_while(|c| {
-        matches!(
-            c,
-            Component::RootDir | Component::Prefix(_) | Component::CurDir
-        )
-    });
-    let original = stripped.as_path();
+    let mut components = plan_directory.components();
+    loop {
+        let mut peek = components.clone();
+        match peek.next() {
+            Some(Component::Prefix(_)) | Some(Component::RootDir) | Some(Component::CurDir) => {
+                components.next();
+            }
+            _ => break,
+        }
+    }
+    let original = components.as_path();
     if original.as_os_str().is_empty() {
         Path::new(".")
     } else {
