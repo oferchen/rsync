@@ -116,21 +116,23 @@ impl MapFile<AdaptiveMapStrategy> {
     pub fn is_buffered(&self) -> bool {
         self.strategy.is_buffered()
     }
+}
 
-    /// Returns the underlying basis file when the strategy is buffered.
+impl<S: MapStrategy> MapFile<S> {
+    /// Returns the underlying basis file when the strategy is backed by a
+    /// real `File` (i.e. buffered, not mmap).
     ///
-    /// Returns `None` when mmap-backed. Used by the IUD-10 delta-apply fast
-    /// path: handing an mmap pointer to `copy_file_range(2)` would force the
-    /// kernel to fault those pages back in through the mapping it owns, so
-    /// the dispatch is restricted to the buffered variant.
+    /// Returns `None` for mmap-backed strategies. Used by the IUD-10
+    /// delta-apply fast path: handing an mmap pointer to
+    /// `copy_file_range(2)` would force the kernel to fault those pages
+    /// back in through the mapping it owns, so the dispatch is restricted
+    /// to buffered strategies.
     #[must_use]
     #[inline]
     pub fn buffered_basis_file(&self) -> Option<&File> {
         self.strategy.buffered_file()
     }
-}
 
-impl<S: MapStrategy> MapFile<S> {
     /// Creates a `MapFile` with a custom strategy.
     pub fn with_strategy(strategy: S) -> Self {
         Self { strategy }
