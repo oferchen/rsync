@@ -128,13 +128,13 @@ pub mod zero_detect;
 #[cfg(feature = "adaptive-basis-dispatch")]
 pub mod adaptive_dispatch;
 
+/// Offset-aware basis-to-destination range copy via `copy_file_range(2)` for
+/// the delta-apply COPY-token fast path (IUD-10).
+pub mod copy_basis_range;
 /// Windows `CopyFileExW` file copy with automatic fallback.
 pub mod copy_file_ex;
 /// High-performance file copying with tiered fallback.
 pub mod copy_file_range;
-/// Offset-aware basis-to-destination range copy via `copy_file_range(2)` for
-/// the delta-apply COPY-token fast path (IUD-10).
-pub mod copy_basis_range;
 /// Anonymous temporary file creation via `O_TMPFILE` and finalization via `linkat`.
 pub mod o_tmpfile;
 /// Platform-abstracted file copy trait with automatic optimization selection.
@@ -233,7 +233,9 @@ mod policy;
 mod status;
 
 pub use cached_sort::{CachedSortKey, cached_sort_by};
-pub use copy_basis_range::{COPY_BASIS_RANGE_MIN_BYTES, copy_basis_range, copy_file_range_supported};
+pub use copy_basis_range::{
+    COPY_BASIS_RANGE_MIN_BYTES, copy_basis_range, copy_file_range_supported,
+};
 pub use page_aligned::{PageAlignedBuffer, page_size, round_up_to_page};
 pub use parallel::{ParallelExecutor, ParallelResult};
 pub use platform_copy::{

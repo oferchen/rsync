@@ -342,7 +342,8 @@ impl<'a> DeltaApplicator<'a> {
                     // Kernel honoured the full range. copy_file_range does
                     // not advance the destination file position, so seek
                     // forward to keep subsequent literal writes contiguous.
-                    self.output.seek(SeekFrom::Start(dest_off + dispatched as u64))?;
+                    self.output
+                        .seek(SeekFrom::Start(dest_off + dispatched as u64))?;
                     self.stats.bytes_written += dispatched as u64;
                     self.stats.matched_bytes += dispatched as u64;
                     self.stats.block_tokens += 1;
