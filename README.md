@@ -407,9 +407,16 @@ All crates enforce `#![deny(unsafe_code)]`. Targeted `#[allow(unsafe_code)]` is 
 - **protocol** - One isolated allow in `multiplex::helpers` for frame parsing
 - **windows-gnu-eh** - Windows GNU exception handling shims
 
-Not vulnerable to known upstream rsync CVEs (CVE-2024-12084 through CVE-2024-12088, CVE-2024-12747). OS-level race conditions (TOCTOU) remain possible at filesystem boundaries.
+Not vulnerable to known upstream rsync CVEs (CVE-2024-12084 through CVE-2024-12088, CVE-2024-12747).
 
-For security issues, see [SECURITY.md](./SECURITY.md).
+### Upstream rsync 3.4.3 hardening
+
+- **TOCTOU mitigation for path-based daemon syscalls** (CVE-2026-29518, CVE-2026-43619): the receiver routes every mutating filesystem call through a `DirSandbox` carrier anchored on an `O_DIRECTORY | O_NOFOLLOW` root dirfd, with `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` runtime detection. Coverage spans the full `*at` syscall family: `unlinkat`, `mkdirat`, `symlinkat`, `linkat`, `fchmodat`, `fchownat`, `utimensat`, `renameat`, and `fstatat`. macOS provides the same `*at` semantics and is verified; Windows uses NTFS handle-based APIs, where the path TOCTOU window does not apply.
+- **Defense-in-depth (Linux only, cargo feature `landlock`)**: the daemon engages a kernel-side allowlist over the resolved module root via the Landlock LSM. A per-connection `restrict_self()` runs immediately after `apply_module_privilege_restrictions` returns, so any filesystem syscall that resolves a path outside the module root is rejected with `EACCES` regardless of which syscall the userspace code chose. Requires Linux 5.13+ (ABI v1), 5.19+ (v2 adds `REFER` for cross-directory renames), or 6.2+ (v3 adds `TRUNCATE`). Best-effort ABI downgrade picks the highest level the running kernel exposes; on pre-5.13 kernels the `*at` helpers remain the sole defense. See [`docs/design/sec-1-p-landlock-defense-in-depth-2026-05-22.md`](./docs/design/sec-1-p-landlock-defense-in-depth-2026-05-22.md).
+- **CONNECT proxy bounded-read** (CVE-2026-45232): the HTTP CONNECT response-line parser caps line length at the upstream-aligned ceiling, so the C off-by-one stack write is structurally impossible against a heap `Vec<u8>` push path.
+- **Hyphen-prefixed remote-shell hostname rejection** (rsync 3.4.3 hardening): the SSH operand parser rejects hostnames that begin with `-`, blocking the `-oProxyCommand=`-style argument-injection class.
+
+See [`SECURITY.md`](./SECURITY.md) for full status, advisory cross-references, and known-pending follow-ups.
 
 ---
 
