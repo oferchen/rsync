@@ -24,9 +24,6 @@
 //! - [`iconv_wire_order`] - regression coverage for the receiver-side
 //!   `--iconv` ordering invariant (file_list stays in sender wire-emit
 //!   order, never re-sorted on local-charset bytes).
-//! - [`receiver_strategy`] - Path B dispatch coverage:
-//!   `total_source_bytes` and `dispatch_receiver_strategy` heuristic
-//!   matrix across small/many/large/empty workloads.
 
 mod delete_pipeline_hook;
 mod filter_chain;
@@ -37,7 +34,6 @@ mod incremental_directories;
 mod incremental_receiver;
 mod ndx_convert;
 mod proto_io_error;
-mod receiver_strategy;
 mod wire_attrs;
 
 use std::io::Cursor;

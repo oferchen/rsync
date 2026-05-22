@@ -37,16 +37,11 @@ impl ReceiverContext {
         let (mut reader, file_count, mut setup) = self.setup_transfer(reader)?;
         let reader = &mut reader;
 
-        // Path B dispatch: pick sequential vs parallel apply before the loop.
-        // upstream-independent: matches docs/design/parallel-receive-delta-default-on.md.
-        let receiver_strategy_chosen = self.dispatch_receiver_strategy(file_count);
-
         let mut stats = TransferStats {
             files_listed: file_count,
             entries_received: file_count as u64,
             io_error: self.flist_reader_cache.as_ref().map_or(0, |r| r.io_error())
                 | self.flist_io_error,
-            receiver_strategy_chosen,
             ..Default::default()
         };
         let mut failed_dirs = crate::receiver::directory::FailedDirectories::new();

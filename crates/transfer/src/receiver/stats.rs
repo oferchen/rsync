@@ -7,23 +7,6 @@ use std::path::PathBuf;
 
 use protocol::stats::DeleteStats;
 
-/// Which receive-side delta apply path the receiver dispatched to.
-///
-/// Set by [`ReceiverContext::select_receiver_strategy`] before the apply
-/// loop runs and surfaced on [`TransferStats::receiver_strategy_chosen`]
-/// for telemetry. The heuristic and thresholds are documented in
-/// `docs/design/parallel-receive-delta-default-on.md` section 6.2 (Path B).
-///
-/// [`ReceiverContext::select_receiver_strategy`]: crate::receiver::ReceiverContext::select_receiver_strategy
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ReceiverStrategy {
-    /// Single-threaded apply loop. Matches upstream rsync `recv_files()`.
-    #[default]
-    Sequential,
-    /// Cross-file parallel apply via [`crate::delta_pipeline::ParallelDeltaPipeline`].
-    Parallel,
-}
-
 /// Statistics from a receiver transfer operation.
 ///
 /// Returned inside [`crate::ServerStats::Receiver`] after a successful receive.
@@ -120,16 +103,6 @@ pub struct TransferStats {
     /// - `receiver.c:970-974` - `send_msg_int(MSG_REDO, ndx)` queues for redo
     /// - `generator.c:2160-2199` - generator processes redo queue in phase 2
     pub redo_count: usize,
-
-    /// Which apply path the receiver dispatched to for this transfer.
-    ///
-    /// Default is [`ReceiverStrategy::Sequential`]. The receiver may flip to
-    /// [`ReceiverStrategy::Parallel`] when the heuristic in
-    /// [`crate::receiver::ReceiverContext::select_receiver_strategy`] returns
-    /// it. Reported for telemetry; the wire format is unaffected.
-    ///
-    /// See `docs/design/parallel-receive-delta-default-on.md` section 6.2.
-    pub receiver_strategy_chosen: ReceiverStrategy,
 }
 
 /// Statistics received from the remote sender after transfer completion.
