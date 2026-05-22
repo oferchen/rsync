@@ -1,7 +1,18 @@
 # PIP-7 - parallel-receive-delta receiver corruption
 
 Date: 2026-05-22
-Status: **OPEN - urgent regression discovered by PIP-4 (#4720) interop scenario.**
+Status: **MITIGATED-PENDING-PIP-9** - resolved by tearing out the dead
+receiver-side dispatch scaffolding in PIP-8. The
+`enable_parallel_receive_delta()` swap, the `delta_pipeline` field on
+`ReceiverContext`, `dispatch_receiver_strategy`,
+`select_receiver_strategy`, the `ReceiverStrategy` enum, the
+`PARALLEL_RECEIVE_*` thresholds, the `OC_RSYNC_FORCE_PARALLEL` env knob,
+and the strategy-tests module no longer exist. The `parallel-receive-delta`
+feature flag survives as a no-op so the
+`ParallelDeltaApplier` / `ParallelDeltaPipeline` / `DeltaConsumer` types
+remain compiled for bench and fuzz coverage; the proper RJN-3 fan-out
+integration is tracked by PIP-9
+(`docs/design/pip-9-parallel-receive-delta-wire-up-2026-05-22.md`).
 
 Tracking: follow-up to #4720 (PIP-4 - added the `parallel-threshold-trip`
 interop scenario) and #4666 (PIP-5 - flipped `parallel-receive-delta`
@@ -326,3 +337,46 @@ the next write that arrives.
   to drop that side effect entirely while the parallel pipeline is
   not wired to the receive loop, then re-introduce it together with
   the RJN-3 fan-out caller that actually consumes the pipeline.
+
+## Resolution: dead scaffolding removed in PIP-8 (2026-05-22)
+
+PIP-8 took the first "drop the side effect entirely" branch of the
+proposed fix. The investigation above confirmed that
+`ParallelDeltaPipeline` / `enable_parallel_receive_delta` /
+`delta_pipeline` were a 1-writer / 0-readers dead-state contraption -
+the only observable production behaviour was the `DeltaConsumer`
+background thread spawned by `ParallelDeltaPipeline::new`, which is
+the suspected source of the corruption. PIP-8 removed:
+
+- `ReceiverContext::enable_parallel_receive_delta()` and the
+  `parallel-receive-delta`-gated `ParallelDeltaPipeline::new()` swap.
+- `ReceiverContext::set_delta_pipeline()` and the
+  `delta_pipeline: Option<Box<dyn ReceiverDeltaPipeline>>` field.
+- `ReceiverContext::dispatch_receiver_strategy()`,
+  `select_receiver_strategy()`, `total_source_bytes()`, and
+  `dispatch_forced_parallel()`.
+- The `ReceiverStrategy` enum and the
+  `TransferStats::receiver_strategy_chosen` field.
+- The `PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD`,
+  `PARALLEL_RECEIVE_BYTES_THRESHOLD`, and
+  `FORCE_PARALLEL_RECEIVE_ENV` constants (the `OC_RSYNC_FORCE_PARALLEL`
+  env knob is now silently a no-op).
+- `crates/transfer/src/receiver/tests/file_list/receiver_strategy.rs`
+  and the `strategy_tests` module in `receiver/mod.rs`.
+
+PIP-8 deliberately kept the `ParallelDeltaPipeline`,
+`ParallelDeltaApplier`, and `DeltaConsumer` types compiled because
+benches (`parallel_receive_delta_perf`,
+`br_3j_f_dashmap_cores_vs_throughput`, `parallel_verify_chunk`),
+`wire_format_parallel_scheduling_fuzz`, and the engine consumer tests
+exercise them. The `parallel-receive-delta` feature flag stays defined
+as a no-op so default builds remain byte-identical to the post-PIP-7
+mitigation.
+
+The proper RJN-3 fan-out wire-up of `ParallelDeltaApplier` into the
+receiver hot path is tracked by PIP-9
+(`docs/design/pip-9-parallel-receive-delta-wire-up-2026-05-22.md`,
+status `OPEN`). PIP-9 will need to re-introduce the parallel apply
+path **with** an observable reader for the pipeline, and re-validate
+the `parallel-threshold-trip` interop scenario under `cargo build
+--profile dist` against the new wiring.

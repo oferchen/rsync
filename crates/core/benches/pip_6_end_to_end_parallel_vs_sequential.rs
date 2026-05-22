@@ -11,21 +11,23 @@
 //!
 //! PIP-6 is the **end-to-end** complement: it drives a real `oc-rsync` client
 //! against a real `oc-rsync` daemon over loopback, on workload shapes
-//! calibrated to the Path B heuristic boundary
+//! calibrated to the original Path B heuristic boundary
 //! (`file_count > 100 || total_size > 64 MiB`) that PIP-3+5 (PR #4666)
-//! wired into `ReceiverContext::dispatch_receiver_strategy`.
+//! wired into the receiver. PIP-8 (#TBD) tore out that dispatch scaffolding
+//! after PIP-7 (PR #4730) proved it was a side-effect-only no-op; the
+//! workload shapes are retained as a calibration baseline for the
+//! eventual PIP-9 re-wiring of `ParallelDeltaApplier` into the receiver
+//! through the RJN-3 fan-out caller.
 //!
 //! The bench compares two binaries running the **same** workload:
 //!
-//! - `oc-rsync` built with default features - parallel-receive-delta is
-//!   available, dispatcher flips parallel above the heuristic thresholds.
-//! - `oc-rsync` built **without** `parallel-receive-delta` - dispatcher logs
-//!   `receiver_strategy=parallel_unavailable` per
-//!   `crates/transfer/src/receiver/mod.rs:480-494` and always picks
-//!   sequential.
+//! - `oc-rsync` built with default features.
+//! - `oc-rsync` built **without** `parallel-receive-delta`.
 //!
-//! Same workload, same wire framing, same disk; only the apply strategy
-//! differs. The wall-clock delta is the answer the bench reports.
+//! Until PIP-9 lands the two builds are functionally equivalent (the
+//! feature flag is a no-op), so the bench is informational rather than
+//! decision-driving. Same workload, same wire framing, same disk; the
+//! wall-clock delta is whatever scheduling noise the host produces.
 //!
 //! # Workload matrix
 //!
@@ -91,10 +93,6 @@
 //!   `docs/design/pip-6-end-to-end-parallel-vs-sequential-bench-2026-05-21.md`
 //! - BR-3i.f apply-loop bench:
 //!   `crates/engine/benches/parallel_receive_delta_perf.rs`
-//! - Heuristic constants and dispatch site:
-//!   `crates/transfer/src/receiver/mod.rs::PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD`,
-//!   `crates/transfer/src/receiver/mod.rs::PARALLEL_RECEIVE_BYTES_THRESHOLD`,
-//!   `crates/transfer/src/receiver/mod.rs::dispatch_receiver_strategy`.
 //! - Sibling end-to-end bench harness this scaffold mirrors:
 //!   `crates/core/benches/transfer_benchmark.rs`.
 

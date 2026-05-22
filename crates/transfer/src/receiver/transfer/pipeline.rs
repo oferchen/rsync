@@ -170,8 +170,8 @@ impl ReceiverContext {
                         .collect();
 
                     if !batch.is_empty() && !is_redo_pass {
-                        // Extract basis config fields for the closure so it doesn't
-                        // capture &self (which is not Sync due to delta_pipeline).
+                        // Extract basis config fields for the closure to avoid
+                        // capturing &self across rayon worker boundaries.
                         let fuzzy_level = self.config.flags.fuzzy_level;
                         let ref_dirs = &self.config.reference_directories;
                         let protocol = self.protocol;

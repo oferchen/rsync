@@ -56,13 +56,12 @@ use engine::HardlinkApplyTracker;
 use engine::delete::DeleteContext;
 
 use crate::config::ServerConfig;
-use crate::delta_pipeline::{ReceiverDeltaPipeline, SequentialDeltaPipeline};
 use crate::handshake::HandshakeResult;
 use crate::shared::ChecksumFactory;
 
 pub use self::basis::{BasisFileConfig, BasisFileResult, find_basis_file_with_config};
 pub use self::file_list::IncrementalFileListReceiver;
-pub use self::stats::{ReceiverStrategy, SenderStats, TransferStats};
+pub use self::stats::{SenderStats, TransferStats};
 pub use self::wire::{
     SenderAttrs, SumHead, apply_xattr_abbreviation_values, write_signature_blocks,
     write_xattr_request,
@@ -86,35 +85,6 @@ const PHASE1_CHECKSUM_LENGTH: NonZeroU8 =
 /// (upstream: generator.c:2163 `csum_length = SUM_LENGTH`)
 const REDO_CHECKSUM_LENGTH: NonZeroU8 =
     NonZeroU8::new(signature::block_size::MAX_SUM_LENGTH).unwrap();
-
-/// Path B heuristic: file-count cutoff above which the receiver dispatches
-/// to the parallel apply path.
-///
-/// 100 is the next common cutoff above the rayon `PARALLEL_STAT_THRESHOLD = 64`
-/// convention referenced in `MEMORY.md`. See
-/// `docs/design/parallel-receive-delta-default-on.md` section 6.2.
-pub const PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD: usize = 100;
-
-/// Path B heuristic: total-source-bytes cutoff above which the receiver
-/// dispatches to the parallel apply path.
-///
-/// 64 MiB matches the `copy_file_range` crossover documented in
-/// `crates/engine/benches/per_op_thresholds.rs`. See
-/// `docs/design/parallel-receive-delta-default-on.md` section 6.2.
-pub const PARALLEL_RECEIVE_BYTES_THRESHOLD: u64 = 64 * 1024 * 1024;
-
-/// Runtime/debug override that forces [`ReceiverContext::dispatch_receiver_strategy`]
-/// onto the parallel apply path regardless of the file-count and total-bytes
-/// thresholds.
-///
-/// Set to any non-empty value (e.g. `OC_RSYNC_FORCE_PARALLEL=1`) before
-/// invoking the receiver to short-circuit the Path B heuristic. Intended for
-/// interop coverage and ad-hoc debugging; the toggle is intentionally not
-/// surfaced as a CLI flag. When the `parallel-receive-delta` feature is
-/// compiled out, the override still logs the decision under `GENR` and falls
-/// back to [`ReceiverStrategy::Sequential`] so telemetry never claims a path
-/// the binary cannot take.
-pub const FORCE_PARALLEL_RECEIVE_ENV: &str = "OC_RSYNC_FORCE_PARALLEL";
 
 pub(crate) use crate::parallel_io::ParallelThresholds;
 
@@ -254,12 +224,6 @@ pub struct ReceiverContext {
     /// id lists (upstream: flist.c:2517-2518). Protocol >= 30 uses MSG_IO_ERROR
     /// or SAFE_FILE_LIST instead.
     flist_io_error: i32,
-    /// Pluggable delta dispatch pipeline for file processing.
-    ///
-    /// Defaults to [`SequentialDeltaPipeline`] which matches upstream rsync's
-    /// sequential `recv_files()` loop. Can be swapped to a parallel or
-    /// threshold-based pipeline via [`set_delta_pipeline`](Self::set_delta_pipeline).
-    delta_pipeline: Option<Box<dyn ReceiverDeltaPipeline>>,
     /// Per-operation thresholds for switching between sequential and parallel execution.
     ///
     /// Different operations have different overhead profiles: CPU-bound signature
@@ -321,7 +285,6 @@ impl ReceiverContext {
             hardlink_tracker,
             prior_hlinks: HashMap::new(),
             flist_io_error: 0,
-            delta_pipeline: Some(Box::new(SequentialDeltaPipeline::new())),
             parallel_thresholds: ParallelThresholds::default(),
             delete_ctx: None,
         }
@@ -384,191 +347,6 @@ impl ReceiverContext {
             return None;
         }
         Some(flat_idx)
-    }
-
-    /// Replaces the delta dispatch pipeline.
-    ///
-    /// The default is [`SequentialDeltaPipeline`], which processes files one at
-    /// a time matching upstream rsync. Pass a [`ThresholdDeltaPipeline`] or
-    /// [`ParallelDeltaPipeline`] to enable concurrent delta processing.
-    ///
-    /// Must be called before [`run`](Self::run) - the pipeline is consumed
-    /// during the transfer loop.
-    ///
-    /// [`ThresholdDeltaPipeline`]: crate::delta_pipeline::ThresholdDeltaPipeline
-    /// [`ParallelDeltaPipeline`]: crate::delta_pipeline::ParallelDeltaPipeline
-    pub fn set_delta_pipeline(&mut self, pipeline: Box<dyn ReceiverDeltaPipeline>) {
-        self.delta_pipeline = Some(pipeline);
-    }
-
-    /// Swaps the delta pipeline to the parallel apply path (#1368).
-    ///
-    /// Gated behind the `parallel-receive-delta` cargo feature. The feature
-    /// is in the default set for both `engine` and `transfer` so production
-    /// receivers can dispatch via [`Self::select_receiver_strategy`] without
-    /// any opt-in build flag. See
-    /// `docs/design/parallel-receive-delta-default-on.md` section 8 for the
-    /// promotion timeline.
-    ///
-    /// Builds a [`ParallelDeltaPipeline`] sized to the ambient rayon pool
-    /// and installs it via [`set_delta_pipeline`](Self::set_delta_pipeline).
-    ///
-    /// [`ParallelDeltaPipeline`]: crate::delta_pipeline::ParallelDeltaPipeline
-    #[cfg(feature = "parallel-receive-delta")]
-    pub fn enable_parallel_receive_delta(&mut self) {
-        use crate::delta_pipeline::ParallelDeltaPipeline;
-        let worker_count = rayon::current_num_threads();
-        self.set_delta_pipeline(Box::new(ParallelDeltaPipeline::new(worker_count)));
-    }
-
-    /// Picks the receiver apply strategy via the Path B heuristic.
-    ///
-    /// Returns [`ReceiverStrategy::Parallel`] when either the file count
-    /// exceeds [`PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD`] or the total source
-    /// bytes exceed [`PARALLEL_RECEIVE_BYTES_THRESHOLD`]; otherwise returns
-    /// [`ReceiverStrategy::Sequential`]. The thresholds match the
-    /// `PARALLEL_STAT_THRESHOLD = 64` convention (next common cutoff is 100)
-    /// and the 64 MiB `copy_file_range` crossover documented in
-    /// `crates/engine/benches/per_op_thresholds.rs`. See
-    /// `docs/design/parallel-receive-delta-default-on.md` section 6.2.
-    #[must_use]
-    pub const fn select_receiver_strategy(file_count: usize, total_size: u64) -> ReceiverStrategy {
-        if file_count > PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD
-            || total_size > PARALLEL_RECEIVE_BYTES_THRESHOLD
-        {
-            ReceiverStrategy::Parallel
-        } else {
-            ReceiverStrategy::Sequential
-        }
-    }
-
-    /// Computes the total source byte count across the receiver's file list.
-    ///
-    /// Used as the `total_size` input to [`Self::select_receiver_strategy`].
-    /// Walks the in-memory file list once; the value is also the numerator
-    /// of the `--stats` speedup ratio reported at end-of-transfer.
-    #[must_use]
-    pub fn total_source_bytes(&self) -> u64 {
-        self.file_list.iter().map(|e| e.size()).sum()
-    }
-
-    /// Applies the Path B dispatch decision before the apply loop runs.
-    ///
-    /// Computes `total_size` from the file list, selects the strategy via
-    /// [`Self::select_receiver_strategy`], records the decision under the
-    /// `GENR` debug channel, and (when the `parallel-receive-delta` feature
-    /// is enabled) swaps the delta pipeline to the parallel apply path.
-    /// Returns the chosen strategy for callers to stamp on
-    /// [`TransferStats::receiver_strategy_chosen`].
-    ///
-    /// When the heuristic picks [`ReceiverStrategy::Parallel`] but the
-    /// `parallel-receive-delta` feature is compiled out, the function logs
-    /// `receiver_strategy=parallel_unavailable` and returns
-    /// [`ReceiverStrategy::Sequential`] so telemetry never claims a path
-    /// the binary cannot actually take.
-    ///
-    /// The [`FORCE_PARALLEL_RECEIVE_ENV`] env var short-circuits the heuristic
-    /// when set to a non-empty value: the function logs the override under
-    /// `GENR` and unconditionally returns [`ReceiverStrategy::Parallel`] (or
-    /// `parallel_unavailable`/Sequential when the feature is compiled out).
-    /// The override exists for interop coverage and ad-hoc debugging; it is
-    /// not surfaced as a CLI flag.
-    pub(in crate::receiver) fn dispatch_receiver_strategy(
-        &mut self,
-        file_count: usize,
-    ) -> ReceiverStrategy {
-        let total_size = self.total_source_bytes();
-        if std::env::var_os(FORCE_PARALLEL_RECEIVE_ENV).is_some_and(|v| !v.is_empty()) {
-            return self.dispatch_forced_parallel(file_count, total_size);
-        }
-        let want = Self::select_receiver_strategy(file_count, total_size);
-        match want {
-            ReceiverStrategy::Parallel => {
-                #[cfg(feature = "parallel-receive-delta")]
-                {
-                    logging::debug_log!(
-                        Genr,
-                        1,
-                        "receiver_strategy=parallel file_count={} total_size={} \
-                         (threshold: file_count>{} || total_size>{})",
-                        file_count,
-                        total_size,
-                        PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD,
-                        PARALLEL_RECEIVE_BYTES_THRESHOLD
-                    );
-                    self.enable_parallel_receive_delta();
-                    ReceiverStrategy::Parallel
-                }
-                #[cfg(not(feature = "parallel-receive-delta"))]
-                {
-                    logging::debug_log!(
-                        Genr,
-                        1,
-                        "receiver_strategy=parallel_unavailable file_count={} total_size={} \
-                         (threshold: file_count>{} || total_size>{}); \
-                         falling back to sequential because the parallel-receive-delta \
-                         feature is not compiled in",
-                        file_count,
-                        total_size,
-                        PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD,
-                        PARALLEL_RECEIVE_BYTES_THRESHOLD
-                    );
-                    ReceiverStrategy::Sequential
-                }
-            }
-            ReceiverStrategy::Sequential => {
-                logging::debug_log!(
-                    Genr,
-                    1,
-                    "receiver_strategy=sequential file_count={} total_size={} \
-                     (threshold: file_count>{} || total_size>{})",
-                    file_count,
-                    total_size,
-                    PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD,
-                    PARALLEL_RECEIVE_BYTES_THRESHOLD
-                );
-                ReceiverStrategy::Sequential
-            }
-        }
-    }
-
-    /// Honours the [`FORCE_PARALLEL_RECEIVE_ENV`] override.
-    ///
-    /// When the `parallel-receive-delta` feature is compiled in, swaps the
-    /// delta pipeline to the parallel apply path and returns
-    /// [`ReceiverStrategy::Parallel`]. When the feature is compiled out, logs
-    /// `receiver_strategy=parallel_unavailable` and returns
-    /// [`ReceiverStrategy::Sequential`] to match the heuristic-driven
-    /// fallback at [`Self::dispatch_receiver_strategy`].
-    fn dispatch_forced_parallel(&mut self, file_count: usize, total_size: u64) -> ReceiverStrategy {
-        #[cfg(feature = "parallel-receive-delta")]
-        {
-            logging::debug_log!(
-                Genr,
-                1,
-                "receiver_strategy=parallel file_count={} total_size={} \
-                 (forced via {}=<set>)",
-                file_count,
-                total_size,
-                FORCE_PARALLEL_RECEIVE_ENV
-            );
-            self.enable_parallel_receive_delta();
-            ReceiverStrategy::Parallel
-        }
-        #[cfg(not(feature = "parallel-receive-delta"))]
-        {
-            logging::debug_log!(
-                Genr,
-                1,
-                "receiver_strategy=parallel_unavailable file_count={} total_size={} \
-                 (forced via {}=<set>); falling back to sequential because the \
-                 parallel-receive-delta feature is not compiled in",
-                file_count,
-                total_size,
-                FORCE_PARALLEL_RECEIVE_ENV
-            );
-            ReceiverStrategy::Sequential
-        }
     }
 
     /// Converts a flat file list array index to a wire NDX value.
@@ -980,73 +758,4 @@ fn compile_daemon_filter_set(rules: &[FilterRuleWireFormat]) -> Option<FilterSet
     }
 
     FilterSet::from_rules(filter_rules).ok()
-}
-
-#[cfg(test)]
-mod strategy_tests {
-    //! Unit coverage for the Path B dispatch heuristic. See
-    //! `docs/design/parallel-receive-delta-default-on.md` section 6.2.
-
-    use super::{
-        PARALLEL_RECEIVE_BYTES_THRESHOLD, PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD, ReceiverContext,
-        ReceiverStrategy,
-    };
-
-    #[test]
-    fn below_both_thresholds_picks_sequential() {
-        // 50 files at 1 MiB total - well under file_count > 100 and
-        // total_size > 64 MiB.
-        let strategy = ReceiverContext::select_receiver_strategy(50, 1024 * 1024);
-        assert_eq!(strategy, ReceiverStrategy::Sequential);
-    }
-
-    #[test]
-    fn above_file_count_threshold_picks_parallel() {
-        // 200 files at 1 MiB total - file_count > 100 trips parallel even
-        // though total_size is small.
-        let strategy = ReceiverContext::select_receiver_strategy(200, 1024 * 1024);
-        assert_eq!(strategy, ReceiverStrategy::Parallel);
-    }
-
-    #[test]
-    fn above_bytes_threshold_picks_parallel() {
-        // 50 files at 100 MiB total - total_size > 64 MiB trips parallel
-        // even though file_count is small.
-        let strategy = ReceiverContext::select_receiver_strategy(50, 100 * 1024 * 1024);
-        assert_eq!(strategy, ReceiverStrategy::Parallel);
-    }
-
-    #[test]
-    fn empty_transfer_picks_sequential() {
-        // Universal idempotent-transfer case: a single zero-byte file.
-        // Both inputs are below their respective cutoffs, so the receiver
-        // never pays the rayon dispatch tax for a no-op.
-        let strategy = ReceiverContext::select_receiver_strategy(1, 0);
-        assert_eq!(strategy, ReceiverStrategy::Sequential);
-    }
-
-    #[test]
-    fn exact_thresholds_pick_sequential() {
-        // Boundary check: the heuristic uses strict `>` not `>=`, so the
-        // threshold values themselves keep the sequential path.
-        let strategy = ReceiverContext::select_receiver_strategy(
-            PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD,
-            PARALLEL_RECEIVE_BYTES_THRESHOLD,
-        );
-        assert_eq!(strategy, ReceiverStrategy::Sequential);
-    }
-
-    #[test]
-    fn just_over_file_threshold_picks_parallel() {
-        let strategy =
-            ReceiverContext::select_receiver_strategy(PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD + 1, 0);
-        assert_eq!(strategy, ReceiverStrategy::Parallel);
-    }
-
-    #[test]
-    fn just_over_bytes_threshold_picks_parallel() {
-        let strategy =
-            ReceiverContext::select_receiver_strategy(0, PARALLEL_RECEIVE_BYTES_THRESHOLD + 1);
-        assert_eq!(strategy, ReceiverStrategy::Parallel);
-    }
 }
