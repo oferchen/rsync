@@ -247,7 +247,7 @@ impl SshCommand {
         }
         #[cfg(feature = "ssh-config-parse")]
         {
-            return super::config_lookup::ssh_config_enables_compression(&self.options);
+            super::config_lookup::ssh_config_enables_compression(&self.options)
         }
         #[cfg(not(feature = "ssh-config-parse"))]
         {
