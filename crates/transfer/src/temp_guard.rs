@@ -13,6 +13,8 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::sync::Arc;
 
 /// Length of the random suffix including the leading dot: `.XXXXXX` = 7 bytes.
 const TMPNAME_SUFFIX_LEN: usize = 7;
@@ -120,6 +122,43 @@ fn truncate_utf8_safe(s: &str, max_len: usize) -> String {
 /// A tuple of `(File, TempFileGuard)` - the open file handle and an RAII guard
 /// that cleans up the temp file on drop unless `keep()` is called.
 pub fn open_tmpfile(dest: &Path, temp_dir: Option<&Path>) -> io::Result<(fs::File, TempFileGuard)> {
+    open_tmpfile_inner(
+        dest,
+        temp_dir,
+        #[cfg(unix)]
+        None,
+        #[cfg(unix)]
+        None,
+    )
+}
+
+/// Like [`open_tmpfile`] but routes the create through the SEC-1.r
+/// `DirSandbox` carrier when both the temp parent and the temp leaf reduce
+/// to a single component beneath `dest_dir`.
+///
+/// The returned [`TempFileGuard`] inherits the same sandbox anchor so its
+/// Drop cleanup runs through `unlinkat(sandbox.current_dirfd(), leaf, 0)`,
+/// closing the symlink-swap window between the receiver's decide-to-create
+/// moment and the eventual unlink. When the sandbox is absent or the temp
+/// parent does not match `dest_dir` (for example `--temp-dir` pointing at a
+/// sibling tree), the helper falls back to the path-based open and the
+/// guard falls back to `std::fs::remove_file`.
+#[cfg(unix)]
+pub fn open_tmpfile_sandboxed(
+    dest: &Path,
+    temp_dir: Option<&Path>,
+    sandbox: Option<&Arc<fast_io::DirSandbox>>,
+    dest_dir: Option<&Path>,
+) -> io::Result<(fs::File, TempFileGuard)> {
+    open_tmpfile_inner(dest, temp_dir, sandbox, dest_dir)
+}
+
+fn open_tmpfile_inner(
+    dest: &Path,
+    temp_dir: Option<&Path>,
+    #[cfg(unix)] sandbox: Option<&Arc<fast_io::DirSandbox>>,
+    #[cfg(unix)] dest_dir: Option<&Path>,
+) -> io::Result<(fs::File, TempFileGuard)> {
     let template = get_tmpname(dest, temp_dir)?;
     let template_str = template.to_string_lossy().into_owned();
 
@@ -127,25 +166,41 @@ pub fn open_tmpfile(dest: &Path, temp_dir: Option<&Path>) -> io::Result<(fs::Fil
         let concrete = fill_random_suffix(&template_str);
         let concrete_path = PathBuf::from(&concrete);
 
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&concrete_path)
-        {
+        match try_create_new(
+            &concrete_path,
+            #[cfg(unix)]
+            sandbox,
+            #[cfg(unix)]
+            dest_dir,
+        ) {
             Ok(file) => {
-                return Ok((file, TempFileGuard::new(concrete_path)));
+                #[cfg(unix)]
+                let guard = TempFileGuard::with_anchor(concrete_path.clone(), sandbox, dest_dir);
+                #[cfg(not(unix))]
+                let guard = TempFileGuard::new(concrete_path);
+                return Ok((file, guard));
             }
             Err(ref e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
-                // upstream: receiver.c:766 - mkdir_defmode(dn) before do_mkstemp()
+                // upstream: receiver.c:766 - mkdir_defmode(dn) before do_mkstemp().
+                // SEC-1.r accepted residual: multi-component parent recovery
+                // cannot anchor on a single dirfd without an `mkpath_via_sandbox`
+                // helper; fall back to the path-based create_dir_all walk.
                 if let Some(parent) = concrete_path.parent() {
                     fs::create_dir_all(parent)?;
-                    if let Ok(file) = fs::OpenOptions::new()
-                        .write(true)
-                        .create_new(true)
-                        .open(&concrete_path)
-                    {
-                        return Ok((file, TempFileGuard::new(concrete_path)));
+                    if let Ok(file) = try_create_new(
+                        &concrete_path,
+                        #[cfg(unix)]
+                        sandbox,
+                        #[cfg(unix)]
+                        dest_dir,
+                    ) {
+                        #[cfg(unix)]
+                        let guard =
+                            TempFileGuard::with_anchor(concrete_path.clone(), sandbox, dest_dir);
+                        #[cfg(not(unix))]
+                        let guard = TempFileGuard::new(concrete_path);
+                        return Ok((file, guard));
                     }
                 }
                 return Err(io::Error::new(e.kind(), e.to_string()));
@@ -158,6 +213,43 @@ pub fn open_tmpfile(dest: &Path, temp_dir: Option<&Path>) -> io::Result<(fs::Fil
         io::ErrorKind::AlreadyExists,
         format!("failed to create temp file after {MAX_OPEN_ATTEMPTS} attempts: {template_str}"),
     ))
+}
+
+/// Atomically creates `concrete_path` with `O_RDWR | O_CREAT | O_EXCL |
+/// O_NOFOLLOW` semantics, routing through the SEC-1.r sandbox carrier when
+/// possible.
+fn try_create_new(
+    concrete_path: &Path,
+    #[cfg(unix)] sandbox: Option<&Arc<fast_io::DirSandbox>>,
+    #[cfg(unix)] dest_dir: Option<&Path>,
+) -> io::Result<fs::File> {
+    #[cfg(unix)]
+    {
+        if let (Some(sandbox), Some(dest_dir)) = (sandbox, dest_dir) {
+            if let Some(leaf_name) = concrete_path.file_name() {
+                let parent = concrete_path.parent().unwrap_or(Path::new(""));
+                if parent == dest_dir {
+                    let relative = Path::new(leaf_name);
+                    // Mirror the fallback's `OpenOptions::new().write(true).create_new(true)`
+                    // exactly: `O_WRONLY | O_CREAT | O_EXCL`, plus `O_NOFOLLOW` so a
+                    // pre-planted symlink at the leaf path cannot redirect the create.
+                    let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW;
+                    return fast_io::openat_via_sandbox_or_fallback(
+                        Some(sandbox.as_ref()),
+                        dest_dir,
+                        relative,
+                        concrete_path,
+                        flags,
+                        0o600,
+                    );
+                }
+            }
+        }
+    }
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(concrete_path)
 }
 
 /// Replaces the trailing `XXXXXX` in a template string with random alphanumeric
@@ -175,6 +267,16 @@ fn fill_random_suffix(template: &str) -> String {
     format!("{prefix}{suffix}")
 }
 
+/// SEC-1.r sandbox anchor carried by [`TempFileGuard`] so the Drop unlink
+/// runs through `unlinkat(sandbox.current_dirfd(), leaf, 0)` against the
+/// same parent the create resolved against.
+#[cfg(unix)]
+#[derive(Debug)]
+struct SandboxAnchor {
+    sandbox: Arc<fast_io::DirSandbox>,
+    dest_dir: PathBuf,
+}
+
 /// RAII guard that ensures temp files are deleted on drop.
 ///
 /// By default, the temp file is deleted when the guard is dropped (e.g., on
@@ -184,15 +286,60 @@ fn fill_random_suffix(template: &str) -> String {
 pub struct TempFileGuard {
     path: PathBuf,
     keep_on_drop: bool,
+    /// SEC-1.r sandbox anchor: when present, Drop routes the unlink through
+    /// `unlinkat(sandbox.current_dirfd(), leaf, 0)` so a symlink swap on the
+    /// temp parent between create and unlink cannot redirect the cleanup.
+    #[cfg(unix)]
+    anchor: Option<SandboxAnchor>,
 }
 
 impl TempFileGuard {
     /// Create a new guard for the given temp file path.
+    ///
+    /// The Drop cleanup uses [`std::fs::remove_file`] against the stored
+    /// path. Use [`open_tmpfile_sandboxed`] to install a SEC-1.r sandbox
+    /// anchor that routes the unlink through `unlinkat`.
     #[inline]
     pub const fn new(path: PathBuf) -> Self {
         Self {
             path,
             keep_on_drop: false,
+            #[cfg(unix)]
+            anchor: None,
+        }
+    }
+
+    /// Create a new guard with an optional SEC-1.r sandbox anchor.
+    ///
+    /// When `sandbox` and `dest_dir` are both `Some` and the temp file lives
+    /// directly beneath `dest_dir`, the guard's Drop unlinks the file through
+    /// `unlinkat(sandbox.current_dirfd(), leaf, 0)` instead of the path-based
+    /// `std::fs::remove_file`. Otherwise the guard falls back to the
+    /// path-based cleanup.
+    #[cfg(unix)]
+    fn with_anchor(
+        path: PathBuf,
+        sandbox: Option<&Arc<fast_io::DirSandbox>>,
+        dest_dir: Option<&Path>,
+    ) -> Self {
+        let anchor = match (sandbox, dest_dir) {
+            (Some(sandbox), Some(dest_dir)) => {
+                let parent = path.parent().unwrap_or(Path::new(""));
+                if parent == dest_dir {
+                    Some(SandboxAnchor {
+                        sandbox: Arc::clone(sandbox),
+                        dest_dir: dest_dir.to_path_buf(),
+                    })
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        Self {
+            path,
+            keep_on_drop: false,
+            anchor,
         }
     }
 
@@ -211,11 +358,28 @@ impl TempFileGuard {
 
 impl Drop for TempFileGuard {
     fn drop(&mut self) {
-        if !self.keep_on_drop {
-            // Best-effort: the file may never have been created, may already be renamed
-            // away, and we cannot propagate errors from drop anyway.
-            let _ = std::fs::remove_file(&self.path);
+        if self.keep_on_drop {
+            return;
         }
+        // Best-effort: the file may never have been created, may already be renamed
+        // away, and we cannot propagate errors from drop anyway.
+        #[cfg(unix)]
+        {
+            if let Some(anchor) = self.anchor.as_ref() {
+                if let Some(leaf) = self.path.file_name() {
+                    let relative = Path::new(leaf);
+                    let _ = fast_io::unlink_via_sandbox_or_fallback(
+                        Some(anchor.sandbox.as_ref()),
+                        &anchor.dest_dir,
+                        relative,
+                        &self.path,
+                        fast_io::UnlinkFlags::File,
+                    );
+                    return;
+                }
+            }
+        }
+        let _ = std::fs::remove_file(&self.path);
     }
 }
 
@@ -503,5 +667,115 @@ mod tests {
         assert!(result.len() <= 255);
         assert!(result.ends_with(".XXXXXX"));
         assert!(!result.contains('\u{FFFD}'));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_tmpfile_sandboxed_creates_and_cleans_up_via_carrier() {
+        let dir = tempdir().expect("create temp dir");
+        let root = std::fs::canonicalize(dir.path()).expect("canonicalize");
+        let sandbox = Arc::new(fast_io::DirSandbox::open_root(&root).expect("open sandbox"));
+        let dest = root.join("payload.bin");
+
+        let temp_path;
+        {
+            let (_file, guard) = open_tmpfile_sandboxed(&dest, None, Some(&sandbox), Some(&root))
+                .expect("open sandboxed");
+            temp_path = guard.path().to_path_buf();
+            assert!(temp_path.exists());
+            assert_eq!(temp_path.parent().unwrap(), root);
+        }
+
+        assert!(
+            !temp_path.exists(),
+            "sandbox-anchored guard must unlink the temp file on drop"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn open_tmpfile_sandboxed_falls_back_when_temp_dir_differs() {
+        let dest_root = tempdir().expect("dest dir");
+        let dest_canon = std::fs::canonicalize(dest_root.path()).expect("canon dest");
+        let temp_root = tempdir().expect("temp dir");
+        let temp_canon = std::fs::canonicalize(temp_root.path()).expect("canon temp");
+        let sandbox = Arc::new(fast_io::DirSandbox::open_root(&dest_canon).expect("sandbox"));
+        let dest = dest_canon.join("file.txt");
+
+        let (_file, mut guard) =
+            open_tmpfile_sandboxed(&dest, Some(&temp_canon), Some(&sandbox), Some(&dest_canon))
+                .expect("open sandboxed with temp_dir");
+
+        let temp_path = guard.path().to_path_buf();
+        assert!(temp_path.starts_with(&temp_canon));
+        // Anchor must not engage when the temp parent differs from dest_dir.
+        assert!(guard.anchor.is_none());
+        guard.keep();
+        let _ = std::fs::remove_file(&temp_path);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sandbox_anchored_guard_resists_symlink_swap_on_parent() {
+        // Regression: a symlink swap on the temp file's parent between
+        // create and unlink would, via path-based remove_file, redirect
+        // the unlink to an attacker-chosen inode. The sandbox-anchored
+        // Drop unlinks via `unlinkat(dirfd, leaf, 0)`, which is pinned to
+        // the original dirfd opened at receiver setup so the swap cannot
+        // redirect the cleanup.
+        let staging = tempdir().expect("staging");
+        let staging_canon = std::fs::canonicalize(staging.path()).expect("canon staging");
+        let real_parent = staging_canon.join("real");
+        let real_aside = staging_canon.join("real.aside");
+        let attacker_parent = staging_canon.join("attacker");
+        std::fs::create_dir(&real_parent).expect("real");
+        std::fs::create_dir(&attacker_parent).expect("attacker");
+        let victim_in_attacker = attacker_parent.join("victim.bin");
+        std::fs::write(&victim_in_attacker, b"do not delete me").expect("victim");
+
+        // Open the sandbox before any swap so the dirfd points at `real`.
+        let sandbox = Arc::new(fast_io::DirSandbox::open_root(&real_parent).expect("sandbox"));
+        let dest = real_parent.join("payload.bin");
+
+        let (_file, guard) =
+            open_tmpfile_sandboxed(&dest, None, Some(&sandbox), Some(&real_parent))
+                .expect("open sandboxed");
+        let temp_path = guard.path().to_path_buf();
+        let temp_leaf = temp_path.file_name().unwrap().to_owned();
+        assert!(temp_path.exists());
+
+        // Plant a same-leaf decoy inside `attacker` so a confused
+        // path-based unlink would target the wrong inode.
+        let attacker_decoy = attacker_parent.join(&temp_leaf);
+        std::fs::write(&attacker_decoy, b"do not delete me either").expect("decoy");
+
+        // Rename the real directory aside and plant a symlink at the
+        // original location pointing at the attacker tree. The sandbox
+        // dirfd still references the (now-renamed) real directory; the
+        // attacker has overwritten the path-based `real_parent` route.
+        std::fs::rename(&real_parent, &real_aside).expect("rename real aside");
+        std::os::unix::fs::symlink(&attacker_parent, &real_parent).expect("plant symlink");
+
+        // Drop the guard - the unlinkat must run against the original
+        // dirfd, which still resolves to the moved-aside real directory.
+        drop(guard);
+
+        // The decoy under the attacker tree must survive: a path-based
+        // remove_file(real_parent/<leaf>) after the swap would have
+        // unlinked it.
+        assert!(
+            attacker_decoy.exists(),
+            "sandbox-anchored unlink must not delete the attacker-controlled decoy"
+        );
+        assert!(
+            victim_in_attacker.exists(),
+            "unrelated attacker-owned file must remain untouched"
+        );
+        // And the real temp file must be gone from its (renamed) home.
+        let renamed_temp = real_aside.join(&temp_leaf);
+        assert!(
+            !renamed_temp.exists(),
+            "sandbox-anchored unlink must remove the original temp file"
+        );
     }
 }

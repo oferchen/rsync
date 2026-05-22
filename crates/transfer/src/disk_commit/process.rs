@@ -14,7 +14,11 @@ use protocol::acl::AclCache;
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
 use crate::pipeline::messages::{BeginMessage, CommitResult, ComputedChecksum, FileMessage};
 use crate::pipeline::spsc;
-use crate::temp_guard::{TempFileGuard, open_tmpfile};
+use crate::temp_guard::TempFileGuard;
+#[cfg(not(unix))]
+use crate::temp_guard::open_tmpfile;
+#[cfg(unix)]
+use crate::temp_guard::open_tmpfile_sandboxed;
 
 use super::config::{BackupConfig, DiskCommitConfig};
 use super::writer::{ReusableBufWriter, Writer};
@@ -245,6 +249,20 @@ fn open_output_file(
         }
         Ok((file, TempFileGuard::new(begin.file_path.clone()), false))
     } else {
+        // SEC-1.r: when the dest_dir + sandbox carrier is plumbed, route the
+        // temp-file create through `openat(dirfd, leaf, O_WRONLY|O_CREAT|
+        // O_EXCL|O_NOFOLLOW, 0o600)` and seed the guard with a sandbox anchor
+        // so the Drop unlink uses the same dirfd. The carrier only engages
+        // for the default in-destination temp pattern (single component under
+        // dest_dir); --temp-dir routing keeps the path-based fallback.
+        #[cfg(unix)]
+        let (file, guard) = open_tmpfile_sandboxed(
+            &begin.file_path,
+            config.temp_dir.as_deref(),
+            config.sandbox.as_ref(),
+            config.dest_dir.as_deref(),
+        )?;
+        #[cfg(not(unix))]
         let (file, guard) = open_tmpfile(&begin.file_path, config.temp_dir.as_deref())?;
         Ok((file, guard, true))
     }

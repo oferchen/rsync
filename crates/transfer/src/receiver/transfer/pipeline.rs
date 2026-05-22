@@ -126,6 +126,9 @@ impl ReceiverContext {
         let disk_config = DiskCommitConfig {
             do_fsync: self.config.write.fsync,
             use_sparse: self.config.flags.sparse,
+            dest_dir: Some(setup.dest_dir.clone()),
+            #[cfg(unix)]
+            sandbox: setup.sandbox.clone(),
             temp_dir: self.config.temp_dir.as_ref().map(PathBuf::from),
             file_list: Some(file_list_arc),
             metadata_opts: Some(setup.metadata_opts.clone()),
@@ -297,7 +300,7 @@ impl ReceiverContext {
                 let response_ctx = ResponseContext {
                     config: &request_config,
                     #[cfg(unix)]
-                    sandbox: setup.sandbox.as_deref(),
+                    sandbox: setup.sandbox.as_ref(),
                     #[cfg(unix)]
                     dest_dir: Some(setup.dest_dir.as_path()),
                 };

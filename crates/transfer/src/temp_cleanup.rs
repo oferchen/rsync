@@ -12,6 +12,8 @@
 use std::fs;
 use std::io;
 use std::path::Path;
+#[cfg(unix)]
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use logging::debug_log;
@@ -88,6 +90,29 @@ fn is_temp_file_name(name: &str) -> bool {
 /// We perform this proactively at startup rather than only on signal, since
 /// SIGKILL bypasses all cleanup handlers.
 pub fn cleanup_stale_temp_files(dest_dir: &Path, max_age: Option<Duration>) -> io::Result<usize> {
+    cleanup_stale_temp_files_sandboxed(
+        dest_dir,
+        max_age,
+        #[cfg(unix)]
+        None,
+    )
+}
+
+/// Like [`cleanup_stale_temp_files`] but routes the per-entry unlink through
+/// the SEC-1.r `DirSandbox` carrier when present.
+///
+/// The orphan scan itself stays on the path-based `fs::read_dir` (audit row
+/// #20 carrier-acceptable residual: there is no `fdopendir`-equivalent in
+/// `std` and the scan is informational, not state-changing). The per-entry
+/// `unlinkat(dirfd, leaf, 0)` (audit row #21) is anchored on the sandbox
+/// dirfd when `sandbox` and `dest_dir` reduce to a single-component leaf, so
+/// a symlink swap on the temp parent between scan and unlink cannot
+/// redirect the remove to an attacker-chosen inode.
+pub fn cleanup_stale_temp_files_sandboxed(
+    dest_dir: &Path,
+    max_age: Option<Duration>,
+    #[cfg(unix)] sandbox: Option<&Arc<fast_io::DirSandbox>>,
+) -> io::Result<usize> {
     let threshold = max_age.unwrap_or(DEFAULT_MAX_AGE);
     let now = SystemTime::now();
     let mut removed = 0;
@@ -134,7 +159,14 @@ pub fn cleanup_stale_temp_files(dest_dir: &Path, max_age: Option<Duration>) -> i
         }
 
         let path = entry.path();
-        match fs::remove_file(&path) {
+        let unlink_result = remove_temp_entry(
+            &path,
+            &file_name,
+            dest_dir,
+            #[cfg(unix)]
+            sandbox,
+        );
+        match unlink_result {
             Ok(()) => {
                 debug_log!(Exit, 2, "removed stale temp file: {}", path.display());
                 removed += 1;
@@ -144,6 +176,33 @@ pub fn cleanup_stale_temp_files(dest_dir: &Path, max_age: Option<Duration>) -> i
     }
 
     Ok(removed)
+}
+
+/// Unlinks one orphan temp-file entry, routing through the SEC-1.r sandbox
+/// carrier when present and falling back to `std::fs::remove_file` otherwise.
+fn remove_temp_entry(
+    path: &Path,
+    file_name: &std::ffi::OsStr,
+    dest_dir: &Path,
+    #[cfg(unix)] sandbox: Option<&Arc<fast_io::DirSandbox>>,
+) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        if let Some(sandbox) = sandbox {
+            let relative = Path::new(file_name);
+            return fast_io::unlink_via_sandbox_or_fallback(
+                Some(sandbox.as_ref()),
+                dest_dir,
+                relative,
+                path,
+                fast_io::UnlinkFlags::File,
+            );
+        }
+        let _ = (file_name, dest_dir);
+    }
+    #[cfg(not(unix))]
+    let _ = (file_name, dest_dir);
+    fs::remove_file(path)
 }
 
 #[cfg(test)]
@@ -323,5 +382,38 @@ mod tests {
         fs::set_permissions(&subdir, fs::Permissions::from_mode(0o755)).unwrap();
 
         assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sandboxed_unlink_removes_stale_entries() {
+        let dir = tempdir().expect("create temp dir");
+        let root = std::fs::canonicalize(dir.path()).expect("canonicalize");
+        let sandbox = Arc::new(fast_io::DirSandbox::open_root(&root).expect("sandbox"));
+
+        let temp1 = root.join(".file.txt.AbCdEf");
+        let temp2 = root.join(".data.bin.x1y2z3");
+        fs::write(&temp1, b"stale 1").unwrap();
+        fs::write(&temp2, b"stale 2").unwrap();
+
+        let count = cleanup_stale_temp_files_sandboxed(&root, Some(Duration::ZERO), Some(&sandbox))
+            .unwrap();
+        assert_eq!(count, 2);
+        assert!(!temp1.exists());
+        assert!(!temp2.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sandboxed_unlink_falls_back_when_sandbox_absent() {
+        let dir = tempdir().expect("create temp dir");
+
+        let temp = dir.path().join(".file.txt.AbCdEf");
+        fs::write(&temp, b"stale").unwrap();
+
+        let count =
+            cleanup_stale_temp_files_sandboxed(dir.path(), Some(Duration::ZERO), None).unwrap();
+        assert_eq!(count, 1);
+        assert!(!temp.exists());
     }
 }

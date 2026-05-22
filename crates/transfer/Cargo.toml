@@ -34,12 +34,12 @@ tokio-util = { workspace = true, optional = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 apple-fs = { path = "../apple-fs" }
 
-[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
-# libc is needed for O_NOATIME flag in source-file open (upstream syscall.c:228,687).
-libc = { workspace = true }
-
 [target.'cfg(unix)'.dependencies]
 checksums = { path = "../checksums" }
+# libc is needed for O_NOATIME (Linux source-file open, upstream syscall.c:228,687)
+# and for openat flag constants (O_WRONLY/O_CREAT/O_EXCL/O_NOFOLLOW) used by the
+# SEC-1.r temp-file sandbox in temp_guard.rs.
+libc = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 checksums = { path = "../checksums", default-features = false }

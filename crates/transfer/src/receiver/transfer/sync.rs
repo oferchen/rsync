@@ -22,7 +22,10 @@ use crate::receiver::quick_check::is_hardlink_follower;
 use crate::receiver::stats::TransferStats;
 use crate::receiver::wire::{SenderAttrs, SumHead, write_signature_blocks};
 use crate::receiver::{PipelineSetup, ReceiverContext, apply_acls_from_receiver_cache};
+#[cfg(not(unix))]
 use crate::temp_guard::open_tmpfile;
+#[cfg(unix)]
+use crate::temp_guard::open_tmpfile_sandboxed;
 use crate::token_buffer::TokenBuffer;
 use crate::token_reader::{DeltaToken as TokenReaderDeltaToken, LiteralData, TokenReader};
 
@@ -198,6 +201,17 @@ impl ReceiverContext {
 
             let _echoed_sum_head = SumHead::read(reader)?;
 
+            // SEC-1.r: route temp create + drop unlink through the sandbox
+            // carrier so a TOCTOU swap on the temp parent cannot redirect
+            // the create or the unlink-on-error.
+            #[cfg(unix)]
+            let (file, mut temp_guard) = open_tmpfile_sandboxed(
+                &file_path,
+                self.config.temp_dir.as_deref(),
+                sandbox.as_ref(),
+                Some(dest_dir.as_path()),
+            )?;
+            #[cfg(not(unix))]
             let (file, mut temp_guard) = open_tmpfile(&file_path, self.config.temp_dir.as_deref())?;
             let target_size = file_entry.size();
             let writer_capacity = adaptive_writer_capacity(target_size);
