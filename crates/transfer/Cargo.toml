@@ -136,6 +136,7 @@ tracing = ["dep:tracing"]
 [dev-dependencies]
 tempfile = { workspace = true }
 test-support = { path = "../test-support" }
+platform = { path = "../platform" }
 criterion = { workspace = true }
 proptest = { workspace = true }
 rand = { workspace = true }
