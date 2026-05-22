@@ -2913,9 +2913,8 @@ mod tests {
 
         let sandbox = DirSandbox::open_root(&root).expect("sandbox");
         let leaf = Path::new("link-to-outside");
-        let err =
-            recursive_unlinkat_via_sandbox_or_fallback(Some(&sandbox), &root, leaf, &link)
-                .expect_err("symlink at root must be refused");
+        let err = recursive_unlinkat_via_sandbox_or_fallback(Some(&sandbox), &root, leaf, &link)
+            .expect_err("symlink at root must be refused");
         assert_eq!(
             err.raw_os_error(),
             Some(libc::ELOOP),
@@ -2946,7 +2945,10 @@ mod tests {
         recursive_unlinkat_via_sandbox_or_fallback(Some(&sandbox), &root, leaf, &tree)
             .expect("recursive unlinkat");
         assert!(!tree.exists(), "tree must be gone");
-        assert!(sentinel.exists(), "escape symlink must not have been followed");
+        assert!(
+            sentinel.exists(),
+            "escape symlink must not have been followed"
+        );
         assert!(outside.exists(), "outside directory must still exist");
     }
 
@@ -3017,9 +3019,8 @@ mod tests {
         let sandbox = DirSandbox::open_root(&root).expect("sandbox");
 
         let leaf = Path::new("not-a-dir");
-        let err =
-            recursive_unlinkat_via_sandbox_or_fallback(Some(&sandbox), &root, leaf, &path)
-                .expect_err("non-directory leaf must error");
+        let err = recursive_unlinkat_via_sandbox_or_fallback(Some(&sandbox), &root, leaf, &path)
+            .expect_err("non-directory leaf must error");
         assert_eq!(
             err.raw_os_error(),
             Some(libc::ENOTDIR),
