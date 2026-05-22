@@ -1,5 +1,16 @@
 # Parallel receive-side delta apply: default-on decision (#1368 followup)
 
+> **DEFERRED pending PIP-7 fix (2026-05-22)**: the default-on flip described
+> below has been reverted on master after the PIP-4 (#4720) interop scenario
+> `parallel-threshold-trip` surfaced receiver-side corruption that writes
+> wrong bytes for the first dispatched file once the file count crosses
+> `PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD = 100`. The feature remains compiled
+> and opt-in via `--features parallel-receive-delta`; default builds no
+> longer enable it. Track the receiver-corruption investigation in
+> `docs/design/pip-7-parallel-receive-delta-receiver-corruption-2026-05-22.md`.
+> The remainder of this document is preserved as the historical default-on
+> rationale and should be re-validated before any re-promotion.
+
 Tracking issue: #1368 followup. Companion to
 `docs/design/parallel-receive-delta-application.md` (the umbrella design)
 and PR #4319 (the scaffold that landed the feature behind

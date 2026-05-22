@@ -1,5 +1,14 @@
 # PIP-4 closure - interop suite exercises parallel-receive-delta via PIP-5 default flip
 
+> **DEFERRED pending PIP-7 fix (2026-05-22)**: this closure note is
+> superseded. The PIP-4 `parallel-threshold-trip` interop scenario surfaced
+> receiver-side corruption when the file count crosses
+> `PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD = 100`, and the PIP-5 default
+> flip has been reverted on master. Claims below that say default builds
+> exercise the parallel-receive-delta path no longer hold; the path is
+> opt-in via `--features parallel-receive-delta` until the receiver fix
+> lands. See `docs/design/pip-7-parallel-receive-delta-receiver-corruption-2026-05-22.md`.
+
 Date: 2026-05-21
 Scope: closure note for PIP-4 ("Re-run full upstream interop suite against
 parallel-receive-delta path"). Audit-only; no source changes and no fresh
