@@ -9,8 +9,12 @@
 //! Shared helpers (synthetic plan/entry builders, the [`ScriptedDeleteFs`]
 //! failure fake) live here.
 
+#[cfg(unix)]
+use std::ffi::OsStr;
 use std::ffi::OsString;
 use std::io;
+#[cfg(unix)]
+use std::os::fd::BorrowedFd;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -23,6 +27,8 @@ use crate::util::poison::lock_or_recover;
 mod cohort;
 mod dispatch;
 mod error_policy;
+#[cfg(unix)]
+mod sandbox;
 
 pub(super) fn entry(name: &str, kind: DeleteEntryKind) -> DeleteEntry {
     DeleteEntry::new(OsString::from(name), kind)
@@ -113,5 +119,53 @@ impl DeleteFs for ScriptedDeleteFs {
             return Err(err);
         }
         self.inner.remove_dir_all(path)
+    }
+
+    #[cfg(unix)]
+    fn unlink_file_at(&self, parent_fd: BorrowedFd<'_>, name: &OsStr) -> io::Result<()> {
+        if let Some(err) = self.maybe_fail(Path::new(name)) {
+            return Err(err);
+        }
+        self.inner.unlink_file_at(parent_fd, name)
+    }
+
+    #[cfg(unix)]
+    fn rmdir_at(&self, parent_fd: BorrowedFd<'_>, name: &OsStr) -> io::Result<()> {
+        if let Some(err) = self.maybe_fail(Path::new(name)) {
+            return Err(err);
+        }
+        self.inner.rmdir_at(parent_fd, name)
+    }
+
+    #[cfg(unix)]
+    fn unlink_symlink_at(&self, parent_fd: BorrowedFd<'_>, name: &OsStr) -> io::Result<()> {
+        if let Some(err) = self.maybe_fail(Path::new(name)) {
+            return Err(err);
+        }
+        self.inner.unlink_symlink_at(parent_fd, name)
+    }
+
+    #[cfg(unix)]
+    fn unlink_device_at(&self, parent_fd: BorrowedFd<'_>, name: &OsStr) -> io::Result<()> {
+        if let Some(err) = self.maybe_fail(Path::new(name)) {
+            return Err(err);
+        }
+        self.inner.unlink_device_at(parent_fd, name)
+    }
+
+    #[cfg(unix)]
+    fn unlink_special_at(&self, parent_fd: BorrowedFd<'_>, name: &OsStr) -> io::Result<()> {
+        if let Some(err) = self.maybe_fail(Path::new(name)) {
+            return Err(err);
+        }
+        self.inner.unlink_special_at(parent_fd, name)
+    }
+
+    #[cfg(unix)]
+    fn remove_dir_all_at(&self, parent_fd: BorrowedFd<'_>, name: &OsStr) -> io::Result<()> {
+        if let Some(err) = self.maybe_fail(Path::new(name)) {
+            return Err(err);
+        }
+        self.inner.remove_dir_all_at(parent_fd, name)
     }
 }
