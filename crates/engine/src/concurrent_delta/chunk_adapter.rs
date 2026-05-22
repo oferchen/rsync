@@ -343,8 +343,7 @@ mod tests {
         let work = delta_work(9);
         let adapter = DeltaChunkAdapter::new();
 
-        let literal =
-            adapter.from_delta_work(&work, ChunkPayload::literal(0, vec![0x11; 32]));
+        let literal = adapter.from_delta_work(&work, ChunkPayload::literal(0, vec![0x11; 32]));
         assert!(literal.is_literal);
         assert_eq!(literal.ndx, FileNdx::new(9));
 
@@ -397,7 +396,10 @@ mod tests {
 
         assert_eq!(work.ndx(), snapshot.0);
         assert_eq!(work.dest_path(), snapshot.1);
-        assert_eq!(work.basis_path().map(std::path::Path::to_path_buf), snapshot.2);
+        assert_eq!(
+            work.basis_path().map(std::path::Path::to_path_buf),
+            snapshot.2
+        );
         assert_eq!(work.target_size(), snapshot.3);
         assert_eq!(work.literal_bytes(), snapshot.4);
         assert_eq!(work.matched_bytes(), snapshot.5);
@@ -454,8 +456,8 @@ mod tests {
         // Rust trait conventions. Round-trip a chunk through each form.
         let work = whole_file_work(0);
         let bytes = vec![1u8, 2, 3, 4];
-        let via_new =
-            DeltaChunkAdapter::new().from_delta_work(&work, ChunkPayload::literal(0, bytes.clone()));
+        let via_new = DeltaChunkAdapter::new()
+            .from_delta_work(&work, ChunkPayload::literal(0, bytes.clone()));
         let via_default =
             DeltaChunkAdapter.from_delta_work(&work, ChunkPayload::literal(0, bytes.clone()));
         let via_default_trait =
@@ -475,11 +477,6 @@ mod tests {
         let payload = ChunkPayload::literal(0, vec![0u8; 4])
             .with_expected_strong(first)
             .with_expected_strong(second);
-        assert_eq!(
-            payload
-                .expected_strong
-                .expect("digest attached"),
-            second
-        );
+        assert_eq!(payload.expected_strong.expect("digest attached"), second);
     }
 }
