@@ -224,6 +224,7 @@ impl ReceiverContext {
                     // `std::fs::remove_*` helpers via the same
                     // `single_component_leaf` precondition the existing
                     // SEC-1.f-j helpers use.
+                    #[cfg(unix)]
                     let rel_for_unlink = if dir_relative.as_os_str() == "." {
                         std::path::PathBuf::from(&name)
                     } else {
