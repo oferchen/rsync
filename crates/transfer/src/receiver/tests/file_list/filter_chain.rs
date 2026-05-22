@@ -39,7 +39,14 @@ fn receiver_filter_chain_protects_from_deletion() {
     ctx.set_filter_chain(::filters::FilterChain::new(global));
 
     let mut writer = TestDeletionWriter;
-    let (stats, _) = ctx.delete_extraneous_files(dest, &mut writer).unwrap();
+    let (stats, _) = ctx
+        .delete_extraneous_files(
+            dest,
+            #[cfg(unix)]
+            None,
+            &mut writer,
+        )
+        .unwrap();
 
     // normal.txt should be deleted (not in file list, not protected)
     assert!(
@@ -84,7 +91,14 @@ fn receiver_filter_chain_empty_allows_all_deletions() {
 
     // Empty filter chain - all deletions should proceed
     let mut writer = TestDeletionWriter;
-    let (stats, _) = ctx.delete_extraneous_files(dest, &mut writer).unwrap();
+    let (stats, _) = ctx
+        .delete_extraneous_files(
+            dest,
+            #[cfg(unix)]
+            None,
+            &mut writer,
+        )
+        .unwrap();
 
     assert!(!dest.join("file1.txt").exists());
     assert!(!dest.join("file2.log").exists());
