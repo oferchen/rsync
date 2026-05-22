@@ -48,25 +48,23 @@ pub enum LandlockOutcome {
 /// Probes whether the running kernel exposes any Landlock ABI.
 ///
 /// Returns `true` on Linux 5.13+ with the LSM enabled at boot, `false`
-/// otherwise. The probe builds a minimal ruleset with best-effort
-/// downgrade and inspects the resulting [`RulesetStatus`]; the kernel
-/// returns `NotEnforced` when it accepts the rules but cannot apply them,
-/// equivalent to "Landlock not available". Cheap but not memoised - cache
-/// the result if you call repeatedly.
+/// otherwise. The probe issues `landlock_create_ruleset(2)` via
+/// [`Ruleset::create`] and immediately drops the returned fd; **it must
+/// never call [`RulesetCreated::restrict_self`]** because Landlock
+/// intersects every successive `restrict_self` on the calling thread.
+/// Probing with an empty allowlist would therefore deny every subsequent
+/// filesystem write for the rest of the thread's life and the real
+/// [`restrict_to_module_paths`] call could only narrow that intersection,
+/// never relax it. Cheap but not memoised - cache the result if you call
+/// repeatedly.
 #[must_use]
 pub fn is_supported() -> bool {
     let access = AccessFs::from_all(ABI::V1);
-    match Ruleset::default()
+    Ruleset::default()
         .set_compatibility(CompatLevel::BestEffort)
         .handle_access(access)
         .and_then(|r| r.create())
-    {
-        Ok(created) => match created.restrict_self() {
-            Ok(status) => !matches!(status.ruleset, RulesetStatus::NotEnforced),
-            Err(_) => false,
-        },
-        Err(_) => false,
-    }
+        .is_ok()
 }
 
 /// Restricts the current thread to read+write access only under
@@ -165,7 +163,7 @@ mod tests {
     fn is_supported_returns_bool_without_panic() {
         // The probe must not panic regardless of kernel support; on CI
         // Linux runners (5.13+) it returns true, on pre-5.13 it returns
-        // false. Either outcome is acceptable here — the test only proves
+        // false. Either outcome is acceptable here - the test only proves
         // the probe path is sound.
         let _ = is_supported();
     }
@@ -255,6 +253,37 @@ mod tests {
         })
         .expect("empty-allowlist scenario");
         drop(scratch);
+    }
+
+    #[test]
+    fn is_supported_does_not_restrict_caller() {
+        // Regression: an earlier `is_supported()` engaged Landlock with an
+        // empty allowlist on the calling thread, so every subsequent
+        // `restrict_to_module_paths` call was intersected with "deny all"
+        // and the daemon's receiver could not create its temp files. The
+        // probe must leave the caller's filesystem rights untouched so a
+        // later `restrict_to_module_paths(&[root])` actually permits writes
+        // beneath `root`.
+        if !is_supported() {
+            return;
+        }
+        let allowed = TempDir::new().expect("allowed tempdir");
+        let allowed_path = allowed.path().to_path_buf();
+        run_isolated(move || {
+            // Mirror the daemon ordering: probe first, then engage on the
+            // real module root.
+            assert!(is_supported(), "probe must remain idempotent");
+            let outcome = restrict_to_module_paths(&[allowed_path.as_path()]);
+            match outcome {
+                LandlockOutcome::Enforced(RulesetStatus::NotEnforced) => return Ok(()),
+                LandlockOutcome::Enforced(_) => {}
+                LandlockOutcome::Unavailable => return Ok(()),
+                LandlockOutcome::Error(err) => return Err(format!("setup: {err}")),
+            }
+            fs::write(allowed_path.join("post_probe.txt"), b"x")
+                .map_err(|e| format!("write inside after probe failed: {e}"))
+        })
+        .expect("probe-then-engage scenario");
     }
 
     #[test]
