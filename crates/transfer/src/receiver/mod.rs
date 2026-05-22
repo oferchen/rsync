@@ -103,6 +103,19 @@ pub const PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD: usize = 100;
 /// `docs/design/parallel-receive-delta-default-on.md` section 6.2.
 pub const PARALLEL_RECEIVE_BYTES_THRESHOLD: u64 = 64 * 1024 * 1024;
 
+/// Runtime/debug override that forces [`ReceiverContext::dispatch_receiver_strategy`]
+/// onto the parallel apply path regardless of the file-count and total-bytes
+/// thresholds.
+///
+/// Set to any non-empty value (e.g. `OC_RSYNC_FORCE_PARALLEL=1`) before
+/// invoking the receiver to short-circuit the Path B heuristic. Intended for
+/// interop coverage and ad-hoc debugging; the toggle is intentionally not
+/// surfaced as a CLI flag. When the `parallel-receive-delta` feature is
+/// compiled out, the override still logs the decision under `GENR` and falls
+/// back to [`ReceiverStrategy::Sequential`] so telemetry never claims a path
+/// the binary cannot take.
+pub const FORCE_PARALLEL_RECEIVE_ENV: &str = "OC_RSYNC_FORCE_PARALLEL";
+
 pub(crate) use crate::parallel_io::ParallelThresholds;
 
 use signature;
@@ -453,11 +466,21 @@ impl ReceiverContext {
     /// `receiver_strategy=parallel_unavailable` and returns
     /// [`ReceiverStrategy::Sequential`] so telemetry never claims a path
     /// the binary cannot actually take.
+    ///
+    /// The [`FORCE_PARALLEL_RECEIVE_ENV`] env var short-circuits the heuristic
+    /// when set to a non-empty value: the function logs the override under
+    /// `GENR` and unconditionally returns [`ReceiverStrategy::Parallel`] (or
+    /// `parallel_unavailable`/Sequential when the feature is compiled out).
+    /// The override exists for interop coverage and ad-hoc debugging; it is
+    /// not surfaced as a CLI flag.
     pub(in crate::receiver) fn dispatch_receiver_strategy(
         &mut self,
         file_count: usize,
     ) -> ReceiverStrategy {
         let total_size = self.total_source_bytes();
+        if std::env::var_os(FORCE_PARALLEL_RECEIVE_ENV).is_some_and(|v| !v.is_empty()) {
+            return self.dispatch_forced_parallel(file_count, total_size);
+        }
         let want = Self::select_receiver_strategy(file_count, total_size);
         match want {
             ReceiverStrategy::Parallel => {
@@ -506,6 +529,45 @@ impl ReceiverContext {
                 );
                 ReceiverStrategy::Sequential
             }
+        }
+    }
+
+    /// Honours the [`FORCE_PARALLEL_RECEIVE_ENV`] override.
+    ///
+    /// When the `parallel-receive-delta` feature is compiled in, swaps the
+    /// delta pipeline to the parallel apply path and returns
+    /// [`ReceiverStrategy::Parallel`]. When the feature is compiled out, logs
+    /// `receiver_strategy=parallel_unavailable` and returns
+    /// [`ReceiverStrategy::Sequential`] to match the heuristic-driven
+    /// fallback at [`Self::dispatch_receiver_strategy`].
+    fn dispatch_forced_parallel(&mut self, file_count: usize, total_size: u64) -> ReceiverStrategy {
+        #[cfg(feature = "parallel-receive-delta")]
+        {
+            logging::debug_log!(
+                Genr,
+                1,
+                "receiver_strategy=parallel file_count={} total_size={} \
+                 (forced via {}=<set>)",
+                file_count,
+                total_size,
+                FORCE_PARALLEL_RECEIVE_ENV
+            );
+            self.enable_parallel_receive_delta();
+            ReceiverStrategy::Parallel
+        }
+        #[cfg(not(feature = "parallel-receive-delta"))]
+        {
+            logging::debug_log!(
+                Genr,
+                1,
+                "receiver_strategy=parallel_unavailable file_count={} total_size={} \
+                 (forced via {}=<set>); falling back to sequential because the \
+                 parallel-receive-delta feature is not compiled in",
+                file_count,
+                total_size,
+                FORCE_PARALLEL_RECEIVE_ENV
+            );
+            ReceiverStrategy::Sequential
         }
     }
 
