@@ -223,6 +223,11 @@ pub fn calculate_signature_layout(
     })
 }
 
+/// Derives a block length from file size using rsync's square-root heuristic.
+///
+/// Files at or below `BLOCK_SIZE²` use the default block size; larger files use
+/// an approximation of `sqrt(file_length)` rounded down to a multiple of 8 and
+/// clamped to the protocol-specific maximum.
 fn derive_block_length(file_length: u64, protocol: ProtocolVersion) -> u32 {
     if file_length <= u64::from(BLOCK_SIZE).saturating_mul(u64::from(BLOCK_SIZE)) {
         return BLOCK_SIZE;
