@@ -264,12 +264,10 @@ fn rsync_acl_to_entries_remap_emits_own_debug() {
             _ => None,
         })
         .collect();
-    let expected_uid = format!(
-        "uid {unmappable_uid}(oc_rsync_test_ghost_user) maps to {unmappable_uid}"
-    );
-    let expected_gid = format!(
-        "gid {unmappable_gid}(oc_rsync_test_ghost_group) maps to {unmappable_gid}"
-    );
+    let expected_uid =
+        format!("uid {unmappable_uid}(oc_rsync_test_ghost_user) maps to {unmappable_uid}");
+    let expected_gid =
+        format!("gid {unmappable_gid}(oc_rsync_test_ghost_group) maps to {unmappable_gid}");
     assert!(
         messages.iter().any(|m| m == &expected_uid),
         "missing UID remap emission {expected_uid:?}: {messages:?}"

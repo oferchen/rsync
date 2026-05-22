@@ -33,7 +33,5 @@ pub(super) fn is_unsupported_error(e: &io::Error) -> bool {
     }
 
     let msg = e.to_string().to_lowercase();
-    msg.contains("not supported")
-        || msg.contains("invalid argument")
-        || msg.contains("no data")
+    msg.contains("not supported") || msg.contains("invalid argument") || msg.contains("no data")
 }

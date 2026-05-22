@@ -1242,11 +1242,7 @@ mod noop_apply_acls_tests {
 /// receiver always passes the raw wire id straight to `sys_acl_set_info()`
 /// (`acls.c:404`). The receiver-side `recv_add_id()` fallback at
 /// `uidlist.c:282` keeps `id2 = id` whenever the wire name does not resolve.
-#[cfg(all(
-    unix,
-    feature = "acl",
-    any(target_os = "linux", target_os = "freebsd")
-))]
+#[cfg(all(unix, feature = "acl", any(target_os = "linux", target_os = "freebsd")))]
 mod unmappable_id_remap_tests {
     use super::*;
     use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
