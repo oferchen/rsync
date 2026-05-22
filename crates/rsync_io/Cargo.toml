@@ -27,10 +27,28 @@ tokio = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
 
 [features]
+default = ["ssh-config-parse"]
 embedded-ssh = ["dep:russh", "dep:url", "dep:rpassword", "dep:is-terminal", "dep:tokio"]
 # Async SSH transport: opt-in tokio-process backing for `SshConnection`.
 # See `docs/design/async-ssh-transport.md` (#1593) for the staging plan.
 async-ssh = ["dep:tokio"]
+# ssh-config-parse:
+#   what:    Extends `SshCommand::has_ssh_compression` to consult
+#            `~/.ssh/config` and `/etc/ssh/ssh_config` for `Compression yes`
+#            at top level or under `Host *`, closing the SSC-3 gap where a
+#            user-configured default would silently double-compress when
+#            paired with rsync's `--compress`.
+#   why:     SSC-1 (argv warning) misses the case where the user sets
+#            `Compression yes` globally in ssh_config and never passes `-C`
+#            on the rsync command line.
+#   scope:   Top-level and `Host *` directives only. Per-host `Host foo`
+#            blocks and `Match` blocks are deferred because they need
+#            runtime context the warning site does not have.
+#   safety:  Pure Rust, no extra dependencies, no unsafe code.
+#   opt out: `cargo build -p rsync_io --no-default-features` (then re-add
+#            any other features you need). Without this feature the
+#            argv-only SSC-1 detection path remains in place.
+ssh-config-parse = []
 # Opt-in: exposes the standalone `socketpair_stderr` primitive
 # (SSE-3, #2372) and, when paired with `async-ssh`, the SSE-4 async
 # drain task (#2373) that funnels stderr into a bounded ring buffer
