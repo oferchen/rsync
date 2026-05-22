@@ -1504,10 +1504,10 @@ pub fn readlinkat_via_sandbox_or_fallback(
 ///   inner loop drained: surfaced verbatim. This indicates either a
 ///   concurrent writer outraced the helper or an entry was skipped
 ///   for `EACCES`; mirrors upstream's `DR_NOT_EMPTY` return.
-/// - [`io::ErrorKind::FilesystemLoop`] when the cycle detector trips
-///   on a previously-visited `(dev, ino)` pair (hardlink-to-directory
-///   is the only way to construct this and requires `CAP_SYS_ADMIN`
-///   on Linux).
+/// - `ELOOP` (`io::Error::from_raw_os_error(libc::ELOOP)`) when the
+///   cycle detector trips on a previously-visited `(dev, ino)` pair
+///   (hardlink-to-directory is the only way to construct this and
+///   requires `CAP_SYS_ADMIN` on Linux).
 pub fn recursive_unlinkat_via_sandbox_or_fallback(
     sandbox: Option<&super::DirSandbox>,
     dest_dir: &Path,
@@ -1542,7 +1542,7 @@ fn recursive_unlinkat(parent_dirfd: BorrowedFd<'_>, leaf: &OsStr) -> io::Result<
 /// Inner recursive walker shared by the public entry point and the
 /// per-entry subdir recursion. Threads the cycle-detection set through
 /// each descent level so a `(dev, ino)` we have already entered aborts
-/// the recursion with [`io::ErrorKind::FilesystemLoop`].
+/// the recursion with `ELOOP`.
 fn recursive_unlinkat_inner(
     parent_dirfd: BorrowedFd<'_>,
     leaf: &OsStr,
@@ -1569,7 +1569,7 @@ fn recursive_unlinkat_inner(
     let leaf_meta = fstatat_nofollow(parent_dirfd, leaf)?;
     let key = (leaf_meta.dev(), leaf_meta.ino());
     if !visited.insert(key) {
-        return Err(io::Error::from(io::ErrorKind::FilesystemLoop));
+        return Err(io::Error::from_raw_os_error(libc::ELOOP));
     }
 
     // Step 3a: drain the children. Names are collected up-front so the
