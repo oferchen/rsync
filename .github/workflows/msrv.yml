@@ -9,6 +9,7 @@ on:
       - 'Cargo.toml'
       - 'rust-toolchain.toml'
       - '.github/workflows/msrv.yml'
+      - '.github/workflows/ci.yml'
   pull_request:
     paths:
       - 'crates/**'
@@ -16,6 +17,7 @@ on:
       - 'Cargo.toml'
       - 'rust-toolchain.toml'
       - '.github/workflows/msrv.yml'
+      - '.github/workflows/ci.yml'
   workflow_dispatch:
 
 concurrency:
