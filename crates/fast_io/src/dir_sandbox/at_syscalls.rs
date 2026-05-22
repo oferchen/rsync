@@ -2915,10 +2915,14 @@ mod tests {
         let leaf = Path::new("link-to-outside");
         let err = recursive_unlinkat_via_sandbox_or_fallback(Some(&sandbox), &root, leaf, &link)
             .expect_err("symlink at root must be refused");
-        assert_eq!(
-            err.raw_os_error(),
-            Some(libc::ELOOP),
-            "expected ELOOP from O_NOFOLLOW, got {err:?}"
+        // Linux returns ENOTDIR when O_DIRECTORY + O_NOFOLLOW races a symlink
+        // (the kernel checks the symlink-not-a-directory class before the
+        // O_NOFOLLOW refusal), while POSIX-strict implementations return
+        // ELOOP. Either is acceptable: neither follows the symlink.
+        let errno = err.raw_os_error();
+        assert!(
+            errno == Some(libc::ELOOP) || errno == Some(libc::ENOTDIR),
+            "expected ELOOP or ENOTDIR (symlink not followed), got {err:?}"
         );
         assert!(sentinel.exists(), "sentinel must be intact");
         assert!(outside.exists(), "outside dir must be intact");
