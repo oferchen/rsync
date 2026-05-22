@@ -8,6 +8,11 @@ version.workspace = true
 
 [dependencies]
 libc = { workspace = true }
+
+# Unix-only syscall wrappers. `nix` itself carries `#![cfg(unix)]` so it is
+# inert on Windows, but matching the per-crate convention used by `core` and
+# `platform` keeps cross-platform intent explicit at the manifest level.
+[target.'cfg(unix)'.dependencies]
 nix = { workspace = true, features = ["fs"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
