@@ -170,6 +170,8 @@
 //! - `transfer::pipeline` for the pipelined receiver architecture
 
 pub mod adaptive;
+#[cfg(feature = "parallel-receive-delta")]
+pub mod chunk_adapter;
 pub mod config;
 pub mod consumer;
 #[cfg(test)]
@@ -183,6 +185,8 @@ mod types;
 pub mod work_queue;
 
 pub use adaptive::{AdaptiveCapacityPolicy, ReorderStats};
+#[cfg(feature = "parallel-receive-delta")]
+pub use chunk_adapter::{ChunkPayload, ChunkSource, DeltaChunkAdapter, delta_work_to_chunk};
 pub use config::ConcurrentDeltaConfig;
 pub use consumer::{DeltaConsumer, DeltaConsumerStats};
 #[cfg(feature = "parallel-receive-delta")]
