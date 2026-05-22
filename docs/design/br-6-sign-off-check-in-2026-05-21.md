@@ -164,11 +164,15 @@ deferred items are visible to operators:
    even on Linux 5.16+; the `--zero-copy` flag silently downgrades in
    default builds. IUS-4 will revisit default-on after IUS-3 numbers
    land.
-3. **Parallel-receive-delta default-on** - the parallel receive-delta
-   apply path is now the default (PIP-5, #4666). Interop coverage is
-   exercised through the new default in CI; operators on the legacy
-   sequential path should opt out via the corresponding flag if a
-   regression is suspected during the beta soak.
+3. **Parallel-receive-delta default-on** - DEFERRED pending PIP-7 fix
+   (2026-05-22). PIP-5 (#4666) flipped the feature to default and PIP-4
+   (#4720) added the `parallel-threshold-trip` interop scenario that
+   surfaced receiver-side corruption (wrong bytes for the first
+   dispatched file once the file count crosses
+   `PARALLEL_RECEIVE_FILE_COUNT_THRESHOLD = 100`). The default-on flip
+   has been reverted on master; the feature stays compiled and is opt-in
+   via `--features parallel-receive-delta` until the receiver fix lands.
+   See `docs/design/pip-7-parallel-receive-delta-receiver-corruption-2026-05-22.md`.
 
 ## Sign-off conditions
 
