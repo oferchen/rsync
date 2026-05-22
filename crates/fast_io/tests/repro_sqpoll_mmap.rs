@@ -65,7 +65,7 @@ use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::time::{Duration, Instant};
 
-use io_uring::{IoUring, opcode, types};
+use io_uring::{IoUring, cqueue, opcode, types};
 use memmap2::MmapOptions;
 use tempfile::tempdir;
 
@@ -110,8 +110,7 @@ const SQPOLL_IDLE_MS: u32 = 100;
 #[ignore = "requires CAP_SYS_NICE for SQPOLL; run with --ignored on instrumented kernels"]
 fn repro_sqpoll_mmap_race() {
     println!(
-        "repro_sqpoll_mmap: {ITERATIONS} iterations, scratch={SCRATCH_SIZE}B, read={READ_LEN}B, timeout={:?}",
-        ITER_TIMEOUT
+        "repro_sqpoll_mmap: {ITERATIONS} iterations, scratch={SCRATCH_SIZE}B, read={READ_LEN}B, timeout={ITER_TIMEOUT:?}"
     );
 
     let dir = tempdir().expect("tempdir");
@@ -119,7 +118,7 @@ fn repro_sqpoll_mmap_race() {
     let source_path = dir.path().join("source.bin");
 
     {
-        let mut f = File::create(&scratch_path).expect("create scratch");
+        let f = File::create(&scratch_path).expect("create scratch");
         f.set_len(SCRATCH_SIZE as u64).expect("set_len scratch");
         f.sync_all().expect("sync_all scratch");
     }
@@ -319,7 +318,7 @@ fn run_one_iteration(
     }
 
     let mut cq = ring.completion();
-    let cqe = match cq.next() {
+    let cqe: cqueue::Entry = match cq.next() {
         Some(c) => c,
         None => return IterStatus::Timeout,
     };
@@ -359,9 +358,9 @@ mod sanity {
 
     #[test]
     fn constants_are_sane() {
-        assert!(SCRATCH_SIZE.is_multiple_of(READ_LEN));
-        assert!(READ_LEN > 0);
-        assert!(ITERATIONS > 0 && ITERATIONS < 1024);
-        assert!(ITER_TIMEOUT.as_secs() > 0);
+        assert_eq!(SCRATCH_SIZE % READ_LEN, 0);
+        assert_eq!(READ_LEN % 4096, 0);
+        assert!(ITERATIONS.is_multiple_of(8));
+        assert_eq!(ITER_TIMEOUT, Duration::from_secs(5));
     }
 }
