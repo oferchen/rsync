@@ -75,4 +75,17 @@ pub trait MapStrategy: Send {
 
     /// Returns the total file size.
     fn file_size(&self) -> u64;
+
+    /// Returns the underlying basis file when the strategy is backed by a
+    /// real `File` (i.e. buffered, not mmap).
+    ///
+    /// Defaults to `None`. The buffered variants override to expose their
+    /// inner handle so the IUD-10 `copy_file_range` fast path can borrow
+    /// the fd. mmap-backed strategies must keep returning `None`: handing
+    /// an mmap-region's fd to `copy_file_range(2)` would force the kernel
+    /// to fault those pages back in through the same mapping it is reading.
+    #[inline]
+    fn buffered_file(&self) -> Option<&std::fs::File> {
+        None
+    }
 }
