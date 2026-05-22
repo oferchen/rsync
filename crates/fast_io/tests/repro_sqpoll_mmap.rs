@@ -109,7 +109,10 @@ const SQPOLL_IDLE_MS: u32 = 100;
 #[test]
 #[ignore = "requires CAP_SYS_NICE for SQPOLL; run with --ignored on instrumented kernels"]
 fn repro_sqpoll_mmap_race() {
-    println!("repro_sqpoll_mmap: {ITERATIONS} iterations, scratch={SCRATCH_SIZE}B, read={READ_LEN}B, timeout={:?}", ITER_TIMEOUT);
+    println!(
+        "repro_sqpoll_mmap: {ITERATIONS} iterations, scratch={SCRATCH_SIZE}B, read={READ_LEN}B, timeout={:?}",
+        ITER_TIMEOUT
+    );
 
     let dir = tempdir().expect("tempdir");
     let scratch_path = dir.path().join("scratch_mmap.bin");
@@ -287,9 +290,7 @@ fn run_one_iteration(
     // submission + reap below.
     unsafe {
         if let Err(e) = ring.submission().push(&read_sqe) {
-            return IterStatus::SubmitFailed(std::io::Error::other(format!(
-                "sq push failed: {e}"
-            )));
+            return IterStatus::SubmitFailed(std::io::Error::other(format!("sq push failed: {e}")));
         }
     }
 
