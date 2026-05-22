@@ -213,10 +213,10 @@ the fallback so `--version` / diagnostics can surface it.
 This is the SMR Option 3 conservative path picked by tasks #2287..#2292
 and documented in `docs/design/mmap-vs-sqpoll-conflict-resolution.md`
 "Implementation plan (option 3)". The fallback path costs ~10-15% on NVMe
-+ large mmap'd basis workloads (per
-`/Users/ofer/.claude/projects/-Users-ofer-devel-rsync/memory/project_sqpoll_disabled_with_mmap.md`)
-but trades that for correctness: every failure mode above is sidestepped
-because the SQPOLL kthread never enters the picture.
++ large mmap'd basis workloads (per the SMR-1 bench cells in
+`crates/fast_io/benches/mmap_vs_read_fixed_basis.rs`) but trades that for
+correctness: every failure mode above is sidestepped because the SQPOLL
+kthread never enters the picture.
 
 The disable is intentionally crude. SQM-2 will use the SQM-1.a reproducer
 data to design a finer-grained workaround (candidates: `MADV_WILLNEED`
