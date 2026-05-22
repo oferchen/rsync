@@ -123,16 +123,37 @@ fn validate_client_paths_in_module(
 /// non-Linux targets short-circuits to `Unavailable` so the wire-in does
 /// not need `#[cfg]` branching.
 ///
-/// Returns `Ok(true)` on every non-fatal outcome (engaged, downgraded, or
-/// unavailable). Returns `Ok(false)` after emitting an `@ERROR` reply when
-/// the kernel advertised Landlock support but the helper failed to engage
-/// the ruleset - we treat that as a regression because the SEC-1.p design
-/// requires the sandbox to be live on supporting kernels.
+/// Returns `Ok(true)` on every non-fatal outcome (engaged, downgraded,
+/// unavailable, or skipped because a pre/post-xfer-exec hook is configured).
+/// Returns `Ok(false)` after emitting an `@ERROR` reply when the kernel
+/// advertised Landlock support but the helper failed to engage the ruleset -
+/// we treat that as a regression because the SEC-1.p design requires the
+/// sandbox to be live on supporting kernels.
+///
+/// When `pre_xfer_exec` or `post_xfer_exec` is configured, the sandbox is
+/// skipped: Landlock rulesets are inherited by child processes, so engaging
+/// the allowlist would block `exec()` of hook scripts that live outside the
+/// module path (the common case - e.g. `/usr/local/bin/notify.sh`). Per-module
+/// opt-out via configuration matches the operator's intent (they explicitly
+/// chose to run hooks) and preserves SEC-1 *at* helpers as the primary
+/// defense for those modules.
 fn engage_landlock_sandbox(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
 ) -> io::Result<bool> {
     use fast_io::landlock::{LandlockOutcome, is_supported, restrict_to_module_paths};
+
+    if module.pre_xfer_exec.is_some() || module.post_xfer_exec.is_some() {
+        if let Some(log) = ctx.log_sink {
+            let text = format!(
+                "module '{}': landlock=skipped reason=pre-xfer-exec or post-xfer-exec configured (would block hook exec)",
+                ctx.request,
+            );
+            let message = rsync_info!(text).with_role(Role::Daemon);
+            log_message(log, &message);
+        }
+        return Ok(true);
+    }
 
     if !is_supported() {
         if let Some(log) = ctx.log_sink {
