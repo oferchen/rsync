@@ -94,6 +94,18 @@ impl ChecksumVerifier {
         }
     }
 
+    /// Returns `true` when the verifier is the `None` variant - no whole-file
+    /// digest will be computed.
+    ///
+    /// Used by performance fast paths that can skip the per-byte `update`
+    /// callback when no checksum is being accumulated (e.g. the IUD-10
+    /// `copy_file_range` delta-apply path).
+    #[inline]
+    #[must_use]
+    pub const fn is_noop(&self) -> bool {
+        matches!(self, Self::None)
+    }
+
     /// Returns the checksum algorithm used by this verifier.
     #[inline]
     #[must_use]

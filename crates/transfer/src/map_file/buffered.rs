@@ -88,6 +88,15 @@ impl BufferedMap {
         })
     }
 
+    /// Returns a shared reference to the underlying file handle.
+    ///
+    /// Exposed so optimizations like the IUD-10 `copy_file_range` fast path
+    /// can borrow the fd without disturbing the sliding-window cache state.
+    #[inline]
+    pub fn file(&self) -> &File {
+        &self.file
+    }
+
     /// Returns true if the requested range is within the current window.
     #[inline]
     fn is_in_window(&self, offset: u64, len: usize) -> bool {
@@ -184,5 +193,10 @@ impl MapStrategy for BufferedMap {
     #[inline]
     fn file_size(&self) -> u64 {
         self.size
+    }
+
+    #[inline]
+    fn buffered_file(&self) -> Option<&File> {
+        Some(&self.file)
     }
 }
