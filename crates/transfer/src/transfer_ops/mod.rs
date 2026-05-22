@@ -180,10 +180,13 @@ pub struct ResponseContext<'a> {
     /// Threaded through to the per-entry response processing so the
     /// SEC-1.f-j cutover sites can resolve relative names against a
     /// sandboxed dirfd via `*at` syscalls instead of re-walking paths
-    /// through the kernel. `None` when the receiver could not open the
-    /// destination root (e.g. it does not exist yet).
+    /// through the kernel. Held as `&Arc` rather than `&DirSandbox` so
+    /// SEC-1.r anchor sites (the temp-file Drop guard) can clone the
+    /// carrier into a stable handle that outlives this borrow. `None`
+    /// when the receiver could not open the destination root (e.g. it
+    /// does not exist yet).
     #[cfg(unix)]
-    pub sandbox: Option<&'a fast_io::DirSandbox>,
+    pub sandbox: Option<&'a std::sync::Arc<fast_io::DirSandbox>>,
     /// Destination tree root anchor for the SEC-1.j leaf-rename detector.
     ///
     /// `process_file_response` uses this together with `sandbox` to route
