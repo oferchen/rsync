@@ -157,6 +157,26 @@ Promote OPEN to IN-PROGRESS when any of the following lands:
 - A CVE-class disclosure targets the `--delete` traversal rather
   than the per-entry unlink.
 
+## Deferred follow-up: receiver-deletion integration
+
+The initial SEC-1.q implementation lands the trait extension, the
+`RealDeleteFs` sandbox routes, and the `DeleteEmitter` sandbox carrier
+slot. The receiver-deletion call sites in `crates/transfer/` (PR #4710
+rows #5-#7) are **not** wired in the same PR because the receiver's
+delete traversal does not yet route through `DeleteEmitter`: it issues
+its own per-entry unlink/rmdir loop in
+`crates/transfer/src/receiver/directory/`. Threading the sandbox through
+that loop is a separate refactor (collapsing the receiver loop onto the
+emitter, or shimming the sandbox into the loop directly) and ships as a
+follow-up task once the architectural mismatch is resolved.
+
+Until that follow-up lands, `DeleteEmitter::with_sandbox` is exercised
+only from unit tests and from any future caller that builds the emitter
+directly. The path-based fallback methods remain the production code
+path for the existing receiver loop, so this PR is a net-positive
+defense-in-depth change with zero behavioural regression for the live
+receiver.
+
 ## References
 
 - PR #4710 -
