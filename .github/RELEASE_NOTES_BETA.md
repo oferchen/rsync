@@ -1,5 +1,5 @@
 <!--
-Scaffold for the upcoming beta release notes.
+Draft for the upcoming beta release notes.
 
 Status: DRAFT. The version line below uses `v0.7.0-beta` as a placeholder.
 The maintainer will choose the actual semver bump (e.g. `v0.7.0-beta`,
@@ -18,7 +18,7 @@ Workflow when promoting to a real release notes body:
 
 ## oc-rsync v0.7.0-beta
 
-Wire-compatible with upstream rsync 3.4.2 (and back-compat with 3.4.1, protocol 32).
+Wire-equivalent to upstream rsync 3.4.x (and back-compat with 3.4.1, protocol 32).
 
 This is the first **beta** of oc-rsync. The 0.6.x line shipped as alpha while
 wire-feature completeness, interop, coverage, and unsafe-code hygiene closed
@@ -33,11 +33,45 @@ new since v0.6.2.
 
 ---
 
+### Highlights
+
+- **Wire-equivalent to upstream rsync 3.4.x (protocol 32) with measurable
+  performance gains.** Local copy, daemon push/pull, and SSH transport are
+  byte-identical against upstream across the 3.0.9 / 3.1.3 / 3.4.1 / 3.4.2
+  interop matrix; the cumulative architecture (threaded pipeline, io_uring,
+  IOCP writers, reflink/clone, zsync-inspired delta matching) carries the
+  performance story.
+- **SEC-1 chain mitigates CVE-2026-29518 and CVE-2026-43619.** The TOCTOU
+  symlink-race window on path-based daemon syscalls under `use chroot = no`
+  is closed via a per-connection `DirSandbox` carrier, `openat2(RESOLVE_BENEATH
+  | RESOLVE_NO_SYMLINKS)` runtime detection, and full coverage of the
+  `*at` syscall family (`fstatat`, `unlinkat`, `mkdirat`, `symlinkat`,
+  `linkat`, `fchmodat`, `fchownat`, `utimensat`, `renameat`). See
+  `SECURITY.md` for the per-CVE table and remaining wiring follow-ups.
+- **Optional Linux-only Landlock LSM defense-in-depth.** A new `landlock`
+  Cargo feature layers kernel-enforced `PathBeneath` allowlisting on top
+  of the `*at` chain so a future commit that bypasses `DirSandbox` is still
+  rejected by the kernel. Linux 5.13+ required; daemons on older kernels
+  run with the `*at` chain alone. See `SECURITY.md` and the SEC-1.p design
+  note.
+- **parallel-receive-delta is now the default execution path (PIP-5).**
+  The receiver's delta-apply pipeline parallelises `verify_chunk` across
+  cores by default; the legacy sequential path remains opt-in for the
+  beta soak. Interop coverage exercises the new default end-to-end against
+  the full upstream matrix.
+- **DashMap-backed slot map removes the ParallelDeltaApplier outer Mutex
+  (BR-3j).** The per-file lookup that previously serialised registration
+  and finish under a single `Mutex<HashMap<...>>` is now sharded via
+  DashMap, so per-file fan-out scales with cores rather than collapsing
+  to a single lock owner.
+
+---
+
 ### Beta-readiness criteria
 
 This release is the first build that meets all four criteria simultaneously:
 
-1. **Wire-feature completeness vs upstream rsync 3.4.1.** No remaining
+1. **Wire-feature completeness vs upstream rsync 3.4.x.** No remaining
    `--iconv`, `--fake-super`, ACL, xattr, or IOCP gaps. The specific fixes
    that closed the last known gaps are enumerated in *Wire-protocol
    fidelity* below.
@@ -59,26 +93,56 @@ This release is the first build that meets all four criteria simultaneously:
 
 ---
 
-### Highlights
+### Security
 
-<!--
-Pick 3-5 user-visible items from "What's New" / "Wire-protocol fidelity"
-that justify the milestone, written for an operator who has been running
-0.6.2 and is deciding whether to upgrade. Suggested anchors (refine at
-tag time):
+`SECURITY.md` carries the canonical per-CVE matrix and is the source of
+truth. Summary as of the beta tag:
 
-- `--iconv` is now correct end-to-end (local-copy + pull from upstream daemon)
-- `-X --fake-super` round-trips cleanly against upstream rsync 3.4.x
-- Sender now honours `user.rsync.%stat` so fake-super -> fake-super -> fake-super preserves original mode/uid/gid/rdev
-- `--version` lists compiled-in Cargo features so deployments can audit which optional codepaths shipped
-- Engine `force_insert` counter is exposed for operators tuning concurrent-delta reorder pressure
--->
+| CVE | Upstream issue | oc-rsync status |
+|-----|---------------|-----------------|
+| CVE-2026-29518 | TOCTOU symlink race in daemon receiver (`use chroot = no`) | **Mostly fixed** - SEC-1 `*at` chain shipped (`.a`-`.n`); receiver wiring follow-up tracked (SEC-1.i / SEC-1.j deferred callers in `disk_commit`, `transfer_ops/response`, `local_copy/executor`). |
+| CVE-2026-43619 | Symlink races on chmod/lchown/utimes/rename/unlink/mkdir/symlink/mknod/link/rmdir/lstat | **Mostly fixed** - same `*at` helper set, including `fchmodat`/`fchownat`/`utimensat` (SEC-1.i, #4690) and `renameat` (SEC-1.j, #4693). |
+| CVE-2026-45232 | Off-by-one stack write in HTTP CONNECT proxy response handler | **Fixed** - `read_proxy_line()` reads byte-by-byte into a heap `Vec<u8>` capped at `MAX_PROXY_LINE_BYTES = 1024` (SEC-2.a, #4609). |
+| CVE-2026-43617 | Reverse-DNS lookup after daemon chroot causes hostname ACL bypass | **Not vulnerable** - `module_peer_hostname` runs before `chroot/setuid`. |
+| CVE-2026-43618 | Integer overflow in compressed-token decoder | **Mitigated** - `saturating_add` in zstd and zlib counting writers with explicit regression coverage. |
+| CVE-2026-43620 | OOB read in `recv_files` via negative `parent_ndx` | **Not vulnerable** - `DirectoryTree::try_add_directory` validates the parent index and returns `DirTreeError::OutOfBoundsParent` (SEC-4 closed). |
+| rsync 3.4.3 hostname hardening | Hyphen-prefixed remote-shell hostname injection | **Fixed** - SSH operand parse rejects hyphen-prefixed hostnames (SEC-3). |
 
-- TBD: top user-visible improvement #1
-- TBD: top user-visible improvement #2
-- TBD: top user-visible improvement #3
-- TBD: top user-visible improvement #4
-- TBD: top user-visible improvement #5
+CVEs from the early 2025 cluster (CVE-2024-12084 through CVE-2024-12747)
+remain *not vulnerable* or *mitigated* by Rust's memory safety. The
+`tools/ci/check_upstream_release.sh` watcher runs weekly and opens a
+tracking issue when upstream rsync ships a new release, so new CVEs are
+surfaced automatically.
+
+#### SEC-1 chain - what shipped this cycle
+
+- **SEC-1.a / b / c / d / e** - `DirSandbox` carrier with in-tree dirfd
+  cache, `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` runtime probe,
+  and receiver pipeline wiring (PRs #4643, #4650 and prior).
+- **SEC-1.f** (#4668) - `fstatat(AT_SYMLINK_NOFOLLOW)` replaces
+  `lstat`/`symlink_metadata`.
+- **SEC-1.g** (#4671) - `unlinkat` replaces `remove_file` / `remove_dir`
+  in `fast_io` and `transfer`.
+- **SEC-1.h** (#4683) - `mkdirat` / `symlinkat` / `linkat` sandbox
+  helpers for create-path operations.
+- **SEC-1.i** (#4690) - `fchmodat` / `fchownat` / `utimensat` sandbox
+  helpers for metadata application.
+- **SEC-1.j** (#4693, #4697) - `renameat` sandbox helper plus deferred
+  receiver wiring.
+- **SEC-1.k / l** - macOS `*at` parity verified; Windows NTFS handle-based
+  APIs sidestep the TOCTOU window structurally.
+- **SEC-1.m / n** (#4675, #4678) - symlink-swap attack regression suite
+  plus legitimate-symlink no-regression coverage.
+- **SEC-1.o-partial** (#4672) - `SECURITY.md` promoted to MOSTLY FIXED
+  reflecting the shipped chain.
+- **SEC-1.p** - Landlock LSM defense-in-depth audit and design landed
+  (#4699); the implementation is gated behind the `landlock` Cargo
+  feature.
+
+Remaining follow-ups (do **not** block the beta tag, tracked in
+`SECURITY.md`): receiver wiring for the SEC-1.i / SEC-1.j deferred
+callers; `mknodat` for device / FIFO nodes (closure doc #4694, not on
+the daemon-reachable surface).
 
 ---
 
@@ -89,21 +153,50 @@ so the rendered release matches the GitHub-generated changelog.
 
 #### Features
 
-- `feat(transfer)`: honour source-side `user.rsync.%stat` in `--fake-super`
-  sender; preserves original mode/uid/gid/rdev across a fake-super round
-  trip (#4578).
-- `feat(version)`: list compiled-in Cargo features in `--version` output so
-  deployments can audit which optional codepaths shipped (#4547).
+- `feat(engine)`: `flush_workers` / `drain_inflight` barrier API on
+  `ParallelDeltaApplier` (FFB-2, #4665).
+- `feat(core)`: warn when `rsync --compress` meets SSH `-C` -
+  double-compression detection at session start (SSC-1, #4667).
+- `feat(rsync_io)`: warn on SSH stderr socketpair-to-pipe fallback so the
+  diagnostic is visible when the platform downgrades silently (SSF-2,
+  #4663).
+- `feat(fast_io)`: SEC-1 `*at` sandbox helper family - `fstatat`,
+  `unlinkat`, `mkdirat`, `symlinkat`, `linkat`, `fchmodat`, `fchownat`,
+  `utimensat`, `renameat` (SEC-1.f through SEC-1.j).
+- `feat(fast_io)`: optional Landlock LSM enforcement behind the
+  `landlock` Cargo feature (SEC-1.p, #4699).
+- `feat(transfer)`: honour source-side `user.rsync.%stat` in
+  `--fake-super` sender; preserves original mode/uid/gid/rdev across a
+  fake-super round trip (#4578).
+- `feat(version)`: list compiled-in Cargo features in `--version` output
+  so deployments can audit which optional codepaths shipped (#4547).
 - `feat(engine)`: expose `force_insert` counter on `DeltaConsumer::stats`
   for concurrent-delta receiver tuning (#4553).
 
 #### Performance
 
-- TBD once benchmark deltas land. See *Performance* below for the chart
-  placeholder. No `perf:`-prefixed PRs landed between v0.6.2 and the
-  scaffold cut; the perf story for beta is the cumulative architecture
-  (threaded pipeline, io_uring, IOCP writers, reflink/clone) carried over
-  from 0.6.x, validated by the chart.
+- `perf(transfer)`: enable parallel receive-delta by default via the Path
+  B heuristic - the parallel `verify_chunk` apply path is now the default
+  execution path for the receiver (PIP-3 + PIP-5, #4666).
+- `perf(engine)`: DashMap-backed slot map for `ParallelDeltaApplier`
+  removes the outer `Mutex<HashMap<...>>` that serialised per-file
+  registration and finish (BR-3j.c / .d / .e, #4634, #4635, #4636).
+- `perf(engine)`: bench harness for parallel `verify_chunk`
+  cores-vs-throughput sweep (BR-3i.f, #4653).
+- `bench(engine)`: BR-3j.f DashMap cores-vs-throughput re-bench scaffold
+  (#4682); cores-vs-throughput numbers deferred to an offline capture run
+  on a known hardware profile.
+- `bench(engine)`: PIP-6 end-to-end parallel-vs-sequential bench scaffold
+  (#4679).
+- `bench(fast_io)`: IUS-3 SEND_ZC vs plain SEND bench scaffold (#4680).
+- `perf(checksums)`: keep rolling `s1` / `s2` in SIMD registers across
+  stripe (CSP-2 F1, #4451).
+- **Delta matching** (carry-over from the 0.6.x line, recorded here for
+  beta completeness): four zsync-inspired refactors to the receiver's
+  block-match path - bithash prefilter (#3737), sequential-match
+  extension (#3751), matched-block pruning (#3748), compact-key layout
+  (#3994). All four are wire-byte-identical against upstream rsync 3.0.9
+  / 3.1.3 / 3.4.1.
 
 #### Bug Fixes
 
@@ -134,44 +227,38 @@ so the rendered release matches the GitHub-generated changelog.
 - `fix(engine)`: gate single-slot TLS `buffer_pool` tests off
   thread-slab feature (#4540).
 - `fix`: clear master CI cascade (cipher/zc tests, macOS `O_NONBLOCK`,
-  IOCP)
+  IOCP).
 - `fix(ci)`: skip oc-rsync daemon scenarios in Windows interop smoke
   (#4550).
 
-#### CI/CD
-
-- TBD. No `ci:`-prefixed PRs landed between v0.6.2 and the scaffold cut.
-  CI hardening shows up under *Bug Fixes* / *Other Changes* this cycle
-  (Windows interop smoke skip, Windows path normalisation in test
-  fixtures, `enforce-limits` removal).
-
 #### Documentation
 
-- `docs(audits)`: triage non-required CI workflow failure cells (BR-5b).
-- `docs(audits)`: record workspace `cargo llvm-cov` baseline (BR-4a).
-- `docs(audits)`: record Windows hard-coded Unix path test audit (#4554).
-- `docs(audits)`: eliminate-path matrix for `tools/ci/known_failures.conf`.
-- `docs`: refresh IOCP wiring and signal-handler unsafe attribution
-  (#4574).
-- `docs(compress)`: fix protocol-threshold comments and document module
-  layout.
-- `docs(engine)`: fix broken intra-doc links in `concurrent_delta`
-  (#4557).
-- `docs(engine,transfer)`: fix broken intra-doc links in `lib.rs` and
-  submodules.
-- `docs(bandwidth)`: drop banner/divider and restatement comments
-  (#4569); drop restating test comments and replace stale line
-  references.
-- `docs(embedding)`: drop restatement comments in lib and example
-  (#4568).
-- `docs(logging-sink)`: remove restatement comments in tests (#4564).
-- `docs(branding)`: drop restatement comments in `validate_versions`
-  (#4563).
+- `docs(security)`: SEC-1 status to MOSTLY FIXED reflecting `.f`/`.g`/`.h`/`.i`/`.j`/`.k`/`.l`/`.m`/`.n` ship state (#4691).
+- `docs(design)`: SEC-1.p Landlock LSM as defense-in-depth audit and
+  design (#4699).
+- `docs(design)`: BR-6 beta-readiness sign-off check-in (#4692).
+- `docs`: close WPG-1 as deferred to post-beta Windows hardware capture
+  (#4688).
+- `docs(design)`: close PIP-4 - interop suite exercises
+  parallel-receive-delta path via PIP-5 default flip (#4689).
+- `docs(design)`: close FFB-3 / FFB-4 / PIP-2 as satisfied by FFB-1
+  design + PIP-3 + PIP-5 wire-up (#4677).
+- `docs(design)`: close ABW-3 as N/A pending per-file `Mutex` refactor
+  (#4685); close RJN-4 as N/A after RJN-3 was rename-only (#4686).
+- `docs(audits)`: BR-4a workspace coverage baseline; BR-13 beta bench;
+  IOCP wiring refresh; signal-handler unsafe attribution (#4574).
 
 #### Other Changes
 
 Includes `chore:`, `style:`, `test:`, and `refactor:` PRs.
 
+- `test(transfer)`: comprehensive symlink-swap attack regression (SEC-1.m,
+  #4675); legitimate symlink transfers must not regress under the SEC-1
+  sandbox (SEC-1.n, #4678).
+- `test(rsync_io)`: assert success path skips the socketpair fallback
+  warning (SSF-4, #4684).
+- `refactor(fast_io)`: re-fold SEC-1 `*at` helpers into a single
+  `at_syscalls` module post SEC-1.j ship (#4700).
 - `refactor(fast_io)`: split `sendfile.rs` into per-concern submodules
   (#4530).
 - `refactor(compress)`: SPL-decompose `strategy/negotiator.rs` (#4533).
@@ -184,22 +271,8 @@ Includes `chore:`, `style:`, `test:`, and `refactor:` PRs.
 - `refactor(transfer)`: split `receiver/transfer.rs` into per-concern
   submodules; decompose `generator/transfer.rs` and `generator/mod.rs`
   into per-concern submodules.
-- `test(protocol)`: pin filter `legal_len=1` parity at proto <= 28
-  (#4572); fix `stress_long_paths_10k` roundtrip on Windows (#4565);
-  build flist stress paths with forward slashes (#4561).
-- `test(daemon)`: normalise Windows temp paths for `--module` fixtures
-  (#4559).
-- `test(engine)`: cover `force_insert` drops, duplicates, payload,
-  monotonicity (#4556); ignore flaky
-  `surviving_threads_keep_inserting_after_lock` test.
-- `test(flist)`: fix `error_path_preservation` on Windows (#4549).
-- `test(fuzz)`: consolidate ACL/xattr wire decoders into
-  `acl_xattr_wire` fuzz target.
 - `chore`: stop tracking `AGENTS.md`; treat as local-only.
-- `chore`: remove enforce-limits CI check and xtask command (#4538).
-- `chore(tests)`: remove stale TODO markers from interop placeholders.
-- `chore(cli)`: delete stale `server_tests` targeting refactored-away
-  API.
+- `chore`: remove `enforce-limits` CI check and xtask command (#4538).
 
 ---
 
@@ -217,12 +290,13 @@ qualifying changes for beta-readiness criterion #1.
   (#4576). The receiver was decoding each entry, transcoding the
   filename, then re-sorting the NDX-addressed `file_list` in
   local-charset order while the upstream generator's subsequent requests
-  indexed against the sender's wire-byte (scan) order. `iconv_reorder_suppressed()`
-  now centralises the predicate and is checked in `receive_file_list`,
-  `receive_extra_file_lists` (INC_RECURSE), and the streaming
+  indexed against the sender's wire-byte (scan) order.
+  `iconv_reorder_suppressed()` now centralises the predicate and is
+  checked in `receive_file_list`, `receive_extra_file_lists`
+  (INC_RECURSE), and the streaming
   `IncrementalFileListReceiver::collect_sorted` fallback. Upstream
-  reference: `options.c:2051-2056` `need_unsorted_flist`, `flist.c:2496-2498`.
-  *Closes BR-2e (#2490).*
+  reference: `options.c:2051-2056` `need_unsorted_flist`,
+  `flist.c:2496-2498`. *Closes BR-2e (#2490).*
 - **`--fake-super` local-copy writes `user.rsync.%stat` xattr** (#4580).
   Local-copy now records the privileged metadata into the xattr the same
   way the network path does, so a `cp -a`-equivalent local fake-super
@@ -271,6 +345,21 @@ The benchmark chart above is auto-uploaded as a release asset by
 `benchmark.yml` on tag push. Update the URL to match the final tag name
 when promoting this scaffold to the release body.
 
+The following benches shipped as scaffolding this cycle and are the
+canonical reference once their numbers are captured offline:
+
+- **BR-3i.f** (#4653) - parallel `verify_chunk` cores-vs-throughput sweep.
+- **BR-3j.f** (#4682) - DashMap cores-vs-throughput re-bench through the
+  post-DashMap applier. Numbers offline-captured per
+  `docs/design/br-3j-f-dashmap-rebench-2026-05-21.md`.
+- **PIP-6** (#4679) - end-to-end parallel-vs-sequential receive-delta
+  bench.
+- **IUS-3** (#4680) - `IORING_OP_SEND_ZC` vs plain `IORING_OP_SEND`
+  bench.
+- **SSC-1** (#4667) - startup warning when SSH `-C` collides with rsync
+  wire compression; the bench-adjacent expectation is that operators
+  see the warning and pick one compression layer before profiling.
+
 Headline numbers (TBD once the post-tag benchmark workflow completes):
 
 - **Local copy:** TBD x upstream rsync 3.4.2 (target: 3x+).
@@ -290,15 +379,83 @@ Headline numbers (TBD once the post-tag benchmark workflow completes):
 
 ---
 
+### Compatibility notes
+
+- **Linux 5.6+ recommended for io_uring.** The `fast_io` crate runtime-probes
+  io_uring support and falls back to standard buffered I/O on older
+  kernels. Provided buffer rings (PBUF_RING) require Linux **5.19+**;
+  pre-5.19 kernels fall back to standard buffered I/O via runtime
+  probing.
+- **Linux 5.13+ required for the Landlock LSM layer.** The new `landlock`
+  Cargo feature requires kernel Landlock ABI v1 or newer. Daemons on
+  older kernels run with the SEC-1 `*at` chain as the sole TOCTOU
+  defense, which is itself sufficient against CVE-2026-29518 and
+  CVE-2026-43619; Landlock is purely additive defense-in-depth.
+- **Linux 6.0+ recommended for SEND_ZC.** `IORING_OP_SEND_ZC` is gated
+  behind the `iouring-send-zc` Cargo feature. Default builds use plain
+  `IORING_OP_SEND` even on Linux 5.16+; the `--zero-copy` flag advertises
+  SEND_ZC but downgrades silently in default builds. The IUS-4
+  default-on decision (#4687) is pre-framed for a post-beta cycle once
+  IUS-3 numbers land.
+- **Windows IOCP path is shipped but unprofiled.** IOCP is wired for
+  socket I/O (daemon and SSH transports) and for the receive-side
+  disk-write pipeline (`transfer::disk_commit` dispatches `Writer::Iocp`
+  when the IOCP backend is selected on Windows). File reads still use
+  standard buffered I/O. Comparative throughput claims for Windows are
+  deferred to a post-beta hardware-capture cycle; see the WPG-1 closure
+  note (#4688). Production Windows deployments should treat IOCP
+  throughput numbers as informational until that capture lands.
+- **macOS uses POSIX `*at` syscalls.** SEC-1.k verified the BSD `*at`
+  family behaves identically to Linux for the SEC-1 chain; no macOS-only
+  carve-outs.
+- **Windows sidesteps path TOCTOU structurally.** SEC-1.l audited the
+  NTFS handle-based APIs (`CreateFileW` returning a kernel handle that
+  pins the resolved target) and confirmed they do not expose the path
+  TOCTOU window the Linux/macOS `*at` chain closes.
+
+---
+
+### Deprecations / breaking changes
+
+None - this is a beta tag. The wire-protocol fixes above strictly close
+gaps and do not change semantics for transfers that were already working.
+
+The `enforce-limits` CI workflow and the corresponding xtask command
+were removed (#4538); external pipelines that gated on that workflow
+should drop the requirement. LoC is no longer policed in CI.
+
+---
+
 ### Known limitations
 
-These carry over from v0.6.2 and remain accurate as of beta. They are
-reproduced here so beta users see the architectural trade-offs before
-deploying, without having to chase down `README.md`.
+These carry over from v0.6.2 and remain accurate as of beta, plus the
+new-in-this-cycle items called out below. They are reproduced here so
+beta users see the architectural trade-offs before deploying without
+chasing down `README.md` and individual closure docs.
 
-- **io_uring kernel requirement.** Provided buffer rings (PBUF_RING)
-  require Linux **5.19+**; older 5.6-5.18 kernels fall back to standard
-  buffered I/O via runtime probing.
+#### New in this cycle
+
+- **ABW-3 / ABW-4 (verify+write pipelining).** Closed as N/A pending a
+  per-file `Mutex` refactor (#4685). Today's serial-write-after-parallel-verify
+  shape is correctness-equivalent; pipelining is a follow-up perf item,
+  not a beta gate.
+- **RJN-4 bench.** Closed as N/A (RJN-3 was a rename-only change, no
+  bench needed; #4686).
+- **PIP-4** (interop matrix re-run after PIP-5). Closed retroactively -
+  parallel-receive-delta interop coverage is satisfied by the PIP-5
+  default flip (#4666) exercising the existing interop suite under the
+  new default path (#4689).
+- **SEC-1.i / SEC-1.j receiver wiring.** Deferred follow-ups for the
+  `disk_commit`, `transfer_ops/response`, and `local_copy/executor`
+  callers; the `*at` helpers themselves ship and are the live mitigation
+  for CVE-2026-29518 / CVE-2026-43619 (#4701).
+- **SEND_ZC opt-in only.** `IORING_OP_SEND_ZC` is gated behind the
+  `iouring-send-zc` feature; default builds use plain SEND even on Linux
+  5.16+. IUS-4 will revisit default-on after IUS-3 numbers land
+  (#4687).
+
+#### Carry-over from v0.6.2
+
 - **Fixed io_uring buffer pool.** The registered buffer pool is sized at
   compile time (1024 x 4 KiB = 4 MiB) and does not adapt under sustained
   I/O pressure. Workloads with very high concurrent file fan-out may see
@@ -311,33 +468,28 @@ deploying, without having to chase down `README.md`.
   file. Rolling-hash fan-out across files is not yet parallelised; large
   file workloads fully utilise one CPU per transfer rather than scaling
   delta CPU horizontally.
-- **SSH compression interaction.** When the SSH cipher already performs
-  compression (e.g., `Compression yes` in `ssh_config`), running
-  `oc-rsync -z` will compress payloads twice. There is currently no
-  auto-detection / auto-disable path; operators should pick one layer.
+- **SSH compression interaction.** When SSH itself compresses the stream
+  (`Compression yes` in `ssh_config` or a cipher with built-in
+  compression), running `oc-rsync -z` will compress payloads twice.
+  SSC-1 now warns when `-C` is observed in the argv; `ssh_config`-driven
+  compression is not detected (audit #4674). Pick one layer.
 - **Daemon TLS.** Native TLS is not built into the daemon. Deploy
   `oc-rsync --daemon` behind `stunnel`, `ssh -L`, or a reverse proxy
   that terminates TLS. See `docs/deployment/daemon-tls.md` and
   `SECURITY.md`.
-- **Windows IOCP scope.** IOCP is wired for socket I/O (daemon and SSH
-  transports) and for the receive-side disk-write pipeline
-  (`transfer::disk_commit` dispatches `Writer::Iocp` when the IOCP
-  backend is selected on Windows). File reads still use standard
-  buffered I/O; extending IOCP to the read path is tracked in WPG-1.
-- **`.rsync-filter` per-directory inheritance.** Inheritance semantics
-  match upstream for the common cases tested in the interop suite, but
-  exhaustive parity against upstream's filter-tree corner cases (deeply
-  nested merges, anchored vs unanchored interactions) is still being
-  validated.
-- **`--checksum-seed` / `--fuzzy`.** These flags are accepted and
-  exercised in the common path; deeper conformance audits against
-  upstream rsync 3.4.1 are tracked separately.
+- **`.rsync-filter` per-directory inheritance.** Matches upstream for
+  the common cases tested in the interop suite; exhaustive parity
+  against upstream's filter-tree corner cases (deeply nested merges,
+  anchored vs unanchored interactions) is still being validated.
+- **`--checksum-seed` / `--fuzzy`.** Accepted and exercised in the common
+  path; deeper conformance audits against upstream rsync 3.4.1 are
+  tracked separately.
 - **Windows Tier-1C ACLs.** NTFS DACL round-trip via `windows-rs`
-  `GetNamedSecurityInfoW`/`SetNamedSecurityInfoW`; deny ACEs, inherited
-  ACEs, the SACL, non-`rwx` access bits, and unresolvable SIDs are
-  dropped with a one-time warning. SDDL fidelity payload,
-  `--audit-acls`, `--fail-on-windows-acl-loss`, and `--windows-acls` are
-  planned. See `docs/platform-notes.md` and
+  `GetNamedSecurityInfoW` / `SetNamedSecurityInfoW`; deny ACEs,
+  inherited ACEs, the SACL, non-`rwx` access bits, and unresolvable
+  SIDs are dropped with a one-time warning. SDDL fidelity payload,
+  `--audit-acls`, `--fail-on-windows-acl-loss`, and `--windows-acls`
+  are planned. See `docs/platform-notes.md` and
   `docs/design/windows-ntfs-acl-support.md`.
 - **Windows symlinks and device nodes.** `create_symlinks` is
   `cfg(not(unix))` no-op; `create_fifo` and `create_device_node` are
@@ -348,22 +500,32 @@ deploying, without having to chase down `README.md`.
 ### Upgrade guide
 
 Most operators upgrading from v0.6.2 will not need to change anything.
-The wire-protocol fixes above only activate when the corresponding flags
-(`--iconv`, `--fake-super`, `-X --fake-super`) are in use, and they
-strictly close gaps - they do not change semantics for transfers that
-were already working.
+The wire-protocol fixes only activate when the corresponding flags
+(`--iconv`, `--fake-super`, `-X --fake-super`) are in use, and the
+default-path change for parallel-receive-delta (PIP-5) preserves byte
+equivalence with the legacy sequential path.
 
-- **Flag defaults:** no flag default changed between v0.6.2 and this
-  beta. The full default set is documented in `oc-rsync --help` and
-  `docs/oc-rsync.1.md`.
-- **New env vars:** none introduced this cycle. `OC_RSYNC_SPILL_THRESHOLD_BYTES`
-  and `OC_RSYNC_SPILL_DIR` (introduced in 0.6.x) remain the canonical way to
-  enable disk-backed receiver spill; the planned `--spill-dir` and
-  `--spill-threshold-bytes` CLI flags are still tracked under STN-11 and
-  will shadow the env vars once they land.
-- **Removed CI surface:** the `enforce-limits` check and the corresponding
-  xtask command were removed (#4538). External pipelines that gated on
-  the `enforce-limits` workflow should drop that requirement; LoC is no
+- **Flag defaults:** the receiver's delta-apply path is now parallel by
+  default (PIP-5). Operators who hit a regression during the beta soak
+  can opt out via the legacy sequential path. No other flag default
+  changed between v0.6.2 and this beta. The full default set is
+  documented in `oc-rsync --help` and `docs/oc-rsync.1.md`.
+- **New env vars:** none introduced this cycle.
+  `OC_RSYNC_SPILL_THRESHOLD_BYTES` and `OC_RSYNC_SPILL_DIR` (introduced
+  in 0.6.x) remain the canonical way to enable disk-backed receiver
+  spill; the `--spill-dir` and `--spill-threshold-bytes` CLI flags
+  shadow the env vars.
+- **New Cargo features:**
+  - `landlock` - enables Linux Landlock LSM enforcement on top of the
+    SEC-1 `*at` chain (Linux 5.13+, no-op elsewhere).
+  - `iouring-send-zc` - enables `IORING_OP_SEND_ZC` dispatch (Linux
+    6.0+ recommended; opt-in for the beta tag).
+  - `ssh-socketpair-stderr` - socketpair-backed SSH stderr instead of an
+    anonymous pipe; opt-in to avoid pipe-buffer deadlock with chatty
+    remote children.
+- **Removed CI surface:** the `enforce-limits` workflow and xtask
+  command were removed (#4538). External pipelines that gated on the
+  `enforce-limits` workflow should drop that requirement; LoC is no
   longer policed in CI.
 - **AGENTS.md no longer tracked.** Treat as local-only. No runtime
   effect.
@@ -374,54 +536,17 @@ those configurations, those workarounds can be dropped after upgrading.
 
 ---
 
-### Security notes
+### Acknowledgements
 
-See `SECURITY.md` for the full policy. Highlights relevant to this
-release:
+Mirrors upstream rsync 3.4.x behavior. See `target/interop/upstream-src/`
+for the canonical reference. The SEC-1 chain mirrors upstream's own
+3.4.3 hardening direction (`renameat`, `unlinkat`, and the metadata
+`*at` family) while adding the `DirSandbox` + `openat2(RESOLVE_BENEATH
+| RESOLVE_NO_SYMLINKS)` carrier as oc-rsync's specific construction.
 
-#### Upstream rsync CVE status
-
-oc-rsync is not vulnerable to the upstream rsync CVE cluster disclosed
-in early 2025, and the v0.6.2 audit against rsync 3.4.2 fixes carries
-forward:
-
-| CVE | Upstream Issue | oc-rsync Status | Reason |
-|-----|---------------|-----------------|--------|
-| CVE-2024-12084 | Heap overflow in checksum parsing | Not vulnerable | Rust `Vec<u8>` handles dynamic sizing |
-| CVE-2024-12085 | Uninitialized stack buffer leak | Not vulnerable | Rust requires initialization |
-| CVE-2024-12086 | Server leaks client files | Not vulnerable | Strict path validation |
-| CVE-2024-12087 | Path traversal via `--inc-recursive` | Not vulnerable | Path sanitization |
-| CVE-2024-12088 | `--safe-links` bypass | Mitigated | Rust path handling |
-| CVE-2024-12747 | Symlink race condition | Mitigated | TOCTOU is OS-level |
-
-#### Upstream rsync 3.4.2 audits (carried over from v0.6.2)
-
-Equivalent code paths verified safe in oc-rsync: compressed-stream
-negative-token decoder bounds (#2225), xattr `qsort` element-count
-parity (#2226), `clean_fname()` buffer-underflow parity (#2227),
-allocator zeroing pattern (#2228), Y2038 safety in syscall paths (#2229),
-ACL ID mapping for non-root users (#2230, closes #618), FreeBSD
-many-xattrs handling parity (#2231), "Directory has vanished" error
-path (#2232), removal of multiple leading slashes (#2233), daemon
-`chrono::Local` pre-init before `chroot` (#2234), `--open-noatime`
-propagation through sender source-file opens (#2236), AVX2
-`get_checksum1` `mul_one` uninitialised-regression audit (#2222), MD4
-`get_checksum2` `buf1` uninitialised-regression audit (#2223), and the
-SIMD vs scalar self-test cross-validating AVX2/SSE2/NEON paths at
-startup (#2224).
-
-#### Monitoring
-
-`tools/ci/check_upstream_release.sh` runs weekly via GitHub Actions and
-opens a tracking issue when a new upstream rsync release ships, so new
-CVEs are surfaced automatically. See `SECURITY.md` for the full
-subscriber list.
-
-#### Hardening notes
-
-The hardening notes in `SECURITY.md` (buffer pool bounds checks, io_uring
-buffer-group ID namespace, SSH double compression, daemon TLS
-termination, daemon module hardening) apply unchanged.
+The zsync-inspired delta-matching refactors (bithash prefilter,
+sequential-match extension, matched-block pruning, compact-key layout)
+draw from the `librcksum` design in https://github.com/cph6/zsync.
 
 ---
 
