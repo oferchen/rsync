@@ -1,0 +1,95 @@
+# Contributing to oc-rsync
+
+Thanks for your interest in contributing. This document captures the
+day-to-day workflow used by the maintainers so that outside contributors can
+match the same conventions. For project architecture see
+[`README.md`](./README.md) and [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md);
+for security disclosures see [`SECURITY.md`](./SECURITY.md).
+
+---
+
+## Local development workflow
+
+oc-rsync uses a **push-and-let-CI-verify** workflow. Local builds are kept to
+the minimum needed for a fast, lock-free edit/push cycle; the full validation
+matrix runs in CI on every push.
+
+### Required local commands (lock-free, fast)
+
+- `cargo fmt --all` - always run before pushing.
+- `cargo fmt --all -- --check` - pre-push sanity check; matches the CI gate.
+- Standard `git` tooling for diff and history inspection.
+
+### CI-only commands (do NOT run locally)
+
+Leave these to CI. Running them locally is not required and is actively
+discouraged because concurrent invocations have caused multi-minute build-lock
+hangs on shared workstations:
+
+- `cargo clippy --workspace --all-targets --all-features --no-deps -- -D warnings`
+- `cargo nextest run --workspace --all-features`
+- `cargo build` / `cargo check` against the full workspace
+
+CI runs the full matrix (fmt + clippy, nextest on stable, Windows, macOS,
+Linux musl) on every push. If you need to reproduce a failure locally, scope
+the run to a single crate and test pattern:
+
+```sh
+cargo nextest run -p <crate> --all-features -E 'test(<pattern>)'
+```
+
+Use `cargo-nextest` rather than `cargo test`; configuration lives in
+`.config/nextest.toml`.
+
+---
+
+## Adding a new optional dependency
+
+1. Add the crate to the relevant per-crate `Cargo.toml`, under either
+   `[dependencies]` or a platform-conditional table such as
+   `[target.'cfg(target_os = "linux")'.dependencies]`, with `optional = true`
+   and a matching entry in `[features]`.
+2. Run `cargo update` once so the new entry is registered in `Cargo.lock`.
+   This will also rewrite unrelated lock entries with patch-level bumps; that
+   is normal cargo behaviour - accept the diff as-is.
+3. For platform-conditional optional deps, mirror the `iouring-send-zc`
+   pattern in `crates/fast_io/Cargo.toml`: declare the dep `optional = true`
+   under a `[target.'cfg(...)'.dependencies]` block, then expose it as a
+   named feature that re-exports the underlying capability.
+
+---
+
+## Opening a pull request
+
+- **Branch naming.** Use `<category>/<short-description>[-<task-id>]`, for
+  example `feat/parallel-delta-2087` or `docs/contributing-push-and-ci-workflow`.
+- **Conventional prefixes.** Both commit messages and PR titles must use one
+  of: `feat:`, `fix:`, `perf:`, `docs:`, `chore:`, `style:`, `test:`,
+  `refactor:`, `ci:`. A labeler workflow auto-applies release-note categories
+  from the PR title, so the prefix is load-bearing.
+- **Title length.** Keep PR titles under 70 characters; put detail in the body.
+- **CI gate.** All required checks must pass before merge: fmt + clippy,
+  nextest (stable), Windows, macOS, Linux musl. PRs require one approving
+  review. Master is protected; merge via GitHub (`gh pr merge`).
+- **Authorship hygiene.** PR titles, PR bodies, branch names, commit messages,
+  and added files must not reference internal tooling or non-human authoring
+  aids. Use hyphens (`-`) rather than em-dashes in prose.
+
+---
+
+## Parallel work pattern
+
+- **Worktrees recommended.** Use `git worktree add` so each in-flight branch
+  has its own checkout. This keeps cargo build state isolated per branch and
+  avoids the lock contention that arises when several shells or agents share
+  one target directory.
+- **Cross-tree fix bundles allowed.** If a flake or regression on master is
+  blocking several in-flight PRs, fix it in whichever branch is closest to
+  mergeable rather than spinning up a separate hotfix PR.
+
+---
+
+## License
+
+By contributing you agree that your contributions will be licensed under
+GPL-3.0-or-later, matching the project license in [`LICENSE`](./LICENSE).
