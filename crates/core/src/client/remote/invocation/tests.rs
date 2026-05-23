@@ -1660,7 +1660,11 @@ fn default_rsync_path_is_rsync() {
 }
 
 #[test]
+#[cfg(not(feature = "sender-inc-recurse"))]
 fn capability_string_present_in_sender_args() {
+    // Skipped under sender-inc-recurse: the feature flips the default
+    // inc_recursive_send, so the sender args carry
+    // build_capability_string(true), not (false).
     let config = ClientConfig::builder().build();
     let args = build_sender_args(&config);
     let expected = build_capability_string(false);
