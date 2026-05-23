@@ -403,6 +403,9 @@ pub(crate) fn accumulate_chunk_sse2_for_tests(
     len: usize,
     chunk: &[u8],
 ) -> (u32, u32, usize) {
+    // SAFETY: callers gate on `is_x86_feature_detected!("sse2")`. SSE2 is the
+    // x86_64 baseline, so this precondition holds on every 64-bit Intel/AMD
+    // target the test suite runs on.
     unsafe { accumulate_chunk_sse2(s1, s2, len, chunk) }
 }
 
@@ -413,5 +416,8 @@ pub(crate) fn accumulate_chunk_avx2_for_tests(
     len: usize,
     chunk: &[u8],
 ) -> (u32, u32, usize) {
+    // SAFETY: callers gate on `is_x86_feature_detected!("avx2")`; the parity
+    // test in `rolling/tests/checksum/simd.rs:42` short-circuits and returns
+    // early when AVX2 is unavailable on the host.
     unsafe { accumulate_chunk_avx2(s1, s2, len, chunk) }
 }
