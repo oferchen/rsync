@@ -250,6 +250,105 @@ impl BgidAllocator {
         }
     }
 
+    /// Allocates up to `count` bgids in a single free-list lock acquisition.
+    ///
+    /// The hot per-thread bgid-lease path (IUR-3.e) batches allocation so the
+    /// process-wide [`bgid_free_list`] mutex is acquired once per slice
+    /// instead of once per id. The returned vector contains as many ids as
+    /// were available: it is shorter than `count` only when the namespace
+    /// drains mid-batch, in which case the caller can either fall back to
+    /// the plain `recv`/`read` path or retry once leased ids are returned.
+    ///
+    /// Each returned id participates in [`PEAK_USED`] and
+    /// [`maybe_warn_namespace_pressure`] exactly as if it had been issued
+    /// through [`allocate`](Self::allocate), so operator-facing metrics
+    /// remain consistent.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`BgidAllocError::Exhausted`] only when zero ids could be
+    /// obtained (free-list empty *and* counter at the namespace limit).
+    /// A short non-empty batch is returned as `Ok` so partial progress is
+    /// visible to the caller.
+    pub fn allocate_batch(count: usize) -> Result<Vec<u16>, BgidAllocError> {
+        if count == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut out = Vec::with_capacity(count);
+        let mut counter_exhausted = false;
+
+        // Drain freed ids first under a single lock acquisition, then top
+        // the batch up from the monotonic counter without holding the lock
+        // any longer than necessary.
+        {
+            let mut free_list = bgid_free_list().lock().expect("bgid free-list poisoned");
+            while out.len() < count {
+                match free_list.pop() {
+                    Some(id) => out.push(id),
+                    None => break,
+                }
+            }
+        }
+
+        while out.len() < count {
+            let id = NEXT_BGID.fetch_add(1, Ordering::Relaxed);
+            if id < BGID_NAMESPACE_SIZE {
+                out.push(id as u16);
+            } else {
+                NEXT_BGID.fetch_sub(1, Ordering::Relaxed);
+                counter_exhausted = true;
+                break;
+            }
+        }
+
+        if out.is_empty() {
+            BGID_EXHAUSTED_COUNT.fetch_add(1, Ordering::Relaxed);
+            let free_list_len = bgid_free_list()
+                .lock()
+                .expect("bgid free-list poisoned")
+                .len();
+            return Err(BgidAllocError::Exhausted {
+                fresh_used: BGID_NAMESPACE_SIZE,
+                free_list_len,
+            });
+        }
+
+        for _ in &out {
+            record_allocation();
+        }
+
+        // Surface a single namespace-pressure tick for callers observing
+        // `bgid_exhausted_count()` when the batch drained the counter
+        // mid-slice, even though we still returned some ids.
+        if counter_exhausted {
+            BGID_EXHAUSTED_COUNT.fetch_add(1, Ordering::Relaxed);
+        }
+
+        Ok(out)
+    }
+
+    /// Returns a slice of previously-allocated bgids to the free-list in a
+    /// single lock acquisition.
+    ///
+    /// Mirror image of [`allocate_batch`](Self::allocate_batch): used by
+    /// [`super::super::bgid_lease::BgidLease`]'s `Drop` to return every id
+    /// it owned without paying the [`bgid_free_list`] mutex per id. Each
+    /// duplicate id present in the input or already in the free-list is
+    /// dropped silently to preserve the no-duplicates invariant documented
+    /// on [`deallocate`](Self::deallocate).
+    pub fn deallocate_batch(bgids: &[u16]) {
+        if bgids.is_empty() {
+            return;
+        }
+        let mut free_list = bgid_free_list().lock().expect("bgid free-list poisoned");
+        for &bgid in bgids {
+            if !free_list.contains(&bgid) {
+                free_list.push(bgid);
+            }
+        }
+    }
+
     /// Returns a previously-allocated bgid to the free-list for reuse.
     ///
     /// Wired into [`super::BufferRing`]'s `Drop` implementation when the

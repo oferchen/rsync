@@ -85,6 +85,12 @@
 //!   `docs/audits/iouring-pbuf-ring.md` for the full call-site survey.
 
 mod batching;
+/// Per-thread BGID lease over the BGE-4 central pool (IUR-3.e).
+///
+/// Amortises [`BgidAllocator`] mutex acquisitions across per-thread
+/// io_uring consumers: each thread leases a slice of bgids on first use
+/// and returns them on thread teardown.
+pub mod bgid_lease;
 /// io_uring provided buffer ring (PBUF_RING) for zero-copy reads.
 pub mod buffer_ring;
 /// io_uring `IORING_OP_ASYNC_CANCEL` primitive for in-flight SQE cancellation.
@@ -128,6 +134,7 @@ mod tests;
 use std::fs::File;
 use std::io::{self, Write};
 
+pub use bgid_lease::{BgidLease, DEFAULT_LEASE_BATCH, with_thread_lease};
 pub use buffer_ring::{
     BgidAllocError, BgidAllocator, BufferRing, BufferRingConfig, BufferRingError,
     bgid_exhausted_count, bgid_inflight, bgid_peak_used, buffer_id_from_cqe_flags,
