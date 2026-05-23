@@ -32,6 +32,10 @@ mod file_writer;
 pub mod linkat;
 /// Stub linked-SQE chain API mirroring the Linux backend.
 pub mod linked_chain;
+/// Stub per-thread io_uring ring primitive mirroring the Linux backend
+/// (IUR-3.a). [`with_ring`] always returns
+/// [`std::io::ErrorKind::Unsupported`] on this platform.
+pub mod per_thread_ring;
 /// Stub registered-buffer API mirroring the Linux backend.
 pub mod registered_buffers;
 /// Stub `RENAMEAT2` API mirroring the Linux backend.
@@ -81,6 +85,7 @@ pub use linkat::{
     submit_linkat_blocking,
 };
 pub use linked_chain::{CqeResult, LinkedChain, read_then_write};
+pub use per_thread_ring::DEFAULT_RING_DEPTH as PER_THREAD_RING_DEPTH;
 pub use registered_buffers::{RegisteredBufferGroup, RegisteredBufferSlot};
 pub use renameat2::{
     RenameAt2Args, build_renameat2_sqe, build_renameat2_sqe_unchecked, renameat2_blocking,

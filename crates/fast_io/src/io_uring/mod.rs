@@ -100,6 +100,12 @@ mod file_writer;
 pub mod linkat;
 /// Linked SQE chains for the read -> checksum -> write pipeline.
 pub mod linked_chain;
+/// Per-thread io_uring ring primitive (IUR-3.a).
+///
+/// Lazy-init thread-local ring used by the migration of `file_writer`,
+/// `file_reader`, and `socket_writer` factories to the hybrid per-thread
+/// topology chosen by IUR-2. See `docs/design/iur-2-per-thread-rings.md`.
+pub mod per_thread_ring;
 /// Page-aligned buffer registration for io_uring `READ_FIXED`/`WRITE_FIXED`.
 pub mod registered_buffers;
 /// `IORING_OP_RENAMEAT` (RENAMEAT2) submission helpers and kernel probe.
@@ -148,6 +154,7 @@ pub use linkat::{
     linkat_supported, submit_linkat_blocking,
 };
 pub use linked_chain::{CqeResult, LinkedChain, read_then_write};
+pub use per_thread_ring::{DEFAULT_RING_DEPTH as PER_THREAD_RING_DEPTH, PerThreadRing};
 pub use registered_buffers::{
     RegisteredBufferGroup, RegisteredBufferSlot, RegisteredBufferStats, RegisteredBufferStatus,
 };
