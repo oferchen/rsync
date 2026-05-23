@@ -244,14 +244,21 @@ mod tests {
         }
         let workers = 4usize;
         let iterations = 1000usize;
-        let barrier = Arc::new(Barrier::new(workers));
+        let start_barrier = Arc::new(Barrier::new(workers));
+        // Exit barrier keeps all worker rings alive until the parent has
+        // collected every fd. Without it, threads can exit between
+        // joins, run their thread_local destructors (closing the ring
+        // fd), and let the kernel recycle that fd number for the next
+        // worker - causing a false "rings collided" assertion.
+        let exit_barrier = Arc::new(Barrier::new(workers + 1));
         let unique_op_id = Arc::new(AtomicUsize::new(1));
         let mut handles = Vec::with_capacity(workers);
         for worker in 0..workers {
-            let barrier = Arc::clone(&barrier);
+            let start_barrier = Arc::clone(&start_barrier);
+            let exit_barrier = Arc::clone(&exit_barrier);
             let unique_op_id = Arc::clone(&unique_op_id);
             handles.push(thread::spawn(move || -> io::Result<i32> {
-                barrier.wait();
+                start_barrier.wait();
                 // Burn 1000 with_ring calls to confirm there is no
                 // hidden lock or panic on the lazy-init / re-acquire
                 // path under load.
@@ -264,9 +271,18 @@ mod tests {
                 // op_id from another worker's earlier submission.
                 let op_id =
                     unique_op_id.fetch_add(1, Ordering::Relaxed) as u64 | ((worker as u64) << 32);
-                with_ring(|ring| submit_nop_and_reap(ring, op_id))
+                let fd = with_ring(|ring| submit_nop_and_reap(ring, op_id))?;
+                // Hold the ring open until the parent has snapshotted
+                // every worker's fd. Releasing earlier lets the kernel
+                // recycle this fd into another worker's freshly opened
+                // ring and the dedup invariant falsely collapses.
+                exit_barrier.wait();
+                Ok(fd)
             }));
         }
+        // Wait until every worker has reached the post-submit barrier;
+        // at that point all four rings exist concurrently.
+        exit_barrier.wait();
         let mut fds = Vec::with_capacity(workers);
         for handle in handles {
             let fd = handle
