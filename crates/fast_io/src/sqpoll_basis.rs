@@ -338,6 +338,10 @@ mod tests {
         assert!(!is_downgrade_errno(0));
     }
 
+    // The mlock-attempts counter invariant only holds on Linux. The
+    // non-Linux stub is a zero-cost no-op and never bumps the counter,
+    // so this test would spuriously fail there.
+    #[cfg(target_os = "linux")]
     #[test]
     fn zero_length_window_is_no_op() {
         let before = mlock_attempts();
