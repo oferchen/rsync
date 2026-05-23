@@ -12,6 +12,7 @@ use super::super::{SpillCodec, SpillableReorderBuffer};
 
 mod basic;
 mod compression;
+mod enospc_degradation;
 mod fault;
 mod granularity;
 mod hardening;
