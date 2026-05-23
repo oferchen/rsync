@@ -62,10 +62,7 @@ use logging::debug_log;
 /// - the chosen file does not contain a matching `Compression yes`,
 /// - the chosen file fails to parse (a `debug_log!` line is emitted and
 ///   the function reports `false` rather than aborting the transfer).
-pub(super) fn ssh_config_enables_compression(
-    options: &[OsString],
-    ctx: &MatchContext<'_>,
-) -> bool {
+pub(super) fn ssh_config_enables_compression(options: &[OsString], ctx: &MatchContext<'_>) -> bool {
     for candidate in candidate_paths(options) {
         if !candidate.is_file() {
             continue;
@@ -629,13 +626,19 @@ mod tests {
         // Top-level scope must fire regardless of target host, including
         // the degenerate empty-string case used by callers that never
         // populate `SshCommand::host`.
-        assert!(parse_enables_compression("Compression yes\n", &host_ctx("")));
+        assert!(parse_enables_compression(
+            "Compression yes\n",
+            &host_ctx("")
+        ));
     }
 
     #[test]
     fn host_star_compression_yes_detected() {
         let text = "Host *\n  Compression yes\n";
-        assert!(parse_enables_compression(text, &host_ctx("any.example.com")));
+        assert!(parse_enables_compression(
+            text,
+            &host_ctx("any.example.com")
+        ));
     }
 
     #[test]
@@ -643,7 +646,10 @@ mod tests {
         // Top-level directive must still win regardless of any subsequent
         // host-specific block that does not match the target.
         let text = "Compression yes\nHost db*\n  Compression no\n";
-        assert!(parse_enables_compression(text, &host_ctx("web1.example.com")));
+        assert!(parse_enables_compression(
+            text,
+            &host_ctx("web1.example.com")
+        ));
     }
 
     #[test]
@@ -652,7 +658,10 @@ mod tests {
         // pre-fix. The audit doc's first example asserts they now fire
         // when `target_host` matches the literal.
         let text = "Host web1.example.com\n  Compression yes\n";
-        assert!(parse_enables_compression(text, &host_ctx("web1.example.com")));
+        assert!(parse_enables_compression(
+            text,
+            &host_ctx("web1.example.com")
+        ));
     }
 
     #[test]
@@ -660,7 +669,10 @@ mod tests {
         // SSC-5.b G1: glob tokens like `Host web*` resolve via the
         // shared SSC-4.b `pattern_glob_matches` matcher.
         let text = "Host web*\n  Compression yes\n";
-        assert!(parse_enables_compression(text, &host_ctx("web1.example.com")));
+        assert!(parse_enables_compression(
+            text,
+            &host_ctx("web1.example.com")
+        ));
     }
 
     #[test]
@@ -668,7 +680,10 @@ mod tests {
         // Negative case for the glob path: `Host db*` must not fire
         // when the target is `web1.example.com`.
         let text = "Host db*\n  Compression yes\n";
-        assert!(!parse_enables_compression(text, &host_ctx("web1.example.com")));
+        assert!(!parse_enables_compression(
+            text,
+            &host_ctx("web1.example.com")
+        ));
     }
 
     #[test]
@@ -706,7 +721,10 @@ mod tests {
         // Pre-SSC-5.b behaviour preserved for non-matching targets:
         // `Host foo` with target `bar` contributes nothing.
         let text = "Host foo.example.com\n  Compression yes\n";
-        assert!(!parse_enables_compression(text, &host_ctx("bar.example.com")));
+        assert!(!parse_enables_compression(
+            text,
+            &host_ctx("bar.example.com")
+        ));
     }
 
     #[test]
