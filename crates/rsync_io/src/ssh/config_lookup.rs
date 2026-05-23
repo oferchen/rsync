@@ -154,6 +154,12 @@ enum Block {
 /// at evaluation time by [`pattern_glob_matches`]. Mirrors OpenSSH's
 /// `match_pattern_list` plus the embedded transport's
 /// `host_matches_any_pattern` semantics.
+//
+// SSC-4.c will consume `Pattern` (and the rest of the Match-evaluator
+// items below) from `parse_enables_compression`. Until that wiring
+// lands the items are reachable only from tests, so suppress dead-code
+// in non-test builds.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(super) struct Pattern {
     glob: String,
@@ -184,6 +190,7 @@ impl Pattern {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 /// One condition from an ssh_config `Match` line.
 ///
 /// The HONOR set selected in SSC-4.a: five variants covering `host`,
@@ -212,6 +219,7 @@ pub(super) enum MatchCondition {
     All,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 /// Connection context consulted when evaluating an ssh_config `Match`
 /// line.
 ///
@@ -279,6 +287,7 @@ impl<'a> MatchContext<'a> {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 /// Returns the local username from `USER` (Unix) or `USERNAME`
 /// (Windows). Returns `None` on platforms without either var or when
 /// the value is empty.
@@ -294,6 +303,7 @@ fn local_user_env() -> Option<String> {
     if value.is_empty() { None } else { Some(value) }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 /// Evaluates a parsed `Match` line against `ctx`.
 ///
 /// Returns `true` only when *every* condition's pattern list resolves
@@ -314,6 +324,7 @@ pub(super) fn evaluate_match(conditions: &[MatchCondition], ctx: &MatchContext<'
         .all(|cond| evaluate_condition(cond, ctx))
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 /// Evaluates a single [`MatchCondition`] against the context's
 /// corresponding field. Hostnames are compared case-insensitively;
 /// usernames are compared case-sensitively on Unix and
@@ -336,6 +347,7 @@ fn evaluate_condition(condition: &MatchCondition, ctx: &MatchContext<'_>) -> boo
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 /// Whether the input is a hostname or a username; controls case
 /// folding per SSC-4.a.
 #[derive(Copy, Clone)]
@@ -344,6 +356,7 @@ enum MatchKind {
     User,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 /// Returns `true` when `input` matches the pattern list under OpenSSH's
 /// OR-with-negation rule: any negated token that matches forces a
 /// failure; otherwise at least one positive token must match. An empty
@@ -364,6 +377,7 @@ fn pattern_list_matches(patterns: &[Pattern], input: &str, kind: MatchKind) -> b
     any_positive
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 /// Glob-matches `input` against `glob`, applying the case-folding rule
 /// dictated by `kind`. Mirrors the embedded transport's `pattern_matches`
 /// (`*` matches any run, `?` matches one character) with an added
@@ -378,6 +392,7 @@ fn pattern_glob_matches(glob: &str, input: &str, kind: MatchKind) -> bool {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 /// Returns `true` when comparisons for `kind` should be ASCII
 /// case-folded. Hostnames are always folded; usernames are folded only
 /// on Windows, where account names are inherently case-insensitive.
@@ -388,6 +403,7 @@ fn case_fold(kind: MatchKind) -> bool {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 /// Byte-level glob matcher: `*` matches any run, `?` matches one byte.
 /// No character classes; no extended globs. Equivalent to `fnmatch(3)`
 /// without `FNM_PATHNAME`.
