@@ -252,7 +252,9 @@ mod imp {
 mod tests {
     use super::*;
     use std::fs::{File, OpenOptions};
-    use std::io::{Read, Seek, SeekFrom, Write};
+    use std::io::Write;
+    #[cfg(target_os = "linux")]
+    use std::io::{Read, Seek, SeekFrom};
     use tempfile::tempdir;
 
     fn make_basis(dir: &std::path::Path, name: &str, payload: &[u8]) -> File {
@@ -274,6 +276,7 @@ mod tests {
             .unwrap()
     }
 
+    #[cfg(target_os = "linux")]
     fn read_all(dest: &mut File) -> Vec<u8> {
         dest.seek(SeekFrom::Start(0)).unwrap();
         let mut buf = Vec::new();
