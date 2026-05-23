@@ -230,6 +230,10 @@ mod io_uring_common;
 mod io_uring_depth;
 mod io_uring_ops;
 mod policy;
+/// SQM-3: pin mmap'd basis windows in memory before SQPOLL submissions
+/// so the kthread cannot fault on a page the userspace task has not
+/// touched. See `docs/design/sqm-2b-implementation-design.md`.
+pub mod sqpoll_basis;
 mod status;
 
 pub use cached_sort::{CachedSortKey, cached_sort_by};
@@ -414,6 +418,9 @@ pub use policy::{
     MMAP_TO_SQPOLL_THRESHOLD, MMAP_TO_SQPOLL_THRESHOLD_ENV, ZeroCopyPolicy,
     choose_basis_read_backend, choose_basis_read_backend_with_threshold,
     mmap_to_sqpoll_threshold_bytes,
+};
+pub use sqpoll_basis::{
+    MAX_WIRED_WINDOW_BYTES, MlockError, WiredBasisWindow, mlock_attempts, mlock_downgrades,
 };
 pub use status::{
     io_uring_availability_reason, io_uring_kernel_info, io_uring_status_detail, iocp_status_detail,
