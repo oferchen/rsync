@@ -229,10 +229,13 @@ impl SshCommand {
     /// When the `ssh-config-parse` feature is enabled (on by default)
     /// and the argv check is inconclusive, the lookup also consults the
     /// user's `~/.ssh/config` (or the file supplied via `-F`) and
-    /// `/etc/ssh/ssh_config`. Top-level directives and `Host` blocks
-    /// (including glob and negation patterns) whose pattern-list matches
-    /// the destination host are honoured. `Match` blocks are wired
-    /// separately by SSC-4.c; `Match exec` is deferred per SSC-4.a.
+    /// `/etc/ssh/ssh_config`. Top-level directives, `Host` blocks
+    /// (including glob and negation patterns), and `Match` blocks whose
+    /// `host` / `originalhost` / `user` / `localuser` / `all`
+    /// conditions evaluate true against the connection target are all
+    /// honoured. `Match exec` is treated as never-matching to avoid
+    /// spawning subprocesses from a passive config-lookup path, per
+    /// SSC-4.a security guidance.
     ///
     /// Truthy values for `Compression`: `yes`, `true`, `1`, case-insensitive.
     #[must_use]
@@ -247,13 +250,23 @@ impl SshCommand {
         }
         #[cfg(feature = "ssh-config-parse")]
         {
-            // SSC-5.b: pass the destination host so per-host `Host`
-            // blocks resolve via the shared SSC-4.b pattern matcher.
-            // `to_string_lossy` is sufficient because OpenSSH hostnames
-            // are ASCII; non-UTF-8 bytes round-trip as U+FFFD which can
-            // never match a real `Host` pattern.
-            let target = self.host.to_string_lossy();
-            super::config_lookup::ssh_config_enables_compression(&self.options, &target)
+            // SSC-5.b/SSC-4.c: build a `MatchContext` so per-host `Host`
+            // blocks and per-`Match`-condition blocks resolve via the
+            // shared SSC-4.b matcher. `to_string_lossy` is sufficient
+            // because OpenSSH hostnames and usernames are ASCII; any
+            // non-UTF-8 bytes round-trip as U+FFFD which can never
+            // match a real pattern.
+            let host = self.host.to_string_lossy();
+            let user = self.user.as_deref().map(OsStr::to_string_lossy);
+            let user_str = user.as_deref().unwrap_or("");
+            let mut local_user_buf = String::new();
+            let ctx = super::config_lookup::MatchContext::with_local_user_from_env(
+                &host,
+                &host,
+                user_str,
+                &mut local_user_buf,
+            );
+            super::config_lookup::ssh_config_enables_compression(&self.options, &ctx)
         }
         #[cfg(not(feature = "ssh-config-parse"))]
         {
