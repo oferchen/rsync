@@ -341,11 +341,11 @@ impl ReorderBuffer {
     ) -> Result<(), ReorderBufferError> {
         match self.by_key.get(&key) {
             Some(&existing_rank) if existing_rank != rank => {
-                return Err(ReorderBufferError::RankConflict {
+                Err(ReorderBufferError::RankConflict {
                     key,
                     existing: existing_rank,
                     incoming: rank,
-                });
+                })
             }
             Some(_) => {
                 let entry = self
