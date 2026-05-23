@@ -80,6 +80,7 @@ pub const DEFAULT_LEASE_BATCH: usize = 16;
 /// handed out via [`take`](Self::take) are *not* tracked by the lease:
 /// the caller is responsible for returning them, normally through the
 /// `Drop` of the [`super::buffer_ring::BufferRing`] that consumed them.
+#[derive(Debug)]
 pub struct BgidLease {
     /// Local pool of bgids ready to hand out. Acts as a LIFO so the most
     /// recently leased id is the next one returned; this keeps the
