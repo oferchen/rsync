@@ -47,10 +47,18 @@ fn get_memlock_limit() -> (libc::rlim_t, libc::rlim_t) {
     (rl.rlim_cur, rl.rlim_max)
 }
 
-/// Sets `RLIMIT_MEMLOCK` to the requested (soft, hard) pair.
-fn set_memlock_limit(soft: libc::rlim_t, hard: libc::rlim_t) {
+/// Sets `RLIMIT_MEMLOCK`'s soft limit, preserving the current hard limit.
+///
+/// An unprivileged process can lower the soft limit freely but cannot
+/// raise the hard limit once dropped (`EPERM`). Touching only the soft
+/// limit keeps the test runnable on CI runners without `CAP_SYS_RESOURCE`
+/// while still gating `mlock(2)` behaviour - the kernel enforces the
+/// soft limit when accepting `mlock` requests.
+fn set_memlock_soft(soft: libc::rlim_t) {
+    let (_, hard) = get_memlock_limit();
+    let capped = soft.min(hard);
     let rl = libc::rlimit {
-        rlim_cur: soft,
+        rlim_cur: capped,
         rlim_max: hard,
     };
     // SAFETY: `setrlimit` reads `rl` by const pointer and copies it; the
@@ -59,7 +67,7 @@ fn set_memlock_limit(soft: libc::rlim_t, hard: libc::rlim_t) {
     assert_eq!(
         rc,
         0,
-        "setrlimit(RLIMIT_MEMLOCK, {soft}, {hard}) failed: {}",
+        "setrlimit(RLIMIT_MEMLOCK, soft={capped}, hard={hard}) failed: {}",
         std::io::Error::last_os_error()
     );
 }
@@ -74,12 +82,12 @@ fn page_aligned_buffer(len: usize) -> Vec<u8> {
 #[test]
 fn rlimit_zero_forces_downgrade_via_eperm() {
     let _guard = rlimit_lock();
-    let (original_soft, original_hard) = get_memlock_limit();
+    let (original_soft, _) = get_memlock_limit();
 
-    // Drop both limits to zero. Any non-zero mlock call from a
+    // Drop the soft limit to zero. Any non-zero mlock call from a
     // non-privileged process will fail with EPERM (or EAGAIN on some
     // kernels). Either errno is in the downgrade-class set.
-    set_memlock_limit(0, 0);
+    set_memlock_soft(0);
 
     let before_downgrades = mlock_downgrades();
     let before_attempts = mlock_attempts();
@@ -87,9 +95,9 @@ fn rlimit_zero_forces_downgrade_via_eperm() {
     let buf = page_aligned_buffer(1024 * 1024);
     let result = WiredBasisWindow::new(buf.as_ptr(), buf.len());
 
-    // Restore the limit before any assertion so a failed assert does not
-    // leave the process in a degraded state.
-    set_memlock_limit(original_soft, original_hard);
+    // Restore the soft limit before any assertion so a failed assert
+    // does not leave the process in a degraded state.
+    set_memlock_soft(original_soft);
 
     // Root or CAP_IPC_LOCK can pin past a 0 rlimit. If the test runner is
     // privileged the call succeeds and we only verify that the success
@@ -128,18 +136,18 @@ fn rlimit_zero_forces_downgrade_via_eperm() {
 #[test]
 fn small_rlimit_allows_small_pin_blocks_large_pin() {
     let _guard = rlimit_lock();
-    let (original_soft, original_hard) = get_memlock_limit();
+    let (original_soft, _) = get_memlock_limit();
 
     // Set a 4 KiB budget. A page-sized pin should succeed; a 1 MiB pin
     // (256 pages) should hit EAGAIN unless the runner has CAP_IPC_LOCK.
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as libc::rlim_t;
-    set_memlock_limit(page_size, page_size);
+    set_memlock_soft(page_size);
 
     let large = page_aligned_buffer(1024 * 1024);
     let before_downgrades = mlock_downgrades();
     let result = WiredBasisWindow::new(large.as_ptr(), large.len());
 
-    set_memlock_limit(original_soft, original_hard);
+    set_memlock_soft(original_soft);
 
     match result {
         Ok(window) => {
@@ -163,21 +171,21 @@ fn small_rlimit_allows_small_pin_blocks_large_pin() {
 #[test]
 fn successful_pin_releases_on_drop() {
     let _guard = rlimit_lock();
-    let (original_soft, original_hard) = get_memlock_limit();
+    let (original_soft, _) = get_memlock_limit();
 
     // Try with a budget large enough that even an unprivileged process
     // can pin 4 KiB. The kernel default is 64 KiB so this should always
     // succeed on a stock Linux.
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as libc::rlim_t;
     let budget = page_size.max(64 * 1024);
-    set_memlock_limit(budget, budget.max(original_hard));
+    set_memlock_soft(budget);
 
     let before_attempts = mlock_attempts();
 
     let buf = page_aligned_buffer(page_size as usize);
     let result = WiredBasisWindow::new(buf.as_ptr(), buf.len());
 
-    set_memlock_limit(original_soft, original_hard);
+    set_memlock_soft(original_soft);
 
     match result {
         Ok(window) => {
