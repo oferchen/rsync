@@ -8,6 +8,13 @@ remote (host-key prompts, `Permission denied`, MOTD lines, verbose
 `-vvv` traces, anything chatty in `~/.ssh/rc`) is surfaced to the user
 without ever stalling the transfer.
 
+When the `embedded-ssh` Cargo feature is enabled, `ssh://` URI operands
+take a separate code path that uses the in-process russh client instead
+of spawning `ssh`. The trade-offs between the two paths, and the
+historical anchor for why russh is the preferred transport for new
+deployments, are documented in
+[`ssh-transport-decision-matrix.md`](ssh-transport-decision-matrix.md).
+
 The default stderr endpoint is an anonymous pipe created by
 `pipe2(2)`. That is portable and sufficient for typical workloads. For
 long-running sessions with very chatty remote children, an opt-in Cargo
