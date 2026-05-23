@@ -39,7 +39,9 @@
 //! rollback trigger.
 
 use std::io;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+#[cfg(target_os = "linux")]
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Maximum bytes pinned per `WiredBasisWindow::new` call.
 ///
@@ -69,7 +71,9 @@ static MLOCK_DOWNGRADES: AtomicU64 = AtomicU64::new(0);
 
 /// One-shot guard so the `EPERM` / `EAGAIN` / `ENOMEM` warning only fires
 /// once per process. Subsequent downgrades still bump the counter but stay
-/// silent in the log to avoid flooding.
+/// silent in the log to avoid flooding. Linux-only since the warning path
+/// lives inside the Linux-gated [`WiredBasisWindow::new`].
+#[cfg(target_os = "linux")]
 static DOWNGRADE_WARNED: AtomicBool = AtomicBool::new(false);
 
 /// Returns the cumulative count of successful basis-window pins.
