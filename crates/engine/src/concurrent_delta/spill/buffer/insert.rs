@@ -17,10 +17,11 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     ///
     /// Returns [`SpillError::Capacity`] if the sequence offset from
     /// `next_expected` exceeds the ring buffer capacity. Returns
-    /// [`SpillError::Io`] if a spill write fails (ENOSPC, missing temp
-    /// directory, partial write, encoder failure). On I/O failure the
-    /// affected item is preserved in memory; on capacity failure no
-    /// insert occurs.
+    /// [`SpillError::Io`] if a spill write fails (ENOSPC, partial write,
+    /// encoder failure) and [`SpillError::PriorSpillsLost`] when the
+    /// caller-supplied spill directory vanishes after prior records were
+    /// already on disk. On I/O failure the affected item is preserved in
+    /// memory; on capacity failure no insert occurs.
     pub fn insert(&mut self, sequence: u64, item: T) -> Result<(), SpillError> {
         let item_size = item.estimated_size();
         self.inner.insert(sequence, item)?;

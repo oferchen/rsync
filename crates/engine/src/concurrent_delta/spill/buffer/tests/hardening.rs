@@ -43,6 +43,9 @@ fn enospc_during_spill_propagates_as_io_error() {
         SpillError::UnsupportedCompression(tag) => {
             panic!("expected I/O error, got unsupported compression tag 0x{tag:02x}")
         }
+        SpillError::PriorSpillsLost { dir, count } => {
+            panic!("expected I/O error, got prior-spills-lost {dir:?} count={count}")
+        }
     }
     assert!(err.is_out_of_space(), "is_out_of_space should be true");
 }
@@ -114,8 +117,9 @@ fn temp_dir_vanish_recreates_when_no_prior_spills() {
 #[test]
 fn temp_dir_vanish_after_prior_spills_returns_error() {
     // Vanish after prior spills is unrecoverable: those items live
-    // only on the now-missing disk. We surface the I/O error rather
-    // than silently lose them.
+    // only on the now-missing disk. We surface the typed
+    // PriorSpillsLost variant so the receiver can emit an actionable
+    // diagnostic instead of a generic NotFound.
     let scratch = ::tempfile::tempdir().expect("create scratch root");
     let spill_dir = scratch.path().join("spill");
     let mut buf: SpillableReorderBuffer<u64> =
@@ -132,18 +136,78 @@ fn temp_dir_vanish_after_prior_spills_returns_error() {
     buf.spill_file = None;
     fs::remove_dir_all(&spill_dir).expect("remove spill dir");
 
-    // The next insert that triggers a spill should surface NotFound
-    // (or another io::Error) without panicking and without recreating
-    // the directory: prior items are unrecoverable.
+    // The next insert that triggers a spill should surface
+    // PriorSpillsLost without panicking and without recreating the
+    // directory: prior items are unrecoverable.
     let mut saw_error = false;
     for i in 2u64..6 {
         if let Err(e) = buf.insert(i, i * 100) {
-            assert!(matches!(e, SpillError::Io(_)), "expected I/O error");
+            match e {
+                SpillError::PriorSpillsLost { ref dir, count } => {
+                    assert_eq!(dir, &spill_dir, "variant must carry the vanished dir");
+                    assert!(count >= 1, "expected at least one lost chunk, got {count}");
+                }
+                other => panic!("expected PriorSpillsLost, got {other:?}"),
+            }
             saw_error = true;
             break;
         }
     }
     assert!(saw_error, "expected spill failure after dir vanish");
+    assert_eq!(
+        buf.spill_stats().dir_recreate_events,
+        0,
+        "must not silently recreate when prior items exist"
+    );
+}
+
+#[test]
+fn prior_spills_lost_surfaces_typed_variant_on_dir_wipe() {
+    // SPL-37: a wipe of the spill directory after items are already on
+    // disk must surface PriorSpillsLost with the configured dir and a
+    // non-zero count of unrecoverable chunks. Forces enough inserts to
+    // trip the byte threshold so spill_excess writes real records, then
+    // wipes the directory and drives the reload-or-spill path until the
+    // typed variant surfaces.
+    let scratch = ::tempfile::tempdir().expect("create scratch root");
+    let spill_dir = scratch.path().join("spill");
+    let mut buf: SpillableReorderBuffer<u64> =
+        SpillableReorderBuffer::with_spill_dir(32, 16, &spill_dir).expect("setup spill directory");
+
+    // Seed enough items to comfortably exceed the 16-byte threshold so
+    // spill_excess fires and persists at least one record on disk.
+    for i in 0u64..6 {
+        buf.insert(i, i * 17).expect("seed insert must succeed");
+    }
+    let seeded = buf.spill_stats().spilled_items;
+    assert!(
+        seeded >= 1,
+        "expected at least one item on disk before wipe, got {seeded}"
+    );
+
+    // Wipe the directory mid-transfer. Drop the cached file handle so the
+    // next write reopens against the missing parent.
+    buf.spill_file = None;
+    fs::remove_dir_all(&spill_dir).expect("remove spill dir");
+
+    let mut surfaced: Option<SpillError> = None;
+    for i in 6u64..32 {
+        match buf.insert(i, i * 23) {
+            Ok(()) => continue,
+            Err(e) => {
+                surfaced = Some(e);
+                break;
+            }
+        }
+    }
+    let err = surfaced.expect("expected spill to surface an error after wipe");
+    match err {
+        SpillError::PriorSpillsLost { dir, count } => {
+            assert_eq!(dir, spill_dir, "variant must carry the vanished directory");
+            assert!(count >= 1, "expected count >= 1, got {count}");
+        }
+        other => panic!("expected PriorSpillsLost, got {other:?}"),
+    }
     assert_eq!(
         buf.spill_stats().dir_recreate_events,
         0,

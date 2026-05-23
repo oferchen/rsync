@@ -187,5 +187,18 @@ mod tests {
         assert!(std::error::Error::source(&unsupported).is_none());
         assert!(unsupported.io_error().is_none());
         assert!(!unsupported.is_out_of_space());
+
+        let lost = SpillError::PriorSpillsLost {
+            dir: std::path::PathBuf::from("/tmp/spill-vanished"),
+            count: 3,
+        };
+        let rendered = format!("{lost}");
+        assert!(
+            rendered.contains("/tmp/spill-vanished") && rendered.contains("3 chunk"),
+            "display should mention dir and count: {rendered}"
+        );
+        assert!(std::error::Error::source(&lost).is_none());
+        assert!(lost.io_error().is_none());
+        assert!(!lost.is_out_of_space());
     }
 }
