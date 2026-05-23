@@ -1,0 +1,5 @@
++ pre/clear.txt
+!
+- post/clear.txt
+!
++ second/clear/keep

@@ -1,0 +1,3 @@
+- \\literal
++ path/\\with\\backslash
+- end\\

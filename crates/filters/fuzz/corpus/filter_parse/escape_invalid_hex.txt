@@ -1,0 +1,3 @@
+- \xzz/bad
++ \xgg/also
+- /escape/\x/path
