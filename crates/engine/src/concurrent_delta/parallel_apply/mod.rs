@@ -50,8 +50,10 @@ use thiserror::Error;
 use super::reorder::ReorderBuffer;
 use super::types::FileNdx;
 
+mod decrement_guard;
 mod slot_barrier;
 
+use decrement_guard::DecrementGuard;
 use slot_barrier::SlotBarrier;
 
 /// Typed error variants for [`ParallelDeltaApplier::finish_file`] shutdown
@@ -278,21 +280,6 @@ impl FileSlot {
     /// Returns true if every submitted chunk for this file has hit the writer.
     fn drained(&self) -> bool {
         self.reorder.is_empty()
-    }
-}
-
-/// RAII guard returned alongside a [`SlotHandle`] that decrements the
-/// per-slot in-flight counter when dropped. Keeping the decrement in a
-/// dedicated drop type makes the bookkeeping exception-safe: if the worker
-/// panics mid-write or returns early via `?`, the counter still drops
-/// back to its pre-handoff value and `flush_workers` unblocks.
-struct DecrementGuard {
-    barrier: Arc<SlotBarrier>,
-}
-
-impl Drop for DecrementGuard {
-    fn drop(&mut self) {
-        self.barrier.decrement_inflight();
     }
 }
 
