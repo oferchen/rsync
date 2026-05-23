@@ -254,10 +254,7 @@ mod linux {
     ///
     /// so the test stays portable across CI tiles with and without the
     /// capability.
-    pub(crate) fn with_full_tmpfs<R>(
-        size_mb: u64,
-        f: impl FnOnce(&Path) -> R,
-    ) -> Option<R> {
+    pub(crate) fn with_full_tmpfs<R>(size_mb: u64, f: impl FnOnce(&Path) -> R) -> Option<R> {
         if !has_cap_sys_admin() {
             return None;
         }
@@ -329,9 +326,7 @@ mod linux {
             // because tmpfs sizes are user-controlled by the caller and
             // capped at the mount's `size=` option. `posix_fallocate`
             // returns the errno directly rather than setting `errno`.
-            let rc = unsafe {
-                libc::posix_fallocate(filler.as_raw_fd(), 0, len as libc::off_t)
-            };
+            let rc = unsafe { libc::posix_fallocate(filler.as_raw_fd(), 0, len as libc::off_t) };
             if rc != 0 {
                 let err = std::io::Error::from_raw_os_error(rc);
                 let _ = fs::remove_file(&filler_path);
@@ -417,7 +412,10 @@ mod tests {
             one_shot: true,
         };
         let mut w = MockEnoSpcWriter::with_plan(Vec::<u8>::new(), plan);
-        let err = w.write(b"hello").err().expect("one-shot fires on first call");
+        let err = w
+            .write(b"hello")
+            .err()
+            .expect("one-shot fires on first call");
         assert_eq!(err.kind(), ENOSPC_KIND);
         // After the one-shot trips, subsequent writes succeed against the
         // underlying buffer. This mirrors the SPL-33 free-space-restored
