@@ -357,8 +357,7 @@ impl IoUringConfig {
     pub(crate) fn build_ring(&self) -> io::Result<RawIoUring> {
         let sqpoll_requested = self.sqpoll;
         let mlock_basis_enabled = cfg!(feature = "sqpoll-mlock-basis");
-        let sqpoll_safe =
-            sqpoll_requested && (!self.mmap_basis_active || mlock_basis_enabled);
+        let sqpoll_safe = sqpoll_requested && (!self.mmap_basis_active || mlock_basis_enabled);
         if sqpoll_requested && !sqpoll_safe {
             logging::debug_log!(
                 Io,

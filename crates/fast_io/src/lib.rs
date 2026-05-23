@@ -407,9 +407,6 @@ pub fn write_file_with_io_uring(_path: &std::path::Path, _data: &[u8]) -> std::i
 }
 
 pub use io_uring_common::IoBackend;
-pub use sqpoll_basis::{
-    MAX_WIRED_WINDOW_BYTES, MlockError, WiredBasisWindow, mlock_attempts, mlock_downgrades,
-};
 pub use io_uring_depth::{
     IO_URING_DEPTH_MAX, IO_URING_DEPTH_MIN, IoUringDepthError, validate_io_uring_depth,
 };
@@ -421,6 +418,9 @@ pub use policy::{
     MMAP_TO_SQPOLL_THRESHOLD, MMAP_TO_SQPOLL_THRESHOLD_ENV, ZeroCopyPolicy,
     choose_basis_read_backend, choose_basis_read_backend_with_threshold,
     mmap_to_sqpoll_threshold_bytes,
+};
+pub use sqpoll_basis::{
+    MAX_WIRED_WINDOW_BYTES, MlockError, WiredBasisWindow, mlock_attempts, mlock_downgrades,
 };
 pub use status::{
     io_uring_availability_reason, io_uring_kernel_info, io_uring_status_detail, iocp_status_detail,

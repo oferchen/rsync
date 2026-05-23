@@ -20,9 +20,7 @@
 
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
-use fast_io::{
-    MlockError, WiredBasisWindow, mlock_attempts, mlock_downgrades,
-};
+use fast_io::{MlockError, WiredBasisWindow, mlock_attempts, mlock_downgrades};
 
 /// Process-wide lock so that rlimit-mutating tests serialise across the
 /// nextest runner. `RLIMIT_MEMLOCK` is per-process, not per-thread, so two
