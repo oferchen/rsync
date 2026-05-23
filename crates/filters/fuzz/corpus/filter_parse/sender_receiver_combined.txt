@@ -1,0 +1,3 @@
+-s /sender/only
++r /receiver/only
+-sr /both/sides
