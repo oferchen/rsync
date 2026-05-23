@@ -37,7 +37,7 @@
 //! `DeltaConsumer` pattern already covers that case).
 
 use std::io::{self, Write};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, MutexGuard};
 
 use checksums::strong::strategy::{
     ChecksumAlgorithmKind, ChecksumDigest, ChecksumStrategy, ChecksumStrategySelector,
