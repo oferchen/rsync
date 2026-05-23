@@ -85,7 +85,10 @@ fn tier1_one_mib_spill_hits_enospc_at_500k_no_panic_no_data_loss() {
         }
     }));
 
-    assert!(result.is_ok(), "the spill path must never panic under ENOSPC");
+    assert!(
+        result.is_ok(),
+        "the spill path must never panic under ENOSPC"
+    );
     assert!(trip_seen, "ENOSPC must surface within the 1 MiB write");
     assert!(writer.has_tripped(), "chassis counter must mark the trip");
     assert_eq!(
@@ -135,8 +138,10 @@ fn tier1_spillable_buffer_surfaces_storage_full_during_spill() {
         fail_kind: Some(ErrorKind::StorageFull),
     };
 
-    buf.insert(0, healthy_a).expect("seed insert below threshold");
-    buf.insert(1, healthy_b).expect("seed insert near threshold");
+    buf.insert(0, healthy_a)
+        .expect("seed insert below threshold");
+    buf.insert(1, healthy_b)
+        .expect("seed insert near threshold");
 
     let pre_failure_count = buf.buffered_count();
 
@@ -170,7 +175,10 @@ fn tier2_first_spill_survives_second_spill_hits_enospc() {
         .write(&first)
         .expect("first spill must fully commit below threshold");
     assert_eq!(n, 200);
-    assert!(!writer.has_tripped(), "no trip on the surviving first spill");
+    assert!(
+        !writer.has_tripped(),
+        "no trip on the surviving first spill"
+    );
 
     let second = [0x22_u8; 200];
     let err = writer
@@ -211,7 +219,8 @@ fn tier2_subsequent_inserts_after_failure_keep_buffer_consistent() {
     };
 
     for seq in 0..4 {
-        buf.insert(seq, ok(seq)).expect("baseline insert must succeed");
+        buf.insert(seq, ok(seq))
+            .expect("baseline insert must succeed");
     }
 
     // The fifth insert is the poisoned one. The buffer must surface
@@ -261,7 +270,10 @@ fn tier3_mid_chunk_failure_keeps_buffer_length_consistent() {
         .expect("atomic-fail path must not panic")
         .expect_err("over-threshold single write must fail atomically");
     assert_eq!(err.kind(), ENOSPC_KIND);
-    assert!(writer.has_tripped(), "chassis counter records the mid-chunk trip");
+    assert!(
+        writer.has_tripped(),
+        "chassis counter records the mid-chunk trip"
+    );
     assert_eq!(
         writer.bytes_written(),
         0,
@@ -284,12 +296,18 @@ fn tier3_partial_progress_then_atomic_fail_on_threshold_cross() {
     let backing: Vec<u8> = Vec::new();
     let mut writer = MockEnoSpcWriter::new(backing, 64);
 
-    writer.write(&[0x77; 32]).expect("first write fits below threshold");
+    writer
+        .write(&[0x77; 32])
+        .expect("first write fits below threshold");
     let err = writer
         .write(&[0x88; 64])
         .expect_err("second write crosses the threshold");
     assert_eq!(err.kind(), ENOSPC_KIND);
-    assert_eq!(writer.bytes_written(), 32, "only the first write's bytes are durable");
+    assert_eq!(
+        writer.bytes_written(),
+        32,
+        "only the first write's bytes are durable"
+    );
 
     let backing = writer.into_inner();
     assert_eq!(backing.len(), 32);
@@ -308,7 +326,9 @@ fn tier4_persistent_plan_returns_err_immediately_post_trip() {
     let mut writer = MockEnoSpcWriter::new(Vec::<u8>::new(), 0);
 
     // First write trips the plan (threshold = 0 fires on any payload).
-    let first = writer.write(&[0; 1]).expect_err("threshold=0 trips on first byte");
+    let first = writer
+        .write(&[0; 1])
+        .expect_err("threshold=0 trips on first byte");
     assert_eq!(first.kind(), ENOSPC_KIND);
 
     // Hammer the writer 50 more times; every call must short-circuit to
@@ -317,7 +337,11 @@ fn tier4_persistent_plan_returns_err_immediately_post_trip() {
         let err = writer
             .write(&[0; 1])
             .expect_err("persistent plan must fail-fast on every attempt");
-        assert_eq!(err.kind(), ENOSPC_KIND, "attempt {attempt} must surface ENOSPC");
+        assert_eq!(
+            err.kind(),
+            ENOSPC_KIND,
+            "attempt {attempt} must surface ENOSPC"
+        );
     }
     assert_eq!(
         writer.bytes_written(),
@@ -337,7 +361,9 @@ fn tier4_one_shot_plan_recovers_but_persistent_plan_does_not() {
         one_shot: true,
     };
     let mut writer = MockEnoSpcWriter::with_plan(Vec::<u8>::new(), one_shot);
-    writer.write(&[0; 1]).expect_err("one-shot trips on first byte");
+    writer
+        .write(&[0; 1])
+        .expect_err("one-shot trips on first byte");
     let n = writer
         .write(&[0xCD; 4])
         .expect("one-shot plan permits recovery on the next write");
@@ -345,7 +371,9 @@ fn tier4_one_shot_plan_recovers_but_persistent_plan_does_not() {
 
     // The persistent plan must NOT recover. Use a fresh writer to prove it.
     let mut persistent = MockEnoSpcWriter::new(Vec::<u8>::new(), 0);
-    persistent.write(&[0; 1]).expect_err("persistent plan trips");
+    persistent
+        .write(&[0; 1])
+        .expect_err("persistent plan trips");
     persistent
         .write(&[0; 1])
         .expect_err("persistent plan must keep failing");
@@ -480,9 +508,15 @@ fn fault_event_count_advances_exactly_once_for_one_shot_plan() {
     };
     let mut writer = MockEnoSpcWriter::with_plan(Vec::<u8>::new(), plan);
     assert!(!writer.has_tripped(), "no trip before first failing write");
-    writer.write(&[0; 1]).expect_err("one-shot fires on first call");
+    writer
+        .write(&[0; 1])
+        .expect_err("one-shot fires on first call");
     assert!(writer.has_tripped(), "trip flag set after first failure");
-    writer.write(&[0xEE; 8]).expect("post-trip write succeeds under one-shot");
-    assert!(writer.has_tripped(), "trip flag is monotonic - never cleared");
+    writer
+        .write(&[0xEE; 8])
+        .expect("post-trip write succeeds under one-shot");
+    assert!(
+        writer.has_tripped(),
+        "trip flag is monotonic - never cleared"
+    );
 }
-
