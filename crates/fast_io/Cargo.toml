@@ -51,7 +51,19 @@ io-uring = { version = "0.7", optional = true }
 landlock = { version = "0.4", optional = true }
 
 [features]
-default = ["io_uring", "iocp"]
+default = ["io_uring", "iocp", "sqpoll-mlock-basis"]
+
+# SQM-3: pin (`mlock(2)`) the mmap'd basis-file window before each SQPOLL
+# submission so the kthread cannot fault on a page the userspace task has
+# not yet touched. With the feature on, `IoUringConfig::build_ring` keeps
+# SQPOLL even when an mmap basis reader is active because
+# `WiredBasisWindow` closes the race surface structurally; with the feature
+# off, the long-standing defensive disable refuses SQPOLL+mmap pairings and
+# the build falls back to a regular ring. Operators flip the feature off
+# when downgrade-class `mlock` errors exceed the 5% SQM-2.b threshold (see
+# `docs/design/sqm-2b-implementation-design.md`). Linux-only at runtime;
+# non-Linux builds compile a zero-cost stub.
+sqpoll-mlock-basis = []
 
 # ============================================================================
 # I/O Optimization Features
