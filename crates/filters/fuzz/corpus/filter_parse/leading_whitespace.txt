@@ -1,0 +1,3 @@
+    + indented.txt
+	- tab/indented
+   + /spaces/indented

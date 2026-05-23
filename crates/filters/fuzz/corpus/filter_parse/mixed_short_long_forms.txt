@@ -1,0 +1,6 @@
++ *.rs
+exclude *.tmp
+- /build/
+include /important/
+P /protected/
+risk /risky/
