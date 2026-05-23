@@ -278,6 +278,12 @@ NEON) are used where available, with automatic scalar fallbacks.
 **-A**, **--acls**
 :   Preserve POSIX ACLs on Linux, macOS, and FreeBSD via `exacl`.
 
+    For receiver-side UID/GID handling when an ACL entry names a principal
+    that does not resolve locally, see `docs/user-guide/acl-id-mapping.md`.
+    Since PR #4742 (commit `07f81641f`), unmappable named entries are
+    preserved with their raw wire id rather than silently dropped, matching
+    upstream rsync 3.4.2 `acls.c::recv_ida_entries`.
+
     On Windows, **--acls** preserves the NTFS discretionary ACL (DACL) via
     `GetNamedSecurityInfoW`/`SetNamedSecurityInfoW`. The Windows path is a
     Tier 1C partial implementation: it interoperates with upstream rsync
