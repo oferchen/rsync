@@ -635,6 +635,7 @@ fn test_single_remote_source_returns_single_variant() {
 }
 
 #[test]
+#[cfg(not(feature = "sender-inc-recurse"))]
 fn test_remote_invocation_with_multiple_paths() {
     use core::client::{ClientConfig, remote::RemoteInvocationBuilder, remote::RemoteRole};
 
@@ -650,7 +651,8 @@ fn test_remote_invocation_with_multiple_paths() {
     assert!(args[flags_idx].to_string_lossy().starts_with('-'));
     // Capability info string for protocol features (checksum negotiation, etc.)
     // Sender-side INC_RECURSE is opt-in (default false); 'i' is omitted from
-    // the capability string. Tracker #1862.
+    // the capability string. Tracker #1862. Skipped under
+    // sender-inc-recurse where the default flips ON and the 'i' bit is set.
     assert_eq!(args[flags_idx + 1].to_string_lossy(), "-e.LsfxCIvu");
     let dot_idx = flags_idx + 2;
     assert_eq!(args[dot_idx].to_string_lossy(), ".");

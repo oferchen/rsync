@@ -98,6 +98,15 @@ async = ["dep:tokio", "engine/async", "transfer/async"]
 # `docs/design/pip-9-parallel-receive-delta-wire-up-2026-05-22.md`.
 parallel-receive-delta = ["transfer/parallel-receive-delta", "engine/parallel-receive-delta"]
 
+# Sender-side INC_RECURSE interop bake-up (ISI.b). Default OFF; when enabled,
+# flips the `inc_recursive_send` builder fallback from `false` to `true` so
+# the client advertises the `'i'` capability bit on push transfers. CLI
+# `--inc-recursive` / `--no-inc-recursive` overrides still win. ISI.c-g
+# add tests and validate interop against rsync 3.0.9 / 3.1.3 / 3.4.1 /
+# 3.4.2; ISI.h flips the default and retires this flag. See
+# `docs/design/isi-a-sender-inc-recurse-call-graph.md`.
+sender-inc-recurse = []
+
 # Async SSH transport: wires `rsync_io::ssh::AsyncSshTransport` into the client
 # remote transfer path. Opt-in at runtime via the `OC_RSYNC_ASYNC_SSH=1` env
 # var until the CLI flag lands (#1806).
