@@ -1,12 +1,30 @@
 //! io_uring-based socket writer using `IORING_OP_SEND`.
+//!
+//! Submissions go through the per-thread io_uring ring established by IUR-3.a
+//! ([`super::per_thread_ring::with_ring`]). The writer no longer owns a
+//! `RawIoUring` instance; one ring per OS thread is shared across every
+//! [`IoUringSocketWriter`] that thread holds, dissolving the cross-thread
+//! contention the shared-ring layout imposed on rayon-parallel senders (IUR-2
+//! design doc section 1.1, row "`socket_writer` factory" in section 1.2).
+//!
+//! The SEND_ZC opcode dispatch is preserved: when the `iouring-send-zc` cargo
+//! feature is enabled and the running kernel advertises `IORING_OP_SEND_ZC`,
+//! payloads at or above [`SEND_ZC_MIN_BYTES`] are submitted through the
+//! zero-copy primitive on the per-thread ring; sub-threshold payloads stay on
+//! regular `IORING_OP_SEND`.
+//!
+//! Per-ring kernel state - fixed-file registration in particular - is tied to
+//! a specific ring fd and does not survive the move to a thread-shared ring.
+//! It is recorded as unavailable on every writer constructed through this
+//! module; IUR-3.e re-introduces ring-bound state on the per-thread topology
+//! via the bgid-lease primitive.
 
 use std::io::{self, Write};
 use std::os::unix::io::RawFd;
 
-use io_uring::IoUring as RawIoUring;
-
-use super::batching::{sqe_fd, submit_send_batch, try_register_fd};
+use super::batching::{NO_FIXED_FD, sqe_fd, submit_send_batch};
 use super::config::IoUringConfig;
+use super::per_thread_ring::with_ring;
 use super::send_zc;
 
 /// Payload-length floor below which `IORING_OP_SEND_ZC` is skipped in favour
@@ -31,20 +49,23 @@ const SEND_ZC_MIN_BYTES: usize = send_zc::SEND_ZC_DISPATCH_MIN_BYTES;
 /// `IORING_OP_SEND_ZC`).
 ///
 /// Replaces direct `write()` calls on `TcpStream` by batching sends through
-/// the io_uring ring. Maintains an internal write buffer, flushing via
-/// batched send SQEs.
+/// the calling thread's per-thread io_uring ring (see
+/// [`super::per_thread_ring`]). Maintains an internal write buffer, flushing
+/// via batched send SQEs.
 ///
-/// When [`IoUringConfig::allow_send_zc`] is set and the running kernel
-/// advertises `IORING_OP_SEND_ZC` (Linux 6.0+), the big-write fast path
-/// switches to the zero-copy primitive. Sub-page writes stay on regular
+/// When the [`iouring-send-zc`](send_zc) feature is enabled and the running
+/// kernel advertises `IORING_OP_SEND_ZC` (Linux 6.0+), the big-write fast
+/// path switches to the zero-copy primitive. Sub-page writes stay on regular
 /// `IORING_OP_SEND` because SEND_ZC's page-pin overhead loses to SEND for
 /// small payloads. The kernel probe in [`send_zc::is_supported`] is cached
 /// process-wide; an unsupported result silently degrades to SEND so the
 /// writer never blocks startup on the probe outcome.
+///
+/// Per-ring fixed-file registration is disabled on this writer until IUR-3.e
+/// wires the per-thread registration lease; SQEs always reference the raw
+/// socket fd.
 pub struct IoUringSocketWriter {
-    ring: RawIoUring,
     fd: RawFd,
-    fixed_fd_slot: i32,
     buffer: Vec<u8>,
     buffer_pos: usize,
     buffer_size: usize,
@@ -60,15 +81,21 @@ impl IoUringSocketWriter {
     ///
     /// The caller must ensure `fd` remains valid for the lifetime of this writer.
     /// The writer does NOT take ownership of the fd - it will not close it on drop.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the per-thread io_uring ring cannot be
+    /// constructed on the calling thread (kernel pre-5.6, seccomp-blocked, or
+    /// `io_uring_setup(2)` rejection).
     pub fn from_raw_fd(fd: RawFd, config: &IoUringConfig) -> io::Result<Self> {
-        let ring = config.build_ring()?;
-        let fixed_fd_slot = try_register_fd(&ring, fd, config.register_files);
+        // Probe the per-thread ring once at construction so callers observe
+        // io_uring unavailability synchronously, matching the old behaviour
+        // where `config.build_ring()?` surfaced setup errors here.
+        with_ring(|_| Ok(()))?;
         let send_zc_active = config.allow_send_zc() && send_zc::is_supported();
 
         Ok(Self {
-            ring,
             fd,
-            fixed_fd_slot,
             buffer: vec![0u8; config.buffer_size],
             buffer_pos: 0,
             buffer_size: config.buffer_size,
@@ -90,27 +117,32 @@ impl IoUringSocketWriter {
     /// when SEND_ZC is disabled. Returns the byte count actually sent.
     fn submit_send(&mut self, data: &[u8]) -> io::Result<usize> {
         if self.send_zc_active && data.len() >= SEND_ZC_MIN_BYTES {
-            match send_zc::try_send_zc(&mut self.ring, self.fd, data, 0) {
+            let fd = self.fd;
+            // Wrap the inner result so the `Unsupported` branch can disable
+            // SEND_ZC on this writer without propagating as an io_uring
+            // ring-construction failure from `with_ring`.
+            let outcome: Result<usize, ()> =
+                with_ring(|ring| match send_zc::try_send_zc(ring, fd, data, 0) {
+                    Ok(n) => Ok(Ok(n)),
+                    Err(e) if e.kind() == io::ErrorKind::Unsupported => Ok(Err(())),
+                    Err(e) => Err(e),
+                })?;
+            match outcome {
                 Ok(n) => return Ok(n),
-                Err(e) if e.kind() == io::ErrorKind::Unsupported => {
+                Err(()) => {
                     // Stop trying SEND_ZC for the lifetime of this writer:
                     // the kernel cache already memoised the negative probe,
                     // but turning off the per-writer flag avoids a futile
                     // syscall on every subsequent flush.
                     self.send_zc_active = false;
                 }
-                Err(e) => return Err(e),
             }
         }
-        let fd = sqe_fd(self.fd, self.fixed_fd_slot);
-        submit_send_batch(
-            &mut self.ring,
-            fd,
-            data,
-            self.buffer_size,
-            self.sq_entries as usize,
-            self.fixed_fd_slot,
-        )
+        let raw_fd = self.fd;
+        let fd = sqe_fd(raw_fd, NO_FIXED_FD);
+        let buffer_size = self.buffer_size;
+        let sq_entries = self.sq_entries as usize;
+        with_ring(|ring| submit_send_batch(ring, fd, data, buffer_size, sq_entries, NO_FIXED_FD))
     }
 
     /// Flushes the internal buffer via SEND_ZC or batched SEND submissions.
