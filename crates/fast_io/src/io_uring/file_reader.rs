@@ -1,22 +1,30 @@
 //! io_uring-based file reader with batched read support.
 //!
-//! When registered buffers are available, reads use `IORING_OP_READ_FIXED`
-//! which avoids per-SQE `get_user_pages()` overhead. Falls back to regular
-//! `IORING_OP_READ` when registration is unavailable or all slots are busy.
+//! Submissions go through the per-thread io_uring ring established by IUR-3.a
+//! ([`super::per_thread_ring::with_ring`]). The reader no longer owns a
+//! `RawIoUring` instance; one ring per OS thread is shared across every
+//! [`IoUringReader`] that thread holds, dissolving the cross-thread
+//! contention the shared-ring layout imposed on rayon-parallel readers (IUR-2
+//! design doc section 1.1).
+//!
+//! Per-ring kernel state - fixed-file registration and registered buffers -
+//! is tied to a specific ring fd and does not survive the move to a
+//! thread-shared ring. Both are recorded as unavailable on every reader
+//! constructed through this module; IUR-3.e re-introduces them on the
+//! per-thread topology via the bgid-lease primitive. Until then the batched
+//! read path uses plain `IORING_OP_READ` SQEs.
 
 use std::fs::File;
 use std::io::{self, Read};
 use std::os::unix::io::AsRawFd;
 use std::path::Path;
 
-use io_uring::{IoUring as RawIoUring, opcode};
+use io_uring::opcode;
 
 use super::batching::{NO_FIXED_FD, maybe_fixed_file, sqe_fd};
 use super::config::IoUringConfig;
-use super::registered_buffers::{
-    RegisteredBufferGroup, RegisteredBufferSlotInfo, RegisteredBufferStatus,
-    submit_read_fixed_batch,
-};
+use super::per_thread_ring::with_ring;
+use super::registered_buffers::RegisteredBufferStatus;
 use crate::traits::FileReader;
 
 /// A file reader using io_uring for async I/O.
@@ -25,91 +33,77 @@ use crate::traits::FileReader;
 /// interfaces. The batched path submits up to `sq_entries` concurrent reads per
 /// `submit_and_wait` call, dramatically reducing syscall count for large files.
 ///
-/// When [`RegisteredBufferGroup`] is available, the reader uses
-/// `IORING_OP_READ_FIXED` for batched reads, eliminating kernel-side page
-/// pinning overhead on each operation.
+/// Submissions are issued against the calling thread's per-thread ring (see
+/// [`super::per_thread_ring`]). Fixed-file registration and registered-buffer
+/// fast paths are disabled on this reader until IUR-3.e wires the per-thread
+/// bgid lease; batched reads always use the regular `IORING_OP_READ` opcode.
 pub struct IoUringReader {
-    ring: RawIoUring,
     file: File,
     size: u64,
     position: u64,
     buffer_size: usize,
     sq_entries: u32,
-    /// Fixed-file slot index, or `NO_FIXED_FD` when not registered.
-    fixed_fd_slot: i32,
-    /// Optional registered buffer group for `READ_FIXED` operations.
-    registered_buffers: Option<RegisteredBufferGroup>,
-    /// Provenance of `registered_buffers`: distinguishes "disabled by config"
-    /// from "kernel rejected registration" so operators can diagnose why a
-    /// transfer is using the unfixed `IORING_OP_READ` fallback.
-    registered_buffer_status: RegisteredBufferStatus,
 }
 
 impl IoUringReader {
     /// Opens a file for reading with io_uring.
     ///
-    /// When `config.register_files` is true, the fd is registered with the
-    /// ring via `IORING_REGISTER_FILES`, eliminating per-op file-table
-    /// lookups in the kernel. When `config.register_buffers` is true,
-    /// page-aligned buffers are registered for `READ_FIXED` operations.
+    /// Submissions route through the calling thread's per-thread ring (see
+    /// [`super::per_thread_ring`]); the reader no longer owns a `RawIoUring`
+    /// instance. The fixed-file and registered-buffer knobs on `config` are
+    /// honoured for sizing only - per-writer/reader registration is disabled
+    /// on the per-thread topology and IUR-3.e re-introduces it via the
+    /// bgid-lease primitive.
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - The file cannot be opened
-    /// - io_uring initialization fails
+    /// - io_uring initialization fails on the calling thread
     pub fn open<P: AsRef<Path>>(path: P, config: &IoUringConfig) -> io::Result<Self> {
         let file = File::open(path)?;
         let size = file.metadata()?.len();
-
-        let ring = config.build_ring()?;
-
-        let raw_fd = file.as_raw_fd();
-        let fixed_fd_slot = if config.register_files {
-            let fds = [raw_fd];
-            match ring.submitter().register_files(&fds) {
-                Ok(()) => 0,
-                Err(_) => NO_FIXED_FD,
-            }
-        } else {
-            NO_FIXED_FD
-        };
-
-        let (registered_buffers, registered_buffer_status) =
-            RegisteredBufferGroup::try_new_with_status(
-                &ring,
-                config.buffer_size,
-                config.registered_buffer_count,
-                config.register_buffers,
-            );
-
+        // Probe the per-thread ring once at construction so callers observe
+        // io_uring unavailability synchronously, matching the old behaviour
+        // where `config.build_ring()?` surfaced setup errors here.
+        with_ring(|_| Ok(()))?;
         Ok(Self {
-            ring,
             file,
             size,
             position: 0,
             buffer_size: config.buffer_size,
             sq_entries: config.sq_entries,
-            fixed_fd_slot,
-            registered_buffers,
-            registered_buffer_status,
         })
+    }
+
+    /// Returns the count of currently-registered fixed buffers, or `None` if
+    /// buffer registration is not active on this reader.
+    ///
+    /// Always returns `None` on the per-thread topology: the per-thread ring
+    /// is shared across every reader on the same thread, so per-reader
+    /// buffer registration cannot be expressed safely. IUR-3.e re-introduces
+    /// shared per-thread buffer registration via the bgid lease; call
+    /// [`registered_buffer_status`](Self::registered_buffer_status) to tell
+    /// the post-migration state apart from a kernel-side rejection.
+    #[must_use]
+    pub fn registered_buffer_count(&self) -> Option<usize> {
+        None
     }
 
     /// Returns the provenance of fixed-buffer registration on this reader.
     ///
-    /// Distinguishes the "caller disabled registration" case from the
-    /// "kernel rejected registration" case when fixed-buffer I/O is
-    /// inactive. See [`RegisteredBufferStatus`].
+    /// Always returns [`RegisteredBufferStatus::Disabled`] on the per-thread
+    /// topology; see [`Self::registered_buffer_count`].
     #[must_use]
     pub fn registered_buffer_status(&self) -> &RegisteredBufferStatus {
-        &self.registered_buffer_status
+        &RegisteredBufferStatus::Disabled
     }
 
     /// Reads data at the specified offset without advancing the position.
     ///
-    /// Submits a single SQE and waits for completion. For bulk reads, prefer
-    /// `read_all_batched` which amortizes syscall overhead across many SQEs.
+    /// Submits a single SQE on the per-thread ring and waits for completion.
+    /// For bulk reads, prefer `read_all_batched` which amortizes syscall
+    /// overhead across many SQEs.
     pub fn read_at(&mut self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
         if offset >= self.size {
             return Ok(0);
@@ -120,49 +114,49 @@ impl IoUringReader {
             return Ok(0);
         }
 
-        let fd = sqe_fd(self.file.as_raw_fd(), self.fixed_fd_slot);
+        let raw_fd = self.file.as_raw_fd();
+        let fd = sqe_fd(raw_fd, NO_FIXED_FD);
 
-        let entry = opcode::Read::new(fd, buf.as_mut_ptr(), to_read as u32)
-            .offset(offset)
-            .build()
-            .user_data(0);
-        let entry = maybe_fixed_file(entry, self.fixed_fd_slot);
+        with_ring(|ring| {
+            let entry = opcode::Read::new(fd, buf.as_mut_ptr(), to_read as u32)
+                .offset(offset)
+                .build()
+                .user_data(0);
+            let entry = maybe_fixed_file(entry, NO_FIXED_FD);
 
-        // SAFETY: `entry` references `buf` and the file fd; both outlive
-        // `submit_and_wait` below, so the kernel can safely fill the buffer
-        // before we observe completion.
-        unsafe {
-            self.ring
-                .submission()
-                .push(&entry)
-                .map_err(|_| io::Error::other("submission queue full"))?;
-        }
+            // SAFETY: `entry` references `buf` and the file fd; both outlive
+            // `submit_and_wait` below, so the kernel can safely fill the buffer
+            // before we observe completion.
+            unsafe {
+                ring.submission()
+                    .push(&entry)
+                    .map_err(|_| io::Error::other("submission queue full"))?;
+            }
 
-        self.ring.submit_and_wait(1)?;
+            ring.submit_and_wait(1)?;
 
-        let cqe = self
-            .ring
-            .completion()
-            .next()
-            .ok_or_else(|| io::Error::other("no completion"))?;
+            let cqe = ring
+                .completion()
+                .next()
+                .ok_or_else(|| io::Error::other("no completion"))?;
 
-        let result = cqe.result();
-        if result < 0 {
-            return Err(io::Error::from_raw_os_error(-result));
-        }
+            let result = cqe.result();
+            if result < 0 {
+                return Err(io::Error::from_raw_os_error(-result));
+            }
 
-        Ok(result as usize)
+            Ok(result as usize)
+        })
     }
 
     /// Reads the entire file into a vector using batched io_uring submissions.
     ///
-    /// When registered buffers are available, uses `READ_FIXED` to eliminate
-    /// per-SQE page pinning overhead. Falls back to regular `Read` SQEs
-    /// when registration is unavailable.
-    ///
-    /// Divides the file into `buffer_size` chunks and submits up to `sq_entries`
-    /// reads per `submit_and_wait` call. For a 1 MB file with 64 KB buffers and
-    /// 64 SQ entries, this completes in a single syscall instead of 16.
+    /// Divides the file into `buffer_size` chunks and submits up to
+    /// `sq_entries` reads per `submit_and_wait` call against the per-thread
+    /// ring. For a 1 MB file with 64 KB buffers and 64 SQ entries this
+    /// completes in a single syscall instead of 16. Always uses plain
+    /// `IORING_OP_READ`; the `READ_FIXED` fast path returns with IUR-3.e via
+    /// the per-thread bgid lease.
     pub fn read_all_batched(&mut self) -> io::Result<Vec<u8>> {
         let size = self.size as usize;
         if size == 0 {
@@ -171,38 +165,12 @@ impl IoUringReader {
 
         let mut output = vec![0u8; size];
 
-        if let Some(ref reg) = self.registered_buffers {
-            let slot_count = reg.available().min(self.sq_entries as usize);
-            if slot_count > 0 {
-                let mut slots: Vec<_> = (0..slot_count).filter_map(|_| reg.checkout()).collect();
-                if !slots.is_empty() {
-                    let fd = sqe_fd(self.file.as_raw_fd(), self.fixed_fd_slot);
-                    let slot_infos: Vec<RegisteredBufferSlotInfo> = slots
-                        .iter_mut()
-                        .map(|s| RegisteredBufferSlotInfo {
-                            ptr: s.as_mut_ptr(),
-                            buf_index: s.buf_index(),
-                            buffer_size: s.buffer_size(),
-                        })
-                        .collect();
-
-                    let _ = submit_read_fixed_batch(
-                        &mut self.ring,
-                        fd,
-                        &mut output,
-                        0,
-                        &slot_infos,
-                        self.fixed_fd_slot,
-                    )?;
-                    return Ok(output);
-                }
-            }
-        }
-
         let chunk_size = self.buffer_size;
         let max_batch = self.sq_entries as usize;
         let total_chunks = size.div_ceil(chunk_size);
-        let fd = sqe_fd(self.file.as_raw_fd(), self.fixed_fd_slot);
+        let raw_fd = self.file.as_raw_fd();
+        let fd = sqe_fd(raw_fd, NO_FIXED_FD);
+        let file_size = self.size;
 
         let mut chunks_done = 0usize;
 
@@ -224,65 +192,67 @@ impl IoUringReader {
 
             let mut all_done = false;
             while !all_done {
-                let mut submitted = 0u32;
+                with_ring(|ring| -> io::Result<()> {
+                    let mut submitted = 0u32;
 
-                for (idx, &(out_start, len, done)) in slots.iter().enumerate() {
-                    let want = len - done;
-                    if want == 0 {
-                        continue;
-                    }
-                    let file_off = base_offset + (idx * chunk_size) as u64 + done as u64;
-                    if file_off >= self.size {
-                        continue;
-                    }
-                    let clamped = want.min((self.size - file_off) as usize);
-                    if clamped == 0 {
-                        continue;
-                    }
+                    for (idx, &(out_start, len, done)) in slots.iter().enumerate() {
+                        let want = len - done;
+                        if want == 0 {
+                            continue;
+                        }
+                        let file_off = base_offset + (idx * chunk_size) as u64 + done as u64;
+                        if file_off >= file_size {
+                            continue;
+                        }
+                        let clamped = want.min((file_size - file_off) as usize);
+                        if clamped == 0 {
+                            continue;
+                        }
 
-                    let ptr = output[out_start + done..].as_mut_ptr();
-                    let entry = opcode::Read::new(fd, ptr, clamped as u32)
-                        .offset(file_off)
-                        .build()
-                        .user_data(idx as u64);
-                    let entry = maybe_fixed_file(entry, self.fixed_fd_slot);
+                        let ptr = output[out_start + done..].as_mut_ptr();
+                        let entry = opcode::Read::new(fd, ptr, clamped as u32)
+                            .offset(file_off)
+                            .build()
+                            .user_data(idx as u64);
+                        let entry = maybe_fixed_file(entry, NO_FIXED_FD);
 
-                    // SAFETY: `entry` references `output` (held across the
-                    // whole batched read) and the file fd; the pointer
-                    // remains valid until `submit_and_wait` returns.
-                    unsafe {
-                        self.ring
-                            .submission()
-                            .push(&entry)
-                            .map_err(|_| io::Error::other("submission queue full"))?;
-                    }
-                    submitted += 1;
-                }
-
-                if submitted == 0 {
-                    break;
-                }
-
-                self.ring.submit_and_wait(submitted as usize)?;
-
-                let mut completed = 0u32;
-                while completed < submitted {
-                    let cqe = self
-                        .ring
-                        .completion()
-                        .next()
-                        .ok_or_else(|| io::Error::other("missing CQE"))?;
-
-                    let idx = cqe.user_data() as usize;
-                    let result = cqe.result();
-
-                    if result < 0 {
-                        return Err(io::Error::from_raw_os_error(-result));
+                        // SAFETY: `entry` references `output` (held across the
+                        // whole batched read) and the file fd; the pointer
+                        // remains valid until `submit_and_wait` returns.
+                        unsafe {
+                            ring.submission()
+                                .push(&entry)
+                                .map_err(|_| io::Error::other("submission queue full"))?;
+                        }
+                        submitted += 1;
                     }
 
-                    slots[idx].2 += result as usize;
-                    completed += 1;
-                }
+                    if submitted == 0 {
+                        return Ok(());
+                    }
+
+                    ring.submit_and_wait(submitted as usize)?;
+
+                    let mut completed = 0u32;
+                    while completed < submitted {
+                        let cqe = ring
+                            .completion()
+                            .next()
+                            .ok_or_else(|| io::Error::other("missing CQE"))?;
+
+                        let idx = cqe.user_data() as usize;
+                        let result = cqe.result();
+
+                        if result < 0 {
+                            return Err(io::Error::from_raw_os_error(-result));
+                        }
+
+                        slots[idx].2 += result as usize;
+                        completed += 1;
+                    }
+
+                    Ok(())
+                })?;
 
                 all_done = slots.iter().all(|&(_, len, done)| done >= len);
             }
@@ -325,5 +295,66 @@ impl FileReader for IoUringReader {
     fn read_all(&mut self) -> io::Result<Vec<u8>> {
         self.seek_to(0)?;
         self.read_all_batched()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    /// Builds a reader for testing via the per-thread ring. Returns `None`
+    /// when the kernel rejects `io_uring_setup(2)` (e.g., container,
+    /// seccomp, or non-5.6+ kernel) so the test skips cleanly.
+    fn make_reader() -> Option<IoUringReader> {
+        let dir = tempdir().ok()?;
+        let path = dir.path().join("in.bin");
+        std::fs::write(&path, b"hello").ok()?;
+        // Probe the per-thread ring; on hosts without io_uring we skip the
+        // test rather than constructing a reader that would later fail.
+        with_ring(|_| Ok(())).ok()?;
+        // Keep `dir` alive for the duration of the reader by leaking it; the
+        // OS reclaims the temp file at process exit. Tests are short-lived
+        // and this avoids ordering the drop with the reader.
+        let reader = IoUringReader::open(&path, &IoUringConfig::default()).ok()?;
+        std::mem::forget(dir);
+        Some(reader)
+    }
+
+    #[test]
+    fn registered_buffers_always_disabled_on_per_thread_ring() {
+        let reader = match make_reader() {
+            Some(r) => r,
+            None => return,
+        };
+        assert_eq!(
+            reader.registered_buffer_count(),
+            None,
+            "per-thread ring readers do not own per-reader registered buffers"
+        );
+        assert_eq!(
+            reader.registered_buffer_status(),
+            &RegisteredBufferStatus::Disabled,
+            "status must report Disabled on the per-thread topology until IUR-3.e wires bgid lease"
+        );
+    }
+
+    #[test]
+    fn open_returns_reader_when_io_uring_available() {
+        let reader = match make_reader() {
+            Some(r) => r,
+            None => return,
+        };
+        assert_eq!(reader.size(), 5);
+        assert_eq!(reader.position(), 0);
+    }
+
+    #[test]
+    fn default_config_constructs_reader() {
+        let reader = match make_reader() {
+            Some(r) => r,
+            None => return,
+        };
+        assert_eq!(reader.registered_buffer_count(), None);
     }
 }
