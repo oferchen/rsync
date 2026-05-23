@@ -166,6 +166,7 @@ pub(super) struct Pattern {
     negate: bool,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 impl Pattern {
     /// Builds a [`Pattern`] from a raw token. A leading `!` sets the
     /// negation flag; the remainder is stored verbatim as the glob text.
@@ -244,6 +245,7 @@ pub(super) struct MatchContext<'a> {
     pub local_user: &'a str,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 impl<'a> MatchContext<'a> {
     /// Builds a context with an explicit local-user string. Tests use
     /// this to avoid touching process environment.
