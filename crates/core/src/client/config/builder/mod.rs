@@ -434,7 +434,17 @@ impl ClientConfigBuilder {
             mkpath: self.mkpath,
             prune_empty_dirs: self.prune_empty_dirs,
             qsort: self.qsort,
-            inc_recursive_send: self.inc_recursive_send.unwrap_or(false),
+            // ISI.b: temporary gate for sender-side INC_RECURSE interop bake-up.
+            // The `sender-inc-recurse` cargo feature flips the default fallback
+            // from `false` to `true` so push transfers advertise the `'i'`
+            // capability bit. CLI `--inc-recursive` / `--no-inc-recursive`
+            // overrides still win because they populate `Some(_)`. Default-off
+            // behavior is bit-for-bit identical to today; ISI.h retires this
+            // gate once interop is validated against 3.0.9 / 3.1.3 / 3.4.1 /
+            // 3.4.2. See `docs/design/isi-a-sender-inc-recurse-call-graph.md`.
+            inc_recursive_send: self
+                .inc_recursive_send
+                .unwrap_or(cfg!(feature = "sender-inc-recurse")),
             verbosity: self.verbosity,
             progress: self.progress,
             stats: self.stats,
