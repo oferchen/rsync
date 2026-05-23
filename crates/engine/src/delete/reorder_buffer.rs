@@ -575,7 +575,10 @@ mod tests {
             assert_eq!(cohort_ops.len(), 10);
             // Inner order is FIFO insertion (round 0..10).
             for (round, op_entry) in cohort_ops.iter().enumerate() {
-                assert_eq!(op_entry.leaf, OsString::from(format!("file{cohort_idx}-{round}")));
+                assert_eq!(
+                    op_entry.leaf,
+                    OsString::from(format!("file{cohort_idx}-{round}"))
+                );
             }
         }
     }
