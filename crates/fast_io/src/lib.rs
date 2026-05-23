@@ -230,6 +230,10 @@ mod io_uring_common;
 mod io_uring_depth;
 mod io_uring_ops;
 mod policy;
+/// SQM-3: pin mmap'd basis windows in memory before SQPOLL submissions
+/// so the kthread cannot fault on a page the userspace task has not
+/// touched. See `docs/design/sqm-2b-implementation-design.md`.
+pub mod sqpoll_basis;
 mod status;
 
 pub use cached_sort::{CachedSortKey, cached_sort_by};
@@ -403,6 +407,9 @@ pub fn write_file_with_io_uring(_path: &std::path::Path, _data: &[u8]) -> std::i
 }
 
 pub use io_uring_common::IoBackend;
+pub use sqpoll_basis::{
+    MAX_WIRED_WINDOW_BYTES, MlockError, WiredBasisWindow, mlock_attempts, mlock_downgrades,
+};
 pub use io_uring_depth::{
     IO_URING_DEPTH_MAX, IO_URING_DEPTH_MIN, IoUringDepthError, validate_io_uring_depth,
 };

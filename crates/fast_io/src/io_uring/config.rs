@@ -330,7 +330,7 @@ impl IoUringConfig {
     /// optimistically request SQPOLL without needing privilege checks
     /// upfront - the fallback is transparent.
     ///
-    /// # Defensive SQPOLL + mmap refusal
+    /// # Defensive SQPOLL + mmap refusal (Candidate 3 backstop)
     ///
     /// When [`mmap_basis_active`](Self::mmap_basis_active) is set the
     /// caller is signalling that an `MmapReader` / `MmapStrategy` is live
@@ -341,18 +341,32 @@ impl IoUringConfig {
     /// (deadlock loop on pre-6.x kernels) and concurrent truncation
     /// surfaces as in-kernel `SIGBUS`. See
     /// `docs/audits/io-uring-sqpoll-mmap-interaction.md` for the long-form
-    /// reasoning. We degrade gracefully (disable SQPOLL, regular ring)
-    /// rather than failing the transfer.
+    /// reasoning.
+    ///
+    /// # SQM-3: mlock'd basis window allows SQPOLL+mmap pairing
+    ///
+    /// With the `sqpoll-mlock-basis` feature on (default), the per-SQE-batch
+    /// [`crate::sqpoll_basis::WiredBasisWindow`] primitive pins the mmap'd
+    /// basis range via `mlock(2)` before each submission. The wired pages
+    /// cannot fault from the SQPOLL kthread, so the race surface that
+    /// motivates the defensive refusal is closed structurally. When the
+    /// feature is off (operator opt-out per the SQM-2.b rollback path), or
+    /// the wiring fails with a downgrade-class errno at submission time, the
+    /// refusal here remains the safety net: the ring is built without
+    /// SQPOLL and `SQPOLL_FALLBACK` is set so callers see the degrade.
     pub(crate) fn build_ring(&self) -> io::Result<RawIoUring> {
         let sqpoll_requested = self.sqpoll;
-        let sqpoll_safe = sqpoll_requested && !self.mmap_basis_active;
+        let mlock_basis_enabled = cfg!(feature = "sqpoll-mlock-basis");
+        let sqpoll_safe =
+            sqpoll_requested && (!self.mmap_basis_active || mlock_basis_enabled);
         if sqpoll_requested && !sqpoll_safe {
             logging::debug_log!(
                 Io,
                 1,
                 "io_uring: refusing SQPOLL because an mmap basis reader is active on this \
-                 transfer plan (SQPOLL kthread + file-backed mmap is a known kernel deadlock \
-                 hazard on pre-6.x kernels); falling back to a regular ring"
+                 transfer plan and the sqpoll-mlock-basis feature is off (SQPOLL kthread + \
+                 file-backed mmap is a known kernel deadlock hazard on pre-6.x kernels); \
+                 falling back to a regular ring"
             );
             SQPOLL_FALLBACK.store(true, Ordering::Relaxed);
         }
@@ -779,9 +793,12 @@ mod tests {
     }
 
     #[test]
-    fn build_ring_sqpoll_with_mmap_basis_disables_sqpoll() {
-        // Large-file plan with mmap basis: the defensive check must refuse
-        // SQPOLL and fall back to a regular ring with the fallback flag set.
+    fn build_ring_sqpoll_with_mmap_basis_respects_mlock_feature() {
+        // Large-file plan with mmap basis: behaviour depends on whether the
+        // SQM-3 sqpoll-mlock-basis feature is compiled in. With the feature
+        // on (default), build_ring keeps SQPOLL because per-submission mlock
+        // closes the race surface. With the feature off, the defensive
+        // refusal still trips and the fallback flag is set.
         SQPOLL_FALLBACK.store(false, Ordering::Relaxed);
         let config = IoUringConfig {
             sqpoll: true,
@@ -791,12 +808,22 @@ mod tests {
         let ring = config.build_ring();
         assert!(
             ring.is_ok(),
-            "build_ring() must succeed (graceful degrade) when mmap basis is active"
+            "build_ring() must succeed regardless of feature gating"
         );
-        assert!(
-            sqpoll_fell_back(),
-            "SQPOLL fallback flag must be set when mmap_basis_active blocks SQPOLL"
-        );
+        if cfg!(feature = "sqpoll-mlock-basis") {
+            // Feature on: SQPOLL is allowed; the fallback flag is only set
+            // if the kernel itself rejects SQPOLL (no CAP_SYS_NICE). On
+            // unprivileged CI runners that still trips; on privileged hosts
+            // it does not. Both outcomes are valid for this assertion, so
+            // we only verify the flag is queryable.
+            let _ = sqpoll_fell_back();
+        } else {
+            assert!(
+                sqpoll_fell_back(),
+                "SQPOLL fallback flag must be set when mmap_basis_active and \
+                 sqpoll-mlock-basis is off"
+            );
+        }
     }
 
     #[test]
