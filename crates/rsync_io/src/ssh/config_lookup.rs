@@ -976,4 +976,234 @@ mod tests {
         // untouched.
         assert!(!context.local_user.is_empty());
     }
+
+    // SSC-4.d: synthetic ssh_config fixtures exercising the wired
+    // `Match` block path in `parse_enables_compression`. Each test
+    // drives one combination of header conditions and asserts the
+    // resulting compression decision.
+
+    /// Builds a fully populated [`MatchContext`] for the SSC-4.d
+    /// fixtures. Mirrors the `Match`-line semantics: `host` and
+    /// `original_host` may differ to exercise the originalhost/host
+    /// distinction.
+    fn match_ctx<'a>(
+        host: &'a str,
+        original_host: &'a str,
+        user: &'a str,
+        local_user: &'a str,
+    ) -> MatchContext<'a> {
+        MatchContext::new(host, original_host, user, local_user)
+    }
+
+    #[test]
+    fn match_host_glob_enables_compression_on_hit() {
+        // `Match host *.example.com` matches `web1.example.com`, so the
+        // `Compression yes` inside the block fires.
+        let text = "Match host *.example.com\n  Compression yes\n";
+        assert!(parse_enables_compression(
+            text,
+            &match_ctx("web1.example.com", "web1.example.com", "", "")
+        ));
+    }
+
+    #[test]
+    fn match_host_glob_ignored_when_host_does_not_match() {
+        // Same fixture, target does not match the glob; the block is
+        // inert and no other scope enables compression.
+        let text = "Match host *.example.com\n  Compression yes\n";
+        assert!(!parse_enables_compression(
+            text,
+            &match_ctx("db.internal", "db.internal", "", "")
+        ));
+    }
+
+    #[test]
+    fn match_all_enables_compression_unconditionally() {
+        // `Match all` matches any context, including an entirely empty
+        // one, and contributes its `Compression yes`.
+        let text = "Match all\n  Compression yes\n";
+        assert!(parse_enables_compression(text, &match_ctx("", "", "", "")));
+    }
+
+    #[test]
+    fn match_block_first_match_wins_within_scope() {
+        // SSC-4.c first-match-wins across the shared match-block slot:
+        // the first matching `Compression` (here `yes`) sticks and the
+        // later `Match all\n Compression no` cannot override it.
+        let text = "Match host *.example.com\n  Compression yes\nMatch all\n  Compression no\n";
+        assert!(parse_enables_compression(
+            text,
+            &match_ctx("web1.example.com", "web1.example.com", "", "")
+        ));
+    }
+
+    #[test]
+    fn match_block_first_no_blocks_later_yes() {
+        // Mirror image: a `Match all\n Compression no` ahead of a
+        // matching `Compression yes` sinks the scope. The earlier `no`
+        // is recorded as the first decision and the later block's
+        // `yes` is dropped.
+        let text = "Match all\n  Compression no\nMatch host *.example.com\n  Compression yes\n";
+        assert!(!parse_enables_compression(
+            text,
+            &match_ctx("web1.example.com", "web1.example.com", "", "")
+        ));
+    }
+
+    #[test]
+    fn match_user_pattern_enables_compression() {
+        // `Match user deploy` matches the context user; `Compression
+        // yes` fires.
+        let text = "Match user deploy\n  Compression yes\n";
+        assert!(parse_enables_compression(
+            text,
+            &match_ctx("web1", "web1", "deploy", "")
+        ));
+    }
+
+    #[test]
+    fn match_user_pattern_miss_keeps_compression_off() {
+        let text = "Match user deploy\n  Compression yes\n";
+        assert!(!parse_enables_compression(
+            text,
+            &match_ctx("web1", "web1", "root", "")
+        ));
+    }
+
+    #[test]
+    fn match_originalhost_distinct_from_host() {
+        // `originalhost` resolves against the pre-canonicalization
+        // operand. With `original_host = "web1"` but `host = "web1.
+        // canonical.example.com"`, the originalhost block fires while
+        // a `host = web1` block would not.
+        let text = "Match originalhost web1\n  Compression yes\n";
+        assert!(parse_enables_compression(
+            text,
+            &match_ctx("web1.canonical.example.com", "web1", "", "")
+        ));
+    }
+
+    #[test]
+    fn match_host_does_not_match_originalhost_operand() {
+        // Inverse of the above: `Match host web1` consults the
+        // canonicalized field. With `host` populated only with the
+        // canonical form, a literal `web1` pattern misses.
+        let text = "Match host web1\n  Compression yes\n";
+        assert!(!parse_enables_compression(
+            text,
+            &match_ctx("web1.canonical.example.com", "web1", "", "")
+        ));
+    }
+
+    #[test]
+    fn match_canonical_keyword_skips_block() {
+        // SKIP set: `canonical` renders the block inert even when the
+        // host pattern would otherwise match.
+        let text = "Match canonical host *.example.com\n  Compression yes\n";
+        assert!(!parse_enables_compression(
+            text,
+            &match_ctx("web1.example.com", "web1.example.com", "", "")
+        ));
+    }
+
+    #[test]
+    fn match_final_keyword_skips_block() {
+        let text = "Match final host *.example.com\n  Compression yes\n";
+        assert!(!parse_enables_compression(
+            text,
+            &match_ctx("web1.example.com", "web1.example.com", "", "")
+        ));
+    }
+
+    #[test]
+    fn match_tagged_keyword_skips_block() {
+        let text = "Match tagged ci host *.example.com\n  Compression yes\n";
+        assert!(!parse_enables_compression(
+            text,
+            &match_ctx("web1.example.com", "web1.example.com", "", "")
+        ));
+    }
+
+    #[test]
+    fn match_exec_never_spawns_and_never_matches() {
+        // Security: `exec` must never spawn the command. The block is
+        // treated as non-matching and the `Compression yes` is dropped.
+        // If this test ever flips to true, the parser has started
+        // invoking the shell - regression of SSC-4.a's DEFER policy.
+        let text = "Match exec /bin/true\n  Compression yes\n";
+        assert!(!parse_enables_compression(
+            text,
+            &match_ctx("web1.example.com", "web1.example.com", "", "")
+        ));
+    }
+
+    #[test]
+    fn top_level_compression_no_not_overridden_by_non_matching_match() {
+        // Top-level scope captures `Compression no` first. A later
+        // `Match host` block whose pattern misses contributes nothing,
+        // so the overall answer stays `false`.
+        let text = "Compression no\nMatch host db*\n  Compression yes\n";
+        assert!(!parse_enables_compression(
+            text,
+            &match_ctx("web1.example.com", "web1.example.com", "", "")
+        ));
+    }
+
+    #[test]
+    fn top_level_compression_no_or_with_matching_match_yes() {
+        // Top-level scope is `Compression no`; match-block scope is
+        // `Compression yes`. The final answer ORs the slots, so any
+        // scope set to true wins. Confirms the OR semantics described
+        // in `parse_enables_compression`.
+        let text = "Compression no\nMatch host *.example.com\n  Compression yes\n";
+        assert!(parse_enables_compression(
+            text,
+            &match_ctx("web1.example.com", "web1.example.com", "", "")
+        ));
+    }
+
+    #[test]
+    fn host_block_and_match_block_both_contribute_via_or() {
+        // Host block enables compression for `web*`; match block
+        // enables compression for `Match user deploy`. Either one is
+        // sufficient on its own; together they still produce `true`.
+        let text = "Host web*\n  Compression yes\nMatch user deploy\n  Compression yes\n";
+        assert!(parse_enables_compression(
+            text,
+            &match_ctx("web1", "web1", "deploy", "")
+        ));
+    }
+
+    #[test]
+    fn host_block_miss_with_match_block_hit_still_enables() {
+        // Host block misses (`db*` vs `web1`); match block hits via
+        // user. OR across scopes flips the answer to `true`.
+        let text = "Host db*\n  Compression yes\nMatch user deploy\n  Compression yes\n";
+        assert!(parse_enables_compression(
+            text,
+            &match_ctx("web1", "web1", "deploy", "")
+        ));
+    }
+
+    #[test]
+    fn match_localuser_matches_env_local_user() {
+        // `Match localuser` evaluates against the local-user field that
+        // `MatchContext::with_local_user_from_env` populates from the
+        // process environment. Drive the test against the same string
+        // we hand the context to keep the assertion deterministic.
+        let mut buf = String::from("ofer");
+        let ctx = MatchContext::with_local_user_from_env("any", "any", "", &mut buf);
+        let text = format!("Match localuser {}\n  Compression yes\n", ctx.local_user);
+        assert!(parse_enables_compression(&text, &ctx));
+    }
+
+    #[test]
+    fn match_localuser_miss_keeps_compression_off() {
+        // Same fixture shape, but pattern does not match the local
+        // user; the block contributes nothing.
+        let mut buf = String::from("ofer");
+        let ctx = MatchContext::with_local_user_from_env("any", "any", "", &mut buf);
+        let text = "Match localuser nobody\n  Compression yes\n";
+        assert!(!parse_enables_compression(text, &ctx));
+    }
 }
