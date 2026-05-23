@@ -98,10 +98,12 @@ fn ssh_sender_omits_inc_recurse_when_no_inc_recursive_set() {
 }
 
 #[test]
+#[cfg(not(feature = "sender-inc-recurse"))]
 fn ssh_receiver_omits_inc_recurse_capability_by_default() {
     // Sender-side INC_RECURSE is gated by `inc_recursive_send` which defaults
     // to false; the SSH capability builder reads only that flag, so pull
-    // transfers also omit 'i' by default. Tracker #1862.
+    // transfers also omit 'i' by default. Tracker #1862. Skipped under
+    // sender-inc-recurse where the default flips ON.
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
     let args = builder.build("/remote/path");
