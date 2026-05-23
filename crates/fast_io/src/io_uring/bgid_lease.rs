@@ -54,7 +54,7 @@
 use std::cell::RefCell;
 use std::io;
 
-use super::buffer_ring::{BgidAllocError, BgidAllocator};
+use super::buffer_ring::BgidAllocator;
 
 /// Default number of bgids leased per central-pool round-trip.
 ///
