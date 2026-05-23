@@ -360,11 +360,10 @@ mod tests {
     #[test]
     fn mock_enospc_writer_triggers_at_threshold() {
         let mut w = MockEnoSpcWriter::new(Vec::<u8>::new(), 100);
-        assert!(w.write(&vec![0u8; 50]).is_ok());
+        assert!(w.write(&[0u8; 50]).is_ok());
         let err = w
-            .write(&vec![0u8; 60])
-            .err()
-            .expect("second write must surface ENOSPC after threshold crossed");
+            .write(&[0u8; 60])
+            .expect_err("second write must surface ENOSPC after threshold crossed");
         assert_eq!(
             err.kind(),
             ENOSPC_KIND,
@@ -381,9 +380,8 @@ mod tests {
         // `write(2)` calls that cannot fit at all.
         let mut w = MockEnoSpcWriter::new(Vec::<u8>::new(), 10);
         let err = w
-            .write(&vec![0u8; 25])
-            .err()
-            .expect("over-threshold write must fail atomically");
+            .write(&[0u8; 25])
+            .expect_err("over-threshold write must fail atomically");
         assert_eq!(err.kind(), ENOSPC_KIND);
         assert_eq!(w.bytes_written(), 0, "inner writer must stay untouched");
     }
@@ -400,7 +398,7 @@ mod tests {
         let n = w.write(b"world").expect("ten bytes total still fits");
         assert_eq!(n, 5);
         assert_eq!(w.bytes_written(), 10);
-        let err = w.write(b"!").err().expect("threshold crossing fails");
+        let err = w.write(b"!").expect_err("threshold crossing fails");
         assert_eq!(err.kind(), ENOSPC_KIND);
     }
 
@@ -414,8 +412,7 @@ mod tests {
         let mut w = MockEnoSpcWriter::with_plan(Vec::<u8>::new(), plan);
         let err = w
             .write(b"hello")
-            .err()
-            .expect("one-shot fires on first call");
+            .expect_err("one-shot fires on first call");
         assert_eq!(err.kind(), ENOSPC_KIND);
         // After the one-shot trips, subsequent writes succeed against the
         // underlying buffer. This mirrors the SPL-33 free-space-restored
