@@ -190,5 +190,8 @@ pub(crate) fn accumulate_chunk_neon_for_tests(
         return accumulate_chunk_scalar_raw(s1, s2, len, chunk);
     }
 
+    // SAFETY: `neon_available()` returned true above, so the host CPU
+    // advertises the `neon` feature required by the `#[target_feature(enable
+    // = "neon")]` precondition of `accumulate_chunk_neon_impl`.
     unsafe { accumulate_chunk_neon_impl(s1, s2, len, chunk) }
 }
