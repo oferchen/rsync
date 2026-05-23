@@ -11,7 +11,7 @@
 //! # Shape
 //!
 //! [`ParallelDeltaApplier`] owns a configurable concurrency limit and a
-//! per-file map of [`Mutex`]-guarded destination writers. Callers hand it
+//! per-file map of [`std::sync::Mutex`]-guarded destination writers. Callers hand it
 //! [`DeltaChunk`] values (one literal-or-block segment for one file) through
 //! [`apply_one_chunk`](ParallelDeltaApplier::apply_one_chunk). The
 //! checksum verify step runs on the rayon pool; the actual file-write happens
@@ -28,7 +28,7 @@
 //!    destination writer, even though the rayon verify step completes out of
 //!    order.
 //! 2. **Per-file write exclusivity.** The destination writer for each file
-//!    sits behind a [`Mutex`], so only one chunk ever holds the writer at a
+//!    sits behind a [`std::sync::Mutex`], so only one chunk ever holds the writer at a
 //!    time. Combined with the reorder buffer above, the bytes hit the file
 //!    in the exact sequence the producer submitted them.
 //!
@@ -37,7 +37,7 @@
 //! `DeltaConsumer` pattern already covers that case).
 
 use std::io::{self, Write};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::sync::{Arc, MutexGuard};
 
 use checksums::strong::strategy::{
     ChecksumAlgorithmKind, ChecksumDigest, ChecksumStrategy, ChecksumStrategySelector,
@@ -49,6 +49,10 @@ use thiserror::Error;
 
 use super::reorder::ReorderBuffer;
 use super::types::FileNdx;
+
+mod slot_barrier;
+
+use slot_barrier::SlotBarrier;
 
 /// Typed error variants for [`ParallelDeltaApplier::finish_file`] shutdown
 /// paths.
@@ -277,84 +281,6 @@ impl FileSlot {
     }
 }
 
-/// Per-slot barrier primitive backing FFB-1 / FFB-2.
-///
-/// Colocates the file's [`Mutex<FileSlot>`] with an in-flight worker
-/// counter and a [`Condvar`] so `flush_workers(ndx)` can block the caller
-/// until every outstanding [`SlotHandle`] for `ndx` has been dropped. The
-/// counter sits behind its own [`Mutex`] so the barrier wait never
-/// contends with the per-file write critical section: workers take the
-/// slot mutex to write, and the counter mutex only to bump or decrement.
-///
-/// Holding the per-slot [`Arc`] is the unit of "in-flight"; the counter
-/// tracks how many of those `Arc` clones are currently outstanding so the
-/// `Condvar` can fire deterministically the moment the last clone drops.
-struct SlotBarrier {
-    slot: Mutex<FileSlot>,
-    inflight: Mutex<usize>,
-    notify: Condvar,
-}
-
-impl SlotBarrier {
-    fn new(slot: FileSlot) -> Self {
-        Self {
-            slot: Mutex::new(slot),
-            inflight: Mutex::new(0),
-            notify: Condvar::new(),
-        }
-    }
-
-    /// Locks the per-file slot mutex, mapping a poisoned mutex to the
-    /// typed [`ParallelApplyError::SlotPoisoned`] error.
-    fn lock_slot(&self, ndx: FileNdx, kind: &'static str) -> io::Result<MutexGuard<'_, FileSlot>> {
-        self.slot
-            .lock()
-            .map_err(|_| ParallelApplyError::SlotPoisoned { ndx, kind }.into())
-    }
-
-    /// Bumps the in-flight counter for this slot. Called by [`SlotHandle::new`]
-    /// once the caller has obtained an [`Arc<SlotBarrier>`] clone from
-    /// [`ParallelDeltaApplier::slot_for`].
-    fn increment_inflight(&self) {
-        let mut guard = self
-            .inflight
-            .lock()
-            .expect("inflight mutex poisoned on increment");
-        *guard = guard.checked_add(1).expect("inflight counter overflow");
-    }
-
-    /// Drops the in-flight counter back by one and wakes any waiter parked
-    /// on the [`Condvar`]. Invoked from [`DecrementGuard::drop`] so the
-    /// bookkeeping stays exception-safe across early returns and panics.
-    fn decrement_inflight(&self) {
-        let mut guard = self
-            .inflight
-            .lock()
-            .expect("inflight mutex poisoned on decrement");
-        // Saturating subtract: a poisoned-then-rebuilt path that observes
-        // zero must not panic the worker on its way out. The counter is
-        // an internal bookkeeping primitive, not a security invariant.
-        *guard = guard.saturating_sub(1);
-        // Wake every waiter; `flush_workers` re-checks the predicate under
-        // the mutex so spurious wakeups are harmless.
-        self.notify.notify_all();
-    }
-
-    /// Blocks the calling thread until the in-flight counter reaches zero.
-    /// Spurious wakeups are filtered by the loop predicate.
-    fn wait_until_idle(&self, ndx: FileNdx, kind: &'static str) -> io::Result<()> {
-        let guard = self
-            .inflight
-            .lock()
-            .map_err(|_| ParallelApplyError::SlotPoisoned { ndx, kind })?;
-        let _final = self
-            .notify
-            .wait_while(guard, |inflight| *inflight > 0)
-            .map_err(|_| ParallelApplyError::SlotPoisoned { ndx, kind })?;
-        Ok(())
-    }
-}
-
 /// RAII guard returned alongside a [`SlotHandle`] that decrements the
 /// per-slot in-flight counter when dropped. Keeping the decrement in a
 /// dedicated drop type makes the bookkeeping exception-safe: if the worker
@@ -436,9 +362,9 @@ struct VerifiedChunk {
 pub struct ParallelDeltaApplier {
     /// Per-file slots keyed by NDX. The outer map is a [`DashMap`] so the
     /// register/lookup path shards under a fixed number of internal locks
-    /// instead of serialising every operation behind one [`Mutex`]. Each
+    /// instead of serialising every operation behind one [`std::sync::Mutex`]. Each
     /// slot value is an [`Arc<SlotBarrier>`] that wraps the per-file
-    /// [`Mutex<FileSlot>`] alongside the in-flight counter and [`Condvar`]
+    /// [`std::sync::Mutex<FileSlot>`] alongside the in-flight counter and [`std::sync::Condvar`]
     /// that back FFB-2's `flush_workers` barrier. The BR-3j.a audit (see
     /// `docs/audits/br-3j-a-dashmap-vs-sharded-2026-05-20.md`) selected
     /// DashMap as the right fit for the access pattern: short guard
@@ -453,7 +379,7 @@ pub struct ParallelDeltaApplier {
     /// `rayon::join`, or a per-file mutex lock would re-introduce the
     /// outer-map contention the migration was designed to eliminate. In
     /// particular, the barrier wait in `flush_workers` blocks on the
-    /// slot's own [`Condvar`] and never re-acquires a shard guard.
+    /// slot's own [`std::sync::Condvar`] and never re-acquires a shard guard.
     files: DashMap<FileNdx, Arc<SlotBarrier>>,
     /// Reorder-buffer capacity per file. Bounded so a stalled file does not
     /// pin unbounded memory.
@@ -778,7 +704,7 @@ impl ParallelDeltaApplier {
     /// [`Self::apply_batch_parallel`] obtains a [`SlotHandle`] from
     /// [`Self::slot_for`] that bumps the slot's in-flight counter for the
     /// duration of the call (decrement on drop). `flush_workers` parks on
-    /// the slot's [`Condvar`] until that counter is observed to be zero.
+    /// the slot's [`std::sync::Condvar`] until that counter is observed to be zero.
     /// Spurious wakeups are filtered by the wait-while predicate.
     ///
     /// Returns [`Ok`] immediately if `ndx` is not registered (or has
@@ -906,6 +832,7 @@ mod tests {
     use proptest::prelude::*;
     use std::collections::HashMap;
     use std::io::Cursor;
+    use std::sync::Mutex;
 
     /// In-memory sink that records every byte written so tests can compare
     /// parallel vs sequential output.
