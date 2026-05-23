@@ -11,8 +11,12 @@ use super::{RemoteOperands, RemoteRole, TransferSpec};
 use crate::client::config::{ClientConfig, IconvSetting, TransferTimeout};
 
 #[test]
+#[cfg(not(feature = "sender-inc-recurse"))]
 fn builds_receiver_invocation_with_sender_flag() {
-    // Pull: local is receiver -> remote needs --sender (upstream options.c:2598)
+    // Pull: local is receiver -> remote needs --sender (upstream options.c:2598).
+    // Skipped under sender-inc-recurse: the feature flips the default
+    // inc_recursive_send, changing the capability string from
+    // build_capability_string(false).
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
     let args = builder.build("/remote/path");
@@ -29,8 +33,12 @@ fn builds_receiver_invocation_with_sender_flag() {
 }
 
 #[test]
+#[cfg(not(feature = "sender-inc-recurse"))]
 fn builds_sender_invocation_no_sender_flag() {
-    // Push: local is sender -> remote is receiver, no --sender flag
+    // Push: local is sender -> remote is receiver, no --sender flag.
+    // Skipped under sender-inc-recurse: the feature flips the default
+    // inc_recursive_send to true, so the expected capability string no
+    // longer matches build_capability_string(false).
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/remote/path");
@@ -47,10 +55,12 @@ fn builds_sender_invocation_no_sender_flag() {
 }
 
 #[test]
+#[cfg(not(feature = "sender-inc-recurse"))]
 fn ssh_sender_omits_inc_recurse_capability_by_default() {
     // Sender-side INC_RECURSE is opt-in: SSH push transfers omit the 'i'
     // capability bit by default while the sender-side state machine is
-    // validated against upstream rsync. Tracker #1862.
+    // validated against upstream rsync. Tracker #1862. Skipped under
+    // sender-inc-recurse where the default flips ON.
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/remote/path");
@@ -88,10 +98,12 @@ fn ssh_sender_omits_inc_recurse_when_no_inc_recursive_set() {
 }
 
 #[test]
+#[cfg(not(feature = "sender-inc-recurse"))]
 fn ssh_receiver_omits_inc_recurse_capability_by_default() {
     // Sender-side INC_RECURSE is gated by `inc_recursive_send` which defaults
     // to false; the SSH capability builder reads only that flag, so pull
-    // transfers also omit 'i' by default. Tracker #1862.
+    // transfers also omit 'i' by default. Tracker #1862. Skipped under
+    // sender-inc-recurse where the default flips ON.
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
     let args = builder.build("/remote/path");
@@ -1650,7 +1662,11 @@ fn default_rsync_path_is_rsync() {
 }
 
 #[test]
+#[cfg(not(feature = "sender-inc-recurse"))]
 fn capability_string_present_in_sender_args() {
+    // Skipped under sender-inc-recurse: the feature flips the default
+    // inc_recursive_send, so the sender args carry
+    // build_capability_string(true), not (false).
     let config = ClientConfig::builder().build();
     let args = build_sender_args(&config);
     let expected = build_capability_string(false);
@@ -1661,7 +1677,11 @@ fn capability_string_present_in_sender_args() {
 }
 
 #[test]
+#[cfg(not(feature = "sender-inc-recurse"))]
 fn capability_string_present_in_receiver_args() {
+    // Skipped under sender-inc-recurse: the feature flips the default
+    // inc_recursive_send, so the receiver args carry
+    // build_capability_string(true), not (false).
     let config = ClientConfig::builder().build();
     let args = build_receiver_args(&config);
     let expected = build_capability_string(false);
