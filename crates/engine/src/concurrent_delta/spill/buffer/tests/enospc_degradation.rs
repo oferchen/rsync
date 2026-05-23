@@ -297,10 +297,10 @@ fn tier3_partial_progress_then_atomic_fail_on_threshold_cross() {
     let mut writer = MockEnoSpcWriter::new(backing, 64);
 
     writer
-        .write(&[0x77; 32])
+        .write_all(&[0x77; 32])
         .expect("first write fits below threshold");
     let err = writer
-        .write(&[0x88; 64])
+        .write_all(&[0x88; 64])
         .expect_err("second write crosses the threshold");
     assert_eq!(err.kind(), ENOSPC_KIND);
     assert_eq!(
@@ -509,11 +509,11 @@ fn fault_event_count_advances_exactly_once_for_one_shot_plan() {
     let mut writer = MockEnoSpcWriter::with_plan(Vec::<u8>::new(), plan);
     assert!(!writer.has_tripped(), "no trip before first failing write");
     writer
-        .write(&[0; 1])
+        .write_all(&[0; 1])
         .expect_err("one-shot fires on first call");
     assert!(writer.has_tripped(), "trip flag set after first failure");
     writer
-        .write(&[0xEE; 8])
+        .write_all(&[0xEE; 8])
         .expect("post-trip write succeeds under one-shot");
     assert!(
         writer.has_tripped(),
