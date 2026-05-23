@@ -80,9 +80,7 @@ mod tests {
     };
 
     use super::super::super::types::FileNdx;
-    use super::super::tests::{
-        VecSink, chunk_with_correct_digest, collect_file, sequential_apply,
-    };
+    use super::super::tests::{VecSink, chunk_with_correct_digest, collect_file, sequential_apply};
     use super::super::{DeltaChunk, ParallelDeltaApplier};
 
     #[test]
