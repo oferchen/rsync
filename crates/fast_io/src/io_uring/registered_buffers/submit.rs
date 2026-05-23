@@ -156,6 +156,11 @@ pub fn submit_read_fixed_batch(
 /// Writes `data` to the file starting at `base_offset`, copying chunks into
 /// registered buffers and submitting `WriteFixed` SQEs. Returns the total
 /// bytes written.
+///
+/// Gated to `#[cfg(test)]`: the per-thread-ring migration removed the
+/// production caller; the function is preserved for the existing batch
+/// tests until IUR-3.e reintroduces a bgid-lease-aware replacement.
+#[cfg(test)]
 pub(in crate::io_uring) fn submit_write_fixed_batch(
     ring: &mut RawIoUring,
     fd: io_uring::types::Fd,

@@ -100,6 +100,5 @@ pub(crate) fn page_size() -> usize {
 
 pub use registry::{RegisteredBufferGroup, RegisteredBufferSlot};
 pub use stats::{RegisteredBufferStats, RegisteredBufferStatus};
-pub(super) use submit::submit_write_fixed_batch;
 #[doc(hidden)]
 pub use submit::{RegisteredBufferSlotInfo, submit_read_fixed_batch};

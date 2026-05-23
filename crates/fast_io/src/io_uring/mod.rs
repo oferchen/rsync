@@ -127,7 +127,6 @@ mod tests;
 
 use std::fs::File;
 use std::io::{self, Write};
-use std::os::unix::io::AsRawFd;
 
 pub use buffer_ring::{
     BgidAllocError, BgidAllocator, BufferRing, BufferRingConfig, BufferRingError,
@@ -196,7 +195,6 @@ pub use statx::{
 
 use crate::io_uring_common::IoBackend;
 use crate::traits::{FileReader, FileReaderFactory, FileWriterFactory};
-use batching::try_register_fd;
 
 /// Marker type implementing [`IoBackend`] for the live Linux io_uring backend.
 ///
@@ -267,16 +265,14 @@ pub fn writer_from_file_with_depth(
     match policy {
         crate::IoUringPolicy::Auto => {
             if is_io_uring_available() {
-                // Build ring first - if this fails, `file` is still ours.
-                if let Ok(ring) = config.build_ring() {
-                    let fixed_fd_slot =
-                        try_register_fd(&ring, file.as_raw_fd(), config.register_files);
+                // Probe the per-thread ring; on setup failure `file` is still
+                // ours and we fall back to standard I/O.
+                if per_thread_ring::with_ring(|_| Ok(())).is_ok() {
                     return Ok(IoUringOrStdWriter::IoUring(IoUringWriter::with_ring(
                         file,
-                        ring,
                         buffer_capacity,
                         config.sq_entries,
-                        fixed_fd_slot,
+                        batching::NO_FIXED_FD,
                         config.register_buffers,
                         config.registered_buffer_count,
                     )));
@@ -293,14 +289,12 @@ pub fn writer_from_file_with_depth(
                     "io_uring requested via --io-uring but not available on this system",
                 ));
             }
-            let ring = config.build_ring()?;
-            let fixed_fd_slot = try_register_fd(&ring, file.as_raw_fd(), config.register_files);
+            per_thread_ring::with_ring(|_| Ok(()))?;
             Ok(IoUringOrStdWriter::IoUring(IoUringWriter::with_ring(
                 file,
-                ring,
                 buffer_capacity,
                 config.sq_entries,
-                fixed_fd_slot,
+                batching::NO_FIXED_FD,
                 config.register_buffers,
                 config.registered_buffer_count,
             )))
