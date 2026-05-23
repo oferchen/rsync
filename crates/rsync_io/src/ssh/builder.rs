@@ -229,10 +229,10 @@ impl SshCommand {
     /// When the `ssh-config-parse` feature is enabled (on by default)
     /// and the argv check is inconclusive, the lookup also consults the
     /// user's `~/.ssh/config` (or the file supplied via `-F`) and
-    /// `/etc/ssh/ssh_config`. Only top-level directives and `Host *`
-    /// blocks are honoured - per-host `Host foo` and `Match` blocks
-    /// need runtime context the warning site does not have and are
-    /// intentionally skipped to avoid false positives.
+    /// `/etc/ssh/ssh_config`. Top-level directives and `Host` blocks
+    /// (including glob and negation patterns) whose pattern-list matches
+    /// the destination host are honoured. `Match` blocks are wired
+    /// separately by SSC-4.c; `Match exec` is deferred per SSC-4.a.
     ///
     /// Truthy values for `Compression`: `yes`, `true`, `1`, case-insensitive.
     #[must_use]
@@ -247,7 +247,13 @@ impl SshCommand {
         }
         #[cfg(feature = "ssh-config-parse")]
         {
-            super::config_lookup::ssh_config_enables_compression(&self.options)
+            // SSC-5.b: pass the destination host so per-host `Host`
+            // blocks resolve via the shared SSC-4.b pattern matcher.
+            // `to_string_lossy` is sufficient because OpenSSH hostnames
+            // are ASCII; non-UTF-8 bytes round-trip as U+FFFD which can
+            // never match a real `Host` pattern.
+            let target = self.host.to_string_lossy();
+            super::config_lookup::ssh_config_enables_compression(&self.options, &target)
         }
         #[cfg(not(feature = "ssh-config-parse"))]
         {
