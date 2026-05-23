@@ -44,12 +44,12 @@ use checksums::strong::strategy::{
 };
 use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
-use rayon::prelude::*;
 use thiserror::Error;
 
 use super::reorder::ReorderBuffer;
 use super::types::FileNdx;
 
+mod batch;
 mod decrement_guard;
 mod slot_barrier;
 
@@ -548,46 +548,6 @@ impl ParallelDeltaApplier {
         slot.ingest(verified.chunk)
     }
 
-    /// Applies a batch of chunks, fanning the verify step across the rayon
-    /// pool subject to [`Self::concurrency`]. Order-preserving per file.
-    ///
-    /// Chunks belonging to different files run independently; chunks for the
-    /// same file are merged back through the per-file reorder buffer before
-    /// they reach the destination writer.
-    ///
-    /// # Errors
-    ///
-    /// Returns the first [`io::Error`] encountered while applying the
-    /// batch, including any per-chunk strong-checksum mismatch surfaced by
-    /// [`Self::verify_chunk`].
-    pub fn apply_batch_parallel(&self, chunks: Vec<DeltaChunk>) -> io::Result<()> {
-        if chunks.is_empty() {
-            return Ok(());
-        }
-        let total = chunks.len();
-        let cap = if self.concurrency == 0 {
-            total
-        } else {
-            self.concurrency.min(total)
-        };
-        let min_len = total.div_ceil(cap.max(1)).max(1);
-        let strategy = Arc::clone(&self.strategy);
-        let verified: Result<Vec<VerifiedChunk>, ParallelApplyError> = chunks
-            .into_par_iter()
-            .with_min_len(min_len)
-            .map(|chunk| Self::verify_chunk(strategy.as_ref(), chunk))
-            .collect();
-        let verified = verified?;
-
-        for v in verified {
-            let ndx = v.chunk.ndx;
-            let handle = self.slot_for(ndx)?;
-            let mut slot = handle.lock_slot(ndx, "apply_batch_parallel")?;
-            slot.ingest(v.chunk)?;
-        }
-        Ok(())
-    }
-
     /// Returns the total bytes written to `ndx` so far.
     ///
     /// # Errors
@@ -814,7 +774,7 @@ fn hex_lower(bytes: &[u8]) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use proptest::prelude::*;
     use std::collections::HashMap;
@@ -823,12 +783,12 @@ mod tests {
 
     /// In-memory sink that records every byte written so tests can compare
     /// parallel vs sequential output.
-    struct VecSink {
+    pub(super) struct VecSink {
         buf: Arc<Mutex<Vec<u8>>>,
     }
 
     impl VecSink {
-        fn new() -> (Self, Arc<Mutex<Vec<u8>>>) {
+        pub(super) fn new() -> (Self, Arc<Mutex<Vec<u8>>>) {
             let buf = Arc::new(Mutex::new(Vec::new()));
             (Self { buf: buf.clone() }, buf)
         }
@@ -845,7 +805,7 @@ mod tests {
         }
     }
 
-    fn sequential_apply(chunks: &[DeltaChunk]) -> Vec<u8> {
+    pub(super) fn sequential_apply(chunks: &[DeltaChunk]) -> Vec<u8> {
         let mut by_file: HashMap<FileNdx, Vec<&DeltaChunk>> = HashMap::new();
         for c in chunks {
             by_file.entry(c.ndx).or_default().push(c);
@@ -863,7 +823,7 @@ mod tests {
         out
     }
 
-    fn collect_file(
+    pub(super) fn collect_file(
         applier: &ParallelDeltaApplier,
         ndx: FileNdx,
         buf: Arc<Mutex<Vec<u8>>>,
@@ -908,40 +868,6 @@ mod tests {
             applier.apply_one_chunk(c).unwrap();
         }
         assert_eq!(collect_file(&applier, FileNdx::new(0), buf), expected);
-    }
-
-    #[test]
-    fn batch_apply_matches_sequential_byte_for_byte() {
-        let applier = ParallelDeltaApplier::new(8);
-        let (sink_a, buf_a) = VecSink::new();
-        let (sink_b, buf_b) = VecSink::new();
-        applier.register_file(0u32, Box::new(sink_a)).unwrap();
-        applier.register_file(1u32, Box::new(sink_b)).unwrap();
-
-        let mut chunks = Vec::new();
-        for i in 0..24u64 {
-            let payload: Vec<u8> = (0..16).map(|b| (i as u8).wrapping_add(b)).collect();
-            chunks.push(DeltaChunk::literal(0u32, i, payload.clone()));
-            chunks.push(DeltaChunk::matched(1u32, i, payload));
-        }
-        let expected_a = sequential_apply(
-            &chunks
-                .iter()
-                .filter(|c| c.ndx == FileNdx::new(0))
-                .cloned()
-                .collect::<Vec<_>>(),
-        );
-        let expected_b = sequential_apply(
-            &chunks
-                .iter()
-                .filter(|c| c.ndx == FileNdx::new(1))
-                .cloned()
-                .collect::<Vec<_>>(),
-        );
-
-        applier.apply_batch_parallel(chunks).unwrap();
-        assert_eq!(collect_file(&applier, FileNdx::new(0), buf_a), expected_a);
-        assert_eq!(collect_file(&applier, FileNdx::new(1), buf_b), expected_b);
     }
 
     #[test]
@@ -1352,7 +1278,7 @@ mod tests {
     /// the supplied strategy will compute over `data`. Used by the BR-3i.c
     /// happy-path tests so the fixture stays in lockstep with the
     /// negotiated algorithm.
-    fn chunk_with_correct_digest(
+    pub(super) fn chunk_with_correct_digest(
         strategy: &dyn ChecksumStrategy,
         ndx: u32,
         sequence: u64,
@@ -1416,59 +1342,6 @@ mod tests {
         // The writer must remain untouched: the verify failure happens
         // before the per-file mutex is taken.
         assert!(buf.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn verify_batch_rejects_mismatched_digest() {
-        // BR-3i.c error path under the batch entry point. The rayon
-        // parallel `collect` short-circuits on the first error, surfacing
-        // the typed `ChecksumMismatch` instead of any successful write.
-        let applier = ParallelDeltaApplier::new(4);
-        let strategy = Arc::clone(applier.strategy());
-        let (sink, _) = VecSink::new();
-        applier.register_file(0u32, Box::new(sink)).unwrap();
-
-        let good_a = chunk_with_correct_digest(strategy.as_ref(), 0, 0, vec![1u8; 32]);
-        let bad = DeltaChunk::literal(0u32, 1, vec![2u8; 32])
-            .with_expected_strong(ChecksumDigest::new(&[0u8; 16]));
-        let good_b = chunk_with_correct_digest(strategy.as_ref(), 0, 2, vec![3u8; 32]);
-
-        let err = applier
-            .apply_batch_parallel(vec![good_a, bad, good_b])
-            .unwrap_err();
-        assert!(err.to_string().contains("checksum mismatch"));
-    }
-
-    #[test]
-    fn parallel_apply_with_real_digests_matches_sequential_byte_for_byte() {
-        // BR-3i.e regression test: parallel apply with real per-chunk
-        // strong-checksum verification produces the same destination byte
-        // stream as the sequential reference path. Guards against future
-        // regressions where the verify path mutates `chunk.data` or
-        // reorders writes when the strategy short-circuits.
-        let strategy: Arc<dyn ChecksumStrategy> = Arc::from(
-            ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Md5, 0),
-        );
-        let applier = ParallelDeltaApplier::with_strategy(4, Arc::clone(&strategy));
-        let (sink, buf) = VecSink::new();
-        applier.register_file(0u32, Box::new(sink)).unwrap();
-
-        let chunks: Vec<DeltaChunk> = (0..32u64)
-            .map(|i| {
-                let payload: Vec<u8> = (0..64u8).map(|b| b.wrapping_add(i as u8)).collect();
-                chunk_with_correct_digest(strategy.as_ref(), 0, i, payload)
-            })
-            .collect();
-        let expected = sequential_apply(&chunks);
-
-        // Deterministic non-trivial permutation: rotate by 5 so workers
-        // see chunks out of submission order; the reorder buffer must
-        // still emit them in `chunk_sequence` order.
-        let mut shuffled = chunks;
-        shuffled.rotate_left(5);
-        applier.apply_batch_parallel(shuffled).unwrap();
-        let _writer = applier.finish_file(0u32).unwrap();
-        assert_eq!(buf.lock().unwrap().clone(), expected);
     }
 
     #[test]
