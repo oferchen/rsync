@@ -839,6 +839,30 @@ NEON) are used where available, with automatic scalar fallbacks.
 :   Override daemon config parameter on the command line. Can be specified
     multiple times.
 
+**--max-connections**=*N*
+:   Cap the number of concurrent client connections the daemon will accept.
+    *N* must be a positive integer. When omitted the daemon imposes no
+    admission cap, so operating-system limits (file descriptors, RAM) are the
+    only ceiling. When the cap is reached the accept loop refuses each new
+    socket with the upstream-compatible greeting
+    `@ERROR: max connections (N) reached -- try again later` and closes it
+    without dispatching a session; the listener keeps running and serving
+    in-flight clients. Mirrors the per-module `max connections` directive
+    documented in **rsyncd.conf**(5); this flag enforces the same cap
+    daemon-wide from the command line. **NOTE:** publicly exposed daemons
+    SHOULD set this flag (or the equivalent `max connections` directive in
+    *oc-rsyncd.conf*). Releases prior to **v0.6.2** have no admission cap
+    and accept connections until the operating system runs out of resources.
+
+**--max-sessions**=*N*
+:   Cap the total number of sessions the daemon will serve before exiting.
+    *N* must be a positive integer. After serving *N* sessions the daemon
+    stops accepting new connections and exits once in-flight transfers
+    complete. Useful for periodic restart under a process supervisor.
+    Distinct from **--max-connections**, which caps *concurrent* sessions
+    without bounding the lifetime total. Pass **--once** as a shorthand for
+    **--max-sessions**=*1*.
+
 ## Performance Options
 
 The io_uring policy selects one of three modes for the asynchronous file I/O

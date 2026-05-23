@@ -137,7 +137,13 @@ providing the same isolation guarantee as the sync mode's `catch_unwind`.
 The async listener uses a `tokio::sync::Semaphore` to enforce the maximum
 connection limit.  When the semaphore has no permits, new connections are
 dropped immediately. This is analogous to upstream rsync's `max connections`
-directive.
+directive. The sync accept loop enforces the same cap via a
+`ConnectionCounter`: when `--max-connections=N` is set (or the equivalent
+`max connections` config directive), each accepted socket is refused with
+`@ERROR: max connections (N) reached -- try again later` once *N*
+concurrent sessions are in flight. The cap is unset by default; see
+**oc-rsync(1)** for the flag reference and the *Operational
+Recommendations* below for the deployment note on **v0.6.2**.
 
 ---
 
@@ -155,7 +161,7 @@ authenticate, list modules, and transfer files using the same wire protocol.
 |----------|----------------|-------------------|
 | Session crash | Only that transfer fails; other connections unaffected | Same: `catch_unwind` isolates the panic; daemon continues |
 | Memory corruption | Cannot propagate across processes | Could theoretically propagate across threads (mitigated by `deny(unsafe_code)`) |
-| `max connections` | Each child is a process; OS `ulimit` applies | Threads are lighter; semaphore or `max_sessions` config enforces the limit |
+| `max connections` | Each child is a process; OS `ulimit` applies | Threads are lighter; the `--max-connections` flag (or `max connections` directive) caps concurrent sessions and refuses excess connections with the upstream `@ERROR` reply |
 | PID in logs | Each session has its own PID | All sessions share the daemon PID; session identity is the peer address |
 | `kill <session>` | `kill <child-pid>` terminates one session | No per-session PID; the daemon must handle cancellation internally |
 | Signal delivery | SIGTERM to child kills only that child | SIGTERM to the daemon process triggers graceful shutdown of all sessions |
@@ -177,9 +183,16 @@ authenticate, list modules, and transfer files using the same wire protocol.
    the daemon stops accepting new connections and drains active sessions before
    exiting.
 
-4. **Session limits.** Use `max connections` in `oc-rsyncd.conf` (or
-   `--max-sessions` on the command line) to cap concurrent sessions, matching
-   upstream rsync's per-module `max connections` directive.
+4. **Session limits.** Use `--max-connections=N` (or `max connections = N`
+   in `oc-rsyncd.conf`) to cap concurrent sessions, matching upstream
+   rsync's per-module `max connections` directive. When the cap is hit the
+   accept loop refuses each new socket with
+   `@ERROR: max connections (N) reached -- try again later` and keeps
+   running. `--max-connections` was introduced in **v0.6.2**; older
+   releases have no admission cap, so any publicly exposed daemon should
+   run **v0.6.2** or newer. Pair with `--max-sessions=N` to bound the
+   *total* sessions served before the daemon exits (useful for periodic
+   restart under a supervisor).
 
 ---
 
