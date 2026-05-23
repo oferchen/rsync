@@ -96,7 +96,7 @@ fn rlimit_zero_forces_downgrade_via_eperm() {
     // bumped the attempt counter without bumping the downgrade counter.
     match result {
         Ok(window) => {
-            assert!(window.len() > 0);
+            assert!(!window.is_empty());
             assert!(
                 mlock_attempts() > before_attempts,
                 "successful pin must bump mlock_attempts"
@@ -145,7 +145,7 @@ fn small_rlimit_allows_small_pin_blocks_large_pin() {
         Ok(window) => {
             // Privileged runner; the large pin succeeded. Verify the
             // counter discipline.
-            assert!(window.len() > 0);
+            assert!(!window.is_empty());
             assert!(mlock_downgrades() >= before_downgrades);
         }
         Err(MlockError::Downgrade(err)) => {
