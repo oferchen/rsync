@@ -13,8 +13,11 @@
 //! tokens), and `Match` blocks whose conditions all pass are honoured.
 //! Resolution mirrors OpenSSH's first-match-wins rule per directive: the
 //! first matching `Compression` assignment in the scan wins for its
-//! scope. `Match exec` is deferred per SSC-4.a; the rest of the SKIP
-//! set (`canonical`, `final`, `tagged`) short-circuits the block.
+//! scope. SSC-4.c wires the `Match` evaluator into the parser, honouring
+//! `host`, `originalhost`, `user`, `localuser`, and `all`. `Match exec`
+//! is treated as non-matching to avoid spawning arbitrary commands from
+//! a config-lookup path; the rest of the SKIP set (`canonical`, `final`,
+//! `tagged`) likewise short-circuits the block.
 //!
 //! # Failure mode
 //!
@@ -39,8 +42,8 @@ use std::path::{Path, PathBuf};
 use logging::debug_log;
 
 /// Returns `true` when `~/.ssh/config` or `/etc/ssh/ssh_config`
-/// configures `Compression yes` for `target_host` at top level or under
-/// a matching `Host` block.
+/// configures `Compression yes` for `ctx` at top level or under a
+/// matching `Host` or `Match` block.
 ///
 /// `options` is the SSH option argv; a `-F <file>` (or `-F<file>`)
 /// override is honoured first when present and the file exists. After
@@ -49,22 +52,25 @@ use logging::debug_log;
 /// the list are not consulted, matching OpenSSH's behaviour when `-F`
 /// is supplied.
 ///
-/// `target_host` is the destination hostname taken from
-/// `SshCommand::host`. SSC-5.b uses it to evaluate per-host `Host`
-/// blocks (`Host web*.example.com`); when empty, only top-level and
-/// `Host *` directives can fire.
+/// `ctx` carries the connection context evaluated by SSC-4.b/SSC-5.b:
+/// the destination host (used for `Host` blocks and `Match host`),
+/// `originalhost`, remote user, and local user. When every field is
+/// empty only top-level and `Host *` / `Match all` directives can fire.
 ///
 /// Returns `false` when:
 /// - no candidate file exists,
 /// - the chosen file does not contain a matching `Compression yes`,
 /// - the chosen file fails to parse (a `debug_log!` line is emitted and
 ///   the function reports `false` rather than aborting the transfer).
-pub(super) fn ssh_config_enables_compression(options: &[OsString], target_host: &str) -> bool {
+pub(super) fn ssh_config_enables_compression(
+    options: &[OsString],
+    ctx: &MatchContext<'_>,
+) -> bool {
     for candidate in candidate_paths(options) {
         if !candidate.is_file() {
             continue;
         }
-        return read_and_check(&candidate, target_host);
+        return read_and_check(&candidate, ctx);
     }
     false
 }
@@ -84,12 +90,12 @@ pub(super) fn candidate_paths(options: &[OsString]) -> Vec<PathBuf> {
     paths
 }
 
-/// Reads `path` and returns whether it enables compression for
-/// `target_host`. Parse and I/O errors are converted to `false` with a
-/// single diagnostic line.
-fn read_and_check(path: &Path, target_host: &str) -> bool {
+/// Reads `path` and returns whether it enables compression for `ctx`.
+/// Parse and I/O errors are converted to `false` with a single
+/// diagnostic line.
+fn read_and_check(path: &Path, ctx: &MatchContext<'_>) -> bool {
     match fs::read_to_string(path) {
-        Ok(text) => parse_enables_compression(&text, target_host),
+        Ok(text) => parse_enables_compression(&text, ctx),
         Err(err) => {
             debug_log!(
                 Io,
@@ -104,25 +110,29 @@ fn read_and_check(path: &Path, target_host: &str) -> bool {
 }
 
 /// Parses `text` and returns `true` when `Compression yes` is in effect
-/// for `target_host` at top level or under a matching `Host` block.
+/// for `ctx` at top level or under a matching `Host` or `Match` block.
 ///
 /// Per OpenSSH's first-match-wins rule (see SSC-4.a "First-match-wins
 /// ordering" and SSC-5 audit findings G1/G2), each scope keeps its own
 /// `Option<bool>` slot that records the first assignment encountered.
-/// The final answer ORs the two scope slots: any scope whose first hit
-/// was `Compression yes` flips the warning. A `Host` block contributes
-/// only when `target_host` matches at least one positive pattern token
-/// and no negated token (`pattern_list_matches`, sourced from SSC-4.b).
+/// The final answer ORs the scope slots: any scope whose first hit was
+/// `Compression yes` flips the warning. A `Host` block contributes only
+/// when `ctx.host` matches at least one positive pattern token and no
+/// negated token (`pattern_list_matches`, sourced from SSC-4.b). A
+/// `Match` block contributes only when every condition on its header
+/// line evaluates true against `ctx`; SKIP/DEFER conditions
+/// (`canonical`, `final`, `tagged`, `exec`) render the whole block
+/// inert per SSC-4.a.
 ///
-/// `target_host` may be empty; in that case only `Host *` patterns can
-/// match (the empty-input guard in `pattern_list_matches` already
-/// rejects non-empty patterns against an empty input).
+/// `ctx`'s fields may be empty; in that case only `Host *` and
+/// `Match all` (or other patterns that tolerate empty input) can match.
 ///
 /// Exposed to tests so they can assert behaviour without disk I/O.
-pub(super) fn parse_enables_compression(text: &str, target_host: &str) -> bool {
+pub(super) fn parse_enables_compression(text: &str, ctx: &MatchContext<'_>) -> bool {
     let mut block = Block::TopLevel;
     let mut top_level: Option<bool> = None;
     let mut host_block: Option<bool> = None;
+    let mut match_block: Option<bool> = None;
 
     for raw_line in text.lines() {
         let line = strip_comment(raw_line).trim();
@@ -143,7 +153,7 @@ pub(super) fn parse_enables_compression(text: &str, target_host: &str) -> bool {
                 block = Block::Host(parse_pattern_list(value));
             }
             "match" => {
-                block = Block::Match;
+                block = Block::MatchEvaluated(match_line_applies(value, ctx));
             }
             "compression" => {
                 let parsed = parse_yes_no(value);
@@ -151,9 +161,12 @@ pub(super) fn parse_enables_compression(text: &str, target_host: &str) -> bool {
                     Block::TopLevel if top_level.is_none() => top_level = parsed,
                     Block::Host(patterns)
                         if host_block.is_none()
-                            && pattern_list_matches(patterns, target_host, MatchKind::Host) =>
+                            && pattern_list_matches(patterns, ctx.host, MatchKind::Host) =>
                     {
                         host_block = parsed;
+                    }
+                    Block::MatchEvaluated(true) if match_block.is_none() => {
+                        match_block = parsed;
                     }
                     _ => {}
                 }
@@ -162,7 +175,7 @@ pub(super) fn parse_enables_compression(text: &str, target_host: &str) -> bool {
         }
     }
 
-    top_level.unwrap_or(false) || host_block.unwrap_or(false)
+    top_level.unwrap_or(false) || host_block.unwrap_or(false) || match_block.unwrap_or(false)
 }
 
 /// Active config block while parsing.
@@ -173,11 +186,17 @@ pub(super) fn parse_enables_compression(text: &str, target_host: &str) -> bool {
 /// shared SSC-4.b `pattern_list_matches` against the target host
 /// instead of the old "`*` literal only" shortcut, closing audit gap
 /// G1 (per-host blocks dropped) and G3 (matcher duplication).
+///
+/// SSC-4.c added [`Block::MatchEvaluated`]: when the parser encounters a
+/// `Match` directive it evaluates the header line once via
+/// [`match_line_applies`] and records the boolean outcome. Subsequent
+/// `Compression` directives inside the block consult that cached
+/// decision instead of re-evaluating per directive.
 #[derive(Clone, Eq, PartialEq)]
 enum Block {
     TopLevel,
     Host(Vec<Pattern>),
-    Match,
+    MatchEvaluated(bool),
 }
 
 /// A single token from an ssh_config `Host` or `Match` pattern-list.
@@ -223,9 +242,9 @@ impl Pattern {
 /// [`Pattern`] entries.
 ///
 /// Tokens are split on whitespace or commas, matching OpenSSH's
-/// `match_pattern_list`. Empty tokens are dropped. Used by both
-/// `parse_enables_compression` (SSC-5.b) and future `Match` plumbing
-/// (SSC-4.c) so the two callers share one tokeniser.
+/// `match_pattern_list`. Empty tokens are dropped. Shared by
+/// `Host`-block resolution (SSC-5.b) and the `Match`-line evaluator
+/// (SSC-4.c) so both callers route through one tokeniser.
 pub(super) fn parse_pattern_list(value: &str) -> Vec<Pattern> {
     value
         .split(|c: char| c.is_whitespace() || c == ',')
@@ -235,7 +254,6 @@ pub(super) fn parse_pattern_list(value: &str) -> Vec<Pattern> {
         .collect()
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 /// One condition from an ssh_config `Match` line.
 ///
 /// The HONOR set selected in SSC-4.a: five variants covering `host`,
@@ -264,7 +282,6 @@ pub(super) enum MatchCondition {
     All,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 /// Connection context consulted when evaluating an ssh_config `Match`
 /// line.
 ///
@@ -289,10 +306,10 @@ pub(super) struct MatchContext<'a> {
     pub local_user: &'a str,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 impl<'a> MatchContext<'a> {
     /// Builds a context with an explicit local-user string. Tests use
     /// this to avoid touching process environment.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn new(
         host: &'a str,
         original_host: &'a str,
@@ -333,7 +350,6 @@ impl<'a> MatchContext<'a> {
     }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 /// Returns the local username from `USER` (Unix) or `USERNAME`
 /// (Windows). Returns `None` on platforms without either var or when
 /// the value is empty.
@@ -349,7 +365,6 @@ fn local_user_env() -> Option<String> {
     if value.is_empty() { None } else { Some(value) }
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 /// Evaluates a parsed `Match` line against `ctx`.
 ///
 /// Returns `true` only when *every* condition's pattern list resolves
@@ -368,7 +383,71 @@ pub(super) fn evaluate_match(conditions: &[MatchCondition], ctx: &MatchContext<'
     conditions.iter().all(|cond| evaluate_condition(cond, ctx))
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+/// Tokenises the value half of a `Match` header into [`MatchCondition`]
+/// entries, then evaluates them against `ctx`.
+///
+/// Returns `true` when every recognised condition matches; `false`
+/// otherwise. SKIP / DEFER keywords (`canonical`, `final`, `tagged`,
+/// `exec`) short-circuit the line per SSC-4.a: encountering any of
+/// them renders the whole block inert, regardless of the rest of the
+/// line, mirroring the conservative reading documented in the spec.
+///
+/// `exec` is **never** executed. Spawning subprocesses from a passive
+/// config-lookup path inverts the trust model the warning was meant to
+/// live inside, so we treat it as a non-match with no fork/exec. See
+/// SSC-4.a "DEFER" rationale for the full security justification.
+///
+/// Recognises keys case-insensitively; arguments are split on whitespace
+/// or commas via [`parse_pattern_list`] for the keys that take a
+/// pattern-list. Unknown tokens cause the line to be treated as inert
+/// (conservative: a typo cannot accidentally flip the warning).
+fn match_line_applies(value: &str, ctx: &MatchContext<'_>) -> bool {
+    let mut conditions = Vec::new();
+    let mut tokens = value.split_ascii_whitespace();
+    while let Some(keyword) = tokens.next() {
+        let keyword_lc = keyword.to_ascii_lowercase();
+        match keyword_lc.as_str() {
+            "all" => conditions.push(MatchCondition::All),
+            "host" => {
+                let Some(arg) = tokens.next() else {
+                    return false;
+                };
+                conditions.push(MatchCondition::Host(parse_pattern_list(arg)));
+            }
+            "originalhost" => {
+                let Some(arg) = tokens.next() else {
+                    return false;
+                };
+                conditions.push(MatchCondition::OriginalHost(parse_pattern_list(arg)));
+            }
+            "user" => {
+                let Some(arg) = tokens.next() else {
+                    return false;
+                };
+                conditions.push(MatchCondition::User(parse_pattern_list(arg)));
+            }
+            "localuser" => {
+                let Some(arg) = tokens.next() else {
+                    return false;
+                };
+                conditions.push(MatchCondition::LocalUser(parse_pattern_list(arg)));
+            }
+            // SKIP set (SSC-4.a): we never reach OpenSSH's second pass,
+            // and no oc-rsync code path produces a `-P` tag. Any block
+            // gated by one of these is dead code from our perspective.
+            "canonical" | "final" | "tagged" => return false,
+            // DEFER (SSC-4.a): `exec` would require spawning a shell
+            // command from a passive config-lookup path. Treated as
+            // non-matching here to avoid the fork/exec entirely; the
+            // argv-side SSC-1 check still catches `-C` and
+            // `-o Compression=yes`.
+            "exec" => return false,
+            _ => return false,
+        }
+    }
+    evaluate_match(&conditions, ctx)
+}
+
 /// Evaluates a single [`MatchCondition`] against the context's
 /// corresponding field. Hostnames are compared case-insensitively;
 /// usernames are compared case-sensitively on Unix and
@@ -530,11 +609,18 @@ fn home_dir() -> Option<PathBuf> {
 mod tests {
     use super::*;
 
+    /// Builds a host-only `MatchContext` for tests that only need to
+    /// drive `Host`-block resolution. Mirrors the pre-SSC-4.c signature
+    /// where `parse_enables_compression` took a bare `target_host`.
+    fn host_ctx(target: &str) -> MatchContext<'_> {
+        MatchContext::new(target, target, "", "")
+    }
+
     #[test]
     fn top_level_compression_yes_detected() {
         assert!(parse_enables_compression(
             "Compression yes\n",
-            "any.example.com"
+            &host_ctx("any.example.com")
         ));
     }
 
@@ -543,13 +629,13 @@ mod tests {
         // Top-level scope must fire regardless of target host, including
         // the degenerate empty-string case used by callers that never
         // populate `SshCommand::host`.
-        assert!(parse_enables_compression("Compression yes\n", ""));
+        assert!(parse_enables_compression("Compression yes\n", &host_ctx("")));
     }
 
     #[test]
     fn host_star_compression_yes_detected() {
         let text = "Host *\n  Compression yes\n";
-        assert!(parse_enables_compression(text, "any.example.com"));
+        assert!(parse_enables_compression(text, &host_ctx("any.example.com")));
     }
 
     #[test]
@@ -557,7 +643,7 @@ mod tests {
         // Top-level directive must still win regardless of any subsequent
         // host-specific block that does not match the target.
         let text = "Compression yes\nHost db*\n  Compression no\n";
-        assert!(parse_enables_compression(text, "web1.example.com"));
+        assert!(parse_enables_compression(text, &host_ctx("web1.example.com")));
     }
 
     #[test]
@@ -566,7 +652,7 @@ mod tests {
         // pre-fix. The audit doc's first example asserts they now fire
         // when `target_host` matches the literal.
         let text = "Host web1.example.com\n  Compression yes\n";
-        assert!(parse_enables_compression(text, "web1.example.com"));
+        assert!(parse_enables_compression(text, &host_ctx("web1.example.com")));
     }
 
     #[test]
@@ -574,7 +660,7 @@ mod tests {
         // SSC-5.b G1: glob tokens like `Host web*` resolve via the
         // shared SSC-4.b `pattern_glob_matches` matcher.
         let text = "Host web*\n  Compression yes\n";
-        assert!(parse_enables_compression(text, "web1.example.com"));
+        assert!(parse_enables_compression(text, &host_ctx("web1.example.com")));
     }
 
     #[test]
@@ -582,7 +668,7 @@ mod tests {
         // Negative case for the glob path: `Host db*` must not fire
         // when the target is `web1.example.com`.
         let text = "Host db*\n  Compression yes\n";
-        assert!(!parse_enables_compression(text, "web1.example.com"));
+        assert!(!parse_enables_compression(text, &host_ctx("web1.example.com")));
     }
 
     #[test]
@@ -591,7 +677,10 @@ mod tests {
         // that matches forces the whole pattern-list to fail, even when
         // a positive token (`*`) would otherwise match.
         let text = "Host !banned.example.com *\n  Compression yes\n";
-        assert!(!parse_enables_compression(text, "banned.example.com"));
+        assert!(!parse_enables_compression(
+            text,
+            &host_ctx("banned.example.com")
+        ));
     }
 
     #[test]
@@ -599,7 +688,7 @@ mod tests {
         // Negation only fires when the negated token itself matches.
         // For any other host, the positive `*` token wins.
         let text = "Host !banned.example.com *\n  Compression yes\n";
-        assert!(parse_enables_compression(text, "ok.example.com"));
+        assert!(parse_enables_compression(text, &host_ctx("ok.example.com")));
     }
 
     #[test]
@@ -609,7 +698,7 @@ mod tests {
         // later `Host *\n Compression yes` cannot override an earlier
         // matching `Host web1\n Compression no`.
         let text = "Host web1\n  Compression no\nHost *\n  Compression yes\n";
-        assert!(!parse_enables_compression(text, "web1"));
+        assert!(!parse_enables_compression(text, &host_ctx("web1")));
     }
 
     #[test]
@@ -617,32 +706,41 @@ mod tests {
         // Pre-SSC-5.b behaviour preserved for non-matching targets:
         // `Host foo` with target `bar` contributes nothing.
         let text = "Host foo.example.com\n  Compression yes\n";
-        assert!(!parse_enables_compression(text, "bar.example.com"));
+        assert!(!parse_enables_compression(text, &host_ctx("bar.example.com")));
     }
 
     #[test]
     fn compression_no_returns_false() {
-        assert!(!parse_enables_compression("Compression no\n", "any"));
+        assert!(!parse_enables_compression(
+            "Compression no\n",
+            &host_ctx("any")
+        ));
     }
 
     #[test]
-    fn match_block_compression_yes_ignored() {
-        // SSC-5.b leaves `Match` blocks for SSC-4.c to wire; the
-        // `Block::Match` arm still drops the directive here.
+    fn match_host_block_flips_compression_to_true() {
+        // SSC-4.c: a `Match host` block whose pattern matches the target
+        // must contribute its `Compression yes` directive. This is the
+        // targeted regression that proves `Block::MatchEvaluated(true)`
+        // is wired into the `Compression` arm. Without SSC-4.c the
+        // `Match` block was inert and the assertion would fail.
         let text = "Match host bar\n  Compression yes\n";
-        assert!(!parse_enables_compression(text, "bar"));
+        assert!(parse_enables_compression(text, &host_ctx("bar")));
     }
 
     #[test]
     fn equals_separator_supported() {
-        assert!(parse_enables_compression("Compression=yes\n", "any"));
+        assert!(parse_enables_compression(
+            "Compression=yes\n",
+            &host_ctx("any")
+        ));
     }
 
     #[test]
     fn comments_stripped() {
         assert!(parse_enables_compression(
             "# header\nCompression yes # trailing\n",
-            "any"
+            &host_ctx("any")
         ));
     }
 
