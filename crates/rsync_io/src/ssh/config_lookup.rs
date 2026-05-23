@@ -1030,8 +1030,7 @@ mod tests {
         // SSC-4.c first-match-wins across the shared match-block slot:
         // the first matching `Compression` (here `yes`) sticks and the
         // later `Match all\n Compression no` cannot override it.
-        let text =
-            "Match host *.example.com\n  Compression yes\nMatch all\n  Compression no\n";
+        let text = "Match host *.example.com\n  Compression yes\nMatch all\n  Compression no\n";
         assert!(parse_enables_compression(
             text,
             &match_ctx("web1.example.com", "web1.example.com", "", "")
@@ -1044,8 +1043,7 @@ mod tests {
         // matching `Compression yes` sinks the scope. The earlier `no`
         // is recorded as the first decision and the later block's
         // `yes` is dropped.
-        let text =
-            "Match all\n  Compression no\nMatch host *.example.com\n  Compression yes\n";
+        let text = "Match all\n  Compression no\nMatch host *.example.com\n  Compression yes\n";
         assert!(!parse_enables_compression(
             text,
             &match_ctx("web1.example.com", "web1.example.com", "", "")
