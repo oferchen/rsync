@@ -38,6 +38,7 @@ mod error;
 mod extras;
 mod plan;
 mod plan_map;
+mod reorder_buffer;
 mod traversal;
 
 pub use cohort_index::CohortIndex;
@@ -50,4 +51,8 @@ pub use error::DeleteError;
 pub use extras::{compute_extras, compute_extras_with_cohorts};
 pub use plan::{DeleteEntry, DeleteEntryKind, DeletePlan, HardlinkCohortId};
 pub use plan_map::DeletePlanMap;
+pub use reorder_buffer::{
+    DRAIN_BATCH_CAP, DeleteCohort, DeleteCohortKey, DeleteOperation, MAX_BUFFERED_COHORTS,
+    ReorderBuffer, ReorderBufferError,
+};
 pub use traversal::DirTraversalCursor;
