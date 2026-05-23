@@ -410,9 +410,7 @@ mod tests {
             one_shot: true,
         };
         let mut w = MockEnoSpcWriter::with_plan(Vec::<u8>::new(), plan);
-        let err = w
-            .write(b"hello")
-            .expect_err("one-shot fires on first call");
+        let err = w.write(b"hello").expect_err("one-shot fires on first call");
         assert_eq!(err.kind(), ENOSPC_KIND);
         // After the one-shot trips, subsequent writes succeed against the
         // underlying buffer. This mirrors the SPL-33 free-space-restored
