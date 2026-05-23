@@ -262,8 +262,8 @@ mod tests {
                 // CQE round-trip proves each thread's ring is its own
                 // SQ/CQ pair: a shared ring would surface a foreign
                 // op_id from another worker's earlier submission.
-                let op_id = unique_op_id.fetch_add(1, Ordering::Relaxed) as u64
-                    | ((worker as u64) << 32);
+                let op_id =
+                    unique_op_id.fetch_add(1, Ordering::Relaxed) as u64 | ((worker as u64) << 32);
                 with_ring(|ring| submit_nop_and_reap(ring, op_id))
             }));
         }
