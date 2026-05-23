@@ -5,12 +5,33 @@
 //! synchronous `Read`/`Write` handles suitable for the rsync protocol layer.
 
 use std::sync::Arc;
+use std::sync::mpsc::RecvTimeoutError;
+use std::time::{Duration, Instant};
 
 use super::auth::authenticate;
 use super::config::SshConfig;
 use super::error::SshError;
 use super::handler::SshClientHandler;
 use super::resolve::resolve_host;
+
+/// Bounded budget for the SSH goodbye phase.
+///
+/// After the local side drops its writer half, the remote channel must
+/// signal EOF (and the bridge task that drives `russh::Channel::wait()`
+/// must drain and exit) within this window. The value is chosen as a
+/// compromise between two failure modes:
+///
+/// - **Too small**: a slow but healthy network roundtrip during shutdown
+///   would surface as a spurious goodbye-phase error.
+/// - **Too large**: a real deadlock (the class fixed in PR #4154 / the
+///   v0.6.1 200x SSH push regression) would again present as a multi-
+///   minute hang instead of a typed error.
+///
+/// 30 seconds is comfortably above any healthy SSH channel teardown and
+/// well below the operator-visible patience threshold, so a deadlock is
+/// surfaced as `SshError::GoodbyePhaseTimeout` long before it shows up
+/// as a wall-clock cliff.
+pub const SSH_GOODBYE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Synchronous reader wrapping data received from the SSH channel.
 ///
@@ -53,6 +74,50 @@ impl std::io::Read for ChannelReader {
                 Ok(n)
             }
             Err(_) => Ok(0), // Channel closed = EOF
+        }
+    }
+}
+
+impl ChannelReader {
+    /// Waits for the remote SSH channel to signal EOF within
+    /// [`SSH_GOODBYE_TIMEOUT`].
+    ///
+    /// Intended to be called after the local writer half has been dropped
+    /// (the rsync protocol stream is complete) to enforce a bounded budget
+    /// on the SSH session-shutdown handshake. Any chunks that arrive
+    /// during the wait are discarded, because protocol-level reads are
+    /// already finished by the caller.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(())` when the underlying bridge task exits cleanly (the
+    ///   sender drop is observed as `RecvTimeoutError::Disconnected`).
+    /// - `Err(SshError::GoodbyePhaseTimeout)` when the budget elapses
+    ///   without the bridge having exited, signalling a deadlock on the
+    ///   remote channel close.
+    ///
+    /// # Determinism
+    ///
+    /// The implementation tracks elapsed time against [`Instant::now`]
+    /// rather than against the per-`recv_timeout` slice, so a sequence of
+    /// short-lived chunks before the remote stalls still surfaces as a
+    /// timeout error within the configured budget.
+    pub fn wait_for_eof_with_timeout(&mut self, budget: Duration) -> Result<(), SshError> {
+        let deadline = Instant::now() + budget;
+        loop {
+            let now = Instant::now();
+            let remaining = if now >= deadline {
+                Duration::ZERO
+            } else {
+                deadline - now
+            };
+            match self.rx.recv_timeout(remaining) {
+                Ok(_chunk) => continue,
+                Err(RecvTimeoutError::Disconnected) => return Ok(()),
+                Err(RecvTimeoutError::Timeout) => {
+                    return Err(SshError::GoodbyePhaseTimeout { elapsed: budget });
+                }
+            }
         }
     }
 }
@@ -266,6 +331,86 @@ mod tests {
         let mut buf2 = [0u8; 64];
         let n2 = reader.read(&mut buf2).unwrap();
         assert_eq!(&buf2[..n2], b" world");
+    }
+
+    /// A held-open bridge sender (the deadlock surface guarded by
+    /// `SSH_GOODBYE_TIMEOUT`) surfaces as `GoodbyePhaseTimeout` within
+    /// the configured budget, not as an unbounded hang.
+    ///
+    /// The budget is intentionally tiny (50 ms) so the test stays fast,
+    /// and the upper bound is generous (2 s) so it stays deterministic on
+    /// loaded CI runners. Using the budget as an upper bound rather than
+    /// requiring wall-clock equality keeps the test from flaking under
+    /// scheduling jitter.
+    #[test]
+    fn wait_for_eof_times_out_when_bridge_stalls() {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(1);
+        let mut reader = ChannelReader { rx, partial: None };
+
+        let budget = Duration::from_millis(50);
+        let start = Instant::now();
+        let result = reader.wait_for_eof_with_timeout(budget);
+        let elapsed = start.elapsed();
+
+        // Keep the sender alive past the call so the receiver can never
+        // observe a Disconnected error - this is the simulated deadlock.
+        drop(tx);
+
+        match result {
+            Err(SshError::GoodbyePhaseTimeout { elapsed: reported }) => {
+                assert_eq!(reported, budget);
+            }
+            other => panic!("expected GoodbyePhaseTimeout, got {other:?}"),
+        }
+
+        assert!(
+            elapsed >= budget,
+            "returned before budget elapsed: {elapsed:?} < {budget:?}",
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "took longer than the upper bound: {elapsed:?}",
+        );
+    }
+
+    /// Dropping the bridge sender models the healthy goodbye-phase path:
+    /// the russh bridge task exits, the sender is dropped, and the
+    /// receiver observes channel disconnect. The bounded wait helper
+    /// must return `Ok(())` promptly.
+    #[test]
+    fn wait_for_eof_returns_ok_on_clean_drop() {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(1);
+        let mut reader = ChannelReader { rx, partial: None };
+        drop(tx);
+
+        let start = Instant::now();
+        let result = reader.wait_for_eof_with_timeout(SSH_GOODBYE_TIMEOUT);
+        let elapsed = start.elapsed();
+
+        assert!(result.is_ok(), "expected Ok, got {result:?}");
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "clean EOF should return promptly: {elapsed:?}",
+        );
+    }
+
+    /// Chunks delivered before the remote stalls are discarded - the
+    /// helper is only concerned with bounding the wait for channel
+    /// disconnect, not with surfacing late protocol data. A budget that
+    /// outlives the in-flight chunks still trips the timeout because the
+    /// sender is never dropped.
+    #[test]
+    fn wait_for_eof_drains_pending_chunks_then_times_out() {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(4);
+        tx.send(b"stale".to_vec()).unwrap();
+        tx.send(b"goodbye-bytes".to_vec()).unwrap();
+        let mut reader = ChannelReader { rx, partial: None };
+
+        let budget = Duration::from_millis(75);
+        let result = reader.wait_for_eof_with_timeout(budget);
+        drop(tx);
+
+        assert!(matches!(result, Err(SshError::GoodbyePhaseTimeout { .. })));
     }
 
     #[test]
