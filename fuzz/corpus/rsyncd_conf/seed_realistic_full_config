@@ -1,0 +1,13 @@
+# global settings
+motd file = /etc/rsyncd.motd
+log file = /var/log/rsyncd.log
+port = 873
+
+[backup]
+  path = /srv/backup
+  comment = nightly backup
+  read only = yes
+  uid = nobody
+  gid = nogroup
+  auth users = alice, bob
+  secrets file = /etc/rsyncd.secrets
