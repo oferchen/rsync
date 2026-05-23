@@ -115,6 +115,22 @@ impl BgidAllocator {
     /// No-op on this platform.
     pub fn deallocate(_bgid: u16) {}
 
+    /// Always returns [`BgidAllocError::Exhausted`] on this platform.
+    ///
+    /// Mirrors the Linux signature so cross-platform callers (e.g. the
+    /// per-thread bgid lease) handle exhaustion through a single typed
+    /// path without `cfg`-gating.
+    pub fn allocate_batch(_count: usize) -> Result<Vec<u16>, BgidAllocError> {
+        Err(BgidAllocError::Exhausted {
+            fresh_used: 0,
+            free_list_len: 0,
+        })
+    }
+
+    /// No-op on this platform; the stub never issues bgids so it never has
+    /// any to return.
+    pub fn deallocate_batch(_bgids: &[u16]) {}
+
     /// Always returns 0 on this platform.
     #[must_use]
     pub fn remaining() -> u32 {
