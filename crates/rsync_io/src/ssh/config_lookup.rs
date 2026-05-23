@@ -147,6 +147,271 @@ enum Block {
     Match,
 }
 
+/// A single token from an ssh_config `Match` pattern-list.
+///
+/// Stores the raw glob text (sans leading `!`) plus the negation flag.
+/// Glob metacharacters `*` (any run) and `?` (one character) are honoured
+/// at evaluation time by [`pattern_glob_matches`]. Mirrors OpenSSH's
+/// `match_pattern_list` plus the embedded transport's
+/// `host_matches_any_pattern` semantics.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(super) struct Pattern {
+    glob: String,
+    negate: bool,
+}
+
+impl Pattern {
+    /// Builds a [`Pattern`] from a raw token. A leading `!` sets the
+    /// negation flag; the remainder is stored verbatim as the glob text.
+    pub(super) fn new(token: &str) -> Self {
+        let (negate, glob) = token
+            .strip_prefix('!')
+            .map_or((false, token), |stripped| (true, stripped));
+        Self {
+            glob: glob.to_owned(),
+            negate,
+        }
+    }
+
+    /// Returns the stored glob text without the leading `!`.
+    pub(super) fn glob(&self) -> &str {
+        &self.glob
+    }
+
+    /// Returns `true` when this token is a negated pattern (`!glob`).
+    pub(super) fn is_negated(&self) -> bool {
+        self.negate
+    }
+}
+
+/// One condition from an ssh_config `Match` line.
+///
+/// The HONOR set selected in SSC-4.a: five variants covering `host`,
+/// `originalhost`, `user`, `localuser`, and the argumentless `all`
+/// sentinel. The SKIP / DEFER conditions (`canonical`, `final`,
+/// `tagged`, `exec`) are not modelled here; the parser short-circuits
+/// the whole block when it encounters one of them.
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(super) enum MatchCondition {
+    /// `Match host <patterns>`: target hostname after `Hostname`
+    /// substitution and canonicalization. We never substitute, so this
+    /// evaluates against [`MatchContext::host`] directly.
+    Host(Vec<Pattern>),
+    /// `Match originalhost <patterns>`: target hostname as given on the
+    /// command line, before any substitution. Evaluates against
+    /// [`MatchContext::original_host`].
+    OriginalHost(Vec<Pattern>),
+    /// `Match user <patterns>`: remote user (`-l`, `user@host`, or
+    /// `User` directive). Evaluates against [`MatchContext::user`].
+    User(Vec<Pattern>),
+    /// `Match localuser <patterns>`: local user running ssh. Evaluates
+    /// against [`MatchContext::local_user`].
+    LocalUser(Vec<Pattern>),
+    /// `Match all`: always matches; the conventional default-block
+    /// sentinel.
+    All,
+}
+
+/// Connection context consulted when evaluating an ssh_config `Match`
+/// line.
+///
+/// Lifetimes are external because every field is borrowed from the
+/// caller's `SshCommand` or an env-lookup string.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct MatchContext<'a> {
+    /// Target host as passed to ssh on the command line, after
+    /// canonicalization. oc-rsync never canonicalizes, so this equals
+    /// `original_host` for our purposes.
+    pub host: &'a str,
+    /// Target host as given on the command line, before any
+    /// `Hostname` substitution. Evaluated by `originalhost`.
+    pub original_host: &'a str,
+    /// Remote user. Empty string when the caller did not specify one;
+    /// callers may pass the local user as a fallback to mirror
+    /// OpenSSH's `User` default.
+    pub user: &'a str,
+    /// Local user running ssh. Sourced from `USER` on Unix and
+    /// `USERNAME` on Windows when discovered via
+    /// [`MatchContext::with_local_user_from_env`].
+    pub local_user: &'a str,
+}
+
+impl<'a> MatchContext<'a> {
+    /// Builds a context with an explicit local-user string. Tests use
+    /// this to avoid touching process environment.
+    pub(super) fn new(
+        host: &'a str,
+        original_host: &'a str,
+        user: &'a str,
+        local_user: &'a str,
+    ) -> Self {
+        Self {
+            host,
+            original_host,
+            user,
+            local_user,
+        }
+    }
+
+    /// Builds a context whose `local_user` is taken from the platform's
+    /// canonical env var (`USER` on Unix, `USERNAME` on Windows). When
+    /// the var is unset or non-UTF-8 the field is left as the empty
+    /// string `""`, which never matches a non-empty pattern token.
+    ///
+    /// The returned context borrows from `local_user_buf`, so callers
+    /// own the backing storage and the borrow checker can enforce the
+    /// lifetime.
+    pub(super) fn with_local_user_from_env(
+        host: &'a str,
+        original_host: &'a str,
+        user: &'a str,
+        local_user_buf: &'a mut String,
+    ) -> Self {
+        if let Some(value) = local_user_env() {
+            *local_user_buf = value;
+        }
+        Self {
+            host,
+            original_host,
+            user,
+            local_user: local_user_buf.as_str(),
+        }
+    }
+}
+
+/// Returns the local username from `USER` (Unix) or `USERNAME`
+/// (Windows). Returns `None` on platforms without either var or when
+/// the value is empty.
+fn local_user_env() -> Option<String> {
+    #[cfg(unix)]
+    let raw = std::env::var_os("USER");
+    #[cfg(windows)]
+    let raw = std::env::var_os("USERNAME");
+    #[cfg(not(any(unix, windows)))]
+    let raw: Option<std::ffi::OsString> = None;
+
+    let value = raw?.to_string_lossy().into_owned();
+    if value.is_empty() { None } else { Some(value) }
+}
+
+/// Evaluates a parsed `Match` line against `ctx`.
+///
+/// Returns `true` only when *every* condition's pattern list resolves
+/// to a match (logical AND across the line). Within one condition the
+/// pattern list is OR-matched: any positive token that matches the
+/// input passes, unless a negated token also matches, in which case
+/// the whole condition fails (mirrors OpenSSH's `match_pattern_list`).
+///
+/// An empty `conditions` slice returns `false`. SSC-4.a chose this
+/// conservative default so a malformed `Match` line with no recognised
+/// tokens cannot activate a block.
+pub(super) fn evaluate_match(conditions: &[MatchCondition], ctx: &MatchContext<'_>) -> bool {
+    if conditions.is_empty() {
+        return false;
+    }
+    conditions
+        .iter()
+        .all(|cond| evaluate_condition(cond, ctx))
+}
+
+/// Evaluates a single [`MatchCondition`] against the context's
+/// corresponding field. Hostnames are compared case-insensitively;
+/// usernames are compared case-sensitively on Unix and
+/// case-insensitively on Windows, matching OpenSSH's behaviour.
+fn evaluate_condition(condition: &MatchCondition, ctx: &MatchContext<'_>) -> bool {
+    match condition {
+        MatchCondition::All => true,
+        MatchCondition::Host(patterns) => {
+            pattern_list_matches(patterns, ctx.host, MatchKind::Host)
+        }
+        MatchCondition::OriginalHost(patterns) => {
+            pattern_list_matches(patterns, ctx.original_host, MatchKind::Host)
+        }
+        MatchCondition::User(patterns) => {
+            pattern_list_matches(patterns, ctx.user, MatchKind::User)
+        }
+        MatchCondition::LocalUser(patterns) => {
+            pattern_list_matches(patterns, ctx.local_user, MatchKind::User)
+        }
+    }
+}
+
+/// Whether the input is a hostname or a username; controls case
+/// folding per SSC-4.a.
+#[derive(Copy, Clone)]
+enum MatchKind {
+    Host,
+    User,
+}
+
+/// Returns `true` when `input` matches the pattern list under OpenSSH's
+/// OR-with-negation rule: any negated token that matches forces a
+/// failure; otherwise at least one positive token must match. An empty
+/// pattern list never matches.
+fn pattern_list_matches(patterns: &[Pattern], input: &str, kind: MatchKind) -> bool {
+    if patterns.is_empty() || input.is_empty() {
+        return false;
+    }
+    let mut any_positive = false;
+    for pattern in patterns {
+        if pattern_glob_matches(pattern.glob(), input, kind) {
+            if pattern.is_negated() {
+                return false;
+            }
+            any_positive = true;
+        }
+    }
+    any_positive
+}
+
+/// Glob-matches `input` against `glob`, applying the case-folding rule
+/// dictated by `kind`. Mirrors the embedded transport's `pattern_matches`
+/// (`*` matches any run, `?` matches one character) with an added
+/// case-folding step.
+fn pattern_glob_matches(glob: &str, input: &str, kind: MatchKind) -> bool {
+    if case_fold(kind) {
+        let input_norm = input.to_ascii_lowercase();
+        let glob_norm = glob.to_ascii_lowercase();
+        glob_matches_bytes(input_norm.as_bytes(), glob_norm.as_bytes())
+    } else {
+        glob_matches_bytes(input.as_bytes(), glob.as_bytes())
+    }
+}
+
+/// Returns `true` when comparisons for `kind` should be ASCII
+/// case-folded. Hostnames are always folded; usernames are folded only
+/// on Windows, where account names are inherently case-insensitive.
+fn case_fold(kind: MatchKind) -> bool {
+    match kind {
+        MatchKind::Host => true,
+        MatchKind::User => cfg!(windows),
+    }
+}
+
+/// Byte-level glob matcher: `*` matches any run, `?` matches one byte.
+/// No character classes; no extended globs. Equivalent to `fnmatch(3)`
+/// without `FNM_PATHNAME`.
+fn glob_matches_bytes(input: &[u8], glob: &[u8]) -> bool {
+    if glob.is_empty() {
+        return input.is_empty();
+    }
+    match glob[0] {
+        b'*' => {
+            if glob.len() == 1 {
+                return true;
+            }
+            for i in 0..=input.len() {
+                if glob_matches_bytes(&input[i..], &glob[1..]) {
+                    return true;
+                }
+            }
+            false
+        }
+        b'?' => !input.is_empty() && glob_matches_bytes(&input[1..], &glob[1..]),
+        c => !input.is_empty() && input[0] == c && glob_matches_bytes(&input[1..], &glob[1..]),
+    }
+}
+
 /// Returns `true` when any token in `patterns` is exactly `*`. Matches
 /// OpenSSH's "wildcard everything" idiom, which is the only host
 /// pattern we evaluate without runtime context.
@@ -286,5 +551,175 @@ mod tests {
     fn no_dash_f_returns_none() {
         let opts = vec![OsString::from("-oBatchMode=yes")];
         assert!(extract_dash_f_path(&opts).is_none());
+    }
+
+    fn ctx<'a>(host: &'a str, user: &'a str, local_user: &'a str) -> MatchContext<'a> {
+        MatchContext::new(host, host, user, local_user)
+    }
+
+    fn patterns(tokens: &[&str]) -> Vec<Pattern> {
+        tokens.iter().map(|t| Pattern::new(t)).collect()
+    }
+
+    #[test]
+    fn pattern_strips_negation_prefix() {
+        let pat = Pattern::new("!banned.example.com");
+        assert!(pat.is_negated());
+        assert_eq!(pat.glob(), "banned.example.com");
+    }
+
+    #[test]
+    fn pattern_without_bang_is_positive() {
+        let pat = Pattern::new("web*.example.com");
+        assert!(!pat.is_negated());
+        assert_eq!(pat.glob(), "web*.example.com");
+    }
+
+    #[test]
+    fn evaluate_match_single_host_positive() {
+        let cond = vec![MatchCondition::Host(patterns(&["web1.example.com"]))];
+        assert!(evaluate_match(&cond, &ctx("web1.example.com", "", "")));
+    }
+
+    #[test]
+    fn evaluate_match_single_host_negative() {
+        let cond = vec![MatchCondition::Host(patterns(&["db.example.com"]))];
+        assert!(!evaluate_match(&cond, &ctx("web1.example.com", "", "")));
+    }
+
+    #[test]
+    fn evaluate_match_single_host_wildcard() {
+        let cond = vec![MatchCondition::Host(patterns(&["*.example.com"]))];
+        assert!(evaluate_match(&cond, &ctx("web1.example.com", "", "")));
+        assert!(!evaluate_match(&cond, &ctx("db.internal", "", "")));
+    }
+
+    #[test]
+    fn evaluate_match_single_host_question_mark() {
+        let cond = vec![MatchCondition::Host(patterns(&["web?.example.com"]))];
+        assert!(evaluate_match(&cond, &ctx("web1.example.com", "", "")));
+        assert!(!evaluate_match(&cond, &ctx("web10.example.com", "", "")));
+    }
+
+    #[test]
+    fn evaluate_match_host_case_insensitive() {
+        let cond = vec![MatchCondition::Host(patterns(&["WEB1.EXAMPLE.COM"]))];
+        assert!(evaluate_match(&cond, &ctx("web1.example.com", "", "")));
+    }
+
+    #[test]
+    fn evaluate_match_host_negation() {
+        let cond = vec![MatchCondition::Host(patterns(&[
+            "*.example.com",
+            "!banned.example.com",
+        ]))];
+        assert!(evaluate_match(&cond, &ctx("ok.example.com", "", "")));
+        assert!(!evaluate_match(&cond, &ctx("banned.example.com", "", "")));
+    }
+
+    #[test]
+    fn evaluate_match_host_and_user_and_chain() {
+        let cond = vec![
+            MatchCondition::Host(patterns(&["web*"])),
+            MatchCondition::User(patterns(&["deploy"])),
+        ];
+        assert!(evaluate_match(&cond, &ctx("web1", "deploy", "")));
+        assert!(!evaluate_match(&cond, &ctx("web1", "root", "")));
+        assert!(!evaluate_match(&cond, &ctx("db1", "deploy", "")));
+    }
+
+    #[test]
+    fn evaluate_match_or_within_condition_and_across() {
+        let cond = vec![
+            MatchCondition::Host(patterns(&["web*", "app*"])),
+            MatchCondition::User(patterns(&["deploy", "ci"])),
+        ];
+        assert!(evaluate_match(&cond, &ctx("web1", "deploy", "")));
+        assert!(evaluate_match(&cond, &ctx("app2", "ci", "")));
+        assert!(!evaluate_match(&cond, &ctx("db1", "deploy", "")));
+        assert!(!evaluate_match(&cond, &ctx("web1", "root", "")));
+    }
+
+    #[test]
+    fn evaluate_match_originalhost_evaluates_against_original_host_field() {
+        let cond = vec![MatchCondition::OriginalHost(patterns(&["web1"]))];
+        let context = MatchContext::new("web1.canonical.example.com", "web1", "", "");
+        assert!(evaluate_match(&cond, &context));
+    }
+
+    #[test]
+    fn evaluate_match_localuser_evaluates_against_local_user_field() {
+        let cond = vec![MatchCondition::LocalUser(patterns(&["ofer"]))];
+        assert!(evaluate_match(&cond, &ctx("any", "", "ofer")));
+        assert!(!evaluate_match(&cond, &ctx("any", "", "alice")));
+    }
+
+    #[test]
+    fn evaluate_match_all_is_unconditional() {
+        let cond = vec![MatchCondition::All];
+        assert!(evaluate_match(&cond, &ctx("", "", "")));
+        assert!(evaluate_match(&cond, &ctx("anything", "anyone", "anywhere")));
+    }
+
+    #[test]
+    fn evaluate_match_empty_condition_list_rejects() {
+        assert!(!evaluate_match(&[], &ctx("web1", "deploy", "ofer")));
+    }
+
+    #[test]
+    fn evaluate_match_empty_input_never_matches_non_empty_patterns() {
+        let cond = vec![MatchCondition::User(patterns(&["deploy"]))];
+        assert!(!evaluate_match(&cond, &ctx("web1", "", "ofer")));
+    }
+
+    #[test]
+    fn evaluate_match_empty_pattern_list_rejects() {
+        let cond = vec![MatchCondition::Host(Vec::new())];
+        assert!(!evaluate_match(&cond, &ctx("web1", "", "")));
+    }
+
+    #[test]
+    fn evaluate_match_negation_only_pattern_list_rejects() {
+        let cond = vec![MatchCondition::Host(patterns(&["!banned"]))];
+        assert!(!evaluate_match(&cond, &ctx("banned", "", "")));
+        assert!(!evaluate_match(&cond, &ctx("ok", "", "")));
+    }
+
+    #[test]
+    fn evaluate_match_and_chain_with_all_sentinel() {
+        let cond = vec![
+            MatchCondition::Host(patterns(&["web1"])),
+            MatchCondition::All,
+        ];
+        assert!(evaluate_match(&cond, &ctx("web1", "", "")));
+        assert!(!evaluate_match(&cond, &ctx("db1", "", "")));
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn user_pattern_case_sensitive_on_unix() {
+        let cond = vec![MatchCondition::User(patterns(&["Deploy"]))];
+        assert!(!evaluate_match(&cond, &ctx("web1", "deploy", "")));
+        assert!(evaluate_match(&cond, &ctx("web1", "Deploy", "")));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn user_pattern_case_insensitive_on_windows() {
+        let cond = vec![MatchCondition::User(patterns(&["Deploy"]))];
+        assert!(evaluate_match(&cond, &ctx("web1", "deploy", "")));
+    }
+
+    #[test]
+    fn with_local_user_from_env_threads_fields_through() {
+        let mut buf = String::from("fallback");
+        let context = MatchContext::with_local_user_from_env("h", "orig", "u", &mut buf);
+        assert_eq!(context.host, "h");
+        assert_eq!(context.original_host, "orig");
+        assert_eq!(context.user, "u");
+        // local_user is either the env value or the fallback; never empty
+        // because `fallback` is the seed and a missing env var leaves it
+        // untouched.
+        assert!(!context.local_user.is_empty());
     }
 }
