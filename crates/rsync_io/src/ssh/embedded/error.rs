@@ -54,6 +54,22 @@ pub enum SshError {
         secs: u64,
     },
 
+    /// The SSH goodbye phase did not complete within the configured budget.
+    ///
+    /// Surfaced when the local side has finished writing the rsync protocol
+    /// stream and dropped its writer half, but the remote channel never
+    /// signals EOF and the bridge task that drives `russh::Channel::wait()`
+    /// does not exit within [`super::connect::SSH_GOODBYE_TIMEOUT`].
+    /// Guards against the v0.6.1 200x-slowdown class of regression in which a
+    /// deadlocked shutdown surfaces as a multi-minute hang rather than a
+    /// typed failure.
+    #[error("SSH goodbye phase timed out after {elapsed:?}")]
+    GoodbyePhaseTimeout {
+        /// Wall-clock duration the local side waited for the remote to ack
+        /// EOF before giving up.
+        elapsed: std::time::Duration,
+    },
+
     /// The URL was syntactically valid but semantically invalid for SSH.
     #[error("invalid SSH URL: {reason}")]
     InvalidUrl {

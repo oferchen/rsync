@@ -332,11 +332,26 @@ fn run_transfer_over_embedded_ssh(
         None,
     );
 
+    // Goodbye phase: drop the writer to signal EOF to the russh bridge
+    // task, then bound how long we wait for the remote to ack the close.
+    // A stalled remote channel here is the v0.6.1 200x-slowdown class of
+    // regression - SSR-4 turns it into a typed timeout rather than a
+    // multi-minute hang. The goodbye guard only fires when the underlying
+    // transfer succeeded; a failed transfer carries the more informative
+    // diagnostic and should not be masked by a shutdown-phase error.
     drop(writer);
+    let goodbye_outcome =
+        reader.wait_for_eof_with_timeout(rsync_io::ssh::embedded::SSH_GOODBYE_TIMEOUT);
     let elapsed = start.elapsed();
 
     match transfer_result {
-        Ok(stats) => Ok(convert_server_stats_to_summary(stats, elapsed)),
+        Ok(stats) => match goodbye_outcome {
+            Ok(()) => Ok(convert_server_stats_to_summary(stats, elapsed)),
+            Err(e) => Err(invalid_argument_error(
+                &format!("embedded SSH goodbye phase failed: {e}"),
+                ExitCode::Timeout.as_i32(),
+            )),
+        },
         Err(e) => {
             let exit = ExitCode::from_io_error(&e);
             Err(invalid_argument_error(
