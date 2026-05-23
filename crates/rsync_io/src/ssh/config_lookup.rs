@@ -319,9 +319,7 @@ pub(super) fn evaluate_match(conditions: &[MatchCondition], ctx: &MatchContext<'
     if conditions.is_empty() {
         return false;
     }
-    conditions
-        .iter()
-        .all(|cond| evaluate_condition(cond, ctx))
+    conditions.iter().all(|cond| evaluate_condition(cond, ctx))
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -332,15 +330,11 @@ pub(super) fn evaluate_match(conditions: &[MatchCondition], ctx: &MatchContext<'
 fn evaluate_condition(condition: &MatchCondition, ctx: &MatchContext<'_>) -> bool {
     match condition {
         MatchCondition::All => true,
-        MatchCondition::Host(patterns) => {
-            pattern_list_matches(patterns, ctx.host, MatchKind::Host)
-        }
+        MatchCondition::Host(patterns) => pattern_list_matches(patterns, ctx.host, MatchKind::Host),
         MatchCondition::OriginalHost(patterns) => {
             pattern_list_matches(patterns, ctx.original_host, MatchKind::Host)
         }
-        MatchCondition::User(patterns) => {
-            pattern_list_matches(patterns, ctx.user, MatchKind::User)
-        }
+        MatchCondition::User(patterns) => pattern_list_matches(patterns, ctx.user, MatchKind::User),
         MatchCondition::LocalUser(patterns) => {
             pattern_list_matches(patterns, ctx.local_user, MatchKind::User)
         }
@@ -674,7 +668,10 @@ mod tests {
     fn evaluate_match_all_is_unconditional() {
         let cond = vec![MatchCondition::All];
         assert!(evaluate_match(&cond, &ctx("", "", "")));
-        assert!(evaluate_match(&cond, &ctx("anything", "anyone", "anywhere")));
+        assert!(evaluate_match(
+            &cond,
+            &ctx("anything", "anyone", "anywhere")
+        ));
     }
 
     #[test]
