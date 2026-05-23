@@ -71,7 +71,6 @@
 //! - DEL-1.a audit: `docs/design/del-1a-upstream-ordering-audit.md`.
 
 use std::collections::BTreeMap;
-use std::collections::btree_map::Entry;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
