@@ -98,19 +98,50 @@ fn host_star_block_compression_yes_in_home_config() {
 }
 
 #[test]
-fn per_host_block_without_host_star_returns_false() {
+fn per_host_block_does_not_match_unrelated_target() {
     let _lock = ENV_LOCK.lock().unwrap();
     let home = TempDir::new().expect("tempdir");
-    // Deferred behaviour: per-host `Host foo` blocks need runtime
-    // context (the host we are connecting to plus full OpenSSH pattern
-    // semantics) the warning site does not have. Match blocks are
-    // skipped for the same reason. The lookup is intentionally
-    // conservative to avoid noisy false positives.
+    // Per-host `Host foo` blocks now resolve via the SSC-5.b pattern
+    // matcher. The target is `example.com` (from `plain_cmd`), which
+    // does not match `foo.example.com`, so the block contributes
+    // nothing.
     write_ssh_config(&home, "Host foo.example.com\n  Compression yes\n");
     let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
     let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
 
     assert!(!plain_cmd().has_ssh_compression());
+}
+
+#[test]
+fn per_host_glob_block_fires_for_matching_target() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home = TempDir::new().expect("tempdir");
+    // SSC-5.b: `Host *.example.com` now resolves against the connection
+    // target via the shared SSC-4.b pattern matcher.
+    write_ssh_config(&home, "Host *.example.com\n  Compression yes\n");
+    let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
+    let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
+
+    let command = SshCommand::new("web1.example.com");
+    assert!(command.has_ssh_compression());
+}
+
+#[test]
+fn per_host_negation_blocks_match_for_banned_target() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home = TempDir::new().expect("tempdir");
+    // SSC-5.b: bang-prefixed token causes the pattern-list to fail when
+    // the negated token matches the target, even though the positive
+    // `*` token would otherwise match.
+    write_ssh_config(&home, "Host !banned.example.com *\n  Compression yes\n");
+    let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
+    let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
+
+    let banned = SshCommand::new("banned.example.com");
+    assert!(!banned.has_ssh_compression());
+
+    let allowed = SshCommand::new("ok.example.com");
+    assert!(allowed.has_ssh_compression());
 }
 
 #[test]
