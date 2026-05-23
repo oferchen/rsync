@@ -12,6 +12,7 @@ use super::super::{SpillCodec, SpillableReorderBuffer};
 
 mod basic;
 mod compression;
+mod fault;
 mod granularity;
 mod hardening;
 mod memory_pressure;
