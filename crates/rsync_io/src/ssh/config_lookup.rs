@@ -532,7 +532,10 @@ mod tests {
 
     #[test]
     fn top_level_compression_yes_detected() {
-        assert!(parse_enables_compression("Compression yes\n", "any.example.com"));
+        assert!(parse_enables_compression(
+            "Compression yes\n",
+            "any.example.com"
+        ));
     }
 
     #[test]
@@ -588,10 +591,7 @@ mod tests {
         // that matches forces the whole pattern-list to fail, even when
         // a positive token (`*`) would otherwise match.
         let text = "Host !banned.example.com *\n  Compression yes\n";
-        assert!(!parse_enables_compression(
-            text,
-            "banned.example.com"
-        ));
+        assert!(!parse_enables_compression(text, "banned.example.com"));
     }
 
     #[test]
