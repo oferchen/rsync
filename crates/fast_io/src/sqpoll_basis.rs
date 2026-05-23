@@ -301,16 +301,6 @@ impl WiredBasisWindow {
     }
 }
 
-/// Resets the process-wide counters. Test-only helper so unit tests can
-/// observe deltas without contention from other tests running in the same
-/// process.
-#[cfg(test)]
-pub(crate) fn reset_counters_for_test() {
-    MLOCK_ATTEMPTS.store(0, Ordering::Relaxed);
-    MLOCK_DOWNGRADES.store(0, Ordering::Relaxed);
-    DOWNGRADE_WARNED.store(false, Ordering::Relaxed);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,9 +343,9 @@ mod tests {
         assert!(window.is_empty());
         // Zero-length entry still bumps the attempt counter for parity with
         // the live path so the rollback ratio remains well-defined. Use
-        // monotonic `>=` so the assertion stays robust against concurrent
+        // strict `>` so the assertion stays robust against concurrent
         // tests that share the same process-wide counter.
-        assert!(mlock_attempts() >= before + 1);
+        assert!(mlock_attempts() > before);
         drop(window);
     }
 
