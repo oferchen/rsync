@@ -89,7 +89,16 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
                     Err(e) => {
                         // Re-insert the item on spill failure so the caller
                         // can retry or shut down without losing the result.
+                        // A NotFound here means spill_item refused to retry
+                        // because prior records are unrecoverable; upgrade
+                        // to the typed PriorSpillsLost variant so the
+                        // receiver can emit an actionable diagnostic.
                         self.inner.force_insert(seq, item);
+                        if e.kind() == io::ErrorKind::NotFound {
+                            if let Some(lost) = self.prior_spills_lost_error() {
+                                return Err(lost);
+                            }
+                        }
                         return Err(SpillError::Io(e));
                     }
                 }
@@ -148,8 +157,9 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             Ok(w) => w,
             Err(e) if e.kind() == io::ErrorKind::NotFound && self.spill_dir.is_some() => {
                 if !self.spill_index.is_empty() {
+                    let lost = self.prior_spills_lost_error();
                     self.restore_taken(taken);
-                    return Err(SpillError::Io(e));
+                    return Err(lost.unwrap_or(SpillError::Io(e)));
                 }
                 if let Err(retry_err) = self.recreate_spill_dir() {
                     self.restore_taken(taken);
@@ -244,8 +254,9 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
                 // safe when no prior items had been spilled - otherwise
                 // those items are lost on disk and silently continuing
                 // would corrupt the transfer. With prior items present
-                // we surface NotFound; the caller treats it as a fatal
-                // I/O error and the transfer aborts with exit 11.
+                // we surface the original NotFound here; the caller
+                // upgrades it to SpillError::PriorSpillsLost so the
+                // receiver can emit an actionable diagnostic.
                 if !self.spill_index.is_empty() {
                     return Err(e);
                 }
@@ -257,6 +268,20 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// Builds a [`SpillError::PriorSpillsLost`] for the configured directory.
+    ///
+    /// Returns `None` only when the spooled flavour (no caller-supplied
+    /// directory) somehow reached the recovery-refusal branch, in which case
+    /// callers should fall back to the original [`SpillError::Io`].
+    pub(super) fn prior_spills_lost_error(&self) -> Option<SpillError> {
+        self.spill_dir
+            .clone()
+            .map(|dir| SpillError::PriorSpillsLost {
+                dir,
+                count: self.spill_index.len(),
+            })
     }
 
     /// Applies the configured compression codec to the freshly encoded payload.

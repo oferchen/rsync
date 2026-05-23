@@ -139,6 +139,11 @@ pub(super) fn run_spillable_loop(
                     ));
                     return;
                 }
+                Err(e @ SpillError::PriorSpillsLost { .. }) => {
+                    let _ = result_tx
+                        .send(DeltaResult::failed(ndx, format!("spill write failed: {e}")));
+                    return;
+                }
             }
         }
         publish_spill_events(&reorder, spill_events, &mut prev_spill);
