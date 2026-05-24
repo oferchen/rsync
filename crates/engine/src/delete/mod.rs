@@ -37,6 +37,8 @@ mod context;
 pub mod emitter;
 mod error;
 mod extras;
+#[cfg(feature = "parallel-delete-consumer")]
+pub mod parallel_consumer;
 mod plan;
 mod plan_map;
 mod reorder_buffer;
