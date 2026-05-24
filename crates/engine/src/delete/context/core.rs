@@ -361,13 +361,38 @@ impl DeleteContext {
     /// [`DeleteFs`]) plus the running stats and io_error state surfaced
     /// by the drain.
     ///
+    /// # Dispatch
+    ///
+    /// When the crate is built with `--features parallel-delete-consumer`,
+    /// DEL-2.d routes the drain through `ParallelDeleteEmitter` so cohort
+    /// dispatch runs on rayon while preserving the DEL-1.a cross-cohort
+    /// wire-ordering invariant. The sequential
+    /// [`DeleteEmitter`] remains the default.
+    ///
     /// # Errors
     ///
-    /// Surfaces any fatal error from [`DeleteEmitter::emit_all`].
+    /// Surfaces any fatal error from [`DeleteEmitter::emit_all`] (or the
+    /// parallel consumer's equivalent under the feature flag).
+    // DEL-2.d: feature-gated dispatch, parallel-delete-consumer opt-in
+    #[cfg(not(feature = "parallel-delete-consumer"))]
     pub fn emit_one<F: DeleteFs>(self, fs: F) -> io::Result<DrainOutcome<F>> {
         let mut emitter = self.into_emitter(fs)?;
         emitter.emit_all()?;
         Ok(DrainOutcome::from_emitter(emitter))
+    }
+
+    /// Parallel-feature variant of [`Self::emit_one`]. The `Sync + Send +
+    /// 'static` bounds are required by
+    /// [`super::super::parallel_consumer::ParallelDeleteEmitter::run`],
+    /// which spawns a dedicated consumer thread and shares the dispatcher
+    /// across the rayon pool via [`Arc`].
+    // DEL-2.d: feature-gated dispatch, parallel-delete-consumer opt-in
+    #[cfg(feature = "parallel-delete-consumer")]
+    pub fn emit_one<F: DeleteFs + Sync + Send + 'static>(
+        self,
+        fs: F,
+    ) -> io::Result<DrainOutcome<F>> {
+        self.emit_via_parallel_consumer(fs)
     }
 
     /// Drains every published plan through a freshly-built emitter. Used
@@ -377,8 +402,66 @@ impl DeleteContext {
     /// # Errors
     ///
     /// Surfaces any fatal error from [`DeleteEmitter::emit_all`].
+    // DEL-2.d: feature-gated dispatch, parallel-delete-consumer opt-in
+    #[cfg(not(feature = "parallel-delete-consumer"))]
     pub fn emit_all<F: DeleteFs>(self, fs: F) -> io::Result<DrainOutcome<F>> {
         self.emit_one(fs)
+    }
+
+    /// Parallel-feature variant of [`Self::emit_all`]; bounds widened to
+    /// match [`Self::emit_one`].
+    // DEL-2.d: feature-gated dispatch, parallel-delete-consumer opt-in
+    #[cfg(feature = "parallel-delete-consumer")]
+    pub fn emit_all<F: DeleteFs + Sync + Send + 'static>(
+        self,
+        fs: F,
+    ) -> io::Result<DrainOutcome<F>> {
+        self.emit_one(fs)
+    }
+
+    /// DEL-2.d implementation: translates the published [`DeletePlan`]s
+    /// into cohort-keyed [`super::super::reorder_buffer::DeleteOperation`]
+    /// batches, walks the cursor to assign monotonic ranks, and runs the
+    /// parallel consumer to completion. Returns a [`DrainOutcome`] with
+    /// the same shape the sequential emitter produces so callers stay
+    /// unchanged across the feature toggle.
+    #[cfg(feature = "parallel-delete-consumer")]
+    fn emit_via_parallel_consumer<F: DeleteFs + Sync + Send + 'static>(
+        self,
+        fs: F,
+    ) -> io::Result<DrainOutcome<F>> {
+        use super::super::parallel_consumer::ParallelDeleteEmitter;
+        use super::super::reorder_buffer::{DeleteCohortKey, DeleteOperation};
+
+        let (plans, mut cursor, policy) = self.into_drain_parts().map_err(io::Error::from)?;
+        let emitter = ParallelDeleteEmitter::with_policy(fs, policy);
+        let mut rank: u64 = 0;
+        while let Some(dir) = cursor.next_ready() {
+            let Some(plan) = plans.take(&dir) else {
+                continue;
+            };
+            let directory = plan.directory;
+            let ops: Vec<DeleteOperation> = plan
+                .extras
+                .into_iter()
+                .map(|entry| {
+                    let path = directory.join(&entry.name);
+                    DeleteOperation::new(path, entry.name, entry.kind)
+                })
+                .collect();
+            emitter
+                .enqueue_cohort(DeleteCohortKey::new(dir), rank, ops)
+                .map_err(|err| io::Error::other(err.to_string()))?;
+            rank = rank.saturating_add(1);
+        }
+        emitter.mark_producers_done();
+        let outcome = emitter.run()?;
+        Ok(DrainOutcome {
+            fs: outcome.fs,
+            stats: outcome.stats,
+            io_error: outcome.io_error,
+            exit_code: outcome.exit_code,
+        })
     }
 
     /// Builds an emitter from this context.
@@ -407,6 +490,19 @@ impl DeleteContext {
     /// "still shared" error under channel-shutdown semantics - workers
     /// only hold sender clones, never `Arc<DirTraversalCursor>`.
     pub(super) fn into_emitter<F: DeleteFs>(self, fs: F) -> Result<DeleteEmitter<F>, DeleteError> {
+        let (plans, cursor, policy) = self.into_drain_parts()?;
+        Ok(DeleteEmitter::with_policy(fs, plans, cursor, policy))
+    }
+
+    /// Extracts the owned drain inputs (plan map, traversal cursor,
+    /// emitter policy) from this context. Shared by [`Self::into_emitter`]
+    /// (sequential path) and the parallel `emit_via_parallel_consumer`
+    /// path under the `parallel-delete-consumer` feature. The
+    /// channel-shutdown semantics and `Arc::try_unwrap` invariant are
+    /// preserved exactly because both paths consume `self` by value.
+    fn into_drain_parts(
+        self,
+    ) -> Result<(DeletePlanMap, DirTraversalCursor, EmitterErrorPolicy), DeleteError> {
         let plans = Arc::try_unwrap(self.plans).map_err(|still_shared| {
             DeleteError::PlanMapStillShared {
                 strong_count: Arc::strong_count(&still_shared),
@@ -435,6 +531,6 @@ impl DeleteContext {
             cursor.observe_segment(obs.dir, &obs.children);
         }
 
-        Ok(DeleteEmitter::with_policy(fs, plans, cursor, self.policy))
+        Ok((plans, cursor, self.policy))
     }
 }
