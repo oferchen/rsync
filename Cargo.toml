@@ -287,6 +287,8 @@ windows-sys = "0.61"
 xattr = "1.6"
 # Zstandard codec - shared by compress and protocol (optional)
 zstd = "0.13"
+# Bump-allocator arena - used by protocol flist-arena-prototype feature (RSS-7)
+bumpalo = "3"
 
 [workspace.metadata.docs.rs]
 all-features = true

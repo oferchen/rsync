@@ -7,6 +7,19 @@ analysis), `docs/design/rss-4-arena-allocator-eval.md` (recommends
 assessment), RSS-7/8 (prototype + staged migration). Structural
 spec; the prototype lives in RSS-7.
 
+> **Prototype landed in RSS-7.** A feature-gated, parallel
+> `ArenaFileEntry<'arena>` shape backed by `FilePath::Owned(PathBuf) |
+> Arena(&'arena Path)` lives at
+> `crates/protocol/src/flist/entry/arena.rs`. The `bumpalo` arena was
+> selected for the prototype because the shape (`&'arena Path`) maps
+> 1:1 to a bump-allocator slice; the `lasso` interner remains the
+> RSS-8/RSS-9 target. Default builds are byte-identical: the
+> `FilePath::Arena` variant is uninhabited
+> (`std::convert::Infallible`-backed) and `bumpalo` is not pulled in.
+> Migration of every consumer (sort/filter/transfer) is RSS-9; the
+> RSS-10 benchmark task picks up from the prototype to measure
+> per-entry allocator savings.
+
 ## Goals
 
 1. Drop `FileEntry` inline from **88 B Unix / 104 B Windows** to
