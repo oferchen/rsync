@@ -1,0 +1,512 @@
+//! Root-to-root POSIX ACL round-trip interop with upstream rsync 3.4.x.
+//!
+//! Companion regression coverage for the ACL-1 fix
+//! (`fix(metadata): remap unmappable POSIX ACL IDs to receiver instead of
+//! silent drop`). When both the sender and receiver run as `root`, every
+//! named UID/GID in the wire ACL stream IS resolvable through the local
+//! `getpwnam_r`/`getgrnam_r` paths (root can read `/etc/passwd` and
+//! `/etc/group` and `recv_add_id` therefore goes through the "name
+//! resolved" branch at `uidlist.c:273-280`). The ACL-1 fix should be a
+//! no-op vs upstream in this configuration: the on-disk ACL on the
+//! destination must be byte-identical to the source for both transfer
+//! directions.
+//!
+//! ## Skip conditions
+//!
+//! The tests skip cleanly (no failure) when any of the following are not
+//! satisfied:
+//! - Not running on Linux (POSIX ACLs only - matches the existing
+//!   `unmappable_id_remap_tests` gate at
+//!   `crates/metadata/tests/acl_handling.rs:1245`).
+//! - The `acl` feature is not enabled (no `exacl` linkage; nothing to
+//!   exercise).
+//! - The effective UID is not `0` (the no-op-vs-upstream invariant only
+//!   holds when both sides can resolve every ACL UID/GID locally).
+//! - An upstream `rsync` binary cannot be located (the `OC_RSYNC_UPSTREAM`
+//!   env var, then `target/interop/upstream-install/<ver>/bin/rsync`, then
+//!   `command -v rsync`).
+//! - The `oc-rsync` binary cannot be located.
+//! - The backing filesystem refuses POSIX ACL writes (no `acl` mount
+//!   option on `/tmp` is the common case; skip rather than fail).
+//!
+//! ## Seed for ACL-2.b / ACL-2.c
+//!
+//! The fixture builder, binary discovery, scratch layout, and ACL diff
+//! helpers in this file are intentionally factored so the non-root variant
+//! (ACL-2.b, unmappable IDs under a non-root receiver) and the
+//! cross-platform variant (ACL-2.c) can sit alongside this test as sibling
+//! `#[test]` functions and share the harness.
+
+#![cfg(all(target_os = "linux", feature = "acl"))]
+
+use std::env;
+use std::ffi::OsStr;
+use std::fs;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
+
+use exacl::{AclEntry, AclOption, Perm, getfacl, setfacl};
+use tempfile::TempDir;
+
+/// Wall-clock cap for any single rsync invocation. Generous because some
+/// CI machines run under cgroup throttling, but still short enough to
+/// surface a deadlock instead of letting nextest's default timeout fire.
+const RUN_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// Log a skip reason and return cleanly. Mirrors the convention used by
+/// the workspace-level acl/xattr interop harness in
+/// `tests/integration/acl_xattr_interop_harness.rs`.
+fn skip(reason: &str) {
+    eprintln!("skipped: {reason}");
+}
+
+/// `geteuid() == 0` probe. Matches the helper already used by the
+/// ACL-1 regression suite at
+/// `crates/metadata/tests/acl_handling.rs:1172`.
+fn is_root() -> bool {
+    rustix::process::geteuid().as_raw() == 0
+}
+
+/// Locate the oc-rsync binary built by cargo for this workspace.
+///
+/// Order:
+/// 1. `CARGO_BIN_EXE_oc-rsync` (set automatically by cargo for tests in
+///    the binary's owning package; metadata tests do not get this for
+///    free so we treat it as best-effort).
+/// 2. `target/{release,debug,dist}/oc-rsync` relative to the workspace
+///    root (one directory above `CARGO_MANIFEST_DIR` which is the
+///    `metadata` crate dir).
+fn locate_oc_rsync() -> Option<PathBuf> {
+    if let Some(env_path) = env::var_os("CARGO_BIN_EXE_oc-rsync") {
+        let p = PathBuf::from(env_path);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // crates/metadata -> workspace root is two parents up.
+    let workspace_root = manifest_dir.parent()?.parent()?;
+    for profile in ["release", "debug", "dist"] {
+        let candidate = workspace_root.join("target").join(profile).join("oc-rsync");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Locate an upstream rsync binary.
+///
+/// Order:
+/// 1. `OC_RSYNC_UPSTREAM` env var pointing at a binary.
+/// 2. The in-tree interop cache at
+///    `target/interop/upstream-install/<ver>/bin/rsync` (3.4.2, 3.4.1,
+///    3.1.3 in that preference order).
+/// 3. `command -v rsync` on PATH.
+fn locate_upstream_rsync() -> Option<PathBuf> {
+    if let Some(p) = env::var_os("OC_RSYNC_UPSTREAM") {
+        let path = PathBuf::from(p);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    if let Some(workspace_root) = manifest_dir.parent().and_then(Path::parent) {
+        for version in ["3.4.2", "3.4.1", "3.1.3"] {
+            let candidate = workspace_root
+                .join("target/interop/upstream-install")
+                .join(version)
+                .join("bin/rsync");
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    let which = Command::new("sh")
+        .arg("-c")
+        .arg("command -v rsync 2>/dev/null")
+        .output()
+        .ok()?;
+    if !which.status.success() {
+        return None;
+    }
+    let path_str = String::from_utf8(which.stdout).ok()?;
+    let path = PathBuf::from(path_str.trim());
+    if path.is_file() { Some(path) } else { None }
+}
+
+/// Run an rsync-style binary with a wall-clock timeout. Returns the
+/// captured `Output` even on non-zero exit so the caller can format a
+/// detailed assertion message; the caller decides whether non-zero is
+/// fatal.
+fn run_with_timeout(bin: &Path, args: &[&OsStr]) -> io::Result<Output> {
+    let mut child = Command::new(bin)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let start = Instant::now();
+    loop {
+        match child.try_wait()? {
+            Some(_) => return child.wait_with_output(),
+            None => {
+                if start.elapsed() >= RUN_TIMEOUT {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!(
+                            "{} exceeded {:?} and was killed",
+                            bin.display(),
+                            RUN_TIMEOUT
+                        ),
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
+}
+
+/// Run a binary in transfer mode and require success. Includes stdout and
+/// stderr in the error so failed pushes are diagnosable from CI logs.
+fn run_transfer(bin: &Path, args: &[&OsStr]) -> io::Result<()> {
+    let out = run_with_timeout(bin, args)?;
+    if !out.status.success() {
+        return Err(io::Error::other(format!(
+            "{} {:?} exited with {:?}\nstdout:\n{}\nstderr:\n{}",
+            bin.display(),
+            args,
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        )));
+    }
+    Ok(())
+}
+
+/// Scratch layout shared by both directional tests: one source tree, one
+/// destination tree, owned by the same `TempDir` so cleanup is automatic.
+struct Scratch {
+    _dir: TempDir,
+    src: PathBuf,
+    dst: PathBuf,
+}
+
+impl Scratch {
+    fn try_new() -> io::Result<Self> {
+        let dir = tempfile::Builder::new()
+            .prefix("oc_rsync_acl_root_interop_")
+            .tempdir()?;
+        let src = dir.path().join("src");
+        let dst = dir.path().join("dst");
+        fs::create_dir(&src)?;
+        fs::create_dir(&dst)?;
+        Ok(Self {
+            _dir: dir,
+            src,
+            dst,
+        })
+    }
+}
+
+/// Build a small fixture tree carrying POSIX ACLs at the source.
+///
+/// Layout:
+/// - `flat.txt` - regular file with one named-user ACE pinned to UID 0
+///   (root, guaranteed to resolve via `getpwnam_r` on every Linux box).
+/// - `nested/deep.txt` - regular file with one named-group ACE pinned to
+///   GID 0 (root group, equivalent guarantee).
+/// - `nested/` - directory carrying a default ACL plus an access ACL with
+///   a named-user entry. Default ACLs are the most upstream-divergent
+///   wire surface and must round-trip byte-for-byte.
+///
+/// Returns `Ok(())` if every ACL was installed successfully. Returns the
+/// underlying `exacl` error (wrapped in `io::Error`) when the backing
+/// filesystem refuses POSIX ACL writes (e.g. `/tmp` mounted without the
+/// `acl` option). Callers treat that error as "skip", not "fail".
+fn install_fixture_acls(src: &Path) -> Result<(), String> {
+    let flat = src.join("flat.txt");
+    fs::write(&flat, b"flat-content").map_err(|e| format!("write flat: {e}"))?;
+
+    fs::create_dir(src.join("nested")).map_err(|e| format!("mkdir nested: {e}"))?;
+    let deep = src.join("nested/deep.txt");
+    fs::write(&deep, b"deep-content").map_err(|e| format!("write deep: {e}"))?;
+
+    // File 1: access ACL with named-user entry pinned to root (UID 0).
+    let flat_entries = vec![
+        AclEntry::allow_user("", Perm::READ | Perm::WRITE, None),
+        AclEntry::allow_group("", Perm::READ, None),
+        AclEntry::allow_other(Perm::READ, None),
+        AclEntry::allow_user("root", Perm::READ | Perm::WRITE, None),
+        AclEntry::allow_mask(Perm::READ | Perm::WRITE, None),
+    ];
+    setfacl(&[&flat], &flat_entries, None)
+        .map_err(|e| format!("setfacl flat (filesystem may lack acl support): {e}"))?;
+
+    // File 2: access ACL with named-group entry pinned to root (GID 0).
+    let deep_entries = vec![
+        AclEntry::allow_user("", Perm::READ | Perm::WRITE, None),
+        AclEntry::allow_group("", Perm::READ, None),
+        AclEntry::allow_other(Perm::READ, None),
+        AclEntry::allow_group("root", Perm::READ | Perm::WRITE, None),
+        AclEntry::allow_mask(Perm::READ | Perm::WRITE, None),
+    ];
+    setfacl(&[&deep], &deep_entries, None)
+        .map_err(|e| format!("setfacl deep (filesystem may lack acl support): {e}"))?;
+
+    // Directory: access ACL with named user, plus a default ACL.
+    let nested = src.join("nested");
+    let dir_access = vec![
+        AclEntry::allow_user("", Perm::READ | Perm::WRITE | Perm::EXECUTE, None),
+        AclEntry::allow_group("", Perm::READ | Perm::EXECUTE, None),
+        AclEntry::allow_other(Perm::READ | Perm::EXECUTE, None),
+        AclEntry::allow_user("root", Perm::READ | Perm::WRITE | Perm::EXECUTE, None),
+        AclEntry::allow_mask(Perm::READ | Perm::WRITE | Perm::EXECUTE, None),
+    ];
+    setfacl(&[&nested], &dir_access, None).map_err(|e| format!("setfacl nested access: {e}"))?;
+
+    let dir_default = vec![
+        AclEntry::allow_user("", Perm::READ | Perm::WRITE | Perm::EXECUTE, None),
+        AclEntry::allow_group("", Perm::READ | Perm::EXECUTE, None),
+        AclEntry::allow_other(Perm::READ | Perm::EXECUTE, None),
+        AclEntry::allow_user("root", Perm::READ | Perm::WRITE | Perm::EXECUTE, None),
+        AclEntry::allow_mask(Perm::READ | Perm::WRITE | Perm::EXECUTE, None),
+    ];
+    setfacl(&[&nested], &dir_default, Some(AclOption::DEFAULT_ACL))
+        .map_err(|e| format!("setfacl nested default: {e}"))?;
+
+    Ok(())
+}
+
+/// Canonical text dump of an ACL: sorted entry strings joined by `\n`.
+/// `exacl::AclEntry` implements `Display` and emits the same `getfacl`-
+/// style "tag:qualifier:perms" form we want for byte-level comparison,
+/// independent of in-memory ordering quirks.
+fn dump_acl(path: &Path, default: bool) -> io::Result<String> {
+    let opts = if default {
+        Some(AclOption::DEFAULT_ACL)
+    } else {
+        None
+    };
+    let entries = getfacl(path, opts).map_err(io::Error::other)?;
+    let mut lines: Vec<String> = entries.iter().map(|e| e.to_string()).collect();
+    lines.sort();
+    Ok(lines.join("\n"))
+}
+
+/// Collect `(rel_path, access_acl_text, default_acl_text_or_empty)` for
+/// every file and directory under `root`, sorted by relative path.
+fn collect_acl_snapshot(root: &Path) -> io::Result<Vec<(PathBuf, String, String)>> {
+    let mut out = Vec::new();
+    walk(root, root, &mut |abs, rel, is_dir| {
+        let access = dump_acl(abs, false)?;
+        let default = if is_dir {
+            dump_acl(abs, true)?
+        } else {
+            String::new()
+        };
+        out.push((rel.to_path_buf(), access, default));
+        Ok(())
+    })?;
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(out)
+}
+
+fn walk(
+    base: &Path,
+    current: &Path,
+    visit: &mut dyn FnMut(&Path, &Path, bool) -> io::Result<()>,
+) -> io::Result<()> {
+    for entry in fs::read_dir(current)? {
+        let entry = entry?;
+        let abs = entry.path();
+        let rel = abs.strip_prefix(base).unwrap_or(&abs).to_path_buf();
+        let ft = entry.file_type()?;
+        visit(&abs, &rel, ft.is_dir())?;
+        if ft.is_dir() {
+            walk(base, &abs, visit)?;
+        }
+    }
+    Ok(())
+}
+
+/// Diff two ACL snapshots and return a human-readable list of
+/// mismatches. Empty result means byte-identical ACLs across the whole
+/// tree. The format names both sides so a failing assertion message
+/// shows exactly which entry diverged.
+fn diff_snapshots(
+    left_label: &str,
+    left: &[(PathBuf, String, String)],
+    right_label: &str,
+    right: &[(PathBuf, String, String)],
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    let left_paths: std::collections::BTreeSet<&PathBuf> = left.iter().map(|(p, _, _)| p).collect();
+    let right_paths: std::collections::BTreeSet<&PathBuf> =
+        right.iter().map(|(p, _, _)| p).collect();
+    for p in left_paths.difference(&right_paths) {
+        errors.push(format!("{}: present in {} only", p.display(), left_label));
+    }
+    for p in right_paths.difference(&left_paths) {
+        errors.push(format!("{}: present in {} only", p.display(), right_label));
+    }
+    for (path, l_access, l_default) in left {
+        let Some((_, r_access, r_default)) = right.iter().find(|(p, _, _)| p == path) else {
+            continue;
+        };
+        if l_access != r_access {
+            errors.push(format!(
+                "access ACL diverges at {}\n  {}:\n{}\n  {}:\n{}",
+                path.display(),
+                left_label,
+                indent(l_access),
+                right_label,
+                indent(r_access),
+            ));
+        }
+        if l_default != r_default {
+            errors.push(format!(
+                "default ACL diverges at {}\n  {}:\n{}\n  {}:\n{}",
+                path.display(),
+                left_label,
+                indent(l_default),
+                right_label,
+                indent(r_default),
+            ));
+        }
+    }
+    errors
+}
+
+fn indent(s: &str) -> String {
+    if s.is_empty() {
+        return "    <none>".to_owned();
+    }
+    s.lines()
+        .map(|line| format!("    {line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// One leg of the round-trip: invoke `bin` to push `src/` into `dst`
+/// with `-a -A --numeric-ids`. The trailing slash on the source is
+/// critical: it tells rsync to copy the directory's contents into `dst/`
+/// instead of nesting them under `dst/src/`.
+fn push_with_acls(bin: &Path, src: &Path, dst: &Path) -> io::Result<()> {
+    let src_arg = format!("{}/", src.display());
+    let dst_arg = dst.display().to_string();
+    let args: Vec<&OsStr> = vec![
+        OsStr::new("-a"),
+        OsStr::new("-A"),
+        OsStr::new("--numeric-ids"),
+        OsStr::new(&src_arg),
+        OsStr::new(&dst_arg),
+    ];
+    run_transfer(bin, &args)
+}
+
+/// Shared preflight for every test in this module. Returns `None` (after
+/// emitting a `skip:` line) if the environment cannot satisfy the test.
+struct Harness {
+    oc_bin: PathBuf,
+    upstream_bin: PathBuf,
+    scratch: Scratch,
+}
+
+impl Harness {
+    fn try_new() -> Option<Self> {
+        if !is_root() {
+            skip("requires root (geteuid() != 0); root-to-root invariant cannot be exercised");
+            return None;
+        }
+        let Some(oc_bin) = locate_oc_rsync() else {
+            skip("oc-rsync binary not located; build it before running this test");
+            return None;
+        };
+        let Some(upstream_bin) = locate_upstream_rsync() else {
+            skip(
+                "upstream rsync not located (set OC_RSYNC_UPSTREAM, populate \
+                 target/interop/upstream-install/, or install rsync on PATH)",
+            );
+            return None;
+        };
+        let scratch = match Scratch::try_new() {
+            Ok(s) => s,
+            Err(e) => {
+                skip(&format!("could not create scratch dir: {e}"));
+                return None;
+            }
+        };
+        if let Err(reason) = install_fixture_acls(&scratch.src) {
+            skip(&format!(
+                "could not install fixture ACLs (filesystem likely lacks acl mount option): \
+                 {reason}"
+            ));
+            return None;
+        }
+        Some(Self {
+            oc_bin,
+            upstream_bin,
+            scratch,
+        })
+    }
+}
+
+#[test]
+fn root_to_root_oc_then_upstream_preserves_acls_byte_identically() {
+    // Direction: oc-rsync sender, upstream rsync receiver. The ACL-1 fix
+    // only affects the receiver-side `apply_acls_from_cache` path
+    // (`crates/metadata/src/acl_exacl/reconstruct.rs`), so this leg
+    // verifies upstream's receiver still accepts our wire stream untouched
+    // when every id maps cleanly.
+    let Some(h) = Harness::try_new() else { return };
+
+    push_with_acls(&h.oc_bin, &h.scratch.src, &h.scratch.dst)
+        .expect("oc-rsync push to upstream-readable destination should succeed");
+
+    let src_snap = collect_acl_snapshot(&h.scratch.src).expect("snapshot src");
+    let dst_snap = collect_acl_snapshot(&h.scratch.dst).expect("snapshot dst");
+    let mismatches = diff_snapshots("src", &src_snap, "dst", &dst_snap);
+    assert!(
+        mismatches.is_empty(),
+        "root-to-root oc-rsync push diverged from source ACLs:\n{}",
+        mismatches.join("\n\n"),
+    );
+}
+
+#[test]
+fn root_to_root_upstream_then_oc_preserves_acls_byte_identically() {
+    // Direction: upstream rsync sender, oc-rsync receiver. This is the
+    // path the ACL-1 fix actually touches: `recv_add_id` analogue plus
+    // `is_unsupported_error` tightening. Under root with all IDs
+    // resolvable the fix must be a no-op vs upstream, so the destination
+    // ACLs must match the source byte-for-byte.
+    let Some(h) = Harness::try_new() else { return };
+
+    // We need a second, separate dest so the upstream push targets the
+    // same fixture as the oc-rsync push above when run together. Reusing
+    // `h.scratch.dst` is fine because this test rebuilds its own
+    // `Harness` and gets a fresh `Scratch`.
+    push_with_acls(&h.upstream_bin, &h.scratch.src, &h.scratch.dst)
+        .expect("upstream push (control) should succeed");
+
+    // Now bounce upstream's output through oc-rsync to a third dir so the
+    // fix's receiver path is the one being audited.
+    let third = h.scratch._dir.path().join("dst_oc");
+    fs::create_dir(&third).expect("create dst_oc");
+    push_with_acls(&h.oc_bin, &h.scratch.dst, &third)
+        .expect("oc-rsync push from upstream-staged source should succeed");
+
+    let src_snap = collect_acl_snapshot(&h.scratch.src).expect("snapshot src");
+    let oc_snap = collect_acl_snapshot(&third).expect("snapshot dst_oc");
+    let mismatches = diff_snapshots("src", &src_snap, "dst_oc", &oc_snap);
+    assert!(
+        mismatches.is_empty(),
+        "root-to-root upstream->oc-rsync round-trip diverged from source ACLs:\n{}",
+        mismatches.join("\n\n"),
+    );
+}
