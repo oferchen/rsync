@@ -18,7 +18,7 @@ fn log_module_limit_logs_cap_reached() {
 
     let contents = fs::read_to_string(&path).expect("read log");
     assert!(
-        contents.starts_with("rsync warning:"),
+        contents.starts_with("oc-rsync warning:"),
         "expected warning-level message, got: {contents}"
     );
     assert!(
