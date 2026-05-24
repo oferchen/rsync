@@ -55,7 +55,7 @@ mod drain;
 mod slot_barrier;
 
 use decrement_guard::DecrementGuard;
-use slot_barrier::SlotBarrier;
+use slot_barrier::{SlotBarrier, SlotEntry};
 
 /// Typed error variants for [`ParallelDeltaApplier::finish_file`] shutdown
 /// paths.
@@ -351,9 +351,16 @@ pub struct ParallelDeltaApplier {
     /// Per-file slots keyed by NDX. The outer map is a [`DashMap`] so the
     /// register/lookup path shards under a fixed number of internal locks
     /// instead of serialising every operation behind one [`std::sync::Mutex`]. Each
-    /// slot value is an [`Arc<SlotBarrier>`] that wraps the per-file
-    /// [`std::sync::Mutex<FileSlot>`] alongside the in-flight counter and [`std::sync::Condvar`]
-    /// that back FFB-2's `flush_workers` barrier. The BR-3j.a audit (see
+    /// slot value is a [`SlotEntry`] carrying the per-file payload
+    /// (an [`Arc<slot_barrier::SlotData>`] wrapping
+    /// [`std::sync::Mutex<FileSlot>`]) and the per-file bookkeeping
+    /// (an [`Arc<slot_barrier::BarrierState>`] holding the in-flight
+    /// counter and [`std::sync::Condvar`] that back FFB-2's
+    /// `flush_workers` barrier). DG-3.b (#2569) swapped the value type
+    /// from [`Arc<SlotBarrier>`] to [`SlotEntry`]; callers that still
+    /// consume [`Arc<SlotBarrier>`] adapt at the boundary via
+    /// [`SlotBarrier::from_entry`] until DG-3.c retypes the handle and
+    /// guard. The BR-3j.a audit (see
     /// `docs/audits/br-3j-a-dashmap-vs-sharded-2026-05-20.md`) selected
     /// DashMap as the right fit for the access pattern: short guard
     /// windows, no iteration in the hot path, and write rates that scale
@@ -362,13 +369,18 @@ pub struct ParallelDeltaApplier {
     /// # Locking discipline
     ///
     /// All callers below must drop the DashMap shard guard returned by
-    /// `get`/`entry` before doing any work longer than an [`Arc::clone`]
-    /// or a small struct write. Holding a shard guard across a wait,
-    /// `rayon::join`, or a per-file mutex lock would re-introduce the
-    /// outer-map contention the migration was designed to eliminate. In
-    /// particular, the barrier wait in `flush_workers` blocks on the
-    /// slot's own [`std::sync::Condvar`] and never re-acquires a shard guard.
-    files: DashMap<FileNdx, Arc<SlotBarrier>>,
+    /// `get`/`entry` before doing any work longer than an
+    /// [`SlotEntry::clone`] (two [`Arc::clone`] calls) or a small struct
+    /// write. Holding a shard guard across a wait, `rayon::join`, or a
+    /// per-file mutex lock would re-introduce the outer-map contention
+    /// the migration was designed to eliminate. In particular, the
+    /// barrier wait in `flush_workers` blocks on the slot's own
+    /// [`std::sync::Condvar`] and never re-acquires a shard guard.
+    ///
+    /// [`Arc<SlotBarrier>`]: std::sync::Arc
+    /// [`Arc<slot_barrier::SlotData>`]: std::sync::Arc
+    /// [`Arc<slot_barrier::BarrierState>`]: std::sync::Arc
+    files: DashMap<FileNdx, SlotEntry>,
     /// Reorder-buffer capacity per file. Bounded so a stalled file does not
     /// pin unbounded memory.
     per_file_reorder_capacity: usize,
@@ -482,18 +494,15 @@ impl ParallelDeltaApplier {
         // Pre-build the slot OUTSIDE the shard guard so the reorder-buffer
         // allocation never widens the lock window. Then the entry guard
         // only holds long enough to check vacancy and move the prebuilt
-        // Arc into the map. Single shard write lock; no contention on
+        // entry into the map. Single shard write lock; no contention on
         // unrelated NDX values.
-        let slot = Arc::new(SlotBarrier::new(FileSlot::new(
-            writer,
-            self.per_file_reorder_capacity,
-        )));
+        let entry = SlotEntry::new(FileSlot::new(writer, self.per_file_reorder_capacity));
         match self.files.entry(ndx) {
             Entry::Occupied(_) => Err(io::Error::other(format!(
                 "parallel applier file {ndx} already registered"
             ))),
             Entry::Vacant(vacant) => {
-                vacant.insert(slot);
+                vacant.insert(entry);
                 Ok(())
             }
         }
@@ -591,17 +600,24 @@ impl ParallelDeltaApplier {
     }
 
     fn slot_for(&self, ndx: FileNdx) -> io::Result<SlotHandle> {
-        // Clone the per-file `Arc` while the shard read guard is alive,
-        // then drop the guard at the end of this expression. Callers
-        // never see the DashMap guard, so they cannot accidentally hold
-        // it across the per-file mutex lock or a rayon dispatch. The
-        // returned [`SlotHandle`] bumps the slot's in-flight counter for
-        // the duration of its lifetime so `flush_workers` can wait on it.
-        let barrier = self
+        // Clone the per-file [`SlotEntry`] (two `Arc::clone` calls) while
+        // the shard read guard is alive, then drop the guard at the end
+        // of this expression. Callers never see the DashMap guard, so
+        // they cannot accidentally hold it across the per-file mutex lock
+        // or a rayon dispatch. The bridge below builds a fresh
+        // [`Arc<SlotBarrier>`] adapter from the entry's two inner Arcs so
+        // [`SlotHandle`] and [`DecrementGuard`] keep their
+        // [`Arc<SlotBarrier>`] field types unchanged until DG-3.c retypes
+        // them. The adapter Arc is unique to this call site; the
+        // underlying [`SlotData`] and [`BarrierState`] Arcs are shared
+        // with every other adapter minted from the same entry, so the
+        // in-flight counter and Condvar remain coherent.
+        let entry = self
             .files
             .get(&ndx)
-            .map(|guard| Arc::clone(guard.value()))
+            .map(|guard| guard.value().clone())
             .ok_or_else(|| io::Error::other(format!("parallel applier file {ndx} unknown")))?;
+        let barrier = Arc::new(SlotBarrier::from_entry(&entry));
         Ok(SlotHandle::new(barrier))
     }
 
@@ -1024,7 +1040,7 @@ pub(super) mod tests {
     #[test]
     fn flush_workers_survives_spurious_wakeup() {
         // Condvars are permitted to wake spuriously; the wait_while
-        // predicate in `SlotBarrier::wait_until_idle` must re-check
+        // predicate in `BarrierState::wait_until_idle` must re-check
         // under the mutex and continue waiting. We exercise the
         // predicate by notifying the slot's condvar manually while the
         // inflight counter is still > 0, then verifying flush_workers
@@ -1041,12 +1057,15 @@ pub(super) mod tests {
         // notifications to land while flush_workers is waiting.
         let handle = applier.slot_for(FileNdx::new(0)).expect("slot registered");
 
-        // Snapshot the inner Arc so a sibling thread can notify the
-        // slot's condvar without going through the apply path.
+        // Snapshot the inner `Arc<BarrierState>` so a sibling thread can
+        // notify the slot's Condvar without going through the apply
+        // path. DG-3.b stores `SlotEntry` in the DashMap; the test
+        // reads `entry.barrier` (the bookkeeping Arc) and pokes the
+        // shared Condvar through it.
         let barrier = applier
             .files
             .get(&FileNdx::new(0))
-            .map(|guard| Arc::clone(guard.value()))
+            .map(|guard| Arc::clone(&guard.value().barrier))
             .expect("slot present");
 
         let notifier_barrier = Arc::clone(&barrier);
