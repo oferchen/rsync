@@ -3,7 +3,9 @@
 //! the drain accumulated, and the mapped exit code so callers can both
 //! inspect the outcome (in tests) and surface it to the user.
 
-use super::super::emitter::{DeleteEmitter, DeleteFs};
+#[cfg(not(feature = "parallel-delete-consumer"))]
+use super::super::emitter::DeleteEmitter;
+use super::super::emitter::DeleteFs;
 
 /// Result of draining one or more directories through the emitter.
 ///
@@ -28,6 +30,7 @@ impl<F: DeleteFs> DrainOutcome<F> {
     /// (stats, io_error, exit code) and taking ownership of the
     /// underlying [`DeleteFs`]. Used by `DeleteContext::emit_one` once
     /// `DeleteEmitter::emit_all` returns.
+    #[cfg(not(feature = "parallel-delete-consumer"))]
     pub(super) fn from_emitter(emitter: DeleteEmitter<F>) -> Self {
         let stats = emitter.stats();
         let io_error = emitter.io_error();

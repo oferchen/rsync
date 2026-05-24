@@ -12,6 +12,7 @@ use protocol::flist::FileEntry;
 use tempfile::TempDir;
 
 use super::super::emitter::{DeleteEvent, RecordingDeleteFs};
+#[cfg(not(feature = "parallel-delete-consumer"))]
 use super::super::error::DeleteError;
 use super::super::plan::DeleteEntryKind;
 use super::super::plan_map::DeletePlanMap;
@@ -298,6 +299,7 @@ fn delete_excluded_layering_bit_round_trips() {
     assert!(!ctx.delete_excluded);
 }
 
+#[cfg(not(feature = "parallel-delete-consumer"))]
 #[test]
 fn into_emitter_reports_plan_map_still_shared_with_strong_count() {
     let tmp = tempfile::tempdir().expect("tempdir");
