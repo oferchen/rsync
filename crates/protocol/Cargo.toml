@@ -31,8 +31,13 @@ async = ["bytes", "tokio", "tokio-util"]
 serde = ["dep:serde"]
 # Structured tracing for I/O operations
 tracing = ["dep:tracing"]
+# Prototype: arena-allocated paths inside FileEntry (RSS-7).
+# Opt-in; default builds are byte-identical to the non-arena path.
+# Migration of all consumers (sort/filter/transfer) is tracked under RSS-9.
+flist-arena-prototype = ["dep:bumpalo"]
 
 [dependencies]
+bumpalo = { workspace = true, optional = true }
 bytes = { version = "1.9", optional = true }
 compress = { path = "../compress" }
 encoding_rs = { version = "0.8", optional = true }
