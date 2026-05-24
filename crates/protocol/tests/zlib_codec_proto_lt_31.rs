@@ -77,21 +77,53 @@ use compress::zlib::CompressionLevel;
 ///
 /// Feeds `0x10001` bytes through `see_token` (one byte past the 0xFFFF
 /// chunk boundary so the upstream inner loop iterates twice) and then
-/// emits a short trailing literal whose compressed bytes depend on the
-/// resulting deflate-dictionary state.
+/// emits a trailing literal whose first bytes deliberately probe the
+/// deflate dictionary's most-recent positions.
+///
+/// At `protocol_version >= 31`, the dictionary tail after see_token is
+/// `[.., 254, 255, 0]` (the offset cursor walks forward correctly, so
+/// the second iteration feeds `see_buf[0xFFFF..0x10001]`). At
+/// `protocol_version <= 30`, the dictionary tail is `[.., 254, 0, 1]`
+/// because the offset cursor never advances and the second iteration
+/// re-feeds `see_buf[0..2]` (the upstream data-duplicating bug fixed at
+/// protocol 31, see `token.c:473`).
+///
+/// The literal begins with `[0xFE, 0xFF, 0x00]`, which matches the
+/// `[254, 255, 0]` triple sitting at the very tail of the protocol-31
+/// dictionary at a small back-reference distance. At protocol <= 30 the
+/// same triple only occurs in the cyclic interior of the dictionary at
+/// a much larger distance. Deflate encodes the two distances with
+/// different bit lengths, so the compressed payload diverges between
+/// the two protocol families even though the outer framing is identical.
 fn encode_fixture(protocol_version: u32) -> Vec<u8> {
     let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, protocol_version);
 
-    let mut see_buf = vec![0u8; 0x10001];
+    // Size = 0xFFFF + 4 so the second iteration of see_token feeds 4 bytes,
+    // creating a 4-byte tail divergence between protocol families:
+    //   protocol >= 31 dict tail ends with [..., 254, 255, 0, 1, 2]
+    //   protocol <= 30 dict tail ends with [..., 254, 0, 1, 2, 3]
+    // (deflate needs >= 3-byte matches to emit a back-reference, so a
+    // 4-byte tail diff is the minimum that produces wire-visible
+    // divergence via different back-reference lengths and distances.)
+    let mut see_buf = vec![0u8; 0xFFFF + 4];
     for (idx, byte) in see_buf.iter_mut().enumerate() {
         *byte = (idx & 0xFF) as u8;
     }
     encoder.see_token(&see_buf).unwrap();
 
+    // Literal begins with [0xFF, 0x00, 0x01, 0x02] - exactly the 4-byte
+    // sequence sitting at the very tail of the protocol-31 dictionary
+    // (distance ~5 back-reference). At protocol <= 30 the same sequence
+    // is not at the tail; deflate falls back to an interior cyclic
+    // occurrence at a much larger distance, encoding it with a
+    // different bit pattern. The trailing ASCII keeps human-readable
+    // diff context.
+    let mut trailing = Vec::with_capacity(32);
+    trailing.extend_from_slice(&[0xFF, 0x00, 0x01, 0x02]);
+    trailing.extend_from_slice(b" rp28-i fixture literal");
+
     let mut output = Vec::new();
-    encoder
-        .send_literal(&mut output, b"rp28-i fixture literal")
-        .unwrap();
+    encoder.send_literal(&mut output, &trailing).unwrap();
     encoder.finish(&mut output).unwrap();
     output
 }
