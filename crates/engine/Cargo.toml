@@ -101,6 +101,14 @@ lazy-metadata = []
 # Trade-offs: Minimal overhead on single-core systems
 parallel = []
 
+# DEL-2.c: parallel DeleteEmitter consumer behind a Cargo flag. Gates the
+# `delete::parallel_consumer` module that wraps `CohortBatcher` (DEL-2.b) and
+# the DEL-2.a `ReorderBuffer` with a Condvar-driven consumer thread that
+# dispatches each cohort's ops on rayon while preserving the strict
+# cross-cohort wire order from DEL-1.a. Off by default; DEL-2.d migrates the
+# receiver call site.
+parallel-delete-consumer = []
+
 # Parallel receive-side delta apply (#1368). Currently a no-op flag pending
 # PIP-9 wiring: PIP-8 (post PR #4730) tore out the dead receiver-side
 # dispatch scaffolding that constructed (but never consumed) a
