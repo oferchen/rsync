@@ -74,19 +74,30 @@ fn log_module_request(log: &SharedLogSink, host: Option<&str>, peer_ip: IpAddr, 
     log_message(log, &message);
 }
 
-fn log_module_limit(
+/// Emits a structured warning when a module rejects a connection because
+/// its per-module `max connections` cap has been reached.
+///
+/// Mirrors the global cap warning emitted from
+/// [`log_max_connections_rejection`] so operators see one consistent
+/// shape across both admission paths. Fields are stable and named:
+/// `which` carries the module name (sanitised to strip control chars),
+/// `peer` records the rejected client IP, `cap` is the limit that
+/// triggered the refusal, and `current` is the active connection count
+/// observed at the refusal moment.
+pub(crate) fn log_module_limit(
     log: &SharedLogSink,
     host: Option<&str>,
     peer_ip: IpAddr,
     module: &str,
     limit: NonZeroU32,
+    current: u32,
 ) {
     let display = format_host(host, peer_ip);
     let module_display = sanitize_module_identifier(module);
     let text = format!(
-        "refusing module '{module_display}' from {display} ({peer_ip}): max connections {limit}"
+        "max-connections cap reached: which={module_display} peer={display} ({peer_ip}) cap={limit} current={current}"
     );
-    let message = rsync_info!(text).with_role(Role::Daemon);
+    let message = rsync_warning!(text).with_role(Role::Daemon);
     log_message(log, &message);
 }
 

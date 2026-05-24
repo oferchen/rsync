@@ -846,6 +846,73 @@ fn accept_loop_refuses_when_at_capacity() {
 }
 
 #[test]
+fn refuse_if_at_capacity_emits_structured_warning() {
+    // Operators need a stable, structured warning line whenever the
+    // global `--max-connections` cap rejects a connection; assert that
+    // `refuse_if_at_capacity` writes a single record with the
+    // `which=global`, `peer=`, `cap=` and `current=` fields named.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let local = listener.local_addr().expect("local addr");
+    let client_handle =
+        thread::spawn(move || TcpStream::connect(local).expect("connect refused client"));
+    let (mut server_stream, peer) = listener.accept().expect("accept refused client");
+    let _client = client_handle.join().expect("client connect");
+
+    let log_dir = tempfile::tempdir().expect("log dir");
+    let log_path = log_dir.path().join("daemon.log");
+    let log_sink: Option<SharedLogSink> =
+        Some(open_log_sink(&log_path, Brand::Oc).expect("open log"));
+
+    let flags = no_op_signal_flags();
+    let config_path: Option<PathBuf> = None;
+    let limiter: Option<Arc<ConnectionLimiter>> = None;
+    let notifier = systemd::ServiceNotifier::new();
+    let counter = ConnectionCounter::new();
+    let _g1 = counter.acquire();
+    let _g2 = counter.acquire();
+    assert_eq!(counter.active(), 2);
+
+    let state = test_accept_loop_state(
+        &flags,
+        &config_path,
+        &limiter,
+        &log_sink,
+        &notifier,
+        counter.clone(),
+        Some(2),
+    );
+
+    assert!(refuse_if_at_capacity(&mut server_stream, peer, &state));
+    drop(server_stream);
+
+    // Drop the sink so the underlying file is flushed before we read it.
+    drop(log_sink);
+
+    let contents = std::fs::read_to_string(&log_path).expect("read log");
+    assert!(
+        contents.starts_with("oc-rsync warning:"),
+        "expected warning level, got: {contents}"
+    );
+    assert!(
+        contents.contains("max-connections cap reached"),
+        "missing structured prefix: {contents}"
+    );
+    assert!(
+        contents.contains("which=global"),
+        "missing which=global field: {contents}"
+    );
+    assert!(
+        contents.contains(&format!("peer={peer}")),
+        "missing peer= field: {contents}"
+    );
+    assert!(contents.contains("cap=2"), "missing cap= field: {contents}");
+    assert!(
+        contents.contains("current=2"),
+        "missing current= field: {contents}"
+    );
+}
+
+#[test]
 fn accept_loop_recovers_after_disconnect() {
     // Same setup as `accept_loop_refuses_when_at_capacity`, but after
     // releasing one of the two active guards a new connection must be

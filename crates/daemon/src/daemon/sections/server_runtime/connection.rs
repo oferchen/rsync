@@ -126,7 +126,8 @@ fn refuse_if_at_capacity(
         return false;
     };
 
-    if state.connection_counter.active() < limit {
+    let current = state.connection_counter.active();
+    if current < limit {
         return false;
     }
 
@@ -144,13 +145,34 @@ fn refuse_if_at_capacity(
     let _ = stream.flush();
 
     if let Some(log) = state.log_sink.as_ref() {
-        let text =
-            format!("refused connection from {peer_addr}: max connections ({limit}) reached");
-        let message = rsync_info!(text).with_role(Role::Daemon);
-        log_message(log, &message);
+        log_max_connections_rejection(log, peer_addr, "global", limit, current);
     }
 
     true
+}
+
+/// Emits a structured warning describing a connection rejected by the
+/// daemon's `--max-connections` cap.
+///
+/// Operators rely on this signal to tune the cap from observable evidence,
+/// so the fields are stable and named: `which` distinguishes the global
+/// cap from a per-module cap, `peer` records the rejected client address,
+/// `cap` is the limit that triggered the refusal, and `current` is the
+/// active connection count observed at refusal time. The line is emitted
+/// at warning level to separate it from routine connect/disconnect info
+/// chatter while staying below error severity (the daemon keeps serving).
+pub(crate) fn log_max_connections_rejection(
+    log: &SharedLogSink,
+    peer: SocketAddr,
+    which: &str,
+    cap: usize,
+    current: usize,
+) {
+    let text = format!(
+        "max-connections cap reached: which={which} peer={peer} cap={cap} current={current}"
+    );
+    let message = rsync_warning!(text).with_role(Role::Daemon);
+    log_message(log, &message);
 }
 
 /// Spawns a worker thread for an accepted connection.
