@@ -44,6 +44,18 @@
 //! the receiver-side `getpwnam_r`/`getgrnam_r` lookup must fail and the
 //! numeric id must be preserved verbatim on the destination, matching
 //! upstream's `recv_add_id()` fallback at `uidlist.c:282`.
+//!
+//! ## Companion: ACL-2.c reverse-direction leg
+//!
+//! `acl_2c_upstream_sender_oc_receiver` flips the directional polarity
+//! of ACL-2.b: upstream rsync acts as the sender and oc-rsync owns the
+//! receiver process. The fixture mixes mappable (root user/group) and
+//! unmappable (UNMAPPABLE_UID / UNMAPPABLE_GID) named entries on a
+//! single file so a single transfer covers both branches of
+//! `resolve_ida_id`. The assertion is byte-identical-to-source AND
+//! byte-identical-to-upstream's-own-output, cross-validating that
+//! oc-rsync's receiver matches upstream when handed an upstream-formatted
+//! wire stream.
 
 #![cfg(all(target_os = "linux", feature = "acl"))]
 
@@ -721,6 +733,190 @@ fn non_root_sender_unmappable_uid_remap_matches_upstream() {
         cross.is_empty(),
         "oc-rsync and upstream rsync produced different on-disk ACLs for the \
          same unmappable-uid source (ACL-1 should make these byte-identical):\n{}",
+        cross.join("\n\n"),
+    );
+}
+
+/// ACL-2.c reverse-direction harness: upstream rsync sender, oc-rsync
+/// receiver, non-root, fixture with both mappable and unmappable named-id
+/// ACL entries. Mirrors `NonRootHarness` but treats `upstream_bin` as the
+/// sender and `oc_bin` as the receiver process spawned for the destination
+/// side. Both binaries still run locally because the push form
+/// `rsync src/ dst/` is a single-process invocation; the receiver-side
+/// code path under audit (ACL-1, `apply_acls_from_cache`) is only
+/// exercised when oc-rsync owns the destination of an upstream-formatted
+/// wire stream. We reach that path by chaining upstream's known-good
+/// destination back through oc-rsync, the same trick the root-to-root
+/// `upstream_then_oc` test uses one level up.
+struct ReverseHarness {
+    oc_bin: PathBuf,
+    upstream_bin: PathBuf,
+    scratch: Scratch,
+}
+
+impl ReverseHarness {
+    fn try_new() -> Option<Self> {
+        if is_root() {
+            skip(
+                "requires non-root user with ACL write permission; \
+                 root would silently resolve every wire id and bypass the unmappable path",
+            );
+            return None;
+        }
+        if id_is_resolvable("passwd", UNMAPPABLE_UID) {
+            skip(&format!(
+                "passwd id {UNMAPPABLE_UID} unexpectedly resolves on this host; \
+                 pick a different sentinel id in UNMAPPABLE_UID"
+            ));
+            return None;
+        }
+        if id_is_resolvable("group", UNMAPPABLE_GID) {
+            skip(&format!(
+                "group id {UNMAPPABLE_GID} unexpectedly resolves on this host; \
+                 pick a different sentinel id in UNMAPPABLE_GID"
+            ));
+            return None;
+        }
+        let Some(oc_bin) = locate_oc_rsync() else {
+            skip("oc-rsync binary not located; build it before running this test");
+            return None;
+        };
+        let Some(upstream_bin) = locate_upstream_rsync() else {
+            skip(
+                "upstream rsync not located (set OC_RSYNC_UPSTREAM, populate \
+                 target/interop/upstream-install/, or install rsync on PATH)",
+            );
+            return None;
+        };
+        let scratch = match Scratch::try_new() {
+            Ok(s) => s,
+            Err(e) => {
+                skip(&format!("could not create scratch dir: {e}"));
+                return None;
+            }
+        };
+        if let Err(reason) = install_fixture_mixed_acls(&scratch.src) {
+            skip(&format!(
+                "could not install mixed-id fixture ACLs (filesystem likely lacks \
+                 acl mount option or the test user cannot setfacl on a tempfile): \
+                 {reason}"
+            ));
+            return None;
+        }
+        Some(Self {
+            oc_bin,
+            upstream_bin,
+            scratch,
+        })
+    }
+}
+
+/// Build a fixture mixing mappable and unmappable named ACL entries on a
+/// single file. The mappable entries (`root` user, `root` group) exercise
+/// the `getpwnam_r`/`getgrnam_r` "name resolved" branch. The unmappable
+/// entries (`UNMAPPABLE_UID`, `UNMAPPABLE_GID`) exercise the ACL-1 fix
+/// path: upstream `uidlist.c:282` `id2 = id` fallback when name resolution
+/// fails on the receiver.
+fn install_fixture_mixed_acls(src: &Path) -> Result<(), String> {
+    let mixed = src.join("mixed.txt");
+    fs::write(&mixed, b"mixed-content").map_err(|e| format!("write mixed.txt: {e}"))?;
+
+    let uid_name = UNMAPPABLE_UID.to_string();
+    let gid_name = UNMAPPABLE_GID.to_string();
+    let entries = vec![
+        AclEntry::allow_user("", Perm::READ | Perm::WRITE, None),
+        AclEntry::allow_group("", Perm::READ, None),
+        AclEntry::allow_other(Perm::READ, None),
+        // upstream: acls.c::recv_ida_entries - mappable named user, name
+        // resolution succeeds on the receiver via getpwnam_r("root").
+        AclEntry::allow_user("root", Perm::READ | Perm::WRITE, None),
+        // upstream: acls.c::recv_ida_entries - mappable named group, name
+        // resolution succeeds via getgrnam_r("root").
+        AclEntry::allow_group("root", Perm::READ, None),
+        // upstream: uidlist.c:282 recv_add_id - unmappable named user,
+        // getpwnam_r fails, fallback to numeric id on the wire.
+        AclEntry::allow_user(&uid_name, Perm::READ | Perm::WRITE, None),
+        // upstream: uidlist.c:282 recv_add_id - unmappable named group.
+        AclEntry::allow_group(&gid_name, Perm::READ, None),
+        AclEntry::allow_mask(Perm::READ | Perm::WRITE, None),
+    ];
+    setfacl(&[&mixed], &entries, None).map_err(|e| {
+        format!(
+            "setfacl mixed.txt (non-root cannot set ACL or filesystem lacks acl support): {e}"
+        )
+    })?;
+
+    Ok(())
+}
+
+#[test]
+fn acl_2c_upstream_sender_oc_receiver() {
+    // ACL-2.c reverse-direction interop: upstream rsync acts as sender,
+    // oc-rsync acts as receiver. Source carries both mappable
+    // (root user/group, name resolution succeeds) and unmappable
+    // (UNMAPPABLE_UID/UNMAPPABLE_GID, name resolution fails) named ACL
+    // entries. Per ACL-1 (PR #4742) the oc-rsync receiver must:
+    //   - keep mappable named entries with their resolved local id;
+    //   - keep unmappable named entries with their raw wire id verbatim
+    //     (no silent drop), matching upstream uidlist.c:282 `id2 = id`.
+    //
+    // The assertion compares the oc-rsync-written destination ACL against
+    // both the source (must round-trip byte-for-byte) and the upstream-
+    // written destination ACL (must produce the same on-disk form as
+    // upstream's own receiver, cross-validating the ACL-1 fix).
+    //
+    // upstream: acls.c::recv_ida_entries (3.4.2 am_root gate removal),
+    // uidlist.c::recv_add_id, uidlist.c:287-291 DEBUG_GTE(OWN, 2)
+    // mapping-line emission.
+    let Some(h) = ReverseHarness::try_new() else {
+        return;
+    };
+
+    // Stage upstream's view of the destination first so it can serve as
+    // the source for the oc-rsync receiver leg. Upstream-as-sender,
+    // upstream-as-receiver is the control: the same wire format both
+    // ends, no ACL-1 code path involved.
+    let dst_up = h.scratch._dir.path().join("dst_up");
+    fs::create_dir(&dst_up).expect("create dst_up");
+    push_with_acls(&h.upstream_bin, &h.scratch.src, &dst_up)
+        .expect("upstream rsync push of mixed-id fixture should succeed");
+
+    let src_snap = collect_acl_snapshot(&h.scratch.src).expect("snapshot src");
+    let dst_up_snap = collect_acl_snapshot(&dst_up).expect("snapshot dst_up");
+    let upstream_mismatches = diff_snapshots("src", &src_snap, "dst_up", &dst_up_snap);
+    assert!(
+        upstream_mismatches.is_empty(),
+        "upstream rsync push of mixed-id ACL diverged from source; \
+         the oc-rsync receiver leg cannot be cross-validated:\n{}",
+        upstream_mismatches.join("\n\n"),
+    );
+
+    // Reverse-direction leg under audit: upstream sender, oc-rsync
+    // receiver. Source is the upstream-staged tree so the wire stream
+    // arriving at oc-rsync is produced by upstream's sender. The oc-rsync
+    // process invoked here owns the destination side and runs the ACL-1
+    // receiver path.
+    let dst_oc = h.scratch._dir.path().join("dst_oc");
+    fs::create_dir(&dst_oc).expect("create dst_oc");
+    push_with_acls(&h.oc_bin, &dst_up, &dst_oc)
+        .expect("oc-rsync receive of upstream-staged mixed-id fixture should succeed");
+
+    let dst_oc_snap = collect_acl_snapshot(&dst_oc).expect("snapshot dst_oc");
+    let src_vs_oc = diff_snapshots("src", &src_snap, "dst_oc", &dst_oc_snap);
+    assert!(
+        src_vs_oc.is_empty(),
+        "oc-rsync receiver of upstream-sender mixed-id ACL diverged from source \
+         (mappable ids must resolve, unmappable ids must round-trip verbatim \
+         per ACL-1):\n{}",
+        src_vs_oc.join("\n\n"),
+    );
+
+    let cross = diff_snapshots("upstream_dst", &dst_up_snap, "oc_dst", &dst_oc_snap);
+    assert!(
+        cross.is_empty(),
+        "oc-rsync receiver and upstream receiver produced different on-disk \
+         ACLs for the same upstream-sender wire stream (ACL-1 should make \
+         these byte-identical):\n{}",
         cross.join("\n\n"),
     );
 }

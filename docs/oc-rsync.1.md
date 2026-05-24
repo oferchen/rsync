@@ -327,6 +327,34 @@ NEON) are used where available, with automatic scalar fallbacks.
     See `docs/design/windows-ntfs-acl-support.md` for the full mapping
     matrix, hardlink handling, and the implementation roadmap.
 
+    ### ACL ID-remap interop matrix
+
+    Coverage status for the receiver-side ACL ID-remap path introduced by
+    ACL-1 (PR #4742, commit `07f81641f`), validated by the interop tests
+    in `crates/metadata/tests/acl_root_root_interop.rs`. Each cell names
+    the directional pair, the receiver privilege level, the ID
+    mappability case, and the test that exercises it.
+
+    | Direction              | Receiver | IDs (mappable / unmappable)    | Status | Test                                                 |
+    |------------------------|----------|--------------------------------|--------|------------------------------------------------------|
+    | oc sender, upstream rx | root     | mappable (root/root)           | green  | `root_to_root_oc_then_upstream_preserves_acls_byte_identically` (ACL-2.a) |
+    | upstream sender, oc rx | root     | mappable (root/root)           | green  | `root_to_root_upstream_then_oc_preserves_acls_byte_identically` (ACL-2.a) |
+    | oc sender, oc rx       | non-root | unmappable UID (1500000)       | green  | `non_root_sender_unmappable_uid_remap_matches_upstream` (ACL-2.b)         |
+    | oc sender, oc rx       | non-root | unmappable GID (1500001)       | green  | `non_root_sender_unmappable_gid_remap_matches_upstream` (ACL-2.b)         |
+    | upstream sender, oc rx | non-root | mixed (root + 1500000/1500001) | green  | `acl_2c_upstream_sender_oc_receiver` (ACL-2.c)                            |
+
+    All five cells are wire-validated against upstream rsync 3.4.x: each
+    test snapshots the source ACL, runs both oc-rsync and upstream as the
+    counter-party, and asserts the receiver's on-disk ACL is byte-
+    identical to the source AND to upstream's own output for the same
+    fixture. Mappable named entries route through `getpwnam_r` /
+    `getgrnam_r` and install the resolved local id; unmappable entries
+    round-trip verbatim per upstream `uidlist.c:282` `id2 = id`. The
+    underlying fix is ACL-1 (`crates/metadata/src/acl_exacl/error.rs`
+    `is_unsupported_error` plus `crates/metadata/src/acl_exacl/reconstruct.rs`
+    `resolve_ida_id`); see `docs/user-guide/acl-id-mapping.md` for the
+    user-facing semantics.
+
 **--no-acls**
 :   Disable ACL preservation.
 
