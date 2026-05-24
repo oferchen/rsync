@@ -154,6 +154,17 @@ tempfile = { workspace = true }
 checksums = { path = "crates/checksums" }
 protocol = { path = "crates/protocol" }
 
+# CSM-8: default-enable OpenSSL EVP MD4/MD5 on glibc Linux and macOS (G1 from
+# CSM-7 synthesis). OpenSSL ships with the system libssl and provides ~2x
+# throughput over the pure-Rust md-5/md4 crates for the --checksum hot path
+# (SHA-NI accelerated on supported x86_64 silicon, NEON crypto extensions on
+# aarch64). Musl Linux and Windows builds keep the pure-Rust backend by default
+# (musl targets typically lack a system libssl, and the openssl-sys build script
+# refuses to proceed without it); explicit `--features openssl` or
+# `--features openssl-vendored` still works on every platform.
+[target.'cfg(all(unix, not(target_env = "musl")))'.dependencies]
+checksums = { path = "crates/checksums", default-features = false, features = ["openssl"] }
+
 # Extra deps only for Windows + GNU
 [target.'cfg(all(windows, target_env = "gnu"))'.dependencies]
 windows-gnu-eh = { path = "crates/windows-gnu-eh" }

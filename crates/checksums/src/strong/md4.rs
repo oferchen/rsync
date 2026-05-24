@@ -351,4 +351,41 @@ mod tests {
             assert_eq!(to_hex(batch), to_hex(seq), "Mismatch at index {i}");
         }
     }
+
+    // CSM-8 parity: when the OpenSSL backend is the default-selected backend on
+    // Unix (G1), every MD4 digest must be byte-identical to the pure-Rust md4
+    // crate output. Reference is taken from the pure-Rust crate directly so
+    // the assertion holds regardless of which backend `Md4::new()` selects.
+    #[test]
+    fn md4_active_backend_matches_pure_rust_reference() {
+        use md4::Md4 as Md4Reference;
+
+        let inputs: &[&[u8]] = &[
+            b"",
+            b"a",
+            b"abc",
+            b"message digest",
+            b"abcdefghijklmnopqrstuvwxyz",
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+            // span the 64-byte MD4 block boundary deterministically
+            &[0xAB_u8; 63],
+            &[0xCD_u8; 64],
+            &[0xEF_u8; 65],
+            &[0x5A_u8; 1024],
+        ];
+
+        for (i, input) in inputs.iter().enumerate() {
+            let active = Md4::digest(input);
+
+            let mut reference = Md4Reference::new();
+            reference.update(input);
+            let reference: [u8; 16] = reference.finalize().into();
+
+            assert_eq!(
+                to_hex(&active),
+                to_hex(&reference),
+                "backend digest diverged from md4 reference at input #{i}"
+            );
+        }
+    }
 }
