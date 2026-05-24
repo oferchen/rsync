@@ -82,7 +82,7 @@ parallel-receive-delta = [
 # Forwards to `core/sender-inc-recurse`. ISI.h will flip the default and
 # retire this flag once interop is validated. See
 # `docs/design/isi-a-sender-inc-recurse-call-graph.md`.
-sender-inc-recurse = ["core/sender-inc-recurse"]
+sender-inc-recurse = ["core/sender-inc-recurse", "transfer/sender-inc-recurse"]
 
 # io_uring support for Linux 5.6+ - batched async I/O syscalls
 # Requirements: Linux kernel 5.6+ (runtime fallback on older kernels)
