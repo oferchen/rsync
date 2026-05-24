@@ -57,7 +57,9 @@ use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 
 use checksums::strong::Sha256;
-use checksums::strong::strategy::{ChecksumAlgorithmKind, ChecksumStrategy, ChecksumStrategySelector};
+use checksums::strong::strategy::{
+    ChecksumAlgorithmKind, ChecksumStrategy, ChecksumStrategySelector,
+};
 use engine::concurrent_delta::{DeltaChunk, FileNdx, ParallelDeltaApplier};
 
 /// File count chosen to match the historical `parallel_threshold/` scenario
@@ -110,7 +112,11 @@ struct Rng(u64);
 
 impl Rng {
     fn from_seed(seed: u64) -> Self {
-        let s = if seed == 0 { 0x9E37_79B9_7F4A_7C15 } else { seed };
+        let s = if seed == 0 {
+            0x9E37_79B9_7F4A_7C15
+        } else {
+            seed
+        };
         Self(s)
     }
 
@@ -163,9 +169,10 @@ fn payload_for(index: usize) -> Vec<u8> {
 #[test]
 #[ignore = "PIP-7 corruption - intended to fail until the parallel-receive-delta fix lands"]
 fn pip_7_file_1_byte_identity_when_threshold_trips() {
-    let strategy: Arc<dyn ChecksumStrategy> = Arc::from(
-        ChecksumStrategySelector::for_algorithm(ChecksumAlgorithmKind::Md5, 0),
-    );
+    let strategy: Arc<dyn ChecksumStrategy> = Arc::from(ChecksumStrategySelector::for_algorithm(
+        ChecksumAlgorithmKind::Md5,
+        0,
+    ));
     let applier = ParallelDeltaApplier::with_strategy(8, Arc::clone(&strategy));
 
     // Materialise every per-file payload up front so the test can refer to
@@ -212,8 +219,7 @@ fn pip_7_file_1_byte_identity_when_threshold_trips() {
             // analogue of the parallel work-queue worker resolving
             // basis bytes from the wrong file before the per-file
             // basis state has been bound (audit, "Seam 2").
-            DeltaChunk::literal(ndx as u32, 0, payloads[1].clone())
-                .with_expected_strong(digest)
+            DeltaChunk::literal(ndx as u32, 0, payloads[1].clone()).with_expected_strong(digest)
         } else {
             DeltaChunk::literal(ndx as u32, 0, payload).with_expected_strong(digest)
         };
@@ -240,17 +246,15 @@ fn pip_7_file_1_byte_identity_when_threshold_trips() {
         .finish_file(0u32)
         .expect("PIP-7 regression: finish_file(0) must drain cleanly once the fix lands");
 
-    let committed = sinks[0]
-        .lock()
-        .expect("file_1 sink mutex poisoned")
-        .clone();
+    let committed = sinks[0].lock().expect("file_1 sink mutex poisoned").clone();
     let expected = &payloads[0];
 
     let committed_digest = Sha256::digest(&committed);
     let expected_digest = Sha256::digest(expected);
 
     assert_eq!(
-        committed_digest, expected_digest,
+        committed_digest,
+        expected_digest,
         "PIP-7 regression: file_1 sha256 mismatch after parallel apply\n  \
          expected len: {}\n  \
          committed len: {}\n  \
