@@ -105,6 +105,7 @@ include!("tests/chunks/first_existing_config_path_prefers_primary_candidate.rs")
 include!("tests/chunks/first_existing_config_path_returns_none_when_absent.rs");
 include!("tests/chunks/format_bandwidth_rate_prefers_largest_whole_unit.rs");
 include!("tests/chunks/help_flag_renders_static_help_snapshot.rs");
+include!("tests/chunks/cached_legacy_daemon_greeting_matches_per_call_bytes.rs");
 include!("tests/chunks/legacy_daemon_greeting_digest_list_varies_by_protocol.rs");
 include!("tests/chunks/legacy_daemon_greeting_has_single_newline.rs");
 include!("tests/chunks/legacy_daemon_greeting_includes_version_and_digests.rs");
