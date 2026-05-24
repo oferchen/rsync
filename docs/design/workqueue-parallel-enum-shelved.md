@@ -35,10 +35,21 @@ protocol-compatible order.
   same shape of reason: narrow benefit not worth wire protocol churn. The
   WorkQueue proposal sits in the same category - speculative perf work whose
   payoff does not justify the protocol-care budget.
-- **Current baseline is captured.** The ISI.g bench in PR #4862 records the
-  best-case sender start time on a 100K-file source. That bench is the
-  reference for how fast the sender can start today. WorkQueue must not be
-  promised as a future improvement until that bench shows a meaningful
+- **Current baseline is captured.** The ISI.g bench
+  (`crates/transfer/benches/isi_g_sender_inc_recurse_start_time.rs`, PR #4862)
+  records the best-case sender start time on a 100K-file source. It measures
+  time-to-first-data-bytes (default threshold 1 MiB on `server_stdout`) across
+  three sender cells - baseline `oc-rsync` without `sender-inc-recurse`,
+  `oc-rsync` with `sender-inc-recurse`, and upstream `rsync` 3.4.1 - against a
+  100 000-file source (1 000 files per directory across 100 directories,
+  16-byte payloads). The headline number the bench targets is the ratio
+  `baseline / inc-recurse` on first-data-bytes, with upstream as the reference
+  for "how fast INC_RECURSE should feel"; the upstream design predicts roughly
+  two orders of magnitude improvement in that regime. That bench is the
+  reference for how fast the sender can start today, and is the speed budget
+  WorkQueue would need to beat by a meaningful margin (a 5x or larger win over
+  the `inc-recurse` cell) to be worth the wire-protocol cost. WorkQueue must
+  not be promised as a future improvement until that bench shows a meaningful
   regression against upstream.
 
 ## Re-evaluation Criteria
