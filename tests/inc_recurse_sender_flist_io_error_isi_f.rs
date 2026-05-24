@@ -171,7 +171,9 @@ fn build_fault_tree(root: &Path) -> io::Result<PathBuf> {
                 // Per-byte mix folds dir hash + file index + offset so
                 // every (dir, file, byte) tuple is unique. Catches a
                 // classifier that confuses entries by base name alone.
-                let dir_hash: u32 = rel.bytes().fold(0u32, |acc, b| acc.wrapping_mul(31) ^ b as u32);
+                let dir_hash: u32 = rel
+                    .bytes()
+                    .fold(0u32, |acc, b| acc.wrapping_mul(31) ^ b as u32);
                 let mixed = dir_hash
                     .wrapping_add((idx as u32).wrapping_mul(101))
                     .wrapping_add(byte_idx as u32);
@@ -432,7 +434,8 @@ fn sender_inc_recurse_partial_walk_propagates_io_error() {
                 )
             });
             assert_eq!(
-                dst_digest, src_digest,
+                dst_digest,
+                src_digest,
                 "readable file diverged after partial walk: {}",
                 dst_rel.display()
             );
