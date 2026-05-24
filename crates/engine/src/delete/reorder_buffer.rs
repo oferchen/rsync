@@ -507,6 +507,58 @@ impl ReorderBuffer {
         drained
     }
 
+    /// Drains up to [`DRAIN_BATCH_CAP`] contiguous-by-rank sealed
+    /// cohorts and returns each one's `(key, rank, ops)` tuple.
+    ///
+    /// Mirrors [`Self::try_drain_ready`]'s semantics with the cohort
+    /// key and rank surfaced alongside the operations so the DEL-2.b
+    /// batcher can dispatch cohorts through `DeleteFs` without holding
+    /// a parallel snapshot of head identities. The strict cohort-order
+    /// invariant from DEL-1.b section 2.3 carries through unchanged.
+    pub fn try_drain_ready_with_meta(
+        &mut self,
+    ) -> Vec<(DeleteCohortKey, u64, Vec<DeleteOperation>)> {
+        let mut drained = Vec::new();
+        #[cfg(debug_assertions)]
+        let mut previous_rank: Option<u64> = self.last_drained_rank;
+
+        while drained.len() < DRAIN_BATCH_CAP {
+            let Some((&rank, (_, cohort))) = self.cohorts.iter().next() else {
+                break;
+            };
+            if !cohort.sealed {
+                break;
+            }
+
+            #[cfg(debug_assertions)]
+            {
+                if let Some(prev) = previous_rank {
+                    assert!(
+                        rank > prev,
+                        "delete reorder buffer rank inversion during drain: previous={prev} current={rank}"
+                    );
+                }
+                previous_rank = Some(rank);
+            }
+
+            let (key, cohort) = self
+                .cohorts
+                .remove(&rank)
+                .expect("entry was just observed in the BTreeMap");
+            self.by_key.remove(&key);
+            drained.push((key, rank, cohort.ops));
+        }
+
+        #[cfg(debug_assertions)]
+        {
+            if let Some(prev) = previous_rank {
+                self.last_drained_rank = Some(prev);
+            }
+        }
+
+        drained
+    }
+
     /// Returns the rank of the head cohort (lowest rank currently
     /// buffered), or `None` when the buffer is empty.
     ///
@@ -717,6 +769,29 @@ mod tests {
         assert!(!buf.head_is_ready());
         buf.seal(&key("d2")).unwrap();
         assert!(buf.head_is_ready());
+    }
+
+    /// DEL-2.b: [`ReorderBuffer::try_drain_ready_with_meta`] surfaces
+    /// the cohort key and rank alongside the operations, matching the
+    /// rank order and cap of [`ReorderBuffer::try_drain_ready`].
+    #[test]
+    fn try_drain_ready_with_meta_returns_keys_and_ranks_in_order() {
+        let mut buf = ReorderBuffer::new();
+        for rank in [4u64, 1, 3, 2, 0] {
+            let k = key(&format!("d{rank}"));
+            buf.insert(k.clone(), rank, op(&format!("op-{rank}")))
+                .unwrap();
+            buf.seal(&k).unwrap();
+        }
+        let drained = buf.try_drain_ready_with_meta();
+        assert_eq!(drained.len(), 5);
+        let ranks: Vec<u64> = drained.iter().map(|(_, r, _)| *r).collect();
+        assert_eq!(ranks, vec![0, 1, 2, 3, 4]);
+        for (idx, (k, _, ops)) in drained.iter().enumerate() {
+            assert_eq!(*k, key(&format!("d{idx}")));
+            assert_eq!(ops.len(), 1);
+            assert_eq!(ops[0].leaf, OsString::from(format!("op-{idx}")));
+        }
     }
 
     /// DEL-1.b section 2.3 / DEL-1.c section 3.2: drains across
