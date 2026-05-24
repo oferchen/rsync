@@ -123,6 +123,16 @@ thread-slab-pool = ["engine/thread-slab-pool"]
 # Incremental file list processing with failed directory tracking
 incremental-flist = []
 
+# Marker feature mirroring the workspace-level `sender-inc-recurse` flag (which
+# forwards to `core/sender-inc-recurse`). Gates interop tests in `tests/` that
+# drive an externally-built `oc-rsync` binary - the binary must be compiled
+# with the workspace feature enabled for the test to exercise the sender-side
+# INC_RECURSE wire path. Carries no transfer-crate compile-time effect; the
+# default flip happens in `core::client::config::builder`. See
+# `docs/design/isi-a-sender-inc-recurse-call-graph.md` and
+# `docs/audit/v061-daemon-push-regression.md`.
+sender-inc-recurse = []
+
 # ============================================================================
 # Runtime Features
 # ============================================================================
