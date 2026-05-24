@@ -7,16 +7,18 @@
 //! `finish_file` can hold independent Arc graphs.
 //!
 //! DG-3.a (PR #4826) added the post-split types alongside the existing
-//! [`SlotBarrier`]. DG-3.b (this commit) swaps the [`super::ParallelDeltaApplier`]
-//! [`DashMap`] value type from [`Arc<SlotBarrier>`] to [`SlotEntry`] and
-//! reshapes [`SlotBarrier`] into a thin adapter that wraps shared
-//! [`Arc<SlotData>`] + [`Arc<BarrierState>`] handles. Adapter instances
-//! are minted on demand by [`super::ParallelDeltaApplier::slot_for`] so
-//! [`super::DecrementGuard`] and [`super::SlotHandle`] keep their
-//! [`Arc<SlotBarrier>`] fields unchanged until DG-3.c retypes them. Each
-//! adapter [`Arc`] is independent of the shared per-file state behind it;
-//! the next phase (DG-3.c) collapses the adapter and points the handle
-//! fields at [`Arc<SlotData>`] / [`Arc<BarrierState>`] directly.
+//! [`SlotBarrier`]. DG-3.b (PR #4841) swapped the
+//! [`super::ParallelDeltaApplier`] [`DashMap`] value type from
+//! [`Arc<SlotBarrier>`] to [`SlotEntry`] and reshaped [`SlotBarrier`]
+//! into a thin adapter that wraps shared [`Arc<SlotData>`] +
+//! [`Arc<BarrierState>`] handles. DG-3.c (this commit) retypes
+//! [`super::DecrementGuard`] to hold [`Arc<BarrierState>`] directly,
+//! sourced from the adapter via [`SlotBarrier::barrier`], and removes
+//! the now-dead forwarding `SlotBarrier::decrement_inflight`. The
+//! [`super::SlotHandle`] retype is deferred; the adapter survives only
+//! as that handle's bridge until a follow-on DG-3.x task collapses it
+//! and points the handle fields at [`Arc<SlotData>`] /
+//! [`Arc<BarrierState>`] directly.
 //!
 //! [`Arc<SlotBarrier>`]: std::sync::Arc
 //! [`Arc<SlotData>`]: std::sync::Arc
@@ -30,27 +32,31 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use super::super::types::FileNdx;
 use super::{FileSlot, ParallelApplyError};
 
-/// DG-3.b transitional adapter that preserves the [`Arc<SlotBarrier>`] shape
-/// [`super::DecrementGuard`] and [`super::SlotHandle`] still consume.
+/// Transitional adapter that preserves the [`Arc<SlotBarrier>`] shape
+/// [`super::SlotHandle`] still consumes.
 ///
 /// Originally colocated the file's [`Mutex<FileSlot>`], the in-flight
 /// counter, and the [`Condvar`] in one allocation. DG-3.b moves the
 /// canonical state into [`SlotData`] + [`BarrierState`] (stored together
 /// as [`SlotEntry`] in the DashMap) and leaves this struct as a thin
-/// wrapper that forwards every method through cloned [`Arc`] handles.
-/// New instances are minted by
-/// [`super::ParallelDeltaApplier::slot_for`] on each lookup; sibling
-/// adapters share the same underlying [`Arc<SlotData>`] +
-/// [`Arc<BarrierState>`] state, so the in-flight counter and Condvar
-/// remain coherent across workers. DG-3.c retypes
-/// [`super::DecrementGuard`] / [`super::SlotHandle`] to hold the inner
-/// Arcs directly and deletes this adapter.
+/// wrapper that forwards through cloned [`Arc`] handles. New instances
+/// are minted by [`super::ParallelDeltaApplier::slot_for`] on each
+/// lookup; sibling adapters share the same underlying
+/// [`Arc<SlotData>`] + [`Arc<BarrierState>`] state, so the in-flight
+/// counter and Condvar remain coherent across workers.
+///
+/// DG-3.c retyped [`super::DecrementGuard`] to hold its own
+/// [`Arc<BarrierState>`] clone (sourced via [`Self::barrier`]) so the
+/// guard's strong-count trajectory is disjoint from the adapter's
+/// payload Arc. The adapter survives only as the bridge for
+/// [`super::SlotHandle`]; a future DG-3.x task retypes the handle and
+/// deletes this struct.
 ///
 /// Holding the per-slot [`Arc<SlotBarrier>`] adapter is no longer the
 /// unit of "in-flight"; the counter inside [`BarrierState`] is. The
-/// adapter's lifetime continues to bound when [`super::DecrementGuard`]
-/// runs, which is what the FFB-1 invariant cares about, so external
-/// behaviour is unchanged.
+/// adapter's lifetime continues to bound when [`super::SlotHandle`]
+/// drops, which keeps the lock-path FFB-1 invariant intact even though
+/// the decrement path now lives on [`Arc<BarrierState>`] directly.
 ///
 /// [`Arc`]: std::sync::Arc
 /// [`Arc<SlotBarrier>`]: std::sync::Arc
@@ -94,12 +100,17 @@ impl SlotBarrier {
         self.barrier.increment_inflight();
     }
 
-    /// Drops the in-flight counter back by one and wakes any waiter parked
-    /// on the [`Condvar`]. Invoked from [`super::DecrementGuard::drop`] so
-    /// the bookkeeping stays exception-safe across early returns and
-    /// panics.
-    pub(super) fn decrement_inflight(&self) {
-        self.barrier.decrement_inflight();
+    /// Returns the adapter's inner [`Arc<BarrierState>`] so the caller
+    /// can hand the bookkeeping Arc to [`super::DecrementGuard`] without
+    /// extending the adapter Arc's lifetime. DG-3.c routes the guard's
+    /// strong-count trajectory through this accessor; [`super::SlotHandle`]
+    /// keeps its own [`Arc<SlotBarrier>`] clone for the lock path until
+    /// a future DG-3.x task retypes the handle.
+    ///
+    /// [`Arc<BarrierState>`]: std::sync::Arc
+    /// [`Arc<SlotBarrier>`]: std::sync::Arc
+    pub(super) fn barrier(&self) -> &Arc<BarrierState> {
+        &self.barrier
     }
 }
 
@@ -132,8 +143,12 @@ impl SlotBarrier {
 ///   re-checks the predicate after waking observes a consistent value.
 /// - The counter is monotonic per slot-lifetime: every
 ///   `increment_inflight` is matched 1:1 with a `decrement_inflight`
-///   via the [`super::DecrementGuard`] RAII pairing (DG-3.c will retype
-///   the guard's field to `Arc<BarrierState>`).
+///   via the [`super::DecrementGuard`] RAII pairing. DG-3.c retyped
+///   the guard's field to [`Arc<BarrierState>`] so the pairing now
+///   travels on this allocation directly rather than through the
+///   [`SlotBarrier`] adapter.
+///
+/// [`Arc<BarrierState>`]: std::sync::Arc
 ///
 /// # Visibility
 ///
@@ -173,10 +188,17 @@ impl BarrierState {
     }
 
     /// Drops the in-flight counter by one and wakes every waiter parked
-    /// on the [`Condvar`]. Body is verbatim from
-    /// [`SlotBarrier::decrement_inflight`]; the saturating subtract and
-    /// `notify_all` semantics match exactly so DG-3.c can swap the
-    /// underlying Arc type without changing the wake protocol.
+    /// on the [`Condvar`]. The saturating subtract guards against a
+    /// poisoned-then-rebuilt path that observes zero: this is internal
+    /// bookkeeping, not a security invariant, so a panic here would
+    /// only mask a real worker bug. `notify_all` is fired
+    /// unconditionally so any waiter parked on the condvar gets a
+    /// chance to re-evaluate the predicate; spurious wakeups are
+    /// filtered by [`Self::wait_until_idle`]'s `wait_while` loop.
+    ///
+    /// Invoked exclusively from [`super::DecrementGuard::drop`] (DG-3.c
+    /// retired the [`SlotBarrier`] forwarding shim that previously
+    /// stood between the guard and this method).
     pub(super) fn decrement_inflight(&self) {
         let mut guard = self
             .inflight
@@ -324,50 +346,48 @@ impl SlotEntry {
     }
 }
 
-/// Post-split handle returned from `slot_for` once DG-3.c lands the
-/// [`super::DecrementGuard`] retype.
+/// Post-split handle returned from `slot_for` once a future DG-3.x
+/// task lands the mod-level [`super::SlotHandle`] retype.
 ///
 /// Holds one [`Arc<SlotData>`] for the payload lock plus one
 /// [`Arc<BarrierState>`] so the increment+decrement bookkeeping stays
 /// co-located with the lock site. Field declaration order is
 /// load-bearing: per the DG-2.a spec section 6, [`Self::data`] is
 /// dropped first (releasing the worker's payload Arc clone), then
-/// [`Self::barrier`], and finally the future `_decrement` field that
-/// DG-3.c will attach. That order keeps the payload Arc's strong-count
-/// trajectory disjoint from the notify-bearing Arc's, which is the
-/// invariant DG-1 found violated by the current [`SlotBarrier`] shape.
+/// [`Self::barrier`], and finally a future `_decrement` field. That
+/// order keeps the payload Arc's strong-count trajectory disjoint from
+/// the notify-bearing Arc's, which is the invariant DG-1 found
+/// violated by the original [`SlotBarrier`] shape.
 ///
 /// # Why a parallel type instead of editing the mod-level [`super::SlotHandle`]?
 ///
-/// DG-3.a is purely additive: every existing call site must keep
-/// compiling against the old [`SlotBarrier`]-backed
-/// [`super::SlotHandle`] until DG-3.b swaps the DashMap value type and
-/// DG-3.c retypes [`super::DecrementGuard`]. The two handles coexist
-/// for one release cycle; DG-3.c will rename this type into the
-/// mod-level slot once its sibling pieces are in place.
+/// DG-3.a/b/c are sequenced so the mod-level [`super::SlotHandle`]
+/// keeps compiling against the [`SlotBarrier`] adapter while the
+/// underlying types migrate piece by piece. DG-3.c (this commit)
+/// retyped [`super::DecrementGuard`] only; the handle retype is
+/// deferred to a later task that renames this type into the mod-level
+/// slot.
 ///
 /// # Missing field
 ///
 /// The DG-2.a spec section 6 also calls for a third field,
-/// `_decrement: super::DecrementGuard`. That field cannot land in
-/// DG-3.a because [`super::DecrementGuard`] still carries
-/// `Arc<SlotBarrier>` (DG-3.c retypes it to `Arc<BarrierState>`).
-/// Attaching the existing guard here would defeat the split: the
-/// guard would extend the lifetime of an Arc whose graph
-/// [`SlotData`] no longer participates in. DG-3.c folds the field
-/// back in once the guard is retyped.
+/// `_decrement: super::DecrementGuard`. Attaching that field here is
+/// possible now that DG-3.c has retyped the guard to
+/// [`Arc<BarrierState>`], but it is deferred to the same future task
+/// that retypes the mod-level [`super::SlotHandle`] so this struct
+/// stays inert until its call sites are ready.
 ///
 /// # Visibility
 ///
-/// `pub(super)` so the parent module can wire it in during the DG-3.b
-/// / DG-3.c migrations. Not exposed beyond `parallel_apply`. The
+/// `pub(super)` so the parent module can wire it in during the
+/// follow-on migration. Not exposed beyond `parallel_apply`. The
 /// mod-level [`super::SlotHandle`] is unaffected by this type's
 /// existence: neither shadows the other because `mod.rs` does not
 /// `use slot_barrier::SlotHandle`.
 //
-// `dead_code` allow: same rationale as `BarrierState`. DG-3.c renames
-// this type into the mod-level slot once the sibling pieces are in
-// place.
+// `dead_code` allow: same rationale as `BarrierState`. The follow-on
+// task renames this type into the mod-level slot once its call sites
+// are ready.
 #[allow(dead_code)]
 pub(super) struct SlotHandle {
     /// Per-file payload Arc. Dropped first when the handle goes out
@@ -386,8 +406,8 @@ pub(super) struct SlotHandle {
 impl SlotHandle {
     /// Bumps the entry's in-flight counter and constructs the handle.
     /// Mirrors the DG-2.a spec section 6 constructor, modulo the
-    /// `_decrement` field that DG-3.c will attach once
-    /// [`super::DecrementGuard`] is retyped.
+    /// `_decrement` field deferred to the follow-on task that retypes
+    /// the mod-level [`super::SlotHandle`].
     pub(super) fn new(entry: SlotEntry) -> Self {
         entry.barrier.increment_inflight();
         Self {
