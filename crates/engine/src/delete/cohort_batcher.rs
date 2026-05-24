@@ -63,9 +63,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::reorder_buffer::{
-    DRAIN_BATCH_CAP, DeleteCohortKey, DeleteOperation, ReorderBuffer, ReorderBufferError,
-};
+use super::reorder_buffer::{DeleteCohortKey, DeleteOperation, ReorderBuffer, ReorderBufferError};
 
 /// One sealed cohort surfaced by [`CohortBatcher::drain_batch`].
 ///
