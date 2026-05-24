@@ -607,4 +607,84 @@ mod tests {
             assert_eq!(to_hex(batch), to_hex(seq), "Mismatch at index {i}");
         }
     }
+
+    // CSM-8 parity: when the OpenSSL backend is the default-selected backend on
+    // Unix (G1), every digest must be byte-identical to the pure-Rust `md-5`
+    // crate output for the same input. The active backend is dictated by the
+    // build configuration; the reference value is computed from the
+    // pure-Rust crate directly to keep the comparison independent of which
+    // backend `Md5::new()` happens to pick.
+    #[test]
+    fn md5_active_backend_matches_pure_rust_reference() {
+        let inputs: &[&[u8]] = &[
+            b"",
+            b"a",
+            b"abc",
+            b"message digest",
+            b"abcdefghijklmnopqrstuvwxyz",
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+            // span the 64-byte MD5 block boundary deterministically
+            &[0xAB_u8; 63],
+            &[0xCD_u8; 64],
+            &[0xEF_u8; 65],
+            &[0x5A_u8; 1024],
+        ];
+
+        for (i, input) in inputs.iter().enumerate() {
+            let active = Md5::digest(input);
+
+            let mut reference = md5::Md5::new();
+            reference.update(input);
+            let reference: [u8; 16] = reference.finalize().into();
+
+            assert_eq!(
+                to_hex(&active),
+                to_hex(&reference),
+                "backend digest diverged from md-5 reference at input #{i}"
+            );
+        }
+    }
+
+    // CSM-8 parity: seeded hashing must also match upstream byte-for-byte
+    // regardless of backend selection. Covers the proper (protocol >= 30) and
+    // legacy (pre-CHECKSUM_SEED_FIX) seed orderings.
+    #[test]
+    fn md5_active_backend_matches_pure_rust_reference_seeded() {
+        let seed_value: i32 = 0x12345678;
+        let payloads: &[&[u8]] = &[b"", b"abc", b"message digest", &[0xAA_u8; 4096]];
+
+        for (i, data) in payloads.iter().enumerate() {
+            // proper order: seed bytes hashed before data
+            let mut proper = <Md5 as StrongDigest>::with_seed(Md5Seed::proper(seed_value));
+            proper.update(data);
+            let proper = proper.finalize();
+
+            let mut proper_ref = md5::Md5::new();
+            proper_ref.update(seed_value.to_le_bytes());
+            proper_ref.update(data);
+            let proper_ref: [u8; 16] = proper_ref.finalize().into();
+
+            assert_eq!(
+                to_hex(&proper),
+                to_hex(&proper_ref),
+                "proper-order seeded MD5 diverged at input #{i}"
+            );
+
+            // legacy order: seed bytes hashed after data
+            let mut legacy = <Md5 as StrongDigest>::with_seed(Md5Seed::legacy(seed_value));
+            legacy.update(data);
+            let legacy = legacy.finalize();
+
+            let mut legacy_ref = md5::Md5::new();
+            legacy_ref.update(data);
+            legacy_ref.update(seed_value.to_le_bytes());
+            let legacy_ref: [u8; 16] = legacy_ref.finalize().into();
+
+            assert_eq!(
+                to_hex(&legacy),
+                to_hex(&legacy_ref),
+                "legacy-order seeded MD5 diverged at input #{i}"
+            );
+        }
+    }
 }
