@@ -20,8 +20,13 @@
 //!   `crates/metadata/tests/acl_handling.rs:1245`).
 //! - The `acl` feature is not enabled (no `exacl` linkage; nothing to
 //!   exercise).
-//! - The effective UID is not `0` (the no-op-vs-upstream invariant only
-//!   holds when both sides can resolve every ACL UID/GID locally).
+//! - For the root-to-root pair: the effective UID is not `0` (the
+//!   no-op-vs-upstream invariant only holds when both sides can resolve
+//!   every ACL UID/GID locally).
+//! - For the non-root unmappable-id pair (ACL-2.b): the effective UID
+//!   IS `0` (root would silently resolve every wire id and bypass the
+//!   unmappable path under test), or the chosen sentinel UID/GID
+//!   unexpectedly resolves via `getent`.
 //! - An upstream `rsync` binary cannot be located (the `OC_RSYNC_UPSTREAM`
 //!   env var, then `target/interop/upstream-install/<ver>/bin/rsync`, then
 //!   `command -v rsync`).
@@ -29,13 +34,16 @@
 //! - The backing filesystem refuses POSIX ACL writes (no `acl` mount
 //!   option on `/tmp` is the common case; skip rather than fail).
 //!
-//! ## Seed for ACL-2.b / ACL-2.c
+//! ## Companion: ACL-2.b non-root unmappable-id leg
 //!
-//! The fixture builder, binary discovery, scratch layout, and ACL diff
-//! helpers in this file are intentionally factored so the non-root variant
-//! (ACL-2.b, unmappable IDs under a non-root receiver) and the
-//! cross-platform variant (ACL-2.c) can sit alongside this test as sibling
-//! `#[test]` functions and share the harness.
+//! Below the root-to-root tests, `non_root_sender_unmappable_uid_*` and
+//! `non_root_sender_unmappable_gid_*` reuse the same scratch layout,
+//! binary discovery, snapshot, and diff helpers but install fixtures
+//! containing a named-user / named-group ACE pinned to a UID/GID that
+//! does not exist on the host. They exercise the ACL-1 wire path where
+//! the receiver-side `getpwnam_r`/`getgrnam_r` lookup must fail and the
+//! numeric id must be preserved verbatim on the destination, matching
+//! upstream's `recv_add_id()` fallback at `uidlist.c:282`.
 
 #![cfg(all(target_os = "linux", feature = "acl"))]
 
@@ -508,5 +516,260 @@ fn root_to_root_upstream_then_oc_preserves_acls_byte_identically() {
         mismatches.is_empty(),
         "root-to-root upstream->oc-rsync round-trip diverged from source ACLs:\n{}",
         mismatches.join("\n\n"),
+    );
+}
+
+/// UID well above the conventional 16-bit `nobody` range and above
+/// `/etc/login.defs` UID_MAX on virtually every distribution. Used by the
+/// non-root unmappable-uid leg below so neither sender nor receiver has a
+/// `/etc/passwd` entry that would let `getpwnam_r`/`getpwuid_r` resolve a
+/// name. The literal value also drives the wire string the receiver must
+/// preserve verbatim ("user:1500000:rw-").
+const UNMAPPABLE_UID: u32 = 1_500_000;
+
+/// GID counterpart. Distinct from `UNMAPPABLE_UID` so a one-side bug that
+/// confuses the user/group qualifier kind surfaces as a snapshot diff
+/// instead of accidentally aliasing onto the UID.
+const UNMAPPABLE_GID: u32 = 1_500_001;
+
+/// Probe `/etc/passwd` / `/etc/group` (via `getent`) and return `true`
+/// when the supplied uid or gid actually resolves on this host. Used to
+/// abort the test cleanly if a CI image has shipped with an entry for our
+/// chosen sentinel id, in which case the "unmappable" framing would not
+/// hold.
+fn id_is_resolvable(database: &str, id: u32) -> bool {
+    Command::new("getent")
+        .arg(database)
+        .arg(id.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Build a fixture containing a single regular file whose access ACL
+/// pins a named-user ACE to `uid`. The wire-level invariant under test
+/// is that the receiver writes that exact numeric id into the
+/// destination ACL when `getpwnam_r("<uid>")` returns "no such user",
+/// matching upstream `recv_add_id()` at `uidlist.c:282`.
+fn install_fixture_unmappable_user_acl(src: &Path, uid: u32) -> Result<(), String> {
+    let flat = src.join("unmappable_user.txt");
+    fs::write(&flat, b"unmappable-user-content")
+        .map_err(|e| format!("write unmappable_user.txt: {e}"))?;
+
+    let uid_name = uid.to_string();
+    let entries = vec![
+        AclEntry::allow_user("", Perm::READ | Perm::WRITE, None),
+        AclEntry::allow_group("", Perm::READ, None),
+        AclEntry::allow_other(Perm::READ, None),
+        AclEntry::allow_user(&uid_name, Perm::READ | Perm::WRITE, None),
+        AclEntry::allow_mask(Perm::READ | Perm::WRITE, None),
+    ];
+    setfacl(&[&flat], &entries, None).map_err(|e| {
+        format!(
+            "setfacl unmappable_user.txt (non-root cannot set ACL or filesystem lacks acl \
+             support): {e}"
+        )
+    })?;
+
+    Ok(())
+}
+
+/// GID counterpart to `install_fixture_unmappable_user_acl`. Same wire
+/// invariant on the group axis: `getgrnam_r("<gid>")` must fail on the
+/// receiver and the numeric gid must travel through to the destination
+/// ACL unchanged.
+fn install_fixture_unmappable_group_acl(src: &Path, gid: u32) -> Result<(), String> {
+    let flat = src.join("unmappable_group.txt");
+    fs::write(&flat, b"unmappable-group-content")
+        .map_err(|e| format!("write unmappable_group.txt: {e}"))?;
+
+    let gid_name = gid.to_string();
+    let entries = vec![
+        AclEntry::allow_user("", Perm::READ | Perm::WRITE, None),
+        AclEntry::allow_group("", Perm::READ, None),
+        AclEntry::allow_other(Perm::READ, None),
+        AclEntry::allow_group(&gid_name, Perm::READ | Perm::WRITE, None),
+        AclEntry::allow_mask(Perm::READ | Perm::WRITE, None),
+    ];
+    setfacl(&[&flat], &entries, None).map_err(|e| {
+        format!(
+            "setfacl unmappable_group.txt (non-root cannot set ACL or filesystem lacks acl \
+             support): {e}"
+        )
+    })?;
+
+    Ok(())
+}
+
+/// Non-root variant of `Harness`. Same binary discovery and scratch
+/// layout, but flips the `is_root` polarity (non-root only) and lets the
+/// caller plug in the fixture installer so the user and group legs can
+/// share one preflight.
+struct NonRootHarness {
+    oc_bin: PathBuf,
+    upstream_bin: PathBuf,
+    scratch: Scratch,
+}
+
+impl NonRootHarness {
+    fn try_new<F>(database: &str, id: u32, install: F) -> Option<Self>
+    where
+        F: FnOnce(&Path) -> Result<(), String>,
+    {
+        if is_root() {
+            skip(
+                "requires non-root user with ACL write permission; \
+                 root would silently resolve every wire id and bypass the unmappable path",
+            );
+            return None;
+        }
+        if id_is_resolvable(database, id) {
+            skip(&format!(
+                "{database} id {id} unexpectedly resolves on this host; \
+                 pick a different sentinel id in UNMAPPABLE_UID/UNMAPPABLE_GID"
+            ));
+            return None;
+        }
+        let Some(oc_bin) = locate_oc_rsync() else {
+            skip("oc-rsync binary not located; build it before running this test");
+            return None;
+        };
+        let Some(upstream_bin) = locate_upstream_rsync() else {
+            skip(
+                "upstream rsync not located (set OC_RSYNC_UPSTREAM, populate \
+                 target/interop/upstream-install/, or install rsync on PATH)",
+            );
+            return None;
+        };
+        let scratch = match Scratch::try_new() {
+            Ok(s) => s,
+            Err(e) => {
+                skip(&format!("could not create scratch dir: {e}"));
+                return None;
+            }
+        };
+        if let Err(reason) = install(&scratch.src) {
+            skip(&format!(
+                "could not install unmappable-id fixture ACLs \
+                 (filesystem likely lacks acl mount option or the test user \
+                 cannot setfacl on a tempfile): {reason}"
+            ));
+            return None;
+        }
+        Some(Self {
+            oc_bin,
+            upstream_bin,
+            scratch,
+        })
+    }
+}
+
+#[test]
+fn non_root_sender_unmappable_uid_remap_matches_upstream() {
+    // Wire invariant for the named-user ACE pinned to UNMAPPABLE_UID:
+    // with --numeric-ids both implementations carry "user:1500000"
+    // verbatim. The receiver must call getpwnam_r("1500000") and, when
+    // it fails, fall back to the numeric id from the wire. ACL-1
+    // (PR #4742) installed that fallback on the oc-rsync receiver,
+    // matching upstream's `recv_add_id()` at `uidlist.c:282`.
+    //
+    // The byte-identical assertion is two-pronged:
+    //   1. oc-rsync push src -> dst preserves the numeric uid
+    //      end-to-end (src snapshot == dst snapshot).
+    //   2. upstream push src -> dst_up produces the same on-disk ACL
+    //      as oc-rsync (src snapshot == dst_up snapshot), so the
+    //      destination's serialized form is byte-identical to what
+    //      upstream itself writes.
+    let Some(h) = NonRootHarness::try_new("passwd", UNMAPPABLE_UID, |src| {
+        install_fixture_unmappable_user_acl(src, UNMAPPABLE_UID)
+    }) else {
+        return;
+    };
+
+    push_with_acls(&h.oc_bin, &h.scratch.src, &h.scratch.dst)
+        .expect("oc-rsync push of unmappable-uid fixture should succeed");
+
+    let src_snap = collect_acl_snapshot(&h.scratch.src).expect("snapshot src");
+    let dst_snap = collect_acl_snapshot(&h.scratch.dst).expect("snapshot dst");
+    let oc_mismatches = diff_snapshots("src", &src_snap, "dst", &dst_snap);
+    assert!(
+        oc_mismatches.is_empty(),
+        "oc-rsync push of unmappable-uid ACL diverged from source (numeric id \
+         must round-trip verbatim per ACL-1 fix):\n{}",
+        oc_mismatches.join("\n\n"),
+    );
+
+    let dst_up = h.scratch._dir.path().join("dst_up");
+    fs::create_dir(&dst_up).expect("create dst_up");
+    push_with_acls(&h.upstream_bin, &h.scratch.src, &dst_up)
+        .expect("upstream rsync push of unmappable-uid fixture should succeed");
+
+    let dst_up_snap = collect_acl_snapshot(&dst_up).expect("snapshot dst_up");
+    let upstream_mismatches = diff_snapshots("src", &src_snap, "dst_up", &dst_up_snap);
+    assert!(
+        upstream_mismatches.is_empty(),
+        "upstream rsync push of unmappable-uid ACL diverged from source; \
+         oc-rsync's behavior cannot be cross-validated:\n{}",
+        upstream_mismatches.join("\n\n"),
+    );
+
+    let cross = diff_snapshots("oc_dst", &dst_snap, "upstream_dst", &dst_up_snap);
+    assert!(
+        cross.is_empty(),
+        "oc-rsync and upstream rsync produced different on-disk ACLs for the \
+         same unmappable-uid source (ACL-1 should make these byte-identical):\n{}",
+        cross.join("\n\n"),
+    );
+}
+
+#[test]
+fn non_root_sender_unmappable_gid_remap_matches_upstream() {
+    // Group-axis mirror of the named-user test: the named-group ACE is
+    // pinned to UNMAPPABLE_GID, getgrnam_r("1500001") must fail on the
+    // receiver, and the numeric gid must reach the destination ACL
+    // intact. Same two-pronged assertion as the uid leg: oc-rsync must
+    // preserve src ACLs end-to-end AND match upstream's serialized form.
+    let Some(h) = NonRootHarness::try_new("group", UNMAPPABLE_GID, |src| {
+        install_fixture_unmappable_group_acl(src, UNMAPPABLE_GID)
+    }) else {
+        return;
+    };
+
+    push_with_acls(&h.oc_bin, &h.scratch.src, &h.scratch.dst)
+        .expect("oc-rsync push of unmappable-gid fixture should succeed");
+
+    let src_snap = collect_acl_snapshot(&h.scratch.src).expect("snapshot src");
+    let dst_snap = collect_acl_snapshot(&h.scratch.dst).expect("snapshot dst");
+    let oc_mismatches = diff_snapshots("src", &src_snap, "dst", &dst_snap);
+    assert!(
+        oc_mismatches.is_empty(),
+        "oc-rsync push of unmappable-gid ACL diverged from source (numeric id \
+         must round-trip verbatim per ACL-1 fix):\n{}",
+        oc_mismatches.join("\n\n"),
+    );
+
+    let dst_up = h.scratch._dir.path().join("dst_up");
+    fs::create_dir(&dst_up).expect("create dst_up");
+    push_with_acls(&h.upstream_bin, &h.scratch.src, &dst_up)
+        .expect("upstream rsync push of unmappable-gid fixture should succeed");
+
+    let dst_up_snap = collect_acl_snapshot(&dst_up).expect("snapshot dst_up");
+    let upstream_mismatches = diff_snapshots("src", &src_snap, "dst_up", &dst_up_snap);
+    assert!(
+        upstream_mismatches.is_empty(),
+        "upstream rsync push of unmappable-gid ACL diverged from source; \
+         oc-rsync's behavior cannot be cross-validated:\n{}",
+        upstream_mismatches.join("\n\n"),
+    );
+
+    let cross = diff_snapshots("oc_dst", &dst_snap, "upstream_dst", &dst_up_snap);
+    assert!(
+        cross.is_empty(),
+        "oc-rsync and upstream rsync produced different on-disk ACLs for the \
+         same unmappable-gid source (ACL-1 should make these byte-identical):\n{}",
+        cross.join("\n\n"),
     );
 }
