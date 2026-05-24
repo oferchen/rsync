@@ -18,13 +18,13 @@
 //!    - `register_file(ndx, sink)`
 //!    - `apply_one_chunk(literal(ndx, 0, payload))`
 //!    - `finish_file(ndx)`
-//!    The `finish_file` step is where the DG-1 race used to surface:
-//!    `Arc::try_unwrap` on the payload Arc would observe `strong_count
-//!    >= 2` because `DecrementGuard::drop` had already fired
-//!    `notify_all` but its `Arc<SlotBarrier>` field had not yet dropped.
-//!    The DG-3 split moves the notify-bearing Arc off the payload
-//!    allocation entirely, so this loop now runs clean on every
-//!    platform.
+//!      The `finish_file` step is where the DG-1 race used to surface:
+//!      `Arc::try_unwrap` on the payload Arc would observe `strong_count
+//!      >= 2` because `DecrementGuard::drop` had already fired
+//!      `notify_all` but its `Arc<SlotBarrier>` field had not yet dropped.
+//!      The DG-3 split moves the notify-bearing Arc off the payload
+//!      allocation entirely, so this loop now runs clean on every
+//!      platform.
 //! 3. After every worker returns, assert:
 //!    - every cycle returned `Ok` (no Arc::try_unwrap failure, no
 //!      slot-poisoning panic),
