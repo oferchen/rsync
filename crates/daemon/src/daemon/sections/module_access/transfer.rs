@@ -388,7 +388,7 @@ fn process_approved_module(
     let _connection_guard = match module.try_acquire_connection() {
         Ok(guard) => guard,
         Err(ModuleConnectionError::Limit(limit)) => {
-            return handle_max_connections_exceeded(ctx, limit);
+            return handle_max_connections_exceeded(ctx, module, limit);
         }
         Err(ModuleConnectionError::Io(error)) => {
             return handle_lock_error(ctx, &error);

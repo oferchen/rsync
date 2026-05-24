@@ -94,12 +94,23 @@ fn send_daemon_ok(
 /// Sends an error message indicating the connection limit was reached and logs the event.
 fn handle_max_connections_exceeded(
     ctx: &mut ModuleRequestContext<'_>,
+    module: &ModuleRuntime,
     limit: NonZeroU32,
 ) -> io::Result<()> {
     let payload = MODULE_MAX_CONNECTIONS_PAYLOAD.replace("{limit}", &limit.get().to_string());
     send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
     if let Some(log) = ctx.log_sink {
-        log_module_limit(log, ctx.effective_host(), ctx.peer_ip, ctx.request, limit);
+        let current = module
+            .active_connections
+            .load(std::sync::atomic::Ordering::Acquire);
+        log_module_limit(
+            log,
+            ctx.effective_host(),
+            ctx.peer_ip,
+            ctx.request,
+            limit,
+            current,
+        );
     }
     Ok(())
 }
