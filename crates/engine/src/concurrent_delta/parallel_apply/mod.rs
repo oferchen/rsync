@@ -1040,7 +1040,7 @@ pub(super) mod tests {
     #[test]
     fn flush_workers_survives_spurious_wakeup() {
         // Condvars are permitted to wake spuriously; the wait_while
-        // predicate in `SlotBarrier::wait_until_idle` must re-check
+        // predicate in `BarrierState::wait_until_idle` must re-check
         // under the mutex and continue waiting. We exercise the
         // predicate by notifying the slot's condvar manually while the
         // inflight counter is still > 0, then verifying flush_workers

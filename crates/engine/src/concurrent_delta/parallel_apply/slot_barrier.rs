@@ -101,12 +101,6 @@ impl SlotBarrier {
     pub(super) fn decrement_inflight(&self) {
         self.barrier.decrement_inflight();
     }
-
-    /// Blocks the calling thread until the in-flight counter reaches zero.
-    /// Spurious wakeups are filtered by the loop predicate.
-    pub(super) fn wait_until_idle(&self, ndx: FileNdx, kind: &'static str) -> io::Result<()> {
-        self.barrier.wait_until_idle(ndx, kind)
-    }
 }
 
 /// Per-slot in-flight counter and [`Condvar`] (DG-3.a, Option B).
