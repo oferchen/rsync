@@ -181,3 +181,7 @@ harness = false
 [[bench]]
 name = "sync_channel_overhead"
 harness = false
+
+[[bench]]
+name = "isi_g_sender_inc_recurse_start_time"
+harness = false
