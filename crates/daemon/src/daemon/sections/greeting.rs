@@ -43,6 +43,22 @@ pub(crate) fn legacy_daemon_greeting() -> String {
     legacy_daemon_greeting_for_protocol(ProtocolVersion::NEWEST)
 }
 
+/// Returns the cached newest-protocol greeting bytes for direct wire emission.
+///
+/// The greeting at `ProtocolVersion::NEWEST` is a pure function of the
+/// compiled-in digest list, so it is rendered once per process and reused for
+/// every accepted connection. This removes the per-accept `format!`, `pop`,
+/// and `push_str` chain identified by the DIS-4.a audit while keeping the wire
+/// bytes byte-identical to the previous per-accept builder.
+///
+/// upstream: clientserver.c:455 `output_daemon_greeting` writes the same
+/// `@RSYNCD: <ver>.<sub> <digests>\n` line from a stack buffer that is
+/// initialized once on the server.
+pub(crate) fn cached_legacy_daemon_greeting() -> &'static [u8] {
+    static GREETING: OnceLock<Box<[u8]>> = OnceLock::new();
+    GREETING.get_or_init(|| legacy_daemon_greeting().into_bytes().into_boxed_slice())
+}
+
 /// Reads one line from `reader`, stripping trailing `\r` and `\n`.
 ///
 /// Returns `Ok(None)` on EOF, or `Ok(Some(line))` with the stripped content.

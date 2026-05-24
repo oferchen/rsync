@@ -6,6 +6,10 @@
 /// messages fall back to [`format_legacy_daemon_message`], ensuring formatting
 /// parity with upstream rsync without duplicating string construction logic.
 ///
+/// The cache is hoisted to a process-wide `OnceLock` because the `OK` and
+/// `EXIT` payloads are compile-time constants; the DIS-4.a audit flagged the
+/// per-accept rebuild as wasted allocations on the cold-start critical path.
+///
 /// upstream: clientserver.c - the daemon sends `@RSYNCD: OK\n` and
 /// `@RSYNCD: EXIT\n` as protocol bookends around every module interaction.
 #[derive(Debug)]
@@ -14,21 +18,18 @@ struct LegacyMessageCache {
     exit: Box<[u8]>,
 }
 
-impl Default for LegacyMessageCache {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl LegacyMessageCache {
-    fn new() -> Self {
-        let ok = format_legacy_daemon_message(LegacyDaemonMessage::Ok)
-            .into_boxed_str()
-            .into_boxed_bytes();
-        let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit)
-            .into_boxed_str()
-            .into_boxed_bytes();
-        Self { ok, exit }
+    fn shared() -> &'static Self {
+        static SHARED: OnceLock<LegacyMessageCache> = OnceLock::new();
+        SHARED.get_or_init(|| {
+            let ok = format_legacy_daemon_message(LegacyDaemonMessage::Ok)
+                .into_boxed_str()
+                .into_boxed_bytes();
+            let exit = format_legacy_daemon_message(LegacyDaemonMessage::Exit)
+                .into_boxed_str()
+                .into_boxed_bytes();
+            Self { ok, exit }
+        })
     }
 
     fn render(&self, message: LegacyDaemonMessage<'_>) -> LegacyMessage<'_> {
