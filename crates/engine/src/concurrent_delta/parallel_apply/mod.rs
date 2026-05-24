@@ -303,10 +303,18 @@ struct SlotHandle {
 impl SlotHandle {
     /// Bumps the slot's in-flight counter and returns the handle. The
     /// counter is decremented when the returned handle is dropped.
+    ///
+    /// DG-3.c routes the [`DecrementGuard`]'s clone through the
+    /// adapter's inner `Arc<BarrierState>` (see [`SlotBarrier::barrier`])
+    /// so the worker's lingering decrement-guard Arc no longer extends
+    /// the payload Arc's strong count past the flusher's
+    /// `Arc::try_unwrap`. The handle's own `barrier` field still carries
+    /// the [`Arc<SlotBarrier>`] adapter until a future DG-3.x task
+    /// retypes [`SlotHandle`].
     fn new(barrier: Arc<SlotBarrier>) -> Self {
         barrier.increment_inflight();
         let decrement = DecrementGuard {
-            barrier: Arc::clone(&barrier),
+            barrier: Arc::clone(barrier.barrier()),
         };
         Self {
             barrier,
@@ -357,10 +365,13 @@ pub struct ParallelDeltaApplier {
     /// (an [`Arc<slot_barrier::BarrierState>`] holding the in-flight
     /// counter and [`std::sync::Condvar`] that back FFB-2's
     /// `flush_workers` barrier). DG-3.b (#2569) swapped the value type
-    /// from [`Arc<SlotBarrier>`] to [`SlotEntry`]; callers that still
-    /// consume [`Arc<SlotBarrier>`] adapt at the boundary via
-    /// [`SlotBarrier::from_entry`] until DG-3.c retypes the handle and
-    /// guard. The BR-3j.a audit (see
+    /// from [`Arc<SlotBarrier>`] to [`SlotEntry`]; DG-3.c retyped
+    /// [`DecrementGuard`] to consume an
+    /// [`Arc<slot_barrier::BarrierState>`] sourced via
+    /// [`SlotBarrier::barrier`], and [`SlotHandle`] keeps its
+    /// [`Arc<SlotBarrier>`] adapter (minted by
+    /// [`SlotBarrier::from_entry`]) until a follow-on DG-3.x task
+    /// retypes the handle. The BR-3j.a audit (see
     /// `docs/audits/br-3j-a-dashmap-vs-sharded-2026-05-20.md`) selected
     /// DashMap as the right fit for the access pattern: short guard
     /// windows, no iteration in the hot path, and write rates that scale
@@ -605,13 +616,17 @@ impl ParallelDeltaApplier {
         // of this expression. Callers never see the DashMap guard, so
         // they cannot accidentally hold it across the per-file mutex lock
         // or a rayon dispatch. The bridge below builds a fresh
-        // [`Arc<SlotBarrier>`] adapter from the entry's two inner Arcs so
-        // [`SlotHandle`] and [`DecrementGuard`] keep their
-        // [`Arc<SlotBarrier>`] field types unchanged until DG-3.c retypes
-        // them. The adapter Arc is unique to this call site; the
-        // underlying [`SlotData`] and [`BarrierState`] Arcs are shared
-        // with every other adapter minted from the same entry, so the
-        // in-flight counter and Condvar remain coherent.
+        // [`Arc<SlotBarrier>`] adapter from the entry's two inner Arcs.
+        // After DG-3.c the [`DecrementGuard`] no longer rides on the
+        // adapter: [`SlotHandle::new`] sources the bookkeeping
+        // [`Arc<BarrierState>`] through [`SlotBarrier::barrier`] and
+        // hands that clone to the guard, leaving the adapter Arc to
+        // bound the lock path only. The follow-on DG-3.x task retypes
+        // [`SlotHandle`] and deletes the adapter entirely. The adapter
+        // Arc is unique to this call site; the underlying [`SlotData`]
+        // and [`BarrierState`] Arcs are shared with every other adapter
+        // minted from the same entry, so the in-flight counter and
+        // Condvar remain coherent.
         let entry = self
             .files
             .get(&ndx)
