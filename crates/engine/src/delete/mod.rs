@@ -31,6 +31,7 @@
 //! - `target/interop/upstream-src/rsync-3.4.1/flist.c:3217-3343`
 //!   (`f_name_cmp`).
 
+mod cohort_batcher;
 mod cohort_index;
 mod context;
 pub mod emitter;
@@ -41,6 +42,7 @@ mod plan_map;
 mod reorder_buffer;
 mod traversal;
 
+pub use cohort_batcher::{CohortBatch, CohortBatchEntry, CohortBatcher};
 pub use cohort_index::CohortIndex;
 pub use context::{DeleteContext, DrainOutcome, EmitterTiming};
 pub use emitter::{
