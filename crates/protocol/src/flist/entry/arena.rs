@@ -97,7 +97,7 @@ impl<'arena> FilePath<'arena> {
         match self {
             Self::Owned(p) => p.as_path(),
             #[cfg(feature = "flist-arena-prototype")]
-            Self::Arena(p) => *p,
+            Self::Arena(p) => p,
             #[cfg(not(feature = "flist-arena-prototype"))]
             Self::Arena(never) => match never.never {},
         }
@@ -130,7 +130,7 @@ impl<'arena> Clone for FilePath<'arena> {
         match self {
             Self::Owned(p) => Self::Owned(p.clone()),
             #[cfg(feature = "flist-arena-prototype")]
-            Self::Arena(p) => Self::Arena(*p),
+            Self::Arena(p) => Self::Arena(p),
             #[cfg(not(feature = "flist-arena-prototype"))]
             Self::Arena(never) => match never.never {},
         }
