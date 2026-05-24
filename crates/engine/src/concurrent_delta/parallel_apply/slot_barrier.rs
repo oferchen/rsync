@@ -1,21 +1,28 @@
 //! Per-slot synchronisation primitive backing FFB-1 / FFB-2.
 //!
-//! Extracted from `parallel_apply.rs` as part of SPL-38.b. Owns the
-//! [`Mutex<FileSlot>`] payload plus the in-flight worker counter and
-//! [`Condvar`] that back `flush_workers(ndx)`. The DG-2.a/DG-3 spec at
-//! `docs/design/dg-2a-option-b-spec.md` plans to rename this type to
-//! `BarrierState` and split the slot payload out; until that lands the
-//! current shape is preserved verbatim.
+//! Extracted from `parallel_apply.rs` as part of SPL-38.b. The DG-2.a/DG-3
+//! spec at `docs/design/dg-2a-option-b-spec.md` plans to split the per-slot
+//! state across [`BarrierState`] (in-flight counter + [`Condvar`]) and
+//! [`SlotData`] (per-file [`Mutex<FileSlot>`]) so [`SlotHandle`] and
+//! `finish_file` can hold independent Arc graphs.
 //!
-//! DG-3.a (this commit) adds the new Option-B types ([`BarrierState`],
-//! [`SlotData`], [`SlotEntry`], and the post-split [`SlotHandle`]) in
-//! parallel with the existing [`SlotBarrier`]. No call site has been
-//! migrated yet: that work is sequenced by DG-3.b (DashMap value swap),
-//! DG-3.c ([`super::DecrementGuard`] + the mod-level `SlotHandle`
-//! migration), and DG-3.d ([`super::ParallelDeltaApplier::finish_file`]
-//! cleanup). Until those land, the new types are unreachable from any
-//! production path and exist only to fix the compile surface they will
-//! plug into.
+//! DG-3.a (PR #4826) added the post-split types alongside the existing
+//! [`SlotBarrier`]. DG-3.b (this commit) swaps the [`super::ParallelDeltaApplier`]
+//! [`DashMap`] value type from [`Arc<SlotBarrier>`] to [`SlotEntry`] and
+//! reshapes [`SlotBarrier`] into a thin adapter that wraps shared
+//! [`Arc<SlotData>`] + [`Arc<BarrierState>`] handles. Adapter instances
+//! are minted on demand by [`super::ParallelDeltaApplier::slot_for`] so
+//! [`super::DecrementGuard`] and [`super::SlotHandle`] keep their
+//! [`Arc<SlotBarrier>`] fields unchanged until DG-3.c retypes them. Each
+//! adapter [`Arc`] is independent of the shared per-file state behind it;
+//! the next phase (DG-3.c) collapses the adapter and points the handle
+//! fields at [`Arc<SlotData>`] / [`Arc<BarrierState>`] directly.
+//!
+//! [`Arc<SlotBarrier>`]: std::sync::Arc
+//! [`Arc<SlotData>`]: std::sync::Arc
+//! [`Arc<BarrierState>`]: std::sync::Arc
+//! [`Arc`]: std::sync::Arc
+//! [`DashMap`]: dashmap::DashMap
 
 use std::io;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -23,33 +30,47 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use super::super::types::FileNdx;
 use super::{FileSlot, ParallelApplyError};
 
-/// Per-slot barrier primitive backing FFB-1 / FFB-2.
+/// DG-3.b transitional adapter that preserves the [`Arc<SlotBarrier>`] shape
+/// [`super::DecrementGuard`] and [`super::SlotHandle`] still consume.
 ///
-/// Colocates the file's [`Mutex<FileSlot>`] with an in-flight worker
-/// counter and a [`Condvar`] so `flush_workers(ndx)` can block the caller
-/// until every outstanding [`SlotHandle`] for `ndx` has been dropped. The
-/// counter sits behind its own [`Mutex`] so the barrier wait never
-/// contends with the per-file write critical section: workers take the
-/// slot mutex to write, and the counter mutex only to bump or decrement.
+/// Originally colocated the file's [`Mutex<FileSlot>`], the in-flight
+/// counter, and the [`Condvar`] in one allocation. DG-3.b moves the
+/// canonical state into [`SlotData`] + [`BarrierState`] (stored together
+/// as [`SlotEntry`] in the DashMap) and leaves this struct as a thin
+/// wrapper that forwards every method through cloned [`Arc`] handles.
+/// New instances are minted by
+/// [`super::ParallelDeltaApplier::slot_for`] on each lookup; sibling
+/// adapters share the same underlying [`Arc<SlotData>`] +
+/// [`Arc<BarrierState>`] state, so the in-flight counter and Condvar
+/// remain coherent across workers. DG-3.c retypes
+/// [`super::DecrementGuard`] / [`super::SlotHandle`] to hold the inner
+/// Arcs directly and deletes this adapter.
 ///
-/// Holding the per-slot [`Arc`] is the unit of "in-flight"; the counter
-/// tracks how many of those `Arc` clones are currently outstanding so the
-/// `Condvar` can fire deterministically the moment the last clone drops.
+/// Holding the per-slot [`Arc<SlotBarrier>`] adapter is no longer the
+/// unit of "in-flight"; the counter inside [`BarrierState`] is. The
+/// adapter's lifetime continues to bound when [`super::DecrementGuard`]
+/// runs, which is what the FFB-1 invariant cares about, so external
+/// behaviour is unchanged.
 ///
 /// [`Arc`]: std::sync::Arc
+/// [`Arc<SlotBarrier>`]: std::sync::Arc
+/// [`Arc<SlotData>`]: std::sync::Arc
+/// [`Arc<BarrierState>`]: std::sync::Arc
 /// [`SlotHandle`]: super::SlotHandle
 pub(super) struct SlotBarrier {
-    pub(super) slot: Mutex<FileSlot>,
-    pub(super) inflight: Mutex<usize>,
-    pub(super) notify: Condvar,
+    data: Arc<SlotData>,
+    barrier: Arc<BarrierState>,
 }
 
 impl SlotBarrier {
-    pub(super) fn new(slot: FileSlot) -> Self {
+    /// Builds an adapter that shares its inner state with `entry`.
+    /// Clones the entry's two Arcs so the adapter participates in the
+    /// same in-flight bookkeeping and per-file mutex as every other
+    /// adapter minted from the same entry.
+    pub(super) fn from_entry(entry: &SlotEntry) -> Self {
         Self {
-            slot: Mutex::new(slot),
-            inflight: Mutex::new(0),
-            notify: Condvar::new(),
+            data: Arc::clone(&entry.data),
+            barrier: Arc::clone(&entry.barrier),
         }
     }
 
@@ -60,57 +81,31 @@ impl SlotBarrier {
         ndx: FileNdx,
         kind: &'static str,
     ) -> io::Result<MutexGuard<'_, FileSlot>> {
-        self.slot
-            .lock()
-            .map_err(|_| ParallelApplyError::SlotPoisoned { ndx, kind }.into())
+        self.data.lock_slot(ndx, kind)
     }
 
-    /// Bumps the in-flight counter for this slot. Called by [`SlotHandle::new`]
-    /// once the caller has obtained an [`Arc<SlotBarrier>`] clone from
-    /// [`ParallelDeltaApplier::slot_for`].
+    /// Bumps the in-flight counter for this slot. Called by
+    /// [`super::SlotHandle::new`] once the caller has obtained an
+    /// [`Arc<SlotBarrier>`] clone from
+    /// [`super::ParallelDeltaApplier::slot_for`].
     ///
     /// [`Arc<SlotBarrier>`]: std::sync::Arc
-    /// [`SlotHandle::new`]: super::SlotHandle::new
-    /// [`ParallelDeltaApplier::slot_for`]: super::ParallelDeltaApplier::slot_for
     pub(super) fn increment_inflight(&self) {
-        let mut guard = self
-            .inflight
-            .lock()
-            .expect("inflight mutex poisoned on increment");
-        *guard = guard.checked_add(1).expect("inflight counter overflow");
+        self.barrier.increment_inflight();
     }
 
     /// Drops the in-flight counter back by one and wakes any waiter parked
-    /// on the [`Condvar`]. Invoked from [`DecrementGuard::drop`] so the
-    /// bookkeeping stays exception-safe across early returns and panics.
-    ///
-    /// [`DecrementGuard::drop`]: super::DecrementGuard
+    /// on the [`Condvar`]. Invoked from [`super::DecrementGuard::drop`] so
+    /// the bookkeeping stays exception-safe across early returns and
+    /// panics.
     pub(super) fn decrement_inflight(&self) {
-        let mut guard = self
-            .inflight
-            .lock()
-            .expect("inflight mutex poisoned on decrement");
-        // Saturating subtract: a poisoned-then-rebuilt path that observes
-        // zero must not panic the worker on its way out. The counter is
-        // an internal bookkeeping primitive, not a security invariant.
-        *guard = guard.saturating_sub(1);
-        // Wake every waiter; `flush_workers` re-checks the predicate under
-        // the mutex so spurious wakeups are harmless.
-        self.notify.notify_all();
+        self.barrier.decrement_inflight();
     }
 
     /// Blocks the calling thread until the in-flight counter reaches zero.
     /// Spurious wakeups are filtered by the loop predicate.
     pub(super) fn wait_until_idle(&self, ndx: FileNdx, kind: &'static str) -> io::Result<()> {
-        let guard = self
-            .inflight
-            .lock()
-            .map_err(|_| ParallelApplyError::SlotPoisoned { ndx, kind })?;
-        let _final = self
-            .notify
-            .wait_while(guard, |inflight| *inflight > 0)
-            .map_err(|_| ParallelApplyError::SlotPoisoned { ndx, kind })?;
-        Ok(())
+        self.barrier.wait_until_idle(ndx, kind)
     }
 }
 
@@ -150,20 +145,15 @@ impl SlotBarrier {
 ///
 /// `pub(super)` so the parent module (`parallel_apply`) can build
 /// [`SlotEntry`] instances without exposing the bookkeeping type to
-/// the wider engine crate. No public API is added.
-//
-// `dead_code` allow: DG-3.a is the type-definition-only step. The
-// parent module does not call into these types until DG-3.b (DashMap
-// value swap) and DG-3.c (handle/guard migration) land. The smoke
-// tests below exercise every item under `#[cfg(test)]`, but the
-// non-test build has no caller yet.
-#[allow(dead_code)]
+/// the wider engine crate. No public API is added. The [`Condvar`]
+/// field is exposed at `pub(super)` so the
+/// `flush_workers_survives_spurious_wakeup` test can fire spurious
+/// wakeups directly into the wait loop.
 pub(super) struct BarrierState {
     inflight: Mutex<usize>,
-    notify: Condvar,
+    pub(super) notify: Condvar,
 }
 
-#[allow(dead_code)]
 impl BarrierState {
     /// Constructs a fresh bookkeeping primitive with a zero in-flight
     /// counter. The counter is bumped by [`Self::increment_inflight`]
@@ -252,15 +242,10 @@ impl BarrierState {
 ///
 /// `pub(super)` so the parent module can construct [`SlotEntry`]
 /// values and read the payload back out. No public API is added.
-//
-// `dead_code` allow: same rationale as `BarrierState`. DG-3.b/c/d
-// wire up the production callers.
-#[allow(dead_code)]
 pub(super) struct SlotData {
     slot: Mutex<FileSlot>,
 }
 
-#[allow(dead_code)]
 impl SlotData {
     /// Wraps a [`FileSlot`] in its own mutex. Mirrors
     /// [`SlotBarrier::new`] for the payload half of the split.
@@ -321,11 +306,6 @@ impl SlotData {
 /// `pub(super)` so `register_file`, `slot_for`, and `finish_file` can
 /// build and decompose the entry. Not exposed beyond
 /// `parallel_apply`.
-//
-// `dead_code` allow: same rationale as `BarrierState`. The fields are
-// read by the smoke test below and will become the DashMap value type
-// in DG-3.b.
-#[allow(dead_code)]
 #[derive(Clone)]
 pub(super) struct SlotEntry {
     /// Per-file payload Arc. `finish_file` calls [`Arc::try_unwrap`]
@@ -337,7 +317,6 @@ pub(super) struct SlotEntry {
     pub(super) barrier: Arc<BarrierState>,
 }
 
-#[allow(dead_code)]
 impl SlotEntry {
     /// Wraps a fresh [`FileSlot`] in the two Option-B Arcs. The
     /// in-flight counter starts at zero; the first [`SlotHandle`]
