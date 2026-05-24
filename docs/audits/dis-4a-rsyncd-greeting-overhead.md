@@ -316,3 +316,13 @@ DIS-2 should re-run the harness with `perf record -F 999 -g
   mitigation list; R3-R5 realign with its proposals.
 - `docs/audits/binary-startup-overhead.md` - DIS-3 row 1 (out of
   DIS-4 scope).
+
+## 8. DIS-6 follow-up
+
+DIS-6 lands R2 and R3 from section 4: the newest-protocol greeting bytes
+are cached in a `OnceLock<Box<[u8]>>` (greeting.rs `cached_legacy_daemon_greeting`)
+and `LegacyMessageCache` is hoisted to a process-wide `OnceLock<LegacyMessageCache>`
+so the `@RSYNCD: OK\n` / `@RSYNCD: EXIT\n` boxes are allocated once at first
+accept and borrowed for every subsequent connection. The no-op `reader.get_mut().flush()?`
+call (R6) is dropped on the same hot path. Wire-byte parity is held by a
+test that compares the cached bytes against the per-call greeting builder.

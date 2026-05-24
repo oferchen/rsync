@@ -219,11 +219,14 @@ fn handle_legacy_session(
     } = params;
     let mut reader = BufReader::new(stream);
     let mut limiter = BandwidthLimitComponents::new(daemon_limit, daemon_burst).into_limiter();
-    let messages = LegacyMessageCache::new();
+    // DIS-4.a R3: borrow the process-wide cache instead of rebuilding the
+    // `@RSYNCD: OK\n` / `@RSYNCD: EXIT\n` boxes per accepted connection.
+    let messages = LegacyMessageCache::shared();
 
-    let greeting = legacy_daemon_greeting();
-    write_limited(reader.get_mut(), &mut limiter, greeting.as_bytes())?;
-    reader.get_mut().flush()?;
+    // DIS-4.a R2: write the cached newest-protocol greeting bytes directly,
+    // skipping the per-accept `format!`/`push_str` chain.
+    // upstream: clientserver.c:455 output_daemon_greeting
+    write_limited(reader.get_mut(), &mut limiter, cached_legacy_daemon_greeting())?;
 
     let mut request = None;
     let mut refused_options = Vec::new();
@@ -274,7 +277,7 @@ fn handle_legacy_session(
     let request = request.unwrap_or_default();
 
     if request == "#list" {
-        advertise_capabilities(reader.get_mut(), modules, &messages)?;
+        advertise_capabilities(reader.get_mut(), modules, messages)?;
         if let Some(log) = log_sink.as_ref() {
             log_list_request(log, peer_host.as_deref(), peer_addr);
         }
@@ -285,7 +288,7 @@ fn handle_legacy_session(
             motd_lines,
             peer_addr.ip(),
             reverse_lookup,
-            &messages,
+            messages,
         )?;
     } else if request.is_empty() {
         write_limited(
@@ -307,7 +310,7 @@ fn handle_legacy_session(
             &refused_options,
             log_sink.as_ref(),
             reverse_lookup,
-            &messages,
+            messages,
             negotiated_protocol,
             early_input_data,
         )?;
