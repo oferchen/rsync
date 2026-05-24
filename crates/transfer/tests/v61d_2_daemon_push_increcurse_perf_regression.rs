@@ -278,8 +278,7 @@ fn spawn_upstream_daemon(
         let mut guard = DaemonGuard { child };
         let _ = guard.child.kill();
         return Err(io::Error::other(format!(
-            "upstream rsync --daemon did not accept connections on port {port} within {:?}",
-            DAEMON_BOOT_TIMEOUT,
+            "upstream rsync --daemon did not accept connections on port {port} within {DAEMON_BOOT_TIMEOUT:?}",
         )));
     }
     Ok(DaemonGuard { child })
@@ -390,11 +389,7 @@ fn daemon_push_under_inc_recurse_stays_within_5x_of_upstream_sender_baseline() {
 
     assert!(
         ratio <= MAX_SLOWDOWN_RATIO,
-        "v0.6.1 daemon-push regression: oc-rsync sender {:?} vs upstream baseline {:?} \
-         (ratio {:.2}x, threshold {:.1}x). See docs/audit/v061-daemon-push-regression.md.",
-        oc_elapsed,
-        upstream_elapsed,
-        ratio,
-        MAX_SLOWDOWN_RATIO,
+        "v0.6.1 daemon-push regression: oc-rsync sender {oc_elapsed:?} vs upstream baseline {upstream_elapsed:?} \
+         (ratio {ratio:.2}x, threshold {MAX_SLOWDOWN_RATIO:.1}x). See docs/audit/v061-daemon-push-regression.md."
     );
 }
