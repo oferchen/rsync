@@ -34,6 +34,7 @@ use crate::daemon::{
     advertised_capability_lines,
     // From sections/module_access.rs
     apply_module_bandwidth_limit,
+    cached_legacy_daemon_greeting,
     clap_command,
     clear_test_hostname_overrides,
     default_secrets_path_if_present,
