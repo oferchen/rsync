@@ -620,3 +620,73 @@ jobs:
       # keeps the cell green on zero matches so the build alone gates regressions.
       - name: Test parallel_threshold interop (--profile dist --features parallel-receive-delta)
         run: cargo nextest run --locked --workspace --cargo-profile dist --features parallel-receive-delta --no-tests=pass -E 'test(parallel_threshold)'
+
+  # ===========================================================================
+  # DG-3.e: concurrent_register_and_dispatch stress (#2694)
+  # ---------------------------------------------------------------------------
+  # Runs the 1000-thread x 10K-iter stress in
+  # `crates/engine/tests/parallel_apply_dg3_stress.rs` on Linux + Windows +
+  # macOS to validate the DG-3 SlotData/BarrierState split fixes the
+  # `finish_file` Arc::try_unwrap release race that previously needed the
+  # spin-then-yield workaround. Non-required so a flake (e.g. CI runner
+  # thread-limit pressure) does not block merges; surfaces regressions in
+  # the post-DG-3 applier under fan-out load that the standard nextest cell
+  # would never reach with its smaller per-test thread budgets.
+  # ===========================================================================
+  dg3-stress:
+    name: DG-3 stress (${{ matrix.os }}, non-required)
+    needs: lint
+    timeout-minutes: 30
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-dg3-stress-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+          key: dg3-stress
+
+      - name: Install cargo-nextest (Unix)
+        if: runner.os != 'Windows'
+        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2
+        with:
+          tool: cargo-nextest
+
+      - name: Install cargo-nextest (Windows direct download)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # Mirrors the workaround used by `windows-test` and `windows-iocp`
+          # for actions/partner-runner-images#169.
+          $ErrorActionPreference = 'Stop'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
+          & "$cargoBin\cargo-nextest.exe" --version
+
+      # Build the engine crate with the `dg-stress` feature so the stress
+      # test under `#[cfg(feature = "dg-stress")]` is compiled in.
+      - name: Build engine (--features dg-stress)
+        run: cargo build --locked -p engine --tests --features dg-stress
+
+      # Run only the stress test. `--no-tests=pass` keeps the cell green if
+      # the test ever gets renamed or moved (the filter would match zero
+      # tests). 1000 threads x 10K iter = 10M cycles; in-memory sinks make
+      # the per-iter cost a few atomic adds plus the applier's mutex path.
+      - name: Run DG-3 stress (--features dg-stress)
+        run: cargo nextest run --locked -p engine --features dg-stress --no-tests=pass -E 'test(concurrent_register_and_dispatch_stress)'
