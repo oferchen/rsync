@@ -1,10 +1,15 @@
 //! Per-file drain primitives for the parallel apply scaffold (SPL-38.e).
 //!
 //! Extracted from `parallel_apply/mod.rs` as part of the SPL-38 module
-//! decomposition. Sibling to [`super::slot_barrier::SlotBarrier`],
+//! decomposition. Sibling to [`super::slot_barrier`],
 //! [`super::decrement_guard::DecrementGuard`], and [`super::batch`]; reuses
-//! the per-slot [`std::sync::Arc<SlotBarrier>`] map maintained by
-//! [`ParallelDeltaApplier`].
+//! the per-slot [`super::slot_barrier::SlotEntry`] map maintained by
+//! [`ParallelDeltaApplier`]. DG-3.b (#2569) swapped the DashMap value
+//! type from `Arc<SlotBarrier>` to `SlotEntry`; this module now clones
+//! `entry.barrier` ([`std::sync::Arc<super::slot_barrier::BarrierState>`])
+//! for the FFB-2 wait and unwraps `entry.data`
+//! ([`std::sync::Arc<super::slot_barrier::SlotData>`]) for the
+//! end-of-file writer reclaim.
 //!
 //! # Contract
 //!
@@ -25,6 +30,7 @@ use std::io::Write;
 use std::sync::Arc;
 
 use super::super::types::FileNdx;
+use super::slot_barrier::SlotEntry;
 use super::{ParallelApplyError, ParallelDeltaApplier};
 
 impl ParallelDeltaApplier {
@@ -53,21 +59,30 @@ impl ParallelDeltaApplier {
         // `DashMap::remove` returns the owned `(K, V)` and drops the shard
         // guard immediately; the `Arc::try_unwrap` work below happens
         // outside the shard lock.
-        let (_, slot_arc) = self
+        let (_, entry) = self
             .files
             .remove(&ndx)
             .ok_or_else(|| std::io::Error::other(format!("parallel applier file {ndx} unknown")))?;
+        // DG-3.b retargets the spin/unwrap from the (now-removed) single
+        // `Arc<SlotBarrier>` to the entry's payload Arc. Drop the
+        // bookkeeping Arc first so any leftover `DecrementGuard` clones
+        // are the only `BarrierState` strong references left; the
+        // payload Arc's strong-count trajectory is now what
+        // `try_unwrap` reasons about.
+        let SlotEntry { data, barrier } = entry;
+        drop(barrier);
         // Post-barrier release-race window: `flush_workers` waits for
         // `inflight==0` via the Condvar, which fires from
-        // `DecrementGuard::drop` *before* the guard's own
-        // `Arc<SlotBarrier>` clone has been released (the notify happens
-        // inside the drop body; the inner Arc only drops after the body
-        // returns). The window is typically nanoseconds but is reliably
-        // observable on Windows under load. Spin-then-yield until the
-        // worker's drop completes; the worker is past the notify and its
-        // drop fn is just about to return so the wait is bounded.
+        // `DecrementGuard::drop` *before* the guard's own adapter Arc
+        // has been released (the notify happens inside the drop body;
+        // the inner Arcs only drop after the body returns). The window
+        // is typically nanoseconds but is reliably observable on Windows
+        // under load. Spin-then-yield until the worker's drop completes;
+        // the worker is past the notify and its drop fn is just about
+        // to return so the wait is bounded. DG-3.c will retire the
+        // adapter and let DG-4 delete the spin entirely.
         let mut spin = 0u32;
-        while Arc::strong_count(&slot_arc) > 1 {
+        while Arc::strong_count(&data) > 1 {
             spin = spin.saturating_add(1);
             if spin >= 1_000 {
                 // Past the typical drop window - surface the typed error
@@ -75,7 +90,7 @@ impl ParallelDeltaApplier {
                 // against `finish_file`) does not hide forever.
                 return Err(ParallelApplyError::ApplierStillReferenced {
                     ndx,
-                    strong_count: Arc::strong_count(&slot_arc),
+                    strong_count: Arc::strong_count(&data),
                     kind: "finish_file",
                 }
                 .into());
@@ -86,20 +101,14 @@ impl ParallelDeltaApplier {
                 std::thread::yield_now();
             }
         }
-        let barrier = Arc::try_unwrap(slot_arc).map_err(|still_shared| {
+        let slot_data = Arc::try_unwrap(data).map_err(|still_shared| {
             ParallelApplyError::ApplierStillReferenced {
                 ndx,
                 strong_count: Arc::strong_count(&still_shared),
                 kind: "finish_file",
             }
         })?;
-        let slot = barrier
-            .slot
-            .into_inner()
-            .map_err(|_| ParallelApplyError::SlotPoisoned {
-                ndx,
-                kind: "finish_file",
-            })?;
+        let slot = slot_data.into_slot(ndx, "finish_file")?;
         if !slot.drained() {
             return Err(ParallelApplyError::UndrainedChunks {
                 ndx,
@@ -136,12 +145,13 @@ impl ParallelDeltaApplier {
     /// [`Self::slot_for`]: super::ParallelDeltaApplier
     pub fn flush_workers(&self, ndx: impl Into<FileNdx>) -> std::io::Result<()> {
         let ndx = ndx.into();
-        // Look up the slot, clone the `Arc<SlotBarrier>`, drop the shard
-        // guard before waiting. This keeps the DashMap shard available to
-        // other NDX values while the caller blocks on the slot's own
-        // condvar, preserving the BR-3j.c shard-discipline contract.
+        // Look up the slot, clone the `Arc<BarrierState>` from the
+        // entry, drop the shard guard before waiting. This keeps the
+        // DashMap shard available to other NDX values while the caller
+        // blocks on the slot's own condvar, preserving the BR-3j.c
+        // shard-discipline contract.
         let barrier = match self.files.get(&ndx) {
-            Some(guard) => Arc::clone(guard.value()),
+            Some(guard) => Arc::clone(&guard.value().barrier),
             None => return Ok(()),
         };
         barrier.wait_until_idle(ndx, "flush_workers")
