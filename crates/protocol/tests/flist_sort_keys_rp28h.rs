@@ -94,11 +94,11 @@ fn proto28_wire_order_matches_t_item() {
     assert_eq!(
         on_wire,
         vec![
-            ".",          // dot-first short-circuit (both comparators)
-            "aardvark",   // 'a' (0x61) < 'd' (0x64): plain byte order
-            "dir",        // strict prefix of "dir.txt" under t_ITEM
+            ".",        // dot-first short-circuit (both comparators)
+            "aardvark", // 'a' (0x61) < 'd' (0x64): plain byte order
+            "dir",      // strict prefix of "dir.txt" under t_ITEM
             "dir.txt",
-            "zebra.txt",  // 'z' last under plain byte order
+            "zebra.txt", // 'z' last under plain byte order
         ],
         "protocol 28 must serialise entries in t_ITEM (plain byte) order",
     );
@@ -117,11 +117,11 @@ fn proto29_wire_order_matches_t_path() {
     assert_eq!(
         on_wire,
         vec![
-            ".",          // dot-first short-circuit
-            "dir.txt",    // file "dir.txt" sorts before dir "dir/" since '.' < '/'
-            "zebra.txt",  // files before dirs at root level
-            "aardvark",   // directory after both root files
-            "dir",        // directory after "aardvark" by name
+            ".",         // dot-first short-circuit
+            "dir.txt",   // file "dir.txt" sorts before dir "dir/" since '.' < '/'
+            "zebra.txt", // files before dirs at root level
+            "aardvark",  // directory after both root files
+            "dir",       // directory after "aardvark" by name
         ],
         "protocol 29 must serialise entries in t_PATH (file-before-dir) order",
     );
