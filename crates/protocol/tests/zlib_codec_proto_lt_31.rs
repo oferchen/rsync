@@ -89,7 +89,9 @@ fn encode_fixture(protocol_version: u32) -> Vec<u8> {
     encoder.see_token(&see_buf).unwrap();
 
     let mut output = Vec::new();
-    encoder.send_literal(&mut output, b"rp28-i fixture literal").unwrap();
+    encoder
+        .send_literal(&mut output, b"rp28-i fixture literal")
+        .unwrap();
     encoder.finish(&mut output).unwrap();
     output
 }
