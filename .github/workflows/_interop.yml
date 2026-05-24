@@ -92,6 +92,100 @@ jobs:
       - name: Run interop tests
         run: bash tools/ci/run_interop.sh
 
+      # RP28.c - rsync 2.6.9 push interop cell (protocol-28 cutoff peer).
+      # The 2.6.9 binary is built and cached by `run_interop.sh build-only`
+      # (RP28.b) but is not yet wired into the main scenario matrix because
+      # protocol < 30 daemon behaviour is still being audited under the RP28
+      # umbrella. This step exercises a simple push (oc-rsync sender ->
+      # rsync 2.6.9 receiver daemon) and asserts byte-identical contents on
+      # the receiver. Non-blocking until the RP28 series is ready to gate CI
+      # on pre-30 parity (RP28.k); promote to required by removing
+      # `continue-on-error: true` once the parity baseline is green.
+      - name: Run rsync 2.6.9 push interop (RP28.c)
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          UP_269="target/interop/upstream-install/2.6.9/bin/rsync"
+          if [[ ! -x "$UP_269" ]]; then
+            echo "rsync 2.6.9 binary missing at $UP_269; skipping RP28.c push cell" >&2
+            exit 0
+          fi
+          echo "rsync 2.6.9: $($UP_269 --version 2>&1 | head -1)"
+
+          OC_RSYNC="target/dist/oc-rsync"
+          if [[ ! -x "$OC_RSYNC" ]]; then
+            echo "oc-rsync binary missing at $OC_RSYNC" >&2
+            exit 1
+          fi
+
+          WORKDIR=$(mktemp -d)
+          UP_PID=""
+          cleanup() {
+            [[ -n "$UP_PID" ]] && kill "$UP_PID" 2>/dev/null || true
+            rm -rf "$WORKDIR"
+          }
+          trap cleanup EXIT
+
+          SRC="$WORKDIR/src"
+          DST="$WORKDIR/dst"
+          mkdir -p "$SRC" "$DST"
+
+          # Small file tree exercising regular files and a nested directory.
+          printf 'hello 2.6.9\n' > "$SRC/hello.txt"
+          printf 'line1\nline2\n' > "$SRC/multiline.txt"
+          dd if=/dev/urandom of="$SRC/binary.dat" bs=1K count=8 2>/dev/null
+          mkdir -p "$SRC/subdir"
+          printf 'nested\n' > "$SRC/subdir/nested.txt"
+
+          # Allocate an ephemeral port for the 2.6.9 daemon.
+          UP_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+
+          UP_CONF="$WORKDIR/rsyncd-269.conf"
+          UP_PID_FILE="$WORKDIR/rsyncd-269.pid"
+          UP_LOG="$WORKDIR/rsyncd-269.log"
+          {
+            printf 'pid file = %s\n' "$UP_PID_FILE"
+            printf 'port = %s\n' "$UP_PORT"
+            printf 'use chroot = false\n'
+            printf '[interop]\n'
+            printf '    path = %s\n' "$DST"
+            printf '    comment = rsync 2.6.9 receiver (RP28.c)\n'
+            printf '    read only = false\n'
+          } > "$UP_CONF"
+
+          "$UP_269" --daemon --config "$UP_CONF" --no-detach --log-file "$UP_LOG" </dev/null &
+          UP_PID=$!
+
+          # Wait up to 10s for the daemon port to bind.
+          for _ in $(seq 1 20); do
+            if (echo >/dev/tcp/127.0.0.1/"$UP_PORT") 2>/dev/null; then
+              break
+            fi
+            sleep 0.5
+          done
+          if ! (echo >/dev/tcp/127.0.0.1/"$UP_PORT") 2>/dev/null; then
+            echo "FATAL: rsync 2.6.9 daemon failed to bind port $UP_PORT" >&2
+            cat "$UP_LOG" || true
+            exit 1
+          fi
+
+          echo "=== RP28.c push: oc-rsync sender -> rsync 2.6.9 daemon ==="
+          if ! timeout 60 "$OC_RSYNC" -av --timeout=30 \
+              "$SRC/" "rsync://127.0.0.1:$UP_PORT/interop" 2>&1; then
+            echo "FAIL: oc-rsync push to rsync 2.6.9 daemon" >&2
+            echo "--- rsync 2.6.9 daemon log ---" >&2
+            cat "$UP_LOG" >&2 || true
+            exit 1
+          fi
+
+          if ! diff -r "$SRC" "$DST"; then
+            echo "FAIL: receiver contents diverged from source" >&2
+            echo "--- rsync 2.6.9 daemon log ---" >&2
+            cat "$UP_LOG" >&2 || true
+            exit 1
+          fi
+          echo "PASS: oc-rsync -> rsync 2.6.9 push produced byte-identical tree."
+
       # Drive upstream rsync's own `testsuite/*.test` corpus against
       # oc-rsync as `$RSYNC`. The harness sources upstream's `rsync.fns`
       # and reuses its helper tools (`tls`, `getgroups`, `support/lsh.sh`),
