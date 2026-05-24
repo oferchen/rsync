@@ -119,6 +119,15 @@ parallel-delete-consumer = []
 # (`docs/design/pip-9-parallel-receive-delta-wire-up-2026-05-22.md`).
 parallel-receive-delta = []
 
+# DG-3.e: high-iteration stress test for `concurrent_register_and_dispatch`
+# under the DG-3 SlotData/BarrierState split (#2694). Gated behind its own
+# feature so the 1000-thread x 10K-iter cycle does not run in every PR's
+# nextest cell; a dedicated non-required CI cell runs it on Linux + Windows
+# + macOS. See `project_concurrent_dispatch_test_flake` and
+# `project_slothandle_decrementguard_release_race` memory notes for the
+# race the stress targets.
+dg-stress = ["parallel-receive-delta"]
+
 # Multi-producer work queue - enables Clone for WorkQueueSender
 # Benefits: Multiple producer threads can feed the concurrent delta pipeline
 # Trade-offs: Relaxes the single-producer compile-time invariant
