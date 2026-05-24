@@ -1193,10 +1193,7 @@ pub(super) mod tests {
         let applier = ParallelDeltaApplier::new(1);
         let (sink, _) = VecSink::new();
         applier.register_file(0u32, Box::new(sink)).unwrap();
-        let entry = applier
-            .files
-            .get(&FileNdx::new(0))
-            .expect("slot present");
+        let entry = applier.files.get(&FileNdx::new(0)).expect("slot present");
         let data_addr = Arc::as_ptr(&entry.value().data).addr();
         let barrier_addr = Arc::as_ptr(&entry.value().barrier).addr();
         assert_ne!(
