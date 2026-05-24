@@ -46,6 +46,7 @@ use crate::daemon::{
     legacy_daemon_greeting,
     legacy_daemon_greeting_for_protocol,
     log_module_bandwidth_change,
+    log_module_limit,
     module_peer_hostname,
     open_log_sink,
     // From sections/config_helpers.rs
@@ -111,6 +112,7 @@ include!("tests/chunks/log_file_open_failure_returns_message_io.rs");
 include!("tests/chunks/log_module_bandwidth_change_ignores_unchanged.rs");
 include!("tests/chunks/log_module_bandwidth_change_logs_disable.rs");
 include!("tests/chunks/log_module_bandwidth_change_logs_updates.rs");
+include!("tests/chunks/log_module_limit_logs_cap_reached.rs");
 include!("tests/chunks/module_bwlimit_burst_does_not_raise_daemon_cap.rs");
 include!("tests/chunks/module_bwlimit_can_lower_daemon_cap.rs");
 include!("tests/chunks/module_bwlimit_cannot_raise_daemon_cap.rs");
