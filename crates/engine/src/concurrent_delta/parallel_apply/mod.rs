@@ -1053,6 +1053,157 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn finish_file_payload_arc_uncontended_after_worker_drop() {
+        // DG-3.d: After DG-3.c retyped `DecrementGuard` to
+        // `Arc<BarrierState>`, the worker's lingering decrement-guard
+        // clone no longer touches the payload Arc that `finish_file`
+        // calls `Arc::try_unwrap` on. Verify the strong-count trajectory
+        // claim from the DG-2.a spec section 3 at the actual try_unwrap
+        // call site: once the worker has fully released its
+        // `SlotHandle`, the entry's `Arc<SlotData>` has strong count 1
+        // (DashMap only) and `try_unwrap` would succeed deterministically
+        // without spinning.
+        //
+        // Establishing this fact in a test is the precondition for DG-4
+        // (removing the spin-then-yield workaround in
+        // `drain.rs::finish_file`). If a future change re-introduces a
+        // payload-Arc clone on the worker's drop path, this test fails
+        // before the spin can mask the regression.
+        let applier = Arc::new(ParallelDeltaApplier::new(1));
+        let (sink, _) = VecSink::new();
+        applier.register_file(0u32, Box::new(sink)).unwrap();
+
+        // Synchronisation: worker signals `acquired` after it owns the
+        // SlotHandle, then blocks on `release_rx` so the main thread
+        // controls when the handle drops. After `release_tx` fires the
+        // worker drops the handle and signals `dropped` so the main
+        // thread can observe the post-drop strong count deterministically
+        // (no time-based barrier).
+        let (acquired_tx, acquired_rx) = std::sync::mpsc::channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let (dropped_tx, dropped_rx) = std::sync::mpsc::channel::<()>();
+        let worker_applier = Arc::clone(&applier);
+        let worker = std::thread::spawn(move || {
+            let handle = worker_applier
+                .slot_for(FileNdx::new(0))
+                .expect("slot registered");
+            acquired_tx.send(()).expect("acquired handshake");
+            release_rx.recv().expect("release handshake");
+            drop(handle);
+            dropped_tx.send(()).expect("dropped handshake");
+        });
+
+        // Wait until the worker owns the SlotHandle. While it is held the
+        // payload Arc strong count is at least 2 (DashMap + adapter's
+        // clone via SlotBarrier::from_entry) and would block `try_unwrap`.
+        acquired_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("worker acquired SlotHandle");
+        let while_held = applier
+            .files
+            .get(&FileNdx::new(0))
+            .map(|guard| Arc::strong_count(&guard.value().data))
+            .expect("slot present");
+        assert!(
+            while_held >= 2,
+            "payload Arc strong count while worker holds handle must be >= 2, got {while_held}"
+        );
+
+        // Release the worker, then wait for the drop to fully retire the
+        // SlotHandle (including the DecrementGuard's drop body). The
+        // dropped_tx send happens after `drop(handle)` returns, so by
+        // the time we receive on `dropped_rx` every field of the handle
+        // - including the payload Arc clone the SlotBarrier adapter
+        // carried and the bookkeeping Arc the DecrementGuard carried -
+        // has been released.
+        release_tx.send(()).expect("release send");
+        dropped_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("worker dropped SlotHandle");
+        worker.join().expect("worker thread");
+
+        // DG-3.c invariant: after the worker drops, the only remaining
+        // `Arc<SlotData>` clone is the one owned by the DashMap. The
+        // DecrementGuard's `Arc<BarrierState>` clone is irrelevant here
+        // - it lives on a disjoint allocation per the Option-B split in
+        // `docs/design/dg-2a-option-b-spec.md` section 3.
+        let after_drop = applier
+            .files
+            .get(&FileNdx::new(0))
+            .map(|guard| Arc::strong_count(&guard.value().data))
+            .expect("slot present");
+        assert_eq!(
+            after_drop, 1,
+            "payload Arc strong count after worker drop must be 1 (DashMap only), got {after_drop}"
+        );
+
+        // finish_file removes the entry from the DashMap and runs
+        // `Arc::try_unwrap` on the payload Arc. With strong_count==1 the
+        // unwrap succeeds on the first attempt; the spin-then-yield
+        // workaround in drain.rs is uncontended on this path.
+        let _writer = applier.finish_file(0u32).expect("finish_file");
+    }
+
+    #[test]
+    fn finish_file_payload_arc_uncontended_under_burst() {
+        // DG-3.d: stress variant. Drive many short-lived SlotHandles
+        // serially through the same file (mirroring the receiver
+        // pipeline's per-chunk dispatch) and verify the post-drop
+        // payload Arc strong count returns to 1 after every burst. A
+        // regression that re-introduces a payload-Arc clone on the
+        // worker drop path leaves a non-1 count visible here even
+        // before finish_file runs.
+        let applier = Arc::new(ParallelDeltaApplier::new(2));
+        let (sink, _) = VecSink::new();
+        applier.register_file(0u32, Box::new(sink)).unwrap();
+
+        for sequence in 0..32u64 {
+            applier
+                .apply_one_chunk(DeltaChunk::literal(0u32, sequence, vec![sequence as u8; 8]))
+                .expect("apply_one_chunk");
+            // After apply_one_chunk returns the SlotHandle has fully
+            // dropped (it was a local in apply_one_chunk's body). The
+            // payload Arc should be back to DashMap-only.
+            let count = applier
+                .files
+                .get(&FileNdx::new(0))
+                .map(|guard| Arc::strong_count(&guard.value().data))
+                .expect("slot present");
+            assert_eq!(
+                count, 1,
+                "payload Arc strong count after chunk {sequence} should be 1, got {count}"
+            );
+        }
+
+        // finish_file completes without hitting the spin loop's
+        // strong-count>1 branch.
+        let _writer = applier.finish_file(0u32).expect("finish_file");
+    }
+
+    #[test]
+    fn finish_file_payload_and_barrier_arcs_are_distinct_allocations() {
+        // DG-3.d: structural witness that the DG-2.a Option-B split is
+        // intact. The entry's `data: Arc<SlotData>` and
+        // `barrier: Arc<BarrierState>` Arcs point at different
+        // allocations - if a future refactor collapses them back into
+        // one (e.g. by re-introducing a combined struct behind a single
+        // Arc) the wakeup-before-drop race documented in DG-1 returns
+        // and the spin-then-yield workaround in drain.rs becomes
+        // load-bearing again.
+        let applier = ParallelDeltaApplier::new(1);
+        let (sink, _) = VecSink::new();
+        applier.register_file(0u32, Box::new(sink)).unwrap();
+        let entry = applier.files.get(&FileNdx::new(0)).expect("slot present");
+        let data_addr = Arc::as_ptr(&entry.value().data).addr();
+        let barrier_addr = Arc::as_ptr(&entry.value().barrier).addr();
+        assert_ne!(
+            data_addr, barrier_addr,
+            "SlotEntry.data and SlotEntry.barrier must point at distinct allocations \
+             so the worker's DecrementGuard drop cannot extend the payload Arc's strong count"
+        );
+    }
+
+    #[test]
     fn flush_workers_survives_spurious_wakeup() {
         // Condvars are permitted to wake spuriously; the wait_while
         // predicate in `BarrierState::wait_until_idle` must re-check
