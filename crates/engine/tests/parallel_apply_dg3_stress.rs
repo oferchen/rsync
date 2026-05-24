@@ -94,9 +94,7 @@ fn concurrent_register_and_dispatch_stress_1000_threads_10k_iter() {
     let applier = Arc::new(ParallelDeltaApplier::new(WORKERS as usize));
     // Per-worker sink counter. Asserted post-join against the number of
     // successful cycles to catch dropped or cross-file writes.
-    let sinks: Vec<Arc<AtomicU64>> = (0..WORKERS)
-        .map(|_| Arc::new(AtomicU64::new(0)))
-        .collect();
+    let sinks: Vec<Arc<AtomicU64>> = (0..WORKERS).map(|_| Arc::new(AtomicU64::new(0))).collect();
     // Per-worker completed-cycle counter. Lets the post-join assertion
     // localise any worker that failed mid-loop without losing the rest
     // of the diagnostic surface.

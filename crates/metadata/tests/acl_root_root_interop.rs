@@ -841,9 +841,7 @@ fn install_fixture_mixed_acls(src: &Path) -> Result<(), String> {
         AclEntry::allow_mask(Perm::READ | Perm::WRITE, None),
     ];
     setfacl(&[&mixed], &entries, None).map_err(|e| {
-        format!(
-            "setfacl mixed.txt (non-root cannot set ACL or filesystem lacks acl support): {e}"
-        )
+        format!("setfacl mixed.txt (non-root cannot set ACL or filesystem lacks acl support): {e}")
     })?;
 
     Ok(())
