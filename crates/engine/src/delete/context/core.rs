@@ -12,7 +12,9 @@ use std::sync::{Arc, Mutex};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use protocol::flist::FileEntry;
 
-use super::super::emitter::{DeleteEmitter, DeleteFs, EmitterErrorPolicy};
+#[cfg(not(feature = "parallel-delete-consumer"))]
+use super::super::emitter::DeleteEmitter;
+use super::super::emitter::{DeleteFs, EmitterErrorPolicy};
 use super::super::error::DeleteError;
 use super::super::extras::compute_extras;
 use super::super::plan::DeletePlan;
@@ -489,6 +491,7 @@ impl DeleteContext {
     /// in operator diagnostics. The cursor side cannot fail with a
     /// "still shared" error under channel-shutdown semantics - workers
     /// only hold sender clones, never `Arc<DirTraversalCursor>`.
+    #[cfg(not(feature = "parallel-delete-consumer"))]
     pub(super) fn into_emitter<F: DeleteFs>(self, fs: F) -> Result<DeleteEmitter<F>, DeleteError> {
         let (plans, cursor, policy) = self.into_drain_parts()?;
         Ok(DeleteEmitter::with_policy(fs, plans, cursor, policy))
