@@ -31,11 +31,11 @@
 //! At protocol < 31 the `offset` cursor is never advanced between the
 //! 0xFFFF-sized chunks fed through `deflate(..., Z_INSERT_ONLY)`. The
 //! same data window is re-inserted into the deflate dictionary on every
-//! loop iteration, producing a different compressor state than protocol
-//! >= 31 where the cursor walks forward. Subsequent literal output
-//! produced by `send_deflated_token()` therefore differs between the two
-//! protocol families even though the outer DEFLATED_DATA framing and
-//! END_FLAG terminator are identical.
+//! loop iteration, producing a different compressor state than at
+//! protocol 31 or later, where the cursor walks forward. Subsequent
+//! literal output produced by `send_deflated_token()` therefore differs
+//! between the two protocol families even though the outer
+//! DEFLATED_DATA framing and END_FLAG terminator are identical.
 //!
 //! # Fixture
 //!
