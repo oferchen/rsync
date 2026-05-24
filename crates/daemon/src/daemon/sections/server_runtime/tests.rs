@@ -890,7 +890,7 @@ fn refuse_if_at_capacity_emits_structured_warning() {
 
     let contents = std::fs::read_to_string(&log_path).expect("read log");
     assert!(
-        contents.starts_with("rsync warning:"),
+        contents.starts_with("oc-rsync warning:"),
         "expected warning level, got: {contents}"
     );
     assert!(
