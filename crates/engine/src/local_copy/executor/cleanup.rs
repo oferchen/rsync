@@ -51,12 +51,16 @@ pub(crate) fn delete_extraneous_entries<S: AsRef<OsStr>>(
     relative: Option<&Path>,
     source_entries: &[S],
 ) -> Result<(), LocalCopyError> {
+    // DEL-2.d: feature-gated dispatch, parallel-delete-consumer opt-in.
+    // `RealDeleteFs` is passed by value so the parallel consumer's
+    // `Sync + Send + 'static` bound is satisfied; the sequential path is
+    // unaffected because it takes the dispatcher generically by value too.
     delete_extraneous_entries_via_emitter(
         context,
         destination,
         relative,
         source_entries,
-        &RealDeleteFs,
+        RealDeleteFs,
     )
 }
 
@@ -74,13 +78,16 @@ pub(crate) fn delete_extraneous_entries<S: AsRef<OsStr>>(
 /// `fs` is parameterised so tests can substitute
 /// [`crate::delete::RecordingDeleteFs`] and observe the unlink sequence
 /// without touching the filesystem.
-fn delete_extraneous_entries_via_emitter<S: AsRef<OsStr>, F: DeleteFs>(
+fn delete_extraneous_entries_via_emitter<S: AsRef<OsStr>, F>(
     context: &mut CopyContext,
     destination: &Path,
     relative: Option<&Path>,
     source_entries: &[S],
-    fs: &F,
-) -> Result<(), LocalCopyError> {
+    fs: F,
+) -> Result<(), LocalCopyError>
+where
+    F: DeleteFs + Sync + Send + 'static,
+{
     // Phase 1: scan the destination directory, compute extras, and
     // produce a single-directory DeletePlan in upstream emission order.
     // The plan respects partial-dir protection, allows_deletion filter
