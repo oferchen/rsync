@@ -60,7 +60,7 @@ use checksums::strong::Sha256;
 use checksums::strong::strategy::{
     ChecksumAlgorithmKind, ChecksumStrategy, ChecksumStrategySelector,
 };
-use engine::concurrent_delta::{DeltaChunk, FileNdx, ParallelDeltaApplier};
+use engine::concurrent_delta::{DeltaChunk, ParallelDeltaApplier};
 
 /// File count chosen to match the historical `parallel_threshold/` scenario
 /// (120 files), which sits comfortably above the receiver-side
