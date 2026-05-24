@@ -31,6 +31,7 @@ window each release will accept on the wire.
 
 | Upstream release | `PROTOCOL_VERSION` | `MIN_PROTOCOL_VERSION` | `MAX_PROTOCOL_VERSION` | Notes |
 |------------------|--------------------|------------------------|------------------------|-------|
+| rsync 2.6.9      | 29                 | 20                     | 40                     | Protocol-28 cutoff peer; advertises 29 and degrades to 28 on request. Always source-built by the harness; binary is cached but dedicated push/pull interop cells land in a follow-up task. |
 | rsync 3.0.9      | 30                 | 20                     | 40                     | First release with binary handshake; wire compat down to 28 still useful for legacy peers. |
 | rsync 3.1.3      | 31                 | 20                     | 40                     | Adds `CF_SAFE_FLIST` always-on, `--info=progress2`. |
 | rsync 3.4.1      | 32                 | 20                     | 40                     | Newest release. Adds checksum negotiation (`-e.LsfxCIvu`), `CF_ID0_NAMES`, `--crtimes`. |

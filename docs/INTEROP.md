@@ -3,15 +3,17 @@
 **Last Updated**: 2025-11-25
 **Status**: RESTORED TO CI PIPELINE
 
-This document defines the upstream compatibility test scenarios used to validate oc-rsync's parity with rsync 3.0.9, 3.1.3, and 3.4.1.
+This document defines the upstream compatibility test scenarios used to validate oc-rsync's parity with rsync 2.6.9, 3.0.9, 3.1.3, 3.4.1, and 3.4.2.
 
 ---
 
 ## Upstream Binaries Tested
 
+- `rsync-2.6.9` (always built from source; protocol-28 cutoff peer)
 - `rsync-3.0.9` (via old-releases.ubuntu.com or source build)
 - `rsync-3.1.3` (via archive.ubuntu.com or source build)
 - `rsync-3.4.1` (via deb.debian.org or source build)
+- `rsync-3.4.2` (via deb.debian.org or source build)
 
 ---
 

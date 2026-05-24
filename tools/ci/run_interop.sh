@@ -2,6 +2,7 @@
 # Ubuntu/Debian-first rsync interop harness
 # - Detects platform architecture and aligns Debian/Ubuntu package arch names
 # - Tries real, validated package locations for:
+#     2.6.9  -> always source-built (legacy, predates per-arch .deb coverage we care about)
 #     3.0.9  -> old-releases.ubuntu.com
 #     3.1.3  -> archive.ubuntu.com
 #     3.4.1  -> deb.debian.org (3.4.1+ds1-6)
@@ -50,8 +51,12 @@ upstream_src_root="${workspace_root}/target/interop/upstream-src"
 upstream_install_root="${workspace_root}/target/interop/upstream-install"
 interop_log_dir="${workspace_root}/target/interop/logs"
 
-# Versions we test against
+# Versions we run interop scenarios against.
 versions=(3.0.9 3.1.3 3.4.1 3.4.2)
+# Versions we only build and cache (no scenarios wired up yet). 2.6.9 is the
+# protocol-28 cutoff peer (advertises protocol 29, accepts down to 28); the
+# binary is needed so follow-up tasks can wire push/pull cells against it.
+extra_build_versions=(2.6.9)
 rsync_repo_url="https://github.com/RsyncProject/rsync.git"
 rsync_tarball_base_url="${RSYNC_TARBALL_BASE_URL:-https://rsync.samba.org/ftp/rsync/src}"
 
@@ -103,11 +108,16 @@ build_jobs() {
   fi
 }
 
-# Build the most realistic URL for this version+arch using actual distro naming
+# Build the most realistic URL for this version+arch using actual distro naming.
+# Returns an empty string for versions that have no usable .deb (e.g. 2.6.9);
+# ensure_upstream_build treats an empty URL as "skip deb fetch, build from source".
 build_version_url() {
   local version=$1
   local arch=$2
   case "$version" in
+    2.6.9)
+      echo ""
+      ;;
     3.0.9)
       echo "${OLD_UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.0.9-1ubuntu1.3_${arch}.deb"
       ;;
@@ -185,6 +195,11 @@ try_fetch_deb_generic() {
   local candidates=()
 
   case "$version" in
+    2.6.9)
+      # No usable per-arch generic-pool .deb for rsync 2.6.9; skip straight to source build.
+      rm -f "$tmp_deb"
+      return 1
+      ;;
     3.0.9)
       candidates+=(
         "${OLD_UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.0.9-1ubuntu1_${arch}.deb"
@@ -336,6 +351,17 @@ build_upstream_from_source() {
     exit 1
   fi
 
+  # Refresh ancient autotools helper scripts when the system provides newer ones.
+  # rsync 2.6.9 ships a 2006-vintage config.guess/config.sub that does not
+  # recognise aarch64, riscv64, or modern Linux triples; Debian's autotools
+  # package keeps current copies in /usr/share/misc/ that we can drop in.
+  local helper
+  for helper in config.guess config.sub; do
+    if [[ -f "$helper" && -f "/usr/share/misc/${helper}" ]]; then
+      cp "/usr/share/misc/${helper}" "$helper"
+    fi
+  done
+
   local configure_help
   configure_help=$(./configure --help)
   local -a configure_args=("--prefix=${install_dir}")
@@ -356,8 +382,20 @@ build_upstream_from_source() {
   if grep -q -- "--enable-xattr-support" <<<"$configure_help"; then
     configure_args+=("--enable-xattr-support")
   fi
+  # rsync 2.6.9 predates the bundled-popt-by-default era; without this the
+  # build links against system libpopt, which may not be present on minimal
+  # CI images. The flag is silently absent on newer rsync, so gate on help.
+  if grep -q -- "--with-included-popt" <<<"$configure_help"; then
+    configure_args+=("--with-included-popt")
+  fi
 
-  if ! ./configure "${configure_args[@]}" >"${build_log}" 2>&1; then
+  # gcc >= 14 makes implicit function declarations and implicit int errors by
+  # default, which breaks autoconf feature-probes in rsync 2.6.9 (every check
+  # silently reports "no", leading to a build that calls gettimeofday with the
+  # wrong arity etc.). Restoring the historical "warn, don't error" defaults
+  # keeps the conftest results accurate without touching newer rsync builds.
+  local extra_cflags="-O2 -Wno-implicit-function-declaration -Wno-implicit-int -Wno-int-conversion"
+  if ! CFLAGS="${CFLAGS:-} ${extra_cflags}" ./configure "${configure_args[@]}" >"${build_log}" 2>&1; then
     echo "Upstream rsync ${version} configure failed; see ${build_log}" >&2
     tail -n 50 "${build_log}" >&2 || true
     exit 1
@@ -395,6 +433,11 @@ ensure_upstream_build() {
 
   local url
   url=$(build_version_url "$version" "$arch")
+  if [[ -z "$url" ]]; then
+    echo "No .deb candidate for rsync ${version}; building from source ..."
+    build_upstream_from_source "$version"
+    return
+  fi
   echo "Trying ${url}"
   if try_fetch_deb "$url" "$install_dir"; then
     if "${install_dir}/bin/rsync" --version | head -n1 | grep -q "rsync\s\+version\s\+${version}\b"; then
@@ -9813,16 +9856,18 @@ for arg in "$@"; do
   esac
 done
 
-# Build upstream binaries first (always needed)
+# Build upstream binaries first (always needed). Includes versions cached for
+# follow-up tasks (extra_build_versions) so the binary is on disk and on PATH
+# even when no scenarios reference it yet.
 mkdir -p "$upstream_src_root" "$upstream_install_root"
-for version in "${versions[@]}"; do
+for version in "${versions[@]}" "${extra_build_versions[@]}"; do
   ensure_upstream_build "$version"
 done
 
 # If build-only mode, exit after building upstream binaries
 if [[ "$build_only" == "true" ]]; then
   echo "Built upstream rsync binaries (build-only mode)"
-  for version in "${versions[@]}"; do
+  for version in "${versions[@]}" "${extra_build_versions[@]}"; do
     binary="${upstream_install_root}/${version}/bin/rsync"
     if [[ -x "$binary" ]]; then
       echo "  - ${version}: $binary"
