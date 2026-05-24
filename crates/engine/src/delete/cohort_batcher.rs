@@ -313,6 +313,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::super::plan::DeleteEntryKind;
+    use super::super::reorder_buffer::DRAIN_BATCH_CAP;
     use super::*;
 
     fn key(path: &str) -> DeleteCohortKey {
