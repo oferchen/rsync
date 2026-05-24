@@ -26,9 +26,11 @@ Both test suites use similar infrastructure:
 
 Tests verify compatibility with:
 
-- **rsync 3.4.1** - Latest stable, protocol 32
+- **rsync 3.4.2** - Latest stable, protocol 32
+- **rsync 3.4.1** - Previous stable, protocol 32
 - **rsync 3.1.3** - Common production version, protocol 30/31
 - **rsync 3.0.9** - Older widely-deployed version, protocol 30
+- **rsync 2.6.9** - Protocol-28 cutoff peer; advertises protocol 29, accepts down to 28. Always built from source by `tools/ci/run_interop.sh`.
 
 ## Prerequisites
 
