@@ -120,6 +120,19 @@ Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
 
 Tested against upstream rsync **3.0.9**, **3.1.3**, **3.4.1**, and **3.4.2** in CI across protocols 28-32. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth.
 
+### Supported rsync wire protocol versions
+
+| upstream rsync version | protocol | mode (push/pull/daemon)  | status (CI-verified) |
+|------------------------|----------|--------------------------|----------------------|
+| 2.6.9                  | 29       | push (daemon)            | non-blocking (RP28.c) |
+| 2.6.9                  | 29       | pull (daemon)            | non-blocking (RP28.d) |
+| 3.0.9                  | 30       | push, pull, daemon       | gating |
+| 3.1.3                  | 31       | push, pull, daemon       | gating |
+| 3.4.1                  | 32       | push, pull, daemon, SSH  | gating |
+| 3.4.2                  | 32       | push, pull, daemon       | gating |
+
+Wire format is verified byte-identical to upstream rsync via CI golden-byte tests for the listed versions. Other versions may work but are not regression-tested.
+
 ### Performance
 
 ![Benchmark: oc-rsync vs upstream rsync](https://github.com/oferchen/rsync/releases/latest/download/benchmark.png)
