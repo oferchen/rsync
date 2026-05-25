@@ -1,0 +1,4 @@
+# MDF-7 fixture: deep-nesting/l1/.rsync-filter (depth 2)
+# Inherits the depth-1 dir-merge directive and adds nothing of its own.
+
+: .rsync-filter

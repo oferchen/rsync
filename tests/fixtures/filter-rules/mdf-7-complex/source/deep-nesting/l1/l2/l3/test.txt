@@ -1,0 +1,2 @@
+Depth-4 test file; must transfer because depth-4 .rsync-filter
+includes it via `+ test.txt`.

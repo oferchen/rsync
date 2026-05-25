@@ -1,0 +1,9 @@
+# MDF-7 fixture: e-modifier/.rsync-filter
+# Exercises: dir-merge `:e` (FILTRULE_EXCLUDE_SELF). The merge file
+# itself MUST be excluded from the transfer.
+# Tracking: filter-rules-status.md section 3.2 (MDF-2 fix scope).
+# Upstream reference: exclude.c:1256-1260.
+
+# Exclude-self dir-merge: the `.rsync-filter` containing this rule
+# should NOT appear in the destination tree.
+:e .rsync-filter

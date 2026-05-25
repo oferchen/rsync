@@ -1,0 +1,2 @@
+Per `n` modifier: parent's `- ambient.txt` must NOT inherit here.
+This file MUST transfer.

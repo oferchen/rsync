@@ -1,0 +1,3 @@
+Verifies that the word-split modifier applies to the merged patterns,
+not to file names being matched. This file (with spaces in its name)
+must transfer.

@@ -1,0 +1,13 @@
+always-exclude.txt
+anchored/subdir/anchored-here.txt
+cvs/.git/
+cvs/.git/HEAD
+cvs/CVS/
+cvs/CVS/Entries
+docs/draft.md
+docs/images/tmp.png
+docs/private/
+docs/private/secrets.txt
+e-modifier/.rsync-filter
+src/build/
+src/build/tmp.o

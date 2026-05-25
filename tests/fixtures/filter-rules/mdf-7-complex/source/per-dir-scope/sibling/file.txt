@@ -1,0 +1,4 @@
+Out of scope: per-dir-scope/.rsync-filter's `+ file.txt` MUST NOT
+inherit into a sibling subtree. Default rsync behaviour transfers
+this file unconditionally; the test asserts it is NOT excluded by
+the parent rule.
