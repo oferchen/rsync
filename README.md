@@ -163,6 +163,24 @@ oc-rsync uses io_uring on Linux when the kernel and probed opcodes allow it; bel
 
 The full tier requires Linux 6.0+ together with the `iouring-send-zc` cargo feature for `SEND_ZC` dispatch; default builds downgrade to plain `SEND` even on 6.0+ kernels. See [`docs/audit/iouring-opcode-kernel-floor.md`](./docs/audit/iouring-opcode-kernel-floor.md) for the full per-opcode dispatch-site inventory.
 
+### SSH transport (russh)
+
+oc-rsync uses the Rust [`russh`](https://crates.io/crates/russh) crate for SSH transport, embedded directly in the binary. The default code path does not spawn an external `ssh` subprocess. Authentication uses key-based (RSA, ED25519, ECDSA) and password methods compatible with OpenSSH, and per-host settings are read from `~/.ssh/config` via the [`ssh2-config`](https://crates.io/crates/ssh2-config) integration (SSC-3 series).
+
+What this changes versus upstream rsync, which shells out to the system `ssh` binary:
+
+- No external `ssh` binary dependency at runtime; the SSH client lives inside the oc-rsync process.
+- All SSH state (connection, channel, auth context) lives in the oc-rsync process rather than crossing a pipe to a child.
+- `~/.ssh/config` `Match` blocks are honored for the limited subset implemented under the SSC-4 series.
+- SSH agent forwarding via `SSH_AUTH_SOCK` is honored when set.
+
+Current limitations:
+
+- Some exotic SSH features (for example SSH-2 keepalive intervals and certificate-based auth) may not be fully supported; please open an issue if you hit one.
+- The current `spawn_blocking` thread-pool bridge between the synchronous transfer pipeline and the async russh client throttles daemon concurrency at hundreds of concurrent sessions. The RUSSH-9..14 work moves the SSH transport to a fully async-native path; see [`docs/design/russh-async-native-path.md`](./docs/design/russh-async-native-path.md) for the planned evolution and [`docs/design/russh-async-native-back-compat-shim.md`](./docs/design/russh-async-native-back-compat-shim.md) for the back-compat shim.
+
+See also the `SSH TRANSPORT` section of `oc-rsync(1)` for the man-page summary.
+
 ### Performance
 
 ![Benchmark: oc-rsync vs upstream rsync](https://github.com/oferchen/rsync/releases/latest/download/benchmark.png)
