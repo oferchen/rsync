@@ -1,0 +1,7 @@
+# MDF-7 fixture: deep-nesting/l1/l2/l3/.rsync-filter (depth 4)
+# Depth-4 dir-merge: stresses the recursive enter_directory hook in
+# `crates/filters/src/chain/mod.rs:200-241`. The rule below must
+# actually take effect at depth 4.
+
+# Always include test.txt at this depth.
++ test.txt

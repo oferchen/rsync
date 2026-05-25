@@ -1,0 +1,9 @@
+# MDF-7 fixture: w-modifier/.rsync-filter
+# Exercises: dir-merge `:w` (FILTRULE_WORD_SPLIT). The merged file is
+# tokenised on whitespace rather than newlines, so each whitespace-
+# separated token becomes its own rule pattern.
+# Upstream reference: exclude.c:1279-1283, parse_filter_file
+# exclude.c:1480-1494.
+
+# Word-split dir-merge sourcing patterns from .w-patterns.
+:w .w-patterns

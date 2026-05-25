@@ -1,0 +1,15 @@
+# MDF-7 fixture: cvs/.rsync-filter
+# Exercises: dir-merge `:C` (CVS bundle). When `C` is present, upstream
+# bundles FILTRULE_NO_PREFIXES | FILTRULE_WORD_SPLIT | FILTRULE_NO_INHERIT
+# | FILTRULE_CVS_IGNORE and defaults the merge filename to `.cvsignore`.
+# Tracking: filter-rules-status.md section 3.1 (MDF-2 fix scope).
+# Upstream reference: exclude.c:1248-1255.
+
+# CVS-style dir-merge: defaults to reading .cvsignore in each dir and
+# bundles the upstream `default_cvsignore` set (CVS/, RCS, SCCS,
+# `.svn/`, `.git/`, `.hg/`, `.bzr/`, `*.o`, `*~`, etc).
+#
+# Note: the sibling `dot-git/` directory in this fixture is renamed to
+# `.git/` by materialize.sh before the transfer runs, because git
+# cannot track a nested `.git/` directory.
+:C

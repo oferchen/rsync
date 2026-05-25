@@ -1,0 +1,1 @@
+Sanity file: must never transfer (excluded by root .rsync-filter).

@@ -1,0 +1,3 @@
+Symlinked-merge-file edge case (MDF-6). The .rsync-filter in this dir
+is a symlink to ../docs/.rsync-filter; behaviour when the receiver
+resolves vs ignores symlinked merge files is the audit target.

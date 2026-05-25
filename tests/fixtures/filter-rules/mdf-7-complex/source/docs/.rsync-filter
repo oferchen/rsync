@@ -1,0 +1,13 @@
+# MDF-7 fixture: docs/.rsync-filter
+# Exercises: short-form dir-merge `:` with no modifiers, plus a sibling
+# exclude rule that scopes to this directory and its descendants.
+# Upstream reference: exclude.c:1181-1188 (FILTRULE_PERDIR_MERGE).
+
+# Re-merge any nested .rsync-filter on directory entry.
+: .rsync-filter
+
+# Exclude any draft documents anywhere under docs/.
+- draft.md
+
+# Exclude the private/ subtree wholesale.
+- private/

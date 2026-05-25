@@ -1,0 +1,12 @@
+# MDF-7 fixture: anchored/.rsync-filter
+# Exercises: anchored patterns (leading `/`) inside a merged
+# .rsync-filter. Upstream scopes the anchor to the merge-file's own
+# directory, NOT to the transfer root.
+# Tracking: filter-rules-status.md section 3.8 (MDF-4 fix scope).
+
+# Include only the anchored-here.txt directly under THIS directory.
++ /anchored-here.txt
+
+# Exclude any anchored-here.txt found in deeper subdirectories - the
+# `+` rule above must NOT bleed into subdir/ because of its anchor.
+- anchored-here.txt

@@ -1,0 +1,7 @@
+# MDF-7 fixture: deep-nesting/.rsync-filter (depth 1)
+# Exercises: dir-merge that recursively picks up .rsync-filter files at
+# every depth level. This is the depth-1 entry; depth-4 is exercised
+# via l1/l2/l3/.rsync-filter.
+# Tracking: filter-rules-status.md section 3.7 (MDF-3 fix scope).
+
+: .rsync-filter

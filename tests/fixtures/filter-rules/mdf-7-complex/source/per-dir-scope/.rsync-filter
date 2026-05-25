@@ -1,0 +1,12 @@
+# MDF-7 fixture: per-dir-scope/.rsync-filter
+# Exercises: per-directory rule scope. The rules below MUST go out of
+# scope when the chain leaves per-dir-scope/, so sibling/file.txt is
+# NOT matched by them.
+# Tracking: filter-rules-status.md section 3.9 (MDF-5 fix scope).
+# Upstream reference: pop_filter_list, exclude.c:802-803.
+
+# Re-merge nested per-directory rules.
+: .rsync-filter
+
+# Include file.txt directly under per-dir-scope/.
++ file.txt

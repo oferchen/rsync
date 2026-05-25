@@ -1,0 +1,16 @@
+# MDF-7 fixture: n-modifier/.rsync-filter
+# Exercises: dir-merge `:n` (FILTRULE_NO_INHERIT). Rules contributed by
+# this merge file MUST NOT inherit into child directories.
+# Tracking: filter-rules-status.md section 3.3 (MDF-2 fix scope).
+# Upstream reference: exclude.c:1261-1265, push_local_filters
+# exclude.c:802-803.
+
+# Non-inheriting dir-merge: rules below scope to THIS directory only.
+:n .rsync-filter
+
+# This exclude must NOT apply to n-modifier/subdir/ambient.txt because
+# `n` strips inheritance on the directory boundary.
+- ambient.txt
+
+# Always keep kept.txt in this directory.
++ kept.txt
