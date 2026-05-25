@@ -1,0 +1,212 @@
+# Daemon cold-start regression bench (DIS-8.a, parent DIS-1 #2752).
+#
+# Catches regressions on the daemon cold-start path tracked by the DIS
+# series: oc-rsync daemon pull cold start runs ~1.35s vs upstream ~0.36s
+# (3.7x slow). DIS-7 will re-bench post-fix; this cell ensures we do not
+# regress further while the gap is being closed.
+#
+# Methodology: hyperfine times a one-shot daemon pull of a tiny fixture
+# (10 small files) for both oc-rsync and upstream rsync. The job fails
+# when oc-rsync mean wall-clock exceeds 1.5x upstream mean. The 1.5x
+# ceiling is a placeholder regression bound and will tighten once DIS-7
+# closes the underlying gap.
+#
+# Status: non-required. Promotion to a required check is tracked
+# separately as DIS-8.b; do not gate PRs on this workflow yet.
+name: Bench daemon cold-start
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Nightly at 03:17 UTC, clear of the weekly Sunday Benchmark cron.
+    - cron: '17 3 * * *'
+  pull_request:
+    paths:
+      - 'crates/daemon/**'
+      - 'crates/core/src/session/**'
+      - 'crates/protocol/src/handshake/**'
+      - '.github/workflows/bench-daemon-coldstart.yml'
+
+concurrency:
+  group: bench-daemon-coldstart-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  bench-daemon-coldstart:
+    name: Daemon cold-start regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Non-required: DIS-8.b will promote this check after a bake-in
+    # period on master. Do not add to branch protection here.
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: "1.88.0"
+
+      - name: Cache cargo builds
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: bench-daemon-coldstart
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rsync hyperfine jq
+
+      - name: Build oc-rsync (release)
+        run: cargo build --release -p oc-rsync
+
+      - name: Prepare fixture and daemon configs
+        id: prep
+        run: |
+          set -euo pipefail
+          WORK="${{ github.workspace }}/bench-coldstart"
+          mkdir -p "$WORK/src" "$WORK/dst-oc" "$WORK/dst-up" "$WORK/results"
+
+          # 10 small files; reproducible content so cold-start times the
+          # daemon path, not the read pattern of random data.
+          for i in $(seq 1 10); do
+            printf 'cold-start fixture file %02d\n' "$i" > "$WORK/src/file-$i.txt"
+          done
+
+          # Pick two free localhost ports so oc-rsync and upstream do
+          # not contend for the same port across hyperfine runs.
+          OC_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+          UP_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+
+          cat > "$WORK/oc-rsyncd.conf" <<CONF
+          use chroot = no
+          port = $OC_PORT
+          pid file = $WORK/oc-rsyncd.pid
+          log file = $WORK/oc-rsyncd.log
+          [cold]
+              path = $WORK/src
+              read only = yes
+              list = yes
+          CONF
+
+          cat > "$WORK/rsyncd.conf" <<CONF
+          use chroot = no
+          port = $UP_PORT
+          pid file = $WORK/rsyncd.pid
+          log file = $WORK/rsyncd.log
+          [cold]
+              path = $WORK/src
+              read only = yes
+              list = yes
+          CONF
+
+          {
+            echo "WORK=$WORK"
+            echo "OC_PORT=$OC_PORT"
+            echo "UP_PORT=$UP_PORT"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Start daemons
+        env:
+          WORK: ${{ steps.prep.outputs.WORK }}
+          OC_PORT: ${{ steps.prep.outputs.OC_PORT }}
+          UP_PORT: ${{ steps.prep.outputs.UP_PORT }}
+        run: |
+          set -euo pipefail
+          OC_RSYNC="${{ github.workspace }}/target/release/oc-rsync"
+
+          "$OC_RSYNC" --daemon --no-detach --config "$WORK/oc-rsyncd.conf" \
+            > "$WORK/oc-rsyncd.stdout" 2> "$WORK/oc-rsyncd.stderr" &
+          echo $! > "$WORK/oc-rsyncd.runpid"
+
+          rsync --daemon --no-detach --config "$WORK/rsyncd.conf" \
+            > "$WORK/rsyncd.stdout" 2> "$WORK/rsyncd.stderr" &
+          echo $! > "$WORK/rsyncd.runpid"
+
+          # Wait briefly for both listeners to bind.
+          for _ in $(seq 1 50); do
+            if (echo > "/dev/tcp/127.0.0.1/$OC_PORT") >/dev/null 2>&1 \
+               && (echo > "/dev/tcp/127.0.0.1/$UP_PORT") >/dev/null 2>&1; then
+              break
+            fi
+            sleep 0.1
+          done
+
+      - name: Run hyperfine (cold-start)
+        env:
+          WORK: ${{ steps.prep.outputs.WORK }}
+          OC_PORT: ${{ steps.prep.outputs.OC_PORT }}
+          UP_PORT: ${{ steps.prep.outputs.UP_PORT }}
+        run: |
+          set -euo pipefail
+          OC_RSYNC="${{ github.workspace }}/target/release/oc-rsync"
+
+          hyperfine \
+            --warmup 1 \
+            --runs 10 \
+            --prepare "rm -rf '$WORK/dst-oc' '$WORK/dst-up' && mkdir -p '$WORK/dst-oc' '$WORK/dst-up'" \
+            --export-json /tmp/cold.json \
+            --command-name oc-rsync \
+              "$OC_RSYNC -r rsync://127.0.0.1:$OC_PORT/cold/ $WORK/dst-oc/" \
+            --command-name upstream \
+              "rsync -r rsync://127.0.0.1:$UP_PORT/cold/ $WORK/dst-up/"
+
+      - name: Assert cold-start ratio (oc-rsync <= 1.5x upstream)
+        env:
+          RATIO_LIMIT: "1.5"
+        run: |
+          set -euo pipefail
+          OC_MEAN=$(jq -r '.results[] | select(.command=="oc-rsync") | .mean' /tmp/cold.json)
+          UP_MEAN=$(jq -r '.results[] | select(.command=="upstream") | .mean' /tmp/cold.json)
+          RATIO=$(python3 -c "print($OC_MEAN / $UP_MEAN)")
+
+          printf 'oc-rsync mean : %s s\n' "$OC_MEAN"
+          printf 'upstream mean : %s s\n' "$UP_MEAN"
+          printf 'ratio         : %s (limit %s)\n' "$RATIO" "$RATIO_LIMIT"
+
+          {
+            echo "### Daemon cold-start bench"
+            echo ""
+            echo "| binary | mean (s) |"
+            echo "| ------ | -------- |"
+            printf '| oc-rsync | %s |\n' "$OC_MEAN"
+            printf '| upstream | %s |\n' "$UP_MEAN"
+            echo ""
+            printf 'Ratio: **%s** (fail threshold %sx)\n' "$RATIO" "$RATIO_LIMIT"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          python3 -c "import sys; sys.exit(0 if $OC_MEAN <= $RATIO_LIMIT * $UP_MEAN else 1)" \
+            || { echo "::error::oc-rsync cold-start regressed: $RATIO > $RATIO_LIMIT (DIS-8.a)"; exit 1; }
+
+      - name: Stop daemons
+        if: always()
+        env:
+          WORK: ${{ steps.prep.outputs.WORK }}
+        run: |
+          for f in "$WORK/oc-rsyncd.runpid" "$WORK/rsyncd.runpid"; do
+            [ -f "$f" ] || continue
+            pid=$(cat "$f")
+            kill "$pid" 2>/dev/null || true
+          done
+
+      - name: Upload bench results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bench-daemon-coldstart
+          retention-days: 30
+          path: |
+            /tmp/cold.json
+            ${{ steps.prep.outputs.WORK }}/oc-rsyncd.log
+            ${{ steps.prep.outputs.WORK }}/rsyncd.log
+            ${{ steps.prep.outputs.WORK }}/oc-rsyncd.stderr
+            ${{ steps.prep.outputs.WORK }}/rsyncd.stderr
