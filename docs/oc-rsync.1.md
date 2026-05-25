@@ -1320,6 +1320,53 @@ Refer to **SECURITY.md** in the source distribution for full CVE status,
 including the SEC-1 (CVE-2026-29518 / CVE-2026-43619) progress matrix and
 the SEC-1.p Landlock design note.
 
+# LINUX IO_URING SUPPORT
+
+**oc-rsync** uses io_uring opportunistically on Linux when the running
+kernel exposes the required opcode set. The hard floor for any io_uring
+dispatch at all is **Linux 5.6** (set by `MIN_KERNEL_VERSION` in
+`crates/fast_io/src/io_uring/config.rs`); below that kernel, and on every
+non-Linux platform, **oc-rsync** falls back transparently to standard
+**read**(2) / **write**(2) and to the platform-specific data paths
+(IOCP-backed writes and sockets on Windows, standard buffered I/O
+elsewhere). Above the 5.6 floor, individual opcodes are probed at
+runtime; opcodes the kernel rejects are individually downgraded to a
+documented fallback without aborting the transfer.
+
+The table below lists the io_uring opcodes dispatched by the
+**oc-rsync** fast-I/O subsystem, the kernel version that first ships
+each opcode, and the path taken when the opcode is unavailable. The
+inventory mirrors `docs/audit/iouring-opcode-kernel-floor.md`; refer
+to that document for the per-call-site source map.
+
+| Opcode | Min kernel | Fallback when unavailable |
+|--------|-----------|----------------------------|
+| **IORING_OP_FSYNC** | 5.1 | Standard **fsync**(2) via the non-io_uring **disk_commit** writer (selected when ring construction fails). |
+| **IORING_OP_READ_FIXED** / **IORING_OP_WRITE_FIXED** | 5.1 | Plain **IORING_OP_READ** / **IORING_OP_WRITE** when no registered-buffer lease is available; below the 5.6 ring floor, libc **read**(2) / **write**(2). |
+| **IORING_OP_POLL_ADD** | 5.1 | Caller receives **io::ErrorKind::Unsupported** and reverts to blocking writes outside io_uring. |
+| **IORING_OP_ASYNC_CANCEL** (user-data form) | 5.5 | Stub returns **Unsupported**; cancel becomes a no-op and the request runs to completion. |
+| **IORING_OP_ASYNC_CANCEL** (fd-targeted form) | 5.19 | Downgrades to the 5.5 user-data cancel form when fd-targeted cancel is rejected. |
+| **IORING_OP_LINK_TIMEOUT** | 5.5 | Chained **PollAdd** still arms; the timeout safety rail is treated as best-effort. |
+| **IORING_OP_READ** / **IORING_OP_WRITE** | 5.6 | Below the 5.6 ring floor the whole io_uring path is bypassed and standard **read**(2) / **write**(2) executors take over. |
+| **IORING_OP_SEND** / **IORING_OP_RECV** | 5.6 | Socket reader/writer factory returns **Unsupported**; transport reverts to blocking **send**(2) / **recv**(2). |
+| **IORING_OP_STATX** | 5.11 | Stub returns **Unsupported**; callers fall back to the libc **statx**(2) / **stat**(2) syscall, and the receiver fast path that batches stat calls effectively becomes serial. |
+| **IORING_OP_RENAMEAT** | 5.11 | Runtime probe rejects the SQE; **io_uring_ops::try_io_uring_rename** falls back to libc **renameat2**(2). |
+| **IORING_OP_LINKAT** | 5.15 | Runtime probe rejects the SQE; **io_uring_ops::try_io_uring_hardlink** falls back to libc **linkat**(2). |
+| **IORING_REGISTER_PBUF_RING** / **IORING_UNREGISTER_PBUF_RING** | 5.19 | Reader and writer paths skip the kernel-side buffer ring; the legacy provide-buffers path runs (or, if that is also missing, plain **IORING_OP_READ** against an owned buffer). |
+| **IORING_OP_SEND_ZC** | 6.0 | Falls back to **IORING_OP_SEND**. Default builds additionally gate this dispatch behind the **iouring-send-zc** cargo feature and downgrade silently to **SEND** when the feature is not compiled in, even on 6.0+. |
+
+The full feature tier - all opcodes available, including **SEND_ZC**
+and fd-targeted cancel - effectively requires **Linux 6.0** with the
+**iouring-send-zc** feature enabled. On RHEL 8 era kernels (4.18) and
+on every non-Linux target, **oc-rsync** runs end-to-end without
+io_uring by selecting the standard syscall executors throughout.
+
+See the README section on Linux io_uring kernel-tier support for the
+operator-facing summary, and
+**docs/audit/iouring-opcode-kernel-floor.md** in the source
+distribution for the complete per-opcode dispatch-site inventory and
+the kernel-tier table that this section is derived from.
+
 # SEE ALSO
 
 rsync(1), rsyncd.conf(5), ssh(1)
