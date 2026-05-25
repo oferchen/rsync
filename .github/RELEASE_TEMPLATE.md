@@ -60,4 +60,12 @@ Status values mirror `SECURITY.md` ("Fixed", "Mostly fixed", "Mitigated", "Not v
 
 Distro packagers: see `docs/packaging/landlock-feature-guidance.md` for the per-distro `--features landlock` recommendation, runtime ABI matrix, and build-time dependency notes.
 
+### Linux io_uring requirements
+
+oc-rsync uses Linux io_uring for high-throughput I/O on supported kernels. The minimum supported kernel for the io_uring path is **Linux 5.6**; older kernels (including RHEL 8 / CentOS Stream 8 at 4.18) fall back to standard `read(2)` / `write(2)` automatically - no user action required.
+
+For the full performance tier (zero-copy `SEND_ZC`), Linux **6.0 or newer** is required AND the binary must be built with the `iouring-send-zc` cargo feature enabled. Default release builds advertise `--zero-copy` but downgrade to non-zero-copy `SEND` silently on older kernels or builds without the feature.
+
+Full per-opcode kernel-floor matrix: see `docs/audit/iouring-opcode-kernel-floor.md`.
+
 ---
