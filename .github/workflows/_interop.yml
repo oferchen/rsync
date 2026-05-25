@@ -327,6 +327,53 @@ jobs:
             echo "no /tmp/rp28-e/daemon.log to capture"
           fi
 
+      # RP28.f.2 - client-mode interop with rsync 2.6.9 as the daemon.
+      # Inverse of RP28.e.2: rsync 2.6.9 runs `--daemon --no-detach` on an
+      # ephemeral 127.0.0.1 port and oc-rsync issues pulls and pushes
+      # against the `[legacy]` module. Exercises the F1-F12 fixture
+      # matrix from `docs/design/rp28-f-1-client-2-6-9-daemon-harness.md`
+      # (spec shipped in RP28.f.1, PR #4929). Reuses the cached 2.6.9
+      # binary published by the RP28.b.3 cache step (PR #4947) under
+      # `target/interop/upstream-install/2.6.9/bin/rsync`; falls back to
+      # the RP28.b.1 build helper if the cache is cold. The harness
+      # exits 77 when either binary is missing so the cell becomes a
+      # no-op rather than a false failure. Non-blocking via
+      # `continue-on-error: true` until RP28.k promotes pre-30 parity
+      # to a required check.
+      - name: Run rsync 2.6.9 client-mode daemon interop (RP28.f.2)
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          RSYNC_269="target/interop/upstream-install/2.6.9/bin/rsync"
+          if [[ ! -x "$RSYNC_269" ]]; then
+            echo "rsync 2.6.9 binary missing at $RSYNC_269; building via RP28.b.1 helper" >&2
+            sudo bash scripts/build_rsync_2_6_9.sh
+            RSYNC_269="/usr/local/bin/rsync-2.6.9"
+          fi
+
+          OC_RSYNC="target/release/oc-rsync"
+          if [[ ! -x "$OC_RSYNC" ]]; then
+            OC_RSYNC="target/dist/oc-rsync"
+          fi
+          if [[ ! -x "$OC_RSYNC" ]]; then
+            echo "oc-rsync binary missing at target/release/oc-rsync and target/dist/oc-rsync" >&2
+            exit 1
+          fi
+
+          bash scripts/rp28_f_1_run.sh \
+            --oc-rsync "$OC_RSYNC" \
+            --rsync-2-6-9 "$RSYNC_269"
+
+      - name: Capture RP28.f.2 daemon log on failure
+        if: failure()
+        run: |
+          if [[ -f /tmp/rp28-f/daemon.log ]]; then
+            echo "--- /tmp/rp28-f/daemon.log ---"
+            cat /tmp/rp28-f/daemon.log
+          else
+            echo "no /tmp/rp28-f/daemon.log to capture"
+          fi
+
       # Drive upstream rsync's own `testsuite/*.test` corpus against
       # oc-rsync as `$RSYNC`. The harness sources upstream's `rsync.fns`
       # and reuses its helper tools (`tls`, `getgroups`, `support/lsh.sh`),
