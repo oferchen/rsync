@@ -98,6 +98,9 @@ jobs:
       # Runs in warn-only mode until BPF-3 (#2821) closes the existing
       # gap; flip the workflow to strict via `OC_RSYNC_ENVGUARD_LINT_STRICT=1`
       # in a follow-up. EOL plan in `docs/design/bpf-4-envguard-ci-lint-spec.md`.
+      - name: Install ripgrep (required by EnvGuard lint)
+        run: sudo apt-get install -y ripgrep
+
       - name: EnvGuard lint (BPF-5)
         run: bash tools/ci/check_envguard.sh
 
