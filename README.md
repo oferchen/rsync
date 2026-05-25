@@ -148,6 +148,21 @@ Per-version dispatch is implemented as `protocol_version` gates in the wire code
 
 Wire format is verified byte-identical to upstream rsync via CI golden-byte tests for the listed versions. Other versions may work but are not regression-tested.
 
+### Linux io_uring kernel-tier support
+
+oc-rsync uses io_uring on Linux when the kernel and probed opcodes allow it; below the floor (or on any non-Linux platform) it falls back to standard `read(2)`/`write(2)` and platform-specific paths (IOCP on Windows). The hard kernel floor is Linux 5.6, gated by `MIN_KERNEL_VERSION = (5, 6)` in [`crates/fast_io/src/io_uring/config.rs`](./crates/fast_io/src/io_uring/config.rs); on older kernels the io_uring path is disabled entirely.
+
+| Kernel version | Tier | Opcodes available | Notes |
+|----------------|------|-------------------|-------|
+| < 5.6          | Unsupported | none - io_uring path disabled | Standard I/O fallback only |
+| 5.6 - 5.10     | Basic | READ, WRITE, READ_FIXED, WRITE_FIXED, SEND, RECV, FSYNC, NOP, POLL_ADD, ASYNC_CANCEL | Hard floor; data path enabled |
+| 5.11 - 5.14    | Extended | + STATX, RENAMEAT | Metadata fast paths enabled |
+| 5.15 - 5.18    | Mature | + LINKAT | Hardlink fast path enabled |
+| 5.19 - 6.0     | PBUF-ring | + register_pbuf_ring opcodes | Provided-buffer-ring optimisation |
+| >= 6.0         | Full | + SEND_ZC (with `iouring-send-zc` feature) | Zero-copy send tier |
+
+The full tier requires Linux 6.0+ together with the `iouring-send-zc` cargo feature for `SEND_ZC` dispatch; default builds downgrade to plain `SEND` even on 6.0+ kernels. See [`docs/audit/iouring-opcode-kernel-floor.md`](./docs/audit/iouring-opcode-kernel-floor.md) for the full per-opcode dispatch-site inventory.
+
 ### Performance
 
 ![Benchmark: oc-rsync vs upstream rsync](https://github.com/oferchen/rsync/releases/latest/download/benchmark.png)
