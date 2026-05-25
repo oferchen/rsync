@@ -120,6 +120,21 @@ Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
 
 Tested against upstream rsync **3.0.9**, **3.1.3**, **3.4.1**, and **3.4.2** in CI across protocols 28-32. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth.
 
+### Supported rsync protocol versions
+
+oc-rsync negotiates `protocol_version` per upstream, defaults to 32, and supports back-negotiation to 28 inclusive. Protocols 28-29 are exercised via wire-byte regression tests; 30-32 are exercised via the daemon and client interop matrices in CI.
+
+| Protocol | Upstream rsync version | Status in oc-rsync | Notes |
+|----------|------------------------|--------------------|-------|
+| 32       | 3.4.x (current)        | Full support        | Primary target; all features negotiated |
+| 31       | 3.2.x - 3.3.x          | Full support        | Verified via interop matrix |
+| 30       | 3.1.x                  | Full support        | Verified via interop matrix |
+| 29       | 3.0.x                  | Full support        | Verified via interop matrix; sort.rs t_PATH/t_ITEM gate (RP28.h) |
+| 28       | 2.6.x                  | Wire-level support  | Validated via wire-byte regression tests (RP28.g, RP28.h); full interop with upstream 2.6.9 daemon/client tracked under RP28 series |
+| <= 27    | <= 2.5.x               | Not supported       | Pre-dates protocol cleanup; not tested |
+
+Per-version dispatch is implemented as `protocol_version` gates in the wire codecs. See [`crates/protocol/src/wire/compressed_token/zlib_codec.rs`](./crates/protocol/src/wire/compressed_token/zlib_codec.rs) and the sibling [`zstd_codec.rs`](./crates/protocol/src/wire/compressed_token/zstd_codec.rs) / [`lz4_codec.rs`](./crates/protocol/src/wire/compressed_token/lz4_codec.rs) for representative examples of the gates that switch on `protocol_version`.
+
 ### Supported rsync wire protocol versions
 
 | upstream rsync version | protocol | mode (push/pull/daemon)  | status (CI-verified) |
