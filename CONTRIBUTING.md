@@ -77,6 +77,26 @@ Use `cargo-nextest` rather than `cargo test`; configuration lives in
 
 ---
 
+## EnvGuard CI lint
+
+If you write a test that sets an `OC_RSYNC_BUFFER_POOL_*` env var (or
+otherwise mutates `BufferPool` capacity state), wrap the env-var
+manipulation in `EnvGuard` (from `platform::env::EnvGuard`). The CI lint
+at `tools/ci/check_envguard.sh` walks every `#[test]` and
+`#[tokio::test]` body in the workspace and flags any cap-touching test
+that does not also hold an `EnvGuard`.
+
+The lint runs in the `fmt + clippy` job. It is currently in warn-only
+mode and will be flipped to strict (via `OC_RSYNC_ENVGUARD_LINT_STRICT=1`)
+once BPF-3 (#2821) closes the existing gap. To silence a known-safe
+test, add a `<repo-relative-path>::<fn_name>` entry to
+`tools/ci/envguard_lint.ignore`. See
+`docs/design/bpf-4-envguard-ci-lint-spec.md` for the full design and the
+EOL plan; the lint is removed once BPF-9 replaces the global `OnceLock`
+singleton with a per-test factory.
+
+---
+
 ## Parallel work pattern
 
 - **Worktrees recommended.** Use `git worktree add` so each in-flight branch
