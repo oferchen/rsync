@@ -9,12 +9,12 @@
 # interop matrix consumes it.
 #
 # Parent: RP28.b (#2727). Grandparent: RP28 (#2725).
-# Follow-up: RP28.b.3 (#2962) will add artifact caching so the build
-# does not repeat on every CI run.
+# RP28.b.3 (#2962) adds the actions/cache layer below so the build does
+# not repeat on every CI run; cache key is keyed on the helper script's
+# content hash so any change to the script invalidates the artifact.
 #
 # Status: non-required. This workflow is advisory in branch protection.
-# Promotion to a required check is handled by a separate task once the
-# caching layer from RP28.b.3 lands.
+# Promotion to a required check is handled by a separate task.
 name: Build rsync 2.6.9 (smoke)
 
 on:
@@ -48,12 +48,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Restore rsync 2.6.9 cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            /usr/local/bin/rsync-2.6.9
+            /tmp/rsync-2.6.9-build
+          key: rsync-2.6.9-${{ runner.os }}-${{ hashFiles('scripts/build_rsync_2_6_9.sh') }}
+          restore-keys: |
+            rsync-2.6.9-${{ runner.os }}-
+
       - name: Install build dependencies
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential autoconf
 
       - name: Build rsync 2.6.9 via helper script
+        if: steps.cache.outputs.cache-hit != 'true'
         run: sudo bash scripts/build_rsync_2_6_9.sh
 
       - name: Verify version string
@@ -70,13 +83,28 @@ jobs:
       - name: Smoke-run --help
         run: /usr/local/bin/rsync-2.6.9 --help | head -5
 
+      - name: Save rsync 2.6.9 cache
+        if: steps.cache.outputs.cache-hit != 'true' && success()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            /usr/local/bin/rsync-2.6.9
+            /tmp/rsync-2.6.9-build
+          key: rsync-2.6.9-${{ runner.os }}-${{ hashFiles('scripts/build_rsync_2_6_9.sh') }}
+
       - name: Emit step summary
         run: |
+          if [ "${{ steps.cache.outputs.cache-hit }}" = "true" ]; then
+            CACHE_STATUS="hit (binary restored, build skipped)"
+          else
+            CACHE_STATUS="miss (built from source, artifact saved)"
+          fi
           {
             echo "### rsync 2.6.9 build smoke"
             echo ""
             echo "- Binary: \`/usr/local/bin/rsync-2.6.9\`"
             echo "- Helper: \`scripts/build_rsync_2_6_9.sh\`"
+            echo "- cache: ${CACHE_STATUS}"
             echo ""
             echo "Captured version line:"
             echo ""
