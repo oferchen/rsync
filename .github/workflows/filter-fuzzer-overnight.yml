@@ -71,7 +71,7 @@ jobs:
           toolchain: nightly
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           shared-key: ci-${{ runner.os }}-cargo-v1-${{ hashFiles('**/Cargo.lock') }}
           key: filter-fuzzer-${{ matrix.target }}
@@ -83,7 +83,7 @@ jobs:
           version: v1
 
       - name: Install cargo-fuzz
-        uses: taiki-e/install-action@fa0dd4cd0a40696e6f9766370614a5ce482e6aa8 # v2
+        uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
         with:
           tool: cargo-fuzz
 
