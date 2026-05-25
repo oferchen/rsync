@@ -1,0 +1,266 @@
+# Daemon concurrency ceiling regression bench (D10K-7, parent D10K-1 #2830).
+#
+# Catches regressions on the daemon thread-per-connection accept path
+# tracked by the D10K series: the documented ~10K concurrent connection
+# ceiling (see docs/user/daemon-concurrency-limits.md, D10K-6). The cell
+# soaks the daemon with 1000 concurrent rsync:// pulls of a tiny fixture
+# and asserts no admission-cap evictions, no daemon crashes, and a
+# bounded peak RSS on a stock github-actions ubuntu-latest runner.
+#
+# Template: mirrors .github/workflows/bench-daemon-coldstart.yml (DIS-8.a,
+# PR #4905). Same trigger style, hyperfine + JSON artifact pattern, and
+# continue-on-error advisory posture.
+#
+# Status: non-required. Promotion to a required check is tracked
+# separately as a follow-up task; do not gate PRs on this workflow yet.
+name: Bench daemon concurrency
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Nightly at 04:37 UTC, offset from the 03:17 cold-start cron so the
+    # two daemon benches do not contend on a single runner pool slot.
+    - cron: '37 4 * * *'
+  pull_request:
+    paths:
+      - 'crates/daemon/**'
+      - 'crates/core/src/client/remote/daemon_transfer/**'
+      - '.github/workflows/bench-daemon-concurrency.yml'
+
+concurrency:
+  group: bench-daemon-concurrency-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  bench-daemon-concurrency:
+    name: Daemon concurrency ceiling regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Non-required: promotion to a required check is a future task. Do
+    # not add to branch protection here.
+    continue-on-error: true
+
+    env:
+      SOAK_CONNECTIONS: "1000"
+      SOAK_PARALLELISM: "64"
+      SOAK_RUNS: "3"
+      SOAK_RSS_LIMIT_KB: "4194304"
+      SOAK_TIMEOUT_SECONDS: "300"
+      DAEMON_MAX_CONNECTIONS: "2000"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: "1.88.0"
+
+      - name: Cache cargo builds
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: bench-daemon-concurrency
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rsync hyperfine jq time
+
+      - name: Build oc-rsync (release)
+        run: cargo build --release -p oc-rsync
+
+      - name: Prepare fixture and daemon config
+        id: prep
+        run: |
+          set -euo pipefail
+          WORK="${{ github.workspace }}/bench-concurrency"
+          mkdir -p "$WORK/src" "$WORK/dst" "$WORK/results"
+
+          # Single 1 KiB fixture file; the soak times the daemon accept
+          # path, not the transfer of bulk data.
+          dd if=/dev/urandom of="$WORK/src/fixture.bin" bs=1024 count=1 status=none
+
+          # Pick a free localhost port for the oc-rsync daemon.
+          OC_PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+
+          cat > "$WORK/oc-rsyncd.conf" <<CONF
+          use chroot = no
+          port = $OC_PORT
+          max connections = ${DAEMON_MAX_CONNECTIONS}
+          pid file = $WORK/oc-rsyncd.pid
+          log file = $WORK/oc-rsyncd.log
+          [soak]
+              path = $WORK/src
+              read only = yes
+              list = yes
+          CONF
+
+          {
+            echo "WORK=$WORK"
+            echo "OC_PORT=$OC_PORT"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Start oc-rsync daemon
+        env:
+          WORK: ${{ steps.prep.outputs.WORK }}
+          OC_PORT: ${{ steps.prep.outputs.OC_PORT }}
+        run: |
+          set -euo pipefail
+          OC_RSYNC="${{ github.workspace }}/target/release/oc-rsync"
+
+          /usr/bin/time -v -o "$WORK/oc-rsyncd.time" \
+            "$OC_RSYNC" --daemon --no-detach \
+              --config "$WORK/oc-rsyncd.conf" \
+              > "$WORK/oc-rsyncd.stdout" 2> "$WORK/oc-rsyncd.stderr" &
+          echo $! > "$WORK/oc-rsyncd.runpid"
+
+          # Wait for the listener to bind before issuing pulls.
+          for _ in $(seq 1 50); do
+            if (echo > "/dev/tcp/127.0.0.1/$OC_PORT") >/dev/null 2>&1; then
+              break
+            fi
+            sleep 0.1
+          done
+
+      - name: Run concurrency soak
+        env:
+          WORK: ${{ steps.prep.outputs.WORK }}
+          OC_PORT: ${{ steps.prep.outputs.OC_PORT }}
+        run: |
+          set -euo pipefail
+          RESULTS="$WORK/results"
+          PULL_LOG="$RESULTS/pull-failures.log"
+          : > "$PULL_LOG"
+
+          one_pull() {
+            local idx="$1"
+            local out="$WORK/dst/pull-$idx"
+            mkdir -p "$out"
+            if ! rsync -q "rsync://127.0.0.1:${OC_PORT}/soak/fixture.bin" "$out/" \
+                 2>> "$PULL_LOG"; then
+              printf 'pull %s failed\n' "$idx" >> "$PULL_LOG"
+              return 1
+            fi
+          }
+          export -f one_pull
+          export WORK OC_PORT PULL_LOG
+          export SOAK_CONNECTIONS SOAK_PARALLELISM
+
+          run_soak() {
+            local run_idx="$1"
+            rm -rf "$WORK/dst"
+            mkdir -p "$WORK/dst"
+            : > "$PULL_LOG"
+
+            local start end
+            start=$(date +%s.%N)
+            local failures=0
+            timeout "${SOAK_TIMEOUT_SECONDS}" bash -c '
+              seq 1 "${SOAK_CONNECTIONS}" \
+                | xargs -n 1 -P "${SOAK_PARALLELISM}" -I {} bash -c "one_pull {}"
+            ' || failures=$?
+            end=$(date +%s.%N)
+
+            local wall
+            wall=$(python3 -c "print($end - $start)")
+            local fail_count
+            fail_count=$(grep -c 'failed' "$PULL_LOG" || true)
+
+            printf '{"run":%s,"wall":%s,"failures":%s,"timeout_exit":%s}\n' \
+              "$run_idx" "$wall" "$fail_count" "$failures" \
+              >> "$RESULTS/soak-runs.jsonl"
+          }
+
+          : > "$RESULTS/soak-runs.jsonl"
+          for run_idx in $(seq 1 "${SOAK_RUNS}"); do
+            run_soak "$run_idx"
+          done
+
+          # Sample daemon peak RSS (VmHWM, kB) while it is still alive;
+          # /usr/bin/time -v only writes its summary on process exit.
+          PID=$(cat "$WORK/oc-rsyncd.runpid")
+          PEAK_RSS_KB=$(awk '/VmHWM/ {print $2}' "/proc/$PID/status")
+          echo "$PEAK_RSS_KB" > "$RESULTS/daemon-peak-rss-kb"
+
+      - name: Assert soak invariants
+        env:
+          WORK: ${{ steps.prep.outputs.WORK }}
+        run: |
+          set -euo pipefail
+          RESULTS="$WORK/results"
+
+          MEAN_WALL=$(jq -s '([.[].wall] | add) / length' "$RESULTS/soak-runs.jsonl")
+          TOTAL_FAIL=$(jq -s '[.[].failures] | add' "$RESULTS/soak-runs.jsonl")
+          MAX_TIMEOUT=$(jq -s '[.[].timeout_exit] | max' "$RESULTS/soak-runs.jsonl")
+          PEAK_RSS_KB=$(cat "$RESULTS/daemon-peak-rss-kb")
+
+          printf 'soak runs        : %s\n' "${SOAK_RUNS}"
+          printf 'connections/run  : %s\n' "${SOAK_CONNECTIONS}"
+          printf 'parallelism      : %s\n' "${SOAK_PARALLELISM}"
+          printf 'mean wall (s)    : %s\n' "$MEAN_WALL"
+          printf 'total failures   : %s\n' "$TOTAL_FAIL"
+          printf 'max timeout exit : %s\n' "$MAX_TIMEOUT"
+          printf 'daemon peak RSS  : %s kB (limit %s kB)\n' \
+            "$PEAK_RSS_KB" "${SOAK_RSS_LIMIT_KB}"
+
+          {
+            echo "### Daemon concurrency bench (D10K-7)"
+            echo ""
+            echo "| metric | value |"
+            echo "| ------ | ----- |"
+            printf '| connections per run | %s |\n' "${SOAK_CONNECTIONS}"
+            printf '| parallelism | %s |\n' "${SOAK_PARALLELISM}"
+            printf '| soak runs | %s |\n' "${SOAK_RUNS}"
+            printf '| mean wall (s) | %s |\n' "$MEAN_WALL"
+            printf '| total failed pulls | %s |\n' "$TOTAL_FAIL"
+            printf '| daemon peak RSS (kB) | %s |\n' "$PEAK_RSS_KB"
+            printf '| RSS limit (kB) | %s |\n' "${SOAK_RSS_LIMIT_KB}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$TOTAL_FAIL" -ne 0 ]; then
+            echo "::error::soak saw $TOTAL_FAIL failed pulls (D10K-7)"; exit 1
+          fi
+          if [ "$MAX_TIMEOUT" -ne 0 ]; then
+            echo "::error::soak hit ${SOAK_TIMEOUT_SECONDS}s timeout (D10K-7)"; exit 1
+          fi
+          if [ "$PEAK_RSS_KB" -gt "${SOAK_RSS_LIMIT_KB}" ]; then
+            echo "::error::daemon peak RSS $PEAK_RSS_KB kB > ${SOAK_RSS_LIMIT_KB} kB (D10K-7)"
+            exit 1
+          fi
+
+      - name: Stop oc-rsync daemon
+        if: always()
+        env:
+          WORK: ${{ steps.prep.outputs.WORK }}
+        run: |
+          if [ -f "$WORK/oc-rsyncd.runpid" ]; then
+            pid=$(cat "$WORK/oc-rsyncd.runpid")
+            kill "$pid" 2>/dev/null || true
+            for _ in $(seq 1 30); do
+              kill -0 "$pid" 2>/dev/null || break
+              sleep 0.1
+            done
+            kill -9 "$pid" 2>/dev/null || true
+          fi
+
+      - name: Upload bench results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bench-daemon-concurrency
+          retention-days: 30
+          path: |
+            ${{ steps.prep.outputs.WORK }}/results/soak-runs.jsonl
+            ${{ steps.prep.outputs.WORK }}/results/daemon-peak-rss-kb
+            ${{ steps.prep.outputs.WORK }}/results/pull-failures.log
+            ${{ steps.prep.outputs.WORK }}/oc-rsyncd.log
+            ${{ steps.prep.outputs.WORK }}/oc-rsyncd.stderr
+            ${{ steps.prep.outputs.WORK }}/oc-rsyncd.time
