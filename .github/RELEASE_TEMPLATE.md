@@ -68,4 +68,8 @@ For the full performance tier (zero-copy `SEND_ZC`), Linux **6.0 or newer** is r
 
 Full per-opcode kernel-floor matrix: see `docs/audit/iouring-opcode-kernel-floor.md`.
 
+### Supported rsync protocol versions
+
+oc-rsync continues to support protocol versions 28-32 inclusive, matching upstream rsync 2.6.x through 3.4.x. Protocol back-negotiation to 28 is exercised by wire-byte regression tests and a periodic CI matrix against rsync 2.6.9 (built from source). Protocols `<= 27` (rsync 2.5.x and earlier) remain unsupported. See `docs/design/rp28-k-1-protocol-drop-vs-keep-decision.md` for the decision rationale and `docs/design/rp28-k-2-execution-record.md` for the execution record.
+
 ---
