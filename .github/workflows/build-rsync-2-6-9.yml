@@ -1,0 +1,86 @@
+# RP28.b.2 - CI smoke test for rsync 2.6.9 build helper script
+#
+# Verifies that scripts/build_rsync_2_6_9.sh (shipped in RP28.b.1, #2960
+# / PR #4903) still produces a working rsync-2.6.9 binary on a stock
+# ubuntu-latest runner. The RP28 series tracks protocol 28 interop
+# coverage; rsync 2.6.9 is our oldest protocol-28 baseline and its
+# 2006-vintage autotools tend to bit-rot against current toolchains, so
+# this job catches breakage at the build-script layer before the wider
+# interop matrix consumes it.
+#
+# Parent: RP28.b (#2727). Grandparent: RP28 (#2725).
+# Follow-up: RP28.b.3 (#2962) will add artifact caching so the build
+# does not repeat on every CI run.
+#
+# Status: non-required. This workflow is advisory in branch protection.
+# Promotion to a required check is handled by a separate task once the
+# caching layer from RP28.b.3 lands.
+name: Build rsync 2.6.9 (smoke)
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly on Monday at 05:23 UTC, clear of other recurring crons.
+    - cron: '23 5 * * 1'
+  pull_request:
+    paths:
+      - 'scripts/build_rsync_2_6_9.sh'
+      - '.github/workflows/build-rsync-2-6-9.yml'
+
+concurrency:
+  group: build-rsync-2-6-9-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-rsync-2-6-9:
+    name: Build rsync 2.6.9 from source
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential autoconf
+
+      - name: Build rsync 2.6.9 via helper script
+        run: bash scripts/build_rsync_2_6_9.sh
+
+      - name: Verify version string
+        id: verify
+        run: |
+          set -euo pipefail
+          VERSION_LINE=$(/usr/local/bin/rsync-2.6.9 --version | head -1)
+          printf 'rsync-2.6.9 --version: %s\n' "$VERSION_LINE"
+          /usr/local/bin/rsync-2.6.9 --version | grep -q "version 2.6.9"
+          {
+            printf 'version_line<<EOF\n%s\nEOF\n' "$VERSION_LINE"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Smoke-run --help
+        run: /usr/local/bin/rsync-2.6.9 --help | head -5
+
+      - name: Emit step summary
+        run: |
+          {
+            echo "### rsync 2.6.9 build smoke"
+            echo ""
+            echo "- Binary: \`/usr/local/bin/rsync-2.6.9\`"
+            echo "- Helper: \`scripts/build_rsync_2_6_9.sh\`"
+            echo ""
+            echo "Captured version line:"
+            echo ""
+            echo '```'
+            echo "${{ steps.verify.outputs.version_line }}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
