@@ -1,0 +1,48 @@
+dest/
+|-- .rsync-filter
+|-- always-include.txt
+|-- anchored/
+|   |-- .rsync-filter
+|   |-- anchored-here.txt
+|   `-- subdir/
+|-- cvs/
+|   |-- .rsync-filter
+|   `-- source.txt
+|-- deep-nesting/
+|   |-- .rsync-filter
+|   `-- l1/
+|       |-- .rsync-filter
+|       `-- l2/
+|           |-- .rsync-filter
+|           `-- l3/
+|               |-- .rsync-filter
+|               `-- test.txt
+|-- docs/
+|   |-- .rsync-filter
+|   |-- api.md
+|   `-- images/
+|       |-- .rsync-filter
+|       `-- logo.png
+|-- e-modifier/
+|   `-- data.txt
+|-- n-modifier/
+|   |-- .rsync-filter
+|   |-- kept.txt
+|   `-- subdir/
+|       `-- ambient.txt
+|-- per-dir-scope/
+|   |-- .rsync-filter
+|   |-- file.txt
+|   `-- sibling/
+|       `-- file.txt
+|-- src/
+|   |-- .build-excludes
+|   |-- .rsync-filter
+|   `-- main.rs
+|-- symlinked-rsyncfilter/
+|   |-- .rsync-filter -> ../docs/.rsync-filter
+|   `-- test.txt
+`-- w-modifier/
+    |-- .rsync-filter
+    |-- .w-patterns
+    `-- file_with_spaces in name.txt

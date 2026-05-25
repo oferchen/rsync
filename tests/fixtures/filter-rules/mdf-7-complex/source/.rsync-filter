@@ -1,0 +1,12 @@
+# MDF-7 fixture: root-level .rsync-filter
+# Exercises: blank lines, comments, basic include/exclude prefix rules.
+# This file is loaded by every receiver that walks the source tree with
+# the canonical dir-merge /.rsync-filter invocation.
+
+# Blank lines and comments should be ignored.
+
+# Always exclude the canonical "always-exclude.txt" sanity file.
+- always-exclude.txt
+
+# Always include the canonical "always-include.txt" sanity file.
++ always-include.txt

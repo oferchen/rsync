@@ -1,0 +1,7 @@
+# MDF-7 fixture: docs/images/.rsync-filter
+# Exercises: nested dir-merge at depth 2 (parent docs/ already merged a
+# .rsync-filter). Tests filter-rules-status.md section 3.7 - nested
+# merge depth coverage.
+
+# Drop transient/temp images regardless of extension.
+- tmp.*
