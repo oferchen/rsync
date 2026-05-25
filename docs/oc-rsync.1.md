@@ -1340,6 +1340,51 @@ Refer to **SECURITY.md** in the source distribution for full CVE status,
 including the SEC-1 (CVE-2026-29518 / CVE-2026-43619) progress matrix and
 the SEC-1.p Landlock design note.
 
+# SSH TRANSPORT
+
+**oc-rsync** uses an embedded **russh** SSH client for SSH transport. The
+default code path does not spawn an external **ssh**(1) subprocess; the
+SSH state machine (transport, channel, auth context) lives inside the
+**oc-rsync** process for the full lifetime of the transfer.
+
+**Authentication**
+:   Key-based authentication is supported for RSA, ED25519, and ECDSA key
+    types. Password authentication is also supported. Private keys are
+    read from the conventional locations under **~/.ssh/id_\***, and
+    per-host settings (**HostName**, **User**, **Port**,
+    **IdentityFile**, **ProxyJump** and the SSC-3 / SSC-4 subset of
+    other directives) are read from **~/.ssh/config** via the embedded
+    **ssh2-config** parser.
+
+**Environment**
+:   The **SSH_AUTH_SOCK** environment variable is honored, so ssh-agent
+    forwarding works for authentication when an agent socket is
+    available. See also the **ENVIRONMENT** section above.
+
+**Compression**
+:   A **Compression yes** directive in **~/.ssh/config** is honored by
+    the embedded client (SSC-4 series). When the user also requests
+    rsync wire compression via **-z** / **--compress**, a one-time
+    startup warning is emitted so the operator can pick one layer and
+    avoid double-compressing the stream (SSC-1 series). See the
+    *Performance tuning* section of the README for the operator-facing
+    guidance and the exact warning substring.
+
+**Limitations**
+:   Some SSH features are not yet fully supported by the embedded
+    client. Notable cases include certificate-based authentication, the
+    SSH-2 **ControlMaster** multiplexing feature, and exotic key
+    exchange methods outside the OpenSSH defaults. The full limitation
+    surface and migration plan are tracked under the RUSSH series; see
+    in particular **docs/design/russh-async-native-path.md** for the
+    planned async-native transport and
+    **docs/design/russh-async-native-back-compat-shim.md** for the
+    back-compat shim. If you hit an unsupported SSH feature in
+    practice, please open an issue against the project repository.
+
+See also the **SSH transport (russh)** section of the README for the
+operator-facing summary and a worked example.
+
 # LINUX IO_URING SUPPORT
 
 **oc-rsync** uses io_uring opportunistically on Linux when the running
