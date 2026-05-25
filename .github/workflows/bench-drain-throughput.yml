@@ -1,0 +1,132 @@
+# DPC-8 - CI bench cell for drain throughput regression. Catches regressions in the drain_parallel hot path.
+#
+# The DPC series tracks the drain_parallel restructure (Arc<Mutex<Vec>>
+# -> per-worker channels). This cell exercises the existing
+# `drain_parallel_benchmark` criterion harness on every push that
+# touches `crates/engine/src/concurrent_delta/**`, nightly, and on
+# demand. Throughput is published as a bench artifact and a step
+# summary so reviewers can spot regressions without re-running the
+# bench locally.
+#
+# Template: mirrors .github/workflows/bench-daemon-coldstart.yml
+# (DIS-8.a, PR #4905) and .github/workflows/bench-daemon-concurrency.yml
+# (D10K-7, PR #4922). Same trigger style, criterion + artifact pattern,
+# and continue-on-error advisory posture.
+#
+# Status: non-required. Promotion to a required check is tracked
+# separately as DPC-8.b (not yet filed); do not gate PRs on this
+# workflow yet.
+name: Bench drain throughput
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Nightly at 05:47 UTC. Offset from cold-start (03:17) and daemon
+    # concurrency (04:37) so the three bench cells do not contend on a
+    # single runner pool slot.
+    - cron: '47 5 * * *'
+  pull_request:
+    paths:
+      - 'crates/engine/src/concurrent_delta/**'
+      - 'crates/engine/benches/drain_parallel_benchmark.rs'
+      - '.github/workflows/bench-drain-throughput.yml'
+
+concurrency:
+  group: bench-drain-throughput-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  bench-drain-throughput:
+    name: Drain throughput regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Non-required: DPC-8.b will promote this check after a bake-in
+    # period on master. Do not add to branch protection here.
+    continue-on-error: true
+
+    env:
+      # Soft cap for the bench step itself; the job-level timeout above
+      # is the hard ceiling for the entire workflow run.
+      BENCH_TIMEOUT_SECONDS: "300"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: "1.88.0"
+
+      - name: Cache cargo builds
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: bench-drain-throughput
+
+      - name: Build engine (release, parallel-receive-delta)
+        run: cargo build --release -p engine --features parallel-receive-delta
+
+      - name: Prepare results directory
+        id: prep
+        run: |
+          set -euo pipefail
+          WORK="${{ github.workspace }}/bench-drain-throughput"
+          mkdir -p "$WORK/results"
+          echo "WORK=$WORK" >> "$GITHUB_OUTPUT"
+
+      - name: Run drain_parallel criterion bench
+        env:
+          WORK: ${{ steps.prep.outputs.WORK }}
+        run: |
+          set -euo pipefail
+          OUT="$WORK/results/drain-parallel.bencher.txt"
+          : > "$OUT"
+
+          # criterion's bencher output is a single column of
+          # machine-readable lines that hyperfine-style tooling can
+          # parse downstream. --measurement-time 10s keeps each cell
+          # within the bench soft cap while giving criterion enough
+          # samples to stabilize.
+          timeout "${BENCH_TIMEOUT_SECONDS}" \
+            cargo bench \
+              -p engine \
+              --features parallel-receive-delta \
+              --bench drain_parallel_benchmark \
+              -- \
+              --output-format bencher \
+              --measurement-time 10 \
+              drain_parallel \
+            | tee "$OUT"
+
+      - name: Publish bench summary
+        env:
+          WORK: ${{ steps.prep.outputs.WORK }}
+        run: |
+          set -euo pipefail
+          OUT="$WORK/results/drain-parallel.bencher.txt"
+
+          {
+            echo "### Drain throughput bench (DPC-8)"
+            echo ""
+            echo '```'
+            # Bencher output is line-oriented; cap to keep the summary
+            # readable while preserving all data in the artifact.
+            head -n 200 "$OUT" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload bench results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bench-drain-throughput
+          retention-days: 30
+          path: |
+            ${{ steps.prep.outputs.WORK }}/results/drain-parallel.bencher.txt
