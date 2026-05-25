@@ -490,3 +490,155 @@ jobs:
           echo "PASS: SSH pull no-change sync"
 
           echo "All SSH interop tests passed."
+
+  # ===========================================================================
+  # PIP-9.b.6 - upstream interop matrix under --features parallel-receive-delta.
+  # Gates the bake window per docs/design/pip-9-f-1-bake-criterion.md.
+  # ---------------------------------------------------------------------------
+  # Re-runs the full multi-version upstream interop harness
+  # (`tools/ci/run_interop.sh`) against rsync 3.0.9, 3.1.3, 3.4.1, and 3.4.2
+  # with oc-rsync built `--features parallel-receive-delta`. Complements the
+  # narrower `parallel-receive-delta (dist profile, non-required)` cell in
+  # `ci.yml` (PIP-9.d), which only exercises the `parallel_threshold`
+  # scenario. This cell surfaces wire-protocol regressions that only repro
+  # against real upstream binaries across all supported protocol versions.
+  # Non-blocking (`continue-on-error: true`) until the PIP-9.f bake window
+  # closes; promote to required check once the bake criterion is met.
+  # ===========================================================================
+  interop-parallel-receive-delta:
+    name: interop with upstream rsync (--features parallel-receive-delta, non-required)
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    continue-on-error: true
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-D warnings"
+      RUST_BACKTRACE: "full"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (${{ inputs.rust_toolchain }})
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ inputs.rust_toolchain }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ inputs.cache_version }}-${{ hashFiles('**/Cargo.lock') }}
+          key: interop-parallel-receive-delta
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
+          version: ${{ inputs.cache_version }}
+
+      - name: Cache upstream rsync
+        id: cache-rsync
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-${{ inputs.upstream_rsync_version }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-${{ inputs.upstream_rsync_version }}-${{ runner.os }}-
+
+      - name: Build upstream rsync
+        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          echo "Building upstream rsync ${{ inputs.upstream_rsync_version }}..."
+          bash tools/ci/run_interop.sh build-only
+
+      - name: Set up SSH loopback
+        run: |
+          sudo systemctl start ssh
+          mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          ssh -o StrictHostKeyChecking=no localhost true
+
+      - name: Install upstream rsync to PATH
+        run: |
+          UPSTREAM="target/interop/upstream-src/rsync-3.4.1/rsync"
+          if [ -f "$UPSTREAM" ]; then
+            sudo cp "$UPSTREAM" /usr/local/bin/rsync
+          fi
+
+      # Build oc-rsync with --features parallel-receive-delta into the same
+      # `target/dist/oc-rsync` path the harness consumes via
+      # `ensure_workspace_binaries`. Mirrors the V61D-3 sender-inc-recurse
+      # rebuild pattern above.
+      - name: Build oc-rsync with parallel-receive-delta
+        run: |
+          set -euo pipefail
+          rm -f target/dist/oc-rsync
+          cargo build --profile dist --bin oc-rsync --features parallel-receive-delta
+          target/dist/oc-rsync --version 2>&1 | head -1
+
+      # Drive the full upstream interop matrix (rsync 3.0.9 / 3.1.3 / 3.4.1 /
+      # 3.4.2) against the parallel-receive-delta binary. Tee output so the
+      # follow-up summary step can derive per-version status from the
+      # captured log even when the cache restored a tempdir-free workspace.
+      - name: Run interop matrix (--features parallel-receive-delta)
+        id: interop_run
+        run: |
+          set -euo pipefail
+          mkdir -p target/interop/logs
+          LOG=target/interop/logs/parallel-receive-delta-interop.log
+          set +e
+          bash tools/ci/run_interop.sh 2>&1 | tee "$LOG"
+          rc=${PIPESTATUS[0]}
+          set -e
+          echo "harness_exit=$rc" >> "$GITHUB_OUTPUT"
+          exit "$rc"
+
+      # Emit a per-version pass/fail table to the job summary so the bake
+      # window can audit which upstream versions diverge under the parallel
+      # path. Always runs so the summary is populated even on harness
+      # failure.
+      - name: Emit per-version summary
+        if: always()
+        run: |
+          set -euo pipefail
+          LOG=target/interop/logs/parallel-receive-delta-interop.log
+          {
+            echo "## interop matrix (--features parallel-receive-delta)"
+            echo ""
+            echo "Harness exit: ${{ steps.interop_run.outputs.harness_exit }}"
+            echo ""
+            echo "| upstream rsync | status |"
+            echo "| --- | --- |"
+            for v in 3.0.9 3.1.3 3.4.1 3.4.2; do
+              if [[ ! -f "$LOG" ]]; then
+                printf '| %s | UNKNOWN (no log) |\n' "$v"
+                continue
+              fi
+              if grep -qE "Interop failures:.*\b${v}\b" "$LOG"; then
+                printf '| %s | FAIL |\n' "$v"
+              elif grep -qE "=== Comprehensive: upstream ${v} " "$LOG"; then
+                printf '| %s | PASS |\n' "$v"
+              else
+                printf '| %s | SKIPPED (binary missing) |\n' "$v"
+              fi
+            done
+            echo ""
+            echo "Log: \`target/interop/logs/parallel-receive-delta-interop.log\` (uploaded as artifact)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload interop log and wire captures
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: interop-parallel-receive-delta-logs
+          path: |
+            target/interop/logs/
+            target/interop/upstream-testsuite/
+          if-no-files-found: ignore
+          retention-days: 14
