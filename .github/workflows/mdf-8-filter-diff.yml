@@ -1,0 +1,62 @@
+# MDF-8 - filter-decision diff harness
+#
+# Builds oc-rsync, runs the diff harness in scripts/mdf_8_filter_diff_harness.sh
+# against upstream rsync and the MDF-7 complex fixture, and uploads the diff
+# log as an artifact. Advisory until the default-mode diff hits zero across
+# one release cycle (see docs/design/mdf-8-filter-diff-harness.md).
+
+name: MDF-8 Filter Diff
+
+on:
+  workflow_dispatch:
+    inputs:
+      strict:
+        description: 'Pass --strict to compare level-2+ FILTER traces (expected to fail today).'
+        required: false
+        default: 'false'
+
+concurrency:
+  group: mdf-8-filter-diff-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  diff:
+    name: filter-diff
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install upstream rsync
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rsync
+          /usr/bin/rsync --version | head -n 1
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build oc-rsync (release)
+        run: cargo build --release --bin oc-rsync
+
+      - name: Run MDF-8 diff harness
+        run: |
+          ARGS=()
+          if [[ "${{ inputs.strict }}" == "true" ]]; then
+              ARGS+=(--strict)
+          fi
+          bash scripts/mdf_8_filter_diff_harness.sh \
+              --upstream /usr/bin/rsync \
+              --oc-rsync target/release/oc-rsync \
+              "${ARGS[@]}"
+
+      - name: Upload diff artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mdf-8-filter-diff
+          path: /tmp/mdf-8-diff/
+          if-no-files-found: warn
