@@ -1249,6 +1249,26 @@ warnings go to the **tracing** target **ssh::stderr**.
 Both as a client connecting to upstream rsync servers and as a server
 accepting connections from upstream rsync clients.
 
+# SUPPORTED RSYNC PROTOCOL VERSIONS
+
+**oc-rsync** negotiates `protocol_version` per upstream rsync, defaults to 32,
+and supports back-negotiation to protocol 28 inclusive. The peer's advertised
+protocol determines the version used; the lower of the two is selected.
+
+| Protocol | Upstream version | Status in oc-rsync | Notes |
+|----------|------------------|---------------------|-------|
+| 32       | 3.4.x            | Full support        | Primary target; all features negotiated |
+| 31       | 3.2.x - 3.3.x    | Full support        | Verified via interop matrix |
+| 30       | 3.1.x            | Full support        | Verified via interop matrix |
+| 29       | 3.0.x            | Full support        | Verified via interop matrix |
+| 28       | 2.6.x            | Wire-level support  | Validated via wire-byte regression tests; full interop with rsync 2.6.9 tracked under the RP28 series |
+| <= 27    | <= 2.5.x         | Not supported       | Pre-dates protocol cleanup; not tested |
+
+Protocol back-negotiation gates appear in
+`crates/protocol/src/wire/compressed_token/zlib_codec.rs` and sibling codec
+and capability files. See the README "Supported rsync protocol versions"
+section for the same information rendered for browser readers.
+
 # SECURITY
 
 Protocol-handling code enforces **#![deny(unsafe_code)]** in Rust, eliminating
