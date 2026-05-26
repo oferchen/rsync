@@ -390,8 +390,8 @@ fn bench_readdir_stat(c: &mut Criterion) {
                                     .collect();
                                 let refs: Vec<&Path> =
                                     entries.iter().map(|p| p.as_path()).collect();
-                                let results = submit_statx_batch(&refs, true)
-                                    .expect("submit_statx_batch");
+                                let results =
+                                    submit_statx_batch(&refs, true).expect("submit_statx_batch");
                                 for r in &results {
                                     r.as_ref().expect("statx result");
                                     count += 1;
@@ -476,5 +476,10 @@ fn bench_parallel_stat(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(high_file_count, bench_stat, bench_readdir_stat, bench_parallel_stat);
+criterion_group!(
+    high_file_count,
+    bench_stat,
+    bench_readdir_stat,
+    bench_parallel_stat
+);
 criterion_main!(high_file_count);
