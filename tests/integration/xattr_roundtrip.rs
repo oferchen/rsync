@@ -82,7 +82,11 @@ impl fmt::Display for XattrEntry {
             f,
             "{}={}",
             self.name,
-            if self.value.iter().all(|b| b.is_ascii_graphic() || *b == b' ') {
+            if self
+                .value
+                .iter()
+                .all(|b| b.is_ascii_graphic() || *b == b' ')
+            {
                 String::from_utf8_lossy(&self.value).into_owned()
             } else {
                 hex_encode(&self.value)
