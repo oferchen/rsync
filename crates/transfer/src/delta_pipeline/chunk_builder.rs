@@ -101,6 +101,18 @@ pub enum ChunkBuilderError {
 /// outlive every chunk the builder produces, which matches the receiver
 /// pipeline's lifecycle (the basis signature is held until the file's
 /// final commit).
+///
+/// # File-boundary drain contract (PIP-9.b.4)
+///
+/// After the last chunk for a file has been submitted to the applier, the
+/// receiver must call [`ParallelDeltaApplier::finish_file`] before moving
+/// to the next file. `finish_file` bakes in a [`flush_workers`] barrier
+/// that waits for all in-flight chunks to drain, so callers never need to
+/// call `flush_workers` separately. This ensures that the per-file writer
+/// has received every byte in sequence before it is reclaimed for the
+/// temp-file commit, checksum verification, and metadata application.
+///
+/// [`flush_workers`]: engine::concurrent_delta::ParallelDeltaApplier::flush_workers
 #[derive(Debug)]
 pub struct ChunkBuilder<'a> {
     ndx: FileNdx,
