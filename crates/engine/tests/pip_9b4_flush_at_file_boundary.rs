@@ -91,7 +91,8 @@ fn expected_bytes_for(ndx: u32) -> Vec<u8> {
 /// `finish_file` at the boundary. Verifies byte-exact output per file.
 #[test]
 fn finish_file_drains_inflight_at_file_boundary() {
-    let applier = ParallelDeltaApplier::new(4);
+    let applier = ParallelDeltaApplier::new(4)
+        .with_per_file_reorder_capacity(CHUNKS_PER_FILE as usize);
 
     // Process files sequentially: for each file, register, dispatch all
     // chunks (potentially out-of-order to exercise reorder buffering),
@@ -152,7 +153,10 @@ fn finish_file_drains_inflight_at_file_boundary() {
 fn interleaved_multi_file_dispatch_with_boundary_drain() {
     use rayon::prelude::*;
 
-    let applier = Arc::new(ParallelDeltaApplier::new(8));
+    let applier = Arc::new(
+        ParallelDeltaApplier::new(8)
+            .with_per_file_reorder_capacity(CHUNKS_PER_FILE as usize),
+    );
     let mut sinks: Vec<Arc<Mutex<Vec<u8>>>> = Vec::with_capacity(NUM_FILES as usize);
 
     // Register all files up front.
