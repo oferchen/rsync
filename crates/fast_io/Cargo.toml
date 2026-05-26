@@ -304,3 +304,15 @@ required-features = ["iouring-data-writes", "iouring-data-reads"]
 name = "ius_3_send_zc_vs_send"
 harness = false
 required-features = ["io_uring"]
+
+# Linux-only bench: high-file-count io_uring statx batching measurement
+# (IUB-5). Compares IORING_OP_STATX batch submission against sequential
+# std::fs::metadata and syscall_batch at 100K and 1M file counts where
+# the hypothesis predicts io_uring statx batching pays off. Gated by
+# BENCH_HIGH_FILE_COUNT=1 (100K tier) and BENCH_HIGH_FILE_COUNT_1M=1
+# (1M tier). See the file's module doc for the run recipe and what the
+# numbers inform.
+[[bench]]
+name = "iouring_high_file_count"
+harness = false
+required-features = ["io_uring"]
