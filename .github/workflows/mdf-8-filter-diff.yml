@@ -29,7 +29,7 @@ jobs:
     timeout-minutes: 30
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install upstream rsync
         run: |
@@ -55,7 +55,7 @@ jobs:
 
       - name: Upload diff artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mdf-8-filter-diff
           path: /tmp/mdf-8-diff/
