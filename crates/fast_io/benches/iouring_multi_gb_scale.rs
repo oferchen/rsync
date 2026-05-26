@@ -96,7 +96,7 @@ use std::path::Path;
     feature = "iouring-data-writes",
     feature = "iouring-data-reads"
 ))]
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 #[cfg(all(
     target_os = "linux",
     feature = "iouring-data-writes",
@@ -358,39 +358,31 @@ fn bench_scale_write(c: &mut Criterion) {
     for &(size, label) in &sizes {
         group.throughput(Throughput::Bytes(size));
 
-        group.bench_with_input(
-            BenchmarkId::new("stdlib_write", label),
-            &size,
-            |b, &sz| {
-                b.iter_with_setup(
-                    || {
-                        let dir = make_scratch_dir();
-                        let path = dir.path().join("bench_file");
-                        (dir, path)
-                    },
-                    |(_dir, path)| {
-                        stdlib_write(&path, sz);
-                    },
-                );
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("stdlib_write", label), &size, |b, &sz| {
+            b.iter_with_setup(
+                || {
+                    let dir = make_scratch_dir();
+                    let path = dir.path().join("bench_file");
+                    (dir, path)
+                },
+                |(_dir, path)| {
+                    stdlib_write(&path, sz);
+                },
+            );
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("iouring_write", label),
-            &size,
-            |b, &sz| {
-                b.iter_with_setup(
-                    || {
-                        let dir = make_scratch_dir();
-                        let path = dir.path().join("bench_file");
-                        (dir, path)
-                    },
-                    |(_dir, path)| {
-                        iouring_write(&path, sz);
-                    },
-                );
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("iouring_write", label), &size, |b, &sz| {
+            b.iter_with_setup(
+                || {
+                    let dir = make_scratch_dir();
+                    let path = dir.path().join("bench_file");
+                    (dir, path)
+                },
+                |(_dir, path)| {
+                    iouring_write(&path, sz);
+                },
+            );
+        });
     }
 
     group.finish();
@@ -414,41 +406,33 @@ fn bench_scale_read(c: &mut Criterion) {
     for &(size, label) in &sizes {
         group.throughput(Throughput::Bytes(size));
 
-        group.bench_with_input(
-            BenchmarkId::new("stdlib_read", label),
-            &size,
-            |b, &sz| {
-                b.iter_with_setup(
-                    || {
-                        let dir = make_scratch_dir();
-                        let path = dir.path().join("bench_file");
-                        seed_file(&path, sz);
-                        (dir, path)
-                    },
-                    |(_dir, path)| {
-                        stdlib_read(&path, sz);
-                    },
-                );
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("stdlib_read", label), &size, |b, &sz| {
+            b.iter_with_setup(
+                || {
+                    let dir = make_scratch_dir();
+                    let path = dir.path().join("bench_file");
+                    seed_file(&path, sz);
+                    (dir, path)
+                },
+                |(_dir, path)| {
+                    stdlib_read(&path, sz);
+                },
+            );
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("iouring_read", label),
-            &size,
-            |b, &sz| {
-                b.iter_with_setup(
-                    || {
-                        let dir = make_scratch_dir();
-                        let path = dir.path().join("bench_file");
-                        seed_file(&path, sz);
-                        (dir, path)
-                    },
-                    |(_dir, path)| {
-                        iouring_read(&path, sz);
-                    },
-                );
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("iouring_read", label), &size, |b, &sz| {
+            b.iter_with_setup(
+                || {
+                    let dir = make_scratch_dir();
+                    let path = dir.path().join("bench_file");
+                    seed_file(&path, sz);
+                    (dir, path)
+                },
+                |(_dir, path)| {
+                    iouring_read(&path, sz);
+                },
+            );
+        });
     }
 
     group.finish();
