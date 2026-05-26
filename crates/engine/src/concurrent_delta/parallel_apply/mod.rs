@@ -659,7 +659,27 @@ impl ParallelDeltaApplier {
         strategy: &dyn ChecksumStrategy,
         chunk: DeltaChunk,
     ) -> Result<VerifiedChunk, ParallelApplyError> {
+        // ABW-5.a invariant 1: verify_chunk reads only owned chunk.data
+        // and immutable shared strategy - no Mutex, no &self, no side
+        // effects on shared state. Being a static method it structurally
+        // cannot access the per-file Mutex map. Assert the digest length
+        // from the strategy matches the algorithm's documented size as a
+        // witness that we consume the immutable strategy correctly.
+        debug_assert!(
+            strategy.digest_len() > 0,
+            "ABW-5.a invariant 1: verify_chunk requires a valid ChecksumStrategy \
+             with non-zero digest length; received digest_len=0"
+        );
         let digest = strategy.compute(&chunk.data);
+        debug_assert_eq!(
+            digest.as_bytes().len(),
+            strategy.digest_len(),
+            "ABW-5.a invariant 1: computed digest length ({}) does not match \
+             strategy.digest_len() ({}); verify_chunk must produce a digest \
+             consistent with the immutable shared strategy",
+            digest.as_bytes().len(),
+            strategy.digest_len(),
+        );
         if let Some(expected) = chunk.expected_strong.as_ref() {
             // `ChecksumDigest` carries both bytes and len; rely on its
             // `PartialEq` impl which compares the active byte ranges and
