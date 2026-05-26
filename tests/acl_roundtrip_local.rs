@@ -183,13 +183,12 @@ fn acl_roundtrip_multiple_named_entries_on_same_file() {
     // protocol preserves the full ida_entries list.
     let user = test_user();
 
-    let mut acl_entries = vec![AclEntry::user_rwx(user)];
-
-    // On Linux, we can add a group entry too.
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    {
-        acl_entries.push(AclEntry::group_rx(test_group()));
-    }
+    let acl_entries = {
+        let mut entries = vec![AclEntry::user_rwx(user)];
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        entries.push(AclEntry::group_rx(test_group()));
+        entries
+    };
 
     let entries = vec![FixtureFile::file(
         "multi_acl.txt",
