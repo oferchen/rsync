@@ -96,7 +96,7 @@ use std::path::Path;
     feature = "iouring-data-writes",
     feature = "iouring-data-reads"
 ))]
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 #[cfg(all(
     target_os = "linux",
     feature = "iouring-data-writes",
