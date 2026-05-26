@@ -1,4 +1,5 @@
-//! Hardening tests for ENOSPC, temp-dir vanish, and partial writes.
+//! Hardening tests for ENOSPC, temp-dir vanish, permission denied, and
+//! partial writes.
 
 use std::fs;
 use std::io::{self, Write};
@@ -232,6 +233,60 @@ fn dir_recreate_failure_surfaces_io_error() {
     // (NotADirectory on modern Linux, Other on older toolchains, sometimes
     // AlreadyExists on macOS); any io::Error meets the contract.
     let _ = err.kind();
+}
+
+#[cfg(unix)]
+#[test]
+fn permission_denied_on_spill_dir_surfaces_io_error() {
+    // EACCES: the spill directory exists but the process cannot create files
+    // inside it. The tempfile creation in open_backend must propagate the
+    // PermissionDenied error through write_record -> spill_item ->
+    // spill_excess -> insert as SpillError::Io, never panic.
+    use std::os::unix::fs::PermissionsExt;
+
+    // Root bypasses file permission checks, so this test is meaningless
+    // when running as uid 0. Skip gracefully.
+    if rustix::process::getuid().is_root() {
+        return;
+    }
+
+    let scratch = ::tempfile::tempdir().expect("create scratch root");
+    let spill_dir = scratch.path().join("spill");
+    let mut buf: SpillableReorderBuffer<u64> =
+        SpillableReorderBuffer::with_spill_dir(16, 8, &spill_dir).expect("setup spill directory");
+
+    // Revoke all permissions on the spill directory so tempfile_in fails
+    // with PermissionDenied on the next spill attempt.
+    fs::set_permissions(&spill_dir, fs::Permissions::from_mode(0o000))
+        .expect("chmod 000 spill dir");
+
+    // Drive enough inserts to trigger a spill. The spill opens a fresh
+    // tempfile inside the now-unwritable directory and must surface
+    // SpillError::Io(PermissionDenied) cleanly.
+    let mut surfaced: Option<SpillError> = None;
+    for i in 0u64..8 {
+        match buf.insert(i, i * 41) {
+            Ok(()) => continue,
+            Err(e) => {
+                surfaced = Some(e);
+                break;
+            }
+        }
+    }
+
+    // Restore permissions before assertions so cleanup succeeds.
+    let _ = fs::set_permissions(&spill_dir, fs::Permissions::from_mode(0o755));
+
+    let err = surfaced.expect("permission-denied spill dir must surface an error");
+    match err {
+        SpillError::Io(ref e) => assert_eq!(
+            e.kind(),
+            io::ErrorKind::PermissionDenied,
+            "expected PermissionDenied, got {:?}",
+            e.kind()
+        ),
+        other => panic!("expected SpillError::Io(PermissionDenied), got {other:?}"),
+    }
 }
 
 #[test]
