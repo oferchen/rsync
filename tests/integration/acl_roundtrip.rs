@@ -44,25 +44,13 @@ pub const ACL_GATE_ENV: &str = "OC_RSYNC_ACL_ROUNDTRIP";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AclEntry {
     /// Named user with read/write/execute permission bits (rwx = 7, r-x = 5, etc.).
-    User {
-        name: String,
-        perms: u8,
-    },
+    User { name: String, perms: u8 },
     /// Named group with permission bits.
-    Group {
-        name: String,
-        perms: u8,
-    },
+    Group { name: String, perms: u8 },
     /// Default (inheritable) ACL for a named user on a directory (Linux only).
-    DefaultUser {
-        name: String,
-        perms: u8,
-    },
+    DefaultUser { name: String, perms: u8 },
     /// Default (inheritable) ACL for a named group on a directory (Linux only).
-    DefaultGroup {
-        name: String,
-        perms: u8,
-    },
+    DefaultGroup { name: String, perms: u8 },
 }
 
 impl AclEntry {
@@ -289,20 +277,11 @@ impl AclTestFixture {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum AclComparison {
     /// ACL entry matches between source and destination.
-    Match {
-        path: PathBuf,
-        entry: String,
-    },
+    Match { path: PathBuf, entry: String },
     /// ACL entry present on source but missing on destination.
-    MissingOnDest {
-        path: PathBuf,
-        entry: String,
-    },
+    MissingOnDest { path: PathBuf, entry: String },
     /// ACL entry present on destination but not expected from source.
-    ExtraOnDest {
-        path: PathBuf,
-        entry: String,
-    },
+    ExtraOnDest { path: PathBuf, entry: String },
     /// ACL entry present on both but permissions differ.
     PermsMismatch {
         path: PathBuf,
@@ -449,7 +428,9 @@ pub fn verify_acl_roundtrip(
             } else {
                 // Check if it is a perms mismatch (same user/group, different perms).
                 let prefix = acl_line_prefix(line);
-                let dst_match = dst_acl_lines.iter().find(|dl| acl_line_prefix(dl) == prefix);
+                let dst_match = dst_acl_lines
+                    .iter()
+                    .find(|dl| acl_line_prefix(dl) == prefix);
                 if let Some(dst_line) = dst_match {
                     comparisons.push(AclComparison::PermsMismatch {
                         path: entry.rel_path.clone(),
@@ -586,10 +567,7 @@ fn stamp_acl(path: &Path, entry: &AclEntry) -> io::Result<()> {
     // Default ACLs do not exist on macOS; map them to file_inherit/directory_inherit.
     let (ace_str, _is_default) = match entry {
         AclEntry::User { name, perms } => (
-            format!(
-                "{name} allow {}",
-                macos_perms_str(*perms, path.is_dir())
-            ),
+            format!("{name} allow {}", macos_perms_str(*perms, path.is_dir())),
             false,
         ),
         AclEntry::Group { name, perms } => (
@@ -644,7 +622,8 @@ fn stamp_acl(path: &Path, entry: &AclEntry) -> io::Result<()> {
     let mut cmd = Command::new("icacls");
     cmd.arg(path);
     if inheritance {
-        cmd.arg("/grant").arg(format!("{principal}:(OI)(CI){perm_str}"));
+        cmd.arg("/grant")
+            .arg(format!("{principal}:(OI)(CI){perm_str}"));
     } else {
         cmd.arg("/grant").arg(format!("{principal}:{perm_str}"));
     }
@@ -661,7 +640,9 @@ fn stamp_acl(path: &Path, entry: &AclEntry) -> io::Result<()> {
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn stamp_acl(_path: &Path, _entry: &AclEntry) -> io::Result<()> {
-    Err(io::Error::other("ACL stamping not supported on this platform"))
+    Err(io::Error::other(
+        "ACL stamping not supported on this platform",
+    ))
 }
 
 /// Read ACL entries from a path and return normalized, sorted lines.
@@ -703,10 +684,7 @@ fn read_acl_normalized(path: &Path) -> io::Result<Vec<String>> {
 fn read_acl_normalized(path: &Path) -> io::Result<Vec<String>> {
     // `ls -led` shows extended ACLs.  Each ACE is on its own line,
     // numbered.  Format: ` N: <type>:<qualifier> <allow|deny> <perms>`
-    let output = Command::new("ls")
-        .arg("-led")
-        .arg(path)
-        .output()?;
+    let output = Command::new("ls").arg("-led").arg(path).output()?;
     if !output.status.success() {
         return Err(io::Error::other(format!(
             "ls -led on {} failed: {}",
@@ -735,9 +713,7 @@ fn read_acl_normalized(path: &Path) -> io::Result<Vec<String>> {
 
 #[cfg(target_os = "windows")]
 fn read_acl_normalized(path: &Path) -> io::Result<Vec<String>> {
-    let output = Command::new("icacls")
-        .arg(path)
-        .output()?;
+    let output = Command::new("icacls").arg(path).output()?;
     if !output.status.success() {
         return Err(io::Error::other(format!(
             "icacls on {} failed: {}",
@@ -767,7 +743,9 @@ fn read_acl_normalized(path: &Path) -> io::Result<Vec<String>> {
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn read_acl_normalized(_path: &Path) -> io::Result<Vec<String>> {
-    Err(io::Error::other("ACL reading not supported on this platform"))
+    Err(io::Error::other(
+        "ACL reading not supported on this platform",
+    ))
 }
 
 // ---------------------------------------------------------------------------

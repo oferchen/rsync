@@ -19,9 +19,7 @@
 
 mod integration;
 
-use integration::acl_roundtrip::{
-    AclEntry, AclTestFixture, FixtureFile, verify_acl_roundtrip,
-};
+use integration::acl_roundtrip::{AclEntry, AclTestFixture, FixtureFile, verify_acl_roundtrip};
 
 /// Determine a user name that exists on this system for ACL entries.
 ///
@@ -222,11 +220,7 @@ fn acl_roundtrip_deep_tree() {
         FixtureFile::dir("a", vec![AclEntry::user_rwx(user)]),
         FixtureFile::dir("a/b", vec![AclEntry::user_rx(user)]),
         FixtureFile::file("a/top.txt", b"top level", vec![AclEntry::user_r(user)]),
-        FixtureFile::file(
-            "a/b/deep.txt",
-            b"deep file",
-            vec![AclEntry::user_rwx(user)],
-        ),
+        FixtureFile::file("a/b/deep.txt", b"deep file", vec![AclEntry::user_rwx(user)]),
     ];
 
     let Some(fixture) = AclTestFixture::try_build(entries.clone()) else {
