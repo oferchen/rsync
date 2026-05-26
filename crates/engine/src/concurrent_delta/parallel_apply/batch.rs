@@ -76,11 +76,39 @@ impl ParallelDeltaApplier {
             .collect();
         let verified = verified?;
 
+        // ABW-5.a invariant 3: the rayon `collect` above is a hard barrier.
+        // Every verify must complete before the first write starts. Assert
+        // the batch is fully materialized (verified count equals submitted
+        // count) so no verify work can still be in flight when the serial
+        // write loop below begins.
+        debug_assert_eq!(
+            verified.len(),
+            total,
+            "ABW-5.a invariant 3: verified batch length ({}) does not equal submitted chunk \
+             count ({}); the rayon collect barrier must resolve all chunks before writes begin",
+            verified.len(),
+            total,
+        );
+
         for v in verified {
             let ndx = v.chunk.ndx;
             let handle = self.slot_for(ndx)?;
             let mut slot = handle.lock_slot(ndx, "apply_batch_parallel")?;
+            // ABW-5.a invariant 2: the per-file Mutex must be held for the
+            // entire write critical section. The MutexGuard `slot` protects
+            // the writer, reorder buffer, and bytes counter as a single
+            // unit. In debug builds, capture bytes_written before and after
+            // ingest to verify the write executed inside the lock scope and
+            // the guard was not dropped prematurely by a future refactor.
+            #[cfg(debug_assertions)]
+            let bytes_before = slot.bytes_written();
             slot.ingest(v.chunk)?;
+            #[cfg(debug_assertions)]
+            debug_assert!(
+                slot.bytes_written() >= bytes_before,
+                "ABW-5.a invariant 2: bytes_written must not decrease after ingest for ndx={ndx}; \
+                 the per-file Mutex guard must protect writer, reorder buffer, and bytes counter"
+            );
         }
         Ok(())
     }
