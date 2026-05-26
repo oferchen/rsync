@@ -13,8 +13,8 @@ in place as each task ships.
 
 ## 1. Overview
 
-oc-rsync runs on Windows via the GNU toolchain
-(`x86_64-pc-windows-gnu`) and uses I/O Completion Ports (IOCP) for
+oc-rsync runs on Windows via the MSVC toolchain
+(`x86_64-pc-windows-msvc`) and uses I/O Completion Ports (IOCP) for
 the I/O dispatch fast path. io_uring is Linux-only and has no
 Windows port; the IOCP path is the permanent Windows replacement and
 covers metadata calls today, with the data path going through the
@@ -118,32 +118,42 @@ Concrete Windows-specific gaps still open:
 
 ## 4. Build and packaging requirements
 
-The Windows builds shipped in the release pipeline use the GNU
+The Windows builds shipped in the release pipeline use the MSVC
 toolchain:
 
-- **Toolchain triple**: `x86_64-pc-windows-gnu`.
-- **C cross-compiler**: GCC 13 or later via the `x86_64-w64-mingw32`
-  toolchain, or the project `Cross.toml` consumed by `cargo-cross`.
-- **ABI bridge**: the `windows-gnu-eh` crate supplies the SEH /
-  Itanium-ABI exception-handling bridge required for the
-  `windows-rs` crate family.
+- **Toolchain triple**: `x86_64-pc-windows-msvc`.
+- **Exception handling**: SEH (Structured Exception Handling), the
+  native Windows mechanism. Panic unwinding across FFI boundaries
+  is safe. Since Rust 1.71, panics reaching `extern "system"` frames
+  abort rather than invoke undefined behavior.
+- **Runtime dependencies**: `vcruntime140.dll` and `ucrtbase.dll`,
+  both shipped with every supported Windows version since Windows 10.
+  No additional DLLs are required.
 - **Pre-built artifacts**: GitHub Releases ship a
-  `x86_64-pc-windows-gnu` `.zip` per tag containing `oc-rsync.exe`
+  `x86_64-pc-windows-msvc` `.zip` per tag containing `oc-rsync.exe`
   and the daemon configuration template.
+- **EH ABI status**: the `windows-gnu-eh` crate in the workspace is
+  a no-op on MSVC targets - it compiles to a single zero-cost
+  function that is optimized away entirely. It exists to support
+  cross-compilation from Linux to `x86_64-pc-windows-gnu` via
+  `cargo-zigbuild`. See `docs/audit/win-gd-gnu-eh-release-implications.md`
+  for the full analysis.
 
-Building from source on a Windows host is supported via the same
-GNU toolchain. The MSVC toolchain is not audited (see the next
-section). For the rationale behind picking GNU over MSVC, see
-`docs/audit/windows-gnu-vs-msvc-evaluation.md`.
+Building from source on a Windows host is supported via the default
+`rustup` MSVC toolchain. For the toolchain choice rationale, see
+`docs/audits/windows-gnu-vs-msvc.md`.
 
 ## 5. What is NOT supported
 
 Explicit non-goals to set operator expectations:
 
-- **`x86_64-pc-windows-msvc` builds**. The MSVC toolchain compiles
-  but is not exercised in CI and is not audited for ABI parity
-  with the GNU build. Use `x86_64-pc-windows-gnu`. See the GNU vs
-  MSVC evaluation referenced above.
+- **`x86_64-pc-windows-gnu` release builds**. The GNU toolchain is
+  compile-checked in CI (`cargo check` only, no runtime tests) but
+  is not shipped in release artifacts. Cross-compilation from Linux
+  to `x86_64-pc-windows-gnu` works via `cargo-zigbuild` with the
+  `windows-gnu-eh` shim crate, but the resulting binary is not
+  CI-tested at runtime. See the GNU vs MSVC evaluation at
+  `docs/audits/windows-gnu-vs-msvc.md`.
 - **WSL bridging**. Running `oc-rsync` inside WSL is treated as a
   Linux build (the binary is `x86_64-unknown-linux-gnu`, not a
   Windows binary). WSL filesystem quirks (DrvFs case sensitivity,
@@ -151,7 +161,7 @@ Explicit non-goals to set operator expectations:
   of this document.
 - **Cygwin compatibility mode**. Upstream rsync ships a Cygwin
   port; oc-rsync does not. Users running on Cygwin should run the
-  upstream Cygwin rsync, not the oc-rsync Windows GNU binary.
+  upstream Cygwin rsync, not the oc-rsync Windows binary.
 - **NTFS object IDs, USN journal entries, and EFS-encrypted file
   re-encryption**. None of these are part of the rsync protocol or
   the upstream feature set, and oc-rsync does not preserve them.
