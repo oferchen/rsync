@@ -43,6 +43,21 @@ impl ParallelDeltaApplier {
     /// batch, including any per-chunk strong-checksum mismatch surfaced by
     /// [`Self::verify_chunk`].
     pub fn apply_batch_parallel(&self, chunks: Vec<DeltaChunk>) -> std::io::Result<()> {
+        // SAFETY (verify-write overlap contract - ABW-5.c audit:
+        //   docs/audit/abw-5c-verify-write-mutex-scope.md)
+        //
+        // The parallel verify step and the serial write loop access disjoint
+        // state, so concurrent batches never race on shared data. Three
+        // invariants must hold for this to remain true:
+        //
+        //  1. verify_chunk is pure - it reads only owned chunk.data and the
+        //     immutable Arc<dyn ChecksumStrategy>. It must never read the
+        //     destination file or acquire the per-file Mutex.
+        //  2. The per-file Mutex<FileSlot> protects the writer, reorder
+        //     buffer, and bytes-written counter as a single atomic unit.
+        //     Splitting them into separate locks would open write races.
+        //  3. ReorderBuffer lives inside the Mutex and restores chunk_sequence
+        //     order regardless of Mutex acquisition order across threads.
         if chunks.is_empty() {
             return Ok(());
         }
