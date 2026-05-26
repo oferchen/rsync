@@ -116,9 +116,9 @@ fn finish_file_drains_inflight_at_file_boundary() {
 
         // File boundary: finish_file calls flush_workers internally,
         // waits for all in-flight chunks to drain, then returns the writer.
-        let _writer = applier.finish_file(ndx).unwrap_or_else(|e| {
-            panic!("finish_file(ndx={ndx}) failed at file boundary: {e}")
-        });
+        let _writer = applier
+            .finish_file(ndx)
+            .unwrap_or_else(|e| panic!("finish_file(ndx={ndx}) failed at file boundary: {e}"));
 
         // Verify byte-exact output for this file.
         let committed = buf.lock().expect("sink mutex").clone();
@@ -131,9 +131,13 @@ fn finish_file_drains_inflight_at_file_boundary() {
             expected.len(),
         );
         assert_eq!(
-            committed, expected,
+            committed,
+            expected,
             "file {ndx}: byte mismatch at offset {:?}",
-            committed.iter().zip(expected.iter()).position(|(a, b)| a != b),
+            committed
+                .iter()
+                .zip(expected.iter())
+                .position(|(a, b)| a != b),
         );
     }
 }
@@ -176,24 +180,22 @@ fn interleaved_multi_file_dispatch_with_boundary_drain() {
     shuffled.sort_by_key(|c| (c.chunk_sequence, c.ndx.get()));
 
     shuffled.par_iter().for_each(|chunk| {
-        applier
-            .apply_one_chunk(chunk.clone())
-            .unwrap_or_else(|e| {
-                panic!(
-                    "apply_one_chunk(ndx={}, seq={}) failed: {e}",
-                    chunk.ndx.get(),
-                    chunk.chunk_sequence
-                )
-            });
+        applier.apply_one_chunk(chunk.clone()).unwrap_or_else(|e| {
+            panic!(
+                "apply_one_chunk(ndx={}, seq={}) failed: {e}",
+                chunk.ndx.get(),
+                chunk.chunk_sequence
+            )
+        });
     });
 
     // Drain each file at its boundary. finish_file bakes flush_workers,
     // so all in-flight chunks for the file are guaranteed applied before
     // the writer is reclaimed.
     for ndx in 0..NUM_FILES {
-        let _writer = applier.finish_file(ndx).unwrap_or_else(|e| {
-            panic!("finish_file(ndx={ndx}) failed at file boundary: {e}")
-        });
+        let _writer = applier
+            .finish_file(ndx)
+            .unwrap_or_else(|e| panic!("finish_file(ndx={ndx}) failed at file boundary: {e}"));
 
         let committed = sinks[ndx as usize].lock().expect("sink mutex").clone();
         let expected = expected_bytes_for(ndx);
@@ -205,9 +207,13 @@ fn interleaved_multi_file_dispatch_with_boundary_drain() {
             expected.len(),
         );
         assert_eq!(
-            committed, expected,
+            committed,
+            expected,
             "file {ndx}: byte mismatch at offset {:?}",
-            committed.iter().zip(expected.iter()).position(|(a, b)| a != b),
+            committed
+                .iter()
+                .zip(expected.iter())
+                .position(|(a, b)| a != b),
         );
     }
 }
