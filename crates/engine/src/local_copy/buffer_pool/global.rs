@@ -64,6 +64,16 @@ pub struct GlobalBufferPoolConfig {
 /// constrained environments or for benchmarking.
 const ENV_BUFFER_POOL_SIZE: &str = "OC_RSYNC_BUFFER_POOL_SIZE";
 
+/// Parses an optional env-var value into a positive buffer count.
+///
+/// Returns `Some(n)` when the value is a valid integer greater than zero.
+/// Returns `None` for missing, non-numeric, zero, or negative values.
+fn parse_pool_size_override(env_val: Option<String>) -> Option<usize> {
+    env_val
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+}
+
 impl Default for GlobalBufferPoolConfig {
     /// Defaults to one buffer per hardware thread at the standard copy buffer size.
     ///
@@ -74,10 +84,7 @@ impl Default for GlobalBufferPoolConfig {
         let auto_detected = std::thread::available_parallelism()
             .map(std::num::NonZero::get)
             .unwrap_or(4);
-        let max_buffers = std::env::var(ENV_BUFFER_POOL_SIZE)
-            .ok()
-            .and_then(|v| v.parse::<usize>().ok())
-            .filter(|&n| n > 0)
+        let max_buffers = parse_pool_size_override(std::env::var(ENV_BUFFER_POOL_SIZE).ok())
             .unwrap_or(auto_detected);
         Self {
             max_buffers,
@@ -227,94 +234,38 @@ mod tests {
         assert!(pool.available() >= initial_available);
     }
 
-    /// RAII guard that sets an env var and restores it on drop.
-    struct EnvGuard {
-        key: String,
-        original: Option<String>,
-    }
-
-    impl EnvGuard {
-        #[allow(unsafe_code)]
-        fn set(key: &str, value: &str) -> Self {
-            let original = std::env::var(key).ok();
-            // SAFETY: tests using EnvGuard are serialized via nextest
-            // test-group (max-threads = 1) to prevent concurrent env mutation.
-            unsafe { std::env::set_var(key, value) };
-            Self {
-                key: key.to_string(),
-                original,
-            }
-        }
-
-        #[allow(unsafe_code)]
-        fn remove(key: &str) -> Self {
-            let original = std::env::var(key).ok();
-            // SAFETY: see set() above.
-            unsafe { std::env::remove_var(key) };
-            Self {
-                key: key.to_string(),
-                original,
-            }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        #[allow(unsafe_code)]
-        fn drop(&mut self) {
-            // SAFETY: see EnvGuard::set() above.
-            match &self.original {
-                Some(val) => unsafe { std::env::set_var(&self.key, val) },
-                None => unsafe { std::env::remove_var(&self.key) },
-            }
-        }
+    #[test]
+    fn parse_override_valid_positive() {
+        assert_eq!(
+            super::parse_pool_size_override(Some("42".to_string())),
+            Some(42)
+        );
     }
 
     #[test]
-    fn env_var_overrides_pool_size() {
-        let _guard = EnvGuard::set(super::ENV_BUFFER_POOL_SIZE, "42");
-        let config = GlobalBufferPoolConfig::default();
-        assert_eq!(config.max_buffers, 42);
+    fn parse_override_zero_ignored() {
+        assert_eq!(super::parse_pool_size_override(Some("0".to_string())), None);
     }
 
     #[test]
-    fn env_var_zero_ignored() {
-        let _guard = EnvGuard::set(super::ENV_BUFFER_POOL_SIZE, "0");
-        let config = GlobalBufferPoolConfig::default();
-        // Zero is invalid, should fall back to auto-detected.
-        let expected = std::thread::available_parallelism()
-            .map(std::num::NonZero::get)
-            .unwrap_or(4);
-        assert_eq!(config.max_buffers, expected);
+    fn parse_override_non_numeric_ignored() {
+        assert_eq!(
+            super::parse_pool_size_override(Some("not_a_number".to_string())),
+            None
+        );
     }
 
     #[test]
-    fn env_var_non_numeric_ignored() {
-        let _guard = EnvGuard::set(super::ENV_BUFFER_POOL_SIZE, "not_a_number");
-        let config = GlobalBufferPoolConfig::default();
-        let expected = std::thread::available_parallelism()
-            .map(std::num::NonZero::get)
-            .unwrap_or(4);
-        assert_eq!(config.max_buffers, expected);
+    fn parse_override_negative_ignored() {
+        assert_eq!(
+            super::parse_pool_size_override(Some("-5".to_string())),
+            None
+        );
     }
 
     #[test]
-    fn env_var_negative_ignored() {
-        let _guard = EnvGuard::set(super::ENV_BUFFER_POOL_SIZE, "-5");
-        let config = GlobalBufferPoolConfig::default();
-        let expected = std::thread::available_parallelism()
-            .map(std::num::NonZero::get)
-            .unwrap_or(4);
-        assert_eq!(config.max_buffers, expected);
-    }
-
-    #[test]
-    fn env_var_unset_uses_auto() {
-        let _guard = EnvGuard::remove(super::ENV_BUFFER_POOL_SIZE);
-        let config = GlobalBufferPoolConfig::default();
-        let expected = std::thread::available_parallelism()
-            .map(std::num::NonZero::get)
-            .unwrap_or(4);
-        assert_eq!(config.max_buffers, expected);
+    fn parse_override_none_returns_none() {
+        assert_eq!(super::parse_pool_size_override(None), None);
     }
 
     #[test]
