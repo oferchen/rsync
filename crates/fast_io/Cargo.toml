@@ -280,6 +280,16 @@ name = "nvme_data_path_production"
 harness = false
 required-features = ["iouring-data-writes", "iouring-data-reads"]
 
+# Linux-only bench: multi-GB single-file io_uring scale measurement (IUB-4).
+# Measures streaming write and read throughput at 2 GiB, 10 GiB, and 50 GiB
+# to determine whether io_uring pays off at production file sizes. Gated by
+# BENCH_LARGE=1 (for 2/10 GiB) and BENCH_LARGE_50G=1 (for the 50 GiB tier).
+# See the file's module doc for the run recipe and what the numbers inform.
+[[bench]]
+name = "iouring_multi_gb_scale"
+harness = false
+required-features = ["iouring-data-writes", "iouring-data-reads"]
+
 # Linux-only bench: IORING_OP_SEND_ZC vs plain IORING_OP_SEND on a loopback
 # TCP pair across four workload shapes (16 KiB x 10000, 256 KiB x 1000,
 # 1 MiB x 100, mixed 4 KiB-1 MiB x 1000). The send_plain group needs only
