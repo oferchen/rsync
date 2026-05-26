@@ -63,44 +63,14 @@ impl ParallelDeltaApplier {
             .files
             .remove(&ndx)
             .ok_or_else(|| std::io::Error::other(format!("parallel applier file {ndx} unknown")))?;
-        // DG-3.b retargets the spin/unwrap from the (now-removed) single
-        // `Arc<SlotBarrier>` to the entry's payload Arc. Drop the
-        // bookkeeping Arc first so any leftover `DecrementGuard` clones
-        // are the only `BarrierState` strong references left; the
-        // payload Arc's strong-count trajectory is now what
-        // `try_unwrap` reasons about.
+        // Drop the BarrierState Arc before try_unwrap so DecrementGuard
+        // clones are the only remaining strong references. After the
+        // DG-3 split (BarrierState/SlotData), struct field drop order
+        // guarantees SlotHandle's barrier drops before its _decrement
+        // guard fires the Condvar notify - so by the time flush_workers
+        // returns, no worker holds a SlotData clone.
         let SlotEntry { data, barrier } = entry;
         drop(barrier);
-        // Post-barrier release-race window: `flush_workers` waits for
-        // `inflight==0` via the Condvar, which fires from
-        // `DecrementGuard::drop` *before* the guard's own adapter Arc
-        // has been released (the notify happens inside the drop body;
-        // the inner Arcs only drop after the body returns). The window
-        // is typically nanoseconds but is reliably observable on Windows
-        // under load. Spin-then-yield until the worker's drop completes;
-        // the worker is past the notify and its drop fn is just about
-        // to return so the wait is bounded. DG-3.c will retire the
-        // adapter and let DG-4 delete the spin entirely.
-        let mut spin = 0u32;
-        while Arc::strong_count(&data) > 1 {
-            spin = spin.saturating_add(1);
-            if spin >= 1_000 {
-                // Past the typical drop window - surface the typed error
-                // so a real bug (e.g. caller raced a new `slot_for`
-                // against `finish_file`) does not hide forever.
-                return Err(ParallelApplyError::ApplierStillReferenced {
-                    ndx,
-                    strong_count: Arc::strong_count(&data),
-                    kind: "finish_file",
-                }
-                .into());
-            }
-            if spin < 32 {
-                std::hint::spin_loop();
-            } else {
-                std::thread::yield_now();
-            }
-        }
         let slot_data = Arc::try_unwrap(data).map_err(|still_shared| {
             ParallelApplyError::ApplierStillReferenced {
                 ndx,
