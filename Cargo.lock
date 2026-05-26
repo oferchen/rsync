@@ -304,6 +304,7 @@ dependencies = [
  "tempfile",
  "transfer",
  "windows-gnu-eh",
+ "xattr",
 ]
 
 [[package]]
