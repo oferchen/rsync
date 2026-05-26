@@ -76,11 +76,12 @@ fn build_buffer_from_policy(
             .expect("per-knob tests always opt the spill layer in"),
     )
     .unwrap_or(usize::MAX);
-    match policy.dir.clone() {
+    let buf = match policy.dir.clone() {
         Some(dir) => SpillableReorderBuffer::with_spill_dir(capacity, threshold, dir)
             .expect("spill directory must be creatable in tests"),
         None => SpillableReorderBuffer::new(capacity, threshold),
-    }
+    };
+    buf.with_in_memory_only(policy.in_memory_only)
 }
 
 fn drain_all(buf: &mut SpillableReorderBuffer<SizedItem>) -> Result<Vec<SizedItem>, SpillError> {
@@ -266,4 +267,58 @@ fn dir_override_default_none_keeps_buffer_without_a_dir() {
         buf.spill_dir().is_none(),
         "spooled backend never grows a directory"
     );
+}
+
+// ---- in_memory_only (SRO-3, wired) ----
+
+#[test]
+fn in_memory_only_returns_spill_disabled_via_policy() {
+    // When the policy sets `in_memory_only: true`, exceeding the threshold
+    // must yield `SpillError::SpillDisabled` instead of attempting disk I/O.
+    let policy = SpillPolicy {
+        threshold_bytes: Some(24),
+        in_memory_only: true,
+        ..Default::default()
+    };
+    let mut buf = build_buffer_from_policy(64, &policy);
+    assert!(buf.in_memory_only());
+
+    for i in 0..3u64 {
+        buf.insert(i, SizedItem::new(i, 8)).unwrap();
+    }
+    assert_eq!(buf.spill_stats().spill_events, 0);
+
+    let err = buf
+        .insert(3, SizedItem::new(3, 8))
+        .expect_err("should fail with SpillDisabled");
+    assert!(
+        matches!(err, SpillError::SpillDisabled),
+        "expected SpillDisabled, got: {err:?}"
+    );
+}
+
+#[test]
+fn in_memory_only_false_allows_normal_spill_via_policy() {
+    // Confirm the default `in_memory_only: false` path still spills normally.
+    let policy = SpillPolicy {
+        threshold_bytes: Some(24),
+        in_memory_only: false,
+        ..Default::default()
+    };
+    let mut buf = build_buffer_from_policy(64, &policy);
+    assert!(!buf.in_memory_only());
+
+    for i in (0..8u64).rev() {
+        buf.insert(i, SizedItem::new(i, 8)).unwrap();
+    }
+
+    let stats = buf.spill_stats();
+    assert!(
+        stats.spill_events > 0,
+        "default policy must allow disk spill"
+    );
+
+    let items = drain_all(&mut buf).unwrap();
+    let values: Vec<u64> = items.iter().map(|i| i.value).collect();
+    assert_eq!(values, (0..8u64).collect::<Vec<_>>());
 }

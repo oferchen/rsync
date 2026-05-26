@@ -52,6 +52,13 @@ pub enum SpillError {
         /// no longer be reloaded.
         count: usize,
     },
+    /// Spill-to-disk was requested but the policy forbids disk I/O.
+    ///
+    /// Returned when [`SpillPolicy::in_memory_only`](super::policy::SpillPolicy::in_memory_only)
+    /// is `true` and the reorder buffer exceeds its capacity threshold.
+    /// Callers should either increase the threshold, reduce concurrency,
+    /// or switch to a policy that permits disk spill.
+    SpillDisabled,
 }
 
 impl SpillError {
@@ -62,7 +69,8 @@ impl SpillError {
             SpillError::Io(e) => Some(e),
             SpillError::Capacity(_)
             | SpillError::UnsupportedCompression(_)
-            | SpillError::PriorSpillsLost { .. } => None,
+            | SpillError::PriorSpillsLost { .. }
+            | SpillError::SpillDisabled => None,
         }
     }
 
@@ -88,6 +96,10 @@ impl std::fmt::Display for SpillError {
                 "prior spill directory {} vanished; {count} chunk(s) cannot be recovered",
                 dir.display()
             ),
+            SpillError::SpillDisabled => write!(
+                f,
+                "reorder buffer exceeded capacity but spill-to-disk is disabled (in-memory-only policy)"
+            ),
         }
     }
 }
@@ -97,7 +109,8 @@ impl std::error::Error for SpillError {
         match self {
             SpillError::Capacity(_)
             | SpillError::UnsupportedCompression(_)
-            | SpillError::PriorSpillsLost { .. } => None,
+            | SpillError::PriorSpillsLost { .. }
+            | SpillError::SpillDisabled => None,
             SpillError::Io(e) => Some(e),
         }
     }
