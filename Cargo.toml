@@ -151,6 +151,7 @@ core = { path = "crates/core" }
 filetime = { workspace = true }
 libc = { workspace = true }
 tempfile = { workspace = true }
+xattr = { workspace = true }
 checksums = { path = "crates/checksums" }
 protocol = { path = "crates/protocol" }
 
