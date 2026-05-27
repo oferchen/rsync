@@ -11,6 +11,40 @@ use super::super::{SpillCodec, SpillCompression, SpillError, SpillGranularity, r
 use super::SPILL_TAG_ZSTD;
 use super::{HOT_ZONE, SPILL_TAG_RAW, SpillableReorderBuffer};
 
+/// Emits a one-shot `tracing::warn!` the first time the reorder buffer
+/// spills to disk. Subsequent calls with `already_warned = true` are no-ops.
+#[cfg(feature = "tracing")]
+fn emit_spill_warning(
+    spill_dir: Option<&std::path::Path>,
+    threshold: usize,
+    already_warned: bool,
+) -> bool {
+    if already_warned {
+        return true;
+    }
+    let dir_display = spill_dir
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|| "<system tempdir>".to_string());
+    tracing::warn!(
+        spill_dir = %dir_display,
+        threshold_bytes = threshold,
+        "reorder buffer exceeded memory threshold - spilling to disk; \
+         use --spill-dir to control the spill location or \
+         OC_RSYNC_SPILL_DIR / OC_RSYNC_SPILL_THRESHOLD_BYTES to tune via environment"
+    );
+    true
+}
+
+/// No-op stub when the `tracing` feature is disabled.
+#[cfg(not(feature = "tracing"))]
+fn emit_spill_warning(
+    _spill_dir: Option<&std::path::Path>,
+    _threshold: usize,
+    _already_warned: bool,
+) -> bool {
+    true
+}
+
 impl<T: SpillCodec> SpillableReorderBuffer<T> {
     /// Spills the highest-sequence items to disk until memory usage drops
     /// below the threshold.
@@ -58,10 +92,19 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
         // demand is met automatically; the per-item path needs the explicit
         // flag.
         let rss_forced = self.should_force_spill_for_rss();
-        match self.granularity {
+        let prev_spill_count = self.spill_count;
+        let result = match self.granularity {
             SpillGranularity::PerItem => self.spill_candidates_per_item(&candidates, rss_forced),
             SpillGranularity::WholeBatch => self.spill_candidates_whole_batch(&candidates),
+        };
+        // Emit the one-shot warning after a successful spill that actually
+        // wrote at least one record. Checking spill_count > prev_spill_count
+        // avoids false positives when all candidates were in the hot zone.
+        if result.is_ok() && self.spill_count > prev_spill_count {
+            self.spill_warned =
+                emit_spill_warning(self.spill_dir.as_deref(), self.threshold, self.spill_warned);
         }
+        result
     }
 
     /// Per-item spill: each candidate becomes its own length-prefixed record.

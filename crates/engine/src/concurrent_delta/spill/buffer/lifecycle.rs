@@ -44,6 +44,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             reclaim: SpillReclaim::default(),
             memory_pressure_bytes: None,
             in_memory_only: false,
+            spill_warned: false,
         }
     }
 
@@ -85,6 +86,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             reclaim: SpillReclaim::default(),
             memory_pressure_bytes: None,
             in_memory_only: false,
+            spill_warned: false,
         })
     }
 
@@ -280,5 +282,15 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
         drop(f);
         fs::remove_file(&probe_path)?;
         Ok(())
+    }
+
+    /// Returns `true` if the one-shot spill-activation warning has fired.
+    ///
+    /// The warning fires exactly once per buffer lifetime - on the first
+    /// successful spill-to-disk event. Tests can inspect this flag to verify
+    /// warning behaviour without capturing log output.
+    #[must_use]
+    pub fn spill_warned(&self) -> bool {
+        self.spill_warned
     }
 }

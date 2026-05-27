@@ -139,6 +139,10 @@ pub struct SpillableReorderBuffer<T: SpillCodec> {
     /// and instead returns [`SpillError::SpillDisabled`](super::SpillError::SpillDisabled).
     /// Wired from [`SpillPolicy::in_memory_only`](super::policy::SpillPolicy::in_memory_only).
     in_memory_only: bool,
+    /// One-shot flag that ensures the spill-activation warning fires at most
+    /// once per transfer. Set to `true` after the first successful spill
+    /// event emits a `tracing::warn!`.
+    spill_warned: bool,
 }
 
 impl<T: SpillCodec> std::fmt::Debug for SpillableReorderBuffer<T> {
@@ -156,6 +160,7 @@ impl<T: SpillCodec> std::fmt::Debug for SpillableReorderBuffer<T> {
             .field("compression", &self.compression)
             .field("reclaim", &self.reclaim)
             .field("in_memory_only", &self.in_memory_only)
+            .field("spill_warned", &self.spill_warned)
             .finish()
     }
 }
