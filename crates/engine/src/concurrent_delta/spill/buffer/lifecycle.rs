@@ -43,6 +43,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             compression: SpillCompression::None,
             reclaim: SpillReclaim::default(),
             memory_pressure_bytes: None,
+            in_memory_only: false,
         }
     }
 
@@ -83,6 +84,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             compression: SpillCompression::None,
             reclaim: SpillReclaim::default(),
             memory_pressure_bytes: None,
+            in_memory_only: false,
         })
     }
 
@@ -170,6 +172,21 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     #[must_use]
     pub fn memory_pressure_bytes(&self) -> Option<u64> {
         self.memory_pressure_bytes
+    }
+
+    /// Enables in-memory-only mode: the buffer returns
+    /// [`SpillError::SpillDisabled`](super::super::SpillError::SpillDisabled)
+    /// when the threshold is exceeded instead of writing to disk.
+    #[must_use]
+    pub fn with_in_memory_only(mut self, enabled: bool) -> Self {
+        self.in_memory_only = enabled;
+        self
+    }
+
+    /// Returns `true` if in-memory-only mode is active (disk spill forbidden).
+    #[must_use]
+    pub fn in_memory_only(&self) -> bool {
+        self.in_memory_only
     }
 
     /// Returns the next sequence number expected for in-order delivery.

@@ -148,6 +148,16 @@ pub struct SpillPolicy {
     /// Platforms without a supported RSS source (currently Windows) treat
     /// this knob as a no-op: the byte budget retains full control.
     pub memory_pressure_bytes: Option<u64>,
+    /// When `true`, the buffer never attempts disk I/O for spill operations.
+    ///
+    /// Instead of writing excess items to a temporary file, the buffer
+    /// returns [`SpillError::SpillDisabled`](super::SpillError::SpillDisabled)
+    /// when the memory threshold is exceeded. Use this on read-only
+    /// filesystems, in containers without writable tmpfs, or when the
+    /// caller prefers a clean error over silent disk I/O.
+    ///
+    /// Default is `false` (disk spill is permitted when a threshold is set).
+    pub in_memory_only: bool,
 }
 
 impl SpillPolicy {
@@ -213,6 +223,15 @@ impl SpillPolicy {
         self
     }
 
+    /// Enables in-memory-only mode: the buffer returns
+    /// [`SpillError::SpillDisabled`](super::SpillError::SpillDisabled) when
+    /// the threshold is exceeded instead of writing to disk.
+    #[must_use]
+    pub fn with_in_memory_only(mut self) -> Self {
+        self.in_memory_only = true;
+        self
+    }
+
     /// Returns `true` when the spill layer is configured to engage.
     #[must_use]
     pub const fn is_enabled(&self) -> bool {
@@ -265,6 +284,7 @@ mod tests {
         assert_eq!(policy.compression, SpillCompression::None);
         assert_eq!(policy.reclaim, SpillReclaim::KeepInMemory);
         assert!(policy.memory_pressure_bytes.is_none());
+        assert!(!policy.in_memory_only);
     }
 
     #[test]
@@ -278,6 +298,18 @@ mod tests {
     #[test]
     fn off_matches_default() {
         assert_eq!(SpillPolicy::off(), SpillPolicy::default());
+    }
+
+    #[test]
+    fn with_in_memory_only_sets_flag() {
+        let policy = SpillPolicy::with_threshold(4096).with_in_memory_only();
+        assert!(policy.in_memory_only);
+        assert!(policy.is_enabled());
+    }
+
+    #[test]
+    fn in_memory_only_default_is_false() {
+        assert!(!SpillPolicy::with_threshold(1024).in_memory_only);
     }
 
     #[test]

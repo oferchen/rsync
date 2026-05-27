@@ -39,6 +39,7 @@ pub(super) enum ReorderMode {
         dir: Option<PathBuf>,
         granularity: spill::SpillGranularity,
         memory_pressure_bytes: Option<u64>,
+        in_memory_only: bool,
     },
 }
 
@@ -56,6 +57,7 @@ impl ReorderMode {
                 dir: cfg.spill_policy.dir,
                 granularity: cfg.spill_policy.granularity,
                 memory_pressure_bytes: cfg.spill_policy.memory_pressure_bytes,
+                in_memory_only: cfg.spill_policy.in_memory_only,
             },
             None => ReorderMode::Bare {
                 capacity: reorder_capacity,
@@ -170,9 +172,16 @@ impl ReorderBackend {
                 dir,
                 granularity,
                 memory_pressure_bytes,
+                in_memory_only,
             } => {
-                match build_spillable(capacity, threshold, dir, granularity, memory_pressure_bytes)
-                {
+                match build_spillable(
+                    capacity,
+                    threshold,
+                    dir,
+                    granularity,
+                    memory_pressure_bytes,
+                    in_memory_only,
+                ) {
                     Ok(buf) => Self::Spillable(Box::new(buf)),
                     Err(e) => Self::Failed(e),
                 }
@@ -198,6 +207,7 @@ fn build_spillable(
     dir: Option<PathBuf>,
     granularity: spill::SpillGranularity,
     memory_pressure_bytes: Option<u64>,
+    in_memory_only: bool,
 ) -> std::io::Result<SpillableReorderBuffer<DeltaResult>> {
     let buf = match dir {
         Some(d) => SpillableReorderBuffer::with_spill_dir(capacity, threshold, d)?,
@@ -205,5 +215,6 @@ fn build_spillable(
     };
     Ok(buf
         .with_granularity(granularity)
-        .with_memory_pressure_bytes(memory_pressure_bytes))
+        .with_memory_pressure_bytes(memory_pressure_bytes)
+        .with_in_memory_only(in_memory_only))
 }

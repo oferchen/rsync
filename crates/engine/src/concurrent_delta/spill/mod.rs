@@ -200,5 +200,15 @@ mod tests {
         assert!(std::error::Error::source(&lost).is_none());
         assert!(lost.io_error().is_none());
         assert!(!lost.is_out_of_space());
+
+        let disabled = SpillError::SpillDisabled;
+        let rendered = format!("{disabled}");
+        assert!(
+            rendered.contains("in-memory-only"),
+            "display should mention in-memory-only policy: {rendered}"
+        );
+        assert!(std::error::Error::source(&disabled).is_none());
+        assert!(disabled.io_error().is_none());
+        assert!(!disabled.is_out_of_space());
     }
 }

@@ -24,6 +24,10 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     /// call, at least one item is spilled regardless of the byte budget so
     /// pressure is actively relieved instead of merely surveyed.
     pub(super) fn spill_excess(&mut self) -> Result<(), SpillError> {
+        if self.in_memory_only {
+            return Err(SpillError::SpillDisabled);
+        }
+
         let next = self.inner.next_expected();
         let count = self.inner.buffered_count();
         if count == 0 {
