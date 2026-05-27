@@ -16,6 +16,7 @@ mod enospc_degradation;
 mod fault;
 mod granularity;
 mod hardening;
+mod in_memory_only;
 mod memory_pressure;
 mod reclaim;
 
