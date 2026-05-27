@@ -80,11 +80,7 @@ fn apply_no_spill(policy: &mut SpillPolicy) {
     match val.trim().to_ascii_lowercase().as_str() {
         "1" | "true" | "yes" => policy.in_memory_only = true,
         "" => {} // empty string = unset
-        other => warn_invalid(
-            ENV_NO_SPILL,
-            other,
-            "expected '1', 'true', or 'yes'",
-        ),
+        other => warn_invalid(ENV_NO_SPILL, other, "expected '1', 'true', or 'yes'"),
     }
 }
 
