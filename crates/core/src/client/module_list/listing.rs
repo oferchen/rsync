@@ -203,7 +203,7 @@ pub fn run_module_list_with_password_and_options(
     if let Some(tls_cfg) = options.tls_config() {
         let connector = super::connect::tls::TlsConnector::new(tls_cfg).map_err(|e| {
             daemon_error(
-                &format!("failed to initialize TLS for module listing: {e}"),
+                format!("failed to initialize TLS for module listing: {e}"),
                 23,
             )
         })?;
