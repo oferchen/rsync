@@ -236,9 +236,7 @@ impl ModuleListOptions {
     /// before negotiating with the daemon. Returns `None` until the
     /// `--ssl` CLI flag is wired through (TLS-10).
     #[cfg(feature = "client-tls")]
-    pub(crate) fn tls_config(
-        &self,
-    ) -> Option<&super::connect::tls::TlsClientConfig> {
+    pub(crate) fn tls_config(&self) -> Option<&super::connect::tls::TlsClientConfig> {
         None // wired when --ssl CLI flag is added for client mode
     }
 }

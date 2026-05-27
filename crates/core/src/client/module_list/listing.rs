@@ -29,9 +29,9 @@ use super::auth::{
     DaemonAuthContext, SensitiveBytes, is_motd_payload, load_daemon_password,
     normalize_motd_payload, send_daemon_auth_credentials,
 };
-use super::connect::{open_daemon_stream, resolve_connect_timeout};
 #[cfg(feature = "client-tls")]
 use super::connect::open_daemon_stream_tls;
+use super::connect::{open_daemon_stream, resolve_connect_timeout};
 use super::errors::{legacy_daemon_error_payload, map_daemon_handshake_error, read_trimmed_line};
 use super::request::ModuleListOptions;
 use super::request::ModuleListRequest;
@@ -201,13 +201,12 @@ pub fn run_module_list_with_password_and_options(
     // path is exercised by the compiler.
     #[cfg(feature = "client-tls")]
     if let Some(tls_cfg) = options.tls_config() {
-        let connector = super::connect::tls::TlsConnector::new(tls_cfg)
-            .map_err(|e| {
-                daemon_error(
-                    &format!("failed to initialize TLS for module listing: {e}"),
-                    23,
-                )
-            })?;
+        let connector = super::connect::tls::TlsConnector::new(tls_cfg).map_err(|e| {
+            daemon_error(
+                &format!("failed to initialize TLS for module listing: {e}"),
+                23,
+            )
+        })?;
         let _tls_stream = open_daemon_stream_tls(
             addr,
             connect_duration,
