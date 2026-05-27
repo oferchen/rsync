@@ -140,8 +140,8 @@ pub fn wrap_stream(
 /// Loads PEM-encoded certificates from a file.
 fn load_certificates(path: &Path) -> Result<Vec<CertificateDer<'static>>, io::Error> {
     let pem_data = fs::read(path)?;
-    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut pem_data.as_slice())
-        .collect::<Result<Vec<_>, _>>()?;
+    let certs: Vec<CertificateDer<'static>> =
+        rustls_pemfile::certs(&mut pem_data.as_slice()).collect::<Result<Vec<_>, _>>()?;
     if certs.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
