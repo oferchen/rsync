@@ -17,6 +17,7 @@ mod fault;
 mod granularity;
 mod hardening;
 mod memory_pressure;
+mod preflight;
 mod reclaim;
 
 /// Simple [`SpillCodec`] for `u64` shared across every suite.

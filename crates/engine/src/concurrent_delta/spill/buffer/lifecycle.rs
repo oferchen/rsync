@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -231,5 +231,37 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     #[must_use]
     pub fn spill_dir(&self) -> Option<&Path> {
         self.spill_dir.as_deref()
+    }
+
+    /// Probes the spill directory for writability before the transfer starts.
+    ///
+    /// Creates a small temporary file in the configured spill directory, writes
+    /// a few bytes, and removes it. This catches permission, missing-parent,
+    /// and read-only filesystem issues at transfer start rather than
+    /// mid-transfer when the first spill event fires.
+    ///
+    /// The probe is skipped (returns `Ok(())`) when:
+    /// - `in_memory_only` is `true` - no disk I/O will ever be attempted.
+    /// - No explicit `spill_dir` is configured - the buffer falls back to a
+    ///   system-managed `SpooledTempFile` whose parent is owned by the OS.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SpillError::Io`](super::super::SpillError::Io) if the probe
+    /// file cannot be created, written, or removed.
+    pub fn probe_writability(&self) -> Result<(), super::super::SpillError> {
+        if self.in_memory_only {
+            return Ok(());
+        }
+        let dir = match self.spill_dir.as_deref() {
+            Some(d) => d,
+            None => return Ok(()),
+        };
+        let probe_path = dir.join(".oc-rsync-probe");
+        let mut f = fs::File::create(&probe_path)?;
+        f.write_all(b"probe")?;
+        drop(f);
+        fs::remove_file(&probe_path)?;
+        Ok(())
     }
 }
