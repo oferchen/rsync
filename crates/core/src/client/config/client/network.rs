@@ -150,7 +150,7 @@ impl ClientConfig {
     #[cfg(feature = "client-tls")]
     pub(crate) fn tls_config(
         &self,
-    ) -> Option<&crate::client::module_list::connect::tls::TlsClientConfig> {
+    ) -> Option<&crate::client::module_list::TlsClientConfig> {
         None // wired when --ssl CLI flag is added for client mode
     }
 }
