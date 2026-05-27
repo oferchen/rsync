@@ -13,7 +13,6 @@
 /// - stunnel-era `ssl cert`, `ssl key`, `ssl ca` global directives
 /// - `clientserver.c:output_daemon_greeting()` - wire greeting format
 /// - `clientserver.c:start_inband_exchange()` - module listing handshake
-
 #[cfg(feature = "daemon-tls")]
 #[test]
 fn tls_handshake_exchanges_rsyncd_greeting() {
