@@ -1242,9 +1242,11 @@ warnings go to the **tracing** target **ssh::stderr**.
 
 **oc-rsync** is wire-compatible with upstream rsync and can operate with:
 
+- Upstream rsync 2.6.9 (protocol 29) - daemon push/pull validated via RP28 series
 - Upstream rsync 3.0.9 (protocol 30)
 - Upstream rsync 3.1.3 (protocol 31)
 - Upstream rsync 3.4.1 (protocol 32)
+- Upstream rsync 3.4.2 (protocol 32)
 
 Both as a client connecting to upstream rsync servers and as a server
 accepting connections from upstream rsync clients.
