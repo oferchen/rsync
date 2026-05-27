@@ -363,3 +363,5 @@ include!("tests/chunks/daemon_delete_push.rs");
 include!("tests/chunks/daemon_inplace_push.rs");
 // Daemon push/pull lifecycle end-to-end tests
 include!("tests/chunks/daemon_push_pull_lifecycle.rs");
+// Daemon TLS handshake integration tests
+include!("tests/chunks/daemon_tls_handshake.rs");
