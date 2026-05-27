@@ -31,7 +31,7 @@ enum AuthenticationStatus {
 ///
 /// Returns `Granted` if authentication succeeded, `Denied` otherwise.
 fn perform_module_authentication(
-    reader: &mut BufReader<TcpStream>,
+    reader: &mut BufReader<DaemonStream>,
     limiter: &mut Option<BandwidthLimiter>,
     module: &ModuleDefinition,
     peer_ip: IpAddr,
@@ -205,7 +205,7 @@ fn check_secrets_file_permissions(path: &Path) -> io::Result<()> {
 ///
 /// upstream: clientserver.c:762 - `@ERROR: auth failed on module %s\n`
 fn send_auth_failed(
-    stream: &mut TcpStream,
+    stream: &mut DaemonStream,
     module: &ModuleDefinition,
     limiter: &mut Option<BandwidthLimiter>,
     messages: &LegacyMessageCache,
