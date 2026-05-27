@@ -116,6 +116,19 @@ pub fn run_daemon_transfer(
         apply_socket_options(&stream, sockopts)?;
     }
 
+    // When the client requests TLS, wrap the TCP stream before the daemon
+    // handshake. Full TLS transfer wiring is deferred to TLS-11; for now
+    // the presence of a TLS config triggers an early error so the code
+    // path is exercised by the compiler.
+    #[cfg(feature = "client-tls")]
+    if let Some(tls_cfg) = config.tls_config() {
+        let _tls_stream = wrap_stream_tls(stream, request.address.host(), tls_cfg)?;
+        return Err(invalid_argument_error(
+            "client-side TLS transfers not yet supported",
+            2,
+        ));
+    }
+
     let output_motd = !config.no_motd();
     let protocol = perform_daemon_handshake(
         &mut stream,

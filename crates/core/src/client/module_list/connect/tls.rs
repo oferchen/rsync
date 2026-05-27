@@ -30,17 +30,11 @@ use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 ///
 /// Holds filesystem paths for optional certificate material. When
 /// `ca_cert_path` is `None`, the Mozilla root CA bundle is used.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct TlsClientConfig {
     /// Optional path to a PEM-encoded CA bundle for server certificate
     /// verification. When `None`, the built-in Mozilla root CAs are used.
     pub(crate) ca_cert_path: Option<PathBuf>,
-}
-
-impl Default for TlsClientConfig {
-    fn default() -> Self {
-        Self { ca_cert_path: None }
-    }
 }
 
 /// Reusable TLS connector backed by a shared rustls `ClientConfig`.
