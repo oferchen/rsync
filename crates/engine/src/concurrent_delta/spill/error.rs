@@ -32,6 +32,10 @@ use super::super::reorder::CapacityExceeded;
 /// reconstructed; the typed variant lets the receiver emit an actionable
 /// diagnostic for the operator instead of a generic `NotFound`.
 ///
+/// [`SpillDisabled`](Self::SpillDisabled) is surfaced when in-memory-only mode
+/// is active and the reorder buffer exceeds its capacity threshold. The caller
+/// should increase the threshold, reduce concurrency, or permit disk spill.
+///
 /// [`FileIo`]: https://github.com/RsyncProject/rsync/blob/master/errcode.h
 #[derive(Debug)]
 pub enum SpillError {
@@ -52,6 +56,13 @@ pub enum SpillError {
         /// no longer be reloaded.
         count: usize,
     },
+    /// Spill-to-disk was requested but the policy forbids disk I/O.
+    ///
+    /// Returned when in-memory-only mode is active and the reorder buffer
+    /// exceeds its capacity threshold. Callers should either increase the
+    /// threshold, reduce concurrency, or switch to a policy that permits
+    /// disk spill.
+    SpillDisabled,
 }
 
 impl SpillError {
@@ -62,7 +73,8 @@ impl SpillError {
             SpillError::Io(e) => Some(e),
             SpillError::Capacity(_)
             | SpillError::UnsupportedCompression(_)
-            | SpillError::PriorSpillsLost { .. } => None,
+            | SpillError::PriorSpillsLost { .. }
+            | SpillError::SpillDisabled => None,
         }
     }
 
@@ -88,6 +100,10 @@ impl std::fmt::Display for SpillError {
                 "prior spill directory {} vanished; {count} chunk(s) cannot be recovered",
                 dir.display()
             ),
+            SpillError::SpillDisabled => write!(
+                f,
+                "reorder buffer exceeded capacity but spill-to-disk is disabled (in-memory-only policy)"
+            ),
         }
     }
 }
@@ -97,7 +113,8 @@ impl std::error::Error for SpillError {
         match self {
             SpillError::Capacity(_)
             | SpillError::UnsupportedCompression(_)
-            | SpillError::PriorSpillsLost { .. } => None,
+            | SpillError::PriorSpillsLost { .. }
+            | SpillError::SpillDisabled => None,
             SpillError::Io(e) => Some(e),
         }
     }

@@ -144,6 +144,14 @@ pub(super) fn run_spillable_loop(
                         .send(DeltaResult::failed(ndx, format!("spill write failed: {e}")));
                     return;
                 }
+                Err(SpillError::SpillDisabled) => {
+                    let _ = result_tx.send(DeltaResult::failed(
+                        ndx,
+                        "reorder buffer exceeded capacity but spill-to-disk is disabled"
+                            .to_string(),
+                    ));
+                    return;
+                }
             }
         }
         publish_spill_events(&reorder, spill_events, &mut prev_spill);

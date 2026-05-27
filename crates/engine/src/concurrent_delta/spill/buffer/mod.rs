@@ -135,6 +135,9 @@ pub struct SpillableReorderBuffer<T: SpillCodec> {
     /// crossed. `None` preserves the historical byte-budget-only behaviour.
     /// Wired from [`SpillPolicy::memory_pressure_bytes`](super::policy::SpillPolicy::memory_pressure_bytes).
     memory_pressure_bytes: Option<u64>,
+    /// When `true`, the buffer never attempts disk I/O for spill operations
+    /// and instead returns [`SpillError::SpillDisabled`](super::SpillError::SpillDisabled).
+    in_memory_only: bool,
 }
 
 impl<T: SpillCodec> std::fmt::Debug for SpillableReorderBuffer<T> {
@@ -151,6 +154,7 @@ impl<T: SpillCodec> std::fmt::Debug for SpillableReorderBuffer<T> {
             .field("granularity", &self.granularity)
             .field("compression", &self.compression)
             .field("reclaim", &self.reclaim)
+            .field("in_memory_only", &self.in_memory_only)
             .finish()
     }
 }
