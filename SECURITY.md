@@ -188,15 +188,17 @@ If the SSH transport itself compresses the stream (`Compression yes` in `ssh_con
 
 ### Daemon TLS
 
-`oc-rsync --daemon` does not terminate TLS natively. To expose the daemon over an untrusted network, deploy it behind one of:
+When built with `--features daemon-tls`, the daemon terminates TLS natively via rustls. Configure `ssl cert`, `ssl key`, and optionally `ssl ca` (for mutual TLS) in `oc-rsyncd.conf`. The daemon listens for TLS on port 874 alongside the cleartext listener on port 873. Clients connect with `--ssl` (requires `--features client-tls`).
+
+Default builds do not include TLS. To expose a non-TLS daemon over an untrusted network, deploy it behind one of:
 
 - **stunnel** in front of `rsync://`-style daemon traffic
 - **SSH tunnel** (`ssh -L` to a localhost-bound daemon)
 - **A reverse proxy** that performs TLS termination (e.g., HAProxy in TCP mode)
 
-Bind the daemon itself to `127.0.0.1` (or a private VPC interface) and route external clients exclusively through the TLS terminator.
+When using external wrapping, bind the daemon to `127.0.0.1` (or a private VPC interface) and route external clients exclusively through the TLS terminator.
 
-See [`docs/deployment/daemon-tls.md`](docs/deployment/daemon-tls.md) for runnable recipes covering stunnel, `ssh -L`, and HAProxy TCP-mode configurations, hardened systemd unit excerpts, and nftables/iptables rules that deny external access to the daemon's loopback port.
+See [`docs/user/daemon-tls-wrapping.md`](docs/user/daemon-tls-wrapping.md) for setup instructions covering both native and external TLS, and [`docs/deployment/daemon-tls.md`](docs/deployment/daemon-tls.md) for hardened systemd units and firewall rules.
 
 ### Daemon module hardening
 

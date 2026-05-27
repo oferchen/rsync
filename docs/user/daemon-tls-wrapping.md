@@ -6,22 +6,19 @@ or `oc-rsyncd`) and want encrypted transport between client and server.
 ## Overview
 
 oc-rsync daemon mode listens on TCP port 873 and speaks the rsync wire
-protocol in cleartext - the same as upstream rsync. Neither upstream rsync nor
-oc-rsync ships a native TLS implementation. Instead, encryption is delegated
-to an external tool that terminates TLS and forwards plain rsync bytes to the
-daemon over loopback.
+protocol in cleartext - the same as upstream rsync. Two approaches exist for
+encrypting daemon connections:
 
-Three approaches are covered here, from simplest to most production-ready:
+1. **Native TLS** (recommended for single-binary deployments) - built-in
+   rustls-based TLS acceptor and client connector. Requires building with
+   feature flags `daemon-tls` and/or `client-tls`. No external tooling needed.
+2. **External TLS wrapping** - delegate encryption to stunnel, a reverse proxy
+   (HAProxy/nginx), or SSH tunnels. Works with any oc-rsync build. No
+   recompilation required.
 
-1. **stunnel** - the upstream-blessed pattern, widely documented in the rsync
-   community.
-2. **rsync-ssl / openssl s_client** - client-side TLS wrapping with no
-   server-side changes beyond a certificate.
-3. **Reverse proxy** (HAProxy or nginx) - recommended for production, with TLS
-   offload, certificate rotation, and health checking.
-
-All three work with an unmodified oc-rsync daemon. No code changes, feature
-flags, or recompilation are needed.
+Both approaches encrypt the same rsync wire protocol. From the client's
+perspective, a native TLS daemon on port 874 is indistinguishable from a
+stunnel-wrapped daemon on port 874.
 
 ### Port conventions
 
@@ -32,7 +29,155 @@ flags, or recompilation are needed.
 
 ---
 
-## Method 1: stunnel (server-side wrapping)
+## Method 1: Native TLS (built-in rustls)
+
+When built with the `daemon-tls` feature, oc-rsync can accept TLS connections
+directly - no stunnel, no proxy, no sidecar. The `client-tls` feature adds
+the corresponding `--ssl` client flag.
+
+### Building with TLS support
+
+```sh
+# Daemon-side TLS acceptor only
+cargo build --release --features daemon-tls
+
+# Client-side TLS connector only
+cargo build --release --features client-tls
+
+# Both daemon and client TLS
+cargo build --release --features daemon-tls,client-tls
+```
+
+When neither feature is enabled (the default), zero TLS code is compiled and
+the binary is identical to a non-TLS build.
+
+### Daemon configuration (oc-rsyncd.conf)
+
+Three global directives control the TLS acceptor:
+
+| Directive | Required | Description |
+|-----------|----------|-------------|
+| `ssl cert` | yes | Path to PEM-encoded certificate chain (server cert + intermediates, leaf-first) |
+| `ssl key` | yes | Path to PEM-encoded private key (PKCS#8, PKCS#1 RSA, or SEC1 EC) |
+| `ssl ca` | no | Path to PEM-encoded CA bundle for client certificate verification (mutual TLS) |
+
+When `ssl cert` and `ssl key` are both set, the daemon listens for TLS
+connections on port 874 in addition to the cleartext listener on port 873.
+When `ssl ca` is also set, the daemon requires a valid client certificate
+signed by one of the listed CAs.
+
+Example `oc-rsyncd.conf` with TLS:
+
+```ini
+# /etc/oc-rsyncd/oc-rsyncd.conf
+port = 873
+ssl cert = /etc/oc-rsync-ssl/server.crt
+ssl key  = /etc/oc-rsync-ssl/server.key
+
+# Optional: require client certificates (mutual TLS)
+# ssl ca = /etc/oc-rsync-ssl/ca.crt
+
+[backups]
+    path         = /srv/backups
+    read only    = false
+    auth users   = backup-bot
+    secrets file = /etc/oc-rsyncd/oc-rsyncd.secrets
+```
+
+Start the daemon normally:
+
+```sh
+oc-rsync --daemon --config /etc/oc-rsyncd/oc-rsyncd.conf
+```
+
+The daemon logs whether TLS is active at startup.
+
+### Client connection with --ssl
+
+When built with the `client-tls` feature, the `--ssl` flag tells oc-rsync
+to connect via TLS instead of cleartext:
+
+```sh
+# Pull from a TLS-enabled daemon
+oc-rsync --ssl -av rsync://daemon-host/backups/ ./restore/
+
+# Push to a TLS-enabled daemon
+oc-rsync --ssl -av ./data/ rsync://daemon-host/backups/
+```
+
+The `--ssl` flag changes the default port from 873 to 874. An explicit
+port in the URL overrides this.
+
+By default, the client verifies the server certificate against the Mozilla
+root CA bundle. To use a custom CA (e.g., a private CA for internal
+deployments):
+
+```sh
+oc-rsync --ssl -av \
+    --ssl-ca-cert /etc/oc-rsync-ssl/ca.crt \
+    rsync://daemon-host/backups/ ./restore/
+```
+
+### Interoperability
+
+| Client | Server | Works? |
+|--------|--------|--------|
+| `oc-rsync --ssl` | oc-rsyncd (native TLS) | Yes |
+| `oc-rsync --ssl` | upstream rsyncd + stunnel | Yes |
+| `rsync-ssl` (upstream) | oc-rsyncd (native TLS) | Yes |
+| `rsync-ssl` (upstream) | oc-rsyncd + stunnel | Yes |
+| `oc-rsync` (no `--ssl`) | oc-rsyncd (cleartext port) | Yes |
+
+A native TLS daemon presents standard TLS on port 874, so any TLS-capable
+rsync client (including upstream `rsync-ssl`) connects without modification.
+
+### Certificate requirements
+
+- **PEM format required.** DER-encoded certificates and keys are not accepted.
+- **Certificate chain must be leaf-first.** The server certificate comes first,
+  followed by any intermediate certificates. The root CA certificate is
+  typically omitted (clients have their own trust store).
+- **Subject Alternative Name (SAN) required.** Modern TLS libraries reject
+  certificates that rely solely on the Common Name (CN) field. Generate
+  certificates with `-addext "subjectAltName=DNS:rsync.example.com"`.
+- **Key formats:** PKCS#8, PKCS#1 (RSA), and SEC1 (EC) are all accepted.
+
+Generate a self-signed certificate for testing:
+
+```sh
+mkdir -p /etc/oc-rsync-ssl
+openssl req -x509 -newkey rsa:2048 -nodes \
+    -keyout /etc/oc-rsync-ssl/server.key \
+    -out /etc/oc-rsync-ssl/server.crt \
+    -days 365 \
+    -subj "/CN=rsync.example.com" \
+    -addext "subjectAltName=DNS:rsync.example.com"
+chmod 600 /etc/oc-rsync-ssl/server.key
+```
+
+For production, use certificates from your organization's CA or a public CA
+via ACME (Let's Encrypt).
+
+### Native TLS vs external wrapping
+
+| Criterion | Native TLS | External (stunnel/proxy) |
+|-----------|-----------|--------------------------|
+| Deployment | Single binary, single config | Two processes, two configs |
+| Certificate management | Unified in `oc-rsyncd.conf` | Split across terminator config |
+| Binary size | +1-2 MB (feature-gated) | No change |
+| Build requirement | `--features daemon-tls` | None |
+| Production maturity | New | Battle-tested (stunnel/HAProxy) |
+| Certificate rotation | Daemon restart required | Proxy reload (no restart) |
+| Upstream rsync compatibility | Not available in upstream | Upstream-documented pattern |
+
+Choose native TLS for single-binary, container, or quick-setup deployments.
+Choose external wrapping when you have an existing PKI infrastructure, need
+certificate hot-reload without restart, or prefer the proven stunnel/HAProxy
+path.
+
+---
+
+## Method 2: stunnel (external server-side wrapping)
 
 stunnel is the approach documented in the upstream rsync tarball
 (`stunnel-rsyncd.conf`). It accepts TLS connections on port 874 and forwards
@@ -134,7 +279,7 @@ oc-rsync --daemon --config /etc/oc-rsyncd.conf
 
 ---
 
-## Method 2: rsync-ssl / openssl s_client (client-side wrapping)
+## Method 3: rsync-ssl / openssl s_client (client-side wrapping)
 
 The client side needs its own TLS tunnel to connect to a TLS-wrapped daemon.
 Two options:
@@ -202,7 +347,7 @@ oc-rsync -av rsync://localhost:8730/backups/ ./restore/
 
 ---
 
-## Method 3: reverse proxy (recommended for production)
+## Method 4: reverse proxy (production deployments)
 
 A reverse proxy is the production-recommended approach. It provides TLS
 offload, certificate rotation via reload, health checking, connection limits,
@@ -367,6 +512,8 @@ iptables -A INPUT -p tcp --dport 874 -j ACCEPT
 
 | Scenario | Server setup | Client command |
 |----------|--------------|----------------|
+| Native TLS (both sides) | `ssl cert`/`ssl key` in oc-rsyncd.conf | `oc-rsync --ssl rsync://host/mod/` |
+| Native TLS server + rsync-ssl client | `ssl cert`/`ssl key` in oc-rsyncd.conf | `rsync-ssl host::mod/` |
 | stunnel server + openssl client | stunnel on port 874 | `oc-rsync --connect-program 'openssl s_client -quiet ...' rsync://host:874/mod/` |
 | stunnel server + stunnel client | stunnel on port 874 | `oc-rsync rsync://localhost:8730/mod/` (local stunnel forwards) |
 | HAProxy TLS termination | HAProxy on port 874 | Same as stunnel client options |
