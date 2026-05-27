@@ -204,8 +204,8 @@ mod tests {
         let disabled = SpillError::SpillDisabled;
         let rendered = format!("{disabled}");
         assert!(
-            rendered.contains("disabled"),
-            "display should mention disabled: {rendered}"
+            rendered.contains("in-memory-only"),
+            "display should mention in-memory-only policy: {rendered}"
         );
         assert!(std::error::Error::source(&disabled).is_none());
         assert!(disabled.io_error().is_none());

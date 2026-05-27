@@ -293,10 +293,6 @@ fn permission_denied_on_spill_dir_surfaces_io_error() {
 #[cfg(unix)]
 #[test]
 fn spill_dir_read_only_between_spills_surfaces_io_error() {
-    // SRO-8: the spill directory was writable for the first spill and
-    // becomes read-only before the second. Because the cached file handle
-    // is dropped, open_backend must re-create a tempfile inside the
-    // now-unwritable dir and surface PermissionDenied cleanly.
     use std::os::unix::fs::PermissionsExt;
 
     if rustix::process::getuid().is_root() {
@@ -308,7 +304,6 @@ fn spill_dir_read_only_between_spills_surfaces_io_error() {
     let mut buf: SpillableReorderBuffer<u64> =
         SpillableReorderBuffer::with_spill_dir(16, 8, &spill_dir).expect("setup spill directory");
 
-    // First batch: trigger a successful spill so we know the dir was usable.
     buf.insert(0, 100).unwrap();
     buf.insert(1, 200).unwrap();
     assert!(
@@ -316,13 +311,10 @@ fn spill_dir_read_only_between_spills_surfaces_io_error() {
         "expected at least one successful spill"
     );
 
-    // Drop the cached file handle and make the directory read-only so the
-    // next spill must open a fresh tempfile and hit PermissionDenied.
     buf.spill_file = None;
     fs::set_permissions(&spill_dir, fs::Permissions::from_mode(0o444))
         .expect("chmod 444 spill dir");
 
-    // Drive enough inserts to exceed the threshold again.
     let mut surfaced: Option<SpillError> = None;
     for i in 2u64..10 {
         match buf.insert(i, i * 41) {
@@ -334,7 +326,6 @@ fn spill_dir_read_only_between_spills_surfaces_io_error() {
         }
     }
 
-    // Restore permissions before assertions so cleanup succeeds.
     let _ = fs::set_permissions(&spill_dir, fs::Permissions::from_mode(0o755));
 
     let err = surfaced.expect("read-only spill dir must surface an error on re-open");

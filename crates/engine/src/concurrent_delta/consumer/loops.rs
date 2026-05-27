@@ -147,7 +147,7 @@ pub(super) fn run_spillable_loop(
                 Err(SpillError::SpillDisabled) => {
                     let _ = result_tx.send(DeltaResult::failed(
                         ndx,
-                        "reorder buffer exceeded capacity but spill-to-disk is disabled"
+                        "reorder buffer exceeded capacity and spill-to-disk is disabled"
                             .to_string(),
                     ));
                     return;

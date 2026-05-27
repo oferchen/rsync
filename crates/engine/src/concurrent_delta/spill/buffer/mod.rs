@@ -137,6 +137,7 @@ pub struct SpillableReorderBuffer<T: SpillCodec> {
     memory_pressure_bytes: Option<u64>,
     /// When `true`, the buffer never attempts disk I/O for spill operations
     /// and instead returns [`SpillError::SpillDisabled`](super::SpillError::SpillDisabled).
+    /// Wired from [`SpillPolicy::in_memory_only`](super::policy::SpillPolicy::in_memory_only).
     in_memory_only: bool,
 }
 

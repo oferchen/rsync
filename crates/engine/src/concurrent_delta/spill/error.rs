@@ -58,10 +58,10 @@ pub enum SpillError {
     },
     /// Spill-to-disk was requested but the policy forbids disk I/O.
     ///
-    /// Returned when in-memory-only mode is active and the reorder buffer
-    /// exceeds its capacity threshold. Callers should either increase the
-    /// threshold, reduce concurrency, or switch to a policy that permits
-    /// disk spill.
+    /// Returned when [`SpillPolicy::in_memory_only`](super::policy::SpillPolicy::in_memory_only)
+    /// is `true` and the reorder buffer exceeds its capacity threshold.
+    /// Callers should either increase the threshold, reduce concurrency,
+    /// or switch to a policy that permits disk spill.
     SpillDisabled,
 }
 

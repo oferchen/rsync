@@ -19,6 +19,7 @@ mod delta_apply;
 mod errors_and_timeouts;
 mod file_list;
 mod hard_links;
+mod parallel_delta_notice;
 mod partial_resume;
 mod support;
 mod symlinks_and_devices;
