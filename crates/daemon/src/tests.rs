@@ -365,3 +365,5 @@ include!("tests/chunks/daemon_inplace_push.rs");
 include!("tests/chunks/daemon_push_pull_lifecycle.rs");
 // Daemon TLS handshake integration tests
 include!("tests/chunks/daemon_tls_handshake.rs");
+// Daemon TLS upstream interop tests (stunnel emulation)
+include!("tests/chunks/daemon_tls_upstream_interop.rs");
