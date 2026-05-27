@@ -1,6 +1,8 @@
 mod direct;
 mod program;
 mod proxy;
+#[cfg(feature = "client-tls")]
+pub(crate) mod tls;
 
 use std::ffi::OsStr;
 use std::io::{self, Read, Write};
@@ -17,6 +19,11 @@ pub(crate) use proxy::{
     parse_proxy_spec,
 };
 
+/// Opens a plain TCP connection to a daemon.
+///
+/// Respects `RSYNC_CONNECT_PROG` and `RSYNC_PROXY` environment
+/// variables. For TLS-wrapped connections, use
+/// [`open_daemon_stream_tls`] instead.
 pub(super) fn open_daemon_stream(
     addr: &DaemonAddress,
     connect_timeout: Option<Duration>,
@@ -45,6 +52,42 @@ pub(super) fn open_daemon_stream(
     Ok(DaemonStream::tcp(stream))
 }
 
+/// Opens a connection to a daemon and wraps it in TLS.
+///
+/// Establishes the TCP connection identically to [`open_daemon_stream`],
+/// then performs a TLS handshake using the provided connector. The
+/// hostname from `addr` is passed as the SNI server name.
+#[cfg(feature = "client-tls")]
+pub(super) fn open_daemon_stream_tls(
+    addr: &DaemonAddress,
+    connect_timeout: Option<Duration>,
+    io_timeout: Option<Duration>,
+    address_mode: AddressMode,
+    bind_address: Option<SocketAddr>,
+    connector: &tls::TlsConnector,
+) -> Result<DaemonStream, ClientError> {
+    use crate::client::socket_error;
+
+    let stream = match load_daemon_proxy()? {
+        Some(proxy) => {
+            proxy::connect_via_proxy(addr, &proxy, connect_timeout, io_timeout, bind_address)?
+        }
+        None => connect_direct(
+            addr,
+            connect_timeout,
+            io_timeout,
+            address_mode,
+            bind_address,
+        )?,
+    };
+
+    let tls_stream = connector
+        .wrap(stream, addr.host())
+        .map_err(|e| socket_error("TLS handshake with", addr.socket_addr_display(), e))?;
+
+    Ok(DaemonStream::Tls(Box::new(tls_stream)))
+}
+
 pub(crate) const fn resolve_connect_timeout(
     connect_timeout: TransferTimeout,
     fallback: TransferTimeout,
@@ -61,9 +104,21 @@ pub(crate) const fn resolve_connect_timeout(
     }
 }
 
+/// Bidirectional stream to an rsync daemon.
+///
+/// Abstracts over the underlying transport: plain TCP, a connect program
+/// (`RSYNC_CONNECT_PROG`), or a TLS-wrapped TCP connection (when the
+/// `client-tls` feature is enabled).
 pub(super) enum DaemonStream {
+    /// Plain TCP connection.
     Tcp(TcpStream),
+    /// Connection via an external connect program.
     Program(ConnectProgramStream),
+    /// TLS-wrapped TCP connection (requires `client-tls` feature).
+    ///
+    /// Boxed to avoid inflating the enum size for the common non-TLS path.
+    #[cfg(feature = "client-tls")]
+    Tls(Box<tls::TlsStream>),
 }
 
 impl DaemonStream {
@@ -81,6 +136,8 @@ impl Read for DaemonStream {
         match self {
             Self::Tcp(stream) => stream.read(buf),
             Self::Program(stream) => stream.read(buf),
+            #[cfg(feature = "client-tls")]
+            Self::Tls(stream) => stream.read(buf),
         }
     }
 }
@@ -90,6 +147,8 @@ impl Write for DaemonStream {
         match self {
             Self::Tcp(stream) => stream.write(buf),
             Self::Program(stream) => stream.write(buf),
+            #[cfg(feature = "client-tls")]
+            Self::Tls(stream) => stream.write(buf),
         }
     }
 
@@ -97,6 +156,8 @@ impl Write for DaemonStream {
         match self {
             Self::Tcp(stream) => stream.flush(),
             Self::Program(stream) => stream.flush(),
+            #[cfg(feature = "client-tls")]
+            Self::Tls(stream) => stream.flush(),
         }
     }
 }

@@ -145,6 +145,10 @@ sd-notify = ["daemon/sd-notify"]
 # Trade-offs: Adds ~400KB to binary, requires PEM cert/key management
 daemon-tls = ["daemon/daemon-tls"]
 
+# TLS client support for rsync:// connections via --ssl (alternative to stunnel wrapper).
+# Uses rustls with webpki root certificates for server verification.
+client-tls = ["core/client-tls"]
+
 [dependencies]
 cli = { path = "crates/cli", default-features = false }
 daemon = { path = "crates/daemon", default-features = false }
@@ -315,6 +319,8 @@ bumpalo = "3"
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 # PEM file parser for rustls certificate/key loading
 rustls-pemfile = "2"
+# Mozilla root CA certificates for TLS client verification
+webpki-roots = "0.26"
 
 [workspace.metadata.docs.rs]
 all-features = true

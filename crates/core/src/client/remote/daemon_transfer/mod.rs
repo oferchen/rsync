@@ -36,6 +36,8 @@ use super::super::summary::ClientSummary;
 use super::batch_support::build_batch_context;
 use super::invocation::{RemoteRole, TransferSpec, determine_transfer_role};
 
+#[cfg(feature = "client-tls")]
+use super::super::module_list::{TlsClientConfig, TlsConnector, TlsStream};
 use connection::{DaemonTransferRequest, perform_daemon_handshake};
 use orchestration::{run_pull_transfer, run_push_transfer, send_daemon_arguments};
 
@@ -114,6 +116,19 @@ pub fn run_daemon_transfer(
         apply_socket_options(&stream, sockopts)?;
     }
 
+    // When the client requests TLS, wrap the TCP stream before the daemon
+    // handshake. Full TLS transfer wiring is deferred to TLS-11; for now
+    // the presence of a TLS config triggers an early error so the code
+    // path is exercised by the compiler.
+    #[cfg(feature = "client-tls")]
+    if let Some(tls_cfg) = config.tls_config() {
+        let _tls_stream = wrap_stream_tls(stream, request.address.host(), tls_cfg)?;
+        return Err(invalid_argument_error(
+            "client-side TLS transfers not yet supported",
+            2,
+        ));
+    }
+
     let output_motd = !config.no_motd();
     let protocol = perform_daemon_handshake(
         &mut stream,
@@ -143,4 +158,31 @@ pub fn run_daemon_transfer(
             unreachable!("Proxy transfers via daemon are rejected earlier")
         }
     }
+}
+
+/// Wraps a connected TCP stream in a TLS session for encrypted daemon
+/// communication.
+///
+/// Constructs a [`TlsConnector`] from the provided configuration and
+/// performs the TLS handshake. The `hostname` is used for SNI and
+/// certificate verification.
+///
+/// This is the integration point for the `--ssl` CLI flag (TLS-10). Once
+/// the flag is wired through `ClientConfig`, callers replace the
+/// `connect_direct` call with `connect_direct` followed by
+/// `wrap_stream_tls` to upgrade the connection.
+#[cfg(feature = "client-tls")]
+pub(crate) fn wrap_stream_tls(
+    stream: std::net::TcpStream,
+    hostname: &str,
+    tls_config: &TlsClientConfig,
+) -> Result<TlsStream, ClientError> {
+    use crate::client::socket_error;
+
+    let connector = TlsConnector::new(tls_config)
+        .map_err(|e| invalid_argument_error(&format!("failed to initialize TLS: {e}"), 23))?;
+
+    connector
+        .wrap(stream, hostname)
+        .map_err(|e| socket_error("TLS handshake with", hostname, e))
 }
