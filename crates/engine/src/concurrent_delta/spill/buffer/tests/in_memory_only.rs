@@ -2,7 +2,8 @@
 //! [`SpillError::SpillDisabled`] when the threshold is exceeded instead
 //! of attempting disk I/O.
 
-use super::super::super::SpillableReorderBuffer;
+use super::super::super::{SpillError, SpillableReorderBuffer};
+use super::drain_all;
 
 #[test]
 fn in_memory_only_returns_spill_disabled_on_threshold_breach() {
@@ -22,9 +23,33 @@ fn in_memory_only_returns_spill_disabled_on_threshold_breach() {
         .insert(3, 30)
         .expect_err("should fail with SpillDisabled");
     assert!(
-        matches!(err, super::super::super::SpillError::SpillDisabled),
+        matches!(err, SpillError::SpillDisabled),
         "expected SpillDisabled, got: {err:?}"
     );
+}
+
+#[test]
+fn in_memory_only_correct_drain_under_threshold() {
+    // Items inserted out of order under the threshold drain in correct
+    // sequence order - in-memory-only mode must not interfere with
+    // normal reorder delivery.
+    let mut buf: SpillableReorderBuffer<u64> =
+        SpillableReorderBuffer::new(64, 1024).with_in_memory_only(true);
+
+    // Insert 10 items in reverse order - well under the 1 KB threshold.
+    for i in (0..10).rev() {
+        buf.insert(i, i * 7)
+            .expect("should succeed under threshold");
+    }
+
+    let stats = buf.spill_stats();
+    assert_eq!(stats.spill_events, 0, "no spill should occur");
+
+    let items = drain_all(&mut buf);
+    assert_eq!(items.len(), 10);
+    let expected: Vec<u64> = (0..10).map(|i| i * 7).collect();
+    assert_eq!(items, expected, "items must drain in sequence order");
+    assert!(buf.is_empty());
 }
 
 #[test]
@@ -45,7 +70,7 @@ fn in_memory_only_disabled_allows_normal_spill() {
     );
 
     // Items should drain correctly in order despite spilling.
-    let items = super::drain_all(&mut buf);
+    let items = drain_all(&mut buf);
     assert_eq!(items.len(), 16);
     for (i, &val) in items.iter().enumerate() {
         assert_eq!(val, i as u64 * 100);
@@ -93,7 +118,7 @@ fn in_memory_only_force_insert_returns_spill_disabled() {
         .force_insert(2, 20)
         .expect_err("should fail with SpillDisabled");
     assert!(
-        matches!(err, super::super::super::SpillError::SpillDisabled),
+        matches!(err, SpillError::SpillDisabled),
         "expected SpillDisabled, got: {err:?}"
     );
 }
