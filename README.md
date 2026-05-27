@@ -118,7 +118,7 @@ Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
 
 ### Interop Testing
 
-Tested against upstream rsync **3.0.9**, **3.1.3**, **3.4.1**, and **3.4.2** in CI across protocols 28-32. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth.
+Tested against upstream rsync **2.6.9**, **3.0.9**, **3.1.3**, **3.4.1**, and **3.4.2** in CI across protocols 28-32. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth.
 
 ### Supported rsync protocol versions
 

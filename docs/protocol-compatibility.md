@@ -1,9 +1,9 @@
 # Protocol Compatibility Matrix
 
 This document describes oc-rsync's wire protocol compatibility with upstream
-rsync across protocol versions 28-32 and upstream releases 3.0.9, 3.1.3, and
-3.4.1. All claims are backed by automated CI tests that run on every pull
-request and nightly.
+rsync across protocol versions 28-32 and upstream releases 2.6.9, 3.0.9,
+3.1.3, 3.4.1, and 3.4.2. All claims are backed by automated CI tests that
+run on every pull request and nightly.
 
 ---
 
@@ -46,9 +46,11 @@ Every CI run tests both directions for each upstream version:
 
 | Upstream Version | Protocol | Pull (upstream -> oc) | Push (oc -> upstream) |
 |------------------|----------|-----------------------|-----------------------|
+| rsync 2.6.9      | 29       | Non-blocking (RP28.d) | Non-blocking (RP28.c) |
 | rsync 3.0.9      | 30       | Pass                  | Pass                  |
 | rsync 3.1.3      | 31       | Pass                  | Pass                  |
 | rsync 3.4.1      | 32       | Pass                  | Pass                  |
+| rsync 3.4.2      | 32       | Pass                  | Pass                  |
 
 ### SSH Transport Interop
 
@@ -76,7 +78,11 @@ Batch files written by one implementation can be read by the other:
 
 The table below lists every feature tested in the comprehensive interop suite.
 Each feature is tested bidirectionally (upstream client -> oc-rsync daemon and
-oc-rsync client -> upstream daemon) against all three upstream versions.
+oc-rsync client -> upstream daemon) against 3.0.9, 3.1.3, and 3.4.1. Rsync
+3.4.2 uses the same protocol (32) as 3.4.1 and passes the identical test
+matrix - it is not shown separately. Rsync 2.6.9 (protocol 29) interop is
+validated via dedicated daemon push/pull cells (RP28.c/RP28.d) rather than
+the full feature matrix below.
 
 ### Transfer Modes
 
