@@ -78,7 +78,7 @@ pub(crate) fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option
 }
 
 fn advertise_capabilities(
-    stream: &mut TcpStream,
+    stream: &mut DaemonStream,
     modules: &[ModuleRuntime],
     messages: &LegacyMessageCache,
 ) -> io::Result<()> {

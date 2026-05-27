@@ -28,6 +28,10 @@ struct AcceptLoopState<'a> {
     bandwidth_burst: Option<NonZeroU64>,
     reverse_lookup: bool,
     proxy_protocol: bool,
+    /// TLS acceptor for wrapping accepted TCP connections when the daemon is
+    /// configured with certificate material. `None` means plain TCP only.
+    #[cfg(feature = "daemon-tls")]
+    tls_acceptor: Option<crate::tls::TlsAcceptor>,
 }
 
 /// Checks signal flags and performs maintenance tasks between accept iterations.
@@ -118,7 +122,7 @@ fn check_signals_and_maintain(
 /// `@ERROR: max connections (%d) reached -- try again later\n` to the
 /// client via `io_printf(f_out, ...)`.
 fn refuse_if_at_capacity(
-    stream: &mut TcpStream,
+    stream: &mut DaemonStream,
     peer_addr: SocketAddr,
     state: &AcceptLoopState<'_>,
 ) -> bool {
@@ -183,7 +187,7 @@ pub(crate) fn log_max_connections_rejection(
 /// upstream: clientserver.c - fork per connection; we use threads with
 /// `catch_unwind` for equivalent crash isolation.
 fn spawn_connection_worker(
-    stream: TcpStream,
+    stream: DaemonStream,
     raw_peer_addr: SocketAddr,
     state: &AcceptLoopState<'_>,
 ) -> thread::JoinHandle<WorkerResult> {
@@ -250,7 +254,7 @@ fn spawn_connection_worker(
 
 /// Applies socket options to an accepted stream and logs any failure.
 fn apply_client_options(
-    stream: &TcpStream,
+    stream: &DaemonStream,
     client_socket_options: &[SocketOption],
     log_sink: Option<&SharedLogSink>,
 ) {
@@ -258,7 +262,7 @@ fn apply_client_options(
     // on the accepted client fd before the session handler runs.
     if !client_socket_options.is_empty() {
         if let Err(error) =
-            apply_socket_options_to_stream(stream, client_socket_options)
+            apply_socket_options_to_stream(stream.tcp_stream(), client_socket_options)
         {
             if let Some(log) = log_sink {
                 let text = format!(
@@ -269,6 +273,37 @@ fn apply_client_options(
             }
         }
     }
+}
+
+/// Wraps an accepted `TcpStream` into a [`DaemonStream`].
+///
+/// When the `daemon-tls` feature is enabled and a TLS acceptor is configured,
+/// the stream is wrapped through `tls::wrap_stream()` to perform the TLS
+/// handshake. If the handshake fails, the error is logged and `None` is
+/// returned so the accept loop can skip the connection.
+///
+/// When TLS is not configured (or the feature is disabled), the stream is
+/// wrapped as `DaemonStream::Plain`.
+fn wrap_accepted_stream(
+    tcp_stream: TcpStream,
+    #[allow(unused_variables)] state: &AcceptLoopState<'_>,
+) -> Option<DaemonStream> {
+    #[cfg(feature = "daemon-tls")]
+    if let Some(ref acceptor) = state.tls_acceptor {
+        return match crate::tls::wrap_stream(acceptor, tcp_stream) {
+            Ok(tls_stream) => Some(DaemonStream::Tls(tls_stream)),
+            Err(error) => {
+                if let Some(log) = state.log_sink.as_ref() {
+                    let text = format!("TLS handshake failed: {error}");
+                    let message = rsync_warning!(text).with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+                None
+            }
+        };
+    }
+
+    Some(DaemonStream::plain(tcp_stream))
 }
 
 /// Updates the systemd connection status after a new connection is accepted.
@@ -307,8 +342,8 @@ fn run_single_listener_loop(
         }
 
         match listener.accept() {
-            Ok((mut stream, raw_peer_addr)) => {
-                if let Err(error) = stream.set_nonblocking(false) {
+            Ok((tcp_stream, raw_peer_addr)) => {
+                if let Err(error) = tcp_stream.set_nonblocking(false) {
                     if let Some(log) = state.log_sink.as_ref() {
                         let text = format!(
                             "failed to set accepted socket to blocking: {error}"
@@ -318,6 +353,10 @@ fn run_single_listener_loop(
                     }
                     continue;
                 }
+
+                let Some(mut stream) = wrap_accepted_stream(tcp_stream, state) else {
+                    continue;
+                };
 
                 apply_client_options(&stream, &state.client_socket_options, state.log_sink.as_ref());
 
@@ -434,7 +473,11 @@ fn run_dual_stack_loop(
 
         // Use recv_timeout to allow periodic worker reaping and signal checks
         match rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(Ok((mut stream, raw_peer_addr))) => {
+            Ok(Ok((tcp_stream, raw_peer_addr))) => {
+                let Some(mut stream) = wrap_accepted_stream(tcp_stream, state) else {
+                    continue;
+                };
+
                 apply_client_options(&stream, &state.client_socket_options, state.log_sink.as_ref());
 
                 if refuse_if_at_capacity(&mut stream, raw_peer_addr, state) {

@@ -42,7 +42,7 @@ struct LegacySessionParams<'a> {
 /// each child calls `rsync_module()` which performs the full session lifecycle.
 #[cfg_attr(feature = "tracing", instrument(skip(stream, params), fields(peer = %peer_addr), name = "session_handler"))]
 fn handle_session(
-    stream: TcpStream,
+    stream: DaemonStream,
     peer_addr: SocketAddr,
     params: SessionParams<'_>,
 ) -> io::Result<()> {
@@ -66,8 +66,9 @@ fn handle_session(
 
     // upstream: clientserver.c:1298 - read PROXY protocol header before any
     // rsync protocol data when `proxy protocol = true` in the config.
+    let mut stream = stream;
     let peer_addr = if proxy_protocol {
-        match parse_proxy_header(&stream) {
+        match parse_proxy_header(&mut stream) {
             Ok(Some(proxied_addr)) => proxied_addr,
             Ok(None) => peer_addr,
             Err(error) => {
@@ -174,7 +175,7 @@ enum SessionStyle {
 /// chunks and each chunk is registered with the limiter before sending.
 /// When no limiter is present, the payload is written in a single call.
 fn write_limited(
-    stream: &mut TcpStream,
+    stream: &mut DaemonStream,
     limiter: &mut Option<BandwidthLimiter>,
     payload: &[u8],
 ) -> io::Result<()> {
@@ -204,7 +205,7 @@ fn write_limited(
 /// 3. Client sends module name (or `#list`)
 #[cfg_attr(feature = "tracing", instrument(skip(stream, params), fields(peer = %peer_addr), name = "legacy_session"))]
 fn handle_legacy_session(
-    stream: TcpStream,
+    stream: DaemonStream,
     peer_addr: SocketAddr,
     params: LegacySessionParams<'_>,
 ) -> io::Result<()> {
@@ -368,7 +369,7 @@ fn read_early_input(
 }
 
 fn handle_binary_session(
-    stream: TcpStream,
+    stream: DaemonStream,
     daemon_limit: Option<NonZeroU64>,
     daemon_burst: Option<NonZeroU64>,
     log_sink: Option<SharedLogSink>,
@@ -377,7 +378,7 @@ fn handle_binary_session(
 }
 
 fn handle_binary_session_internal(
-    mut stream: TcpStream,
+    mut stream: DaemonStream,
     daemon_limit: Option<NonZeroU64>,
     daemon_burst: Option<NonZeroU64>,
     log_sink: Option<SharedLogSink>,

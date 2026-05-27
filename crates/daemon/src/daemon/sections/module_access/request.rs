@@ -14,7 +14,7 @@
 /// with the module request metadata so helper functions receive a single
 /// context parameter instead of many individual arguments.
 struct ModuleRequestContext<'a> {
-    reader: &'a mut BufReader<TcpStream>,
+    reader: &'a mut BufReader<DaemonStream>,
     limiter: &'a mut Option<BandwidthLimiter>,
     peer_ip: IpAddr,
     session_peer_host: Option<&'a str>,
@@ -241,7 +241,7 @@ fn handle_module_denied(
 /// Returns an I/O error if the connection fails, otherwise `Ok(())`.
 #[allow(clippy::too_many_arguments)]
 fn respond_with_module_request(
-    reader: &mut BufReader<TcpStream>,
+    reader: &mut BufReader<DaemonStream>,
     limiter: &mut Option<BandwidthLimiter>,
     modules: &[ModuleRuntime],
     request: &str,

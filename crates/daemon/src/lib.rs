@@ -181,6 +181,8 @@ mod daemon;
 mod error;
 /// Daemon configuration file parsing for `rsyncd.conf`.
 pub mod rsyncd_config;
+/// Unified stream abstraction for plain TCP and TLS-wrapped connections.
+pub mod daemon_stream;
 mod systemd;
 /// Native TLS termination via rustls for the daemon listener.
 #[cfg(feature = "daemon-tls")]
@@ -195,6 +197,7 @@ mod tests;
 
 pub use cli::{exit_code_from, run};
 pub use config::{DaemonConfig, DaemonConfigBuilder};
+pub use daemon_stream::DaemonStream;
 #[cfg(feature = "async-daemon")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async-daemon")))]
 pub use daemon::run_async_daemon;

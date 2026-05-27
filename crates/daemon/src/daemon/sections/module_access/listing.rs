@@ -24,7 +24,7 @@ fn format_module_listing_line(name: &str, comment: &str) -> String {
 /// to access. Only modules marked as listable and that permit the peer's IP
 /// address are included in the response.
 fn respond_with_module_list(
-    stream: &mut TcpStream,
+    stream: &mut DaemonStream,
     limiter: &mut Option<BandwidthLimiter>,
     modules: &[ModuleRuntime],
     motd_lines: &[String],

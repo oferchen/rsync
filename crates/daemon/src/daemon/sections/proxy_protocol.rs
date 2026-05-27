@@ -211,9 +211,8 @@ fn parse_v1_header<R: Read>(prefix: &[u8; 12], reader: &mut R) -> io::Result<Opt
 ///
 /// upstream: clientserver.c:1298 - `read_proxy_protocol_header()` is called
 /// before any rsync protocol data when `proxy protocol = true` in the config.
-pub(crate) fn parse_proxy_header(stream: &TcpStream) -> io::Result<Option<SocketAddr>> {
-    // Borrow as Read via reference - TcpStream implements Read for &TcpStream.
-    let mut reader = BufReader::new(stream);
+pub(crate) fn parse_proxy_header(stream: &mut DaemonStream) -> io::Result<Option<SocketAddr>> {
+    let mut reader = BufReader::new(&mut *stream);
     parse_proxy_header_from(&mut reader)
 }
 
