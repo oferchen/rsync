@@ -149,7 +149,7 @@ fn bind_with_backlog(addr: SocketAddr, backlog: i32) -> io::Result<TcpListener> 
 }
 
 /// Configures read/write timeouts on an accepted client stream.
-fn configure_stream(stream: &TcpStream) -> io::Result<()> {
+fn configure_stream(stream: &DaemonStream) -> io::Result<()> {
     stream.set_read_timeout(Some(SOCKET_TIMEOUT))?;
     stream.set_write_timeout(Some(SOCKET_TIMEOUT))
 }

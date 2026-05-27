@@ -729,6 +729,8 @@ fn test_accept_loop_state<'a>(
         bandwidth_burst: None,
         reverse_lookup: false,
         proxy_protocol: false,
+        #[cfg(feature = "daemon-tls")]
+        tls_acceptor: None,
     }
 }
 
@@ -769,8 +771,9 @@ fn refuse_if_at_capacity_admits_when_no_cap_configured() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let local = listener.local_addr().expect("local addr");
     let client_handle = thread::spawn(move || TcpStream::connect(local).expect("connect"));
-    let (mut server_stream, peer) = listener.accept().expect("accept");
+    let (server_stream, peer) = listener.accept().expect("accept");
     let _client = client_handle.join().expect("client connect");
+    let mut server_stream = DaemonStream::plain(server_stream);
 
     let flags = no_op_signal_flags();
     let config_path: Option<PathBuf> = None;
@@ -805,8 +808,9 @@ fn accept_loop_refuses_when_at_capacity() {
     let local = listener.local_addr().expect("local addr");
     let client_handle =
         thread::spawn(move || TcpStream::connect(local).expect("connect third client"));
-    let (mut server_stream, peer) = listener.accept().expect("accept third client");
+    let (server_stream, peer) = listener.accept().expect("accept third client");
     let mut client_stream = client_handle.join().expect("client connect");
+    let mut server_stream = DaemonStream::plain(server_stream);
 
     let flags = no_op_signal_flags();
     let config_path: Option<PathBuf> = None;
@@ -855,8 +859,9 @@ fn refuse_if_at_capacity_emits_structured_warning() {
     let local = listener.local_addr().expect("local addr");
     let client_handle =
         thread::spawn(move || TcpStream::connect(local).expect("connect refused client"));
-    let (mut server_stream, peer) = listener.accept().expect("accept refused client");
+    let (server_stream, peer) = listener.accept().expect("accept refused client");
     let _client = client_handle.join().expect("client connect");
+    let mut server_stream = DaemonStream::plain(server_stream);
 
     let log_dir = tempfile::tempdir().expect("log dir");
     let log_path = log_dir.path().join("daemon.log");
@@ -921,8 +926,9 @@ fn accept_loop_recovers_after_disconnect() {
     let local = listener.local_addr().expect("local addr");
     let client_handle =
         thread::spawn(move || TcpStream::connect(local).expect("connect after drain"));
-    let (mut server_stream, peer) = listener.accept().expect("accept after drain");
+    let (server_stream, peer) = listener.accept().expect("accept after drain");
     let _client = client_handle.join().expect("client connect");
+    let mut server_stream = DaemonStream::plain(server_stream);
 
     let flags = no_op_signal_flags();
     let config_path: Option<PathBuf> = None;

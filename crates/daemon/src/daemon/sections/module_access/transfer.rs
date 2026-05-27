@@ -229,7 +229,7 @@ fn setup_transfer_streams(
     let stream = ctx.reader.get_mut();
     stream.set_nodelay(true)?;
 
-    let read_stream = match stream.try_clone() {
+    let read_stream = match stream.tcp_stream().try_clone() {
         Ok(s) => s,
         Err(err) => {
             let payload = format!("@ERROR: failed to clone stream: {err}");
@@ -238,7 +238,7 @@ fn setup_transfer_streams(
         }
     };
 
-    let write_stream = match stream.try_clone() {
+    let write_stream = match stream.tcp_stream().try_clone() {
         Ok(s) => s,
         Err(err) => {
             return Err(io::Error::other(format!(
@@ -252,7 +252,7 @@ fn setup_transfer_streams(
 
 /// Builds the handshake result for the transfer.
 fn build_handshake_result(
-    reader: &BufReader<TcpStream>,
+    reader: &BufReader<DaemonStream>,
     negotiated_protocol: Option<ProtocolVersion>,
     client_args: Vec<String>,
     module: &ModuleRuntime,

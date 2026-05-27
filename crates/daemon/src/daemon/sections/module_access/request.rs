@@ -14,7 +14,7 @@
 /// with the module request metadata so helper functions receive a single
 /// context parameter instead of many individual arguments.
 struct ModuleRequestContext<'a> {
-    reader: &'a mut BufReader<TcpStream>,
+    reader: &'a mut BufReader<DaemonStream>,
     limiter: &'a mut Option<BandwidthLimiter>,
     peer_ip: IpAddr,
     session_peer_host: Option<&'a str>,
@@ -38,7 +38,7 @@ impl<'a> ModuleRequestContext<'a> {
 
 /// Sends an error message and exit marker to the client.
 fn send_error_and_exit(
-    stream: &mut TcpStream,
+    stream: &mut DaemonStream,
     limiter: &mut Option<BandwidthLimiter>,
     messages: &LegacyMessageCache,
     payload: &str,
@@ -56,7 +56,7 @@ fn send_error_and_exit(
 ///
 /// upstream: clientserver.c:733 - `@ERROR: access denied to %s from %s (%s)\n`
 fn deny_module(
-    stream: &mut TcpStream,
+    stream: &mut DaemonStream,
     module: &ModuleDefinition,
     peer_ip: IpAddr,
     host: Option<&str>,
@@ -81,7 +81,7 @@ fn deny_module(
 /// This confirms that the module request was accepted and the client
 /// may proceed with sending its arguments.
 fn send_daemon_ok(
-    stream: &mut TcpStream,
+    stream: &mut DaemonStream,
     limiter: &mut Option<BandwidthLimiter>,
     messages: &LegacyMessageCache,
 ) -> io::Result<()> {
@@ -186,7 +186,7 @@ fn handle_authentication(
 ///
 /// Sends an error message and logs the event.
 fn handle_unknown_module(
-    stream: &mut TcpStream,
+    stream: &mut DaemonStream,
     limiter: &mut Option<BandwidthLimiter>,
     messages: &LegacyMessageCache,
     request: &str,
@@ -241,7 +241,7 @@ fn handle_module_denied(
 /// Returns an I/O error if the connection fails, otherwise `Ok(())`.
 #[allow(clippy::too_many_arguments)]
 fn respond_with_module_request(
-    reader: &mut BufReader<TcpStream>,
+    reader: &mut BufReader<DaemonStream>,
     limiter: &mut Option<BandwidthLimiter>,
     modules: &[ModuleRuntime],
     request: &str,
