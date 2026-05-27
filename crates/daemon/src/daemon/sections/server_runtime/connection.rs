@@ -291,7 +291,7 @@ fn wrap_accepted_stream(
     #[cfg(feature = "daemon-tls")]
     if let Some(ref acceptor) = state.tls_acceptor {
         return match crate::tls::wrap_stream(acceptor, tcp_stream) {
-            Ok(tls_stream) => Some(DaemonStream::Tls(tls_stream)),
+            Ok(tls_stream) => Some(DaemonStream::Tls(Box::new(tls_stream))),
             Err(error) => {
                 if let Some(log) = state.log_sink.as_ref() {
                     let text = format!("TLS handshake failed: {error}");

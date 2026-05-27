@@ -39,7 +39,7 @@ pub enum DaemonStream {
     /// performing TLS record framing under the hood.
     #[cfg(feature = "daemon-tls")]
     #[cfg_attr(docsrs, doc(cfg(feature = "daemon-tls")))]
-    Tls(rustls::StreamOwned<rustls::ServerConnection, TcpStream>),
+    Tls(Box<rustls::StreamOwned<rustls::ServerConnection, TcpStream>>),
 }
 
 impl DaemonStream {
