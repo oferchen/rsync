@@ -12,7 +12,8 @@ fn in_memory_only_returns_spill_disabled_on_threshold_breach() {
 
     // First 3 items fit within the threshold.
     for i in 0..3 {
-        buf.insert(i, i * 10).expect("should succeed under threshold");
+        buf.insert(i, i * 10)
+            .expect("should succeed under threshold");
     }
 
     // The 4th item exceeds the threshold and triggers a spill attempt,
@@ -83,7 +84,8 @@ fn in_memory_only_force_insert_returns_spill_disabled() {
     let mut buf: SpillableReorderBuffer<u64> =
         SpillableReorderBuffer::new(64, 16).with_in_memory_only(true);
 
-    buf.force_insert(0, 0).expect("first insert under threshold");
+    buf.force_insert(0, 0)
+        .expect("first insert under threshold");
     buf.force_insert(1, 10).expect("second insert at threshold");
 
     // Third force_insert exceeds the threshold.
