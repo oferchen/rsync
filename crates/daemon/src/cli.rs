@@ -83,10 +83,17 @@ where
         return execute_service_action(action, &parsed, stdout, stderr);
     }
 
-    let config = DaemonConfig::builder()
+    #[allow(unused_mut)]
+    let mut builder = DaemonConfig::builder()
         .brand(parsed.program_name.brand())
-        .arguments(parsed.remainder)
-        .build();
+        .arguments(parsed.remainder);
+
+    #[cfg(feature = "daemon-tls")]
+    if let Some(tls) = parsed.tls_config {
+        builder = builder.tls_config(tls);
+    }
+
+    let config = builder.build();
 
     match run_daemon(config) {
         Ok(()) => 0,
@@ -262,5 +269,96 @@ mod tests {
         let mut stderr = Vec::new();
         let result = run(["oc-rsyncd", "--windows-service"], &mut stdout, &mut stderr);
         assert_eq!(result, 1);
+    }
+
+    #[cfg(feature = "daemon-tls")]
+    mod tls_cli {
+        use crate::daemon::parse_args;
+        use std::path::Path;
+
+        #[test]
+        fn ssl_flag_sets_tls_config_with_defaults() {
+            let parsed = parse_args(["oc-rsyncd", "--ssl"]).unwrap();
+            let tls = parsed.tls_config.expect("--ssl should set tls_config");
+            assert_eq!(tls.cert_path, Path::new("cert.pem"));
+            assert_eq!(tls.key_path, Path::new("key.pem"));
+            assert!(tls.client_ca_path.is_none());
+        }
+
+        #[test]
+        fn ssl_flag_with_cert_and_key() {
+            let parsed = parse_args([
+                "oc-rsyncd",
+                "--ssl",
+                "--ssl-cert",
+                "/etc/certs/server.pem",
+                "--ssl-key",
+                "/etc/certs/server.key",
+            ])
+            .unwrap();
+            let tls = parsed.tls_config.expect("--ssl should set tls_config");
+            assert_eq!(tls.cert_path, Path::new("/etc/certs/server.pem"));
+            assert_eq!(tls.key_path, Path::new("/etc/certs/server.key"));
+            assert!(tls.client_ca_path.is_none());
+        }
+
+        #[test]
+        fn ssl_flag_with_client_ca() {
+            let parsed = parse_args([
+                "oc-rsyncd",
+                "--ssl",
+                "--ssl-cert",
+                "/certs/server.pem",
+                "--ssl-key",
+                "/certs/server.key",
+                "--ssl-ca",
+                "/certs/ca.pem",
+            ])
+            .unwrap();
+            let tls = parsed.tls_config.expect("--ssl should set tls_config");
+            assert_eq!(
+                tls.client_ca_path.as_deref(),
+                Some(Path::new("/certs/ca.pem"))
+            );
+        }
+
+        #[test]
+        fn no_ssl_flag_leaves_tls_config_none() {
+            let parsed = parse_args(["oc-rsyncd"]).unwrap();
+            assert!(parsed.tls_config.is_none());
+        }
+
+        #[test]
+        fn ssl_cert_without_ssl_flag_is_rejected() {
+            let result = parse_args(["oc-rsyncd", "--ssl-cert", "/path/cert.pem"]);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn ssl_key_without_ssl_flag_is_rejected() {
+            let result = parse_args(["oc-rsyncd", "--ssl-key", "/path/key.pem"]);
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn ssl_ca_without_ssl_flag_is_rejected() {
+            let result = parse_args(["oc-rsyncd", "--ssl-ca", "/path/ca.pem"]);
+            assert!(result.is_err());
+        }
+    }
+
+    #[cfg(not(feature = "daemon-tls"))]
+    mod tls_cli_absent {
+        use crate::daemon::parse_args;
+
+        #[test]
+        fn ssl_flag_passes_through_without_feature() {
+            // Without the daemon-tls feature, --ssl is not a defined clap
+            // argument. It passes through to remainder via the trailing
+            // var-arg collector and is rejected downstream by
+            // RuntimeOptions::parse_with_brand as an unsupported option.
+            let parsed = parse_args(["oc-rsyncd", "--ssl"]).unwrap();
+            assert!(parsed.remainder.iter().any(|a| a == "--ssl"));
+        }
     }
 }

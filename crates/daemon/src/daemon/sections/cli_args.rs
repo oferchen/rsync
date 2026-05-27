@@ -56,6 +56,13 @@ pub(crate) struct ParsedArgs {
     pub(crate) show_version: bool,
     pub(crate) service_action: Option<ServiceAction>,
     pub(crate) remainder: Vec<OsString>,
+    /// TLS configuration parsed from `--ssl*` flags.
+    ///
+    /// Present only when `--ssl` is given and the `daemon-tls` feature is
+    /// enabled. Contains paths to the certificate chain, private key, and
+    /// optional client CA bundle for mutual TLS.
+    #[cfg(feature = "daemon-tls")]
+    pub(crate) tls_config: Option<crate::tls::TlsConfig>,
 }
 
 /// Builds the clap [`Command`] used by [`parse_args`].
@@ -63,7 +70,8 @@ pub(crate) struct ParsedArgs {
 /// Only `--help` and `--version` are extracted here; all other flags are
 /// collected as `remainder` and forwarded to the daemon option parser.
 pub(crate) fn clap_command(program_name: &'static str) -> Command {
-    Command::new(program_name)
+    #[allow(unused_mut)]
+    let mut cmd = Command::new(program_name)
         .disable_help_flag(true)
         .disable_version_flag(true)
         .arg_required_else_help(false)
@@ -105,7 +113,41 @@ pub(crate) fn clap_command(program_name: &'static str) -> Command {
                 .allow_hyphen_values(true)
                 .trailing_var_arg(true)
                 .value_parser(OsStringValueParser::new()),
-        )
+        );
+
+    #[cfg(feature = "daemon-tls")]
+    {
+        cmd = cmd
+            .arg(
+                Arg::new("ssl")
+                    .long("ssl")
+                    .help("Enable native TLS on the daemon listener.")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("ssl-cert")
+                    .long("ssl-cert")
+                    .help("Path to PEM certificate chain for TLS.")
+                    .value_name("PATH")
+                    .requires("ssl"),
+            )
+            .arg(
+                Arg::new("ssl-key")
+                    .long("ssl-key")
+                    .help("Path to PEM private key for TLS.")
+                    .value_name("PATH")
+                    .requires("ssl"),
+            )
+            .arg(
+                Arg::new("ssl-ca")
+                    .long("ssl-ca")
+                    .help("Path to PEM CA bundle for mutual TLS client verification.")
+                    .value_name("PATH")
+                    .requires("ssl"),
+            );
+    }
+
+    cmd
 }
 
 /// Parses the top-level daemon arguments, extracting `--help` and `--version`.
@@ -151,12 +193,31 @@ where
         None
     };
 
+    #[cfg(feature = "daemon-tls")]
+    let tls_config = if matches.get_flag("ssl") {
+        Some(crate::tls::TlsConfig {
+            cert_path: matches
+                .get_one::<String>("ssl-cert")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("cert.pem")),
+            key_path: matches
+                .get_one::<String>("ssl-key")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("key.pem")),
+            client_ca_path: matches.get_one::<String>("ssl-ca").map(PathBuf::from),
+        })
+    } else {
+        None
+    };
+
     Ok(ParsedArgs {
         program_name,
         show_help,
         show_version,
         service_action,
         remainder,
+        #[cfg(feature = "daemon-tls")]
+        tls_config,
     })
 }
 

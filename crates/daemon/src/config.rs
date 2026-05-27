@@ -32,6 +32,12 @@ pub struct DaemonConfig {
     /// binding a new socket, eliminating the TOCTOU race between port allocation
     /// and daemon bind in tests.
     pre_bound_listener: Option<TcpListener>,
+    /// TLS configuration parsed from `--ssl*` CLI flags.
+    ///
+    /// When present, the daemon listener wraps accepted connections in a TLS
+    /// layer using the certificate material referenced by these paths.
+    #[cfg(feature = "daemon-tls")]
+    tls_config: Option<crate::tls::TlsConfig>,
 }
 
 impl Clone for DaemonConfig {
@@ -42,15 +48,25 @@ impl Clone for DaemonConfig {
             load_default_paths: self.load_default_paths,
             signal_flags: self.signal_flags.clone(),
             pre_bound_listener: None,
+            #[cfg(feature = "daemon-tls")]
+            tls_config: self.tls_config.clone(),
         }
     }
 }
 
 impl PartialEq for DaemonConfig {
     fn eq(&self, other: &Self) -> bool {
-        self.brand == other.brand
+        let base = self.brand == other.brand
             && self.arguments == other.arguments
-            && self.load_default_paths == other.load_default_paths
+            && self.load_default_paths == other.load_default_paths;
+        #[cfg(feature = "daemon-tls")]
+        {
+            base && self.tls_config == other.tls_config
+        }
+        #[cfg(not(feature = "daemon-tls"))]
+        {
+            base
+        }
     }
 }
 
@@ -100,6 +116,17 @@ impl DaemonConfig {
         self.pre_bound_listener.take()
     }
 
+    /// Returns TLS configuration parsed from `--ssl*` CLI flags, if present.
+    ///
+    /// When set, the daemon listener wraps accepted connections in a TLS
+    /// layer. The returned config contains filesystem paths to the certificate
+    /// chain, private key, and optional client CA bundle.
+    #[cfg(feature = "daemon-tls")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "daemon-tls")))]
+    pub fn take_tls_config(&mut self) -> Option<crate::tls::TlsConfig> {
+        self.tls_config.take()
+    }
+
     /// Reports whether any daemon-specific arguments were provided.
     #[must_use]
     pub const fn has_runtime_request(&self) -> bool {
@@ -115,6 +142,8 @@ pub struct DaemonConfigBuilder {
     load_default_paths: bool,
     signal_flags: Option<SignalFlags>,
     pre_bound_listener: Option<TcpListener>,
+    #[cfg(feature = "daemon-tls")]
+    tls_config: Option<crate::tls::TlsConfig>,
 }
 
 impl Clone for DaemonConfigBuilder {
@@ -125,15 +154,25 @@ impl Clone for DaemonConfigBuilder {
             load_default_paths: self.load_default_paths,
             signal_flags: self.signal_flags.clone(),
             pre_bound_listener: None,
+            #[cfg(feature = "daemon-tls")]
+            tls_config: self.tls_config.clone(),
         }
     }
 }
 
 impl PartialEq for DaemonConfigBuilder {
     fn eq(&self, other: &Self) -> bool {
-        self.brand == other.brand
+        let base = self.brand == other.brand
             && self.arguments == other.arguments
-            && self.load_default_paths == other.load_default_paths
+            && self.load_default_paths == other.load_default_paths;
+        #[cfg(feature = "daemon-tls")]
+        {
+            base && self.tls_config == other.tls_config
+        }
+        #[cfg(not(feature = "daemon-tls"))]
+        {
+            base
+        }
     }
 }
 
@@ -147,6 +186,8 @@ impl Default for DaemonConfigBuilder {
             load_default_paths: true,
             signal_flags: None,
             pre_bound_listener: None,
+            #[cfg(feature = "daemon-tls")]
+            tls_config: None,
         }
     }
 }
@@ -159,6 +200,8 @@ impl From<DaemonConfig> for DaemonConfigBuilder {
             load_default_paths: config.load_default_paths,
             signal_flags: config.signal_flags,
             pre_bound_listener: config.pre_bound_listener,
+            #[cfg(feature = "daemon-tls")]
+            tls_config: config.tls_config,
         }
     }
 }
@@ -211,6 +254,18 @@ impl DaemonConfigBuilder {
         self
     }
 
+    /// Sets the TLS configuration for the daemon listener.
+    ///
+    /// When set, the daemon wraps accepted TCP connections in a TLS layer
+    /// using the certificate material referenced by `config`.
+    #[cfg(feature = "daemon-tls")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "daemon-tls")))]
+    #[must_use]
+    pub fn tls_config(mut self, config: crate::tls::TlsConfig) -> Self {
+        self.tls_config = Some(config);
+        self
+    }
+
     /// Finalises the builder and constructs the [`DaemonConfig`].
     #[must_use]
     pub fn build(self) -> DaemonConfig {
@@ -220,6 +275,8 @@ impl DaemonConfigBuilder {
             load_default_paths: self.load_default_paths,
             signal_flags: self.signal_flags,
             pre_bound_listener: self.pre_bound_listener,
+            #[cfg(feature = "daemon-tls")]
+            tls_config: self.tls_config,
         }
     }
 }
@@ -333,6 +390,63 @@ mod tests {
             let taken = config.take_signal_flags().unwrap();
             shutdown.store(true, Ordering::Relaxed);
             assert!(taken.shutdown.load(Ordering::Relaxed));
+        }
+    }
+
+    #[cfg(feature = "daemon-tls")]
+    mod tls_config_tests {
+        use super::*;
+        use std::path::PathBuf;
+
+        fn sample_tls_config() -> crate::tls::TlsConfig {
+            crate::tls::TlsConfig {
+                cert_path: PathBuf::from("/etc/certs/server.pem"),
+                key_path: PathBuf::from("/etc/certs/server.key"),
+                client_ca_path: None,
+            }
+        }
+
+        #[test]
+        fn builder_default_has_no_tls_config() {
+            let mut config = DaemonConfig::builder().build();
+            assert!(config.take_tls_config().is_none());
+        }
+
+        #[test]
+        fn builder_with_tls_config() {
+            let tls = sample_tls_config();
+            let mut config = DaemonConfig::builder().tls_config(tls.clone()).build();
+            let taken = config.take_tls_config();
+            assert_eq!(taken, Some(tls));
+        }
+
+        #[test]
+        fn take_tls_config_returns_none_on_second_call() {
+            let tls = sample_tls_config();
+            let mut config = DaemonConfig::builder().tls_config(tls).build();
+            assert!(config.take_tls_config().is_some());
+            assert!(config.take_tls_config().is_none());
+        }
+
+        #[test]
+        fn tls_config_survives_clone() {
+            let tls = sample_tls_config();
+            let config = DaemonConfig::builder().tls_config(tls.clone()).build();
+            let cloned = config.clone();
+            assert_eq!(config, cloned);
+        }
+
+        #[test]
+        fn tls_config_chained_with_other_options() {
+            let tls = sample_tls_config();
+            let mut config = DaemonConfig::builder()
+                .brand(Brand::Upstream)
+                .arguments(["--port", "8873"])
+                .tls_config(tls)
+                .build();
+
+            assert_eq!(config.brand(), Brand::Upstream);
+            assert!(config.take_tls_config().is_some());
         }
     }
 

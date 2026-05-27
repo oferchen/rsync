@@ -61,7 +61,7 @@ pub struct TlsAcceptor {
 /// All paths must point at PEM-encoded files. The certificate chain file
 /// must contain the server certificate followed by any intermediate
 /// certificates, ordered leaf-first.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TlsConfig {
     /// Path to the PEM-encoded certificate chain (server cert + intermediates).
     pub cert_path: PathBuf,
