@@ -36,9 +36,9 @@ use super::super::summary::ClientSummary;
 use super::batch_support::build_batch_context;
 use super::invocation::{RemoteRole, TransferSpec, determine_transfer_role};
 
-use connection::{DaemonTransferRequest, perform_daemon_handshake};
 #[cfg(feature = "client-tls")]
-use super::super::module_list::{TlsClientConfig, TlsConnector};
+use super::super::module_list::{TlsClientConfig, TlsConnector, TlsStream};
+use connection::{DaemonTransferRequest, perform_daemon_handshake};
 use orchestration::{run_pull_transfer, run_push_transfer, send_daemon_arguments};
 
 /// Executes a transfer over daemon protocol (rsync://).
@@ -163,12 +163,11 @@ pub(crate) fn wrap_stream_tls(
     stream: std::net::TcpStream,
     hostname: &str,
     tls_config: &TlsClientConfig,
-) -> Result<crate::client::module_list::connect::tls::TlsStream, ClientError> {
+) -> Result<TlsStream, ClientError> {
     use crate::client::socket_error;
 
-    let connector = TlsConnector::new(tls_config).map_err(|e| {
-        invalid_argument_error(&format!("failed to initialize TLS: {e}"), 23)
-    })?;
+    let connector = TlsConnector::new(tls_config)
+        .map_err(|e| invalid_argument_error(&format!("failed to initialize TLS: {e}"), 23))?;
 
     connector
         .wrap(stream, hostname)

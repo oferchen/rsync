@@ -45,6 +45,9 @@ pub(super) use crate::auth::{DaemonAuthDigest, compute_daemon_auth_response};
 pub(super) use auth::{
     DaemonAuthContext, SensitiveBytes, load_daemon_password, send_daemon_auth_credentials,
 };
+#[cfg(feature = "client-tls")]
+#[allow(unused_imports)] // REASON: convenience re-export for sibling modules
+pub(super) use connect::tls::{TlsClientConfig, TlsConnector, TlsStream};
 #[allow(unused_imports)] // REASON: convenience re-export for sibling modules
 pub(super) use connect::{
     ConnectProgramConfig, ProxyConfig, ProxyCredentials, connect_direct, connect_via_proxy,
@@ -56,6 +59,3 @@ pub(super) use errors::map_daemon_handshake_error;
 pub(super) use parsing::parse_host_port;
 #[allow(unused_imports)] // REASON: convenience re-export for sibling modules
 pub(super) use socket_options::apply_socket_options;
-#[cfg(feature = "client-tls")]
-#[allow(unused_imports)] // REASON: convenience re-export for sibling modules
-pub(super) use connect::tls::{TlsClientConfig, TlsConnector};

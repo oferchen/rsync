@@ -18,7 +18,7 @@
 //! TLS-protected stream.
 
 use std::fs;
-use std::io::{self, Read, Write};
+use std::io;
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -39,9 +39,7 @@ pub(crate) struct TlsClientConfig {
 
 impl Default for TlsClientConfig {
     fn default() -> Self {
-        Self {
-            ca_cert_path: None,
-        }
+        Self { ca_cert_path: None }
     }
 }
 
@@ -90,11 +88,7 @@ impl TlsConnector {
     ///
     /// Returns `io::Error` if the hostname is not a valid DNS name or
     /// IP address, or if the TLS handshake fails.
-    pub(crate) fn wrap(
-        &self,
-        stream: TcpStream,
-        hostname: &str,
-    ) -> Result<TlsStream, io::Error> {
+    pub(crate) fn wrap(&self, stream: TcpStream, hostname: &str) -> Result<TlsStream, io::Error> {
         let server_name = ServerName::try_from(hostname.to_owned())
             .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
 
