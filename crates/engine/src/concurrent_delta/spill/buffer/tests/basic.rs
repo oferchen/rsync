@@ -250,7 +250,10 @@ fn spill_warned_flag_fires_on_first_spill() {
     for i in 0..3 {
         buf.insert(i, i * 10).unwrap();
     }
-    assert!(!buf.spill_warned(), "warning should not fire before threshold is exceeded");
+    assert!(
+        !buf.spill_warned(),
+        "warning should not fire before threshold is exceeded"
+    );
 
     // 4th item exceeds threshold - triggers spill and warning.
     buf.insert(3, 30).unwrap();
