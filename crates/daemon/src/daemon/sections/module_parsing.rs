@@ -122,7 +122,7 @@ fn canonical_option(text: &str) -> String {
     token.to_ascii_lowercase()
 }
 
-fn apply_module_timeout(stream: &TcpStream, module: &ModuleDefinition) -> io::Result<()> {
+fn apply_module_timeout(stream: &DaemonStream, module: &ModuleDefinition) -> io::Result<()> {
     if let Some(timeout) = module.timeout {
         let duration = Duration::from_secs(timeout.get());
         stream.set_read_timeout(Some(duration))?;

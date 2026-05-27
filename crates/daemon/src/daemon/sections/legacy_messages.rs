@@ -42,7 +42,7 @@ impl LegacyMessageCache {
 
     fn write(
         &self,
-        stream: &mut TcpStream,
+        stream: &mut DaemonStream,
         limiter: &mut Option<BandwidthLimiter>,
         message: LegacyDaemonMessage<'_>,
     ) -> io::Result<()> {
@@ -52,7 +52,7 @@ impl LegacyMessageCache {
 
     fn write_ok(
         &self,
-        stream: &mut TcpStream,
+        stream: &mut DaemonStream,
         limiter: &mut Option<BandwidthLimiter>,
     ) -> io::Result<()> {
         write_limited(stream, limiter, &self.ok)
@@ -60,7 +60,7 @@ impl LegacyMessageCache {
 
     fn write_exit(
         &self,
-        stream: &mut TcpStream,
+        stream: &mut DaemonStream,
         limiter: &mut Option<BandwidthLimiter>,
     ) -> io::Result<()> {
         write_limited(stream, limiter, &self.exit)
