@@ -77,3 +77,7 @@ harness = false
 [[bench]]
 name = "wire_protocol_bench"
 harness = false
+
+[[bench]]
+name = "flist_rss_fixture"
+harness = false
