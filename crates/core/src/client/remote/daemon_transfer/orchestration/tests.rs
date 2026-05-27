@@ -78,11 +78,9 @@ mod protect_args_daemon_tests {
     }
 
     #[test]
-    fn build_full_args_push_omits_inc_recurse_capability_by_default() {
-        // Sender-side INC_RECURSE is opt-in: the daemon push capability
-        // builder reads only `inc_recursive_send`, which defaults to false
-        // until the sender state machine is validated against upstream rsync.
-        // Tracker #1862.
+    fn build_full_args_push_includes_inc_recurse_capability_by_default() {
+        // ISI.h: sender-side INC_RECURSE is default-on, matching upstream
+        // rsync 3.4.x. The daemon push capability includes 'i' by default.
         let protocol = ProtocolVersion::try_from(32u8).unwrap();
         let request = test_daemon_request();
 
@@ -93,28 +91,26 @@ mod protect_args_daemon_tests {
             .find(|a| a.starts_with("-e."))
             .expect("capability string present");
         assert!(
-            !caps_default.contains('i'),
-            "default push capability must omit 'i': {caps_default}"
+            caps_default.contains('i'),
+            "default push capability must include 'i': {caps_default}"
         );
 
-        let config_on = ClientConfig::builder().inc_recursive_send(true).build();
-        let args_on = build_full_daemon_args(&config_on, &request, protocol, false);
-        let caps_on = args_on
+        let config_off = ClientConfig::builder().inc_recursive_send(false).build();
+        let args_off = build_full_daemon_args(&config_off, &request, protocol, false);
+        let caps_off = args_off
             .iter()
             .find(|a| a.starts_with("-e."))
             .expect("capability string present");
         assert!(
-            caps_on.contains('i'),
-            "--inc-recursive must advertise 'i' on push capability: {caps_on}"
+            !caps_off.contains('i'),
+            "--no-inc-recursive must suppress 'i' on push capability: {caps_off}"
         );
     }
 
     #[test]
-    fn build_full_args_pull_omits_inc_recurse_capability_by_default() {
-        // Sender-side INC_RECURSE is opt-in: the daemon push/pull capability
-        // builder reads only `inc_recursive_send`, which defaults to false
-        // until the sender state machine is validated against upstream rsync.
-        // Tracker #1862.
+    fn build_full_args_pull_includes_inc_recurse_capability_by_default() {
+        // ISI.h: sender-side INC_RECURSE is default-on, matching upstream
+        // rsync 3.4.x. The daemon pull capability includes 'i' by default.
         let protocol = ProtocolVersion::try_from(32u8).unwrap();
         let request = test_daemon_request();
 
@@ -125,19 +121,19 @@ mod protect_args_daemon_tests {
             .find(|a| a.starts_with("-e."))
             .expect("capability string present");
         assert!(
-            !caps_default.contains('i'),
-            "default pull capability must omit 'i': {caps_default}"
+            caps_default.contains('i'),
+            "default pull capability must include 'i': {caps_default}"
         );
 
-        let config_on = ClientConfig::builder().inc_recursive_send(true).build();
-        let args_on = build_full_daemon_args(&config_on, &request, protocol, true);
-        let caps_on = args_on
+        let config_off = ClientConfig::builder().inc_recursive_send(false).build();
+        let args_off = build_full_daemon_args(&config_off, &request, protocol, true);
+        let caps_off = args_off
             .iter()
             .find(|a| a.starts_with("-e."))
             .expect("capability string present");
         assert!(
-            caps_on.contains('i'),
-            "--inc-recursive must advertise 'i' on pull capability: {caps_on}"
+            !caps_off.contains('i'),
+            "--no-inc-recursive must suppress 'i' on pull capability: {caps_off}"
         );
     }
 

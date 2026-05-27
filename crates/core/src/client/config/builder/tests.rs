@@ -1589,24 +1589,9 @@ fn inc_recursive_send_false_clears_flag() {
 }
 
 #[test]
-#[cfg(not(feature = "sender-inc-recurse"))]
-fn default_inc_recursive_send_is_false() {
-    // Sender-side INC_RECURSE is opt-in until the sender state machine is
-    // validated against upstream rsync 3.0.9 / 3.1.3 / 3.4.1. Tracker #1862.
-    // The `sender-inc-recurse` feature flips this default ON for interop
-    // bake-up; under that feature the default is true and this invariant
-    // does not hold.
-    let config = builder().build();
-    assert!(!config.inc_recursive_send());
-}
-
-#[test]
-#[cfg(feature = "sender-inc-recurse")]
-fn default_inc_recursive_send_is_true_under_sender_inc_recurse_feature() {
-    // With `sender-inc-recurse` enabled, the default flips ON so interop
-    // tests can exercise the sender-side INC_RECURSE path against upstream
-    // rsync. ISI.h will flip this default permanently after the interop
-    // bake-up completes.
+fn default_inc_recursive_send_is_true() {
+    // ISI.h: sender-side INC_RECURSE is default-on, matching upstream rsync
+    // 3.4.x. CLI `--no-inc-recursive` overrides to false.
     let config = builder().build();
     assert!(config.inc_recursive_send());
 }
