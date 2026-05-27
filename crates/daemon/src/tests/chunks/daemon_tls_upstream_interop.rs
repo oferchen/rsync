@@ -28,7 +28,6 @@
 /// - stunnel.conf `[rsync]` section - TLS termination for rsync daemons
 /// - `rsync-ssl` script - client-side stunnel wrapper
 /// - `clientserver.c:start_daemon_client()` - daemon connection entry point
-
 #[cfg(all(unix, feature = "daemon-tls"))]
 #[test]
 fn tls_upstream_interop_push_through_encrypted_proxy() {
@@ -54,7 +53,7 @@ fn tls_upstream_interop_push_through_encrypted_proxy() {
     fs::write(source_dir.join("hello.txt"), b"hello through TLS\n").expect("write hello");
     fs::write(
         source_dir.join("binary.dat"),
-        &(0..=255).collect::<Vec<u8>>(),
+        (0..=255).collect::<Vec<u8>>(),
     )
     .expect("write binary");
 
