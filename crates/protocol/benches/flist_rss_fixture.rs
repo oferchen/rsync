@@ -239,8 +239,7 @@ fn bench_roundtrip_at_scale(c: &mut Criterion) {
     // Encode once.
     let mut encoded = Vec::with_capacity(count * 64);
     {
-        let mut writer =
-            protocol::flist::FileListWriter::new(protocol::ProtocolVersion::NEWEST);
+        let mut writer = protocol::flist::FileListWriter::new(protocol::ProtocolVersion::NEWEST);
         for entry in &entries {
             writer.write_entry(&mut encoded, entry).unwrap();
         }
@@ -326,13 +325,15 @@ fn bench_memory_profile(c: &mut Criterion) {
             / 1000;
 
         let estimated_heap_per_entry = avg_path_len + 24; // PathBuf capacity + overhead
-        let estimated_total =
-            vec_bytes + (entries.len() * estimated_heap_per_entry);
+        let estimated_total = vec_bytes + (entries.len() * estimated_heap_per_entry);
 
         eprintln!("=== 1M entry memory profile ===");
         eprintln!("  Inline per entry:     {inline}B");
         eprintln!("  Avg path length:      {avg_path_len}B");
-        eprintln!("  Vec backing store:    {vec_bytes}B ({:.1} MiB)", vec_bytes as f64 / 1_048_576.0);
+        eprintln!(
+            "  Vec backing store:    {vec_bytes}B ({:.1} MiB)",
+            vec_bytes as f64 / 1_048_576.0
+        );
         eprintln!(
             "  Est. total (vec+heap): {estimated_total}B ({:.1} MiB)",
             estimated_total as f64 / 1_048_576.0
