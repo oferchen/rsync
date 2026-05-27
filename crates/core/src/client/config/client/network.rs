@@ -148,9 +148,7 @@ impl ClientConfig {
     /// before performing the `@RSYNCD:` handshake. Returns `None` until
     /// the `--ssl` CLI flag is wired through `ClientConfigBuilder` (TLS-10).
     #[cfg(feature = "client-tls")]
-    pub(crate) fn tls_config(
-        &self,
-    ) -> Option<&crate::client::module_list::TlsClientConfig> {
+    pub(crate) fn tls_config(&self) -> Option<&crate::client::module_list::TlsClientConfig> {
         None // wired when --ssl CLI flag is added for client mode
     }
 }
