@@ -32,6 +32,10 @@ use super::super::reorder::CapacityExceeded;
 /// reconstructed; the typed variant lets the receiver emit an actionable
 /// diagnostic for the operator instead of a generic `NotFound`.
 ///
+/// [`SpillDisabled`](Self::SpillDisabled) is surfaced when in-memory-only mode
+/// is active and the reorder buffer exceeds its capacity threshold. The caller
+/// should increase the threshold, reduce concurrency, or permit disk spill.
+///
 /// [`FileIo`]: https://github.com/RsyncProject/rsync/blob/master/errcode.h
 #[derive(Debug)]
 pub enum SpillError {

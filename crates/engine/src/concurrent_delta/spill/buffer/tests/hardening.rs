@@ -290,6 +290,56 @@ fn permission_denied_on_spill_dir_surfaces_io_error() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn spill_dir_read_only_between_spills_surfaces_io_error() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if rustix::process::getuid().is_root() {
+        return;
+    }
+
+    let scratch = ::tempfile::tempdir().expect("create scratch root");
+    let spill_dir = scratch.path().join("spill");
+    let mut buf: SpillableReorderBuffer<u64> =
+        SpillableReorderBuffer::with_spill_dir(16, 8, &spill_dir).expect("setup spill directory");
+
+    buf.insert(0, 100).unwrap();
+    buf.insert(1, 200).unwrap();
+    assert!(
+        buf.spill_stats().spill_events > 0,
+        "expected at least one successful spill"
+    );
+
+    buf.spill_file = None;
+    fs::set_permissions(&spill_dir, fs::Permissions::from_mode(0o444))
+        .expect("chmod 444 spill dir");
+
+    let mut surfaced: Option<SpillError> = None;
+    for i in 2u64..10 {
+        match buf.insert(i, i * 41) {
+            Ok(()) => continue,
+            Err(e) => {
+                surfaced = Some(e);
+                break;
+            }
+        }
+    }
+
+    let _ = fs::set_permissions(&spill_dir, fs::Permissions::from_mode(0o755));
+
+    let err = surfaced.expect("read-only spill dir must surface an error on re-open");
+    match err {
+        SpillError::Io(ref e) => assert_eq!(
+            e.kind(),
+            io::ErrorKind::PermissionDenied,
+            "expected PermissionDenied, got {:?}",
+            e.kind()
+        ),
+        other => panic!("expected SpillError::Io(PermissionDenied), got {other:?}"),
+    }
+}
+
 #[test]
 fn directory_backed_spill_round_trip() {
     // Sanity: the directory backend yields the same byte-for-byte
