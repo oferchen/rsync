@@ -85,7 +85,7 @@ pub(super) fn open_daemon_stream_tls(
         .wrap(stream, addr.host())
         .map_err(|e| socket_error("TLS handshake with", addr.socket_addr_display(), e))?;
 
-    Ok(DaemonStream::Tls(tls_stream))
+    Ok(DaemonStream::Tls(Box::new(tls_stream)))
 }
 
 pub(crate) const fn resolve_connect_timeout(
@@ -115,8 +115,10 @@ pub(super) enum DaemonStream {
     /// Connection via an external connect program.
     Program(ConnectProgramStream),
     /// TLS-wrapped TCP connection (requires `client-tls` feature).
+    ///
+    /// Boxed to avoid inflating the enum size for the common non-TLS path.
     #[cfg(feature = "client-tls")]
-    Tls(tls::TlsStream),
+    Tls(Box<tls::TlsStream>),
 }
 
 impl DaemonStream {
