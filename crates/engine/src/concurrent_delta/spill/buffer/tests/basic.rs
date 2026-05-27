@@ -270,7 +270,11 @@ fn spill_warned_flag_fires_only_once() {
     }
 
     let stats = buf.spill_stats();
-    assert!(stats.spill_events > 1, "need multiple spills for this test, got {}", stats.spill_events);
+    assert!(
+        stats.spill_events > 1,
+        "need multiple spills for this test, got {}",
+        stats.spill_events
+    );
     assert!(buf.spill_warned(), "warning flag should be set");
 
     // Drain and verify the flag stays set.
@@ -287,6 +291,9 @@ fn spill_warned_false_when_no_spill() {
         buf.insert(i, i).unwrap();
     }
 
-    assert!(!buf.spill_warned(), "warning should not fire when under threshold");
+    assert!(
+        !buf.spill_warned(),
+        "warning should not fire when under threshold"
+    );
     assert_eq!(buf.spill_stats().spill_events, 0);
 }
