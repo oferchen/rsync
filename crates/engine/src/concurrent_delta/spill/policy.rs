@@ -238,18 +238,29 @@ impl SpillPolicy {
         self.threshold_bytes.is_some()
     }
 
-    /// Applies CLI-supplied overrides for the directory and threshold knobs.
+    /// Applies CLI-supplied overrides for the directory, threshold, and
+    /// no-spill knobs.
     ///
     /// Each `Some` argument unconditionally replaces the corresponding
-    /// field; each `None` leaves it untouched. The intended call order is
-    /// `defaults -> env-var loader -> apply_cli_overrides`, which cements
-    /// the documented precedence rule **CLI > env > defaults**.
-    pub fn apply_cli_overrides(&mut self, dir: Option<&Path>, threshold_bytes: Option<u64>) {
+    /// field; each `None` leaves it untouched. `no_spill` is a plain
+    /// `bool` because the CLI flag is a simple presence toggle. The
+    /// intended call order is `defaults -> env-var loader ->
+    /// apply_cli_overrides`, which cements the documented precedence rule
+    /// **CLI > env > defaults**.
+    pub fn apply_cli_overrides(
+        &mut self,
+        dir: Option<&Path>,
+        threshold_bytes: Option<u64>,
+        no_spill: bool,
+    ) {
         if let Some(dir) = dir {
             self.dir = Some(dir.to_path_buf());
         }
         if let Some(bytes) = threshold_bytes {
             self.threshold_bytes = Some(bytes);
+        }
+        if no_spill {
+            self.in_memory_only = true;
         }
     }
 
@@ -366,7 +377,7 @@ mod tests {
         let mut policy =
             SpillPolicy::with_threshold(1024).with_dir(PathBuf::from("/tmp/env-spill"));
         let cli_dir = PathBuf::from("/tmp/cli-spill");
-        policy.apply_cli_overrides(Some(cli_dir.as_path()), Some(8 * 1024));
+        policy.apply_cli_overrides(Some(cli_dir.as_path()), Some(8 * 1024), false);
         assert_eq!(policy.dir.as_deref(), Some(cli_dir.as_path()));
         assert_eq!(policy.threshold_bytes, Some(8 * 1024));
     }
@@ -375,7 +386,7 @@ mod tests {
     fn apply_cli_overrides_none_preserves_existing_values() {
         let env_dir = PathBuf::from("/tmp/env-spill");
         let mut policy = SpillPolicy::with_threshold(2048).with_dir(env_dir.clone());
-        policy.apply_cli_overrides(None, None);
+        policy.apply_cli_overrides(None, None, false);
         assert_eq!(policy.dir.as_deref(), Some(env_dir.as_path()));
         assert_eq!(policy.threshold_bytes, Some(2048));
     }
@@ -384,7 +395,7 @@ mod tests {
     fn apply_cli_overrides_can_set_fields_from_defaults() {
         let mut policy = SpillPolicy::default();
         let cli_dir = PathBuf::from("/tmp/cli-spill");
-        policy.apply_cli_overrides(Some(cli_dir.as_path()), Some(64 * 1024 * 1024));
+        policy.apply_cli_overrides(Some(cli_dir.as_path()), Some(64 * 1024 * 1024), false);
         assert_eq!(policy.dir.as_deref(), Some(cli_dir.as_path()));
         assert_eq!(policy.threshold_bytes, Some(64 * 1024 * 1024));
         assert!(policy.is_enabled());
@@ -394,7 +405,7 @@ mod tests {
     fn apply_cli_overrides_threshold_only_keeps_dir() {
         let env_dir = PathBuf::from("/tmp/env-spill");
         let mut policy = SpillPolicy::with_threshold(1024).with_dir(env_dir.clone());
-        policy.apply_cli_overrides(None, Some(4096));
+        policy.apply_cli_overrides(None, Some(4096), false);
         assert_eq!(policy.threshold_bytes, Some(4096));
         assert_eq!(policy.dir.as_deref(), Some(env_dir.as_path()));
     }
@@ -405,7 +416,7 @@ mod tests {
         let env_dir = PathBuf::from("/tmp/env-spill");
         let mut policy = SpillPolicy::with_threshold(1024).with_dir(env_dir);
         let cli_dir = PathBuf::from("/tmp/cli-spill");
-        policy.apply_cli_overrides(Some(cli_dir.as_path()), None);
+        policy.apply_cli_overrides(Some(cli_dir.as_path()), None, false);
         // CLI wins.
         assert_eq!(policy.dir.as_deref(), Some(cli_dir.as_path()));
     }
@@ -414,7 +425,7 @@ mod tests {
     fn spill_threshold_bytes_flag_overrides_env() {
         // Simulate env-applied threshold, then CLI override.
         let mut policy = SpillPolicy::with_threshold(64 * 1024 * 1024);
-        policy.apply_cli_overrides(None, Some(128 * 1024 * 1024));
+        policy.apply_cli_overrides(None, Some(128 * 1024 * 1024), false);
         // CLI wins.
         assert_eq!(policy.threshold_bytes, Some(128 * 1024 * 1024));
     }
@@ -424,9 +435,35 @@ mod tests {
         // Simulate env-applied values; CLI passes None for both knobs.
         let env_dir = PathBuf::from("/tmp/env-spill");
         let mut policy = SpillPolicy::with_threshold(32 * 1024 * 1024).with_dir(env_dir.clone());
-        policy.apply_cli_overrides(None, None);
+        policy.apply_cli_overrides(None, None, false);
         // Env values preserved.
         assert_eq!(policy.dir.as_deref(), Some(env_dir.as_path()));
         assert_eq!(policy.threshold_bytes, Some(32 * 1024 * 1024));
+    }
+
+    #[test]
+    fn apply_cli_overrides_no_spill_sets_in_memory_only() {
+        let mut policy = SpillPolicy::with_threshold(4096);
+        assert!(!policy.in_memory_only);
+        policy.apply_cli_overrides(None, None, true);
+        assert!(policy.in_memory_only);
+    }
+
+    #[test]
+    fn apply_cli_overrides_no_spill_false_preserves_env() {
+        let mut policy = SpillPolicy::with_threshold(4096).with_in_memory_only();
+        assert!(policy.in_memory_only);
+        policy.apply_cli_overrides(None, None, false);
+        // CLI did not set --no-spill, so env-set value preserved.
+        assert!(policy.in_memory_only);
+    }
+
+    #[test]
+    fn no_spill_cli_overrides_env() {
+        // Simulate: env did not set in_memory_only, CLI sets --no-spill.
+        let mut policy = SpillPolicy::with_threshold(1024);
+        assert!(!policy.in_memory_only);
+        policy.apply_cli_overrides(None, None, true);
+        assert!(policy.in_memory_only);
     }
 }

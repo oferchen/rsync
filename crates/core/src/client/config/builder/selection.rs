@@ -101,4 +101,17 @@ impl ClientConfigBuilder {
         self.spill_threshold_bytes = value;
         self
     }
+
+    /// Sets the CLI override for disabling disk-based spilling.
+    ///
+    /// Corresponds to `--no-spill`. When `true`, the value is later applied
+    /// via `engine::SpillPolicy::apply_cli_overrides` **after** the env-var
+    /// loader, cementing the precedence rule **CLI > env > defaults**.
+    /// Passing `false` leaves the env-var (or default) value in place.
+    #[must_use]
+    #[doc(alias = "--no-spill")]
+    pub const fn no_spill(mut self, value: bool) -> Self {
+        self.no_spill = value;
+        self
+    }
 }

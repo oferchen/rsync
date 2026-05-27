@@ -197,6 +197,7 @@ where
         .remove_one::<OsString>("spill-dir")
         .map(PathBuf::from);
     let spill_threshold_bytes = parse_spill_threshold_bytes(&mut matches)?;
+    let no_spill = matches.get_flag("no-spill");
 
     let modify_window = match matches.remove_one::<OsString>("modify-window") {
         Some(value) => {
@@ -878,6 +879,7 @@ where
         tokio_threads,
         spill_dir,
         spill_threshold_bytes,
+        no_spill,
     })
 }
 

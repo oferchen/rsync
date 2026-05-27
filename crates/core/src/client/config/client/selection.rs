@@ -188,6 +188,17 @@ impl ClientConfig {
     pub const fn spill_threshold_bytes(&self) -> Option<u64> {
         self.spill_threshold_bytes
     }
+
+    /// Returns whether disk-based spilling is disabled by CLI flag.
+    ///
+    /// Corresponds to `--no-spill`. Applied via
+    /// `engine::SpillPolicy::apply_cli_overrides` **after** the env-var
+    /// loader, cementing the precedence rule **CLI > env > defaults**.
+    #[must_use]
+    #[doc(alias = "--no-spill")]
+    pub const fn no_spill(&self) -> bool {
+        self.no_spill
+    }
 }
 
 #[cfg(test)]
@@ -344,5 +355,17 @@ mod tests {
             .spill_threshold_bytes(Some(128 * 1024 * 1024))
             .build();
         assert_eq!(config.spill_threshold_bytes(), Some(128 * 1024 * 1024));
+    }
+
+    #[test]
+    fn no_spill_default_is_false() {
+        let config = default_config();
+        assert!(!config.no_spill());
+    }
+
+    #[test]
+    fn no_spill_builder_setter_round_trips() {
+        let config = ClientConfig::builder().no_spill(true).build();
+        assert!(config.no_spill());
     }
 }

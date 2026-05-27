@@ -210,6 +210,11 @@ pub struct ClientConfig {
     /// the env-var (or default) threshold. Precedence: **CLI > env >
     /// defaults**.
     pub(super) spill_threshold_bytes: Option<u64>,
+    /// CLI flag to disable disk-based spilling.
+    ///
+    /// When `true`, `engine::SpillPolicy::apply_cli_overrides` sets
+    /// `in_memory_only` to `true`. Precedence: **CLI > env > defaults**.
+    pub(super) no_spill: bool,
     pub(super) no_motd: bool,
     pub(super) daemon_params: Vec<String>,
     pub(super) protocol_version: Option<protocol::ProtocolVersion>,
@@ -376,6 +381,7 @@ impl Default for ClientConfig {
             from0: false,
             spill_dir: None,
             spill_threshold_bytes: None,
+            no_spill: false,
             no_motd: false,
             daemon_params: Vec::new(),
             protocol_version: None,

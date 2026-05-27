@@ -616,4 +616,11 @@ pub struct ParsedArgs {
     /// CLI > env > defaults. `None` leaves the env-var (or default) value in
     /// place.
     pub spill_threshold_bytes: Option<u64>,
+
+    /// `--no-spill` - disable disk-based spilling for the reorder buffer.
+    ///
+    /// When `true`, the reorder buffer returns an error instead of writing
+    /// excess items to a temporary file. Overrides `OC_RSYNC_NO_SPILL`.
+    /// Precedence: CLI > env > defaults.
+    pub no_spill: bool,
 }

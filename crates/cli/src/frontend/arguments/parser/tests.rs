@@ -802,3 +802,35 @@ fn spill_dir_and_threshold_can_be_combined() {
     );
     assert_eq!(parsed.spill_threshold_bytes, Some(128 * 1024 * 1024));
 }
+
+#[test]
+fn no_spill_flag_default_is_false() {
+    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+    assert!(!parsed.no_spill);
+}
+
+#[test]
+fn no_spill_flag_sets_true() {
+    let parsed = parse_test_args(["--no-spill", "src/", "dst/"]).expect("parse");
+    assert!(parsed.no_spill);
+}
+
+#[test]
+fn no_spill_combines_with_spill_dir_and_threshold() {
+    let parsed = parse_test_args([
+        "--no-spill",
+        "--spill-dir",
+        "/tmp/spill",
+        "--spill-threshold-bytes",
+        "64K",
+        "src/",
+        "dst/",
+    ])
+    .expect("parse");
+    assert!(parsed.no_spill);
+    assert_eq!(
+        parsed.spill_dir.as_deref(),
+        Some(std::path::Path::new("/tmp/spill"))
+    );
+    assert_eq!(parsed.spill_threshold_bytes, Some(64 * 1024));
+}
