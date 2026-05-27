@@ -5,7 +5,9 @@
 //! provides experimental scaffolding rather than a production-validated
 //! parallel path.
 
-use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, debug_log, drain_events, init};
+#[cfg(feature = "parallel-receive-delta")]
+use logging::debug_log;
+use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
 
 fn init_recv_level1() {
     let mut cfg = VerbosityConfig::default();
