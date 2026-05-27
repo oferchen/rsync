@@ -68,7 +68,8 @@ pub mod policy;
 pub mod rss;
 pub mod stats;
 pub use env::{
-    ENV_SPILL_COMPRESSION, ENV_SPILL_DIR, ENV_SPILL_THRESHOLD_BYTES, apply_env_overrides,
+    ENV_NO_SPILL, ENV_SPILL_COMPRESSION, ENV_SPILL_DIR, ENV_SPILL_THRESHOLD_BYTES,
+    apply_env_overrides,
 };
 pub use policy::{ReclaimMode, SpillCompression, SpillGranularity, SpillPolicy, SpillReclaim};
 pub use stats::SpillStats;

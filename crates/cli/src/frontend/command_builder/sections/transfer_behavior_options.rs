@@ -432,6 +432,20 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .value_parser(OsStringValueParser::new()),
             )
             .arg(
+                Arg::new("no-spill")
+                    .long("no-spill")
+                    .help_heading("Advanced (spill)")
+                    .help(
+                        "Disable disk-based spilling for the reorder buffer. \
+                         When set, the buffer returns an error instead of \
+                         writing excess items to a temporary file. Useful on \
+                         read-only filesystems or in containers without \
+                         writable tmpfs. Takes precedence over \
+                         OC_RSYNC_NO_SPILL. Precedence: CLI > env > defaults.",
+                    )
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
                 Arg::new("backup")
                     .long("backup")
                     .short('b')
