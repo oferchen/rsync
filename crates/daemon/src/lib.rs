@@ -175,6 +175,10 @@
 pub mod async_listener;
 /// Daemon mode challenge-response authentication matching upstream rsync 3.4.1.
 pub mod auth;
+/// Native TLS termination via rustls for the daemon listener.
+#[cfg(feature = "daemon-tls")]
+#[cfg_attr(docsrs, doc(cfg(feature = "daemon-tls")))]
+pub mod tls;
 mod cli;
 mod config;
 mod daemon;

@@ -33,6 +33,11 @@ tracing = ["dep:tracing", "core/tracing"]
 acl = ["core/acl", "metadata/acl"]
 # Filename charset transcoding via the module `charset =` directive (iconv).
 iconv = ["core/iconv", "protocol/iconv"]
+# Native TLS termination via rustls - single-binary alternative to stunnel/HAProxy
+# sidecar. Opt-in; default builds remain TLS-free. See
+# `docs/design/daemon-async-accept-sync-workers.md` section 11 for the integration
+# roadmap.
+daemon-tls = ["dep:rustls", "dep:rustls-pemfile"]
 
 [dependencies]
 clap = { workspace = true }
@@ -50,6 +55,8 @@ tempfile = { workspace = true }
 tokio = { workspace = true, optional = true, features = ["net", "io-util", "sync", "rt", "rt-multi-thread", "time", "macros"] }
 dashmap = { workspace = true, optional = true }
 tracing = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+rustls-pemfile = { version = "2", optional = true }
 
 [target.'cfg(not(windows))'.dependencies]
 checksums = { path = "../checksums" }
