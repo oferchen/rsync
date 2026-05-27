@@ -48,6 +48,8 @@ jobs:
             args: "-p logging -p protocol -p flist --features serde"
           - name: concurrent-sessions
             args: "-p daemon --features concurrent-sessions"
+          - name: daemon-tls
+            args: "-p daemon --features daemon-tls"
 
     env:
       CARGO_TERM_COLOR: always
