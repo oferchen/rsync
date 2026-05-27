@@ -38,7 +38,8 @@ fn in_memory_only_correct_drain_under_threshold() {
 
     // Insert 10 items in reverse order - well under the 1 KB threshold.
     for i in (0..10).rev() {
-        buf.insert(i, i * 7).expect("should succeed under threshold");
+        buf.insert(i, i * 7)
+            .expect("should succeed under threshold");
     }
 
     let stats = buf.spill_stats();
