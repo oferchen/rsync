@@ -135,6 +135,16 @@ async = ["daemon/async", "core/async"]
 # systemd sd-notify integration for daemon
 sd-notify = ["daemon/sd-notify"]
 
+# ============================================================================
+# Daemon Features
+# ============================================================================
+
+# Native TLS termination for the daemon via rustls (alternative to stunnel sidecar).
+# Requirements: None (pure Rust, no system TLS dependency)
+# Benefits: Single-binary TLS termination, no stunnel/HAProxy sidecar needed
+# Trade-offs: Adds ~400KB to binary, requires PEM cert/key management
+daemon-tls = ["daemon/daemon-tls"]
+
 [dependencies]
 cli = { path = "crates/cli", default-features = false }
 daemon = { path = "crates/daemon", default-features = false }
@@ -301,6 +311,10 @@ xattr = "1.6"
 zstd = "0.13"
 # Bump-allocator arena - used by protocol flist-arena-prototype feature (RSS-7)
 bumpalo = "3"
+# Pure-Rust TLS - daemon native TLS termination (optional, feature-gated)
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
+# PEM file parser for rustls certificate/key loading
+rustls-pemfile = "2"
 
 [workspace.metadata.docs.rs]
 all-features = true
