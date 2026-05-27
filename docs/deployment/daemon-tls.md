@@ -1,9 +1,14 @@
-# Daemon TLS-in-Front Deployment
+# Daemon TLS Deployment
 
-`oc-rsync --daemon` does not implement TLS natively. To expose it over an
-untrusted network, bind the daemon to the loopback interface and run a TLS
-terminator in front of it. This document gives runnable recipes for the three
-supported terminators - `stunnel`, `ssh -L`, and HAProxy in TCP mode - plus
+When built with `--features daemon-tls`, the daemon can terminate TLS
+natively via `ssl cert` / `ssl key` / `ssl ca` directives in `oc-rsyncd.conf`.
+See [`docs/user/daemon-tls-wrapping.md`](../user/daemon-tls-wrapping.md)
+for native TLS setup.
+
+For builds without the `daemon-tls` feature, or when external TLS termination
+is preferred, bind the daemon to the loopback interface and run a TLS
+terminator in front of it. This document gives runnable recipes for three
+external terminators - `stunnel`, `ssh -L`, and HAProxy in TCP mode - plus
 hardened systemd unit excerpts and host-firewall rules that prevent external
 access to the loopback-bound daemon port.
 
