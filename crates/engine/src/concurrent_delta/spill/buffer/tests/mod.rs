@@ -18,6 +18,7 @@ mod granularity;
 mod hardening;
 mod in_memory_only;
 mod memory_pressure;
+mod preflight;
 mod reclaim;
 
 /// Simple [`SpillCodec`] for `u64` shared across every suite.
