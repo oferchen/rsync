@@ -913,10 +913,7 @@ mod tls_directives {
             config.global().ssl_key(),
             Some(Path::new("/etc/ssl/server.key"))
         );
-        assert_eq!(
-            config.global().ssl_ca(),
-            Some(Path::new("/etc/ssl/ca.pem"))
-        );
+        assert_eq!(config.global().ssl_ca(), Some(Path::new("/etc/ssl/ca.pem")));
     }
 
     #[test]
@@ -1087,9 +1084,6 @@ mod tls_directives {
             config.global().ssl_key(),
             Some(Path::new("/etc/ssl/server.key"))
         );
-        assert_eq!(
-            config.global().ssl_ca(),
-            Some(Path::new("/etc/ssl/ca.pem"))
-        );
+        assert_eq!(config.global().ssl_ca(), Some(Path::new("/etc/ssl/ca.pem")));
     }
 }
