@@ -240,3 +240,63 @@ fn spillable_buffer_with_delta_results() {
     assert_eq!(items[2].ndx().get(), 20);
     assert!(items[2].is_success());
 }
+
+#[test]
+fn spill_warned_flag_fires_on_first_spill() {
+    // Threshold of 24 bytes = 3 items of 8 bytes each.
+    let mut buf: SpillableReorderBuffer<u64> = SpillableReorderBuffer::new(64, 24);
+
+    // Insert 3 items - at threshold, no spill yet.
+    for i in 0..3 {
+        buf.insert(i, i * 10).unwrap();
+    }
+    assert!(
+        !buf.spill_warned(),
+        "warning should not fire before threshold is exceeded"
+    );
+
+    // 4th item exceeds threshold - triggers spill and warning.
+    buf.insert(3, 30).unwrap();
+    assert!(buf.spill_warned(), "warning should fire on first spill");
+    let stats = buf.spill_stats();
+    assert!(stats.spill_events > 0, "spill must have occurred");
+}
+
+#[test]
+fn spill_warned_flag_fires_only_once() {
+    // Very tight threshold: 16 bytes = 2 items.
+    let mut buf: SpillableReorderBuffer<u64> = SpillableReorderBuffer::new(64, 16);
+
+    // Fill past threshold multiple times to trigger multiple spill events.
+    for i in (0..20).rev() {
+        buf.insert(i, i * 100).unwrap();
+    }
+
+    let stats = buf.spill_stats();
+    assert!(
+        stats.spill_events > 1,
+        "need multiple spills for this test, got {}",
+        stats.spill_events
+    );
+    assert!(buf.spill_warned(), "warning flag should be set");
+
+    // Drain and verify the flag stays set.
+    let items = drain_all(&mut buf);
+    assert_eq!(items.len(), 20);
+    assert!(buf.spill_warned(), "flag must remain set after drain");
+}
+
+#[test]
+fn spill_warned_false_when_no_spill() {
+    let mut buf: SpillableReorderBuffer<u64> = SpillableReorderBuffer::new(64, 1024);
+
+    for i in 0..10 {
+        buf.insert(i, i).unwrap();
+    }
+
+    assert!(
+        !buf.spill_warned(),
+        "warning should not fire when under threshold"
+    );
+    assert_eq!(buf.spill_stats().spill_events, 0);
+}
