@@ -1,20 +1,24 @@
 # TLS in Front of the oc-rsync Daemon
 
 oc-rsync's daemon mode speaks the plaintext rsync wire protocol over TCP,
-just like upstream rsync. The daemon authenticates clients itself
-(`auth users` + `secrets file`), but the bytes on the wire are not
-encrypted. Operators that want network-level confidentiality and
-integrity put a TLS terminator in front of the daemon.
+just like upstream rsync. Two options exist for encrypting daemon connections:
 
-This page documents three sidecar deployments: **stunnel**, **SSH
-tunnel**, and a **TCP-mode reverse proxy** (HAProxy or nginx). All three
-work with an unmodified oc-rsyncd; oc-rsync ships no native TLS client
-or server.
+1. **Native TLS** - when built with `--features daemon-tls`, the daemon
+   terminates TLS directly via `ssl cert` / `ssl key` / `ssl ca` directives
+   in `oc-rsyncd.conf`. Clients connect with `--ssl` (requires
+   `--features client-tls`). See
+   [`docs/user/daemon-tls-wrapping.md`](../user/daemon-tls-wrapping.md)
+   for setup details.
 
-**Last verified:** 2026-05-01 against
-`crates/daemon/src/daemon/sections/config_parsing/global_directives.rs`,
-`crates/daemon/src/daemon/sections/config_parsing/module_directives.rs`,
-`crates/cli/src/frontend/command_builder/sections/build_base_command/network.rs`,
+2. **External TLS wrapping** - deploy a TLS terminator in front of the
+   daemon. This page documents three sidecar approaches: **stunnel**, **SSH
+   tunnel**, and a **TCP-mode reverse proxy** (HAProxy or nginx). All three
+   work with any oc-rsync build.
+
+**Last verified:** 2026-05-27 against
+`crates/daemon/src/tls.rs`,
+`crates/daemon/src/rsyncd_config/parser.rs`,
+`crates/core/src/client/module_list/connect/tls.rs`,
 and upstream `rsync-3.4.1/stunnel-rsyncd.conf`.
 
 ---
@@ -231,9 +235,14 @@ For mTLS add `ssl_client_certificate /etc/nginx/ca.crt;` and
 
 ## Connecting from the client
 
-oc-rsync has no native TLS client. Whatever TLS terminator you deploy on
-the server, the client must terminate TLS before handing bytes to
-`oc-rsync`. Three common shapes:
+When built with `--features client-tls`, the client supports native TLS
+via the `--ssl` flag:
+
+```sh
+oc-rsync --ssl -av rsync://daemon-host/backups/ ./restore/
+```
+
+For builds without `client-tls`, three external approaches work:
 
 1. **Local stunnel client.** Run `stunnel` on the client host with
    `client = yes` and `accept = 8730`, `connect = server:874`. Then run
