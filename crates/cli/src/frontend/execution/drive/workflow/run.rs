@@ -224,6 +224,7 @@ where
         tokio_threads,
         spill_dir,
         spill_threshold_bytes,
+        no_spill,
     } = parsed;
 
     if let Some(level) = simd_override
@@ -826,6 +827,7 @@ where
         from0,
         spill_dir,
         spill_threshold_bytes,
+        no_spill,
     };
 
     let builder = config::build_base_config(config_inputs);

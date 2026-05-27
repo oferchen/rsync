@@ -30,17 +30,26 @@ pub const ENV_SPILL_THRESHOLD_BYTES: &str = "OC_RSYNC_SPILL_THRESHOLD_BYTES";
 /// disabled at build time.
 pub const ENV_SPILL_COMPRESSION: &str = "OC_RSYNC_SPILL_COMPRESSION";
 
+/// Environment variable that enables in-memory-only mode.
+///
+/// Truthy values (`1`, `true`, `yes` - case-insensitive) set
+/// [`SpillPolicy::in_memory_only`] to `true`, preventing the reorder
+/// buffer from writing to disk. Any other non-empty value is logged and
+/// ignored.
+pub const ENV_NO_SPILL: &str = "OC_RSYNC_NO_SPILL";
+
 /// Applies environment-variable overrides in place.
 ///
 /// Reads the variables documented on [`ENV_SPILL_DIR`],
-/// [`ENV_SPILL_THRESHOLD_BYTES`], and [`ENV_SPILL_COMPRESSION`]; each
-/// missing variable leaves the matching field untouched. Invalid values
-/// emit a `tracing::warn!` (under the `tracing` feature) and leave the
-/// field unchanged. The function never panics.
+/// [`ENV_SPILL_THRESHOLD_BYTES`], [`ENV_SPILL_COMPRESSION`], and
+/// [`ENV_NO_SPILL`]; each missing variable leaves the matching field
+/// untouched. Invalid values emit a `tracing::warn!` (under the `tracing`
+/// feature) and leave the field unchanged. The function never panics.
 pub fn apply_env_overrides(policy: &mut SpillPolicy) {
     apply_dir(policy);
     apply_threshold(policy);
     apply_compression(policy);
+    apply_no_spill(policy);
 }
 
 fn apply_dir(policy: &mut SpillPolicy) {
@@ -61,6 +70,21 @@ fn apply_threshold(policy: &mut SpillPolicy) {
     match val.parse::<u64>() {
         Ok(parsed) => policy.threshold_bytes = Some(parsed),
         Err(_) => warn_invalid(ENV_SPILL_THRESHOLD_BYTES, &val, "expected unsigned integer"),
+    }
+}
+
+fn apply_no_spill(policy: &mut SpillPolicy) {
+    let Ok(val) = env::var(ENV_NO_SPILL) else {
+        return;
+    };
+    match val.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" => policy.in_memory_only = true,
+        "" => {} // empty string = unset
+        other => warn_invalid(
+            ENV_NO_SPILL,
+            other,
+            "expected '1', 'true', or 'yes'",
+        ),
     }
 }
 
@@ -169,6 +193,7 @@ mod tests {
             EnvGuard::remove(ENV_SPILL_DIR),
             EnvGuard::remove(ENV_SPILL_THRESHOLD_BYTES),
             EnvGuard::remove(ENV_SPILL_COMPRESSION),
+            EnvGuard::remove(ENV_NO_SPILL),
         ]
     }
 
@@ -311,5 +336,64 @@ mod tests {
             policy.dir.as_deref(),
             Some(PathBuf::from("/tmp/spill-from-env").as_path())
         );
+    }
+
+    #[test]
+    fn env_no_spill_truthy_one() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guards = reset_env();
+        let _set = EnvGuard::set(ENV_NO_SPILL, "1");
+        let mut policy = SpillPolicy::default();
+        apply_env_overrides(&mut policy);
+        assert!(policy.in_memory_only);
+    }
+
+    #[test]
+    fn env_no_spill_truthy_true() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guards = reset_env();
+        let _set = EnvGuard::set(ENV_NO_SPILL, "true");
+        let mut policy = SpillPolicy::default();
+        apply_env_overrides(&mut policy);
+        assert!(policy.in_memory_only);
+    }
+
+    #[test]
+    fn env_no_spill_truthy_yes_case_insensitive() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guards = reset_env();
+        let _set = EnvGuard::set(ENV_NO_SPILL, "YES");
+        let mut policy = SpillPolicy::default();
+        apply_env_overrides(&mut policy);
+        assert!(policy.in_memory_only);
+    }
+
+    #[test]
+    fn env_no_spill_invalid_leaves_unchanged() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guards = reset_env();
+        let _set = EnvGuard::set(ENV_NO_SPILL, "maybe");
+        let mut policy = SpillPolicy::default();
+        apply_env_overrides(&mut policy);
+        assert!(!policy.in_memory_only);
+    }
+
+    #[test]
+    fn env_no_spill_empty_leaves_unchanged() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guards = reset_env();
+        let _set = EnvGuard::set(ENV_NO_SPILL, "");
+        let mut policy = SpillPolicy::default();
+        apply_env_overrides(&mut policy);
+        assert!(!policy.in_memory_only);
+    }
+
+    #[test]
+    fn env_no_spill_absent_leaves_unchanged() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _guards = reset_env();
+        let mut policy = SpillPolicy::default();
+        apply_env_overrides(&mut policy);
+        assert!(!policy.in_memory_only);
     }
 }
