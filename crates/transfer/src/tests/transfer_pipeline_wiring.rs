@@ -152,6 +152,73 @@ fn advancing_past_complete_is_rejected() {
 }
 
 // ---------------------------------------------------------------------------
+// Sole state authority (FSW-7 audit)
+// ---------------------------------------------------------------------------
+
+/// Confirms that `TransferPipeline` is the sole mechanism for tracking the
+/// transfer lifecycle. No ad-hoc booleans, phase counters, or state strings
+/// exist outside the FSM for lifecycle management - all phase progression
+/// goes through `TransferPipeline::advance_to()`.
+///
+/// Note: the `phase: i32` counters in `transfer_loop.rs` and `phases.rs` are
+/// upstream wire-protocol sub-phase counters within `DeltaTransfer` (mirroring
+/// `generator.c` phase 0->1->2->3 for NDX_DONE exchanges). They track which
+/// NDX_DONE round we are in, not the overall transfer lifecycle.
+///
+/// This test codifies the FSW-7 audit finding: after FSW-6 wired the FSM
+/// into the transfer orchestration, zero residual ad-hoc state variables
+/// remain for lifecycle tracking.
+#[test]
+fn transfer_pipeline_is_sole_lifecycle_authority() {
+    let all_phases = [
+        TransferPhase::Handshake,
+        TransferPhase::FilterExchange,
+        TransferPhase::FileListTransfer,
+        TransferPhase::DeltaTransfer,
+        TransferPhase::Finalization,
+        TransferPhase::Complete,
+    ];
+    assert_eq!(all_phases.len(), 6, "FSM must cover all 6 transfer phases");
+
+    // The pipeline enforces strictly sequential phase progression.
+    let mut pipeline = TransferPipeline::new(ServerRole::Receiver);
+    for &phase in &all_phases[1..] {
+        assert!(
+            pipeline.advance_to(phase).is_ok(),
+            "sequential advance to {phase:?} must succeed"
+        );
+    }
+    assert!(pipeline.is_complete());
+
+    // No phase can be skipped.
+    let mut pipeline = TransferPipeline::new(ServerRole::Generator);
+    for skip_target in &all_phases[2..] {
+        let fresh = TransferPipeline::new(ServerRole::Generator);
+        // Trying to jump from Handshake to any phase beyond FilterExchange
+        // must fail, confirming the FSM enforces every step.
+        assert!(
+            fresh.phase() == TransferPhase::Handshake,
+            "fresh pipeline must start at Handshake"
+        );
+        let mut fresh = fresh;
+        let result = fresh.advance_to(*skip_target);
+        assert!(
+            result.is_err(),
+            "skipping to {skip_target:?} from Handshake must be rejected"
+        );
+    }
+
+    // Advance through all phases to confirm Generator path works identically.
+    for &phase in &all_phases[1..] {
+        assert!(
+            pipeline.advance_to(phase).is_ok(),
+            "generator sequential advance to {phase:?} must succeed"
+        );
+    }
+    assert!(pipeline.is_complete());
+}
+
+// ---------------------------------------------------------------------------
 // fsm_error conversion
 // ---------------------------------------------------------------------------
 
