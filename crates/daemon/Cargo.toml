@@ -90,9 +90,6 @@ rcgen = { workspace = true }
 rustls = { workspace = true }
 rustls-pemfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
-rcgen = { workspace = true }
-rustls = { workspace = true }
-rustls-pemfile = { workspace = true }
 
 [target.'cfg(unix)'.dev-dependencies]
 xattr = { workspace = true }
