@@ -87,6 +87,9 @@ bandwidth = { path = "../bandwidth", features = ["test-support"] }
 criterion = { workspace = true }
 filetime = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+rcgen = { workspace = true }
+rustls = { workspace = true }
+rustls-pemfile = { workspace = true }
 
 [target.'cfg(unix)'.dev-dependencies]
 xattr = { workspace = true }
