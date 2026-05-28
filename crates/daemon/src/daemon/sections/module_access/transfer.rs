@@ -627,11 +627,15 @@ fn process_approved_module(
         None => return Ok(()),
     };
 
+    // Extract host name before building structs that borrow ctx, so the
+    // borrow is released before the FSM transition mutates ctx.conn_state.
+    let host_name_owned = ctx.effective_host().map(str::to_owned);
+
     let xfer_ctx = XferExecContext {
         module_name: &module.name,
         module_path: &module.path,
         host_addr: ctx.peer_ip,
-        host_name: ctx.effective_host(),
+        host_name: host_name_owned.as_deref(),
         user_name: auth_user.as_deref(),
         request: ctx.request,
     };
@@ -645,7 +649,7 @@ fn process_approved_module(
         module_name: &module.name,
         username: "",
         remote_addr: &addr_str_exec,
-        hostname: ctx.effective_host().unwrap_or(""),
+        hostname: host_name_owned.as_deref().unwrap_or(""),
         pid: std::process::id(),
     };
 
@@ -700,6 +704,13 @@ fn process_approved_module(
         }
     }
 
+    // FSM: -> Transferring - auth passed (or was not required), all
+    // pre-transfer validation complete, transfer engine about to run.
+    ctx.conn_state = ctx
+        .conn_state
+        .transition(ConnectionState::Transferring)
+        .map_err(transition_error)?;
+
     let handshake = build_handshake_result(ctx.reader, negotiated_protocol, client_args, module);
     let final_protocol = handshake.protocol;
 
@@ -728,6 +739,12 @@ fn process_approved_module(
         let expanded_command = expand_exec_command(command, &exec_path_ctx);
         run_post_xfer_exec(&expanded_command, &xfer_ctx, exit_status, ctx.log_sink);
     }
+
+    // FSM: Transferring -> Closing - transfer and post-xfer hooks complete.
+    ctx.conn_state = ctx
+        .conn_state
+        .transition(ConnectionState::Closing)
+        .map_err(transition_error)?;
 
     Ok(())
 }

@@ -8,6 +8,11 @@
 // upstream: `clientserver.c` - `rsync_module()` is the dispatcher that handles
 // module lookup, access control, authentication, and transfer setup.
 
+/// Maps an [`InvalidTransition`] to an [`io::Error`] for protocol-level reporting.
+fn transition_error(err: InvalidTransition) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, err.to_string())
+}
+
 /// Context for module request handling, passed to helper functions.
 ///
 /// Bundles the connection state (reader, bandwidth limiter, peer address)
@@ -27,6 +32,12 @@ struct ModuleRequestContext<'a> {
     /// upstream: clientserver.c:583-584 - the daemon writes `early_input` to
     /// the pre-xfer exec script's stdin.
     early_input_data: Option<Vec<u8>>,
+    /// Typed FSM state tracking the connection lifecycle phase.
+    ///
+    /// Every phase transition goes through `ConnectionState::transition()`,
+    /// which rejects invalid progressions. The field is the single source of
+    /// truth for which protocol phase the connection is in.
+    conn_state: ConnectionState,
 }
 
 impl<'a> ModuleRequestContext<'a> {
@@ -143,11 +154,16 @@ fn handle_refused_option(ctx: &mut ModuleRequestContext<'_>, refused: &str) -> i
     Ok(())
 }
 
-/// Handles module authentication flow.
+/// Handles module authentication flow with FSM transition enforcement.
 ///
 /// Returns `Some(username)` if authentication succeeded, where the username is
 /// the authenticated user (or `None` inside `Some` when auth was not required).
 /// Returns `Ok(None)` if authentication failed or was denied.
+///
+/// FSM transitions:
+/// - When auth is required: ModuleSelect -> Authenticating -> (on grant) stays
+///   until caller transitions to Transferring.
+/// - When auth is not required: no Authenticating transition (skipped).
 fn handle_authentication(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleDefinition,
@@ -157,6 +173,12 @@ fn handle_authentication(
         send_daemon_ok(ctx.reader.get_mut(), ctx.limiter, ctx.messages)?;
         return Ok(Some(None));
     }
+
+    // FSM: ModuleSelect -> Authenticating - module requires auth, challenge sent.
+    ctx.conn_state = ctx
+        .conn_state
+        .transition(ConnectionState::Authenticating)
+        .map_err(transition_error)?;
 
     match perform_module_authentication(
         ctx.reader,
@@ -170,6 +192,11 @@ fn handle_authentication(
             if let Some(log) = ctx.log_sink {
                 log_module_auth_failure(log, ctx.effective_host(), ctx.peer_ip, ctx.request);
             }
+            // FSM: -> Closing on auth failure (session ends).
+            ctx.conn_state = ctx
+                .conn_state
+                .transition(ConnectionState::Closing)
+                .map_err(transition_error)?;
             Ok(None)
         }
         AuthenticationStatus::Granted(username) => {
@@ -253,6 +280,7 @@ fn respond_with_module_request(
     messages: &LegacyMessageCache,
     negotiated_protocol: Option<ProtocolVersion>,
     early_input_data: Option<Vec<u8>>,
+    conn_state: ConnectionState,
 ) -> io::Result<()> {
     let Some(module) = modules.iter().find(|module| module.name == request) else {
         return handle_unknown_module(
@@ -302,6 +330,7 @@ fn respond_with_module_request(
         log_sink,
         messages,
         early_input_data,
+        conn_state,
     };
 
     if !module.permits(peer_ip, module_peer_host) {

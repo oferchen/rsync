@@ -61,7 +61,13 @@ use protocol::{
     parse_legacy_daemon_message,
 };
 
-use crate::{config::DaemonConfig, daemon_stream::DaemonStream, error::DaemonError, systemd};
+use crate::{
+    config::DaemonConfig,
+    connection::{ConnectionState, InvalidTransition},
+    daemon_stream::DaemonStream,
+    error::DaemonError,
+    systemd,
+};
 
 mod help;
 pub(crate) mod tracing_stream;
