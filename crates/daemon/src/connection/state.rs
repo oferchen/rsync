@@ -102,7 +102,10 @@ impl ConnectionState {
     /// assert!(state.transition(ConnectionState::ModuleSelect).is_ok());
     /// assert!(state.transition(ConnectionState::Transferring).is_err());
     /// ```
-    pub const fn transition(self, next: ConnectionState) -> Result<ConnectionState, InvalidTransition> {
+    pub const fn transition(
+        self,
+        next: ConnectionState,
+    ) -> Result<ConnectionState, InvalidTransition> {
         // PartialEq::eq is not available in const context for custom enums,
         // so compare discriminants via as-cast.
         let next_disc = next as u8;
@@ -349,7 +352,10 @@ mod tests {
     #[test]
     fn valid_transitions_greeting() {
         let valid = ConnectionState::Greeting.valid_transitions();
-        assert_eq!(valid, &[ConnectionState::ModuleSelect, ConnectionState::Closing]);
+        assert_eq!(
+            valid,
+            &[ConnectionState::ModuleSelect, ConnectionState::Closing]
+        );
     }
 
     #[test]
@@ -497,7 +503,13 @@ mod tests {
     fn exhaustive_transition_matrix() {
         use ConnectionState::*;
 
-        let all = [Greeting, ModuleSelect, Authenticating, Transferring, Closing];
+        let all = [
+            Greeting,
+            ModuleSelect,
+            Authenticating,
+            Transferring,
+            Closing,
+        ];
 
         // Expected valid transitions encoded as (from, to) pairs.
         let valid_pairs: &[(ConnectionState, ConnectionState)] = &[

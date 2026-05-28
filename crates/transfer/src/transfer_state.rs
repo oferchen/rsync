@@ -425,9 +425,7 @@ mod tests {
     fn advance_to_each_successor_succeeds() {
         let mut pipeline = TransferPipeline::new(ServerRole::Receiver);
 
-        pipeline
-            .advance_to(TransferPhase::FilterExchange)
-            .unwrap();
+        pipeline.advance_to(TransferPhase::FilterExchange).unwrap();
         assert_eq!(pipeline.phase(), TransferPhase::FilterExchange);
 
         pipeline
@@ -452,9 +450,7 @@ mod tests {
     #[test]
     fn advance_to_same_phase_is_invalid() {
         let mut pipeline = TransferPipeline::new(ServerRole::Receiver);
-        let err = pipeline
-            .advance_to(TransferPhase::Handshake)
-            .unwrap_err();
+        let err = pipeline.advance_to(TransferPhase::Handshake).unwrap_err();
         assert_eq!(err.current, TransferPhase::Handshake);
         assert_eq!(err.target, TransferPhase::Handshake);
         // Phase should not change on error
@@ -464,13 +460,9 @@ mod tests {
     #[test]
     fn advance_to_prior_phase_is_invalid() {
         let mut pipeline = TransferPipeline::new(ServerRole::Receiver);
-        pipeline
-            .advance_to(TransferPhase::FilterExchange)
-            .unwrap();
+        pipeline.advance_to(TransferPhase::FilterExchange).unwrap();
 
-        let err = pipeline
-            .advance_to(TransferPhase::Handshake)
-            .unwrap_err();
+        let err = pipeline.advance_to(TransferPhase::Handshake).unwrap_err();
         assert_eq!(err.current, TransferPhase::FilterExchange);
         assert_eq!(err.target, TransferPhase::Handshake);
         assert_eq!(pipeline.phase(), TransferPhase::FilterExchange);
@@ -494,9 +486,7 @@ mod tests {
         for _ in 0..5 {
             pipeline.advance().unwrap();
         }
-        let err = pipeline
-            .advance_to(TransferPhase::Handshake)
-            .unwrap_err();
+        let err = pipeline.advance_to(TransferPhase::Handshake).unwrap_err();
         assert_eq!(err.current, TransferPhase::Complete);
     }
 
@@ -525,9 +515,7 @@ mod tests {
     #[test]
     fn advance_through_to_complete() {
         let mut pipeline = TransferPipeline::new(ServerRole::Receiver);
-        pipeline
-            .advance_through(TransferPhase::Complete)
-            .unwrap();
+        pipeline.advance_through(TransferPhase::Complete).unwrap();
         assert!(pipeline.is_complete());
     }
 
@@ -587,9 +575,7 @@ mod tests {
     fn full_lifecycle_generator() {
         let mut pipeline = TransferPipeline::new(ServerRole::Generator);
 
-        pipeline
-            .advance_to(TransferPhase::FilterExchange)
-            .unwrap();
+        pipeline.advance_to(TransferPhase::FilterExchange).unwrap();
         pipeline
             .advance_to(TransferPhase::FileListTransfer)
             .unwrap();
@@ -608,9 +594,7 @@ mod tests {
     #[test]
     fn double_advance_to_same_target_fails() {
         let mut pipeline = TransferPipeline::new(ServerRole::Receiver);
-        pipeline
-            .advance_to(TransferPhase::FilterExchange)
-            .unwrap();
+        pipeline.advance_to(TransferPhase::FilterExchange).unwrap();
         let err = pipeline
             .advance_to(TransferPhase::FilterExchange)
             .unwrap_err();
@@ -679,19 +663,14 @@ mod tests {
             }
 
             let result = pipeline.advance_to(phase);
-            assert!(
-                result.is_err(),
-                "self-transition at {phase} should fail"
-            );
+            assert!(result.is_err(), "self-transition at {phase} should fail");
         }
     }
 
     #[test]
     fn advance_through_from_complete_is_invalid() {
         let mut pipeline = TransferPipeline::new(ServerRole::Receiver);
-        pipeline
-            .advance_through(TransferPhase::Complete)
-            .unwrap();
+        pipeline.advance_through(TransferPhase::Complete).unwrap();
 
         // Every phase target should fail from Complete
         let all_phases = [
@@ -716,9 +695,7 @@ mod tests {
     #[test]
     fn advance_past_complete_is_idempotently_rejected() {
         let mut pipeline = TransferPipeline::new(ServerRole::Receiver);
-        pipeline
-            .advance_through(TransferPhase::Complete)
-            .unwrap();
+        pipeline.advance_through(TransferPhase::Complete).unwrap();
 
         // Multiple attempts to advance past Complete all fail
         for _ in 0..3 {
