@@ -173,6 +173,8 @@
 #[cfg(feature = "async-daemon")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async-daemon")))]
 pub mod async_listener;
+/// Typed daemon connection lifecycle state machine.
+pub mod connection;
 /// Daemon mode challenge-response authentication matching upstream rsync 3.4.1.
 pub mod auth;
 mod cli;
