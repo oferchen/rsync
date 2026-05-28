@@ -12,6 +12,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 arbitrary = { version = "1", features = ["derive"] }
 tempfile = "3.15"
+filetime = "0.2"
 
 [dependencies.protocol]
 path = "../crates/protocol"
@@ -184,6 +185,13 @@ bench = false
 [[bin]]
 name = "bwlimit"
 path = "fuzz_targets/bwlimit.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "differential_outcome"
+path = "fuzz_targets/differential_outcome.rs"
 test = false
 doc = false
 bench = false
