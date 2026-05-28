@@ -700,6 +700,13 @@ fn process_approved_module(
         }
     }
 
+    // FSM: -> Transferring - auth passed (or was not required), all
+    // pre-transfer validation complete, transfer engine about to run.
+    ctx.conn_state = ctx
+        .conn_state
+        .transition(ConnectionState::Transferring)
+        .map_err(transition_error)?;
+
     let handshake = build_handshake_result(ctx.reader, negotiated_protocol, client_args, module);
     let final_protocol = handshake.protocol;
 
@@ -728,6 +735,12 @@ fn process_approved_module(
         let expanded_command = expand_exec_command(command, &exec_path_ctx);
         run_post_xfer_exec(&expanded_command, &xfer_ctx, exit_status, ctx.log_sink);
     }
+
+    // FSM: Transferring -> Closing - transfer and post-xfer hooks complete.
+    ctx.conn_state = ctx
+        .conn_state
+        .transition(ConnectionState::Closing)
+        .map_err(transition_error)?;
 
     Ok(())
 }

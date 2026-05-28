@@ -224,6 +224,10 @@ fn handle_legacy_session(
     // `@RSYNCD: OK\n` / `@RSYNCD: EXIT\n` boxes per accepted connection.
     let messages = LegacyMessageCache::shared();
 
+    // FSM: connection starts in Greeting - the server is about to send the
+    // @RSYNCD: greeting and wait for the client's version response.
+    let mut conn_state = ConnectionState::Greeting;
+
     // DIS-4.a R2: write the cached newest-protocol greeting bytes directly,
     // skipping the per-accept `format!`/`push_str` chain.
     // upstream: clientserver.c:455 output_daemon_greeting
@@ -242,6 +246,11 @@ fn handle_legacy_session(
                 // the version exchange. Sending OK here causes the client to misinterpret
                 // subsequent protocol messages.
                 negotiated_protocol = Some(version);
+                // FSM: Greeting -> ModuleSelect - version exchange complete,
+                // now waiting for the client to request a module name.
+                conn_state = conn_state
+                    .transition(ConnectionState::ModuleSelect)
+                    .map_err(transition_error)?;
                 continue;
             }
             Ok(LegacyDaemonMessage::Other(payload)) => {
@@ -250,7 +259,11 @@ fn handle_legacy_session(
                     continue;
                 }
             }
-            Ok(LegacyDaemonMessage::Exit) => return Ok(()),
+            Ok(LegacyDaemonMessage::Exit) => {
+                // FSM: -> Closing on client-initiated exit.
+                let _ = conn_state.transition(ConnectionState::Closing);
+                return Ok(());
+            }
             Ok(
                 LegacyDaemonMessage::Ok
                 | LegacyDaemonMessage::Capabilities { .. }
@@ -291,6 +304,10 @@ fn handle_legacy_session(
             reverse_lookup,
             messages,
         )?;
+        // FSM: -> Closing after sending the module list and EXIT.
+        conn_state = conn_state
+            .transition(ConnectionState::Closing)
+            .map_err(transition_error)?;
     } else if request.is_empty() {
         write_limited(
             reader.get_mut(),
@@ -300,6 +317,10 @@ fn handle_legacy_session(
         write_limited(reader.get_mut(), &mut limiter, b"\n")?;
         messages.write_exit(reader.get_mut(), &mut limiter)?;
         reader.get_mut().flush()?;
+        // FSM: -> Closing after sending error and EXIT for empty request.
+        conn_state = conn_state
+            .transition(ConnectionState::Closing)
+            .map_err(transition_error)?;
     } else {
         respond_with_module_request(
             &mut reader,
@@ -314,6 +335,7 @@ fn handle_legacy_session(
             messages,
             negotiated_protocol,
             early_input_data,
+            conn_state,
         )?;
     }
 
@@ -632,6 +654,91 @@ mod session_runtime_tests {
     #[test]
     fn early_input_max_size_is_5k() {
         assert_eq!(EARLY_INPUT_MAX_SIZE, 5120);
+    }
+
+    #[test]
+    fn fsm_greeting_to_module_select() {
+        let state = ConnectionState::Greeting;
+        let state = state.transition(ConnectionState::ModuleSelect).unwrap();
+        assert_eq!(state, ConnectionState::ModuleSelect);
+    }
+
+    #[test]
+    fn fsm_module_select_to_closing_on_list() {
+        let state = ConnectionState::ModuleSelect;
+        let state = state.transition(ConnectionState::Closing).unwrap();
+        assert!(state.is_terminal());
+    }
+
+    #[test]
+    fn fsm_full_lifecycle_without_auth() {
+        let mut state = ConnectionState::Greeting;
+        state = state.transition(ConnectionState::ModuleSelect).unwrap();
+        state = state.transition(ConnectionState::Transferring).unwrap();
+        state = state.transition(ConnectionState::Closing).unwrap();
+        assert!(state.is_terminal());
+    }
+
+    #[test]
+    fn fsm_full_lifecycle_with_auth() {
+        let mut state = ConnectionState::Greeting;
+        state = state.transition(ConnectionState::ModuleSelect).unwrap();
+        state = state.transition(ConnectionState::Authenticating).unwrap();
+        state = state.transition(ConnectionState::Transferring).unwrap();
+        state = state.transition(ConnectionState::Closing).unwrap();
+        assert!(state.is_terminal());
+    }
+
+    #[test]
+    fn fsm_early_close_from_module_select() {
+        let mut state = ConnectionState::Greeting;
+        state = state.transition(ConnectionState::ModuleSelect).unwrap();
+        state = state.transition(ConnectionState::Closing).unwrap();
+        assert!(state.is_terminal());
+    }
+
+    #[test]
+    fn fsm_auth_failure_transitions_to_closing() {
+        let mut state = ConnectionState::Greeting;
+        state = state.transition(ConnectionState::ModuleSelect).unwrap();
+        state = state.transition(ConnectionState::Authenticating).unwrap();
+        state = state.transition(ConnectionState::Closing).unwrap();
+        assert!(state.is_terminal());
+    }
+
+    #[test]
+    fn fsm_skip_auth_to_transfer() {
+        let mut state = ConnectionState::Greeting;
+        state = state.transition(ConnectionState::ModuleSelect).unwrap();
+        // When no auth required, skip Authenticating and go to Transferring.
+        state = state.transition(ConnectionState::Transferring).unwrap();
+        assert_eq!(state, ConnectionState::Transferring);
+    }
+
+    #[test]
+    fn fsm_invalid_greeting_to_transferring() {
+        let state = ConnectionState::Greeting;
+        let result = state.transition(ConnectionState::Transferring);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn fsm_no_double_close() {
+        let state = ConnectionState::Closing;
+        let result = state.transition(ConnectionState::Closing);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn transition_error_produces_invalid_data() {
+        let err = InvalidTransition {
+            from: ConnectionState::Greeting,
+            to: ConnectionState::Transferring,
+        };
+        let io_err = transition_error(err);
+        assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
+        assert!(io_err.to_string().contains("Greeting"));
+        assert!(io_err.to_string().contains("Transferring"));
     }
 }
 
