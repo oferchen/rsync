@@ -158,24 +158,22 @@ be combined.
   async path.
 - **Build.** `cargo build --release --features async-daemon`.
 
-### `parallel-receive-delta` (`transfer`, experimental)
+### `parallel-receive-delta` (`transfer`, default-on)
 
-- **What it does.** Wires the receiver's per-file token-apply loop
-  onto the existing `ParallelDeltaPipeline` infrastructure with a
-  threshold short-circuit, so above-threshold batches dispatch
-  multiple files in parallel through the reorder buffer.
-- **When to opt in.** Long-tailed file-size distributions with many
-  medium files where the sequential apply loop becomes the long pole.
-  Expect a measurable win only on receiver-side workloads where the
-  drain bench (#4214) showed parallel dispatch beating sequential.
-- **When to stay on the default.** Always, unless you have explicit
-  bench evidence for your workload. The parity test
-  (`parallel_pipeline_wire_parity.rs`, audit follow-up G2) and the
-  drain benchmark must be green for your build; the flag is
-  experimental until it flips default per the phased rollout in
-  [`docs/design/parallel-receive-delta-application.md`](design/parallel-receive-delta-application.md)
-  section 6.3.
-- **Build.** `cargo build --release --features parallel-receive-delta`.
+- **What it does.** Fans out per-chunk strong-checksum verification
+  across rayon workers while serializing writes through a per-file
+  reorder buffer. Verification scales with core count; writes stay
+  deterministic.
+- **Status.** Default-on. The feature was validated through full
+  upstream interop (PIP-10.a), adversarial stress tests (PIP-10.b),
+  mixed-size correctness (PIP-10.c), RSS overhead measurement
+  (PIP-10.d), error-path parity (PIP-10.e), and a 5-day bake window
+  with zero attributable regressions (PIP-9.f). See
+  [`docs/design/parallel-receive-delta-bake-prerequisites.md`](design/parallel-receive-delta-bake-prerequisites.md)
+  for the bake-window evidence.
+- **Emergency opt-out.** Build without the feature to fall back to the
+  sequential receiver path. The feature flag is retained temporarily;
+  PIP-9.f.4 will retire it after the post-flip bake.
 
 ### `thread-slab-pool` (`engine`)
 
