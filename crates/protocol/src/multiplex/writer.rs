@@ -706,19 +706,18 @@ mod tests {
     #[test]
     fn msg_info_does_not_flush_immediately() {
         let mut tracker = FlushTracker::new();
-        let mut writer = MplexWriter::new(&mut tracker);
-
-        writer
-            .write_message(MessageCode::Info, b"file1.txt")
-            .unwrap();
-        assert_eq!(tracker.flush_count, 0, "MSG_INFO should not trigger flush");
-
-        writer
-            .write_message(MessageCode::Info, b"file2.txt")
-            .unwrap();
+        {
+            let mut writer = MplexWriter::new(&mut tracker);
+            writer
+                .write_message(MessageCode::Info, b"file1.txt")
+                .unwrap();
+            writer
+                .write_message(MessageCode::Info, b"file2.txt")
+                .unwrap();
+        }
         assert_eq!(
             tracker.flush_count, 0,
-            "second MSG_INFO should still not flush"
+            "MSG_INFO should not trigger flush"
         );
     }
 
@@ -789,20 +788,18 @@ mod tests {
     #[test]
     fn explicit_flush_drains_buffered_info() {
         let mut tracker = FlushTracker::new();
-        let mut writer = MplexWriter::new(&mut tracker);
-
-        writer
-            .write_message(MessageCode::Info, b"buffered")
-            .unwrap();
-        assert_eq!(tracker.flush_count, 0);
-
-        writer.flush().unwrap();
+        {
+            let mut writer = MplexWriter::new(&mut tracker);
+            writer
+                .write_message(MessageCode::Info, b"buffered")
+                .unwrap();
+            writer.flush().unwrap();
+        }
         assert_eq!(
             tracker.flush_count, 1,
             "explicit flush must drain deferred MSG_INFO"
         );
 
-        // Verify the frame is present in the output
         let mut cursor = std::io::Cursor::new(&tracker.data);
         let frame = recv_msg(&mut cursor).unwrap();
         assert_eq!(frame.code(), MessageCode::Info);
