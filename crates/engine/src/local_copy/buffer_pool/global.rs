@@ -144,7 +144,7 @@ impl Default for GlobalBufferPoolConfig {
             .unwrap_or(auto_detected);
         let byte_budget = match parse_byte_budget_override(std::env::var(ENV_BYTE_BUDGET).ok()) {
             Some(override_val) => override_val, // Env var present: use its value (or None for 0).
-            None => Some(DEFAULT_BYTE_BUDGET), // No env var: apply the 32 MiB default.
+            None => Some(DEFAULT_BYTE_BUDGET),  // No env var: apply the 32 MiB default.
         };
         Self {
             max_buffers,
