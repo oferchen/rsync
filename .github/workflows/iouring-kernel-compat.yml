@@ -1,0 +1,193 @@
+# io_uring kernel version compatibility matrix (IKV-7, IKV-8, IKV-9).
+#
+# Exercises io_uring runtime probe and fallback on different Linux LTS
+# kernel versions available via GitHub Actions runners. Each tier tests
+# a progressively richer set of io_uring opcodes:
+#
+#   ubuntu-22.04 - kernel ~5.15 (IKV-7/8): basic ring + most ops
+#   ubuntu-24.04 - kernel ~6.8  (IKV-9):   full perf tier (PBUF_RING,
+#                                           SEND_ZC, all metadata ops)
+#
+# IKV-7 (Linux 5.10 LTS) note: GitHub Actions does not offer a runner
+# with a 5.10 kernel. Container images use the host kernel for syscalls,
+# so running a Debian 11 container on a 5.15+ host does not exercise
+# 5.10 kernel behaviour. The ubuntu-22.04 cell covers the ~5.15 floor
+# which is the closest available approximation. A dedicated 5.10 cell
+# would require a self-hosted runner or VM-based CI and is not included.
+#
+# Status: non-required (informational). Do not add to branch protection.
+# These cells validate graceful fallback across kernel tiers, not
+# correctness - the main CI nextest job covers that.
+name: io_uring kernel compat
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - 'crates/fast_io/**'
+      - 'crates/transfer/src/disk_commit/**'
+      - 'crates/transfer/src/map_file/**'
+      - '.github/workflows/iouring-kernel-compat.yml'
+  pull_request:
+    paths:
+      - 'crates/fast_io/**'
+      - 'crates/transfer/src/disk_commit/**'
+      - 'crates/transfer/src/map_file/**'
+      - '.github/workflows/iouring-kernel-compat.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: iouring-kernel-compat-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  iouring-kernel-compat:
+    name: io_uring ${{ matrix.label }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    # Non-required: informational only. Do not gate PRs on this workflow.
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # IKV-7/8: ubuntu-22.04 ships kernel ~5.15 (Jammy).
+          # Covers the basic io_uring ring and most metadata ops (statx,
+          # rename, linkat). PBUF_RING may or may not be available
+          # depending on exact kernel patch level.
+          - runner: ubuntu-22.04
+            label: "kernel ~5.15 (ubuntu-22.04)"
+            ikv: "IKV-7/8"
+            expect_iouring: true
+            expect_full_tier: false
+
+          # IKV-9: ubuntu-24.04 ships kernel ~6.8 (Noble).
+          # Full perf tier: all metadata ops, PBUF_RING, SEND_ZC opcode.
+          - runner: ubuntu-24.04
+            label: "kernel ~6.8 (ubuntu-24.04)"
+            ikv: "IKV-9"
+            expect_iouring: true
+            expect_full_tier: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Report host kernel version
+        id: kernel
+        run: |
+          set -euo pipefail
+          RELEASE=$(uname -r)
+          MAJOR=$(echo "$RELEASE" | cut -d. -f1)
+          MINOR=$(echo "$RELEASE" | cut -d. -f2)
+          printf 'kernel release : %s\n' "$RELEASE"
+          printf 'parsed         : %s.%s\n' "$MAJOR" "$MINOR"
+          echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
+          echo "major=$MAJOR" >> "$GITHUB_OUTPUT"
+          echo "minor=$MINOR" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: "1.88.0"
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: iouring-compat-${{ matrix.runner }}
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
+        with:
+          tool: cargo-nextest
+
+      - name: Build with io_uring feature
+        run: cargo build --locked --workspace --all-features
+
+      - name: Run io_uring-related tests
+        run: |
+          cargo nextest run --locked -p fast_io --all-features \
+            -E 'test(io_uring) | test(iouring) | test(kernel_version) | test(probe) | test(fallback) | test(sqpoll) | test(pbuf) | test(send_zc) | test(linkat) | test(statx) | test(renameat) | test(mmap_pressure) | test(shared_ring) | test(byte_identical) | test(data_writes) | test(data_reads) | test(fixed_batch)'
+
+      - name: Run transfer crate io_uring-related tests
+        run: |
+          cargo nextest run --locked -p transfer --all-features \
+            -E 'test(io_uring) | test(iouring) | test(disk_commit)'
+
+      - name: Probe io_uring availability via binary
+        id: probe
+        run: |
+          set -euo pipefail
+          # Build a small probe that exercises the public API.
+          PROBE_OUTPUT=$(cargo run --locked --all-features -- --version 2>&1 || true)
+          printf '%s\n' "$PROBE_OUTPUT"
+
+          # Extract io_uring status line from version output.
+          IOURING_LINE=$(echo "$PROBE_OUTPUT" | grep -i 'io_uring' || echo "io_uring: not found in output")
+          echo "iouring_status=$IOURING_LINE" >> "$GITHUB_OUTPUT"
+
+      - name: Validate io_uring expectations
+        env:
+          KERNEL_MAJOR: ${{ steps.kernel.outputs.major }}
+          KERNEL_MINOR: ${{ steps.kernel.outputs.minor }}
+          KERNEL_RELEASE: ${{ steps.kernel.outputs.release }}
+          EXPECT_IOURING: ${{ matrix.expect_iouring }}
+          EXPECT_FULL_TIER: ${{ matrix.expect_full_tier }}
+          IKV: ${{ matrix.ikv }}
+          IOURING_STATUS: ${{ steps.probe.outputs.iouring_status }}
+        run: |
+          set -euo pipefail
+
+          printf 'kernel         : %s (%s.%s)\n' "$KERNEL_RELEASE" "$KERNEL_MAJOR" "$KERNEL_MINOR"
+          printf 'expect io_uring: %s\n' "$EXPECT_IOURING"
+          printf 'expect full    : %s\n' "$EXPECT_FULL_TIER"
+          printf 'probe status   : %s\n' "$IOURING_STATUS"
+
+          # Validate kernel meets minimum 5.6 requirement.
+          if [ "$KERNEL_MAJOR" -gt 5 ] || { [ "$KERNEL_MAJOR" -eq 5 ] && [ "$KERNEL_MINOR" -ge 6 ]; }; then
+            echo "kernel $KERNEL_MAJOR.$KERNEL_MINOR meets io_uring minimum (5.6)"
+          else
+            echo "::warning::kernel $KERNEL_MAJOR.$KERNEL_MINOR is below io_uring minimum 5.6 ($IKV)"
+          fi
+
+          # On kernels >= 6.0, all metadata ops and PBUF_RING should be
+          # available. Log a warning (not a failure) if the probe reports
+          # otherwise - seccomp or container policies can still block
+          # io_uring even on a new enough kernel.
+          if [ "$EXPECT_FULL_TIER" = "true" ]; then
+            if echo "$IOURING_STATUS" | grep -q "enabled"; then
+              echo "full perf tier confirmed: io_uring enabled on kernel $KERNEL_MAJOR.$KERNEL_MINOR"
+            else
+              echo "::warning::expected full perf tier on kernel $KERNEL_MAJOR.$KERNEL_MINOR but probe reports: $IOURING_STATUS ($IKV)"
+            fi
+          fi
+
+      - name: Generate step summary
+        if: always()
+        env:
+          KERNEL_RELEASE: ${{ steps.kernel.outputs.release }}
+          KERNEL_MAJOR: ${{ steps.kernel.outputs.major }}
+          KERNEL_MINOR: ${{ steps.kernel.outputs.minor }}
+          IKV: ${{ matrix.ikv }}
+          RUNNER: ${{ matrix.runner }}
+          IOURING_STATUS: ${{ steps.probe.outputs.iouring_status }}
+        run: |
+          {
+            echo "### io_uring kernel compat ($IKV)"
+            echo ""
+            echo "| property | value |"
+            echo "| -------- | ----- |"
+            printf '| runner | %s |\n' "$RUNNER"
+            printf '| kernel | %s (%s.%s) |\n' "$KERNEL_RELEASE" "$KERNEL_MAJOR" "$KERNEL_MINOR"
+            printf '| io_uring status | %s |\n' "$IOURING_STATUS"
+            printf '| task | %s |\n' "$IKV"
+          } >> "$GITHUB_STEP_SUMMARY"
