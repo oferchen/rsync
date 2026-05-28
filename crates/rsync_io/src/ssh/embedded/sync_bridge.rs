@@ -314,7 +314,7 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::time::Duration;
-    use tokio::io::duplex;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
 
     /// `SyncAsyncBridge` round-trips bytes by driving an async echo task on
     /// the opposite half of an in-memory duplex.
@@ -463,5 +463,242 @@ mod tests {
         drop(writer);
         let received = rt.block_on(rx.recv());
         assert!(received.is_none(), "sender drop should close the channel");
+    }
+
+    // -----------------------------------------------------------------------
+    // Wire-byte parity: SyncAsyncBridge (async-native) vs channel-pump
+    // (spawn_blocking) bridging strategies (RUSSH-12).
+    //
+    // Both strategies convert an async duplex stream into sync Read + Write.
+    // These tests verify that the bytes observed on the sync side are
+    // identical regardless of which bridge is used, for payloads ranging
+    // from trivial to multi-chunk.
+    // -----------------------------------------------------------------------
+
+    /// Sends `payload` through the `SyncAsyncBridge` path and returns the
+    /// bytes the sync reader observes after a round-trip through an echo
+    /// server on the async side.
+    ///
+    /// # Bridge path: `SyncAsyncBridge` (async-native)
+    ///
+    /// Uses the direct `block_on`-per-call strategy. The bridge owns a
+    /// current-thread runtime and drives the async I/O inline on every
+    /// `read()` / `write()` call.
+    fn round_trip_via_bridge(payload: &[u8]) -> Vec<u8> {
+        let rt = Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let (client, mut server) = duplex(64 * 1024);
+
+        // Async echo server: reads everything, writes it back verbatim.
+        rt.spawn(async move {
+            let mut buf = vec![0u8; 32 * 1024];
+            loop {
+                let n = match server.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                if server.write_all(&buf[..n]).await.is_err() {
+                    break;
+                }
+            }
+            let _ = server.shutdown().await;
+        });
+
+        let payload_owned = payload.to_vec();
+
+        // Run on a separate OS thread because SyncAsyncBridge constructs its
+        // own current-thread runtime internally, which cannot nest inside
+        // an existing runtime.
+        let handle = std::thread::spawn(move || {
+            let mut bridge = SyncAsyncBridge::new(client).unwrap();
+            bridge.write_all(&payload_owned).unwrap();
+            bridge.flush().unwrap();
+
+            // Read back exactly the number of bytes we wrote - the echo
+            // server sends them back 1:1.
+            let mut received = vec![0u8; payload_owned.len()];
+            if !received.is_empty() {
+                bridge.read_exact(&mut received).unwrap();
+            }
+            received
+        });
+
+        handle.join().unwrap()
+    }
+
+    /// Sends `payload` through the channel-pump bridge path and returns
+    /// the bytes the sync reader observes after a round-trip echo.
+    ///
+    /// # Bridge path: channel-pump (`SyncReader` / `SyncWriter`)
+    ///
+    /// Uses bounded `std::sync::mpsc` + `tokio::sync::mpsc` queues with a
+    /// background pump task, matching the spawn_blocking-compatible strategy
+    /// used by `connect_and_exec` and the async SSH transport.
+    fn round_trip_via_channel_pump(payload: &[u8]) -> Vec<u8> {
+        let rt = Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+
+        let (client, mut server) = duplex(64 * 1024);
+
+        // Async echo server on the duplex's server half.
+        rt.spawn(async move {
+            let mut buf = vec![0u8; 32 * 1024];
+            loop {
+                let n = match server.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                if server.write_all(&buf[..n]).await.is_err() {
+                    break;
+                }
+            }
+            let _ = server.shutdown().await;
+        });
+
+        // Build the channel-pump bridge manually (same wiring as
+        // into_sync_halves, but over a duplex instead of a russh Channel).
+        let cap = DEFAULT_CHANNEL_CAPACITY;
+        let (data_tx, data_rx) = std_mpsc::sync_channel::<Vec<u8>>(cap);
+        let (write_tx, mut write_rx) = tokio_mpsc::channel::<Vec<u8>>(cap);
+
+        let (mut async_reader, mut async_writer) = tokio::io::split(client);
+
+        // Inbound pump: async reader -> sync reader channel.
+        rt.spawn(async move {
+            let mut buf = vec![0u8; 32 * 1024];
+            loop {
+                let n = match async_reader.read(&mut buf).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => n,
+                };
+                if data_tx.send(buf[..n].to_vec()).is_err() {
+                    break;
+                }
+            }
+        });
+
+        // Outbound pump: sync writer channel -> async writer.
+        rt.spawn(async move {
+            while let Some(chunk) = write_rx.recv().await {
+                if async_writer.write_all(&chunk).await.is_err() {
+                    break;
+                }
+            }
+            let _ = async_writer.shutdown().await;
+        });
+
+        let sync_reader = SyncReader::new(data_rx);
+        let sync_writer = SyncWriter::new(write_tx);
+
+        let payload_owned = payload.to_vec();
+        let expected_len = payload_owned.len();
+
+        let handle = std::thread::spawn(move || {
+            let mut writer = sync_writer;
+            let mut reader = sync_reader;
+            writer.write_all(&payload_owned).unwrap();
+            writer.flush().unwrap();
+            // Drop writer to signal EOF to the outbound pump, which shuts
+            // down the async write half so the echo server sees EOF.
+            drop(writer);
+
+            let mut received = Vec::with_capacity(expected_len);
+            reader.read_to_end(&mut received).unwrap();
+            received
+        });
+
+        handle.join().unwrap()
+    }
+
+    /// Both bridge strategies must produce identical bytes for a small
+    /// single-chunk payload.
+    #[test]
+    fn wire_byte_parity_small_payload() {
+        let payload = b"hello rsync wire parity test";
+        let bridge_bytes = round_trip_via_bridge(payload);
+        let pump_bytes = round_trip_via_channel_pump(payload);
+
+        assert_eq!(
+            bridge_bytes, pump_bytes,
+            "bridge and channel-pump must produce identical bytes for small payload"
+        );
+        assert_eq!(bridge_bytes, payload.as_slice());
+    }
+
+    /// Both bridge strategies must produce identical bytes for a multi-chunk
+    /// payload that exceeds the duplex buffer and exercises chunked I/O.
+    #[test]
+    fn wire_byte_parity_multi_chunk_payload() {
+        // 256 KiB payload - exceeds the 64 KiB duplex buffer and forces
+        // multiple read/write cycles through both bridge strategies.
+        let payload: Vec<u8> = (0..256 * 1024).map(|i| (i % 251) as u8).collect();
+        let bridge_bytes = round_trip_via_bridge(&payload);
+        let pump_bytes = round_trip_via_channel_pump(&payload);
+
+        assert_eq!(
+            bridge_bytes.len(),
+            pump_bytes.len(),
+            "both paths must return the same number of bytes"
+        );
+        assert_eq!(
+            bridge_bytes, pump_bytes,
+            "bridge and channel-pump must produce identical bytes for multi-chunk payload"
+        );
+        assert_eq!(bridge_bytes, payload);
+    }
+
+    /// Both bridge strategies must produce identical bytes for a payload
+    /// that contains the full byte range (0x00-0xFF) including null bytes,
+    /// high-bit bytes, and the newline/CR sequences that naive text-mode
+    /// bridging would corrupt.
+    #[test]
+    fn wire_byte_parity_binary_payload() {
+        let mut payload = Vec::with_capacity(512);
+        // Two full rounds of 0x00..0xFF to exercise any off-by-one in
+        // chunk boundary handling when the same byte value straddles a
+        // duplex buffer boundary.
+        for _ in 0..2 {
+            for b in 0..=255u8 {
+                payload.push(b);
+            }
+        }
+        let bridge_bytes = round_trip_via_bridge(&payload);
+        let pump_bytes = round_trip_via_channel_pump(&payload);
+
+        assert_eq!(
+            bridge_bytes, pump_bytes,
+            "bridge and channel-pump must handle all byte values identically"
+        );
+        assert_eq!(bridge_bytes, payload);
+    }
+
+    /// Empty payload round-trips cleanly through both paths.
+    #[test]
+    fn wire_byte_parity_empty_payload() {
+        let payload = b"";
+        let bridge_bytes = round_trip_via_bridge(payload);
+        let pump_bytes = round_trip_via_channel_pump(payload);
+
+        assert_eq!(bridge_bytes, pump_bytes);
+        assert!(bridge_bytes.is_empty());
+    }
+
+    /// Single-byte payload - boundary case for the minimum non-empty
+    /// transfer.
+    #[test]
+    fn wire_byte_parity_single_byte() {
+        let payload = &[0x42u8];
+        let bridge_bytes = round_trip_via_bridge(payload);
+        let pump_bytes = round_trip_via_channel_pump(payload);
+
+        assert_eq!(bridge_bytes, pump_bytes);
+        assert_eq!(bridge_bytes, payload.as_slice());
     }
 }
