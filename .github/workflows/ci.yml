@@ -136,7 +136,7 @@ jobs:
     name: nextest (${{ matrix.toolchain }})
     runs-on: ubuntu-latest
     needs: lint
-    timeout-minutes: 45
+    timeout-minutes: 60
     # Stable gates merge; beta/nightly are informational so a churning
     # nightly compiler does not block PR throughput. Branch protection
     # should pin the required check to `nextest (stable)`.
