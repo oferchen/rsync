@@ -127,15 +127,11 @@ fn skipping_filter_exchange_is_rejected() {
 #[test]
 fn backward_transition_during_transfer_is_rejected() {
     let mut pipeline = TransferPipeline::new(ServerRole::Generator);
-    pipeline
-        .advance_to(TransferPhase::FilterExchange)
-        .unwrap();
+    pipeline.advance_to(TransferPhase::FilterExchange).unwrap();
     pipeline
         .advance_to(TransferPhase::FileListTransfer)
         .unwrap();
-    pipeline
-        .advance_to(TransferPhase::DeltaTransfer)
-        .unwrap();
+    pipeline.advance_to(TransferPhase::DeltaTransfer).unwrap();
 
     // Trying to go back to FileListTransfer
     let err = pipeline

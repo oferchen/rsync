@@ -109,7 +109,11 @@ impl GeneratorContext {
     /// orchestration layer. It should be at `FilterExchange` when the
     /// generator is created.
     #[must_use]
-    pub fn new(handshake: &HandshakeResult, config: ServerConfig, pipeline: TransferPipeline) -> Self {
+    pub fn new(
+        handshake: &HandshakeResult,
+        config: ServerConfig,
+        pipeline: TransferPipeline,
+    ) -> Self {
         // upstream: flist.c:2923 - ndx_start = inc_recurse ? 1 : 0
         let inc_recurse = handshake
             .compat_flags
