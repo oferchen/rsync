@@ -143,8 +143,8 @@ impl Default for GlobalBufferPoolConfig {
         let max_buffers = parse_pool_size_override(std::env::var(ENV_BUFFER_POOL_SIZE).ok())
             .unwrap_or(auto_detected);
         let byte_budget = match parse_byte_budget_override(std::env::var(ENV_BYTE_BUDGET).ok()) {
-            Some(override_val) => override_val,  // Env var present: use its value (or None for 0).
-            None => Some(DEFAULT_BYTE_BUDGET),    // No env var: apply the 32 MiB default.
+            Some(override_val) => override_val, // Env var present: use its value (or None for 0).
+            None => Some(DEFAULT_BYTE_BUDGET), // No env var: apply the 32 MiB default.
         };
         Self {
             max_buffers,
@@ -433,9 +433,6 @@ mod tests {
 
     #[test]
     fn parse_byte_budget_negative_ignored() {
-        assert_eq!(
-            parse_byte_budget_override(Some("-1".to_string())),
-            None
-        );
+        assert_eq!(parse_byte_budget_override(Some("-1".to_string())), None);
     }
 }
