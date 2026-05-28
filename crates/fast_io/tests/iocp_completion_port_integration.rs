@@ -28,8 +28,8 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
 
 use fast_io::iocp::{
-    IocpConfig, IocpDiskBatch, IocpReader, IocpReaderFactory, IocpWriter, IocpWriterFactory,
-    IOCP_MIN_FILE_SIZE, is_iocp_available,
+    IOCP_MIN_FILE_SIZE, IocpConfig, IocpDiskBatch, IocpReader, IocpReaderFactory, IocpWriter,
+    IocpWriterFactory, is_iocp_available,
 };
 use fast_io::traits::{FileReader, FileReaderFactory, FileWriter, FileWriterFactory};
 use tempfile::tempdir;
@@ -351,9 +351,7 @@ fn reader_seek_beyond_eof_errors() {
     let mut reader = IocpReader::open(&path, &config).unwrap();
     assert_eq!(reader.size(), 5);
 
-    let err = reader
-        .seek_to(100)
-        .expect_err("seek past EOF must fail");
+    let err = reader.seek_to(100).expect_err("seek past EOF must fail");
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
 }
 
@@ -377,8 +375,7 @@ fn writer_create_for_append_preserves_content() {
 
     let config = IocpConfig::default();
     {
-        let mut writer =
-            IocpWriter::create_for_append(&path, 8192, &config).unwrap();
+        let mut writer = IocpWriter::create_for_append(&path, 8192, &config).unwrap();
         // Seek to the end of the existing content before appending.
         writer.seek(SeekFrom::Start(16)).unwrap();
         writer.write_all(b"-appended").unwrap();

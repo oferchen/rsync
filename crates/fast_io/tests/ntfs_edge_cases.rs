@@ -237,10 +237,7 @@ fn case_insensitive_overwrite() {
         entries.len(),
         1,
         "case-insensitive FS should have exactly one file, got: {:?}",
-        entries
-            .iter()
-            .map(|e| e.file_name())
-            .collect::<Vec<_>>()
+        entries.iter().map(|e| e.file_name()).collect::<Vec<_>>()
     );
 
     // Content should be the second write.
@@ -337,8 +334,7 @@ fn readonly_attribute_blocks_writes() {
     fs::set_permissions(&path, perms).unwrap();
 
     // Writing must fail.
-    let err = fs::write(&path, b"overwrite")
-        .expect_err("write to read-only file must fail");
+    let err = fs::write(&path, b"overwrite").expect_err("write to read-only file must fail");
     assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
 
     // Clear read-only and verify write succeeds.
@@ -424,7 +420,7 @@ fn unicode_filename_roundtrip() {
     let dir = tempdir().unwrap();
 
     let names = [
-        "\u{00e9}l\u{00e8}ve.txt",     // French accents: eleve
+        "\u{00e9}l\u{00e8}ve.txt",      // French accents: eleve
         "\u{65e5}\u{672c}\u{8a9e}.txt", // Japanese: nihongo
         "\u{0410}\u{0411}\u{0412}.txt", // Cyrillic: ABV
     ];
