@@ -635,9 +635,9 @@ fn test_single_remote_source_returns_single_variant() {
 }
 
 #[test]
-#[cfg(not(feature = "sender-inc-recurse"))]
 fn test_remote_invocation_with_multiple_paths() {
     use core::client::{ClientConfig, remote::RemoteInvocationBuilder, remote::RemoteRole};
+    use transfer::setup::build_capability_string;
 
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
@@ -645,15 +645,14 @@ fn test_remote_invocation_with_multiple_paths() {
 
     assert_eq!(args[0].to_string_lossy(), "rsync");
     assert_eq!(args[1].to_string_lossy(), "--server");
-    // Receiver (pull) → --sender flag present
+    // Receiver (pull) -> --sender flag present
     assert_eq!(args[2].to_string_lossy(), "--sender");
     let flags_idx = 3;
     assert!(args[flags_idx].to_string_lossy().starts_with('-'));
-    // Capability info string for protocol features (checksum negotiation, etc.)
-    // Sender-side INC_RECURSE is opt-in (default false); 'i' is omitted from
-    // the capability string. Tracker #1862. Skipped under
-    // sender-inc-recurse where the default flips ON and the 'i' bit is set.
-    assert_eq!(args[flags_idx + 1].to_string_lossy(), "-e.LsfxCIvu");
+    // ISI.h: sender-side INC_RECURSE is default-on; the capability string
+    // includes 'i', matching upstream rsync 3.4.x.
+    let expected_caps = build_capability_string(true);
+    assert_eq!(args[flags_idx + 1].to_string_lossy(), expected_caps);
     let dot_idx = flags_idx + 2;
     assert_eq!(args[dot_idx].to_string_lossy(), ".");
     // Paths come after "."

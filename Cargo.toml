@@ -76,12 +76,10 @@ parallel-receive-delta = [
     "engine/parallel-receive-delta",
 ]
 
-# Sender-side INC_RECURSE interop bake-up (ISI.b). Default OFF; flips the
-# `inc_recursive_send` builder fallback ON so push transfers advertise the
-# `'i'` capability bit. Wire behavior is unchanged when the flag is absent.
-# Forwards to `core/sender-inc-recurse`. ISI.h will flip the default and
-# retire this flag once interop is validated. See
-# `docs/design/isi-a-sender-inc-recurse-call-graph.md`.
+# DEPRECATED (ISI.h): sender INC_RECURSE is now default-on. Flag
+# retained for one release as an emergency-disable no-op. CLI
+# `--no-inc-recursive` is the recommended override. Remove in the
+# next minor version (ISI.i.2).
 sender-inc-recurse = ["core/sender-inc-recurse", "transfer/sender-inc-recurse"]
 
 # io_uring support for Linux 5.6+ - batched async I/O syscalls
