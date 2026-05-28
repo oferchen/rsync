@@ -1,0 +1,175 @@
+# Differential Fuzzer - Overnight Schedule
+#
+# Runs the three differential fuzz targets nightly to accumulate
+# coverage against wire-level protocol divergences.
+#
+# Budget:
+#   - FUZZ_DURATION seconds per target (default 1800s = 30 min).
+#   - Three targets run in parallel -> ~30 min wall clock per night.
+#
+# Targets:
+#   - differential_multiplex: cross-API agreement for multiplex frames
+#   - differential_flist: encode/decode round-trip for file list entries
+#   - differential_outcome: end-to-end transfer outcome vs upstream rsync
+#
+# Findings:
+#   - Any file under fuzz/artifacts/ uploads as a workflow artifact and
+#     the job fails so triage starts the next morning.
+
+name: Differential Fuzzer Overnight
+
+on:
+  schedule:
+    # Nightly at 03:00 UTC: after Filter Fuzzer (02:00) and before
+    # Coverage Report (03:30).
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Seconds per fuzz target (default 1800 = 30 min)'
+        required: false
+        default: '1800'
+
+concurrency:
+  group: differential-fuzzer-overnight
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  FUZZ_DURATION: ${{ github.event.inputs.duration || '1800' }}
+
+jobs:
+  fuzz:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    # Per-target budget + 30 minutes for build/setup overhead.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: differential_multiplex
+            needs_upstream: false
+          - target: differential_flist
+            needs_upstream: false
+          - target: differential_outcome
+            needs_upstream: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Install nightly Rust
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: nightly
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-v1-${{ hashFiles('**/Cargo.lock') }}
+          key: differential-fuzzer-${{ matrix.target }}
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev
+          version: v1
+
+      - name: Install cargo-fuzz
+        uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
+        with:
+          tool: cargo-fuzz
+
+      - name: Cache upstream rsync
+        if: matrix.needs_upstream
+        id: cache-rsync
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            target/interop/upstream-src
+            target/interop/upstream-install
+          key: upstream-rsync-3.4.2-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          restore-keys: |
+            upstream-rsync-3.4.2-${{ runner.os }}-
+
+      - name: Build upstream rsync
+        if: matrix.needs_upstream && steps.cache-rsync.outputs.cache-hit != 'true'
+        run: bash tools/ci/run_interop.sh build-only
+
+      - name: Locate upstream rsync
+        if: matrix.needs_upstream
+        id: upstream
+        run: |
+          set -euo pipefail
+          for candidate in \
+              "${GITHUB_WORKSPACE}/target/interop/upstream-install/3.4.2/bin/rsync" \
+              "${GITHUB_WORKSPACE}/target/interop/upstream-install/3.4.1/bin/rsync"; do
+              if [[ -x "${candidate}" ]]; then
+                  echo "upstream=${candidate}" >>"$GITHUB_OUTPUT"
+                  echo "located upstream rsync at ${candidate}"
+                  exit 0
+              fi
+          done
+          echo "error: no upstream rsync binary built" >&2
+          exit 1
+
+      - name: Build oc-rsync (for differential_outcome)
+        if: matrix.needs_upstream
+        run: cargo build --release
+
+      - name: Run ${{ matrix.target }}
+        env:
+          OC_RSYNC_BIN: ${{ matrix.needs_upstream && format('{0}/target/release/oc-rsync', github.workspace) || '' }}
+          UPSTREAM_RSYNC: ${{ steps.upstream.outputs.upstream || '' }}
+        run: |
+          set -uo pipefail
+          cd fuzz
+          cargo +nightly fuzz run "${{ matrix.target }}" \
+              -- -max_total_time="${FUZZ_DURATION}"
+          status=$?
+          echo "runner_status=${status}" >>"$GITHUB_ENV"
+          exit "${status}"
+
+      - name: Collect artifacts metadata
+        if: always()
+        run: |
+          set -euo pipefail
+          mkdir -p fuzz-report
+          if [[ -d fuzz/artifacts ]]; then
+              find fuzz/artifacts -mindepth 1 -type f -printf '%p\t%s\n' \
+                  >fuzz-report/inventory.tsv || true
+          fi
+          if [[ -s fuzz-report/inventory.tsv ]]; then
+              echo "findings recorded:" >&2
+              cat fuzz-report/inventory.tsv >&2
+          else
+              echo "no findings recorded" >fuzz-report/inventory.tsv
+          fi
+
+      - name: Upload fuzz artifacts
+        if: always() && hashFiles('fuzz/artifacts/**') != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: differential-fuzz-artifacts-${{ matrix.target }}-${{ github.run_id }}
+          retention-days: 30
+          path: |
+            fuzz/artifacts/**
+            fuzz-report/**
+
+      - name: Fail if findings were uploaded
+        if: always() && hashFiles('fuzz/artifacts/**') != ''
+        run: |
+          echo "Fuzzer recorded artifacts under fuzz/artifacts/."
+          echo "Triage the crash artifact to determine if it represents"
+          echo "a real protocol divergence or a false positive from the"
+          echo "harness configuration."
+          exit 1
