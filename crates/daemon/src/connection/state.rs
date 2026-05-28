@@ -530,8 +530,7 @@ mod tests {
                 assert_eq!(
                     result.is_ok(),
                     expected_valid,
-                    "transition {from:?} -> {to:?}: expected valid={expected_valid}, got {:?}",
-                    result
+                    "transition {from:?} -> {to:?}: expected valid={expected_valid}, got {result:?}"
                 );
             }
         }
