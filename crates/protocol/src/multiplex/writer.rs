@@ -715,10 +715,7 @@ mod tests {
                 .write_message(MessageCode::Info, b"file2.txt")
                 .unwrap();
         }
-        assert_eq!(
-            tracker.flush_count, 0,
-            "MSG_INFO should not trigger flush"
-        );
+        assert_eq!(tracker.flush_count, 0, "MSG_INFO should not trigger flush");
     }
 
     #[test]
