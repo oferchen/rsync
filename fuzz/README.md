@@ -27,6 +27,7 @@ unstable compiler flags.
 | `protocol_wire`        | `protocol::BorrowedMessageFrames` (multiplex frames)                     |
 | `simd_checksum_parity` | `checksums` rolling + MD4/MD5 batch SIMD dispatchers vs scalar reference |
 | `filter_differential`  | `filters::FilterSet` decisions vs upstream rsync 3.4.2 (spawns rsync)    |
+| `differential_outcome` | End-to-end local-copy outcome comparison vs upstream rsync (spawns both) |
 
 ## Running
 
