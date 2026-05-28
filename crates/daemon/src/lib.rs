@@ -177,6 +177,8 @@ pub mod async_listener;
 pub mod auth;
 mod cli;
 mod config;
+/// Typed daemon connection lifecycle state machine.
+pub mod connection;
 mod daemon;
 /// Unified stream abstraction for plain TCP and TLS-wrapped connections.
 pub mod daemon_stream;

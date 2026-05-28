@@ -138,6 +138,7 @@ pub mod reorder_buffer;
 pub mod token_buffer;
 pub mod token_reader;
 pub mod transfer_ops;
+pub mod transfer_state;
 
 pub use self::adaptive_buffer::{
     AdaptiveTokenBuffer, HUGE_BUFFER_SIZE, HUGE_FILE_THRESHOLD, LARGE_BUFFER_SIZE,
@@ -176,6 +177,7 @@ pub use pipeline::{
     PipelineConfig, PipelineState,
 };
 pub use progress::{ItemizeCallback, TransferProgressCallback, TransferProgressEvent};
+pub use transfer_state::{InvalidTransition, TransferPhase, TransferPipeline};
 
 /// Batch recording configuration for protocol stream teeing.
 ///
