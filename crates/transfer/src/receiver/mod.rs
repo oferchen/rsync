@@ -58,6 +58,7 @@ use engine::delete::DeleteContext;
 use crate::config::ServerConfig;
 use crate::handshake::HandshakeResult;
 use crate::shared::ChecksumFactory;
+use crate::transfer_state::TransferPipeline;
 
 pub use self::basis::{BasisFileConfig, BasisFileResult, find_basis_file_with_config};
 pub use self::file_list::IncrementalFileListReceiver;
@@ -242,6 +243,13 @@ pub struct ReceiverContext {
     /// This is wired by task DDP-B3 (#2257) and consumed by the emitter
     /// wiring in tasks DDP-E1-E5.
     delete_ctx: Option<Arc<DeleteContext>>,
+    /// Transfer pipeline FSM tracking the current protocol phase.
+    ///
+    /// Enforces the linear phase progression through the transfer lifecycle.
+    /// Initialized at `FilterExchange` by `run_server_with_handshake` and
+    /// advanced through `FileListTransfer`, `DeltaTransfer`, `Finalization`,
+    /// and `Complete` as the receiver progresses.
+    pipeline: TransferPipeline,
 }
 
 impl ReceiverContext {
@@ -251,8 +259,16 @@ impl ReceiverContext {
     /// Compiles daemon filter rules from `ServerConfig::daemon_filter_rules` into
     /// a `FilterSet` for per-file exclusion checking during transfer.
     /// Execute the transfer via [`run`](Self::run).
+    ///
+    /// The `pipeline` parameter carries the transfer FSM state from the
+    /// orchestration layer. It should be at `FilterExchange` when the
+    /// receiver is created.
     #[must_use]
-    pub fn new(handshake: &HandshakeResult, config: ServerConfig) -> Self {
+    pub fn new(
+        handshake: &HandshakeResult,
+        config: ServerConfig,
+        pipeline: TransferPipeline,
+    ) -> Self {
         // upstream: flist.c:2923 - ndx_start = inc_recurse ? 1 : 0
         let inc_recurse = handshake
             .compat_flags
@@ -287,7 +303,22 @@ impl ReceiverContext {
             flist_io_error: 0,
             parallel_thresholds: ParallelThresholds::default(),
             delete_ctx: None,
+            pipeline,
         }
+    }
+
+    /// Creates a receiver context for unit testing with a default pipeline.
+    ///
+    /// The pipeline is initialized at `FilterExchange`, matching the state
+    /// when a real `run_server_with_handshake` dispatches to the receiver.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn new_for_test(handshake: &HandshakeResult, config: ServerConfig) -> Self {
+        let mut pipeline = TransferPipeline::new(crate::role::ServerRole::Receiver);
+        pipeline
+            .advance_to(crate::transfer_state::TransferPhase::FilterExchange)
+            .expect("test pipeline advance");
+        Self::new(handshake, config, pipeline)
     }
 
     /// Attaches a [`DeleteContext`] to the receiver.

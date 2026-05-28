@@ -25,7 +25,7 @@ fn receiver_filter_chain_protects_from_deletion() {
     let mut config = test_config();
     config.flags.delete = true;
     config.args = vec![OsString::from(dest.to_str().unwrap())];
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // File list includes "." and "source.txt" - anything else at dest is extraneous
     ctx.file_list
@@ -81,7 +81,7 @@ fn receiver_filter_chain_empty_allows_all_deletions() {
     let mut config = test_config();
     config.flags.delete = true;
     config.args = vec![OsString::from(dest.to_str().unwrap())];
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // File list has "." and "keep.txt" - file1/file2 are extraneous
     ctx.file_list
@@ -110,7 +110,7 @@ fn receiver_filter_chain_empty_allows_all_deletions() {
 fn receiver_set_and_get_filter_chain() {
     let handshake = test_handshake();
     let config = test_config();
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Default filter chain should be empty
     assert!(ctx.filter_chain().is_empty());

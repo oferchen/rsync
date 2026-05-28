@@ -24,6 +24,7 @@ use super::timing::TransferTiming;
 use super::{itemize, open_source};
 use crate::config::ServerConfig;
 use crate::handshake::HandshakeResult;
+use crate::transfer_state::TransferPipeline;
 
 /// Context for the generator role during a transfer.
 ///
@@ -89,6 +90,13 @@ pub struct GeneratorContext {
     /// Different operations have different overhead profiles: CPU-bound signature
     /// computation benefits from parallelism at lower counts than I/O-bound stat calls.
     pub(crate) parallel_thresholds: crate::parallel_io::ParallelThresholds,
+    /// Transfer pipeline FSM tracking the current protocol phase.
+    ///
+    /// Enforces the linear phase progression through the transfer lifecycle.
+    /// Initialized at `FilterExchange` by `run_server_with_handshake` and
+    /// advanced through `FileListTransfer`, `DeltaTransfer`, `Finalization`,
+    /// and `Complete` as the generator progresses.
+    pub(crate) pipeline: TransferPipeline,
 }
 
 impl GeneratorContext {
@@ -97,8 +105,15 @@ impl GeneratorContext {
     /// Initializes protocol state, INC_RECURSE NDX offset, and empty file list.
     /// Call [`build_file_list`](Self::build_file_list) to populate entries, then
     /// [`run`](Self::run) to execute the transfer.
+    /// The `pipeline` parameter carries the transfer FSM state from the
+    /// orchestration layer. It should be at `FilterExchange` when the
+    /// generator is created.
     #[must_use]
-    pub fn new(handshake: &HandshakeResult, config: ServerConfig) -> Self {
+    pub fn new(
+        handshake: &HandshakeResult,
+        config: ServerConfig,
+        pipeline: TransferPipeline,
+    ) -> Self {
         // upstream: flist.c:2923 - ndx_start = inc_recurse ? 1 : 0
         let inc_recurse = handshake
             .compat_flags
@@ -121,7 +136,22 @@ impl GeneratorContext {
             incremental: IncrementalState::new(initial_ndx_start),
             delete_stats: DeleteStats::new(),
             parallel_thresholds: crate::parallel_io::ParallelThresholds::default(),
+            pipeline,
         }
+    }
+
+    /// Creates a generator context for unit testing with a default pipeline.
+    ///
+    /// The pipeline is initialized at `FilterExchange`, matching the state
+    /// when a real `run_server_with_handshake` dispatches to the generator.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn new_for_test(handshake: &HandshakeResult, config: ServerConfig) -> Self {
+        let mut pipeline = TransferPipeline::new(crate::role::ServerRole::Generator);
+        pipeline
+            .advance_to(crate::transfer_state::TransferPhase::FilterExchange)
+            .expect("test pipeline advance");
+        Self::new(handshake, config, pipeline)
     }
 
     /// Converts a wire NDX value to a flat file list array index.

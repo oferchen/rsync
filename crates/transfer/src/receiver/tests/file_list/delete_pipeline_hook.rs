@@ -36,7 +36,7 @@ fn delete_pipeline_hook_publishes_one_plan_per_segment() {
 
     let handshake = test_handshake();
     let config = test_config();
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Build a flist matching what the receiver would have after the
     // initial segment plus two INC_RECURSE segments. Segment table is
@@ -124,7 +124,7 @@ fn delete_pipeline_hook_publishes_one_plan_per_segment() {
 fn delete_pipeline_hook_is_noop_when_no_context_attached() {
     let handshake = test_handshake();
     let config = test_config();
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
     ctx.file_list = vec![FileEntry::new_directory(PathBuf::from("sub"), 0o755)];
     ctx.ndx_segments = vec![(0, 1)];
 

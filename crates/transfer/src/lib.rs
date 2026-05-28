@@ -101,6 +101,15 @@ use std::sync::{Arc, Mutex};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
+/// Converts an [`InvalidTransition`] into an [`io::Error`].
+///
+/// Invalid FSM transitions indicate a logic error in the transfer orchestration -
+/// the caller tried to advance through phases in the wrong order. Mapped to
+/// `InvalidData` because the orchestration state is inconsistent.
+pub(crate) fn fsm_error(err: transfer_state::InvalidTransition) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, err.to_string())
+}
+
 mod compressed_reader;
 mod compressed_writer;
 pub mod config;
@@ -305,6 +314,10 @@ pub fn run_server_with_handshake<W: Write>(
     batch: Option<BatchRecording>,
     itemize: Option<&mut dyn ItemizeCallback>,
 ) -> ServerResult {
+    // FSM: begin at Handshake (version exchange is already complete when this
+    // function is called - either via run_server_stdio or daemon greeting).
+    let mut pipeline = TransferPipeline::new(config.role);
+
     // upstream: setup_protocol() skips binary exchange when remote_protocol != 0
     // (already set by @RSYNCD greeting or SSH handshake).
     let buffered_data = std::mem::take(&mut handshake.buffered);
@@ -411,6 +424,12 @@ pub fn run_server_with_handshake<W: Write>(
         allow_inc_recurse,
     };
     let setup_result = setup::setup_protocol(&mut stdout, &mut chained_stdin, &setup_config)?;
+
+    // FSM: Handshake complete (setup_protocol exchanged compat flags, checksum
+    // seed, and capability negotiation). Advance to FilterExchange.
+    pipeline
+        .advance_to(TransferPhase::FilterExchange)
+        .map_err(fsm_error)?;
 
     handshake.negotiated_algorithms = setup_result.negotiated_algorithms;
     handshake.compat_flags = setup_result.compat_flags;
@@ -555,7 +574,7 @@ pub fn run_server_with_handshake<W: Write>(
 
     match config.role {
         ServerRole::Receiver => {
-            let mut ctx = ReceiverContext::new(&handshake, config);
+            let mut ctx = ReceiverContext::new(&handshake, config, pipeline);
             // upstream: io.c:859 - stats.total_written tracking
             let mut counting_writer = writer::CountingWriter::new(&mut writer);
             let mut stats = ctx.run(chained_reader, &mut counting_writer, progress)?;
@@ -567,7 +586,7 @@ pub fn run_server_with_handshake<W: Write>(
             let mut paths = Vec::with_capacity(config.args.len());
             paths.extend(config.args.iter().map(std::path::PathBuf::from));
 
-            let mut ctx = GeneratorContext::new(&handshake, config);
+            let mut ctx = GeneratorContext::new(&handshake, config, pipeline);
             let stats = ctx.run(chained_reader, &mut writer, &paths, progress, itemize)?;
 
             Ok(ServerStats::Generator(stats))

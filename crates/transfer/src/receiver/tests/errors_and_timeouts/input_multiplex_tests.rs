@@ -31,7 +31,7 @@ fn receiver_with_client_mode(protocol_version: u8, client_mode: bool) -> Receive
         ..Default::default()
     };
     config.connection.client_mode = client_mode;
-    ReceiverContext::new(&handshake, config)
+    ReceiverContext::new_for_test(&handshake, config)
 }
 
 #[test]

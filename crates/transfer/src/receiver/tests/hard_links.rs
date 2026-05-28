@@ -216,7 +216,7 @@ fn create_hardlinks_skipped_when_disabled() {
         args: vec![OsString::from(".")],
         ..Default::default()
     };
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
     ctx.file_list = entries;
 
     let mut writer = TestDeletionWriter;
@@ -253,7 +253,7 @@ fn create_hardlinks_skipped_in_dry_run() {
         args: vec![OsString::from(".")],
         ..Default::default()
     };
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
     ctx.file_list = entries;
 
     let mut writer = TestDeletionWriter;
@@ -297,7 +297,7 @@ fn tracker_initialized_when_hard_links_enabled() {
         args: vec![OsString::from(".")],
         ..Default::default()
     };
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
     assert!(
         ctx.hardlink_tracker.is_some(),
         "tracker should be initialized when hard_links is enabled"
@@ -319,7 +319,7 @@ fn tracker_not_initialized_when_hard_links_disabled() {
         args: vec![OsString::from(".")],
         ..Default::default()
     };
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
     assert!(
         ctx.hardlink_tracker.is_none(),
         "tracker should not be initialized when hard_links is disabled"

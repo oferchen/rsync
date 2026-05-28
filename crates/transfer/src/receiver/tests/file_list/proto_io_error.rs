@@ -31,7 +31,7 @@ fn receive_file_list_reads_io_error_for_proto28() {
         args: vec![OsString::from(".")],
         ..Default::default()
     };
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Wire bytes: 0x00 end marker + 4-byte LE io_error (value 3 = IOERR_GENERAL | IOERR_DEL_LIMIT)
     let io_error_value: i32 = 3;
@@ -62,7 +62,7 @@ fn receive_file_list_reads_io_error_for_proto29() {
         args: vec![OsString::from(".")],
         ..Default::default()
     };
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Wire: end marker + io_error = 0 (no error)
     let mut wire = vec![0x00u8];
@@ -90,7 +90,7 @@ fn receive_file_list_skips_io_error_for_proto30() {
         args: vec![OsString::from(".")],
         ..Default::default()
     };
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Wire: just end marker, no io_error bytes. If the code tried to read
     // 4 more bytes it would fail with UnexpectedEof.
@@ -120,7 +120,7 @@ fn receive_file_list_ignore_errors_suppresses_io_error() {
         args: vec![OsString::from(".")],
         ..Default::default()
     };
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Wire: end marker + io_error = 7
     let mut wire = vec![0x00u8];

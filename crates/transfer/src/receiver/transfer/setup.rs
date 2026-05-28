@@ -18,6 +18,7 @@ use filters::{DirMergeConfig, FilterChain, FilterSet};
 
 use crate::receiver::{PHASE1_CHECKSUM_LENGTH, PipelineSetup, ReceiverContext};
 use crate::shared::ChecksumFactory;
+use crate::transfer_state::TransferPhase;
 
 impl ReceiverContext {
     /// Common setup for all transfer modes.
@@ -117,6 +118,11 @@ impl ReceiverContext {
             }
         }
 
+        // FSM: filter list reading is complete. Advance to FileListTransfer.
+        self.pipeline
+            .advance_to(TransferPhase::FileListTransfer)
+            .map_err(crate::fsm_error)?;
+
         if self.config.flags.verbose && self.config.connection.client_mode {
             info_log!(Flist, 1, "receiving incremental file list");
         }
@@ -176,6 +182,11 @@ impl ReceiverContext {
         // path-based fall-backs cover that case today).
         #[cfg(unix)]
         let sandbox = open_sandbox_for_dest(&dest_dir);
+
+        // FSM: file list received and sanitized. Advance to DeltaTransfer.
+        self.pipeline
+            .advance_to(TransferPhase::DeltaTransfer)
+            .map_err(crate::fsm_error)?;
 
         Ok((
             reader,
