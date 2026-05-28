@@ -101,8 +101,6 @@ use std::sync::{Arc, Mutex};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use transfer_state::{TransferPhase, TransferPipeline};
-
 /// Converts an [`InvalidTransition`] into an [`io::Error`].
 ///
 /// Invalid FSM transitions indicate a logic error in the transfer orchestration -
