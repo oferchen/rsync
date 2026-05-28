@@ -133,7 +133,9 @@ jobs:
 
           # Extract io_uring status line from version output.
           IOURING_LINE=$(echo "$PROBE_OUTPUT" | grep -i 'io_uring' || echo "io_uring: not found in output")
-          echo "iouring_status=$IOURING_LINE" >> "$GITHUB_OUTPUT"
+          echo "iouring_status<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$IOURING_LINE" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Validate io_uring expectations
         env:
