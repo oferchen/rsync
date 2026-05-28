@@ -172,6 +172,24 @@ impl MessageCode {
         &Self::ALL
     }
 
+    /// Returns true if this message code requires an immediate flush after
+    /// being written to the multiplexed stream.
+    ///
+    /// `MSG_INFO` and `MSG_WARNING` are batchable - they accumulate in the
+    /// write buffer and drain with the next DATA flush or explicit
+    /// `io_flush()`. All other control messages (ERROR, REDO, NO_SEND,
+    /// SUCCESS, etc.) are latency-sensitive and must be flushed immediately.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:965 send_msg()` - appends to `iobuf.msg` without flushing
+    /// - `io.c:680-716 perform_io()` - drains `iobuf.msg` opportunistically
+    #[inline]
+    #[must_use]
+    pub const fn requires_immediate_flush(self) -> bool {
+        !matches!(self, Self::Info | Self::Warning)
+    }
+
     /// Reports whether this message is a keepalive (no-op) used to prevent
     /// connection timeouts during long operations.
     ///
@@ -487,5 +505,40 @@ mod tests {
         let err = ParseMessageCodeError::new("BAD_CODE");
         let display = format!("{err}");
         assert!(display.contains("BAD_CODE"));
+    }
+
+    #[test]
+    fn info_and_warning_are_batchable() {
+        assert!(!MessageCode::Info.requires_immediate_flush());
+        assert!(!MessageCode::Warning.requires_immediate_flush());
+    }
+
+    #[test]
+    fn latency_sensitive_codes_require_flush() {
+        let must_flush = [
+            MessageCode::Data,
+            MessageCode::ErrorXfer,
+            MessageCode::Error,
+            MessageCode::ErrorSocket,
+            MessageCode::ErrorUtf8,
+            MessageCode::Redo,
+            MessageCode::Stats,
+            MessageCode::IoError,
+            MessageCode::IoTimeout,
+            MessageCode::NoOp,
+            MessageCode::ErrorExit,
+            MessageCode::Success,
+            MessageCode::Deleted,
+            MessageCode::NoSend,
+            MessageCode::Log,
+            MessageCode::Client,
+        ];
+        for code in must_flush {
+            assert!(
+                code.requires_immediate_flush(),
+                "{} should require immediate flush",
+                code.name()
+            );
+        }
     }
 }
