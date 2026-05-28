@@ -89,9 +89,7 @@ fn read_greeting(reader: &mut BufReader<TcpStream>) -> String {
 }
 
 fn send_version(stream: &mut TcpStream) {
-    stream
-        .write_all(b"@RSYNCD: 32.0\n")
-        .expect("send version");
+    stream.write_all(b"@RSYNCD: 32.0\n").expect("send version");
     stream.flush().expect("flush version");
 }
 
@@ -205,9 +203,7 @@ fn lifecycle_early_exit_after_version() {
     read_greeting(&mut reader);
     send_version(&mut writer);
 
-    writer
-        .write_all(b"@RSYNCD: EXIT\n")
-        .expect("send EXIT");
+    writer.write_all(b"@RSYNCD: EXIT\n").expect("send EXIT");
     writer.flush().expect("flush EXIT");
 
     drop(writer);
@@ -215,7 +211,10 @@ fn lifecycle_early_exit_after_version() {
 
     flags.shutdown.store(true, Ordering::Relaxed);
     let result = handle.join().expect("daemon thread");
-    assert!(result.is_ok(), "daemon should exit cleanly on early EXIT: {result:?}");
+    assert!(
+        result.is_ok(),
+        "daemon should exit cleanly on early EXIT: {result:?}"
+    );
 }
 
 /// Greeting -> Closing via immediate TCP disconnect.
@@ -242,7 +241,10 @@ fn lifecycle_immediate_disconnect() {
 
     flags.shutdown.store(true, Ordering::Relaxed);
     let result = handle.join().expect("daemon thread");
-    assert!(result.is_ok(), "daemon should handle immediate disconnect: {result:?}");
+    assert!(
+        result.is_ok(),
+        "daemon should handle immediate disconnect: {result:?}"
+    );
 }
 
 /// Multiple sequential connections each traverse the full lifecycle.
@@ -280,10 +282,7 @@ fn lifecycle_multiple_sequential_connections() {
                 break;
             }
         }
-        assert!(
-            saw_exit,
-            "connection {i}: daemon should send @RSYNCD: EXIT"
-        );
+        assert!(saw_exit, "connection {i}: daemon should send @RSYNCD: EXIT");
 
         drop(writer);
         drop(reader);
