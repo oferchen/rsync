@@ -15,8 +15,12 @@
 //! first matching `Compression` assignment in the scan wins for its
 //! scope. SSC-4.c wires the `Match` evaluator into the parser, honouring
 //! `host`, `originalhost`, `user`, `localuser`, and `all`. `Match exec`
-//! is treated as non-matching to avoid spawning arbitrary commands from
-//! a config-lookup path; the rest of the SKIP set (`canonical`, `final`,
+//! is deliberately unsupported - executing arbitrary shell commands from
+//! a passive config-lookup path is a security risk, and the
+//! compression-detection use case does not need it. When a `Match exec`
+//! block is encountered, the parser emits a one-shot `eprintln!` warning
+//! so the user knows that compression settings inside such blocks will
+//! not be detected. The rest of the SKIP set (`canonical`, `final`,
 //! `tagged`) likewise short-circuits the block.
 //!
 //! # Failure mode
@@ -124,12 +128,19 @@ fn read_and_check(path: &Path, ctx: &MatchContext<'_>) -> bool {
 /// `ctx`'s fields may be empty; in that case only `Host *` and
 /// `Match all` (or other patterns that tolerate empty input) can match.
 ///
+/// When any `Match exec` block is encountered, a one-shot warning is
+/// emitted via `eprintln!` to alert the user that compression settings
+/// inside such blocks will not be detected. The warning fires at most
+/// once per parse invocation regardless of how many `Match exec` blocks
+/// appear in the file.
+///
 /// Exposed to tests so they can assert behaviour without disk I/O.
 pub(super) fn parse_enables_compression(text: &str, ctx: &MatchContext<'_>) -> bool {
     let mut block = Block::TopLevel;
     let mut top_level: Option<bool> = None;
     let mut host_block: Option<bool> = None;
     let mut match_block: Option<bool> = None;
+    let mut saw_match_exec = false;
 
     for raw_line in text.lines() {
         let line = strip_comment(raw_line).trim();
@@ -150,7 +161,7 @@ pub(super) fn parse_enables_compression(text: &str, ctx: &MatchContext<'_>) -> b
                 block = Block::Host(parse_pattern_list(value));
             }
             "match" => {
-                block = Block::MatchEvaluated(match_line_applies(value, ctx));
+                block = Block::MatchEvaluated(match_line_applies(value, ctx, &mut saw_match_exec));
             }
             "compression" => {
                 let parsed = parse_yes_no(value);
@@ -170,6 +181,13 @@ pub(super) fn parse_enables_compression(text: &str, ctx: &MatchContext<'_>) -> b
             }
             _ => {}
         }
+    }
+
+    if saw_match_exec {
+        eprintln!(
+            "warning: ssh_config Match exec blocks are not evaluated; \
+             compression settings inside them will not be detected"
+        );
     }
 
     top_level.unwrap_or(false) || host_block.unwrap_or(false) || match_block.unwrap_or(false)
@@ -394,11 +412,16 @@ pub(super) fn evaluate_match(conditions: &[MatchCondition], ctx: &MatchContext<'
 /// live inside, so we treat it as a non-match with no fork/exec. See
 /// SSC-4.a "DEFER" rationale for the full security justification.
 ///
+/// When `exec` is encountered, `*saw_exec` is set to `true` so the
+/// caller can emit a one-shot user-visible warning. The flag is only
+/// set, never cleared, so multiple `Match exec` blocks within one
+/// config file produce at most one warning.
+///
 /// Recognises keys case-insensitively; arguments are split on whitespace
 /// or commas via [`parse_pattern_list`] for the keys that take a
 /// pattern-list. Unknown tokens cause the line to be treated as inert
 /// (conservative: a typo cannot accidentally flip the warning).
-fn match_line_applies(value: &str, ctx: &MatchContext<'_>) -> bool {
+fn match_line_applies(value: &str, ctx: &MatchContext<'_>, saw_exec: &mut bool) -> bool {
     let mut conditions = Vec::new();
     let mut tokens = value.split_ascii_whitespace();
     while let Some(keyword) = tokens.next() {
@@ -433,12 +456,19 @@ fn match_line_applies(value: &str, ctx: &MatchContext<'_>) -> bool {
             // and no oc-rsync code path produces a `-P` tag. Any block
             // gated by one of these is dead code from our perspective.
             "canonical" | "final" | "tagged" => return false,
-            // DEFER (SSC-4.a): `exec` would require spawning a shell
-            // command from a passive config-lookup path. Treated as
-            // non-matching here to avoid the fork/exec entirely; the
-            // argv-side SSC-1 check still catches `-C` and
+            // DELIBERATE OMISSION (MED-1, SSC-4.a DEFER): `Match exec`
+            // runs an arbitrary shell command to decide whether the block
+            // applies. Evaluating it here would be a security risk -
+            // executing user-supplied commands from a passive config-lookup
+            // path inverts the trust model. It also adds subprocess
+            // complexity for a feature the compression-detection use case
+            // does not need. The block is treated as non-matching with no
+            // fork/exec; the argv-side SSC-1 check still catches `-C` and
             // `-o Compression=yes`.
-            "exec" => return false,
+            "exec" => {
+                *saw_exec = true;
+                return false;
+            }
             _ => return false,
         }
     }
@@ -1205,5 +1235,57 @@ mod tests {
         let ctx = MatchContext::with_local_user_from_env("any", "any", "", &mut buf);
         let text = "Match localuser nobody\n  Compression yes\n";
         assert!(!parse_enables_compression(text, &ctx));
+    }
+
+    // MED-2: `Match exec` warning flag tests. These exercise the
+    // `saw_exec` output parameter on `match_line_applies` to verify
+    // the one-shot warning fires exactly when expected.
+
+    #[test]
+    fn match_exec_sets_saw_exec_flag() {
+        // When the parser encounters `Match exec`, the saw_exec flag
+        // must be set to true so the caller can emit a warning.
+        let mut saw_exec = false;
+        let result = match_line_applies("exec /bin/true", &ctx("web1", "", ""), &mut saw_exec);
+        assert!(!result, "Match exec must not match");
+        assert!(saw_exec, "saw_exec flag must be set");
+    }
+
+    #[test]
+    fn match_without_exec_does_not_set_flag() {
+        // Normal Match conditions must not set the saw_exec flag.
+        let mut saw_exec = false;
+        match_line_applies("host web1", &ctx("web1", "", ""), &mut saw_exec);
+        assert!(!saw_exec, "saw_exec should not be set for non-exec Match");
+    }
+
+    #[test]
+    fn match_all_does_not_set_flag() {
+        let mut saw_exec = false;
+        match_line_applies("all", &ctx("", "", ""), &mut saw_exec);
+        assert!(!saw_exec, "saw_exec should not be set for Match all");
+    }
+
+    #[test]
+    fn match_exec_flag_set_once_across_multiple_exec_blocks() {
+        // Multiple Match exec blocks should set the flag but only the
+        // first encounter matters for the one-shot warning. Verify the
+        // flag stays true after a second exec block.
+        let mut saw_exec = false;
+        match_line_applies("exec /bin/true", &ctx("web1", "", ""), &mut saw_exec);
+        assert!(saw_exec);
+        match_line_applies("exec /bin/false", &ctx("web1", "", ""), &mut saw_exec);
+        assert!(saw_exec, "flag should remain true after second exec");
+    }
+
+    #[test]
+    fn match_exec_flag_not_reset_by_non_exec_match() {
+        // Once saw_exec is set by a Match exec block, a subsequent
+        // non-exec Match must not clear it.
+        let mut saw_exec = false;
+        match_line_applies("exec /usr/bin/test", &ctx("web1", "", ""), &mut saw_exec);
+        assert!(saw_exec);
+        match_line_applies("host web1", &ctx("web1", "", ""), &mut saw_exec);
+        assert!(saw_exec, "non-exec Match must not clear saw_exec flag");
     }
 }
