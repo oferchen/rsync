@@ -378,8 +378,8 @@ mod tests {
         let recv = TransferPipeline::new(ServerRole::Receiver);
         assert_eq!(recv.role(), ServerRole::Receiver);
 
-        let gen = TransferPipeline::new(ServerRole::Generator);
-        assert_eq!(gen.role(), ServerRole::Generator);
+        let generator = TransferPipeline::new(ServerRole::Generator);
+        assert_eq!(generator.role(), ServerRole::Generator);
     }
 
     // -----------------------------------------------------------------------
