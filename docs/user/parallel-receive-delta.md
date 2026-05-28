@@ -32,14 +32,25 @@ different files verify and write without contending on each other's locks.
 
 ## Current status
 
-**Feature-gated, not default.** The feature compiles behind the
-`parallel-receive-delta` Cargo feature flag and is excluded from the default
-feature set. The production receiver token loop still takes the sequential
-`DeltaWork` path on default builds.
+**Default-on (stable).** The `parallel-receive-delta` Cargo feature is
+enabled by default in the workspace and all forwarding crates. The
+production receiver `token_loop` dispatches through `ParallelDeltaApplier`,
+fanning out per-chunk verification across rayon workers. The feature was
+validated through full upstream interop (PIP-10.a), adversarial stress tests
+(PIP-10.b), mixed-size correctness (PIP-10.c), RSS overhead measurement
+(PIP-10.d), error-path parity (PIP-10.e), and a 5-day bake window with
+zero attributable regressions (PIP-9.f). See
+[`docs/design/parallel-receive-delta-bake-prerequisites.md`](../design/parallel-receive-delta-bake-prerequisites.md)
+for the bake-window evidence.
+
+The feature flag is retained temporarily as an emergency opt-out; build
+without the feature to fall back to the sequential path. PIP-9.f.4 will
+retire the flag entirely after the post-flip bake window.
 
 ### History
 
-The feature has been through several integration attempts:
+The feature has been through several integration attempts before reaching
+the default-on state:
 
 - **PIP-3/5** wired an initial dispatch into the receiver context and flipped
   the feature to default-on across `cli`, `core`, `transfer`, and `engine`.
@@ -51,9 +62,13 @@ The feature has been through several integration attempts:
 - **PIP-8** tore out the dead wiring, leaving the core types
   (`ParallelDeltaApplier`, `ParallelDeltaPipeline`, `DeltaConsumer`)
   compiled but unwired. The feature flag became a no-op.
-- **PIP-9** is rebuilding the integration properly, routing the receiver's
-  token loop through `ParallelDeltaApplier` via a real fan-out caller with
+- **PIP-9** rebuilt the integration properly, routing the receiver's token
+  loop through `ParallelDeltaApplier` via a real fan-out caller with
   observable production readers.
+- **PIP-10** validated the parallel path end-to-end across interop, stress,
+  correctness, RSS, and error-path dimensions.
+- **PIP-9.f** satisfied the bake criterion and flipped the feature to
+  default-on.
 
 ### Safety verification
 
