@@ -61,7 +61,7 @@ fn test_receiver_uses_negotiated_md5() {
     let handshake = create_handshake(30, Some(negotiated), 12345);
     let config = test_config();
 
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Verify context stores negotiated algorithms
     assert_eq!(ctx.protocol().as_u8(), 30);
@@ -79,7 +79,7 @@ fn test_receiver_uses_negotiated_sha1() {
     let handshake = create_handshake(31, Some(negotiated), 54321);
     let config = test_config();
 
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
     assert_eq!(ctx.protocol().as_u8(), 31);
 }
 
@@ -95,7 +95,7 @@ fn test_receiver_uses_negotiated_xxh64() {
     let handshake = create_handshake(32, Some(negotiated), seed);
     let config = test_config();
 
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
     assert_eq!(ctx.protocol().as_u8(), 32);
     // The seed should be stored and will be used when creating XXH64 instances
 }
@@ -111,7 +111,7 @@ fn test_receiver_uses_negotiated_xxh128() {
     let handshake = create_handshake(32, Some(negotiated), seed);
     let config = test_config();
 
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
     assert_eq!(ctx.protocol().as_u8(), 32);
 }
 
@@ -121,7 +121,7 @@ fn test_receiver_fallback_protocol30_no_negotiation() {
     let handshake = create_handshake(30, None, 0);
     let config = test_config();
 
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
     assert_eq!(ctx.protocol().as_u8(), 30);
     // Fallback logic: None → MD5 (protocol 30+)
 }
@@ -132,7 +132,7 @@ fn test_receiver_fallback_protocol28_legacy() {
     let handshake = create_handshake(28, None, 0);
     let config = test_config();
 
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
     assert_eq!(ctx.protocol().as_u8(), 28);
     // Fallback logic: None → MD4 (protocol < 30)
 }
@@ -148,7 +148,7 @@ fn test_generator_uses_negotiated_md5() {
     let mut config = test_config();
     config.role = ServerRole::Generator;
 
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
     assert_eq!(ctx.protocol().as_u8(), 30);
 }
 
@@ -163,7 +163,7 @@ fn test_generator_uses_negotiated_sha1() {
     let mut config = test_config();
     config.role = ServerRole::Generator;
 
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
     assert_eq!(ctx.protocol().as_u8(), 31);
 }
 
@@ -179,7 +179,7 @@ fn test_generator_uses_negotiated_xxh64() {
     let mut config = test_config();
     config.role = ServerRole::Generator;
 
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
     assert_eq!(ctx.protocol().as_u8(), 32);
 }
 
@@ -190,7 +190,7 @@ fn test_generator_fallback_protocol30_no_negotiation() {
     let mut config = test_config();
     config.role = ServerRole::Generator;
 
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
     assert_eq!(ctx.protocol().as_u8(), 30);
 }
 
@@ -201,7 +201,7 @@ fn test_generator_fallback_protocol29_legacy() {
     let mut config = test_config();
     config.role = ServerRole::Generator;
 
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
     assert_eq!(ctx.protocol().as_u8(), 29);
 }
 
@@ -222,8 +222,8 @@ fn test_checksum_seed_propagation() {
         let mut gen_config = test_config();
         gen_config.role = ServerRole::Generator;
 
-        let recv_ctx = ReceiverContext::new(&handshake, recv_config);
-        let gen_ctx = GeneratorContext::new(&handshake, gen_config);
+        let recv_ctx = ReceiverContext::new_for_test(&handshake, recv_config);
+        let gen_ctx = GeneratorContext::new_for_test(&handshake, gen_config);
 
         // Contexts are created successfully with the seed
         assert_eq!(recv_ctx.protocol().as_u8(), 32);
@@ -241,7 +241,7 @@ fn test_negotiation_result_stored_in_context() {
     let handshake = create_handshake(32, Some(negotiated), 42);
     let config = test_config();
 
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Context creation succeeds, implying negotiated_algorithms is stored
     assert_eq!(ctx.protocol().as_u8(), 32);
@@ -266,7 +266,7 @@ fn test_all_checksum_algorithms_supported() {
         let handshake = create_handshake(32, Some(negotiated), 999);
         let config = test_config();
 
-        let ctx = ReceiverContext::new(&handshake, config);
+        let ctx = ReceiverContext::new_for_test(&handshake, config);
         assert_eq!(ctx.protocol().as_u8(), 32);
     }
 }
@@ -288,7 +288,7 @@ fn test_compat_flags_accessible_in_receiver() {
     handshake.compat_flags = compat_flags;
 
     let config = test_config();
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Verify compat_flags are accessible via accessor
     assert_eq!(ctx.compat_flags(), compat_flags);
@@ -320,7 +320,7 @@ fn test_compat_flags_accessible_in_generator() {
 
     let mut config = test_config();
     config.role = ServerRole::Generator;
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
 
     // Verify compat_flags are accessible via accessor
     assert_eq!(ctx.compat_flags(), compat_flags);
@@ -338,7 +338,7 @@ fn test_compat_flags_accessible_in_generator() {
 fn test_compat_flags_none_for_protocol_29() {
     let handshake = create_handshake(29, None, 0);
     let config = test_config();
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Protocol 29 should have no compat flags
     assert!(ctx.compat_flags().is_none());

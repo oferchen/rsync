@@ -44,7 +44,7 @@ fn receiver_for(protocol_version: u8) -> ReceiverContext {
         args: vec![OsString::from(".")],
         ..Default::default()
     };
-    ReceiverContext::new(&handshake, config)
+    ReceiverContext::new_for_test(&handshake, config)
 }
 
 #[test]

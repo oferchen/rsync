@@ -80,7 +80,7 @@ fn test_handshake_with_negotiated_algorithms(
 fn test_generator() -> (HandshakeResult, GeneratorContext) {
     let handshake = test_handshake();
     let config = test_config();
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
     (handshake, ctx)
 }
 
@@ -93,7 +93,7 @@ fn test_generator_for_path(
     let mut config = test_config();
     config.args = vec![OsString::from(base_path)];
     config.flags.recursive = recursive;
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
     (handshake, ctx)
 }
 
@@ -442,7 +442,7 @@ fn build_and_send_round_trip() {
     let handshake = test_handshake();
     let mut gen_config = test_config();
     gen_config.role = ServerRole::Generator;
-    let mut generator = GeneratorContext::new(&handshake, gen_config);
+    let mut generator = GeneratorContext::new_for_test(&handshake, gen_config);
 
     let mut entry1 = protocol::flist::FileEntry::new_file("file1.txt".into(), 100, 0o644);
     entry1.set_mtime(1700000000, 0);
@@ -455,7 +455,7 @@ fn build_and_send_round_trip() {
     generator.send_file_list(&mut wire_data).unwrap();
 
     let recv_config = test_config();
-    let mut receiver = ReceiverContext::new(&handshake, recv_config);
+    let mut receiver = ReceiverContext::new_for_test(&handshake, recv_config);
     let mut cursor = Cursor::new(&wire_data[..]);
     let count = receiver.receive_file_list(&mut cursor).unwrap();
 
@@ -1179,7 +1179,7 @@ fn should_activate_input_multiplex_client_mode_protocol_28() {
     let mut config = test_config();
     config.connection.client_mode = true;
 
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
     // Protocol 28 >= 23, so should activate in client mode
     assert!(ctx.should_activate_input_multiplex());
 }
@@ -1191,7 +1191,7 @@ fn should_activate_input_multiplex_client_mode_protocol_32() {
     let mut config = test_config();
     config.connection.client_mode = true;
 
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
     assert!(ctx.should_activate_input_multiplex());
 }
 
@@ -1201,7 +1201,7 @@ fn should_activate_input_multiplex_server_mode_protocol_30() {
     let mut config = test_config();
     config.connection.client_mode = false;
 
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
     assert!(ctx.should_activate_input_multiplex());
 }
 
@@ -1211,7 +1211,7 @@ fn should_activate_input_multiplex_server_mode_protocol_29() {
     let mut config = test_config();
     config.connection.client_mode = false;
 
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
     assert!(!ctx.should_activate_input_multiplex());
 }
 
@@ -1219,7 +1219,7 @@ fn should_activate_input_multiplex_server_mode_protocol_29() {
 fn get_checksum_algorithm_default_protocol_28() {
     let handshake = test_handshake_with_protocol(28);
 
-    let ctx = GeneratorContext::new(&handshake, test_config());
+    let ctx = GeneratorContext::new_for_test(&handshake, test_config());
     assert_eq!(ctx.get_checksum_algorithm(), ChecksumAlgorithm::MD4);
 }
 
@@ -1227,7 +1227,7 @@ fn get_checksum_algorithm_default_protocol_28() {
 fn get_checksum_algorithm_default_protocol_30() {
     let handshake = test_handshake_with_protocol(30);
 
-    let ctx = GeneratorContext::new(&handshake, test_config());
+    let ctx = GeneratorContext::new_for_test(&handshake, test_config());
     assert_eq!(ctx.get_checksum_algorithm(), ChecksumAlgorithm::MD5);
 }
 
@@ -1239,14 +1239,14 @@ fn get_checksum_algorithm_negotiated() {
         CompressionAlgorithm::None,
     );
 
-    let ctx = GeneratorContext::new(&handshake, test_config());
+    let ctx = GeneratorContext::new_for_test(&handshake, test_config());
     assert_eq!(ctx.get_checksum_algorithm(), ChecksumAlgorithm::XXH3);
 }
 
 #[test]
 fn validate_file_index_valid() {
     let handshake = test_handshake();
-    let mut ctx = GeneratorContext::new(&handshake, test_config());
+    let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
     ctx.file_list.push(protocol::flist::FileEntry::new_file(
         "test.txt".into(),
         100,
@@ -1265,7 +1265,7 @@ fn validate_file_index_valid() {
 #[test]
 fn validate_file_index_invalid() {
     let handshake = test_handshake();
-    let mut ctx = GeneratorContext::new(&handshake, test_config());
+    let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
     ctx.file_list.push(protocol::flist::FileEntry::new_file(
         "test.txt".into(),
         100,
@@ -1281,7 +1281,7 @@ fn validate_file_index_invalid() {
 #[test]
 fn validate_file_index_empty_list() {
     let handshake = test_handshake();
-    let ctx = GeneratorContext::new(&handshake, test_config());
+    let ctx = GeneratorContext::new_for_test(&handshake, test_config());
 
     let result = ctx.validate_file_index(0);
     assert!(result.is_err());
@@ -1325,7 +1325,7 @@ fn send_id_lists_empty_output_no_preserve() {
     config.flags.owner = false;
     config.flags.group = false;
 
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
 
     let mut output = Vec::new();
     ctx.send_id_lists(&mut output).unwrap();
@@ -1341,7 +1341,7 @@ fn send_id_lists_owner_only() {
     config.flags.owner = true;
     config.flags.group = false;
 
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
 
     let mut output = Vec::new();
     ctx.send_id_lists(&mut output).unwrap();
@@ -1354,7 +1354,7 @@ fn send_id_lists_owner_only() {
 #[test]
 fn send_io_error_flag_protocol_29() {
     let handshake = test_handshake_with_protocol(29);
-    let ctx = GeneratorContext::new(&handshake, test_config());
+    let ctx = GeneratorContext::new_for_test(&handshake, test_config());
 
     let mut output = Vec::new();
     ctx.send_io_error_flag(&mut output).unwrap();
@@ -1367,7 +1367,7 @@ fn send_io_error_flag_protocol_29() {
 #[test]
 fn send_io_error_flag_protocol_30() {
     let handshake = test_handshake_with_protocol(30);
-    let ctx = GeneratorContext::new(&handshake, test_config());
+    let ctx = GeneratorContext::new_for_test(&handshake, test_config());
 
     let mut output = Vec::new();
     ctx.send_io_error_flag(&mut output).unwrap();
@@ -1379,7 +1379,7 @@ fn send_io_error_flag_protocol_30() {
 #[test]
 fn send_io_error_flag_with_errors_protocol_29() {
     let handshake = test_handshake_with_protocol(29);
-    let mut ctx = GeneratorContext::new(&handshake, test_config());
+    let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
     ctx.add_io_error(io_error_flags::IOERR_GENERAL);
 
     let mut output = Vec::new();
@@ -1398,7 +1398,7 @@ fn send_io_error_flag_ignore_errors_suppresses_value() {
     let mut config = test_config();
     config.deletion.ignore_errors = true;
 
-    let mut ctx = GeneratorContext::new(&handshake, config);
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
     ctx.add_io_error(io_error_flags::IOERR_GENERAL);
 
     let mut output = Vec::new();
@@ -1492,7 +1492,7 @@ fn config_with_role_and_flags(
 fn send_id_lists_skips_when_numeric_ids_true() {
     let handshake = test_handshake();
     let config = config_with_flags(true, true, true);
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
 
     let mut output = Vec::new();
     let result = ctx.send_id_lists(&mut output);
@@ -1506,7 +1506,7 @@ fn send_id_lists_skips_when_numeric_ids_true() {
 fn send_id_lists_sends_uid_list_when_owner_set() {
     let handshake = test_handshake();
     let config = config_with_flags(true, false, false);
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
 
     let mut output = Vec::new();
     let result = ctx.send_id_lists(&mut output);
@@ -1520,7 +1520,7 @@ fn send_id_lists_sends_uid_list_when_owner_set() {
 fn send_id_lists_sends_gid_list_when_group_set() {
     let handshake = test_handshake();
     let config = config_with_flags(false, true, false);
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
 
     let mut output = Vec::new();
     let result = ctx.send_id_lists(&mut output);
@@ -1534,7 +1534,7 @@ fn send_id_lists_sends_gid_list_when_group_set() {
 fn send_id_lists_sends_both_when_owner_and_group_set() {
     let handshake = test_handshake();
     let config = config_with_flags(true, true, false);
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
 
     let mut output = Vec::new();
     let result = ctx.send_id_lists(&mut output);
@@ -1548,7 +1548,7 @@ fn send_id_lists_sends_both_when_owner_and_group_set() {
 fn send_id_lists_skips_both_when_neither_flag_set() {
     let handshake = test_handshake();
     let config = config_with_flags(false, false, false);
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
 
     let mut output = Vec::new();
     let result = ctx.send_id_lists(&mut output);
@@ -1565,7 +1565,7 @@ fn id_lists_round_trip_with_numeric_ids_false() {
 
     // Generator sends ID lists (numeric_ids=false, owner/group=true)
     let gen_config = config_with_flags(true, true, false);
-    let generator = GeneratorContext::new(&handshake, gen_config);
+    let generator = GeneratorContext::new_for_test(&handshake, gen_config);
 
     let mut wire_data = Vec::new();
     generator.send_id_lists(&mut wire_data).unwrap();
@@ -1575,7 +1575,7 @@ fn id_lists_round_trip_with_numeric_ids_false() {
 
     // Receiver reads ID lists with matching flags
     let recv_config = config_with_role_and_flags(ServerRole::Receiver, true, true, false);
-    let mut receiver = ReceiverContext::new(&handshake, recv_config);
+    let mut receiver = ReceiverContext::new_for_test(&handshake, recv_config);
 
     let mut cursor = Cursor::new(&wire_data[..]);
     let result = receiver.receive_id_lists(&mut cursor);
@@ -1592,7 +1592,7 @@ fn id_lists_round_trip_with_numeric_ids_true() {
 
     // Generator skips ID lists (numeric_ids=true)
     let gen_config = config_with_flags(true, true, true);
-    let generator = GeneratorContext::new(&handshake, gen_config);
+    let generator = GeneratorContext::new_for_test(&handshake, gen_config);
 
     let mut wire_data = Vec::new();
     generator.send_id_lists(&mut wire_data).unwrap();
@@ -1602,7 +1602,7 @@ fn id_lists_round_trip_with_numeric_ids_true() {
 
     // Receiver also skips reading with matching flags
     let recv_config = config_with_role_and_flags(ServerRole::Receiver, true, true, true);
-    let mut receiver = ReceiverContext::new(&handshake, recv_config);
+    let mut receiver = ReceiverContext::new_for_test(&handshake, recv_config);
 
     let mut cursor = Cursor::new(&wire_data[..]);
     let result = receiver.receive_id_lists(&mut cursor);
@@ -1619,7 +1619,7 @@ fn generator_context_stores_negotiated_compression() {
         CompressionAlgorithm::Zlib,
     );
 
-    let ctx = GeneratorContext::new(&handshake, test_config());
+    let ctx = GeneratorContext::new_for_test(&handshake, test_config());
     assert!(ctx.negotiated_algorithms.is_some());
     let negotiated = ctx.negotiated_algorithms.as_ref().unwrap();
     assert_eq!(negotiated.compression, CompressionAlgorithm::Zlib);
@@ -1633,7 +1633,7 @@ fn generator_context_handles_no_compression() {
         CompressionAlgorithm::None,
     );
 
-    let ctx = GeneratorContext::new(&handshake, test_config());
+    let ctx = GeneratorContext::new_for_test(&handshake, test_config());
     assert!(ctx.negotiated_algorithms.is_some());
     let negotiated = ctx.negotiated_algorithms.as_ref().unwrap();
     assert_eq!(negotiated.compression, CompressionAlgorithm::None);
@@ -1662,7 +1662,7 @@ fn walk_skips_fifo_when_preserve_specials_is_false() {
     let mut config = test_config();
     config.flags.specials = false;
     config.flags.recursive = true;
-    let mut ctx = GeneratorContext::new(&handshake, config);
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
     let count = build_file_list_for(&mut ctx, base_path);
 
@@ -1683,7 +1683,7 @@ fn walk_includes_fifo_when_preserve_specials_is_true() {
     let mut config = test_config();
     config.flags.specials = true;
     config.flags.recursive = true;
-    let mut ctx = GeneratorContext::new(&handshake, config);
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
     let count = build_file_list_for(&mut ctx, base_path);
 
@@ -1705,7 +1705,7 @@ fn walk_includes_fifo_as_special_entry_type() {
     let handshake = test_handshake();
     let mut config = test_config();
     config.flags.specials = true;
-    let mut ctx = GeneratorContext::new(&handshake, config);
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
     build_file_list_for(&mut ctx, base_path);
 
@@ -1722,7 +1722,7 @@ fn send_file_list_passes_preserve_flags_to_writer() {
     let mut gen_config = test_config();
     gen_config.flags.specials = true;
     gen_config.flags.devices = true;
-    let mut generator = GeneratorContext::new(&handshake, gen_config);
+    let mut generator = GeneratorContext::new_for_test(&handshake, gen_config);
 
     // Add a FIFO entry
     let mut fifo = protocol::flist::FileEntry::new_fifo("test.fifo".into(), 0o644);
@@ -1736,7 +1736,7 @@ fn send_file_list_passes_preserve_flags_to_writer() {
     let mut recv_config = test_config();
     recv_config.flags.specials = true;
     recv_config.flags.devices = true;
-    let mut receiver = ReceiverContext::new(&handshake, recv_config);
+    let mut receiver = ReceiverContext::new_for_test(&handshake, recv_config);
 
     let mut cursor = Cursor::new(&wire_data[..]);
     let count = receiver.receive_file_list(&mut cursor).unwrap();
@@ -1942,7 +1942,7 @@ fn del_stats_not_sent_without_do_stats() {
     config.do_stats = false;
     config.flags.delete = true;
     config.deletion.late_delete = false;
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
     assert!(!ctx.should_send_del_stats());
 }
 
@@ -1954,7 +1954,7 @@ fn del_stats_early_sent_with_do_stats_and_delete() {
     config.do_stats = true;
     config.flags.delete = true;
     config.deletion.late_delete = false;
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
     assert!(ctx.should_send_del_stats());
 }
 
@@ -1966,7 +1966,7 @@ fn del_stats_early_not_sent_without_delete() {
     config.do_stats = true;
     config.flags.delete = false;
     config.deletion.late_delete = false;
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
     assert!(!ctx.should_send_del_stats());
 }
 
@@ -1978,7 +1978,7 @@ fn del_stats_late_sent_with_do_stats_only() {
     config.do_stats = true;
     config.flags.delete = false;
     config.deletion.late_delete = true;
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
     assert!(ctx.should_send_del_stats());
 }
 
@@ -1990,7 +1990,7 @@ fn del_stats_late_not_sent_without_do_stats() {
     config.do_stats = false;
     config.flags.delete = true;
     config.deletion.late_delete = true;
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
     assert!(!ctx.should_send_del_stats());
 }
 
@@ -2002,14 +2002,14 @@ fn del_stats_late_with_delete_and_stats() {
     config.do_stats = true;
     config.flags.delete = true;
     config.deletion.late_delete = true;
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
     assert!(ctx.should_send_del_stats());
 }
 
 #[test]
 fn record_io_error_not_found_sets_vanished() {
     let handshake = test_handshake();
-    let mut ctx = GeneratorContext::new(&handshake, test_config());
+    let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
 
     let error = io::Error::new(io::ErrorKind::NotFound, "file vanished");
     ctx.record_io_error(&error);
@@ -2024,7 +2024,7 @@ fn record_io_error_not_found_sets_vanished() {
 #[test]
 fn record_io_error_other_sets_general() {
     let handshake = test_handshake();
-    let mut ctx = GeneratorContext::new(&handshake, test_config());
+    let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
 
     let error = io::Error::new(io::ErrorKind::PermissionDenied, "access denied");
     ctx.record_io_error(&error);
@@ -2039,7 +2039,7 @@ fn record_io_error_other_sets_general() {
 #[test]
 fn io_error_flags_accumulate_via_or() {
     let handshake = test_handshake();
-    let mut ctx = GeneratorContext::new(&handshake, test_config());
+    let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
 
     let vanished = io::Error::new(io::ErrorKind::NotFound, "gone");
     let general = io::Error::new(io::ErrorKind::PermissionDenied, "denied");
@@ -2116,7 +2116,7 @@ mod legacy_goodbye_tests {
         let handshake = test_handshake_with_protocol(protocol_version);
         let mut config = test_config();
         config.protocol = ProtocolVersion::try_from(protocol_version).unwrap();
-        GeneratorContext::new(&handshake, config)
+        GeneratorContext::new_for_test(&handshake, config)
     }
 
     #[test]
@@ -2190,7 +2190,7 @@ mod legacy_goodbye_tests {
         config.protocol = ProtocolVersion::try_from(28u8).unwrap();
         config.do_stats = true;
         config.flags.delete = true;
-        let mut ctx = GeneratorContext::new(&handshake, config);
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
         let receiver_input = NDX_DONE_LE.to_vec();
         let mut reader = Cursor::new(receiver_input);
@@ -2242,7 +2242,7 @@ mod files_from {
         let handshake = test_handshake();
         let mut config = test_config();
         config.file_selection.files_from_path = Some("-".to_owned());
-        let ctx = GeneratorContext::new(&handshake, config);
+        let ctx = GeneratorContext::new_for_test(&handshake, config);
 
         let paths = vec![PathBuf::from("/src")];
         // NUL-separated file list with double-NUL terminator
@@ -2260,7 +2260,7 @@ mod files_from {
         let handshake = test_handshake();
         let mut config = test_config();
         config.file_selection.files_from_path = Some("-".to_owned());
-        let ctx = GeneratorContext::new(&handshake, config);
+        let ctx = GeneratorContext::new_for_test(&handshake, config);
 
         let paths: Vec<PathBuf> = vec![];
         let wire_data = b"file.txt\0\0";
@@ -2276,7 +2276,7 @@ mod files_from {
         let handshake = test_handshake();
         let mut config = test_config();
         config.file_selection.files_from_path = Some("-".to_owned());
-        let ctx = GeneratorContext::new(&handshake, config);
+        let ctx = GeneratorContext::new_for_test(&handshake, config);
 
         let paths = vec![PathBuf::from("/base")];
         // Single file (the double-NUL is the terminator, no empty names in between)
@@ -2297,7 +2297,7 @@ mod files_from {
         let handshake = test_handshake();
         let mut config = test_config();
         config.file_selection.files_from_path = Some(list_file.to_string_lossy().to_string());
-        let ctx = GeneratorContext::new(&handshake, config);
+        let ctx = GeneratorContext::new_for_test(&handshake, config);
 
         let paths = vec![PathBuf::from("/data")];
         let mut reader = Cursor::new(Vec::<u8>::new());
@@ -2319,7 +2319,7 @@ mod files_from {
         let mut config = test_config();
         config.file_selection.files_from_path = Some(list_file.to_string_lossy().to_string());
         config.file_selection.from0 = true;
-        let ctx = GeneratorContext::new(&handshake, config);
+        let ctx = GeneratorContext::new_for_test(&handshake, config);
 
         let paths = vec![PathBuf::from("/root")];
         let mut reader = Cursor::new(Vec::<u8>::new());
@@ -2343,7 +2343,7 @@ mod files_from {
         let handshake = test_handshake();
         let mut config = test_config();
         config.file_selection.files_from_path = Some(list_file.to_string_lossy().to_string());
-        let ctx = GeneratorContext::new(&handshake, config);
+        let ctx = GeneratorContext::new_for_test(&handshake, config);
 
         let paths = vec![PathBuf::from("/dir")];
         let mut reader = Cursor::new(Vec::<u8>::new());
@@ -2365,7 +2365,7 @@ mod files_from {
         let handshake = test_handshake();
         let mut config = test_config();
         config.args = vec![OsString::from(&src)];
-        let mut ctx = GeneratorContext::new(&handshake, config);
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
         let file_paths = vec![src.join("hello.txt"), src.join("subdir/file.txt")];
         let count = ctx.build_file_list_with_base(&src, &file_paths).unwrap();
@@ -2403,7 +2403,7 @@ mod files_from {
         config.flags.relative = true;
         config.flags.recursive = true;
         config.args = vec![OsString::from(&src_dir)];
-        let mut ctx = GeneratorContext::new(&handshake, config);
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
         ctx.build_file_list(&[src_dir.clone()]).unwrap();
         let names: Vec<String> = ctx
@@ -2459,7 +2459,7 @@ mod files_from {
         let mut config = test_config();
         config.flags.relative = true;
         config.flags.recursive = true;
-        let mut ctx = GeneratorContext::new(&handshake, config);
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
         ctx.build_file_list(&[src_with_anchor]).unwrap();
 
         let names: Vec<String> = ctx
@@ -2495,7 +2495,7 @@ mod files_from {
         let mut config = test_config();
         config.flags.relative = false;
         config.flags.recursive = true;
-        let mut ctx = GeneratorContext::new(&handshake, config);
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
         ctx.build_file_list(&[src_dir]).unwrap();
 
         let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
@@ -2516,7 +2516,7 @@ mod files_from {
         let handshake = test_handshake();
         let mut config = test_config();
         config.args = vec![OsString::from(&src)];
-        let mut ctx = GeneratorContext::new(&handshake, config);
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
         let file_paths = vec![src.join("exists.txt"), src.join("missing.txt")];
         let count = ctx.build_file_list_with_base(&src, &file_paths).unwrap();
@@ -2833,7 +2833,7 @@ fn server_mode_flushes_writer_before_filter_list_read() {
     let mut config = test_config();
     config.connection.client_mode = false; // daemon/server mode
 
-    let ctx = GeneratorContext::new(&handshake, config);
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
 
     // The fix: server mode flushes before reading filter list.
     // We verify this by calling flush on the writer as the generator does.
