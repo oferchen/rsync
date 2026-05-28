@@ -305,7 +305,7 @@ fn handle_legacy_session(
             messages,
         )?;
         // FSM: -> Closing after sending the module list and EXIT.
-        conn_state = conn_state
+        _ = conn_state
             .transition(ConnectionState::Closing)
             .map_err(transition_error)?;
     } else if request.is_empty() {
@@ -318,7 +318,7 @@ fn handle_legacy_session(
         messages.write_exit(reader.get_mut(), &mut limiter)?;
         reader.get_mut().flush()?;
         // FSM: -> Closing after sending error and EXIT for empty request.
-        conn_state = conn_state
+        _ = conn_state
             .transition(ConnectionState::Closing)
             .map_err(transition_error)?;
     } else {
