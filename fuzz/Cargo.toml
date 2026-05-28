@@ -196,6 +196,20 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "differential_multiplex"
+path = "fuzz_targets/differential_multiplex.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "differential_flist"
+path = "fuzz_targets/differential_flist.rs"
+test = false
+doc = false
+bench = false
+
 # Standalone workspace - excluded from the root workspace so that
 # `cargo build` does not pull libfuzzer-sys into ordinary builds.
 [workspace]
