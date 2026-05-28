@@ -769,13 +769,12 @@ impl Write for FlushTracker {
 #[test]
 fn multiplex_writer_msg_info_defers_flush() {
     let mut tracker = FlushTracker::new();
-    let mut mux = MultiplexWriter::new(&mut tracker);
-
-    mux.send_message(MessageCode::Info, b"file1.txt\n").unwrap();
+    {
+        let mut mux = MultiplexWriter::new(&mut tracker);
+        mux.send_message(MessageCode::Info, b"file1.txt\n").unwrap();
+        mux.send_message(MessageCode::Info, b"file2.txt\n").unwrap();
+    }
     assert_eq!(tracker.flush_count, 0, "MSG_INFO should not trigger flush");
-
-    mux.send_message(MessageCode::Info, b"file2.txt\n").unwrap();
-    assert_eq!(tracker.flush_count, 0, "second MSG_INFO should not flush");
 }
 
 #[test]
@@ -790,34 +789,34 @@ fn multiplex_writer_msg_error_flushes_immediately() {
 #[test]
 fn server_writer_msg_info_defers_flush() {
     let mut tracker = FlushTracker::new();
-    let mut writer = ServerWriter::new_plain(&mut tracker)
-        .activate_multiplex()
-        .unwrap();
+    {
+        let mut writer = ServerWriter::new_plain(&mut tracker)
+            .activate_multiplex()
+            .unwrap();
 
-    writer.send_msg_info(b"item1\n").unwrap();
-    assert_eq!(tracker.flush_count, 0, "MSG_INFO should not trigger flush");
-
-    writer.send_msg_info(b"item2\n").unwrap();
-    assert_eq!(tracker.flush_count, 0, "second MSG_INFO should not flush");
-
-    // Explicit flush drains deferred MSG_INFO frames
-    writer.flush().unwrap();
-    assert_eq!(tracker.flush_count, 1);
+        writer.send_msg_info(b"item1\n").unwrap();
+        writer.send_msg_info(b"item2\n").unwrap();
+        writer.flush().unwrap();
+    }
+    assert_eq!(
+        tracker.flush_count, 1,
+        "explicit flush must drain deferred MSG_INFO"
+    );
 }
 
 #[test]
 fn server_writer_msg_error_flushes_past_deferred_info() {
     let mut tracker = FlushTracker::new();
-    let mut writer = ServerWriter::new_plain(&mut tracker)
-        .activate_multiplex()
-        .unwrap();
+    {
+        let mut writer = ServerWriter::new_plain(&mut tracker)
+            .activate_multiplex()
+            .unwrap();
 
-    writer.send_msg_info(b"info line\n").unwrap();
-    assert_eq!(tracker.flush_count, 0);
-
-    writer
-        .send_message(MessageCode::Error, b"error line\n")
-        .unwrap();
+        writer.send_msg_info(b"info line\n").unwrap();
+        writer
+            .send_message(MessageCode::Error, b"error line\n")
+            .unwrap();
+    }
     assert_eq!(
         tracker.flush_count, 1,
         "MSG_ERROR must flush even after deferred MSG_INFO"
