@@ -13,8 +13,26 @@
 //! before any subsystem acquires buffers.
 //!
 //! If [`init_global_buffer_pool`] is not called, the pool defaults to
-//! [`BufferPool::default`] - one buffer per hardware thread at
-//! [`COPY_BUFFER_SIZE`](super::super::COPY_BUFFER_SIZE).
+//! [`GlobalBufferPoolConfig::default`] - one buffer per hardware thread at
+//! [`COPY_BUFFER_SIZE`](super::super::COPY_BUFFER_SIZE) with a 32 MiB
+//! byte budget on pool retention.
+//!
+//! # Default Byte Budget
+//!
+//! The pool applies a default byte budget of [`DEFAULT_BYTE_BUDGET`] (32 MiB)
+//! on retained buffers. This prevents unbounded memory growth when adaptive
+//! buffer sizing creates large (up to 1 MiB) buffers that would otherwise
+//! accumulate in the pool. The budget is a soft cap - acquires never block,
+//! but returning buffers past the cap are deallocated instead of retained.
+//!
+//! The default can be overridden via the `OC_RSYNC_BYTE_BUDGET` environment
+//! variable or programmatically through [`GlobalBufferPoolConfig`]. Setting
+//! the env var to `0` disables the byte budget entirely.
+//!
+//! For daemon deployments serving many concurrent connections, the 32 MiB
+//! default is shared across all connections (single process-wide pool). This
+//! is appropriate because pooled buffers are reused across connections - the
+//! pool size scales with parallelism, not with connection count.
 //!
 //! # Thread Safety
 //!
@@ -57,12 +75,30 @@ pub struct GlobalBufferPoolConfig {
     pub byte_budget: Option<usize>,
 }
 
+/// Default byte budget for pool retention (32 MiB).
+///
+/// Matches the maximum pooled memory at the adaptive resizer's ceiling:
+/// 256 buffers at 128 KiB each = 32 MiB. This provides a consistent
+/// upper bound whether the pool grows by count (adaptive resizing) or
+/// by individual buffer size (adaptive buffer sizing for large files).
+///
+/// Overridden by `--max-alloc`, `OC_RSYNC_BYTE_BUDGET`, or programmatic
+/// configuration via [`GlobalBufferPoolConfig`].
+pub const DEFAULT_BYTE_BUDGET: usize = 32 * 1024 * 1024;
+
 /// Environment variable for overriding the buffer pool size (number of buffers).
 ///
 /// When set to a valid positive integer, overrides the auto-detected
 /// hardware parallelism value. Useful for tuning memory usage in
 /// constrained environments or for benchmarking.
 const ENV_BUFFER_POOL_SIZE: &str = "OC_RSYNC_BUFFER_POOL_SIZE";
+
+/// Environment variable for overriding the default byte budget.
+///
+/// When set to a valid positive integer, overrides [`DEFAULT_BYTE_BUDGET`].
+/// Set to `0` to disable the byte budget entirely (unbounded retention).
+/// Useful for memory-constrained environments or high-throughput servers.
+const ENV_BYTE_BUDGET: &str = "OC_RSYNC_BYTE_BUDGET";
 
 /// Parses an optional env-var value into a positive buffer count.
 ///
@@ -74,31 +110,56 @@ fn parse_pool_size_override(env_val: Option<String>) -> Option<usize> {
         .filter(|&n| n > 0)
 }
 
+/// Parses an optional env-var value into a byte budget.
+///
+/// Returns `Some(Some(n))` when the value is a valid positive integer (use n).
+/// Returns `Some(None)` when the value is `"0"` (disable byte budget).
+/// Returns `None` for missing or non-numeric values (use default).
+fn parse_byte_budget_override(env_val: Option<String>) -> Option<Option<usize>> {
+    let val = env_val?;
+    let n = val.parse::<usize>().ok()?;
+    if n == 0 {
+        Some(None) // Explicitly disabled.
+    } else {
+        Some(Some(n))
+    }
+}
+
 impl Default for GlobalBufferPoolConfig {
-    /// Defaults to one buffer per hardware thread at the standard copy buffer size.
+    /// Defaults to one buffer per hardware thread at the standard copy buffer
+    /// size, with a 32 MiB byte budget on pool retention.
     ///
     /// The `OC_RSYNC_BUFFER_POOL_SIZE` environment variable overrides the
     /// auto-detected hardware parallelism value when set to a valid positive
     /// integer. Invalid or non-positive values are silently ignored.
+    ///
+    /// The `OC_RSYNC_BYTE_BUDGET` environment variable overrides the default
+    /// byte budget. Set to `0` to disable the byte budget (unbounded
+    /// retention). Invalid or non-numeric values are silently ignored.
     fn default() -> Self {
         let auto_detected = std::thread::available_parallelism()
             .map(std::num::NonZero::get)
             .unwrap_or(4);
         let max_buffers = parse_pool_size_override(std::env::var(ENV_BUFFER_POOL_SIZE).ok())
             .unwrap_or(auto_detected);
+        let byte_budget = match parse_byte_budget_override(std::env::var(ENV_BYTE_BUDGET).ok()) {
+            Some(override_val) => override_val,  // Env var present: use its value (or None for 0).
+            None => Some(DEFAULT_BYTE_BUDGET),    // No env var: apply the 32 MiB default.
+        };
         Self {
             max_buffers,
             buffer_size: super::super::COPY_BUFFER_SIZE,
             memory_cap: None,
-            byte_budget: None,
+            byte_budget,
         }
     }
 }
 
 /// Returns a shared reference to the global buffer pool.
 ///
-/// Initializes the pool with [`BufferPool::default`] on first call if
-/// [`init_global_buffer_pool`] has not been called. Subsequent calls
+/// Initializes the pool from [`GlobalBufferPoolConfig::default`] on first
+/// call if [`init_global_buffer_pool`] has not been called. This applies
+/// the default 32 MiB byte budget on pool retention. Subsequent calls
 /// return a clone of the same [`Arc`].
 ///
 /// # Example
@@ -111,7 +172,14 @@ impl Default for GlobalBufferPoolConfig {
 /// ```
 #[must_use]
 pub fn global_buffer_pool() -> Arc<BufferPool> {
-    Arc::clone(GLOBAL_BUFFER_POOL.get_or_init(|| Arc::new(BufferPool::default())))
+    Arc::clone(GLOBAL_BUFFER_POOL.get_or_init(|| {
+        let config = GlobalBufferPoolConfig::default();
+        let mut pool = BufferPool::with_buffer_size(config.max_buffers, config.buffer_size);
+        if let Some(budget) = config.byte_budget.filter(|&n| n > 0) {
+            pool = pool.with_byte_budget(budget);
+        }
+        Arc::new(pool)
+    }))
 }
 
 /// Initializes the global buffer pool with custom settings.
@@ -169,7 +237,7 @@ mod tests {
         assert_eq!(config.max_buffers, expected);
         assert_eq!(config.buffer_size, super::super::super::COPY_BUFFER_SIZE);
         assert!(config.memory_cap.is_none());
-        assert!(config.byte_budget.is_none());
+        assert_eq!(config.byte_budget, Some(DEFAULT_BYTE_BUDGET));
     }
 
     #[test]
@@ -327,5 +395,47 @@ mod tests {
         // by `init_after_lazy_init_returns_err` and integration tests.
         let cap: Option<usize> = Some(0).filter(|&n| n > 0);
         assert!(cap.is_none());
+    }
+
+    #[test]
+    fn default_byte_budget_is_32_mib() {
+        assert_eq!(DEFAULT_BYTE_BUDGET, 32 * 1024 * 1024);
+    }
+
+    #[test]
+    fn parse_byte_budget_positive_value() {
+        assert_eq!(
+            parse_byte_budget_override(Some("16777216".to_string())),
+            Some(Some(16_777_216))
+        );
+    }
+
+    #[test]
+    fn parse_byte_budget_zero_disables() {
+        assert_eq!(
+            parse_byte_budget_override(Some("0".to_string())),
+            Some(None)
+        );
+    }
+
+    #[test]
+    fn parse_byte_budget_non_numeric_ignored() {
+        assert_eq!(
+            parse_byte_budget_override(Some("unlimited".to_string())),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_byte_budget_missing_returns_none() {
+        assert_eq!(parse_byte_budget_override(None), None);
+    }
+
+    #[test]
+    fn parse_byte_budget_negative_ignored() {
+        assert_eq!(
+            parse_byte_budget_override(Some("-1".to_string())),
+            None
+        );
     }
 }
