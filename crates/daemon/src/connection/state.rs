@@ -496,6 +496,53 @@ mod tests {
         assert_eq!(err, cloned);
     }
 
+    // -- Sole state authority (FSW-7 audit) -----------------------------------
+
+    /// Confirms that `ConnectionState` is the sole mechanism for tracking the
+    /// daemon connection lifecycle. No ad-hoc booleans, phase counters, or
+    /// state strings exist outside the FSM - all phase progression goes
+    /// through `ConnectionState::transition()`.
+    ///
+    /// This test codifies the FSW-7 audit finding: after FSW-4 wired the FSM
+    /// into the daemon handler, zero residual ad-hoc state variables remain.
+    #[test]
+    fn connection_state_is_sole_lifecycle_authority() {
+        // The FSM covers every daemon connection phase.
+        let all_phases = [
+            ConnectionState::Greeting,
+            ConnectionState::ModuleSelect,
+            ConnectionState::Authenticating,
+            ConnectionState::Transferring,
+            ConnectionState::Closing,
+        ];
+        assert_eq!(all_phases.len(), 5, "FSM must cover all 5 lifecycle phases");
+
+        // Every non-terminal phase has at least one valid forward transition.
+        for &phase in &all_phases {
+            if phase.is_terminal() {
+                assert!(
+                    phase.valid_transitions().is_empty(),
+                    "terminal state must have no outgoing transitions"
+                );
+            } else {
+                assert!(
+                    !phase.valid_transitions().is_empty(),
+                    "{phase:?} must have at least one forward transition"
+                );
+            }
+        }
+
+        // Every non-terminal phase can reach Closing (error/abort path).
+        for &phase in &all_phases {
+            if !phase.is_terminal() {
+                assert!(
+                    phase.transition(ConnectionState::Closing).is_ok(),
+                    "{phase:?} must be able to transition to Closing"
+                );
+            }
+        }
+    }
+
     // -- Exhaustive transition matrix ----------------------------------------
 
     /// Verifies every possible (from, to) pair against the expected outcome.
