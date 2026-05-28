@@ -34,7 +34,7 @@ fn incremental_receiver_reads_entries() {
     // Create handshake and config
     let handshake = test_handshake();
     let config = test_config();
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Create incremental receiver
     let mut receiver = ctx.incremental_file_list_receiver(Cursor::new(&data[..]));
@@ -64,7 +64,7 @@ fn incremental_receiver_handles_empty_list() {
 
     let handshake = test_handshake();
     let config = test_config();
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
 
     let mut receiver = ctx.incremental_file_list_receiver(Cursor::new(&data[..]));
 
@@ -91,7 +91,7 @@ fn incremental_receiver_collect_sorted() {
 
     let handshake = test_handshake();
     let config = test_config();
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
 
     let receiver = ctx.incremental_file_list_receiver(Cursor::new(&data[..]));
 
@@ -117,7 +117,7 @@ fn incremental_receiver_iterator_interface() {
 
     let handshake = test_handshake();
     let config = test_config();
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
 
     let receiver = ctx.incremental_file_list_receiver(Cursor::new(&data[..]));
 
@@ -140,7 +140,7 @@ fn incremental_receiver_mark_directory_created() {
 
     let handshake = test_handshake();
     let config = test_config();
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
 
     let mut receiver = ctx.incremental_file_list_receiver(Cursor::new(&data[..]));
 
@@ -207,7 +207,7 @@ mod create_directory_incremental_tests {
 
         let handshake = test_handshake();
         let config = test_config();
-        let ctx = ReceiverContext::new(&handshake, config);
+        let ctx = ReceiverContext::new_for_test(&handshake, config);
 
         let result = ctx.create_directory_incremental(
             dest,
@@ -237,7 +237,7 @@ mod create_directory_incremental_tests {
 
         let handshake = test_handshake();
         let config = test_config();
-        let ctx = ReceiverContext::new(&handshake, config);
+        let ctx = ReceiverContext::new_for_test(&handshake, config);
 
         let result = ctx.create_directory_incremental(
             dest,
@@ -316,7 +316,7 @@ mod incremental_mode_tests {
 
         let handshake = test_handshake();
         let config = test_config();
-        let ctx = ReceiverContext::new(&handshake, config);
+        let ctx = ReceiverContext::new_for_test(&handshake, config);
 
         let result = ctx.create_directory_incremental(
             dest,

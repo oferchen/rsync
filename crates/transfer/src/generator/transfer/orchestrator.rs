@@ -19,6 +19,7 @@ use super::super::GeneratorContext;
 use super::super::protocol_io::calculate_duration_ms;
 use crate::generator::GeneratorStats;
 use crate::role_trailer::error_location;
+use crate::transfer_state::TransferPhase;
 
 impl GeneratorContext {
     /// Runs the generator role to completion.
@@ -70,6 +71,11 @@ impl GeneratorContext {
         // upstream: flist.c:2240-2264 - resolve --files-from paths if configured
         let files_from_paths = self.resolve_files_from_paths(paths, &mut reader)?;
 
+        // FSM: filter exchange complete. Advance to FileListTransfer.
+        self.pipeline
+            .advance_to(TransferPhase::FileListTransfer)
+            .map_err(crate::fsm_error)?;
+
         let reader = &mut reader;
 
         // upstream: flist.c:2192 - send_file_list()
@@ -89,12 +95,22 @@ impl GeneratorContext {
         self.send_id_lists(writer)?;
         self.send_io_error_flag(writer)?;
 
+        // FSM: file list sent. Advance to DeltaTransfer.
+        self.pipeline
+            .advance_to(TransferPhase::DeltaTransfer)
+            .map_err(crate::fsm_error)?;
+
         // INC_RECURSE sub-lists are sent lazily inside the loop via
         // SegmentScheduler, matching upstream sender.c:227,261 cadence.
         let transfer_result = {
             let _t = PhaseTimer::new("generator-transfer-loop");
             self.run_transfer_loop(reader, writer, &mut progress, &mut itemize)?
         };
+
+        // FSM: delta transfer complete. Advance to Finalization.
+        self.pipeline
+            .advance_to(TransferPhase::Finalization)
+            .map_err(crate::fsm_error)?;
 
         // upstream: main.c:960-962 - do_server_sender() calls io_flush then handle_stats
         // before read_final_goodbye. Server-sender writes transfer stats; client-sender
@@ -196,6 +212,11 @@ impl GeneratorContext {
             elapsed_ns = segment_elapsed_ns,
             "generator encode_and_send_segment totals"
         );
+
+        // FSM: finalization complete. Advance to Complete.
+        self.pipeline
+            .advance_to(TransferPhase::Complete)
+            .map_err(crate::fsm_error)?;
 
         Ok(GeneratorStats {
             files_listed: file_count,

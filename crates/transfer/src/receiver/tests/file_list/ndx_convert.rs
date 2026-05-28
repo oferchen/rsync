@@ -19,7 +19,7 @@ fn receiver_ndx_convert_call_counter_increments() {
 
     let handshake = test_handshake();
     let config = test_config();
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
 
     let (calls_before, _) = ndx_convert_totals();
 
@@ -44,7 +44,7 @@ fn receiver_ndx_convert_partition_point_depth_grows() {
 
     let handshake = test_handshake();
     let config = test_config();
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
     // Default ndx_segments has one entry; extend it to four.
     ctx.ndx_segments.push((10, 11));
     ctx.ndx_segments.push((20, 22));
@@ -79,7 +79,7 @@ fn receiver_ndx_convert_partition_point_depth_grows() {
 fn wire_to_flat_ndx_round_trips_with_flat_to_wire() {
     let handshake = test_handshake();
     let config = test_config();
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Simulate INC_RECURSE: initial segment (0, 1) plus two extras.
     ctx.ndx_segments = vec![(0, 1), (5, 7), (12, 15)];

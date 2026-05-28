@@ -24,7 +24,7 @@ fn receiver_with_trust(entries: Vec<FileEntry>, trust_sender: bool) -> ReceiverC
         args: vec![OsString::from(".")],
         ..Default::default()
     };
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
     ctx.file_list = entries;
     ctx
 }
@@ -46,7 +46,7 @@ fn receiver_with_trust_and_relative(
         args: vec![OsString::from(".")],
         ..Default::default()
     };
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
     ctx.file_list = entries;
     ctx
 }

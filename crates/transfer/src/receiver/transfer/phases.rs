@@ -21,6 +21,7 @@ use protocol::codec::{
 
 use crate::receiver::ReceiverContext;
 use crate::receiver::stats::SenderStats;
+use crate::transfer_state::TransferPhase;
 
 impl ReceiverContext {
     /// Exchanges NDX_DONE messages for phase transitions.
@@ -203,10 +204,15 @@ impl ReceiverContext {
     ///
     /// This is the common finalization sequence shared by all transfer modes.
     pub(in crate::receiver) fn finalize_transfer<R: Read, W: Write + ?Sized>(
-        &self,
+        &mut self,
         reader: &mut R,
         writer: &mut W,
     ) -> io::Result<()> {
+        // FSM: delta transfer complete. Advance to Finalization.
+        self.pipeline
+            .advance_to(TransferPhase::Finalization)
+            .map_err(crate::fsm_error)?;
+
         let mut ndx_write_codec = create_ndx_codec(self.protocol.as_u8());
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
 
@@ -240,6 +246,11 @@ impl ReceiverContext {
             partition_point_depth = ndx_cmps,
             "receiver ndx_convert totals"
         );
+
+        // FSM: finalization complete. Advance to Complete.
+        self.pipeline
+            .advance_to(TransferPhase::Complete)
+            .map_err(crate::fsm_error)?;
 
         Ok(())
     }

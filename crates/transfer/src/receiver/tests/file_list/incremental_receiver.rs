@@ -29,7 +29,7 @@ fn make_receiver(
 ) -> super::super::super::IncrementalFileListReceiver<Cursor<Vec<u8>>> {
     let handshake = test_handshake();
     let config = test_config();
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
     ctx.incremental_file_list_receiver(Cursor::new(data))
 }
 
@@ -325,7 +325,7 @@ fn try_read_one_reads_symlink_entry() {
     let handshake = test_handshake();
     let mut config = test_config();
     config.flags.links = true;
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Encode a symlink entry with links preserved
     let protocol = protocol::ProtocolVersion::try_from(32u8).unwrap();

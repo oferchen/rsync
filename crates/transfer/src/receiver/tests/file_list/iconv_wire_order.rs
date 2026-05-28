@@ -85,7 +85,7 @@ fn iconv_active_preserves_wire_order_for_ndx_lookup() {
     let data = build_wire_bytes(&wire_entries);
 
     let handshake = test_handshake();
-    let mut ctx = ReceiverContext::new(&handshake, build_iconv_config());
+    let mut ctx = ReceiverContext::new_for_test(&handshake, build_iconv_config());
     let mut cursor = Cursor::new(data);
     let count = ctx.receive_file_list(&mut cursor).unwrap();
 
@@ -113,7 +113,7 @@ fn no_iconv_path_still_sorts_entries() {
     let data = build_wire_bytes(&wire_entries);
 
     let handshake = test_handshake();
-    let mut ctx = ReceiverContext::new(&handshake, build_no_iconv_config());
+    let mut ctx = ReceiverContext::new_for_test(&handshake, build_no_iconv_config());
     let mut cursor = Cursor::new(data);
     let count = ctx.receive_file_list(&mut cursor).unwrap();
 
@@ -148,7 +148,7 @@ fn identity_iconv_does_not_suppress_reorder() {
     let data = build_wire_bytes(&wire_entries);
 
     let handshake = test_handshake();
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
     let mut cursor = Cursor::new(data);
     let count = ctx.receive_file_list(&mut cursor).unwrap();
 

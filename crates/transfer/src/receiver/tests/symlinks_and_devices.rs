@@ -54,7 +54,7 @@ fn receiver_config_with_itemize() -> ServerConfig {
 fn emit_itemize_new_file_transfer() {
     let handshake = test_handshake();
     let config = receiver_config_with_itemize();
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
     let mut writer = MockMsgInfoWriter::new();
 
     let entry = FileEntry::new_file("docs/readme.txt".into(), 1024, 0o644);
@@ -72,7 +72,7 @@ fn emit_itemize_new_file_transfer() {
 fn emit_itemize_updated_file_transfer() {
     let handshake = test_handshake();
     let config = receiver_config_with_itemize();
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
     let mut writer = MockMsgInfoWriter::new();
 
     let entry = FileEntry::new_file("data.bin".into(), 512, 0o644);
@@ -89,7 +89,7 @@ fn emit_itemize_updated_file_transfer() {
 fn emit_itemize_directory_creation() {
     let handshake = test_handshake();
     let config = receiver_config_with_itemize();
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
     let mut writer = MockMsgInfoWriter::new();
 
     let entry = FileEntry::new_directory("subdir".into(), 0o755);
@@ -106,7 +106,7 @@ fn emit_itemize_directory_creation() {
 fn emit_itemize_up_to_date_file() {
     let handshake = test_handshake();
     let config = receiver_config_with_itemize();
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
     let mut writer = MockMsgInfoWriter::new();
 
     let entry = FileEntry::new_file("unchanged.txt".into(), 256, 0o644);
@@ -126,7 +126,7 @@ fn emit_itemize_skipped_in_client_mode() {
     let handshake = test_handshake();
     let mut config = receiver_config_with_itemize();
     config.connection.client_mode = true; // Client mode suppresses emission
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
     let mut writer = MockMsgInfoWriter::new();
 
     let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
@@ -143,7 +143,7 @@ fn emit_itemize_skipped_without_itemize_flag() {
     let mut config = test_config();
     config.flags.info_flags.itemize = false;
     config.connection.client_mode = false;
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
     let mut writer = MockMsgInfoWriter::new();
 
     let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
@@ -158,7 +158,7 @@ fn emit_itemize_skipped_without_itemize_flag() {
 fn emit_itemize_symlink_with_target() {
     let handshake = test_handshake();
     let config = receiver_config_with_itemize();
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
     let mut writer = MockMsgInfoWriter::new();
 
     let entry = FileEntry::new_symlink("mylink".into(), "target".into());
@@ -179,21 +179,21 @@ fn should_emit_itemize_conditions() {
     let mut config = test_config();
     config.connection.client_mode = false;
     config.flags.info_flags.itemize = true;
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
     assert!(ctx.should_emit_itemize());
 
     // Client mode + itemize -> false
     let mut config = test_config();
     config.connection.client_mode = true;
     config.flags.info_flags.itemize = true;
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
     assert!(!ctx.should_emit_itemize());
 
     // Server mode + no itemize -> false
     let mut config = test_config();
     config.connection.client_mode = false;
     config.flags.info_flags.itemize = false;
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
     assert!(!ctx.should_emit_itemize());
 }
 

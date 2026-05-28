@@ -10,7 +10,7 @@ use super::super::support::{test_config, test_handshake};
 fn daemon_filter_set_empty_when_no_rules() {
     let handshake = test_handshake();
     let config = test_config();
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
     assert!(ctx.daemon_filter_set().is_none());
 }
 
@@ -35,7 +35,7 @@ fn daemon_filter_set_built_from_config_rules() {
         perishable: false,
         negate: false,
     }];
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
 
     let filters = ctx.daemon_filter_set();
     assert!(
@@ -94,7 +94,7 @@ fn daemon_filter_set_include_and_exclude() {
             negate: false,
         },
     ];
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
 
     let filters = ctx.daemon_filter_set().unwrap();
     // *.rs should be included (explicit include before wildcard exclude)
@@ -130,7 +130,7 @@ fn daemon_filter_set_anchored_pattern() {
         perishable: false,
         negate: false,
     }];
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
 
     let filters = ctx.daemon_filter_set().unwrap();
     // /secret should be excluded (anchored)
@@ -171,7 +171,7 @@ fn daemon_filter_rules_prepended_to_receiver_deletion_chain() {
         perishable: false,
         negate: false,
     }];
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Daemon filter set should reject secret_ files
     let filters = ctx.daemon_filter_set().unwrap();

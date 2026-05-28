@@ -11,7 +11,7 @@ use super::super::support::{config_with_flags, test_handshake};
 fn receive_id_lists_skips_when_numeric_ids_true() {
     let handshake = test_handshake();
     let config = config_with_flags(true, true, true);
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // With numeric_ids=true, no data should be read even with owner/group set
     let data: &[u8] = &[];
@@ -27,7 +27,7 @@ fn receive_id_lists_skips_when_numeric_ids_true() {
 fn receive_id_lists_reads_uid_list_when_owner_set() {
     let handshake = test_handshake();
     let config = config_with_flags(true, false, false);
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Empty UID list: varint 0 terminator only
     let data: &[u8] = &[0];
@@ -42,7 +42,7 @@ fn receive_id_lists_reads_uid_list_when_owner_set() {
 fn receive_id_lists_reads_gid_list_when_group_set() {
     let handshake = test_handshake();
     let config = config_with_flags(false, true, false);
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Empty GID list: varint 0 terminator only
     let data: &[u8] = &[0];
@@ -57,7 +57,7 @@ fn receive_id_lists_reads_gid_list_when_group_set() {
 fn receive_id_lists_reads_both_when_owner_and_group_set() {
     let handshake = test_handshake();
     let config = config_with_flags(true, true, false);
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Both lists: two varint 0 terminators
     let data: &[u8] = &[0, 0];
@@ -72,7 +72,7 @@ fn receive_id_lists_reads_both_when_owner_and_group_set() {
 fn receive_id_lists_skips_both_when_neither_flag_set() {
     let handshake = test_handshake();
     let config = config_with_flags(false, false, false);
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     let data: &[u8] = &[];
     let mut cursor = Cursor::new(data);

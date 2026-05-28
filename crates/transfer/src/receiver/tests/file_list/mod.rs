@@ -45,7 +45,7 @@ use super::support::{test_config, test_handshake};
 fn receiver_context_creation() {
     let handshake = test_handshake();
     let config = test_config();
-    let ctx = ReceiverContext::new(&handshake, config);
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
 
     assert_eq!(ctx.protocol().as_u8(), 32);
     assert!(ctx.file_list().is_empty());
@@ -55,7 +55,7 @@ fn receiver_context_creation() {
 fn receiver_empty_file_list() {
     let handshake = test_handshake();
     let config = test_config();
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Empty file list (just the end marker)
     let data = [0u8];
@@ -72,7 +72,7 @@ fn receiver_single_file() {
 
     let handshake = test_handshake();
     let config = test_config();
-    let mut ctx = ReceiverContext::new(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
     // Create a proper file list using FileListWriter for protocol 32
     let mut data = Vec::new();

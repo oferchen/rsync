@@ -524,7 +524,7 @@ mod fake_super_round_trip_tests {
         config.flags.owner = owner;
         config.flags.group = group;
         config.flags.numeric_ids = true; // skip uid/gid name lookups in tests
-        GeneratorContext::new(&handshake, config)
+        GeneratorContext::new_for_test(&handshake, config)
     }
 
     fn write_placeholder_with_xattr(tmp: &TempDir, stat: &FakeSuperStat) -> PathBuf {
