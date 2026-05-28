@@ -459,10 +459,7 @@ fn fsm_error_forward_skip_produces_io_error() {
     assert_eq!(io_err.kind(), std::io::ErrorKind::InvalidData);
     let msg = io_err.to_string();
     assert!(msg.contains("handshake"), "missing current: {msg}");
-    assert!(
-        msg.contains("file-list-transfer"),
-        "missing target: {msg}"
-    );
+    assert!(msg.contains("file-list-transfer"), "missing target: {msg}");
 }
 
 #[test]
