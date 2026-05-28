@@ -55,7 +55,8 @@ windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
 libc = { workspace = true }
 
 [features]
-# parallel-receive-delta deferred from default per PIP-7 #4730 finding: dead scaffolding torn out in PIP-8; flag is now a no-op pending PIP-9 wire-up.
+# parallel-receive-delta validated through PIP-9 series and PIP-10 E2E interop.
+# Enabled by default via transfer crate's feature forwarding.
 default = ["zstd", "lz4", "xattr", "lazy-metadata"]
 
 # ============================================================================
@@ -109,14 +110,10 @@ parallel = []
 # receiver call site.
 parallel-delete-consumer = []
 
-# Parallel receive-side delta apply (#1368). Currently a no-op flag pending
-# PIP-9 wiring: PIP-8 (post PR #4730) tore out the dead receiver-side
-# dispatch scaffolding that constructed (but never consumed) a
-# `ParallelDeltaPipeline`. The `ParallelDeltaApplier` type still ships and
-# is exercised by `parallel_receive_delta_perf`,
-# `br_3j_f_dashmap_cores_vs_throughput`, and `parallel_verify_chunk`. The
-# proper RJN-3 fan-out integration is tracked by PIP-9
-# (`docs/design/pip-9-parallel-receive-delta-wire-up-2026-05-22.md`).
+# Parallel receive-side delta apply (#1368). Validated through PIP-9.f.1
+# (bake criterion), PIP-9.f.3 (production CI monitoring), and PIP-10 (full
+# E2E interop validation). Default-on via transfer crate forwarding since
+# PIP-9.f.2.
 parallel-receive-delta = []
 
 # DG-3.e: high-iteration stress test for `concurrent_register_and_dispatch`
