@@ -736,3 +736,115 @@ fn server_writer_batch_recorder_stays_on_mux_zstd() {
         assert!(!recorded.is_empty(), "recorder must capture data");
     }
 }
+
+// MSG_INFO coalescing tests
+
+/// Writer that counts flush calls to verify coalescing behavior.
+struct FlushTracker {
+    data: Vec<u8>,
+    flush_count: usize,
+}
+
+impl FlushTracker {
+    fn new() -> Self {
+        Self {
+            data: Vec::new(),
+            flush_count: 0,
+        }
+    }
+}
+
+impl Write for FlushTracker {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.data.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.flush_count += 1;
+        Ok(())
+    }
+}
+
+#[test]
+fn multiplex_writer_msg_info_defers_flush() {
+    let mut tracker = FlushTracker::new();
+    {
+        let mut mux = MultiplexWriter::new(&mut tracker);
+        mux.send_message(MessageCode::Info, b"file1.txt\n").unwrap();
+        mux.send_message(MessageCode::Info, b"file2.txt\n").unwrap();
+    }
+    assert_eq!(tracker.flush_count, 0, "MSG_INFO should not trigger flush");
+}
+
+#[test]
+fn multiplex_writer_msg_error_flushes_immediately() {
+    let mut tracker = FlushTracker::new();
+    let mut mux = MultiplexWriter::new(&mut tracker);
+
+    mux.send_message(MessageCode::Error, b"fatal").unwrap();
+    assert_eq!(tracker.flush_count, 1, "MSG_ERROR must flush immediately");
+}
+
+#[test]
+fn server_writer_msg_info_defers_flush() {
+    let mut tracker = FlushTracker::new();
+    {
+        let mut writer = ServerWriter::new_plain(&mut tracker)
+            .activate_multiplex()
+            .unwrap();
+
+        writer.send_msg_info(b"item1\n").unwrap();
+        writer.send_msg_info(b"item2\n").unwrap();
+        writer.flush().unwrap();
+    }
+    assert_eq!(
+        tracker.flush_count, 1,
+        "explicit flush must drain deferred MSG_INFO"
+    );
+}
+
+#[test]
+fn server_writer_msg_error_flushes_past_deferred_info() {
+    let mut tracker = FlushTracker::new();
+    {
+        let mut writer = ServerWriter::new_plain(&mut tracker)
+            .activate_multiplex()
+            .unwrap();
+
+        writer.send_msg_info(b"info line\n").unwrap();
+        writer
+            .send_message(MessageCode::Error, b"error line\n")
+            .unwrap();
+    }
+    assert_eq!(
+        tracker.flush_count, 1,
+        "MSG_ERROR must flush even after deferred MSG_INFO"
+    );
+}
+
+#[test]
+fn coalesced_msg_info_wire_bytes_identical() {
+    // Verify that coalesced MSG_INFO frames produce byte-identical output
+    // compared to the reference frame encoding (header + payload for each).
+    let payloads: Vec<&[u8]> = vec![b"file_a.txt\n", b"file_b.txt\n", b"file_c.txt\n"];
+
+    let mut coalesced = Vec::new();
+    {
+        let mut mux = MultiplexWriter::new(&mut coalesced);
+        for p in &payloads {
+            mux.send_message(MessageCode::Info, p).unwrap();
+        }
+        mux.flush().unwrap();
+    }
+
+    let mut reference = Vec::new();
+    for p in &payloads {
+        protocol::send_msg(&mut reference, MessageCode::Info, p).unwrap();
+    }
+
+    assert_eq!(
+        coalesced, reference,
+        "coalesced frames must be byte-identical to individual frames"
+    );
+}

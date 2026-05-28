@@ -63,10 +63,20 @@ impl<W: Write> MultiplexWriter<W> {
     /// Unlike the `Write` trait which always sends `MSG_DATA`, this method
     /// allows sending other message types like `MSG_IO_TIMEOUT`.
     /// Flushes buffered data first to maintain message ordering.
+    ///
+    /// Batchable message codes (`MSG_INFO`, `MSG_WARNING`) skip the
+    /// immediate flush, letting the write buffer coalesce multiple
+    /// control frames into fewer TCP segments. This matches upstream
+    /// rsync's `send_msg()` in `io.c` which appends to `iobuf.msg`
+    /// without flushing. Latency-sensitive codes (ERROR, REDO, etc.)
+    /// still flush immediately.
     pub(crate) fn send_message(&mut self, code: MessageCode, payload: &[u8]) -> io::Result<()> {
         self.flush_buffer()?;
         protocol::send_msg(&mut self.inner, code, payload)?;
-        self.inner.flush()
+        if code.requires_immediate_flush() {
+            self.inner.flush()?;
+        }
+        Ok(())
     }
 
     /// Writes raw bytes directly to the inner writer, bypassing multiplex framing.

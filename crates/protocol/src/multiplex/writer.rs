@@ -197,8 +197,15 @@ impl<W: Write> MplexWriter<W> {
     /// Writes a message with the specified message code.
     ///
     /// This is used for sending control messages (INFO, WARNING, ERROR, etc.)
-    /// or other non-DATA message types. The message is sent immediately,
-    /// flushing any buffered DATA first to maintain proper message ordering.
+    /// or other non-DATA message types. Buffered DATA is flushed first to
+    /// maintain proper message ordering.
+    ///
+    /// Batchable message codes (`MSG_INFO`, `MSG_WARNING`) skip the
+    /// immediate flush, letting the write buffer coalesce multiple
+    /// control frames into fewer TCP segments. This matches upstream
+    /// rsync's `send_msg()` in `io.c` which appends to `iobuf.msg`
+    /// without flushing. Latency-sensitive codes (ERROR, REDO, etc.)
+    /// still flush immediately.
     ///
     /// # Errors
     ///
@@ -228,7 +235,12 @@ impl<W: Write> MplexWriter<W> {
         // before data the caller has already written.
         self.flush_buffer()?;
         send_msg(&mut self.inner, code, payload)?;
-        self.inner.flush()
+        // upstream: io.c:965 send_msg() appends to iobuf.msg without flushing.
+        // Only latency-sensitive codes need an immediate flush.
+        if code.requires_immediate_flush() {
+            self.inner.flush()?;
+        }
+        Ok(())
     }
 
     /// Writes a DATA message directly without buffering.
@@ -662,5 +674,155 @@ mod tests {
         }
 
         assert_eq!(reconstructed, large_data);
+    }
+
+    /// Writer that counts flush calls to verify coalescing behavior.
+    struct FlushTracker {
+        data: Vec<u8>,
+        flush_count: usize,
+    }
+
+    impl FlushTracker {
+        fn new() -> Self {
+            Self {
+                data: Vec::new(),
+                flush_count: 0,
+            }
+        }
+    }
+
+    impl Write for FlushTracker {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.data.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flush_count += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn msg_info_does_not_flush_immediately() {
+        let mut tracker = FlushTracker::new();
+        {
+            let mut writer = MplexWriter::new(&mut tracker);
+            writer
+                .write_message(MessageCode::Info, b"file1.txt")
+                .unwrap();
+            writer
+                .write_message(MessageCode::Info, b"file2.txt")
+                .unwrap();
+        }
+        assert_eq!(tracker.flush_count, 0, "MSG_INFO should not trigger flush");
+    }
+
+    #[test]
+    fn msg_warning_does_not_flush_immediately() {
+        let mut tracker = FlushTracker::new();
+        let mut writer = MplexWriter::new(&mut tracker);
+
+        writer
+            .write_message(MessageCode::Warning, b"slow link")
+            .unwrap();
+        assert_eq!(
+            tracker.flush_count, 0,
+            "MSG_WARNING should not trigger flush"
+        );
+    }
+
+    #[test]
+    fn msg_error_flushes_immediately() {
+        let mut tracker = FlushTracker::new();
+        let mut writer = MplexWriter::new(&mut tracker);
+
+        writer
+            .write_message(MessageCode::Error, b"permission denied")
+            .unwrap();
+        assert_eq!(tracker.flush_count, 1, "MSG_ERROR must flush immediately");
+    }
+
+    #[test]
+    fn msg_redo_flushes_immediately() {
+        let mut tracker = FlushTracker::new();
+        let mut writer = MplexWriter::new(&mut tracker);
+
+        writer
+            .write_message(MessageCode::Redo, &42_i32.to_le_bytes())
+            .unwrap();
+        assert_eq!(tracker.flush_count, 1, "MSG_REDO must flush immediately");
+    }
+
+    #[test]
+    fn coalesced_info_frames_byte_identical_after_flush() {
+        // Send multiple MSG_INFO frames, then flush. Verify the wire bytes
+        // are identical to what individual flush-per-frame would produce.
+        let payloads: Vec<&[u8]> = vec![b"file1.txt\n", b"file2.txt\n", b"file3.txt\n"];
+
+        // Coalesced: write all, then flush once
+        let mut coalesced_output = Vec::new();
+        {
+            let mut writer = MplexWriter::new(&mut coalesced_output);
+            for payload in &payloads {
+                writer.write_message(MessageCode::Info, payload).unwrap();
+            }
+            writer.flush().unwrap();
+        }
+
+        // Reference: write each with immediate flush (old behavior)
+        let mut reference_output = Vec::new();
+        for payload in &payloads {
+            send_msg(&mut reference_output, MessageCode::Info, payload).unwrap();
+        }
+
+        assert_eq!(
+            coalesced_output, reference_output,
+            "coalesced output must be byte-identical to individual frames"
+        );
+    }
+
+    #[test]
+    fn explicit_flush_drains_buffered_info() {
+        let mut tracker = FlushTracker::new();
+        {
+            let mut writer = MplexWriter::new(&mut tracker);
+            writer
+                .write_message(MessageCode::Info, b"buffered")
+                .unwrap();
+            writer.flush().unwrap();
+        }
+        assert_eq!(
+            tracker.flush_count, 1,
+            "explicit flush must drain deferred MSG_INFO"
+        );
+
+        let mut cursor = std::io::Cursor::new(&tracker.data);
+        let frame = recv_msg(&mut cursor).unwrap();
+        assert_eq!(frame.code(), MessageCode::Info);
+        assert_eq!(frame.payload(), b"buffered");
+    }
+
+    #[test]
+    fn data_write_after_info_preserves_ordering() {
+        // MSG_INFO followed by DATA write - verify correct frame ordering
+        let mut output = Vec::new();
+        {
+            let mut writer = MplexWriter::new(&mut output);
+            writer
+                .write_message(MessageCode::Info, b"info line")
+                .unwrap();
+            writer.write_all(b"file data").unwrap();
+            writer.flush().unwrap();
+        }
+
+        let mut cursor = std::io::Cursor::new(&output);
+        let frame1 = recv_msg(&mut cursor).unwrap();
+        assert_eq!(frame1.code(), MessageCode::Info);
+        assert_eq!(frame1.payload(), b"info line");
+
+        let frame2 = recv_msg(&mut cursor).unwrap();
+        assert_eq!(frame2.code(), MessageCode::Data);
+        assert_eq!(frame2.payload(), b"file data");
     }
 }
