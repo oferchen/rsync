@@ -65,7 +65,7 @@ fn should_skip_copy_requires_exact_mtime_when_window_zero() {
         size_only: false,
         ignore_times: false,
         checksum: false,
-        checksum_algorithm: SignatureAlgorithm::Md5 { seed_config: checksums::strong::Md5Seed::none() },
+        checksum_algorithm: SignatureAlgorithm::Xxh3_128 { seed: 0 },
         modify_window: Duration::ZERO,
         prefetched_match: None,
     }));
@@ -96,7 +96,7 @@ fn should_skip_copy_allows_difference_within_window() {
         size_only: false,
         ignore_times: false,
         checksum: false,
-        checksum_algorithm: SignatureAlgorithm::Md5 { seed_config: checksums::strong::Md5Seed::none() },
+        checksum_algorithm: SignatureAlgorithm::Xxh3_128 { seed: 0 },
         modify_window: Duration::from_secs(5),
         prefetched_match: None,
     }));
@@ -112,7 +112,7 @@ fn should_skip_copy_allows_difference_within_window() {
         size_only: false,
         ignore_times: false,
         checksum: false,
-        checksum_algorithm: SignatureAlgorithm::Md5 { seed_config: checksums::strong::Md5Seed::none() },
+        checksum_algorithm: SignatureAlgorithm::Xxh3_128 { seed: 0 },
         modify_window: Duration::from_secs(5),
         prefetched_match: None,
     }));
@@ -141,7 +141,7 @@ fn should_skip_copy_skips_when_size_and_mtime_match_unless_ignored() {
         size_only: false,
         ignore_times: false,
         checksum: false,
-        checksum_algorithm: SignatureAlgorithm::Md5 { seed_config: checksums::strong::Md5Seed::none() },
+        checksum_algorithm: SignatureAlgorithm::Xxh3_128 { seed: 0 },
         modify_window: Duration::ZERO,
         prefetched_match: None,
     }));
@@ -154,7 +154,7 @@ fn should_skip_copy_skips_when_size_and_mtime_match_unless_ignored() {
         size_only: false,
         ignore_times: true,
         checksum: false,
-        checksum_algorithm: SignatureAlgorithm::Md5 { seed_config: checksums::strong::Md5Seed::none() },
+        checksum_algorithm: SignatureAlgorithm::Xxh3_128 { seed: 0 },
         modify_window: Duration::ZERO,
         prefetched_match: None,
     }));
@@ -204,9 +204,7 @@ fn local_copy_options_checksum_algorithm_round_trip() {
     );
     assert_eq!(
         LocalCopyOptions::default().checksum_algorithm(),
-        SignatureAlgorithm::Md5 {
-            seed_config: checksums::strong::Md5Seed::none()
-        }
+        SignatureAlgorithm::Xxh3_128 { seed: 0 }
     );
 }
 
