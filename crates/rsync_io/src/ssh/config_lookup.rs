@@ -207,21 +207,11 @@ pub(super) fn parse_enables_compression(text: &str, ctx: &MatchContext<'_>) -> b
         eprintln!(
             "warning: ssh_config contains \"Compression yes\" inside a \"Match exec\" block."
         );
-        eprintln!(
-            "         The exec condition was not evaluated because executing arbitrary"
-        );
-        eprintln!(
-            "         commands from a config-lookup path is a security risk. If SSH"
-        );
-        eprintln!(
-            "         compression is active, oc-rsync's --compress will double-compress."
-        );
-        eprintln!(
-            "         Workaround: move \"Compression yes\" to a Host or Match host block,"
-        );
-        eprintln!(
-            "         or pass -e \"ssh -C\" explicitly so oc-rsync can detect it."
-        );
+        eprintln!("         The exec condition was not evaluated because executing arbitrary");
+        eprintln!("         commands from a config-lookup path is a security risk. If SSH");
+        eprintln!("         compression is active, oc-rsync's --compress will double-compress.");
+        eprintln!("         Workaround: move \"Compression yes\" to a Host or Match host block,");
+        eprintln!("         or pass -e \"ssh -C\" explicitly so oc-rsync can detect it.");
     }
 
     top_level.unwrap_or(false) || host_block.unwrap_or(false) || match_block.unwrap_or(false)
@@ -1383,8 +1373,7 @@ mod tests {
         // block is skipped. The overall result is `false`, but the
         // warning should still fire because the exec block might enable
         // compression if evaluated.
-        let text =
-            "Compression no\nMatch exec /usr/local/bin/check-vpn\n  Compression yes\n";
+        let text = "Compression no\nMatch exec /usr/local/bin/check-vpn\n  Compression yes\n";
         assert!(!parse_enables_compression(
             text,
             &match_ctx("web1.example.com", "web1.example.com", "", "")
@@ -1465,12 +1454,7 @@ Host *\n\
         // compression fires.
         assert!(parse_enables_compression(
             text,
-            &match_ctx(
-                "db.internal.example.com",
-                "db.internal.example.com",
-                "",
-                ""
-            )
+            &match_ctx("db.internal.example.com", "db.internal.example.com", "", "")
         ));
         // Target does not match any host block with compression,
         // and the exec block is skipped.
