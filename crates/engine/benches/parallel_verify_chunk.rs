@@ -60,7 +60,6 @@
 //!     --bench parallel_verify_chunk`
 
 #![deny(unsafe_code)]
-#![cfg(feature = "parallel-receive-delta")]
 
 use std::hint::black_box;
 use std::io::{self, Write};

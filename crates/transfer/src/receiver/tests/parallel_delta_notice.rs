@@ -1,11 +1,8 @@
-//! Tests for the parallel-receive-delta feature notice (PFF-3).
+//! Tests for the parallel receive-delta notice.
 //!
-//! Verifies that a diagnostic message is emitted when the
-//! `parallel-receive-delta` feature is enabled, warning that the feature
-//! provides experimental scaffolding rather than a production-validated
-//! parallel path.
+//! Verifies that a diagnostic message is emitted at receiver setup
+//! confirming the parallel receive-delta path is active.
 
-#[cfg(feature = "parallel-receive-delta")]
 use logging::debug_log;
 use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
 
@@ -30,11 +27,9 @@ fn recv_messages() -> Vec<String> {
         .collect()
 }
 
-/// When the `parallel-receive-delta` feature is enabled, `setup_transfer`
-/// emits a `debug_log!(Recv, 1, ...)` notice. This test exercises the same
-/// macro call that `setup_transfer` uses and verifies the expected keywords
-/// appear in the message. The test compiles on all platforms.
-#[cfg(feature = "parallel-receive-delta")]
+/// `setup_transfer` emits a `debug_log!(Recv, 1, ...)` notice confirming
+/// the parallel receive-delta path is active. This test exercises the same
+/// macro call and verifies the expected keywords appear in the message.
 #[test]
 fn parallel_receive_delta_notice_emitted() {
     init_recv_level1();
@@ -42,35 +37,13 @@ fn parallel_receive_delta_notice_emitted() {
     debug_log!(
         Recv,
         1,
-        "parallel-receive-delta feature enabled - \
-         this is experimental scaffolding, not a production-validated \
-         parallel path; the receiver still uses the sequential delta loop"
+        "parallel receive-delta path active"
     );
 
     let msgs = recv_messages();
     assert!(
         msgs.iter()
-            .any(|m| m.contains("parallel-receive-delta feature enabled")
-                && m.contains("experimental scaffolding")),
-        "expected parallel-receive-delta notice in: {msgs:?}"
-    );
-}
-
-/// When the feature is disabled, no notice should be emitted by the
-/// feature-gated code path. This test verifies the cfg gate compiles
-/// correctly in the absence of the feature.
-#[cfg(not(feature = "parallel-receive-delta"))]
-#[test]
-fn parallel_receive_delta_notice_absent_without_feature() {
-    init_recv_level1();
-
-    // The feature-gated debug_log! in setup_transfer is not compiled.
-    // Verify no stray parallel-receive-delta messages appear.
-    let msgs = recv_messages();
-    assert!(
-        !msgs
-            .iter()
-            .any(|m| m.contains("parallel-receive-delta feature enabled")),
-        "unexpected parallel-receive-delta notice without feature: {msgs:?}"
+            .any(|m| m.contains("parallel receive-delta path active")),
+        "expected parallel receive-delta notice in: {msgs:?}"
     );
 }
