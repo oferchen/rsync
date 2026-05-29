@@ -1,5 +1,14 @@
 # RSS-9.c: transfer consumer PathHandle migration
 
+> **Status: prototype / not landed.** This transfer-consumer migration
+> was never applied. The prerequisite `PathHandle`/`PathArena` types do
+> not exist; the production `FileEntry` still uses `PathBuf` +
+> `Arc<Path>`. The only landed dedup is the `Arc<Path>` dirname interner.
+> The real arena/flat backing store is designed in
+> `docs/design/flat-flist-representation.md` and built from scratch by
+> RSS-A.5.a-f (gated on RSS-2 profiling). See
+> `docs/audit/arena-prototype-landing-gap.md`.
+
 Task: RSS-9.c (#2927). Branch: `docs/rss-9c-transfer-pathhandle`.
 Prerequisites: RSS-8.a (PathHandle type definition, PR #4980),
 RSS-8.b (read-path migration), RSS-8.c (write-path migration).
