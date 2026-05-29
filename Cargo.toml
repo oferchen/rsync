@@ -163,9 +163,11 @@ core = { path = "crates/core" }
 filetime = { workspace = true }
 libc = { workspace = true }
 tempfile = { workspace = true }
-xattr = { workspace = true }
 checksums = { path = "crates/checksums" }
 protocol = { path = "crates/protocol" }
+
+[target.'cfg(unix)'.dev-dependencies]
+xattr = { workspace = true }
 
 # CSM-8: default-enable OpenSSL EVP MD4/MD5 on glibc Linux and macOS (G1 from
 # CSM-7 synthesis). OpenSSL ships with the system libssl and provides ~2x

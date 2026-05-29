@@ -257,7 +257,7 @@ fn tls_upstream_interop_pull_through_encrypted_proxy() {
 /// bridges data between the external client, the TLS tunnel, and the daemon.
 /// Uses `rustls::StreamOwned` behind `Arc<Mutex>` with short read timeouts
 /// to allow bidirectional multiplexing from separate threads without deadlock.
-#[cfg(feature = "daemon-tls")]
+#[cfg(all(unix, feature = "daemon-tls"))]
 fn tls_proxy_accept_loop(
     listener: std::net::TcpListener,
     daemon_port: u16,
@@ -382,7 +382,7 @@ fn tls_proxy_accept_loop(
 /// Both threads use short read timeouts and release the TLS mutex between
 /// iterations to prevent deadlock. The bridge runs until both sides reach EOF
 /// or an unrecoverable error.
-#[cfg(feature = "daemon-tls")]
+#[cfg(all(unix, feature = "daemon-tls"))]
 fn tls_bridge_bidirectional<T>(
     tls: std::sync::Arc<std::sync::Mutex<T>>,
     mut plain_read: std::net::TcpStream,
@@ -471,7 +471,7 @@ fn tls_bridge_bidirectional<T>(
 }
 
 /// Builds a rustls `ClientConnection` that trusts the given CA certificate.
-#[cfg(feature = "daemon-tls")]
+#[cfg(all(unix, feature = "daemon-tls"))]
 fn tls_interop_build_client_connection(
     ca_path: &Path,
     hostname: &str,
@@ -505,7 +505,7 @@ fn tls_interop_build_client_connection(
 /// Generates ephemeral test certificates for TLS interop tests.
 ///
 /// Returns `(server_cert_pem, server_key_pem, ca_cert_pem)`.
-#[cfg(feature = "daemon-tls")]
+#[cfg(all(unix, feature = "daemon-tls"))]
 fn tls_interop_generate_certificates(hostname: &str) -> (String, String, String) {
     let ca_key_pair = rcgen::KeyPair::generate().expect("generate CA key pair");
     let mut ca_params =

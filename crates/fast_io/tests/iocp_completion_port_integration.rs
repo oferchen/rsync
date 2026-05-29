@@ -25,7 +25,7 @@
 #![cfg(all(target_os = "windows", feature = "iocp"))]
 
 use std::fs;
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Seek, SeekFrom, Write};
 
 use fast_io::iocp::{
     IOCP_MIN_FILE_SIZE, IocpConfig, IocpDiskBatch, IocpReader, IocpReaderFactory, IocpWriter,
