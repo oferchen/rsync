@@ -374,9 +374,7 @@ mod tests {
 
     /// Returns the default checksum algorithm used across comparison tests.
     fn default_checksum_algorithm() -> SignatureAlgorithm {
-        SignatureAlgorithm::Md5 {
-            seed_config: checksums::strong::Md5Seed::none(),
-        }
+        SignatureAlgorithm::Xxh3_128 { seed: 0 }
     }
 
     #[test]

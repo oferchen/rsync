@@ -226,9 +226,7 @@ impl LocalCopyOptionsBuilder {
             sparse: false,
             sparse_detect_strategy: SparseDetectStrategy::Auto,
             checksum: false,
-            checksum_algorithm: SignatureAlgorithm::Md5 {
-                seed_config: checksums::strong::Md5Seed::none(),
-            },
+            checksum_algorithm: SignatureAlgorithm::Xxh3_128 { seed: 0 },
             checksum_seed: None,
             enable_xxh64_dedup: false,
             xxh64_dedup_size_limit: DEFAULT_XXH64_DEDUP_SIZE_LIMIT,
