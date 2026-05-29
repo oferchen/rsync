@@ -268,6 +268,101 @@ kernel 6.0+ hardware. IUM-3 is the go/no-go decision doc; on this evidence it
 should keep the data-path and SEND_ZC paths opt-in, decline to default-flip
 anything new, and gate any scope expansion on running the named cells above.
 
+## Committed scope and go/no-go decision (IUM-3)
+
+IUM-1 wrote the predictions; IUM-2 confronted each with committed evidence and
+found that only the "no win at small scale" guard is corroborated (~1.00x at
+148 MB), while every magnitude / throughput win-claim is Untested because the
+named benches were never run. This section records the resulting committed
+stance per use site, plus the explicit, measurable threshold that would change
+it. Each threshold is a falsifiable bench cell, not a target to be argued.
+
+### (1) Metadata ops - STATX batch, rename / link / unlinkat transient rings
+
+Committed stance: **keep as-is.** This is the de-facto committed default scope
+and it ships today. No default change.
+
+- STATX batch stays default-on (probe-gated), but its win is unproven. IUM-2
+  marks it Untested: the `iouring_high_file_count` cell is implemented and has
+  no committed result, and the `--checksum` STATX overhead (STX, 3.34x) is a
+  syscall-count bug whose fix is sized reads, not necessarily io_uring STATX.
+- rename / link / unlinkat transient rings stay as best-effort
+  correctness-parity paths, not speed paths. IUM-2 corroborates qualitatively
+  (acquire below the flame-graph noise floor) that there is no regime where the
+  single-SQE transient-ring form beats the plain syscall.
+
+Threshold that would change it: do not invest further in metadata rings
+(persistent batched rename/link, deeper STATX batching) until a named bench
+shows a real reduction. Specifically, `iouring_high_file_count` at 100K and 1M
+small files on kernel 5.11+ must show io_uring STATX beating synchronous
+`statx(2)` by >= 15% wall-clock on the file-list-build / quick-check phase, at
+a margin that survives run-to-run noise. Absent that number, metadata-ring
+scope is frozen at today's surface: keep what ships, add nothing.
+
+### (2) Receiver disk-batch writes - Auto policy, default-on today
+
+Committed stance: **keep default-on for now, but flag the win as Untested.**
+This path is active in default builds (Auto policy) yet carries no committed
+measurement; IUM-2 marks it Untested (the IUD-4/IUD-9 NVMe numbers are "not
+committed", the IUB-2 multi-GB cells were never run).
+
+Threshold that must pass to justify keeping it default rather than re-gating it
+behind a size threshold or opt-in feature:
+
+- Bench cell: `nvme_data_path` / `nvme_data_path_production` (IUD-4 / IUD-9) and
+  the high-file-count receiver-write shape, on real NVMe with deep queues.
+- Pass criterion: io_uring disk-batch writes must beat buffered `write(2)` /
+  `copy_file_range` by >= 10% throughput at >= 2 GiB sustained per file or
+  >= 50K write IOPS at queue depth >= 32, on kernel 5.6+, surviving noise.
+- No-go consequence: if the cell runs and the path does not clear that bar in
+  any tested regime, the default flips - the disk-batch path is moved behind a
+  size threshold or opt-in feature rather than left default-on, and IUM-4 files
+  the re-gate. Leaving an unmeasured path default-on is the gap IUM-3 names; it
+  is tolerated only until the cell runs.
+
+### (3) File-data slurp read / write - feature-gated, off by default
+
+Committed stance: **stay opt-in.** No change. The slurp read
+(`iouring-data-reads`) and slurp write (`iouring-data-writes`) paths remain
+behind their cargo features and their 1 MiB / 64 KiB gates, which IUM-2 notes
+are "a first guess, not a measured crossover."
+
+Threshold for go (default-on): all of `iouring_multi_gb_scale` (2 / 10 / 50 GiB
+cells, IUB-6..9) and `nvme_data_path_production` must show a defensible margin -
+>= 10% throughput over stdlib writes / `copy_file_range` at multi-GB single
+files and at high file count on NVMe with deep queues, kernel 5.6+, with the
+crossover file size recorded. Until those cells run and clear that bar, do not
+flip: opt-in is the committed state.
+
+### (4) SEND_ZC - feature-gated, off by default
+
+Committed stance: **stay opt-in.** No change. `ZeroCopySender` / `try_send_zc`
+remain behind `iouring-send-zc`.
+
+Threshold for go: `ius_3_send_zc_vs_send` (SZC.b 10 GiB throughput, SZC.c
+concurrent) must produce committed numbers showing SEND_ZC is lower-CPU than
+plain SEND at large registered-buffer payloads on kernel 6.0+, with the
+sub-4 KiB crossover where plain SEND wins recorded. Per IUS-4 these numbers are
+currently **MISSING** (no multi-kernel hardware run captured; only the harness
+shipped). Do not flip until SZC.b/SZC.c land real numbers clearing that bar.
+
+### Decision summary
+
+- Default-flip nothing new. The committed default scope stays exactly where it
+  is today: metadata-only (STATX batch + transient rename/link/unlink rings)
+  plus the receiver disk-batch write path under Auto policy.
+- Keep the file-data slurp read/write paths and SEND_ZC opt-in. Neither has a
+  committed win; neither graduates from its cargo feature on current evidence.
+- Every scope expansion - and the decision to keep the disk-batch path
+  default-on rather than re-gate it - is gated on running its named bench cell
+  and clearing the stated threshold above. A threshold a cell fails to clear
+  flips the corresponding default off; an unrun cell freezes scope where it is.
+- IUM-4 is the follow-up: once these benches run, it files the concrete
+  remove-or-implement actions for every site with no defensible win (re-gate
+  the disk-batch path if it fails (2); delete or rewrite the falsified
+  predictions per the Decision gate rule; promote a path to default only after
+  its cell clears its bar).
+
 ## Decision gate
 
 Future io_uring code or scope changes must be gated on a measured break-even
@@ -283,8 +378,10 @@ threshold, not on open-ended auditing. The rule:
 - A prediction in this document that the IUM-2 benches falsify is deleted or
   rewritten - it does not linger as aspiration.
 
-Choosing those thresholds from the IUM-2 measurements is the follow-up
-decision task **IUM-3**.
+Those thresholds are now recorded per use site in the "Committed scope and
+go/no-go decision (IUM-3)" section above. Filing the concrete
+remove-or-implement follow-ups once the named bench cells run is the next task
+**IUM-4**.
 
 ## Cross-references
 
