@@ -7,6 +7,7 @@
 #     3.1.3  -> archive.ubuntu.com
 #     3.4.1  -> deb.debian.org (3.4.1+ds1-6)
 #     3.4.2  -> deb.debian.org (3.4.2+ds1-1, fallback to source if missing)
+#     3.4.3  -> source-built (security release, no .deb yet)
 # - Falls back to source build if the exact .deb for this arch is missing
 # - Starts oc-rsync --daemon on a non-privileged port by passing --port on the CLI
 set -euo pipefail
@@ -52,7 +53,7 @@ upstream_install_root="${workspace_root}/target/interop/upstream-install"
 interop_log_dir="${workspace_root}/target/interop/logs"
 
 # Versions we run interop scenarios against.
-versions=(3.0.9 3.1.3 3.4.1 3.4.2)
+versions=(3.0.9 3.1.3 3.4.1 3.4.2 3.4.3)
 # Versions we only build and cache (no scenarios wired up yet). 2.6.9 is the
 # protocol-28 cutoff peer (advertises protocol 29, accepts down to 28); the
 # binary is needed so follow-up tasks can wire push/pull cells against it.
@@ -129,6 +130,10 @@ build_version_url() {
       ;;
     3.4.2)
       echo "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.2+ds1-1_${arch}.deb"
+      ;;
+    3.4.3)
+      # 3.4.3 is a recent security release; no .deb available yet, force source build.
+      echo ""
       ;;
     *)
       echo "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_${version}-1_${arch}.deb"
@@ -222,6 +227,11 @@ try_fetch_deb_generic() {
         "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.2+ds1-2_${arch}.deb"
         "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.2-1_${arch}.deb"
       )
+      ;;
+    3.4.3)
+      # Recent security release; no .deb available yet, skip straight to source build.
+      rm -f "$tmp_deb"
+      return 1
       ;;
     *)
       candidates+=(
@@ -9678,9 +9688,9 @@ run_comprehensive_interop_case() {
 
   # Extended scenarios only for the newest upstream versions (3.4.1+).
   # xattrs requires protocol >= 30 (upstream compat.c), so it only works
-  # against 3.4.1/3.4.2 (protocol 32), not 3.0.9 (protocol 28) or 3.1.3
+  # against 3.4.1/3.4.2/3.4.3 (protocol 32), not 3.0.9 (protocol 28) or 3.1.3
   # (protocol 31 but may lack --enable-xattr-support).
-  if [[ "${version}" == "3.4.1" || "${version}" == "3.4.2" ]]; then
+  if [[ "${version}" == "3.4.1" || "${version}" == "3.4.2" || "${version}" == "3.4.3" ]]; then
     scenarios+=(
       "xattrs|-avX|xattrs"
       "one-file-system|-avx|basic"
@@ -9988,12 +9998,12 @@ echo "=== Parallel version tests complete ==="
 
 # =====================================================================
 # Protocol version forcing tests: all 5 protocols via the newest
-# available upstream binary (3.4.2, falling back to 3.4.1).
+# available upstream binary (3.4.3, falling back to 3.4.2/3.4.1).
 # Run sequentially to avoid port contention under CI load.
 # =====================================================================
 newest_label=""
 newest_binary=""
-for nv in 3.4.2 3.4.1; do
+for nv in 3.4.3 3.4.2 3.4.1; do
   if [[ -x "${upstream_install_root}/${nv}/bin/rsync" ]]; then
     newest_label="$nv"
     newest_binary="${upstream_install_root}/${nv}/bin/rsync"
@@ -10038,7 +10048,7 @@ echo "=== Standalone Interop Tests ==="
 
 # Use the newest available upstream binary for standalone tests
 standalone_binary=""
-for nv in 3.4.2 3.4.1; do
+for nv in 3.4.3 3.4.2 3.4.1; do
   if [[ -x "${upstream_install_root}/${nv}/bin/rsync" ]]; then
     standalone_binary="${upstream_install_root}/${nv}/bin/rsync"
     break
