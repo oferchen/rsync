@@ -351,19 +351,13 @@ fn realistic_multi_file_transfer_pattern() {
 // ---------------------------------------------------------------------------
 #[test]
 fn msg_warning_coalescing_wire_byte_parity() {
-    let payloads: &[&[u8]] = &[
-        b"slow network\n",
-        b"partial transfer\n",
-        b"retrying\n",
-    ];
+    let payloads: &[&[u8]] = &[b"slow network\n", b"partial transfer\n", b"retrying\n"];
 
     let mut coalesced = Vec::new();
     {
         let mut writer = MplexWriter::new(&mut coalesced);
         for payload in payloads {
-            writer
-                .write_message(MessageCode::Warning, payload)
-                .unwrap();
+            writer.write_message(MessageCode::Warning, payload).unwrap();
         }
         writer.flush().unwrap();
     }
@@ -424,7 +418,12 @@ fn many_small_info_frames_none_lost() {
     }
 
     let frames = drain_frames(&wire);
-    assert_eq!(frames.len(), count, "expected {count} frames, got {}", frames.len());
+    assert_eq!(
+        frames.len(),
+        count,
+        "expected {count} frames, got {}",
+        frames.len()
+    );
     for (i, (code, payload)) in frames.iter().enumerate() {
         assert_eq!(*code, MessageCode::Info);
         let expected = format!("{i}\n");
