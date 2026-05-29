@@ -104,7 +104,10 @@ impl PathArena {
         let index = u32::try_from(self.spans.len())
             .expect("PathArena exceeded u32::MAX distinct interned strings");
         // u32::MAX is the NONE sentinel and must never name a real string.
-        assert!(index != PathHandle::NONE.0, "PathArena handle space exhausted");
+        assert!(
+            index != PathHandle::NONE.0,
+            "PathArena handle space exhausted"
+        );
 
         let offset = u32::try_from(self.bytes.len()).expect("PathArena byte arena exceeded 4 GiB");
         let len = u32::try_from(s.len()).expect("interned string exceeds u32::MAX bytes");
