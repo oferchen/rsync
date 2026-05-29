@@ -21,7 +21,7 @@ path = "src/bin/oc-rsync.rs"
 # Optimized for best performance on modern systems.
 # io_uring auto-detects Linux 5.6+ at runtime and falls back to standard I/O.
 # IOCP auto-detects Windows Vista+ at runtime and falls back to synchronous I/O.
-# parallel-receive-delta deferred from default per PIP-7 #4730 finding: dead scaffolding torn out in PIP-8; flag is now a no-op pending PIP-9 wire-up.
+# Parallel receive-side delta apply is unconditionally compiled (PFF-7).
 default = [
     "zstd",
     "lz4",
@@ -65,16 +65,6 @@ iconv = ["cli/iconv", "core/iconv"]
 # Trade-offs: Minimal overhead on single-core systems
 parallel = ["cli/parallel", "checksums/parallel"]
 
-# Parallel receive-side delta apply (#1368). Forwards through cli to core,
-# transfer, and engine. Currently a no-op flag pending PIP-9 wire-up;
-# PIP-8 removed the dead receiver dispatch scaffolding. See
-# `docs/design/pip-9-parallel-receive-delta-wire-up-2026-05-22.md`.
-parallel-receive-delta = [
-    "cli/parallel-receive-delta",
-    "core/parallel-receive-delta",
-    "transfer/parallel-receive-delta",
-    "engine/parallel-receive-delta",
-]
 
 # DEPRECATED (ISI.h): sender INC_RECURSE is now default-on. Flag
 # retained for one release as an emergency-disable no-op. CLI

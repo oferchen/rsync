@@ -66,7 +66,7 @@ default-features = false
 features = ["xattr"]
 
 [features]
-default = ["zstd", "lz4", "xattr", "iconv", "parallel-receive-delta"]
+default = ["zstd", "lz4", "xattr", "iconv"]
 
 # ============================================================================
 # Compression Features
@@ -95,11 +95,6 @@ embedded-ssh = ["dep:tokio", "rsync_io/embedded-ssh"]
 # Async runtime support - enables tokio-based async I/O for core operations
 async = ["dep:tokio", "engine/async", "transfer/async"]
 
-# Parallel receive-side delta apply (#1368). Forwards through transfer to
-# engine. Currently a no-op flag pending PIP-9 wire-up; PIP-8 removed the
-# dead receiver dispatch scaffolding. See
-# `docs/design/pip-9-parallel-receive-delta-wire-up-2026-05-22.md`.
-parallel-receive-delta = ["transfer/parallel-receive-delta", "engine/parallel-receive-delta"]
 
 # DEPRECATED (ISI.h): sender INC_RECURSE is now default-on. Marker
 # retained for one release until ISI.i.2 retires the feature flag.

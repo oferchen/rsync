@@ -70,8 +70,8 @@ jobs:
         with:
           shared-key: bench-drain-throughput
 
-      - name: Build engine (release, parallel-receive-delta)
-        run: cargo build --release -p engine --features parallel-receive-delta
+      - name: Build engine (release)
+        run: cargo build --release -p engine
 
       - name: Prepare results directory
         id: prep
@@ -97,7 +97,6 @@ jobs:
           timeout "${BENCH_TIMEOUT_SECONDS}" \
             cargo bench \
               -p engine \
-              --features parallel-receive-delta \
               --bench drain_parallel_benchmark \
               -- \
               --output-format bencher \

@@ -26,8 +26,6 @@
 //!   must maintain byte-identical per-file output despite concurrent chunk
 //!   dispatch.
 
-#![cfg(feature = "parallel-receive-delta")]
-
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 

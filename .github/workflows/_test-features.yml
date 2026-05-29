@@ -118,10 +118,9 @@ jobs:
           - name: no-default-features
             args: "--workspace --no-default-features"
             apt: ""
-          # PFF-6: Verify the default build (without parallel-receive-delta)
-          # exercises the sequential receive-delta path end-to-end. The main
-          # CI test job uses --all-features which enables parallel-receive-delta,
-          # masking regressions in the sequential code path that ships by default.
+          # PFF-6: Verify the default-features build compiles and passes
+          # tests. The main CI test job uses --all-features which may mask
+          # regressions in the default feature set.
           - name: default-features
             args: "--workspace"
             apt: ""

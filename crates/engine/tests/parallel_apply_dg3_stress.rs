@@ -54,7 +54,7 @@
 //! runs this on Linux + Windows + macOS for any PR touching
 //! `parallel_apply/`.
 
-#![cfg(all(feature = "dg-stress", feature = "parallel-receive-delta"))]
+#![cfg(feature = "dg-stress")]
 
 use std::io::{self, Write};
 use std::sync::Arc;

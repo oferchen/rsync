@@ -55,8 +55,7 @@ windows-sys = { workspace = true, features = ["Win32_Storage_FileSystem"] }
 libc = { workspace = true }
 
 [features]
-# parallel-receive-delta validated through PIP-9 series and PIP-10 E2E interop.
-# Enabled by default via transfer crate's feature forwarding.
+# Parallel receive-side delta apply is unconditionally compiled (PFF-7).
 default = ["zstd", "lz4", "xattr", "lazy-metadata"]
 
 # ============================================================================
@@ -110,12 +109,6 @@ parallel = []
 # receiver call site.
 parallel-delete-consumer = []
 
-# Parallel receive-side delta apply (#1368). Validated through PIP-9.f.1
-# (bake criterion), PIP-9.f.3 (production CI monitoring), and PIP-10 (full
-# E2E interop validation). Default-on via transfer crate forwarding since
-# PIP-9.f.2.
-parallel-receive-delta = []
-
 # DG-3.e: high-iteration stress test for `concurrent_register_and_dispatch`
 # under the DG-3 SlotData/BarrierState split (#2694). Gated behind its own
 # feature so the 1000-thread x 10K-iter cycle does not run in every PR's
@@ -123,7 +116,7 @@ parallel-receive-delta = []
 # + macOS. See `project_concurrent_dispatch_test_flake` and
 # `project_slothandle_decrementguard_release_race` memory notes for the
 # race the stress targets.
-dg-stress = ["parallel-receive-delta"]
+dg-stress = []
 
 # Multi-producer work queue - enables Clone for WorkQueueSender
 # Benefits: Multiple producer threads can feed the concurrent delta pipeline
@@ -274,17 +267,14 @@ harness = false
 [[bench]]
 name = "parallel_receive_delta_perf"
 harness = false
-required-features = ["parallel-receive-delta"]
 
 [[bench]]
 name = "parallel_verify_chunk"
 harness = false
-required-features = ["parallel-receive-delta"]
 
 [[bench]]
 name = "br_3j_f_dashmap_cores_vs_throughput"
 harness = false
-required-features = ["parallel-receive-delta"]
 
 [[bench]]
 name = "spill_policy_perf"

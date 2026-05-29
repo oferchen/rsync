@@ -68,7 +68,6 @@
 //!     --bench br_3j_f_dashmap_cores_vs_throughput`
 
 #![deny(unsafe_code)]
-#![cfg(feature = "parallel-receive-delta")]
 
 use std::hint::black_box;
 use std::io::{self, Write};

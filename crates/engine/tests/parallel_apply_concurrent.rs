@@ -20,8 +20,6 @@
 //!   taken: any guard held across the inner lock would deadlock under this
 //!   load.
 
-#![cfg(feature = "parallel-receive-delta")]
-
 use std::io::{self, Write};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

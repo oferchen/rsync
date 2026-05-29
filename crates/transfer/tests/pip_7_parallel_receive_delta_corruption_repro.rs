@@ -39,9 +39,8 @@
 //!
 //! # Status
 //!
-//! - `#[cfg(feature = "parallel-receive-delta")]` so default builds skip.
 //! - `#[ignore]` until the fix lands. Drop the `ignore` attribute in the
-//!   fix PR; PIP-9.d's CI cell picks it up automatically.
+//!   fix PR.
 //!
 //! # Upstream reference
 //!
@@ -50,7 +49,6 @@
 //! - `token.c:simple_recv_token()` - the wire decoder whose output the
 //!   parallel applier's `DeltaChunk` ultimately mirrors.
 
-#![cfg(feature = "parallel-receive-delta")]
 #![allow(clippy::needless_range_loop)]
 
 use std::io::{self, Write};
