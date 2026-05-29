@@ -31,6 +31,11 @@ async = ["bytes", "tokio", "tokio-util"]
 serde = ["dep:serde"]
 # Structured tracing for I/O operations
 tracing = ["dep:tracing"]
+# Flat file-list backing store (RSS-A.5). Opt-in, unwired phase-1 step:
+# adds the fixed-size FileEntryHeader type only. Not referenced by any
+# consumer; default builds are byte-identical to the legacy Vec<FileEntry>
+# path. Builder/consumer migration is tracked under RSS-A.6+.
+flat-flist = []
 
 [dependencies]
 bytes = { version = "1.9", optional = true }
