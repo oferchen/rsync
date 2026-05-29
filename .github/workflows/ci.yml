@@ -140,11 +140,12 @@ jobs:
     # Stable gates merge; beta/nightly are informational so a churning
     # nightly compiler does not block PR throughput. Branch protection
     # should pin the required check to `nextest (stable)`.
+    # On PRs, run stable only to reduce runner contention for required checks.
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
     strategy:
       fail-fast: false
       matrix:
-        toolchain: [stable, beta, nightly]
+        toolchain: ${{ github.event_name == 'pull_request' && fromJSON('["stable"]') || fromJSON('["stable", "beta", "nightly"]') }}
 
     steps:
       - name: Checkout
@@ -199,6 +200,7 @@ jobs:
   # ===========================================================================
   feature-flags:
     name: Feature flag combinations
+    if: github.event_name != 'pull_request'
     needs: lint
     uses: ./.github/workflows/_test-features.yml
     with:
@@ -216,7 +218,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        toolchain: [stable, beta, nightly]
+        toolchain: ${{ github.event_name == 'pull_request' && fromJSON('["stable"]') || fromJSON('["stable", "beta", "nightly"]') }}
 
     steps:
       - name: Checkout
@@ -275,6 +277,7 @@ jobs:
   # ===========================================================================
   windows-iocp:
     name: Windows IOCP (--features iocp)
+    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     needs: lint
     timeout-minutes: 30
@@ -340,6 +343,7 @@ jobs:
   # ===========================================================================
   windows-acl-xattr:
     name: Windows ACL/xattr
+    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     needs: lint
     timeout-minutes: 30
@@ -432,7 +436,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        toolchain: [stable, beta, nightly]
+        toolchain: ${{ github.event_name == 'pull_request' && fromJSON('["stable"]') || fromJSON('["stable", "beta", "nightly"]') }}
 
     steps:
       - name: Checkout
@@ -491,7 +495,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        toolchain: [stable, beta, nightly]
+        toolchain: ${{ github.event_name == 'pull_request' && fromJSON('["stable"]') || fromJSON('["stable", "beta", "nightly"]') }}
 
     steps:
       - name: Checkout
@@ -577,6 +581,7 @@ jobs:
   # ===========================================================================
   interop-upstream-windows:
     name: interop (Windows, best-effort)
+    if: github.event_name != 'pull_request'
     needs: lint
     uses: ./.github/workflows/_interop-windows.yml
     with:
@@ -597,6 +602,7 @@ jobs:
   # ===========================================================================
   dg3-stress:
     name: DG-3 stress (${{ matrix.os }}, non-required)
+    if: github.event_name != 'pull_request'
     needs: lint
     timeout-minutes: 30
     continue-on-error: true
