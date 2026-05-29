@@ -42,11 +42,7 @@ impl ReceiverContext {
         debug_log!(Genr, 1, "generator starting pid={}", std::process::id());
 
         // Parallel receive-side delta apply is unconditionally compiled (PFF-7).
-        debug_log!(
-            Recv,
-            1,
-            "parallel receive-delta path active"
-        );
+        debug_log!(Recv, 1, "parallel receive-delta path active");
 
         let mut reader = if self.should_activate_input_multiplex() {
             reader.activate_multiplex().map_err(|e| {
