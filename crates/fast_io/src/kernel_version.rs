@@ -72,18 +72,125 @@ pub fn parse_kernel_version(release: &str) -> Option<KernelVersion> {
 /// Minimum kernel version required for io_uring (5.6).
 pub const IO_URING_MIN_KERNEL: KernelVersion = KernelVersion { major: 5, minor: 6 };
 
+/// Trait for kernel features that have a minimum version requirement.
+///
+/// Reduces maintenance surface by centralising the version-check pattern
+/// that otherwise gets duplicated across every kernel-gated feature. Each
+/// implementor declares its minimum kernel version and a human-readable
+/// feature name; the trait provides a default `is_supported` method that
+/// compares against a given `KernelVersion`.
+pub trait VersionRequirement {
+    /// Minimum kernel version required for this feature.
+    fn min_version(&self) -> KernelVersion;
+
+    /// Human-readable name for diagnostic messages (e.g. "io_uring",
+    /// "PBUF_RING", "LINKAT").
+    fn feature_name(&self) -> &str;
+
+    /// Returns `true` if `kernel` meets the minimum version requirement.
+    fn is_supported(&self, kernel: &KernelVersion) -> bool {
+        let min = self.min_version();
+        kernel.meets_minimum(min.major, min.minor)
+    }
+
+    /// Returns a diagnostic string indicating whether the feature is
+    /// supported on the given kernel, or why not.
+    fn check_message(&self, kernel: &KernelVersion) -> String {
+        let min = self.min_version();
+        if self.is_supported(kernel) {
+            format!("{}: supported (kernel {} >= {})", self.feature_name(), kernel, min)
+        } else {
+            format!(
+                "{}: unsupported (kernel {} < {} required)",
+                self.feature_name(),
+                kernel,
+                min
+            )
+        }
+    }
+}
+
+/// io_uring basic availability (Linux 5.6+).
+pub struct IoUringRequirement;
+
+impl VersionRequirement for IoUringRequirement {
+    fn min_version(&self) -> KernelVersion {
+        IO_URING_MIN_KERNEL
+    }
+    fn feature_name(&self) -> &str {
+        "io_uring"
+    }
+}
+
+/// PBUF_RING provided-buffer ring (Linux 5.19+).
+pub struct PbufRingRequirement;
+
+impl VersionRequirement for PbufRingRequirement {
+    fn min_version(&self) -> KernelVersion {
+        KernelVersion { major: 5, minor: 19 }
+    }
+    fn feature_name(&self) -> &str {
+        "PBUF_RING"
+    }
+}
+
+/// IORING_OP_LINKAT (Linux 5.15+).
+pub struct LinkatRequirement;
+
+impl VersionRequirement for LinkatRequirement {
+    fn min_version(&self) -> KernelVersion {
+        KernelVersion { major: 5, minor: 15 }
+    }
+    fn feature_name(&self) -> &str {
+        "LINKAT"
+    }
+}
+
+/// IORING_OP_STATX and IORING_OP_RENAMEAT (Linux 5.11+).
+pub struct StatxRenameatRequirement;
+
+impl VersionRequirement for StatxRenameatRequirement {
+    fn min_version(&self) -> KernelVersion {
+        KernelVersion { major: 5, minor: 11 }
+    }
+    fn feature_name(&self) -> &str {
+        "STATX/RENAMEAT"
+    }
+}
+
+/// IORING_OP_SEND_ZC zero-copy socket send (Linux 6.0+).
+pub struct SendZcRequirement;
+
+impl VersionRequirement for SendZcRequirement {
+    fn min_version(&self) -> KernelVersion {
+        KernelVersion { major: 6, minor: 0 }
+    }
+    fn feature_name(&self) -> &str {
+        "SEND_ZC"
+    }
+}
+
 /// Logs the io_uring probe result at debug level.
 ///
 /// On Linux with the `io_uring` feature enabled, this queries the kernel
 /// version and io_uring availability, emitting a `debug_log!(Io, 1, ...)`
-/// message describing the result. Callers should invoke this once during
-/// startup after the io_uring probe has been cached.
+/// message describing the result. When io_uring is unavailable, also logs
+/// the specific restriction type (seccomp, cgroup, kernel version) so
+/// operators can diagnose container or cloud environment issues.
+///
+/// Callers should invoke this once during startup after the io_uring probe
+/// has been cached.
 ///
 /// On non-Linux platforms or without the `io_uring` feature, this is a no-op.
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 pub fn log_io_uring_probe_result() {
     let reason = crate::io_uring_availability_reason();
     logging::debug_log!(Io, 1, "{reason}");
+
+    let restriction = crate::detect_io_uring_restriction();
+    if restriction != crate::IoUringRestriction::None {
+        logging::debug_log!(Io, 1, "io_uring restriction: {restriction}");
+    }
 }
 
 /// No-op stub for non-Linux platforms or when io_uring feature is disabled.
@@ -289,5 +396,85 @@ mod tests {
         // On all platforms, calling the probe log function must not panic.
         // On non-Linux, this is a no-op. On Linux, it emits a debug_log message.
         log_io_uring_probe_result();
+    }
+
+    #[test]
+    fn version_requirement_io_uring_matches_constant() {
+        let req = IoUringRequirement;
+        assert_eq!(req.min_version(), IO_URING_MIN_KERNEL);
+        assert_eq!(req.feature_name(), "io_uring");
+    }
+
+    #[test]
+    fn version_requirement_is_supported_at_exact_minimum() {
+        let req = IoUringRequirement;
+        let v = KernelVersion { major: 5, minor: 6 };
+        assert!(req.is_supported(&v));
+    }
+
+    #[test]
+    fn version_requirement_is_not_supported_below_minimum() {
+        let req = IoUringRequirement;
+        let v = KernelVersion { major: 5, minor: 5 };
+        assert!(!req.is_supported(&v));
+    }
+
+    #[test]
+    fn version_requirement_is_supported_above_minimum() {
+        let req = IoUringRequirement;
+        let v = KernelVersion { major: 6, minor: 1 };
+        assert!(req.is_supported(&v));
+    }
+
+    #[test]
+    fn version_requirement_check_message_supported() {
+        let req = IoUringRequirement;
+        let v = KernelVersion { major: 6, minor: 1 };
+        let msg = req.check_message(&v);
+        assert!(msg.contains("supported"), "got: {msg}");
+        assert!(msg.contains("io_uring"), "got: {msg}");
+        assert!(msg.contains("6.1"), "got: {msg}");
+    }
+
+    #[test]
+    fn version_requirement_check_message_unsupported() {
+        let req = IoUringRequirement;
+        let v = KernelVersion { major: 4, minor: 19 };
+        let msg = req.check_message(&v);
+        assert!(msg.contains("unsupported"), "got: {msg}");
+        assert!(msg.contains("4.19"), "got: {msg}");
+        assert!(msg.contains("5.6"), "got: {msg}");
+    }
+
+    #[test]
+    fn pbuf_ring_requirement_needs_5_19() {
+        let req = PbufRingRequirement;
+        assert_eq!(req.min_version(), KernelVersion { major: 5, minor: 19 });
+        assert!(!req.is_supported(&KernelVersion { major: 5, minor: 18 }));
+        assert!(req.is_supported(&KernelVersion { major: 5, minor: 19 }));
+    }
+
+    #[test]
+    fn send_zc_requirement_needs_6_0() {
+        let req = SendZcRequirement;
+        assert_eq!(req.min_version(), KernelVersion { major: 6, minor: 0 });
+        assert!(!req.is_supported(&KernelVersion { major: 5, minor: 19 }));
+        assert!(req.is_supported(&KernelVersion { major: 6, minor: 0 }));
+    }
+
+    #[test]
+    fn linkat_requirement_needs_5_15() {
+        let req = LinkatRequirement;
+        assert_eq!(req.min_version(), KernelVersion { major: 5, minor: 15 });
+        assert!(!req.is_supported(&KernelVersion { major: 5, minor: 14 }));
+        assert!(req.is_supported(&KernelVersion { major: 5, minor: 15 }));
+    }
+
+    #[test]
+    fn statx_renameat_requirement_needs_5_11() {
+        let req = StatxRenameatRequirement;
+        assert_eq!(req.min_version(), KernelVersion { major: 5, minor: 11 });
+        assert!(!req.is_supported(&KernelVersion { major: 5, minor: 10 }));
+        assert!(req.is_supported(&KernelVersion { major: 5, minor: 11 }));
     }
 }

@@ -84,10 +84,12 @@ where
     }
 }
 
-/// Prints help or version text if requested, returning the exit code.
+/// Prints help, version, or io_uring status text if requested, returning
+/// the exit code.
 pub(crate) fn maybe_print_help_or_version<Out>(
     show_help: bool,
     show_version: bool,
+    show_io_uring_status: bool,
     program_name: ProgramName,
     stdout: &mut Out,
 ) -> Option<i32>
@@ -106,6 +108,13 @@ where
         let report = VersionInfoReport::for_client_brand(program_name.brand());
         let banner = report.human_readable();
         if stdout.write_all(banner.as_bytes()).is_err() {
+            Some(1)
+        } else {
+            Some(0)
+        }
+    } else if show_io_uring_status {
+        let matrix = fast_io::io_uring_capability_matrix();
+        if writeln!(stdout, "{matrix}").is_err() {
             Some(1)
         } else {
             Some(0)
