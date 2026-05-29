@@ -41,6 +41,15 @@ pub(crate) struct MultiplexReader<R> {
     /// Exit code from MSG_ERROR_EXIT. When set, the remote has requested
     /// immediate termination. upstream: io.c:1663-1701 calls _exit_cleanup().
     pub(super) error_exit_code: Option<i32>,
+    /// Count of MSG_ERROR_XFER messages received from the remote.
+    ///
+    /// upstream: log.c:311 - receipt of FERROR_XFER sets `got_xfer_error = 1`.
+    /// When the remote daemon's generator rejects files matching server-side
+    /// module exclude rules, it emits FERROR_XFER for each rejected file and
+    /// then exits with RERR_PARTIAL (23). Tracking this count lets
+    /// `check_error_exit` distinguish a daemon filter refusal exit (non-fatal)
+    /// from a genuine transfer error.
+    pub(super) xfer_error_count: u32,
     /// Optional recorder for batch mode - captures post-demux data.
     /// upstream: `io.c` `write_batch_monitor_in` + `safe_write(batch_fd, buf, len)`
     pub(crate) batch_recorder: Option<Arc<Mutex<dyn Write + Send>>>,
@@ -64,6 +73,7 @@ impl<R: Read> MultiplexReader<R> {
             no_send_indices: Vec::new(),
             redo_indices: Vec::new(),
             error_exit_code: None,
+            xfer_error_count: 0,
         }
     }
 
@@ -100,8 +110,26 @@ impl<R: Read> MultiplexReader<R> {
     ///
     /// Called after dispatching non-DATA messages to abort the read loop,
     /// matching upstream's NORETURN `_exit_cleanup(val)` behavior.
+    ///
+    /// When the remote daemon exits with RERR_PARTIAL (23) solely because its
+    /// generator rejected files matching server-side module exclude rules
+    /// (tracked by `xfer_error_count` from MSG_ERROR_XFER messages), this is
+    /// non-fatal. The daemon successfully transferred all allowed files and
+    /// only exited 23 because `got_xfer_error` was set. Suppressing the abort
+    /// lets the transfer loop drain normally and exit 0, matching the behavior
+    /// of oc-rsync's own receiver which silently skips daemon-excluded files.
+    ///
+    /// upstream: generator.c:1269 - `rprintf(FERROR_XFER, "daemon refused...")`
+    /// upstream: log.c:311 - `got_xfer_error = 1;` on FERROR_XFER receipt
+    /// upstream: main.c:1608-1609 - `if (got_xfer_error) _exit(RERR_PARTIAL);`
     fn check_error_exit(&self) -> io::Result<()> {
         if let Some(code) = self.error_exit_code {
+            // RERR_PARTIAL (23) after MSG_ERROR_XFER means the remote daemon
+            // refused files via its module exclude rules. All allowed files
+            // were transferred successfully - treat as non-fatal.
+            if code == 23 && self.xfer_error_count > 0 {
+                return Ok(());
+            }
             Err(io::Error::new(
                 io::ErrorKind::ConnectionAborted,
                 format!("remote error exit (code {code})"),
@@ -180,10 +208,18 @@ impl<R: Read> MultiplexReader<R> {
                 }
             }
             protocol::MessageCode::Error
-            | protocol::MessageCode::ErrorXfer
             | protocol::MessageCode::ErrorSocket
             | protocol::MessageCode::ErrorUtf8 => {
                 // upstream: log.c:rwrite() - FERROR* to stderr
+                if let Ok(msg) = std::str::from_utf8(&self.buffer) {
+                    eprint!("{msg}");
+                }
+            }
+            protocol::MessageCode::ErrorXfer => {
+                // upstream: log.c:311 - receipt of FERROR_XFER sets
+                // got_xfer_error = 1. Track the count so check_error_exit
+                // can distinguish daemon filter refusals from real errors.
+                self.xfer_error_count += 1;
                 if let Ok(msg) = std::str::from_utf8(&self.buffer) {
                     eprint!("{msg}");
                 }
