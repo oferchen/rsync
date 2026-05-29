@@ -224,3 +224,11 @@ jobs:
   windows-throughput:
     name: Windows throughput (vs MSYS2 rsync)
     uses: ./.github/workflows/_benchmark-windows.yml
+
+  # macOS throughput sniff: runs on tag, weekly schedule, and manual
+  # dispatch. Best-effort (continue-on-error in the reusable workflow);
+  # not wired into branch protection. Builds upstream rsync 3.4.2 from
+  # source and compares against oc-rsync release build.
+  macos-throughput:
+    name: macOS throughput (vs upstream rsync 3.4.2)
+    uses: ./.github/workflows/_benchmark-macos.yml
