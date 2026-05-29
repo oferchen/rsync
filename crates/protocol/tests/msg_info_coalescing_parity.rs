@@ -341,7 +341,7 @@ fn realistic_multi_file_transfer_pattern() {
     // Verify all data bytes arrived (order is preserved by MplexReader).
     let mut expected_data = Vec::new();
     for i in 0..file_count {
-        expected_data.extend_from_slice(&vec![(i & 0xFF) as u8; 128]);
+        expected_data.extend_from_slice(&[(i & 0xFF) as u8; 128]);
     }
     assert_eq!(data, expected_data);
 }
