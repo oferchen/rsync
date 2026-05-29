@@ -435,7 +435,10 @@ mod tests {
         let decoded = arena.decode(reference).unwrap().unwrap();
         // Only the symlink target is present; every other field stays absent.
         assert_eq!(decoded, extras);
-        assert_eq!(decoded.link_target.as_deref(), Some(&b"../some/where/target"[..]));
+        assert_eq!(
+            decoded.link_target.as_deref(),
+            Some(&b"../some/where/target"[..])
+        );
         assert_eq!(decoded.rdev_major, None);
     }
 
@@ -547,6 +550,9 @@ mod tests {
         let reference = arena.append(&extras);
         let decoded = arena.decode(reference).unwrap().unwrap();
         // Over-long checksums are clamped to the 32-byte upstream maximum.
-        assert_eq!(decoded.checksum.as_ref().map(Vec::len), Some(MAX_CHECKSUM_LEN));
+        assert_eq!(
+            decoded.checksum.as_ref().map(Vec::len),
+            Some(MAX_CHECKSUM_LEN)
+        );
     }
 }
