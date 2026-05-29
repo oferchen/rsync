@@ -34,11 +34,7 @@ fn recv_messages() -> Vec<String> {
 fn parallel_receive_delta_notice_emitted() {
     init_recv_level1();
 
-    debug_log!(
-        Recv,
-        1,
-        "parallel receive-delta path active"
-    );
+    debug_log!(Recv, 1, "parallel receive-delta path active");
 
     let msgs = recv_messages();
     assert!(
