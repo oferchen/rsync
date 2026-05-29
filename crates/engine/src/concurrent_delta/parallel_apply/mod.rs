@@ -1,12 +1,8 @@
-//! Parallel receive-side delta apply scaffold (#1368).
+//! Parallel receive-side delta apply (#1368).
 //!
-//! Gated behind the `parallel-receive-delta` feature so the production binary
-//! continues to drive the sequential apply loop in
-//! `crates/transfer/src/receiver/transfer.rs`. The design at
-//! `docs/design/parallel-receive-delta-application.md` calls for this code
-//! path to be opt-in until the parity-test gap (#4205 G2) closes and the
-//! drain-parallel bench from #4214 shows a measurable win at receive-side
-//! scale.
+//! Unconditionally compiled as of PFF-7. The design at
+//! `docs/design/parallel-receive-delta-application.md` documents the
+//! phased rollout that validated this path through PIP-9 and PIP-10.
 //!
 //! # Shape
 //!

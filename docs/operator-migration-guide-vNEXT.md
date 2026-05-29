@@ -158,22 +158,19 @@ be combined.
   async path.
 - **Build.** `cargo build --release --features async-daemon`.
 
-### `parallel-receive-delta` (`transfer`, default-on)
+### Parallel receive-delta (unconditional)
 
 - **What it does.** Fans out per-chunk strong-checksum verification
   across rayon workers while serializing writes through a per-file
   reorder buffer. Verification scales with core count; writes stay
   deterministic.
-- **Status.** Default-on. The feature was validated through full
+- **Status.** Unconditionally compiled. The `parallel-receive-delta`
+  feature flag was removed in PFF-7 after validation through full
   upstream interop (PIP-10.a), adversarial stress tests (PIP-10.b),
   mixed-size correctness (PIP-10.c), RSS overhead measurement
-  (PIP-10.d), error-path parity (PIP-10.e), and a 5-day bake window
-  with zero attributable regressions (PIP-9.f). See
-  [`docs/design/parallel-receive-delta-bake-prerequisites.md`](design/parallel-receive-delta-bake-prerequisites.md)
-  for the bake-window evidence.
-- **Emergency opt-out.** Build without the feature to fall back to the
-  sequential receiver path. The feature flag is retained temporarily;
-  PIP-9.f.4 will retire it after the post-flip bake.
+  (PIP-10.d), error-path parity (PIP-10.e), and a bake window with
+  zero attributable regressions (PIP-9.f). There is no opt-out; the
+  parallel path is the only path.
 
 ### `thread-slab-pool` (`engine`)
 
@@ -500,7 +497,7 @@ targets; on macOS and Windows the platform-native build is used.
   `--delete-during` sweep. The `--delete-strict-order` opt-in flag
   from the prior prerelease becomes available again.
 - The opt-in feature flags from section 4 (`async-ssh`,
-  `async-daemon`, `parallel-receive-delta`, `ssh-socketpair-stderr`,
+  `async-daemon`, `ssh-socketpair-stderr`,
   `thread-slab-pool`, `vmsplice`) do not exist in earlier releases.
   Builds that enabled them must drop the flag from the build command
   when downgrading.

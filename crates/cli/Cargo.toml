@@ -13,7 +13,7 @@ rustdoc-args = ["--cfg", "docsrs", "-D", "rustdoc::broken_intra_doc_links"]
 targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
-default = ["zstd", "lz4", "xattr", "parallel-receive-delta"]
+default = ["zstd", "lz4", "xattr"]
 
 # ============================================================================
 # Compression Features
@@ -42,11 +42,6 @@ iconv = ["core/iconv"]
 # Also enables engine optimization features for maximum performance
 parallel = ["engine/lazy-metadata", "checksums/parallel"]
 
-# Parallel receive-side delta apply (#1368). Currently a no-op flag
-# pending PIP-9 wire-up; PIP-8 removed the dead receiver dispatch
-# scaffolding. See
-# `docs/design/pip-9-parallel-receive-delta-wire-up-2026-05-22.md`.
-parallel-receive-delta = ["core/parallel-receive-delta"]
 
 [dependencies]
 clap = { workspace = true }

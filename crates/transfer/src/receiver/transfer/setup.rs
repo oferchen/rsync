@@ -41,19 +41,11 @@ impl ReceiverContext {
         // setup_transfer).
         debug_log!(Genr, 1, "generator starting pid={}", std::process::id());
 
-        // PFF-3: warn when parallel-receive-delta feature is enabled but the
-        // production token_loop still uses the sequential DeltaWork path. The
-        // feature flag enables scaffolding (ParallelDeltaApplier, ChunkBuilder)
-        // that is exercised by benchmarks and unit tests but is not wired into
-        // the receiver transfer loop. Users enabling the flag expecting a
-        // speedup get no benefit until PIP-9 completes the wire-up.
-        #[cfg(feature = "parallel-receive-delta")]
+        // Parallel receive-side delta apply is unconditionally compiled (PFF-7).
         debug_log!(
             Recv,
             1,
-            "parallel-receive-delta feature enabled - \
-             this is experimental scaffolding, not a production-validated \
-             parallel path; the receiver still uses the sequential delta loop"
+            "parallel receive-delta path active"
         );
 
         let mut reader = if self.should_activate_input_multiplex() {
