@@ -35,7 +35,7 @@
 //! where the goal is fast change detection rather than protocol compatibility.
 
 use std::fs::File;
-use std::io::{self, BufReader, Read};
+use std::io::{self, Read};
 use std::path::Path;
 
 /// Buffer size for streaming file reads (64 KiB).
@@ -141,17 +141,17 @@ pub fn crc32c_bytes(data: &[u8]) -> u32 {
 /// assert_eq!(file_checksum, crc32c_bytes(b"hello world"));
 /// ```
 pub fn crc32c_file(path: &Path) -> io::Result<u32> {
-    let file = File::open(path)?;
-    let mut reader = BufReader::with_capacity(BUF_SIZE, file);
+    let mut file = File::open(path)?;
+    let size = file.metadata()?.len();
     let mut hasher = Crc32cHasher::new();
     let mut buf = [0u8; BUF_SIZE];
+    let mut remaining = size;
 
-    loop {
-        let n = reader.read(&mut buf)?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
+    while remaining > 0 {
+        let to_read = (remaining as usize).min(BUF_SIZE);
+        file.read_exact(&mut buf[..to_read])?;
+        hasher.update(&buf[..to_read]);
+        remaining -= to_read as u64;
     }
 
     Ok(hasher.finalize())

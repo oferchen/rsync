@@ -139,29 +139,49 @@ fn compute_file_checksum(
     let metadata = file.metadata().ok()?;
     let size = metadata.len();
 
-    let digest = hash_file_contents(file, algorithm, buffer_pool).ok()?;
+    let digest = hash_file_contents(file, size, algorithm, buffer_pool).ok()?;
 
     Some(FileChecksum { digest, size })
 }
 
 /// Hashes file contents using the specified algorithm.
+///
+/// Uses a pre-sized read loop based on the known `file_size` to avoid
+/// the extra read() syscall that EOF-probe patterns (BufReader, loop-until-0)
+/// issue per file.
+///
+/// upstream: checksum.c - sized read loop: `while (remaining > 0) { read(); remaining -= n; }`
 fn hash_file_contents(
     mut file: File,
+    file_size: u64,
     algorithm: SignatureAlgorithm,
     buffer_pool: &Arc<BufferPool>,
 ) -> io::Result<Vec<u8>> {
     let mut buffer = BufferPool::acquire_from(Arc::clone(buffer_pool));
+    let buf_len = buffer.len();
+
+    /// Reads exactly `remaining` bytes from `file` into `hasher` using
+    /// pre-sized chunks, avoiding a trailing EOF probe syscall.
+    fn read_into_hasher(
+        file: &mut File,
+        mut remaining: u64,
+        buffer: &mut [u8],
+        buf_len: usize,
+        hasher: &mut impl checksums::strong::StrongDigest,
+    ) -> io::Result<()> {
+        while remaining > 0 {
+            let to_read = (remaining as usize).min(buf_len);
+            file.read_exact(&mut buffer[..to_read])?;
+            hasher.update(&buffer[..to_read]);
+            remaining -= to_read as u64;
+        }
+        Ok(())
+    }
 
     let digest = match algorithm {
         SignatureAlgorithm::Md4 => {
             let mut hasher = Md4::new();
-            loop {
-                let n = file.read(&mut buffer)?;
-                if n == 0 {
-                    break;
-                }
-                hasher.update(&buffer[..n]);
-            }
+            read_into_hasher(&mut file, file_size, &mut buffer, buf_len, &mut hasher)?;
             hasher.finalize().as_ref().to_vec()
         }
         SignatureAlgorithm::Md4Seeded { seed } => {
@@ -169,13 +189,7 @@ fn hash_file_contents(
             // after the file data when seed != 0. A zero seed degenerates to
             // unseeded MD4 (preserved here for symmetry with `Md4`).
             let mut hasher = Md4::new();
-            loop {
-                let n = file.read(&mut buffer)?;
-                if n == 0 {
-                    break;
-                }
-                hasher.update(&buffer[..n]);
-            }
+            read_into_hasher(&mut file, file_size, &mut buffer, buf_len, &mut hasher)?;
             if seed != 0 {
                 hasher.update(&seed.to_le_bytes());
             }
@@ -183,57 +197,27 @@ fn hash_file_contents(
         }
         SignatureAlgorithm::Md5 { seed_config } => {
             let mut hasher = Md5::with_seed(seed_config);
-            loop {
-                let n = file.read(&mut buffer)?;
-                if n == 0 {
-                    break;
-                }
-                hasher.update(&buffer[..n]);
-            }
+            read_into_hasher(&mut file, file_size, &mut buffer, buf_len, &mut hasher)?;
             hasher.finalize().as_ref().to_vec()
         }
         SignatureAlgorithm::Sha1 => {
             let mut hasher = Sha1::new();
-            loop {
-                let n = file.read(&mut buffer)?;
-                if n == 0 {
-                    break;
-                }
-                hasher.update(&buffer[..n]);
-            }
+            read_into_hasher(&mut file, file_size, &mut buffer, buf_len, &mut hasher)?;
             hasher.finalize().as_ref().to_vec()
         }
         SignatureAlgorithm::Xxh64 { seed } => {
             let mut hasher = Xxh64::new(seed);
-            loop {
-                let n = file.read(&mut buffer)?;
-                if n == 0 {
-                    break;
-                }
-                hasher.update(&buffer[..n]);
-            }
+            read_into_hasher(&mut file, file_size, &mut buffer, buf_len, &mut hasher)?;
             hasher.finalize().as_ref().to_vec()
         }
         SignatureAlgorithm::Xxh3 { seed } => {
             let mut hasher = Xxh3::new(seed);
-            loop {
-                let n = file.read(&mut buffer)?;
-                if n == 0 {
-                    break;
-                }
-                hasher.update(&buffer[..n]);
-            }
+            read_into_hasher(&mut file, file_size, &mut buffer, buf_len, &mut hasher)?;
             hasher.finalize().as_ref().to_vec()
         }
         SignatureAlgorithm::Xxh3_128 { seed } => {
             let mut hasher = Xxh3_128::new(seed);
-            loop {
-                let n = file.read(&mut buffer)?;
-                if n == 0 {
-                    break;
-                }
-                hasher.update(&buffer[..n]);
-            }
+            read_into_hasher(&mut file, file_size, &mut buffer, buf_len, &mut hasher)?;
             hasher.finalize().as_ref().to_vec()
         }
     };

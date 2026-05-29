@@ -7,7 +7,7 @@
 use fast_io::mmap_reader::{MMAP_THRESHOLD, MmapReader};
 use rayon::prelude::*;
 use std::fs::File;
-use std::io::{self, BufReader, Read};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use crate::rolling::RollingChecksum;
@@ -25,14 +25,13 @@ where
     D::Seed: Default,
 {
     let result = (|| -> io::Result<(D::Digest, u64)> {
-        let file = File::open(path)?;
+        let mut file = File::open(path)?;
         let metadata = file.metadata()?;
         let size = metadata.len();
 
         if size <= config.max_memory_file_size {
-            let mut data = Vec::with_capacity(size as usize);
-            let mut reader = BufReader::with_capacity(config.buffer_size, file);
-            reader.read_to_end(&mut data)?;
+            let mut data = vec![0u8; size as usize];
+            file.read_exact(&mut data)?;
             return Ok((D::digest(&data), size));
         }
 
@@ -43,16 +42,15 @@ where
             }
         }
 
+        // upstream: checksum.c - pre-sized read loop avoids trailing EOF probe
         let mut hasher = D::new();
-        let mut reader = BufReader::with_capacity(config.buffer_size, file);
         let mut buffer = vec![0u8; config.buffer_size];
-
-        loop {
-            let bytes_read = reader.read(&mut buffer)?;
-            if bytes_read == 0 {
-                break;
-            }
-            hasher.update(&buffer[..bytes_read]);
+        let mut remaining = size;
+        while remaining > 0 {
+            let to_read = (remaining as usize).min(buffer.len());
+            file.read_exact(&mut buffer[..to_read])?;
+            hasher.update(&buffer[..to_read]);
+            remaining -= to_read as u64;
         }
 
         Ok((hasher.finalize(), size))
@@ -217,14 +215,13 @@ where
     D::Seed: Clone,
 {
     let result = (|| -> io::Result<(D::Digest, u64)> {
-        let file = File::open(path)?;
+        let mut file = File::open(path)?;
         let metadata = file.metadata()?;
         let size = metadata.len();
 
         if size <= config.max_memory_file_size {
-            let mut data = Vec::with_capacity(size as usize);
-            let mut reader = BufReader::with_capacity(config.buffer_size, file);
-            reader.read_to_end(&mut data)?;
+            let mut data = vec![0u8; size as usize];
+            file.read_exact(&mut data)?;
             return Ok((D::digest_with_seed(seed, &data), size));
         }
 
@@ -235,16 +232,15 @@ where
             }
         }
 
+        // upstream: checksum.c - pre-sized read loop avoids trailing EOF probe
         let mut hasher = D::with_seed(seed);
-        let mut reader = BufReader::with_capacity(config.buffer_size, file);
         let mut buffer = vec![0u8; config.buffer_size];
-
-        loop {
-            let bytes_read = reader.read(&mut buffer)?;
-            if bytes_read == 0 {
-                break;
-            }
-            hasher.update(&buffer[..bytes_read]);
+        let mut remaining = size;
+        while remaining > 0 {
+            let to_read = (remaining as usize).min(buffer.len());
+            file.read_exact(&mut buffer[..to_read])?;
+            hasher.update(&buffer[..to_read]);
+            remaining -= to_read as u64;
         }
 
         Ok((hasher.finalize(), size))
@@ -323,7 +319,7 @@ where
     D::Seed: Default,
 {
     let result = (|| -> io::Result<SignatureComputeResult<D::Digest>> {
-        let file = File::open(path)?;
+        let mut file = File::open(path)?;
         let metadata = file.metadata()?;
         let size = metadata.len();
         let estimated_blocks = (size as usize).div_ceil(block_size);
@@ -351,24 +347,16 @@ where
         }
 
         let mut signatures = Vec::with_capacity(estimated_blocks);
-        let mut reader = BufReader::with_capacity(buffer_size, file);
+        let _ = buffer_size; // size known from metadata; BufReader not needed
         let mut buffer = vec![0u8; block_size];
+        let mut remaining = size;
 
-        loop {
-            let mut total_read = 0;
-            while total_read < block_size {
-                let bytes_read = reader.read(&mut buffer[total_read..])?;
-                if bytes_read == 0 {
-                    break;
-                }
-                total_read += bytes_read;
-            }
+        while remaining > 0 {
+            let to_read = (remaining as usize).min(block_size);
+            file.read_exact(&mut buffer[..to_read])?;
+            remaining -= to_read as u64;
 
-            if total_read == 0 {
-                break;
-            }
-
-            let block = &buffer[..total_read];
+            let block = &buffer[..to_read];
             let mut rolling = RollingChecksum::new();
             rolling.update(block);
 
