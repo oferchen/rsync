@@ -184,13 +184,21 @@ impl FileEntry {
     /// Returns the user ID if set.
     #[inline]
     pub const fn uid(&self) -> Option<u32> {
-        self.uid
+        if self.present & super::core::PRESENT_UID != 0 {
+            Some(self.uid)
+        } else {
+            None
+        }
     }
 
     /// Returns the group ID if set.
     #[inline]
     pub const fn gid(&self) -> Option<u32> {
-        self.gid
+        if self.present & super::core::PRESENT_GID != 0 {
+            Some(self.gid)
+        } else {
+            None
+        }
     }
 
     /// Returns the symlink target if this is a symlink.
@@ -258,12 +266,14 @@ impl FileEntry {
 
     /// Sets the user ID.
     pub const fn set_uid(&mut self, uid: u32) {
-        self.uid = Some(uid);
+        self.uid = uid;
+        self.present |= super::core::PRESENT_UID;
     }
 
     /// Sets the group ID.
     pub const fn set_gid(&mut self, gid: u32) {
-        self.gid = Some(gid);
+        self.gid = gid;
+        self.present |= super::core::PRESENT_GID;
     }
 
     /// Returns the user name if set.
@@ -350,14 +360,18 @@ impl FileEntry {
     #[inline]
     #[must_use]
     pub const fn content_dir(&self) -> bool {
-        self.content_dir
+        self.present & super::core::PRESENT_CONTENT_DIR != 0
     }
 
     /// Sets whether this directory has content to transfer.
     ///
     /// When false, XMIT_NO_CONTENT_DIR flag is set on wire.
     pub const fn set_content_dir(&mut self, has_content: bool) {
-        self.content_dir = has_content;
+        if has_content {
+            self.present |= super::core::PRESENT_CONTENT_DIR;
+        } else {
+            self.present &= !super::core::PRESENT_CONTENT_DIR;
+        }
     }
 
     /// Returns the hardlink device number (for protocol < 30).
