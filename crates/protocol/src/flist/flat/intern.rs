@@ -129,6 +129,9 @@ impl PathArena {
     /// index). Handles are only valid for the interner that issued them.
     #[must_use]
     pub fn resolve(&self, handle: PathHandle) -> &str {
+        if handle == PathHandle::NONE {
+            return "";
+        }
         match self.get(handle) {
             Some(s) => s,
             None => panic!("PathHandle({}) is not valid for this PathArena", handle.0),
