@@ -222,6 +222,52 @@ SQPOLL-vs-regular cells - and against the SZC SEND_ZC benches
 run the cells, record the measured win or absence of win, and mark each
 prediction above confirmed or falsified.
 
+## Predictions vs evidence (IUM-2)
+
+IUM-1 wrote falsifiable predictions. IUM-2 confronts each one with the
+evidence already committed to this repo. The discipline here is conservative:
+a number that was never captured is marked Untested and the bench cell that
+would settle it is named; small-scale evidence that pushes against a "win"
+claim is marked Contradicted. No numbers are invented below - where a result
+table does not exist in the tree, that absence is itself the finding.
+
+The recurring source of the small-scale datum is the project memory note
+`project_iouring_marginal_at_small_bench_scale` (~1.00x at the 148 MB /
+10 000-file release-bench shape). That datum is cited by the IUB-1 inventory
+(`docs/audit/iouring-bench-workload-inventory.md` lines 24-34) but, per that
+same inventory, it does not live in any tracked result file - no committed
+`.rs` doc-comment baseline, no CHANGELOG number, no results doc.
+
+| Prediction (use site) | Evidence source | Verdict | Notes |
+|-----------------------|-----------------|---------|-------|
+| (a) STATX batch wins at high file count | `crates/fast_io/benches/iouring_high_file_count.rs` (IUB-5 cell, env-gated `BENCH_HIGH_FILE_COUNT` / `_1M`); `docs/audit/iouring-bench-workload-inventory.md` lines 109-129 | Untested | The 100K / 1M-file STATX bench is implemented but has no committed result. IUB-1 observation 4 states "No baseline numbers ... are committed to the repo." The break-even (the doc's "a few hundred files") is explicitly the open measurement (IUM-1 line 104). Settled by running `iouring_high_file_count` at 100K and 1M small files on kernel 5.11+. |
+| (a) STATX overhead is real in `--checksum` mode (the regime the win targets) | `docs/audit/checksum-statx-overhead.md` (STX-1/STX-4) | Corroborated (problem), Untested (io_uring fix) | strace shows oc-rsync issuing 6,691 statx vs upstream 2,006 on a 500-file `--checksum` corpus (3.34x). This confirms metadata syscalls dominate in the targeted regime. But the audit's root causes (BufReader EOF probe STX-6, redundant fstat STX-8) are syscall-count bugs whose fix is sized reads, not io_uring STATX batching. No evidence that io_uring STATX is the lever that closes this gap. |
+| (a) rename / link / unlink transient-ring form has no regime where it wins | `docs/design/iur-3f-shared-rings-decision.md` (sections 2-3); `docs/design/io-uring-shared-ring-audit.md` lines 180-198 (IUR-1 section 3.4) | Corroborated (qualitatively), Untested (numerically) | IUR-1/IUR-3.f find the probe-ring acquire "below the flame-graph noise floor" with "no SharedRing contention to measure today" - consistent with the "always break-even, treat as correctness-parity" claim. But this is a contention model, not a head-to-head bench of transient-ring renameat2/linkat vs the plain syscall. No bench in `crates/fast_io/benches/` times single rename/link/unlink against `std::fs::rename` / direct syscall. The prediction is plausible and unmeasured. |
+| (b) Receiver disk-batch writes win only at multi-GB / high sustained IOPS | `crates/fast_io/benches/nvme_data_path.rs`, `nvme_data_path_production.rs` (10x1GiB, env-gated, IUD-4/IUD-9); `docs/design/iouring-multi-gb-bench-design.md` (IUB-2, 2/10/50 GiB cells); `docs/audit/iouring-bench-workload-inventory.md` lines 66-71, 125-129 | Untested | The disk-batch path is default-on (Auto policy) yet has no committed measurement. IUB-1 states the IUD-4/IUD-9 NVMe benches carry "not committed (#4381 / #2364)" / "(#4398 / #2369)" numbers. The IUB-2 multi-GB cells that would test the payload-scaling hypothesis are designed but, per IUB-2 status, land under IUB-4 and have not been run. Settled by `iouring_multi_gb` (2/10/50 GiB) and `nvme_data_path*` on NVMe with deep queues. |
+| (b) File-data slurp read/write (opt-in) wins only at multi-GB on fast NVMe | `crates/fast_io/benches/nvme_data_path_production.rs` (IUD-9, `iouring-data-writes`+`iouring-data-reads`); `docs/design/iouring-receive-data-path.md`; `docs/audit/iouring-bench-workload-inventory.md` lines 68-71 | Untested | The slurp paths stay opt-in precisely because no default-on win was shown - but the underlying magnitude (multi-GB payoff) is unmeasured. No numeric baseline is committed for the IUD-9 production wrapper. The 1 MiB / 64 KiB gates in the engine and `iouring-receive-data-path.md` are described in their own docs as a "first guess, not a measured crossover." Settled by the same `iouring_multi_gb` / `nvme_data_path*` cells. |
+| (b) At small/mid file size, `copy_file_range` / buffered `write(2)` win over io_uring | `project_iouring_marginal_at_small_bench_scale` (via `docs/audit/iouring-bench-workload-inventory.md` lines 24-34); `docs/design/iouring-multi-gb-bench-design.md` disk-class table (lines 117-126) | Corroborated (small scale) | The ~1.00x measurement at 148 MB on a CI runner (page-cache-resident, likely tmpfs) is consistent with "no win below the break-even." IUB-2's own disk-class table predicts ~1.00x on tmpfs/ramdisk and HDD. This is the one place small-scale evidence actively supports a prediction in the model - the "no win at small scale" half. The crossover above which io_uring wins remains unmeasured. |
+| (c) SEND_ZC saves CPU only for large registered-buffer payloads | `crates/fast_io/benches/ius_3_send_zc_vs_send.rs`; `docs/design/ius-4-decision-2026-05-22.md`; `docs/design/szc-a-send-zc-bench-workload.md`, `szc-b-send-zc-10gb-bench.md`, `szc-d-send-zc-concurrent-bench.md` | Untested | The IUS-4 decision doc records the IUS-3 throughput input as "**MISSING**" - "No multi-kernel hardware run has been captured ... only the bench harness has shipped." The SZC.a/b/d successor docs are all "design spec; implementation is a follow-up PR" with no captured numbers. The 4 KiB dispatch floor and the two-CQE-overhead claim are unmeasured. Settled by `ius_3_send_zc_vs_send` (and SZC.b 10 GiB) on kernel 6.0+ with a registered buffer group. |
+| (c) Below ~4 KiB plain SEND wins; `sendfile`/`splice` win for on-disk data | `docs/design/ius-4-decision-2026-05-22.md` section 1 (default builds use `sendfile`/`splice`/`copy_file_range`); `crates/fast_io/benches/ius_3_send_zc_vs_send.rs` (4 KiB-1 MiB chunk shapes) | Untested | The default-build posture (plain SEND + sendfile/splice) is an architectural choice consistent with the prediction, but no bench compares SEND_ZC against plain SEND at sub-4 KiB chunks with committed numbers. The bench harness has the chunk shapes (`small_chunks_16KiB`, `mixed_chunks_4KiB_to_1MiB`) but, per IUB-1, results are "not committed." |
+
+Tally: of the eight rows, 5 are Untested, 2 are Corroborated (the "no win at
+small scale" half of the data-path prediction, and the qualitative
+no-regime-to-win finding for transient-ring rename/link/unlink), 1 is split
+(the `--checksum` STATX problem is corroborated as real, but io_uring STATX as
+its fix is untested). None of the predictions is Contradicted: no committed
+measurement shows an io_uring path losing where the model claims a win,
+because the magnitude benches that would test the win claims have not been
+run. The single piece of measured data (~1.00x at 148 MB) sits below every
+predicted break-even and therefore neither confirms nor refutes the
+payoff claims - it only confirms the model's "no win at small scale" guard.
+
+Implication for IUM-3: the evidence base justifies only the metadata-only
+default scope that ships today, and even there the STATX win is asserted, not
+measured. Every magnitude prediction (data-path writes, slurp read/write,
+SEND_ZC) rests on assumption until the IUB-4 / SZC.b benches run on NVMe and
+kernel 6.0+ hardware. IUM-3 is the go/no-go decision doc; on this evidence it
+should keep the data-path and SEND_ZC paths opt-in, decline to default-flip
+anything new, and gate any scope expansion on running the named cells above.
+
 ## Decision gate
 
 Future io_uring code or scope changes must be gated on a measured break-even
