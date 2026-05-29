@@ -24,6 +24,13 @@ ignore = [
     # `embedded-ssh` feature; default builds are unaffected. Re-evaluate when
     # rsa 0.10 ships stable and the advisory is updated.
     "RUSTSEC-2023-0071",
+    # RUSTSEC-2025-0134 - rustls-pemfile is unmaintained (repo archived Aug
+    # 2025); upstream recommends migrating to rustls-pki-types' PemObject. This
+    # is an unmaintained notice, not a vulnerability, and there is no safe
+    # upgrade available. It reaches us only transitively through the rustls TLS
+    # stack (webpki/tokio-rustls), which still depends on rustls-pemfile; we do
+    # not use it directly. Re-evaluate once the rustls stack drops it.
+    "RUSTSEC-2025-0134",
 ]
 
 [licenses]
@@ -43,6 +50,10 @@ allow = [
     "0BSD",
     "CC0-1.0",
     "Artistic-2.0",
+    # webpki-roots ships the Mozilla CA certificate bundle under the Community
+    # Data License Agreement (permissive). It is data, not code, reaches us
+    # transitively via the rustls TLS stack, and imposes no copyleft.
+    "CDLA-Permissive-2.0",
     # The project itself is GPL-3.0-or-later
     "GPL-3.0-or-later",
 ]
