@@ -56,6 +56,7 @@ fn drain_mplex(wire: &[u8]) -> (Vec<u8>, Vec<(MessageCode, Vec<u8>)>) {
         }
     }
 
+    drop(reader);
     let oob = Arc::try_unwrap(messages).unwrap().into_inner().unwrap();
     (data, oob)
 }
