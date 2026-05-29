@@ -1,9 +1,23 @@
 # Flat flist backing-store representation
 
 Task: RSS-A.4 (design). Branch: `docs/flat-flist-representation-design`.
-Prerequisites: RSS-A.2 (FileEntry layout audit), RSS-8.a (PathHandle
-type), RSS-8/9 (arena path migration). Downstream: RSS-A.5..A.11
-(implementation), RSS-2 (allocation profiling, blocking validation).
+Prerequisites: RSS-A.2 (FileEntry layout audit). Downstream: RSS-A.5..A.11
+(implementation), RSS-2 (allocation profiling, blocking validation),
+RSS-A.5.c (build the 4-byte interner handle this design needs).
+
+Premise correction (RSS-A.0.c): an earlier draft of this document assumed
+the RSS-8/RSS-9 arena path migration had already landed and that a 4-byte
+`PathHandle` (backed by `PathArena` / `StringArena` and a `lasso`
+interner) was in production. The RSS-A.0.a audit
+(`docs/audit/arena-prototype-landing-gap.md`) verified against the tree
+that this is false. No `PathHandle`, `PathArena`, or `StringArena` type
+exists anywhere in the workspace. The production `FileEntry` still stores
+`name: PathBuf` and `dirname: Arc<Path>`, and the only landed dedup is the
+`Arc<Path>` dirname `PathInterner` (`crates/protocol/src/flist/intern.rs`).
+The only arena code that landed was an unused `bumpalo` prototype, removed
+in RSS-A.0.b. This document therefore treats the 4-byte interner handle as
+something the flat-store effort must build from scratch (RSS-A.5.c), not as
+a prerequisite that already exists.
 
 ## Summary
 
@@ -23,13 +37,17 @@ gap at 1 million files (197 MB versus 7.6 MB for upstream) and a 2.7x
 structural overhead in the common case (~160 bytes per entry versus
 ~60 bytes upstream).
 
-The PathHandle/PathArena work (RSS-8/9) already attacks the path
-allocations by replacing `name: PathBuf` and `dirname: Arc<Path>` with
-4-byte interned handles. The flat flist design described here is the
-next, more fundamental step: it removes the per-entry `Vec` and `Box`
-overhead entirely by storing all entries in one contiguous buffer and
-all variable-length data in a shared arena, leaving the per-entry node
-at a fixed 48-64 bytes with zero per-entry heap allocations.
+The path allocations are only partly addressed today. The dirname
+`PathInterner` (`crates/protocol/src/flist/intern.rs`) deduplicates
+directory names by sharing one `Arc<Path>` per unique directory, but
+`name` is still a per-entry `PathBuf` and dirname references still cost a
+pointer-sized `Arc<Path>` each, not a 4-byte handle. The flat flist
+design described here goes further: it stores all entries in one
+contiguous buffer and all variable-length data in a shared arena,
+introduces its own 4-byte interner handle (the `PathHandle` type that
+RSS-A.5.c must build), and removes the per-entry `Vec` and `Box` overhead
+entirely, leaving the per-entry node at a fixed 48-64 bytes with zero
+per-entry heap allocations.
 
 This is a design-only document. The projected savings below are
 structural estimates derived from the RSS-A.2 audit. They MUST be
@@ -43,11 +61,11 @@ RSS-A.5..A.11 implementation steps land. See "Validation gate".
 ```
 FileList
 ├── entries: Vec<FileEntry>          (96 B inline per entry)
-│       ├── name: PathBuf / PathHandle
-│       ├── dirname: Arc<Path> / PathHandle
+│       ├── name: PathBuf                          (per-entry heap allocation)
+│       ├── dirname: Arc<Path>                     (shared via PathInterner)
 │       ├── size, mtime, uid, gid, mode, flags, content_dir (inline)
 │       └── extras: Option<Box<FileEntryExtras>>  (224 B heap when set)
-└── interner: PathInterner            (shared dirname/name strings)
+└── interner: PathInterner            (HashMap<PathBuf, Arc<Path>>, dirnames only)
 ```
 
 Cost contributors identified by RSS-A.2, ranked:
@@ -67,9 +85,15 @@ Cost contributors identified by RSS-A.2, ranked:
    waste a full word on the discriminant rather than using a presence
    bitfield.
 
-PathHandle (RSS-8) addresses contributor 2 for paths. RSS-A.3 (compact
-Option fields) addresses contributor 4. This design addresses
-contributors 1 and 3, and unifies the result into one contiguous store.
+The dirname `PathInterner` partly addresses contributor 2 by sharing one
+`Arc<Path>` per directory, but it leaves each entry's `name: PathBuf`
+allocation and each `Box<FileEntryExtras>` allocation in place, and it
+hands back a pointer-sized `Arc<Path>` rather than a 4-byte handle. The
+4-byte name/dirname interner that would fully address contributor 2 does
+not exist yet; this design builds it (RSS-A.5.c). RSS-A.3 (compact Option
+fields) addresses contributor 4. This design addresses contributors 1 and
+3, builds the 4-byte path handle for contributor 2, and unifies the result
+into one contiguous store.
 
 ### Upstream representation
 
@@ -134,6 +158,15 @@ A fixed-size, `Copy`, `repr(C)`-considered struct holding only inline
 scalars and arena references. No `PathBuf`, no `Box`, no `Option<T>`
 with discriminant words. Target 48-64 bytes.
 
+The header references names and dirnames through its own concrete 4-byte
+interner handle. That handle type does not exist today (see the premise
+correction above and `docs/audit/arena-prototype-landing-gap.md`); this
+design defines it and the flat-store effort must build it from scratch as
+task RSS-A.5.c. The field type is written here as `PathHandle` to name the
+to-be-built type, not to reuse a pre-existing one. Concretely it is a
+4-byte index (`u32` newtype) into the flat store's own name/dirname
+interner, with `u32::MAX` reserved as a null/empty sentinel.
+
 ```rust
 /// Fixed-size header for one file-list entry in the flat backing store.
 ///
@@ -150,9 +183,12 @@ pub struct FileEntryHeader {
     uid: u32,
     /// Group ID; meaningful only when the `GID` presence bit is set.
     gid: u32,
-    /// Interned name handle (4-byte PathHandle / Spur).
+    /// Interned name handle. `PathHandle` is a 4-byte `u32` index into
+    /// the flat store's own name interner, built by RSS-A.5.c; it does
+    /// not exist in the tree today.
     name: PathHandle,
-    /// Interned dirname handle (4-byte PathHandle / Spur).
+    /// Interned dirname handle. Same to-be-built 4-byte `PathHandle`
+    /// type as `name`, indexed into the same interner.
     dirname: PathHandle,
     /// Arena offset of the packed extras tail, or `NO_EXTRAS` sentinel
     /// when the entry has no rarely-used fields.
@@ -185,17 +221,21 @@ A field such as `uid` is read as `Some(uid)` only when
 `present & UID_BIT != 0`, eliminating the 4-byte-per-Option waste the
 RSS-A.2 audit flagged (contributor 4) without an enum discriminant.
 
-### StringArena (extends existing arena work)
+### StringArena (built by this effort, not pre-existing)
 
-The flat store does not introduce a new arena. It extends the
-`PathArena` / `StringArena` already specified in RSS-8.a, which today
-backs `PathHandle`-based `name` and `dirname` storage via a `lasso`
-interner (`Rodeo` while building, `RodeoReader` once frozen). Names and
-dirnames continue to be interned exactly as RSS-8 defines, so the flat
-store inherits dirname deduplication and basename deduplication for
-free.
+The flat store introduces a new arena; there is no `PathArena` or
+`StringArena` in the tree to extend. RSS-A.5.c must build a path interner
+(`PathArena`) that maps each unique name/dirname string to a 4-byte
+`PathHandle`, plus the `StringArena` wrapper below. A `lasso` interner
+(`Rodeo` while building, `RodeoReader` once frozen) is the recommended
+backing, giving O(1) indexed resolution once frozen; the exact crate is an
+implementation choice for RSS-A.5.c. Interning names and dirnames this way
+gives the flat store both dirname deduplication (which the existing
+`Arc<Path>` `PathInterner` already provides) and basename deduplication
+(which it does not), and shrinks each reference from a pointer-sized
+`Arc<Path>` to a 4-byte handle.
 
-The extension: the arena gains a non-interned blob region for the
+The second part: the arena gains a non-interned blob region for the
 variable-length extras tail (symlink target, xattr/ACL/checksum bytes,
 optional user/group names). Interning is the wrong tool for these -
 they are mostly unique and some are binary - so they are appended to a
@@ -203,7 +243,8 @@ growable byte region and referenced by `(offset, len)`:
 
 ```rust
 pub struct StringArena {
-    /// Interned path strings (names, dirnames) - RSS-8 lasso interner.
+    /// Interned path strings (names, dirnames). Built by RSS-A.5.c;
+    /// resolves a 4-byte PathHandle to a string in O(1) once frozen.
     paths: PathArena,
     /// Append-only byte region for non-interned variable tails
     /// (symlink targets, xattr/ACL/checksum blobs, user/group names).
@@ -211,18 +252,20 @@ pub struct StringArena {
 }
 ```
 
-This keeps the RSS-8 contract intact: `PathHandle` resolution is
-unchanged, the build-then-freeze lifecycle is unchanged, and the drop
-semantics remain a single bulk free (the `blobs` `Vec` and the interner
+The intended contract: `PathHandle` resolution is an indexed read, the
+arena follows a build-then-freeze lifecycle (mutable interner while the
+file list is being built, immutable reader once frozen), and the drop
+semantics are a single bulk free (the `blobs` `Vec` and the interner
 chunks free in O(chunks), mirroring upstream `pool_destroy()`).
 
 ### Offset-based indexing scheme
 
 A header references its variable tail through two reference kinds:
 
-- `PathHandle` for `name` and `dirname`: a 4-byte `Spur` indexed into
-  the interner. Resolution is `arena.paths.resolve(handle) -> &str`
-  (RSS-8.a API), an O(1) indexed read with no hash lookup once frozen.
+- `PathHandle` for `name` and `dirname`: a 4-byte handle indexed into
+  the interner that RSS-A.5.c builds. Resolution is
+  `arena.paths.resolve(handle) -> &str`, an O(1) indexed read with no
+  hash lookup once frozen.
 - `ExtrasRef` for the optional extras tail: a 4-byte arena offset (or
   the `NO_EXTRAS` sentinel) pointing into `arena.blobs`. The extras
   tail is a length-prefixed, self-describing record: a 2-byte presence
@@ -250,8 +293,8 @@ Because the tail is written once at build time and never mutated,
 offsets are stable for the life of the arena.
 
 Resolution helpers live on the flat store, not on the header (the
-header has no arena in scope), matching the RSS-8.a accessor-with-arena
-pattern:
+header has no arena in scope), since the header holds only handles and
+offsets and needs the arena to resolve them:
 
 ```rust
 impl FlatFileList {
@@ -270,9 +313,10 @@ filter. Implications:
 
 - Sorting calls the existing comparator (`compare_file_entries`,
   `name_cmp`) but operates on `index` slots, resolving each slot's
-  `name`/`dirname` through the arena. This is the same resolve cost
-  RSS-9.a already accepts for the PathHandle migration; the only change
-  is that the comparator indexes through `index[i]` into `headers`.
+  `name`/`dirname` through the arena. The comparator gains an
+  arena-resolve step (handle to `&str`) and indexes through `index[i]`
+  into `headers`; this resolve cost is new work the flat store accepts in
+  exchange for moving 4-byte indices instead of 48-64-byte headers.
 - Deduplication (`flist_clean`) marks duplicate header indices in a
   side bitset rather than removing entries, then drops them from
   `index`. Headers themselves are never removed, preserving offset
@@ -281,26 +325,40 @@ filter. Implications:
   filtered view, again without moving headers. This matches upstream,
   where excluded entries stay in `flist` and are skipped by NDX.
 
-## Integration with existing PathHandle/StringArena work
+## Relationship to the existing arena prototype and dirname interner
 
-The flat flist is a strict superset of the RSS-8/9 arena migration, not
-a parallel design:
+There is no shipped `PathHandle`/`PathArena` migration to build on. The
+RSS-A.0.a audit (`docs/audit/arena-prototype-landing-gap.md`) verified the
+actual landed state, which the flat store relates to as follows:
 
-- RSS-8 already replaced `name`/`dirname` with `PathHandle`. The flat
-  header stores those same handles. No second name-storage scheme.
-- RSS-9 already threads `&PathArena` (the interner) through every sort,
-  filter, and transfer consumer. The flat store reuses those call
-  sites verbatim; consumers receive `&FlatFileList` (which owns the
-  arena) instead of `(&[FileEntry], &PathArena)`, a mechanical change.
-- The build-then-freeze lifecycle, drop-as-bulk-free semantics, and
-  per-segment arena ownership from RSS-8.a carry over unchanged.
+- The production `FileEntry` still uses `name: PathBuf` and
+  `dirname: Arc<Path>` plus `extras: Option<Box<FileEntryExtras>>`. The
+  flat store replaces all three: names and dirnames become 4-byte handles
+  into a new interner (RSS-A.5.c), and extras become a packed arena tail.
+- The only landed deduplication is the `Arc<Path>` dirname `PathInterner`
+  (`crates/protocol/src/flist/intern.rs`, a `HashMap<PathBuf, Arc<Path>>`).
+  It dedups dirnames but not basenames, and it returns a pointer-sized
+  `Arc<Path>`, not a 4-byte handle. The flat store's interner subsumes it:
+  same dirname deduplication, plus basename deduplication, plus a 4-byte
+  reference. Once the flat path is live the `Arc<Path>` interner is
+  redundant and can be retired.
+- A `bumpalo` arena prototype (`ArenaFileEntry` / `ArenaFileEntryBuilder` /
+  `FilePath` in `crates/protocol/src/flist/entry/arena.rs`) was the only
+  arena code that landed. It had no production caller and was removed in
+  RSS-A.0.b. It is not a foundation this design extends; the flat store is
+  a fresh build.
+- There is therefore no pre-existing build-then-freeze lifecycle,
+  drop-as-bulk-free arena, or `&PathArena`-threaded consumer to reuse.
+  RSS-A.5.c builds the interner and its lifecycle; RSS-A.6..A.9 thread
+  `&FlatFileList` (which owns the arena) through the sort, filter,
+  transfer, and engine consumers, replacing today's `&[FileEntry]` plus
+  `&PathInterner` call sites.
 
-The only new arena surface is the `blobs` byte region for extras tails,
-which did not exist in RSS-8 because RSS-8 scoped itself to paths. The
-extras compaction recommended in RSS-A.12 (replace `Option<u32>`/
-`Option<i64>` extras fields with raw values plus a presence mask) is
-realized naturally by the extras-tail layout above: the presence mask
-in the tail is exactly the RSS-A.12 bitfield.
+The `blobs` byte region for extras tails is likewise new. The extras
+compaction recommended in RSS-A.12 (replace `Option<u32>`/`Option<i64>`
+extras fields with raw values plus a presence mask) is realized naturally
+by the extras-tail layout above: the presence mask in the tail is exactly
+the RSS-A.12 bitfield.
 
 ## INC_RECURSE incremental segment growth
 
@@ -328,8 +386,10 @@ This preserves the existing per-segment lifetime and bounds memory:
 - A new segment appends a fresh `FlatFileList`; the global NDX continues
   from the prior segment's `ndx_end()`, exactly as today.
 - `index` is per-segment. Segments are independent sort/compare/transfer
-  domains (RSS-8.a establishes that cross-segment handle comparison is
-  never needed), so no global index is required.
+  domains - cross-segment handle comparison is never needed because each
+  segment carries its own interner and NDX range - so no global index is
+  required. (This mirrors today's per-segment `Vec<FileEntry>` ownership
+  in `SegmentedFileList`.)
 - When a segment is fully consumed, its `FlatFileList` is dropped,
   freeing its `headers` `Vec`, its `arena.blobs`, and its interner
   chunks in one pass - matching upstream's per-flist pool destroy.
@@ -343,16 +403,20 @@ This design feeds the existing RSS-A implementation tracker. The phasing
 below maps the design onto those task slots; exact slot assignments are
 finalized in the tracker.
 
-1. **Build the store behind an accessor facade (RSS-A.5).** Introduce
-   `FlatFileList`, `FileEntryHeader`, and the `blobs` arena extension.
-   The file-list builder (`read`/walker path) emits headers and arena
-   tails. Expose accessor methods (`name`, `dirname`, `link_target`,
-   `checksum`, ...) so consumers read through one API. Keep the old
-   `Vec<FileEntry>` path compiling in parallel behind a build flag.
+1. **Build the store behind an accessor facade (RSS-A.5).** First build
+   the 4-byte name/dirname interner and its `PathHandle` type (RSS-A.5.c),
+   since none exists today. Then introduce `FlatFileList`,
+   `FileEntryHeader`, and the `blobs` arena region. The file-list builder
+   (`read`/walker path) emits headers and arena tails. Expose accessor
+   methods (`name`, `dirname`, `link_target`, `checksum`, ...) so consumers
+   read through one API. Keep the old `Vec<FileEntry>` path compiling in
+   parallel behind a build flag.
 2. **Migrate the sort consumer (RSS-A.6).** Point `sort_file_list`,
    `compare_file_entries`, `name_cmp`, and `flist_clean` at the
-   `index: Vec<u32>` permutation. Reuse the RSS-9.a arena-threaded
-   comparators. Verify byte-identical sort order against golden tests.
+   `index: Vec<u32>` permutation. Extend the comparators to resolve each
+   slot's handle through the arena (new work - there is no arena-threaded
+   comparator to reuse). Verify byte-identical sort order against golden
+   tests.
 3. **Migrate the filter consumer (RSS-A.7).** Filter evaluation reads
    `name`/`dirname` via the flat accessors and marks exclusions in the
    presence/index structures rather than mutating a `Vec`.
@@ -384,8 +448,8 @@ no extras), building on the RSS-A.2 audit numbers:
 |---|---:|---:|---|
 | Per-entry inline node | 96 B | 48 B | header replaces FileEntry |
 | `Vec` capacity slack | up to 50% | up to 50% of 48 B | smaller base shrinks slack |
-| Name heap (per entry) | ~46 B | 0 (arena, dedup) | already removed by RSS-8 |
-| Dirname heap | ~0 (shared) | 0 | unchanged |
+| Name heap (per entry) | ~46 B | 0 (arena, dedup) | removed by the new interner (RSS-A.5.c) |
+| Dirname heap | ~0 (shared) | 0 | `Arc<Path>` interner today; 4-byte handle in flat store |
 | Extras malloc header | 16 B when set | 0 | tail packed in arena |
 | Per-entry malloc metadata | ~16-32 B | 0 | no per-entry alloc |
 
@@ -403,16 +467,16 @@ quantify.
 - Scope is the `protocol` crate's `flist` module plus its direct
   consumers in `transfer`, `engine`, and `core`. There are no external
   crate consumers, so this is a workspace-internal refactor with no
-  semver implications, consistent with the RSS-8 assessment.
+  semver implications.
 - Wire format is unchanged. The flat store is purely an in-memory
   representation; encode/decode produce byte-identical wire output.
   Golden wire-format tests (`crates/protocol/tests/golden_*`) are the
   binding contract and must stay green at every step.
-- The public `FileEntry` type's accessor methods change shape (they
-  already changed in RSS-8 to take `&PathArena`). Under the flat store
-  they move onto `FlatFileList` and take a header index. A thin
-  `FileEntry`-shaped view can be retained during migration so consumers
-  convert incrementally.
+- The public `FileEntry` type's accessor methods change shape. Today they
+  return owned/`Arc` path data directly from the struct; under the flat
+  store they move onto `FlatFileList` and take a header index, resolving
+  through the arena. A thin `FileEntry`-shaped view can be retained during
+  migration so consumers convert incrementally.
 - `FileListSegment::entries: Vec<FileEntry>` becomes a per-segment
   `FlatFileList`. `SegmentedFileList` accessors (global NDX lookup)
   keep their signatures.
@@ -476,12 +540,17 @@ should proceed on the strength of the estimates alone.
 
 ## Cross-references
 
+- `docs/audit/arena-prototype-landing-gap.md` - RSS-A.0.a audit
+  establishing that the `PathHandle`/`PathArena` migration never landed;
+  the basis for this document's premise correction (RSS-A.0.c).
 - `docs/audit/file-entry-layout-audit.md` - RSS-A.2 layout audit and
   per-entry overhead numbers cited here.
-- `docs/design/rss-8a-arena-handle-type.md` - PathHandle / PathArena
-  definition and build-then-freeze lifecycle this design extends.
-- `docs/design/rss-9a-sort-consumer-pathhandle-migration.md` - arena
-  threading through sort consumers, reused by RSS-A.6.
+- `docs/design/rss-8a-arena-handle-type.md` - earlier PathHandle /
+  PathArena design proposal. Not implemented; see the audit above. The
+  4-byte handle described there is the type RSS-A.5.c must still build.
+- `docs/design/rss-9a-sort-consumer-pathhandle-migration.md` - earlier
+  proposal for threading the arena through sort consumers. Not
+  implemented; RSS-A.6 does this work from scratch.
 - `docs/design/flist-memory-benchmark-plan.md` - 1M-file RSS benchmark
   used for RSS-A.11 validation.
 - `crates/protocol/src/flist/entry/core.rs` - current `FileEntry`.
