@@ -1,5 +1,14 @@
 # RSS-8.b: FileEntry read-path migration to PathHandle
 
+> **Status: prototype / not landed.** This read-path migration was never
+> applied. The production `FileEntry` still uses `PathBuf` + `Arc<Path>`,
+> and no `PathHandle`/`PathInterner`-over-arena type exists in the tree.
+> The only landed dedup is the `Arc<Path>` dirname interner. The real
+> arena/flat backing store is designed in
+> `docs/design/flat-flist-representation.md` and built from scratch by
+> RSS-A.5.a-f (gated on RSS-2 profiling). See
+> `docs/audit/arena-prototype-landing-gap.md`.
+
 Task: RSS-8.b. Branch: `docs/rss-8b-read-path-migration-spec`.
 Prerequisites: RSS-8.a (PR #4980 - defines `PathHandle` as a 4-byte
 `lasso::Spur` handle replacing `PathBuf`/`Arc<Path>` in FileEntry),

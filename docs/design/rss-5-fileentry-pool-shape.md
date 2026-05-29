@@ -1,5 +1,15 @@
 # RSS-5: pool-allocator-backed `FileEntry` shape
 
+> **Status: prototype / not landed.** This pool-allocator shape and the
+> RSS-7 `ArenaFileEntry` prototype it references were never applied to
+> the production file list. The shipping `FileEntry` still uses `PathBuf`
+> + `Arc<Path>`, no `PathHandle`/arena type exists in the tree, and the
+> unused `bumpalo` prototype has since been removed. The only landed
+> dedup is the `Arc<Path>` dirname interner. The real arena/flat backing
+> store is designed in `docs/design/flat-flist-representation.md` and
+> built from scratch by RSS-A.5.a-f (gated on RSS-2 profiling). See
+> `docs/audit/arena-prototype-landing-gap.md`.
+
 Task: RSS-5. Branch: `docs/rss-5-fileentry-pool-shape`.
 Prerequisites: `docs/audits/rss-3-fileentry-size-breakdown.md` (cost
 analysis), `docs/design/rss-4-arena-allocator-eval.md` (recommends

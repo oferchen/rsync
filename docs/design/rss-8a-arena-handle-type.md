@@ -1,5 +1,13 @@
 # RSS-8.a: arena-handle type definition for FileEntry paths
 
+> **Status: prototype / not landed.** This `PathHandle` type was never
+> added to the tree. The production `FileEntry` still uses `PathBuf` +
+> `Arc<Path>`; no `PathHandle`/`PathArena` type exists. The only landed
+> dedup is the `Arc<Path>` dirname interner. The real arena/flat backing
+> store is designed in `docs/design/flat-flist-representation.md` and
+> built from scratch by RSS-A.5.a-f (gated on RSS-2 profiling). See
+> `docs/audit/arena-prototype-landing-gap.md`.
+
 Task: RSS-8.a. Branch: `docs/rss-8a-arena-handle-type`.
 Prerequisites: RSS-5 (pool-allocator FileEntry shape), RSS-7 (arena
 path prototype). Downstream: RSS-8.b (migration implementation),

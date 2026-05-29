@@ -1,5 +1,14 @@
 # RSS-9.b: filter consumer PathHandle migration
 
+> **Status: prototype / not landed.** This filter-consumer migration was
+> never applied. The prerequisite `PathHandle` type does not exist; the
+> production `FileEntry` still uses `PathBuf` + `Arc<Path>`. The only
+> landed dedup is the `Arc<Path>` dirname interner. The real arena/flat
+> backing store is designed in
+> `docs/design/flat-flist-representation.md` and built from scratch by
+> RSS-A.5.a-f (gated on RSS-2 profiling). See
+> `docs/audit/arena-prototype-landing-gap.md`.
+
 Task: RSS-9.b (#2926). Branch: `docs/rss-9b-filter-pathhandle`.
 Prerequisites: RSS-8.a (PathHandle type - 4-byte `lasso::Spur`),
 RSS-8.b (FileEntry read-path migration), RSS-8.c (FileEntry write-path
