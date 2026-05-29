@@ -55,7 +55,7 @@ fn collect_files(root: &Path, out: &mut Vec<PathBuf>) {
 
 /// Snapshots the live dhat heap and prints a labelled line plus the byte/block
 /// delta against the previous snapshot.
-fn snapshot(label: &str, prev_bytes: &mut u64, prev_blocks: &mut u64) {
+fn snapshot(label: &str, prev_bytes: &mut usize, prev_blocks: &mut usize) {
     let s = dhat::HeapStats::get();
     let db = s.curr_bytes as i64 - *prev_bytes as i64;
     let dn = s.curr_blocks as i64 - *prev_blocks as i64;
@@ -97,8 +97,8 @@ fn main() {
     // Profiled region of interest: build the resident flist.
     // testing() mode enables HeapStats::get() to return live statistics.
     let _profiler = dhat::Profiler::builder().testing().build();
-    let mut pb = 0u64;
-    let mut pn = 0u64;
+    let mut pb = 0usize;
+    let mut pn = 0usize;
     snapshot("0_baseline", &mut pb, &mut pn);
 
     // Phase 1: reserve the Vec<FileEntry> backing buffer. This is the single
