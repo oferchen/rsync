@@ -516,27 +516,189 @@ If profiling does not corroborate the estimates, the design is revised
 or the flat store is not adopted. No implementation step past RSS-A.5
 should proceed on the strength of the estimates alone.
 
-## Open questions
+## Upstream-grounded layout resolution (RSS-A.5.f)
 
-1. **Inline size versus conditional size.** Should `size` stay an
-   inline `u64` (48-byte header) or move to a conditional arena field
-   following upstream's `len32` + `FLAG_LENGTH64` split? The latter
-   saves 4 bytes inline for the > 99% of files under 4 GB but adds an
-   arena read for large files. Decide with the RSS-A.11 profile.
-2. **Mode width.** Upstream uses `uint16` for mode. oc-rsync stores
-   `u32`. Narrowing to `u16` saves 2 bytes inline but must be verified
-   against upstream parity for any upper mode bits oc-rsync relies on.
-3. **Extras tail read ergonomics.** Whether consumers read individual
-   extras fields on demand (cheapest) or reconstruct a transient
-   `FileEntryExtras` view (most compatible with current call sites).
-   Likely both: a view for migration, on-demand reads for hot paths.
-4. **Arena blob fragmentation.** Whether the append-only `blobs` region
-   needs alignment padding for the `u32`/`i64` extras fields, and
-   whether unaligned reads are acceptable on all target architectures.
-5. **`index` materialization cost.** Whether to keep a single
-   `Vec<u32>` index or multiple views (sorted, filtered, transfer
-   order); profiling should confirm the index does not reintroduce
-   meaningful overhead at 1M entries.
+This section resolves the open questions below against the real upstream
+`struct file_struct` and `union file_extras` layout, read from the local
+upstream tree (`target/interop/upstream-src/rsync-3.4.1/`). It supersedes
+the earlier note that the `file_struct` quote came from the RSS-A.2 audit
+because the tree was absent; the definition is now confirmed first-hand.
+Every citation below is a file:line that was read directly.
+
+### Confirmed upstream field set and sizes
+
+The authoritative `file_struct` (upstream: `rsync.h:801-812`,
+`#[derive]`-free C) is 24 bytes fixed on a 64-bit target:
+
+```c
+struct file_struct {       // upstream: rsync.h:801
+    const char *dirname;   //  8 B  - rsync.h:802, shared pointer (lastdir)
+    time_t modtime;        //  8 B  - rsync.h:803
+    uint32 len32;          //  4 B  - rsync.h:804, low 32 bits of length
+    uint16 mode;           //  2 B  - rsync.h:805, type + permissions
+    uint16 flags;          //  2 B  - rsync.h:806, FLAG_* bits
+    const char basename[]; //  0 B  - rsync.h:808, flexible array tail
+};                         // = 24 B = FILE_STRUCT_LEN (rsync.h:827)
+```
+
+The earlier draft's quoted definition matches the real source exactly.
+The `FileEntryHeader` field set is a faithful superset: it carries
+`dirname`, `mtime`, `size`, `mode`, `flags`, and a name reference, and
+adds inline `uid`/`gid`/`mtime_nsec`/`extras`/`present` fields that
+upstream keeps as conditional 4-byte extras rather than inline. The flat
+header trades upstream's per-allocation conditional extras for a few
+always-present inline words plus a `present` bitfield; this is the
+deliberate "wider node, simpler access" choice, kept within 48 bytes
+(2x upstream's 24, not 6.7x like the legacy `FileEntry`).
+
+### How upstream packs variable extras, and how `ExtrasRef` mirrors it
+
+Upstream does not store optional metadata inline. Each optional field is a
+4-byte `union file_extras { int32 num; uint32 unum; const char* ptr; }`
+slot (upstream: `rsync.h:786-792`, `EXTRA_LEN = sizeof(union file_extras)`
+at `rsync.h:831`). The slots are allocated **before** the `file_struct`
+pointer in the same block and addressed by negative index:
+`REQ_EXTRA(f,ndx) = (union file_extras*)(f) - (ndx)` (upstream:
+`rsync.h:837`) for always-present-when-enabled fields (uid/gid/acl/xattr,
+selected by the global `*_ndx` counters at `rsync.h:816-823`), and
+`OPT_EXTRA(f,bump)` (upstream: `rsync.h:838`) for per-entry-optional
+fields whose presence is computed from the `flags` via the `*_BUMP`
+macros (`rsync.h:844-848`). The total extra count for a node is summed
+incrementally in `extra_len` as each optional field is detected
+(upstream: `flist.c:704` init, then `flist.c:965,972,976,980,984,1007`
+for hardlink/ACL/checksum/length64/nsec/device), then the whole block is
+allocated as `FILE_STRUCT_LEN + extra_len + basename_len + linkname_len`
+in one `pool_alloc` (upstream: `flist.c:1018-1025` recv side,
+`flist.c:1423-1433` sender side).
+
+This is exactly the model `ExtrasRef` mirrors, with one structural
+difference. Upstream selects which extras a node carries via *global*
+config indices plus per-entry flag bumps, so the slot order is implicit
+and shared across the whole flist. The flat store instead makes the
+selection *self-describing per entry*: `ExtrasRef` points at a tail in
+`arena.blobs` whose first 2 bytes are a presence mask, followed by the
+present fields in canonical order. The semantic content is the same set
+(symlink target, rdev, hardlink, acl/def-acl/xattr indices, checksum,
+user/group names, atime/crtime/nsec) - compare the flat tail layout
+("Offset-based indexing scheme" above) field-for-field against the
+upstream `F_*` accessors: `F_OWNER`/`F_GROUP` (`rsync.h:875-876`),
+`F_ACL`/`F_XATTR` (`rsync.h:877-878`), `F_ATIME`/`F_CRTIME`
+(`rsync.h:880-881`), `F_HL_GNUM`/`F_HL_PREV` (`rsync.h:884-885`),
+`F_RDEV_P` (`rsync.h:895`), `F_SUM` (`rsync.h:898`), `F_MOD_NSEC`
+(`rsync.h:858`), `F_HIGH_LEN` (`rsync.h:854`). The flat store pays a
+2-byte per-tail mask that upstream avoids by deriving presence from
+global config; in exchange it needs no global `*_ndx` state threaded
+through every accessor.
+
+### Name and dirname interning vs upstream's sharing
+
+Upstream stores the basename **inline** as the `file_struct` flexible
+array tail (upstream: `rsync.h:808`; written by `memcpy(bp, basename,
+basename_len)` at `flist.c:1027` / `flist.c:1435`), so there is no
+per-entry basename allocation but also **no basename deduplication** -
+two files named `README` in different directories store the string
+twice. The dirname is shared by a different mechanism: a `lastdir`
+one-entry cache. When consecutive entries share a directory prefix the
+same heap `lastdir` pointer is reused; only when the prefix changes is a
+new `lastdir` allocated (upstream: `flist.c:765-773` recv,
+`flist.c:1373-1380` sender; assigned via `file->dirname = lastdir` at
+`flist.c:1076` / `flist.c:1487`). The full path is reconstructed on
+demand by `f_name()`, which concatenates `dirname + '/' + basename`
+(upstream: `flist.c:3360-3377`). The sender additionally keeps a
+`F_PATHNAME` extra pointing at the on-disk root (upstream: `rsync.h:866`,
+`rsync.h:868`).
+
+The flat store's interner is therefore strictly stronger than upstream
+on basenames and equivalent on dirnames: it interns *both* name and
+dirname to 4-byte `PathHandle`s, giving basename deduplication upstream
+lacks (the duplicate-`README` case collapses to one arena string) while
+matching upstream's dirname sharing (upstream's `lastdir` cache shares
+only runs of identical consecutive dirnames; a true interner shares all
+occurrences). Reconstructing the full path is the flat-store analogue of
+`f_name()`: resolve both handles and join. The flat store has no need for
+a separate `F_PATHNAME` extra because name resolution is already an arena
+read, not a pointer into transfer-root-relative storage.
+
+### Final byte target and per-target padding caveats
+
+**Final target: 48 bytes on a 64-bit target**, the low end of the stated
+48-64 range, with the field order in the struct above yielding no tail
+padding (8+8+4+4+4+4+4+4+4+2+2 = 48). Caveats grounded in upstream:
+
+- Upstream's node is 24 bytes fixed (`FILE_STRUCT_LEN`, `rsync.h:827`)
+  plus conditional extras; the flat header's 48 bytes is 2x that, the
+  cost of inlining uid/gid/nsec/size that upstream conditionalizes. This
+  is acceptable per the sizing rationale above and far below the legacy
+  ~96-160 bytes.
+- 32-bit targets: upstream's `union file_extras` is 4 bytes there
+  (`PTRS_ARE_32`, `rsync.h:767-769`) and pointers shrink, but the flat
+  header's `i64 mtime` + `u64 size` stay 8 bytes each, so the header does
+  **not** shrink proportionally on 32-bit; it remains 48 bytes
+  (the scalar fields are pointer-width-independent). State the 48-byte
+  target as a 64-bit figure and add a `const _: () = assert!(size_of ==
+  48)` only under `#[cfg(target_pointer_width = "64")]`.
+- Extras-tail alignment: upstream rounds every node's `extra_len` up to a
+  multiple of `EXTRA_LEN` via `EXTRA_ROUNDING` (upstream: `rounding.h:1`
+  defines it as 1; applied at `flist.c:1014-1015` / `flist.c:1419-1420`),
+  and guarantees the int64 extras (`REQ_EXTRA64`) are allocated first so
+  they are 8-byte aligned (upstream: `rsync.h:840-842`). See open
+  question 4 below for how the flat `blobs` region handles this.
+
+### Resolved open questions
+
+1. **Inline size versus conditional size - RESOLVED: keep inline `u64`.**
+   Upstream splits size into `len32` (inline, `rsync.h:804`) plus a
+   conditional `F_HIGH_LEN` extra gated by `FLAG_LENGTH64`
+   (`rsync.h:855`, `flist.c:1466-1470`) purely because its base node is
+   24 bytes and every inline byte is precious. The flat header is already
+   48 bytes with no tail padding; reclaiming 4 bytes by conditionalizing
+   the high word would add an arena read on every large-file access and a
+   `present` bit, for under 10% of the node. Keep `size: u64` inline. The
+   `FLAG_LENGTH64` mechanism stays relevant only on the wire, which is
+   unchanged. Revisit only if the RSS-A.11 profile shows the inline word
+   is binding.
+2. **Mode width - RESOLVED: narrow to `u16`.** Upstream stores mode as
+   `uint16` (upstream: `rsync.h:805`) and assigns it directly from
+   `st.st_mode` (`flist.c:1472`). The full POSIX type+permission set
+   (`S_IFMT` | `ACCESSPERMS`) fits in 16 bits, and the wire encodes mode
+   as a 32-bit value but upstream truncates to `uint16` on receive, so
+   there are no upper mode bits to preserve. Narrow `FileEntryHeader.mode`
+   from `u32` to `u16`, saving 2 bytes; reallocate them to keep the node
+   at a clean 48 with the `present`/`flags` `u16` pair.
+3. **Extras tail read ergonomics - RESOLVED: both, mirroring upstream.**
+   Upstream itself uses both styles: per-field macro reads on hot paths
+   (`F_OWNER`, `F_SUM`, etc., `rsync.h:875-899`) and full reconstruction
+   only where a complete view is needed (`f_name`, `flist.c:3360`).
+   Provide on-demand per-field accessors on `FlatFileList` for hot paths
+   and a transient `FileEntryExtras` view constructor for migration call
+   sites, exactly as the design's accessor list already sketches.
+4. **Arena blob fragmentation / alignment - RESOLVED: byte-packed tail,
+   unaligned reads.** Upstream keeps its extras 8-byte aligned by
+   prepending them and ordering int64 slots first (`rsync.h:840-842`,
+   `EXTRA_ROUNDING` at `rounding.h:1`). The flat `blobs` tail cannot cheaply
+   replicate that because tails are densely appended at arbitrary offsets.
+   Resolve by reading multi-byte extras fields with explicit
+   `from_le_bytes` / `read_unaligned`-equivalent byte reads rather than
+   reinterpreting a `*const u32`; this is endian-stable and alignment-safe
+   on all targets (including strict-alignment ones), and the extras path is
+   cold (only entries with symlinks/devices/checksums hit it), so the
+   byte-assembly cost is negligible. Do **not** pad the `blobs` region;
+   padding would reintroduce the per-entry slack the flat store exists to
+   remove.
+5. **`index` materialization cost - RESOLVED: single `Vec<u32>`, alias
+   when unsorted.** Upstream proves the sort-the-pointers model: it keeps
+   `files` in build order and a separate `sorted` permutation
+   (upstream: `rsync.h:943` `struct file_struct **files, **sorted;`),
+   sorting only the pointer array via `fsort`/`file_compare`
+   (`flist.c:1696-1756`). Crucially, when no unsorted view is needed
+   upstream aliases `sorted = files` and allocates no second array
+   (upstream: `flist.c:2149-2153`, gated on `need_unsorted_flist`). The
+   flat store adopts the same discipline: one `index: Vec<u32>`, and when
+   build order already equals transfer order, treat `index` as the
+   identity permutation (or skip materializing it) rather than allocating
+   parallel sorted/filtered views. A `u32` index at 1M entries is 4 MB, an
+   order of magnitude below the per-entry savings, matching upstream's
+   single-pointer-array overhead.
 
 ## Cross-references
 
@@ -564,6 +726,7 @@ should proceed on the strength of the estimates alone.
 - upstream: `flist.c` (`make_file`, `f_name`, `flist_new`,
   `send_extra_file_list`), `rsync.h` (`struct file_struct`,
   `union file_extras`), `lib/pool_alloc.c` (pool allocate / destroy).
-  Consult these for exact contiguous-layout and bulk-free semantics;
-  the upstream tree was not present locally at authoring time, so the
-  `file_struct` definition above is quoted from the RSS-A.2 audit.
+  The "Upstream-grounded layout resolution (RSS-A.5.f)" section above
+  confirms the `file_struct` / `file_extras` layout, extras packing, and
+  sort-the-pointers model against the local upstream tree
+  (`target/interop/upstream-src/rsync-3.4.1/`), with file:line citations.
