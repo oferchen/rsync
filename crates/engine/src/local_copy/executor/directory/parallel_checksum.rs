@@ -108,8 +108,15 @@ pub(crate) fn prefetch_checksums(
             let pool_dst = Arc::clone(&buffer_pool);
 
             let (source_checksum, destination_checksum) = rayon::join(
-                || compute_file_checksum(&pair.source, algorithm, &pool_src),
-                || compute_file_checksum(&pair.destination, algorithm, &pool_dst),
+                || compute_file_checksum(&pair.source, pair.source_size, algorithm, &pool_src),
+                || {
+                    compute_file_checksum(
+                        &pair.destination,
+                        pair.destination_size,
+                        algorithm,
+                        &pool_dst,
+                    )
+                },
             );
 
             (
@@ -130,18 +137,23 @@ pub(crate) fn prefetch_checksums(
 }
 
 /// Computes the checksum of a single file.
+///
+/// Uses the pre-cached `file_size` from the file list entry rather than
+/// calling `file.metadata()`, eliminating a redundant fstat syscall per file.
+/// upstream: checksum.c:402 `file_checksum()` uses the stat-cached size.
 fn compute_file_checksum(
     path: &Path,
+    file_size: u64,
     algorithm: SignatureAlgorithm,
     buffer_pool: &Arc<BufferPool>,
 ) -> Option<FileChecksum> {
     let file = File::open(path).ok()?;
-    let metadata = file.metadata().ok()?;
-    let size = metadata.len();
+    let digest = hash_file_contents(file, file_size, algorithm, buffer_pool).ok()?;
 
-    let digest = hash_file_contents(file, size, algorithm, buffer_pool).ok()?;
-
-    Some(FileChecksum { digest, size })
+    Some(FileChecksum {
+        digest,
+        size: file_size,
+    })
 }
 
 /// Hashes file contents using the specified algorithm.
