@@ -98,7 +98,12 @@ pub trait VersionRequirement {
     fn check_message(&self, kernel: &KernelVersion) -> String {
         let min = self.min_version();
         if self.is_supported(kernel) {
-            format!("{}: supported (kernel {} >= {})", self.feature_name(), kernel, min)
+            format!(
+                "{}: supported (kernel {} >= {})",
+                self.feature_name(),
+                kernel,
+                min
+            )
         } else {
             format!(
                 "{}: unsupported (kernel {} < {} required)",
@@ -127,7 +132,10 @@ pub struct PbufRingRequirement;
 
 impl VersionRequirement for PbufRingRequirement {
     fn min_version(&self) -> KernelVersion {
-        KernelVersion { major: 5, minor: 19 }
+        KernelVersion {
+            major: 5,
+            minor: 19,
+        }
     }
     fn feature_name(&self) -> &str {
         "PBUF_RING"
@@ -139,7 +147,10 @@ pub struct LinkatRequirement;
 
 impl VersionRequirement for LinkatRequirement {
     fn min_version(&self) -> KernelVersion {
-        KernelVersion { major: 5, minor: 15 }
+        KernelVersion {
+            major: 5,
+            minor: 15,
+        }
     }
     fn feature_name(&self) -> &str {
         "LINKAT"
@@ -151,7 +162,10 @@ pub struct StatxRenameatRequirement;
 
 impl VersionRequirement for StatxRenameatRequirement {
     fn min_version(&self) -> KernelVersion {
-        KernelVersion { major: 5, minor: 11 }
+        KernelVersion {
+            major: 5,
+            minor: 11,
+        }
     }
     fn feature_name(&self) -> &str {
         "STATX/RENAMEAT"
@@ -439,7 +453,10 @@ mod tests {
     #[test]
     fn version_requirement_check_message_unsupported() {
         let req = IoUringRequirement;
-        let v = KernelVersion { major: 4, minor: 19 };
+        let v = KernelVersion {
+            major: 4,
+            minor: 19,
+        };
         let msg = req.check_message(&v);
         assert!(msg.contains("unsupported"), "got: {msg}");
         assert!(msg.contains("4.19"), "got: {msg}");
@@ -449,32 +466,71 @@ mod tests {
     #[test]
     fn pbuf_ring_requirement_needs_5_19() {
         let req = PbufRingRequirement;
-        assert_eq!(req.min_version(), KernelVersion { major: 5, minor: 19 });
-        assert!(!req.is_supported(&KernelVersion { major: 5, minor: 18 }));
-        assert!(req.is_supported(&KernelVersion { major: 5, minor: 19 }));
+        assert_eq!(
+            req.min_version(),
+            KernelVersion {
+                major: 5,
+                minor: 19
+            }
+        );
+        assert!(!req.is_supported(&KernelVersion {
+            major: 5,
+            minor: 18
+        }));
+        assert!(req.is_supported(&KernelVersion {
+            major: 5,
+            minor: 19
+        }));
     }
 
     #[test]
     fn send_zc_requirement_needs_6_0() {
         let req = SendZcRequirement;
         assert_eq!(req.min_version(), KernelVersion { major: 6, minor: 0 });
-        assert!(!req.is_supported(&KernelVersion { major: 5, minor: 19 }));
+        assert!(!req.is_supported(&KernelVersion {
+            major: 5,
+            minor: 19
+        }));
         assert!(req.is_supported(&KernelVersion { major: 6, minor: 0 }));
     }
 
     #[test]
     fn linkat_requirement_needs_5_15() {
         let req = LinkatRequirement;
-        assert_eq!(req.min_version(), KernelVersion { major: 5, minor: 15 });
-        assert!(!req.is_supported(&KernelVersion { major: 5, minor: 14 }));
-        assert!(req.is_supported(&KernelVersion { major: 5, minor: 15 }));
+        assert_eq!(
+            req.min_version(),
+            KernelVersion {
+                major: 5,
+                minor: 15
+            }
+        );
+        assert!(!req.is_supported(&KernelVersion {
+            major: 5,
+            minor: 14
+        }));
+        assert!(req.is_supported(&KernelVersion {
+            major: 5,
+            minor: 15
+        }));
     }
 
     #[test]
     fn statx_renameat_requirement_needs_5_11() {
         let req = StatxRenameatRequirement;
-        assert_eq!(req.min_version(), KernelVersion { major: 5, minor: 11 });
-        assert!(!req.is_supported(&KernelVersion { major: 5, minor: 10 }));
-        assert!(req.is_supported(&KernelVersion { major: 5, minor: 11 }));
+        assert_eq!(
+            req.min_version(),
+            KernelVersion {
+                major: 5,
+                minor: 11
+            }
+        );
+        assert!(!req.is_supported(&KernelVersion {
+            major: 5,
+            minor: 10
+        }));
+        assert!(req.is_supported(&KernelVersion {
+            major: 5,
+            minor: 11
+        }));
     }
 }

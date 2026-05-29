@@ -261,9 +261,9 @@ pub use dir_sandbox::{
     unlink_via_sandbox_or_fallback, unlinkat, utimensat, utimensat_via_sandbox_or_fallback,
 };
 pub use kernel_version::{
-    IO_URING_MIN_KERNEL, IoUringRequirement, KernelVersion, LinkatRequirement,
-    PbufRingRequirement, SendZcRequirement, StatxRenameatRequirement, VersionRequirement,
-    log_io_uring_probe_result, parse_kernel_version,
+    IO_URING_MIN_KERNEL, IoUringRequirement, KernelVersion, LinkatRequirement, PbufRingRequirement,
+    SendZcRequirement, StatxRenameatRequirement, VersionRequirement, log_io_uring_probe_result,
+    parse_kernel_version,
 };
 #[cfg(unix)]
 pub use linux_capabilities::openat2_supported;
