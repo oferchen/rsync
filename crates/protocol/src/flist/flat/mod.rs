@@ -18,6 +18,6 @@ mod header;
 mod tests;
 
 pub use header::{
-    ExtrasRef, FileEntryHeader, PathHandle, PRESENT_CONTENT_DIR, PRESENT_GID, PRESENT_LENGTH64,
-    PRESENT_MTIME_NSEC, PRESENT_UID,
+    ExtrasRef, FileEntryHeader, PRESENT_CONTENT_DIR, PRESENT_GID, PRESENT_LENGTH64,
+    PRESENT_MTIME_NSEC, PRESENT_UID, PathHandle,
 };
