@@ -53,6 +53,11 @@ pub use batched_writer::{BatchConfig, BatchStats, BatchedFileListWriter};
 pub use dir_tree::{DirTreeError, DirectoryTree};
 pub use entry::{FileEntry, FileType};
 pub use flags::{FileFlags, XMIT_HLINK_FIRST, XMIT_HLINKED, XMIT_SAME_RDEV_PRE28, XMIT_TOP_DIR};
+#[cfg(feature = "flat-flist")]
+pub use flat::{
+    ExtrasRef, FileEntryHeader, PRESENT_CONTENT_DIR, PRESENT_GID, PRESENT_LENGTH64,
+    PRESENT_MTIME_NSEC, PRESENT_UID, PathHandle,
+};
 pub use hardlink::{
     DevIno, HardlinkEntry, HardlinkLookup, HardlinkTable, trace_found_flist_match,
     trace_hashtable_for_dev, trace_leader_is, trace_looking_for_leader, trace_virtual_first,
