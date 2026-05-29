@@ -32,6 +32,8 @@
 mod batched_writer;
 mod dir_tree;
 mod entry;
+#[cfg(feature = "flat-flist")]
+mod flat;
 mod flags;
 mod hardlink;
 mod incremental;
