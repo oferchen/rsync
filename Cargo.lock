@@ -2857,7 +2857,6 @@ dependencies = [
 name = "protocol"
 version = "0.6.2"
 dependencies = [
- "bumpalo",
  "bytes",
  "compress",
  "criterion",

@@ -12,7 +12,6 @@
 //! string pool (upstream: flist.c:f_name()).
 
 mod accessors;
-mod arena;
 mod constructors;
 mod core;
 mod extras;
@@ -20,6 +19,5 @@ mod file_type;
 #[cfg(test)]
 mod tests;
 
-pub use self::arena::{ArenaFileEntry, ArenaFileEntryBuilder, FilePath};
 pub use self::core::FileEntry;
 pub use self::file_type::FileType;
