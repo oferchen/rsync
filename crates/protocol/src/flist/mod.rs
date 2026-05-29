@@ -56,7 +56,7 @@ pub use flags::{FileFlags, XMIT_HLINK_FIRST, XMIT_HLINKED, XMIT_SAME_RDEV_PRE28,
 #[cfg(feature = "flat-flist")]
 pub use flat::{
     ExtrasRef, FileEntryHeader, PRESENT_CONTENT_DIR, PRESENT_GID, PRESENT_LENGTH64,
-    PRESENT_MTIME_NSEC, PRESENT_UID, PathHandle,
+    PRESENT_MTIME_NSEC, PRESENT_UID, PathArena, PathHandle,
 };
 pub use hardlink::{
     DevIno, HardlinkEntry, HardlinkLookup, HardlinkTable, trace_found_flist_match,

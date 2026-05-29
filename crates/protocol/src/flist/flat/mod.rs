@@ -6,13 +6,14 @@
 //! the placeholder handle types it references.
 //!
 //! It is entirely additive and unwired. Nothing in production references
-//! these types; the legacy `Vec<FileEntry>` path is untouched. The real
-//! 4-byte path interner that backs [`PathHandle`] is built later
-//! (RSS-A.5.c), and threading `FlatFileList` through the sort, filter,
-//! transfer, and engine consumers is RSS-A.6+. All of that remains gated
-//! on RSS-2 allocation profiling per the design's validation gate.
+//! these types; the legacy `Vec<FileEntry>` path is untouched. The 4-byte
+//! path interner that backs [`PathHandle`] is [`PathArena`] (RSS-A.5.c);
+//! threading `FlatFileList` through the sort, filter, transfer, and engine
+//! consumers is RSS-A.6+. All of that remains gated on RSS-2 allocation
+//! profiling per the design's validation gate.
 
 mod header;
+mod intern;
 
 #[cfg(test)]
 mod tests;
@@ -21,3 +22,4 @@ pub use header::{
     ExtrasRef, FileEntryHeader, PRESENT_CONTENT_DIR, PRESENT_GID, PRESENT_LENGTH64,
     PRESENT_MTIME_NSEC, PRESENT_UID, PathHandle,
 };
+pub use intern::PathArena;
