@@ -1,4 +1,4 @@
-# io_uring Benefit Model (IUM-1)
+# io_uring Benefit Model (IUM-1..4)
 
 ## Purpose
 
@@ -379,9 +379,130 @@ threshold, not on open-ended auditing. The rule:
   rewritten - it does not linger as aspiration.
 
 Those thresholds are now recorded per use site in the "Committed scope and
-go/no-go decision (IUM-3)" section above. Filing the concrete
-remove-or-implement follow-ups once the named bench cells run is the next task
-**IUM-4**.
+go/no-go decision (IUM-3)" section above. The concrete remove-or-implement
+follow-ups are filed in the "Filed follow-ups (IUM-4)" section below.
+
+## Filed follow-ups (IUM-4)
+
+IUM-3 froze every magnitude-win path at its current default state and gated any
+expansion on a named bench cell clearing a stated threshold. IUM-4 turns that
+into a concrete worklist. Each item names the use site, the trigger (bench
+result or code fact), and the action. Nothing here changes default behaviour on
+its own - these are the follow-ups that fire when their gate condition is met.
+
+The list is grouped by the IUM-3 decision class. Bench-gated items stay open
+until their cell runs; code-fact items are doc/scope hygiene that can proceed
+without a bench.
+
+### GATE - receiver disk-batch writes (default-on today, win Untested)
+
+The one default-on path with no committed measurement. The follow-up is to run
+its cell and then either confirm or re-gate.
+
+- [ ] Run `nvme_data_path` / `nvme_data_path_production` (IUD-4 / IUD-9) on real
+      NVMe with queue depth >= 32, kernel 5.6+, and commit the numbers to a
+      results doc (no number is committed today).
+- [ ] If the path clears >= 10% throughput over buffered `write(2)` /
+      `copy_file_range` at >= 2 GiB sustained per file or >= 50K write IOPS:
+      record the regime in this doc and keep Auto policy default-on.
+- [ ] If it fails that bar in every tested regime: re-gate the disk-batch path
+      behind a size threshold or opt-in feature instead of leaving it
+      default-on under Auto policy. Leaving an unmeasured path default-on is the
+      exact gap this model was written to close.
+
+### GATE - file-data slurp read / write (opt-in, off by default)
+
+Stays opt-in until a multi-GB cell justifies a default flip.
+
+- [ ] Run `iouring_multi_gb_scale` (2 / 10 / 50 GiB cells, IUB-6..9) and
+      `nvme_data_path_production` with `iouring-data-writes` + `iouring-data-reads`
+      enabled, and record the crossover file size.
+- [ ] Re-derive the slurp gate from that crossover. Both the write gate
+      (`IOURING_DATA_WRITES_MIN_BYTES`, 1 MiB in
+      `engine/.../execute/iouring.rs`) and the read gate
+      (`IOURING_BASIS_SLURP_THRESHOLD`, 1 MiB in
+      `engine/src/concurrent_delta/strategy.rs`) are 1 MiB by assertion, not by
+      measurement. (The earlier "1 MiB / 64 KiB" framing in this doc's history
+      was imprecise: both gates are 1 MiB.) Replace the guessed value with the
+      measured break-even.
+- [ ] Default-flip only if the cell clears >= 10% over stdlib writes /
+      `copy_file_range` at multi-GB on NVMe; otherwise leave opt-in and record
+      the negative result so the prediction is not re-litigated.
+
+### GATE - SEND_ZC (opt-in, off by default)
+
+Stays opt-in; numbers are MISSING per IUS-4.
+
+- [ ] Run `ius_3_send_zc_vs_send` plus the SZC.b 10 GiB and SZC.c concurrent
+      cells on kernel 6.0+ with a `RegisteredBufferGroup`, and commit the
+      results (IUS-4 records the throughput input as MISSING - harness only).
+- [ ] Record the measured sub-`SEND_ZC_DISPATCH_MIN_BYTES` (4 KiB) crossover
+      where plain `IORING_OP_SEND` wins, replacing the asserted 4 KiB floor with
+      a measured one.
+- [ ] Promote out of `iouring-send-zc` only if SEND_ZC is demonstrably
+      lower-CPU than plain SEND at large registered-buffer payloads; otherwise
+      keep the feature opt-in and stop carrying it as aspirational scope.
+
+### KEEP - metadata STATX batch (default-on, win Untested)
+
+Default scope is frozen; do not deepen it without a number.
+
+- [ ] Run `iouring_high_file_count` at 100K and 1M small files on kernel 5.11+
+      (env-gated `BENCH_HIGH_FILE_COUNT` / `_1M`) and commit the result.
+- [ ] If io_uring STATX beats synchronous `statx(2)` by >= 15% wall-clock on the
+      file-list-build / quick-check phase: record the file-count break-even (the
+      doc's "a few hundred files" is a guess) and keep default-on.
+- [ ] If it does not clear that bar: do not invest in deeper STATX batching, and
+      cross-check whether the `--checksum` STATX overhead (STX, 3.34x) is better
+      closed by the sized-read fixes (STX-6 BufReader EOF probe, STX-8 redundant
+      fstat) than by io_uring STATX - those are syscall-count bugs, not a
+      batching opportunity.
+
+### SCOPE-DOWN - rename / link / unlink transient rings (correctness-parity only)
+
+No regime where the single-SQE transient-ring form beats the plain syscall
+(IUM-2 corroborates qualitatively: acquire below the flame-graph noise floor).
+These are kept as best-effort correctness-parity paths, not speed paths.
+
+- [ ] Do not build the persistent batched rename/link ring that the model says
+      would be needed for a win, until a bench first shows a head-to-head loss
+      for the plain syscall at high rename/link volume. No such bench exists in
+      `crates/fast_io/benches/` today (nothing times single `renameat2` /
+      `linkat` against `std::fs::rename` / the direct syscall).
+- [ ] Correct the use-site inventory: section (a) lists "unlinkat: removal
+      during `--delete`" as an io_uring metadata op, but there is no
+      `IORING_OP` unlink wrapper in the tree. The only `unlinkat` is the plain
+      `unlinkat(2)` syscall in `fast_io::dir_sandbox::at_syscalls`, which is not
+      an io_uring path. Drop the unlinkat claim from the io_uring metadata
+      surface (it belongs to the directory-sandbox syscall layer), so the model
+      does not credit io_uring with a path it does not own.
+
+### REMOVE-OR-JUSTIFY - ASYNC_CANCEL primitive (no production consumer)
+
+`IORING_OP_ASYNC_CANCEL` (opcode 14) ships as a library primitive
+(`io_uring/cancel.rs`: `cancel_by_user_data`, `cancel_all_by_fd`,
+`CancelOutcome`) but has no default-build production consumer. The only
+`cancel()` call in `transfer/src/pipeline/async_pipeline.rs` is a cooperative
+software `CancellationToken`, not the io_uring opcode. The cancel exports are
+referenced only by `lib.rs` / `mod.rs` re-exports and the crate's own tests.
+
+- [ ] Either wire the ASYNC_CANCEL primitive into a real in-flight-cancellation
+      path (timeout-driven SQE cancellation on the shared/per-thread rings) and
+      add the use-site to the IUM-1 model, or mark it explicitly as a tested
+      library primitive with no shipping consumer so it is not mistaken for
+      live scope. It is neither a throughput nor a latency win on its own; it is
+      a control-plane op, so it carries no benefit prediction either way.
+
+### Cross-cutting
+
+- [ ] When any cell above runs, update IUM-2's prediction-vs-evidence table:
+      flip the row from Untested to Confirmed or Refuted, and per the Decision
+      gate rule delete or rewrite any prediction the bench falsifies rather than
+      leaving it as aspiration.
+- [ ] Record kernel-floor reality in the results: the full perf tier needs
+      Linux 6.0+ (SEND_ZC), the basic ring is 5.1, STATX is 5.11, LINKAT is
+      5.15; RHEL 8 (4.18) is below every floor, so a "win" measured on a recent
+      kernel does not generalize to the oldest supported deployment targets.
 
 ## Cross-references
 
@@ -391,7 +512,8 @@ io_uring surface (`crates/fast_io/src/io_uring/`):
 - `statx.rs` - `IORING_OP_STATX` wrapper, `submit_statx_batch`.
 - `renameat2.rs` - `IORING_OP_RENAMEAT` wrapper, `renameat2_blocking`.
 - `linkat.rs` - `IORING_OP_LINKAT` wrapper, `submit_linkat_blocking`.
-- `cancel.rs` - `IORING_OP_ASYNC_CANCEL` for in-flight SQE cancellation.
+- `cancel.rs` - `IORING_OP_ASYNC_CANCEL` library primitive for in-flight SQE
+  cancellation; no default-build production consumer (see IUM-4).
 - `send_zc.rs` - `IORING_OP_SEND_ZC` zero-copy send, `ZeroCopySender`,
   `SEND_ZC_DISPATCH_MIN_BYTES`.
 - `disk_batch.rs` - `IoUringDiskBatch` batched receiver writes.
