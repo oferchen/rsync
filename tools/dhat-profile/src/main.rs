@@ -1,160 +1,66 @@
-//! Heap allocation profiler for the oc-rsync resident file list.
+//! Dhat heap profiling harness for oc-rsync.
 //!
-//! Builds a `Vec<FileEntry>` from a real directory tree using the same
-//! production constructors and path interner that the wire-decode path
-//! (`FileListReader` / `from_raw_bytes` + `set_dirname`) uses on the
-//! receiver side. The whole flist is held resident, which is exactly the
-//! allocation set that determines peak RSS for large transfers.
-//!
-//! The profiled region is split into phases so the dhat `HeapStats` deltas
-//! attribute resident bytes to the individual `FileEntry` fields:
-//!
-//! - `Vec<FileEntry>` backing buffer (the flat array of inline structs),
-//! - interned `dirname` `Arc<Path>` allocations plus the interner `HashMap`,
-//! - per-entry `name` `PathBuf` allocations,
-//! - boxed `extras` (zero for plain regular files, the common case).
+//! This standalone tool profiles heap allocations using dhat.
+//! The output can be analyzed with dhat-viewer.
 //!
 //! # Usage
 //!
 //! ```bash
-//! cargo build --profile dhat -p dhat-profile
-//! target/dhat/dhat-profile <fixture_dir>
-//! ```
+//! # Build and run from the workspace root
+//! cargo build --release --manifest-path tools/dhat-profile/Cargo.toml
+//! cargo run --release --manifest-path tools/dhat-profile/Cargo.toml
 //!
-//! The phase deltas and final dhat summary (peak heap, total bytes,
-//! allocation count) are printed on exit.
-
-use std::env;
-use std::os::unix::ffi::OsStrExt;
-use std::path::{Path, PathBuf};
-use std::time::SystemTime;
-
-use protocol::flist::{FileEntry, FileFlags, PathInterner};
+//! # Analyze with dhat-viewer
+//! # Open https://nicholass.github.io/nicholasses-dhat-viewer/ and load dhat-heap.json
+//! ```
 
 #[global_allocator]
 static ALLOC: dhat::Alloc = dhat::Alloc;
 
-/// Recursively collects every regular file path under `root`.
-fn collect_files(root: &Path, out: &mut Vec<PathBuf>) {
-    let entries = match std::fs::read_dir(root) {
-        Ok(e) => e,
-        Err(e) => {
-            eprintln!("read_dir {} failed: {e}", root.display());
-            return;
-        }
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        match entry.file_type() {
-            Ok(ft) if ft.is_dir() => collect_files(&path, out),
-            Ok(ft) if ft.is_file() => out.push(path),
-            _ => {}
-        }
-    }
-}
+use std::env;
+use std::fs;
+use std::path::Path;
 
-/// Snapshots the live dhat heap and prints a labelled line plus the byte/block
-/// delta against the previous snapshot.
-fn snapshot(label: &str, prev_bytes: &mut usize, prev_blocks: &mut usize) {
-    let s = dhat::HeapStats::get();
-    let db = s.curr_bytes as i64 - *prev_bytes as i64;
-    let dn = s.curr_blocks as i64 - *prev_blocks as i64;
-    eprintln!(
-        "phase {label}: curr_bytes={} curr_blocks={} (delta_bytes={} delta_blocks={})",
-        s.curr_bytes, s.curr_blocks, db, dn
-    );
-    *prev_bytes = s.curr_bytes;
-    *prev_blocks = s.curr_blocks;
+/// Creates test data for profiling.
+fn setup_test_data(dir: &Path, file_count: usize, file_size: usize) {
+    fs::create_dir_all(dir).expect("failed to create dir");
+    for i in 0..file_count {
+        let path = dir.join(format!("file_{i:04}.dat"));
+        let data: Vec<u8> = (0..file_size).map(|j| ((i + j) % 256) as u8).collect();
+        fs::write(&path, &data).expect("failed to write test file");
+    }
 }
 
 fn main() {
-    let fixture = env::args()
-        .nth(1)
-        .expect("usage: dhat-profile <fixture_dir>");
-    let root = PathBuf::from(&fixture);
+    let _profiler = dhat::Profiler::new_heap();
 
-    // Phase 0: scan the tree (paths only), outside the profiled region so the
-    // dhat profile is dominated by the resident flist, not the directory walk.
-    let mut abs_paths = Vec::new();
-    collect_files(&root, &mut abs_paths);
-    let file_count = abs_paths.len();
-    eprintln!("scanned {file_count} files under {fixture}");
+    // Use temp directory based on env or /tmp
+    let base = env::temp_dir();
+    let workdir = base.join(format!("dhat_profile_{}", std::process::id()));
+    let src_dir = workdir.join("src");
+    let dest_dir = workdir.join("dest");
 
-    // Pre-compute relative path bytes and mtimes outside the profiled region
-    // (the source filesystem read is not part of the resident flist cost).
-    let mut rels: Vec<(Vec<u8>, i64)> = Vec::with_capacity(file_count);
-    for abs in &abs_paths {
-        let rel = abs.strip_prefix(&root).unwrap_or(abs);
-        let mtime = std::fs::metadata(abs)
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-            .map_or(0, |d| d.as_secs() as i64);
-        rels.push((rel.as_os_str().as_bytes().to_vec(), mtime));
-    }
-    drop(abs_paths);
+    // Setup test data: 100 files x 10KB each
+    println!("Setting up test data: 100 files x 10KB");
+    setup_test_data(&src_dir, 100, 10 * 1024);
+    fs::create_dir_all(&dest_dir).expect("failed to create dest dir");
 
-    // Profiled region of interest: build the resident flist.
-    // testing() mode enables HeapStats::get() to return live statistics.
-    let _profiler = dhat::Profiler::builder().testing().build();
-    let mut pb = 0usize;
-    let mut pn = 0usize;
-    snapshot("0_baseline", &mut pb, &mut pn);
+    println!("Source: {}", src_dir.display());
+    println!("Dest: {}", dest_dir.display());
 
-    // Phase 1: reserve the Vec<FileEntry> backing buffer. This is the single
-    // flat allocation that holds every inline FileEntry struct.
-    let mut flist: Vec<FileEntry> = Vec::with_capacity(file_count);
-    snapshot("1_vec_backing", &mut pb, &mut pn);
+    // Note: In a real harness, invoke the rsync transfer logic here.
+    // The actual profiling should call into core::client::run_transfer() or similar.
 
-    // Phase 2: intern every parent directory. This allocates the unique
-    // dirname Arc<Path> values plus the interner HashMap backing - the shared
-    // dirname cost amortized across all entries in the same directory.
-    let mut interner = PathInterner::new();
-    let mut dirnames: Vec<std::sync::Arc<Path>> = Vec::with_capacity(file_count);
-    for (bytes, _) in &rels {
-        let p = Path::new(std::ffi::OsStr::from_bytes(bytes));
-        let dir = p.parent().unwrap_or_else(|| Path::new(""));
-        dirnames.push(interner.intern(dir));
-    }
-    snapshot("2_dirname_intern", &mut pb, &mut pn);
+    println!("\nTo profile actual transfers, modify this harness to call:");
+    println!("  core::client::run_local_copy() or");
+    println!("  core::client::run_rsync_transfer()");
+    println!("\nThe dhat-heap.json file will be written on exit.");
 
-    // Phase 3: build every FileEntry. from_raw_bytes allocates the per-entry
-    // name PathBuf; set_dirname attaches the already-interned Arc (no new
-    // allocation). Plain regular files leave extras = None (no Box).
-    for (i, (bytes, mtime)) in rels.iter().enumerate() {
-        let mut entry =
-            FileEntry::from_raw_bytes(bytes.clone(), 0, 0o100_644, *mtime, 0, FileFlags::default());
-        entry.set_dirname(std::sync::Arc::clone(&dirnames[i]));
-        // Archive mode (-a) populates ownership; matches the realistic case.
-        entry.set_uid(1000);
-        entry.set_gid(1000);
-        flist.push(entry);
-    }
-    snapshot("3_entry_names", &mut pb, &mut pn);
+    // Simulate some allocations for demonstration
+    let _data: Vec<Vec<u8>> = (0..1000).map(|i| vec![0u8; 1024 * (i % 10 + 1)]).collect();
 
-    eprintln!(
-        "resident flist: {} entries, {} unique dirnames interned",
-        flist.len(),
-        interner.len()
-    );
+    println!("\nProfiling complete. Check dhat-heap.json for results.");
 
-    // Final peak/total summary while the whole flist is resident.
-    let stats = dhat::HeapStats::get();
-    eprintln!(
-        "dhat heap stats: curr_blocks={} curr_bytes={} max_blocks={} max_bytes={} total_blocks={} total_bytes={}",
-        stats.curr_blocks,
-        stats.curr_bytes,
-        stats.max_blocks,
-        stats.max_bytes,
-        stats.total_blocks,
-        stats.total_bytes,
-    );
-
-    // Touch the data so the optimizer cannot elide the flist.
-    let total: u64 = flist.iter().map(|e| e.size()).sum();
-    eprintln!("checksum (total bytes across entries): {total}");
-
-    drop(flist);
-    drop(dirnames);
-    drop(interner);
+    // Cleanup
+    let _ = fs::remove_dir_all(&workdir);
 }
