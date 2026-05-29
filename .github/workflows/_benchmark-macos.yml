@@ -1,0 +1,141 @@
+name: Benchmark (macOS throughput)
+
+# Reusable workflow: macOS throughput comparison between oc-rsync and
+# upstream rsync 3.4.2 built from source.
+#
+# Best-effort: macOS runners have more wall-clock variance than
+# bare-metal Linux. Numbers are a regression sniff, not a merge gate.
+
+on:
+  workflow_call:
+    inputs:
+      cache_version:
+        description: 'Cache version for invalidation'
+        type: string
+        default: 'v1'
+      rust_toolchain:
+        description: 'Rust toolchain version'
+        type: string
+        default: 'stable'
+      timeout_minutes:
+        description: 'Job timeout in minutes'
+        type: number
+        default: 90
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark-macos:
+    name: throughput vs upstream rsync 3.4.2 (macOS, best-effort)
+    runs-on: macos-15
+    timeout-minutes: ${{ inputs.timeout_minutes || 90 }}
+    continue-on-error: true
+
+    env:
+      CARGO_TERM_COLOR: always
+      RUSTFLAGS: "-D warnings"
+      RUST_BACKTRACE: "full"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (${{ inputs.rust_toolchain || 'stable' }})
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: ${{ inputs.rust_toolchain || 'stable' }}
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ inputs.cache_version || 'v1' }}-${{ hashFiles('**/Cargo.lock') }}
+          key: benchmark-macos
+
+      - name: Install build dependencies
+        run: brew install xxhash zstd lz4 openssl@3 autoconf automake || true
+
+      - name: Build oc-rsync (release)
+        run: cargo build --locked --release --bin oc-rsync
+
+      - name: Cache upstream rsync
+        id: cache-rsync
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: target/interop/upstream-src/rsync-3.4.2
+          key: upstream-rsync-3.4.2-${{ runner.os }}-full
+
+      - name: Build upstream rsync 3.4.2
+        if: steps.cache-rsync.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p target/interop/upstream-src
+          cd target/interop/upstream-src
+
+          if [ ! -d rsync-3.4.2 ]; then
+            curl -L https://download.samba.org/pub/rsync/src/rsync-3.4.2.tar.gz | tar xz
+          fi
+
+          cd rsync-3.4.2
+          if [ ! -f rsync ]; then
+            ./configure \
+              --with-included-popt \
+              --disable-md2man \
+              CFLAGS="-O2"
+            make -j$(sysctl -n hw.ncpu)
+          fi
+
+      - name: Verify upstream rsync binary
+        run: target/interop/upstream-src/rsync-3.4.2/rsync --version | head -3
+
+      - name: Set up SSH loopback
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
+          cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
+          chmod 600 ~/.ssh/authorized_keys
+          # macOS: enable remote login via system preferences API
+          sudo systemsetup -setremotelogin on 2>/dev/null || true
+          ssh -o StrictHostKeyChecking=no localhost true
+
+      - name: Run benchmark
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/benchmark.py > benchmark_results_macos.json
+          cat benchmark_results_macos.json
+
+      - name: Generate benchmark report
+        run: |
+          set -euo pipefail
+          cp benchmark_results_macos.json benchmark_results.json
+          python3 .github/scripts/benchmark_report.py \
+            | sed 's/^## Performance Benchmark/## macOS Performance Benchmark/' \
+            > benchmark_report_macos.md
+          cat benchmark_report_macos.md
+
+      - name: Generate step summary
+        if: always()
+        run: |
+          {
+            echo "## macOS Performance Benchmark Results"
+            echo ""
+            echo "**Commit:** \`${GITHUB_SHA::8}\`"
+            echo "**Runner:** \`$(uname -m)\` on macOS $(sw_vers -productVersion)"
+            echo ""
+            if [ -f benchmark_report_macos.md ]; then
+              cat benchmark_report_macos.md
+            else
+              echo "Benchmark did not complete successfully."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: macos-throughput-bench
+          retention-days: 90
+          if-no-files-found: ignore
+          path: |
+            benchmark_results_macos.json
+            benchmark_report_macos.md
