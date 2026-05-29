@@ -12,12 +12,18 @@
 //! consumers is RSS-A.6+. All of that remains gated on RSS-2 allocation
 //! profiling per the design's validation gate.
 
+mod extras;
 mod header;
 mod intern;
 
 #[cfg(test)]
 mod tests;
 
+pub use extras::{
+    EXTRA_ACL, EXTRA_ATIME, EXTRA_ATIME_NSEC, EXTRA_CHECKSUM, EXTRA_CRTIME, EXTRA_DEF_ACL,
+    EXTRA_GROUP_NAME, EXTRA_HARDLINK, EXTRA_LINK_TARGET, EXTRA_RDEV, EXTRA_USER_NAME, EXTRA_XATTR,
+    ExtrasArena, ExtrasError, FlatExtras,
+};
 pub use header::{
     ExtrasRef, FileEntryHeader, PRESENT_CONTENT_DIR, PRESENT_GID, PRESENT_LENGTH64,
     PRESENT_MTIME_NSEC, PRESENT_UID, PathHandle,

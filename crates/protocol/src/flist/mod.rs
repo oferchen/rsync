@@ -55,8 +55,10 @@ pub use entry::{FileEntry, FileType};
 pub use flags::{FileFlags, XMIT_HLINK_FIRST, XMIT_HLINKED, XMIT_SAME_RDEV_PRE28, XMIT_TOP_DIR};
 #[cfg(feature = "flat-flist")]
 pub use flat::{
-    ExtrasRef, FileEntryHeader, PRESENT_CONTENT_DIR, PRESENT_GID, PRESENT_LENGTH64,
-    PRESENT_MTIME_NSEC, PRESENT_UID, PathArena, PathHandle,
+    EXTRA_ACL, EXTRA_ATIME, EXTRA_ATIME_NSEC, EXTRA_CHECKSUM, EXTRA_CRTIME, EXTRA_DEF_ACL,
+    EXTRA_GROUP_NAME, EXTRA_HARDLINK, EXTRA_LINK_TARGET, EXTRA_RDEV, EXTRA_USER_NAME, EXTRA_XATTR,
+    ExtrasArena, ExtrasError, ExtrasRef, FileEntryHeader, FlatExtras, PRESENT_CONTENT_DIR,
+    PRESENT_GID, PRESENT_LENGTH64, PRESENT_MTIME_NSEC, PRESENT_UID, PathArena, PathHandle,
 };
 pub use hardlink::{
     DevIno, HardlinkEntry, HardlinkLookup, HardlinkTable, trace_found_flist_match,
