@@ -303,8 +303,6 @@ windows-sys = "0.61"
 xattr = "1.6"
 # Zstandard codec - shared by compress and protocol (optional)
 zstd = "0.13"
-# Bump-allocator arena - used by protocol flist-arena-prototype feature (RSS-7)
-bumpalo = "3"
 # Pure-Rust TLS - daemon native TLS termination (optional, feature-gated)
 rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "std", "tls12"] }
 # PEM file parser for rustls certificate/key loading
