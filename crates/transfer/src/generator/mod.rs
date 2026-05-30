@@ -86,12 +86,12 @@ mod file_list;
 mod filters;
 pub mod io_error_flags;
 mod item_flags;
-pub(crate) mod itemize;
+pub mod itemize;
 mod open_source;
 mod protocol_io;
 mod segments;
 #[cfg(feature = "flat-flist")]
-mod sender_accessor;
+pub mod sender_accessor;
 mod stats;
 #[cfg(test)]
 mod tests;

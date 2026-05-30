@@ -42,7 +42,7 @@ use super::itemize::ItemizeContext;
 ///
 /// - `log.c:695-746` - itemize string construction in `log_formatted()`
 #[must_use]
-pub(crate) fn format_iflags_generic<T: FileEntryAccessor>(
+pub fn format_iflags_generic<T: FileEntryAccessor>(
     iflags: &ItemFlags,
     entry: &T,
     is_sender: bool,
@@ -117,8 +117,10 @@ pub(crate) fn format_iflags_generic<T: FileEntryAccessor>(
         } else {
             't'
         }
+    } else if !ctx.preserve_mtimes {
+        'T'
     } else {
-        if !ctx.preserve_mtimes { 'T' } else { 't' }
+        't'
     };
 
     // upstream: log.c:720-722 - perms, owner, group
@@ -195,7 +197,7 @@ pub(crate) fn format_iflags_generic<T: FileEntryAccessor>(
 /// - `options.c:2336-2338` - `stdout_format = "%i %n%L"` for `-i`
 /// - `log.c:627-636` - `%n` expansion (filename with trailing `/` for dirs)
 /// - `log.c:637-653` - `%L` expansion (` -> target` for symlinks)
-pub(crate) fn format_itemize_line_generic<T: FileEntryAccessor>(
+pub fn format_itemize_line_generic<T: FileEntryAccessor>(
     iflags: &ItemFlags,
     entry: &T,
     is_sender: bool,
