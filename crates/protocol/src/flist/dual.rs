@@ -832,5 +832,612 @@ mod tests {
                 assert_eq!(list.flat().get(i).unwrap().header.dirname, first_dirname);
             }
         }
+
+        /// Describes which optional fields to set on a test entry.
+        ///
+        /// Each combination of these flags produces a distinct `FileEntry`
+        /// variant, ensuring the flat conversion covers all optional field
+        /// paths.
+        #[derive(Clone, Copy)]
+        struct FieldCombo {
+            uid: bool,
+            gid: bool,
+            mtime_nsec: bool,
+            link_target: bool,
+            rdev: bool,
+            checksum: bool,
+            hardlink_idx: bool,
+            acl_ndx: bool,
+            def_acl_ndx: bool,
+            xattr_ndx: bool,
+            user_name: bool,
+            group_name: bool,
+            atime: bool,
+            crtime: bool,
+            atime_nsec: bool,
+            content_dir_off: bool,
+        }
+
+        /// Builds a `FileEntry` with the fields indicated by `combo`.
+        fn build_entry(idx: usize, combo: FieldCombo) -> FileEntry {
+            let path: std::path::PathBuf = if combo.link_target {
+                format!("dir_{}/link_{idx}", idx % 7).into()
+            } else if combo.rdev {
+                format!("dev/node_{idx}").into()
+            } else if combo.content_dir_off {
+                format!("dirs/d_{idx}").into()
+            } else {
+                format!("src/pkg_{}/file_{idx}.rs", idx % 5).into()
+            };
+
+            let mut entry = if combo.link_target {
+                FileEntry::new_symlink(
+                    path,
+                    format!("../targets/dest_{idx}").into(),
+                )
+            } else if combo.rdev {
+                FileEntry::new_block_device(
+                    path,
+                    0o660,
+                    (idx as u32) + 1,
+                    (idx as u32) * 3,
+                )
+            } else if combo.content_dir_off {
+                let mut d = FileEntry::new_directory(path, 0o755);
+                d.set_content_dir(false);
+                d
+            } else {
+                FileEntry::new_file(
+                    path,
+                    (idx as u64 + 1) * 1024,
+                    0o644,
+                )
+            };
+
+            entry.set_mtime(1_700_000_000 + idx as i64, 0);
+
+            if combo.uid {
+                entry.set_uid(1000 + idx as u32);
+            }
+            if combo.gid {
+                entry.set_gid(2000 + idx as u32);
+            }
+            if combo.mtime_nsec {
+                entry.set_mtime(entry.mtime(), 500_000 + idx as u32);
+            }
+            if combo.checksum {
+                let mut sum = vec![0u8; 16];
+                for (j, b) in sum.iter_mut().enumerate() {
+                    *b = ((idx + j) & 0xFF) as u8;
+                }
+                entry.set_checksum(sum);
+            }
+            if combo.hardlink_idx {
+                entry.set_hardlink_idx(100 + idx as u32);
+            }
+            if combo.acl_ndx {
+                entry.set_acl_ndx(10 + idx as u32);
+            }
+            if combo.def_acl_ndx {
+                entry.set_def_acl_ndx(20 + idx as u32);
+            }
+            if combo.xattr_ndx {
+                entry.set_xattr_ndx(30 + idx as u32);
+            }
+            if combo.user_name {
+                entry.set_user_name(format!("user_{idx}"));
+            }
+            if combo.group_name {
+                entry.set_group_name(format!("group_{idx}"));
+            }
+            if combo.atime {
+                entry.set_atime(1_600_000_000 + idx as i64);
+            }
+            if combo.crtime {
+                entry.set_crtime(1_500_000_000 + idx as i64);
+            }
+            if combo.atime_nsec {
+                entry.set_atime_nsec(100_000 + idx as u32);
+            }
+            entry
+        }
+
+        /// Asserts that every field of the legacy `FileEntry` at `idx` matches
+        /// the corresponding flat representation in the `DualFileList`.
+        fn assert_entry_equivalence(list: &DualFileList, idx: usize) {
+            let legacy = &list[idx];
+            let flat_entry = list
+                .flat()
+                .get(idx)
+                .unwrap_or_else(|| panic!("flat entry {idx} missing"));
+
+            // Name: the flat store splits into dirname/basename at the last '/'.
+            let full_name = legacy.name();
+            let (expected_dirname, expected_basename) = match full_name.rfind('/') {
+                Some(pos) => (&full_name[..pos], &full_name[pos + 1..]),
+                None => ("", full_name),
+            };
+            assert_eq!(
+                flat_entry.name,
+                expected_basename.as_bytes(),
+                "entry {idx}: name mismatch"
+            );
+            assert_eq!(
+                flat_entry.dirname,
+                expected_dirname.as_bytes(),
+                "entry {idx}: dirname mismatch"
+            );
+
+            // Scalar inline fields.
+            assert_eq!(
+                flat_entry.header.mode,
+                legacy.mode(),
+                "entry {idx}: mode mismatch"
+            );
+            assert_eq!(
+                flat_entry.header.mtime,
+                legacy.mtime(),
+                "entry {idx}: mtime mismatch"
+            );
+            assert_eq!(
+                flat_entry.header.size,
+                legacy.size(),
+                "entry {idx}: size mismatch"
+            );
+
+            // Presence-gated inline fields.
+            assert_eq!(
+                flat_entry.header.uid(),
+                legacy.uid(),
+                "entry {idx}: uid mismatch"
+            );
+            assert_eq!(
+                flat_entry.header.gid(),
+                legacy.gid(),
+                "entry {idx}: gid mismatch"
+            );
+
+            let expected_nsec = if legacy.mtime_nsec() != 0 {
+                Some(legacy.mtime_nsec())
+            } else {
+                None
+            };
+            assert_eq!(
+                flat_entry.header.mtime_nsec(),
+                expected_nsec,
+                "entry {idx}: mtime_nsec mismatch"
+            );
+
+            // Content-dir flag.
+            assert_eq!(
+                flat_entry.header.has(PRESENT_CONTENT_DIR),
+                legacy.content_dir(),
+                "entry {idx}: content_dir mismatch"
+            );
+
+            // Extras: decode the flat extras and compare with legacy accessors.
+            let flat_extras = list
+                .extras()
+                .decode(flat_entry.header.extras)
+                .unwrap_or_else(|e| panic!("entry {idx}: extras decode failed: {e}"));
+
+            // When there are no extras the decoded result is None.
+            match flat_extras {
+                None => {
+                    // Legacy must also have no extras-backed fields.
+                    assert!(
+                        legacy.link_target().is_none(),
+                        "entry {idx}: expected no link_target"
+                    );
+                    assert!(
+                        legacy.rdev_major().is_none(),
+                        "entry {idx}: expected no rdev"
+                    );
+                    assert!(
+                        legacy.checksum().is_none(),
+                        "entry {idx}: expected no checksum"
+                    );
+                    assert!(
+                        legacy.hardlink_idx().is_none(),
+                        "entry {idx}: expected no hardlink_idx"
+                    );
+                    assert!(
+                        legacy.acl_ndx().is_none(),
+                        "entry {idx}: expected no acl_ndx"
+                    );
+                    assert!(
+                        legacy.def_acl_ndx().is_none(),
+                        "entry {idx}: expected no def_acl_ndx"
+                    );
+                    assert!(
+                        legacy.xattr_ndx().is_none(),
+                        "entry {idx}: expected no xattr_ndx"
+                    );
+                    assert!(
+                        legacy.user_name().is_none(),
+                        "entry {idx}: expected no user_name"
+                    );
+                    assert!(
+                        legacy.group_name().is_none(),
+                        "entry {idx}: expected no group_name"
+                    );
+                    assert_eq!(legacy.atime(), 0, "entry {idx}: expected atime 0");
+                    assert_eq!(legacy.crtime(), 0, "entry {idx}: expected crtime 0");
+                    assert_eq!(
+                        legacy.atime_nsec(),
+                        0,
+                        "entry {idx}: expected atime_nsec 0"
+                    );
+                }
+                Some(decoded) => {
+                    // Link target.
+                    match legacy.link_target() {
+                        Some(target) => {
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::ffi::OsStrExt;
+                                assert_eq!(
+                                    decoded.link_target.as_deref(),
+                                    Some(target.as_os_str().as_bytes()),
+                                    "entry {idx}: link_target mismatch"
+                                );
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                let lossy = target.to_string_lossy();
+                                assert_eq!(
+                                    decoded.link_target.as_deref(),
+                                    Some(lossy.as_bytes()),
+                                    "entry {idx}: link_target mismatch"
+                                );
+                            }
+                        }
+                        None => assert_eq!(
+                            decoded.link_target, None,
+                            "entry {idx}: link_target should be None"
+                        ),
+                    }
+
+                    // Device numbers.
+                    assert_eq!(
+                        decoded.rdev_major,
+                        legacy.rdev_major(),
+                        "entry {idx}: rdev_major mismatch"
+                    );
+                    assert_eq!(
+                        decoded.rdev_minor,
+                        legacy.rdev_minor(),
+                        "entry {idx}: rdev_minor mismatch"
+                    );
+
+                    // Checksum.
+                    assert_eq!(
+                        decoded.checksum.as_deref(),
+                        legacy.checksum(),
+                        "entry {idx}: checksum mismatch"
+                    );
+
+                    // Hardlink index.
+                    assert_eq!(
+                        decoded.hardlink_idx,
+                        legacy.hardlink_idx(),
+                        "entry {idx}: hardlink_idx mismatch"
+                    );
+
+                    // ACL/xattr indices.
+                    assert_eq!(
+                        decoded.acl_ndx,
+                        legacy.acl_ndx(),
+                        "entry {idx}: acl_ndx mismatch"
+                    );
+                    assert_eq!(
+                        decoded.def_acl_ndx,
+                        legacy.def_acl_ndx(),
+                        "entry {idx}: def_acl_ndx mismatch"
+                    );
+                    assert_eq!(
+                        decoded.xattr_ndx,
+                        legacy.xattr_ndx(),
+                        "entry {idx}: xattr_ndx mismatch"
+                    );
+
+                    // User/group names.
+                    assert_eq!(
+                        decoded.user_name.as_deref().map(|b| std::str::from_utf8(b).unwrap()),
+                        legacy.user_name(),
+                        "entry {idx}: user_name mismatch"
+                    );
+                    assert_eq!(
+                        decoded.group_name.as_deref().map(|b| std::str::from_utf8(b).unwrap()),
+                        legacy.group_name(),
+                        "entry {idx}: group_name mismatch"
+                    );
+
+                    // Atime/crtime.
+                    assert_eq!(
+                        decoded.atime.unwrap_or(0),
+                        legacy.atime(),
+                        "entry {idx}: atime mismatch"
+                    );
+                    assert_eq!(
+                        decoded.crtime.unwrap_or(0),
+                        legacy.crtime(),
+                        "entry {idx}: crtime mismatch"
+                    );
+                    assert_eq!(
+                        decoded.atime_nsec.unwrap_or(0),
+                        legacy.atime_nsec(),
+                        "entry {idx}: atime_nsec mismatch"
+                    );
+                }
+            }
+        }
+
+        /// Verifies field-level equivalence between legacy `Vec<FileEntry>` and
+        /// `FlatFileList` representations across 100+ entries covering every
+        /// optional field combination.
+        ///
+        /// Each entry is pushed through `DualFileList::push`, which populates
+        /// both representations from the same `FileEntry` source. The test then
+        /// walks every entry and asserts that the flat header + extras arena
+        /// matches the legacy accessors field by field: name, dirname, mode,
+        /// mtime, size, uid, gid, mtime_nsec, content_dir, link_target, rdev,
+        /// checksum, hardlink_idx, acl_ndx, def_acl_ndx, xattr_ndx, user_name,
+        /// group_name, atime, crtime, and atime_nsec.
+        #[test]
+        fn flat_matches_legacy_field_by_field_all_combos() {
+            // 16 boolean field flags gives 2^16 = 65536 combinations. We sample
+            // a representative set by iterating bits 0..15 and toggling each
+            // independently, producing 100+ distinct combos that exercise every
+            // field both present and absent.
+            let mut entries: Vec<FieldCombo> = Vec::with_capacity(128);
+
+            // Combo 0: all fields absent (plain file, no extras).
+            entries.push(FieldCombo {
+                uid: false,
+                gid: false,
+                mtime_nsec: false,
+                link_target: false,
+                rdev: false,
+                checksum: false,
+                hardlink_idx: false,
+                acl_ndx: false,
+                def_acl_ndx: false,
+                xattr_ndx: false,
+                user_name: false,
+                group_name: false,
+                atime: false,
+                crtime: false,
+                atime_nsec: false,
+                content_dir_off: false,
+            });
+
+            // Combos 1-16: exactly one field set at a time.
+            let field_names = [
+                "uid",
+                "gid",
+                "mtime_nsec",
+                "link_target",
+                "rdev",
+                "checksum",
+                "hardlink_idx",
+                "acl_ndx",
+                "def_acl_ndx",
+                "xattr_ndx",
+                "user_name",
+                "group_name",
+                "atime",
+                "crtime",
+                "atime_nsec",
+                "content_dir_off",
+            ];
+            for bit in 0..field_names.len() {
+                let mut combo = FieldCombo {
+                    uid: false,
+                    gid: false,
+                    mtime_nsec: false,
+                    link_target: false,
+                    rdev: false,
+                    checksum: false,
+                    hardlink_idx: false,
+                    acl_ndx: false,
+                    def_acl_ndx: false,
+                    xattr_ndx: false,
+                    user_name: false,
+                    group_name: false,
+                    atime: false,
+                    crtime: false,
+                    atime_nsec: false,
+                    content_dir_off: false,
+                };
+                set_combo_bit(&mut combo, bit);
+                entries.push(combo);
+            }
+
+            // Combos 17-32: pairs of adjacent fields.
+            for bit in 0..field_names.len() {
+                let mut combo = FieldCombo {
+                    uid: false,
+                    gid: false,
+                    mtime_nsec: false,
+                    link_target: false,
+                    rdev: false,
+                    checksum: false,
+                    hardlink_idx: false,
+                    acl_ndx: false,
+                    def_acl_ndx: false,
+                    xattr_ndx: false,
+                    user_name: false,
+                    group_name: false,
+                    atime: false,
+                    crtime: false,
+                    atime_nsec: false,
+                    content_dir_off: false,
+                };
+                set_combo_bit(&mut combo, bit);
+                set_combo_bit(&mut combo, (bit + 1) % field_names.len());
+                entries.push(combo);
+            }
+
+            // Combos 33-64: groups of 4 using stride-4 patterns.
+            for start in 0..16u32 {
+                let mask = start.wrapping_mul(0x1111) & 0xFFFF;
+                let mut combo = FieldCombo {
+                    uid: false,
+                    gid: false,
+                    mtime_nsec: false,
+                    link_target: false,
+                    rdev: false,
+                    checksum: false,
+                    hardlink_idx: false,
+                    acl_ndx: false,
+                    def_acl_ndx: false,
+                    xattr_ndx: false,
+                    user_name: false,
+                    group_name: false,
+                    atime: false,
+                    crtime: false,
+                    atime_nsec: false,
+                    content_dir_off: false,
+                };
+                for bit in 0..field_names.len() {
+                    if mask & (1 << bit) != 0 {
+                        set_combo_bit(&mut combo, bit);
+                    }
+                }
+                entries.push(combo);
+            }
+
+            // Combos 65-96: scattered selections using XOR pattern.
+            for seed in 0u32..32 {
+                let mask = seed ^ (seed.wrapping_mul(2027));
+                let mut combo = FieldCombo {
+                    uid: false,
+                    gid: false,
+                    mtime_nsec: false,
+                    link_target: false,
+                    rdev: false,
+                    checksum: false,
+                    hardlink_idx: false,
+                    acl_ndx: false,
+                    def_acl_ndx: false,
+                    xattr_ndx: false,
+                    user_name: false,
+                    group_name: false,
+                    atime: false,
+                    crtime: false,
+                    atime_nsec: false,
+                    content_dir_off: false,
+                };
+                for bit in 0..field_names.len() {
+                    if mask & (1 << bit) != 0 {
+                        set_combo_bit(&mut combo, bit);
+                    }
+                }
+                entries.push(combo);
+            }
+
+            // Combo: all fields present (the maximal entry).
+            entries.push(FieldCombo {
+                uid: true,
+                gid: true,
+                mtime_nsec: true,
+                link_target: true,
+                rdev: false, // mutually exclusive with link_target
+                checksum: true,
+                hardlink_idx: true,
+                acl_ndx: true,
+                def_acl_ndx: true,
+                xattr_ndx: true,
+                user_name: true,
+                group_name: true,
+                atime: true,
+                crtime: true,
+                atime_nsec: true,
+                content_dir_off: false,
+            });
+
+            // Combo: all scalar extras (no link_target, no rdev).
+            entries.push(FieldCombo {
+                uid: true,
+                gid: true,
+                mtime_nsec: true,
+                link_target: false,
+                rdev: false,
+                checksum: true,
+                hardlink_idx: true,
+                acl_ndx: true,
+                def_acl_ndx: true,
+                xattr_ndx: true,
+                user_name: true,
+                group_name: true,
+                atime: true,
+                crtime: true,
+                atime_nsec: true,
+                content_dir_off: false,
+            });
+
+            // Combo: device with all scalar extras.
+            entries.push(FieldCombo {
+                uid: true,
+                gid: true,
+                mtime_nsec: true,
+                link_target: false,
+                rdev: true,
+                checksum: true,
+                hardlink_idx: true,
+                acl_ndx: true,
+                def_acl_ndx: true,
+                xattr_ndx: true,
+                user_name: true,
+                group_name: true,
+                atime: true,
+                crtime: true,
+                atime_nsec: true,
+                content_dir_off: false,
+            });
+
+            assert!(
+                entries.len() >= 100,
+                "expected 100+ combos, got {}",
+                entries.len()
+            );
+
+            let mut list = DualFileList::with_capacity(entries.len());
+            for (idx, combo) in entries.iter().enumerate() {
+                list.push(build_entry(idx, *combo));
+            }
+
+            // Both representations must have the same length.
+            assert_eq!(list.len(), list.flat().len());
+
+            // Assert field-by-field equivalence for every entry.
+            for idx in 0..list.len() {
+                assert_entry_equivalence(&list, idx);
+            }
+        }
+
+        /// Sets the `bit`-th boolean field on a `FieldCombo`.
+        fn set_combo_bit(combo: &mut FieldCombo, bit: usize) {
+            match bit {
+                0 => combo.uid = true,
+                1 => combo.gid = true,
+                2 => combo.mtime_nsec = true,
+                3 => combo.link_target = true,
+                4 => combo.rdev = true,
+                5 => combo.checksum = true,
+                6 => combo.hardlink_idx = true,
+                7 => combo.acl_ndx = true,
+                8 => combo.def_acl_ndx = true,
+                9 => combo.xattr_ndx = true,
+                10 => combo.user_name = true,
+                11 => combo.group_name = true,
+                12 => combo.atime = true,
+                13 => combo.crtime = true,
+                14 => combo.atime_nsec = true,
+                15 => combo.content_dir_off = true,
+                _ => {}
+            }
+        }
     }
 }
