@@ -291,7 +291,7 @@ fn flat_file_list_sort_by_name() {
     flist.sort();
 
     let sorted: Vec<&[u8]> = flist.iter().map(|e| e.name).collect();
-    assert_eq!(sorted, vec![b"apple", b"banana", b"cherry"]);
+    assert_eq!(sorted, vec![b"apple" as &[u8], b"banana", b"cherry"]);
 
     // Verify sizes followed their headers through the sort.
     assert_eq!(flist.get(0).unwrap().header.size, 1);
