@@ -290,24 +290,66 @@ fn dirname_shared_across_entries() {
     assert!(Arc::ptr_eq(entry1.dirname(), entry2.dirname()));
 }
 
-/// Verifies the struct size optimization: FileEntry should be <= 96 bytes
-/// inline on Unix (down from ~295 bytes before the Box<FileEntryExtras>
-/// refactor). On Windows the cap is <= 104 because `PathBuf` is 8 bytes
-/// larger than on Unix (Windows `Wtf8Buf` carries an extra `is_known_utf8`
-/// bool, which pads the inner `OsString` from 24 to 32 bytes). This guards
-/// against accidental field additions that bloat the hot path.
+/// Verifies the struct size optimization: FileEntry should be <= 88 bytes
+/// inline on Unix (down from 96 bytes before packing uid/gid/content_dir into
+/// a presence bitfield, and from ~295 bytes before the Box<FileEntryExtras>
+/// refactor). On Windows the cap is <= 96 because `PathBuf` is 8 bytes larger
+/// than on Unix (Windows `Wtf8Buf` carries an extra `is_known_utf8` bool, which
+/// pads the inner `OsString` from 24 to 32 bytes). This guards against
+/// accidental field additions that bloat the hot path.
 #[test]
 fn file_entry_size_optimized() {
     let size = std::mem::size_of::<FileEntry>();
     #[cfg(not(windows))]
-    const MAX: usize = 96;
+    const MAX: usize = 88;
     #[cfg(windows)]
-    const MAX: usize = 104;
+    const MAX: usize = 96;
     assert!(
         size <= MAX,
         "FileEntry is {size} bytes; expected <= {MAX}. \
          Did you add a field to FileEntry instead of FileEntryExtras?"
     );
+}
+
+/// RSS-A.3 regression: packing `uid`/`gid`/`content_dir` into a presence
+/// bitfield must keep the struct at or below the prior 96-byte (Unix) /
+/// 104-byte (Windows) inline size, and must round-trip the absent/present
+/// distinction the old `Option<u32>` fields encoded.
+#[test]
+fn file_entry_presence_bitfield_roundtrip() {
+    // (a) size did not regress against the pre-compaction layout.
+    #[cfg(not(windows))]
+    const PREVIOUS: usize = 96;
+    #[cfg(windows)]
+    const PREVIOUS: usize = 104;
+    let size = std::mem::size_of::<FileEntry>();
+    assert!(
+        size <= PREVIOUS,
+        "FileEntry grew to {size} bytes; pre-compaction layout was {PREVIOUS}"
+    );
+
+    // (b) building without uid/gid yields None; the directory content flag
+    // defaults to true.
+    let mut entry = FileEntry::new_directory("d".into(), 0o755);
+    assert_eq!(entry.uid(), None);
+    assert_eq!(entry.gid(), None);
+    assert!(entry.content_dir());
+
+    // Setting uid/gid flips them to Some without disturbing the other bits.
+    entry.set_uid(1000);
+    assert_eq!(entry.uid(), Some(1000));
+    assert_eq!(entry.gid(), None);
+    assert!(entry.content_dir());
+
+    entry.set_gid(0); // gid 0 must report Some(0), not None.
+    assert_eq!(entry.gid(), Some(0));
+    assert_eq!(entry.uid(), Some(1000));
+
+    // Clearing content_dir must not affect uid/gid presence.
+    entry.set_content_dir(false);
+    assert!(!entry.content_dir());
+    assert_eq!(entry.uid(), Some(1000));
+    assert_eq!(entry.gid(), Some(0));
 }
 
 /// Regular file entries should not allocate extras.

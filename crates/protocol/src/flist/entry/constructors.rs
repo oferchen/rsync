@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use super::FileEntry;
-use super::core::extract_dirname;
+use super::core::{PRESENT_CONTENT_DIR, extract_dirname};
 use super::extras::FileEntryExtras;
 use super::file_type::FileType;
 
@@ -35,13 +35,14 @@ impl FileEntry {
             dirname,
             size,
             mtime: 0,
-            uid: None,
-            gid: None,
             extras,
+            uid: 0,
+            gid: 0,
             mode: file_type.to_mode_bits() | (permissions & 0o7777),
             mtime_nsec: 0,
             flags: super::super::flags::FileFlags::default(),
-            content_dir: true, // Directories have content by default
+            // Directories have content by default; uid/gid start absent.
+            present: PRESENT_CONTENT_DIR,
         }
     }
 
@@ -113,13 +114,13 @@ impl FileEntry {
             dirname,
             size,
             mtime,
-            uid: None,
-            gid: None,
             extras: None,
+            uid: 0,
+            gid: 0,
             mode,
             mtime_nsec,
             flags,
-            content_dir: true,
+            present: PRESENT_CONTENT_DIR,
         }
     }
 
@@ -162,13 +163,13 @@ impl FileEntry {
             dirname,
             size,
             mtime,
-            uid: None,
-            gid: None,
             extras: None,
+            uid: 0,
+            gid: 0,
             mode,
             mtime_nsec,
             flags,
-            content_dir: true,
+            present: PRESENT_CONTENT_DIR,
         }
     }
 }

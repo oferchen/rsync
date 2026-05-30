@@ -3,6 +3,22 @@ use std::sync::Arc;
 
 use super::extras::FileEntryExtras;
 
+/// Presence bit: the `uid` field holds a meaningful value.
+///
+/// Mirrors the conditional `uid` extra in upstream rsync's `file_struct`
+/// (upstream: rsync.h `F_OWNER`). Cleared when ownership is not preserved.
+pub(super) const PRESENT_UID: u8 = 1 << 0;
+/// Presence bit: the `gid` field holds a meaningful value.
+///
+/// Mirrors the conditional `gid` extra in upstream rsync's `file_struct`
+/// (upstream: rsync.h `F_GROUP`). Cleared when ownership is not preserved.
+pub(super) const PRESENT_GID: u8 = 1 << 1;
+/// Presence bit: this directory has content to transfer (protocol 30+).
+///
+/// Set by default for directories; cleared for XMIT_NO_CONTENT_DIR (implied or
+/// content-less) directories. Non-directories report `true` via the accessor.
+pub(super) const PRESENT_CONTENT_DIR: u8 = 1 << 2;
+
 /// A single entry in the rsync file list.
 ///
 /// Contains all metadata needed to synchronize a filesystem object, including
@@ -17,6 +33,12 @@ use super::extras::FileEntryExtras;
 /// that is only allocated when at least one such field is set. This reduces
 /// the common-case inline size from ~295 bytes to ~88 bytes - matching
 /// upstream rsync's conditional field allocation pattern.
+///
+/// `uid`, `gid`, and the directory content flag are packed via a `present`
+/// bitfield rather than `Option`/`bool`, reclaiming the discriminant padding
+/// that `Option<u32>` and a trailing `bool` cost. This mirrors upstream's
+/// conditional `file_extras` layout where each extra is a plain 4-byte slot
+/// gated by a presence flag.
 ///
 /// # Path Interning
 ///
@@ -44,10 +66,6 @@ pub struct FileEntry {
     pub(super) size: u64,
     /// Modification time as seconds since Unix epoch.
     pub(super) mtime: i64,
-    /// User ID (None if not preserving ownership).
-    pub(super) uid: Option<u32>,
-    /// Group ID (None if not preserving ownership).
-    pub(super) gid: Option<u32>,
     /// Rarely-used fields, boxed to reduce inline size.
     ///
     /// `None` for regular files in typical transfers (no symlinks, devices,
@@ -55,6 +73,10 @@ pub struct FileEntry {
     pub(super) extras: Option<Box<FileEntryExtras>>,
 
     // 4-byte aligned fields
+    /// User ID raw value. Meaningful only when `PRESENT_UID` is set in `present`.
+    pub(super) uid: u32,
+    /// Group ID raw value. Meaningful only when `PRESENT_GID` is set in `present`.
+    pub(super) gid: u32,
     /// Unix mode bits (type + permissions).
     pub(super) mode: u32,
     /// Modification time nanoseconds (protocol 31+).
@@ -65,10 +87,10 @@ pub struct FileEntry {
     pub(super) flags: super::super::flags::FileFlags,
 
     // 1-byte aligned fields
-    /// Whether this directory has content to transfer (protocol 30+).
+    /// Presence bitfield for `uid`, `gid`, and the directory content flag.
     ///
-    /// False indicates XMIT_NO_CONTENT_DIR - an implied or content-less directory.
-    pub(super) content_dir: bool,
+    /// See `PRESENT_UID`, `PRESENT_GID`, and `PRESENT_CONTENT_DIR`.
+    pub(super) present: u8,
 }
 
 /// Extracts the parent directory from a path.
@@ -89,13 +111,13 @@ impl Clone for FileEntry {
             dirname: Arc::clone(&self.dirname),
             size: self.size,
             mtime: self.mtime,
+            extras: self.extras.clone(),
             uid: self.uid,
             gid: self.gid,
-            extras: self.extras.clone(),
             mode: self.mode,
             mtime_nsec: self.mtime_nsec,
             flags: self.flags,
-            content_dir: self.content_dir,
+            present: self.present,
         }
     }
 }
@@ -107,12 +129,12 @@ impl std::fmt::Debug for FileEntry {
             .field("dirname", &self.dirname)
             .field("size", &self.size)
             .field("mtime", &self.mtime)
-            .field("uid", &self.uid)
-            .field("gid", &self.gid)
+            .field("uid", &self.uid())
+            .field("gid", &self.gid())
             .field("mode", &self.mode)
             .field("mtime_nsec", &self.mtime_nsec)
             .field("flags", &self.flags)
-            .field("content_dir", &self.content_dir);
+            .field("content_dir", &self.content_dir());
         if let Some(extras) = &self.extras {
             s.field("extras", extras);
         }
@@ -126,12 +148,12 @@ impl PartialEq for FileEntry {
         self.name == other.name
             && self.size == other.size
             && self.mtime == other.mtime
-            && self.uid == other.uid
-            && self.gid == other.gid
+            && self.uid() == other.uid()
+            && self.gid() == other.gid()
             && self.mode == other.mode
             && self.mtime_nsec == other.mtime_nsec
             && self.flags == other.flags
-            && self.content_dir == other.content_dir
+            && self.content_dir() == other.content_dir()
             && self.extras == other.extras
     }
 }
