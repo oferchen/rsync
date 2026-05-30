@@ -261,7 +261,9 @@ pub use dir_sandbox::{
     unlink_via_sandbox_or_fallback, unlinkat, utimensat, utimensat_via_sandbox_or_fallback,
 };
 pub use kernel_version::{
-    IO_URING_MIN_KERNEL, KernelVersion, log_io_uring_probe_result, parse_kernel_version,
+    IO_URING_MIN_KERNEL, IoUringRequirement, KernelVersion, LinkatRequirement, PbufRingRequirement,
+    SendZcRequirement, StatxRenameatRequirement, VersionRequirement, log_io_uring_probe_result,
+    parse_kernel_version,
 };
 #[cfg(unix)]
 pub use linux_capabilities::openat2_supported;
@@ -423,6 +425,7 @@ pub use sqpoll_basis::{
     MAX_WIRED_WINDOW_BYTES, MlockError, WiredBasisWindow, mlock_attempts, mlock_downgrades,
 };
 pub use status::{
-    io_uring_availability_reason, io_uring_kernel_info, io_uring_status_detail, iocp_status_detail,
+    IoUringRestriction, detect_io_uring_restriction, io_uring_availability_reason,
+    io_uring_capability_matrix, io_uring_kernel_info, io_uring_status_detail, iocp_status_detail,
     platform_io_capabilities,
 };
