@@ -358,6 +358,46 @@ fn flat_file_list_default_is_new() {
 // Feature-flag coexistence (RSS-A.5.e.3)
 // ---------------------------------------------------------------------------
 
+/// Verifies PathArena dirname deduplication at scale: 100 files across
+/// 5 directories stores each dirname exactly once, mirroring upstream
+/// rsync's `lastdir` cache (upstream: flist.c:765-773).
+#[test]
+fn dirname_interning_deduplicates_at_scale() {
+    let mut flist = FlatFileList::new();
+
+    let dirs = ["alpha", "beta", "gamma", "delta", "epsilon"];
+    for dir in &dirs {
+        for i in 0u64..20 {
+            let name = format!("f{i}.rs");
+            push_entry(&mut flist, &name, dir, i);
+        }
+    }
+
+    assert_eq!(flist.len(), 100);
+
+    // PathArena should hold 5 unique dirnames + 20 unique basenames = 25.
+    // Basenames "f0.rs"..."f19.rs" repeat across dirs but intern once each.
+    assert_eq!(flist.paths().len(), 25);
+
+    // Verify handle sharing: all 20 entries under "alpha" share one handle.
+    let alpha_handles: Vec<_> = (0..flist.len())
+        .filter_map(|i| {
+            let e = flist.get(i)?;
+            if e.dirname == b"alpha" {
+                Some(e.header.dirname)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(alpha_handles.len(), 20);
+    let first = alpha_handles[0];
+    assert!(
+        alpha_handles.iter().all(|h| *h == first),
+        "all entries in 'alpha' must share one dirname handle"
+    );
+}
+
 /// Verifies that the flat-flist types and the legacy `Vec<FileEntry>` path
 /// compile and operate side-by-side in the same scope. This is the key
 /// invariant of the feature flag: enabling `flat-flist` must never shadow,
