@@ -4463,6 +4463,59 @@ CONF
     return 1
   fi
 
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local uni_dest2="${work}/unicode-dest2"
+  rm -rf "$uni_dest2"
+  mkdir -p "$uni_dest2"
+
+  local uni_up_conf="${work}/unicode-up.conf"
+  local uni_up_pid="${work}/unicode-up.pid"
+  local uni_up_log="${work}/unicode-up.log"
+  cat > "$uni_up_conf" <<CONF
+pid file = ${uni_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${uni_dest2}
+    comment = unicode names test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$uni_up_conf" "$uni_up_log" "$uni_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av --timeout=10 \
+      "${uni_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.unicode-d2.out" 2>"${log}.unicode-d2.err"; then
+    echo "    oc -> upstream daemon unicode transfer failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$uni_up_log" 2>/dev/null)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  for fname in "文件.txt" "测试.dat" "🎯test.txt" "café.txt" "Åse_Ørsted.txt"; do
+    if [[ ! -f "${uni_dest2}/${fname}" ]]; then
+      echo "    ${fname} missing after oc->upstream unicode transfer"
+      return 1
+    fi
+    if ! cmp -s "${uni_src}/${fname}" "${uni_dest2}/${fname}"; then
+      echo "    ${fname} content mismatch (dir2)"
+      return 1
+    fi
+  done
+
+  if [[ ! -f "${uni_dest2}/目录/子目录/data.txt" ]]; then
+    echo "    目录/子目录/data.txt missing after oc->upstream unicode transfer"
+    return 1
+  fi
+  if ! cmp -s "${uni_src}/目录/子目录/data.txt" "${uni_dest2}/目录/子目录/data.txt"; then
+    echo "    目录/子目录/data.txt content mismatch (dir2)"
+    return 1
+  fi
+
   return 0
 }
 
@@ -4553,6 +4606,55 @@ CONF
   fi
   if [[ ! -f "${sc_dest}/dir (with) spaces/inner.txt" ]]; then
     echo "    dir (with) spaces/inner.txt missing"
+    return 1
+  fi
+
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local sc_dest2="${work}/special-chars-dest2"
+  rm -rf "$sc_dest2"
+  mkdir -p "$sc_dest2"
+
+  local sc_up_conf="${work}/special-chars-up.conf"
+  local sc_up_pid="${work}/special-chars-up.pid"
+  local sc_up_log="${work}/special-chars-up.log"
+  cat > "$sc_up_conf" <<CONF
+pid file = ${sc_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${sc_dest2}
+    comment = special chars test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$sc_up_conf" "$sc_up_log" "$sc_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av --timeout=10 \
+      "${sc_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.special-chars-d2.out" 2>"${log}.special-chars-d2.err"; then
+    echo "    oc -> upstream daemon special chars transfer failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$sc_up_log" 2>/dev/null)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  for fname in "${expected_files[@]}"; do
+    if [[ ! -f "${sc_dest2}/${fname}" ]]; then
+      echo "    ${fname} missing after oc->upstream special chars transfer"
+      return 1
+    fi
+  done
+
+  if [[ ! -f "${sc_dest2}/dir [special]/inner.txt" ]]; then
+    echo "    dir [special]/inner.txt missing (dir2)"
+    return 1
+  fi
+  if [[ ! -f "${sc_dest2}/dir (with) spaces/inner.txt" ]]; then
+    echo "    dir (with) spaces/inner.txt missing (dir2)"
     return 1
   fi
 
@@ -4649,6 +4751,64 @@ CONF
     return 1
   fi
 
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local ed_dest2="${work}/empty-dir-dest2"
+  rm -rf "$ed_dest2"
+  mkdir -p "$ed_dest2"
+
+  local ed_up_conf="${work}/empty-dir-up.conf"
+  local ed_up_pid="${work}/empty-dir-up.pid"
+  local ed_up_log="${work}/empty-dir-up.log"
+  cat > "$ed_up_conf" <<CONF
+pid file = ${ed_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${ed_dest2}
+    comment = empty dir test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$ed_up_conf" "$ed_up_log" "$ed_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -avr --timeout=10 \
+      "${ed_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.empty-dir-d2.out" 2>"${log}.empty-dir-d2.err"; then
+    echo "    oc -> upstream daemon empty dir transfer failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$ed_up_log" 2>/dev/null)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  for dname in "empty_top" "nested/empty_mid" "nested/deep/empty_bottom" \
+               "sibling_empty_a" "sibling_empty_b"; do
+    if [[ ! -d "${ed_dest2}/${dname}" ]]; then
+      echo "    empty dir ${dname} missing after oc->upstream transfer"
+      return 1
+    fi
+  done
+
+  if [[ ! -f "${ed_dest2}/has_files/a.txt" ]]; then
+    echo "    has_files/a.txt missing (dir2)"
+    return 1
+  fi
+  if ! cmp -s "${ed_src}/has_files/a.txt" "${ed_dest2}/has_files/a.txt"; then
+    echo "    has_files/a.txt content mismatch (dir2)"
+    return 1
+  fi
+  if [[ ! -f "${ed_dest2}/root.txt" ]]; then
+    echo "    root.txt missing (dir2)"
+    return 1
+  fi
+  if ! cmp -s "${ed_src}/root.txt" "${ed_dest2}/root.txt"; then
+    echo "    root.txt content mismatch (dir2)"
+    return 1
+  fi
+
   return 0
 }
 
@@ -4727,6 +4887,67 @@ CONF
   # Verify extra directory was removed
   if [[ -d "$da_dest/olddir" ]]; then
     echo "    extra directory not deleted: olddir"
+    return 1
+  fi
+
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local da_dest2="${work}/delete-after-dest2"
+  rm -rf "$da_dest2"
+  mkdir -p "$da_dest2"
+
+  # Pre-populate with extra files
+  echo "extra-one" > "$da_dest2/extra1.txt"
+  echo "extra-two" > "$da_dest2/extra2.txt"
+  mkdir -p "$da_dest2/olddir"
+  echo "stale" > "$da_dest2/olddir/stale.txt"
+
+  local da_up_conf="${work}/delete-after-up.conf"
+  local da_up_pid="${work}/delete-after-up.pid"
+  local da_up_log="${work}/delete-after-up.log"
+  cat > "$da_up_conf" <<CONF
+pid file = ${da_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${da_dest2}
+    comment = delete-after test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$da_up_conf" "$da_up_log" "$da_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av --delete-after --timeout=10 \
+      "${da_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.delete-after-d2.out" 2>"${log}.delete-after-d2.err"; then
+    echo "    oc -> upstream delete-after transfer failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  for f in file1.txt file2.txt subdir/nested.txt; do
+    if [[ ! -f "$da_dest2/$f" ]]; then
+      echo "    missing source file (dir2): $f"
+      return 1
+    fi
+    if ! cmp -s "$da_src/$f" "$da_dest2/$f"; then
+      echo "    content mismatch (dir2): $f"
+      return 1
+    fi
+  done
+
+  for f in extra1.txt extra2.txt olddir/stale.txt; do
+    if [[ -f "$da_dest2/$f" ]]; then
+      echo "    extra file not deleted (dir2): $f"
+      return 1
+    fi
+  done
+
+  if [[ -d "$da_dest2/olddir" ]]; then
+    echo "    extra directory not deleted (dir2): olddir"
     return 1
   fi
 
@@ -4853,6 +5074,71 @@ CONF
   ig=$(stat -c %i "$hl_dest/gamma.txt" 2>/dev/null || stat -f %i "$hl_dest/gamma.txt" 2>/dev/null)
   if [[ "$ig" == "$ia" || "$ig" == "$ib" ]]; then
     echo "    gamma.txt shares inode with a hardlink group"
+    return 1
+  fi
+
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local hl_dest2="${work}/hl-daemon-dest2"
+  rm -rf "$hl_dest2"
+  mkdir -p "$hl_dest2"
+
+  local hl_up_conf="${work}/hl-daemon-up.conf"
+  local hl_up_pid="${work}/hl-daemon-up.pid"
+  local hl_up_log="${work}/hl-daemon-up.log"
+  cat > "$hl_up_conf" <<CONF
+pid file = ${hl_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${hl_dest2}
+    comment = hardlinks test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$hl_up_conf" "$hl_up_log" "$hl_up_pid"
+
+  local rc2=0
+  timeout "$hard_timeout" "$oc_bin" --hard-links -av --timeout=10 \
+      "${hl_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.hl-daemon-d2.out" 2>"${log}.hl-daemon-d2.err" || rc2=$?
+
+  stop_upstream_daemon
+
+  if [[ $rc2 -ne 0 ]]; then
+    echo "    oc push with --hard-links to upstream daemon failed (exit=$rc2)"
+    echo "    stderr: $(head -5 "${log}.hl-daemon-d2.err")"
+    return 1
+  fi
+
+  for f in alpha.txt alpha_link.txt subdir/alpha_sub.txt \
+           beta.txt beta_link.txt gamma.txt; do
+    if [[ ! -f "$hl_dest2/$f" ]]; then
+      echo "    missing file (dir2): $f"
+      return 1
+    fi
+  done
+
+  for f in alpha.txt alpha_link.txt subdir/alpha_sub.txt; do
+    if [[ "$(cat "$hl_dest2/$f")" != "alpha-content" ]]; then
+      echo "    content mismatch in $f (dir2)"
+      return 1
+    fi
+  done
+
+  local ia2 ia2_link
+  ia2=$(stat -c %i "$hl_dest2/alpha.txt" 2>/dev/null || stat -f %i "$hl_dest2/alpha.txt" 2>/dev/null)
+  ia2_link=$(stat -c %i "$hl_dest2/alpha_link.txt" 2>/dev/null || stat -f %i "$hl_dest2/alpha_link.txt" 2>/dev/null)
+  if [[ "$ia2" != "$ia2_link" ]]; then
+    echo "    alpha same-dir inodes differ (dir2: $ia2, $ia2_link)"
+    return 1
+  fi
+
+  local ia2_sub
+  ia2_sub=$(stat -c %i "$hl_dest2/subdir/alpha_sub.txt" 2>/dev/null || stat -f %i "$hl_dest2/subdir/alpha_sub.txt" 2>/dev/null)
+  if [[ "$ia2" != "$ia2_sub" ]]; then
+    echo "    cross-directory hardlink not preserved (dir2: $ia2 vs $ia2_sub)"
     return 1
   fi
 
@@ -5015,6 +5301,58 @@ CONF
     return 1
   fi
 
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local mf_dest2="${work}/many-files-dest2"
+  rm -rf "$mf_dest2"
+  mkdir -p "$mf_dest2"
+
+  local mf_up_conf="${work}/many-files-up.conf"
+  local mf_up_pid="${work}/many-files-up.pid"
+  local mf_up_log="${work}/many-files-up.log"
+  cat > "$mf_up_conf" <<CONF
+pid file = ${mf_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${mf_dest2}
+    comment = many files test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$mf_up_conf" "$mf_up_log" "$mf_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av --timeout=30 \
+      "${mf_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.many-files-d2.out" 2>"${log}.many-files-d2.err"; then
+    echo "    oc -> upstream daemon many-files push failed (exit=$?)"
+    echo "    daemon log: $(tail -5 "$mf_up_log" 2>/dev/null)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  local dest2_file_count
+  dest2_file_count=$(find "$mf_dest2" -type f | wc -l | tr -d ' ')
+  if [[ "$dest2_file_count" -ne "$src_file_count" ]]; then
+    echo "    file count mismatch (dir2): src=${src_file_count} dest=${dest2_file_count}"
+    return 1
+  fi
+
+  local dest2_checksum
+  if command -v md5sum >/dev/null 2>&1; then
+    dest2_checksum=$(cd "$mf_dest2" && find . -type f | sort | xargs md5sum | md5sum | awk '{print $1}')
+  elif command -v md5 >/dev/null 2>&1; then
+    dest2_checksum=$(cd "$mf_dest2" && find . -type f | sort | xargs md5 -r | md5 -q)
+  fi
+
+  if [[ "$src_checksum" != "$dest2_checksum" ]]; then
+    echo "    aggregate checksum mismatch (dir2): src=${src_checksum} dest=${dest2_checksum}"
+    return 1
+  fi
+
   return 0
 }
 
@@ -5071,6 +5409,47 @@ CONF
   fi
   if ! cmp -s "$sp_src/regular.txt" "$sp_dest/regular.txt"; then
     echo "    regular.txt content mismatch"
+    return 1
+  fi
+
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local sp_dest2="${work}/sparse-dest2"
+  rm -rf "$sp_dest2"
+  mkdir -p "$sp_dest2"
+
+  local sp_up_conf="${work}/sparse-up.conf"
+  local sp_up_pid="${work}/sparse-up.pid"
+  local sp_up_log="${work}/sparse-up.log"
+  cat > "$sp_up_conf" <<CONF
+pid file = ${sp_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${sp_dest2}
+    comment = sparse test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$sp_up_conf" "$sp_up_log" "$sp_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" --sparse -av --timeout=10 \
+      "${sp_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.sparse-d2.out" 2>"${log}.sparse-d2.err"; then
+    echo "    oc -> upstream sparse push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  if ! cmp -s "$sp_src/zeros.bin" "$sp_dest2/zeros.bin"; then
+    echo "    zeros.bin content mismatch (dir2)"
+    return 1
+  fi
+  if ! cmp -s "$sp_src/regular.txt" "$sp_dest2/regular.txt"; then
+    echo "    regular.txt content mismatch (dir2)"
     return 1
   fi
 
@@ -5151,6 +5530,45 @@ CONF
     return 1
   fi
 
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local wf_dest2="${work}/whole-file-dest2"
+  rm -rf "$wf_dest2"
+  mkdir -p "$wf_dest2"
+
+  local wf_up_conf="${work}/whole-file-up.conf"
+  local wf_up_pid="${work}/whole-file-up.pid"
+  local wf_up_log="${work}/whole-file-up.log"
+  cat > "$wf_up_conf" <<CONF
+pid file = ${wf_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${wf_dest2}
+    comment = whole-file test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$wf_up_conf" "$wf_up_log" "$wf_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" --whole-file -av --timeout=10 \
+      "${wf_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.whole-file-d2.out" 2>"${log}.whole-file-d2.err"; then
+    echo "    oc -> upstream whole-file push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  for f in alpha.txt beta.txt sub/nested.txt; do
+    if ! cmp -s "$wf_src/$f" "$wf_dest2/$f"; then
+      echo "    $f content mismatch (dir2)"
+      return 1
+    fi
+  done
+
   return 0
 }
 
@@ -5206,6 +5624,45 @@ CONF
   dest_count=$(find "$dr_dest" -type f | wc -l | tr -d ' ')
   if [[ "$dest_count" -ne 0 ]]; then
     echo "    dry-run transferred ${dest_count} files (expected 0)"
+    return 1
+  fi
+
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local dr_dest2="${work}/dry-run-dest2"
+  rm -rf "$dr_dest2"
+  mkdir -p "$dr_dest2"
+
+  local dr_up_conf="${work}/dry-run-up.conf"
+  local dr_up_pid="${work}/dry-run-up.pid"
+  local dr_up_log="${work}/dry-run-up.log"
+  cat > "$dr_up_conf" <<CONF
+pid file = ${dr_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${dr_dest2}
+    comment = dry-run test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$dr_up_conf" "$dr_up_log" "$dr_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -avn --timeout=10 \
+      "${dr_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.dry-run-d2.out" 2>"${log}.dry-run-d2.err"; then
+    echo "    oc -> upstream dry-run push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  local dest2_count
+  dest2_count=$(find "$dr_dest2" -type f | wc -l | tr -d ' ')
+  if [[ "$dest2_count" -ne 0 ]]; then
+    echo "    dry-run transferred ${dest2_count} files (dir2, expected 0)"
     return 1
   fi
 
@@ -5281,6 +5738,57 @@ CONF
   for f in debug.log error.log scratch.tmp subdir/app.log subdir/temp.tmp; do
     if [[ -f "$fr_dest/$f" ]]; then
       echo "    excluded file present: $f"
+      return 1
+    fi
+  done
+
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local fr_dest2="${work}/filter-rules-dest2"
+  rm -rf "$fr_dest2"
+  mkdir -p "$fr_dest2"
+
+  local fr_up_conf="${work}/filter-rules-up.conf"
+  local fr_up_pid="${work}/filter-rules-up.pid"
+  local fr_up_log="${work}/filter-rules-up.log"
+  cat > "$fr_up_conf" <<CONF
+pid file = ${fr_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${fr_dest2}
+    comment = filter-rules test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$fr_up_conf" "$fr_up_log" "$fr_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av --timeout=10 \
+      --filter='- *.log' --filter='- *.tmp' \
+      "${fr_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.filter-rules-d2.out" 2>"${log}.filter-rules-d2.err"; then
+    echo "    oc -> upstream filter-rules push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  for f in readme.txt notes.txt subdir/data.txt; do
+    if [[ ! -f "$fr_dest2/$f" ]]; then
+      echo "    missing included file (dir2): $f"
+      return 1
+    fi
+    if ! cmp -s "$fr_src/$f" "$fr_dest2/$f"; then
+      echo "    content mismatch (dir2): $f"
+      return 1
+    fi
+  done
+
+  for f in debug.log error.log scratch.tmp subdir/app.log subdir/temp.tmp; do
+    if [[ -f "$fr_dest2/$f" ]]; then
+      echo "    excluded file present (dir2): $f"
       return 1
     fi
   done
@@ -5498,6 +6006,51 @@ CONF
     return 1
   fi
 
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local ip_dest2="${work}/inplace-dest2"
+  rm -rf "$ip_dest2"
+  mkdir -p "$ip_dest2"
+
+  # Pre-populate with smaller versions
+  echo "small" > "$ip_dest2/data.bin"
+  echo "short" > "$ip_dest2/alpha.txt"
+  mkdir -p "$ip_dest2/sub"
+  echo "tiny" > "$ip_dest2/sub/nested.txt"
+
+  local ip_up_conf="${work}/inplace-up.conf"
+  local ip_up_pid="${work}/inplace-up.pid"
+  local ip_up_log="${work}/inplace-up.log"
+  cat > "$ip_up_conf" <<CONF
+pid file = ${ip_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${ip_dest2}
+    comment = inplace test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$ip_up_conf" "$ip_up_log" "$ip_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av --inplace --timeout=10 \
+      "${ip_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.inplace-d2.out" 2>"${log}.inplace-d2.err"; then
+    echo "    oc -> upstream inplace push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  for f in data.bin alpha.txt sub/nested.txt; do
+    if ! cmp -s "$ip_src/$f" "$ip_dest2/$f"; then
+      echo "    $f content mismatch (dir2)"
+      return 1
+    fi
+  done
+
   return 0
 }
 
@@ -5563,9 +6116,51 @@ CONF
   if ! cmp -s "$ap_src/logfile.txt" "$ap_dest/logfile.txt"; then
     echo "    logfile.txt content mismatch after append"
     echo "    expected:"
-    cat "$ap_src/logfile.txt" 2>/dev/null | head -5
+    head -5 "$ap_src/logfile.txt" 2>/dev/null
     echo "    got:"
-    cat "$ap_dest/logfile.txt" 2>/dev/null | head -5
+    head -5 "$ap_dest/logfile.txt" 2>/dev/null
+    return 1
+  fi
+
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local ap_dest2="${work}/append-dest2"
+  rm -rf "$ap_dest2"
+  mkdir -p "$ap_dest2"
+
+  # Create initial file for direction 2
+  echo "original-line-1" > "$ap_dest2/logfile.txt"
+  echo "original-line-2" >> "$ap_dest2/logfile.txt"
+
+  local ap_up_conf="${work}/append-up.conf"
+  local ap_up_pid="${work}/append-up.pid"
+  local ap_up_log="${work}/append-up.log"
+  cat > "$ap_up_conf" <<CONF
+pid file = ${ap_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${ap_dest2}
+    comment = append test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$ap_up_conf" "$ap_up_log" "$ap_up_pid"
+
+  # First push to populate
+  if ! timeout "$hard_timeout" "$oc_bin" -av --timeout=10 \
+      "${ap_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.append-d2-init.out" 2>"${log}.append-d2-init.err"; then
+    echo "    oc -> upstream initial append push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  if ! cmp -s "$ap_src/logfile.txt" "$ap_dest2/logfile.txt"; then
+    echo "    logfile.txt content mismatch after oc->upstream append"
     return 1
   fi
 
@@ -5628,6 +6223,49 @@ CONF
     fi
     if ! cmp -s "$du_src/$f" "$du_dest/$f"; then
       echo "    content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local du_dest2="${work}/delay-updates-dest2"
+  rm -rf "$du_dest2"
+  mkdir -p "$du_dest2"
+
+  local du_up_conf="${work}/delay-updates-up.conf"
+  local du_up_pid="${work}/delay-updates-up.pid"
+  local du_up_log="${work}/delay-updates-up.log"
+  cat > "$du_up_conf" <<CONF
+pid file = ${du_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${du_dest2}
+    comment = delay-updates test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$du_up_conf" "$du_up_log" "$du_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av --delay-updates --timeout=10 \
+      "${du_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.delay-updates-d2.out" 2>"${log}.delay-updates-d2.err"; then
+    echo "    oc -> upstream delay-updates push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  for f in alpha.txt beta.txt sub/nested.txt binary.dat; do
+    if [[ ! -f "$du_dest2/$f" ]]; then
+      echo "    missing file (dir2): $f"
+      return 1
+    fi
+    if ! cmp -s "$du_src/$f" "$du_dest2/$f"; then
+      echo "    content mismatch (dir2): $f"
       return 1
     fi
   done
@@ -5714,6 +6352,47 @@ CONF
   fi
   if ! cmp -s "$cl_src/small.txt" "$cl_dest/small.txt"; then
     echo "    small.txt mismatch after level 9"
+    return 1
+  fi
+
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local cl_dest2="${work}/compress-level-dest2"
+  rm -rf "$cl_dest2"
+  mkdir -p "$cl_dest2"
+
+  local cl_up_conf="${work}/compress-level-up.conf"
+  local cl_up_pid="${work}/compress-level-up.pid"
+  local cl_up_log="${work}/compress-level-up.log"
+  cat > "$cl_up_conf" <<CONF
+pid file = ${cl_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${cl_dest2}
+    comment = compress-level test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$cl_up_conf" "$cl_up_log" "$cl_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -avz --compress-level=1 --timeout=10 \
+      "${cl_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.compress-level-d2.out" 2>"${log}.compress-level-d2.err"; then
+    echo "    oc -> upstream compress-level push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  if ! cmp -s "$cl_src/compressible.txt" "$cl_dest2/compressible.txt"; then
+    echo "    compressible.txt mismatch (dir2)"
+    return 1
+  fi
+  if ! cmp -s "$cl_src/small.txt" "$cl_dest2/small.txt"; then
+    echo "    small.txt mismatch (dir2)"
     return 1
   fi
 
@@ -5908,6 +6587,57 @@ CONF
     fi
   done
 
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local ff_dest2="${work}/files-from-dest2"
+  rm -rf "$ff_dest2"
+  mkdir -p "$ff_dest2"
+
+  local ff_up_conf="${work}/files-from-up.conf"
+  local ff_up_pid="${work}/files-from-up.pid"
+  local ff_up_log="${work}/files-from-up.log"
+  cat > "$ff_up_conf" <<CONF
+pid file = ${ff_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${ff_dest2}
+    comment = files-from test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$ff_up_conf" "$ff_up_log" "$ff_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av --timeout=10 \
+      --files-from="$ff_list" \
+      "${ff_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.files-from-d2.out" 2>"${log}.files-from-d2.err"; then
+    echo "    oc -> upstream files-from push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  for f in alpha.txt beta.txt sub/nested.txt; do
+    if [[ ! -f "$ff_dest2/$f" ]]; then
+      echo "    missing included file (dir2): $f"
+      return 1
+    fi
+    if ! cmp -s "$ff_src/$f" "$ff_dest2/$f"; then
+      echo "    content mismatch (dir2): $f"
+      return 1
+    fi
+  done
+
+  for f in gamma.txt delta.txt sub/other.txt; do
+    if [[ -f "$ff_dest2/$f" ]]; then
+      echo "    excluded file present (dir2): $f"
+      return 1
+    fi
+  done
+
   return 0
 }
 
@@ -5967,6 +6697,49 @@ CONF
     fi
     if ! cmp -s "$ts_src/$f" "$ts_dest/$f"; then
       echo "    content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local ts_dest2="${work}/trust-sender-dest2"
+  rm -rf "$ts_dest2"
+  mkdir -p "$ts_dest2"
+
+  local ts_up_conf="${work}/trust-sender-up.conf"
+  local ts_up_pid="${work}/trust-sender-up.pid"
+  local ts_up_log="${work}/trust-sender-up.log"
+  cat > "$ts_up_conf" <<CONF
+pid file = ${ts_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${ts_dest2}
+    comment = trust-sender test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$ts_up_conf" "$ts_up_log" "$ts_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av --trust-sender --timeout=10 \
+      "${ts_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.trust-sender-d2.out" 2>"${log}.trust-sender-d2.err"; then
+    echo "    oc -> upstream trust-sender push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  for f in alpha.txt beta.txt sub/nested.txt data.bin; do
+    if [[ ! -f "$ts_dest2/$f" ]]; then
+      echo "    missing file (dir2): $f"
+      return 1
+    fi
+    if ! cmp -s "$ts_src/$f" "$ts_dest2/$f"; then
+      echo "    content mismatch (dir2): $f"
       return 1
     fi
   done
@@ -6034,6 +6807,54 @@ CONF
   # Verify no .rsync-partial directory remains after successful transfer
   if [[ -d "$pd_dest/.rsync-partial" ]]; then
     echo "    .rsync-partial dir should not remain after successful transfer"
+    return 1
+  fi
+
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local pd_dest2="${work}/partial-dir-dest2"
+  rm -rf "$pd_dest2"
+  mkdir -p "$pd_dest2"
+
+  local pd_up_conf="${work}/partial-dir-up.conf"
+  local pd_up_pid="${work}/partial-dir-up.pid"
+  local pd_up_log="${work}/partial-dir-up.log"
+  cat > "$pd_up_conf" <<CONF
+pid file = ${pd_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${pd_dest2}
+    comment = partial-dir test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$pd_up_conf" "$pd_up_log" "$pd_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av --partial-dir=.rsync-partial --timeout=10 \
+      "${pd_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.partial-dir-d2.out" 2>"${log}.partial-dir-d2.err"; then
+    echo "    oc -> upstream partial-dir push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  for f in large.bin readme.txt; do
+    if [[ ! -f "$pd_dest2/$f" ]]; then
+      echo "    missing file (dir2): $f"
+      return 1
+    fi
+    if ! cmp -s "$pd_src/$f" "$pd_dest2/$f"; then
+      echo "    content mismatch (dir2): $f"
+      return 1
+    fi
+  done
+
+  if [[ -d "$pd_dest2/.rsync-partial" ]]; then
+    echo "    .rsync-partial dir should not remain (dir2)"
     return 1
   fi
 
@@ -6107,6 +6928,55 @@ CONF
     return 1
   fi
 
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local dn_dest2="${work}/deep-nesting-dest2"
+  rm -rf "$dn_dest2"
+  mkdir -p "$dn_dest2"
+
+  local dn_up_conf="${work}/deep-nesting-up.conf"
+  local dn_up_pid="${work}/deep-nesting-up.pid"
+  local dn_up_log="${work}/deep-nesting-up.log"
+  cat > "$dn_up_conf" <<CONF
+pid file = ${dn_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${dn_dest2}
+    comment = deep-nesting test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$dn_up_conf" "$dn_up_log" "$dn_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av --timeout=10 \
+      "${dn_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.deep-nesting-d2.out" 2>"${log}.deep-nesting-d2.err"; then
+    echo "    oc -> upstream deep-nesting push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  if [[ ! -f "$dn_dest2/top.txt" ]]; then
+    echo "    missing top-level file (dir2)"
+    return 1
+  fi
+  if ! cmp -s "$dn_src/top.txt" "$dn_dest2/top.txt"; then
+    echo "    top.txt content mismatch (dir2)"
+    return 1
+  fi
+  if [[ ! -f "$dn_dest2/$deep_path/file.txt" ]]; then
+    echo "    missing deeply nested file (dir2): $deep_path/file.txt"
+    return 1
+  fi
+  if ! cmp -s "$dn_src/$deep_path/file.txt" "$dn_dest2/$deep_path/file.txt"; then
+    echo "    deeply nested file content mismatch (dir2)"
+    return 1
+  fi
+
   return 0
 }
 
@@ -6174,6 +7044,49 @@ CONF
     fi
     if ! cmp -s "$mw_src/$f" "$mw_dest/$f"; then
       echo "    content mismatch: $f"
+      return 1
+    fi
+  done
+
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local mw_dest2="${work}/modify-window-dest2"
+  rm -rf "$mw_dest2"
+  mkdir -p "$mw_dest2"
+
+  local mw_up_conf="${work}/modify-window-up.conf"
+  local mw_up_pid="${work}/modify-window-up.pid"
+  local mw_up_log="${work}/modify-window-up.log"
+  cat > "$mw_up_conf" <<CONF
+pid file = ${mw_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${mw_dest2}
+    comment = modify-window test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$mw_up_conf" "$mw_up_log" "$mw_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av --modify-window=1 --timeout=10 \
+      "${mw_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.modify-window-d2.out" 2>"${log}.modify-window-d2.err"; then
+    echo "    oc -> upstream modify-window push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  for f in alpha.txt beta.txt sub/nested.txt; do
+    if [[ ! -f "$mw_dest2/$f" ]]; then
+      echo "    missing file (dir2): $f"
+      return 1
+    fi
+    if ! cmp -s "$mw_src/$f" "$mw_dest2/$f"; then
+      echo "    content mismatch (dir2): $f"
       return 1
     fi
   done
@@ -6262,6 +7175,68 @@ CONF
     return 1
   fi
 
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local de_dest2="${work}/delete-excluded-dest2"
+  rm -rf "$de_dest2"
+  mkdir -p "$de_dest2"
+
+  # Pre-populate with .bak and extra files
+  echo "stale-backup-1" > "$de_dest2/old.bak"
+  echo "stale-backup-2" > "$de_dest2/archive.bak"
+  mkdir -p "$de_dest2/sub"
+  echo "stale-nested-backup" > "$de_dest2/sub/temp.bak"
+  echo "extra-file" > "$de_dest2/extra.txt"
+
+  local de_up_conf="${work}/delete-excluded-up.conf"
+  local de_up_pid="${work}/delete-excluded-up.pid"
+  local de_up_log="${work}/delete-excluded-up.log"
+  cat > "$de_up_conf" <<CONF
+pid file = ${de_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${de_dest2}
+    comment = delete-excluded test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$de_up_conf" "$de_up_log" "$de_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av --delete-excluded --exclude='*.bak' --timeout=10 \
+      "${de_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.delete-excluded-d2.out" 2>"${log}.delete-excluded-d2.err"; then
+    echo "    oc -> upstream delete-excluded push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  for f in alpha.txt beta.txt sub/nested.txt; do
+    if [[ ! -f "$de_dest2/$f" ]]; then
+      echo "    missing source file (dir2): $f"
+      return 1
+    fi
+    if ! cmp -s "$de_src/$f" "$de_dest2/$f"; then
+      echo "    content mismatch (dir2): $f"
+      return 1
+    fi
+  done
+
+  for f in old.bak archive.bak sub/temp.bak; do
+    if [[ -f "$de_dest2/$f" ]]; then
+      echo "    excluded file not deleted (dir2): $f"
+      return 1
+    fi
+  done
+
+  if [[ -f "$de_dest2/extra.txt" ]]; then
+    echo "    extra file not deleted (dir2): extra.txt"
+    return 1
+  fi
+
   return 0
 }
 
@@ -6340,6 +7315,57 @@ CONF
     return 1
   fi
 
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local pm_dest2="${work}/perms-dest2"
+  rm -rf "$pm_dest2"
+  mkdir -p "$pm_dest2"
+
+  local pm_up_conf="${work}/perms-up.conf"
+  local pm_up_pid="${work}/perms-up.pid"
+  local pm_up_log="${work}/perms-up.log"
+  cat > "$pm_up_conf" <<CONF
+pid file = ${pm_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${pm_dest2}
+    comment = permissions test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$pm_up_conf" "$pm_up_log" "$pm_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -rlpv --timeout=10 \
+      "${pm_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.perms-d2.out" 2>"${log}.perms-d2.err"; then
+    echo "    oc -> upstream permissions push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  for f in readonly.txt script.sh sub/nested.txt; do
+    if [[ ! -f "$pm_dest2/$f" ]]; then
+      echo "    missing file (dir2): $f"
+      return 1
+    fi
+    if ! cmp -s "$pm_src/$f" "$pm_dest2/$f"; then
+      echo "    content mismatch (dir2): $f"
+      return 1
+    fi
+  done
+
+  local src_perm2 dest_perm2
+  src_perm2=$(stat -c '%a' "$pm_src/script.sh" 2>/dev/null || stat -f '%Lp' "$pm_src/script.sh")
+  dest_perm2=$(stat -c '%a' "$pm_dest2/script.sh" 2>/dev/null || stat -f '%Lp' "$pm_dest2/script.sh")
+  if [[ "$src_perm2" != "$dest_perm2" ]]; then
+    echo "    script.sh permission mismatch (dir2): src=$src_perm2 dest=$dest_perm2"
+    return 1
+  fi
+
   return 0
 }
 
@@ -6414,6 +7440,59 @@ CONF
     dest_mtime=$(stat -c '%Y' "$ts_dest/$f" 2>/dev/null || stat -f '%m' "$ts_dest/$f")
     if [[ "$src_mtime" != "$dest_mtime" ]]; then
       echo "    mtime mismatch for $f: src=$src_mtime dest=$dest_mtime"
+      return 1
+    fi
+  done
+
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local ts_dest2="${work}/timestamps-dest2"
+  rm -rf "$ts_dest2"
+  mkdir -p "$ts_dest2"
+
+  local ts_up_conf="${work}/timestamps-up.conf"
+  local ts_up_pid="${work}/timestamps-up.pid"
+  local ts_up_log="${work}/timestamps-up.log"
+  cat > "$ts_up_conf" <<CONF
+pid file = ${ts_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${ts_dest2}
+    comment = timestamps test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$ts_up_conf" "$ts_up_log" "$ts_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -rltv --timeout=10 \
+      "${ts_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.timestamps-d2.out" 2>"${log}.timestamps-d2.err"; then
+    echo "    oc -> upstream timestamps push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  for f in alpha.txt beta.txt sub/nested.txt; do
+    if [[ ! -f "$ts_dest2/$f" ]]; then
+      echo "    missing file (dir2): $f"
+      return 1
+    fi
+    if ! cmp -s "$ts_src/$f" "$ts_dest2/$f"; then
+      echo "    content mismatch (dir2): $f"
+      return 1
+    fi
+  done
+
+  for f in alpha.txt beta.txt sub/nested.txt; do
+    local src_mt2 dest_mt2
+    src_mt2=$(stat -c '%Y' "$ts_src/$f" 2>/dev/null || stat -f '%m' "$ts_src/$f")
+    dest_mt2=$(stat -c '%Y' "$ts_dest2/$f" 2>/dev/null || stat -f '%m' "$ts_dest2/$f")
+    if [[ "$src_mt2" != "$dest_mt2" ]]; then
+      echo "    mtime mismatch (dir2) for $f: src=$src_mt2 dest=$dest_mt2"
       return 1
     fi
   done
@@ -6573,6 +7652,57 @@ CONF
     fi
   done
 
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local ei_dest2="${work}/excl-incl-dest2"
+  rm -rf "$ei_dest2"
+  mkdir -p "$ei_dest2"
+
+  local ei_up_conf="${work}/excl-incl-up.conf"
+  local ei_up_pid="${work}/excl-incl-up.pid"
+  local ei_up_log="${work}/excl-incl-up.log"
+  cat > "$ei_up_conf" <<CONF
+pid file = ${ei_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${ei_dest2}
+    comment = exclude-include test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$ei_up_conf" "$ei_up_log" "$ei_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -rv --timeout=10 \
+      --include='*.txt' --include='*/' --exclude='*' \
+      "${ei_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.excl-incl-d2.out" 2>"${log}.excl-incl-d2.err"; then
+    echo "    oc -> upstream exclude/include push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  for f in alpha.txt beta.txt sub/nested.txt; do
+    if [[ ! -f "$ei_dest2/$f" ]]; then
+      echo "    missing included .txt file (dir2): $f"
+      return 1
+    fi
+    if ! cmp -s "$ei_src/$f" "$ei_dest2/$f"; then
+      echo "    content mismatch (dir2): $f"
+      return 1
+    fi
+  done
+
+  for f in data.bin config.yaml output.log sub/nested.dat; do
+    if [[ -f "$ei_dest2/$f" ]]; then
+      echo "    excluded file present (dir2): $f"
+      return 1
+    fi
+  done
+
   return 0
 }
 
@@ -6657,6 +7787,73 @@ CONF
   for f in stale.txt old.log sub/old-nested.dat; do
     if [[ -f "$df_dest/$f" ]]; then
       echo "    extra file not deleted: $f"
+      return 1
+    fi
+  done
+
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local df_dest2="${work}/del-filter-dest2"
+  rm -rf "$df_dest2"
+  mkdir -p "$df_dest2"
+
+  # Pre-populate with extra files
+  echo "source alpha" > "$df_dest2/alpha.txt"
+  echo "extra stale" > "$df_dest2/stale.txt"
+  echo "extra old log" > "$df_dest2/old.log"
+  echo "keep this" > "$df_dest2/important.keep"
+  mkdir -p "$df_dest2/sub"
+  echo "extra sub stale" > "$df_dest2/sub/old-nested.dat"
+  echo "keep nested" > "$df_dest2/sub/preserve.keep"
+
+  local df_up_conf="${work}/del-filter-up.conf"
+  local df_up_pid="${work}/del-filter-up.pid"
+  local df_up_log="${work}/del-filter-up.log"
+  cat > "$df_up_conf" <<CONF
+pid file = ${df_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${df_dest2}
+    comment = delete-with-filters test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$df_up_conf" "$df_up_log" "$df_up_pid"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av --delete --timeout=10 \
+      --exclude='*.keep' \
+      "${df_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.del-filter-d2.out" 2>"${log}.del-filter-d2.err"; then
+    echo "    oc -> upstream delete-with-filters push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  for f in alpha.txt beta.txt sub/nested.txt; do
+    if [[ ! -f "$df_dest2/$f" ]]; then
+      echo "    missing source file (dir2): $f"
+      return 1
+    fi
+    if ! cmp -s "$df_src/$f" "$df_dest2/$f"; then
+      echo "    content mismatch (dir2): $f"
+      return 1
+    fi
+  done
+
+  for f in important.keep sub/preserve.keep; do
+    if [[ ! -f "$df_dest2/$f" ]]; then
+      echo "    .keep file was deleted (dir2): $f"
+      return 1
+    fi
+  done
+
+  for f in stale.txt old.log sub/old-nested.dat; do
+    if [[ -f "$df_dest2/$f" ]]; then
+      echo "    extra file not deleted (dir2): $f"
       return 1
     fi
   done
@@ -9092,6 +10289,57 @@ CONF
     return 1
   fi
 
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local ld_dest2="${work}/linkdest-dest2"
+  rm -rf "$ld_dest2"
+  mkdir -p "$ld_dest2"
+
+  local ld_up_conf="${work}/linkdest-up.conf"
+  local ld_up_pid="${work}/linkdest-up.pid"
+  local ld_up_log="${work}/linkdest-up.log"
+  cat > "$ld_up_conf" <<CONF
+pid file = ${ld_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${ld_dest2}
+    comment = link-dest test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$ld_up_conf" "$ld_up_log" "$ld_up_pid"
+
+  # Copy reference into daemon-visible path
+  local ld_ref_daemon2="${ld_dest2}/../linkdest-ref-daemon2"
+  rm -rf "$ld_ref_daemon2"
+  cp -a "$ld_ref" "$ld_ref_daemon2"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av --timeout=10 \
+      --link-dest="$ld_ref_daemon2" \
+      "${ld_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.linkdest-d2.out" 2>"${log}.linkdest-d2.err"; then
+    echo "    oc -> upstream link-dest push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  if ! cmp -s "$ld_src/shared.txt" "$ld_dest2/shared.txt"; then
+    echo "    shared.txt content mismatch (dir2)"
+    return 1
+  fi
+  if ! cmp -s "$ld_src/changed.txt" "$ld_dest2/changed.txt"; then
+    echo "    changed.txt content mismatch (dir2)"
+    return 1
+  fi
+  if ! cmp -s "$ld_src/newfile.txt" "$ld_dest2/newfile.txt"; then
+    echo "    newfile.txt content mismatch (dir2)"
+    return 1
+  fi
+
   return 0
 }
 
@@ -9163,6 +10411,57 @@ CONF
   fi
   if ! cmp -s "$cd_src/new.txt" "$cd_dest/new.txt"; then
     echo "    new.txt content mismatch"
+    return 1
+  fi
+
+  # --- Direction 2: oc-rsync client -> upstream daemon ---
+  local cd_dest2="${work}/copydest-dest2"
+  rm -rf "$cd_dest2"
+  mkdir -p "$cd_dest2"
+
+  local cd_up_conf="${work}/copydest-up.conf"
+  local cd_up_pid="${work}/copydest-up.pid"
+  local cd_up_log="${work}/copydest-up.log"
+  cat > "$cd_up_conf" <<CONF
+pid file = ${cd_up_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${cd_dest2}
+    comment = copy-dest test dir2
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$cd_up_conf" "$cd_up_log" "$cd_up_pid"
+
+  # Copy reference into daemon-visible path
+  local cd_ref_daemon2="${cd_dest2}/../copydest-ref-daemon2"
+  rm -rf "$cd_ref_daemon2"
+  cp -a "$cd_ref" "$cd_ref_daemon2"
+
+  if ! timeout "$hard_timeout" "$oc_bin" -av --timeout=10 \
+      --copy-dest="$cd_ref_daemon2" \
+      "${cd_src}/" "rsync://127.0.0.1:${upstream_port}/interop" \
+      >"${log}.copydest-d2.out" 2>"${log}.copydest-d2.err"; then
+    echo "    oc -> upstream copy-dest push failed (exit=$?)"
+    stop_upstream_daemon
+    return 1
+  fi
+
+  stop_upstream_daemon
+
+  if ! cmp -s "$cd_src/same.txt" "$cd_dest2/same.txt"; then
+    echo "    same.txt content mismatch (dir2)"
+    return 1
+  fi
+  if ! cmp -s "$cd_src/diff.txt" "$cd_dest2/diff.txt"; then
+    echo "    diff.txt content mismatch (dir2)"
+    return 1
+  fi
+  if ! cmp -s "$cd_src/new.txt" "$cd_dest2/new.txt"; then
+    echo "    new.txt content mismatch (dir2)"
     return 1
   fi
 
