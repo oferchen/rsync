@@ -167,17 +167,6 @@ jobs:
         with:
           tool: cargo-nextest
 
-      - name: Free disk space
-        # The debug build statically links a large dependency closure (aws-lc,
-        # openssl, ring, zstd) into many test binaries, which can exhaust the
-        # ~14 GB free on ubuntu-latest at link time ("No space left on device").
-        # Remove preinstalled toolchains the Rust build does not use to reclaim
-        # ~15+ GB before the build.
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
-            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
-          df -h /
-
       - name: Run tests
         run: cargo nextest run --locked --workspace --all-features
 
