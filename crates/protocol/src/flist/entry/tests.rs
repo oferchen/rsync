@@ -1329,3 +1329,109 @@ fn clone_all_extras_then_mutate() {
 
     assert_ne!(entry, cloned);
 }
+
+/// Extras presence bitfield: all compacted fields return None by default.
+#[test]
+fn extras_presence_bitfield_defaults_none() {
+    let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+    // Force extras allocation without setting any compacted field.
+    entry.set_atime(0);
+    assert!(entry.extras.is_some());
+
+    assert_eq!(entry.rdev_major(), None);
+    assert_eq!(entry.rdev_minor(), None);
+    assert_eq!(entry.hardlink_idx(), None);
+    assert_eq!(entry.acl_ndx(), None);
+    assert_eq!(entry.def_acl_ndx(), None);
+    assert_eq!(entry.xattr_ndx(), None);
+    assert_eq!(entry.hardlink_dev(), None);
+    assert_eq!(entry.hardlink_ino(), None);
+}
+
+/// Extras presence bitfield: round-trip set/get for all compacted fields.
+#[test]
+fn extras_presence_bitfield_roundtrip() {
+    let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+
+    entry.set_rdev(8, 1);
+    assert_eq!(entry.rdev_major(), Some(8));
+    assert_eq!(entry.rdev_minor(), Some(1));
+
+    entry.set_hardlink_idx(42);
+    assert_eq!(entry.hardlink_idx(), Some(42));
+
+    entry.set_acl_ndx(10);
+    assert_eq!(entry.acl_ndx(), Some(10));
+
+    entry.set_def_acl_ndx(20);
+    assert_eq!(entry.def_acl_ndx(), Some(20));
+
+    entry.set_xattr_ndx(30);
+    assert_eq!(entry.xattr_ndx(), Some(30));
+
+    entry.set_hardlink_dev(0xFD00);
+    assert_eq!(entry.hardlink_dev(), Some(0xFD00));
+
+    entry.set_hardlink_ino(12345);
+    assert_eq!(entry.hardlink_ino(), Some(12345));
+}
+
+/// Extras presence bitfield: Some(0) is correctly distinguished from None.
+#[test]
+fn extras_presence_bitfield_some_zero_vs_none() {
+    let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+
+    // Before setting: None
+    assert_eq!(entry.rdev_major(), None);
+    assert_eq!(entry.hardlink_idx(), None);
+    assert_eq!(entry.acl_ndx(), None);
+    assert_eq!(entry.def_acl_ndx(), None);
+    assert_eq!(entry.xattr_ndx(), None);
+    assert_eq!(entry.hardlink_dev(), None);
+    assert_eq!(entry.hardlink_ino(), None);
+
+    // After setting to 0: Some(0)
+    entry.set_rdev(0, 0);
+    assert_eq!(entry.rdev_major(), Some(0));
+    assert_eq!(entry.rdev_minor(), Some(0));
+
+    entry.set_hardlink_idx(0);
+    assert_eq!(entry.hardlink_idx(), Some(0));
+
+    entry.set_acl_ndx(0);
+    assert_eq!(entry.acl_ndx(), Some(0));
+
+    entry.set_def_acl_ndx(0);
+    assert_eq!(entry.def_acl_ndx(), Some(0));
+
+    entry.set_xattr_ndx(0);
+    assert_eq!(entry.xattr_ndx(), Some(0));
+
+    entry.set_hardlink_dev(0);
+    assert_eq!(entry.hardlink_dev(), Some(0));
+
+    entry.set_hardlink_ino(0);
+    assert_eq!(entry.hardlink_ino(), Some(0));
+}
+
+/// Extras presence bitfield: setting one compacted field does not affect others.
+#[test]
+fn extras_presence_bitfield_independence() {
+    let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+
+    entry.set_acl_ndx(5);
+    assert_eq!(entry.acl_ndx(), Some(5));
+    assert_eq!(entry.def_acl_ndx(), None);
+    assert_eq!(entry.xattr_ndx(), None);
+    assert_eq!(entry.rdev_major(), None);
+    assert_eq!(entry.hardlink_idx(), None);
+    assert_eq!(entry.hardlink_dev(), None);
+
+    entry.set_xattr_ndx(10);
+    assert_eq!(entry.acl_ndx(), Some(5));
+    assert_eq!(entry.xattr_ndx(), Some(10));
+    assert_eq!(entry.def_acl_ndx(), None);
+    assert_eq!(entry.rdev_major(), None);
+    assert_eq!(entry.hardlink_idx(), None);
+    assert_eq!(entry.hardlink_dev(), None);
+}
