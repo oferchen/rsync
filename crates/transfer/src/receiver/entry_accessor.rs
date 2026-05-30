@@ -321,9 +321,7 @@ mod tests {
         // size_only mode
         assert_eq!(
             quick_check_matches_generic(&entry, &path, &meta, true, true, None),
-            super::super::quick_check::quick_check_matches(
-                &entry, &path, &meta, true, true, None
-            ),
+            super::super::quick_check::quick_check_matches(&entry, &path, &meta, true, true, None),
         );
 
         // no preserve_times
@@ -403,7 +401,9 @@ mod tests {
         let acc: &dyn FileEntryAccessor = &entry;
 
         // size_only mode should match
-        assert!(quick_check_matches_generic(acc, &path, &meta, true, true, None));
+        assert!(quick_check_matches_generic(
+            acc, &path, &meta, true, true, None
+        ));
     }
 
     /// Verifies that `is_hardlink_follower_generic` can be called via trait object.
