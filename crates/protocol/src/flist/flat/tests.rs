@@ -105,3 +105,82 @@ fn extras_ref_no_extras_sentinel() {
     assert_eq!(h.extras, ExtrasRef::NO_EXTRAS);
     assert_ne!(ExtrasRef(0), ExtrasRef::NO_EXTRAS);
 }
+
+#[test]
+fn intern_resolve_round_trips() {
+    let mut arena = PathArena::new();
+    let h = arena.intern("src/lib.rs");
+    // A real string never collides with the empty sentinel.
+    assert_ne!(h, PathHandle::NONE);
+    assert_eq!(arena.resolve(h), "src/lib.rs");
+    assert_eq!(arena.get(h), Some("src/lib.rs"));
+}
+
+#[test]
+fn intern_dedups_to_same_handle() {
+    let mut arena = PathArena::new();
+    let a = arena.intern("README");
+    let b = arena.intern("README");
+    // Dedup yields the same handle and stores the bytes only once.
+    assert_eq!(a, b);
+    assert_eq!(arena.len(), 1);
+    assert_eq!(arena.bytes_len(), "README".len());
+}
+
+#[test]
+fn distinct_strings_get_distinct_handles() {
+    let mut arena = PathArena::new();
+    let a = arena.intern("alpha");
+    let b = arena.intern("beta");
+    let c = arena.intern("gamma");
+    assert_ne!(a, b);
+    assert_ne!(b, c);
+    assert_ne!(a, c);
+    assert_eq!(arena.len(), 3);
+    // Each resolves back to its own string regardless of insertion order.
+    assert_eq!(arena.resolve(a), "alpha");
+    assert_eq!(arena.resolve(b), "beta");
+    assert_eq!(arena.resolve(c), "gamma");
+}
+
+#[test]
+fn empty_string_is_the_none_sentinel() {
+    let mut arena = PathArena::new();
+    // The empty name/dirname slot must map to NONE and store nothing.
+    assert_eq!(arena.intern(""), PathHandle::NONE);
+    assert!(arena.is_empty());
+    assert_eq!(arena.bytes_len(), 0);
+    // NONE resolves to the empty string and to None, never to stored bytes.
+    assert_eq!(arena.resolve(PathHandle::NONE), "");
+    assert_eq!(arena.get(PathHandle::NONE), None);
+}
+
+#[test]
+fn get_returns_none_for_unknown_handle() {
+    let arena = PathArena::new();
+    // An index never issued by this arena is not a valid handle.
+    assert_eq!(arena.get(PathHandle(0)), None);
+}
+
+#[test]
+fn dedup_shares_basenames_across_dirnames() {
+    // Mirrors the design's basename-dedup goal: two identical basenames
+    // under different dirnames collapse to one arena string, which upstream
+    // (inline flexible-array basenames) cannot do.
+    let mut arena = PathArena::new();
+    let dir_a = arena.intern("a");
+    let dir_b = arena.intern("b");
+    let name_1 = arena.intern("README");
+    let name_2 = arena.intern("README");
+    assert_ne!(dir_a, dir_b);
+    assert_eq!(name_1, name_2);
+    // Two dirnames + one shared basename = three unique strings.
+    assert_eq!(arena.len(), 3);
+}
+
+#[test]
+fn with_capacity_starts_empty() {
+    let arena = PathArena::with_capacity(128);
+    assert!(arena.is_empty());
+    assert_eq!(arena.len(), 0);
+}
