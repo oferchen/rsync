@@ -77,10 +77,13 @@ mod registration;
 pub use crate::io_uring_common::{
     BgidAllocError, BufferRingConfig, BufferRingError, buffer_id_from_cqe_flags,
 };
-pub use allocator::{BgidAllocator, bgid_exhausted_count, bgid_inflight, bgid_peak_used};
+pub use allocator::{
+    BgidAllocator, BgidSessionStats, BgidSnapshot, bgid_exhausted_count, bgid_inflight,
+    bgid_peak_used, bgid_snapshot,
+};
 pub use registration::{is_supported, pbuf_ring_supported};
 
-use allocator::warn_bgid_fallback_once;
+use allocator::warn_bgid_fallback;
 use registration::{
     IORING_OFF_PBUF_RING, IORING_REGISTER_PBUF_RING, IORING_UNREGISTER_PBUF_RING, IoUringBufReg,
     check_kernel_version,
@@ -371,7 +374,7 @@ impl BufferRing {
         let bgid = match BgidAllocator::allocate() {
             Ok(id) => id,
             Err(e) => {
-                warn_bgid_fallback_once(e);
+                warn_bgid_fallback(e);
                 return Err(e.into());
             }
         };

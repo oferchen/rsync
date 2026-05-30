@@ -165,3 +165,82 @@ pub fn bgid_inflight() -> u16 {
 pub fn bgid_exhausted_count() -> u64 {
     0
 }
+
+/// Consistent snapshot of all process-wide bgid allocator counters.
+///
+/// On non-Linux platforms all fields are zero because no bgids are ever
+/// issued. Mirrors the Linux type so cross-platform callers compile
+/// without `cfg`-gating.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BgidSnapshot {
+    /// Cumulative exhaustion events since process start.
+    pub exhausted_count: u64,
+    /// Current bgids checked out (not yet returned to the free-list).
+    pub in_flight: u16,
+    /// High-water mark for concurrent bgid occupancy.
+    pub peak_used: u16,
+    /// Bgids available for allocation (counter headroom + free-list).
+    pub remaining: u32,
+}
+
+/// Returns a zero-valued snapshot on non-Linux platforms.
+///
+/// Mirrors the Linux accessor so cross-platform callers and metrics
+/// exporters compile without `cfg`-gating.
+#[must_use]
+pub fn bgid_snapshot() -> BgidSnapshot {
+    BgidSnapshot {
+        exhausted_count: 0,
+        in_flight: 0,
+        peak_used: 0,
+        remaining: 0,
+    }
+}
+
+/// Per-session bgid exhaustion tracker.
+///
+/// On non-Linux platforms this is a no-op: exhaustion events never occur
+/// and all counters stay at zero. Mirrors the Linux type so cross-platform
+/// callers compile without `cfg`-gating.
+#[derive(Debug, Clone, Copy)]
+pub struct BgidSessionStats {
+    _private: (),
+}
+
+impl BgidSessionStats {
+    /// Returns a no-op session tracker on this platform.
+    #[must_use]
+    pub fn new() -> Self {
+        Self { _private: () }
+    }
+
+    /// Always returns 0 on this platform.
+    #[must_use]
+    pub fn exhaustions_since_start(&self) -> u64 {
+        0
+    }
+
+    /// Always returns 0 on this platform.
+    #[must_use]
+    pub fn start_in_flight(&self) -> u16 {
+        0
+    }
+
+    /// Always returns 0 on this platform.
+    #[must_use]
+    pub fn current_in_flight(&self) -> u16 {
+        0
+    }
+
+    /// Always returns 0 on this platform.
+    #[must_use]
+    pub fn in_flight_delta(&self) -> i32 {
+        0
+    }
+}
+
+impl Default for BgidSessionStats {
+    fn default() -> Self {
+        Self::new()
+    }
+}

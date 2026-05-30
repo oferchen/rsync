@@ -67,8 +67,8 @@ pub use crate::io_uring_common::{
 };
 
 pub use buffer_ring::{
-    BgidAllocator, BufferRing, bgid_exhausted_count, bgid_inflight, bgid_peak_used,
-    pbuf_ring_supported,
+    BgidAllocator, BgidSessionStats, BgidSnapshot, BufferRing, bgid_exhausted_count, bgid_inflight,
+    bgid_peak_used, bgid_snapshot, pbuf_ring_supported,
 };
 pub use cancel::{CancelOutcome, cancel_all_by_fd, cancel_by_user_data};
 pub use config::{StubIoUringBackend, config_detail, is_io_uring_available, sqpoll_fell_back};
