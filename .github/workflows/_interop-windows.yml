@@ -15,6 +15,13 @@ name: Interop Tests (Windows)
 #   - upstream sender + oc-rsync receiver (pull, via upstream daemon)
 #   - quick-check no-op re-run
 #   - delta update: oc-rsync client -> upstream daemon
+#   - compress (-avz), checksum (-avc), delete (--delete)
+#   - dry-run (-avn), exclude (--exclude), relative paths (-avR)
+#   - whole-file (-avW), inplace (--inplace), numeric-ids
+#   - itemize (-avi), files-from, size-only (--size-only)
+#   - compressed delta (-avz --no-whole-file -I)
+#   Note: symlinks, hardlinks, and oc-rsync daemon scenarios are
+#   skipped on Windows (see platform gate in the harness).
 #
 # Intentionally NOT covered on Windows:
 #   - xattr / ACL / hardlinks / symlinks parity (NTFS semantics differ
