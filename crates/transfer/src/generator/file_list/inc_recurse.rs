@@ -149,12 +149,11 @@ impl GeneratorContext {
         } = cr;
 
         // Wrap in Option<T> for safe move-out by index.
-        let mut file_entries: Vec<Option<FileEntry>> =
-            std::mem::take(&mut self.file_list)
-                .into_vec()
-                .into_iter()
-                .map(Some)
-                .collect();
+        let mut file_entries: Vec<Option<FileEntry>> = std::mem::take(&mut self.file_list)
+            .into_vec()
+            .into_iter()
+            .map(Some)
+            .collect();
         let mut paths: Vec<Option<std::path::PathBuf>> = std::mem::take(&mut self.full_paths)
             .into_iter()
             .map(Some)
