@@ -186,10 +186,7 @@ fn acl_roundtrip_multiple_named_entries_on_same_file() {
     let acl_entries = {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         {
-            vec![
-                AclEntry::user_rwx(user),
-                AclEntry::group_rx(test_group()),
-            ]
+            vec![AclEntry::user_rwx(user), AclEntry::group_rx(test_group())]
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {

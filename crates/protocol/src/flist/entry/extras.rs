@@ -29,7 +29,7 @@ pub(super) const EXTRAS_PRESENT_HARDLINK_DEV: u16 = 1 << 5;
 /// use raw storage with a `present` bitfield instead of `Option<T>`. This
 /// mirrors the `PRESENT_UID`/`PRESENT_GID` compaction on `FileEntry` and
 /// saves 8-16 bytes of discriminant+padding per `Option`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct FileEntryExtras {
     // 8-byte aligned fields first.
     /// Symlink target path (for symlinks).
@@ -88,28 +88,4 @@ pub(super) struct FileEntryExtras {
     ///
     /// See `EXTRAS_PRESENT_*` constants.
     pub(super) present: u16,
-}
-
-impl Default for FileEntryExtras {
-    fn default() -> Self {
-        Self {
-            link_target: None,
-            user_name: None,
-            group_name: None,
-            atime: 0,
-            crtime: 0,
-            hardlink_dev: 0,
-            hardlink_ino: 0,
-            checksum: None,
-            xattr_list: None,
-            atime_nsec: 0,
-            rdev_major: 0,
-            rdev_minor: 0,
-            hardlink_idx: 0,
-            acl_ndx: 0,
-            def_acl_ndx: 0,
-            xattr_ndx: 0,
-            present: 0,
-        }
-    }
 }
