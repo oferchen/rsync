@@ -612,6 +612,51 @@ wait_for_port() {
   return 1
 }
 
+# Wait for an rsync daemon to be fully ready by performing a protocol-level
+# handshake check. Unlike wait_for_port() which only checks TCP binding and
+# creates a ghost connection the daemon must handle, this function connects,
+# reads the @RSYNCD: greeting, and cleanly exits. This prevents the ghost
+# connection race where the daemon processes a bare TCP probe as a real client,
+# potentially interfering with the actual transfer that follows.
+# Returns 0 on success, 1 on timeout.
+wait_for_daemon_ready() {
+  local port=$1
+  local max_wait=${2:-15}
+
+  python3 -c "
+import socket, time, sys
+
+port = int(sys.argv[1])
+max_wait = float(sys.argv[2])
+interval = 0.5
+deadline = time.monotonic() + max_wait
+
+while time.monotonic() < deadline:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(2.0)
+        s.connect(('127.0.0.1', port))
+        greeting = s.recv(256)
+        if greeting.startswith(b'@RSYNCD:'):
+            # Send EXIT to close gracefully so the daemon does not waste
+            # resources processing a probe as a real session.
+            try:
+                s.sendall(b'@RSYNCD: EXIT\n')
+            except OSError:
+                pass
+            s.close()
+            sys.exit(0)
+        s.close()
+    except (ConnectionRefusedError, ConnectionResetError, OSError):
+        pass
+    time.sleep(interval)
+
+print('ERROR: rsync daemon on port %d not ready after %gs' % (port, max_wait),
+      file=sys.stderr)
+sys.exit(1)
+" "$port" "$max_wait"
+}
+
 # Wait for a TCP port to stop accepting connections (released after daemon shutdown).
 # Prevents the next daemon from racing against TIME_WAIT on the old socket.
 wait_for_port_free() {
@@ -714,7 +759,7 @@ start_oc_daemon() {
   OC_RSYNC_DAEMON_FALLBACK=0 \
     "$oc_binary" --daemon --no-detach --config "$config" --port "$port" --log-file "$log_file" </dev/null &
   oc_pid=$!
-  if ! wait_for_port "$port" 10; then
+  if ! wait_for_daemon_ready "$port" 15; then
     echo "FATAL: oc-rsync daemon failed to bind port $port" >&2
     stop_oc_daemon
     return 1
@@ -748,7 +793,7 @@ start_upstream_daemon() {
 
   if [[ -n "$port" ]]; then
     up_port_current="$port"
-    if ! wait_for_port "$port" 10; then
+    if ! wait_for_daemon_ready "$port" 15; then
       echo "FATAL: upstream rsync daemon failed to bind port $port" >&2
       stop_upstream_daemon
       return 1
