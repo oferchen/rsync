@@ -871,27 +871,15 @@ mod tests {
             };
 
             let mut entry = if combo.link_target {
-                FileEntry::new_symlink(
-                    path,
-                    format!("../targets/dest_{idx}").into(),
-                )
+                FileEntry::new_symlink(path, format!("../targets/dest_{idx}").into())
             } else if combo.rdev {
-                FileEntry::new_block_device(
-                    path,
-                    0o660,
-                    (idx as u32) + 1,
-                    (idx as u32) * 3,
-                )
+                FileEntry::new_block_device(path, 0o660, (idx as u32) + 1, (idx as u32) * 3)
             } else if combo.content_dir_off {
                 let mut d = FileEntry::new_directory(path, 0o755);
                 d.set_content_dir(false);
                 d
             } else {
-                FileEntry::new_file(
-                    path,
-                    (idx as u64 + 1) * 1024,
-                    0o644,
-                )
+                FileEntry::new_file(path, (idx as u64 + 1) * 1024, 0o644)
             };
 
             entry.set_mtime(1_700_000_000 + idx as i64, 0);
@@ -1063,11 +1051,7 @@ mod tests {
                     );
                     assert_eq!(legacy.atime(), 0, "entry {idx}: expected atime 0");
                     assert_eq!(legacy.crtime(), 0, "entry {idx}: expected crtime 0");
-                    assert_eq!(
-                        legacy.atime_nsec(),
-                        0,
-                        "entry {idx}: expected atime_nsec 0"
-                    );
+                    assert_eq!(legacy.atime_nsec(), 0, "entry {idx}: expected atime_nsec 0");
                 }
                 Some(decoded) => {
                     // Link target.
@@ -1143,12 +1127,18 @@ mod tests {
 
                     // User/group names.
                     assert_eq!(
-                        decoded.user_name.as_deref().map(|b| std::str::from_utf8(b).unwrap()),
+                        decoded
+                            .user_name
+                            .as_deref()
+                            .map(|b| std::str::from_utf8(b).unwrap()),
                         legacy.user_name(),
                         "entry {idx}: user_name mismatch"
                     );
                     assert_eq!(
-                        decoded.group_name.as_deref().map(|b| std::str::from_utf8(b).unwrap()),
+                        decoded
+                            .group_name
+                            .as_deref()
+                            .map(|b| std::str::from_utf8(b).unwrap()),
                         legacy.group_name(),
                         "entry {idx}: group_name mismatch"
                     );
