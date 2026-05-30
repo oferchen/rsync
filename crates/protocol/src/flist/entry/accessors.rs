@@ -208,12 +208,24 @@ impl FileEntry {
 
     /// Returns the device major number if this is a device.
     pub fn rdev_major(&self) -> Option<u32> {
-        self.extras.as_ref().and_then(|e| e.rdev_major)
+        self.extras.as_ref().and_then(|e| {
+            if e.present & super::extras::EXTRAS_PRESENT_RDEV != 0 {
+                Some(e.rdev_major)
+            } else {
+                None
+            }
+        })
     }
 
     /// Returns the device minor number if this is a device.
     pub fn rdev_minor(&self) -> Option<u32> {
-        self.extras.as_ref().and_then(|e| e.rdev_minor)
+        self.extras.as_ref().and_then(|e| {
+            if e.present & super::extras::EXTRAS_PRESENT_RDEV != 0 {
+                Some(e.rdev_minor)
+            } else {
+                None
+            }
+        })
     }
 
     /// Returns the wire format flags.
@@ -304,18 +316,27 @@ impl FileEntry {
     /// Sets the device numbers.
     pub fn set_rdev(&mut self, major: u32, minor: u32) {
         let e = self.extras_mut();
-        e.rdev_major = Some(major);
-        e.rdev_minor = Some(minor);
+        e.rdev_major = major;
+        e.rdev_minor = minor;
+        e.present |= super::extras::EXTRAS_PRESENT_RDEV;
     }
 
     /// Returns the hardlink index if this entry is a hardlink.
     pub fn hardlink_idx(&self) -> Option<u32> {
-        self.extras.as_ref().and_then(|e| e.hardlink_idx)
+        self.extras.as_ref().and_then(|e| {
+            if e.present & super::extras::EXTRAS_PRESENT_HARDLINK_IDX != 0 {
+                Some(e.hardlink_idx)
+            } else {
+                None
+            }
+        })
     }
 
     /// Sets the hardlink index for this entry.
     pub fn set_hardlink_idx(&mut self, idx: u32) {
-        self.extras_mut().hardlink_idx = Some(idx);
+        let e = self.extras_mut();
+        e.hardlink_idx = idx;
+        e.present |= super::extras::EXTRAS_PRESENT_HARDLINK_IDX;
     }
 
     /// Returns the access time as seconds since Unix epoch.
@@ -377,23 +398,39 @@ impl FileEntry {
     /// Returns the hardlink device number (for protocol < 30).
     #[inline]
     pub fn hardlink_dev(&self) -> Option<i64> {
-        self.extras.as_ref().and_then(|e| e.hardlink_dev)
+        self.extras.as_ref().and_then(|e| {
+            if e.present & super::extras::EXTRAS_PRESENT_HARDLINK_DEV != 0 {
+                Some(e.hardlink_dev)
+            } else {
+                None
+            }
+        })
     }
 
     /// Sets the hardlink device number (for protocol < 30).
     pub fn set_hardlink_dev(&mut self, dev: i64) {
-        self.extras_mut().hardlink_dev = Some(dev);
+        let e = self.extras_mut();
+        e.hardlink_dev = dev;
+        e.present |= super::extras::EXTRAS_PRESENT_HARDLINK_DEV;
     }
 
     /// Returns the hardlink inode number (for protocol < 30).
     #[inline]
     pub fn hardlink_ino(&self) -> Option<i64> {
-        self.extras.as_ref().and_then(|e| e.hardlink_ino)
+        self.extras.as_ref().and_then(|e| {
+            if e.present & super::extras::EXTRAS_PRESENT_HARDLINK_DEV != 0 {
+                Some(e.hardlink_ino)
+            } else {
+                None
+            }
+        })
     }
 
     /// Sets the hardlink inode number (for protocol < 30).
     pub fn set_hardlink_ino(&mut self, ino: i64) {
-        self.extras_mut().hardlink_ino = Some(ino);
+        let e = self.extras_mut();
+        e.hardlink_ino = ino;
+        e.present |= super::extras::EXTRAS_PRESENT_HARDLINK_DEV;
     }
 
     /// Returns the file checksum if set (for --checksum mode).
@@ -410,12 +447,20 @@ impl FileEntry {
     /// Returns the access ACL index if set (for --acls mode).
     #[inline]
     pub fn acl_ndx(&self) -> Option<u32> {
-        self.extras.as_ref().and_then(|e| e.acl_ndx)
+        self.extras.as_ref().and_then(|e| {
+            if e.present & super::extras::EXTRAS_PRESENT_ACL_NDX != 0 {
+                Some(e.acl_ndx)
+            } else {
+                None
+            }
+        })
     }
 
     /// Sets the access ACL index (for --acls mode).
     pub fn set_acl_ndx(&mut self, ndx: u32) {
-        self.extras_mut().acl_ndx = Some(ndx);
+        let e = self.extras_mut();
+        e.acl_ndx = ndx;
+        e.present |= super::extras::EXTRAS_PRESENT_ACL_NDX;
     }
 
     /// Returns the default ACL index if set (for directories in --acls mode).
@@ -423,25 +468,41 @@ impl FileEntry {
     /// Corresponds to upstream's `F_DIR_DEFACL`. Only meaningful for directories.
     #[inline]
     pub fn def_acl_ndx(&self) -> Option<u32> {
-        self.extras.as_ref().and_then(|e| e.def_acl_ndx)
+        self.extras.as_ref().and_then(|e| {
+            if e.present & super::extras::EXTRAS_PRESENT_DEF_ACL_NDX != 0 {
+                Some(e.def_acl_ndx)
+            } else {
+                None
+            }
+        })
     }
 
     /// Sets the default ACL index (for directories in --acls mode).
     ///
     /// Corresponds to upstream's `F_DIR_DEFACL`. Only meaningful for directories.
     pub fn set_def_acl_ndx(&mut self, ndx: u32) {
-        self.extras_mut().def_acl_ndx = Some(ndx);
+        let e = self.extras_mut();
+        e.def_acl_ndx = ndx;
+        e.present |= super::extras::EXTRAS_PRESENT_DEF_ACL_NDX;
     }
 
     /// Returns the extended attribute index if set (for --xattrs mode).
     #[inline]
     pub fn xattr_ndx(&self) -> Option<u32> {
-        self.extras.as_ref().and_then(|e| e.xattr_ndx)
+        self.extras.as_ref().and_then(|e| {
+            if e.present & super::extras::EXTRAS_PRESENT_XATTR_NDX != 0 {
+                Some(e.xattr_ndx)
+            } else {
+                None
+            }
+        })
     }
 
     /// Sets the extended attribute index (for --xattrs mode).
     pub fn set_xattr_ndx(&mut self, ndx: u32) {
-        self.extras_mut().xattr_ndx = Some(ndx);
+        let e = self.extras_mut();
+        e.xattr_ndx = ndx;
+        e.present |= super::extras::EXTRAS_PRESENT_XATTR_NDX;
     }
 
     /// Returns the sender-side xattr list if set (for --xattrs mode).
