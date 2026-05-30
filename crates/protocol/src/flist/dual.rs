@@ -10,6 +10,7 @@
 //! newtype over `Vec<FileEntry>` with zero overhead - no arena fields, no
 //! conversion logic, and no extra imports.
 
+use std::fmt;
 use std::ops::{Index, IndexMut, RangeFrom};
 
 use super::FileEntry;
@@ -36,6 +37,14 @@ pub struct DualFileList {
     flat: FlatFileList,
     #[cfg(feature = "flat-flist")]
     extras: ExtrasArena,
+}
+
+impl fmt::Debug for DualFileList {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DualFileList")
+            .field("len", &self.legacy.len())
+            .finish()
+    }
 }
 
 impl DualFileList {
@@ -118,6 +127,23 @@ impl DualFileList {
         self.legacy.len()
     }
 
+    /// Clears all entries from both legacy and flat stores.
+    pub fn clear(&mut self) {
+        self.legacy.clear();
+        #[cfg(feature = "flat-flist")]
+        {
+            self.flat = FlatFileList::new();
+            self.extras = ExtrasArena::new();
+        }
+    }
+
+    /// Reserves capacity for at least `additional` more entries in the
+    /// legacy Vec. The flat stores grow dynamically and do not need
+    /// explicit reservation.
+    pub fn reserve(&mut self, additional: usize) {
+        self.legacy.reserve(additional);
+    }
+
     /// Returns a shared reference to the flat file list.
     ///
     /// Available only when the `flat-flist` feature is enabled.
@@ -176,6 +202,24 @@ impl Index<RangeFrom<usize>> for DualFileList {
 impl IndexMut<usize> for DualFileList {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         &mut self.legacy[index]
+    }
+}
+
+impl<'a> IntoIterator for &'a DualFileList {
+    type Item = &'a FileEntry;
+    type IntoIter = std::slice::Iter<'a, FileEntry>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.legacy.iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a mut DualFileList {
+    type Item = &'a mut FileEntry;
+    type IntoIter = std::slice::IterMut<'a, FileEntry>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.legacy.iter_mut()
     }
 }
 

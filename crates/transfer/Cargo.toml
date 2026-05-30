@@ -114,6 +114,10 @@ thread-slab-pool = ["engine/thread-slab-pool"]
 # Incremental file list processing with failed directory tracking
 incremental-flist = []
 
+# Flat file-list backing store (RSS-A.5+). Forwards to protocol's flat-flist
+# feature, enabling arena-backed dual-emit in DualFileList.
+flat-flist = ["protocol/flat-flist"]
+
 # DEPRECATED (ISI.h): sender INC_RECURSE is now default-on. Marker
 # retained for one release to keep V61D-2 / V61D-3 interop gates
 # compilable until ISI.i.2 retires both.
