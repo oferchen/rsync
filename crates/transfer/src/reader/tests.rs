@@ -349,7 +349,7 @@ fn msg_io_error_round_trip_through_multiplex_layer() {
     );
 
     let exit_code = io_error_flags::to_exit_code(forwarded_flags);
-    assert_eq!(exit_code, 23); // RERR_PARTIAL
+    assert_eq!(exit_code, multiplex::RERR_PARTIAL);
 }
 
 #[test]
@@ -958,10 +958,10 @@ fn multiplex_reader_exit_23_deferred_until_error_xfer_arrives() {
     // the late-arriving FERROR_XFER.
     let mut stream = Vec::new();
 
-    // Wire order: DATA, ERROR_EXIT(23), ERROR_XFER, DATA
+    // Wire order: DATA, ERROR_EXIT(RERR_PARTIAL), ERROR_XFER, DATA
     protocol::send_msg(&mut stream, protocol::MessageCode::Data, b"hello").unwrap();
 
-    let exit_code: i32 = 23;
+    let exit_code: i32 = multiplex::RERR_PARTIAL;
     protocol::send_msg(
         &mut stream,
         protocol::MessageCode::ErrorExit,
@@ -993,17 +993,17 @@ fn multiplex_reader_exit_23_deferred_until_error_xfer_arrives() {
     assert_eq!(&buf, b"world");
 
     assert_eq!(mux.xfer_error_count, 1);
-    assert_eq!(mux.error_exit_code, Some(23));
+    assert_eq!(mux.error_exit_code, Some(multiplex::RERR_PARTIAL));
 }
 
 #[test]
 fn multiplex_reader_exit_23_without_xfer_still_drains() {
-    // Exit 23 without any FERROR_XFER: the reader defers the abort and
-    // continues reading. If a DATA frame arrives, it returns the data
-    // normally. The transfer drains and EOF surfaces naturally.
+    // Exit RERR_PARTIAL without any FERROR_XFER: the reader defers the
+    // abort and continues reading. If a DATA frame arrives, it returns the
+    // data normally. The transfer drains and EOF surfaces naturally.
     let mut stream = Vec::new();
 
-    let exit_code: i32 = 23;
+    let exit_code: i32 = multiplex::RERR_PARTIAL;
     protocol::send_msg(
         &mut stream,
         protocol::MessageCode::ErrorExit,
@@ -1021,7 +1021,7 @@ fn multiplex_reader_exit_23_without_xfer_still_drains() {
     assert_eq!(&buf, b"ok");
 
     assert_eq!(mux.xfer_error_count, 0);
-    assert_eq!(mux.error_exit_code, Some(23));
+    assert_eq!(mux.error_exit_code, Some(multiplex::RERR_PARTIAL));
 }
 
 #[test]
