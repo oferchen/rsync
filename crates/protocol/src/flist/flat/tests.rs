@@ -353,3 +353,36 @@ fn flat_file_list_default_is_new() {
     assert!(flist.is_empty());
     assert_eq!(flist.len(), 0);
 }
+
+// ---------------------------------------------------------------------------
+// Feature-flag coexistence (RSS-A.5.e.3)
+// ---------------------------------------------------------------------------
+
+/// Verifies that the flat-flist types and the legacy `Vec<FileEntry>` path
+/// compile and operate side-by-side in the same scope. This is the key
+/// invariant of the feature flag: enabling `flat-flist` must never shadow,
+/// conflict with, or break the legacy representation.
+#[test]
+fn flat_and_legacy_coexist_in_same_scope() {
+    use crate::flist::FileEntry;
+
+    // Legacy path: build a Vec<FileEntry> with two entries.
+    let legacy: Vec<FileEntry> = vec![
+        FileEntry::new_file("src/main.rs".into(), 2048, 0o644),
+        FileEntry::new_file("README".into(), 512, 0o644),
+    ];
+    assert_eq!(legacy.len(), 2);
+    assert_eq!(legacy[0].size(), 2048);
+
+    // Flat path: build a FlatFileList with the same logical entries.
+    let mut flat = FlatFileList::new();
+    push_entry(&mut flat, "main.rs", "src", 2048);
+    push_entry(&mut flat, "README", "", 512);
+    assert_eq!(flat.len(), 2);
+    assert_eq!(flat.get(0).unwrap().header.size, 2048);
+
+    // Both representations live in the same scope without name collisions
+    // or trait ambiguity. The legacy path is completely unaffected by the
+    // feature flag.
+    assert_eq!(legacy.len(), flat.len());
+}
