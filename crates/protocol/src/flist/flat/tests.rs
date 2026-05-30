@@ -184,3 +184,172 @@ fn with_capacity_starts_empty() {
     assert!(arena.is_empty());
     assert_eq!(arena.len(), 0);
 }
+
+// ---------------------------------------------------------------------------
+// FlatFileList tests
+// ---------------------------------------------------------------------------
+
+/// Helper: push an entry with the given name and dirname into `flist`.
+fn push_entry(flist: &mut FlatFileList, name: &str, dirname: &str, size: u64) {
+    let name_h = flist.paths_mut().intern(name);
+    let dirname_h = flist.paths_mut().intern(dirname);
+    let mut h = empty_header();
+    h.name = name_h;
+    h.dirname = dirname_h;
+    h.size = size;
+    flist.push(h);
+}
+
+#[test]
+fn flat_file_list_new_is_empty() {
+    let flist = FlatFileList::new();
+    assert!(flist.is_empty());
+    assert_eq!(flist.len(), 0);
+    assert!(flist.get(0).is_none());
+}
+
+#[test]
+fn flat_file_list_with_capacity_is_empty() {
+    let flist = FlatFileList::with_capacity(64);
+    assert!(flist.is_empty());
+    assert_eq!(flist.len(), 0);
+}
+
+#[test]
+fn flat_file_list_push_and_get() {
+    let mut flist = FlatFileList::new();
+    push_entry(&mut flist, "README", "src", 42);
+
+    assert_eq!(flist.len(), 1);
+    assert!(!flist.is_empty());
+
+    let entry = flist.get(0).expect("entry 0 should exist");
+    assert_eq!(entry.name, b"README");
+    assert_eq!(entry.dirname, b"src");
+    assert_eq!(entry.header.size, 42);
+}
+
+#[test]
+fn flat_file_list_get_out_of_bounds() {
+    let mut flist = FlatFileList::new();
+    push_entry(&mut flist, "a", "", 0);
+    assert!(flist.get(1).is_none());
+    assert!(flist.get(100).is_none());
+}
+
+#[test]
+fn flat_file_list_multiple_entries() {
+    let mut flist = FlatFileList::new();
+    push_entry(&mut flist, "alpha", "d1", 10);
+    push_entry(&mut flist, "beta", "d2", 20);
+    push_entry(&mut flist, "gamma", "d1", 30);
+
+    assert_eq!(flist.len(), 3);
+
+    let e0 = flist.get(0).unwrap();
+    assert_eq!(e0.name, b"alpha");
+    assert_eq!(e0.dirname, b"d1");
+
+    let e1 = flist.get(1).unwrap();
+    assert_eq!(e1.name, b"beta");
+    assert_eq!(e1.dirname, b"d2");
+
+    let e2 = flist.get(2).unwrap();
+    assert_eq!(e2.name, b"gamma");
+    assert_eq!(e2.dirname, b"d1");
+}
+
+#[test]
+fn flat_file_list_iter_count_and_order() {
+    let mut flist = FlatFileList::new();
+    let names = ["one", "two", "three", "four"];
+    for name in &names {
+        push_entry(&mut flist, name, "", 0);
+    }
+
+    let collected: Vec<&[u8]> = flist.iter().map(|e| e.name).collect();
+    assert_eq!(collected.len(), names.len());
+    for (got, expected) in collected.iter().zip(names.iter()) {
+        assert_eq!(*got, expected.as_bytes());
+    }
+}
+
+#[test]
+fn flat_file_list_iter_empty() {
+    let flist = FlatFileList::new();
+    assert_eq!(flist.iter().count(), 0);
+}
+
+#[test]
+fn flat_file_list_sort_by_name() {
+    let mut flist = FlatFileList::new();
+    // Push in reverse alphabetical order, same dirname.
+    push_entry(&mut flist, "cherry", "", 3);
+    push_entry(&mut flist, "apple", "", 1);
+    push_entry(&mut flist, "banana", "", 2);
+
+    flist.sort();
+
+    let sorted: Vec<&[u8]> = flist.iter().map(|e| e.name).collect();
+    assert_eq!(sorted, vec![b"apple" as &[u8], b"banana", b"cherry"]);
+
+    // Verify sizes followed their headers through the sort.
+    assert_eq!(flist.get(0).unwrap().header.size, 1);
+    assert_eq!(flist.get(1).unwrap().header.size, 2);
+    assert_eq!(flist.get(2).unwrap().header.size, 3);
+}
+
+#[test]
+fn flat_file_list_sort_by_dirname_then_name() {
+    let mut flist = FlatFileList::new();
+    push_entry(&mut flist, "z", "b", 1);
+    push_entry(&mut flist, "a", "b", 2);
+    push_entry(&mut flist, "m", "a", 3);
+
+    flist.sort();
+
+    let sorted: Vec<(&[u8], &[u8])> = flist.iter().map(|e| (e.dirname, e.name)).collect();
+    // "a/m" < "b/a" < "b/z"
+    assert_eq!(
+        sorted,
+        vec![
+            (b"a" as &[u8], b"m" as &[u8]),
+            (b"b" as &[u8], b"a" as &[u8]),
+            (b"b" as &[u8], b"z" as &[u8]),
+        ]
+    );
+}
+
+#[test]
+fn flat_file_list_paths_accessor() {
+    let mut flist = FlatFileList::new();
+    push_entry(&mut flist, "file.txt", "dir", 0);
+
+    // Shared accessor can resolve handles.
+    assert_eq!(flist.paths().len(), 2); // "file.txt" and "dir"
+    assert!(!flist.paths().is_empty());
+}
+
+#[test]
+fn flat_file_list_deduped_names_share_handles() {
+    let mut flist = FlatFileList::new();
+    // Two entries with the same basename under different dirnames.
+    push_entry(&mut flist, "README", "src", 10);
+    push_entry(&mut flist, "README", "docs", 20);
+
+    // The interner deduplicates "README" - only 3 unique strings.
+    assert_eq!(flist.paths().len(), 3); // "README", "src", "docs"
+
+    let e0 = flist.get(0).unwrap();
+    let e1 = flist.get(1).unwrap();
+    assert_eq!(e0.header.name, e1.header.name); // Same handle
+    assert_eq!(e0.name, e1.name); // Same resolved bytes
+    assert_ne!(e0.header.dirname, e1.header.dirname); // Different dirnames
+}
+
+#[test]
+fn flat_file_list_default_is_new() {
+    let flist = FlatFileList::default();
+    assert!(flist.is_empty());
+    assert_eq!(flist.len(), 0);
+}
