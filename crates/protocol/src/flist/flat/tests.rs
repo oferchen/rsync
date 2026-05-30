@@ -535,11 +535,7 @@ fn push_with_extras_preserves_scalar_header_fields() {
     assert_eq!(entry.name, b"f.txt");
     assert_eq!(entry.dirname, b"dir");
 
-    let decoded = flist
-        .extras()
-        .decode(entry.header.extras)
-        .unwrap()
-        .unwrap();
+    let decoded = flist.extras().decode(entry.header.extras).unwrap().unwrap();
     assert_eq!(decoded.atime, Some(999_999));
     assert_eq!(decoded.crtime, Some(888_888));
 }
