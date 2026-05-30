@@ -344,9 +344,7 @@ fn warn_bgid_fallback_throttles_within_window() {
     // First call should fire (no previous timestamp).
     warn_bgid_fallback(err);
     let after_first = {
-        let last = bgid_exhaustion_warn_last()
-            .lock()
-            .expect("lock poisoned");
+        let last = bgid_exhaustion_warn_last().lock().expect("lock poisoned");
         *last
     };
     assert!(
@@ -359,9 +357,7 @@ fn warn_bgid_fallback_throttles_within_window() {
     let first_instant = after_first.unwrap();
     warn_bgid_fallback(err);
     let after_second = {
-        let last = bgid_exhaustion_warn_last()
-            .lock()
-            .expect("lock poisoned");
+        let last = bgid_exhaustion_warn_last().lock().expect("lock poisoned");
         *last
     };
     assert_eq!(
