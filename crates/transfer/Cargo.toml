@@ -76,6 +76,14 @@ acl = ["metadata/acl", "engine/acl"]
 xattr = []
 
 # ============================================================================
+# Arena / Flat File List Migration (RSS-A.7)
+# ============================================================================
+
+# Enables FileEntryAccessor-generic receiver helpers so the receiver can work
+# with both the legacy FileEntry and the arena-backed FlatFileEntry.
+flat-flist = ["protocol/flat-flist"]
+
+# ============================================================================
 # Filename Encoding (iconv)
 # ============================================================================
 
