@@ -202,11 +202,11 @@ members = [
     "crates/fast_io",
     "crates/platform",
     "crates/test-support",
+    "tools/dhat-profile",
 ]
 exclude = [
     "crates/protocol/fuzz",
     "fuzz",
-    "tools/dhat-profile",
 ]
 resolver = "2"
 

@@ -5,11 +5,10 @@ edition = "2024"
 rust-version = "1.88"
 publish = false
 
-[workspace]
-
 [[bin]]
 name = "dhat-profile"
 path = "src/main.rs"
 
 [dependencies]
 dhat = "0.3"
+protocol = { path = "../../crates/protocol" }
