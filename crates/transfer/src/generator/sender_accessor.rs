@@ -39,7 +39,7 @@ use super::itemize::ItemizeContext;
 ///
 /// - `log.c:695-746` - itemize string construction in `log_formatted()`
 #[cfg(feature = "flat-flist")]
-pub(crate) fn format_iflags_generic<T: FileEntryAccessor>(
+pub fn format_iflags_generic<T: FileEntryAccessor>(
     iflags: &ItemFlags,
     entry: &T,
     is_sender: bool,
@@ -114,8 +114,10 @@ pub(crate) fn format_iflags_generic<T: FileEntryAccessor>(
         } else {
             't'
         }
+    } else if !ctx.preserve_mtimes {
+        'T'
     } else {
-        if !ctx.preserve_mtimes { 'T' } else { 't' }
+        't'
     };
 
     // upstream: log.c:720-722 - perms, owner, group
@@ -192,7 +194,7 @@ pub(crate) fn format_iflags_generic<T: FileEntryAccessor>(
 /// - `log.c:627-636` - `%n` expansion (filename with trailing `/` for dirs)
 /// - `log.c:637-653` - `%L` expansion (` -> target` for symlinks)
 #[cfg(feature = "flat-flist")]
-pub(crate) fn format_itemize_line_generic<T: FileEntryAccessor>(
+pub fn format_itemize_line_generic<T: FileEntryAccessor>(
     iflags: &ItemFlags,
     entry: &T,
     is_sender: bool,
@@ -231,7 +233,7 @@ pub(crate) fn format_itemize_line_generic<T: FileEntryAccessor>(
 ///
 /// - `log.c:633-634` - directory names get trailing `/`
 #[cfg(feature = "flat-flist")]
-pub(crate) fn entry_display_name<T: FileEntryAccessor>(entry: &T) -> String {
+pub fn entry_display_name<T: FileEntryAccessor>(entry: &T) -> String {
     let name = entry.name();
     if entry.is_dir() {
         format!("{name}/")
@@ -250,7 +252,7 @@ pub(crate) fn entry_display_name<T: FileEntryAccessor>(entry: &T) -> String {
 ///
 /// - `sender.c:329` - `if (!S_ISREG(file->mode))` skip guard
 #[cfg(feature = "flat-flist")]
-pub(crate) fn should_skip_entry<T: FileEntryAccessor>(entry: &T) -> bool {
+pub fn should_skip_entry<T: FileEntryAccessor>(entry: &T) -> bool {
     !entry.is_file()
 }
 
