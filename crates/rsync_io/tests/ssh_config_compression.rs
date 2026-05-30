@@ -253,3 +253,123 @@ fn argv_dash_c_still_wins_when_config_disables() {
     // Sanity: without -C, the same config keeps the answer false.
     assert!(!plain_cmd().has_ssh_compression());
 }
+
+// MED-6: integration tests for Match exec block detection via
+// `has_ssh_compression()`. These verify that the full lookup path
+// (file read -> parse -> compression check) correctly handles
+// ssh_config files containing Match exec blocks.
+
+#[test]
+fn match_exec_block_with_compression_yes_returns_false() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home = TempDir::new().expect("tempdir");
+    // A `Match exec` block containing `Compression yes` should not
+    // enable the compression flag because the exec condition is not
+    // evaluated. The function returns `false` since no other scope
+    // enables compression.
+    write_ssh_config(
+        &home,
+        "Match exec /usr/local/bin/check-vpn\n  Compression yes\n",
+    );
+    let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
+    let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
+
+    assert!(!plain_cmd().has_ssh_compression());
+}
+
+#[test]
+fn match_exec_block_compression_inside_exec_scope() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home = TempDir::new().expect("tempdir");
+    // After `Match exec`, the active block is `MatchExecSkipped` until
+    // another `Host` or `Match` directive resets it. So `Compression yes`
+    // on the following line is inside the exec block scope and should
+    // not contribute to the compression result.
+    write_ssh_config(
+        &home,
+        "Match exec /usr/local/bin/check-vpn\n  ForwardAgent yes\n\
+         Compression yes\n",
+    );
+    let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
+    let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
+
+    assert!(!plain_cmd().has_ssh_compression());
+}
+
+#[test]
+fn match_exec_with_host_star_compression_detected() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home = TempDir::new().expect("tempdir");
+    // The `Host *` block after the exec block should be evaluated
+    // normally.
+    write_ssh_config(
+        &home,
+        "Match exec /usr/local/bin/check-vpn\n  Compression yes\n\
+         Host *\n  Compression yes\n",
+    );
+    let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
+    let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
+
+    assert!(plain_cmd().has_ssh_compression());
+}
+
+#[test]
+fn match_exec_with_match_all_compression_detected() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home = TempDir::new().expect("tempdir");
+    // A `Match all` block after a `Match exec` block should be
+    // evaluated normally and contribute its compression setting.
+    write_ssh_config(
+        &home,
+        "Match exec /usr/local/bin/check-vpn\n  Compression yes\n\
+         Match all\n  Compression yes\n",
+    );
+    let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
+    let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
+
+    assert!(plain_cmd().has_ssh_compression());
+}
+
+#[test]
+fn match_exec_only_no_other_compression_source() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home = TempDir::new().expect("tempdir");
+    // When the only compression setting is inside a `Match exec` block,
+    // has_ssh_compression must return false since we cannot evaluate
+    // the exec condition.
+    write_ssh_config(
+        &home,
+        "Host *\n  ServerAliveInterval 60\n\n\
+         Match exec \"test -f /etc/vpn.conf\"\n  Compression yes\n",
+    );
+    let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
+    let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
+
+    assert!(!plain_cmd().has_ssh_compression());
+}
+
+#[test]
+fn dash_f_override_with_match_exec_block() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home = TempDir::new().expect("tempdir");
+    write_ssh_config(&home, "Compression no\n");
+    let _home_guard = EnvGuard::set("HOME", home.path().as_os_str());
+    let _userprofile_guard = EnvGuard::set("USERPROFILE", home.path().as_os_str());
+
+    // The `-F` override file contains a `Match exec` block with
+    // `Compression yes`. Since `-F` is consulted first and it only
+    // has compression inside the exec block, the result should be false.
+    let override_dir = TempDir::new().expect("tempdir");
+    let override_path = override_dir.path().join("override.config");
+    fs::write(
+        &override_path,
+        "Match exec /usr/local/bin/check-vpn\n  Compression yes\n",
+    )
+    .expect("write override");
+
+    let mut command = plain_cmd();
+    command.push_option("-F");
+    command.push_option(override_path.as_os_str());
+
+    assert!(!command.has_ssh_compression());
+}

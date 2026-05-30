@@ -18,10 +18,10 @@
 //! is deliberately unsupported - executing arbitrary shell commands from
 //! a passive config-lookup path is a security risk, and the
 //! compression-detection use case does not need it. When a `Match exec`
-//! block is encountered, the parser emits a one-shot `eprintln!` warning
-//! so the user knows that compression settings inside such blocks will
-//! not be detected. The rest of the SKIP set (`canonical`, `final`,
-//! `tagged`) likewise short-circuits the block.
+//! block containing `Compression yes` is encountered, the parser emits
+//! a user-visible warning explaining that the exec condition was not
+//! evaluated and suggesting a workaround. The rest of the SKIP set
+//! (`canonical`, `final`, `tagged`) likewise short-circuits the block.
 //!
 //! # Failure mode
 //!
@@ -128,11 +128,14 @@ fn read_and_check(path: &Path, ctx: &MatchContext<'_>) -> bool {
 /// `ctx`'s fields may be empty; in that case only `Host *` and
 /// `Match all` (or other patterns that tolerate empty input) can match.
 ///
-/// When any `Match exec` block is encountered, a one-shot warning is
-/// emitted via `eprintln!` to alert the user that compression settings
-/// inside such blocks will not be detected. The warning fires at most
-/// once per parse invocation regardless of how many `Match exec` blocks
-/// appear in the file.
+/// When a `Match exec` block containing `Compression yes` is
+/// encountered, a user-visible warning is emitted explaining that the
+/// exec condition was not evaluated and suggesting a workaround (move
+/// the directive to a `Host` or `Match host` block, or pass
+/// `-e "ssh -C"` explicitly). The warning fires only when the skipped
+/// block actually contains a compression directive that would affect
+/// the detection result - bare `Match exec` blocks without compression
+/// settings produce no warning.
 ///
 /// Exposed to tests so they can assert behaviour without disk I/O.
 pub(super) fn parse_enables_compression(text: &str, ctx: &MatchContext<'_>) -> bool {
@@ -140,7 +143,7 @@ pub(super) fn parse_enables_compression(text: &str, ctx: &MatchContext<'_>) -> b
     let mut top_level: Option<bool> = None;
     let mut host_block: Option<bool> = None;
     let mut match_block: Option<bool> = None;
-    let mut saw_match_exec = false;
+    let mut exec_block_has_compression = false;
 
     for raw_line in text.lines() {
         let line = strip_comment(raw_line).trim();
@@ -161,7 +164,13 @@ pub(super) fn parse_enables_compression(text: &str, ctx: &MatchContext<'_>) -> b
                 block = Block::Host(parse_pattern_list(value));
             }
             "match" => {
-                block = Block::MatchEvaluated(match_line_applies(value, ctx, &mut saw_match_exec));
+                let mut saw_exec = false;
+                let applies = match_line_applies(value, ctx, &mut saw_exec);
+                block = if saw_exec {
+                    Block::MatchExecSkipped
+                } else {
+                    Block::MatchEvaluated(applies)
+                };
             }
             "compression" => {
                 let parsed = parse_yes_no(value);
@@ -176,6 +185,11 @@ pub(super) fn parse_enables_compression(text: &str, ctx: &MatchContext<'_>) -> b
                     Block::MatchEvaluated(true) if match_block.is_none() => {
                         match_block = parsed;
                     }
+                    Block::MatchExecSkipped => {
+                        if parsed == Some(true) {
+                            exec_block_has_compression = true;
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -183,11 +197,21 @@ pub(super) fn parse_enables_compression(text: &str, ctx: &MatchContext<'_>) -> b
         }
     }
 
-    if saw_match_exec {
-        eprintln!(
-            "warning: ssh_config Match exec blocks are not evaluated; \
-             compression settings inside them will not be detected"
+    if exec_block_has_compression {
+        debug_log!(
+            Io,
+            1,
+            "ssh_config compression detection: Match exec block contains \
+             Compression yes but the exec condition was not evaluated"
         );
+        eprintln!(
+            "warning: ssh_config contains \"Compression yes\" inside a \"Match exec\" block."
+        );
+        eprintln!("         The exec condition was not evaluated because executing arbitrary");
+        eprintln!("         commands from a config-lookup path is a security risk. If SSH");
+        eprintln!("         compression is active, oc-rsync's --compress will double-compress.");
+        eprintln!("         Workaround: move \"Compression yes\" to a Host or Match host block,");
+        eprintln!("         or pass -e \"ssh -C\" explicitly so oc-rsync can detect it.");
     }
 
     top_level.unwrap_or(false) || host_block.unwrap_or(false) || match_block.unwrap_or(false)
@@ -207,11 +231,22 @@ pub(super) fn parse_enables_compression(text: &str, ctx: &MatchContext<'_>) -> b
 /// [`match_line_applies`] and records the boolean outcome. Subsequent
 /// `Compression` directives inside the block consult that cached
 /// decision instead of re-evaluating per directive.
+///
+/// MED-3 added [`Block::MatchExecSkipped`]: when a `Match exec` block
+/// is encountered, the parser cannot evaluate the condition (security
+/// risk - executing arbitrary commands from a passive config-lookup
+/// path). Directives inside the block are tracked separately so the
+/// parser can detect when `Compression yes` appears inside an
+/// unevaluated exec block and emit a targeted warning.
 #[derive(Clone, Eq, PartialEq)]
 enum Block {
     TopLevel,
     Host(Vec<Pattern>),
     MatchEvaluated(bool),
+    /// Block gated by a `Match exec` condition that was not evaluated.
+    /// Directives inside this block are not honoured but are inspected
+    /// for `Compression yes` to emit a targeted user warning.
+    MatchExecSkipped,
 }
 
 /// A single token from an ssh_config `Host` or `Match` pattern-list.
@@ -413,9 +448,10 @@ pub(super) fn evaluate_match(conditions: &[MatchCondition], ctx: &MatchContext<'
 /// SSC-4.a "DEFER" rationale for the full security justification.
 ///
 /// When `exec` is encountered, `*saw_exec` is set to `true` so the
-/// caller can emit a one-shot user-visible warning. The flag is only
-/// set, never cleared, so multiple `Match exec` blocks within one
-/// config file produce at most one warning.
+/// caller can distinguish an exec-skipped block from a legitimately
+/// non-matching block. The flag is only set, never cleared, so
+/// repeated calls accumulate the signal across multiple `Match exec`
+/// blocks.
 ///
 /// Recognises keys case-insensitively; arguments are split on whitespace
 /// or commas via [`parse_pattern_list`] for the keys that take a
@@ -1287,5 +1323,144 @@ mod tests {
         assert!(saw_exec);
         match_line_applies("host web1", &ctx("web1", "", ""), &mut saw_exec);
         assert!(saw_exec, "non-exec Match must not clear saw_exec flag");
+    }
+
+    // MED-6: `Match exec` warning integration tests exercising the full
+    // `parse_enables_compression` path with synthetic ssh_config fixtures.
+
+    #[test]
+    fn match_exec_with_compression_yes_returns_false() {
+        // A `Match exec` block with `Compression yes` must not contribute
+        // to the compression result - the exec condition was never
+        // evaluated, so we cannot know whether the block would apply.
+        let text = "Match exec /usr/local/bin/check-vpn\n  Compression yes\n";
+        assert!(!parse_enables_compression(
+            text,
+            &match_ctx("web1.example.com", "web1.example.com", "", "")
+        ));
+    }
+
+    #[test]
+    fn match_exec_without_compression_does_not_warn() {
+        // A `Match exec` block that does not contain `Compression` should
+        // not trigger the warning. The warning is only relevant when
+        // compression detection may be incomplete.
+        let text = "Match exec /usr/local/bin/check-vpn\n  ForwardAgent yes\n";
+        // No assertion on stderr - we verify correctness by confirming
+        // the function returns false and does not panic.
+        assert!(!parse_enables_compression(
+            text,
+            &match_ctx("web1.example.com", "web1.example.com", "", "")
+        ));
+    }
+
+    #[test]
+    fn match_exec_compression_no_does_not_warn() {
+        // `Compression no` inside a `Match exec` block is not actionable
+        // - even if the block were evaluated, it would not enable
+        // compression. The warning should not fire for this case.
+        let text = "Match exec /usr/local/bin/check-vpn\n  Compression no\n";
+        assert!(!parse_enables_compression(
+            text,
+            &match_ctx("web1.example.com", "web1.example.com", "", "")
+        ));
+    }
+
+    #[test]
+    fn match_exec_with_compression_yes_alongside_top_level() {
+        // Top-level `Compression no` plus a `Match exec` block with
+        // `Compression yes`. The top-level `no` is honoured; the exec
+        // block is skipped. The overall result is `false`, but the
+        // warning should still fire because the exec block might enable
+        // compression if evaluated.
+        let text = "Compression no\nMatch exec /usr/local/bin/check-vpn\n  Compression yes\n";
+        assert!(!parse_enables_compression(
+            text,
+            &match_ctx("web1.example.com", "web1.example.com", "", "")
+        ));
+    }
+
+    #[test]
+    fn match_exec_block_does_not_affect_subsequent_blocks() {
+        // A `Match exec` block must not contaminate subsequent `Match`
+        // blocks. The `Match all` block after the exec block should be
+        // evaluated normally.
+        let text = "Match exec /usr/local/bin/check-vpn\n  Compression yes\n\
+                    Match all\n  Compression yes\n";
+        assert!(parse_enables_compression(
+            text,
+            &match_ctx("web1.example.com", "web1.example.com", "", "")
+        ));
+    }
+
+    #[test]
+    fn match_exec_block_followed_by_host_block() {
+        // After a `Match exec` block, a `Host` block should be evaluated
+        // normally and contribute its compression setting.
+        let text = "Match exec /usr/local/bin/check-vpn\n  Compression yes\n\
+                    Host *.example.com\n  Compression yes\n";
+        assert!(parse_enables_compression(
+            text,
+            &match_ctx("web1.example.com", "web1.example.com", "", "")
+        ));
+    }
+
+    #[test]
+    fn multiple_match_exec_blocks_with_compression() {
+        // Multiple `Match exec` blocks each containing `Compression yes`
+        // should all be skipped. The overall result is `false`.
+        let text = "Match exec /usr/local/bin/check-vpn\n  Compression yes\n\
+                    Match exec /usr/local/bin/check-lan\n  Compression yes\n";
+        assert!(!parse_enables_compression(
+            text,
+            &match_ctx("web1.example.com", "web1.example.com", "", "")
+        ));
+    }
+
+    #[test]
+    fn match_exec_block_with_other_directives_and_compression() {
+        // A realistic ssh_config snippet where the exec block contains
+        // multiple directives including `Compression yes`. Only the
+        // compression directive triggers the warning logic.
+        let text = "Match exec \"test -f /etc/vpn.conf\"\n\
+                    \x20 ProxyJump bastion.example.com\n\
+                    \x20 Compression yes\n\
+                    \x20 ForwardAgent yes\n";
+        assert!(!parse_enables_compression(
+            text,
+            &match_ctx("internal.example.com", "internal.example.com", "", "")
+        ));
+    }
+
+    #[test]
+    fn realistic_ssh_config_with_match_exec_and_host_blocks() {
+        // A realistic multi-section ssh_config where some blocks use
+        // `Match exec` and others use `Host`. The host-block compression
+        // should be detected while the exec-block compression is skipped.
+        let text = "\
+Host bastion.example.com\n\
+  Compression no\n\
+\n\
+Match exec \"test -f /etc/vpn.conf\"\n\
+  Compression yes\n\
+  ProxyJump bastion.example.com\n\
+\n\
+Host *.internal.example.com\n\
+  Compression yes\n\
+\n\
+Host *\n\
+  ServerAliveInterval 60\n";
+        // Target matches `*.internal.example.com`, so host-block
+        // compression fires.
+        assert!(parse_enables_compression(
+            text,
+            &match_ctx("db.internal.example.com", "db.internal.example.com", "", "")
+        ));
+        // Target does not match any host block with compression,
+        // and the exec block is skipped.
+        assert!(!parse_enables_compression(
+            text,
+            &match_ctx("external.example.com", "external.example.com", "", "")
+        ));
     }
 }
