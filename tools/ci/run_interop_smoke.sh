@@ -163,6 +163,7 @@ port = ${port}
 [data]
   path = ${workdir}/data-${label}
   read only = false
+  munge symlinks = false
 EOF
 
   # Only emit uid/gid when running as root; non-root daemons inherit
@@ -426,20 +427,22 @@ else
 fi
 
 # --- Scenario 13: relative paths (-avR) --------------------------------
-reset_module_data "up"
-"${OC_RSYNC}" -avR "${src}/./subdir/world.txt" "${up_url}/" 2>&1
-[[ -f "${workdir}/data-up/subdir/world.txt" ]] \
-  || fail "relative: subdir/world.txt missing in upstream module"
-pass "relative: oc-rsync -> upstream daemon"
+# Skipped entirely on Windows: MSYS2 path translation mangles the /./
+# separator that rsync -R mode requires.
+if [[ "${host_os}" == "windows" ]]; then
+  echo "SKIP: relative (MSYS2 path translation breaks /./ separator)"
+else
+  reset_module_data "up"
+  "${OC_RSYNC}" -avR "${src}/./subdir/world.txt" "${up_url}/" 2>&1
+  [[ -f "${workdir}/data-up/subdir/world.txt" ]] \
+    || fail "relative: subdir/world.txt missing in upstream module"
+  pass "relative: oc-rsync -> upstream daemon"
 
-if [[ "${host_os}" != "windows" ]]; then
   reset_module_data "oc"
   "${UPSTREAM_RSYNC}" -avR "${src}/./subdir/world.txt" "${oc_url}/" 2>&1
   [[ -f "${workdir}/data-oc/subdir/world.txt" ]] \
     || fail "relative: subdir/world.txt missing in oc-rsync module"
   pass "relative: upstream -> oc-rsync daemon"
-else
-  echo "SKIP: relative: upstream -> oc-rsync daemon (unsupported on Windows)"
 fi
 
 # --- Scenario 14: whole-file mode (-avW) --------------------------------
