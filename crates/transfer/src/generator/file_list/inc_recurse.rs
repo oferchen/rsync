@@ -40,7 +40,7 @@ impl GeneratorContext {
             return;
         }
 
-        let classification = Self::classify_file_list_entries(&self.file_list);
+        let classification = Self::classify_file_list_entries(self.file_list.as_slice());
         self.reorder_and_build_segments(classification);
 
         debug_log!(
@@ -149,17 +149,19 @@ impl GeneratorContext {
         } = cr;
 
         // Wrap in Option<T> for safe move-out by index.
-        let mut file_entries: Vec<Option<FileEntry>> = std::mem::take(&mut self.file_list)
-            .into_iter()
-            .map(Some)
-            .collect();
+        let mut file_entries: Vec<Option<FileEntry>> =
+            std::mem::take(&mut self.file_list)
+                .into_vec()
+                .into_iter()
+                .map(Some)
+                .collect();
         let mut paths: Vec<Option<std::path::PathBuf>> = std::mem::take(&mut self.full_paths)
             .into_iter()
             .map(Some)
             .collect();
 
         let total = file_entries.len();
-        self.file_list = Vec::with_capacity(total);
+        self.file_list = protocol::flist::DualFileList::with_capacity(total);
         self.full_paths = Vec::with_capacity(total);
 
         // Place initial entries first (move, not clone).
