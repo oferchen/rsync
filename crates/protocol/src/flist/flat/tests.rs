@@ -343,7 +343,7 @@ fn flat_file_list_deduped_names_share_handles() {
     let e0 = flist.get(0).unwrap();
     let e1 = flist.get(1).unwrap();
     assert_eq!(e0.header.name, e1.header.name); // Same handle
-    assert_eq!(e0.name, e1.name);               // Same resolved bytes
+    assert_eq!(e0.name, e1.name); // Same resolved bytes
     assert_ne!(e0.header.dirname, e1.header.dirname); // Different dirnames
 }
 
