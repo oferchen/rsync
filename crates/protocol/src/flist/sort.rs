@@ -950,7 +950,6 @@ mod tests {
         use std::cmp::Ordering;
 
         use crate::flist::FileEntry;
-        use crate::flist::accessor::FileEntryAccessor;
         use crate::flist::sort::{
             compare_entries_generic, compare_file_entries, sort_entries_generic, sort_file_list,
         };
