@@ -355,6 +355,228 @@ fn flat_file_list_default_is_new() {
 }
 
 // ---------------------------------------------------------------------------
+// FlatFileList extras wiring (RSS-A.6.f)
+// ---------------------------------------------------------------------------
+
+/// Helper: push an entry with extras into `flist`.
+fn push_entry_with_extras(
+    flist: &mut FlatFileList,
+    name: &str,
+    dirname: &str,
+    size: u64,
+    extras: &FlatExtras,
+) {
+    let name_h = flist.paths_mut().intern(name);
+    let dirname_h = flist.paths_mut().intern(dirname);
+    let mut h = empty_header();
+    h.name = name_h;
+    h.dirname = dirname_h;
+    h.size = size;
+    flist.push_with_extras(h, extras);
+}
+
+#[test]
+fn push_with_extras_no_extras_yields_sentinel() {
+    let mut flist = FlatFileList::new();
+    push_entry_with_extras(&mut flist, "plain.txt", "", 100, &FlatExtras::default());
+
+    let h = &flist.get(0).unwrap().header;
+    assert_eq!(h.extras, ExtrasRef::NO_EXTRAS);
+    assert!(flist.extras().is_empty());
+    assert_eq!(flist.extras().decode(h.extras).unwrap(), None);
+}
+
+#[test]
+fn push_with_extras_symlink_round_trip() {
+    let mut flist = FlatFileList::new();
+    let extras = FlatExtras {
+        link_target: Some(b"../other/target".to_vec()),
+        ..FlatExtras::default()
+    };
+    push_entry_with_extras(&mut flist, "link", "src", 0, &extras);
+
+    let h = &flist.get(0).unwrap().header;
+    assert_ne!(h.extras, ExtrasRef::NO_EXTRAS);
+    let decoded = flist.extras().decode(h.extras).unwrap().unwrap();
+    assert_eq!(
+        decoded.link_target.as_deref(),
+        Some(b"../other/target" as &[u8])
+    );
+    assert_eq!(decoded.rdev_major, None);
+}
+
+#[test]
+fn push_with_extras_device_round_trip() {
+    let mut flist = FlatFileList::new();
+    let extras = FlatExtras {
+        rdev_major: Some(8),
+        rdev_minor: Some(17),
+        ..FlatExtras::default()
+    };
+    push_entry_with_extras(&mut flist, "sda", "dev", 0, &extras);
+
+    let decoded = flist
+        .extras()
+        .decode(flist.get(0).unwrap().header.extras)
+        .unwrap()
+        .unwrap();
+    assert_eq!(decoded.rdev_major, Some(8));
+    assert_eq!(decoded.rdev_minor, Some(17));
+}
+
+#[test]
+fn push_with_extras_all_fields_round_trip() {
+    let mut flist = FlatFileList::new();
+    let extras = FlatExtras {
+        link_target: Some(b"target".to_vec()),
+        rdev_major: Some(1),
+        rdev_minor: Some(2),
+        hardlink_idx: Some(42),
+        acl_ndx: Some(3),
+        def_acl_ndx: Some(4),
+        xattr_ndx: Some(5),
+        checksum: Some(vec![0xDE; 16]),
+        user_name: Some(b"alice".to_vec()),
+        group_name: Some(b"staff".to_vec()),
+        atime: Some(-12345),
+        crtime: Some(987_654_321),
+        atime_nsec: Some(500),
+    };
+    push_entry_with_extras(&mut flist, "f.txt", "dir", 1024, &extras);
+
+    let decoded = flist
+        .extras()
+        .decode(flist.get(0).unwrap().header.extras)
+        .unwrap()
+        .unwrap();
+    assert_eq!(decoded, extras);
+}
+
+#[test]
+fn push_with_extras_multiple_entries_independent() {
+    let mut flist = FlatFileList::new();
+
+    let symlink_extras = FlatExtras {
+        link_target: Some(b"../target".to_vec()),
+        ..FlatExtras::default()
+    };
+    push_entry_with_extras(&mut flist, "link1", "", 0, &symlink_extras);
+
+    push_entry_with_extras(&mut flist, "plain.txt", "", 256, &FlatExtras::default());
+
+    let dev_extras = FlatExtras {
+        rdev_major: Some(10),
+        rdev_minor: Some(20),
+        ..FlatExtras::default()
+    };
+    push_entry_with_extras(&mut flist, "sda", "dev", 0, &dev_extras);
+
+    let checksum_extras = FlatExtras {
+        checksum: Some(vec![0xAB; 8]),
+        user_name: Some(b"bob".to_vec()),
+        ..FlatExtras::default()
+    };
+    push_entry_with_extras(&mut flist, "data.bin", "out", 4096, &checksum_extras);
+
+    assert_eq!(flist.len(), 4);
+
+    let d0 = flist
+        .extras()
+        .decode(flist.get(0).unwrap().header.extras)
+        .unwrap()
+        .unwrap();
+    assert_eq!(d0, symlink_extras);
+
+    assert_eq!(flist.get(1).unwrap().header.extras, ExtrasRef::NO_EXTRAS);
+
+    let d2 = flist
+        .extras()
+        .decode(flist.get(2).unwrap().header.extras)
+        .unwrap()
+        .unwrap();
+    assert_eq!(d2, dev_extras);
+
+    let d3 = flist
+        .extras()
+        .decode(flist.get(3).unwrap().header.extras)
+        .unwrap()
+        .unwrap();
+    assert_eq!(d3, checksum_extras);
+}
+
+#[test]
+fn push_with_extras_preserves_scalar_header_fields() {
+    let mut flist = FlatFileList::new();
+    let extras = FlatExtras {
+        atime: Some(999_999),
+        crtime: Some(888_888),
+        ..FlatExtras::default()
+    };
+    let name_h = flist.paths_mut().intern("f.txt");
+    let dirname_h = flist.paths_mut().intern("dir");
+    let mut h = empty_header();
+    h.name = name_h;
+    h.dirname = dirname_h;
+    h.size = 42;
+    h.mtime = 1_000_000;
+    h.mode = 0o100644;
+    h.uid = 1000;
+    h.gid = 2000;
+    h.set(PRESENT_UID);
+    h.set(PRESENT_GID);
+    flist.push_with_extras(h, &extras);
+
+    let entry = flist.get(0).unwrap();
+    assert_eq!(entry.header.size, 42);
+    assert_eq!(entry.header.mtime, 1_000_000);
+    assert_eq!(entry.header.mode, 0o100644);
+    assert_eq!(entry.header.uid(), Some(1000));
+    assert_eq!(entry.header.gid(), Some(2000));
+    assert_eq!(entry.name, b"f.txt");
+    assert_eq!(entry.dirname, b"dir");
+
+    let decoded = flist
+        .extras()
+        .decode(entry.header.extras)
+        .unwrap()
+        .unwrap();
+    assert_eq!(decoded.atime, Some(999_999));
+    assert_eq!(decoded.crtime, Some(888_888));
+}
+
+#[test]
+fn extras_accessor_starts_empty() {
+    let flist = FlatFileList::new();
+    assert!(flist.extras().is_empty());
+    assert_eq!(flist.extras().len(), 0);
+}
+
+#[test]
+fn extras_mut_allows_manual_append() {
+    let mut flist = FlatFileList::new();
+    let extras = FlatExtras {
+        hardlink_idx: Some(77),
+        ..FlatExtras::default()
+    };
+    let ext_ref = flist.extras_mut().append(&extras);
+
+    let name_h = flist.paths_mut().intern("f.txt");
+    let dirname_h = flist.paths_mut().intern("");
+    let mut h = empty_header();
+    h.name = name_h;
+    h.dirname = dirname_h;
+    h.extras = ext_ref;
+    flist.push(h);
+
+    let decoded = flist
+        .extras()
+        .decode(flist.get(0).unwrap().header.extras)
+        .unwrap()
+        .unwrap();
+    assert_eq!(decoded.hardlink_idx, Some(77));
+}
+
+// ---------------------------------------------------------------------------
 // Feature-flag coexistence (RSS-A.5.e.3)
 // ---------------------------------------------------------------------------
 
