@@ -11,7 +11,7 @@
 //! These tests pin oc-rsync's serializer and parser to the same semantics so
 //! the `up:merge-filter` interop scenario stays classified as an upstream
 //! limitation. See `tools/ci/known_failures.conf` and the BR-1a/b audit at
-//! `target/audits/br-1-merge-filter-repro.md`.
+//! `docs/audits/br-1-merge-filter-repro.md`.
 
 use protocol::ProtocolVersion;
 use protocol::filters::{FilterRuleWireFormat, RuleType, build_rule_prefix, write_filter_list};
