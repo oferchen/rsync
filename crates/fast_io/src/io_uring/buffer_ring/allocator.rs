@@ -7,12 +7,31 @@
 //! rings still active in the kernel.
 //!
 //! This submodule owns the bgid allocator, its process-wide counters
-//! (`NEXT_BGID`, `PEAK_USED`, `BGID_EXHAUSTED_COUNT`, `BGID_FALLBACK_WARNED`)
-//! and the throttled namespace-pressure warning. The public surface is
+//! (`NEXT_BGID`, `PEAK_USED`, `BGID_EXHAUSTED_COUNT`) and the throttled
+//! namespace-pressure and exhaustion warnings. The public surface is
 //! re-exported through the parent [`super`] module so consumers keep using
 //! `crate::io_uring::buffer_ring::BgidAllocator` etc. unchanged.
+//!
+//! # Daemon-aware warnings (BGW series)
+//!
+//! Long-lived daemon processes may exhaust the bgid namespace repeatedly
+//! over their lifetime as sessions come and go. The original one-shot
+//! exhaustion warning (`warn_bgid_fallback_once`) fired only on the first
+//! occurrence, making it invisible to operators monitoring a daemon that
+//! has been running for days.
+//!
+//! The current design uses throttled periodic warnings: exhaustion
+//! warnings fire at most once per `BGID_EXHAUSTION_WARN_THROTTLE` window
+//! (60 seconds). Each warning includes the cumulative exhaustion count,
+//! current in-flight occupancy, and peak usage so operators can correlate
+//! pressure with session churn.
+//!
+//! Per-session tracking is available via `BgidSessionStats`: callers
+//! snapshot the process-wide counters at session start and compute the
+//! delta at session end to attribute exhaustion events to individual
+//! connections.
 
-use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -55,15 +74,14 @@ static PEAK_USED: AtomicU16 = AtomicU16::new(0);
 /// callers that want a rate compute the delta between two snapshots.
 static BGID_EXHAUSTED_COUNT: AtomicU64 = AtomicU64::new(0);
 
-/// Process-wide one-shot flag for the "BGID space exhausted, falling
-/// back" warning emitted by [`super::BufferRing::new_with_allocator`].
+/// Minimum interval between successive bgid exhaustion fallback warnings.
 ///
-/// `false` means the warning has not yet fired in this process. Set to
-/// `true` on the first exhaustion path so the hot allocation loop does
-/// not repeatedly spam the log; operators get a single deterministic
-/// marker and can correlate it with the cumulative counter from
-/// [`bgid_exhausted_count`].
-static BGID_FALLBACK_WARNED: AtomicBool = AtomicBool::new(false);
+/// Set to 60 seconds so a long-lived daemon that experiences repeated
+/// exhaustion across many sessions gets periodic visibility without
+/// flooding the log. Operators can correlate each warning with the
+/// cumulative `exhausted_count` to assess whether the condition is
+/// transient (session churn) or sustained (namespace leak).
+const BGID_EXHAUSTION_WARN_THROTTLE: Duration = Duration::from_secs(60);
 
 /// Initial capacity reserved for the bgid free-list.
 ///
@@ -110,19 +128,39 @@ fn bgid_warn_last() -> &'static Mutex<Option<Instant>> {
     LAST.get_or_init(|| Mutex::new(None))
 }
 
-/// Emits the "BGID space exhausted, falling back" `tracing::warn!` at
-/// most once per process lifetime.
+/// Last time the bgid exhaustion fallback warning was emitted.
+///
+/// Separate from `bgid_warn_last` because the two warnings track
+/// different conditions (namespace pressure vs full exhaustion) and fire
+/// at different throttle intervals.
+fn bgid_exhaustion_warn_last() -> &'static Mutex<Option<Instant>> {
+    static LAST: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+    LAST.get_or_init(|| Mutex::new(None))
+}
+
+/// Emits a throttled "BGID space exhausted, falling back"
+/// `tracing::warn!` at most once per `BGID_EXHAUSTION_WARN_THROTTLE`
+/// window.
 ///
 /// Called from [`super::BufferRing::new_with_allocator`] whenever
 /// [`BgidAllocator::allocate`] returns [`BgidAllocError::Exhausted`].
-/// The atomic compare-exchange guarantees the message fires exactly once
-/// even when many threads hit exhaustion simultaneously, so the hot
-/// allocation loop in a long-running daemon does not flood the log.
-pub(super) fn warn_bgid_fallback_once(err: BgidAllocError) {
-    if BGID_FALLBACK_WARNED
-        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-        .is_ok()
-    {
+/// Unlike the previous one-shot design, this fires periodically so
+/// operators monitoring a long-lived daemon get repeated visibility
+/// when the namespace stays exhausted across many sessions. Each
+/// warning includes the cumulative exhaustion count, current in-flight
+/// occupancy, and peak usage for correlation with session churn.
+pub(super) fn warn_bgid_fallback(err: BgidAllocError) {
+    let mut last = match bgid_exhaustion_warn_last().lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    let now = Instant::now();
+    let fire = match *last {
+        None => true,
+        Some(t) => now.duration_since(t) >= BGID_EXHAUSTION_WARN_THROTTLE,
+    };
+    if fire {
+        *last = Some(now);
         let BgidAllocError::Exhausted {
             fresh_used,
             free_list_len,
@@ -132,6 +170,8 @@ pub(super) fn warn_bgid_fallback_once(err: BgidAllocError) {
             fresh_used,
             free_list_len,
             exhausted_count = BGID_EXHAUSTED_COUNT.load(Ordering::Relaxed),
+            in_flight = current_in_flight(),
+            peak_used = PEAK_USED.load(Ordering::Relaxed),
             "BGID space exhausted, falling back to non-registered receive path"
         );
     }
@@ -458,6 +498,119 @@ pub fn bgid_inflight() -> u16 {
 #[must_use]
 pub fn bgid_exhausted_count() -> u64 {
     BGID_EXHAUSTED_COUNT.load(Ordering::Relaxed)
+}
+
+/// Consistent snapshot of all process-wide bgid allocator counters.
+///
+/// Intended for operator diagnostics, logging on daemon session teardown,
+/// and health-check endpoints. The values are sampled best-effort (not
+/// under a single lock), so they may be slightly inconsistent under
+/// concurrent allocation/deallocation - but they never overstate the
+/// exhaustion count or in-flight count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BgidSnapshot {
+    /// Cumulative exhaustion events since process start.
+    pub exhausted_count: u64,
+    /// Current bgids checked out (not yet returned to the free-list).
+    pub in_flight: u16,
+    /// High-water mark for concurrent bgid occupancy.
+    pub peak_used: u16,
+    /// Bgids available for allocation (counter headroom + free-list).
+    pub remaining: u32,
+}
+
+/// Takes a consistent snapshot of the process-wide bgid allocator state.
+///
+/// Suitable for structured logging at session boundaries, health-check
+/// responses, or periodic daemon monitoring. The snapshot captures all
+/// four operator-facing metrics in a single call so the values are
+/// temporally close.
+#[must_use]
+pub fn bgid_snapshot() -> BgidSnapshot {
+    BgidSnapshot {
+        exhausted_count: bgid_exhausted_count(),
+        in_flight: bgid_inflight(),
+        peak_used: bgid_peak_used(),
+        remaining: BgidAllocator::remaining(),
+    }
+}
+
+/// Per-session bgid exhaustion tracker.
+///
+/// Captures the process-wide exhaustion counter at construction time and
+/// computes the delta at any later point. Daemon session handlers create
+/// one at session start and query it at session end to attribute bgid
+/// exhaustion events to individual connections.
+///
+/// # Usage
+///
+/// ```ignore
+/// let session_stats = BgidSessionStats::new();
+/// // ... run the session transfer ...
+/// let exhaustions = session_stats.exhaustions_since_start();
+/// if exhaustions > 0 {
+///     tracing::warn!(
+///         exhaustions,
+///         "session experienced bgid exhaustion"
+///     );
+/// }
+/// ```
+#[derive(Debug, Clone, Copy)]
+pub struct BgidSessionStats {
+    /// Snapshot of `BGID_EXHAUSTED_COUNT` at session start.
+    start_exhausted: u64,
+    /// Snapshot of in-flight bgids at session start.
+    start_in_flight: u16,
+}
+
+impl BgidSessionStats {
+    /// Captures the current process-wide counters as the session baseline.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            start_exhausted: bgid_exhausted_count(),
+            start_in_flight: bgid_inflight(),
+        }
+    }
+
+    /// Returns the number of bgid exhaustion events that occurred since
+    /// this session started.
+    ///
+    /// A positive value means at least one allocation during this session
+    /// fell back to the non-registered receive path.
+    #[must_use]
+    pub fn exhaustions_since_start(&self) -> u64 {
+        bgid_exhausted_count().saturating_sub(self.start_exhausted)
+    }
+
+    /// Returns the in-flight bgid count at the time this session started.
+    #[must_use]
+    pub fn start_in_flight(&self) -> u16 {
+        self.start_in_flight
+    }
+
+    /// Returns the current in-flight bgid count.
+    #[must_use]
+    pub fn current_in_flight(&self) -> u16 {
+        bgid_inflight()
+    }
+
+    /// Returns the net change in in-flight bgids since session start.
+    ///
+    /// Positive means more bgids are checked out now than when the session
+    /// began (potential leak). Negative means bgids were returned (normal
+    /// churn). The value wraps through zero safely via saturating
+    /// arithmetic on the unsigned delta.
+    #[must_use]
+    pub fn in_flight_delta(&self) -> i32 {
+        i32::from(bgid_inflight()) - i32::from(self.start_in_flight)
+    }
+}
+
+impl Default for BgidSessionStats {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
