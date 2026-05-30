@@ -35,6 +35,8 @@ mod cohort_batcher;
 mod cohort_index;
 mod context;
 pub mod emitter;
+#[cfg(feature = "flat-flist")]
+pub mod entry_accessor;
 mod error;
 mod extras;
 #[cfg(feature = "parallel-delete-consumer")]
@@ -60,3 +62,7 @@ pub use reorder_buffer::{
     ReorderBuffer, ReorderBufferError,
 };
 pub use traversal::DirTraversalCursor;
+#[cfg(feature = "flat-flist")]
+pub use entry_accessor::{
+    GenericCohortIndex, collect_child_dirs_generic, segment_basenames_generic,
+};
