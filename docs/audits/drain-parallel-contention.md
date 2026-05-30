@@ -204,7 +204,7 @@ Output format. Each run produces:
 - A criterion HTML report at `target/criterion/drain_parallel/...`.
 - A CSV (or JSON) summary of `wall_ns_per_elem`, `cpu_ns_per_elem`,
   `futex_per_elem`, `cache_misses_per_elem` per cell. The runner
-  appends to `target/audits/drain-parallel-1679/results.csv`.
+  appends to `docs/audits/drain-parallel-1679/results.csv`.
 - A short markdown report capturing host topology
   (`lscpu | head -20`), kernel version, and the rayon version pinned
   in `Cargo.toml`. Hardware shape determines whether `W=32` crosses a
