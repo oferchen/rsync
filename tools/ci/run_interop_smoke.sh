@@ -163,6 +163,7 @@ port = ${port}
 [data]
   path = ${workdir}/data-${label}
   read only = false
+  munge symlinks = false
 EOF
 
   # Only emit uid/gid when running as root; non-root daemons inherit
@@ -268,5 +269,316 @@ else
     || fail "delta update push (upstream -> oc-rsync) diverged"
   pass "delta update: upstream client -> oc-rsync daemon"
 fi
+
+# ===================================================================
+# Extended cross-platform scenarios
+#
+# These exercise wire-level flag negotiation paths that the baseline
+# scenarios above do not cover. Each scenario uses the upstream daemon
+# already running on $up_port (oc-rsync as client) and, where the
+# oc-rsync daemon is available (non-Windows), also exercises the
+# reverse direction. Every scenario creates a fresh destination inside
+# the daemon's module directory to avoid interference.
+# ===================================================================
+
+# Helper: reset a daemon module's data directory and optionally
+# populate it with a setup function.
+reset_module_data() {
+  local label=$1   # "up" or "oc"
+  local data_dir="${workdir}/data-${label}"
+  rm -rf "${data_dir}"
+  mkdir -p "${data_dir}"
+}
+
+# Helper: run a single extended scenario in both directions.
+# $1 = scenario name (for log lines)
+# $2 = extra rsync flags (space-separated string, applied after -a)
+# $3 = optional setup function name (called with src_dir as $1)
+# $4 = optional comparison function name (default: tree_diff src data)
+run_extended_scenario() {
+  local name=$1
+  local flags=$2
+  local setup_fn="${3:-}"
+  local compare_fn="${4:-}"
+
+  # Prepare a per-scenario source if a setup function is provided;
+  # otherwise reuse the common $src.
+  local scenario_src="${src}"
+  if [[ -n "${setup_fn}" ]]; then
+    scenario_src="${workdir}/src-${name}"
+    rm -rf "${scenario_src}"
+    cp -R "${src}" "${scenario_src}"
+    "${setup_fn}" "${scenario_src}"
+  fi
+
+  # Direction 1: oc-rsync client -> upstream daemon
+  reset_module_data "up"
+  # shellcheck disable=SC2086
+  "${OC_RSYNC}" ${flags} "${scenario_src}/" "${up_url}/" 2>&1 || {
+    fail "${name}: oc-rsync -> upstream daemon (exit $?)"
+  }
+  if [[ -n "${compare_fn}" ]]; then
+    "${compare_fn}" "${scenario_src}" "${workdir}/data-up" \
+      || fail "${name}: oc-rsync -> upstream daemon diverged"
+  else
+    tree_diff "${scenario_src}" "${workdir}/data-up" \
+      || fail "${name}: oc-rsync -> upstream daemon diverged"
+  fi
+  pass "${name}: oc-rsync -> upstream daemon"
+
+  # Direction 2: upstream client -> oc-rsync daemon (non-Windows)
+  if [[ "${host_os}" != "windows" ]]; then
+    reset_module_data "oc"
+    # shellcheck disable=SC2086
+    "${UPSTREAM_RSYNC}" ${flags} "${scenario_src}/" "${oc_url}/" 2>&1 || {
+      fail "${name}: upstream -> oc-rsync daemon (exit $?)"
+    }
+    if [[ -n "${compare_fn}" ]]; then
+      "${compare_fn}" "${scenario_src}" "${workdir}/data-oc" \
+        || fail "${name}: upstream -> oc-rsync daemon diverged"
+    else
+      tree_diff "${scenario_src}" "${workdir}/data-oc" \
+        || fail "${name}: upstream -> oc-rsync daemon diverged"
+    fi
+    pass "${name}: upstream -> oc-rsync daemon"
+  else
+    echo "SKIP: ${name}: upstream -> oc-rsync daemon (unsupported on Windows)"
+  fi
+}
+
+# --- Scenario 8: compressed transfer (-avz) ----------------------------
+run_extended_scenario "compress" "-avz"
+
+# --- Scenario 9: checksum mode (-avc) ----------------------------------
+run_extended_scenario "checksum" "-avc"
+
+# --- Scenario 10: delete (--delete) ------------------------------------
+# For --delete, we need to pre-populate the destination before the
+# transfer so that the delete phase actually runs.
+reset_module_data "up"
+printf 'stale\n' > "${workdir}/data-up/stale-file.txt"
+# shellcheck disable=SC2086
+"${OC_RSYNC}" -av --delete "${src}/" "${up_url}/" 2>&1
+if [[ -f "${workdir}/data-up/stale-file.txt" ]]; then
+  fail "delete: stale file not removed by oc-rsync -> upstream daemon"
+fi
+tree_diff "${src}" "${workdir}/data-up" \
+  || fail "delete: oc-rsync -> upstream daemon diverged"
+pass "delete: oc-rsync -> upstream daemon"
+
+if [[ "${host_os}" != "windows" ]]; then
+  reset_module_data "oc"
+  printf 'stale\n' > "${workdir}/data-oc/stale-file.txt"
+  "${UPSTREAM_RSYNC}" -av --delete "${src}/" "${oc_url}/" 2>&1
+  if [[ -f "${workdir}/data-oc/stale-file.txt" ]]; then
+    fail "delete: stale file not removed by upstream -> oc-rsync daemon"
+  fi
+  tree_diff "${src}" "${workdir}/data-oc" \
+    || fail "delete: upstream -> oc-rsync daemon diverged"
+  pass "delete: upstream -> oc-rsync daemon"
+else
+  echo "SKIP: delete: upstream -> oc-rsync daemon (unsupported on Windows)"
+fi
+
+# --- Scenario 11: dry run (-avn) ---------------------------------------
+# Dry run should not create any files in the destination.
+reset_module_data "up"
+"${OC_RSYNC}" -avn "${src}/" "${up_url}/" 2>&1 || true
+count="$(find "${workdir}/data-up" -type f 2>/dev/null | wc -l | tr -d ' ')"
+if [[ "${count}" -ne 0 ]]; then
+  fail "dry-run: oc-rsync -> upstream daemon created files"
+fi
+pass "dry-run: oc-rsync -> upstream daemon (no files created)"
+
+# --- Scenario 12: exclude filter (--exclude) ---------------------------
+setup_exclude_src() {
+  local d=$1
+  printf 'should be excluded\n' > "${d}/debug.log"
+  printf 'should be excluded too\n' > "${d}/subdir/access.log"
+}
+exclude_src="${workdir}/src-exclude"
+rm -rf "${exclude_src}"
+cp -R "${src}" "${exclude_src}"
+setup_exclude_src "${exclude_src}"
+
+reset_module_data "up"
+"${OC_RSYNC}" -av --exclude='*.log' "${exclude_src}/" "${up_url}/" 2>&1
+if [[ -f "${workdir}/data-up/debug.log" ]] || \
+   [[ -f "${workdir}/data-up/subdir/access.log" ]]; then
+  fail "exclude: *.log files were transferred by oc-rsync -> upstream"
+fi
+# Verify non-excluded files arrived.
+[[ -f "${workdir}/data-up/hello.txt" ]] \
+  || fail "exclude: hello.txt missing after oc-rsync -> upstream"
+pass "exclude: oc-rsync -> upstream daemon"
+
+if [[ "${host_os}" != "windows" ]]; then
+  reset_module_data "oc"
+  "${UPSTREAM_RSYNC}" -av --exclude='*.log' "${exclude_src}/" "${oc_url}/" 2>&1
+  if [[ -f "${workdir}/data-oc/debug.log" ]] || \
+     [[ -f "${workdir}/data-oc/subdir/access.log" ]]; then
+    fail "exclude: *.log files were transferred by upstream -> oc-rsync"
+  fi
+  [[ -f "${workdir}/data-oc/hello.txt" ]] \
+    || fail "exclude: hello.txt missing after upstream -> oc-rsync"
+  pass "exclude: upstream -> oc-rsync daemon"
+else
+  echo "SKIP: exclude: upstream -> oc-rsync daemon (unsupported on Windows)"
+fi
+
+# --- Scenario 13: relative paths (-avR) --------------------------------
+# Skipped entirely on Windows: MSYS2 path translation mangles the /./
+# separator that rsync -R mode requires.
+if [[ "${host_os}" == "windows" ]]; then
+  echo "SKIP: relative (MSYS2 path translation breaks /./ separator)"
+else
+  reset_module_data "up"
+  "${OC_RSYNC}" -avR "${src}/./subdir/world.txt" "${up_url}/" 2>&1
+  [[ -f "${workdir}/data-up/subdir/world.txt" ]] \
+    || fail "relative: subdir/world.txt missing in upstream module"
+  pass "relative: oc-rsync -> upstream daemon"
+
+  reset_module_data "oc"
+  "${UPSTREAM_RSYNC}" -avR "${src}/./subdir/world.txt" "${oc_url}/" 2>&1
+  [[ -f "${workdir}/data-oc/subdir/world.txt" ]] \
+    || fail "relative: subdir/world.txt missing in oc-rsync module"
+  pass "relative: upstream -> oc-rsync daemon"
+fi
+
+# --- Scenario 14: whole-file mode (-avW) --------------------------------
+run_extended_scenario "whole-file" "-avW"
+
+# --- Scenario 15: inplace mode (--inplace) ------------------------------
+run_extended_scenario "inplace" "-av --inplace"
+
+# --- Scenario 16: numeric-ids (--numeric-ids) --------------------------
+run_extended_scenario "numeric-ids" "-av --numeric-ids"
+
+# --- Scenario 17: itemize (-avi) ----------------------------------------
+# Verify the transfer succeeds; exact itemize output format is not
+# compared cross-implementation, only content parity.
+run_extended_scenario "itemize" "-avi"
+
+# --- Scenario 18: symlinks (macOS / Linux only) -------------------------
+if [[ "${host_os}" != "windows" ]]; then
+  symlink_src="${workdir}/src-symlinks"
+  rm -rf "${symlink_src}"
+  cp -R "${src}" "${symlink_src}"
+  printf 'link target\n' > "${symlink_src}/real-file.txt"
+  ln -s real-file.txt "${symlink_src}/link.txt"
+
+  reset_module_data "up"
+  "${OC_RSYNC}" -av "${symlink_src}/" "${up_url}/" 2>&1
+  if [[ ! -L "${workdir}/data-up/link.txt" ]]; then
+    fail "symlinks: link.txt not a symlink in upstream module"
+  fi
+  target="$(readlink "${workdir}/data-up/link.txt")"
+  [[ "${target}" == "real-file.txt" ]] \
+    || fail "symlinks: link.txt points to '${target}', expected 'real-file.txt'"
+  pass "symlinks: oc-rsync -> upstream daemon"
+
+  reset_module_data "oc"
+  "${UPSTREAM_RSYNC}" -av "${symlink_src}/" "${oc_url}/" 2>&1
+  if [[ ! -L "${workdir}/data-oc/link.txt" ]]; then
+    fail "symlinks: link.txt not a symlink in oc-rsync module"
+  fi
+  target="$(readlink "${workdir}/data-oc/link.txt")"
+  [[ "${target}" == "real-file.txt" ]] \
+    || fail "symlinks: link.txt points to '${target}', expected 'real-file.txt'"
+  pass "symlinks: upstream -> oc-rsync daemon"
+else
+  echo "SKIP: symlinks (unsupported on Windows)"
+fi
+
+# --- Scenario 19: hardlinks (macOS / Linux only) -----------------------
+if [[ "${host_os}" != "windows" ]]; then
+  hardlink_src="${workdir}/src-hardlinks"
+  rm -rf "${hardlink_src}"
+  mkdir -p "${hardlink_src}"
+  printf 'shared content\n' > "${hardlink_src}/original.txt"
+  ln "${hardlink_src}/original.txt" "${hardlink_src}/hardlink.txt"
+
+  reset_module_data "up"
+  "${OC_RSYNC}" -avH "${hardlink_src}/" "${up_url}/" 2>&1
+  # Verify both files exist with identical content.
+  [[ -f "${workdir}/data-up/original.txt" ]] \
+    || fail "hardlinks: original.txt missing in upstream module"
+  [[ -f "${workdir}/data-up/hardlink.txt" ]] \
+    || fail "hardlinks: hardlink.txt missing in upstream module"
+  # Verify they are actually hardlinked (same inode).
+  ino1="$(stat -f '%i' "${workdir}/data-up/original.txt" 2>/dev/null \
+    || stat -c '%i' "${workdir}/data-up/original.txt" 2>/dev/null)"
+  ino2="$(stat -f '%i' "${workdir}/data-up/hardlink.txt" 2>/dev/null \
+    || stat -c '%i' "${workdir}/data-up/hardlink.txt" 2>/dev/null)"
+  [[ "${ino1}" == "${ino2}" ]] \
+    || fail "hardlinks: inodes differ (${ino1} vs ${ino2}) in upstream module"
+  pass "hardlinks: oc-rsync -> upstream daemon"
+
+  reset_module_data "oc"
+  "${UPSTREAM_RSYNC}" -avH "${hardlink_src}/" "${oc_url}/" 2>&1
+  ino1="$(stat -f '%i' "${workdir}/data-oc/original.txt" 2>/dev/null \
+    || stat -c '%i' "${workdir}/data-oc/original.txt" 2>/dev/null)"
+  ino2="$(stat -f '%i' "${workdir}/data-oc/hardlink.txt" 2>/dev/null \
+    || stat -c '%i' "${workdir}/data-oc/hardlink.txt" 2>/dev/null)"
+  [[ "${ino1}" == "${ino2}" ]] \
+    || fail "hardlinks: inodes differ (${ino1} vs ${ino2}) in oc-rsync module"
+  pass "hardlinks: upstream -> oc-rsync daemon"
+else
+  echo "SKIP: hardlinks (unsupported on Windows)"
+fi
+
+# --- Scenario 20: --files-from -----------------------------------------
+files_list="${workdir}/filelist.txt"
+printf 'hello.txt\nsubdir/world.txt\n' > "${files_list}"
+
+reset_module_data "up"
+"${OC_RSYNC}" -av --files-from="${files_list}" "${src}/" "${up_url}/" 2>&1
+[[ -f "${workdir}/data-up/hello.txt" ]] \
+  || fail "files-from: hello.txt missing in upstream module"
+[[ -f "${workdir}/data-up/subdir/world.txt" ]] \
+  || fail "files-from: subdir/world.txt missing in upstream module"
+# random.bin and empty.txt should NOT be transferred.
+if [[ -f "${workdir}/data-up/random.bin" ]]; then
+  fail "files-from: random.bin should not have been transferred"
+fi
+pass "files-from: oc-rsync -> upstream daemon"
+
+if [[ "${host_os}" != "windows" ]]; then
+  reset_module_data "oc"
+  "${UPSTREAM_RSYNC}" -av --files-from="${files_list}" "${src}/" "${oc_url}/" 2>&1
+  [[ -f "${workdir}/data-oc/hello.txt" ]] \
+    || fail "files-from: hello.txt missing in oc-rsync module"
+  [[ -f "${workdir}/data-oc/subdir/world.txt" ]] \
+    || fail "files-from: subdir/world.txt missing in oc-rsync module"
+  if [[ -f "${workdir}/data-oc/random.bin" ]]; then
+    fail "files-from: random.bin should not have been transferred"
+  fi
+  pass "files-from: upstream -> oc-rsync daemon"
+else
+  echo "SKIP: files-from: upstream -> oc-rsync daemon (unsupported on Windows)"
+fi
+
+# --- Scenario 21: --size-only ------------------------------------------
+size_only_src="${workdir}/src-size-only"
+rm -rf "${size_only_src}"
+cp -R "${src}" "${size_only_src}"
+
+reset_module_data "up"
+# First sync to populate destination.
+"${OC_RSYNC}" -av "${size_only_src}/" "${up_url}/" 2>&1
+# Modify content but keep the same size.
+printf 'XXXXX\n' > "${size_only_src}/hello.txt"
+# Re-sync with --size-only: since the size matches (6 bytes both ways),
+# the file should NOT be transferred.
+out="$("${OC_RSYNC}" -av --size-only --stats "${size_only_src}/" "${up_url}/" 2>&1)"
+if ! printf '%s\n' "${out}" \
+     | grep -qE 'Total transferred file size: 0( bytes)?'; then
+  printf '%s\n' "${out}" >&2
+  fail "size-only: oc-rsync transferred data when sizes matched"
+fi
+pass "size-only: oc-rsync -> upstream daemon"
+
+# --- Scenario 22: compressed delta transfer (-avz --no-whole-file -I) ---
+run_extended_scenario "compress-delta" "-avz --no-whole-file -I"
 
 echo "All interop smoke scenarios passed on ${host_os}."

@@ -11,7 +11,12 @@ name: Interop Tests (macOS)
 #   - upstream sender + oc-rsync receiver (pull)
 #   - quick-check no-op re-run
 #   - delta update in both directions
-#   - --list-only output parity
+#   - compress (-avz), checksum (-avc), delete (--delete)
+#   - dry-run (-avn), exclude (--exclude), relative paths (-avR)
+#   - whole-file (-avW), inplace (--inplace), numeric-ids
+#   - itemize (-avi), symlinks, hardlinks (-avH)
+#   - files-from (--files-from), size-only (--size-only)
+#   - compressed delta (-avz --no-whole-file -I)
 #
 # Intentionally NOT covered on macOS:
 #   - xattr and ACL parity (covered by Linux interop + dedicated
