@@ -29,6 +29,7 @@
 //! assert_eq!(entry.file_type(), FileType::Regular);
 //! ```
 
+mod accessor;
 mod batched_writer;
 mod dir_tree;
 mod dual;
@@ -50,6 +51,7 @@ mod wire_mode;
 mod wire_path;
 mod write;
 
+pub use accessor::FileEntryAccessor;
 pub use batched_writer::{BatchConfig, BatchStats, BatchedFileListWriter};
 pub use dir_tree::{DirTreeError, DirectoryTree};
 pub use dual::DualFileList;
