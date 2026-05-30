@@ -230,8 +230,7 @@ impl FileEntryAccessor for FileEntry {
         #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStrExt;
-            self.link_target()
-                .map(|p| p.as_os_str().as_bytes())
+            self.link_target().map(|p| p.as_os_str().as_bytes())
         }
         #[cfg(not(unix))]
         {
@@ -491,10 +490,7 @@ mod tests {
     #[test]
     fn file_entry_accessor_symlink() {
         use std::path::PathBuf;
-        let entry = FileEntry::new_symlink(
-            "link".into(),
-            PathBuf::from("../target"),
-        );
+        let entry = FileEntry::new_symlink("link".into(), PathBuf::from("../target"));
         let acc: &dyn FileEntryAccessor = &entry;
         assert!(acc.is_symlink());
         assert_eq!(acc.link_target_bytes(), Some(b"../target" as &[u8]));
@@ -630,8 +626,8 @@ mod tests {
         use super::super::FileEntryAccessor;
         use crate::flist::flat::{
             ExtrasArena, ExtrasRef, FileEntryHeader, FlatExtras, FlatFileEntry,
-            PathArena, PathHandle,
-            PRESENT_CONTENT_DIR, PRESENT_GID, PRESENT_MTIME_NSEC, PRESENT_UID,
+            PRESENT_CONTENT_DIR, PRESENT_GID, PRESENT_MTIME_NSEC, PRESENT_UID, PathArena,
+            PathHandle,
         };
 
         fn empty_header() -> FileEntryHeader {
