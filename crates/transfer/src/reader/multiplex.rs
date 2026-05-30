@@ -119,15 +119,29 @@ impl<R: Read> MultiplexReader<R> {
     /// lets the transfer loop drain normally and exit 0, matching the behavior
     /// of oc-rsync's own receiver which silently skips daemon-excluded files.
     ///
+    /// # Wire ordering race
+    ///
+    /// The upstream daemon's sender process may emit MSG_ERROR_EXIT(23) before
+    /// the FERROR_XFER messages that caused it arrive on the wire. This happens
+    /// because the sender reads the generator's exit code from `waitpid()`
+    /// before fully draining the msg2sndr IPC pipe. When this occurs,
+    /// `error_exit_code` is set but `xfer_error_count` is still zero.
+    ///
+    /// To handle this, exit code 23 never aborts immediately - the read loop
+    /// continues draining control messages until either FERROR_XFER arrives
+    /// (confirming the daemon filter scenario) or the connection closes
+    /// naturally via EOF.
+    ///
     /// upstream: generator.c:1269 - `rprintf(FERROR_XFER, "daemon refused...")`
     /// upstream: log.c:311 - `got_xfer_error = 1;` on FERROR_XFER receipt
     /// upstream: main.c:1608-1609 - `if (got_xfer_error) _exit(RERR_PARTIAL);`
     fn check_error_exit(&self) -> io::Result<()> {
         if let Some(code) = self.error_exit_code {
-            // RERR_PARTIAL (23) after MSG_ERROR_XFER means the remote daemon
-            // refused files via its module exclude rules. All allowed files
-            // were transferred successfully - treat as non-fatal.
-            if code == 23 && self.xfer_error_count > 0 {
+            // RERR_PARTIAL (23) is only produced when got_xfer_error is set
+            // (upstream cleanup.c:217-218, main.c:1608-1609), which requires
+            // FERROR_XFER to have been sent. Continue draining the wire to
+            // let late-arriving FERROR_XFER frames increment xfer_error_count.
+            if code == 23 {
                 return Ok(());
             }
             Err(io::Error::new(
