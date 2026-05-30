@@ -48,6 +48,7 @@ where
         program_name,
         show_help,
         show_version,
+        show_io_uring_status,
         human_readable,
         dry_run,
         list_only,
@@ -305,7 +306,13 @@ where
         Err(message) => return fail_with_message(message, stderr),
     };
 
-    if let Some(code) = maybe_print_help_or_version(show_help, show_version, program_name, stdout) {
+    if let Some(code) = maybe_print_help_or_version(
+        show_help,
+        show_version,
+        show_io_uring_status,
+        program_name,
+        stdout,
+    ) {
         return code;
     }
 

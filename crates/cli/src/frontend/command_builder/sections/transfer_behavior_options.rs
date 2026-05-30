@@ -181,6 +181,16 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .value_parser(OsStringValueParser::new()),
             )
             .arg(
+                Arg::new("io-uring-status")
+                    .long("io-uring-status")
+                    .help(
+                        "Print the io_uring capability matrix (kernel version, \
+                         availability, restriction detection, supported opcodes, \
+                         feature gates, active fallback chain) and exit.",
+                    )
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
                 Arg::new("simd")
                     .long("simd")
                     .value_name("LEVEL")

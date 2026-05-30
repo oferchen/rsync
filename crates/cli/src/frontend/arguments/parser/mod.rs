@@ -51,6 +51,7 @@ where
 
     let show_help = matches.get_flag("help");
     let show_version = matches.get_flag("version");
+    let show_io_uring_status = matches.get_flag("io-uring-status");
 
     // Handle human-readable: bare flags (-h, --human-readable) count occurrences
     // while explicit values (--human-readable=2) set the level directly.
@@ -703,6 +704,7 @@ where
         program_name,
         show_help,
         show_version,
+        show_io_uring_status,
         human_readable,
         dry_run,
         list_only,

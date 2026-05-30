@@ -209,6 +209,12 @@ pub fn hard_link(src: &std::path::Path, dst: &std::path::Path) -> std::io::Resul
     if let Some(result) = try_hard_link_via_io_uring(src, dst) {
         return result;
     }
+    logging::debug_log!(
+        Io,
+        2,
+        "io_uring LINKAT unavailable, falling back to std::fs::hard_link for {}",
+        dst.display()
+    );
     std::fs::hard_link(src, dst)
 }
 

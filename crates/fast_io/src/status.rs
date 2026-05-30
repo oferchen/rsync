@@ -3,6 +3,15 @@
 //! Combines compile-time platform information with runtime probes for
 //! io_uring and IOCP into human-readable strings suitable for CLI output
 //! and structured records for programmatic callers.
+//!
+//! # io_uring restriction detection (IKV-F.2)
+//!
+//! The [`IoUringRestriction`] enum and [`detect_io_uring_restriction`]
+//! function surface the specific reason io_uring is unavailable, if any.
+//! Container runtimes (Docker pre-20.10.2, gVisor), seccomp profiles, and
+//! cgroup v2 device controllers can silently block `io_uring_setup(2)`.
+//! This module detects these restrictions once at startup via the cached
+//! probe in [`crate::io_uring::config`] and provides user-visible messages.
 
 use crate::io_uring;
 #[cfg(target_os = "linux")]
@@ -13,6 +22,234 @@ use crate::iocp::is_iocp_available;
 use crate::iocp::skip_event_optimization_available;
 #[cfg(target_os = "linux")]
 use crate::splice::is_splice_available;
+
+/// Reason io_uring is restricted or unavailable on this system.
+///
+/// Returned by [`detect_io_uring_restriction`]. The variants map onto the
+/// five outcomes of the startup probe in [`crate::io_uring::config`] but
+/// are exposed as a public enum so callers (CLI `--io-uring-status`,
+/// daemon log) can act on them without parsing strings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IoUringRestriction {
+    /// io_uring is available - no restriction detected.
+    None,
+    /// Platform is not Linux - io_uring is a Linux-only kernel interface.
+    NotLinux,
+    /// The `io_uring` cargo feature was not compiled in.
+    FeatureDisabled,
+    /// Kernel version is below 5.6 (the minimum for `io_uring_setup(2)`).
+    KernelTooOld {
+        /// Detected kernel major version.
+        major: u32,
+        /// Detected kernel minor version.
+        minor: u32,
+    },
+    /// Kernel version is sufficient but `io_uring_setup(2)` failed.
+    /// This typically indicates seccomp filtering, container runtime
+    /// restrictions, or cgroup-level blocking.
+    SyscallBlocked {
+        /// Detected kernel major version.
+        major: u32,
+        /// Detected kernel minor version.
+        minor: u32,
+    },
+    /// Could not determine the kernel version.
+    KernelVersionUnknown,
+}
+
+impl std::fmt::Display for IoUringRestriction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => write!(f, "no restriction - io_uring is available"),
+            Self::NotLinux => write!(f, "platform is not Linux"),
+            Self::FeatureDisabled => write!(f, "io_uring cargo feature not compiled in"),
+            Self::KernelTooOld { major, minor } => {
+                write!(f, "kernel {major}.{minor} is below minimum 5.6")
+            }
+            Self::SyscallBlocked { major, minor } => {
+                write!(
+                    f,
+                    "io_uring_setup(2) blocked on kernel {major}.{minor} \
+                     (seccomp, container runtime, or cgroup restriction)"
+                )
+            }
+            Self::KernelVersionUnknown => write!(f, "could not detect kernel version"),
+        }
+    }
+}
+
+/// Detects whether io_uring is restricted and why.
+///
+/// Uses the cached probe result from [`crate::io_uring::config`] (which
+/// runs once per process), so this function is cheap to call repeatedly.
+/// On non-Linux platforms or without the `io_uring` feature, returns a
+/// compile-time-known restriction without any runtime cost.
+#[must_use]
+pub fn detect_io_uring_restriction() -> IoUringRestriction {
+    detect_io_uring_restriction_impl()
+}
+
+#[cfg(all(target_os = "linux", feature = "io_uring"))]
+fn detect_io_uring_restriction_impl() -> IoUringRestriction {
+    let info = io_uring::config_detail::io_uring_kernel_info();
+    if info.available {
+        return IoUringRestriction::None;
+    }
+    match (info.kernel_major, info.kernel_minor) {
+        (Some(major), Some(minor)) => {
+            if (major, minor) < (5, 6) {
+                IoUringRestriction::KernelTooOld { major, minor }
+            } else {
+                IoUringRestriction::SyscallBlocked { major, minor }
+            }
+        }
+        _ => IoUringRestriction::KernelVersionUnknown,
+    }
+}
+
+#[cfg(not(all(target_os = "linux", feature = "io_uring")))]
+fn detect_io_uring_restriction_impl() -> IoUringRestriction {
+    #[cfg(not(target_os = "linux"))]
+    {
+        IoUringRestriction::NotLinux
+    }
+    #[cfg(all(target_os = "linux", not(feature = "io_uring")))]
+    {
+        IoUringRestriction::FeatureDisabled
+    }
+}
+
+/// Prints a multi-line io_uring capability matrix to stdout.
+///
+/// Designed for the `--io-uring-status` CLI flag. Reports:
+/// - Compile-time feature state
+/// - Kernel version and io_uring availability
+/// - Restriction detection (seccomp/cgroup/kernel version)
+/// - Supported opcodes and capabilities (PBUF_RING, SQPOLL, etc.)
+/// - Active fallback chain
+///
+/// Returns the formatted string so callers can print it or use it in tests.
+#[must_use]
+pub fn io_uring_capability_matrix() -> String {
+    let mut lines = Vec::new();
+
+    lines.push("io_uring capability matrix:".to_string());
+    lines.push(String::new());
+
+    // Compile-time feature state
+    let compiled_in = cfg!(all(target_os = "linux", feature = "io_uring"));
+    lines.push(format!(
+        "  compiled in:        {}",
+        if compiled_in { "yes" } else { "no" }
+    ));
+
+    // Platform
+    let platform = if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "windows") {
+        "windows"
+    } else {
+        "other"
+    };
+    lines.push(format!("  platform:           {platform}"));
+
+    // Kernel info and restriction
+    let info = io_uring_kernel_info();
+    let restriction = detect_io_uring_restriction();
+
+    if let (Some(major), Some(minor)) = (info.kernel_major, info.kernel_minor) {
+        lines.push(format!("  kernel version:     {major}.{minor}"));
+    } else {
+        lines.push("  kernel version:     unknown".to_string());
+    }
+
+    lines.push(format!(
+        "  available:          {}",
+        if info.available { "yes" } else { "no" }
+    ));
+
+    if restriction != IoUringRestriction::None {
+        lines.push(format!("  restriction:        {restriction}"));
+    }
+
+    if info.available {
+        lines.push(format!("  supported ops:      {}", info.supported_ops));
+        lines.push(format!(
+            "  pbuf_ring:          {}",
+            if info.pbuf_ring_supported {
+                "yes (kernel 5.19+)"
+            } else {
+                "no"
+            }
+        ));
+        lines.push(format!(
+            "  sqpoll fell back:   {}",
+            if crate::sqpoll_fell_back() {
+                "yes (CAP_SYS_NICE likely missing)"
+            } else {
+                "no"
+            }
+        ));
+    }
+
+    // Feature gates
+    lines.push(String::new());
+    lines.push("  feature gates:".to_string());
+    lines.push(format!(
+        "    io_uring:             {}",
+        if cfg!(feature = "io_uring") {
+            "on"
+        } else {
+            "off"
+        }
+    ));
+    lines.push(format!(
+        "    iouring-data-reads:   {}",
+        if cfg!(feature = "iouring-data-reads") {
+            "on"
+        } else {
+            "off"
+        }
+    ));
+    lines.push(format!(
+        "    iouring-data-writes:  {}",
+        if cfg!(feature = "iouring-data-writes") {
+            "on"
+        } else {
+            "off"
+        }
+    ));
+    lines.push(format!(
+        "    iouring-send-zc:      {}",
+        if cfg!(feature = "iouring-send-zc") {
+            "on"
+        } else {
+            "off"
+        }
+    ));
+    lines.push(format!(
+        "    sqpoll-mlock-basis:   {}",
+        if cfg!(feature = "sqpoll-mlock-basis") {
+            "on"
+        } else {
+            "off"
+        }
+    ));
+
+    // Fallback chain
+    lines.push(String::new());
+    lines.push("  active fallback chain:".to_string());
+    if info.available {
+        lines.push("    1. io_uring (primary)".to_string());
+        lines.push("    2. standard buffered I/O (fallback on ring failure)".to_string());
+    } else {
+        lines.push("    1. standard buffered I/O (io_uring unavailable)".to_string());
+    }
+
+    lines.join("\n")
+}
 
 /// Detailed IOCP availability status for `--version` output.
 ///
@@ -492,6 +729,94 @@ mod tests {
         assert!(
             !crate::sqpoll_fell_back(),
             "sqpoll_fell_back() must be false at startup"
+        );
+    }
+
+    #[test]
+    fn detect_io_uring_restriction_returns_valid_variant() {
+        let restriction = detect_io_uring_restriction();
+        // On any platform, the function must return a valid variant
+        // that can be formatted.
+        let display = format!("{restriction}");
+        assert!(!display.is_empty());
+
+        #[cfg(not(target_os = "linux"))]
+        assert_eq!(restriction, IoUringRestriction::NotLinux);
+
+        #[cfg(all(target_os = "linux", not(feature = "io_uring")))]
+        assert_eq!(restriction, IoUringRestriction::FeatureDisabled);
+    }
+
+    #[test]
+    fn detect_io_uring_restriction_consistent_with_availability() {
+        let restriction = detect_io_uring_restriction();
+        let available = crate::is_io_uring_available();
+
+        if available {
+            assert_eq!(
+                restriction,
+                IoUringRestriction::None,
+                "restriction must be None when io_uring is available"
+            );
+        } else {
+            assert_ne!(
+                restriction,
+                IoUringRestriction::None,
+                "restriction must not be None when io_uring is unavailable"
+            );
+        }
+    }
+
+    #[test]
+    fn io_uring_restriction_display_is_single_line() {
+        let restriction = detect_io_uring_restriction();
+        let display = format!("{restriction}");
+        assert!(
+            !display.contains('\n'),
+            "restriction display must be single line, got: {display}"
+        );
+    }
+
+    #[test]
+    fn io_uring_capability_matrix_is_well_formed() {
+        let matrix = io_uring_capability_matrix();
+        assert!(
+            matrix.starts_with("io_uring capability matrix:"),
+            "matrix must start with header, got: {}",
+            matrix.lines().next().unwrap_or("")
+        );
+        assert!(matrix.contains("compiled in:"));
+        assert!(matrix.contains("platform:"));
+        assert!(matrix.contains("available:"));
+        assert!(matrix.contains("feature gates:"));
+        assert!(matrix.contains("active fallback chain:"));
+    }
+
+    #[test]
+    fn io_uring_capability_matrix_reflects_availability() {
+        let matrix = io_uring_capability_matrix();
+        let available = crate::is_io_uring_available();
+
+        if available {
+            assert!(
+                matrix.contains("available:          yes"),
+                "matrix must show available=yes when io_uring is available"
+            );
+        } else {
+            assert!(
+                matrix.contains("available:          no"),
+                "matrix must show available=no when io_uring is unavailable"
+            );
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn io_uring_capability_matrix_shows_restriction_on_non_linux() {
+        let matrix = io_uring_capability_matrix();
+        assert!(
+            matrix.contains("restriction:"),
+            "matrix must show restriction on non-Linux, got: {matrix}"
         );
     }
 

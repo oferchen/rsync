@@ -116,8 +116,14 @@ impl FileReaderFactory for IoUringReaderFactory {
         if self.will_use_io_uring() {
             match IoUringReader::open(path, &self.config) {
                 Ok(r) => return Ok(IoUringOrStdReader::IoUring(r)),
-                Err(_) => {
-                    // Fall through to standard I/O
+                Err(e) => {
+                    logging::debug_log!(
+                        Io,
+                        1,
+                        "io_uring reader open failed for {}, falling back to standard I/O: {}",
+                        path.display(),
+                        e
+                    );
                 }
             }
         }
@@ -240,8 +246,14 @@ impl FileWriterFactory for IoUringWriterFactory {
         if self.will_use_io_uring() {
             match IoUringWriter::create(path, &self.config) {
                 Ok(w) => return Ok(IoUringOrStdWriter::IoUring(w)),
-                Err(_) => {
-                    // Fall through to standard I/O
+                Err(e) => {
+                    logging::debug_log!(
+                        Io,
+                        1,
+                        "io_uring writer create failed for {}, falling back to standard I/O: {}",
+                        path.display(),
+                        e
+                    );
                 }
             }
         }
@@ -255,8 +267,16 @@ impl FileWriterFactory for IoUringWriterFactory {
         if self.will_use_io_uring() {
             match IoUringWriter::create_with_size(path, size, &self.config) {
                 Ok(w) => return Ok(IoUringOrStdWriter::IoUring(w)),
-                Err(_) => {
-                    // Fall through to standard I/O
+                Err(e) => {
+                    logging::debug_log!(
+                        Io,
+                        1,
+                        "io_uring writer create_with_size failed for {} (size={}), \
+                         falling back to standard I/O: {}",
+                        path.display(),
+                        size,
+                        e
+                    );
                 }
             }
         }

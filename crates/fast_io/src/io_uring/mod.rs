@@ -274,15 +274,26 @@ pub fn writer_from_file_with_depth(
             if is_io_uring_available() {
                 // Probe the per-thread ring; on setup failure `file` is still
                 // ours and we fall back to standard I/O.
-                if per_thread_ring::with_ring(|_| Ok(())).is_ok() {
-                    return Ok(IoUringOrStdWriter::IoUring(IoUringWriter::with_ring(
-                        file,
-                        buffer_capacity,
-                        config.sq_entries,
-                        batching::NO_FIXED_FD,
-                        config.register_buffers,
-                        config.registered_buffer_count,
-                    )));
+                match per_thread_ring::with_ring(|_| Ok(())) {
+                    Ok(()) => {
+                        return Ok(IoUringOrStdWriter::IoUring(IoUringWriter::with_ring(
+                            file,
+                            buffer_capacity,
+                            config.sq_entries,
+                            batching::NO_FIXED_FD,
+                            config.register_buffers,
+                            config.registered_buffer_count,
+                        )));
+                    }
+                    Err(e) => {
+                        logging::debug_log!(
+                            Io,
+                            1,
+                            "io_uring per-thread ring probe failed, \
+                             falling back to standard I/O for writer: {}",
+                            e
+                        );
+                    }
                 }
             }
             Ok(IoUringOrStdWriter::Std(
@@ -349,7 +360,16 @@ pub fn reader_from_path_with_depth<P: AsRef<std::path::Path>>(
             if is_io_uring_available() {
                 match IoUringReader::open(path.as_ref(), &config) {
                     Ok(r) => return Ok(IoUringOrStdReader::IoUring(r)),
-                    Err(_) => { /* fall through to standard I/O */ }
+                    Err(e) => {
+                        logging::debug_log!(
+                            Io,
+                            1,
+                            "io_uring reader open failed for {}, \
+                             falling back to standard I/O: {}",
+                            path.as_ref().display(),
+                            e
+                        );
+                    }
                 }
             }
             Ok(IoUringOrStdReader::Std(crate::traits::StdFileReader::open(
