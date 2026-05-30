@@ -599,8 +599,7 @@ mod tests {
         let mock = MockEntry::file("test.txt", 1024);
         let ctx = default_ctx();
 
-        let concrete_result =
-            super::super::itemize::format_iflags(&iflags, &concrete, true, &ctx);
+        let concrete_result = super::super::itemize::format_iflags(&iflags, &concrete, true, &ctx);
         let generic_result = format_iflags_generic(&iflags, &mock, true, &ctx);
         assert_eq!(concrete_result, generic_result);
     }
@@ -613,8 +612,7 @@ mod tests {
         let mock = MockEntry::dir("subdir");
         let ctx = default_ctx();
 
-        let concrete_result =
-            super::super::itemize::format_iflags(&iflags, &concrete, true, &ctx);
+        let concrete_result = super::super::itemize::format_iflags(&iflags, &concrete, true, &ctx);
         let generic_result = format_iflags_generic(&iflags, &mock, true, &ctx);
         assert_eq!(concrete_result, generic_result);
     }
@@ -627,8 +625,7 @@ mod tests {
         let mock = MockEntry::file("gone.txt", 0);
         let ctx = default_ctx();
 
-        let concrete_result =
-            super::super::itemize::format_iflags(&iflags, &concrete, true, &ctx);
+        let concrete_result = super::super::itemize::format_iflags(&iflags, &concrete, true, &ctx);
         let generic_result = format_iflags_generic(&iflags, &mock, true, &ctx);
         assert_eq!(concrete_result, generic_result);
     }
@@ -653,8 +650,7 @@ mod tests {
         let mock = MockEntry::file("test.txt", 1024);
         let ctx = default_ctx();
 
-        let concrete_result =
-            super::super::itemize::format_iflags(&iflags, &concrete, false, &ctx);
+        let concrete_result = super::super::itemize::format_iflags(&iflags, &concrete, false, &ctx);
         let generic_result = format_iflags_generic(&iflags, &mock, false, &ctx);
         assert_eq!(concrete_result, generic_result);
     }
