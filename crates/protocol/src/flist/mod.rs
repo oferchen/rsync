@@ -51,8 +51,8 @@ mod wire_path;
 mod write;
 
 pub use batched_writer::{BatchConfig, BatchStats, BatchedFileListWriter};
-pub use dual::DualFileList;
 pub use dir_tree::{DirTreeError, DirectoryTree};
+pub use dual::DualFileList;
 pub use entry::{FileEntry, FileType};
 pub use flags::{FileFlags, XMIT_HLINK_FIRST, XMIT_HLINKED, XMIT_SAME_RDEV_PRE28, XMIT_TOP_DIR};
 #[cfg(feature = "flat-flist")]

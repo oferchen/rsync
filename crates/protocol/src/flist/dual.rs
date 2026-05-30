@@ -16,8 +16,8 @@ use super::FileEntry;
 
 #[cfg(feature = "flat-flist")]
 use super::flat::{
-    ExtrasArena, FlatExtras, FlatFileList, FileEntryHeader,
-    PRESENT_CONTENT_DIR, PRESENT_GID, PRESENT_LENGTH64, PRESENT_MTIME_NSEC, PRESENT_UID,
+    ExtrasArena, FileEntryHeader, FlatExtras, FlatFileList, PRESENT_CONTENT_DIR, PRESENT_GID,
+    PRESENT_LENGTH64, PRESENT_MTIME_NSEC, PRESENT_UID,
 };
 
 /// Dual file-list that maintains both legacy and flat representations.
@@ -587,9 +587,11 @@ mod tests {
             entry.set_checksum(vec![0xAB; 16]);
             list.push(entry);
 
-            let decoded = list.extras().decode(
-                list.flat().get(0).unwrap().header.extras
-            ).unwrap().unwrap();
+            let decoded = list
+                .extras()
+                .decode(list.flat().get(0).unwrap().header.extras)
+                .unwrap()
+                .unwrap();
             assert_eq!(decoded.checksum, Some(vec![0xAB; 16]));
         }
 
@@ -601,9 +603,11 @@ mod tests {
             entry.set_group_name("staff".to_string());
             list.push(entry);
 
-            let decoded = list.extras().decode(
-                list.flat().get(0).unwrap().header.extras
-            ).unwrap().unwrap();
+            let decoded = list
+                .extras()
+                .decode(list.flat().get(0).unwrap().header.extras)
+                .unwrap()
+                .unwrap();
             assert_eq!(decoded.user_name, Some(b"alice".to_vec()));
             assert_eq!(decoded.group_name, Some(b"staff".to_vec()));
         }
@@ -615,9 +619,11 @@ mod tests {
             entry.set_hardlink_idx(42);
             list.push(entry);
 
-            let decoded = list.extras().decode(
-                list.flat().get(0).unwrap().header.extras
-            ).unwrap().unwrap();
+            let decoded = list
+                .extras()
+                .decode(list.flat().get(0).unwrap().header.extras)
+                .unwrap()
+                .unwrap();
             assert_eq!(decoded.hardlink_idx, Some(42));
         }
 
@@ -630,9 +636,11 @@ mod tests {
             entry.set_xattr_ndx(5);
             list.push(entry);
 
-            let decoded = list.extras().decode(
-                list.flat().get(0).unwrap().header.extras
-            ).unwrap().unwrap();
+            let decoded = list
+                .extras()
+                .decode(list.flat().get(0).unwrap().header.extras)
+                .unwrap()
+                .unwrap();
             assert_eq!(decoded.acl_ndx, Some(3));
             assert_eq!(decoded.def_acl_ndx, Some(4));
             assert_eq!(decoded.xattr_ndx, Some(5));
@@ -647,9 +655,11 @@ mod tests {
             entry.set_atime_nsec(999);
             list.push(entry);
 
-            let decoded = list.extras().decode(
-                list.flat().get(0).unwrap().header.extras
-            ).unwrap().unwrap();
+            let decoded = list
+                .extras()
+                .decode(list.flat().get(0).unwrap().header.extras)
+                .unwrap()
+                .unwrap();
             assert_eq!(decoded.atime, Some(1_234_567));
             assert_eq!(decoded.crtime, Some(7_654_321));
             assert_eq!(decoded.atime_nsec, Some(999));
