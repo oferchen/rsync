@@ -111,7 +111,7 @@ impl FlatExtras {
         if self.link_target.is_some() {
             mask |= EXTRA_LINK_TARGET;
         }
-        if self.rdev_major.is_some() || self.rdev_minor.is_some() {
+        if self.rdev_major.is_some() && self.rdev_minor.is_some() {
             mask |= EXTRA_RDEV;
         }
         if self.hardlink_idx.is_some() {
@@ -153,27 +153,18 @@ impl FlatExtras {
 /// A well-formed arena built by [`ExtrasArena::append`] never produces these;
 /// they guard against a malformed offset, a truncated tail, or an over-long
 /// checksum, so the decoder fails loud rather than panicking on a bad slice.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ExtrasError {
     /// The [`ExtrasRef`] offset lies past the end of the arena.
+    #[error("extras offset out of range")]
     OffsetOutOfRange,
     /// The tail ended before all fields the presence mask promised were read.
+    #[error("extras tail truncated")]
     Truncated,
     /// A checksum field declared a length above the 32-byte maximum.
+    #[error("extras checksum length exceeds maximum")]
     ChecksumTooLong,
 }
-
-impl core::fmt::Display for ExtrasError {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::OffsetOutOfRange => write!(f, "extras offset out of range"),
-            Self::Truncated => write!(f, "extras tail truncated"),
-            Self::ChecksumTooLong => write!(f, "extras checksum length exceeds maximum"),
-        }
-    }
-}
-
-impl std::error::Error for ExtrasError {}
 
 /// Append-only blob arena for packed extras tails.
 ///
@@ -223,7 +214,7 @@ impl ExtrasArena {
             return ExtrasRef::NO_EXTRAS;
         }
 
-        let offset = self.blobs.len() as u32;
+        let offset = u32::try_from(self.blobs.len()).expect("ExtrasArena exceeded 4 GiB");
         self.blobs.extend_from_slice(&mask.to_le_bytes());
 
         if let Some(target) = &extras.link_target {
