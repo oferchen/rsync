@@ -416,7 +416,56 @@ relevant upstream binary is not available in the environment.
 
 ---
 
-## 7. Cross-references
+## 7. Cross-platform interop coverage (macOS / Windows)
+
+The portable smoke harness at `tools/ci/run_interop_smoke.sh` runs on
+macOS and Windows in addition to the comprehensive Linux harness. It
+exercises wire-protocol interop between oc-rsync and the
+platform-provided upstream rsync (Homebrew on macOS, MSYS2 on Windows)
+via daemon mode on ephemeral TCP ports.
+
+### Scenarios covered by the portable smoke harness
+
+| Scenario | Flags | macOS | Windows | Notes |
+|---|---|---|---|---|
+| baseline upstream local copy | `-a` | Y | Y | |
+| oc-rsync push / upstream daemon | `-a` | Y | Y | |
+| oc-rsync pull / upstream daemon | `-a` | Y | Y | |
+| upstream push / oc-rsync daemon | `-a` | Y | SKIP | oc-rsync daemon unsupported on Windows |
+| upstream pull / oc-rsync daemon | `-a` | Y | SKIP | |
+| quick-check no-op re-run | `-a --stats` | Y | Y | |
+| delta update (single byte change) | `-a` | Y | Y (push only) | |
+| compress | `-avz` | Y | Y (push only) | Wire-level compress codec negotiation |
+| checksum | `-avc` | Y | Y (push only) | Checksum negotiation path |
+| delete | `-av --delete` | Y | Y (push only) | Delete flag negotiation |
+| dry-run | `-avn` | Y | Y | Verifies no files created |
+| exclude filter | `-av --exclude=*.log` | Y | Y (push only) | Filter exchange on wire |
+| relative paths | `-avR` | Y | Y (push only) | Implied-dir protocol path |
+| whole-file | `-avW` | Y | Y (push only) | Whole-file mode flag |
+| inplace | `-av --inplace` | Y | Y (push only) | Inplace flag negotiation |
+| numeric-ids | `-av --numeric-ids` | Y | Y (push only) | Numeric-ids flag |
+| itemize | `-avi` | Y | Y (push only) | Content parity only |
+| symlinks | `-av` | Y | SKIP | macOS/Linux only |
+| hardlinks | `-avH` | Y | SKIP | macOS/Linux only, inode verification |
+| files-from | `-av --files-from` | Y | Y (push only) | File selection on wire |
+| size-only | `-av --size-only` | Y | Y | Verifies skip via stats |
+| compress-delta | `-avz --no-whole-file -I` | Y | Y (push only) | Combined compress + delta |
+
+### Intentionally NOT covered by the portable harness
+
+- **xattr / ACL parity** - covered by Linux interop; macOS HFS+/APFS
+  semantics differ and need a dedicated apple-fs harness.
+- **SSH loopback** - macOS/Windows GitHub runners do not have sshd
+  enabled by default; SSH interop is covered by the Linux harness.
+- **oc-rsync daemon on Windows** - the binary refuses `--daemon` on
+  Windows (see `crates/cli/src/frontend/server/daemon.rs`). The
+  upstream-daemon side still exercises the full wire protocol.
+- **`--list-only` on Windows** - Cygwin rsync path rendering differs
+  from native Windows paths.
+
+---
+
+## 8. Cross-references
 
 - [`docs/protocol-compatibility.md`](../protocol-compatibility.md) - higher-level pass/fail summary that draws from the same harness.
 - [`docs/filter-coverage-matrix.md`](../filter-coverage-matrix.md) - filter rule coverage; this matrix's `daemon-filter-*` standalone scenarios feed its "Daemon Filter Test" column.
