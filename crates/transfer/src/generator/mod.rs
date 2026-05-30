@@ -80,6 +80,8 @@
 mod context;
 mod delta;
 mod diagnostics;
+#[cfg(feature = "flat-flist")]
+pub mod entry_accessor;
 mod file_list;
 mod filters;
 pub mod io_error_flags;
