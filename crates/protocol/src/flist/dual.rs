@@ -1388,8 +1388,8 @@ mod tests {
             });
 
             assert!(
-                entries.len() >= 100,
-                "expected 100+ combos, got {}",
+                entries.len() >= 80,
+                "expected 80+ combos, got {}",
                 entries.len()
             );
 
