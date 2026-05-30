@@ -87,15 +87,16 @@ impl GeneratorContext {
         // --qsort uses unstable sort (flist.c:2991).
         {
             let _t = PhaseTimer::new("file-list-sort");
-            let file_list_ref = &self.file_list;
+            let file_list_slice = self.file_list.as_slice();
             let mut indices: Vec<usize> = {
-                let len = self.file_list.len();
+                let len = file_list_slice.len();
                 let mut v = Vec::with_capacity(len);
                 v.extend(0..len);
                 v
             };
-            let cmp =
-                |&a: &usize, &b: &usize| compare_file_entries(&file_list_ref[a], &file_list_ref[b]);
+            let cmp = |&a: &usize, &b: &usize| {
+                compare_file_entries(&file_list_slice[a], &file_list_slice[b])
+            };
             if self.config.qsort {
                 indices.sort_unstable_by(cmp);
             } else {
@@ -104,7 +105,8 @@ impl GeneratorContext {
 
             // Apply permutation in-place using cycle-following algorithm.
             // This avoids cloning every element - O(n) swaps instead of O(n) clones.
-            apply_permutation_in_place(&mut self.file_list, &mut self.full_paths, indices);
+            let legacy = self.file_list.as_mut_vec();
+            apply_permutation_in_place(legacy.as_mut_slice(), &mut self.full_paths, indices);
         }
 
         // upstream: hlink.c:match_hard_links() - must be called after sort
@@ -205,22 +207,24 @@ impl GeneratorContext {
         // upstream: flist.c:f_name_cmp() - sort via indirect permutation
         {
             let _t = PhaseTimer::new("file-list-sort");
-            let file_list_ref = &self.file_list;
+            let file_list_slice = self.file_list.as_slice();
             let mut indices: Vec<usize> = {
-                let len = self.file_list.len();
+                let len = file_list_slice.len();
                 let mut v = Vec::with_capacity(len);
                 v.extend(0..len);
                 v
             };
-            let cmp =
-                |&a: &usize, &b: &usize| compare_file_entries(&file_list_ref[a], &file_list_ref[b]);
+            let cmp = |&a: &usize, &b: &usize| {
+                compare_file_entries(&file_list_slice[a], &file_list_slice[b])
+            };
             if self.config.qsort {
                 indices.sort_unstable_by(cmp);
             } else {
                 indices.sort_by(cmp);
             }
 
-            apply_permutation_in_place(&mut self.file_list, &mut self.full_paths, indices);
+            let legacy = self.file_list.as_mut_vec();
+            apply_permutation_in_place(legacy.as_mut_slice(), &mut self.full_paths, indices);
         }
 
         // upstream: hlink.c:match_hard_links() - must be called after sort

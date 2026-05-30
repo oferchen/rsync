@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 
 use ::filters::FilterChain;
-use protocol::flist::FileEntry;
+use protocol::flist::{DualFileList, FileEntry};
 use protocol::idlist::IdList;
 use protocol::stats::DeleteStats;
 use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
@@ -42,9 +42,13 @@ pub struct GeneratorContext {
     pub(crate) config: ServerConfig,
     /// List of files to send (contains relative paths for wire transmission).
     ///
+    /// Wraps both the legacy `Vec<FileEntry>` and (when the `flat-flist`
+    /// feature is enabled) the arena-backed `FlatFileList`, keeping both
+    /// in sync on every push. Read accessors delegate to the legacy Vec.
+    ///
     /// **Invariant**: `file_list` and `full_paths` must always have the same length.
     /// Use [`Self::push_file_item`] to add entries and [`Self::clear_file_list`] to clear.
-    pub(crate) file_list: Vec<FileEntry>,
+    pub(crate) file_list: DualFileList,
     /// Full filesystem paths for each file in `file_list` (parallel array).
     /// Used to open files for delta generation during transfer.
     ///
@@ -123,7 +127,7 @@ impl GeneratorContext {
         Self {
             protocol: handshake.protocol,
             config,
-            file_list: Vec::new(),
+            file_list: DualFileList::new(),
             full_paths: Vec::new(),
             filter_chain: FilterChain::empty(),
             negotiated_algorithms: handshake.negotiated_algorithms,
@@ -292,7 +296,7 @@ impl GeneratorContext {
             self.full_paths.len(),
             "file_list and full_paths must be kept in sync"
         );
-        &self.file_list
+        self.file_list.as_slice()
     }
 
     /// Adds a file entry and its corresponding full path to the file list.
@@ -312,8 +316,9 @@ impl GeneratorContext {
     /// Clears both the file list and full paths arrays.
     ///
     /// This method maintains the invariant that both arrays are cleared together.
+    /// The legacy Vec and flat stores (when enabled) are both cleared.
     pub(crate) fn clear_file_list(&mut self) {
-        self.file_list.clear();
+        self.file_list = DualFileList::new();
         self.full_paths.clear();
     }
 
