@@ -90,6 +90,8 @@ pub(crate) mod itemize;
 mod open_source;
 mod protocol_io;
 mod segments;
+#[cfg(feature = "flat-flist")]
+mod sender_accessor;
 mod stats;
 #[cfg(test)]
 mod tests;
