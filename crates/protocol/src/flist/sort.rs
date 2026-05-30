@@ -24,9 +24,9 @@ use std::cmp::Ordering;
 use logging::debug_log;
 use memchr::memrchr;
 
+use super::FileEntry;
 #[cfg(feature = "flat-flist")]
 use super::accessor::FileEntryAccessor;
-use super::FileEntry;
 
 /// Cached sort metadata for a file entry, precomputed once before sorting.
 ///
@@ -949,9 +949,11 @@ mod tests {
     mod generic_tests {
         use std::cmp::Ordering;
 
-        use crate::flist::accessor::FileEntryAccessor;
-        use crate::flist::sort::{compare_entries_generic, compare_file_entries, sort_entries_generic, sort_file_list};
         use crate::flist::FileEntry;
+        use crate::flist::accessor::FileEntryAccessor;
+        use crate::flist::sort::{
+            compare_entries_generic, compare_file_entries, sort_entries_generic, sort_file_list,
+        };
 
         fn make_file(name: &str) -> FileEntry {
             FileEntry::new_file(name.into(), 0, 0o644)
@@ -979,9 +981,11 @@ mod tests {
                 let concrete = compare_file_entries(a, b);
                 let generic = compare_entries_generic(a, b);
                 assert_eq!(
-                    concrete, generic,
+                    concrete,
+                    generic,
                     "mismatch for ({:?}, {:?}): concrete={concrete:?}, generic={generic:?}",
-                    a.name(), b.name()
+                    a.name(),
+                    b.name()
                 );
 
                 // Also check the reverse direction
