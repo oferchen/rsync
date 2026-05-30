@@ -136,9 +136,9 @@ use std::io::{self, Write};
 
 pub use bgid_lease::{BgidLease, DEFAULT_LEASE_BATCH, with_thread_lease};
 pub use buffer_ring::{
-    BgidAllocError, BgidAllocator, BufferRing, BufferRingConfig, BufferRingError,
-    bgid_exhausted_count, bgid_inflight, bgid_peak_used, buffer_id_from_cqe_flags,
-    pbuf_ring_supported,
+    BgidAllocError, BgidAllocator, BgidSessionStats, BgidSnapshot, BufferRing, BufferRingConfig,
+    BufferRingError, bgid_exhausted_count, bgid_inflight, bgid_peak_used, bgid_snapshot,
+    buffer_id_from_cqe_flags, pbuf_ring_supported,
 };
 pub use cancel::{
     ASYNC_CANCEL_FD_MIN_KERNEL, ASYNC_CANCEL_MIN_KERNEL, CancelOutcome, IORING_OP_ASYNC_CANCEL,

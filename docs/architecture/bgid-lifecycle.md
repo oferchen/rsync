@@ -191,7 +191,36 @@ Until BGE-6 lands, `BgidExhausted` is a hard error. The architecture
 guarantee is that the failure mode is *loud* (typed error, never silent
 id reuse) rather than *graceful*.
 
-## 7. Cross-references
+## 7. Daemon-aware exhaustion warnings (BGW series)
+
+Long-lived daemons that run for days or weeks may exhaust the bgid
+namespace repeatedly as sessions come and go. The original one-shot
+`BGID_FALLBACK_WARNED` flag fired only on the first occurrence,
+leaving operators blind to recurring exhaustion.
+
+The BGW series (BGW-1 through BGW-7) replaces the one-shot flag with:
+
+- **Throttled periodic warnings.** `warn_bgid_fallback()` fires at
+  most once per 60 seconds, including cumulative exhaustion count,
+  current in-flight occupancy, and peak usage.
+- **`BgidSnapshot`** captures all four operator-facing counters
+  (`exhausted_count`, `in_flight`, `peak_used`, `remaining`) in a
+  single call for structured logging and health-check endpoints.
+- **`BgidSessionStats`** tracks per-session exhaustion by snapshotting
+  the process-wide counter at session start and computing the delta at
+  session end. Positive `in_flight_delta()` at teardown signals a
+  potential bgid leak.
+
+The throttle intervals are:
+
+| Warning | Interval | Condition |
+|---------|----------|-----------|
+| Namespace pressure | 30 s | in-flight > 50 % of namespace (32 768) |
+| Exhaustion fallback | 60 s | `BgidAllocError::Exhausted` returned |
+
+Operator guidance is in `docs/operations/bgid-monitoring.md`.
+
+## 8. Cross-references
 
 | Topic                                          | Document                                                              |
 |------------------------------------------------|-----------------------------------------------------------------------|
@@ -202,3 +231,4 @@ id reuse) rather than *graceful*.
 | Session topology (where rings are created)     | `docs/architecture/session-overview-ddp-async-iouring.md` section 3   |
 | Fixed buffer registration audit                | `docs/audits/io-uring-fixed-buffer-audit.md`                          |
 | Per-session ring wiring (in-flight)            | tracking issues `#1936`, `#1937`                                      |
+| Daemon operator monitoring guide               | `docs/operations/bgid-monitoring.md` (BGW-7)                          |

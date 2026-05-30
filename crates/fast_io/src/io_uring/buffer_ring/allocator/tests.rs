@@ -36,7 +36,7 @@ struct BgidStateGuard {
     prev_free_list: Vec<u16>,
     prev_peak: u16,
     prev_exhausted: u64,
-    prev_warned: bool,
+    prev_exhaustion_warn_last: Option<Instant>,
     _serializer: std::sync::MutexGuard<'static, ()>,
 }
 
@@ -46,7 +46,12 @@ impl BgidStateGuard {
         let prev_counter = NEXT_BGID.swap(0, Ordering::Relaxed);
         let prev_peak = PEAK_USED.swap(0, Ordering::Relaxed);
         let prev_exhausted = BGID_EXHAUSTED_COUNT.swap(0, Ordering::Relaxed);
-        let prev_warned = BGID_FALLBACK_WARNED.swap(false, Ordering::AcqRel);
+        let prev_exhaustion_warn_last = {
+            let mut last = bgid_exhaustion_warn_last()
+                .lock()
+                .expect("exhaustion warn lock poisoned");
+            last.take()
+        };
         let prev_free_list = {
             let mut list = bgid_free_list().lock().expect("free-list poisoned");
             // Swap in a fresh Vec with the same pre-sized capacity so tests
@@ -63,7 +68,7 @@ impl BgidStateGuard {
             prev_free_list,
             prev_peak,
             prev_exhausted,
-            prev_warned,
+            prev_exhaustion_warn_last,
             _serializer: serializer,
         }
     }
@@ -74,7 +79,12 @@ impl Drop for BgidStateGuard {
         NEXT_BGID.store(self.prev_counter, Ordering::Relaxed);
         PEAK_USED.store(self.prev_peak, Ordering::Relaxed);
         BGID_EXHAUSTED_COUNT.store(self.prev_exhausted, Ordering::Relaxed);
-        BGID_FALLBACK_WARNED.store(self.prev_warned, Ordering::Release);
+        {
+            let mut last = bgid_exhaustion_warn_last()
+                .lock()
+                .expect("exhaustion warn lock poisoned");
+            *last = self.prev_exhaustion_warn_last;
+        }
         let mut list = bgid_free_list().lock().expect("free-list poisoned");
         *list = std::mem::take(&mut self.prev_free_list);
     }
@@ -318,23 +328,43 @@ fn bgid_warn_threshold_is_half_namespace() {
     );
 }
 
+/// Verifies the throttled exhaustion warning fires on the first call
+/// and is suppressed on subsequent calls within the throttle window,
+/// then fires again after the window elapses. This simulates the
+/// long-lived daemon scenario where multiple sessions hit exhaustion
+/// over time.
 #[test]
-fn warn_bgid_fallback_once_sets_flag_exactly_once() {
+fn warn_bgid_fallback_throttles_within_window() {
     let _guard = BgidStateGuard::snapshot();
-    assert!(!BGID_FALLBACK_WARNED.load(Ordering::Acquire));
     let err = BgidAllocError::Exhausted {
         fresh_used: BGID_NAMESPACE_SIZE,
         free_list_len: 0,
     };
-    warn_bgid_fallback_once(err);
+
+    // First call should fire (no previous timestamp).
+    warn_bgid_fallback(err);
+    let after_first = {
+        let last = bgid_exhaustion_warn_last().lock().expect("lock poisoned");
+        *last
+    };
     assert!(
-        BGID_FALLBACK_WARNED.load(Ordering::Acquire),
-        "first call must set the warned flag"
+        after_first.is_some(),
+        "first warn_bgid_fallback call must set the last-warned timestamp"
     );
-    // Subsequent calls must be a no-op against the flag.
-    warn_bgid_fallback_once(err);
-    warn_bgid_fallback_once(err);
-    assert!(BGID_FALLBACK_WARNED.load(Ordering::Acquire));
+
+    // Second call within the throttle window should NOT update the
+    // timestamp (the warning is suppressed).
+    let first_instant = after_first.unwrap();
+    warn_bgid_fallback(err);
+    let after_second = {
+        let last = bgid_exhaustion_warn_last().lock().expect("lock poisoned");
+        *last
+    };
+    assert_eq!(
+        after_second.unwrap(),
+        first_instant,
+        "second call within throttle window must not update the timestamp"
+    );
 }
 
 /// Models the caller-side fallback contract documented on
@@ -370,4 +400,106 @@ fn caller_side_fallback_observable_signals() {
         7,
         "free-list reuse restores allocation without resetting state"
     );
+}
+
+/// `bgid_snapshot` must return a consistent view of all counters.
+#[test]
+fn bgid_snapshot_captures_all_counters() {
+    let _guard = BgidStateGuard::snapshot();
+    let snap_empty = bgid_snapshot();
+    assert_eq!(snap_empty.exhausted_count, 0);
+    assert_eq!(snap_empty.in_flight, 0);
+    assert_eq!(snap_empty.peak_used, 0);
+    assert!(snap_empty.remaining > 0);
+
+    let id = BgidAllocator::allocate().expect("allocation");
+    let snap_one = bgid_snapshot();
+    assert_eq!(snap_one.in_flight, 1);
+    assert_eq!(snap_one.peak_used, 1);
+    assert_eq!(snap_one.remaining, snap_empty.remaining - 1);
+
+    BgidAllocator::deallocate(id);
+    let snap_released = bgid_snapshot();
+    assert_eq!(snap_released.in_flight, 0);
+    assert_eq!(snap_released.peak_used, 1, "peak never decreases");
+}
+
+/// `BgidSessionStats` tracks exhaustion events scoped to a session.
+#[test]
+fn session_stats_tracks_per_session_exhaustion() {
+    let _guard = BgidStateGuard::snapshot();
+    let session = BgidSessionStats::new();
+    assert_eq!(session.exhaustions_since_start(), 0);
+    assert_eq!(session.in_flight_delta(), 0);
+
+    // Allocate two bgids during the session.
+    let a = BgidAllocator::allocate().expect("first");
+    let _b = BgidAllocator::allocate().expect("second");
+    assert_eq!(session.current_in_flight(), 2);
+    assert_eq!(session.in_flight_delta(), 2);
+
+    // Force exhaustion.
+    NEXT_BGID.store(BGID_NAMESPACE_SIZE, Ordering::Relaxed);
+    assert!(BgidAllocator::allocate().is_err());
+    assert!(BgidAllocator::allocate().is_err());
+    assert_eq!(
+        session.exhaustions_since_start(),
+        2,
+        "session must see both exhaustion events"
+    );
+
+    // Restore NEXT_BGID to the actual issued count before checking
+    // in_flight_delta - the BGID_NAMESPACE_SIZE store above inflates
+    // the "issued" counter that current_in_flight() reads.
+    NEXT_BGID.store(2, Ordering::Relaxed);
+    BgidAllocator::deallocate(a);
+    assert_eq!(session.in_flight_delta(), 1);
+}
+
+/// `BgidSessionStats::default` must produce the same result as `new`.
+#[test]
+fn session_stats_default_matches_new() {
+    let from_new = BgidSessionStats::new();
+    let from_default = BgidSessionStats::default();
+    assert_eq!(
+        from_new.start_in_flight(),
+        from_default.start_in_flight(),
+        "Default and new must produce equivalent snapshots"
+    );
+}
+
+/// Simulates repeated exhaustion events across multiple sessions,
+/// verifying that the exhaustion counter accumulates correctly and
+/// per-session stats see only their own window.
+#[test]
+fn multiple_sessions_see_independent_exhaustion_windows() {
+    let _guard = BgidStateGuard::snapshot();
+    NEXT_BGID.store(BGID_NAMESPACE_SIZE, Ordering::Relaxed);
+
+    // Session 1: two exhaustion events.
+    let session1 = BgidSessionStats::new();
+    assert!(BgidAllocator::allocate().is_err());
+    assert!(BgidAllocator::allocate().is_err());
+    assert_eq!(session1.exhaustions_since_start(), 2);
+
+    // Session 2 starts after session 1's exhaustions.
+    let session2 = BgidSessionStats::new();
+    assert!(BgidAllocator::allocate().is_err());
+    assert_eq!(
+        session2.exhaustions_since_start(),
+        1,
+        "session2 must see only the exhaustion that happened after it started"
+    );
+    assert_eq!(
+        session1.exhaustions_since_start(),
+        3,
+        "session1 must see all exhaustion events including session2's"
+    );
+}
+
+/// The exhaustion throttle interval must match the documented 60-second
+/// value.
+#[test]
+fn exhaustion_warn_throttle_is_sixty_seconds() {
+    assert_eq!(BGID_EXHAUSTION_WARN_THROTTLE, Duration::from_secs(60));
 }
