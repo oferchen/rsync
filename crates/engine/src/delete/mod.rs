@@ -53,6 +53,10 @@ pub use emitter::{
     CohortDeleteRecord, DeleteEmitter, DeleteEvent, DeleteFs, EMITTER_PARTIAL_EXIT_CODE,
     EMITTER_VANISHED_EXIT_CODE, EmitterErrorPolicy, RealDeleteFs, RecordingDeleteFs,
 };
+#[cfg(feature = "flat-flist")]
+pub use entry_accessor::{
+    GenericCohortIndex, collect_child_dirs_generic, segment_basenames_generic,
+};
 pub use error::DeleteError;
 pub use extras::{compute_extras, compute_extras_with_cohorts};
 pub use plan::{DeleteEntry, DeleteEntryKind, DeletePlan, HardlinkCohortId};
@@ -62,7 +66,3 @@ pub use reorder_buffer::{
     ReorderBuffer, ReorderBufferError,
 };
 pub use traversal::DirTraversalCursor;
-#[cfg(feature = "flat-flist")]
-pub use entry_accessor::{
-    GenericCohortIndex, collect_child_dirs_generic, segment_basenames_generic,
-};

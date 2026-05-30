@@ -310,9 +310,7 @@ mod tests {
 
     #[test]
     fn basenames_deeply_nested_paths() {
-        let entries = vec![
-            FileEntry::new_file("a/b/c/d/leaf.txt".into(), 0, 0o644),
-        ];
+        let entries = vec![FileEntry::new_file("a/b/c/d/leaf.txt".into(), 0, 0o644)];
         let set = segment_basenames_generic(&entries);
         assert_eq!(set.len(), 1);
         assert!(set.contains(&OsString::from("leaf.txt")));
@@ -526,12 +524,7 @@ mod tests {
     fn cohort_generic_matches_concrete() {
         // Verify the generic index produces the same cohort assignments
         // as the concrete CohortIndex for an identical input.
-        let entries = vec![
-            leader("a"),
-            follower("b", 0),
-            leader("c"),
-            follower("d", 2),
-        ];
+        let entries = vec![leader("a"), follower("b", 0), leader("c"), follower("d", 2)];
         let generic = GenericCohortIndex::build_from_entries(&entries);
         let concrete = super::super::CohortIndex::build_from_flist_segment(&entries);
 
