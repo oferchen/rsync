@@ -445,8 +445,7 @@ mod tests {
     fn iflags_generic_matches_concrete_receiver() {
         let iflags = ItemFlags::from_raw(ItemFlags::ITEM_TRANSFER | ItemFlags::ITEM_IS_NEW);
         let entry = make_file_entry("test.txt");
-        let concrete =
-            super::super::itemize::format_iflags(&iflags, &entry, false, &default_ctx());
+        let concrete = super::super::itemize::format_iflags(&iflags, &entry, false, &default_ctx());
         let generic = format_iflags_generic(&iflags, &entry, false, &default_ctx());
         assert_eq!(concrete, generic);
         assert_eq!(generic, ">f+++++++++");
@@ -645,11 +644,9 @@ mod tests {
                 for ctx in &contexts {
                     for is_sender in [true, false] {
                         let iflags = ItemFlags::from_raw(flags);
-                        let concrete = super::super::itemize::format_iflags(
-                            &iflags, entry, is_sender, ctx,
-                        );
-                        let generic =
-                            format_iflags_generic(&iflags, entry, is_sender, ctx);
+                        let concrete =
+                            super::super::itemize::format_iflags(&iflags, entry, is_sender, ctx);
+                        let generic = format_iflags_generic(&iflags, entry, is_sender, ctx);
                         assert_eq!(
                             concrete, generic,
                             "parity mismatch: type={label}, flags=0x{flags:04X}, \
