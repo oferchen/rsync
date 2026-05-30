@@ -58,8 +58,8 @@ pub use flat::{
     EXTRA_ACL, EXTRA_ATIME, EXTRA_ATIME_NSEC, EXTRA_CHECKSUM, EXTRA_CRTIME, EXTRA_DEF_ACL,
     EXTRA_GROUP_NAME, EXTRA_HARDLINK, EXTRA_LINK_TARGET, EXTRA_RDEV, EXTRA_USER_NAME, EXTRA_XATTR,
     ExtrasArena, ExtrasError, ExtrasRef, FileEntryHeader, FlatExtras, FlatFileEntry, FlatFileList,
-    PRESENT_CONTENT_DIR, PRESENT_GID, PRESENT_LENGTH64, PRESENT_MTIME_NSEC, PRESENT_UID,
-    PathArena, PathHandle,
+    PRESENT_CONTENT_DIR, PRESENT_GID, PRESENT_LENGTH64, PRESENT_MTIME_NSEC, PRESENT_UID, PathArena,
+    PathHandle,
 };
 pub use hardlink::{
     DevIno, HardlinkEntry, HardlinkLookup, HardlinkTable, trace_found_flist_match,
