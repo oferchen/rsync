@@ -221,8 +221,8 @@ impl ExtrasArena {
             self.put_bytes_u16(target);
         }
         if mask & EXTRA_RDEV != 0 {
-            self.put_u32(extras.rdev_major.unwrap_or(0));
-            self.put_u32(extras.rdev_minor.unwrap_or(0));
+            self.put_u32(extras.rdev_major.expect("EXTRA_RDEV requires rdev_major"));
+            self.put_u32(extras.rdev_minor.expect("EXTRA_RDEV requires rdev_minor"));
         }
         if let Some(idx) = extras.hardlink_idx {
             self.put_u32(idx);
@@ -338,6 +338,8 @@ impl ExtrasArena {
     }
 
     /// Writes a `u16` length prefix followed by the raw bytes.
+    /// Inputs longer than `u16::MAX` bytes are clamped; in practice symlink
+    /// targets and name strings never approach this limit.
     fn put_bytes_u16(&mut self, bytes: &[u8]) {
         let len = bytes.len().min(u16::MAX as usize);
         self.blobs.extend_from_slice(&(len as u16).to_le_bytes());
