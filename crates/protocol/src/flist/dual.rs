@@ -710,5 +710,83 @@ mod tests {
             let list = DualFileList::new();
             assert!(list.extras().is_empty());
         }
+
+        /// Verifies that dirname sharing through PathArena deduplicates
+        /// identical directory paths, analogous to upstream rsync's `lastdir`
+        /// cache (upstream: flist.c:765-773).
+        ///
+        /// Pushes 100 files across 5 directories and asserts that PathArena
+        /// stores each dirname exactly once rather than 100 times.
+        #[test]
+        fn dirname_sharing_deduplicates_across_many_files() {
+            let mut list = DualFileList::new();
+
+            let dirs = ["src", "tests", "docs", "scripts", "benches"];
+            for (i, dir) in dirs.iter().enumerate() {
+                for j in 0..20 {
+                    let path = format!("{dir}/file_{j}.rs");
+                    let size = (i * 20 + j) as u64;
+                    list.push(FileEntry::new_file(path.into(), size, 0o644));
+                }
+            }
+
+            assert_eq!(list.len(), 100);
+            assert_eq!(list.flat().len(), 100);
+
+            let paths = list.flat().paths();
+
+            // 5 unique dirnames + 20 unique basenames per dir = at most
+            // 5 + 100 = 105, but basenames like "file_0.rs" repeat across
+            // dirs so the actual count is 5 dirs + 20 unique basenames = 25.
+            assert_eq!(paths.len(), 25);
+
+            // The byte arena holds each string once: the 5 dirnames plus
+            // 20 basenames. Verify the dirname contribution is exactly the
+            // sum of the 5 unique dirname lengths, not 100x that.
+            let dirname_bytes: usize = dirs.iter().map(|d| d.len()).sum();
+            let basename_bytes: usize = (0..20).map(|j| format!("file_{j}.rs").len()).sum();
+            assert_eq!(paths.bytes_len(), dirname_bytes + basename_bytes);
+
+            // Every pair of entries in the same directory shares the same
+            // dirname handle.
+            for dir in &dirs {
+                let entries_in_dir: Vec<_> = (0..list.flat().len())
+                    .filter_map(|i| {
+                        let e = list.flat().get(i)?;
+                        if e.dirname == dir.as_bytes() {
+                            Some(e.header.dirname)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                assert_eq!(entries_in_dir.len(), 20);
+                let first = entries_in_dir[0];
+                assert!(entries_in_dir.iter().all(|h| *h == first));
+            }
+        }
+
+        /// Verifies that nested directory paths are deduplicated correctly
+        /// when multiple files share the same multi-level directory.
+        #[test]
+        fn dirname_sharing_nested_paths() {
+            let mut list = DualFileList::new();
+            let nested_dir = "a/b/c/d";
+            for i in 0..50 {
+                let path = format!("{nested_dir}/item_{i}.txt");
+                list.push(FileEntry::new_file(path.into(), i, 0o644));
+            }
+
+            let paths = list.flat().paths();
+
+            // 1 unique dirname ("a/b/c/d") + 50 unique basenames
+            assert_eq!(paths.len(), 51);
+
+            // All 50 entries share the same dirname handle.
+            let first_dirname = list.flat().get(0).unwrap().header.dirname;
+            for i in 1..50 {
+                assert_eq!(list.flat().get(i).unwrap().header.dirname, first_dirname);
+            }
+        }
     }
 }
