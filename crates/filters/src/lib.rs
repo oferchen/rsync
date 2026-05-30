@@ -101,13 +101,6 @@
 mod action;
 /// AppleDouble (`._foo`) sidecar exclusion patterns for `--apple-double-skip`.
 pub mod apple_double;
-/// Generic filter evaluation for `FileEntryAccessor` implementors.
-///
-/// Extends `FilterSet` and `FilterChain` with methods that accept any
-/// file-list entry type, eliminating manual `name()` / `is_dir()` extraction
-/// at every call site. Feature-gated behind `flat-flist`.
-#[cfg(feature = "flat-flist")]
-mod entry_filter;
 /// Per-directory scoped filter chain with push/pop semantics.
 pub mod chain;
 mod compiled;
@@ -116,6 +109,13 @@ pub mod cvs;
 /// Structured tracing for filter rule evaluation and statistics.
 pub mod debug_filter;
 mod decision;
+/// Generic filter evaluation for `FileEntryAccessor` implementors.
+///
+/// Extends `FilterSet` and `FilterChain` with methods that accept any
+/// file-list entry type, eliminating manual `name()` / `is_dir()` extraction
+/// at every call site. Feature-gated behind `flat-flist`.
+#[cfg(feature = "flat-flist")]
+mod entry_filter;
 mod error;
 /// Merge-file reader and parser for filter rules.
 pub mod merge;
