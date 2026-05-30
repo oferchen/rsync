@@ -9,6 +9,7 @@
 //! access, iteration, and sorting by resolved name. Production wiring
 //! (replacing `Vec<FileEntry>` in the transfer pipeline) is RSS-A.6+.
 
+use super::extras::ExtrasArena;
 use super::header::FileEntryHeader;
 use super::intern::PathArena;
 
@@ -18,6 +19,10 @@ use super::intern::PathArena;
 /// name and dirname handles through the [`PathArena`], yielding raw byte
 /// slices with no allocation. The lifetime `'a` ties all borrows to the
 /// owning [`FlatFileList`].
+///
+/// An optional reference to the [`ExtrasArena`] is carried so that trait
+/// implementations (e.g. `FileEntryAccessor`) can decode extras fields on
+/// demand without requiring a separate arena parameter at every call site.
 pub struct FlatFileEntry<'a> {
     /// Reference to the fixed-size header for this entry.
     pub header: &'a FileEntryHeader,
@@ -25,6 +30,10 @@ pub struct FlatFileEntry<'a> {
     pub name: &'a [u8],
     /// Resolved dirname bytes from the path interner.
     pub dirname: &'a [u8],
+    /// Optional reference to the extras blob arena for decoding rarely-used
+    /// metadata (symlink targets, device numbers, checksums, etc.).
+    /// `None` until the extras arena is wired into [`FlatFileList`].
+    pub extras_arena: Option<&'a ExtrasArena>,
 }
 
 /// Arena-backed flat file list.
@@ -95,6 +104,7 @@ impl FlatFileList {
             header,
             name,
             dirname,
+            extras_arena: None,
         })
     }
 
@@ -107,6 +117,7 @@ impl FlatFileList {
                 header,
                 name,
                 dirname,
+                extras_arena: None,
             }
         })
     }
