@@ -452,7 +452,10 @@ fn session_stats_tracks_per_session_exhaustion() {
         "session must see both exhaustion events"
     );
 
-    // Return one bgid; delta should decrease.
+    // Restore NEXT_BGID to the actual issued count before checking
+    // in_flight_delta - the BGID_NAMESPACE_SIZE store above inflates
+    // the "issued" counter that current_in_flight() reads.
+    NEXT_BGID.store(2, Ordering::Relaxed);
     BgidAllocator::deallocate(a);
     assert_eq!(session.in_flight_delta(), 1);
 }
