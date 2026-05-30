@@ -184,10 +184,14 @@ fn acl_roundtrip_multiple_named_entries_on_same_file() {
     let user = test_user();
 
     let acl_entries = {
-        let mut entries = vec![AclEntry::user_rwx(user)];
         #[cfg(any(target_os = "linux", target_os = "macos"))]
-        entries.push(AclEntry::group_rx(test_group()));
-        entries
+        {
+            vec![AclEntry::user_rwx(user), AclEntry::group_rx(test_group())]
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            vec![AclEntry::user_rwx(user)]
+        }
     };
 
     let entries = vec![FixtureFile::file(
