@@ -33,7 +33,7 @@ use protocol::flist::FileEntryAccessor;
 /// 3. `size_only` - size matched, skip transfer
 /// 4. `!preserve_times` (implies `ignore_times`) - force transfer
 /// 5. mtime comparison
-pub fn quick_check_matches_generic<T: FileEntryAccessor>(
+pub fn quick_check_matches_generic<T: FileEntryAccessor + ?Sized>(
     entry: &T,
     dest_path: &Path,
     dest_meta: &fs::Metadata,
@@ -84,7 +84,7 @@ pub fn quick_check_matches_generic<T: FileEntryAccessor>(
 /// any `T: FileEntryAccessor`.
 ///
 /// upstream: generator.c:1709
-pub fn dest_mtime_newer_generic<T: FileEntryAccessor>(
+pub fn dest_mtime_newer_generic<T: FileEntryAccessor + ?Sized>(
     dest_meta: &fs::Metadata,
     source_entry: &T,
 ) -> bool {
@@ -114,7 +114,7 @@ pub fn dest_mtime_newer_generic<T: FileEntryAccessor>(
 ///
 /// - `generator.c:1539` - `F_HLINK_NOT_FIRST(file)` check
 /// - `hlink.c:284` - `hard_link_check()` called for non-first entries
-pub fn is_hardlink_follower_generic<T: FileEntryAccessor>(entry: &T) -> bool {
+pub fn is_hardlink_follower_generic<T: FileEntryAccessor + ?Sized>(entry: &T) -> bool {
     entry.flags().hlinked() && !entry.flags().hlink_first()
 }
 
@@ -131,7 +131,7 @@ pub fn is_hardlink_follower_generic<T: FileEntryAccessor>(entry: &T) -> bool {
 ///
 /// Mirrors upstream `set_file_attrs()` in receiver.c which calls `set_acl()`
 /// after setting permissions, times, and ownership.
-pub fn apply_acls_generic<T: FileEntryAccessor>(
+pub fn apply_acls_generic<T: FileEntryAccessor + ?Sized>(
     destination: &Path,
     entry: &T,
     acl_cache: Option<&protocol::acl::AclCache>,
