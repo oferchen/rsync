@@ -140,12 +140,11 @@ jobs:
     # Stable gates merge; beta/nightly are informational so a churning
     # nightly compiler does not block PR throughput. Branch protection
     # should pin the required check to `nextest (stable)`.
-    # On PRs, run stable only to reduce runner contention for required checks.
     continue-on-error: ${{ matrix.toolchain != 'stable' }}
     strategy:
       fail-fast: false
       matrix:
-        toolchain: ${{ github.event_name == 'pull_request' && fromJSON('["stable"]') || fromJSON('["stable", "beta", "nightly"]') }}
+        toolchain: [stable, beta, nightly]
 
     steps:
       - name: Checkout
@@ -166,17 +165,6 @@ jobs:
         uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
         with:
           tool: cargo-nextest
-
-      - name: Free disk space
-        # The debug build statically links a large dependency closure (aws-lc,
-        # openssl, ring, zstd) into many test binaries, which can exhaust the
-        # ~14 GB free on ubuntu-latest at link time ("No space left on device").
-        # Remove preinstalled toolchains the Rust build does not use to reclaim
-        # ~15+ GB before the build.
-        run: |
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc \
-            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
-          df -h /
 
       - name: Run tests
         run: cargo nextest run --locked --workspace --all-features
@@ -211,7 +199,6 @@ jobs:
   # ===========================================================================
   feature-flags:
     name: Feature flag combinations
-    if: github.event_name != 'pull_request'
     needs: lint
     uses: ./.github/workflows/_test-features.yml
     with:
@@ -229,7 +216,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        toolchain: ${{ github.event_name == 'pull_request' && fromJSON('["stable"]') || fromJSON('["stable", "beta", "nightly"]') }}
+        toolchain: [stable, beta, nightly]
 
     steps:
       - name: Checkout
@@ -288,7 +275,6 @@ jobs:
   # ===========================================================================
   windows-iocp:
     name: Windows IOCP (--features iocp)
-    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     needs: lint
     timeout-minutes: 30
@@ -354,7 +340,6 @@ jobs:
   # ===========================================================================
   windows-acl-xattr:
     name: Windows ACL/xattr
-    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     needs: lint
     timeout-minutes: 30
@@ -447,7 +432,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        toolchain: ${{ github.event_name == 'pull_request' && fromJSON('["stable"]') || fromJSON('["stable", "beta", "nightly"]') }}
+        toolchain: [stable, beta, nightly]
 
     steps:
       - name: Checkout
@@ -506,7 +491,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        toolchain: ${{ github.event_name == 'pull_request' && fromJSON('["stable"]') || fromJSON('["stable", "beta", "nightly"]') }}
+        toolchain: [stable, beta, nightly]
 
     steps:
       - name: Checkout
@@ -592,7 +577,6 @@ jobs:
   # ===========================================================================
   interop-upstream-windows:
     name: interop (Windows, best-effort)
-    if: github.event_name != 'pull_request'
     needs: lint
     uses: ./.github/workflows/_interop-windows.yml
     with:
@@ -613,7 +597,6 @@ jobs:
   # ===========================================================================
   dg3-stress:
     name: DG-3 stress (${{ matrix.os }}, non-required)
-    if: github.event_name != 'pull_request'
     needs: lint
     timeout-minutes: 30
     continue-on-error: true
