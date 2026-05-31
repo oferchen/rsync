@@ -81,6 +81,8 @@ pub use read::{FileListReader, read_file_entry};
 pub use sort::{
     CleanResult, compare_file_entries, flist_clean, sort_and_clean_file_list, sort_file_list,
 };
+#[cfg(feature = "flat-flist")]
+pub use sort::{compare_entries_generic, sort_entries_generic};
 pub use state::{FileListCompressionState, FileListStats};
 pub use trace::{
     ProcessRole, output_flist, output_flist_entry, trace_clean_result, trace_file_count_progress,
