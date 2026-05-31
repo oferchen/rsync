@@ -104,6 +104,12 @@ jobs:
       - name: EnvGuard lint (BPF-5)
         run: bash tools/ci/check_envguard.sh
 
+      # IUR-6.c: Prevent reintroduction of Arc<Mutex<IoUring>> serialization
+      # in hot-path io_uring factory modules. The per-thread ring migration
+      # (IUR-3) eliminated this bottleneck; this lint keeps it gone.
+      - name: Shared-ring removal guard (IUR-6.c)
+        run: bash tools/ci/check_shared_ring_removal.sh
+
   # ===========================================================================
   # Unsafe SAFETY Comment Audit - Informational (non-blocking) check
   # ---------------------------------------------------------------------------
