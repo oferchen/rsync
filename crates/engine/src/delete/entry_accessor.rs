@@ -774,8 +774,7 @@ mod tests {
             touch(dir.path(), n);
         }
         let segment = vec![flist_file("a")];
-        let mut generic =
-            compute_extras_with_cohorts_generic(dir.path(), &segment, None).unwrap();
+        let mut generic = compute_extras_with_cohorts_generic(dir.path(), &segment, None).unwrap();
         let mut concrete =
             super::super::compute_extras_with_cohorts(dir.path(), &segment, None).unwrap();
         generic.sort_by(|a, b| a.name.cmp(&b.name));
