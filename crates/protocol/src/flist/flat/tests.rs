@@ -1122,10 +1122,7 @@ fn segment_boundary_tracking_10k_segments() {
             seg.start_index, expected_start,
             "segment {i} start_index mismatch"
         );
-        assert_eq!(
-            seg.count, ENTRIES_PER_SEGMENT,
-            "segment {i} count mismatch"
-        );
+        assert_eq!(seg.count, ENTRIES_PER_SEGMENT, "segment {i} count mismatch");
         let range = flist.segment_range(i).unwrap();
         assert_eq!(range, expected_start..expected_start + ENTRIES_PER_SEGMENT);
         expected_start += ENTRIES_PER_SEGMENT;
