@@ -182,9 +182,7 @@ impl GeneratorContext {
                             // blocks waiting for our phase-transition NDX_DONE.
                             // Proactively transition when all flists are freed and
                             // no more sub-lists are pending.
-                            if flist_done_remaining == 0
-                                && self.incremental.flist_eof_sent
-                            {
+                            if flist_done_remaining == 0 && self.incremental.flist_eof_sent {
                                 debug_log!(
                                     Send,
                                     1,
