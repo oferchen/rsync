@@ -1,0 +1,64 @@
+name: Async Wire Parity
+
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'crates/transfer/**'
+      - 'crates/protocol/**'
+      - 'crates/rsync_io/**'
+      - '.github/workflows/async-wire-parity.yml'
+  pull_request:
+    paths:
+      - 'crates/transfer/**'
+      - 'crates/protocol/**'
+      - 'crates/rsync_io/**'
+      - '.github/workflows/async-wire-parity.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: async-wire-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: "full"
+  CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
+
+jobs:
+  wire-parity:
+    name: sync-async-wire-parity (stable)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+          key: async-wire-parity
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
+        with:
+          tool: cargo-nextest
+
+      - name: Run sync vs async wire-byte parity test
+        run: |
+          cargo nextest run --locked \
+            -p transfer \
+            --features async \
+            -E 'test(sync_async_wire_parity)'
