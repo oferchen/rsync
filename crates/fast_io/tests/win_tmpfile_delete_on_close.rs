@@ -28,9 +28,7 @@ fn probe_returns_valid_result_for_tempdir() {
 
 #[test]
 fn probe_returns_unavailable_for_missing_directory() {
-    let result = win_tmpfile_probe(Path::new(
-        "/no_such_directory_for_win_tmpfile_test_9999",
-    ));
+    let result = win_tmpfile_probe(Path::new("/no_such_directory_for_win_tmpfile_test_9999"));
     assert_eq!(result, WinDeleteOnCloseSupport::Unavailable);
 }
 
@@ -137,10 +135,7 @@ mod windows {
         wtf.file_mut().write_all(b"new content").expect("write");
         wtf.commit_to(&dest).expect("commit");
 
-        assert_eq!(
-            fs::read_to_string(&dest).expect("read"),
-            "new content"
-        );
+        assert_eq!(fs::read_to_string(&dest).expect("read"), "new content");
     }
 
     #[test]
@@ -170,7 +165,9 @@ mod windows {
 
     #[test]
     fn temp_file_strategy_create_and_commit() {
-        use fast_io::temp_file_strategy::{TempFileKind, TempFileStrategy, WindowsTempFileStrategy};
+        use fast_io::temp_file_strategy::{
+            TempFileKind, TempFileStrategy, WindowsTempFileStrategy,
+        };
 
         let dir = tempdir().expect("tempdir");
         let dest = dir.path().join("strategy.txt");
@@ -187,7 +184,9 @@ mod windows {
 
     #[test]
     fn temp_file_strategy_discard_auto_cleans() {
-        use fast_io::temp_file_strategy::{TempFileKind, TempFileStrategy, WindowsTempFileStrategy};
+        use fast_io::temp_file_strategy::{
+            TempFileKind, TempFileStrategy, WindowsTempFileStrategy,
+        };
 
         let dir = tempdir().expect("tempdir");
         let dest = dir.path().join("strategy_discard.txt");

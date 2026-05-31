@@ -202,7 +202,10 @@ mod tests {
             let (file, path) = wtf.into_parts();
             assert!(path.exists());
             drop(file);
-            assert!(!path.exists(), "file must be deleted when parts are dropped");
+            assert!(
+                !path.exists(),
+                "file must be deleted when parts are dropped"
+            );
         }
 
         #[test]
@@ -210,9 +213,7 @@ mod tests {
             let dir = tempdir().expect("tempdir");
             let wtf = WindowsTempFile::open(dir.path()).expect("open");
             // Unlike O_TMPFILE, delete-on-close files have a directory entry.
-            let count = std::fs::read_dir(dir.path())
-                .expect("read_dir")
-                .count();
+            let count = std::fs::read_dir(dir.path()).expect("read_dir").count();
             assert!(count >= 1, "temp file must be visible in directory");
             drop(wtf);
         }
@@ -227,10 +228,7 @@ mod tests {
             wtf.file_mut().write_all(b"new content").expect("write");
             wtf.commit_to(&dest).expect("commit");
 
-            assert_eq!(
-                std::fs::read_to_string(&dest).expect("read"),
-                "new content"
-            );
+            assert_eq!(std::fs::read_to_string(&dest).expect("read"), "new content");
         }
 
         #[test]

@@ -328,7 +328,10 @@ mod windows {
             clear_delete_on_close(&file).expect("clear disposition");
             drop(file);
             // File should survive because we cleared the delete-on-close flag.
-            assert!(path.exists(), "file must survive after clearing disposition");
+            assert!(
+                path.exists(),
+                "file must survive after clearing disposition"
+            );
             // Clean up.
             std::fs::remove_file(&path).expect("cleanup");
         }
@@ -359,10 +362,7 @@ mod windows {
 
             commit_delete_on_close(file, &temp_path, &dest).expect("commit");
 
-            assert_eq!(
-                std::fs::read_to_string(&dest).expect("read"),
-                "new content"
-            );
+            assert_eq!(std::fs::read_to_string(&dest).expect("read"), "new content");
         }
 
         #[test]

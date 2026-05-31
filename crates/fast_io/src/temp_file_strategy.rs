@@ -680,7 +680,10 @@ mod tests {
 
             let mut handle = strategy.create(&dest).expect("create");
             assert!(!strategy.is_anonymous());
-            handle.file.write_all(b"delete-on-close data").expect("write");
+            handle
+                .file
+                .write_all(b"delete-on-close data")
+                .expect("write");
             strategy.commit(handle, &dest).expect("commit");
 
             assert!(dest.exists());
