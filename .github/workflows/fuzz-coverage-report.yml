@@ -164,15 +164,18 @@ jobs:
           echo "error: no upstream rsync binary built" >&2
           exit 1
 
+      - name: Detect host triple
+        id: host
+        run: echo "triple=$(rustc -vV | awk '/^host:/ { print $2 }')" >>"$GITHUB_OUTPUT"
+
       - name: Run cargo fuzz coverage (${{ matrix.target }})
         env:
           OC_RSYNC_UPSTREAM_BIN: ${{ steps.upstream.outputs.upstream }}
         run: |
           set -uo pipefail
           cd "${{ matrix.workspace }}"
-          # cargo fuzz coverage runs the target with a coverage-instrumented
-          # build and emits coverage/<target>/coverage.profdata.
           cargo +nightly fuzz coverage "${{ matrix.target }}" \
+              --target "${{ steps.host.outputs.triple }}" \
               -- -max_total_time="${FUZZ_DURATION}"
           status=$?
           echo "coverage_status=${status}" >>"$GITHUB_ENV"

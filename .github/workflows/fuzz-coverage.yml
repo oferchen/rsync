@@ -81,15 +81,21 @@ jobs:
           echo "discovered ${count} fuzz target(s)"
           printf '%s\n' "${targets}"
 
+      - name: Detect host triple
+        id: host
+        run: echo "triple=$(rustc -vV | awk '/^host:/ { print $2 }')" >>"$GITHUB_OUTPUT"
+
       - name: Smoke run fuzz targets
         run: |
           set -uo pipefail
           mkdir -p coverage
+          host_triple="${{ steps.host.outputs.triple }}"
           failures=0
           while IFS= read -r target; do
               [[ -z "${target}" ]] && continue
               echo "::group::smoke ${target}"
               if ! cargo +nightly fuzz run "${target}" \
+                  --target "${host_triple}" \
                   -- -max_total_time="${FUZZ_DURATION}" -runs=0; then
                   echo "warning: smoke run failed for ${target}" >&2
                   failures=$((failures + 1))
@@ -109,7 +115,7 @@ jobs:
           while IFS= read -r target; do
               [[ -z "${target}" ]] && continue
               echo "::group::coverage ${target}"
-              if ! cargo +nightly fuzz coverage "${target}"; then
+              if ! cargo +nightly fuzz coverage "${target}" --target "${host_triple}"; then
                   echo "warning: cargo fuzz coverage failed for ${target}" >&2
                   echo "::endgroup::"
                   continue
