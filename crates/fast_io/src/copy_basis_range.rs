@@ -242,6 +242,7 @@ mod imp {
 /// heap pressure.
 #[cfg(target_os = "windows")]
 mod imp {
+    use std::ffi::c_void;
     use std::fs::File;
     use std::io;
     use std::os::windows::io::AsRawHandle;
@@ -272,8 +273,8 @@ mod imp {
             return Ok(0);
         }
 
-        let basis_handle = basis.as_raw_handle() as isize;
-        let dest_handle = dest.as_raw_handle() as isize;
+        let basis_handle = basis.as_raw_handle() as *mut c_void;
+        let dest_handle = dest.as_raw_handle() as *mut c_void;
 
         let mut buf = vec![0u8; COPY_BUF_SIZE];
         let mut total: usize = 0;
@@ -294,7 +295,7 @@ mod imp {
                         OffsetHigh: src_hi,
                     },
                 },
-                hEvent: 0,
+                hEvent: std::ptr::null_mut(),
             };
 
             let mut bytes_read: u32 = 0;
@@ -338,7 +339,7 @@ mod imp {
                         OffsetHigh: dst_hi,
                     },
                 },
-                hEvent: 0,
+                hEvent: std::ptr::null_mut(),
             };
 
             let mut total_written: usize = 0;
