@@ -2937,6 +2937,7 @@ dependencies = [
  "md-5",
  "memchr",
  "proptest",
+ "rayon",
  "rustc-hash 2.1.2",
  "serde",
  "serde_json",

@@ -65,6 +65,8 @@ pub use flat::{
     PRESENT_CONTENT_DIR, PRESENT_GID, PRESENT_LENGTH64, PRESENT_MTIME_NSEC, PRESENT_UID, PathArena,
     PathHandle, Segment,
 };
+#[cfg(feature = "flat-flist-rayon")]
+pub use flat::{ParallelFlatFileListBuilder, extend_from};
 pub use hardlink::{
     DevIno, HardlinkEntry, HardlinkLookup, HardlinkTable, trace_found_flist_match,
     trace_hashtable_for_dev, trace_leader_is, trace_looking_for_leader, trace_virtual_first,
