@@ -29,7 +29,7 @@ use crate::token_buffer::TokenBuffer;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SameFsCache {
     Unresolved,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     SameFs,
     DifferentFs,
 }
@@ -734,7 +734,7 @@ mod tests {
         ));
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
     fn resolve_same_fs_marks_two_files_in_same_tempdir() {
         // Both files in the same tempdir live on the same filesystem under
