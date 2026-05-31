@@ -26,7 +26,7 @@ pub use extras::{
     EXTRA_GROUP_NAME, EXTRA_HARDLINK, EXTRA_LINK_TARGET, EXTRA_RDEV, EXTRA_USER_NAME, EXTRA_XATTR,
     ExtrasArena, ExtrasError, FlatExtras,
 };
-pub use flist::{FlatFileEntry, FlatFileList};
+pub use flist::{FlatFileEntry, FlatFileList, Segment};
 pub use header::{
     ExtrasRef, FileEntryHeader, PRESENT_CONTENT_DIR, PRESENT_GID, PRESENT_LENGTH64,
     PRESENT_MTIME_NSEC, PRESENT_UID, PathHandle,

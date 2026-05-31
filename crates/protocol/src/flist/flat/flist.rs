@@ -5,10 +5,36 @@
 //! [`PathArena`] for interned name/dirname strings, an [`ExtrasArena`] for
 //! packed optional-field tails, and provides zero-copy views
 //! ([`FlatFileEntry`]) that resolve path handles on the fly.
+//!
+//! [`Segment`] tracks INC_RECURSE sub-list boundaries within the unified
+//! header array. Each segment records its `start_index` and `count` so
+//! per-segment sorting, hardlink matching, and delete-pipeline publication
+//! can operate on a contiguous slice without touching other segments.
+
+use std::ops::Range;
 
 use super::extras::{ExtrasArena, FlatExtras};
 use super::header::FileEntryHeader;
 use super::intern::PathArena;
+
+/// INC_RECURSE sub-list boundary within a [`FlatFileList`].
+///
+/// Each segment tracks a contiguous range of headers corresponding to one
+/// directory's file list. Segments are appended in reception order; the
+/// header array grows monotonically and existing handles remain valid
+/// (RSS-A.8.b design, finding F4).
+///
+/// Mirrors the `(flat_start, count)` tracking used by the legacy
+/// `Vec<FileEntry>` path in both sender (`PendingSegment`) and receiver
+/// (`ndx_segments`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Segment {
+    /// Index of the first header in this segment within the owning
+    /// [`FlatFileList`]'s header array.
+    pub start_index: usize,
+    /// Number of headers in this segment.
+    pub count: usize,
+}
 
 /// Zero-copy view of a single file-list entry.
 ///
@@ -50,6 +76,11 @@ pub struct FlatFileList {
     /// Blob arena for packed extras tails referenced by each header's
     /// [`ExtrasRef`](super::header::ExtrasRef).
     extras: ExtrasArena,
+    /// INC_RECURSE segment boundaries, in reception order.
+    ///
+    /// Empty when the file list is built as a single batch (non-incremental
+    /// mode). Populated by [`extend_segment`](Self::extend_segment).
+    segments: Vec<Segment>,
 }
 
 impl FlatFileList {
@@ -60,6 +91,7 @@ impl FlatFileList {
             headers: Vec::new(),
             paths: PathArena::new(),
             extras: ExtrasArena::new(),
+            segments: Vec::new(),
         }
     }
 
@@ -74,6 +106,7 @@ impl FlatFileList {
             headers: Vec::with_capacity(cap),
             paths: PathArena::with_capacity(cap),
             extras: ExtrasArena::new(),
+            segments: Vec::new(),
         }
     }
 
@@ -190,6 +223,113 @@ impl FlatFileList {
     /// references a tail in this arena.
     pub fn extras_mut(&mut self) -> &mut ExtrasArena {
         &mut self.extras
+    }
+
+    // -----------------------------------------------------------------
+    // INC_RECURSE segment tracking
+    // -----------------------------------------------------------------
+
+    /// Appends a batch of headers as a new INC_RECURSE segment.
+    ///
+    /// Records a [`Segment`] boundary at the current end of the header
+    /// array, then pushes all `headers` in order. Path handles and extras
+    /// refs carried by the headers must already reference this list's
+    /// [`PathArena`] and [`ExtrasArena`] (interned via [`paths_mut`] and
+    /// [`extras_mut`] or [`push_with_extras`] before calling this method).
+    ///
+    /// Existing `PathHandle` and `ExtrasRef` values from prior segments
+    /// remain valid because all three backing stores are append-only and
+    /// all references are index/offset-based (RSS-A.8.b design, finding
+    /// F4).
+    ///
+    /// Returns the zero-based segment index of the newly created segment.
+    pub fn extend_segment(&mut self, headers: &[FileEntryHeader]) -> usize {
+        let start_index = self.headers.len();
+        let count = headers.len();
+        self.headers.extend_from_slice(headers);
+        let seg_idx = self.segments.len();
+        self.segments.push(Segment {
+            start_index,
+            count,
+        });
+        seg_idx
+    }
+
+    /// Returns the number of tracked segments.
+    ///
+    /// Zero when the list was built as a single batch without
+    /// [`extend_segment`](Self::extend_segment).
+    #[must_use]
+    pub fn segment_count(&self) -> usize {
+        self.segments.len()
+    }
+
+    /// Returns the [`Segment`] at `index`, or `None` if out of bounds.
+    #[must_use]
+    pub fn segment(&self, index: usize) -> Option<Segment> {
+        self.segments.get(index).copied()
+    }
+
+    /// Returns the header-array index range for segment `index`.
+    ///
+    /// Returns `None` if `index` is out of bounds.
+    #[must_use]
+    pub fn segment_range(&self, index: usize) -> Option<Range<usize>> {
+        self.segments.get(index).map(|s| s.start_index..s.start_index + s.count)
+    }
+
+    /// Returns a slice of all tracked segments.
+    #[must_use]
+    pub fn segments(&self) -> &[Segment] {
+        &self.segments
+    }
+
+    /// Sorts only the headers within segment `index` by dirname-then-name.
+    ///
+    /// Headers outside the segment are untouched. Uses the same unsigned
+    /// byte comparison as [`sort`](Self::sort), matching upstream rsync's
+    /// `f_name_cmp()` ordering (upstream: flist.c:3217).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index` is out of bounds.
+    pub fn sort_segment(&mut self, index: usize) {
+        let seg = self.segments[index];
+        let range = seg.start_index..seg.start_index + seg.count;
+        self.sort_range(range);
+    }
+
+    /// Sorts a sub-range of the header array by dirname-then-name.
+    ///
+    /// Used by [`sort_segment`](Self::sort_segment) and available for
+    /// callers that track segment boundaries externally (e.g. the
+    /// receiver's `ndx_segments` table).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `range` is out of bounds for the header array.
+    pub fn sort_range(&mut self, range: Range<usize>) {
+        let paths = &self.paths;
+        self.headers[range].sort_unstable_by(|a, b| {
+            let a_dir = paths.resolve(a.dirname).as_bytes();
+            let b_dir = paths.resolve(b.dirname).as_bytes();
+            let a_name = paths.resolve(a.name).as_bytes();
+            let b_name = paths.resolve(b.name).as_bytes();
+            a_dir.cmp(b_dir).then_with(|| a_name.cmp(b_name))
+        });
+    }
+
+    /// Returns a slice of headers for the given range.
+    ///
+    /// Useful for segment-scoped operations (hardlink matching, delete
+    /// pipeline publication, iteration).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `range` is out of bounds for the header array.
+    #[must_use]
+    pub fn headers_slice(&self, range: Range<usize>) -> &[FileEntryHeader] {
+        &self.headers[range]
     }
 }
 
