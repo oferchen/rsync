@@ -1452,6 +1452,7 @@ dependencies = [
  "globset",
  "logging",
  "proptest",
+ "protocol",
  "tempfile",
  "test-support",
  "thiserror 2.0.18",
