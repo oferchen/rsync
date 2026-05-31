@@ -1,0 +1,141 @@
+# CBP-6 - Nightly CI cell for checksum throughput regression detection.
+#
+# Runs a smoke version of the criterion checksum benchmark suite
+# (60-second measurement budget, unconstrained bandwidth) to catch
+# performance regressions in rolling checksum, MD4, MD5, XXH3, and
+# other digest implementations.
+#
+# Template: mirrors bench-drain-throughput.yml (DPC-8) pattern -
+# criterion + artifact + step summary.
+#
+# Status: non-required. Advisory only; do not gate PRs on this workflow.
+name: Bench checksum throughput
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Nightly at 06:17 UTC. Offset from drain-throughput (05:47),
+    # daemon-concurrency (04:37), and cold-start (03:17) to avoid
+    # runner pool contention.
+    - cron: '17 6 * * *'
+  pull_request:
+    paths:
+      - 'crates/checksums/**'
+      - '.github/workflows/bench-checksum-throughput.yml'
+
+concurrency:
+  group: bench-checksum-throughput-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  bench-checksum-throughput:
+    name: Checksum throughput regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Non-required: advisory bench cell. Do not add to branch protection.
+    continue-on-error: true
+
+    env:
+      # 60-second measurement budget per benchmark group. Criterion will
+      # allocate samples within this window. The job-level timeout is the
+      # hard ceiling for the entire workflow run.
+      BENCH_MEASUREMENT_TIME: "10"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: "1.88.0"
+
+      - name: Cache cargo builds
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: bench-checksum-throughput
+
+      - name: Build checksums crate (release)
+        run: cargo build --release -p checksums
+
+      - name: Prepare results directory
+        id: prep
+        run: |
+          set -euo pipefail
+          WORK="${{ github.workspace }}/bench-checksum-throughput"
+          mkdir -p "$WORK/results"
+          echo "WORK=$WORK" >> "$GITHUB_OUTPUT"
+
+      - name: Run checksums_benchmark (algorithm comparison + throughput)
+        env:
+          WORK: ${{ steps.prep.outputs.WORK }}
+        run: |
+          set -euo pipefail
+          OUT="$WORK/results/checksums.bencher.txt"
+          : > "$OUT"
+
+          # Run the main checksums_benchmark which covers rolling checksum,
+          # MD4, MD5, SHA-1, SHA-256, SHA-512, XXH64, XXH3, and the
+          # algorithm_comparison group at 8 KiB block size.
+          timeout 600 \
+            cargo bench \
+              -p checksums \
+              --bench checksums_benchmark \
+              -- \
+              --output-format bencher \
+              --measurement-time "$BENCH_MEASUREMENT_TIME" \
+            | tee "$OUT"
+
+      - name: Run pipelined_benchmark (pipelined vs sequential)
+        env:
+          WORK: ${{ steps.prep.outputs.WORK }}
+        run: |
+          set -euo pipefail
+          OUT="$WORK/results/pipelined.bencher.txt"
+          : > "$OUT"
+
+          timeout 600 \
+            cargo bench \
+              -p checksums \
+              --bench pipelined_benchmark \
+              -- \
+              --output-format bencher \
+              --measurement-time "$BENCH_MEASUREMENT_TIME" \
+            | tee "$OUT"
+
+      - name: Publish bench summary
+        env:
+          WORK: ${{ steps.prep.outputs.WORK }}
+        run: |
+          set -euo pipefail
+
+          {
+            echo "### Checksum throughput bench (CBP-6)"
+            echo ""
+            echo "#### Algorithm comparison"
+            echo '```'
+            head -n 100 "$WORK/results/checksums.bencher.txt" || true
+            echo '```'
+            echo ""
+            echo "#### Pipelined vs sequential"
+            echo '```'
+            head -n 100 "$WORK/results/pipelined.bencher.txt" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload bench results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bench-checksum-throughput
+          retention-days: 90
+          path: |
+            ${{ steps.prep.outputs.WORK }}/results/checksums.bencher.txt
+            ${{ steps.prep.outputs.WORK }}/results/pipelined.bencher.txt
