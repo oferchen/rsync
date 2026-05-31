@@ -172,6 +172,39 @@ impl GeneratorContext {
                                 }
                                 return Err(e);
                             }
+
+                            // upstream: sender.c:242-250 - when flist_free() frees
+                            // the last flist (first_flist becomes NULL), the sender
+                            // falls through to the phase transition immediately.
+                            // Without this, empty-dir pushes deadlock: the generator
+                            // frees all flists except the last (cur_flist ==
+                            // first_flist break), blocks waiting for receiver, which
+                            // blocks waiting for our phase-transition NDX_DONE.
+                            // Proactively transition when all flists are freed and
+                            // no more sub-lists are pending.
+                            if flist_done_remaining == 0 && self.incremental.flist_eof_sent {
+                                debug_log!(
+                                    Send,
+                                    1,
+                                    "all flists freed with eof sent, \
+                                     proactive phase transition"
+                                );
+                                phase += 1;
+                                if phase > max_phase {
+                                    break;
+                                }
+                                debug_log!(Send, 1, "send_files phase={}", phase);
+                                if let Err(e) = ndx_write_codec
+                                    .write_ndx_done(&mut *writer)
+                                    .and_then(|()| flush_with_count(&mut *writer))
+                                {
+                                    if tolerant && is_early_close_error(&e) {
+                                        break;
+                                    }
+                                    return Err(e);
+                                }
+                            }
+
                             continue;
                         }
 
