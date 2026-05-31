@@ -29,7 +29,7 @@ use crate::token_buffer::TokenBuffer;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SameFsCache {
     Unresolved,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     SameFs,
     DifferentFs,
 }
@@ -416,9 +416,14 @@ impl<'a> DeltaApplicator<'a> {
         fast_io::copy_basis_range(basis_file, basis_off, dest_file, dest_off, bytes_to_copy)
     }
 
-    /// Computes the same-filesystem decision once per file. On non-Linux
-    /// targets the kernel-copy fast path is unreachable, so the result is
-    /// always `DifferentFs`.
+    /// Computes the same-filesystem decision once per file.
+    ///
+    /// On Linux, checks `st_dev` to ensure `copy_file_range` can operate
+    /// within a single filesystem (required on kernel < 5.3). On Windows,
+    /// the `ReadFile`/`WriteFile` + `OVERLAPPED` path works regardless of
+    /// volume, so we always return `SameFs` to enable the fast path. On
+    /// other platforms the fast path is unavailable, so the result is
+    /// `DifferentFs`.
     fn resolve_same_fs(basis: &File, dest: &File) -> SameFsCache {
         #[cfg(target_os = "linux")]
         {
@@ -428,7 +433,15 @@ impl<'a> DeltaApplicator<'a> {
                 _ => SameFsCache::DifferentFs,
             }
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "windows")]
+        {
+            // The Windows copy_basis_range implementation uses
+            // ReadFile/WriteFile with OVERLAPPED offsets, which works
+            // cross-volume. No same-filesystem constraint.
+            let _ = (basis, dest);
+            SameFsCache::SameFs
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "windows")))]
         {
             let _ = (basis, dest);
             SameFsCache::DifferentFs
@@ -721,7 +734,7 @@ mod tests {
         ));
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     #[test]
     fn resolve_same_fs_marks_two_files_in_same_tempdir() {
         // Both files in the same tempdir live on the same filesystem under
