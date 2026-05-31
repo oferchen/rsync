@@ -917,7 +917,6 @@ fn segment_boundary_tracking_accuracy() {
 
     // Build 5 segments with varying sizes.
     let sizes = [3, 1, 4, 0, 2];
-    let mut expected_start = 0;
 
     for (seg_num, &count) in sizes.iter().enumerate() {
         let mut headers = Vec::with_capacity(count);
@@ -928,7 +927,6 @@ fn segment_boundary_tracking_accuracy() {
         }
         let idx = flist.extend_segment(&headers);
         assert_eq!(idx, seg_num, "segment index mismatch");
-        expected_start += count;
     }
 
     assert_eq!(flist.segment_count(), 5);
