@@ -1100,7 +1100,12 @@ fn segment_boundary_tracking_10k_segments() {
         for j in 0..ENTRIES_PER_SEGMENT {
             let name = format!("f{j}");
             let dirname = format!("d{seg}");
-            headers.push(make_header(&mut flist, &name, &dirname, (seg * ENTRIES_PER_SEGMENT + j) as u64));
+            headers.push(make_header(
+                &mut flist,
+                &name,
+                &dirname,
+                (seg * ENTRIES_PER_SEGMENT + j) as u64,
+            ));
         }
         let idx = flist.extend_segment(&headers);
         assert_eq!(idx, seg);
