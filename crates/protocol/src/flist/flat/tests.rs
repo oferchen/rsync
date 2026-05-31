@@ -1080,3 +1080,439 @@ fn handle_stability_across_large_segment_growth() {
     assert_eq!(e0.dirname, b"src/core");
     assert_eq!(e0.header.size, 42);
 }
+
+// ---------------------------------------------------------------------------
+// INC_RECURSE multi-segment stress tests (RSS-A.8.d)
+// ---------------------------------------------------------------------------
+
+/// Exercises segment boundary tracking at 10K segments, validating that
+/// start_index and count are contiguous and non-overlapping across the
+/// entire segment table.
+#[test]
+fn segment_boundary_tracking_10k_segments() {
+    const NUM_SEGMENTS: usize = 10_000;
+    const ENTRIES_PER_SEGMENT: usize = 3;
+
+    let mut flist = FlatFileList::new();
+
+    for seg in 0..NUM_SEGMENTS {
+        let mut headers = Vec::with_capacity(ENTRIES_PER_SEGMENT);
+        for j in 0..ENTRIES_PER_SEGMENT {
+            let name = format!("f{j}");
+            let dirname = format!("d{seg}");
+            headers.push(make_header(
+                &mut flist,
+                &name,
+                &dirname,
+                (seg * ENTRIES_PER_SEGMENT + j) as u64,
+            ));
+        }
+        let idx = flist.extend_segment(&headers);
+        assert_eq!(idx, seg);
+    }
+
+    assert_eq!(flist.segment_count(), NUM_SEGMENTS);
+    assert_eq!(flist.len(), NUM_SEGMENTS * ENTRIES_PER_SEGMENT);
+
+    // Walk every segment and verify boundaries are contiguous.
+    let mut expected_start = 0usize;
+    for i in 0..NUM_SEGMENTS {
+        let seg = flist.segment(i).unwrap();
+        assert_eq!(
+            seg.start_index, expected_start,
+            "segment {i} start_index mismatch"
+        );
+        assert_eq!(seg.count, ENTRIES_PER_SEGMENT, "segment {i} count mismatch");
+        let range = flist.segment_range(i).unwrap();
+        assert_eq!(range, expected_start..expected_start + ENTRIES_PER_SEGMENT);
+        expected_start += ENTRIES_PER_SEGMENT;
+    }
+    assert_eq!(expected_start, flist.len());
+
+    // Out-of-bounds access returns None.
+    assert!(flist.segment(NUM_SEGMENTS).is_none());
+    assert!(flist.segment_range(NUM_SEGMENTS).is_none());
+}
+
+/// After 10K segment appends, all entries remain accessible by global index
+/// and resolve to the correct name/dirname/size.
+#[test]
+fn entries_accessible_by_index_after_10k_segments() {
+    const NUM_SEGMENTS: usize = 10_000;
+    const ENTRIES_PER_SEGMENT: usize = 2;
+
+    let mut flist = FlatFileList::new();
+
+    for seg in 0..NUM_SEGMENTS {
+        let mut headers = Vec::with_capacity(ENTRIES_PER_SEGMENT);
+        for j in 0..ENTRIES_PER_SEGMENT {
+            let name = format!("e{j}");
+            let dirname = format!("s{seg}");
+            let size = (seg * ENTRIES_PER_SEGMENT + j) as u64;
+            headers.push(make_header(&mut flist, &name, &dirname, size));
+        }
+        flist.extend_segment(&headers);
+    }
+
+    let total = NUM_SEGMENTS * ENTRIES_PER_SEGMENT;
+    assert_eq!(flist.len(), total);
+
+    // Spot-check entries from first, middle, and last segments.
+    let check_points = [0, 1, total / 2, total / 2 + 1, total - 2, total - 1];
+    for &idx in &check_points {
+        let seg_num = idx / ENTRIES_PER_SEGMENT;
+        let entry_in_seg = idx % ENTRIES_PER_SEGMENT;
+        let entry = flist.get(idx).unwrap();
+        let expected_name = format!("e{entry_in_seg}");
+        let expected_dirname = format!("s{seg_num}");
+        assert_eq!(
+            entry.name,
+            expected_name.as_bytes(),
+            "index {idx} name mismatch"
+        );
+        assert_eq!(
+            entry.dirname,
+            expected_dirname.as_bytes(),
+            "index {idx} dirname mismatch"
+        );
+        assert_eq!(entry.header.size, idx as u64, "index {idx} size mismatch");
+    }
+
+    // Iterator count matches.
+    assert_eq!(flist.iter().count(), total);
+}
+
+/// PathArena deduplicates shared basenames across 10K segments and the
+/// byte arena grows proportionally to unique strings, not total entries.
+#[test]
+fn path_arena_dedup_across_10k_segments() {
+    const NUM_SEGMENTS: usize = 10_000;
+    // Every segment uses the same 4 basenames but a unique dirname.
+    let basenames = ["README.md", "lib.rs", "mod.rs", "Cargo.toml"];
+
+    let mut flist = FlatFileList::new();
+
+    for seg in 0..NUM_SEGMENTS {
+        let mut headers = Vec::with_capacity(basenames.len());
+        for (j, name) in basenames.iter().enumerate() {
+            let dirname = format!("pkg{seg}");
+            let size = (seg * basenames.len() + j) as u64;
+            headers.push(make_header(&mut flist, name, &dirname, size));
+        }
+        flist.extend_segment(&headers);
+    }
+
+    assert_eq!(flist.len(), NUM_SEGMENTS * basenames.len());
+
+    // Unique strings: 4 basenames + 10K unique dirnames.
+    let expected_unique = basenames.len() + NUM_SEGMENTS;
+    assert_eq!(flist.paths().len(), expected_unique);
+
+    // All entries sharing a basename must share the same PathHandle.
+    let first_readme_handle = flist.get(0).unwrap().header.name;
+    // Entry at index `basenames.len()` is the first entry of segment 1,
+    // which also has basename "README.md" (basenames[0]).
+    let second_readme_handle = flist.get(basenames.len()).unwrap().header.name;
+    assert_eq!(first_readme_handle, second_readme_handle);
+
+    // bytes_len should reflect unique content only: all basename bytes
+    // stored once, all dirname bytes stored once.
+    let basename_bytes: usize = basenames.iter().map(|b| b.len()).sum();
+    let dirname_bytes: usize = (0..NUM_SEGMENTS).map(|s| format!("pkg{s}").len()).sum();
+    assert_eq!(flist.paths().bytes_len(), basename_bytes + dirname_bytes);
+}
+
+/// ExtrasArena grows correctly across 10K segments, and extras encoded
+/// in early segments remain decodable after heavy arena growth.
+#[test]
+fn extras_arena_growth_across_10k_segments() {
+    const NUM_SEGMENTS: usize = 10_000;
+    // Every 10th segment carries extras; the rest are plain.
+    const EXTRAS_INTERVAL: usize = 10;
+
+    let mut flist = FlatFileList::new();
+    let mut extras_refs: Vec<(usize, ExtrasRef)> = Vec::new();
+
+    for seg in 0..NUM_SEGMENTS {
+        if seg % EXTRAS_INTERVAL == 0 {
+            let extras = FlatExtras {
+                hardlink_idx: Some(seg as u32),
+                user_name: Some(format!("user{seg}").into_bytes()),
+                ..FlatExtras::default()
+            };
+            let h = make_header_with_extras(
+                &mut flist,
+                "linked",
+                &format!("d{seg}"),
+                seg as u64,
+                &extras,
+            );
+            let seg_idx = flist.extend_segment(&[h]);
+            // Record which global index carries extras.
+            let global_idx = flist.segment(seg_idx).unwrap().start_index;
+            extras_refs.push((global_idx, flist.get(global_idx).unwrap().header.extras));
+        } else {
+            let h = make_header(&mut flist, "plain", &format!("d{seg}"), seg as u64);
+            flist.extend_segment(&[h]);
+        }
+    }
+
+    assert_eq!(flist.segment_count(), NUM_SEGMENTS);
+
+    // Verify all extras refs are still decodable after the full build.
+    let expected_extras_count = NUM_SEGMENTS / EXTRAS_INTERVAL;
+    assert_eq!(extras_refs.len(), expected_extras_count);
+
+    for &(global_idx, ext_ref) in &extras_refs {
+        assert_ne!(ext_ref, ExtrasRef::NO_EXTRAS);
+        let decoded = flist.extras().decode(ext_ref).unwrap().unwrap();
+        let entry = flist.get(global_idx).unwrap();
+        assert_eq!(decoded.hardlink_idx, Some(entry.header.size as u32));
+        let expected_name = format!("user{}", entry.header.size);
+        assert_eq!(decoded.user_name, Some(expected_name.into_bytes()));
+    }
+
+    // Plain entries should have NO_EXTRAS.
+    let first_plain_seg = flist.segment(1).unwrap();
+    let plain_entry = flist.get(first_plain_seg.start_index).unwrap();
+    assert_eq!(plain_entry.header.extras, ExtrasRef::NO_EXTRAS);
+}
+
+/// sort_segment produces correct dirname-then-name ordering within each
+/// segment, even at high segment counts, and never disturbs adjacent
+/// segments.
+#[test]
+fn sort_within_segments_at_scale() {
+    const NUM_SEGMENTS: usize = 1_000;
+    const ENTRIES_PER_SEGMENT: usize = 5;
+
+    let mut flist = FlatFileList::new();
+
+    // Push each segment in reverse alphabetical order.
+    let names = ["echo", "delta", "charlie", "bravo", "alpha"];
+
+    for seg in 0..NUM_SEGMENTS {
+        let mut headers = Vec::with_capacity(ENTRIES_PER_SEGMENT);
+        let dirname = format!("dir{seg}");
+        for (j, &name) in names.iter().enumerate() {
+            headers.push(make_header(
+                &mut flist,
+                name,
+                &dirname,
+                (seg * ENTRIES_PER_SEGMENT + j) as u64,
+            ));
+        }
+        flist.extend_segment(&headers);
+    }
+
+    // Sort every other segment.
+    for seg in (0..NUM_SEGMENTS).step_by(2) {
+        flist.sort_segment(seg);
+    }
+
+    // Verify sorted segments are in alphabetical order.
+    let sorted_names = ["alpha", "bravo", "charlie", "delta", "echo"];
+    for seg in (0..NUM_SEGMENTS).step_by(2) {
+        let range = flist.segment_range(seg).unwrap();
+        for (j, idx) in range.enumerate() {
+            let entry = flist.get(idx).unwrap();
+            assert_eq!(
+                entry.name,
+                sorted_names[j].as_bytes(),
+                "sorted segment {seg}, position {j}"
+            );
+        }
+    }
+
+    // Verify unsorted segments retain original (reverse) order.
+    for seg in (1..NUM_SEGMENTS).step_by(2) {
+        let range = flist.segment_range(seg).unwrap();
+        for (j, idx) in range.enumerate() {
+            let entry = flist.get(idx).unwrap();
+            assert_eq!(
+                entry.name,
+                names[j].as_bytes(),
+                "unsorted segment {seg}, position {j}"
+            );
+        }
+    }
+}
+
+/// Sanity check: memory footprint grows linearly with entry count, not
+/// quadratically. Measures the ratio of per-entry overhead at two scale
+/// points and asserts they are within a reasonable factor.
+#[test]
+fn memory_growth_is_linear() {
+    // Build a small list and a large list with identical per-entry shape,
+    // then compare per-entry byte cost.
+    fn build_flist(num_segments: usize, entries_per: usize) -> (usize, usize) {
+        let mut flist = FlatFileList::new();
+        for seg in 0..num_segments {
+            let mut headers = Vec::with_capacity(entries_per);
+            let dirname = format!("d{seg}");
+            for j in 0..entries_per {
+                let name = format!("f{j}");
+                headers.push(make_header(&mut flist, &name, &dirname, j as u64));
+            }
+            flist.extend_segment(&headers);
+        }
+        let total_entries = flist.len();
+        // Approximate memory: header vec + path arena bytes + path arena
+        // spans + dedup overhead is hard to measure, so use the observable
+        // metrics as a proxy.
+        let header_bytes = total_entries * core::mem::size_of::<FileEntryHeader>();
+        let path_bytes = flist.paths().bytes_len();
+        let extras_bytes = flist.extras().len();
+        let approx = header_bytes + path_bytes + extras_bytes;
+        (total_entries, approx)
+    }
+
+    let (n_small, mem_small) = build_flist(100, 5);
+    let (n_large, mem_large) = build_flist(10_000, 5);
+
+    // Per-entry cost.
+    let cost_small = mem_small as f64 / n_small as f64;
+    let cost_large = mem_large as f64 / n_large as f64;
+
+    // The large list's per-entry cost should be at most 2x the small list's.
+    // In practice the interner's per-entry cost decreases at scale due to
+    // basename dedup, so the ratio should be well under 2x.
+    let ratio = cost_large / cost_small;
+    assert!(
+        ratio < 2.0,
+        "per-entry cost ratio {ratio:.2} exceeds 2x (small={cost_small:.1}, large={cost_large:.1})"
+    );
+}
+
+/// Mixed segment sizes (empty, single-entry, large) maintain correct
+/// boundaries across 10K total segments.
+#[test]
+fn mixed_segment_sizes_10k() {
+    const NUM_SEGMENTS: usize = 10_000;
+
+    let mut flist = FlatFileList::new();
+    let mut expected_total = 0usize;
+
+    for seg in 0..NUM_SEGMENTS {
+        // Cycle through: empty (0), small (1), medium (5), large (10).
+        let count = match seg % 4 {
+            0 => 0,
+            1 => 1,
+            2 => 5,
+            _ => 10,
+        };
+        let mut headers = Vec::with_capacity(count);
+        for j in 0..count {
+            let name = format!("f{j}");
+            let dirname = format!("d{seg}");
+            headers.push(make_header(
+                &mut flist,
+                &name,
+                &dirname,
+                expected_total as u64 + j as u64,
+            ));
+        }
+        flist.extend_segment(&headers);
+        expected_total += count;
+    }
+
+    assert_eq!(flist.segment_count(), NUM_SEGMENTS);
+    assert_eq!(flist.len(), expected_total);
+
+    // Verify segment boundaries for a sampling of segments.
+    let mut offset = 0usize;
+    for seg in 0..NUM_SEGMENTS {
+        let count = match seg % 4 {
+            0 => 0,
+            1 => 1,
+            2 => 5,
+            _ => 10,
+        };
+        let s = flist.segment(seg).unwrap();
+        assert_eq!(s.start_index, offset, "segment {seg} start_index");
+        assert_eq!(s.count, count, "segment {seg} count");
+        offset += count;
+    }
+
+    // Verify first and last entry.
+    // First non-empty segment is seg=1, its single entry has size 0.
+    let first_nonempty = flist.segment(1).unwrap();
+    let first_entry = flist.get(first_nonempty.start_index).unwrap();
+    assert_eq!(first_entry.name, b"f0");
+
+    let last_entry = flist.get(flist.len() - 1).unwrap();
+    assert!(last_entry.header.size > 0 || flist.len() == 1);
+}
+
+/// Validates that PathHandle values from segment 0 remain stable and
+/// resolve correctly after 10K segments of growth, even when Vec
+/// reallocation moves the underlying data.
+#[test]
+fn handle_stability_sentinel_across_10k_segments() {
+    let mut flist = FlatFileList::new();
+
+    // Plant a sentinel entry with extras in segment 0.
+    let sentinel_extras = FlatExtras {
+        checksum: Some(vec![0xCA; 16]),
+        link_target: Some(b"/stable/target".to_vec()),
+        ..FlatExtras::default()
+    };
+    let h0 = make_header_with_extras(
+        &mut flist,
+        "sentinel.dat",
+        "root/deep/path",
+        0xDEAD_BEEF,
+        &sentinel_extras,
+    );
+    flist.extend_segment(&[h0]);
+
+    // Capture handles before growth.
+    let name_handle = flist.get(0).unwrap().header.name;
+    let dirname_handle = flist.get(0).unwrap().header.dirname;
+    let extras_ref = flist.get(0).unwrap().header.extras;
+
+    // Grow the list heavily.
+    for seg in 0..10_000 {
+        let h = make_header(&mut flist, "bulk", &format!("b{seg}"), seg as u64);
+        flist.extend_segment(&[h]);
+    }
+
+    assert_eq!(flist.len(), 10_001);
+
+    // Verify sentinel handles still resolve.
+    assert_eq!(flist.paths().resolve(name_handle), "sentinel.dat");
+    assert_eq!(flist.paths().resolve(dirname_handle), "root/deep/path");
+    let decoded = flist.extras().decode(extras_ref).unwrap().unwrap();
+    assert_eq!(decoded.checksum, Some(vec![0xCA; 16]));
+    assert_eq!(
+        decoded.link_target.as_deref(),
+        Some(b"/stable/target" as &[u8])
+    );
+
+    // Also verify via indexed access.
+    let e0 = flist.get(0).unwrap();
+    assert_eq!(e0.name, b"sentinel.dat");
+    assert_eq!(e0.dirname, b"root/deep/path");
+    assert_eq!(e0.header.size, 0xDEAD_BEEF);
+}
+
+/// headers_slice returns the correct sub-range for segments at high scale.
+#[test]
+fn headers_slice_at_scale() {
+    const NUM_SEGMENTS: usize = 10_000;
+
+    let mut flist = FlatFileList::new();
+
+    for seg in 0..NUM_SEGMENTS {
+        let h = make_header(&mut flist, &format!("n{seg}"), "", seg as u64);
+        flist.extend_segment(&[h]);
+    }
+
+    // Spot-check slices at start, middle, and end.
+    for seg_idx in [0, NUM_SEGMENTS / 2, NUM_SEGMENTS - 1] {
+        let range = flist.segment_range(seg_idx).unwrap();
+        let slice = flist.headers_slice(range.clone());
+        assert_eq!(slice.len(), 1);
+        assert_eq!(slice[0].size, seg_idx as u64);
+    }
+}
