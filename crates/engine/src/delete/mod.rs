@@ -35,6 +35,8 @@ mod cohort_batcher;
 mod cohort_index;
 mod context;
 pub mod emitter;
+#[cfg(feature = "flat-flist")]
+pub mod entry_accessor;
 mod error;
 mod extras;
 #[cfg(feature = "parallel-delete-consumer")]
@@ -50,6 +52,10 @@ pub use context::{DeleteContext, DrainOutcome, EmitterTiming};
 pub use emitter::{
     CohortDeleteRecord, DeleteEmitter, DeleteEvent, DeleteFs, EMITTER_PARTIAL_EXIT_CODE,
     EMITTER_VANISHED_EXIT_CODE, EmitterErrorPolicy, RealDeleteFs, RecordingDeleteFs,
+};
+#[cfg(feature = "flat-flist")]
+pub use entry_accessor::{
+    GenericCohortIndex, collect_child_dirs_generic, segment_basenames_generic,
 };
 pub use error::DeleteError;
 pub use extras::{compute_extras, compute_extras_with_cohorts};
