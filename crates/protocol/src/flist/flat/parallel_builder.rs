@@ -474,9 +474,8 @@ mod tests {
             ("readme".into(), "".into(), 0),
         ];
 
-        let flist = ParallelFlatFileListBuilder::build_parallel(
-            items,
-            |list, (name, dirname, size)| {
+        let flist =
+            ParallelFlatFileListBuilder::build_parallel(items, |list, (name, dirname, size)| {
                 let nh = list.paths_mut().intern(&name);
                 let dh = list.paths_mut().intern(&dirname);
                 let mut h = empty_header();
@@ -484,8 +483,7 @@ mod tests {
                 h.dirname = dh;
                 h.size = size;
                 list.push(h);
-            },
-        );
+            });
 
         assert_eq!(flist.len(), 4);
 
@@ -500,9 +498,8 @@ mod tests {
     #[test]
     fn build_parallel_empty_items() {
         let items: Vec<(String, String, u64)> = vec![];
-        let flist = ParallelFlatFileListBuilder::build_parallel(
-            items,
-            |list, (name, dirname, size)| {
+        let flist =
+            ParallelFlatFileListBuilder::build_parallel(items, |list, (name, dirname, size)| {
                 let nh = list.paths_mut().intern(&name);
                 let dh = list.paths_mut().intern(&dirname);
                 let mut h = empty_header();
@@ -510,8 +507,7 @@ mod tests {
                 h.dirname = dh;
                 h.size = size;
                 list.push(h);
-            },
-        );
+            });
         assert!(flist.is_empty());
     }
 
@@ -526,9 +522,8 @@ mod tests {
             })
             .collect();
 
-        let flist = ParallelFlatFileListBuilder::build_parallel(
-            items,
-            |list, (name, dirname, size)| {
+        let flist =
+            ParallelFlatFileListBuilder::build_parallel(items, |list, (name, dirname, size)| {
                 let nh = list.paths_mut().intern(&name);
                 let dh = list.paths_mut().intern(&dirname);
                 let mut h = empty_header();
@@ -536,8 +531,7 @@ mod tests {
                 h.dirname = dh;
                 h.size = size;
                 list.push(h);
-            },
-        );
+            });
 
         assert_eq!(flist.len(), 1000);
 
@@ -699,20 +693,17 @@ mod tests {
         // Use enough items to guarantee rayon splits across threads.
         let items: Vec<u64> = (0..10_000).collect();
 
-        let flist = ParallelFlatFileListBuilder::build_parallel(
-            items,
-            |list, i| {
-                let name = format!("f{i}");
-                let dirname = format!("d{}", i % 50);
-                let nh = list.paths_mut().intern(&name);
-                let dh = list.paths_mut().intern(&dirname);
-                let mut h = empty_header();
-                h.name = nh;
-                h.dirname = dh;
-                h.size = i;
-                list.push(h);
-            },
-        );
+        let flist = ParallelFlatFileListBuilder::build_parallel(items, |list, i| {
+            let name = format!("f{i}");
+            let dirname = format!("d{}", i % 50);
+            let nh = list.paths_mut().intern(&name);
+            let dh = list.paths_mut().intern(&dirname);
+            let mut h = empty_header();
+            h.name = nh;
+            h.dirname = dh;
+            h.size = i;
+            list.push(h);
+        });
 
         assert_eq!(flist.len(), 10_000);
 
