@@ -24,15 +24,14 @@ use protocol::flist::{
 /// symlinks spread across multiple directory levels. Returns the entries
 /// as a `Vec<FileEntry>` in insertion order (unsorted).
 fn build_mixed_fixture() -> Vec<FileEntry> {
-    let mut entries = Vec::new();
-
-    // Root-level entries.
-    entries.push(FileEntry::new_file("README".into(), 2048, 0o644));
-    entries.push(FileEntry::new_directory(".".into(), 0o755));
-    entries.push(FileEntry::new_file("Makefile".into(), 512, 0o644));
-
-    // src/ directory tree.
-    entries.push(FileEntry::new_directory("src".into(), 0o755));
+    let mut entries = vec![
+        // Root-level entries.
+        FileEntry::new_file("README".into(), 2048, 0o644),
+        FileEntry::new_directory(".".into(), 0o755),
+        FileEntry::new_file("Makefile".into(), 512, 0o644),
+        // src/ directory tree.
+        FileEntry::new_directory("src".into(), 0o755),
+    ];
     {
         let mut f = FileEntry::new_file("src/main.rs".into(), 4096, 0o644);
         f.set_uid(1000);
