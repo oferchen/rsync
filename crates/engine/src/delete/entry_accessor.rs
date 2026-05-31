@@ -10,8 +10,11 @@
 //! | Original site | Generic helper |
 //! |---|---|
 //! | `extras::segment_basenames` | [`segment_basenames_generic`] |
+//! | `extras::compute_extras` | [`compute_extras_generic`] |
+//! | `extras::compute_extras_with_cohorts` | [`compute_extras_with_cohorts_generic`] |
+//! | `traversal::DirTraversalCursor::observe_segment` | [`observe_segment_generic`] |
 //! | `traversal::DirTraversalCursor::observe_segment` | [`collect_child_dirs_generic`] |
-//! | `cohort_index::CohortIndex::build_from_flist_segment` | [`build_cohort_index_generic`] |
+//! | `cohort_index::CohortIndex::build_from_flist_segment` | [`GenericCohortIndex::build_from_entries`] |
 //!
 //! # Feature gate
 //!
@@ -28,13 +31,18 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use protocol::flist::FileEntryAccessor;
 use rustc_hash::FxHashMap;
 
-use super::plan::HardlinkCohortId;
+use super::cohort_index::CohortIndex;
+use super::extras::classify;
+use super::plan::{DeleteEntry, HardlinkCohortId};
+use super::traversal::DirTraversalCursor;
 
 // ---------------------------------------------------------------------------
 // segment_basenames_generic (mirrors extras::segment_basenames)
@@ -244,6 +252,118 @@ impl GenericCohortIndex {
         }
         let count = cohort_sizes.entry(cohort).or_insert(0);
         *count = count.saturating_add(1);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// compute_extras_generic (mirrors extras::compute_extras)
+// ---------------------------------------------------------------------------
+
+/// Lists `dest_dir`, subtracts every basename that appears in
+/// `segment_entries`, and classifies each surviving entry by kind.
+///
+/// Generic counterpart of [`super::extras::compute_extras`] that accepts
+/// any `T: FileEntryAccessor` for the segment entries, enabling the same
+/// set-subtraction logic to work with both the legacy `FileEntry` and the
+/// arena-backed `FlatFileEntry`.
+///
+/// The returned vector is unsorted. Callers wrap it in a
+/// [`super::plan::DeletePlan`] and sort before publishing.
+///
+/// # Errors
+///
+/// Returns the I/O error from [`fs::read_dir`] or per-entry
+/// `symlink_metadata` if `dest_dir` cannot be scanned.
+pub fn compute_extras_generic<T: FileEntryAccessor>(
+    dest_dir: &Path,
+    segment_entries: &[T],
+) -> io::Result<Vec<DeleteEntry>> {
+    compute_extras_with_cohorts_generic(dest_dir, segment_entries, None)
+}
+
+// ---------------------------------------------------------------------------
+// compute_extras_with_cohorts_generic (mirrors extras::compute_extras_with_cohorts)
+// ---------------------------------------------------------------------------
+
+/// Variant of [`compute_extras_generic`] that attaches a hardlink cohort
+/// tag to each surviving entry whose destination basename matches a member
+/// of the supplied [`CohortIndex`].
+///
+/// Generic counterpart of [`super::extras::compute_extras_with_cohorts`].
+/// The cohort tag has no effect on the unlink decision itself; it exists
+/// for itemize-line decoration and diagnostics.
+///
+/// `cohort_index = None` reproduces the original behaviour bit for bit.
+///
+/// # Errors
+///
+/// Same as [`compute_extras_generic`]: any I/O failure on `read_dir` or
+/// per-entry `symlink_metadata` is surfaced to the caller.
+pub fn compute_extras_with_cohorts_generic<T: FileEntryAccessor>(
+    dest_dir: &Path,
+    segment_entries: &[T],
+    cohort_index: Option<&Arc<CohortIndex>>,
+) -> io::Result<Vec<DeleteEntry>> {
+    let segment_names = segment_basenames_generic(segment_entries);
+    let read_dir = fs::read_dir(dest_dir)?;
+    let mut extras = Vec::new();
+    for entry in read_dir {
+        let entry = entry?;
+        let name = entry.file_name();
+        if segment_names.contains(&name) {
+            continue;
+        }
+        let metadata = fs::symlink_metadata(entry.path())?;
+        let kind = classify(&metadata);
+        let delete_entry = match cohort_index.and_then(|idx| idx.cohort_of(name.as_os_str())) {
+            Some(cohort) => DeleteEntry::with_cohort(name, kind, cohort),
+            None => DeleteEntry::new(name, kind),
+        };
+        extras.push(delete_entry);
+    }
+    Ok(extras)
+}
+
+// ---------------------------------------------------------------------------
+// observe_segment_generic (extends DirTraversalCursor)
+// ---------------------------------------------------------------------------
+
+impl DirTraversalCursor {
+    /// Records the directory children observed in one flist segment,
+    /// accepting any `T: FileEntryAccessor` instead of `&[FileEntry]`.
+    ///
+    /// Generic counterpart of [`DirTraversalCursor::observe_segment`].
+    /// Only entries where [`FileEntryAccessor::is_dir`] returns `true` are
+    /// kept. The stored list is re-sorted in `f_name_cmp` order after
+    /// each call. Late observations after the parent has been advanced
+    /// past are silently dropped.
+    pub fn observe_segment_generic<T: FileEntryAccessor>(&mut self, dir: PathBuf, children: &[T]) {
+        let entry = self.child_dirs_mut().entry(dir.clone()).or_default();
+        for child in children {
+            if !child.is_dir() {
+                continue;
+            }
+            let name_str = child.name();
+            if name_str.is_empty() {
+                continue;
+            }
+            let basename = match Path::new(name_str).file_name() {
+                Some(b) => b,
+                None => continue,
+            };
+            if basename.is_empty() {
+                continue;
+            }
+            let full = if dir.as_os_str().is_empty() || dir == Path::new(".") {
+                PathBuf::from(basename)
+            } else {
+                dir.join(basename)
+            };
+            if !entry.iter().any(|p| p == &full) {
+                entry.push(full);
+            }
+        }
+        super::traversal::sort_paths_by_f_name_cmp(entry);
     }
 }
 
@@ -565,5 +685,186 @@ mod tests {
         for h in handles {
             h.join().expect("worker joined");
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // compute_extras_generic tests
+    // -----------------------------------------------------------------------
+
+    fn flist_file(name: &str) -> FileEntry {
+        FileEntry::new_file(PathBuf::from(name), 0, 0o644)
+    }
+
+    fn touch(dir: &Path, name: &str) {
+        std::fs::File::create(dir.join(name)).expect("create file");
+    }
+
+    #[test]
+    fn compute_extras_generic_empty_dest_and_segment() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let extras = compute_extras_generic(dir.path(), &[] as &[FileEntry]).unwrap();
+        assert!(extras.is_empty());
+    }
+
+    #[test]
+    fn compute_extras_generic_subtracts_segment_basenames() {
+        let dir = tempfile::TempDir::new().unwrap();
+        for n in ["a", "b", "c"] {
+            touch(dir.path(), n);
+        }
+        let segment = vec![flist_file("a"), flist_file("c")];
+        let extras = compute_extras_generic(dir.path(), &segment).unwrap();
+        assert_eq!(extras.len(), 1);
+        assert_eq!(extras[0].name, OsString::from("b"));
+    }
+
+    #[test]
+    fn compute_extras_generic_matches_concrete() {
+        let dir = tempfile::TempDir::new().unwrap();
+        for n in ["x", "y", "z"] {
+            touch(dir.path(), n);
+        }
+        let segment = vec![flist_file("x")];
+        let mut generic = compute_extras_generic(dir.path(), &segment).unwrap();
+        let mut concrete = super::super::compute_extras(dir.path(), &segment).unwrap();
+        generic.sort_by(|a, b| a.name.cmp(&b.name));
+        concrete.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(generic, concrete);
+    }
+
+    #[test]
+    fn compute_extras_with_cohorts_generic_tags_matching() {
+        let dir = tempfile::TempDir::new().unwrap();
+        for n in ["alpha", "beta", "untagged"] {
+            touch(dir.path(), n);
+        }
+        let mut leader_entry = FileEntry::new_file(PathBuf::from("alpha"), 0, 0o644);
+        leader_entry.set_hardlink_idx(u32::MAX);
+        let mut member = FileEntry::new_file(PathBuf::from("beta"), 0, 0o644);
+        member.set_hardlink_idx(0);
+        let cohort_segment = vec![leader_entry, member];
+        let index = super::super::CohortIndex::build_from_flist_segment(&cohort_segment);
+        let extras =
+            compute_extras_with_cohorts_generic(dir.path(), &[] as &[FileEntry], Some(&index))
+                .unwrap();
+        let by_name: std::collections::HashMap<_, _> = extras
+            .iter()
+            .map(|e| (e.name.clone(), e.hardlink_cohort))
+            .collect();
+        assert!(by_name[&OsString::from("alpha")].is_some());
+        assert_eq!(
+            by_name[&OsString::from("alpha")],
+            by_name[&OsString::from("beta")]
+        );
+        assert!(by_name[&OsString::from("untagged")].is_none());
+    }
+
+    #[test]
+    fn compute_extras_generic_nonexistent_dest_returns_not_found() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let missing = dir.path().join("does-not-exist");
+        let err = compute_extras_generic(&missing, &[] as &[FileEntry]).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn compute_extras_with_cohorts_generic_none_matches_baseline() {
+        let dir = tempfile::TempDir::new().unwrap();
+        for n in ["a", "b", "c"] {
+            touch(dir.path(), n);
+        }
+        let segment = vec![flist_file("a")];
+        let mut generic =
+            compute_extras_with_cohorts_generic(dir.path(), &segment, None).unwrap();
+        let mut concrete =
+            super::super::compute_extras_with_cohorts(dir.path(), &segment, None).unwrap();
+        generic.sort_by(|a, b| a.name.cmp(&b.name));
+        concrete.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(generic, concrete);
+        for entry in &generic {
+            assert!(entry.hardlink_cohort.is_none());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // observe_segment_generic tests
+    // -----------------------------------------------------------------------
+
+    fn dir_entry(name: &str) -> FileEntry {
+        FileEntry::new_directory(PathBuf::from(name), 0o755)
+    }
+
+    fn file_entry(name: &str) -> FileEntry {
+        FileEntry::new_file(PathBuf::from(name), 0, 0o644)
+    }
+
+    #[test]
+    fn observe_segment_generic_filters_non_directories() {
+        let mut cursor = super::super::DirTraversalCursor::new(PathBuf::from("root"));
+        cursor.observe_segment_generic(
+            PathBuf::from("root"),
+            &[
+                dir_entry("root/sub"),
+                file_entry("root/file.txt"),
+                FileEntry::new_symlink(PathBuf::from("root/link"), PathBuf::from("target")),
+            ],
+        );
+        let seq: Vec<PathBuf> = std::iter::from_fn(|| cursor.next_ready()).collect();
+        assert_eq!(seq, vec![PathBuf::from("root"), PathBuf::from("root/sub")]);
+    }
+
+    #[test]
+    fn observe_segment_generic_matches_concrete() {
+        let children = vec![
+            dir_entry("root/c"),
+            dir_entry("root/a"),
+            dir_entry("root/b"),
+            file_entry("root/file.txt"),
+        ];
+
+        let mut generic_cursor = super::super::DirTraversalCursor::new(PathBuf::from("root"));
+        generic_cursor.observe_segment_generic(PathBuf::from("root"), &children);
+        let generic_seq: Vec<PathBuf> =
+            std::iter::from_fn(|| generic_cursor.next_ready()).collect();
+
+        let mut concrete_cursor = super::super::DirTraversalCursor::new(PathBuf::from("root"));
+        concrete_cursor.observe_segment(PathBuf::from("root"), &children);
+        let concrete_seq: Vec<PathBuf> =
+            std::iter::from_fn(|| concrete_cursor.next_ready()).collect();
+
+        assert_eq!(generic_seq, concrete_seq);
+    }
+
+    #[test]
+    fn observe_segment_generic_deduplicates() {
+        let mut cursor = super::super::DirTraversalCursor::new(PathBuf::from("root"));
+        cursor.observe_segment_generic(PathBuf::from("root"), &[dir_entry("root/a")]);
+        cursor.observe_segment_generic(PathBuf::from("root"), &[dir_entry("root/a")]);
+        let seq: Vec<PathBuf> = std::iter::from_fn(|| cursor.next_ready()).collect();
+        assert_eq!(seq, vec![PathBuf::from("root"), PathBuf::from("root/a")]);
+    }
+
+    #[test]
+    fn observe_segment_generic_depth_first_order() {
+        let mut cursor = super::super::DirTraversalCursor::new(PathBuf::from("root"));
+        cursor.observe_segment_generic(
+            PathBuf::from("root/a"),
+            &[dir_entry("root/a/y"), dir_entry("root/a/x")],
+        );
+        cursor.observe_segment_generic(
+            PathBuf::from("root"),
+            &[dir_entry("root/b"), dir_entry("root/a")],
+        );
+        let seq: Vec<PathBuf> = std::iter::from_fn(|| cursor.next_ready()).collect();
+        assert_eq!(
+            seq,
+            vec![
+                PathBuf::from("root"),
+                PathBuf::from("root/a"),
+                PathBuf::from("root/a/x"),
+                PathBuf::from("root/a/y"),
+                PathBuf::from("root/b"),
+            ]
+        );
     }
 }
