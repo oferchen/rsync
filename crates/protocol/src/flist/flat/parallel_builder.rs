@@ -12,8 +12,8 @@
 
 use rayon::prelude::*;
 
-use super::extras::ExtrasRef;
 use super::flist::FlatFileList;
+use super::header::ExtrasRef;
 
 /// Builder for constructing a [`FlatFileList`] from parallel rayon workers.
 ///
