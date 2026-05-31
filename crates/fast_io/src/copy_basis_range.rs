@@ -1,30 +1,37 @@
-//! Offset-aware basis-to-destination range copy via `copy_file_range(2)`.
+//! Offset-aware basis-to-destination range copy via platform-optimized I/O.
 //!
 //! This module is the IUD-10 fast path for the delta-apply COPY-token branch:
 //! when the receiver replays a `COPY {index, len}` token, the contents at
 //! `basis[basis_off..basis_off+len]` must end up at
-//! `dest[dest_off..dest_off+len]`. On Linux 4.5+ with both files on the same
-//! filesystem, `copy_file_range(2)` accomplishes this entirely in the kernel
-//! without bouncing bytes through userspace - no per-byte `read(2)`/`write(2)`
-//! and, on supporting filesystems, with reflink/server-side copy acceleration.
+//! `dest[dest_off..dest_off+len]`.
+//!
+//! Platform implementations:
+//!
+//! - **Linux 4.5+**: `copy_file_range(2)` performs a zero-copy in-kernel
+//!   transfer without bouncing bytes through userspace. On supporting
+//!   filesystems, reflink/server-side copy acceleration is available.
+//! - **Windows**: `ReadFile`/`WriteFile` with `OVERLAPPED` offset structs
+//!   performs a kernel-buffered copy without moving the file pointers,
+//!   matching the `copy_file_range` contract.
+//! - **Other**: Returns `Ok(0)` so callers fall back to `map_ptr` + write.
 //!
 //! Upstream rsync 3.4.1 itself does not use `copy_file_range(2)` in the
 //! receiver - it walks `map_ptr` and `write(2)`. This is an oc-rsync
 //! optimization that produces byte-identical output; it is invisible on the
 //! wire and changes no protocol behavior.
 //!
-//! The wrapper is conservative: any kernel-reported failure on the first
-//! iteration collapses to `Ok(0)` so callers fall back to the existing
-//! read-then-write path without surfacing platform-specific errnos. Only
-//! failures after a partial copy succeed are propagated, because at that
-//! point the destination is in a state the caller must reconcile.
+//! The wrapper is conservative: any failure on the first iteration collapses
+//! to `Ok(0)` so callers fall back to the existing read-then-write path
+//! without surfacing platform-specific errors. Only failures after a partial
+//! copy has succeeded are propagated, because at that point the destination
+//! is in a state the caller must reconcile.
 //!
 //! # Bounded I/O contract
 //!
-//! Every iteration submits at most `i64::MAX` bytes and the loop terminates
-//! on three conditions: requested `len` reached, kernel returns 0 (EOF on the
-//! source), or kernel returns an error. There is no unbounded retry; the
-//! caller's `len` bounds total time.
+//! Every iteration submits at most 256 KB (Windows) or `i64::MAX` bytes
+//! (Linux) and the loop terminates on three conditions: requested `len`
+//! reached, EOF on the source, or an error. There is no unbounded retry;
+//! the caller's `len` bounds total time.
 
 use std::fs::File;
 use std::io;
@@ -38,38 +45,37 @@ use std::io;
 pub const COPY_BASIS_RANGE_MIN_BYTES: usize = 4 * 1024;
 
 /// Copies `len` bytes from `basis[basis_off..]` into `dest[dest_off..]` using
-/// `copy_file_range(2)` on Linux, or returns `Ok(0)` on every other target
-/// so callers fall back to read+write.
+/// a platform-optimized path, or returns `Ok(0)` on unsupported platforms so
+/// callers fall back to read+write.
 ///
 /// # Returns
 ///
 /// - `Ok(n)` where `n == len` on full success.
-/// - `Ok(n)` where `0 < n < len` if the kernel hit EOF on the basis before
+/// - `Ok(n)` where `0 < n < len` if EOF on the basis was reached before
 ///   the range was satisfied; the caller must reconcile the short copy
 ///   (rare with a correctly sized basis).
-/// - `Ok(0)` when the syscall is unavailable, the files live on different
-///   filesystems (`EXDEV`), the kernel does not support `copy_file_range`
-///   (`ENOSYS`), or any first-iteration error. The caller must fall back to
-///   the read+write path; the destination is untouched.
+/// - `Ok(0)` when the platform copy path is unavailable or any first-iteration
+///   error occurs. The caller must fall back to the read+write path; the
+///   destination is untouched.
 ///
 /// # Errors
 ///
-/// Returns `Err` only when a kernel error occurs **after** a partial copy
-/// has already succeeded. In that case the destination has been partially
+/// Returns `Err` only when an error occurs **after** a partial copy has
+/// already succeeded. In that case the destination has been partially
 /// written and the caller cannot transparently fall back.
 ///
 /// # Bounded I/O
 ///
-/// Caps each iteration at `i64::MAX` and terminates on completion, EOF, or
-/// error - never hangs. Source and destination file offsets are NOT advanced
-/// (the syscall uses explicit `loff_t*` pointers).
+/// Caps each iteration at 256 KB (Windows) or `i64::MAX` (Linux) and
+/// terminates on completion, EOF, or error - never hangs. Source and
+/// destination file offsets are NOT advanced (Linux uses explicit `loff_t*`
+/// pointers; Windows uses `OVERLAPPED` offset fields).
 ///
 /// # Platform support
 ///
-/// - Linux 4.5+ same filesystem.
-/// - Linux 5.3+ cross filesystem (still gated to `Ok(0)` on `EXDEV` for
-///   safety on older kernels).
-/// - All other targets: returns `Ok(0)` immediately, no syscall issued.
+/// - **Linux 4.5+** same filesystem, 5.3+ cross filesystem.
+/// - **Windows**: `ReadFile`/`WriteFile` with `OVERLAPPED` offsets.
+/// - **Other**: returns `Ok(0)` immediately, no I/O issued.
 #[inline]
 pub fn copy_basis_range(
     basis: &File,
@@ -81,12 +87,12 @@ pub fn copy_basis_range(
     imp::copy_basis_range(basis, basis_off, dest, dest_off, len)
 }
 
-/// Returns `true` when the running kernel exposes a usable
-/// `copy_file_range(2)` syscall.
+/// Returns `true` when the platform has a usable optimized basis-range copy.
 ///
-/// Result is cached via a process-wide `OnceLock` after the first probe so
-/// subsequent dispatch decisions are branch-only. On non-Linux targets this
-/// is a compile-time `false`.
+/// On Linux, probes for `copy_file_range(2)` and caches the result via a
+/// process-wide `OnceLock`. On Windows, returns `true` unconditionally
+/// (the `ReadFile`/`WriteFile` path is always available). On other
+/// platforms, returns `false`.
 #[must_use]
 #[inline]
 pub fn copy_file_range_supported() -> bool {
@@ -228,7 +234,165 @@ mod imp {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+/// Windows implementation using `ReadFile`/`WriteFile` with `OVERLAPPED`.
+///
+/// The `OVERLAPPED` struct specifies the file offset for each I/O operation
+/// without moving the file pointer, matching the `copy_file_range` contract.
+/// A 256 KB buffer keeps syscall count low while avoiding excessive stack or
+/// heap pressure.
+#[cfg(target_os = "windows")]
+mod imp {
+    use std::fs::File;
+    use std::io;
+    use std::os::windows::io::AsRawHandle;
+
+    /// Per-iteration buffer size for the `ReadFile`/`WriteFile` copy loop.
+    const COPY_BUF_SIZE: usize = 256 * 1024;
+
+    pub(super) fn copy_file_range_supported() -> bool {
+        true
+    }
+
+    /// Splits a `u64` offset into the `Offset` (low 32 bits) and
+    /// `OffsetHigh` (high 32 bits) fields used by `OVERLAPPED`.
+    #[inline]
+    fn offset_parts(off: u64) -> (u32, u32) {
+        (off as u32, (off >> 32) as u32)
+    }
+
+    #[allow(unsafe_code)]
+    pub(super) fn copy_basis_range(
+        basis: &File,
+        basis_off: u64,
+        dest: &File,
+        dest_off: u64,
+        len: usize,
+    ) -> io::Result<usize> {
+        if len == 0 {
+            return Ok(0);
+        }
+
+        let basis_handle = basis.as_raw_handle() as isize;
+        let dest_handle = dest.as_raw_handle() as isize;
+
+        let mut buf = vec![0u8; COPY_BUF_SIZE];
+        let mut total: usize = 0;
+        let mut src_pos = basis_off;
+        let mut dst_pos = dest_off;
+
+        while total < len {
+            let remaining = len - total;
+            let chunk = remaining.min(COPY_BUF_SIZE);
+
+            let (src_lo, src_hi) = offset_parts(src_pos);
+            let mut read_overlapped = windows_sys::Win32::System::IO::OVERLAPPED {
+                Internal: 0,
+                InternalHigh: 0,
+                Anonymous: windows_sys::Win32::System::IO::OVERLAPPED_0 {
+                    Anonymous: windows_sys::Win32::System::IO::OVERLAPPED_0_0 {
+                        Offset: src_lo,
+                        OffsetHigh: src_hi,
+                    },
+                },
+                hEvent: 0,
+            };
+
+            let mut bytes_read: u32 = 0;
+            // SAFETY: basis_handle is a valid file handle borrowed from &File.
+            // buf is a valid mutable buffer with at least `chunk` bytes.
+            // read_overlapped is a properly initialized OVERLAPPED struct.
+            // bytes_read is a valid output pointer. The call completes
+            // synchronously because the file was not opened with
+            // FILE_FLAG_OVERLAPPED.
+            let read_ok = unsafe {
+                windows_sys::Win32::Storage::FileSystem::ReadFile(
+                    basis_handle,
+                    buf.as_mut_ptr().cast(),
+                    chunk as u32,
+                    &mut bytes_read,
+                    &mut read_overlapped,
+                )
+            };
+
+            if read_ok == 0 {
+                let err = io::Error::last_os_error();
+                if total == 0 {
+                    return Ok(0);
+                }
+                return Err(err);
+            }
+
+            if bytes_read == 0 {
+                break; // EOF
+            }
+
+            let n = bytes_read as usize;
+
+            let (dst_lo, dst_hi) = offset_parts(dst_pos);
+            let mut write_overlapped = windows_sys::Win32::System::IO::OVERLAPPED {
+                Internal: 0,
+                InternalHigh: 0,
+                Anonymous: windows_sys::Win32::System::IO::OVERLAPPED_0 {
+                    Anonymous: windows_sys::Win32::System::IO::OVERLAPPED_0_0 {
+                        Offset: dst_lo,
+                        OffsetHigh: dst_hi,
+                    },
+                },
+                hEvent: 0,
+            };
+
+            let mut total_written: usize = 0;
+            while total_written < n {
+                let write_chunk = n - total_written;
+                let write_pos = dst_pos + total_written as u64;
+                let (wlo, whi) = offset_parts(write_pos);
+                write_overlapped.Anonymous.Anonymous.Offset = wlo;
+                write_overlapped.Anonymous.Anonymous.OffsetHigh = whi;
+
+                let mut bytes_written: u32 = 0;
+                // SAFETY: dest_handle is a valid file handle borrowed from
+                // &File. The buffer slice is valid for `write_chunk` bytes
+                // starting at offset `total_written`. write_overlapped is
+                // properly initialized. The call completes synchronously.
+                let write_ok = unsafe {
+                    windows_sys::Win32::Storage::FileSystem::WriteFile(
+                        dest_handle,
+                        buf[total_written..].as_ptr().cast(),
+                        write_chunk as u32,
+                        &mut bytes_written,
+                        &mut write_overlapped,
+                    )
+                };
+
+                if write_ok == 0 {
+                    let err = io::Error::last_os_error();
+                    if total == 0 && total_written == 0 {
+                        return Ok(0);
+                    }
+                    return Err(err);
+                }
+
+                if bytes_written == 0 {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "WriteFile returned 0 bytes written",
+                    ));
+                }
+
+                total_written += bytes_written as usize;
+            }
+
+            src_pos += n as u64;
+            dst_pos += n as u64;
+            total += n;
+        }
+
+        Ok(total)
+    }
+}
+
+/// Stub for platforms without a specialized basis-range copy.
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 mod imp {
     use std::fs::File;
     use std::io;
@@ -381,9 +545,89 @@ mod tests {
         assert_eq!(&out[..copied], &payload[..copied]);
     }
 
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "windows")]
+    fn read_all(dest: &mut File) -> Vec<u8> {
+        use std::io::{Read, Seek, SeekFrom};
+        dest.seek(SeekFrom::Start(0)).unwrap();
+        let mut buf = Vec::new();
+        dest.read_to_end(&mut buf).unwrap();
+        buf
+    }
+
+    #[cfg(target_os = "windows")]
     #[test]
-    fn non_linux_stub_returns_zero_without_syscall() {
+    fn windows_copy_produces_byte_identical_output() {
+        let dir = tempdir().unwrap();
+        let payload: Vec<u8> = (0..64 * 1024).map(|i| (i % 251) as u8).collect();
+        let basis = make_basis(dir.path(), "basis.bin", &payload);
+        let mut dest = make_dest(dir.path(), "dest.bin");
+
+        let copied = copy_basis_range(&basis, 0, &dest, 0, payload.len()).unwrap();
+        assert_eq!(copied, payload.len());
+
+        let out = read_all(&mut dest);
+        assert_eq!(out, payload);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_offset_copy_extracts_correct_window() {
+        let dir = tempdir().unwrap();
+        let payload: Vec<u8> = (0..8 * 1024).map(|i| (i % 211) as u8).collect();
+        let basis = make_basis(dir.path(), "basis.bin", &payload);
+        let mut dest = make_dest(dir.path(), "dest.bin");
+
+        let window = 4 * 1024;
+        let copied = copy_basis_range(&basis, 1024, &dest, 0, window).unwrap();
+        assert_eq!(copied, window);
+
+        let out = read_all(&mut dest);
+        assert_eq!(out, &payload[1024..1024 + window]);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_dest_offset_writes_at_correct_position() {
+        let dir = tempdir().unwrap();
+        let payload: Vec<u8> = (0..4 * 1024).map(|i| (i % 199) as u8).collect();
+        let basis = make_basis(dir.path(), "basis.bin", &payload);
+        let mut dest = make_dest(dir.path(), "dest.bin");
+        dest.write_all(&vec![0xFFu8; 2048]).unwrap();
+        dest.sync_all().ok();
+
+        let copied = copy_basis_range(&basis, 0, &dest, 2048, payload.len()).unwrap();
+        assert_eq!(copied, payload.len());
+
+        let out = read_all(&mut dest);
+        assert_eq!(&out[..2048], &vec![0xFFu8; 2048]);
+        assert_eq!(&out[2048..], payload.as_slice());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_short_copy_when_basis_eof() {
+        let dir = tempdir().unwrap();
+        let payload = vec![0xA5u8; 2048];
+        let basis = make_basis(dir.path(), "basis.bin", &payload);
+        let mut dest = make_dest(dir.path(), "dest.bin");
+
+        let copied = copy_basis_range(&basis, 0, &dest, 0, 8192).unwrap();
+        assert!(copied <= payload.len());
+        assert!(copied >= 1);
+
+        let out = read_all(&mut dest);
+        assert_eq!(&out[..copied], &payload[..copied]);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_supported_returns_true() {
+        assert!(copy_file_range_supported());
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+    #[test]
+    fn unsupported_platform_returns_zero() {
         let dir = tempdir().unwrap();
         let basis = make_basis(dir.path(), "b", b"abcd");
         let dest = make_dest(dir.path(), "d");
