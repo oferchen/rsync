@@ -3041,8 +3041,13 @@ fn nonempty_segment_also_sends_wire_bytes() {
     let mut flist_writer = ctx.build_flist_writer();
     let mut ndx_codec = protocol::codec::create_ndx_codec(ctx.protocol().as_u8());
 
-    ctx.encode_and_send_segment(&mut output_nonempty, &seg, &mut flist_writer, &mut ndx_codec)
-        .unwrap();
+    ctx.encode_and_send_segment(
+        &mut output_nonempty,
+        &seg,
+        &mut flist_writer,
+        &mut ndx_codec,
+    )
+    .unwrap();
 
     // Non-empty segment output must be larger than an empty segment's output
     // (NDX header + at least one entry + end marker).
