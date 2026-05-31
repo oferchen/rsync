@@ -137,6 +137,8 @@ pub mod copy_file_ex;
 pub mod copy_file_range;
 /// Anonymous temporary file creation via `O_TMPFILE` and finalization via `linkat`.
 pub mod o_tmpfile;
+/// Delete-on-close temporary file creation for Windows via `FILE_FLAG_DELETE_ON_CLOSE`.
+pub mod win_tmpfile;
 /// Platform-abstracted file copy trait with automatic optimization selection.
 pub mod platform_copy;
 /// ReFS filesystem detection for Windows reflink support.
@@ -292,8 +294,15 @@ pub use o_tmpfile::{
     AnonymousTempFile, OTmpfileSupport, TempFileResult, link_anonymous_tmpfile,
     o_tmpfile_available, o_tmpfile_probe, open_anonymous_tmpfile, open_temp_file,
 };
+pub use win_tmpfile::{
+    WinDeleteOnCloseSupport, WinTempFileResult, WindowsTempFile, clear_delete_on_close,
+    commit_delete_on_close, delete_on_close_available, open_delete_on_close_tmpfile,
+    open_win_temp_file, rename_temp_to_dest, win_tmpfile_probe,
+};
 #[cfg(target_os = "linux")]
 pub use temp_file_strategy::AnonymousTempFileStrategy;
+#[cfg(target_os = "windows")]
+pub use temp_file_strategy::WindowsTempFileStrategy;
 pub use temp_file_strategy::{
     DefaultTempFileStrategy, NamedTempFileStrategy, TempFileHandle, TempFileKind, TempFileStrategy,
 };

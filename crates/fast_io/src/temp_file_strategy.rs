@@ -6,18 +6,23 @@
 //!
 //! - **Linux**: [`AnonymousTempFileStrategy`] uses `O_TMPFILE` + `linkat(2)`
 //!   for zero-cleanup atomic writes. No directory entry exists until commit.
+//! - **Windows**: [`WindowsTempFileStrategy`] uses `FILE_FLAG_DELETE_ON_CLOSE`
+//!   for auto-cleanup temp files. The kernel deletes the file when the last
+//!   handle closes, providing crash-safe cleanup analogous to `O_TMPFILE`.
 //! - **All platforms**: [`NamedTempFileStrategy`] uses a uniquely-named temp
 //!   file + `rename(2)` for atomic commit, with cross-device fallback.
 //!
 //! The [`DefaultTempFileStrategy`] automatically selects the best available
-//! strategy at runtime, probing `O_TMPFILE` support on Linux and falling back
-//! to named temp files elsewhere.
+//! strategy at runtime, probing `O_TMPFILE` support on Linux,
+//! `FILE_FLAG_DELETE_ON_CLOSE` on Windows, and falling back to named temp
+//! files elsewhere.
 //!
 //! # Design
 //!
 //! This follows the Strategy Pattern (Dependency Inversion) - the engine crate
-//! depends on `TempFileStrategy` rather than on concrete `O_TMPFILE` or
-//! `rename` logic directly. Each strategy manages its own RAII cleanup.
+//! depends on `TempFileStrategy` rather than on concrete `O_TMPFILE`,
+//! `FILE_FLAG_DELETE_ON_CLOSE`, or `rename` logic directly. Each strategy
+//! manages its own RAII cleanup.
 
 use std::fs::{self, File};
 use std::io;
@@ -46,6 +51,16 @@ pub enum TempFileKind {
     Anonymous {
         /// Cloned fd for `linkat(2)` - the writer fd is returned separately.
         fd_for_link: File,
+    },
+    /// Delete-on-close temp file (Windows `FILE_FLAG_DELETE_ON_CLOSE`).
+    ///
+    /// Commit clears the delete-on-close disposition via
+    /// `SetFileInformationByHandle`, then renames to destination.
+    /// If dropped without commit, the kernel auto-deletes the file.
+    #[cfg(target_os = "windows")]
+    DeleteOnClose {
+        /// On-disk path of the delete-on-close temp file.
+        temp_path: PathBuf,
     },
     /// Named temp file - commit via `rename(2)`.
     Named {
@@ -145,6 +160,55 @@ impl TempFileStrategy for AnonymousTempFileStrategy {
     }
 }
 
+/// Strategy using Windows `FILE_FLAG_DELETE_ON_CLOSE` for auto-cleanup temp files.
+///
+/// The file is created with a unique name and the delete-on-close flag. If
+/// the process crashes before commit, the kernel deletes the file when the
+/// handle is closed. On commit, the disposition is cleared and the file is
+/// renamed to the destination.
+///
+/// # Platform support
+///
+/// Windows Vista+ with NTFS, ReFS, or FAT32. Callers should probe availability
+/// via [`delete_on_close_available`](crate::delete_on_close_available) before
+/// constructing.
+#[cfg(target_os = "windows")]
+#[derive(Debug, Default, Clone, Copy)]
+pub struct WindowsTempFileStrategy;
+
+#[cfg(target_os = "windows")]
+impl TempFileStrategy for WindowsTempFileStrategy {
+    fn create(&self, destination: &Path) -> io::Result<TempFileHandle> {
+        let dir = destination.parent().unwrap_or(Path::new("."));
+        let (file, temp_path) = crate::open_delete_on_close_tmpfile(dir)?;
+        Ok(TempFileHandle {
+            file,
+            kind: TempFileKind::DeleteOnClose { temp_path },
+        })
+    }
+
+    fn commit(&self, handle: TempFileHandle, destination: &Path) -> io::Result<()> {
+        if let TempFileKind::DeleteOnClose { temp_path } = handle.kind {
+            crate::commit_delete_on_close(handle.file, &temp_path, destination)
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "expected delete-on-close temp file kind",
+            ))
+        }
+    }
+
+    fn discard(&self, _handle: TempFileHandle) {
+        // Dropping the handle triggers kernel deletion via FILE_FLAG_DELETE_ON_CLOSE.
+    }
+
+    fn is_anonymous(&self) -> bool {
+        // Delete-on-close files have a directory entry (unlike O_TMPFILE),
+        // but provide the same crash-safe auto-cleanup semantics.
+        false
+    }
+}
+
 /// Strategy using a uniquely-named temporary file + `rename(2)`.
 ///
 /// Works on all platforms. The temp file is created in the same directory as
@@ -230,6 +294,11 @@ impl TempFileStrategy for NamedTempFileStrategy {
                 io::ErrorKind::InvalidInput,
                 "expected named temp file kind",
             )),
+            #[cfg(target_os = "windows")]
+            TempFileKind::DeleteOnClose { .. } => Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "expected named temp file kind",
+            )),
         }
     }
 
@@ -242,6 +311,10 @@ impl TempFileStrategy for NamedTempFileStrategy {
             }
             #[cfg(target_os = "linux")]
             TempFileKind::Anonymous { .. } => {}
+            #[cfg(target_os = "windows")]
+            TempFileKind::DeleteOnClose { .. } => {
+                // Drop triggers kernel deletion.
+            }
         }
     }
 
@@ -250,15 +323,14 @@ impl TempFileStrategy for NamedTempFileStrategy {
     }
 }
 
-/// Auto-selecting strategy that probes for `O_TMPFILE` on Linux and falls
-/// back to named temp files elsewhere.
+/// Auto-selecting strategy that probes for the best available temp file
+/// mechanism at runtime.
 ///
-/// On Linux, the first call to [`create`](TempFileStrategy::create) probes
-/// `O_TMPFILE` availability on the destination filesystem. If available, all
-/// subsequent calls use anonymous temp files. Otherwise, named temp files are
-/// used.
-///
-/// On non-Linux platforms, this always uses [`NamedTempFileStrategy`].
+/// - **Linux**: probes `O_TMPFILE` on the destination filesystem. If available,
+///   uses anonymous temp files via [`AnonymousTempFileStrategy`].
+/// - **Windows**: probes `FILE_FLAG_DELETE_ON_CLOSE`. If available, uses
+///   delete-on-close temp files via [`WindowsTempFileStrategy`].
+/// - **All platforms**: falls back to named temp files via [`NamedTempFileStrategy`].
 pub struct DefaultTempFileStrategy {
     named: NamedTempFileStrategy,
 }
@@ -289,6 +361,14 @@ impl TempFileStrategy for DefaultTempFileStrategy {
                 return anon.create(destination);
             }
         }
+        #[cfg(target_os = "windows")]
+        {
+            let dir = destination.parent().unwrap_or(Path::new("."));
+            if crate::delete_on_close_available(dir) {
+                let doc = WindowsTempFileStrategy;
+                return doc.create(destination);
+            }
+        }
         self.named.create(destination)
     }
 
@@ -299,6 +379,11 @@ impl TempFileStrategy for DefaultTempFileStrategy {
                 let anon = AnonymousTempFileStrategy;
                 anon.commit(handle, destination)
             }
+            #[cfg(target_os = "windows")]
+            TempFileKind::DeleteOnClose { .. } => {
+                let doc = WindowsTempFileStrategy;
+                doc.commit(handle, destination)
+            }
             TempFileKind::Named { .. } => self.named.commit(handle, destination),
         }
     }
@@ -308,6 +393,10 @@ impl TempFileStrategy for DefaultTempFileStrategy {
             #[cfg(target_os = "linux")]
             TempFileKind::Anonymous { .. } => {
                 // Drop fds - kernel reclaims inode.
+            }
+            #[cfg(target_os = "windows")]
+            TempFileKind::DeleteOnClose { .. } => {
+                // Drop triggers kernel deletion via FILE_FLAG_DELETE_ON_CLOSE.
             }
             TempFileKind::Named { temp_path } => {
                 let path = temp_path.clone();
@@ -395,7 +484,9 @@ mod tests {
         let temp_path = match &handle.kind {
             TempFileKind::Named { temp_path } => temp_path.clone(),
             #[cfg(target_os = "linux")]
-            _ => panic!("expected named"),
+            TempFileKind::Anonymous { .. } => panic!("expected named"),
+            #[cfg(target_os = "windows")]
+            TempFileKind::DeleteOnClose { .. } => panic!("expected named"),
         };
 
         assert!(temp_path.exists());
@@ -439,6 +530,8 @@ mod tests {
             }
             #[cfg(target_os = "linux")]
             TempFileKind::Anonymous { .. } => panic!("expected named"),
+            #[cfg(target_os = "windows")]
+            TempFileKind::DeleteOnClose { .. } => panic!("expected named"),
         }
 
         strategy.discard(handle);
@@ -456,12 +549,16 @@ mod tests {
         let p1 = match &h1.kind {
             TempFileKind::Named { temp_path } => temp_path.clone(),
             #[cfg(target_os = "linux")]
-            _ => panic!("expected named"),
+            TempFileKind::Anonymous { .. } => panic!("expected named"),
+            #[cfg(target_os = "windows")]
+            TempFileKind::DeleteOnClose { .. } => panic!("expected named"),
         };
         let p2 = match &h2.kind {
             TempFileKind::Named { temp_path } => temp_path.clone(),
             #[cfg(target_os = "linux")]
-            _ => panic!("expected named"),
+            TempFileKind::Anonymous { .. } => panic!("expected named"),
+            #[cfg(target_os = "windows")]
+            TempFileKind::DeleteOnClose { .. } => panic!("expected named"),
         };
 
         assert_ne!(p1, p2);
@@ -567,6 +664,73 @@ mod tests {
 
             let handle = strategy.create(&dest).expect("create");
             assert!(matches!(handle.kind, TempFileKind::Anonymous { .. }));
+            strategy.discard(handle);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    mod windows {
+        use super::*;
+
+        #[test]
+        fn delete_on_close_strategy_create_and_commit() {
+            let dir = tempdir().expect("tempdir");
+            let dest = dir.path().join("doc.txt");
+            let strategy = WindowsTempFileStrategy;
+
+            let mut handle = strategy.create(&dest).expect("create");
+            assert!(!strategy.is_anonymous());
+            handle.file.write_all(b"delete-on-close data").expect("write");
+            strategy.commit(handle, &dest).expect("commit");
+
+            assert!(dest.exists());
+            assert_eq!(
+                fs::read_to_string(&dest).expect("read"),
+                "delete-on-close data"
+            );
+        }
+
+        #[test]
+        fn delete_on_close_strategy_discard_no_orphan() {
+            let dir = tempdir().expect("tempdir");
+            let dest = dir.path().join("doc_discard.txt");
+            let strategy = WindowsTempFileStrategy;
+
+            let handle = strategy.create(&dest).expect("create");
+            let temp_path = match &handle.kind {
+                TempFileKind::DeleteOnClose { temp_path } => temp_path.clone(),
+                _ => panic!("expected delete-on-close"),
+            };
+
+            assert!(temp_path.exists());
+            strategy.discard(handle);
+            // Kernel should have deleted via FILE_FLAG_DELETE_ON_CLOSE.
+            assert!(!temp_path.exists());
+            assert!(!dest.exists());
+        }
+
+        #[test]
+        fn delete_on_close_strategy_commit_replaces_existing() {
+            let dir = tempdir().expect("tempdir");
+            let dest = dir.path().join("doc_replace.txt");
+            fs::write(&dest, b"old").expect("write existing");
+
+            let strategy = WindowsTempFileStrategy;
+            let mut handle = strategy.create(&dest).expect("create");
+            handle.file.write_all(b"new").expect("write");
+            strategy.commit(handle, &dest).expect("commit");
+
+            assert_eq!(fs::read_to_string(&dest).expect("read"), "new");
+        }
+
+        #[test]
+        fn default_strategy_prefers_delete_on_close_on_windows() {
+            let dir = tempdir().expect("tempdir");
+            let dest = dir.path().join("default_doc.txt");
+            let strategy = DefaultTempFileStrategy::default();
+
+            let handle = strategy.create(&dest).expect("create");
+            assert!(matches!(handle.kind, TempFileKind::DeleteOnClose { .. }));
             strategy.discard(handle);
         }
     }
