@@ -90,7 +90,11 @@ jobs:
           fi
 
       - name: Run interop tests
-        run: bash tools/ci/run_interop.sh
+        run: |
+          set -euo pipefail
+          mkdir -p target/interop
+          bash tools/ci/run_interop.sh 2>&1 | tee target/interop/interop-output.log
+          # pipefail ensures the exit code of run_interop.sh propagates
 
       # RP28.c - rsync 2.6.9 push interop cell (protocol-28 cutoff peer).
       # The 2.6.9 binary is built and cached by `run_interop.sh build-only`
@@ -537,4 +541,34 @@ jobs:
           echo "PASS: SSH pull no-change sync"
 
           echo "All SSH interop tests passed."
+
+      - name: Regenerate interop compatibility matrix
+        if: always()
+        run: |
+          set -euo pipefail
+          LOG="target/interop/interop-output.log"
+          if [[ -f "$LOG" ]]; then
+            python3 tools/ci/regenerate_interop_matrix.py "$LOG"
+            echo "Matrix regenerated from interop log."
+          else
+            echo "No interop log found; skipping matrix regeneration."
+          fi
+
+      - name: Upload interop matrix
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: interop-compatibility-matrix
+          path: docs/user/interop-compatibility-matrix.md
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Upload interop log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: interop-output-log
+          path: target/interop/interop-output.log
+          if-no-files-found: ignore
+          retention-days: 14
 
