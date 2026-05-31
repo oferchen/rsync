@@ -444,6 +444,12 @@ impl GeneratorContext {
     /// Body of [`Self::encode_and_send_segment`] without the timing wrapper,
     /// so the counter updates remain in a single place and the elapsed window
     /// excludes only the `Instant::now()` pair itself.
+    ///
+    /// Upstream always sends the NDX header and end-of-flist marker even for
+    /// empty directories (flist.c:2117,2139-2146). Skipping them for count==0
+    /// desynchronises `flist_done_remaining` from the receiver's NDX_DONE
+    /// stream, causing a phase-transition NDX_DONE to be consumed as a
+    /// flist-free echo.
     fn encode_and_send_segment_inner<W: Write>(
         &mut self,
         writer: &mut W,
@@ -451,10 +457,6 @@ impl GeneratorContext {
         flist_writer: &mut protocol::flist::FileListWriter,
         ndx_codec: &mut NdxCodecEnum,
     ) -> io::Result<()> {
-        if segment.count == 0 {
-            return Ok(());
-        }
-
         // Compute ndx_start for this sub-list.
         // upstream: flist.c:2931 - flist->ndx_start = prev->ndx_start + prev->used + 1
         let &(prev_flat_start, prev_ndx_start) = self
@@ -469,6 +471,7 @@ impl GeneratorContext {
             .push((segment.flist_start, seg_ndx_start));
 
         // Signal new sub-list to receiver.
+        // upstream: flist.c:2117 - write_ndx(f, NDX_FLIST_OFFSET - dir_ndx)
         ndx_codec.write_ndx(writer, NDX_FLIST_OFFSET - segment.parent_dir_ndx)?;
 
         // Set first_ndx so abbreviated vs unabbreviated followers are
@@ -485,6 +488,7 @@ impl GeneratorContext {
         }
 
         // End-of-flist marker (zero byte).
+        // upstream: flist.c:2139-2146 - always sends write_end_of_flist()
         flist_writer.write_end(writer, None)?;
 
         debug_log!(
