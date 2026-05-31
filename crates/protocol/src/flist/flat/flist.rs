@@ -248,10 +248,7 @@ impl FlatFileList {
         let count = headers.len();
         self.headers.extend_from_slice(headers);
         let seg_idx = self.segments.len();
-        self.segments.push(Segment {
-            start_index,
-            count,
-        });
+        self.segments.push(Segment { start_index, count });
         seg_idx
     }
 
@@ -275,7 +272,9 @@ impl FlatFileList {
     /// Returns `None` if `index` is out of bounds.
     #[must_use]
     pub fn segment_range(&self, index: usize) -> Option<Range<usize>> {
-        self.segments.get(index).map(|s| s.start_index..s.start_index + s.count)
+        self.segments
+            .get(index)
+            .map(|s| s.start_index..s.start_index + s.count)
     }
 
     /// Returns a slice of all tracked segments.

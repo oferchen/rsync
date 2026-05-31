@@ -1071,14 +1071,8 @@ fn handle_stability_across_large_segment_growth() {
 
     // Verify that segment-0's handles still resolve correctly after all
     // the growth.
-    assert_eq!(
-        flist.paths().resolve(sentinel_name_handle),
-        "sentinel.rs"
-    );
-    assert_eq!(
-        flist.paths().resolve(sentinel_dirname_handle),
-        "src/core"
-    );
+    assert_eq!(flist.paths().resolve(sentinel_name_handle), "sentinel.rs");
+    assert_eq!(flist.paths().resolve(sentinel_dirname_handle), "src/core");
     let decoded = flist.extras().decode(sentinel_extras_ref).unwrap().unwrap();
     assert_eq!(decoded.checksum, Some(vec![0xDE; 16]));
 
