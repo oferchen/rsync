@@ -59,7 +59,11 @@ fn build_mixed_fixture() -> Vec<FileEntry> {
 
     // tests/ directory tree.
     entries.push(FileEntry::new_directory("tests".into(), 0o755));
-    entries.push(FileEntry::new_file("tests/integration.rs".into(), 6144, 0o644));
+    entries.push(FileEntry::new_file(
+        "tests/integration.rs".into(),
+        6144,
+        0o644,
+    ));
     entries.push(FileEntry::new_file("tests/unit.rs".into(), 2048, 0o644));
 
     // Nested directory with extras.
@@ -78,10 +82,7 @@ fn build_mixed_fixture() -> Vec<FileEntry> {
     entries.push(FileEntry::new_block_device("dev/sda".into(), 0o660, 8, 0));
 
     // Another symlink at root level.
-    entries.push(FileEntry::new_symlink(
-        "link_to_src".into(),
-        "src".into(),
-    ));
+    entries.push(FileEntry::new_symlink("link_to_src".into(), "src".into()));
 
     // Directory with content_dir toggled off.
     {
@@ -170,16 +171,8 @@ fn dual_file_list_scalar_parity() {
         assert_eq!(flat_entry.header.size, legacy.size(), "entry {i}: size");
         assert_eq!(flat_entry.header.mode, legacy.mode(), "entry {i}: mode");
         assert_eq!(flat_entry.header.mtime, legacy.mtime(), "entry {i}: mtime");
-        assert_eq!(
-            flat_entry.header.uid(),
-            legacy.uid(),
-            "entry {i}: uid"
-        );
-        assert_eq!(
-            flat_entry.header.gid(),
-            legacy.gid(),
-            "entry {i}: gid"
-        );
+        assert_eq!(flat_entry.header.uid(), legacy.uid(), "entry {i}: uid");
+        assert_eq!(flat_entry.header.gid(), legacy.gid(), "entry {i}: gid");
     }
 }
 
@@ -218,7 +211,11 @@ fn accessor_trait_parity_all_entries() {
         // Scalar metadata.
         assert_eq!(legacy.size(), flat_acc.size(), "entry {i}: size");
         assert_eq!(legacy.mode(), flat_acc.mode(), "entry {i}: mode");
-        assert_eq!(legacy.permissions(), flat_acc.permissions(), "entry {i}: permissions");
+        assert_eq!(
+            legacy.permissions(),
+            flat_acc.permissions(),
+            "entry {i}: permissions"
+        );
         assert_eq!(legacy.mtime(), flat_acc.mtime(), "entry {i}: mtime");
         assert_eq!(legacy.uid(), flat_acc.uid(), "entry {i}: uid");
         assert_eq!(legacy.gid(), flat_acc.gid(), "entry {i}: gid");
@@ -226,10 +223,26 @@ fn accessor_trait_parity_all_entries() {
         // Type queries.
         assert_eq!(legacy.is_file(), flat_acc.is_file(), "entry {i}: is_file");
         assert_eq!(legacy.is_dir(), flat_acc.is_dir(), "entry {i}: is_dir");
-        assert_eq!(legacy.is_symlink(), flat_acc.is_symlink(), "entry {i}: is_symlink");
-        assert_eq!(legacy.is_device(), flat_acc.is_device(), "entry {i}: is_device");
-        assert_eq!(legacy.is_special(), flat_acc.is_special(), "entry {i}: is_special");
-        assert_eq!(legacy.file_type(), flat_acc.file_type(), "entry {i}: file_type");
+        assert_eq!(
+            legacy.is_symlink(),
+            flat_acc.is_symlink(),
+            "entry {i}: is_symlink"
+        );
+        assert_eq!(
+            legacy.is_device(),
+            flat_acc.is_device(),
+            "entry {i}: is_device"
+        );
+        assert_eq!(
+            legacy.is_special(),
+            flat_acc.is_special(),
+            "entry {i}: is_special"
+        );
+        assert_eq!(
+            legacy.file_type(),
+            flat_acc.file_type(),
+            "entry {i}: file_type"
+        );
 
         // Scalar extras decoded via the accessor.
         assert_eq!(
@@ -242,11 +255,7 @@ fn accessor_trait_parity_all_entries() {
             flat_acc.rdev_minor(),
             "entry {i}: rdev_minor"
         );
-        assert_eq!(
-            legacy.acl_ndx(),
-            flat_acc.acl_ndx(),
-            "entry {i}: acl_ndx"
-        );
+        assert_eq!(legacy.acl_ndx(), flat_acc.acl_ndx(), "entry {i}: acl_ndx");
         assert_eq!(
             legacy.def_acl_ndx(),
             flat_acc.def_acl_ndx(),
@@ -369,7 +378,8 @@ fn compare_parity_all_pairs() {
             let concrete = compare_file_entries(&fixture[i], &fixture[j]);
             let generic = compare_entries_generic(&fixture[i], &fixture[j]);
             assert_eq!(
-                concrete, generic,
+                concrete,
+                generic,
                 "compare parity failed for ({}, {})",
                 fixture[i].name(),
                 fixture[j].name(),
@@ -451,9 +461,15 @@ fn extras_round_trip_through_dual_file_list() {
             None => {
                 // Legacy must also have no extras-backed fields.
                 assert!(legacy.rdev_major().is_none(), "entry {i}: unexpected rdev");
-                assert!(legacy.checksum().is_none(), "entry {i}: unexpected checksum");
+                assert!(
+                    legacy.checksum().is_none(),
+                    "entry {i}: unexpected checksum"
+                );
                 assert!(legacy.acl_ndx().is_none(), "entry {i}: unexpected acl_ndx");
-                assert!(legacy.xattr_ndx().is_none(), "entry {i}: unexpected xattr_ndx");
+                assert!(
+                    legacy.xattr_ndx().is_none(),
+                    "entry {i}: unexpected xattr_ndx"
+                );
                 assert_eq!(legacy.atime(), 0, "entry {i}: unexpected atime");
                 assert_eq!(legacy.crtime(), 0, "entry {i}: unexpected crtime");
             }
@@ -484,7 +500,11 @@ fn extras_round_trip_through_dual_file_list() {
                     legacy.def_acl_ndx(),
                     "entry {i}: def_acl_ndx"
                 );
-                assert_eq!(decoded.xattr_ndx, legacy.xattr_ndx(), "entry {i}: xattr_ndx");
+                assert_eq!(
+                    decoded.xattr_ndx,
+                    legacy.xattr_ndx(),
+                    "entry {i}: xattr_ndx"
+                );
 
                 // User/group names.
                 assert_eq!(
@@ -908,8 +928,16 @@ fn stress_500_entries() {
 
         assert_eq!(legacy.size(), flat_acc.size(), "stress entry {i}: size");
         assert_eq!(legacy.mode(), flat_acc.mode(), "stress entry {i}: mode");
-        assert_eq!(legacy.is_file(), flat_acc.is_file(), "stress entry {i}: is_file");
-        assert_eq!(legacy.is_dir(), flat_acc.is_dir(), "stress entry {i}: is_dir");
+        assert_eq!(
+            legacy.is_file(),
+            flat_acc.is_file(),
+            "stress entry {i}: is_file"
+        );
+        assert_eq!(
+            legacy.is_dir(),
+            flat_acc.is_dir(),
+            "stress entry {i}: is_dir"
+        );
         assert_eq!(
             legacy.is_symlink(),
             flat_acc.is_symlink(),
