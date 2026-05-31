@@ -130,7 +130,6 @@ impl DualFileList {
         #[cfg(feature = "flat-flist")]
         {
             self.flat = FlatFileList::new();
-            self.extras = ExtrasArena::new();
         }
     }
 
