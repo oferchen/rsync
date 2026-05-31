@@ -2846,3 +2846,214 @@ fn server_mode_flushes_writer_before_filter_list_read() {
         "writer must be flushed in server mode before reading filter list"
     );
 }
+
+// ---------------------------------------------------------------------------
+// INC_RECURSE SegmentScheduler regression tests
+// ---------------------------------------------------------------------------
+
+#[test]
+fn segment_scheduler_dispatches_when_remaining_below_threshold() {
+    // When remaining entries known to the receiver are below
+    // MIN_FILECNT_LOOKAHEAD, the scheduler should dispatch the next segment.
+    use super::segments::{MIN_FILECNT_LOOKAHEAD, PendingSegment, SegmentScheduler};
+
+    let seg = PendingSegment {
+        parent_dir_ndx: 0,
+        flist_start: 10,
+        count: 500,
+    };
+    let mut scheduler = SegmentScheduler::new(vec![seg]);
+
+    // remaining = 13 (a small initial segment), well below 1000
+    let result = scheduler.next_if_needed(13);
+    assert!(
+        result.is_some(),
+        "scheduler must dispatch when remaining ({}) < MIN_FILECNT_LOOKAHEAD ({})",
+        13,
+        MIN_FILECNT_LOOKAHEAD,
+    );
+}
+
+#[test]
+fn segment_scheduler_blocks_when_remaining_at_threshold() {
+    // When remaining equals MIN_FILECNT_LOOKAHEAD, upstream's condition
+    // `file_total - file_old_total < at_least` is false (1000 < 1000 is false),
+    // so no dispatch should occur.
+    use super::segments::{MIN_FILECNT_LOOKAHEAD, PendingSegment, SegmentScheduler};
+
+    let seg = PendingSegment {
+        parent_dir_ndx: 0,
+        flist_start: 10,
+        count: 500,
+    };
+    let mut scheduler = SegmentScheduler::new(vec![seg]);
+
+    let result = scheduler.next_if_needed(MIN_FILECNT_LOOKAHEAD);
+    assert!(
+        result.is_none(),
+        "scheduler must NOT dispatch when remaining == MIN_FILECNT_LOOKAHEAD"
+    );
+}
+
+#[test]
+fn segment_scheduler_blocks_when_remaining_above_threshold() {
+    // When remaining exceeds MIN_FILECNT_LOOKAHEAD, no dispatch.
+    use super::segments::{MIN_FILECNT_LOOKAHEAD, PendingSegment, SegmentScheduler};
+
+    let seg = PendingSegment {
+        parent_dir_ndx: 0,
+        flist_start: 10,
+        count: 500,
+    };
+    let mut scheduler = SegmentScheduler::new(vec![seg]);
+
+    let result = scheduler.next_if_needed(MIN_FILECNT_LOOKAHEAD + 1);
+    assert!(
+        result.is_none(),
+        "scheduler must NOT dispatch when remaining > MIN_FILECNT_LOOKAHEAD"
+    );
+}
+
+#[test]
+fn segment_scheduler_boundary_dispatches_at_999() {
+    // remaining = 999, which is < 1000, so dispatch must occur.
+    use super::segments::{MIN_FILECNT_LOOKAHEAD, PendingSegment, SegmentScheduler};
+
+    let seg = PendingSegment {
+        parent_dir_ndx: 0,
+        flist_start: 10,
+        count: 500,
+    };
+    let mut scheduler = SegmentScheduler::new(vec![seg]);
+
+    let result = scheduler.next_if_needed(MIN_FILECNT_LOOKAHEAD - 1);
+    assert!(
+        result.is_some(),
+        "scheduler must dispatch when remaining == {} (one below threshold)",
+        MIN_FILECNT_LOOKAHEAD - 1,
+    );
+}
+
+#[test]
+fn segment_scheduler_many_files_deadlock_scenario() {
+    // Regression test for the many-files deadlock (#5085).
+    // Scenario: 1013 total entries, 13 in the initial segment, 1000 in a
+    // pending sub-list. Using dispatched_entry_count (13) instead of
+    // file_list.len() (1013) gives remaining=13 which triggers dispatch.
+    use super::segments::{PendingSegment, SegmentScheduler};
+
+    let seg = PendingSegment {
+        parent_dir_ndx: 1,
+        flist_start: 13,
+        count: 1000,
+    };
+    let mut scheduler = SegmentScheduler::new(vec![seg]);
+
+    // Bug: old code computed remaining = file_list.len() - transferred = 1013 - 0 = 1013
+    // which is >= 1000, so no dispatch occurred. Deadlock.
+    let remaining_buggy = 1013usize;
+    let result_buggy = scheduler.next_if_needed(remaining_buggy);
+    assert!(
+        result_buggy.is_none(),
+        "with total file count (buggy), scheduler incorrectly blocks"
+    );
+
+    // Fix: remaining = dispatched_entry_count - transferred = 13 - 0 = 13
+    // Reset scheduler for the corrected test.
+    let seg = PendingSegment {
+        parent_dir_ndx: 1,
+        flist_start: 13,
+        count: 1000,
+    };
+    let mut scheduler = SegmentScheduler::new(vec![seg]);
+
+    let remaining_fixed = 13usize;
+    let result_fixed = scheduler.next_if_needed(remaining_fixed);
+    assert!(
+        result_fixed.is_some(),
+        "with dispatched_entry_count (fixed), scheduler correctly dispatches"
+    );
+}
+
+#[test]
+fn empty_segment_sends_wire_bytes() {
+    // Regression test for empty-dir flist_done overcounting (#5085).
+    // An empty segment (count==0) must still produce wire output (NDX header
+    // + end-of-flist marker), matching upstream flist.c:2117,2139-2146.
+    // The old code returned early for count==0 producing zero wire bytes,
+    // which desynchronised flist_done_remaining from the receiver.
+    let handshake = test_handshake();
+    let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
+
+    // Set up a minimal initial segment in ndx_segments.
+    ctx.incremental.ndx_segments = vec![(0, 0)];
+
+    // Add a dummy file entry so the file_list is non-empty (flist_start=0).
+    ctx.file_list
+        .push(protocol::flist::FileEntry::new_file("x".into(), 1, 0o644));
+    ctx.full_paths.push(PathBuf::from("x"));
+
+    let seg = super::PendingSegment {
+        parent_dir_ndx: 0,
+        flist_start: 1, // past the single entry, so count=0 segment is empty
+        count: 0,
+    };
+
+    let mut output = Vec::new();
+    let mut flist_writer = ctx.build_flist_writer();
+    let mut ndx_codec = protocol::codec::create_ndx_codec(ctx.protocol().as_u8());
+
+    ctx.encode_and_send_segment(&mut output, &seg, &mut flist_writer, &mut ndx_codec)
+        .unwrap();
+
+    // The output must contain at least the NDX header bytes and the
+    // end-of-flist zero byte. With the old early-return bug, output was empty.
+    assert!(
+        !output.is_empty(),
+        "empty segment must still produce wire output (NDX header + end marker)"
+    );
+    // The last byte should be the end-of-flist marker (0x00).
+    assert_eq!(
+        *output.last().unwrap(),
+        0u8,
+        "last wire byte must be the end-of-flist marker"
+    );
+}
+
+#[test]
+fn nonempty_segment_also_sends_wire_bytes() {
+    // Sanity check: a non-empty segment produces wire output with entries.
+    let handshake = test_handshake();
+    let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
+
+    ctx.incremental.ndx_segments = vec![(0, 0)];
+    let entry = protocol::flist::FileEntry::new_file("a.txt".into(), 10, 0o644);
+    ctx.file_list.push(entry);
+    ctx.full_paths.push(PathBuf::from("a.txt"));
+
+    let seg = super::PendingSegment {
+        parent_dir_ndx: 0,
+        flist_start: 0,
+        count: 1,
+    };
+
+    let mut output_nonempty = Vec::new();
+    let mut flist_writer = ctx.build_flist_writer();
+    let mut ndx_codec = protocol::codec::create_ndx_codec(ctx.protocol().as_u8());
+
+    ctx.encode_and_send_segment(&mut output_nonempty, &seg, &mut flist_writer, &mut ndx_codec)
+        .unwrap();
+
+    // Non-empty segment output must be larger than an empty segment's output
+    // (NDX header + at least one entry + end marker).
+    assert!(
+        output_nonempty.len() > 2,
+        "non-empty segment must produce substantial wire output, got {} bytes",
+        output_nonempty.len()
+    );
+    assert_eq!(
+        *output_nonempty.last().unwrap(),
+        0u8,
+        "last wire byte must be end-of-flist marker"
+    );
+}

@@ -98,13 +98,25 @@ impl GeneratorContext {
         // transition. This counter tracks how many flist-free echoes remain.
         let mut flist_done_remaining: usize = 0;
 
+        // upstream: flist.c:104,2160 - file_total tracks entries the receiver
+        // knows about (initial segment + dispatched sub-lists). Used for the
+        // MIN_FILECNT_LOOKAHEAD comparison in send_extra_file_list().
+        // Unlike self.file_list.len() which includes undispatched segments,
+        // this only counts entries already sent to the receiver.
+        let mut dispatched_entry_count: usize = self
+            .incremental
+            .initial_segment_count
+            .unwrap_or(self.file_list.len());
+
         // upstream: sender.c - dry-run skips data transfer; daemon may close early
         let tolerant = self.config.flags.dry_run;
 
         loop {
             // upstream: sender.c:227 - send extra file lists at top of loop
             if inc_recurse {
-                let remaining = self.file_list.len().saturating_sub(files_transferred);
+                // upstream: flist.c:2104 - file_total - file_old_total < at_least
+                // remaining = entries the receiver knows about minus transferred
+                let remaining = dispatched_entry_count.saturating_sub(files_transferred);
                 while let Some(seg) = scheduler.next_if_needed(remaining) {
                     self.encode_and_send_segment(
                         &mut *writer,
@@ -114,6 +126,7 @@ impl GeneratorContext {
                     )?;
                     segments_sent += 1;
                     flist_done_remaining += 1;
+                    dispatched_entry_count += seg.count;
                 }
 
                 // upstream: flist.c:2534-2545 - send NDX_FLIST_EOF when all sub-lists
@@ -456,7 +469,7 @@ impl GeneratorContext {
 
             // upstream: sender.c:261 - send extra file lists at bottom of loop
             if inc_recurse {
-                let remaining = self.file_list.len().saturating_sub(files_transferred);
+                let remaining = dispatched_entry_count.saturating_sub(files_transferred);
                 while let Some(seg) = scheduler.next_if_needed(remaining) {
                     self.encode_and_send_segment(
                         &mut *writer,
@@ -466,6 +479,7 @@ impl GeneratorContext {
                     )?;
                     segments_sent += 1;
                     flist_done_remaining += 1;
+                    dispatched_entry_count += seg.count;
                 }
             }
 
