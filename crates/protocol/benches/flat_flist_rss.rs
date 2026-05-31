@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 use protocol::flist::{
-    ExtrasRef, FileEntry, FileEntryHeader, FlatFileList, PathInterner, PRESENT_GID, PRESENT_UID,
+    ExtrasRef, FileEntry, FileEntryHeader, FlatFileList, PRESENT_GID, PRESENT_UID, PathInterner,
 };
 
 /// Entry count for the benchmark fixture.
@@ -34,9 +34,9 @@ const ENTRY_COUNT: usize = 1_000_000;
 fn synthetic_size(i: usize) -> u64 {
     match i % 100 {
         0..=59 => (i % 4096) as u64,           // 60% < 4 KiB
-        60..=84 => ((i % 256) * 1024) as u64,   // 25% 4-256 KiB
-        85..=94 => ((i % 2048) * 1024) as u64,  // 10% 256 KiB - 2 MiB
-        _ => ((i % 10240) * 1024) as u64,        // 5% 2-10 MiB
+        60..=84 => ((i % 256) * 1024) as u64,  // 25% 4-256 KiB
+        85..=94 => ((i % 2048) * 1024) as u64, // 10% 256 KiB - 2 MiB
+        _ => ((i % 10240) * 1024) as u64,      // 5% 2-10 MiB
     }
 }
 
@@ -45,16 +45,16 @@ fn synthetic_size(i: usize) -> u64 {
 /// Spread across a ~3 year window (2023-2026) to exercise varied timestamps.
 fn synthetic_mtime(i: usize) -> i64 {
     let base = 1_672_531_200_i64; // 2023-01-01 00:00:00 UTC
-    let spread = 94_608_000_i64;  // ~3 years in seconds
+    let spread = 94_608_000_i64; // ~3 years in seconds
     base + ((i as i64 * 7919) % spread) // prime stride for spread
 }
 
 /// Returns a realistic mode for entry `i`.
 fn synthetic_mode(i: usize) -> u32 {
     match i % 20 {
-        0 => 0o100755, // executable
+        0 => 0o100755,     // executable
         1..=2 => 0o100600, // private
-        _ => 0o100644, // regular
+        _ => 0o100644,     // regular
     }
 }
 
@@ -88,16 +88,14 @@ fn deep_path(i: usize) -> PathBuf {
 
 /// Builds a legacy `Vec<FileEntry>` with realistic metadata and dirname
 /// interning via `PathInterner`.
-fn build_legacy_entries(
-    count: usize,
-    path_fn: fn(usize) -> PathBuf,
-) -> Vec<FileEntry> {
+fn build_legacy_entries(count: usize, path_fn: fn(usize) -> PathBuf) -> Vec<FileEntry> {
     let mut entries = Vec::with_capacity(count);
     let mut interner = PathInterner::with_capacity(2048);
 
     for i in 0..count {
         let path = path_fn(i);
-        let mut entry = FileEntry::new_file(path.clone(), synthetic_size(i), synthetic_mode(i) & 0o7777);
+        let mut entry =
+            FileEntry::new_file(path.clone(), synthetic_size(i), synthetic_mode(i) & 0o7777);
         entry.set_mtime(synthetic_mtime(i), (i as u32) % 1_000_000_000);
         entry.set_uid((i % 1000) as u32);
         entry.set_gid((i % 100) as u32);
@@ -111,18 +109,17 @@ fn build_legacy_entries(
 }
 
 /// Builds a `FlatFileList` with identical data to the legacy builder.
-fn build_flat_entries(
-    count: usize,
-    path_fn: fn(usize) -> PathBuf,
-) -> FlatFileList {
+fn build_flat_entries(count: usize, path_fn: fn(usize) -> PathBuf) -> FlatFileList {
     let mut flat = FlatFileList::with_capacity(count);
 
     for i in 0..count {
         let path = path_fn(i);
-        let basename = path.file_name()
+        let basename = path
+            .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let dirname = path.parent()
+        let dirname = path
+            .parent()
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_default();
 
@@ -201,7 +198,14 @@ fn macos_rss_bytes() -> usize {
     let mut info: MachTaskBasicInfo = unsafe { mem::zeroed() };
     let mut count = (mem::size_of::<MachTaskBasicInfo>() / mem::size_of::<u32>()) as u32;
 
-    let kr = unsafe { task_info(mach_task_self(), MACH_TASK_BASIC_INFO, &mut info, &mut count) };
+    let kr = unsafe {
+        task_info(
+            mach_task_self(),
+            MACH_TASK_BASIC_INFO,
+            &mut info,
+            &mut count,
+        )
+    };
     if kr == 0 {
         info.resident_size as usize
     } else {
@@ -264,7 +268,10 @@ fn bench_legacy_allocation(c: &mut Criterion) {
     group.sample_size(10);
     group.measurement_time(std::time::Duration::from_secs(20));
 
-    for (label, path_fn) in [("shared", shared_path as fn(usize) -> PathBuf), ("deep", deep_path)] {
+    for (label, path_fn) in [
+        ("shared", shared_path as fn(usize) -> PathBuf),
+        ("deep", deep_path),
+    ] {
         group.throughput(Throughput::Elements(ENTRY_COUNT as u64));
         group.bench_with_input(
             BenchmarkId::new("legacy", label),
@@ -287,7 +294,10 @@ fn bench_flat_allocation(c: &mut Criterion) {
     group.sample_size(10);
     group.measurement_time(std::time::Duration::from_secs(20));
 
-    for (label, path_fn) in [("shared", shared_path as fn(usize) -> PathBuf), ("deep", deep_path)] {
+    for (label, path_fn) in [
+        ("shared", shared_path as fn(usize) -> PathBuf),
+        ("deep", deep_path),
+    ] {
         group.throughput(Throughput::Elements(ENTRY_COUNT as u64));
         group.bench_with_input(
             BenchmarkId::new("flat", label),
@@ -422,7 +432,13 @@ fn bench_rss_profile(c: &mut Criterion) {
     let flat_count = flat.len();
     drop(flat);
 
-    report_rss("shared paths", legacy_delta, flat_delta, legacy_count, flat_count);
+    report_rss(
+        "shared paths",
+        legacy_delta,
+        flat_delta,
+        legacy_count,
+        flat_count,
+    );
 
     group.finish();
 }
@@ -440,7 +456,10 @@ fn bench_size_assertions(c: &mut Criterion) {
     eprintln!("--- Size assertions ---");
     eprintln!("  FileEntryHeader: {header_size}B (target: <= 64B)");
     eprintln!("  FileEntry:       {entry_size}B (target: <= 96B)");
-    eprintln!("  Ratio:           {:.2}x", entry_size as f64 / header_size as f64);
+    eprintln!(
+        "  Ratio:           {:.2}x",
+        entry_size as f64 / header_size as f64
+    );
     eprintln!("-----------------------");
 
     assert!(
