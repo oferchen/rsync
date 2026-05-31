@@ -1,16 +1,17 @@
-//! Flat file-list backing store (RSS-A.5).
+//! Flat file-list backing store (RSS-A.5/A.6).
 //!
-//! This module is the phase-1 step of the flat backing-store design in
-//! `docs/design/flat-flist-representation.md`: it defines the fixed-size
-//! [`FileEntryHeader`] node that a contiguous header array will hold, plus
-//! the placeholder handle types it references.
+//! This module implements the flat backing-store design from
+//! `docs/design/flat-flist-representation.md`. It defines the fixed-size
+//! [`FileEntryHeader`] node, the [`PathArena`] string interner (RSS-A.5.c),
+//! the [`ExtrasArena`] blob arena for length-prefixed optional metadata
+//! tails (RSS-A.5.b), and the top-level [`FlatFileList`] container that
+//! owns all three stores.
 //!
-//! It is entirely additive and unwired. Nothing in production references
-//! these types; the legacy `Vec<FileEntry>` path is untouched. The 4-byte
-//! path interner that backs [`PathHandle`] is [`PathArena`] (RSS-A.5.c);
-//! threading `FlatFileList` through the sort, filter, transfer, and engine
-//! consumers is RSS-A.6+. All of that remains gated on RSS-2 allocation
-//! profiling per the design's validation gate.
+//! [`DualFileList`](super::DualFileList) wires the builder path: every
+//! [`FileEntry`](super::FileEntry) pushed through `DualFileList::push` is
+//! converted to a `FileEntryHeader` + `FlatExtras` and appended via
+//! [`FlatFileList::push_with_extras`]. The legacy `Vec<FileEntry>` path
+//! remains untouched and runs in parallel for migration safety.
 
 mod extras;
 mod flist;
