@@ -16,12 +16,12 @@
 //! user/group names, atime/crtime/atime_nsec) - compare field-for-field
 //! against the upstream `F_*` accessors cited in the design.
 //!
-//! Like the rest of the `flat` module this is additive and unwired: nothing in
-//! production references it yet, and the legacy `Vec<FileEntry>` path is
-//! untouched. The arena follows a build-then-freeze lifecycle - append records
-//! while building, read them back by offset once frozen - and offsets are
-//! stable for the life of the arena because tails are written once and never
-//! mutated.
+//! The arena follows a build-then-freeze lifecycle - append records while
+//! building, read them back by offset once frozen - and offsets are stable
+//! for the life of the arena because tails are written once and never
+//! mutated. [`FlatFileList`](super::FlatFileList) owns an `ExtrasArena`
+//! and encodes extras through
+//! [`push_with_extras`](super::FlatFileList::push_with_extras).
 
 /// Presence bit: the [`FlatExtras::link_target`] field is present.
 pub const EXTRA_LINK_TARGET: u16 = 1 << 0;

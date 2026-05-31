@@ -2,14 +2,11 @@
 //!
 //! [`FlatFileList`] is the top-level container for the flat backing store.
 //! It owns a contiguous `Vec<FileEntryHeader>` for scalar metadata, a
-//! [`PathArena`] for interned name/dirname strings, and provides zero-copy
-//! views ([`FlatFileEntry`]) that resolve path handles on the fly.
-//!
-//! This is the phase-1 skeleton (RSS-A.5.d): it supports push, indexed
-//! access, iteration, and sorting by resolved name. Production wiring
-//! (replacing `Vec<FileEntry>` in the transfer pipeline) is RSS-A.6+.
+//! [`PathArena`] for interned name/dirname strings, an [`ExtrasArena`] for
+//! packed optional-field tails, and provides zero-copy views
+//! ([`FlatFileEntry`]) that resolve path handles on the fly.
 
-use super::extras::ExtrasArena;
+use super::extras::{ExtrasArena, FlatExtras};
 use super::header::FileEntryHeader;
 use super::intern::PathArena;
 
@@ -39,20 +36,20 @@ pub struct FlatFileEntry<'a> {
 /// Arena-backed flat file list.
 ///
 /// Stores file-list entries as a contiguous array of [`FileEntryHeader`]
-/// nodes plus a shared [`PathArena`] for deduplicated name/dirname strings.
-/// This layout replaces the legacy `Vec<FileEntry>` with pointer-chasing
-/// flexible-array tails, providing cache-friendly iteration and O(1)
-/// indexed access with a smaller per-entry footprint.
-///
-/// The extras arena (for symlink targets, device numbers, ACL/xattr
-/// indices, and checksums) will be added once `ExtrasArena` lands
-/// (RSS-A.5.e). Until then, the `extras` field on each header is set to
-/// [`ExtrasRef::NO_EXTRAS`].
+/// nodes plus a shared [`PathArena`] for deduplicated name/dirname strings
+/// and an [`ExtrasArena`] for packed optional metadata (symlink targets,
+/// device numbers, ACL/xattr indices, checksums, user/group names,
+/// atime/crtime). This layout replaces the legacy `Vec<FileEntry>` with
+/// pointer-chasing flexible-array tails, providing cache-friendly iteration
+/// and O(1) indexed access with a smaller per-entry footprint.
 pub struct FlatFileList {
     /// Contiguous array of fixed-size entry headers.
     headers: Vec<FileEntryHeader>,
     /// Shared string interner for name and dirname handles.
     paths: PathArena,
+    /// Blob arena for packed extras tails referenced by each header's
+    /// [`ExtrasRef`](super::header::ExtrasRef).
+    extras: ExtrasArena,
 }
 
 impl FlatFileList {
@@ -62,19 +59,21 @@ impl FlatFileList {
         Self {
             headers: Vec::new(),
             paths: PathArena::new(),
+            extras: ExtrasArena::new(),
         }
     }
 
     /// Creates a flat file list pre-allocated for `cap` entries.
     ///
     /// Pre-sizes the header array and the path interner's span table.
-    /// The path interner's byte arena grows on demand since per-string
-    /// lengths are not known up front.
+    /// The path interner's byte arena and the extras arena grow on demand
+    /// since per-entry payload sizes are not known up front.
     #[must_use]
     pub fn with_capacity(cap: usize) -> Self {
         Self {
             headers: Vec::with_capacity(cap),
             paths: PathArena::with_capacity(cap),
+            extras: ExtrasArena::new(),
         }
     }
 
@@ -126,10 +125,24 @@ impl FlatFileList {
     ///
     /// The caller must have already interned the entry's name and dirname
     /// strings into this list's [`PathArena`] (via [`paths_mut`]) and set
-    /// the resulting handles on the header before calling `push`.
-    ///
-    /// [`paths_mut`]: FlatFileList::paths_mut
+    /// the resulting handles on the header before calling `push`. The
+    /// header's [`ExtrasRef`](super::header::ExtrasRef) should already
+    /// reference a tail in this list's [`ExtrasArena`] (via
+    /// [`push_with_extras`](Self::push_with_extras)) or be
+    /// [`ExtrasRef::NO_EXTRAS`](super::header::ExtrasRef::NO_EXTRAS).
     pub fn push(&mut self, header: FileEntryHeader) {
+        self.headers.push(header);
+    }
+
+    /// Encodes `extras` into the extras arena, sets the resulting
+    /// [`ExtrasRef`](super::header::ExtrasRef) on `header`, and appends
+    /// the header to the list.
+    ///
+    /// This is the primary builder entry point when the caller has optional
+    /// metadata to attach. The caller must have already interned name and
+    /// dirname via [`paths_mut`](Self::paths_mut).
+    pub fn push_with_extras(&mut self, mut header: FileEntryHeader, extras: &FlatExtras) {
+        header.extras = self.extras.append(extras);
         self.headers.push(header);
     }
 
@@ -162,6 +175,21 @@ impl FlatFileList {
     /// the corresponding header.
     pub fn paths_mut(&mut self) -> &mut PathArena {
         &mut self.paths
+    }
+
+    /// Returns a shared reference to the extras arena.
+    #[must_use]
+    pub fn extras(&self) -> &ExtrasArena {
+        &self.extras
+    }
+
+    /// Returns a mutable reference to the extras arena.
+    ///
+    /// Used by builders that encode extras separately before pushing a
+    /// header whose [`ExtrasRef`](super::header::ExtrasRef) already
+    /// references a tail in this arena.
+    pub fn extras_mut(&mut self) -> &mut ExtrasArena {
+        &mut self.extras
     }
 }
 

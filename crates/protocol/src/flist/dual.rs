@@ -1,10 +1,13 @@
 //! Dual file-list wrapper for the flat backing-store migration.
 //!
 //! [`DualFileList`] pushes every entry to both the legacy `Vec<FileEntry>`
-//! and (when `flat-flist` is enabled) the arena-backed [`FlatFileList`] +
-//! [`ExtrasArena`] stores. This allows production code to migrate call sites
-//! one at a time: read from either representation, compare results, and
-//! eventually drop the legacy path.
+//! and (when `flat-flist` is enabled) the arena-backed [`FlatFileList`].
+//! The [`FlatFileList`] owns its path interner and extras arena internally,
+//! so optional metadata (symlink targets, device numbers, ACL/xattr
+//! indices, checksums, user/group names, atime/crtime) is encoded through
+//! [`FlatFileList::push_with_extras`]. This allows production code to
+//! migrate call sites one at a time: read from either representation,
+//! compare results, and eventually drop the legacy path.
 //!
 //! Without the `flat-flist` feature, `DualFileList` compiles as a transparent
 //! newtype over `Vec<FileEntry>` with zero overhead - no arena fields, no
@@ -17,8 +20,8 @@ use super::FileEntry;
 
 #[cfg(feature = "flat-flist")]
 use super::flat::{
-    ExtrasArena, FileEntryHeader, FlatExtras, FlatFileList, PRESENT_CONTENT_DIR, PRESENT_GID,
-    PRESENT_LENGTH64, PRESENT_MTIME_NSEC, PRESENT_UID,
+    FileEntryHeader, FlatExtras, FlatFileList, PRESENT_CONTENT_DIR, PRESENT_GID, PRESENT_LENGTH64,
+    PRESENT_MTIME_NSEC, PRESENT_UID,
 };
 
 /// Dual file-list that maintains both legacy and flat representations.
@@ -35,8 +38,6 @@ pub struct DualFileList {
     legacy: Vec<FileEntry>,
     #[cfg(feature = "flat-flist")]
     flat: FlatFileList,
-    #[cfg(feature = "flat-flist")]
-    extras: ExtrasArena,
 }
 
 impl fmt::Debug for DualFileList {
@@ -55,8 +56,6 @@ impl DualFileList {
             legacy: Vec::new(),
             #[cfg(feature = "flat-flist")]
             flat: FlatFileList::new(),
-            #[cfg(feature = "flat-flist")]
-            extras: ExtrasArena::new(),
         }
     }
 
@@ -67,8 +66,6 @@ impl DualFileList {
             legacy: Vec::with_capacity(cap),
             #[cfg(feature = "flat-flist")]
             flat: FlatFileList::with_capacity(cap),
-            #[cfg(feature = "flat-flist")]
-            extras: ExtrasArena::new(),
         }
     }
 
@@ -80,8 +77,8 @@ impl DualFileList {
     pub fn push(&mut self, entry: FileEntry) {
         #[cfg(feature = "flat-flist")]
         {
-            let header = file_entry_to_flat(&entry, &mut self.flat, &mut self.extras);
-            self.flat.push(header);
+            let (header, extras) = file_entry_to_flat(&entry, &mut self.flat);
+            self.flat.push_with_extras(header, &extras);
         }
         self.legacy.push(entry);
     }
@@ -133,7 +130,6 @@ impl DualFileList {
         #[cfg(feature = "flat-flist")]
         {
             self.flat = FlatFileList::new();
-            self.extras = ExtrasArena::new();
         }
     }
 
@@ -155,11 +151,12 @@ impl DualFileList {
 
     /// Returns a shared reference to the extras arena.
     ///
-    /// Available only when the `flat-flist` feature is enabled.
+    /// Available only when the `flat-flist` feature is enabled. Delegates
+    /// to the [`FlatFileList`]'s own extras arena.
     #[cfg(feature = "flat-flist")]
     #[must_use]
-    pub fn extras(&self) -> &ExtrasArena {
-        &self.extras
+    pub fn extras(&self) -> &super::flat::ExtrasArena {
+        self.flat.extras()
     }
 
     /// Returns a mutable reference to the underlying legacy Vec.
@@ -223,22 +220,26 @@ impl<'a> IntoIterator for &'a mut DualFileList {
     }
 }
 
-/// Converts a [`FileEntry`] into a [`FileEntryHeader`], interning paths
-/// and encoding extras into the arena stores.
+/// Converts a [`FileEntry`] into a [`FileEntryHeader`] and [`FlatExtras`],
+/// interning paths through the [`FlatFileList`]'s [`PathArena`].
 ///
 /// The entry's name is split at the last `/` separator into dirname and
 /// basename, each interned through the [`FlatFileList`]'s [`PathArena`].
 /// Optional metadata fields (link target, device numbers, hardlink index,
 /// ACL/xattr indices, checksum, user/group names, atime/crtime) are packed
-/// into a [`FlatExtras`] record and appended to the [`ExtrasArena`].
+/// into the returned [`FlatExtras`]. The caller is responsible for encoding
+/// the extras into the arena (via [`FlatFileList::push_with_extras`]).
+///
+/// The header's [`ExtrasRef`] is set to
+/// [`ExtrasRef::NO_EXTRAS`](super::flat::ExtrasRef::NO_EXTRAS) as a
+/// placeholder - [`FlatFileList::push_with_extras`] overwrites it.
 #[cfg(feature = "flat-flist")]
 fn file_entry_to_flat(
     entry: &FileEntry,
     flist: &mut FlatFileList,
-    extras_arena: &mut ExtrasArena,
-) -> FileEntryHeader {
-    // Split the entry name into dirname and basename at the last '/'.
-    // FileEntry::name() returns the full relative path as a str.
+) -> (FileEntryHeader, FlatExtras) {
+    use super::flat::ExtrasRef;
+
     let full_name = entry.name();
     let (dirname_str, basename_str) = match full_name.rfind('/') {
         Some(pos) => (&full_name[..pos], &full_name[pos + 1..]),
@@ -249,7 +250,6 @@ fn file_entry_to_flat(
     let name_handle = paths.intern(basename_str);
     let dirname_handle = paths.intern(dirname_str);
 
-    // Build presence bitfield for inline scalar fields.
     let mut present: u16 = 0;
     if entry.uid().is_some() {
         present |= PRESENT_UID;
@@ -267,28 +267,26 @@ fn file_entry_to_flat(
         present |= PRESENT_LENGTH64;
     }
 
-    // Build the extras record from optional fields.
     let flat_extras = build_flat_extras(entry);
-    let extras_ref = extras_arena.append(&flat_extras);
 
-    // Pack FileFlags into u16 (primary + extended, dropping extended16
-    // which is rarely used and exceeds the 16-bit header field).
     let flags = entry.flags();
     let flags_u16 = u16::from(flags.primary) | (u16::from(flags.extended) << 8);
 
-    FileEntryHeader {
+    let header = FileEntryHeader {
         mtime: entry.mtime(),
         size: entry.size(),
         uid: entry.uid().unwrap_or(0),
         gid: entry.gid().unwrap_or(0),
         name: name_handle,
         dirname: dirname_handle,
-        extras: extras_ref,
+        extras: ExtrasRef::NO_EXTRAS,
         mtime_nsec: entry.mtime_nsec(),
         mode: entry.mode(),
         flags: flags_u16,
         present,
-    }
+    };
+
+    (header, flat_extras)
 }
 
 /// Builds a [`FlatExtras`] from a [`FileEntry`]'s optional metadata fields.
