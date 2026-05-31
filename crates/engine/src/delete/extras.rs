@@ -146,7 +146,7 @@ fn segment_basenames(entries: &[FileEntry]) -> HashSet<OsString> {
 /// Unix we consult `FileTypeExt` for device/FIFO/socket detection; on
 /// non-Unix platforms `std::fs::FileType` exposes only file / dir /
 /// symlink and everything else collapses to [`DeleteEntryKind::File`].
-fn classify(metadata: &fs::Metadata) -> DeleteEntryKind {
+pub(super) fn classify(metadata: &fs::Metadata) -> DeleteEntryKind {
     let file_type = metadata.file_type();
     if file_type.is_symlink() {
         return DeleteEntryKind::Symlink;
