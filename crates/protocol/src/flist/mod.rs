@@ -63,7 +63,7 @@ pub use flat::{
     EXTRA_GROUP_NAME, EXTRA_HARDLINK, EXTRA_LINK_TARGET, EXTRA_RDEV, EXTRA_USER_NAME, EXTRA_XATTR,
     ExtrasArena, ExtrasError, ExtrasRef, FileEntryHeader, FlatExtras, FlatFileEntry, FlatFileList,
     PRESENT_CONTENT_DIR, PRESENT_GID, PRESENT_LENGTH64, PRESENT_MTIME_NSEC, PRESENT_UID, PathArena,
-    PathHandle,
+    PathHandle, Segment,
 };
 pub use hardlink::{
     DevIno, HardlinkEntry, HardlinkLookup, HardlinkTable, trace_found_flist_match,

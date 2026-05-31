@@ -644,3 +644,439 @@ fn flat_and_legacy_coexist_in_same_scope() {
     // feature flag.
     assert_eq!(legacy.len(), flat.len());
 }
+
+// ---------------------------------------------------------------------------
+// INC_RECURSE segment-append tests (RSS-A.8.c)
+// ---------------------------------------------------------------------------
+
+/// Helper: intern paths and build a header for a (name, dirname, size) triple.
+fn make_header(flist: &mut FlatFileList, name: &str, dirname: &str, size: u64) -> FileEntryHeader {
+    let name_h = flist.paths_mut().intern(name);
+    let dirname_h = flist.paths_mut().intern(dirname);
+    let mut h = empty_header();
+    h.name = name_h;
+    h.dirname = dirname_h;
+    h.size = size;
+    h
+}
+
+/// Helper: intern paths, build header with extras, encode extras into the
+/// arena, and return the ready-to-push header.
+fn make_header_with_extras(
+    flist: &mut FlatFileList,
+    name: &str,
+    dirname: &str,
+    size: u64,
+    extras: &FlatExtras,
+) -> FileEntryHeader {
+    let name_h = flist.paths_mut().intern(name);
+    let dirname_h = flist.paths_mut().intern(dirname);
+    let mut h = empty_header();
+    h.name = name_h;
+    h.dirname = dirname_h;
+    h.size = size;
+    h.extras = flist.extras_mut().append(extras);
+    h
+}
+
+#[test]
+fn segment_single_append_and_handles_valid() {
+    let mut flist = FlatFileList::new();
+
+    // Build headers for one segment.
+    let h0 = make_header(&mut flist, "alpha.rs", "src", 100);
+    let h1 = make_header(&mut flist, "beta.rs", "src", 200);
+    let h2 = make_header(&mut flist, "gamma.rs", "tests", 300);
+
+    let seg_idx = flist.extend_segment(&[h0, h1, h2]);
+
+    assert_eq!(seg_idx, 0);
+    assert_eq!(flist.segment_count(), 1);
+    assert_eq!(flist.len(), 3);
+
+    let seg = flist.segment(0).unwrap();
+    assert_eq!(seg.start_index, 0);
+    assert_eq!(seg.count, 3);
+
+    let range = flist.segment_range(0).unwrap();
+    assert_eq!(range, 0..3);
+
+    // Verify all handles resolve correctly.
+    let e0 = flist.get(0).unwrap();
+    assert_eq!(e0.name, b"alpha.rs");
+    assert_eq!(e0.dirname, b"src");
+    assert_eq!(e0.header.size, 100);
+
+    let e1 = flist.get(1).unwrap();
+    assert_eq!(e1.name, b"beta.rs");
+    assert_eq!(e1.dirname, b"src");
+    assert_eq!(e1.header.size, 200);
+
+    let e2 = flist.get(2).unwrap();
+    assert_eq!(e2.name, b"gamma.rs");
+    assert_eq!(e2.dirname, b"tests");
+    assert_eq!(e2.header.size, 300);
+}
+
+#[test]
+fn segment_multi_append_all_handles_valid() {
+    let mut flist = FlatFileList::new();
+
+    // Segment 0: root-level files.
+    let h0 = make_header(&mut flist, "README", "", 50);
+    let h1 = make_header(&mut flist, "Cargo.toml", "", 80);
+    let s0 = flist.extend_segment(&[h0, h1]);
+    assert_eq!(s0, 0);
+
+    // Record handles from segment 0 for later validation.
+    let seg0_name0 = flist.get(0).unwrap().header.name;
+    let seg0_name1 = flist.get(1).unwrap().header.name;
+
+    // Segment 1: src/ files.
+    let h2 = make_header(&mut flist, "main.rs", "src", 1024);
+    let h3 = make_header(&mut flist, "lib.rs", "src", 512);
+    let h4 = make_header(&mut flist, "util.rs", "src", 256);
+    let s1 = flist.extend_segment(&[h2, h3, h4]);
+    assert_eq!(s1, 1);
+
+    // Segment 2: tests/ files.
+    let h5 = make_header(&mut flist, "integration.rs", "tests", 2048);
+    let s2 = flist.extend_segment(&[h5]);
+    assert_eq!(s2, 2);
+
+    // Segment 3: deeply nested.
+    let h6 = make_header(&mut flist, "mod.rs", "src/engine/delta", 768);
+    let h7 = make_header(&mut flist, "apply.rs", "src/engine/delta", 640);
+    let s3 = flist.extend_segment(&[h6, h7]);
+    assert_eq!(s3, 3);
+
+    // Verify segment metadata.
+    assert_eq!(flist.segment_count(), 4);
+    assert_eq!(flist.len(), 8);
+    assert_eq!(flist.segments().len(), 4);
+
+    assert_eq!(flist.segment_range(0), Some(0..2));
+    assert_eq!(flist.segment_range(1), Some(2..5));
+    assert_eq!(flist.segment_range(2), Some(5..6));
+    assert_eq!(flist.segment_range(3), Some(6..8));
+
+    // Verify that segment-0 handles still resolve after three more segments
+    // were appended (potential Vec reallocation).
+    assert_eq!(flist.get(0).unwrap().header.name, seg0_name0);
+    assert_eq!(flist.get(1).unwrap().header.name, seg0_name1);
+    assert_eq!(flist.paths().resolve(seg0_name0), "README");
+    assert_eq!(flist.paths().resolve(seg0_name1), "Cargo.toml");
+
+    // Verify every entry resolves correctly.
+    let expected: &[(&[u8], &[u8], u64)] = &[
+        (b"README", b"", 50),
+        (b"Cargo.toml", b"", 80),
+        (b"main.rs", b"src", 1024),
+        (b"lib.rs", b"src", 512),
+        (b"util.rs", b"src", 256),
+        (b"integration.rs", b"tests", 2048),
+        (b"mod.rs", b"src/engine/delta", 768),
+        (b"apply.rs", b"src/engine/delta", 640),
+    ];
+    for (i, &(name, dirname, size)) in expected.iter().enumerate() {
+        let e = flist.get(i).unwrap();
+        assert_eq!(e.name, name, "entry {i} name mismatch");
+        assert_eq!(e.dirname, dirname, "entry {i} dirname mismatch");
+        assert_eq!(e.header.size, size, "entry {i} size mismatch");
+    }
+}
+
+#[test]
+fn segment_multi_append_with_extras_handles_valid() {
+    let mut flist = FlatFileList::new();
+
+    // Segment 0: plain files (no extras).
+    let h0 = make_header(&mut flist, "a.txt", "dir", 10);
+    flist.extend_segment(&[h0]);
+
+    // Segment 1: entries with extras.
+    let extras1 = FlatExtras {
+        link_target: Some(b"../target".to_vec()),
+        ..FlatExtras::default()
+    };
+    let h1 = make_header_with_extras(&mut flist, "link", "dir", 0, &extras1);
+
+    let extras2 = FlatExtras {
+        checksum: Some(vec![0xAB; 16]),
+        user_name: Some(b"alice".to_vec()),
+        ..FlatExtras::default()
+    };
+    let h2 = make_header_with_extras(&mut flist, "data.bin", "out", 4096, &extras2);
+    flist.extend_segment(&[h1, h2]);
+
+    // Segment 2: another plain file.
+    let h3 = make_header(&mut flist, "z.txt", "dir", 20);
+    flist.extend_segment(&[h3]);
+
+    assert_eq!(flist.segment_count(), 3);
+    assert_eq!(flist.len(), 4);
+
+    // Verify segment-0 entry is still accessible.
+    let e0 = flist.get(0).unwrap();
+    assert_eq!(e0.name, b"a.txt");
+    assert_eq!(e0.header.extras, ExtrasRef::NO_EXTRAS);
+
+    // Verify segment-1 extras round-trip.
+    let e1 = flist.get(1).unwrap();
+    let d1 = flist.extras().decode(e1.header.extras).unwrap().unwrap();
+    assert_eq!(d1.link_target.as_deref(), Some(b"../target" as &[u8]));
+
+    let e2 = flist.get(2).unwrap();
+    let d2 = flist.extras().decode(e2.header.extras).unwrap().unwrap();
+    assert_eq!(d2.checksum, Some(vec![0xAB; 16]));
+    assert_eq!(d2.user_name, Some(b"alice".to_vec()));
+
+    // Verify segment-2 entry.
+    let e3 = flist.get(3).unwrap();
+    assert_eq!(e3.name, b"z.txt");
+    assert_eq!(e3.header.extras, ExtrasRef::NO_EXTRAS);
+}
+
+#[test]
+fn sort_segment_does_not_affect_other_segments() {
+    let mut flist = FlatFileList::new();
+
+    // Segment 0: intentionally reverse-sorted.
+    let h0 = make_header(&mut flist, "cherry", "fruit", 3);
+    let h1 = make_header(&mut flist, "banana", "fruit", 2);
+    let h2 = make_header(&mut flist, "apple", "fruit", 1);
+    flist.extend_segment(&[h0, h1, h2]);
+
+    // Segment 1: also reverse-sorted.
+    let h3 = make_header(&mut flist, "zeta", "greek", 30);
+    let h4 = make_header(&mut flist, "eta", "greek", 20);
+    let h5 = make_header(&mut flist, "alpha", "greek", 10);
+    flist.extend_segment(&[h3, h4, h5]);
+
+    // Segment 2: single entry (sort is a no-op).
+    let h6 = make_header(&mut flist, "only.txt", "", 99);
+    flist.extend_segment(&[h6]);
+
+    // Sort only segment 1.
+    flist.sort_segment(1);
+
+    // Segment 0 must remain in original (reverse) order.
+    assert_eq!(flist.get(0).unwrap().name, b"cherry");
+    assert_eq!(flist.get(0).unwrap().header.size, 3);
+    assert_eq!(flist.get(1).unwrap().name, b"banana");
+    assert_eq!(flist.get(1).unwrap().header.size, 2);
+    assert_eq!(flist.get(2).unwrap().name, b"apple");
+    assert_eq!(flist.get(2).unwrap().header.size, 1);
+
+    // Segment 1 must now be sorted (alpha, eta, zeta).
+    assert_eq!(flist.get(3).unwrap().name, b"alpha");
+    assert_eq!(flist.get(3).unwrap().header.size, 10);
+    assert_eq!(flist.get(4).unwrap().name, b"eta");
+    assert_eq!(flist.get(4).unwrap().header.size, 20);
+    assert_eq!(flist.get(5).unwrap().name, b"zeta");
+    assert_eq!(flist.get(5).unwrap().header.size, 30);
+
+    // Segment 2 must be untouched.
+    assert_eq!(flist.get(6).unwrap().name, b"only.txt");
+    assert_eq!(flist.get(6).unwrap().header.size, 99);
+}
+
+#[test]
+fn sort_segment_with_dirname_ordering() {
+    let mut flist = FlatFileList::new();
+
+    // Segment with mixed dirnames - sort should order by dirname first,
+    // then by name within the same dirname.
+    let h0 = make_header(&mut flist, "z.rs", "b", 1);
+    let h1 = make_header(&mut flist, "a.rs", "b", 2);
+    let h2 = make_header(&mut flist, "m.rs", "a", 3);
+    flist.extend_segment(&[h0, h1, h2]);
+
+    flist.sort_segment(0);
+
+    // "a/m.rs" < "b/a.rs" < "b/z.rs"
+    let sorted: Vec<(&[u8], &[u8])> = (0..3)
+        .map(|i| {
+            let e = flist.get(i).unwrap();
+            (e.dirname, e.name)
+        })
+        .collect();
+    assert_eq!(
+        sorted,
+        vec![
+            (b"a" as &[u8], b"m.rs" as &[u8]),
+            (b"b" as &[u8], b"a.rs" as &[u8]),
+            (b"b" as &[u8], b"z.rs" as &[u8]),
+        ]
+    );
+}
+
+#[test]
+fn segment_boundary_tracking_accuracy() {
+    let mut flist = FlatFileList::new();
+
+    // Build 5 segments with varying sizes.
+    let sizes = [3, 1, 4, 0, 2];
+
+    for (seg_num, &count) in sizes.iter().enumerate() {
+        let mut headers = Vec::with_capacity(count);
+        for j in 0..count {
+            let name = format!("f{j}.txt");
+            let dirname = format!("seg{seg_num}");
+            headers.push(make_header(&mut flist, &name, &dirname, j as u64));
+        }
+        let idx = flist.extend_segment(&headers);
+        assert_eq!(idx, seg_num, "segment index mismatch");
+    }
+
+    assert_eq!(flist.segment_count(), 5);
+    assert_eq!(flist.len(), 10); // 3+1+4+0+2
+
+    // Verify each segment's boundaries.
+    let mut offset = 0;
+    for (i, &count) in sizes.iter().enumerate() {
+        let seg = flist.segment(i).unwrap();
+        assert_eq!(seg.start_index, offset, "segment {i} start_index wrong");
+        assert_eq!(seg.count, count, "segment {i} count wrong");
+        assert_eq!(
+            flist.segment_range(i),
+            Some(offset..offset + count),
+            "segment {i} range wrong"
+        );
+        offset += count;
+    }
+
+    // Out-of-bounds access.
+    assert!(flist.segment(5).is_none());
+    assert!(flist.segment_range(5).is_none());
+}
+
+#[test]
+fn segment_empty_segment_allowed() {
+    let mut flist = FlatFileList::new();
+
+    let h0 = make_header(&mut flist, "before.txt", "", 10);
+    flist.extend_segment(&[h0]);
+
+    // Empty segment is valid (a directory with no children).
+    let idx = flist.extend_segment(&[]);
+    assert_eq!(idx, 1);
+
+    let h1 = make_header(&mut flist, "after.txt", "", 20);
+    flist.extend_segment(&[h1]);
+
+    assert_eq!(flist.segment_count(), 3);
+    assert_eq!(flist.len(), 2);
+
+    let empty_seg = flist.segment(1).unwrap();
+    assert_eq!(empty_seg.start_index, 1);
+    assert_eq!(empty_seg.count, 0);
+    assert_eq!(flist.segment_range(1), Some(1..1));
+
+    // Entries around the empty segment are unaffected.
+    assert_eq!(flist.get(0).unwrap().name, b"before.txt");
+    assert_eq!(flist.get(1).unwrap().name, b"after.txt");
+}
+
+#[test]
+fn segment_no_segments_by_default() {
+    let flist = FlatFileList::new();
+    assert_eq!(flist.segment_count(), 0);
+    assert!(flist.segments().is_empty());
+    assert!(flist.segment(0).is_none());
+    assert!(flist.segment_range(0).is_none());
+}
+
+#[test]
+fn sort_range_independent_of_segments() {
+    let mut flist = FlatFileList::new();
+
+    // Push entries without using extend_segment.
+    push_entry(&mut flist, "cherry", "", 3);
+    push_entry(&mut flist, "apple", "", 1);
+    push_entry(&mut flist, "banana", "", 2);
+    push_entry(&mut flist, "date", "", 4);
+
+    // Sort only the middle two entries.
+    flist.sort_range(1..3);
+
+    assert_eq!(flist.get(0).unwrap().name, b"cherry");
+    assert_eq!(flist.get(1).unwrap().name, b"apple");
+    assert_eq!(flist.get(2).unwrap().name, b"banana");
+    assert_eq!(flist.get(3).unwrap().name, b"date");
+
+    // Sort all.
+    flist.sort_range(0..4);
+    let sorted: Vec<&[u8]> = (0..4).map(|i| flist.get(i).unwrap().name).collect();
+    assert_eq!(
+        sorted,
+        vec![b"apple" as &[u8], b"banana", b"cherry", b"date"]
+    );
+}
+
+#[test]
+fn headers_slice_returns_correct_range() {
+    let mut flist = FlatFileList::new();
+
+    let h0 = make_header(&mut flist, "a.txt", "", 10);
+    let h1 = make_header(&mut flist, "b.txt", "", 20);
+    let h2 = make_header(&mut flist, "c.txt", "", 30);
+    flist.extend_segment(&[h0, h1, h2]);
+
+    let h3 = make_header(&mut flist, "d.txt", "", 40);
+    flist.extend_segment(&[h3]);
+
+    let slice = flist.headers_slice(0..3);
+    assert_eq!(slice.len(), 3);
+    assert_eq!(slice[0].size, 10);
+    assert_eq!(slice[1].size, 20);
+    assert_eq!(slice[2].size, 30);
+
+    let slice2 = flist.headers_slice(3..4);
+    assert_eq!(slice2.len(), 1);
+    assert_eq!(slice2[0].size, 40);
+}
+
+#[test]
+fn handle_stability_across_large_segment_growth() {
+    let mut flist = FlatFileList::new();
+
+    // Segment 0: a small segment whose handles we will verify later.
+    let extras0 = FlatExtras {
+        checksum: Some(vec![0xDE; 16]),
+        ..FlatExtras::default()
+    };
+    let h0 = make_header_with_extras(&mut flist, "sentinel.rs", "src/core", 42, &extras0);
+    flist.extend_segment(&[h0]);
+
+    let sentinel_name_handle = flist.get(0).unwrap().header.name;
+    let sentinel_dirname_handle = flist.get(0).unwrap().header.dirname;
+    let sentinel_extras_ref = flist.get(0).unwrap().header.extras;
+
+    // Append many segments to force Vec reallocations on all backing stores.
+    for seg in 0..50 {
+        let mut headers = Vec::new();
+        for j in 0..20 {
+            let name = format!("file_{seg}_{j}.rs");
+            let dirname = format!("pkg_{seg}");
+            let h = make_header(&mut flist, &name, &dirname, (seg * 20 + j) as u64);
+            headers.push(h);
+        }
+        flist.extend_segment(&headers);
+    }
+
+    assert_eq!(flist.len(), 1 + 50 * 20); // 1001
+
+    // Verify that segment-0's handles still resolve correctly after all
+    // the growth.
+    assert_eq!(flist.paths().resolve(sentinel_name_handle), "sentinel.rs");
+    assert_eq!(flist.paths().resolve(sentinel_dirname_handle), "src/core");
+    let decoded = flist.extras().decode(sentinel_extras_ref).unwrap().unwrap();
+    assert_eq!(decoded.checksum, Some(vec![0xDE; 16]));
+
+    // Verify via get() too.
+    let e0 = flist.get(0).unwrap();
+    assert_eq!(e0.name, b"sentinel.rs");
+    assert_eq!(e0.dirname, b"src/core");
+    assert_eq!(e0.header.size, 42);
+}
