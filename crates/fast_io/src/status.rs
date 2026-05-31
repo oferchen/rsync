@@ -434,6 +434,7 @@ pub fn platform_io_capabilities() -> Vec<&'static str> {
     {
         caps.push("CopyFileEx");
         caps.push("ReFS reflink");
+        caps.push("FILE_FLAG_DELETE_ON_CLOSE");
         if is_iocp_available() {
             caps.push("IOCP");
         }
@@ -470,6 +471,7 @@ mod tests {
         {
             assert!(caps.contains(&"CopyFileEx"));
             assert!(caps.contains(&"ReFS reflink"));
+            assert!(caps.contains(&"FILE_FLAG_DELETE_ON_CLOSE"));
         }
     }
 
