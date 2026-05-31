@@ -126,6 +126,10 @@ jobs:
         if: matrix.needs_upstream
         run: cargo build --release
 
+      - name: Detect host triple
+        id: host
+        run: echo "triple=$(rustc -vV | awk '/^host:/ { print $2 }')" >>"$GITHUB_OUTPUT"
+
       - name: Run ${{ matrix.target }}
         env:
           OC_RSYNC_BIN: ${{ matrix.needs_upstream && format('{0}/target/release/oc-rsync', github.workspace) || '' }}
@@ -134,6 +138,7 @@ jobs:
           set -uo pipefail
           cd fuzz
           cargo +nightly fuzz run "${{ matrix.target }}" \
+              --target "${{ steps.host.outputs.triple }}" \
               -- -max_total_time="${FUZZ_DURATION}"
           status=$?
           echo "runner_status=${status}" >>"$GITHUB_ENV"

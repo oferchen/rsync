@@ -65,6 +65,10 @@ fi
 echo "fuzz target:   ${target_name}"
 echo "duration:      ${duration}s"
 
+host_triple=$(rustc -vV | awk '/^host:/ { print $2 }')
+
 cd "${fuzz_dir}"
 exec env OC_RSYNC_UPSTREAM_BIN="${upstream}" \
-    cargo +nightly fuzz run "${target_name}" -- -max_total_time="${duration}"
+    cargo +nightly fuzz run "${target_name}" \
+        --target "${host_triple}" \
+        -- -max_total_time="${duration}"
