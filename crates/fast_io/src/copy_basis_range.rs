@@ -317,6 +317,10 @@ mod imp {
 
             if read_ok == 0 {
                 let err = io::Error::last_os_error();
+                if err.raw_os_error() == Some(38) {
+                    // ERROR_HANDLE_EOF: normal end-of-file on basis.
+                    break;
+                }
                 if total == 0 {
                     return Ok(0);
                 }
