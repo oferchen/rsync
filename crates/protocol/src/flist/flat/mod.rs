@@ -17,6 +17,8 @@ mod extras;
 mod flist;
 mod header;
 mod intern;
+#[cfg(feature = "flat-flist-rayon")]
+mod parallel_builder;
 
 #[cfg(test)]
 mod tests;
@@ -32,3 +34,5 @@ pub use header::{
     PRESENT_MTIME_NSEC, PRESENT_UID, PathHandle,
 };
 pub use intern::PathArena;
+#[cfg(feature = "flat-flist-rayon")]
+pub use parallel_builder::{extend_from, ParallelFlatFileListBuilder};
