@@ -55,7 +55,8 @@ pub use emitter::{
 };
 #[cfg(feature = "flat-flist")]
 pub use entry_accessor::{
-    GenericCohortIndex, collect_child_dirs_generic, segment_basenames_generic,
+    GenericCohortIndex, collect_child_dirs_generic, compute_extras_generic,
+    compute_extras_with_cohorts_generic, segment_basenames_generic,
 };
 pub use error::DeleteError;
 pub use extras::{compute_extras, compute_extras_with_cohorts};
