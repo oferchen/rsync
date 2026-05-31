@@ -35,4 +35,4 @@ pub use header::{
 };
 pub use intern::PathArena;
 #[cfg(feature = "flat-flist-rayon")]
-pub use parallel_builder::{extend_from, ParallelFlatFileListBuilder};
+pub use parallel_builder::{ParallelFlatFileListBuilder, extend_from};
