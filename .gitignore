@@ -277,5 +277,6 @@ package-lock.json
 # serena plugin
 .serena/
 
-# github actions pycache
+# python bytecode caches
 .github/**/__pycache__
+tools/**/__pycache__
