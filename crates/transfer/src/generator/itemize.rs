@@ -25,7 +25,7 @@ use super::item_flags::ItemFlags;
 /// - `log.c:708-710` - symlink: `T` when `!preserve_mtimes || !receiver_symlink_times || TIMEFAIL`
 /// - `log.c:716-717` - non-symlink: `T` when `!preserve_mtimes`
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct ItemizeContext {
+pub struct ItemizeContext {
     /// Whether `--times` is active (`preserve_mtimes` in upstream).
     pub preserve_mtimes: bool,
     /// Whether the receiver can set symlink timestamps (`receiver_symlink_times` in upstream).
