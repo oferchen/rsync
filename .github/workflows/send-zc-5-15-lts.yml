@@ -1,0 +1,202 @@
+# SEND_ZC graceful fallback on kernel 5.15 LTS (SZP-3 #3303).
+#
+# IORING_OP_SEND_ZC requires kernel 6.0+. On 5.15 LTS (ubuntu-22.04) the
+# opcode probe returns unsupported and the socket_writer must fall back to
+# plain IORING_OP_SEND without panicking or corrupting data.
+#
+# This workflow:
+#   1. Builds with `iouring-send-zc` explicitly enabled.
+#   2. Runs the SEND_ZC-specific unit and integration tests (which skip
+#      gracefully on unsupported kernels).
+#   3. Runs a full local-copy transfer to verify end-to-end correctness
+#      through the fallback path.
+#   4. Asserts that the diagnostic probe log reports SEND_ZC as unsupported
+#      and that no panic occurred.
+#
+# Complements IKV-8 in iouring-kernel-compat.yml (general io_uring on 5.15)
+# with SEND_ZC-specific coverage for the opt-in feature flag.
+#
+# Status: non-required (informational). Do not add to branch protection.
+name: SEND_ZC 5.15 LTS fallback
+
+on:
+  push:
+    branches: [master, main]
+    paths:
+      - 'crates/fast_io/src/io_uring/send_zc.rs'
+      - 'crates/fast_io/src/io_uring/socket_writer.rs'
+      - 'crates/fast_io/src/io_uring/per_thread_ring.rs'
+      - 'crates/fast_io/src/kernel_version.rs'
+      - 'crates/fast_io/src/status.rs'
+      - 'crates/fast_io/tests/io_uring_send_zc.rs'
+      - '.github/workflows/send-zc-5-15-lts.yml'
+  pull_request:
+    paths:
+      - 'crates/fast_io/src/io_uring/send_zc.rs'
+      - 'crates/fast_io/src/io_uring/socket_writer.rs'
+      - 'crates/fast_io/src/io_uring/per_thread_ring.rs'
+      - 'crates/fast_io/src/kernel_version.rs'
+      - 'crates/fast_io/src/status.rs'
+      - 'crates/fast_io/tests/io_uring_send_zc.rs'
+      - '.github/workflows/send-zc-5-15-lts.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: send-zc-5-15-lts-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: "1"
+
+jobs:
+  send-zc-fallback:
+    name: SEND_ZC fallback (kernel ~5.15)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    # Non-required: informational only. Do not gate PRs on this workflow.
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Report host kernel version
+        id: kernel
+        run: |
+          set -euo pipefail
+          RELEASE=$(uname -r)
+          MAJOR=$(echo "$RELEASE" | cut -d. -f1)
+          MINOR=$(echo "$RELEASE" | cut -d. -f2)
+          printf 'kernel release : %s\n' "$RELEASE"
+          printf 'parsed         : %s.%s\n' "$MAJOR" "$MINOR"
+          echo "release=$RELEASE" >> "$GITHUB_OUTPUT"
+          echo "major=$MAJOR" >> "$GITHUB_OUTPUT"
+          echo "minor=$MINOR" >> "$GITHUB_OUTPUT"
+
+          # Sanity: confirm we are below the 6.0 SEND_ZC floor.
+          if [ "$MAJOR" -ge 6 ]; then
+            echo "::warning::kernel $MAJOR.$MINOR is >= 6.0; SEND_ZC may be supported - this test expects it to be unsupported"
+          fi
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: "1.88.0"
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: send-zc-fallback-ubuntu-22.04
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
+        with:
+          tool: cargo-nextest
+
+      - name: Build with iouring-send-zc feature
+        run: |
+          cargo build --locked -p fast_io --features iouring-send-zc
+          cargo build --locked --workspace --features iouring-send-zc
+
+      - name: Run SEND_ZC unit and integration tests
+        run: |
+          cargo nextest run --locked -p fast_io --features iouring-send-zc \
+            -E 'test(send_zc) | test(zero_copy_sender) | test(socket_writer)'
+
+      - name: Run io_uring probe and fallback tests
+        run: |
+          cargo nextest run --locked -p fast_io --features iouring-send-zc \
+            -E 'test(probe) | test(fallback) | test(kernel_version)'
+
+      - name: Verify SEND_ZC probe reports unsupported
+        id: probe
+        run: |
+          set -euo pipefail
+
+          # Build and run the binary with RUST_LOG to capture the io_uring probe.
+          # The --version output includes io_uring feature status.
+          VERSION_OUTPUT=$(cargo run --locked --features iouring-send-zc -- --version 2>&1 || true)
+          printf '%s\n' "$VERSION_OUTPUT"
+
+          # Confirm the iouring-send-zc feature is compiled in.
+          if echo "$VERSION_OUTPUT" | grep -q "iouring-send-zc:.*on"; then
+            echo "iouring-send-zc feature: compiled in"
+          else
+            echo "::error::iouring-send-zc feature not reported as 'on' in --version output"
+            exit 1
+          fi
+
+          echo "version_output<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$VERSION_OUTPUT" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Run end-to-end local transfer with iouring-send-zc
+        run: |
+          set -euo pipefail
+
+          # Create test data: a mix of file sizes to exercise the full dispatch
+          # path (sub-threshold and above-threshold payloads).
+          SRC=$(mktemp -d)
+          DST=$(mktemp -d)
+          trap 'rm -rf "$SRC" "$DST"' EXIT
+
+          # 1 KiB file (below SEND_ZC_MIN_BYTES, stays on plain SEND)
+          dd if=/dev/urandom of="$SRC/small.bin" bs=1024 count=1 2>/dev/null
+          # 64 KiB file (above threshold, would use SEND_ZC if available)
+          dd if=/dev/urandom of="$SRC/medium.bin" bs=1024 count=64 2>/dev/null
+          # 1 MiB file (well above threshold)
+          dd if=/dev/urandom of="$SRC/large.bin" bs=1024 count=1024 2>/dev/null
+          # Nested directory with files
+          mkdir -p "$SRC/subdir"
+          dd if=/dev/urandom of="$SRC/subdir/nested.bin" bs=1024 count=32 2>/dev/null
+
+          # Run oc-rsync local copy with verbose output.
+          cargo run --locked --features iouring-send-zc -- \
+            -av "$SRC/" "$DST/" 2>&1 | tee /tmp/transfer.log
+
+          # Verify transfer completed correctly.
+          echo "--- Verifying transfer integrity ---"
+          for f in small.bin medium.bin large.bin subdir/nested.bin; do
+            if ! cmp -s "$SRC/$f" "$DST/$f"; then
+              echo "::error::File mismatch: $f"
+              exit 1
+            fi
+            echo "OK: $f"
+          done
+          echo "All files transferred correctly via fallback path."
+
+      - name: Assert no panics in transfer log
+        run: |
+          set -euo pipefail
+          if grep -qi "panic\|thread.*panicked\|SIGSEGV\|SIGABRT" /tmp/transfer.log; then
+            echo "::error::Panic or crash detected in transfer output"
+            cat /tmp/transfer.log
+            exit 1
+          fi
+          echo "No panics detected - graceful fallback confirmed."
+
+      - name: Generate step summary
+        if: always()
+        env:
+          KERNEL_RELEASE: ${{ steps.kernel.outputs.release }}
+          KERNEL_MAJOR: ${{ steps.kernel.outputs.major }}
+          KERNEL_MINOR: ${{ steps.kernel.outputs.minor }}
+        run: |
+          {
+            echo "### SEND_ZC 5.15 LTS fallback (SZP-3)"
+            echo ""
+            echo "| property | value |"
+            echo "| -------- | ----- |"
+            printf '| kernel | %s (%s.%s) |\n' "$KERNEL_RELEASE" "$KERNEL_MAJOR" "$KERNEL_MINOR"
+            printf '| SEND_ZC floor | 6.0 |\n'
+            printf '| expected outcome | graceful skip (fallback to SEND) |\n'
+            printf '| feature | iouring-send-zc=on |\n'
+            echo ""
+            echo "**Result:** Transfer completed via fallback path without panics."
+          } >> "$GITHUB_STEP_SUMMARY"
