@@ -627,7 +627,9 @@ mod tests {
 
     #[test]
     fn to_builder_allows_modification() {
-        let original = VersionInfoConfig::new();
+        let original = VersionInfoConfig::builder()
+            .supports_crtimes(false)
+            .build();
         let modified = original.to_builder().supports_crtimes(true).build();
         assert!(!original.supports_crtimes);
         assert!(modified.supports_crtimes);
