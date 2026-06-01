@@ -40,7 +40,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Build oc-rsync (release)
-        run: cargo build --release --bin oc-rsync
+        run: cargo build --locked --release --bin oc-rsync
 
       - name: Run MDF-8 diff harness
         run: |

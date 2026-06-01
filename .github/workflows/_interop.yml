@@ -395,7 +395,7 @@ jobs:
           set -euo pipefail
           # Ensure release oc-rsync exists for the harness.
           if [[ ! -x target/release/oc-rsync ]]; then
-            cargo build --release --bin oc-rsync
+            cargo build --locked --release --bin oc-rsync
           fi
           bash tools/ci/run_upstream_testsuite.sh
 
@@ -448,7 +448,7 @@ jobs:
           # `--features sender-inc-recurse` instead of reusing the
           # default-OFF binary from the earlier interop step.
           rm -f target/dist/oc-rsync
-          cargo build --profile dist --bin oc-rsync --features sender-inc-recurse
+          cargo build --locked --profile dist --bin oc-rsync --features sender-inc-recurse
           target/dist/oc-rsync --version 2>&1 | head -1
           bash tools/ci/run_interop.sh
 

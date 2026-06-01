@@ -61,7 +61,7 @@ jobs:
 
       - name: Build oc-rsync
         run: |
-          cargo build --release
+          cargo build --locked --release
           mkdir -p target/dist
           cp target/release/oc-rsync target/dist/oc-rsync
 
