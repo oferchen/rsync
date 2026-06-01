@@ -1,4 +1,4 @@
-//! Integration tests for the Windows `FILE_FLAG_DELETE_ON_CLOSE` temp file path.
+//! Integration tests for the Windows delete-on-close temp file path.
 //!
 //! These tests verify that the delete-on-close temp file strategy works
 //! correctly as an alternative to named temp files for auto-cleanup writes.

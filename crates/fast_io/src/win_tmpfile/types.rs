@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use super::low_level;
 
-/// Result of probing `FILE_FLAG_DELETE_ON_CLOSE` support on a filesystem.
+/// Result of probing delete-on-close disposition support on a filesystem.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WinDeleteOnCloseSupport {
     /// Delete-on-close temp files are supported.
@@ -33,11 +33,11 @@ pub fn win_tmpfile_probe(dir: &Path) -> WinDeleteOnCloseSupport {
     }
 }
 
-/// A temporary file opened with `FILE_FLAG_DELETE_ON_CLOSE`.
+/// A temporary file with delete-on-close disposition set via `FileDispositionInfo`.
 ///
 /// The file is automatically deleted when dropped unless
 /// [`commit_to`](Self::commit_to) is called first, which clears the
-/// delete-on-close flag and renames the file to the destination.
+/// delete-on-close disposition and renames the file to the destination.
 ///
 /// # Platform support
 ///
@@ -52,7 +52,8 @@ pub struct WindowsTempFile {
 impl WindowsTempFile {
     /// Opens a delete-on-close temporary file in `dir`.
     ///
-    /// The file is created with a unique name and `FILE_FLAG_DELETE_ON_CLOSE`.
+    /// The file is created with a unique name and its delete-on-close
+    /// disposition is set via `FileDispositionInfo` post-creation.
     /// Write data to it via [`file_mut`](Self::file_mut), then call
     /// [`commit_to`](Self::commit_to) to atomically materialize it at the
     /// destination path.
@@ -93,12 +94,12 @@ impl WindowsTempFile {
     ///
     /// This method:
     /// 1. Flushes and syncs the file to disk.
-    /// 2. Clears the `FILE_FLAG_DELETE_ON_CLOSE` disposition.
+    /// 2. Clears the delete-on-close disposition.
     /// 3. Closes the handle.
     /// 4. Renames the temp file to `dest`, replacing any existing file.
     ///
-    /// If any step fails, the temp file retains its delete-on-close flag
-    /// and will be cleaned up when the handle is closed.
+    /// If any step fails, the temp file retains its delete-on-close
+    /// disposition and will be cleaned up when the handle is closed.
     ///
     /// # Errors
     ///
