@@ -254,17 +254,13 @@ impl VersionInfoReport {
             meta.subprotocol_version()
         );
 
-        write!(writer, "{{\n")?;
-        write!(writer, "  \"program\": \"{}\",\n", meta.program_name())?;
-        write!(writer, "  \"version\": \"{}\",\n", meta.rust_version())?;
-        write!(writer, "  \"protocol\": \"{protocol}\",\n")?;
+        writeln!(writer, "{{")?;
+        writeln!(writer, "  \"program\": \"{}\",", meta.program_name())?;
+        writeln!(writer, "  \"version\": \"{}\",", meta.rust_version())?;
+        writeln!(writer, "  \"protocol\": \"{protocol}\",")?;
         // upstream: json_line("copyright", copyright) where copyright is just
         // "(C) YYYY-YYYY by ..." without a "Copyright" prefix
-        write!(
-            writer,
-            "  \"copyright\": \"{}\",\n",
-            meta.copyright_notice()
-        )?;
+        writeln!(writer, "  \"copyright\": \"{}\",", meta.copyright_notice())?;
         write!(writer, "  \"url\": \"{}\"", meta.source_url())?;
 
         // Capabilities section
@@ -284,7 +280,7 @@ impl VersionInfoReport {
             writer,
             ",\n  \"caveat\": \"rsync comes with ABSOLUTELY NO WARRANTY\""
         )?;
-        write!(writer, "\n}}\n")?;
+        writeln!(writer, "\n}}")?;
         Ok(())
     }
 
@@ -297,7 +293,7 @@ impl VersionInfoReport {
         let config = self.config;
 
         // upstream: "*Capabilities" becomes "capabilities": { ... }
-        write!(writer, ",\n  \"capabilities\": {{\n")?;
+        writeln!(writer, ",\n  \"capabilities\": {{")?;
 
         let file_bits = mem::size_of::<off_t>() * 8;
         let inum_bits = mem::size_of::<ino_t>() * 8;
@@ -306,84 +302,76 @@ impl VersionInfoReport {
 
         // upstream: "64-bit files" -> "file_bits": 64
         // The upstream code converts "N-bit label" to "label_bits": N
-        write!(writer, "    \"file_bits\": {file_bits},\n")?;
-        write!(writer, "    \"inum_bits\": {inum_bits},\n")?;
-        write!(writer, "    \"timestamp_bits\": {timestamp_bits},\n")?;
-        write!(writer, "    \"long_int_bits\": {long_int_bits},\n")?;
+        writeln!(writer, "    \"file_bits\": {file_bits},")?;
+        writeln!(writer, "    \"inum_bits\": {inum_bits},")?;
+        writeln!(writer, "    \"timestamp_bits\": {timestamp_bits},")?;
+        writeln!(writer, "    \"long_int_bits\": {long_int_bits},")?;
 
         // Boolean capabilities
         // upstream: "socketpairs" -> true, "no socketpairs" -> false
-        write!(
+        writeln!(
             writer,
-            "    \"socketpairs\": {},\n",
+            "    \"socketpairs\": {},",
             config.supports_socketpairs
         )?;
-        write!(writer, "    \"symlinks\": {},\n", config.supports_symlinks)?;
-        write!(writer, "    \"symtimes\": {},\n", config.supports_symtimes)?;
-        write!(
-            writer,
-            "    \"hardlinks\": {},\n",
-            config.supports_hardlinks
-        )?;
+        writeln!(writer, "    \"symlinks\": {},", config.supports_symlinks)?;
+        writeln!(writer, "    \"symtimes\": {},", config.supports_symtimes)?;
+        writeln!(writer, "    \"hardlinks\": {},", config.supports_hardlinks)?;
         // upstream: "hardlink-specials" -> "hardlink_specials"
-        write!(
+        writeln!(
             writer,
-            "    \"hardlink_specials\": {},\n",
+            "    \"hardlink_specials\": {},",
             config.supports_hardlink_specials
         )?;
-        write!(
+        writeln!(
             writer,
-            "    \"hardlink_symlinks\": {},\n",
+            "    \"hardlink_symlinks\": {},",
             config.supports_hardlink_symlinks
         )?;
         // upstream: "IPv6" -> "IPv6" (uppercase preserved, hyphens -> underscores)
-        write!(writer, "    \"IPv6\": {},\n", config.supports_ipv6)?;
-        write!(writer, "    \"atimes\": {},\n", config.supports_atimes)?;
-        write!(
+        writeln!(writer, "    \"IPv6\": {},", config.supports_ipv6)?;
+        writeln!(writer, "    \"atimes\": {},", config.supports_atimes)?;
+        writeln!(
             writer,
-            "    \"batchfiles\": {},\n",
+            "    \"batchfiles\": {},",
             config.supports_batchfiles
         )?;
-        write!(writer, "    \"inplace\": {},\n", config.supports_inplace)?;
-        write!(writer, "    \"append\": {},\n", config.supports_append)?;
-        write!(writer, "    \"ACLs\": {},\n", config.supports_acls)?;
-        write!(writer, "    \"xattrs\": {},\n", config.supports_xattrs)?;
+        writeln!(writer, "    \"inplace\": {},", config.supports_inplace)?;
+        writeln!(writer, "    \"append\": {},", config.supports_append)?;
+        writeln!(writer, "    \"ACLs\": {},", config.supports_acls)?;
+        writeln!(writer, "    \"xattrs\": {},", config.supports_xattrs)?;
         // upstream: "optional secluded-args" -> "secluded_args": "optional"
         let secluded_value = match config.secluded_args_mode {
             super::super::SecludedArgsMode::Optional => "optional",
             super::super::SecludedArgsMode::Default => "default",
         };
-        write!(writer, "    \"secluded_args\": \"{secluded_value}\",\n")?;
-        write!(writer, "    \"iconv\": {},\n", config.supports_iconv)?;
-        write!(writer, "    \"prealloc\": {},\n", config.supports_prealloc)?;
-        write!(writer, "    \"stop_at\": {},\n", config.supports_stop_at)?;
-        write!(writer, "    \"crtimes\": {}\n", config.supports_crtimes)?;
+        writeln!(writer, "    \"secluded_args\": \"{secluded_value}\",")?;
+        writeln!(writer, "    \"iconv\": {},", config.supports_iconv)?;
+        writeln!(writer, "    \"prealloc\": {},", config.supports_prealloc)?;
+        writeln!(writer, "    \"stop_at\": {},", config.supports_stop_at)?;
+        writeln!(writer, "    \"crtimes\": {}", config.supports_crtimes)?;
         write!(writer, "  }}")?;
 
         // upstream: "*Optimizations" becomes "optimizations": { ... }
-        write!(writer, ",\n  \"optimizations\": {{\n")?;
-        write!(
+        writeln!(writer, ",\n  \"optimizations\": {{")?;
+        writeln!(writer, "    \"SIMD_roll\": {},", config.supports_simd_roll)?;
+        writeln!(writer, "    \"asm_roll\": {},", config.supports_asm_roll)?;
+        writeln!(
             writer,
-            "    \"SIMD_roll\": {},\n",
-            config.supports_simd_roll
-        )?;
-        write!(writer, "    \"asm_roll\": {},\n", config.supports_asm_roll)?;
-        write!(
-            writer,
-            "    \"openssl_crypto\": {},\n",
+            "    \"openssl_crypto\": {},",
             config.supports_openssl_crypto
         )?;
-        write!(writer, "    \"asm_MD5\": {},\n", config.supports_asm_md5)?;
+        writeln!(writer, "    \"asm_MD5\": {},", config.supports_asm_md5)?;
         // oc-rsync-specific optimizations (not in upstream, but present in config)
-        write!(writer, "    \"mimalloc\": {},\n", config.supports_mimalloc)?;
-        write!(
+        writeln!(writer, "    \"mimalloc\": {},", config.supports_mimalloc)?;
+        writeln!(
             writer,
-            "    \"copy_file_range\": {},\n",
+            "    \"copy_file_range\": {},",
             config.supports_copy_file_range
         )?;
-        write!(writer, "    \"io_uring\": {},\n", config.supports_io_uring)?;
-        write!(writer, "    \"parallel\": {},\n", config.supports_parallel)?;
-        write!(writer, "    \"mmap\": {}\n", config.supports_mmap)?;
+        writeln!(writer, "    \"io_uring\": {},", config.supports_io_uring)?;
+        writeln!(writer, "    \"parallel\": {},", config.supports_parallel)?;
+        writeln!(writer, "    \"mmap\": {}", config.supports_mmap)?;
         write!(writer, "  }}")?;
 
         Ok(())
