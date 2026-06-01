@@ -273,8 +273,15 @@ impl GeneratorContext {
                 }
             }
 
+            // upstream: sender.c:263-266 - preserve the original wire NDX for
+            // echo-back. When INC_RECURSE is active, the receiver sends "gap
+            // NDX" values (ndx_start - 1 per sub-list) that fall below
+            // cur_flist->ndx_start. Upstream echoes the original NDX unchanged;
+            // converting through wire_to_flat_ndx and back via flat_to_wire_ndx
+            // corrupts these gap values (the subtraction wraps to usize::MAX).
+            let wire_ndx = ndx;
             // upstream: rsync.c:424 - i = ndx - cur_flist->ndx_start
-            let ndx = self.wire_to_flat_ndx(ndx);
+            let ndx = self.wire_to_flat_ndx(wire_ndx);
 
             // upstream: rsync.c:227 - read_ndx_and_attrs() reads iflags
             let iflags = ItemFlags::read(&mut *reader, self.protocol.as_u8())?;
@@ -309,7 +316,6 @@ impl GeneratorContext {
             // F_PATHNAME is unset for the in-band file list we build, so the
             // path/slash prefix is empty and we emit just the relative name.
             if ndx < self.file_list.len() {
-                let wire_ndx = self.flat_to_wire_ndx(ndx);
                 let entry_path = self.file_list[ndx].path().display().to_string();
                 debug_log!(Send, 1, "send_files({}, {})", wire_ndx, entry_path);
             }
@@ -321,11 +327,10 @@ impl GeneratorContext {
                 // request and apply xattr-only updates. Without this echo the
                 // wire stream stalls when ITEM_REPORT_XATTR is the only delta.
                 self.maybe_emit_itemize(writer, &iflags, ndx, itemize)?;
-                let ndx_i32 = self.flat_to_wire_ndx(ndx);
                 self.write_ndx_iflags_and_xattr_response(
                     &mut *writer,
                     &mut ndx_write_codec,
-                    ndx_i32,
+                    wire_ndx,
                     &iflags,
                     pending_xattr_response.as_mut(),
                 )?;
@@ -339,11 +344,10 @@ impl GeneratorContext {
             if self.config.flags.dry_run {
                 self.validate_file_index(ndx)?;
                 let file_entry = &self.file_list[ndx];
-                let ndx_i32 = self.flat_to_wire_ndx(ndx);
                 self.write_ndx_iflags_and_xattr_response(
                     &mut *writer,
                     &mut ndx_write_codec,
-                    ndx_i32,
+                    wire_ndx,
                     &iflags,
                     pending_xattr_response.as_mut(),
                 )?;
@@ -385,14 +389,12 @@ impl GeneratorContext {
             }
 
             let file_size = file_entry.size();
-            // upstream: sender.c:389 - write_ndx(f_out, ndx)
-            let ndx_i32 = self.flat_to_wire_ndx(ndx);
 
             if has_basis {
                 let source: Box<dyn Read> = match self.open_source_reader(source_path, file_size) {
                     Ok(r) => r,
                     Err(e) => {
-                        self.record_open_failure(&mut *writer, ndx_i32, &e, &source_path_display)?;
+                        self.record_open_failure(&mut *writer, wire_ndx, &e, &source_path_display)?;
                         continue;
                     }
                 };
@@ -410,7 +412,7 @@ impl GeneratorContext {
                 self.write_ndx_and_attrs(
                     &mut *writer,
                     &mut ndx_write_codec,
-                    ndx_i32,
+                    wire_ndx,
                     &iflags,
                     &sum_head,
                     pending_xattr_response.as_mut(),
@@ -453,7 +455,7 @@ impl GeneratorContext {
                 let source: Box<dyn Read> = match self.open_source_reader(source_path, file_size) {
                     Ok(r) => r,
                     Err(e) => {
-                        self.record_open_failure(&mut *writer, ndx_i32, &e, &source_path_display)?;
+                        self.record_open_failure(&mut *writer, wire_ndx, &e, &source_path_display)?;
                         continue;
                     }
                 };
@@ -461,7 +463,7 @@ impl GeneratorContext {
                 self.write_ndx_and_attrs(
                     &mut *writer,
                     &mut ndx_write_codec,
-                    ndx_i32,
+                    wire_ndx,
                     &iflags,
                     &sum_head,
                     pending_xattr_response.as_mut(),

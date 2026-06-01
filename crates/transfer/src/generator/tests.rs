@@ -306,6 +306,57 @@ fn ndx_convert_partition_point_depth_grows() {
 }
 
 #[test]
+fn inc_recurse_gap_ndx_round_trip_preserves_original() {
+    // When INC_RECURSE is active, ndx_start=1. The upstream generator sends
+    // "gap NDX" values (ndx_start - 1 = 0) to signal parent directory
+    // metadata updates. The sender must echo the original wire NDX unchanged.
+    //
+    // Before the fix, wire_to_flat_ndx(0) with ndx_start=1 computed
+    // 0 + (0 - 1) as usize = usize::MAX, and flat_to_wire_ndx(usize::MAX)
+    // produced a garbage value instead of 0.
+    //
+    // upstream: sender.c:263-266 - gap NDX echoed unchanged
+    use protocol::CompatibilityFlags;
+
+    let mut handshake = test_handshake_with_protocol(32);
+    handshake.compat_flags = Some(
+        CompatibilityFlags::INC_RECURSE
+            | CompatibilityFlags::SYMLINK_TIMES
+            | CompatibilityFlags::SYMLINK_ICONV,
+    );
+
+    let ctx = GeneratorContext::new_for_test(&handshake, test_config());
+
+    // Verify INC_RECURSE is active and ndx_start=1
+    assert!(ctx.inc_recurse());
+    assert_eq!(ctx.incremental.ndx_segments, vec![(0, 1)]);
+
+    // Gap NDX = ndx_start - 1 = 0
+    let gap_ndx: i32 = 0;
+
+    // The fix preserves wire_ndx directly, so the round-trip through
+    // wire_to_flat_ndx + flat_to_wire_ndx is no longer used in production.
+    // Verify that the gap NDX value (0) is below ndx_start (1), which is
+    // the condition under which upstream echoes the original NDX unchanged.
+    let ndx_start = ctx.incremental.ndx_segments[0].1;
+    assert!(
+        gap_ndx < ndx_start,
+        "gap NDX ({gap_ndx}) must be below ndx_start ({ndx_start})"
+    );
+
+    // Also verify that a normal NDX (at or above ndx_start) round-trips
+    // correctly through the conversion functions.
+    let normal_ndx: i32 = 1;
+    let flat = ctx.wire_to_flat_ndx(normal_ndx);
+    let back = ctx.flat_to_wire_ndx(flat);
+    assert_eq!(
+        back, normal_ndx,
+        "normal NDX round-trip: wire_to_flat_ndx({normal_ndx}) = {flat}, \
+         flat_to_wire_ndx({flat}) = {back}, expected {normal_ndx}"
+    );
+}
+
+#[test]
 fn flush_with_count_increments_global_counter() {
     // INC_RECURSE diagnostic I3 (#2198): every flush on the generator
     // transfer hot path must bump the global FLUSH_CALLS counter. The

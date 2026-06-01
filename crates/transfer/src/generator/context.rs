@@ -184,9 +184,14 @@ impl GeneratorContext {
     /// Updates the `NDX_CONVERT_CALLS` / `NDX_CONVERT_CMPS` counters used
     /// for INC_RECURSE diagnostic I4 (#2199).
     ///
+    /// Only used in tests after the NDX echo-back fix - the transfer loop now
+    /// preserves the original wire NDX instead of round-tripping through this
+    /// function, which avoids corrupting INC_RECURSE gap NDX values.
+    ///
     /// # Upstream Reference
     ///
     /// - `generator.c:2321` - `ndx = i + cur_flist->ndx_start`
+    #[cfg(test)]
     pub(crate) fn flat_to_wire_ndx(&self, flat_idx: usize) -> i32 {
         let segments = &self.incremental.ndx_segments;
         NDX_CONVERT_CALLS.fetch_add(1, Ordering::Relaxed);
