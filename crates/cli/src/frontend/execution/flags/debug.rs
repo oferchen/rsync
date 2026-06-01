@@ -35,6 +35,10 @@ pub(crate) struct DebugFlagSettings {
     pub(crate) help_requested: bool,
 }
 
+/// Maximum debug output level. Levels above this are clamped rather than rejected.
+/// upstream: options.c:245 - #define MAX_OUT_LEVEL 4
+const MAX_OUT_LEVEL: u8 = 4;
+
 impl DebugFlagSettings {
     /// Returns an iterator over all flag (name, level) pairs that are set.
     pub(crate) fn iter_enabled_flags(&self) -> impl Iterator<Item = (&'static str, u8)> + '_ {
@@ -68,31 +72,33 @@ impl DebugFlagSettings {
         .filter_map(|(name, level)| level.filter(|&l| l > 0).map(|l| (name, l)))
     }
 
-    const fn enable_all(&mut self) {
-        self.acl = Some(1);
-        self.backup = Some(1);
-        self.bind = Some(1);
-        self.chdir = Some(1);
-        self.connect = Some(1);
-        self.cmd = Some(1);
-        self.del = Some(1);
-        self.deltasum = Some(1);
-        self.dup = Some(1);
-        self.exit = Some(1);
-        self.filter = Some(1);
-        self.flist = Some(1);
-        self.fuzzy = Some(1);
-        self.genr = Some(1);
-        self.hash = Some(1);
-        self.hlink = Some(1);
-        self.iconv = Some(1);
-        self.io = Some(1);
-        self.nstr = Some(1);
-        self.own = Some(1);
-        self.proto = Some(1);
-        self.recv = Some(1);
-        self.send = Some(1);
-        self.time = Some(1);
+    /// Sets all debug flags to the given level.
+    /// upstream: options.c:452-453 - "all" with numeric suffix sets every flag.
+    fn set_all(&mut self, level: u8) {
+        self.acl = Some(level);
+        self.backup = Some(level);
+        self.bind = Some(level);
+        self.chdir = Some(level);
+        self.connect = Some(level);
+        self.cmd = Some(level);
+        self.del = Some(level);
+        self.deltasum = Some(level);
+        self.dup = Some(level);
+        self.exit = Some(level);
+        self.filter = Some(level);
+        self.flist = Some(level);
+        self.fuzzy = Some(level);
+        self.genr = Some(level);
+        self.hash = Some(level);
+        self.hlink = Some(level);
+        self.iconv = Some(level);
+        self.io = Some(level);
+        self.nstr = Some(level);
+        self.own = Some(level);
+        self.proto = Some(level);
+        self.recv = Some(level);
+        self.send = Some(level);
+        self.time = Some(level);
     }
 
     const fn disable_all(&mut self) {
@@ -125,159 +131,57 @@ impl DebugFlagSettings {
     pub(super) fn apply(&mut self, token: &str, display: &str) -> Result<(), Message> {
         let lower = token.to_ascii_lowercase();
 
-        if lower == "all" || lower == "1" {
-            self.enable_all();
+        // upstream: options.c:450-453 - "none" sets all to 0;
+        // "all" with optional numeric suffix sets all flags to min(suffix, MAX_OUT_LEVEL).
+        if lower == "0" || lower == "none" {
+            self.disable_all();
             return Ok(());
         }
 
-        if lower == "none" || lower == "0" {
-            self.disable_all();
+        if lower == "1" || lower == "all" || (lower.starts_with("all") && lower[3..].bytes().all(|b| b.is_ascii_digit())) {
+            let level = if lower == "1" || lower == "all" {
+                1
+            } else {
+                lower[3..].parse::<u8>().unwrap_or(1).min(MAX_OUT_LEVEL)
+            };
+            self.set_all(level);
             return Ok(());
         }
 
         let (normalized, level) = self.parse_flag_and_level(&lower);
 
+        // upstream: options.c:444-445 - clamp to MAX_OUT_LEVEL rather than reject
+        let level = level.min(MAX_OUT_LEVEL);
+
         match normalized {
-            "acl" => {
-                self.acl = Some(level);
-                Ok(())
-            }
-            "backup" => {
-                if level > 2 {
-                    return Err(debug_flag_error(display));
-                }
-                self.backup = Some(level);
-                Ok(())
-            }
-            "bind" => {
-                self.bind = Some(level);
-                Ok(())
-            }
-            "chdir" => {
-                self.chdir = Some(level);
-                Ok(())
-            }
-            "connect" => {
-                if level > 2 {
-                    return Err(debug_flag_error(display));
-                }
-                self.connect = Some(level);
-                Ok(())
-            }
-            "cmd" => {
-                if level > 2 {
-                    return Err(debug_flag_error(display));
-                }
-                self.cmd = Some(level);
-                Ok(())
-            }
-            "del" => {
-                if level > 3 {
-                    return Err(debug_flag_error(display));
-                }
-                self.del = Some(level);
-                Ok(())
-            }
-            "deltasum" => {
-                if level > 4 {
-                    return Err(debug_flag_error(display));
-                }
-                self.deltasum = Some(level);
-                Ok(())
-            }
-            "dup" => {
-                self.dup = Some(level);
-                Ok(())
-            }
-            "exit" => {
-                if level > 3 {
-                    return Err(debug_flag_error(display));
-                }
-                self.exit = Some(level);
-                Ok(())
-            }
-            "filter" => {
-                if level > 3 {
-                    return Err(debug_flag_error(display));
-                }
-                self.filter = Some(level);
-                Ok(())
-            }
-            "flist" => {
-                if level > 4 {
-                    return Err(debug_flag_error(display));
-                }
-                self.flist = Some(level);
-                Ok(())
-            }
-            "fuzzy" => {
-                if level > 2 {
-                    return Err(debug_flag_error(display));
-                }
-                self.fuzzy = Some(level);
-                Ok(())
-            }
-            "genr" => {
-                self.genr = Some(level);
-                Ok(())
-            }
-            "hash" => {
-                self.hash = Some(level);
-                Ok(())
-            }
-            "hlink" => {
-                if level > 3 {
-                    return Err(debug_flag_error(display));
-                }
-                self.hlink = Some(level);
-                Ok(())
-            }
-            "iconv" => {
-                if level > 2 {
-                    return Err(debug_flag_error(display));
-                }
-                self.iconv = Some(level);
-                Ok(())
-            }
-            "io" => {
-                if level > 4 {
-                    return Err(debug_flag_error(display));
-                }
-                self.io = Some(level);
-                Ok(())
-            }
-            "nstr" => {
-                self.nstr = Some(level);
-                Ok(())
-            }
-            "own" => {
-                if level > 2 {
-                    return Err(debug_flag_error(display));
-                }
-                self.own = Some(level);
-                Ok(())
-            }
-            "proto" => {
-                self.proto = Some(level);
-                Ok(())
-            }
-            "recv" => {
-                self.recv = Some(level);
-                Ok(())
-            }
-            "send" => {
-                self.send = Some(level);
-                Ok(())
-            }
-            "time" => {
-                if level > 2 {
-                    return Err(debug_flag_error(display));
-                }
-                self.time = Some(level);
-                Ok(())
-            }
-            _ => Err(debug_flag_error(display)),
+            "acl" => self.acl = Some(level),
+            "backup" => self.backup = Some(level),
+            "bind" => self.bind = Some(level),
+            "chdir" => self.chdir = Some(level),
+            "connect" => self.connect = Some(level),
+            "cmd" => self.cmd = Some(level),
+            "del" => self.del = Some(level),
+            "deltasum" => self.deltasum = Some(level),
+            "dup" => self.dup = Some(level),
+            "exit" => self.exit = Some(level),
+            "filter" => self.filter = Some(level),
+            "flist" => self.flist = Some(level),
+            "fuzzy" => self.fuzzy = Some(level),
+            "genr" => self.genr = Some(level),
+            "hash" => self.hash = Some(level),
+            "hlink" => self.hlink = Some(level),
+            "iconv" => self.iconv = Some(level),
+            "io" => self.io = Some(level),
+            "nstr" => self.nstr = Some(level),
+            "own" => self.own = Some(level),
+            "proto" => self.proto = Some(level),
+            "recv" => self.recv = Some(level),
+            "send" => self.send = Some(level),
+            "time" => self.time = Some(level),
+            _ => return Err(debug_flag_error(display)),
         }
+
+        Ok(())
     }
 
     /// Known debug flag names for disambiguating `no-` prefix vs flag names
