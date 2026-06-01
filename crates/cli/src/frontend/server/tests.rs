@@ -204,6 +204,62 @@ fn detect_secluded_args_ignores_program_name() {
 }
 
 #[test]
+fn detect_secluded_args_in_compact_flag_string() {
+    // upstream: options.c:2604 - server_options() puts 's' at argstr[1]
+    // when protect_args is active, producing e.g. `-slogDtprze.iLsfxCIvu`.
+    let args: Vec<OsString> = vec![
+        OsString::from("rsync"),
+        OsString::from("--server"),
+        OsString::from("-slogDtprze.iLsfxCIvu"),
+        OsString::from("."),
+        OsString::from("dest/"),
+    ];
+    assert!(detect_secluded_args_flag(&args));
+}
+
+#[test]
+fn detect_secluded_args_in_compact_flag_string_middle() {
+    // The 's' can appear anywhere in the transfer flags portion.
+    let args: Vec<OsString> = vec![
+        OsString::from("rsync"),
+        OsString::from("--server"),
+        OsString::from("-logDtprs"),
+        OsString::from("."),
+        OsString::from("dest/"),
+    ];
+    assert!(detect_secluded_args_flag(&args));
+}
+
+#[test]
+fn detect_secluded_args_ignores_s_in_capability_string() {
+    // The 's' after the dot is the symlink-iconv capability char,
+    // not secluded-args. Must not trigger secluded-args detection.
+    // upstream: options.c:3027 - 's' in capability string = ICONV_OPTION
+    let args: Vec<OsString> = vec![
+        OsString::from("rsync"),
+        OsString::from("--server"),
+        OsString::from("-logDtprze.iLsfxCIvu"),
+        OsString::from("."),
+        OsString::from("dest/"),
+    ];
+    assert!(!detect_secluded_args_flag(&args));
+}
+
+#[test]
+fn detect_secluded_args_both_transfer_and_capability_s() {
+    // When 's' appears in both the transfer portion (secluded-args) AND
+    // the capability string (symlink-iconv), should detect it.
+    let args: Vec<OsString> = vec![
+        OsString::from("rsync"),
+        OsString::from("--server"),
+        OsString::from("-slogDtprze.iLsfxCIvu"),
+        OsString::from("."),
+        OsString::from("dest/"),
+    ];
+    assert!(detect_secluded_args_flag(&args));
+}
+
+#[test]
 fn parse_server_args_basic() {
     let args = vec![
         OsString::from("--server"),
