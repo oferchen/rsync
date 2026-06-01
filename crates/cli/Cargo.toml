@@ -82,7 +82,7 @@ rustix = { workspace = true, features = ["fs"] }
 base64 = { workspace = true }
 libc = { workspace = true }
 apple-fs = { path = "../apple-fs" }
-serial_test = "3.1"
+serial_test = "3.5"
 criterion = { workspace = true }
 
 [[bench]]
