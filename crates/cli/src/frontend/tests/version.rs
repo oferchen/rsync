@@ -64,3 +64,28 @@ fn short_version_flag_ignores_additional_operands() {
     let expected = VersionInfoReport::for_client_brand(Brand::Upstream).human_readable();
     assert_eq!(stdout, expected.into_bytes());
 }
+
+#[test]
+fn double_v_renders_json_output() {
+    let (code, stdout, stderr) = run_with_args([OsStr::new(RSYNC), OsStr::new("-VV")]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let expected = VersionInfoReport::for_client_brand(Brand::Upstream).machine_readable();
+    assert_eq!(stdout, expected.into_bytes());
+}
+
+#[test]
+fn double_v_json_contains_atimes_true() {
+    // upstream testsuite/atimes.test requires:
+    //   $RSYNC -VV | grep '"atimes": true'
+    let (code, stdout, _) = run_with_args([OsStr::new(RSYNC), OsStr::new("-VV")]);
+
+    assert_eq!(code, 0);
+    let output = String::from_utf8_lossy(&stdout);
+    assert!(
+        output.contains("\"atimes\": true"),
+        "-VV JSON must contain '\"atimes\": true' for upstream testsuite compatibility"
+    );
+}
