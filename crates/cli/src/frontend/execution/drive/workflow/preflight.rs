@@ -86,9 +86,13 @@ where
 
 /// Prints help, version, or io_uring status text if requested, returning
 /// the exit code.
+///
+/// When `show_version >= 2` (i.e., `-VV`), outputs JSON-formatted capability
+/// information matching upstream rsync's `-VV` format. When `show_version == 1`,
+/// outputs the standard human-readable version banner.
 pub(crate) fn maybe_print_help_or_version<Out>(
     show_help: bool,
-    show_version: bool,
+    show_version: u8,
     show_io_uring_status: bool,
     program_name: ProgramName,
     stdout: &mut Out,
@@ -104,7 +108,17 @@ where
         } else {
             Some(0)
         }
-    } else if show_version {
+    } else if show_version >= 2 {
+        // upstream: options.c - version_opt_cnt > 1 calls print_rsync_version(FNONE)
+        // which outputs JSON capabilities.
+        let report = VersionInfoReport::for_client_brand(program_name.brand());
+        let json = report.json();
+        if stdout.write_all(json.as_bytes()).is_err() {
+            Some(1)
+        } else {
+            Some(0)
+        }
+    } else if show_version == 1 {
         let report = VersionInfoReport::for_client_brand(program_name.brand());
         let banner = report.human_readable();
         if stdout.write_all(banner.as_bytes()).is_err() {

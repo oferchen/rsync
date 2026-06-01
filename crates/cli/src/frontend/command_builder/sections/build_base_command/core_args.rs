@@ -17,7 +17,7 @@ pub(super) fn add_core_args(command: ClapCommand) -> ClapCommand {
                 .long("version")
                 .short('V')
                 .help("Output version information and exit.")
-                .action(ArgAction::SetTrue),
+                .action(ArgAction::Count),
         )
         .arg(
             Arg::new("server")

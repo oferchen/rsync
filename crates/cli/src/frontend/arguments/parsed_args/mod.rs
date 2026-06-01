@@ -34,8 +34,8 @@ pub struct ParsedArgs {
     /// `--help`, `-h`
     pub show_help: bool,
 
-    /// `--version`, `-V`
-    pub show_version: bool,
+    /// `--version`, `-V` (repeatable: 1 = human-readable, 2+ = JSON capabilities).
+    pub show_version: u8,
 
     /// `--io-uring-status` - print the io_uring capability matrix and exit.
     pub show_io_uring_status: bool,

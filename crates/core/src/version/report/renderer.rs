@@ -239,6 +239,213 @@ impl VersionInfoReport {
         rendered
     }
 
+    /// Writes the JSON capability report into the provided writer.
+    ///
+    /// This mirrors upstream rsync's `-VV` output (`print_rsync_version(FNONE)`):
+    /// a JSON object with program metadata, nested `capabilities` and
+    /// `optimizations` objects containing boolean/numeric/string values,
+    /// algorithm lists as arrays, and closing `license`/`caveat` strings.
+    pub fn write_json<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
+        // upstream: usage.c - json_line() macro opens with '{' on first line
+        let meta = &self.metadata;
+        let protocol = format!(
+            "{}.{}",
+            meta.protocol_version().as_u8(),
+            meta.subprotocol_version()
+        );
+
+        write!(writer, "{{\n")?;
+        write!(writer, "  \"program\": \"{}\",\n", meta.program_name())?;
+        write!(writer, "  \"version\": \"{}\",\n", meta.rust_version())?;
+        write!(writer, "  \"protocol\": \"{protocol}\",\n")?;
+        // upstream: json_line("copyright", copyright) where copyright is just
+        // "(C) YYYY-YYYY by ..." without a "Copyright" prefix
+        write!(
+            writer,
+            "  \"copyright\": \"{}\",\n",
+            meta.copyright_notice()
+        )?;
+        write!(writer, "  \"url\": \"{}\"", meta.source_url())?;
+
+        // Capabilities section
+        // upstream: print_info_flags(FNONE) outputs nested JSON objects
+        self.write_json_info_flags(writer)?;
+
+        // Algorithm lists
+        // upstream: output_nno_list(FNONE, ...) outputs JSON arrays
+        self.write_json_algorithm_list(writer, "checksum_list", &self.checksum_algorithms)?;
+        self.write_json_algorithm_list(writer, "compress_list", &self.compress_algorithms)?;
+        self.write_json_algorithm_list(
+            writer,
+            "daemon_auth_list",
+            &self.daemon_auth_algorithms,
+        )?;
+
+        // Closing metadata
+        // upstream: usage.c - json_line("license", "GPLv3")
+        write!(writer, ",\n  \"license\": \"GPLv3\"")?;
+        write!(
+            writer,
+            ",\n  \"caveat\": \"rsync comes with ABSOLUTELY NO WARRANTY\""
+        )?;
+        write!(writer, "\n}}\n")?;
+        Ok(())
+    }
+
+    /// Writes the capabilities and optimizations sections as nested JSON objects.
+    ///
+    /// Mirrors upstream `print_info_flags(FNONE)` which converts each info flag
+    /// into a JSON key-value pair with underscores replacing spaces/hyphens and
+    /// lowercase keys.
+    fn write_json_info_flags<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
+        let config = self.config;
+
+        // upstream: "*Capabilities" becomes "capabilities": { ... }
+        write!(writer, ",\n  \"capabilities\": {{\n")?;
+
+        let file_bits = mem::size_of::<off_t>() * 8;
+        let inum_bits = mem::size_of::<ino_t>() * 8;
+        let timestamp_bits = mem::size_of::<TimeT>() * 8;
+        let long_int_bits = mem::size_of::<i64>() * 8;
+
+        // upstream: "64-bit files" -> "file_bits": 64
+        // The upstream code converts "N-bit label" to "label_bits": N
+        write!(writer, "    \"file_bits\": {file_bits},\n")?;
+        write!(writer, "    \"inum_bits\": {inum_bits},\n")?;
+        write!(writer, "    \"timestamp_bits\": {timestamp_bits},\n")?;
+        write!(writer, "    \"long_int_bits\": {long_int_bits},\n")?;
+
+        // Boolean capabilities
+        // upstream: "socketpairs" -> true, "no socketpairs" -> false
+        write!(
+            writer,
+            "    \"socketpairs\": {},\n",
+            config.supports_socketpairs
+        )?;
+        write!(writer, "    \"symlinks\": {},\n", config.supports_symlinks)?;
+        write!(writer, "    \"symtimes\": {},\n", config.supports_symtimes)?;
+        write!(
+            writer,
+            "    \"hardlinks\": {},\n",
+            config.supports_hardlinks
+        )?;
+        // upstream: "hardlink-specials" -> "hardlink_specials"
+        write!(
+            writer,
+            "    \"hardlink_specials\": {},\n",
+            config.supports_hardlink_specials
+        )?;
+        write!(
+            writer,
+            "    \"hardlink_symlinks\": {},\n",
+            config.supports_hardlink_symlinks
+        )?;
+        // upstream: "IPv6" -> "IPv6" (uppercase preserved, hyphens -> underscores)
+        write!(writer, "    \"IPv6\": {},\n", config.supports_ipv6)?;
+        write!(writer, "    \"atimes\": {},\n", config.supports_atimes)?;
+        write!(
+            writer,
+            "    \"batchfiles\": {},\n",
+            config.supports_batchfiles
+        )?;
+        write!(writer, "    \"inplace\": {},\n", config.supports_inplace)?;
+        write!(writer, "    \"append\": {},\n", config.supports_append)?;
+        write!(writer, "    \"ACLs\": {},\n", config.supports_acls)?;
+        write!(writer, "    \"xattrs\": {},\n", config.supports_xattrs)?;
+        // upstream: "optional secluded-args" -> "secluded_args": "optional"
+        let secluded_value = match config.secluded_args_mode {
+            super::super::SecludedArgsMode::Optional => "optional",
+            super::super::SecludedArgsMode::Default => "default",
+        };
+        write!(
+            writer,
+            "    \"secluded_args\": \"{secluded_value}\",\n"
+        )?;
+        write!(writer, "    \"iconv\": {},\n", config.supports_iconv)?;
+        write!(writer, "    \"prealloc\": {},\n", config.supports_prealloc)?;
+        write!(writer, "    \"stop_at\": {},\n", config.supports_stop_at)?;
+        write!(writer, "    \"crtimes\": {}\n", config.supports_crtimes)?;
+        write!(writer, "  }}")?;
+
+        // upstream: "*Optimizations" becomes "optimizations": { ... }
+        write!(writer, ",\n  \"optimizations\": {{\n")?;
+        write!(
+            writer,
+            "    \"SIMD_roll\": {},\n",
+            config.supports_simd_roll
+        )?;
+        write!(writer, "    \"asm_roll\": {},\n", config.supports_asm_roll)?;
+        write!(
+            writer,
+            "    \"openssl_crypto\": {},\n",
+            config.supports_openssl_crypto
+        )?;
+        write!(writer, "    \"asm_MD5\": {},\n", config.supports_asm_md5)?;
+        // oc-rsync-specific optimizations (not in upstream, but present in config)
+        write!(
+            writer,
+            "    \"mimalloc\": {},\n",
+            config.supports_mimalloc
+        )?;
+        write!(
+            writer,
+            "    \"copy_file_range\": {},\n",
+            config.supports_copy_file_range
+        )?;
+        write!(
+            writer,
+            "    \"io_uring\": {},\n",
+            config.supports_io_uring
+        )?;
+        write!(
+            writer,
+            "    \"parallel\": {},\n",
+            config.supports_parallel
+        )?;
+        write!(writer, "    \"mmap\": {}\n", config.supports_mmap)?;
+        write!(writer, "  }}")?;
+
+        Ok(())
+    }
+
+    /// Writes a named algorithm list as a JSON array.
+    ///
+    /// Mirrors upstream `output_nno_list(FNONE, ...)` which outputs:
+    /// `"checksum_list": [ "xxh128", "md5", ... ]`
+    fn write_json_algorithm_list<W: FmtWrite>(
+        &self,
+        writer: &mut W,
+        name: &str,
+        entries: &[Cow<'static, str>],
+    ) -> fmt::Result {
+        write!(writer, ",\n  \"{name}\": [\n   ")?;
+        // upstream: skip entries starting with '(' (aliases)
+        let filtered: Vec<&str> = entries
+            .iter()
+            .map(|e| e.as_ref())
+            .filter(|e| !e.starts_with('('))
+            .collect();
+        for (i, entry) in filtered.iter().enumerate() {
+            if i > 0 {
+                write!(writer, ",")?;
+            }
+            write!(writer, " \"{entry}\"")?;
+        }
+        write!(writer, "\n  ]")?;
+        Ok(())
+    }
+
+    /// Returns the JSON capability report as an owned string.
+    ///
+    /// This is the `-VV` equivalent of [`human_readable`](Self::human_readable).
+    #[must_use]
+    pub fn json(&self) -> String {
+        let mut rendered = String::new();
+        self.write_json(&mut rendered)
+            .expect("writing to String cannot fail");
+        rendered
+    }
+
     fn write_info_sections<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
         let mut buffer = String::new();
         let mut items = self.info_items().into_iter().peekable();
@@ -703,5 +910,150 @@ mod tests {
             InfoItem::Entry(text) => assert_eq!(text, "no test-cap"),
             _ => panic!("Expected Entry variant"),
         }
+    }
+
+    #[test]
+    fn json_returns_non_empty_string() {
+        let report = VersionInfoReport::default();
+        let output = report.json();
+        assert!(!output.is_empty());
+    }
+
+    #[test]
+    fn json_starts_with_open_brace() {
+        let report = VersionInfoReport::default();
+        let output = report.json();
+        assert!(output.starts_with('{'));
+    }
+
+    #[test]
+    fn json_ends_with_close_brace_newline() {
+        let report = VersionInfoReport::default();
+        let output = report.json();
+        assert!(output.ends_with("}\n"));
+    }
+
+    #[test]
+    fn json_contains_program_key() {
+        let report = VersionInfoReport::for_client_brand(Brand::Upstream);
+        let output = report.json();
+        assert!(output.contains("\"program\""));
+        assert!(output.contains(Brand::Upstream.client_program_name()));
+    }
+
+    #[test]
+    fn json_contains_version_key() {
+        let report = VersionInfoReport::default();
+        let output = report.json();
+        assert!(output.contains("\"version\""));
+    }
+
+    #[test]
+    fn json_contains_protocol_key() {
+        let report = VersionInfoReport::default();
+        let output = report.json();
+        assert!(output.contains("\"protocol\""));
+    }
+
+    #[test]
+    fn json_contains_capabilities_section() {
+        let report = VersionInfoReport::default();
+        let output = report.json();
+        assert!(output.contains("\"capabilities\""));
+    }
+
+    #[test]
+    fn json_contains_optimizations_section() {
+        let report = VersionInfoReport::default();
+        let output = report.json();
+        assert!(output.contains("\"optimizations\""));
+    }
+
+    #[test]
+    fn json_contains_atimes_key() {
+        let report = VersionInfoReport::default();
+        let output = report.json();
+        assert!(output.contains("\"atimes\""));
+    }
+
+    #[test]
+    fn json_contains_crtimes_key() {
+        let report = VersionInfoReport::default();
+        let output = report.json();
+        assert!(output.contains("\"crtimes\""));
+    }
+
+    #[test]
+    fn json_contains_acls_key() {
+        let report = VersionInfoReport::default();
+        let output = report.json();
+        assert!(output.contains("\"ACLs\""));
+    }
+
+    #[test]
+    fn json_contains_xattrs_key() {
+        let report = VersionInfoReport::default();
+        let output = report.json();
+        assert!(output.contains("\"xattrs\""));
+    }
+
+    #[test]
+    fn json_contains_license() {
+        let report = VersionInfoReport::default();
+        let output = report.json();
+        assert!(output.contains("\"license\": \"GPLv3\""));
+    }
+
+    #[test]
+    fn json_contains_checksum_list() {
+        let report = VersionInfoReport::default();
+        let output = report.json();
+        assert!(output.contains("\"checksum_list\""));
+    }
+
+    #[test]
+    fn json_contains_compress_list() {
+        let report = VersionInfoReport::default();
+        let output = report.json();
+        assert!(output.contains("\"compress_list\""));
+    }
+
+    #[test]
+    fn json_contains_daemon_auth_list() {
+        let report = VersionInfoReport::default();
+        let output = report.json();
+        assert!(output.contains("\"daemon_auth_list\""));
+    }
+
+    #[test]
+    fn json_atimes_reflects_config() {
+        let config = VersionInfoConfig::builder().supports_atimes(true).build();
+        let report = VersionInfoReport::new(config);
+        let output = report.json();
+        assert!(output.contains("\"atimes\": true"));
+    }
+
+    #[test]
+    fn json_atimes_false_reflects_config() {
+        let config = VersionInfoConfig::builder().supports_atimes(false).build();
+        let report = VersionInfoReport::new(config);
+        let output = report.json();
+        assert!(output.contains("\"atimes\": false"));
+    }
+
+    #[test]
+    fn json_skips_parenthesized_checksum_aliases() {
+        let report = VersionInfoReport::default();
+        let output = report.json();
+        // The default checksum list includes "(xxhash-rust)" which should be skipped
+        assert!(!output.contains("(xxhash-rust)"));
+    }
+
+    #[test]
+    fn write_json_to_string() {
+        let report = VersionInfoReport::default();
+        let mut output = String::new();
+        report.write_json(&mut output).unwrap();
+        assert!(!output.is_empty());
     }
 }
