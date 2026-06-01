@@ -1,17 +1,27 @@
 //! Low-level Win32 wrappers for delete-on-close temporary files.
 //!
-//! On Windows, `FILE_FLAG_DELETE_ON_CLOSE` creates a named file that the
-//! kernel automatically deletes when the last handle to it is closed. This
-//! provides crash-safe cleanup semantics analogous to Linux `O_TMPFILE`:
-//! if the process crashes before commit, no orphaned temp file remains.
+//! On Windows, crash-safe temp files are implemented via post-creation
+//! `FileDispositionInfo` rather than the `FILE_FLAG_DELETE_ON_CLOSE` creation
+//! flag. The creation-time flag cannot be reliably cleared on Windows Server
+//! 2022/2025 via `SetFileInformationByHandle(FileDispositionInfo, FALSE)`,
+//! so we instead:
 //!
-//! The commit path clears the delete-on-close disposition via
-//! `SetFileInformationByHandle(FileDispositionInfo)` so the file survives
-//! handle close, then renames it to the destination.
+//! 1. Create the file with `FILE_ATTRIBUTE_NORMAL` and `CREATE_NEW` (no
+//!    delete-on-close flag at creation time).
+//! 2. Immediately set `FileDispositionInfo = TRUE` post-creation, which
+//!    instructs the kernel to delete the file when the last handle closes.
+//!    This provides crash-safety - if the process dies, the kernel deletes
+//!    the orphaned temp file.
+//! 3. On commit, clear the disposition with `FileDispositionInfo = FALSE`.
+//!    Because the disposition was set post-creation (not at creation time),
+//!    clearing it reliably works across all Windows versions including
+//!    Server 2022/2025.
+//!
+//! The `DELETE` access right is required in `CreateFileW` for
+//! `SetFileInformationByHandle(FileDispositionInfo)` to succeed.
 //!
 //! # Kernel requirements
 //!
-//! - `FILE_FLAG_DELETE_ON_CLOSE`: Windows Vista+ (all supported versions).
 //! - `SetFileInformationByHandle(FileDispositionInfo)`: Windows Vista+.
 //! - `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`: Windows NT 3.1+.
 
@@ -24,8 +34,8 @@ mod windows {
 
     use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
     use windows_sys::Win32::Storage::FileSystem::{
-        CREATE_NEW, CreateFileW, DELETE, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_DELETE_ON_CLOSE,
-        FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        CREATE_NEW, CreateFileW, DELETE, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_READ,
+        FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ,
     };
 
     /// Counter for generating unique temp file names.
@@ -33,14 +43,16 @@ mod windows {
 
     /// Creates a delete-on-close temporary file in `dir`.
     ///
-    /// The file is created with `FILE_FLAG_DELETE_ON_CLOSE` which instructs
-    /// the kernel to delete the file when the last handle is closed. This
-    /// provides automatic cleanup on crash or early return - no orphaned
-    /// temp files.
+    /// The file is created with `FILE_ATTRIBUTE_NORMAL` (no creation-time
+    /// delete-on-close flag), then `FileDispositionInfo = TRUE` is set
+    /// post-creation. This provides crash-safe cleanup (kernel deletes
+    /// the file if the process dies) while allowing reliable clearing of
+    /// the disposition on commit.
     ///
     /// The file is opened with `FILE_SHARE_READ | FILE_SHARE_DELETE` so
     /// external processes can read it (e.g., virus scanners) and the
-    /// rename-on-commit path works.
+    /// rename-on-commit path works. The `DELETE` access right is included
+    /// as required by `SetFileInformationByHandle(FileDispositionInfo)`.
     ///
     /// Returns the opened file and the path of the temp file on disk.
     ///
@@ -55,6 +67,7 @@ mod windows {
     /// - The directory does not exist
     /// - Permission denied
     /// - All generated unique names collide (extremely unlikely)
+    /// - `SetFileInformationByHandle` fails to set the disposition
     pub fn open_delete_on_close_tmpfile(dir: &Path) -> io::Result<(File, PathBuf)> {
         let pid = std::process::id();
         // Retry with different unique names on collision (CREATE_NEW fails
@@ -68,9 +81,10 @@ mod windows {
 
             // SAFETY: `wide_path` is a valid null-terminated wide string.
             // `CREATE_NEW` fails if the file already exists, preventing
-            // races. `FILE_FLAG_DELETE_ON_CLOSE` ensures kernel-level
-            // cleanup. The returned handle is valid on success and is
-            // immediately wrapped in a `File` which owns it.
+            // races. The returned handle is valid on success and is
+            // immediately wrapped in a `File` which owns it. `DELETE`
+            // access right is required for `SetFileInformationByHandle`
+            // with `FileDispositionInfo`.
             #[allow(unsafe_code)]
             let handle = unsafe {
                 CreateFileW(
@@ -79,7 +93,7 @@ mod windows {
                     FILE_SHARE_READ | FILE_SHARE_DELETE,
                     std::ptr::null(),
                     CREATE_NEW,
-                    FILE_ATTRIBUTE_NORMAL | FILE_FLAG_DELETE_ON_CLOSE,
+                    FILE_ATTRIBUTE_NORMAL,
                     std::ptr::null_mut(),
                 )
             };
@@ -102,6 +116,15 @@ mod windows {
                 File::from_raw_handle(handle as *mut std::ffi::c_void)
             };
 
+            // Set delete-on-close disposition post-creation for crash safety.
+            // If this fails, clean up the file manually since there is no
+            // creation-time flag to rely on.
+            if let Err(e) = set_delete_on_close(&file) {
+                drop(file);
+                let _ = std::fs::remove_file(&temp_path);
+                return Err(e);
+            }
+
             return Ok((file, temp_path));
         }
 
@@ -111,15 +134,68 @@ mod windows {
         ))
     }
 
+    /// Sets the delete-on-close disposition on an open file handle.
+    ///
+    /// After calling this, the kernel will delete the file when the last
+    /// handle is closed. This provides crash-safety: if the process dies
+    /// without committing, the temp file is automatically cleaned up.
+    ///
+    /// This is called immediately after file creation to establish the
+    /// delete-on-close semantic via post-creation disposition rather than
+    /// the `FILE_FLAG_DELETE_ON_CLOSE` creation flag.
+    ///
+    /// # Arguments
+    ///
+    /// * `file` - open handle with `DELETE` access right.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `SetFileInformationByHandle` fails.
+    pub fn set_delete_on_close(file: &File) -> io::Result<()> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FileDispositionInfo, SetFileInformationByHandle,
+        };
+
+        // FILE_DISPOSITION_INFO has a single BOOLEAN field `DeleteFile`.
+        // Setting it to TRUE (1) marks the file for deletion on close.
+        let disposition_info: u8 = 1; // TRUE = delete on close
+
+        // SAFETY: `file.as_raw_handle()` returns a valid handle opened
+        // with `DELETE` access right. `SetFileInformationByHandle` with
+        // `FileDispositionInfo` and a `FILE_DISPOSITION_INFO` struct
+        // (which is a single BOOLEAN byte) sets the delete-on-close
+        // disposition. The buffer pointer and size match the struct layout.
+        #[allow(unsafe_code)]
+        let result = unsafe {
+            SetFileInformationByHandle(
+                file.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE,
+                FileDispositionInfo,
+                std::ptr::addr_of!(disposition_info).cast(),
+                std::mem::size_of::<u8>() as u32,
+            )
+        };
+
+        if result == 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        Ok(())
+    }
+
     /// Clears the delete-on-close disposition so the file survives handle close.
     ///
     /// After calling this, the file will NOT be deleted when the handle is
     /// closed. This is the first step of the commit sequence: clear the
-    /// flag, then rename to the final destination.
+    /// disposition, then rename to the final destination.
+    ///
+    /// Because the disposition was set post-creation (not via the
+    /// `FILE_FLAG_DELETE_ON_CLOSE` creation flag), clearing it reliably
+    /// works across all Windows versions including Server 2022/2025.
     ///
     /// # Arguments
     ///
-    /// * `file` - open handle to the delete-on-close temp file.
+    /// * `file` - open handle to the temp file with disposition set.
     ///
     /// # Errors
     ///
@@ -131,12 +207,12 @@ mod windows {
         };
 
         // FILE_DISPOSITION_INFO has a single BOOLEAN field `DeleteFile`.
-        // Setting it to FALSE (0) clears the delete-on-close flag.
+        // Setting it to FALSE (0) clears the delete-on-close disposition.
         let disposition_info: u8 = 0; // FALSE = do NOT delete on close
 
         // SAFETY: `file.as_raw_handle()` returns a valid handle opened
-        // with `FILE_FLAG_DELETE_ON_CLOSE`. `SetFileInformationByHandle`
-        // with `FileDispositionInfo` and a `FILE_DISPOSITION_INFO` struct
+        // with `DELETE` access right. `SetFileInformationByHandle` with
+        // `FileDispositionInfo` and a `FILE_DISPOSITION_INFO` struct
         // (which is a single BOOLEAN byte) clears the delete-on-close
         // disposition. The buffer pointer and size match the struct layout.
         #[allow(unsafe_code)]
@@ -238,9 +314,9 @@ mod windows {
     /// Probes whether delete-on-close temp files work on the filesystem
     /// containing `dir`.
     ///
-    /// Creates a probe file with `FILE_FLAG_DELETE_ON_CLOSE`, writes a
-    /// single byte to verify it works, then drops the handle (which
-    /// triggers deletion). The result is cached process-wide.
+    /// Creates a probe file, sets the delete-on-close disposition via
+    /// `FileDispositionInfo`, then drops the handle (which triggers
+    /// deletion). The result is cached process-wide.
     ///
     /// # Arguments
     ///
@@ -272,7 +348,7 @@ mod windows {
     fn probe_delete_on_close(dir: &Path) -> bool {
         match open_delete_on_close_tmpfile(dir) {
             Ok((file, _path)) => {
-                // Dropping the file triggers deletion via FILE_FLAG_DELETE_ON_CLOSE.
+                // Dropping the file triggers deletion via FileDispositionInfo.
                 drop(file);
                 true
             }
@@ -390,7 +466,7 @@ mod windows {
 #[cfg(target_os = "windows")]
 pub use windows::{
     clear_delete_on_close, commit_delete_on_close, delete_on_close_available,
-    open_delete_on_close_tmpfile, rename_temp_to_dest,
+    open_delete_on_close_tmpfile, rename_temp_to_dest, set_delete_on_close,
 };
 
 /// Stub: delete-on-close temp files are only available on Windows.
@@ -407,7 +483,16 @@ pub fn open_delete_on_close_tmpfile(
 ) -> std::io::Result<(std::fs::File, std::path::PathBuf)> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
-        "FILE_FLAG_DELETE_ON_CLOSE is only supported on Windows",
+        "delete-on-close temp files are only supported on Windows",
+    ))
+}
+
+/// Stub: delete-on-close temp files are only available on Windows.
+#[cfg(not(target_os = "windows"))]
+pub fn set_delete_on_close(_file: &std::fs::File) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "delete-on-close temp files are only supported on Windows",
     ))
 }
 
@@ -416,7 +501,7 @@ pub fn open_delete_on_close_tmpfile(
 pub fn clear_delete_on_close(_file: &std::fs::File) -> std::io::Result<()> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
-        "FILE_FLAG_DELETE_ON_CLOSE is only supported on Windows",
+        "delete-on-close temp files are only supported on Windows",
     ))
 }
 
@@ -428,7 +513,7 @@ pub fn rename_temp_to_dest(
 ) -> std::io::Result<()> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
-        "FILE_FLAG_DELETE_ON_CLOSE is only supported on Windows",
+        "delete-on-close temp files are only supported on Windows",
     ))
 }
 
@@ -441,6 +526,6 @@ pub fn commit_delete_on_close(
 ) -> std::io::Result<()> {
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
-        "FILE_FLAG_DELETE_ON_CLOSE is only supported on Windows",
+        "delete-on-close temp files are only supported on Windows",
     ))
 }
