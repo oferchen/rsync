@@ -1,8 +1,13 @@
 //! File processing logic for the disk commit thread.
 //!
 //! Handles chunked file writes, whole-file coalesced writes, output file
-//! opening (device, inplace, temp+rename), and post-commit metadata
-//! application.
+//! opening (device, inplace, temp+rename), and metadata application.
+//!
+//! Metadata is applied to the temp file before rename to match upstream
+//! `rsync.c:finish_transfer()` line 748: "Change permissions before putting
+//! the file into place." When rename crosses device boundaries (EXDEV), a
+//! copy+remove fallback re-applies metadata to the final path since
+//! `fs::copy` does not preserve ownership, timestamps, ACLs, or xattrs.
 
 use std::fs;
 use std::io;
@@ -101,7 +106,22 @@ pub(super) fn process_file(
                 output.flush_and_sync(config.do_fsync, &begin.file_path)?;
                 output.finish(config.do_fsync, &begin.file_path)?;
 
-                commit_file(
+                // upstream: rsync.c:748 finish_transfer() - "Change
+                // permissions before putting the file into place."
+                // Apply metadata to the temp file before rename so the
+                // file is already correct when it appears at the final
+                // path. For inplace/device, metadata is applied after.
+                let pre_meta_error = if needs_rename {
+                    apply_file_metadata(
+                        cleanup_guard.path(),
+                        &begin,
+                        config,
+                    )
+                } else {
+                    None
+                };
+
+                let was_copy = commit_file(
                     &begin,
                     config,
                     &mut cleanup_guard,
@@ -109,7 +129,17 @@ pub(super) fn process_file(
                     bytes_written,
                 )?;
 
-                let metadata_error = apply_post_commit_metadata(&begin, config);
+                // After commit: apply metadata for inplace/device paths
+                // (no pre-rename step), or re-apply after cross-device
+                // copy since fs::copy does not preserve ownership,
+                // timestamps, ACLs, or xattrs.
+                let metadata_error = if needs_rename && !was_copy {
+                    pre_meta_error
+                } else if needs_rename && was_copy {
+                    apply_file_metadata(&begin.file_path, &begin, config)
+                } else {
+                    apply_file_metadata(&begin.file_path, &begin, config)
+                };
 
                 let computed_checksum = finalize_checksum(checksum_verifier);
 
@@ -191,7 +221,15 @@ pub(super) fn process_whole_file(
     output.flush_and_sync(config.do_fsync, &begin.file_path)?;
     output.finish(config.do_fsync, &begin.file_path)?;
 
-    commit_file(
+    // upstream: rsync.c:748 finish_transfer() - apply metadata to the
+    // temp file before rename (see process_file for full rationale).
+    let pre_meta_error = if needs_rename {
+        apply_file_metadata(cleanup_guard.path(), &begin, config)
+    } else {
+        None
+    };
+
+    let was_copy = commit_file(
         &begin,
         config,
         &mut cleanup_guard,
@@ -199,7 +237,13 @@ pub(super) fn process_whole_file(
         bytes_written,
     )?;
 
-    let metadata_error = apply_post_commit_metadata(&begin, config);
+    let metadata_error = if needs_rename && !was_copy {
+        pre_meta_error
+    } else if needs_rename && was_copy {
+        apply_file_metadata(&begin.file_path, &begin, config)
+    } else {
+        apply_file_metadata(&begin.file_path, &begin, config)
+    };
 
     let computed_checksum = finalize_checksum(checksum_verifier);
 
@@ -342,6 +386,10 @@ fn make_writer<'a>(
 
 /// Performs backup, atomic rename, and inplace truncation after writing.
 ///
+/// Returns `true` when a cross-device copy was needed (EXDEV fallback),
+/// `false` otherwise. Callers use this to decide whether metadata must be
+/// re-applied to the final path.
+///
 /// When io_uring is available (Linux 5.11+ with `IORING_OP_RENAMEAT`), the
 /// temp-file rename is submitted as an io_uring SQE instead of a synchronous
 /// `rename(2)` syscall. Falls back to `std::fs::rename` on all other
@@ -352,14 +400,14 @@ fn commit_file(
     cleanup_guard: &mut TempFileGuard,
     needs_rename: bool,
     bytes_written: u64,
-) -> io::Result<()> {
+) -> io::Result<bool> {
     // upstream: backup.c:make_backup() - rename existing file before overwrite
     if let Some(ref backup_config) = config.backup {
         make_backup(&begin.file_path, backup_config)?;
     }
 
-    if needs_rename {
-        rename_with_io_uring_fallback(cleanup_guard.path(), &begin.file_path)?;
+    let was_copy = if needs_rename {
+        rename_with_io_uring_fallback(cleanup_guard.path(), &begin.file_path)?
     } else if begin.is_inplace {
         // upstream: receiver.c:340 - set_file_length(fd, F_LENGTH(file))
         // In append mode, bytes_written only counts newly received data -
@@ -371,35 +419,75 @@ fn commit_file(
         };
         let file = fs::OpenOptions::new().write(true).open(&begin.file_path)?;
         file.set_len(final_size)?;
-    }
+        false
+    } else {
+        false
+    };
     cleanup_guard.keep();
-    Ok(())
+    Ok(was_copy)
 }
 
 /// Renames a temp file to its final destination, trying io_uring first.
+///
+/// Returns `Ok(false)` when the rename succeeded in-place, `Ok(true)` when
+/// a cross-device copy+remove fallback was used (EXDEV). Callers use the
+/// return value to decide whether metadata must be re-applied to the
+/// destination.
 ///
 /// On Linux 5.11+ with io_uring RENAMEAT2 support, submits the rename as an
 /// `IORING_OP_RENAMEAT` SQE. Falls back to `std::fs::rename` when io_uring
 /// is unavailable (non-Linux, old kernel, or feature not compiled in).
 ///
-/// This mirrors the pattern used in `engine::local_copy::executor::file::guard`
-/// for local-copy temp-file commits.
+/// Cross-device fallback mirrors upstream `util1.c:robust_rename()` which
+/// uses `copy_file()` + `do_unlink()` when `rename()` returns EXDEV. This
+/// happens when `--temp-dir` points to a different filesystem than the
+/// destination.
 // TODO: SEC-1.j receiver wiring - DirSandbox not in scope, defer pending
 // `DiskCommitConfig` carrying an `Arc<DirSandbox>` across the cross-thread
 // message boundary; `BackupConfig::make_backup` needs the same plumbing
 // for the backup rename hardening.
-fn rename_with_io_uring_fallback(old_path: &Path, new_path: &Path) -> io::Result<()> {
+fn rename_with_io_uring_fallback(old_path: &Path, new_path: &Path) -> io::Result<bool> {
     if let Some(result) = fast_io::try_rename_via_io_uring(old_path, new_path) {
-        return result;
+        return result.map(|()| false);
     }
-    fs::rename(old_path, new_path)
+    match fs::rename(old_path, new_path) {
+        Ok(()) => Ok(false),
+        Err(e) if is_cross_device(&e) => {
+            // upstream: util1.c:robust_rename() - copy_file + do_unlink
+            fs::copy(old_path, new_path)?;
+            fs::remove_file(old_path)?;
+            Ok(true)
+        }
+        Err(e) => Err(e),
+    }
 }
 
-/// Applies metadata, ACLs, and xattrs after file commit.
+/// Returns `true` when an I/O error represents a cross-device link (EXDEV).
 ///
-/// Skip metadata for device targets: changing perms/ownership on a device
+/// On Unix, `raw_os_error() == libc::EXDEV` (errno 18). On Windows,
+/// `ERROR_NOT_SAME_DEVICE` (error 17) is the equivalent.
+fn is_cross_device(e: &io::Error) -> bool {
+    match e.raw_os_error() {
+        #[cfg(unix)]
+        Some(code) => code == libc::EXDEV,
+        #[cfg(windows)]
+        Some(code) => code == 17, // ERROR_NOT_SAME_DEVICE
+        #[cfg(not(any(unix, windows)))]
+        Some(_) => false,
+        None => false,
+    }
+}
+
+/// Applies metadata, ACLs, and xattrs to the given path.
+///
+/// Called with the temp file path before rename (upstream
+/// `rsync.c:finish_transfer()` line 748), or with the final destination
+/// path for inplace writes and after cross-device copy fallback.
+///
+/// Skips metadata for device targets: changing perms/ownership on a device
 /// node after writing data is not appropriate.
-fn apply_post_commit_metadata(
+fn apply_file_metadata(
+    target_path: &Path,
     begin: &BeginMessage,
     config: &DiskCommitConfig,
 ) -> Option<(PathBuf, String)> {
@@ -412,7 +500,7 @@ fn apply_post_commit_metadata(
         None
     } else {
         apply_metadata_acls_and_xattrs(
-            &begin.file_path,
+            target_path,
             file_entry,
             config.metadata_opts.as_ref(),
             config.acl_cache.as_deref(),
@@ -522,7 +610,8 @@ mod tests {
     use super::*;
 
     /// Verifies the io_uring RENAMEAT2 fallback renames a file regardless of
-    /// whether io_uring handles it or `std::fs::rename` does.
+    /// whether io_uring handles it or `std::fs::rename` does. Same-device
+    /// rename returns `false` (no cross-device copy).
     #[test]
     fn rename_with_io_uring_fallback_moves_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -531,8 +620,9 @@ mod tests {
 
         fs::write(&src, b"io_uring rename data").unwrap();
 
-        rename_with_io_uring_fallback(&src, &dst).unwrap();
+        let was_copy = rename_with_io_uring_fallback(&src, &dst).unwrap();
 
+        assert!(!was_copy);
         assert!(!src.exists());
         assert!(dst.exists());
         assert_eq!(fs::read(&dst).unwrap(), b"io_uring rename data");
@@ -548,8 +638,9 @@ mod tests {
         fs::write(&src, b"new data").unwrap();
         fs::write(&dst, b"old data").unwrap();
 
-        rename_with_io_uring_fallback(&src, &dst).unwrap();
+        let was_copy = rename_with_io_uring_fallback(&src, &dst).unwrap();
 
+        assert!(!was_copy);
         assert!(!src.exists());
         assert_eq!(fs::read(&dst).unwrap(), b"new data");
     }
@@ -563,6 +654,21 @@ mod tests {
 
         let result = rename_with_io_uring_fallback(&src, &dst);
         assert!(result.is_err());
+    }
+
+    /// Verifies `is_cross_device` correctly identifies EXDEV errors.
+    #[test]
+    fn is_cross_device_detects_exdev() {
+        #[cfg(unix)]
+        {
+            let exdev = io::Error::from_raw_os_error(libc::EXDEV);
+            assert!(is_cross_device(&exdev));
+        }
+        let not_found = io::Error::new(io::ErrorKind::NotFound, "not found");
+        assert!(!is_cross_device(&not_found));
+
+        let perm = io::Error::from_raw_os_error(1); // EPERM
+        assert!(!is_cross_device(&perm));
     }
 
     /// Verifies `make_writer` selects [`Writer::Macos`] when sparse mode is
