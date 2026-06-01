@@ -185,11 +185,8 @@ impl GeneratorContext {
                             // has no regular files. When files exist, the receiver
                             // will request them and send the normal phase-transition
                             // NDX_DONE afterward - no deadlock occurs.
-                            let has_no_files = !self
-                                .file_list
-                                .as_slice()
-                                .iter()
-                                .any(|e| e.is_file());
+                            let has_no_files =
+                                !self.file_list.as_slice().iter().any(|e| e.is_file());
                             if flist_done_remaining == 0
                                 && self.incremental.flist_eof_sent
                                 && has_no_files
