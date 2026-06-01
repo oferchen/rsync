@@ -112,11 +112,7 @@ pub(super) fn process_file(
                 // file is already correct when it appears at the final
                 // path. For inplace/device, metadata is applied after.
                 let pre_meta_error = if needs_rename {
-                    apply_file_metadata(
-                        cleanup_guard.path(),
-                        &begin,
-                        config,
-                    )
+                    apply_file_metadata(cleanup_guard.path(), &begin, config)
                 } else {
                     None
                 };
