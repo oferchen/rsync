@@ -1,9 +1,9 @@
 //! Delete-on-close temporary file creation for Windows.
 //!
 //! This module provides both low-level Win32 wrappers ([`open_delete_on_close_tmpfile`],
-//! [`clear_delete_on_close`], [`commit_delete_on_close`]) and a higher-level
-//! [`WindowsTempFile`] guard type that owns the delete-on-close handle and
-//! exposes a safe `commit_to` finalization method.
+//! [`set_delete_on_close`], [`clear_delete_on_close`], [`commit_delete_on_close`]) and
+//! a higher-level [`WindowsTempFile`] guard type that owns the delete-on-close
+//! handle and exposes a safe `commit_to` finalization method.
 //!
 //! The [`open_win_temp_file`] convenience function probes the filesystem once
 //! and returns either a [`WinTempFileResult::DeleteOnClose`] or
@@ -12,7 +12,7 @@
 //!
 //! # Comparison with `O_TMPFILE`
 //!
-//! | Property | Linux `O_TMPFILE` | Windows `FILE_FLAG_DELETE_ON_CLOSE` |
+//! | Property | Linux `O_TMPFILE` | Windows `FileDispositionInfo` |
 //! |---|---|---|
 //! | Directory entry | None until `linkat` | Visible with unique name |
 //! | Crash cleanup | Kernel reclaims inode | Kernel deletes file on close |
@@ -27,7 +27,7 @@ mod types;
 
 pub use low_level::{
     clear_delete_on_close, commit_delete_on_close, delete_on_close_available,
-    open_delete_on_close_tmpfile, rename_temp_to_dest,
+    open_delete_on_close_tmpfile, rename_temp_to_dest, set_delete_on_close,
 };
 pub use types::{
     WinDeleteOnCloseSupport, WinTempFileResult, WindowsTempFile, open_win_temp_file,
