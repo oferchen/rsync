@@ -74,7 +74,10 @@ fn double_version_flag_renders_json() {
     assert!(stderr.is_empty());
 
     let output = String::from_utf8(stdout).expect("valid UTF-8");
-    assert!(output.starts_with('{'), "JSON output should start with '{{'");
+    assert!(
+        output.starts_with('{'),
+        "JSON output should start with '{{'"
+    );
     assert!(output.contains("\"program\""), "should contain program key");
     assert!(output.contains("\"version\""), "should contain version key");
     assert!(output.contains("\"atimes\""), "should contain atimes key");
@@ -105,7 +108,10 @@ fn separate_version_flags_render_json() {
     assert!(stderr.is_empty());
 
     let output = String::from_utf8(stdout).expect("valid UTF-8");
-    assert!(output.starts_with('{'), "JSON output should start with '{{'");
+    assert!(
+        output.starts_with('{'),
+        "JSON output should start with '{{'"
+    );
     assert!(output.contains("\"atimes\""), "should contain atimes key");
 }
 

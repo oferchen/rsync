@@ -275,11 +275,7 @@ impl VersionInfoReport {
         // upstream: output_nno_list(FNONE, ...) outputs JSON arrays
         self.write_json_algorithm_list(writer, "checksum_list", &self.checksum_algorithms)?;
         self.write_json_algorithm_list(writer, "compress_list", &self.compress_algorithms)?;
-        self.write_json_algorithm_list(
-            writer,
-            "daemon_auth_list",
-            &self.daemon_auth_algorithms,
-        )?;
+        self.write_json_algorithm_list(writer, "daemon_auth_list", &self.daemon_auth_algorithms)?;
 
         // Closing metadata
         // upstream: usage.c - json_line("license", "GPLv3")
@@ -357,10 +353,7 @@ impl VersionInfoReport {
             super::super::SecludedArgsMode::Optional => "optional",
             super::super::SecludedArgsMode::Default => "default",
         };
-        write!(
-            writer,
-            "    \"secluded_args\": \"{secluded_value}\",\n"
-        )?;
+        write!(writer, "    \"secluded_args\": \"{secluded_value}\",\n")?;
         write!(writer, "    \"iconv\": {},\n", config.supports_iconv)?;
         write!(writer, "    \"prealloc\": {},\n", config.supports_prealloc)?;
         write!(writer, "    \"stop_at\": {},\n", config.supports_stop_at)?;
@@ -382,26 +375,14 @@ impl VersionInfoReport {
         )?;
         write!(writer, "    \"asm_MD5\": {},\n", config.supports_asm_md5)?;
         // oc-rsync-specific optimizations (not in upstream, but present in config)
-        write!(
-            writer,
-            "    \"mimalloc\": {},\n",
-            config.supports_mimalloc
-        )?;
+        write!(writer, "    \"mimalloc\": {},\n", config.supports_mimalloc)?;
         write!(
             writer,
             "    \"copy_file_range\": {},\n",
             config.supports_copy_file_range
         )?;
-        write!(
-            writer,
-            "    \"io_uring\": {},\n",
-            config.supports_io_uring
-        )?;
-        write!(
-            writer,
-            "    \"parallel\": {},\n",
-            config.supports_parallel
-        )?;
+        write!(writer, "    \"io_uring\": {},\n", config.supports_io_uring)?;
+        write!(writer, "    \"parallel\": {},\n", config.supports_parallel)?;
         write!(writer, "    \"mmap\": {}\n", config.supports_mmap)?;
         write!(writer, "  }}")?;
 
