@@ -138,7 +138,10 @@ impl DebugFlagSettings {
             return Ok(());
         }
 
-        if lower == "1" || lower == "all" || (lower.starts_with("all") && lower[3..].bytes().all(|b| b.is_ascii_digit())) {
+        if lower == "1"
+            || lower == "all"
+            || (lower.starts_with("all") && lower[3..].bytes().all(|b| b.is_ascii_digit()))
+        {
             let level = if lower == "1" || lower == "all" {
                 1
             } else {
