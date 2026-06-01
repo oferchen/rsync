@@ -351,7 +351,7 @@ impl VersionInfoReport {
             if i > 0 {
                 write!(writer, ",")?;
             }
-            write!(writer, " \"{}\"", entry)?;
+            write!(writer, " \"{entry}\"")?;
         }
         write!(writer, "\n  ]")
     }
