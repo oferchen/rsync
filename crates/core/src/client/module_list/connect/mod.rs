@@ -77,7 +77,7 @@ impl Write for DaemonStreamWriter {
 /// Respects `RSYNC_CONNECT_PROG` and `RSYNC_PROXY` environment
 /// variables. For TLS-wrapped connections, use
 /// [`open_daemon_stream_tls`] instead.
-pub(super) fn open_daemon_stream(
+pub(crate) fn open_daemon_stream(
     addr: &DaemonAddress,
     connect_timeout: Option<Duration>,
     io_timeout: Option<Duration>,

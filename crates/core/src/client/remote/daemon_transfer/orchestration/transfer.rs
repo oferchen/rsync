@@ -3,7 +3,7 @@
 //! Orchestrates the transfer lifecycle by configuring server infrastructure,
 //! establishing the handshake result, and delegating to `run_server_with_handshake`.
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::time::Instant;
 
 use protocol::ProtocolVersion;
