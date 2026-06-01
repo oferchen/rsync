@@ -45,8 +45,10 @@ pub fn apply_directory_metadata_with_options(
     ownership::set_owner_like(metadata, destination, true, &options, None)?;
     permissions::apply_permissions_with_chmod(destination, metadata, &options, None)?;
     if options.times() {
-        timestamps::set_timestamp_like(metadata, destination, true, None)?;
+        timestamps::set_timestamp_like(metadata, destination, true, None, Some(&options))?;
     }
+    // upstream: rsync.c:589 - directories skip atime (`ATTRS_SKIP_ATIME`)
+    // regardless of `--atimes`; only files get atime preservation.
     Ok(())
 }
 
@@ -75,8 +77,12 @@ pub fn apply_file_metadata_with_options(
 ) -> Result<(), MetadataError> {
     ownership::set_owner_like(metadata, destination, true, options, None)?;
     permissions::apply_permissions_with_chmod(destination, metadata, options, None)?;
+    // upstream: rsync.c:587-612 - mtime and atime are handled independently
     if options.times() {
-        timestamps::set_timestamp_like(metadata, destination, true, None)?;
+        timestamps::set_timestamp_like(metadata, destination, true, None, Some(options))?;
+    } else if options.atimes() {
+        // upstream: rsync.c:604-612 - atime applied when SKIP_MTIME but not SKIP_ATIME
+        timestamps::apply_atime_only_from_metadata(metadata, destination, None)?;
     }
     if options.crtimes() {
         timestamps::apply_crtime_from_source_metadata(destination, metadata)?;
@@ -99,8 +105,16 @@ pub fn apply_file_metadata_with_fd(
 ) -> Result<(), MetadataError> {
     ownership::set_owner_like_with_fd(metadata, destination, options, fd, None)?;
     permissions::apply_permissions_with_chmod_fd(destination, metadata, options, Some(fd), None)?;
+    // upstream: rsync.c:587-612 - mtime and atime are handled independently
     if options.times() {
-        timestamps::set_timestamp_with_fd(metadata, destination, fd, None)?;
+        timestamps::set_timestamp_with_fd(metadata, destination, fd, None, Some(options))?;
+    } else if options.atimes() {
+        timestamps::apply_atime_only_from_metadata_with_fd(
+            metadata,
+            destination,
+            fd,
+            None,
+        )?;
     }
     // crtime is always path-based (setattrlist on macOS) - no fd variant exists
     if options.crtimes() {
@@ -123,8 +137,17 @@ pub fn apply_file_metadata_if_changed(
 ) -> Result<(), MetadataError> {
     ownership::set_owner_like(metadata, destination, true, options, Some(existing))?;
     permissions::apply_permissions_with_chmod(destination, metadata, options, Some(existing))?;
+    // upstream: rsync.c:587-612 - mtime and atime are handled independently
     if options.times() {
-        timestamps::set_timestamp_like(metadata, destination, true, Some(existing))?;
+        timestamps::set_timestamp_like(
+            metadata,
+            destination,
+            true,
+            Some(existing),
+            Some(options),
+        )?;
+    } else if options.atimes() {
+        timestamps::apply_atime_only_from_metadata(metadata, destination, Some(existing))?;
     }
     if options.crtimes() {
         timestamps::apply_crtime_from_source_metadata(destination, metadata)?;
@@ -153,8 +176,22 @@ pub fn apply_file_metadata_with_fd_if_changed(
         Some(fd),
         Some(existing),
     )?;
+    // upstream: rsync.c:587-612 - mtime and atime are handled independently
     if options.times() {
-        timestamps::set_timestamp_with_fd(metadata, destination, fd, Some(existing))?;
+        timestamps::set_timestamp_with_fd(
+            metadata,
+            destination,
+            fd,
+            Some(existing),
+            Some(options),
+        )?;
+    } else if options.atimes() {
+        timestamps::apply_atime_only_from_metadata_with_fd(
+            metadata,
+            destination,
+            fd,
+            Some(existing),
+        )?;
     }
     // crtime is always path-based (setattrlist on macOS) - no fd variant exists
     if options.crtimes() {
@@ -186,7 +223,7 @@ pub fn apply_symlink_metadata_with_options(
 ) -> Result<(), MetadataError> {
     ownership::set_owner_like(metadata, destination, false, options, None)?;
     if options.times() {
-        timestamps::set_timestamp_like(metadata, destination, false, None)?;
+        timestamps::set_timestamp_like(metadata, destination, false, None, Some(options))?;
     }
     Ok(())
 }

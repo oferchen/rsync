@@ -66,8 +66,11 @@ impl BatchMetadataContext {
     ) -> Result<(), MetadataError> {
         self.apply_ownership_cached(destination, metadata)?;
         self.apply_permissions_cached(destination, metadata)?;
+        // upstream: rsync.c:587-612 - mtime and atime are handled independently
         if self.options.times() {
             self.apply_timestamps(destination, metadata)?;
+        } else if self.options.atimes() {
+            self.apply_atime_only(destination, metadata)?;
         }
         Ok(())
     }
@@ -213,6 +216,27 @@ impl BatchMetadataContext {
 
         set_file_times(destination, accessed, modified)
             .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?;
+
+        Ok(())
+    }
+
+    /// Applies only the access time from source metadata, preserving dest mtime.
+    ///
+    /// Used when `--atimes` is active but `--times` is not, mirroring upstream's
+    /// independent atime/mtime handling.
+    // upstream: rsync.c:604-612 - atime applied independently of mtime
+    fn apply_atime_only(
+        &mut self,
+        destination: &Path,
+        metadata: &fs::Metadata,
+    ) -> Result<(), MetadataError> {
+        let source_atime = FileTime::from_last_access_time(metadata);
+        let dest_meta = fs::metadata(destination)
+            .map_err(|error| MetadataError::new("read current timestamps", destination, error))?;
+        let dest_mtime = FileTime::from_last_modification_time(&dest_meta);
+
+        set_file_times(destination, source_atime, dest_mtime)
+            .map_err(|error| MetadataError::new("preserve access time", destination, error))?;
 
         Ok(())
     }

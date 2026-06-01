@@ -18,20 +18,33 @@ use std::os::fd::BorrowedFd;
 /// Applies timestamps (atime + mtime) to a path, optionally following symlinks.
 ///
 /// Uses [`set_file_times`] for regular files/directories and
-/// [`set_symlink_file_times`] for symlinks. Skips the syscall when the
-/// mtime already matches `existing`.
+/// [`set_symlink_file_times`] for symlinks. Skips the syscall when both
+/// mtime and atime already match `existing`.
+///
+/// When `options` is provided and `options.atimes()` is true, the atime
+/// comparison is included in the skip check so that atime-only changes
+/// still trigger a `utimensat` call. Without `options` (or when atimes is
+/// disabled), only the mtime is compared.
 // upstream: rsync.c:set_file_attrs() - utimensat / lutimensat based on follow flag
 pub(super) fn set_timestamp_like(
     metadata: &fs::Metadata,
     destination: &Path,
     follow_symlinks: bool,
     existing: Option<&fs::Metadata>,
+    options: Option<&MetadataOptions>,
 ) -> Result<(), MetadataError> {
     let accessed = FileTime::from_last_access_time(metadata);
     let modified = FileTime::from_last_modification_time(metadata);
 
+    // upstream: rsync.c:597-612 - mtime and atime are checked independently;
+    // the utimensat is only skipped when ALL relevant timestamps match.
     if let Some(existing) = existing {
-        if FileTime::from_last_modification_time(existing) == modified {
+        let mtime_matches = FileTime::from_last_modification_time(existing) == modified;
+        let atime_matches = options
+            .is_some_and(|o| o.atimes())
+            .then(|| FileTime::from_last_access_time(existing) == accessed)
+            .unwrap_or(true);
+        if mtime_matches && atime_matches {
             return Ok(());
         }
     }
@@ -50,7 +63,10 @@ pub(super) fn set_timestamp_like(
 /// fd-based variant of [`set_timestamp_like`] that uses `futimens` on the open fd.
 ///
 /// Avoids a path lookup by operating directly on the file descriptor.
-/// Skips the syscall when the mtime already matches `existing`.
+/// Skips the syscall when both mtime and atime already match `existing`.
+///
+/// When `options` is provided and `options.atimes()` is true, the atime
+/// comparison is included in the skip check.
 // upstream: rsync.c:set_file_attrs() - futimens path when fd is available
 #[cfg(unix)]
 pub(super) fn set_timestamp_with_fd(
@@ -58,12 +74,19 @@ pub(super) fn set_timestamp_with_fd(
     destination: &Path,
     fd: BorrowedFd<'_>,
     existing: Option<&fs::Metadata>,
+    options: Option<&MetadataOptions>,
 ) -> Result<(), MetadataError> {
     let accessed = FileTime::from_last_access_time(metadata);
     let modified = FileTime::from_last_modification_time(metadata);
 
+    // upstream: rsync.c:597-612 - mtime and atime are checked independently
     if let Some(existing) = existing {
-        if FileTime::from_last_modification_time(existing) == modified {
+        let mtime_matches = FileTime::from_last_modification_time(existing) == modified;
+        let atime_matches = options
+            .is_some_and(|o| o.atimes())
+            .then(|| FileTime::from_last_access_time(existing) == accessed)
+            .unwrap_or(true);
+        if mtime_matches && atime_matches {
             return Ok(());
         }
     }
@@ -81,6 +104,92 @@ pub(super) fn set_timestamp_with_fd(
 
     rustix::fs::futimens(fd, &timestamps).map_err(|error| {
         MetadataError::new("preserve timestamps", destination, io::Error::from(error))
+    })?;
+
+    Ok(())
+}
+
+/// Applies only the access time from source `fs::Metadata`, preserving the
+/// destination's existing mtime.
+///
+/// Used in the local copy path when `--atimes` is active but `--times` is not,
+/// mirroring upstream's `set_file_attrs()` behavior where atime and mtime are
+/// governed independently by `ATTRS_SKIP_ATIME` / `ATTRS_SKIP_MTIME`.
+// upstream: rsync.c:604-612 - atime applied independently of mtime
+pub(super) fn apply_atime_only_from_metadata(
+    metadata: &fs::Metadata,
+    destination: &Path,
+    existing: Option<&fs::Metadata>,
+) -> Result<(), MetadataError> {
+    let source_atime = FileTime::from_last_access_time(metadata);
+
+    if let Some(existing) = existing {
+        if FileTime::from_last_access_time(existing) == source_atime {
+            return Ok(());
+        }
+    }
+
+    // Preserve the destination's current mtime - only update atime.
+    let dest_mtime = match existing {
+        Some(meta) => FileTime::from_last_modification_time(meta),
+        None => {
+            let meta = fs::metadata(destination).map_err(|error| {
+                MetadataError::new("read current timestamps", destination, error)
+            })?;
+            FileTime::from_last_modification_time(&meta)
+        }
+    };
+
+    set_file_times(destination, source_atime, dest_mtime)
+        .map_err(|error| MetadataError::new("preserve access time", destination, error))?;
+
+    Ok(())
+}
+
+/// fd-based variant of [`apply_atime_only_from_metadata`].
+///
+/// Uses `futimens` on the open fd to set only the atime while preserving the
+/// destination's existing mtime.
+// upstream: rsync.c:604-612 - atime applied independently of mtime
+#[cfg(unix)]
+pub(super) fn apply_atime_only_from_metadata_with_fd(
+    metadata: &fs::Metadata,
+    destination: &Path,
+    fd: BorrowedFd<'_>,
+    existing: Option<&fs::Metadata>,
+) -> Result<(), MetadataError> {
+    let source_atime = FileTime::from_last_access_time(metadata);
+
+    if let Some(existing) = existing {
+        if FileTime::from_last_access_time(existing) == source_atime {
+            return Ok(());
+        }
+    }
+
+    // Preserve the destination's current mtime - only update atime.
+    let dest_mtime = match existing {
+        Some(meta) => FileTime::from_last_modification_time(meta),
+        None => {
+            let meta = fs::metadata(destination).map_err(|error| {
+                MetadataError::new("read current timestamps", destination, error)
+            })?;
+            FileTime::from_last_modification_time(&meta)
+        }
+    };
+
+    let timestamps = rustix::fs::Timestamps {
+        last_access: rustix::fs::Timespec {
+            tv_sec: source_atime.unix_seconds(),
+            tv_nsec: source_atime.nanoseconds().into(),
+        },
+        last_modification: rustix::fs::Timespec {
+            tv_sec: dest_mtime.unix_seconds(),
+            tv_nsec: dest_mtime.nanoseconds().into(),
+        },
+    };
+
+    rustix::fs::futimens(fd, &timestamps).map_err(|error| {
+        MetadataError::new("preserve access time", destination, io::Error::from(error))
     })?;
 
     Ok(())
