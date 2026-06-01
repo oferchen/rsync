@@ -53,7 +53,7 @@ pub(crate) enum ServiceAction {
 pub(crate) struct ParsedArgs {
     pub(crate) program_name: ProgramName,
     pub(crate) show_help: bool,
-    pub(crate) show_version: bool,
+    pub(crate) show_version: u8,
     pub(crate) service_action: Option<ServiceAction>,
     pub(crate) remainder: Vec<OsString>,
 }
@@ -78,7 +78,7 @@ pub(crate) fn clap_command(program_name: &'static str) -> Command {
                 .long("version")
                 .short('V')
                 .help("Output version information and exit.")
-                .action(ArgAction::SetTrue),
+                .action(ArgAction::Count),
         )
         .arg(
             Arg::new("windows-service")
@@ -132,7 +132,7 @@ where
     let mut matches = clap_command(program_name.as_str()).try_get_matches_from(args)?;
 
     let show_help = matches.get_flag("help");
-    let show_version = matches.get_flag("version");
+    let show_version = matches.get_count("version");
     let windows_service = matches.get_flag("windows-service");
     let install_service = matches.get_flag("install-service");
     let uninstall_service = matches.get_flag("uninstall-service");

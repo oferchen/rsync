@@ -239,6 +239,129 @@ impl VersionInfoReport {
         rendered
     }
 
+    /// Writes the machine-readable JSON output produced by `-VV`.
+    ///
+    /// Mirrors upstream rsync's `print_rsync_version(FNONE)` path, which emits
+    /// a JSON object with capability flags, algorithm lists, and metadata fields.
+    // upstream: usage.c:252 - print_rsync_version with f == FNONE
+    pub fn write_machine_readable<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
+        let metadata = self.metadata;
+        let protocol = if metadata.subprotocol_version() != 0 {
+            format!(
+                "{}.{}",
+                metadata.protocol_version().as_u8(),
+                metadata.subprotocol_version()
+            )
+        } else {
+            format!("{}.0", metadata.protocol_version().as_u8())
+        };
+
+        // Preamble key-value pairs.
+        write!(writer, "{{\n  \"program\": \"{}\"", metadata.program_name())?;
+        write!(writer, ",\n  \"version\": \"{}\"", metadata.rust_version())?;
+        write!(writer, ",\n  \"protocol\": \"{protocol}\"")?;
+        write!(
+            writer,
+            ",\n  \"copyright\": \"{}\"",
+            metadata.copyright_notice()
+        )?;
+        write!(writer, ",\n  \"url\": \"{}\"", metadata.source_url())?;
+
+        // Capability and optimization sections.
+        self.write_json_info_sections(writer)?;
+
+        // Algorithm lists.
+        self.write_json_list(writer, "checksum_list", &self.checksum_algorithms)?;
+        self.write_json_list(writer, "compress_list", &self.compress_algorithms)?;
+        self.write_json_list(
+            writer,
+            "daemon_auth_list",
+            &self.daemon_auth_algorithms,
+        )?;
+
+        // Closing metadata.
+        write!(writer, ",\n  \"license\": \"GPLv3\"")?;
+        write!(
+            writer,
+            ",\n  \"caveat\": \"{} comes with ABSOLUTELY NO WARRANTY\"",
+            metadata.program_name()
+        )?;
+        writeln!(writer, "\n}}")
+    }
+
+    /// Returns the machine-readable JSON report as an owned string.
+    #[must_use]
+    pub fn machine_readable(&self) -> String {
+        let mut rendered = String::new();
+        self.write_machine_readable(&mut rendered)
+            .expect("writing to String cannot fail");
+        rendered
+    }
+
+    /// Writes JSON capability/optimization sections mirroring upstream's
+    /// `print_info_flags(FNONE)`.
+    // upstream: usage.c:37-216 - print_info_flags with as_json=true
+    fn write_json_info_sections<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
+        let items = self.info_items();
+        let mut in_section = false;
+
+        for (idx, item) in items.iter().enumerate() {
+            match item {
+                InfoItem::Section(name) => {
+                    // Close previous section if open.
+                    if in_section {
+                        write!(writer, "\n  }}")?;
+                    }
+                    // Lowercase first char, keep the rest as-is.
+                    // upstream: usage.c:206 - toLower(str+1) for first char
+                    let mut chars = name.chars();
+                    if let Some(first) = chars.next() {
+                        write!(
+                            writer,
+                            ",\n  \"{}{}\"",
+                            first.to_lowercase(),
+                            &name[first.len_utf8()..]
+                        )?;
+                    }
+                    write!(writer, ": {{")?;
+                    in_section = true;
+                }
+                InfoItem::Entry(text) => {
+                    let is_last_in_section = matches!(
+                        items.get(idx + 1),
+                        None | Some(InfoItem::Section(_))
+                    );
+
+                    write_json_entry(writer, text, !is_last_in_section)?;
+                }
+            }
+        }
+
+        // Close final section.
+        if in_section {
+            write!(writer, "\n  }}")?;
+        }
+        Ok(())
+    }
+
+    /// Writes a JSON array for an algorithm list.
+    // upstream: usage.c:218-249 - output_nno_list with f == FNONE
+    fn write_json_list<W: FmtWrite>(
+        &self,
+        writer: &mut W,
+        name: &str,
+        entries: &[Cow<'static, str>],
+    ) -> fmt::Result {
+        write!(writer, ",\n  \"{name}\": [\n   ")?;
+        for (i, entry) in entries.iter().enumerate() {
+            if i > 0 {
+                write!(writer, ",")?;
+            }
+            write!(writer, " \"{}\"", entry)?;
+        }
+        write!(writer, "\n  ]")
+    }
+
     fn write_info_sections<W: FmtWrite>(&self, writer: &mut W) -> fmt::Result {
         let mut buffer = String::new();
         let mut items = self.info_items().into_iter().peekable();
@@ -460,6 +583,61 @@ fn capability_entry(label: &'static str, supported: bool) -> InfoItem {
     } else {
         InfoItem::Entry(Cow::Owned(format!("no {label}")))
     }
+}
+
+/// Converts a human-readable info entry into its JSON key-value representation.
+///
+/// Mirrors upstream `print_info_flags` JSON branch (usage.c:172-188):
+/// - `"64-bit files"` -> `"file_bits": 64`
+/// - `"no crtimes"` -> `"crtimes": false`
+/// - `"crtimes"` -> `"crtimes": true`
+/// - `"optional secluded-args"` -> `"secluded_args": "optional"`
+// upstream: usage.c:172-188 - JSON entry formatting in print_info_flags
+fn write_json_entry<W: FmtWrite>(writer: &mut W, text: &str, needs_comma: bool) -> fmt::Result {
+    let comma = if needs_comma { "," } else { "" };
+
+    if let Some(space_pos) = text.find(' ') {
+        let prefix = &text[..space_pos];
+        let suffix = &text[space_pos + 1..];
+
+        if prefix == "no" {
+            // "no crtimes" -> "crtimes": false
+            let key = json_key(suffix);
+            write!(writer, "\n    \"{key}\": false{comma}")
+        } else if prefix.starts_with(|c: char| c.is_ascii_digit()) {
+            // "64-bit files" -> "file_bits": 64
+            let val = if let Some(dash) = prefix.find('-') {
+                &prefix[..dash]
+            } else {
+                prefix
+            };
+            // Item is the word after space; drop trailing 's' and append "_bits"
+            let mut key = String::from(suffix);
+            if key.ends_with('s') {
+                key.pop();
+            }
+            key.push_str("_bits");
+            let key = json_key(&key);
+            write!(writer, "\n    \"{key}\": {val}{comma}")
+        } else {
+            // "optional secluded-args" -> "secluded_args": "optional"
+            let key = json_key(suffix);
+            write!(writer, "\n    \"{key}\": \"{prefix}\"{comma}")
+        }
+    } else {
+        // Simple boolean: "crtimes" -> "crtimes": true
+        let key = json_key(text);
+        write!(writer, "\n    \"{key}\": true{comma}")
+    }
+}
+
+/// Converts a capability name to a JSON key by replacing hyphens and spaces
+/// with underscores.
+// upstream: usage.c:187-188 - strpbrk loop replacing ' ' and '-' with '_'
+fn json_key(s: &str) -> String {
+    s.chars()
+        .map(|c| if c == '-' || c == ' ' { '_' } else { c })
+        .collect()
 }
 
 #[cfg(test)]

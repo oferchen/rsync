@@ -93,7 +93,7 @@ impl VersionInfoConfig {
             supports_iconv: cfg!(feature = "iconv"),
             supports_prealloc: true,
             supports_stop_at: true,
-            supports_crtimes: false,
+            supports_crtimes: cfg!(target_os = "macos"),
             supports_simd_roll: false,
             supports_asm_roll: false,
             supports_openssl_crypto: false,
@@ -410,7 +410,7 @@ mod tests {
         assert!(config.supports_append);
         assert!(config.supports_prealloc);
         assert!(config.supports_stop_at);
-        assert!(!config.supports_crtimes);
+        assert_eq!(config.supports_crtimes, cfg!(target_os = "macos"));
         assert!(!config.supports_simd_roll);
         assert!(!config.supports_asm_roll);
         assert!(!config.supports_openssl_crypto);

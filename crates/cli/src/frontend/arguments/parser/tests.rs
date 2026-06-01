@@ -298,7 +298,7 @@ fn version_flag() {
     let result = parse_test_args(["--version"]);
     assert!(result.is_ok());
     let parsed = result.unwrap();
-    assert!(parsed.show_version);
+    assert_eq!(parsed.show_version, 1);
 }
 
 #[test]

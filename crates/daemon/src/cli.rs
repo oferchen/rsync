@@ -69,10 +69,14 @@ where
         return 0;
     }
 
-    if parsed.show_version && parsed.remainder.is_empty() {
+    if parsed.show_version > 0 && parsed.remainder.is_empty() {
         let report = VersionInfoReport::for_daemon_brand(parsed.program_name.brand());
-        let banner = report.human_readable();
-        if stdout.write_all(banner.as_bytes()).is_err() {
+        let output = if parsed.show_version >= 2 {
+            report.machine_readable()
+        } else {
+            report.human_readable()
+        };
+        if stdout.write_all(output.as_bytes()).is_err() {
             return 1;
         }
         return 0;

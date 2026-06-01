@@ -1728,7 +1728,7 @@ mod path_operands {
     #[test]
     fn no_operands_with_version() {
         let parsed = parse_test_args(["--version"]).expect("parse");
-        assert!(parsed.show_version);
+        assert_eq!(parsed.show_version, 1);
         assert!(parsed.remainder.is_empty());
     }
 }
@@ -1851,13 +1851,19 @@ mod help_and_version {
     #[test]
     fn version_flag() {
         let parsed = parse_test_args(["--version"]).expect("parse");
-        assert!(parsed.show_version);
+        assert_eq!(parsed.show_version, 1);
     }
 
     #[test]
     fn short_version_flag() {
         let parsed = parse_test_args(["-V"]).expect("parse");
-        assert!(parsed.show_version);
+        assert_eq!(parsed.show_version, 1);
+    }
+
+    #[test]
+    fn double_version_flag() {
+        let parsed = parse_test_args(["-VV"]).expect("parse");
+        assert_eq!(parsed.show_version, 2);
     }
 }
 

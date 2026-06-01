@@ -333,7 +333,7 @@ fn parse_args_empty_defaults_to_program_name() {
     assert!(result.is_ok());
     let parsed = result.unwrap();
     assert!(!parsed.show_help);
-    assert!(!parsed.show_version);
+    assert_eq!(parsed.show_version, 0);
 }
 
 #[test]
@@ -343,7 +343,7 @@ fn parse_args_help_flag() {
     assert!(result.is_ok());
     let parsed = result.unwrap();
     assert!(parsed.show_help);
-    assert!(!parsed.show_version);
+    assert_eq!(parsed.show_version, 0);
 }
 
 #[test]
@@ -353,7 +353,7 @@ fn parse_args_version_flag_long() {
     assert!(result.is_ok());
     let parsed = result.unwrap();
     assert!(!parsed.show_help);
-    assert!(parsed.show_version);
+    assert_eq!(parsed.show_version, 1);
 }
 
 #[test]
@@ -362,7 +362,7 @@ fn parse_args_version_flag_short() {
     let result = parse_args(args);
     assert!(result.is_ok());
     let parsed = result.unwrap();
-    assert!(parsed.show_version);
+    assert_eq!(parsed.show_version, 1);
 }
 
 #[test]
@@ -400,7 +400,7 @@ fn parse_args_help_and_version_together() {
     assert!(result.is_ok());
     let parsed = result.unwrap();
     assert!(parsed.show_help);
-    assert!(parsed.show_version);
+    assert_eq!(parsed.show_version, 1);
 }
 
 #[test]
