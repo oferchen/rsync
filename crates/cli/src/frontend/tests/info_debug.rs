@@ -186,9 +186,10 @@ fn debug_flist_levels() {
     let settings = parse_debug_flags(&flags).expect("flags parse");
     assert_eq!(settings.flist, Some(4));
 
+    // upstream: options.c:444-445 - levels above MAX_OUT_LEVEL (4) are clamped, not rejected
     let flags = vec![OsString::from("flist5")];
-    let error = parse_debug_flags(&flags).expect_err("should reject level 5");
-    assert!(error.to_string().contains("invalid --debug flag"));
+    let settings = parse_debug_flags(&flags).expect("flags parse");
+    assert_eq!(settings.flist, Some(4));
 }
 
 #[test]
@@ -205,9 +206,10 @@ fn debug_io_levels() {
     let settings = parse_debug_flags(&flags).expect("flags parse");
     assert_eq!(settings.io, Some(4));
 
+    // upstream: options.c:444-445 - levels above MAX_OUT_LEVEL (4) are clamped, not rejected
     let flags = vec![OsString::from("io5")];
-    let error = parse_debug_flags(&flags).expect_err("should reject level 5");
-    assert!(error.to_string().contains("invalid --debug flag"));
+    let settings = parse_debug_flags(&flags).expect("flags parse");
+    assert_eq!(settings.io, Some(4));
 }
 
 #[test]
