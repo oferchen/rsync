@@ -2494,3 +2494,108 @@ fn iconv_explicit_single_forwards_whole_spec() {
         "Explicit single must forward the whole spec: {args:?}"
     );
 }
+
+// --- Shell-escaping of filename arguments (safe_arg) ---
+// upstream: options.c:safe_arg(NULL, path) backslash-escapes SHELL_CHARS in
+// filename args when protect_args is off. These tests verify that oc-rsync
+// produces the same escaping, matching the lsh.sh `eval "$@"` contract.
+
+use super::builder::shell_safe_filename_arg;
+
+#[test]
+fn shell_safe_simple_path_unchanged() {
+    assert_eq!(shell_safe_filename_arg("/simple/path"), "/simple/path");
+}
+
+#[test]
+fn shell_safe_escapes_parentheses() {
+    // upstream: SHELL_CHARS includes '(' and ')'
+    assert_eq!(
+        shell_safe_filename_arg("/dir/A weird)name/file"),
+        "/dir/A\\ weird\\)name/file"
+    );
+}
+
+#[test]
+fn shell_safe_escapes_spaces() {
+    assert_eq!(
+        shell_safe_filename_arg("/dir/has space/file"),
+        "/dir/has\\ space/file"
+    );
+}
+
+#[test]
+fn shell_safe_escapes_shell_metacharacters() {
+    assert_eq!(shell_safe_filename_arg("a&b"), "a\\&b");
+    assert_eq!(shell_safe_filename_arg("a;b"), "a\\;b");
+    assert_eq!(shell_safe_filename_arg("a|b"), "a\\|b");
+    assert_eq!(shell_safe_filename_arg("a<b"), "a\\<b");
+    assert_eq!(shell_safe_filename_arg("a>b"), "a\\>b");
+    assert_eq!(shell_safe_filename_arg("a{b}"), "a\\{b\\}");
+    assert_eq!(shell_safe_filename_arg("a\"b"), "a\\\"b");
+    assert_eq!(shell_safe_filename_arg("a'b"), "a\\'b");
+    assert_eq!(shell_safe_filename_arg("a`b"), "a\\`b");
+    assert_eq!(shell_safe_filename_arg("a#b"), "a\\#b");
+    assert_eq!(shell_safe_filename_arg("a$b"), "a\\$b");
+    assert_eq!(shell_safe_filename_arg("a!b"), "a\\!b");
+}
+
+#[test]
+fn shell_safe_escapes_tab() {
+    assert_eq!(shell_safe_filename_arg("a\tb"), "a\\\tb");
+}
+
+#[test]
+fn shell_safe_leading_dash_gets_dot_slash() {
+    // upstream: safe_arg prepends "./" to prevent option interpretation
+    assert_eq!(shell_safe_filename_arg("-file"), "./-file");
+}
+
+#[test]
+fn shell_safe_backslash_not_before_wildcard_is_escaped() {
+    // upstream: backslash is escaped unless followed by a wildcard char
+    assert_eq!(shell_safe_filename_arg("a\\b"), "a\\\\b");
+}
+
+#[test]
+fn shell_safe_backslash_before_wildcard_is_preserved() {
+    // upstream: backslash before wildcard chars (*?[]) is NOT escaped
+    assert_eq!(shell_safe_filename_arg("a\\*b"), "a\\*b");
+    assert_eq!(shell_safe_filename_arg("a\\?b"), "a\\?b");
+    assert_eq!(shell_safe_filename_arg("a\\[b"), "a\\[b");
+    assert_eq!(shell_safe_filename_arg("a\\]b"), "a\\]b");
+}
+
+#[test]
+fn shell_safe_no_escaping_in_secluded_mode() {
+    // When protect_args is active, stdin_args should NOT be shell-escaped
+    let config = ClientConfig::builder().protect_args(Some(true)).build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let secluded = builder.build_secluded(&["/path/A weird)name/"]);
+
+    assert!(
+        secluded
+            .stdin_args
+            .iter()
+            .any(|a| a == "/path/A weird)name/"),
+        "secluded stdin_args should contain unescaped path: {:?}",
+        secluded.stdin_args
+    );
+}
+
+#[test]
+fn shell_safe_escaping_in_normal_mode() {
+    // When protect_args is off, command_line_args should have escaped paths
+    let config = ClientConfig::builder().protect_args(None).build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let secluded = builder.build_secluded(&["/path/A weird)name/"]);
+
+    assert!(
+        secluded
+            .command_line_args
+            .iter()
+            .any(|a| a.to_string_lossy() == "/path/A\\ weird\\)name/"),
+        "normal command_line_args should contain escaped path: {:?}",
+        secluded.command_line_args
+    );
+}

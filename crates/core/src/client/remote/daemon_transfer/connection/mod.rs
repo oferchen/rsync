@@ -5,19 +5,19 @@
 //! forwarding. Mirrors upstream `clientserver.c:start_inband_exchange()`.
 
 use std::io::{BufRead, BufReader, Write};
-use std::net::TcpStream;
 use std::path::Path;
 
 use protocol::ProtocolVersion;
 use protocol::nstr::{trace_daemon_auth_negotiated, trace_daemon_greeting_auth_list};
 
-use crate::auth::{DaemonAuthDigest, parse_daemon_digest_list, select_daemon_digest};
+use crate::auth::{
+    DaemonAuthDigest, compute_daemon_auth_response, parse_daemon_digest_list,
+    select_daemon_digest,
+};
 
 use super::super::super::CLIENT_SERVER_PROTOCOL_EXIT_CODE;
 use super::super::super::error::{ClientError, daemon_error, socket_error};
-use super::super::super::module_list::{
-    DaemonAddress, DaemonAuthContext, load_daemon_password, send_daemon_auth_credentials,
-};
+use super::super::super::module_list::{DaemonAddress, load_daemon_password};
 use crate::client::error::invalid_argument_error;
 
 /// Parsed daemon transfer request containing connection and path details.
@@ -57,6 +57,32 @@ impl DaemonTransferRequest {
                 1,
             ));
         }
+
+        Ok(Self {
+            address: target.address,
+            module,
+            path: file_path,
+            username: target.username,
+        })
+    }
+
+    /// Parses a double-colon daemon operand into a transfer request.
+    ///
+    /// Format: `[user@]host::module[/path]`
+    ///
+    /// upstream: `main.c` - `host::module` is equivalent to `rsync://host/module`.
+    pub(crate) fn parse_double_colon(operand: &str) -> Result<Self, ClientError> {
+        use super::super::super::module_list::parse_host_port;
+
+        let (host_part, module_path) = operand
+            .split_once("::")
+            .ok_or_else(|| invalid_argument_error(&format!("not a daemon operand: {operand}"), 1))?;
+
+        let target = parse_host_port(host_part, 873)?;
+
+        let mut path_parts = module_path.splitn(2, '/');
+        let module = path_parts.next().unwrap_or("").to_owned();
+        let file_path = path_parts.next().unwrap_or("").to_owned();
 
         Ok(Self {
             address: target.address,
@@ -146,20 +172,15 @@ fn extract_digest_list_from_greeting(greeting: &str) -> Option<&str> {
 ///
 /// When `output_motd` is true, MOTD lines are printed to stdout, mirroring
 /// upstream rsync's `output_motd` global variable.
-pub(crate) fn perform_daemon_handshake(
-    stream: &mut TcpStream,
+pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
+    reader: &mut BufReader<R>,
+    writer: &mut W,
     request: &DaemonTransferRequest,
     output_motd: bool,
     daemon_params: &[String],
     early_input: Option<&Path>,
     protocol_override: Option<ProtocolVersion>,
 ) -> Result<ProtocolVersion, ClientError> {
-    let mut reader = BufReader::new(
-        stream
-            .try_clone()
-            .map_err(|e| socket_error("clone", request.address.socket_addr_display(), e))?,
-    );
-
     let mut greeting = String::new();
     reader.read_line(&mut greeting).map_err(|e| {
         socket_error(
@@ -195,14 +216,14 @@ pub(crate) fn perform_daemon_handshake(
         "@RSYNCD: {}.0 sha512 sha256 sha1 md5 md4\n",
         our_version.as_u8()
     );
-    stream.write_all(client_version.as_bytes()).map_err(|e| {
+    writer.write_all(client_version.as_bytes()).map_err(|e| {
         socket_error(
             "send client version to",
             request.address.socket_addr_display(),
             e,
         )
     })?;
-    stream
+    writer
         .flush()
         .map_err(|e| socket_error("flush to", request.address.socket_addr_display(), e))?;
 
@@ -210,7 +231,7 @@ pub(crate) fn perform_daemon_handshake(
     // sent as "OPTION key=value\n" before the module name.
     for param in daemon_params {
         let option_line = format!("OPTION {param}\n");
-        stream.write_all(option_line.as_bytes()).map_err(|e| {
+        writer.write_all(option_line.as_bytes()).map_err(|e| {
             socket_error(
                 "send daemon option to",
                 request.address.socket_addr_display(),
@@ -222,19 +243,19 @@ pub(crate) fn perform_daemon_handshake(
     // upstream: clientserver.c:266-294 - sends `#early_input=<len>\n` followed by
     // the raw file contents before the module name.
     if let Some(path) = early_input {
-        send_early_input(stream, path, request)?;
+        send_early_input(writer, path, request)?;
     }
 
     // upstream: clientserver.c:351 - module name is sent BEFORE waiting for @RSYNCD: OK
     let module_request = format!("{}\n", request.module);
-    stream.write_all(module_request.as_bytes()).map_err(|e| {
+    writer.write_all(module_request.as_bytes()).map_err(|e| {
         socket_error(
             "send module request to",
             request.address.socket_addr_display(),
             e,
         )
     })?;
-    stream
+    writer
         .flush()
         .map_err(|e| socket_error("flush to", request.address.socket_addr_display(), e))?;
 
@@ -274,8 +295,19 @@ pub(crate) fn perform_daemon_handshake(
             // digest is selected.
             trace_daemon_auth_negotiated(digest.name());
 
-            let auth_context = DaemonAuthContext::new(username, secret, digest);
-            send_daemon_auth_credentials(&mut reader, &auth_context, challenge, &request.address)?;
+            // Send auth credentials via the writer (not through BufReader).
+            let digest_response = compute_daemon_auth_response(&secret, challenge, digest);
+            let auth_line = format!("{username} {digest_response}\n");
+            writer.write_all(auth_line.as_bytes()).map_err(|e| {
+                socket_error(
+                    "send auth credentials to",
+                    request.address.socket_addr_display(),
+                    e,
+                )
+            })?;
+            writer.flush().map_err(|e| {
+                socket_error("flush to", request.address.socket_addr_display(), e)
+            })?;
 
             continue;
         }
@@ -374,8 +406,8 @@ pub(crate) fn read_early_input_file(path: &Path) -> Result<Vec<u8>, ClientError>
 ///
 /// upstream: clientserver.c:266-294 - `start_inband_exchange()` sends the early
 /// input after `exchange_protocols()` and before the module name.
-fn send_early_input(
-    stream: &mut TcpStream,
+fn send_early_input<W: Write>(
+    writer: &mut W,
     path: &Path,
     request: &DaemonTransferRequest,
 ) -> Result<(), ClientError> {
@@ -386,7 +418,7 @@ fn send_early_input(
     }
 
     let header = format!("{EARLY_INPUT_CMD}{}\n", data.len());
-    stream.write_all(header.as_bytes()).map_err(|e| {
+    writer.write_all(header.as_bytes()).map_err(|e| {
         socket_error(
             "send early-input header to",
             request.address.socket_addr_display(),
@@ -394,7 +426,7 @@ fn send_early_input(
         )
     })?;
 
-    stream.write_all(&data).map_err(|e| {
+    writer.write_all(&data).map_err(|e| {
         socket_error(
             "send early-input data to",
             request.address.socket_addr_display(),

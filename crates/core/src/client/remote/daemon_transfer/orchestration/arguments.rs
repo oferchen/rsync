@@ -5,7 +5,6 @@
 //! argument exchange protocols.
 
 use std::io::Write;
-use std::net::TcpStream;
 
 use protocol::ProtocolVersion;
 use transfer::setup::build_capability_string;
@@ -25,8 +24,8 @@ use crate::client::remote::flags;
 ///
 /// Without protect-args, sends all arguments in a single phase.
 /// For protocol >= 30, strings are null-terminated; for < 30, newline-terminated.
-pub(crate) fn send_daemon_arguments(
-    stream: &mut TcpStream,
+pub(crate) fn send_daemon_arguments<W: Write>(
+    stream: &mut W,
     config: &ClientConfig,
     request: &DaemonTransferRequest,
     protocol: ProtocolVersion,

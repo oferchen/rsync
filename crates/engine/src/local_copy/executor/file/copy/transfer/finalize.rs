@@ -74,7 +74,16 @@ pub(in crate::local_copy) fn finalize_guard_and_metadata(
                 "renaming temp file to {}",
                 destination_path.display()
             );
-            guard.commit()?;
+            let cross_device = guard.commit()?;
+            // After a cross-device commit the destination is a new inode created
+            // by fs::copy - any open fd still refers to the now-unlinked temp
+            // file. Invalidate it so metadata is applied via path-based syscalls
+            // on the actual destination.
+            // upstream: receiver.c:finish_transfer() - set_file_attrs() always
+            // operates on the final destination path after rename/copy.
+            if cross_device {
+                drop(writer_for_metadata.take());
+            }
             #[allow(unused_mut)] // REASON: mutated on unix for with_fd()
             let mut params = FinalizeMetadataParams::new(
                 metadata,
