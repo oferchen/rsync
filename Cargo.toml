@@ -308,7 +308,7 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "logg
 # PEM file parser for rustls certificate/key loading
 rustls-pemfile = "2"
 # Mozilla root CA certificates for TLS client verification
-webpki-roots = "0.26"
+webpki-roots = "1.0"
 # Self-signed certificate generation - dev-dep for TLS integration tests
 rcgen = "0.13"
 
