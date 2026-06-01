@@ -124,7 +124,7 @@ jobs:
 
       - name: Build oc-rsync (for differential_outcome)
         if: matrix.needs_upstream
-        run: cargo build --release
+        run: cargo build --locked --release
 
       - name: Detect host triple
         id: host

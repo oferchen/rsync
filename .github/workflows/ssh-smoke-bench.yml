@@ -99,7 +99,7 @@ jobs:
         run: sudo cp target/interop/upstream-src/rsync-3.4.2/rsync /usr/local/bin/rsync
 
       - name: Build oc-rsync (release)
-        run: cargo build --release --workspace
+        run: cargo build --locked --release --workspace
 
       - name: Set up SSH loopback
         run: |

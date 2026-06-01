@@ -71,7 +71,7 @@ jobs:
           shared-key: bench-drain-throughput
 
       - name: Build engine (release)
-        run: cargo build --release -p engine
+        run: cargo build --locked --release -p engine
 
       - name: Prepare results directory
         id: prep
