@@ -224,9 +224,12 @@ fn build_our_flags<'a>(
                 // This matches upstream where `shell_cmd` is empty.
                 (build_default_flags(config.allow_inc_recurse), None)
             } else {
-                let flags = negotiator
-                    .build_flags_from_client_info(&client_info, config.allow_inc_recurse);
-                (flags, Some(std::borrow::Cow::Owned(client_info.into_owned())))
+                let flags =
+                    negotiator.build_flags_from_client_info(&client_info, config.allow_inc_recurse);
+                (
+                    flags,
+                    Some(std::borrow::Cow::Owned(client_info.into_owned())),
+                )
             }
         } else {
             // SSH server mode without flag string - use platform defaults.

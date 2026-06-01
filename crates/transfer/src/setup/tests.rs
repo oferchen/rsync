@@ -408,7 +408,7 @@ fn setup_protocol_client_reads_compat_flags_from_server() {
         skip_compat_exchange: false,
         client_args: None, // not needed for client mode
         flag_string: None,
-        is_server: false,  // CLIENT mode
+        is_server: false, // CLIENT mode
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
