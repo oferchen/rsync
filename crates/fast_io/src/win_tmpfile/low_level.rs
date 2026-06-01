@@ -24,7 +24,7 @@ mod windows {
 
     use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
     use windows_sys::Win32::Storage::FileSystem::{
-        CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_DELETE_ON_CLOSE,
+        CREATE_NEW, CreateFileW, DELETE, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_DELETE_ON_CLOSE,
         FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ,
     };
 
@@ -75,7 +75,7 @@ mod windows {
             let handle = unsafe {
                 CreateFileW(
                     wide_path.as_ptr(),
-                    FILE_GENERIC_READ | FILE_GENERIC_WRITE,
+                    FILE_GENERIC_READ | FILE_GENERIC_WRITE | DELETE,
                     FILE_SHARE_READ | FILE_SHARE_DELETE,
                     std::ptr::null(),
                     CREATE_NEW,
