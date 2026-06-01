@@ -40,10 +40,11 @@ pub(super) fn set_timestamp_like(
     // the utimensat is only skipped when ALL relevant timestamps match.
     if let Some(existing) = existing {
         let mtime_matches = FileTime::from_last_modification_time(existing) == modified;
-        let atime_matches = options
-            .is_some_and(|o| o.atimes())
-            .then(|| FileTime::from_last_access_time(existing) == accessed)
-            .unwrap_or(true);
+        let atime_matches = if options.is_some_and(|o| o.atimes()) {
+            FileTime::from_last_access_time(existing) == accessed
+        } else {
+            true
+        };
         if mtime_matches && atime_matches {
             return Ok(());
         }
@@ -82,10 +83,11 @@ pub(super) fn set_timestamp_with_fd(
     // upstream: rsync.c:597-612 - mtime and atime are checked independently
     if let Some(existing) = existing {
         let mtime_matches = FileTime::from_last_modification_time(existing) == modified;
-        let atime_matches = options
-            .is_some_and(|o| o.atimes())
-            .then(|| FileTime::from_last_access_time(existing) == accessed)
-            .unwrap_or(true);
+        let atime_matches = if options.is_some_and(|o| o.atimes()) {
+            FileTime::from_last_access_time(existing) == accessed
+        } else {
+            true
+        };
         if mtime_matches && atime_matches {
             return Ok(());
         }
