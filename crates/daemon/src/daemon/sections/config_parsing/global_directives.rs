@@ -794,11 +794,9 @@ fn apply_global_directive(
                 state.module_defaults.exclude.push(value.to_owned());
             }
         }
-        "include" => {
-            if !value.is_empty() {
-                state.module_defaults.include.push(value.to_owned());
-            }
-        }
+        // Note: "include" as a P_LOCAL default is not handled here because
+        // our key=value parser already claims "include" for config file
+        // inclusion (upstream uses "&include /path" which doesn't collide).
         "filter" => {
             if !value.is_empty() {
                 state.module_defaults.filter.push(value.to_owned());
