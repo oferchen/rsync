@@ -310,7 +310,7 @@ rustls-pemfile = "2"
 # Mozilla root CA certificates for TLS client verification
 webpki-roots = "0.26"
 # Self-signed certificate generation - dev-dep for TLS integration tests
-rcgen = "0.13"
+rcgen = "0.14"
 
 [workspace.metadata.docs.rs]
 all-features = true
