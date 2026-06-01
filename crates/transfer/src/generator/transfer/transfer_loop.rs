@@ -181,8 +181,16 @@ impl GeneratorContext {
                             // first_flist break), blocks waiting for receiver, which
                             // blocks waiting for our phase-transition NDX_DONE.
                             // Proactively transition when all flists are freed and
-                            // no more sub-lists are pending.
-                            if flist_done_remaining == 0 && self.incremental.flist_eof_sent {
+                            // no more sub-lists are pending, BUT only when the flist
+                            // has no regular files. When files exist, the receiver
+                            // will request them and send the normal phase-transition
+                            // NDX_DONE afterward - no deadlock occurs.
+                            let has_no_files =
+                                !self.file_list.as_slice().iter().any(|e| e.is_file());
+                            if flist_done_remaining == 0
+                                && self.incremental.flist_eof_sent
+                                && has_no_files
+                            {
                                 debug_log!(
                                     Send,
                                     1,
