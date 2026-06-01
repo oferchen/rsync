@@ -212,7 +212,7 @@ jobs:
           fi
 
       - name: Install cargo-deb and cargo-generate-rpm
-        uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
+        uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2
         with:
           tool: cargo-deb,cargo-generate-rpm
 
@@ -319,7 +319,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install cross
-        uses: taiki-e/install-action@d9be7d8cda89035c9c843f78bd44d4f72d8403d4 # v2
+        uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2
         with:
           tool: cross
 
@@ -1048,7 +1048,7 @@ jobs:
           file bin/arm64/oc-rsync
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
