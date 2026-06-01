@@ -110,6 +110,22 @@ impl ClientConfig {
         self.protect_args
     }
 
+    /// Returns the old-args preference for remote shell transfers.
+    ///
+    /// When `Some(true)`, filename arguments are passed unescaped to the remote
+    /// shell, preserving the pre-3.0 behaviour where spaces in a remote path
+    /// cause `eval` to split them into separate arguments.
+    ///
+    /// `Some(false)` explicitly disables old-args. `None` uses the default
+    /// behaviour (disabled unless `RSYNC_OLD_ARGS` is set in the environment).
+    ///
+    /// upstream: options.c - `old_style_args`, `RSYNC_OLD_ARGS` env var.
+    #[doc(alias = "--old-args")]
+    #[doc(alias = "--no-old-args")]
+    pub const fn old_args(&self) -> Option<bool> {
+        self.old_args
+    }
+
     /// Returns the configured OpenSSH ProxyJump hosts, if any.
     ///
     /// The returned value is a comma-separated list of `[user@]host[:port]`

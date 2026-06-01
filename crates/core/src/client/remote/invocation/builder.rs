@@ -198,8 +198,13 @@ impl<'a> RemoteInvocationBuilder<'a> {
         )));
         args.push(OsString::from("."));
 
+        // upstream: options.c:2533 safe_arg() - when old_style_args >= 1,
+        // filename arguments (is_filename_arg=true) skip shell escaping so
+        // the remote shell's eval naturally splits space-separated paths.
+        let old_args_active = self.config.old_args().unwrap_or(false);
+
         for path in remote_paths {
-            if escape_for_shell {
+            if escape_for_shell && !old_args_active {
                 // upstream: main.c:613 safe_arg(NULL, *remote_argv++)
                 args.push(OsString::from(shell_safe_filename_arg(path)));
             } else {

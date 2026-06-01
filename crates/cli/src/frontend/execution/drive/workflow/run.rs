@@ -58,7 +58,7 @@ where
         remote_options,
         rsync_path: _,
         protect_args,
-        old_args: _,
+        old_args,
         address_mode,
         bind_address: bind_address_raw,
         sockopts,
@@ -823,6 +823,7 @@ where
         early_input: early_input.map(PathBuf::from),
         prefer_aes_gcm,
         protect_args,
+        old_args: resolve_old_args(old_args, protect_args),
         jump_hosts: jump_host,
         batch_config,
         no_motd,
@@ -881,6 +882,32 @@ where
             log_file: log_file_for_local,
         },
     )
+}
+
+/// Resolves the effective `--old-args` setting from the CLI flag and env var.
+///
+/// upstream: options.c:1952-1964 - when `old_style_args` is not explicitly set
+/// (`None`), check `RSYNC_OLD_ARGS` env var. The env var is only honoured when
+/// protect_args is not active (upstream: `protect_args <= 0`). When both
+/// `--old-args` and `--protect-args` are explicitly set, upstream rejects the
+/// combination, but we silently give protect_args precedence (old_args becomes
+/// inactive) since the conflict is validated at the CLI layer.
+fn resolve_old_args(explicit: Option<bool>, protect_args: Option<bool>) -> Option<bool> {
+    if let Some(value) = explicit {
+        return Some(value);
+    }
+    // upstream: options.c:1953 - only check env when !am_server && protect_args <= 0
+    if protect_args.unwrap_or(false) {
+        return None;
+    }
+    match std::env::var("RSYNC_OLD_ARGS") {
+        Ok(val) if !val.is_empty() => {
+            // upstream: old_style_args = atoi(arg) - any non-zero value enables
+            let level: i32 = val.parse().unwrap_or(0);
+            if level > 0 { Some(true) } else { None }
+        }
+        _ => None,
+    }
 }
 
 /// Opens a log file for appending, creating it if it does not exist.
