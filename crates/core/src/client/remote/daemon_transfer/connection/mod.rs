@@ -11,8 +11,7 @@ use protocol::ProtocolVersion;
 use protocol::nstr::{trace_daemon_auth_negotiated, trace_daemon_greeting_auth_list};
 
 use crate::auth::{
-    DaemonAuthDigest, compute_daemon_auth_response, parse_daemon_digest_list,
-    select_daemon_digest,
+    DaemonAuthDigest, compute_daemon_auth_response, parse_daemon_digest_list, select_daemon_digest,
 };
 
 use super::super::super::CLIENT_SERVER_PROTOCOL_EXIT_CODE;
@@ -74,9 +73,9 @@ impl DaemonTransferRequest {
     pub(crate) fn parse_double_colon(operand: &str) -> Result<Self, ClientError> {
         use super::super::super::module_list::parse_host_port;
 
-        let (host_part, module_path) = operand
-            .split_once("::")
-            .ok_or_else(|| invalid_argument_error(&format!("not a daemon operand: {operand}"), 1))?;
+        let (host_part, module_path) = operand.split_once("::").ok_or_else(|| {
+            invalid_argument_error(&format!("not a daemon operand: {operand}"), 1)
+        })?;
 
         let target = parse_host_port(host_part, 873)?;
 
@@ -305,9 +304,9 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
                     e,
                 )
             })?;
-            writer.flush().map_err(|e| {
-                socket_error("flush to", request.address.socket_addr_display(), e)
-            })?;
+            writer
+                .flush()
+                .map_err(|e| socket_error("flush to", request.address.socket_addr_display(), e))?;
 
             continue;
         }
