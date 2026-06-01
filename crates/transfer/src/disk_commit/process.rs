@@ -131,8 +131,6 @@ pub(super) fn process_file(
                 // timestamps, ACLs, or xattrs.
                 let metadata_error = if needs_rename && !was_copy {
                     pre_meta_error
-                } else if needs_rename && was_copy {
-                    apply_file_metadata(&begin.file_path, &begin, config)
                 } else {
                     apply_file_metadata(&begin.file_path, &begin, config)
                 };
@@ -235,8 +233,6 @@ pub(super) fn process_whole_file(
 
     let metadata_error = if needs_rename && !was_copy {
         pre_meta_error
-    } else if needs_rename && was_copy {
-        apply_file_metadata(&begin.file_path, &begin, config)
     } else {
         apply_file_metadata(&begin.file_path, &begin, config)
     };
