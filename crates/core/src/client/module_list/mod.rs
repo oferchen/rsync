@@ -50,8 +50,9 @@ pub(super) use auth::{
 pub(super) use connect::tls::{TlsClientConfig, TlsConnector, TlsStream};
 #[allow(unused_imports)] // REASON: convenience re-export for sibling modules
 pub(super) use connect::{
-    ConnectProgramConfig, ProxyConfig, ProxyCredentials, connect_direct, connect_via_proxy,
-    establish_proxy_tunnel, parse_proxy_spec, resolve_connect_timeout, resolve_daemon_addresses,
+    ConnectProgramConfig, DaemonStream, DaemonStreamGuard, DaemonStreamReader, DaemonStreamWriter,
+    ProxyConfig, ProxyCredentials, connect_direct, connect_via_proxy, establish_proxy_tunnel,
+    open_daemon_stream, parse_proxy_spec, resolve_connect_timeout, resolve_daemon_addresses,
 };
 #[allow(unused_imports)] // REASON: convenience re-export for sibling modules
 pub(super) use errors::map_daemon_handshake_error;

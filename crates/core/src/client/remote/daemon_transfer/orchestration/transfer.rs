@@ -3,15 +3,16 @@
 //! Orchestrates the transfer lifecycle by configuring server infrastructure,
 //! establishing the handshake result, and delegating to `run_server_with_handshake`.
 
-use std::net::TcpStream;
-use std::time::{Duration, Instant};
+use std::io::{Read, Write};
+use std::time::Instant;
 
 use protocol::ProtocolVersion;
 
 use super::server_config::{build_server_config_for_generator, build_server_config_for_receiver};
 use super::stats::convert_server_stats_to_summary;
 use crate::client::config::ClientConfig;
-use crate::client::error::{ClientError, invalid_argument_error, socket_error};
+use crate::client::error::{ClientError, invalid_argument_error};
+use crate::client::module_list::{DaemonStreamGuard, DaemonStreamReader, DaemonStreamWriter};
 use crate::client::remote::batch_support::{BatchContext, build_batch_recording};
 use crate::client::remote::flags;
 use crate::client::summary::ClientSummary;
@@ -28,20 +29,23 @@ use crate::server::handshake::HandshakeResult;
 /// 3. `io_start_multiplex_out()` activates output multiplex
 /// 4. `send_filter_list()` sends filters after multiplex activation
 /// 5. File list exchange and transfer
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_pull_transfer(
     config: &ClientConfig,
-    mut stream: TcpStream,
+    reader: &mut DaemonStreamReader,
+    writer: &mut DaemonStreamWriter,
+    _guard: DaemonStreamGuard,
     local_paths: &[String],
     protocol: ProtocolVersion,
     batch_ctx: Option<BatchContext>,
+    buffered: Vec<u8>,
 ) -> Result<ClientSummary, ClientError> {
-    configure_transfer_socket(&stream, config)?;
-
     let filter_rules = flags::build_wire_format_rules(config.filter_rules())?;
 
     // upstream: compat.c:599 - protocol was negotiated via @RSYNCD text exchange,
     // setup_protocol() skips the binary exchange because remote_protocol != 0.
-    let handshake = build_daemon_handshake(config, protocol);
+    let mut handshake = build_daemon_handshake(config, protocol);
+    handshake.buffered = buffered;
 
     let mut server_config = build_server_config_for_receiver(config, local_paths, filter_rules)?;
 
@@ -59,13 +63,16 @@ pub(crate) fn run_pull_transfer(
         .map(|ctx| build_batch_recording(ctx, false));
 
     let start = Instant::now();
-    let server_stats = run_server_with_handshake_over_stream(
+    let server_stats = crate::server::run_server_with_handshake(
         server_config,
         handshake,
-        &mut stream,
+        reader,
+        writer,
         None,
         batch_recording,
-    )?;
+        None,
+    )
+    .map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))?;
     let elapsed = start.elapsed();
 
     Ok(convert_server_stats_to_summary(server_stats, elapsed))
@@ -82,19 +89,22 @@ pub(crate) fn run_pull_transfer(
 /// 3. `io_start_multiplex_out()` activates output multiplex
 /// 4. `send_filter_list()` sends filters after multiplex activation
 /// 5. File list exchange and transfer
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn run_push_transfer(
     config: &ClientConfig,
-    mut stream: TcpStream,
+    reader: &mut DaemonStreamReader,
+    writer: &mut DaemonStreamWriter,
+    _guard: DaemonStreamGuard,
     local_paths: &[String],
     protocol: ProtocolVersion,
     batch_ctx: Option<BatchContext>,
+    buffered: Vec<u8>,
 ) -> Result<ClientSummary, ClientError> {
-    configure_transfer_socket(&stream, config)?;
-
     let filter_rules = flags::build_wire_format_rules(config.filter_rules())?;
 
     // upstream: compat.c:599 - if (remote_protocol == 0) { ... }
-    let handshake = build_daemon_handshake(config, protocol);
+    let mut handshake = build_daemon_handshake(config, protocol);
+    handshake.buffered = buffered;
 
     let server_config = build_server_config_for_generator(config, local_paths, filter_rules)?;
     let dry_run = config.dry_run();
@@ -106,18 +116,11 @@ pub(crate) fn run_push_transfer(
 
     let start = Instant::now();
 
-    // Call the server directly (not the error-wrapping helper) to inspect the
-    // raw io::Error kind for dry-run graceful close handling.
-    let mut reader = stream
-        .try_clone()
-        .map_err(|e| invalid_argument_error(&format!("failed to clone stream: {e}"), 23))?;
-
     // upstream: log.c:330-340 - when !am_server, rwrite() sends itemize to
     // FCLIENT (stdout); the callback writes directly to process stdout.
     let wants_itemize = config.itemize_changes();
     let stdout_handle = std::io::stdout();
     let mut itemize_cb = move |line: &str| {
-        use std::io::Write;
         let mut out = stdout_handle.lock();
         let _ = out.write_all(line.as_bytes());
     };
@@ -125,8 +128,8 @@ pub(crate) fn run_push_transfer(
     let result = crate::server::run_server_with_handshake(
         server_config,
         handshake,
-        &mut reader,
-        &mut stream,
+        reader,
+        writer,
         None,
         batch_recording,
         if wants_itemize {
@@ -148,30 +151,6 @@ pub(crate) fn run_push_transfer(
         }
         Err(e) => Err(invalid_argument_error(&format!("transfer failed: {e}"), 23)),
     }
-}
-
-/// Configures socket options for the transfer phase.
-///
-/// Sets TCP_NODELAY and applies the user-configured `--timeout` for read/write
-/// operations, replacing the handshake-phase timeout.
-/// upstream: io.c - select_timeout() uses io_timeout for all transfer I/O.
-fn configure_transfer_socket(stream: &TcpStream, config: &ClientConfig) -> Result<(), ClientError> {
-    stream
-        .set_nodelay(true)
-        .map_err(|e| socket_error("set nodelay on", "daemon socket", e))?;
-
-    let transfer_timeout = config
-        .timeout()
-        .as_seconds()
-        .map(|s| Duration::from_secs(s.get()));
-    stream
-        .set_read_timeout(transfer_timeout)
-        .map_err(|e| socket_error("set read timeout on", "daemon socket", e))?;
-    stream
-        .set_write_timeout(transfer_timeout)
-        .map_err(|e| socket_error("set write timeout on", "daemon socket", e))?;
-
-    Ok(())
 }
 
 /// Builds a `HandshakeResult` for daemon transfers where the protocol version
@@ -209,34 +188,6 @@ pub(super) fn is_dry_run_remote_close(error: &std::io::Error) -> bool {
             | std::io::ErrorKind::UnexpectedEof
             | std::io::ErrorKind::WouldBlock
     )
-}
-
-/// Runs server over a TCP stream with pre-negotiated handshake.
-///
-/// Used for daemon client mode where the protocol version exchange has already
-/// been performed in `perform_daemon_handshake`. Calls `run_server_with_handshake`
-/// directly, skipping the duplicate version exchange.
-fn run_server_with_handshake_over_stream(
-    config: crate::server::ServerConfig,
-    handshake: HandshakeResult,
-    stream: &mut TcpStream,
-    progress: Option<&mut dyn crate::server::TransferProgressCallback>,
-    batch: Option<crate::server::BatchRecording>,
-) -> Result<crate::server::ServerStats, ClientError> {
-    let mut reader = stream
-        .try_clone()
-        .map_err(|e| invalid_argument_error(&format!("failed to clone stream: {e}"), 23))?;
-
-    crate::server::run_server_with_handshake(
-        config,
-        handshake,
-        &mut reader,
-        stream,
-        progress,
-        batch,
-        None,
-    )
-    .map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))
 }
 
 /// Reads the `--files-from` source and serializes it into the wire format

@@ -19,6 +19,59 @@ pub(crate) use proxy::{
     parse_proxy_spec,
 };
 
+/// Read half of a [`DaemonStream`] after splitting.
+pub(crate) enum DaemonStreamReader {
+    /// Cloned TCP socket used for reading.
+    Tcp(TcpStream),
+    /// Child process stdout.
+    Program(std::process::ChildStdout),
+    /// TLS read half (full stream - TLS does not support independent halves).
+    #[cfg(feature = "client-tls")]
+    Tls(Box<tls::TlsStream>),
+}
+
+impl Read for DaemonStreamReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::Tcp(stream) => stream.read(buf),
+            Self::Program(stdout) => stdout.read(buf),
+            #[cfg(feature = "client-tls")]
+            Self::Tls(stream) => stream.read(buf),
+        }
+    }
+}
+
+/// Write half of a [`DaemonStream`] after splitting.
+pub(crate) enum DaemonStreamWriter {
+    /// Original TCP socket used for writing.
+    Tcp(TcpStream),
+    /// Child process stdin.
+    Program(std::process::ChildStdin),
+    /// TLS has no split - the writer variant is unused (see `DaemonStreamReader::Tls`).
+    #[cfg(feature = "client-tls")]
+    Tls(std::convert::Infallible),
+}
+
+impl Write for DaemonStreamWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Self::Tcp(stream) => stream.write(buf),
+            Self::Program(stdin) => stdin.write(buf),
+            #[cfg(feature = "client-tls")]
+            Self::Tls(infallible) => match *infallible {},
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Self::Tcp(stream) => stream.flush(),
+            Self::Program(stdin) => stdin.flush(),
+            #[cfg(feature = "client-tls")]
+            Self::Tls(infallible) => match *infallible {},
+        }
+    }
+}
+
 /// Opens a plain TCP connection to a daemon.
 ///
 /// Respects `RSYNC_CONNECT_PROG` and `RSYNC_PROXY` environment
@@ -109,7 +162,7 @@ pub(crate) const fn resolve_connect_timeout(
 /// Abstracts over the underlying transport: plain TCP, a connect program
 /// (`RSYNC_CONNECT_PROG`), or a TLS-wrapped TCP connection (when the
 /// `client-tls` feature is enabled).
-pub(super) enum DaemonStream {
+pub(crate) enum DaemonStream {
     /// Plain TCP connection.
     Tcp(TcpStream),
     /// Connection via an external connect program.
@@ -126,8 +179,96 @@ impl DaemonStream {
         Self::Tcp(stream)
     }
 
-    const fn program(stream: ConnectProgramStream) -> Self {
+    fn program(stream: ConnectProgramStream) -> Self {
         Self::Program(stream)
+    }
+
+    /// Returns a reference to the underlying `TcpStream` if this is a TCP
+    /// connection. Used for applying socket-level options that only apply
+    /// to real sockets (not connect programs or TLS).
+    pub(crate) fn as_tcp_stream(&self) -> Option<&TcpStream> {
+        match self {
+            Self::Tcp(stream) => Some(stream),
+            Self::Program(_) => None,
+            #[cfg(feature = "client-tls")]
+            Self::Tls(_) => None,
+        }
+    }
+
+    /// Splits the daemon stream into independent read and write halves.
+    ///
+    /// For TCP, the socket is cloned (separate fd) so reader and writer
+    /// can be used concurrently. For connect programs, the child's stdout
+    /// and stdin pipes are returned directly.
+    ///
+    /// Returns `(reader, writer, guard)`. The guard must be held alive for
+    /// the duration of the transfer - for connect programs it owns the
+    /// `Child` process and kills it on drop.
+    pub(crate) fn split(
+        self,
+    ) -> io::Result<(DaemonStreamReader, DaemonStreamWriter, DaemonStreamGuard)> {
+        match self {
+            Self::Tcp(stream) => {
+                let reader = stream.try_clone()?;
+                Ok((
+                    DaemonStreamReader::Tcp(reader),
+                    DaemonStreamWriter::Tcp(stream),
+                    DaemonStreamGuard::None,
+                ))
+            }
+            Self::Program(prog) => {
+                let (child, stdin, stdout) = prog.into_parts();
+                Ok((
+                    DaemonStreamReader::Program(stdout),
+                    DaemonStreamWriter::Program(stdin),
+                    DaemonStreamGuard::Child(child),
+                ))
+            }
+            #[cfg(feature = "client-tls")]
+            Self::Tls(_) => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "TLS stream split not yet supported",
+            )),
+        }
+    }
+
+    /// Configures TCP-specific socket options for the transfer phase.
+    ///
+    /// Sets TCP_NODELAY and applies read/write timeouts. No-op for
+    /// non-TCP transports (connect programs, TLS).
+    pub(crate) fn configure_transfer_options(
+        &self,
+        nodelay: bool,
+        timeout: Option<Duration>,
+    ) -> io::Result<()> {
+        if let Self::Tcp(stream) = self {
+            if nodelay {
+                stream.set_nodelay(true)?;
+            }
+            stream.set_read_timeout(timeout)?;
+            stream.set_write_timeout(timeout)?;
+        }
+        Ok(())
+    }
+}
+
+/// Ownership guard for resources backing a split [`DaemonStream`].
+///
+/// For connect programs, this holds the `Child` process handle and
+/// kills/reaps it on drop. For TCP streams, no guard is needed.
+pub(crate) enum DaemonStreamGuard {
+    /// No resource to guard (TCP).
+    None,
+    /// Owns a connect program child process.
+    Child(std::process::Child),
+}
+
+impl Drop for DaemonStreamGuard {
+    fn drop(&mut self) {
+        if let Self::Child(child) = self {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 }
 

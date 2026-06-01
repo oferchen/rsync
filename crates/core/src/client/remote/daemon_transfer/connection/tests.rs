@@ -221,7 +221,7 @@ mod early_input_tests {
 mod early_input_roundtrip_tests {
     use super::*;
     use std::io::{BufRead, BufReader, Read};
-    use std::net::TcpListener;
+    use std::net::{TcpListener, TcpStream};
 
     fn test_request() -> DaemonTransferRequest {
         DaemonTransferRequest {
