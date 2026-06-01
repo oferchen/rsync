@@ -253,6 +253,7 @@ pub struct ClientConfigBuilder {
     early_input: Option<PathBuf>,
     prefer_aes_gcm: Option<bool>,
     protect_args: Option<bool>,
+    old_args: Option<bool>,
     jump_hosts: Option<OsString>,
     batch_config: Option<engine::batch::BatchConfig>,
     files_from: FilesFromSource,
@@ -297,6 +298,14 @@ impl ClientConfigBuilder {
         &self,
         caps: protocol::CompatibilityFlags,
     ) -> Result<(), ConfigConflict> {
+        // upstream: options.c:1958-1961 - --old-args conflicts with --protect-args.
+        if self.old_args == Some(true) && self.protect_args == Some(true) {
+            return Err(ConfigConflict {
+                option1: "old-args",
+                option2: "secluded-args",
+            });
+        }
+
         // upstream: options.c:2382 - --append cannot be used with --whole-file.
         // Only an explicit `--whole-file` (Some(true)) conflicts; the default
         // (None) and `--no-whole-file` (Some(false)) are accepted.
@@ -476,6 +485,7 @@ impl ClientConfigBuilder {
             early_input: self.early_input,
             prefer_aes_gcm: self.prefer_aes_gcm,
             protect_args: self.protect_args,
+            old_args: self.old_args,
             jump_hosts: self.jump_hosts,
             batch_config: self.batch_config,
             files_from: self.files_from,
