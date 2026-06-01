@@ -173,7 +173,7 @@ jobs:
           tool: cargo-nextest
 
       - name: Run tests
-        run: cargo nextest run --locked --workspace --all-features
+        run: cargo nextest run --locked --profile ci --workspace --all-features
 
       - name: Set up SSH loopback
         if: matrix.toolchain == 'stable'

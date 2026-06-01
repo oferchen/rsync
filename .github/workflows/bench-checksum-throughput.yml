@@ -63,7 +63,7 @@ jobs:
           shared-key: bench-checksum-throughput
 
       - name: Build checksums crate (release)
-        run: cargo build --release -p checksums
+        run: cargo build --locked --release -p checksums
 
       - name: Prepare results directory
         id: prep
