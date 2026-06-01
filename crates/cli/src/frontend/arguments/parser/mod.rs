@@ -50,7 +50,7 @@ where
     let mut matches = command.try_get_matches_from(args)?;
 
     let show_help = matches.get_flag("help");
-    let show_version = matches.get_flag("version");
+    let show_version = matches.get_count("version");
     let show_io_uring_status = matches.get_flag("io-uring-status");
 
     // Handle human-readable: bare flags (-h, --human-readable) count occurrences
