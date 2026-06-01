@@ -193,41 +193,66 @@ impl ConnectProgramConfig {
 }
 
 pub(crate) struct ConnectProgramStream {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: ChildStdout,
+    /// `None` after `into_parts()` has been called.
+    child: Option<Child>,
+    /// `None` after `into_parts()` has been called.
+    stdin: Option<ChildStdin>,
+    /// `None` after `into_parts()` has been called.
+    stdout: Option<ChildStdout>,
 }
 
 impl ConnectProgramStream {
-    const fn new(child: Child, stdin: ChildStdin, stdout: ChildStdout) -> Self {
+    fn new(child: Child, stdin: ChildStdin, stdout: ChildStdout) -> Self {
         Self {
-            child,
-            stdin,
-            stdout,
+            child: Some(child),
+            stdin: Some(stdin),
+            stdout: Some(stdout),
         }
+    }
+
+    /// Decomposes the stream into its constituent parts.
+    ///
+    /// Returns `(child, stdin, stdout)`. The caller takes ownership of the
+    /// child process and is responsible for reaping it.
+    pub(super) fn into_parts(mut self) -> (Child, ChildStdin, ChildStdout) {
+        let child = self.child.take().expect("child already taken");
+        let stdin = self.stdin.take().expect("stdin already taken");
+        let stdout = self.stdout.take().expect("stdout already taken");
+        (child, stdin, stdout)
     }
 }
 
 impl Read for ConnectProgramStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.stdout.read(buf)
+        self.stdout
+            .as_mut()
+            .expect("stdout taken by into_parts")
+            .read(buf)
     }
 }
 
 impl Write for ConnectProgramStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.stdin.write(buf)
+        self.stdin
+            .as_mut()
+            .expect("stdin taken by into_parts")
+            .write(buf)
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.stdin.flush()
+        self.stdin
+            .as_mut()
+            .expect("stdin taken by into_parts")
+            .flush()
     }
 }
 
 impl Drop for ConnectProgramStream {
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        if let Some(child) = &mut self.child {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 }
 

@@ -57,7 +57,7 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .long("compress")
                 .short('z')
                 .help("Enable compression during transfers.")
-                .action(ArgAction::SetTrue)
+                .action(ArgAction::Count)
                 .overrides_with("no-compress"),
         )
         .arg(

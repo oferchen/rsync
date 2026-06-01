@@ -737,6 +737,18 @@ fn apply_global_directive(
                 state.daemon_chroot = Some((PathBuf::from(trimmed), origin));
             }
         }
+        // upstream: loadparm.c - P_LOCAL directives in the global section are
+        // silently accepted as module defaults that apply to all modules which
+        // do not override them. We ignore them here because they are processed
+        // at the module level when the module definition inherits global defaults.
+        "munge symlinks" | "hosts allow" | "hosts deny" | "log file" | "transfer logging"
+        | "log format" | "exclude" | "exclude from" | "include from" | "max verbosity"
+        | "timeout" | "dont compress" | "pre-xfer exec" | "post-xfer exec" | "auth users"
+        | "strict modes" | "comment" | "path" | "read only" | "write only" | "list"
+        | "filter" | "charset" | "numeric ids" | "ignore errors" | "ignore nonreadable"
+        | "fake super" | "max connections" => {
+            // Silently accepted - not yet wired as inheritable module defaults.
+        }
         _ => {
             eprintln!(
                 "warning: unknown global directive '{}' in '{}' line {} [daemon={}]",
