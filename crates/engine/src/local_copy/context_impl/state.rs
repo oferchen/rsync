@@ -685,7 +685,8 @@ impl<'a> CopyContext<'a> {
         #[cfg(not(any(all(unix, feature = "xattr"), all(any(unix, windows), feature = "acl"))))]
         let _ = &path_context.source;
 
-        guard.commit()?;
+        // Deferred updates have no open fd, so the cross-device flag is unused.
+        let _cross_device = guard.commit()?;
 
         self.apply_metadata_and_finalize(
             destination.as_path(),

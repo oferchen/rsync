@@ -262,13 +262,19 @@ impl DestinationWriteGuard {
     ///
     /// If the destination already exists, it is removed before the commit.
     ///
+    /// Returns `true` when the commit required a cross-device copy (EXDEV fallback)
+    /// instead of an atomic rename. Callers holding an open fd to the temp file
+    /// must invalidate it after a cross-device commit because the destination is a
+    /// new inode - fd-based metadata operations (fchmod/fchown) would target the
+    /// now-unlinked temp inode instead of the destination.
+    ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - The rename, linkat, or copy operation fails
     /// - The destination cannot be removed
     /// - Permission is denied
-    pub fn commit(mut self) -> Result<(), LocalCopyError> {
+    pub fn commit(mut self) -> Result<bool, LocalCopyError> {
         // Extract values from strategy before calling methods on self,
         // to avoid borrowing self.strategy and self simultaneously.
         enum CommitAction {
@@ -286,17 +292,16 @@ impl DestinationWriteGuard {
             GuardStrategy::Anonymous { file } => CommitAction::Anonymous(file.take()),
         };
 
-        match action {
-            CommitAction::Named(temp_path) => {
-                self.commit_named_temp_file(temp_path)?;
-            }
+        let cross_device = match action {
+            CommitAction::Named(temp_path) => self.commit_named_temp_file(temp_path)?,
             #[cfg(target_os = "linux")]
             CommitAction::Anonymous(file) => {
                 self.commit_anonymous(file)?;
+                false
             }
-        }
+        };
         self.committed = true;
-        Ok(())
+        Ok(cross_device)
     }
 
     /// Commits a named temp file via rename with retry logic.
@@ -310,7 +315,8 @@ impl DestinationWriteGuard {
     // TODO: SEC-1.j receiver wiring - DirSandbox not in scope, defer pending
     // `DestinationWriteGuard` carrying a sandbox handle threaded through the
     // local-copy executor and its callers; cross-crate API change.
-    fn commit_named_temp_file(&self, temp_path: PathBuf) -> Result<(), LocalCopyError> {
+    /// Returns `true` when commit used a cross-device copy instead of rename.
+    fn commit_named_temp_file(&self, temp_path: PathBuf) -> Result<bool, LocalCopyError> {
         let mut tries = 4u32;
         loop {
             let rename_result = if let Some(result) =
@@ -321,7 +327,7 @@ impl DestinationWriteGuard {
                 fs::rename(&temp_path, &self.final_path)
             };
             match rename_result {
-                Ok(()) => return Ok(()),
+                Ok(()) => return Ok(false),
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
                     remove_existing_destination(&self.final_path)?;
                     let retry_result = if let Some(result) =
@@ -334,7 +340,7 @@ impl DestinationWriteGuard {
                     retry_result.map_err(|rename_error| {
                         LocalCopyError::io(self.finalise_action(), temp_path.clone(), rename_error)
                     })?;
-                    return Ok(());
+                    return Ok(false);
                 }
                 Err(error) if error.kind() == io::ErrorKind::ExecutableFileBusy => {
                     tries -= 1;
@@ -343,6 +349,9 @@ impl DestinationWriteGuard {
                     }
                     remove_existing_destination(&self.final_path)?;
                 }
+                // upstream: receiver.c:finish_transfer() - cross-device fallback
+                // copies data then applies metadata via set_file_attrs() on the
+                // new destination inode.
                 Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
                     fs::copy(&temp_path, &self.final_path).map_err(|copy_error| {
                         LocalCopyError::io(
@@ -354,7 +363,7 @@ impl DestinationWriteGuard {
                     fs::remove_file(&temp_path).map_err(|remove_error| {
                         LocalCopyError::io(self.finalise_action(), temp_path, remove_error)
                     })?;
-                    return Ok(());
+                    return Ok(true);
                 }
                 Err(error) => {
                     return Err(LocalCopyError::io(self.finalise_action(), temp_path, error));
