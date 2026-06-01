@@ -621,8 +621,7 @@ const WILD_CHARS: &str = "*?[]";
 /// upstream condition `!protect_args && old_style_args < 2`.
 pub(super) fn shell_safe_filename_arg(arg: &str) -> String {
     let leading_dash = arg.starts_with('-');
-    let needs_escaping =
-        leading_dash || arg.chars().any(|c| SHELL_CHARS.contains(c));
+    let needs_escaping = leading_dash || arg.chars().any(|c| SHELL_CHARS.contains(c));
     if !needs_escaping {
         return arg.to_owned();
     }

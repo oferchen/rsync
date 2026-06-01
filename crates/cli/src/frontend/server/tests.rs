@@ -901,10 +901,7 @@ fn parse_server_long_flags_log_format_operation() {
 #[test]
 fn parse_server_long_flags_log_format_placeholder() {
     // upstream: options.c:2761 - X when not verbose, no i/o tokens
-    let args = vec![
-        OsString::from("--server"),
-        OsString::from("--log-format=X"),
-    ];
+    let args = vec![OsString::from("--server"), OsString::from("--log-format=X")];
     let flags = parse_server_long_flags(&args);
     assert_eq!(flags.log_format.as_deref(), Some("X"));
 }

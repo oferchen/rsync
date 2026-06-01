@@ -273,11 +273,7 @@ impl VersionInfoReport {
         // Algorithm lists.
         self.write_json_list(writer, "checksum_list", &self.checksum_algorithms)?;
         self.write_json_list(writer, "compress_list", &self.compress_algorithms)?;
-        self.write_json_list(
-            writer,
-            "daemon_auth_list",
-            &self.daemon_auth_algorithms,
-        )?;
+        self.write_json_list(writer, "daemon_auth_list", &self.daemon_auth_algorithms)?;
 
         // Closing metadata.
         write!(writer, ",\n  \"license\": \"GPLv3\"")?;
@@ -327,10 +323,8 @@ impl VersionInfoReport {
                     in_section = true;
                 }
                 InfoItem::Entry(text) => {
-                    let is_last_in_section = matches!(
-                        items.get(idx + 1),
-                        None | Some(InfoItem::Section(_))
-                    );
+                    let is_last_in_section =
+                        matches!(items.get(idx + 1), None | Some(InfoItem::Section(_)));
 
                     write_json_entry(writer, text, !is_last_in_section)?;
                 }

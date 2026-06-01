@@ -174,11 +174,13 @@ fn debug_flag_apply_io() {
     assert_eq!(settings.io, Some(1));
 }
 
+/// upstream: options.c:444-445 - levels beyond MAX_OUT_LEVEL (4) are clamped,
+/// not rejected. `--debug=IO5` becomes IO level 4 in upstream.
 #[test]
-fn debug_flag_apply_io_level_too_high() {
+fn debug_flag_apply_io_level_clamped_to_max() {
     let mut settings = DebugFlagSettings::default();
-    let result = settings.apply("io5", "io5");
-    assert!(result.is_err());
+    settings.apply("io5", "io5").unwrap();
+    assert_eq!(settings.io, Some(4));
 }
 
 #[test]
@@ -661,78 +663,86 @@ fn debug_flag_all_keywords_accepted() {
     }
 }
 
+/// upstream: options.c:444-445 - all debug levels are clamped to MAX_OUT_LEVEL (4),
+/// never rejected. Verify that levels at and beyond the documented per-flag maxima
+/// are accepted and clamped.
 #[test]
-fn debug_flag_level_limits() {
+fn debug_flag_level_clamping() {
+    // Within-range levels are stored as-is.
     let mut settings = DebugFlagSettings::default();
+    settings.apply("backup2", "backup2").unwrap();
+    assert_eq!(settings.backup, Some(2));
 
-    // backup: max 2
-    assert!(settings.apply("backup2", "backup2").is_ok());
-    assert!(settings.apply("backup3", "backup3").is_err());
+    settings.apply("del3", "del3").unwrap();
+    assert_eq!(settings.del, Some(3));
 
-    // connect: max 2
+    settings.apply("deltasum4", "deltasum4").unwrap();
+    assert_eq!(settings.deltasum, Some(4));
+
+    settings.apply("io4", "io4").unwrap();
+    assert_eq!(settings.io, Some(4));
+
+    // Beyond MAX_OUT_LEVEL: clamped to 4.
     let mut settings = DebugFlagSettings::default();
-    assert!(settings.apply("connect2", "connect2").is_ok());
-    assert!(settings.apply("connect3", "connect3").is_err());
+    settings.apply("backup5", "backup5").unwrap();
+    assert_eq!(settings.backup, Some(4));
 
-    // cmd: max 2
-    let mut settings = DebugFlagSettings::default();
-    assert!(settings.apply("cmd2", "cmd2").is_ok());
-    assert!(settings.apply("cmd3", "cmd3").is_err());
+    settings.apply("connect9", "connect9").unwrap();
+    assert_eq!(settings.connect, Some(4));
 
-    // del: max 3
-    let mut settings = DebugFlagSettings::default();
-    assert!(settings.apply("del3", "del3").is_ok());
-    assert!(settings.apply("del4", "del4").is_err());
+    settings.apply("cmd7", "cmd7").unwrap();
+    assert_eq!(settings.cmd, Some(4));
 
-    // deltasum: max 4
-    let mut settings = DebugFlagSettings::default();
-    assert!(settings.apply("deltasum4", "deltasum4").is_ok());
-    assert!(settings.apply("deltasum5", "deltasum5").is_err());
+    settings.apply("del8", "del8").unwrap();
+    assert_eq!(settings.del, Some(4));
 
-    // exit: max 3
-    let mut settings = DebugFlagSettings::default();
-    assert!(settings.apply("exit3", "exit3").is_ok());
-    assert!(settings.apply("exit4", "exit4").is_err());
+    settings.apply("deltasum5", "deltasum5").unwrap();
+    assert_eq!(settings.deltasum, Some(4));
 
-    // filter: max 3
-    let mut settings = DebugFlagSettings::default();
-    assert!(settings.apply("filter3", "filter3").is_ok());
-    assert!(settings.apply("filter4", "filter4").is_err());
+    settings.apply("exit6", "exit6").unwrap();
+    assert_eq!(settings.exit, Some(4));
 
-    // flist: max 4
-    let mut settings = DebugFlagSettings::default();
-    assert!(settings.apply("flist4", "flist4").is_ok());
-    assert!(settings.apply("flist5", "flist5").is_err());
+    settings.apply("filter5", "filter5").unwrap();
+    assert_eq!(settings.filter, Some(4));
 
-    // fuzzy: max 2
-    let mut settings = DebugFlagSettings::default();
-    assert!(settings.apply("fuzzy2", "fuzzy2").is_ok());
-    assert!(settings.apply("fuzzy3", "fuzzy3").is_err());
+    settings.apply("flist9", "flist9").unwrap();
+    assert_eq!(settings.flist, Some(4));
 
-    // hlink: max 3
-    let mut settings = DebugFlagSettings::default();
-    assert!(settings.apply("hlink3", "hlink3").is_ok());
-    assert!(settings.apply("hlink4", "hlink4").is_err());
+    settings.apply("fuzzy5", "fuzzy5").unwrap();
+    assert_eq!(settings.fuzzy, Some(4));
 
-    // iconv: max 2
-    let mut settings = DebugFlagSettings::default();
-    assert!(settings.apply("iconv2", "iconv2").is_ok());
-    assert!(settings.apply("iconv3", "iconv3").is_err());
+    settings.apply("hlink5", "hlink5").unwrap();
+    assert_eq!(settings.hlink, Some(4));
 
-    // io: max 4
-    let mut settings = DebugFlagSettings::default();
-    assert!(settings.apply("io4", "io4").is_ok());
-    assert!(settings.apply("io5", "io5").is_err());
+    settings.apply("iconv7", "iconv7").unwrap();
+    assert_eq!(settings.iconv, Some(4));
 
-    // own: max 2
-    let mut settings = DebugFlagSettings::default();
-    assert!(settings.apply("own2", "own2").is_ok());
-    assert!(settings.apply("own3", "own3").is_err());
+    settings.apply("io5", "io5").unwrap();
+    assert_eq!(settings.io, Some(4));
 
-    // time: max 2
+    settings.apply("own9", "own9").unwrap();
+    assert_eq!(settings.own, Some(4));
+
+    settings.apply("time6", "time6").unwrap();
+    assert_eq!(settings.time, Some(4));
+}
+
+/// upstream: options.c:452-453 - "all" with a numeric suffix sets every flag to
+/// min(suffix, MAX_OUT_LEVEL). e.g. `all4` sets all to 4, `all9` clamps to 4.
+#[test]
+fn debug_flag_all_with_level() {
     let mut settings = DebugFlagSettings::default();
-    assert!(settings.apply("time2", "time2").is_ok());
-    assert!(settings.apply("time3", "time3").is_err());
+    settings.apply("all4", "all4").unwrap();
+    assert_eq!(settings.io, Some(4));
+    assert_eq!(settings.flist, Some(4));
+    assert_eq!(settings.hlink, Some(4));
+    assert_eq!(settings.acl, Some(4));
+
+    // Level beyond MAX_OUT_LEVEL is clamped.
+    let mut settings = DebugFlagSettings::default();
+    settings.apply("all9", "all9").unwrap();
+    assert_eq!(settings.io, Some(4));
+    assert_eq!(settings.hlink, Some(4));
 }
 
 #[test]
