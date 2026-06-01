@@ -68,6 +68,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
     /// Builds the complete invocation argument vector with multiple remote paths.
     ///
     /// This is used for pull operations with multiple remote sources from the same host.
+    /// Filename arguments are shell-escaped for safe eval by the remote shell.
     pub fn build_with_paths(&self, remote_paths: &[&str]) -> Vec<OsString> {
         let mut args = Vec::new();
 
@@ -77,7 +78,7 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("rsync"));
         }
 
-        args.extend(self.build_args_without_program(remote_paths));
+        args.extend(self.build_args_without_program(remote_paths, true));
         args
     }
 
@@ -131,9 +132,10 @@ impl<'a> RemoteInvocationBuilder<'a> {
     /// Builds the full argument list for stdin transmission in secluded-args mode.
     ///
     /// This produces the same arguments as `build_with_paths()` but as `String`
-    /// values suitable for null-separated transmission over stdin.
+    /// values suitable for null-separated transmission over stdin. No shell
+    /// escaping is applied because stdin args are null-separated, not eval'd.
     fn build_full_args_for_stdin(&self, remote_paths: &[&str]) -> Vec<String> {
-        let os_args = self.build_args_without_program(remote_paths);
+        let os_args = self.build_args_without_program(remote_paths, false);
         os_args
             .into_iter()
             .map(|a| a.to_string_lossy().into_owned())
@@ -145,7 +147,17 @@ impl<'a> RemoteInvocationBuilder<'a> {
     /// This is shared between normal `build_with_paths` and secluded-args
     /// `build_full_args_for_stdin`. The result includes `--server`, optional
     /// `--sender`, flags, capability string, `.`, and remote paths.
-    fn build_args_without_program(&self, remote_paths: &[&str]) -> Vec<OsString> {
+    ///
+    /// When `escape_for_shell` is true, filename arguments (remote paths) are
+    /// backslash-escaped for safe evaluation by the remote shell. This mirrors
+    /// upstream `options.c:safe_arg(NULL, path)` which escapes shell
+    /// metacharacters so that `eval "$@"` in the remote shell wrapper (e.g.,
+    /// `lsh.sh`) does not misinterpret special characters in filenames.
+    fn build_args_without_program(
+        &self,
+        remote_paths: &[&str],
+        escape_for_shell: bool,
+    ) -> Vec<OsString> {
         let mut args = Vec::new();
 
         args.push(OsString::from("--server"));
@@ -187,7 +199,12 @@ impl<'a> RemoteInvocationBuilder<'a> {
         args.push(OsString::from("."));
 
         for path in remote_paths {
-            args.push(OsString::from(path));
+            if escape_for_shell {
+                // upstream: main.c:613 safe_arg(NULL, *remote_argv++)
+                args.push(OsString::from(shell_safe_filename_arg(path)));
+            } else {
+                args.push(OsString::from(*path));
+            }
         }
 
         args
@@ -574,6 +591,64 @@ impl<'a> RemoteInvocationBuilder<'a> {
 
         flags
     }
+}
+
+/// Shell metacharacters that upstream rsync escapes in filename arguments.
+///
+/// upstream: options.c `SHELL_CHARS` - characters requiring backslash escaping
+/// when passing filename arguments through a remote shell that evaluates them
+/// via `eval "$@"`.
+const SHELL_CHARS: &str = "!#$&;|<>(){}\"'` \t\\";
+
+/// Wildcard characters recognized by upstream rsync.
+///
+/// upstream: options.c `WILD_CHARS` - when a backslash precedes one of these
+/// characters in a filename argument, the backslash is kept as-is (it already
+/// serves as a wildcard escape), so we do not double-escape it.
+const WILD_CHARS: &str = "*?[]";
+
+/// Backslash-escapes shell metacharacters in a filename argument.
+///
+/// Mirrors upstream `options.c:safe_arg(NULL, arg)` which prepends a backslash
+/// before every character in `SHELL_CHARS`, with special handling:
+///
+/// - Backslash itself is only escaped when it does NOT precede a wildcard
+///   character (`*`, `?`, `[`, `]`), preserving intentional wildcard escapes.
+/// - A leading `-` is prefixed with `./` to prevent the remote server from
+///   interpreting the path as an option.
+///
+/// This escaping is applied when `protect_args` is not active, matching the
+/// upstream condition `!protect_args && old_style_args < 2`.
+pub(super) fn shell_safe_filename_arg(arg: &str) -> String {
+    let leading_dash = arg.starts_with('-');
+    let needs_escaping =
+        leading_dash || arg.chars().any(|c| SHELL_CHARS.contains(c));
+    if !needs_escaping {
+        return arg.to_owned();
+    }
+
+    let mut out = String::with_capacity(arg.len() + 16);
+
+    if leading_dash {
+        out.push_str("./");
+    }
+
+    let chars: Vec<char> = arg.chars().collect();
+    for (i, &ch) in chars.iter().enumerate() {
+        if ch == '\\' {
+            // upstream: backslash is only escaped when the next character is
+            // NOT a wildcard (preserving intentional wildcard escapes).
+            let next = chars.get(i + 1).copied().unwrap_or('\0');
+            if !WILD_CHARS.contains(next) {
+                out.push('\\');
+            }
+        } else if SHELL_CHARS.contains(ch) {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+
+    out
 }
 
 /// Converts a `CompressionLevel` into its numeric representation for the wire.
