@@ -278,9 +278,9 @@ fn test_show_help_defaults_to_false() {
 }
 
 #[test]
-fn test_show_version_defaults_to_false() {
+fn test_show_version_defaults_to_zero() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
-    assert!(!args.show_version, "show_version should default to false");
+    assert_eq!(args.show_version, 0, "show_version should default to 0");
 }
 
 #[test]
