@@ -109,12 +109,7 @@ pub fn apply_file_metadata_with_fd(
     if options.times() {
         timestamps::set_timestamp_with_fd(metadata, destination, fd, None, Some(options))?;
     } else if options.atimes() {
-        timestamps::apply_atime_only_from_metadata_with_fd(
-            metadata,
-            destination,
-            fd,
-            None,
-        )?;
+        timestamps::apply_atime_only_from_metadata_with_fd(metadata, destination, fd, None)?;
     }
     // crtime is always path-based (setattrlist on macOS) - no fd variant exists
     if options.crtimes() {
@@ -139,13 +134,7 @@ pub fn apply_file_metadata_if_changed(
     permissions::apply_permissions_with_chmod(destination, metadata, options, Some(existing))?;
     // upstream: rsync.c:587-612 - mtime and atime are handled independently
     if options.times() {
-        timestamps::set_timestamp_like(
-            metadata,
-            destination,
-            true,
-            Some(existing),
-            Some(options),
-        )?;
+        timestamps::set_timestamp_like(metadata, destination, true, Some(existing), Some(options))?;
     } else if options.atimes() {
         timestamps::apply_atime_only_from_metadata(metadata, destination, Some(existing))?;
     }
