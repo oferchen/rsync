@@ -92,6 +92,14 @@ pub(super) struct ServerLongFlags {
     /// the value here lets the server bypass vstring negotiation and use the
     /// same algorithm as the client.
     pub(super) compress_choice: Option<String>,
+    /// Log format forwarded by the client (upstream: `--log-format=FMT`).
+    ///
+    /// upstream: options.c:2750-2762 - the client sends `--log-format=%i`
+    /// (or `%i%I`, `%o`, `X`) so the server knows whether the generator
+    /// should produce itemize data. The server does not use the full format
+    /// string - it only inspects it for `%i` / `%o` tokens to set
+    /// `stdout_format_has_i` and `stdout_format_has_o_or_i`.
+    pub(super) log_format: Option<String>,
 }
 
 /// Parses all long-form flags from the server argument list.
@@ -132,6 +140,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         reference_directories: Vec::new(),
         info: Vec::new(),
         compress_choice: None,
+        log_format: None,
     };
 
     for arg in args {
@@ -211,6 +220,10 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
         .or_else(|| s.strip_prefix("--zc="))
     {
         flags.compress_choice = Some(value.to_owned());
+    // upstream: options.c:2750-2762 - client forwards --log-format=%i (or %o,
+    // %i%I, X) so the server knows whether to generate itemize data.
+    } else if let Some(value) = s.strip_prefix("--log-format=") {
+        flags.log_format = Some(value.to_owned());
     // upstream: options.c:2928-2931 - server_options() forwards info levels.
     // Capture the raw value so run_server_mode can parse it tolerantly via
     // parse_info_flags_server (mirroring `am_server` in parse_output_words).
@@ -287,5 +300,6 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--iconv=")
         || arg.starts_with("--timeout=")
         || arg.starts_with("--io-uring-depth=")
+        || arg.starts_with("--log-format=")
         || arg.starts_with("--info=")
 }

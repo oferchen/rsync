@@ -121,6 +121,15 @@ where
     config.flags.delete = long_flags.delete;
     config.reference_directories = long_flags.reference_directories;
 
+    // upstream: options.c:2327-2338 - server parses --log-format to determine
+    // whether itemize data is needed. %i or %I in the format sets
+    // stdout_format_has_i, which controls generator itemize output.
+    if let Some(fmt) = &long_flags.log_format {
+        if fmt.contains("%i") || fmt.contains("%I") {
+            config.flags.info_flags.itemize = true;
+        }
+    }
+
     // upstream: rsync.c:85-147 setup_iconv() - server opens iconv against the
     // wire's UTF-8 charset using the local-side spec forwarded by the client
     // (options.c:2716-2723). Without this wiring the receiver/generator skip

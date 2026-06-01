@@ -864,3 +864,73 @@ fn parse_server_args_compress_choice_strips_from_dest() {
     assert_eq!(flags, "-vlogDtpre.iLsfxCIvuz");
     assert_eq!(pos_args, vec![OsString::from("dest/")]);
 }
+
+#[test]
+fn parse_server_long_flags_log_format_itemize() {
+    // upstream: options.c:2757 - client sends --log-format=%i for itemize
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--log-format=%i"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.log_format.as_deref(), Some("%i"));
+}
+
+#[test]
+fn parse_server_long_flags_log_format_itemize_extended() {
+    // upstream: options.c:2755 - %i%I when stdout_format_has_i > 1
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--log-format=%i%I"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.log_format.as_deref(), Some("%i%I"));
+}
+
+#[test]
+fn parse_server_long_flags_log_format_operation() {
+    // upstream: options.c:2759 - %o when stdout_format_has_o_or_i
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--log-format=%o"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.log_format.as_deref(), Some("%o"));
+}
+
+#[test]
+fn parse_server_long_flags_log_format_placeholder() {
+    // upstream: options.c:2761 - X when not verbose, no i/o tokens
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--log-format=X"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.log_format.as_deref(), Some("X"));
+}
+
+#[test]
+fn log_format_recognized_as_known_server_long_flag() {
+    assert!(is_known_server_long_flag("--log-format=%i"));
+    assert!(is_known_server_long_flag("--log-format=%i%I"));
+    assert!(is_known_server_long_flag("--log-format=%o"));
+    assert!(is_known_server_long_flag("--log-format=X"));
+}
+
+#[test]
+fn parse_server_args_log_format_strips_from_dest() {
+    // Regression: without recognizing --log-format as a known server flag,
+    // it falls through to positional args and the server tries to find a
+    // file named "--log-format=%i", reporting "file has vanished".
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--sender"),
+        OsString::from("-logDtpre.iLsfxCIvu"),
+        OsString::from("--log-format=%i"),
+        OsString::from("."),
+        OsString::from("/src/path/"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-logDtpre.iLsfxCIvu");
+    assert_eq!(pos_args, vec![OsString::from("/src/path/")]);
+}
