@@ -25,9 +25,6 @@ pub(crate) enum DaemonStreamReader {
     Tcp(TcpStream),
     /// Child process stdout.
     Program(std::process::ChildStdout),
-    /// TLS read half (full stream - TLS does not support independent halves).
-    #[cfg(feature = "client-tls")]
-    Tls(Box<tls::TlsStream>),
 }
 
 impl Read for DaemonStreamReader {
@@ -35,8 +32,6 @@ impl Read for DaemonStreamReader {
         match self {
             Self::Tcp(stream) => stream.read(buf),
             Self::Program(stdout) => stdout.read(buf),
-            #[cfg(feature = "client-tls")]
-            Self::Tls(stream) => stream.read(buf),
         }
     }
 }
@@ -47,9 +42,6 @@ pub(crate) enum DaemonStreamWriter {
     Tcp(TcpStream),
     /// Child process stdin.
     Program(std::process::ChildStdin),
-    /// TLS has no split - the writer variant is unused (see `DaemonStreamReader::Tls`).
-    #[cfg(feature = "client-tls")]
-    Tls(std::convert::Infallible),
 }
 
 impl Write for DaemonStreamWriter {
@@ -57,8 +49,6 @@ impl Write for DaemonStreamWriter {
         match self {
             Self::Tcp(stream) => stream.write(buf),
             Self::Program(stdin) => stdin.write(buf),
-            #[cfg(feature = "client-tls")]
-            Self::Tls(infallible) => match *infallible {},
         }
     }
 
@@ -66,8 +56,6 @@ impl Write for DaemonStreamWriter {
         match self {
             Self::Tcp(stream) => stream.flush(),
             Self::Program(stdin) => stdin.flush(),
-            #[cfg(feature = "client-tls")]
-            Self::Tls(infallible) => match *infallible {},
         }
     }
 }
@@ -77,7 +65,7 @@ impl Write for DaemonStreamWriter {
 /// Respects `RSYNC_CONNECT_PROG` and `RSYNC_PROXY` environment
 /// variables. For TLS-wrapped connections, use
 /// [`open_daemon_stream_tls`] instead.
-pub(super) fn open_daemon_stream(
+pub(crate) fn open_daemon_stream(
     addr: &DaemonAddress,
     connect_timeout: Option<Duration>,
     io_timeout: Option<Duration>,
