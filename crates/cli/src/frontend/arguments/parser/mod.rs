@@ -276,7 +276,8 @@ where
     if backup_dir.is_some() || backup_suffix.is_some() {
         backup = true;
     }
-    let compress_flag = matches.get_flag("compress");
+    let compress_count = matches.get_count("compress");
+    let compress_flag = compress_count > 0;
     let no_compress = matches.get_flag("no-compress");
     let mut compress = if no_compress { false } else { compress_flag };
     let no_open_noatime = matches.get_flag("no-open-noatime");
@@ -621,7 +622,10 @@ where
     let compress_choice = matches.remove_one::<OsString>("compress-choice");
     let compress_threads = matches.remove_one::<OsString>("compress-threads");
     let old_compress = matches.get_flag("old-compress");
-    let new_compress = matches.get_flag("new-compress");
+    // upstream: options.c:2002 - if (!compress_choice && do_compression > 1)
+    //   compress_choice = "zlibx"; -zz selects new-style compression.
+    let new_compress = matches.get_flag("new-compress")
+        || (compress_count >= 2 && compress_choice.is_none() && !old_compress);
     let skip_compress = matches.remove_one::<OsString>("skip-compress");
     let no_bwlimit = matches.get_flag("no-bwlimit");
     let bwlimit = if no_bwlimit {
