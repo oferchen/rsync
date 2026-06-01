@@ -194,6 +194,12 @@ pub struct ClientConfig {
     pub(super) early_input: Option<PathBuf>,
     pub(super) prefer_aes_gcm: Option<bool>,
     pub(super) protect_args: Option<bool>,
+    /// `--old-args` / `--no-old-args` - pre-3.0 argument passing.
+    ///
+    /// When `Some(true)`, filename arguments are passed unescaped to the remote
+    /// shell, allowing space-separated paths to be split by `eval`.
+    /// upstream: options.c - `old_style_args`, `RSYNC_OLD_ARGS` env var.
+    pub(super) old_args: Option<bool>,
     pub(super) jump_hosts: Option<OsString>,
     pub(super) batch_config: Option<engine::batch::BatchConfig>,
     pub(super) files_from: FilesFromSource,
@@ -375,6 +381,7 @@ impl Default for ClientConfig {
             early_input: None,
             prefer_aes_gcm: None,
             protect_args: None,
+            old_args: None,
             jump_hosts: None,
             batch_config: None,
             files_from: FilesFromSource::None,
