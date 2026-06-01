@@ -786,7 +786,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "transfer",
- "webpki-roots 0.26.11",
+ "webpki-roots",
  "zeroize",
 ]
 
@@ -4483,15 +4483,6 @@ checksum = "6d621441cfc37b84979402712047321980c178f299193a3589d05b99e8763436"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "webpki-roots"
-version = "0.26.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "521bc38abb08001b01866da9f51eb7c5d647a19260e00054a8c7fd5f9e57f7a9"
-dependencies = [
- "webpki-roots 1.0.7",
 ]
 
 [[package]]
