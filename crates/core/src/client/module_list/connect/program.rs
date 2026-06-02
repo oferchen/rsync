@@ -626,11 +626,9 @@ mod tests {
             "sys.stdout.flush()"
         );
 
-        let config = ConnectProgramConfig::new(
-            format!("python3 -c \"{probe_script}\"").into(),
-            None,
-        )
-        .unwrap();
+        let config =
+            ConnectProgramConfig::new(format!("python3 -c \"{probe_script}\"").into(), None)
+                .unwrap();
 
         let addr = DaemonAddress::new("localhost".to_owned(), 873).unwrap();
         let result = connect_via_program(&addr, &config);
