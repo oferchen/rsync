@@ -13,5 +13,8 @@ mod run;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use daemon::{daemon_mode_arguments, run_daemon_mode, server_mode_requested};
+pub(crate) use daemon::{
+    daemon_mode_arguments, run_daemon_mode, run_server_daemon_mode, server_daemon_mode_requested,
+    server_mode_requested,
+};
 pub(crate) use run::run_server_mode;

@@ -252,6 +252,13 @@ where
 
     let daemon_alias_requested = daemon_invoked_via_program_name(&args, brand);
 
+    // Check for --server --daemon (remote-shell daemon mode) BEFORE plain
+    // --server. upstream: main.c:1843-1844 dispatches start_daemon() when both
+    // am_server and am_daemon are set, before the normal server path.
+    if server::server_daemon_mode_requested(&args) {
+        return server::run_server_daemon_mode(&args, stderr);
+    }
+
     if server::server_mode_requested(&args) {
         return server::run_server_mode(&args, stdout, stderr);
     }
