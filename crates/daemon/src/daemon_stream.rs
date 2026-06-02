@@ -184,16 +184,6 @@ impl DaemonStream {
         }
     }
 
-    /// Consumes a `Stdio` variant and returns its reader and writer components.
-    ///
-    /// Returns `Ok((reader, writer))` for `Stdio` variants, or `Err(self)` for
-    /// TCP/TLS variants that cannot be split this way.
-    pub fn into_stdio_pair(self) -> Result<(Box<dyn Read + Send>, Box<dyn Write + Send>), Self> {
-        match self {
-            Self::Stdio(pair) => Ok((pair.reader, pair.writer)),
-            other => Err(other),
-        }
-    }
 }
 
 impl Read for DaemonStream {
