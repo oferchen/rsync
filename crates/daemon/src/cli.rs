@@ -10,7 +10,7 @@
 //! triggered by `--daemon` on the command line.
 
 use std::ffi::OsString;
-use std::io::{IsTerminal, Write};
+use std::io::Write;
 
 use core::{
     branding::{self},
@@ -24,7 +24,7 @@ use crate::{
     config::DaemonConfig,
     daemon::{
         MAX_EXIT_CODE, ParsedArgs, ServiceAction, parse_args, render_help, run_daemon,
-        run_stdio_session, write_message,
+        write_message,
     },
 };
 
@@ -85,25 +85,6 @@ where
     // Handle Windows Service management actions before entering the daemon loop.
     if let Some(action) = parsed.service_action {
         return execute_service_action(action, &parsed, stdout, stderr);
-    }
-
-    // upstream: clientserver.c:1496-1509 - daemon_main() detects
-    // is_a_socket(STDIN_FILENO) for inetd-style and RSYNC_CONNECT_PROG
-    // invocations where the daemon communicates over stdin/stdout rather
-    // than binding a TCP listener. Upstream checks for a socket because
-    // sock_exec() creates a socketpair; oc-rsync uses Stdio::piped()
-    // (pipes), so we detect non-terminal stdin instead.
-    if !std::io::stdin().is_terminal() {
-        return match run_stdio_session(&parsed.remainder, false) {
-            Ok(()) => 0,
-            Err(error) => {
-                if write_message(error.message(), stderr).is_err() {
-                    let message = error.message();
-                    let _ = writeln!(stderr.writer_mut(), "{message}");
-                }
-                error.exit_code()
-            }
-        };
     }
 
     let config = DaemonConfig::builder()

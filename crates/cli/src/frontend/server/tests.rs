@@ -166,19 +166,6 @@ fn server_mode_requested_with_receiver() {
     assert!(server_mode_requested(&args));
 }
 
-// upstream: main.c:1843-1844 - `--server --daemon` means stdio daemon mode,
-// NOT server mode. server_mode_requested must return false here.
-#[test]
-fn server_mode_requested_false_when_both_server_and_daemon() {
-    let args: Vec<OsString> = vec![
-        OsString::from("rsync"),
-        OsString::from("--server"),
-        OsString::from("--daemon"),
-        OsString::from("--config=/etc/rsyncd.conf"),
-    ];
-    assert!(!server_mode_requested(&args));
-}
-
 #[test]
 fn server_mode_requested_server_not_in_first_position() {
     let args: Vec<OsString> = vec![

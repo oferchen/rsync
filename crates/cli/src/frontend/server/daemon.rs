@@ -44,23 +44,16 @@ pub(crate) fn daemon_mode_arguments(args: &[OsString]) -> Option<Vec<OsString>> 
 /// Returns `true` when the invocation requests server mode.
 ///
 /// Only considers `--server` appearing before any `--` separator.
-/// Returns `false` when both `--server` and `--daemon` are present,
-/// which indicates stdio daemon mode (remote-shell daemon).
 pub(crate) fn server_mode_requested(args: &[OsString]) -> bool {
-    let mut has_server = false;
-    let mut has_daemon = false;
     for arg in args.iter().skip(1) {
         if arg == "--" {
-            break;
+            return false;
         }
         if arg == "--server" {
-            has_server = true;
-        }
-        if arg == "--daemon" {
-            has_daemon = true;
+            return true;
         }
     }
-    has_server && !has_daemon
+    false
 }
 
 /// Returns `true` when the invocation requests remote-shell daemon mode.
