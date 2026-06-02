@@ -76,7 +76,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
-          shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+          shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
       # Fail fast with an actionable error before any --locked build runs.
       # The downstream cargo steps already pass --locked, but their failure
@@ -167,7 +167,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
-          shared-key: ci-${{ runner.os }}-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+          shared-key: ci-${{ runner.os }}-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
           key: test
 
       - name: Install cargo-nextest
@@ -239,7 +239,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
-          shared-key: ci-windows-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+          shared-key: ci-windows-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install cargo-nextest (Windows direct download)
         shell: pwsh
@@ -300,7 +300,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
-          shared-key: ci-windows-iocp-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+          shared-key: ci-windows-iocp-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
           key: windows-iocp
 
       - name: Install cargo-nextest (Windows direct download)
@@ -365,7 +365,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
-          shared-key: ci-windows-acl-xattr-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+          shared-key: ci-windows-acl-xattr-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
           key: windows-acl-xattr
 
       - name: Install cargo-nextest (Windows direct download)
@@ -424,7 +424,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
-          shared-key: ci-windows-gnu-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+          shared-key: ci-windows-gnu-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Check compilation
         run: cargo check --locked --workspace --target x86_64-pc-windows-gnu
@@ -455,7 +455,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
-          shared-key: ci-macos-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+          shared-key: ci-macos-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2
@@ -521,7 +521,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
-          shared-key: ci-musl-x86_64-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+          shared-key: ci-musl-x86_64-${{ matrix.toolchain }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2
@@ -627,7 +627,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
-          shared-key: ci-dg3-stress-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+          shared-key: ci-dg3-stress-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
           key: dg3-stress
 
       - name: Install cargo-nextest (Unix)

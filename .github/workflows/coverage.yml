@@ -76,7 +76,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
-          shared-key: ci-${{ runner.os }}-coverage-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.toml') }}
+          shared-key: ci-${{ runner.os }}-coverage-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Install cargo-llvm-cov and cargo-nextest
         uses: taiki-e/install-action@e49978b799e49ff429d162b7a30601a569ab6538 # v2
