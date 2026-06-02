@@ -7,9 +7,21 @@ on:
       - 'docs/**'
       - '*.md'
       - 'LICENSE'
-      - '.github/**'
+      - '.github/CODEOWNERS'
+      - '.github/dependabot.yml'
+      - '.github/FUNDING.yml'
+      - '.github/PULL_REQUEST_TEMPLATE.md'
+      - '.github/RELEASE_NOTES_BETA.md'
+      - '.github/RELEASE_TEMPLATE.md'
+      - '.github/release.yml'
+      - '.github/scripts/**'
       - 'scripts/**'
-      - 'tools/**'
+      - 'packaging/**'
+      - 'dist-workspace.toml'
+      - '.dockerignore'
+      - '.gitignore'
+      - '.gitattributes'
+      - 'deny.toml'
 
 concurrency:
   group: ci-skip-${{ github.ref }}
