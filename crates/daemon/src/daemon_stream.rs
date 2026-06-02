@@ -183,7 +183,6 @@ impl DaemonStream {
             Self::Stdio(_) => panic!("cannot extract TcpStream from Stdio variant"),
         }
     }
-
 }
 
 impl Read for DaemonStream {
@@ -223,7 +222,10 @@ impl std::fmt::Debug for DaemonStream {
             Self::Plain(s) => f.debug_tuple("DaemonStream::Plain").field(s).finish(),
             #[cfg(feature = "daemon-tls")]
             Self::Tls(_) => f.debug_tuple("DaemonStream::Tls").field(&"<tls>").finish(),
-            Self::Stdio(_) => f.debug_tuple("DaemonStream::Stdio").field(&"<stdio>").finish(),
+            Self::Stdio(_) => f
+                .debug_tuple("DaemonStream::Stdio")
+                .field(&"<stdio>")
+                .finish(),
         }
     }
 }
@@ -366,20 +368,14 @@ mod tests {
 
     #[test]
     fn stdio_is_not_tls() {
-        let pair = StdioPair::new(
-            Box::new(io::Cursor::new(Vec::new())),
-            Box::new(Vec::new()),
-        );
+        let pair = StdioPair::new(Box::new(io::Cursor::new(Vec::new())), Box::new(Vec::new()));
         let daemon = DaemonStream::stdio(pair);
         assert!(!daemon.is_tls());
     }
 
     #[test]
     fn stdio_is_stdio() {
-        let pair = StdioPair::new(
-            Box::new(io::Cursor::new(Vec::new())),
-            Box::new(Vec::new()),
-        );
+        let pair = StdioPair::new(Box::new(io::Cursor::new(Vec::new())), Box::new(Vec::new()));
         let daemon = DaemonStream::stdio(pair);
         assert!(daemon.is_stdio());
     }
@@ -393,20 +389,14 @@ mod tests {
 
     #[test]
     fn stdio_tcp_stream_is_none() {
-        let pair = StdioPair::new(
-            Box::new(io::Cursor::new(Vec::new())),
-            Box::new(Vec::new()),
-        );
+        let pair = StdioPair::new(Box::new(io::Cursor::new(Vec::new())), Box::new(Vec::new()));
         let daemon = DaemonStream::stdio(pair);
         assert!(daemon.tcp_stream().is_none());
     }
 
     #[test]
     fn stdio_set_timeouts_are_noop() {
-        let pair = StdioPair::new(
-            Box::new(io::Cursor::new(Vec::new())),
-            Box::new(Vec::new()),
-        );
+        let pair = StdioPair::new(Box::new(io::Cursor::new(Vec::new())), Box::new(Vec::new()));
         let daemon = DaemonStream::stdio(pair);
         let dur = Some(Duration::from_secs(5));
         daemon.set_read_timeout(dur).unwrap();
@@ -415,30 +405,21 @@ mod tests {
 
     #[test]
     fn stdio_set_nodelay_is_noop() {
-        let pair = StdioPair::new(
-            Box::new(io::Cursor::new(Vec::new())),
-            Box::new(Vec::new()),
-        );
+        let pair = StdioPair::new(Box::new(io::Cursor::new(Vec::new())), Box::new(Vec::new()));
         let daemon = DaemonStream::stdio(pair);
         daemon.set_nodelay(true).unwrap();
     }
 
     #[test]
     fn stdio_shutdown_is_noop() {
-        let pair = StdioPair::new(
-            Box::new(io::Cursor::new(Vec::new())),
-            Box::new(Vec::new()),
-        );
+        let pair = StdioPair::new(Box::new(io::Cursor::new(Vec::new())), Box::new(Vec::new()));
         let daemon = DaemonStream::stdio(pair);
         daemon.shutdown(Shutdown::Both).unwrap();
     }
 
     #[test]
     fn stdio_debug_format() {
-        let pair = StdioPair::new(
-            Box::new(io::Cursor::new(Vec::new())),
-            Box::new(Vec::new()),
-        );
+        let pair = StdioPair::new(Box::new(io::Cursor::new(Vec::new())), Box::new(Vec::new()));
         let daemon = DaemonStream::stdio(pair);
         let debug = format!("{daemon:?}");
         assert!(debug.contains("Stdio"), "got: {debug}");

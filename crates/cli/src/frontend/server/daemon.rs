@@ -130,10 +130,7 @@ where
 ///
 /// upstream: main.c:1843-1844 - `start_daemon(STDIN_FILENO, STDOUT_FILENO)`.
 #[cfg(unix)]
-pub(crate) fn run_server_daemon_mode<Err>(
-    args: &[OsString],
-    stderr: &mut Err,
-) -> i32
+pub(crate) fn run_server_daemon_mode<Err>(args: &[OsString], stderr: &mut Err) -> i32
 where
     Err: Write,
 {
@@ -156,10 +153,7 @@ where
         Ok(()) => 0,
         Err(error) => {
             let mut sink = MessageSink::with_brand(stderr, program_brand);
-            let mut message = rsync_error!(
-                error.exit_code(),
-                format!("{error}")
-            );
+            let mut message = rsync_error!(error.exit_code(), format!("{error}"));
             message = message.with_role(Role::Daemon);
             if super::super::write_message(&message, &mut sink).is_err() {
                 let _ = writeln!(sink.writer_mut(), "{error}");
@@ -171,10 +165,7 @@ where
 
 /// Reports that server-daemon mode is unavailable on Windows.
 #[cfg(windows)]
-pub(crate) fn run_server_daemon_mode<Err>(
-    args: &[OsString],
-    stderr: &mut Err,
-) -> i32
+pub(crate) fn run_server_daemon_mode<Err>(args: &[OsString], stderr: &mut Err) -> i32
 where
     Err: Write,
 {

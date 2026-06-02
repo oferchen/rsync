@@ -217,11 +217,8 @@ pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
 /// encounters an I/O error.
 pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
     let brand = config.brand();
-    let options = RuntimeOptions::parse_with_brand(
-        config.arguments(),
-        brand,
-        config.load_default_paths(),
-    )?;
+    let options =
+        RuntimeOptions::parse_with_brand(config.arguments(), brand, config.load_default_paths())?;
 
     let RuntimeOptions {
         modules,
