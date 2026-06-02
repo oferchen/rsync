@@ -90,6 +90,22 @@ build_upstream_helpers() {
     )
 }
 
+find_setfacl_nodef() {
+    # upstream: runtests.sh:205-215 - detect the platform's command for
+    # removing default ACLs from a directory.  The ACL tests rely on this
+    # variable being exported into their environment.
+    local probe_dir=$1
+    if setacl -k u::7,g::5,o:5 "$probe_dir" 2>/dev/null; then
+        echo 'setacl -k'
+    elif setfacl --help 2>&1 | grep -E ' -k,|\[-[a-z]*k' >/dev/null 2>&1; then
+        echo 'setfacl -k'
+    elif setfacl -s u::7,g::5,o:5 "$probe_dir" 2>/dev/null; then
+        echo 'setfacl -s u::7,g::5,o:5'
+    else
+        echo 'true'
+    fi
+}
+
 setup_test_env() {
     cd "$upstream_src_dir"
     TOOLDIR="$upstream_src_dir"
@@ -120,6 +136,10 @@ prep_scratch() {
     local sd=$1
     [[ -d "$sd" ]] && chmod -R u+rwX "$sd" 2>/dev/null && rm -rf "$sd"
     mkdir -p "$sd"
+    # upstream: runtests.sh:254 - clear default ACLs and setgid to avoid
+    # confusing tests that depend on inheritable permission state.
+    $setfacl_nodef "$sd" 2>/dev/null || true
+    chmod g-s "$sd" 2>/dev/null || true
     ln -sfn "$srcdir" "$sd/src"
 }
 
@@ -196,6 +216,11 @@ main() {
     mkdir -p "$log_root"
     scratchbase="${log_root}/scratch"
     mkdir -p "$scratchbase"
+
+    # upstream: runtests.sh:205-217 - detect and export setfacl_nodef so
+    # ACL tests can clear default ACLs from directories.
+    setfacl_nodef=$(find_setfacl_nodef "$scratchbase")
+    export setfacl_nodef
 
     passed=0
     failed=0
