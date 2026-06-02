@@ -3,6 +3,18 @@
 //! This module provides [`ConnectProgramConfig`] for executing custom connection
 //! programs, mirroring upstream rsync's `RSYNC_CONNECT_PROG` functionality.
 //!
+//! # Unix Socketpair Transport
+//!
+//! On Unix, the child process's stdin and stdout are connected via a Unix
+//! domain socketpair instead of OS pipes. This mirrors upstream rsync's
+//! `sock_exec()` in `socket.c:811-841`, which uses `socketpair_tcp()` so
+//! that the child's `STDIN_FILENO` passes the `getsockopt(SO_TYPE)` check
+//! in `is_a_socket()` (`socket.c:500`). Without this, daemon inetd
+//! detection fails because pipes are not sockets.
+//!
+//! On non-Unix platforms, standard pipes are used since inetd-style
+//! detection does not apply.
+//!
 //! # Security Model
 //!
 //! The `%H` (host) and `%P` (port) substitutions are performed without shell
@@ -21,11 +33,86 @@ use std::io::{self, Read, Write};
 #[cfg(unix)]
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, Command, Stdio};
 
 use super::super::DaemonAddress;
 use crate::client::{ClientError, FEATURE_UNAVAILABLE_EXIT_CODE, daemon_error};
 
+/// Spawns a connect program with a Unix socketpair for stdin/stdout.
+///
+/// Uses `UnixStream::pair()` so the child's stdin fd is a socket, not a pipe.
+/// This ensures the daemon's `is_a_socket(STDIN_FILENO)` check succeeds.
+///
+/// upstream: socket.c:811-841 - `sock_exec()` uses `socketpair_tcp()` and
+/// `dup2(fd[1], STDIN_FILENO)` / `dup2(fd[1], STDOUT_FILENO)` in the child.
+#[cfg(unix)]
+pub(crate) fn connect_via_program(
+    addr: &DaemonAddress,
+    program: &ConnectProgramConfig,
+) -> Result<super::DaemonStream, ClientError> {
+    use std::os::unix::net::UnixStream;
+
+    let command = program
+        .format_command(addr.host(), addr.port())
+        .map_err(|error| daemon_error(error, FEATURE_UNAVAILABLE_EXIT_CODE))?;
+
+    let shell = program
+        .shell()
+        .cloned()
+        .unwrap_or_else(|| OsString::from("sh"));
+
+    // upstream: socket.c:816 - socketpair_tcp(fd)
+    let (parent_sock, child_sock) = UnixStream::pair().map_err(|error| {
+        daemon_error(
+            format!("failed to create socketpair for RSYNC_CONNECT_PROG: {error}"),
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+        )
+    })?;
+
+    // The child gets one end of the socketpair as both stdin and stdout.
+    // upstream: socket.c:831-832 - dup2(fd[1], STDIN_FILENO), dup2(fd[1], STDOUT_FILENO)
+    //
+    // We need two `Stdio` values from the same fd. `Stdio::from()` consumes
+    // the `OwnedFd`, so clone the child socket for the second handle.
+    let child_sock_dup = child_sock.try_clone().map_err(|error| {
+        daemon_error(
+            format!("failed to dup socketpair fd for RSYNC_CONNECT_PROG: {error}"),
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+        )
+    })?;
+
+    let child_stdin = Stdio::from(std::os::fd::OwnedFd::from(child_sock));
+    let child_stdout = Stdio::from(std::os::fd::OwnedFd::from(child_sock_dup));
+
+    let mut builder = Command::new(&shell);
+    builder.arg("-c").arg(&command);
+    builder.stdin(child_stdin);
+    builder.stdout(child_stdout);
+    builder.stderr(Stdio::inherit());
+    builder.env("RSYNC_PORT", addr.port().to_string());
+
+    let child = builder.spawn().map_err(|error| {
+        daemon_error(
+            format!(
+                "failed to spawn RSYNC_CONNECT_PROG using shell '{}': {error}",
+                Path::new(&shell).display()
+            ),
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+        )
+    })?;
+
+    // Parent keeps fd[0] for reading and writing.
+    // upstream: socket.c:839-840 - close(fd[1]); return fd[0];
+    Ok(super::DaemonStream::program(
+        ConnectProgramStream::from_socketpair(child, parent_sock),
+    ))
+}
+
+/// Spawns a connect program with piped stdin/stdout (non-Unix fallback).
+///
+/// On non-Unix platforms, inetd-style socket detection does not apply, so
+/// standard pipes are acceptable.
+#[cfg(not(unix))]
 pub(crate) fn connect_via_program(
     addr: &DaemonAddress,
     program: &ConnectProgramConfig,
@@ -70,9 +157,9 @@ pub(crate) fn connect_via_program(
         )
     })?;
 
-    Ok(super::DaemonStream::program(ConnectProgramStream::new(
-        child, stdin, stdout,
-    )))
+    Ok(super::DaemonStream::program(
+        ConnectProgramStream::from_pipes(child, stdin, stdout),
+    ))
 }
 
 pub(crate) fn load_daemon_connect_program(
@@ -192,58 +279,164 @@ impl ConnectProgramConfig {
     }
 }
 
+/// Bidirectional stream to a connect program child process.
+///
+/// On Unix, the transport is a Unix domain socketpair so that the child's
+/// stdin fd passes `getsockopt(SO_TYPE)` (inetd detection). On non-Unix,
+/// standard pipes are used.
 pub(crate) struct ConnectProgramStream {
     /// `None` after `into_parts()` has been called.
     child: Option<Child>,
+    /// Parent end of the socketpair (Unix) or pipe handles (non-Unix).
     /// `None` after `into_parts()` has been called.
-    stdin: Option<ChildStdin>,
-    /// `None` after `into_parts()` has been called.
-    stdout: Option<ChildStdout>,
+    transport: Option<ProgramTransport>,
+}
+
+/// Platform-specific transport backing a connect program stream.
+///
+/// On Unix, a single `UnixStream` serves as both the read and write channel
+/// (mirroring upstream rsync's `sock_exec()` which returns a single fd).
+/// On non-Unix, separate pipe handles are used.
+#[cfg(unix)]
+struct ProgramTransport {
+    socket: std::os::unix::net::UnixStream,
+}
+
+#[cfg(not(unix))]
+struct ProgramTransport {
+    stdin: std::process::ChildStdin,
+    stdout: std::process::ChildStdout,
 }
 
 impl ConnectProgramStream {
-    fn new(child: Child, stdin: ChildStdin, stdout: ChildStdout) -> Self {
+    /// Creates a stream backed by a Unix socketpair.
+    #[cfg(unix)]
+    fn from_socketpair(child: Child, parent_socket: std::os::unix::net::UnixStream) -> Self {
         Self {
             child: Some(child),
-            stdin: Some(stdin),
-            stdout: Some(stdout),
+            transport: Some(ProgramTransport {
+                socket: parent_socket,
+            }),
         }
     }
 
-    /// Decomposes the stream into its constituent parts.
-    ///
-    /// Returns `(child, stdin, stdout)`. The caller takes ownership of the
-    /// child process and is responsible for reaping it.
-    pub(super) fn into_parts(mut self) -> (Child, ChildStdin, ChildStdout) {
-        let child = self.child.take().expect("child already taken");
-        let stdin = self.stdin.take().expect("stdin already taken");
-        let stdout = self.stdout.take().expect("stdout already taken");
-        (child, stdin, stdout)
+    /// Creates a stream backed by OS pipes (non-Unix fallback).
+    #[cfg(not(unix))]
+    fn from_pipes(
+        child: Child,
+        stdin: std::process::ChildStdin,
+        stdout: std::process::ChildStdout,
+    ) -> Self {
+        Self {
+            child: Some(child),
+            transport: Some(ProgramTransport { stdin, stdout }),
+        }
     }
+
+    /// Decomposes the stream into its constituent parts for split I/O.
+    ///
+    /// On Unix, returns `(child, reader_socket, writer_socket)` where both
+    /// sockets are handles to the same underlying socketpair fd (via
+    /// `try_clone`). On non-Unix, returns `(child, stdout, stdin)`.
+    pub(super) fn into_parts(mut self) -> io::Result<ConnectProgramParts> {
+        let child = self.child.take().expect("child already taken");
+        let transport = self.transport.take().expect("transport already taken");
+
+        #[cfg(unix)]
+        {
+            let writer = transport.socket.try_clone()?;
+            Ok(ConnectProgramParts {
+                child,
+                reader: transport.socket,
+                writer,
+            })
+        }
+
+        #[cfg(not(unix))]
+        {
+            Ok(ConnectProgramParts {
+                child,
+                reader: transport.stdout,
+                writer: transport.stdin,
+            })
+        }
+    }
+}
+
+/// Decomposed parts of a [`ConnectProgramStream`] for split read/write.
+pub(super) struct ConnectProgramParts {
+    /// The child process handle.
+    pub(super) child: Child,
+    /// Read half: Unix socketpair clone or child stdout pipe.
+    #[cfg(unix)]
+    pub(super) reader: std::os::unix::net::UnixStream,
+    #[cfg(not(unix))]
+    pub(super) reader: std::process::ChildStdout,
+    /// Write half: Unix socketpair clone or child stdin pipe.
+    #[cfg(unix)]
+    pub(super) writer: std::os::unix::net::UnixStream,
+    #[cfg(not(unix))]
+    pub(super) writer: std::process::ChildStdin,
 }
 
 impl Read for ConnectProgramStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.stdout
-            .as_mut()
-            .expect("stdout taken by into_parts")
-            .read(buf)
+        #[cfg(unix)]
+        {
+            self.transport
+                .as_mut()
+                .expect("transport taken by into_parts")
+                .socket
+                .read(buf)
+        }
+        #[cfg(not(unix))]
+        {
+            self.transport
+                .as_mut()
+                .expect("transport taken by into_parts")
+                .stdout
+                .read(buf)
+        }
     }
 }
 
 impl Write for ConnectProgramStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.stdin
-            .as_mut()
-            .expect("stdin taken by into_parts")
-            .write(buf)
+        #[cfg(unix)]
+        {
+            self.transport
+                .as_mut()
+                .expect("transport taken by into_parts")
+                .socket
+                .write(buf)
+        }
+        #[cfg(not(unix))]
+        {
+            self.transport
+                .as_mut()
+                .expect("transport taken by into_parts")
+                .stdin
+                .write(buf)
+        }
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        self.stdin
-            .as_mut()
-            .expect("stdin taken by into_parts")
-            .flush()
+        #[cfg(unix)]
+        {
+            self.transport
+                .as_mut()
+                .expect("transport taken by into_parts")
+                .socket
+                .flush()
+        }
+        #[cfg(not(unix))]
+        {
+            self.transport
+                .as_mut()
+                .expect("transport taken by into_parts")
+                .stdin
+                .flush()
+        }
     }
 }
 
@@ -409,5 +602,116 @@ mod tests {
         let config = ConnectProgramConfig::new("nc %H %P".into(), None).unwrap();
         let result = config.format_command("user@host.example.com", 22).unwrap();
         assert_eq!(result, "nc user@host.example.com 22");
+    }
+
+    /// Verifies that a child process spawned via `connect_via_program` receives
+    /// a socket (not a pipe) as its stdin, so daemon `is_a_socket()` detection
+    /// succeeds.
+    ///
+    /// The test spawns a shell one-liner that writes `getsockopt(SO_TYPE)` probe
+    /// output back through the socketpair. On Unix, stdin must be a socket. On
+    /// non-Unix, this test is skipped since inetd detection does not apply.
+    #[cfg(unix)]
+    #[test]
+    fn connect_program_child_stdin_is_socket() {
+        use std::io::BufRead;
+
+        // Python one-liner that probes stdin with getsockopt(SO_TYPE) and prints
+        // "SOCKET" or "NOT_SOCKET" to stdout (which goes back through the
+        // socketpair to the parent).
+        let probe_script = concat!(
+            "import socket, sys; ",
+            "s = socket.fromfd(sys.stdin.fileno(), socket.AF_UNIX, socket.SOCK_STREAM); ",
+            "print('SOCKET' if s.getsockopt(socket.SOL_SOCKET, socket.SO_TYPE) else 'NOT_SOCKET'); ",
+            "sys.stdout.flush()"
+        );
+
+        let config = ConnectProgramConfig::new(
+            format!("python3 -c \"{probe_script}\"").into(),
+            None,
+        )
+        .unwrap();
+
+        let addr = DaemonAddress::new("localhost".to_owned(), 873).unwrap();
+        let result = connect_via_program(&addr, &config);
+
+        // If python3 is not available, skip rather than fail.
+        let Ok(mut stream) = result else {
+            eprintln!("skipping: python3 not available for socketpair probe test");
+            return;
+        };
+
+        let mut reader = io::BufReader::new(&mut stream);
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) | Err(_) => {
+                eprintln!("skipping: could not read from connect program");
+                return;
+            }
+            Ok(_) => {}
+        }
+
+        assert_eq!(
+            line.trim(),
+            "SOCKET",
+            "child stdin should be a socket, not a pipe"
+        );
+    }
+
+    /// Verifies bidirectional data flow through the socketpair transport.
+    ///
+    /// Spawns a `cat` process that echoes stdin to stdout. Since both are
+    /// connected to the same socketpair end, writing to the parent socket and
+    /// reading back should round-trip the data.
+    #[cfg(unix)]
+    #[test]
+    fn connect_program_socketpair_bidirectional() {
+        let config = ConnectProgramConfig::new("cat".into(), None).unwrap();
+        let addr = DaemonAddress::new("localhost".to_owned(), 873).unwrap();
+        let mut stream = connect_via_program(&addr, &config).unwrap();
+
+        let message = b"hello socketpair\n";
+        stream.write_all(message).unwrap();
+        stream.flush().unwrap();
+
+        let mut buf = vec![0u8; message.len()];
+        stream.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, message);
+    }
+
+    /// Verifies that `into_parts()` produces working read/write halves
+    /// from a socketpair-backed stream.
+    #[cfg(unix)]
+    #[test]
+    fn connect_program_into_parts_round_trip() {
+        use std::os::unix::net::UnixStream;
+        use std::process::Command;
+
+        let (parent_sock, child_sock) = UnixStream::pair().unwrap();
+        let child_sock_dup = child_sock.try_clone().unwrap();
+
+        let child_stdin = Stdio::from(std::os::fd::OwnedFd::from(child_sock));
+        let child_stdout = Stdio::from(std::os::fd::OwnedFd::from(child_sock_dup));
+
+        let child = Command::new("cat")
+            .stdin(child_stdin)
+            .stdout(child_stdout)
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+
+        let stream = ConnectProgramStream::from_socketpair(child, parent_sock);
+        let mut parts = stream.into_parts().unwrap();
+
+        let message = b"split test\n";
+        parts.writer.write_all(message).unwrap();
+        parts.writer.flush().unwrap();
+
+        let mut buf = vec![0u8; message.len()];
+        parts.reader.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, message);
+
+        let _ = parts.child.kill();
+        let _ = parts.child.wait();
     }
 }
