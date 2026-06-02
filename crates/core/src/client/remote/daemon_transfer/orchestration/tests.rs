@@ -57,14 +57,28 @@ mod protect_args_daemon_tests {
         assert_eq!(args[1], "--sender");
     }
 
+    /// Finds the compact flag string in the daemon args (starts with `-`, not `--`).
+    fn find_flag_string(args: &[String]) -> &str {
+        args.iter()
+            .find(|a| a.starts_with('-') && !a.starts_with("--"))
+            .map(|s| s.as_str())
+            .expect("flag string not found in daemon args")
+    }
+
     #[test]
     fn build_full_args_capability_flags_protocol30() {
+        // upstream: options.c:2710 - capability string is embedded in the
+        // compact flag string for protocol >= 30.
         let config = ClientConfig::default();
         let request = test_daemon_request();
         let protocol = ProtocolVersion::try_from(32u8).unwrap();
         let args = build_full_daemon_args(&config, &request, protocol, false);
 
-        assert!(args.iter().any(|a| a.starts_with("-e.")));
+        let flags = find_flag_string(&args);
+        assert!(
+            flags.contains("e."),
+            "protocol 30+ must embed capability in flag string: {flags}"
+        );
     }
 
     #[test]
@@ -74,36 +88,43 @@ mod protect_args_daemon_tests {
         let protocol = ProtocolVersion::try_from(29u8).unwrap();
         let args = build_full_daemon_args(&config, &request, protocol, false);
 
-        assert!(!args.iter().any(|a| a.starts_with("-e.")));
+        let flags = find_flag_string(&args);
+        assert!(
+            !flags.contains("e."),
+            "protocol 29 must not embed capability: {flags}"
+        );
     }
 
     #[test]
     fn build_full_args_push_includes_inc_recurse_capability_by_default() {
         // ISI.h: sender-side INC_RECURSE is default-on, matching upstream
         // rsync 3.4.x. The daemon push capability includes 'i' by default.
+        // upstream: capability string is embedded in the compact flag string.
         let protocol = ProtocolVersion::try_from(32u8).unwrap();
         let request = test_daemon_request();
 
         let config_default = ClientConfig::default();
         let args_default = build_full_daemon_args(&config_default, &request, protocol, false);
-        let caps_default = args_default
-            .iter()
-            .find(|a| a.starts_with("-e."))
-            .expect("capability string present");
+        let flags_default = find_flag_string(&args_default);
+        let caps_default = flags_default
+            .split("e.")
+            .nth(1)
+            .expect("capability suffix present");
         assert!(
             caps_default.contains('i'),
-            "default push capability must include 'i': {caps_default}"
+            "default push capability must include 'i': {flags_default}"
         );
 
         let config_off = ClientConfig::builder().inc_recursive_send(false).build();
         let args_off = build_full_daemon_args(&config_off, &request, protocol, false);
-        let caps_off = args_off
-            .iter()
-            .find(|a| a.starts_with("-e."))
-            .expect("capability string present");
+        let flags_off = find_flag_string(&args_off);
+        let caps_off = flags_off
+            .split("e.")
+            .nth(1)
+            .expect("capability suffix present");
         assert!(
             !caps_off.contains('i'),
-            "--no-inc-recursive must suppress 'i' on push capability: {caps_off}"
+            "--no-inc-recursive must suppress 'i' on push capability: {flags_off}"
         );
     }
 
@@ -111,29 +132,32 @@ mod protect_args_daemon_tests {
     fn build_full_args_pull_includes_inc_recurse_capability_by_default() {
         // ISI.h: sender-side INC_RECURSE is default-on, matching upstream
         // rsync 3.4.x. The daemon pull capability includes 'i' by default.
+        // upstream: capability string is embedded in the compact flag string.
         let protocol = ProtocolVersion::try_from(32u8).unwrap();
         let request = test_daemon_request();
 
         let config_default = ClientConfig::default();
         let args_default = build_full_daemon_args(&config_default, &request, protocol, true);
-        let caps_default = args_default
-            .iter()
-            .find(|a| a.starts_with("-e."))
-            .expect("capability string present");
+        let flags_default = find_flag_string(&args_default);
+        let caps_default = flags_default
+            .split("e.")
+            .nth(1)
+            .expect("capability suffix present");
         assert!(
             caps_default.contains('i'),
-            "default pull capability must include 'i': {caps_default}"
+            "default pull capability must include 'i': {flags_default}"
         );
 
         let config_off = ClientConfig::builder().inc_recursive_send(false).build();
         let args_off = build_full_daemon_args(&config_off, &request, protocol, true);
-        let caps_off = args_off
-            .iter()
-            .find(|a| a.starts_with("-e."))
-            .expect("capability string present");
+        let flags_off = find_flag_string(&args_off);
+        let caps_off = flags_off
+            .split("e.")
+            .nth(1)
+            .expect("capability suffix present");
         assert!(
             !caps_off.contains('i'),
-            "--no-inc-recursive must suppress 'i' on pull capability: {caps_off}"
+            "--no-inc-recursive must suppress 'i' on pull capability: {flags_off}"
         );
     }
 
