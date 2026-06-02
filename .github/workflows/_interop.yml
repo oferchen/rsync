@@ -52,7 +52,7 @@ jobs:
       - name: Cache APT packages
         uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
         with:
-          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool acl libacl1-dev libattr1-dev libzstd-dev liblz4-dev
           version: ${{ inputs.cache_version }}
 
       - name: Cache upstream rsync
