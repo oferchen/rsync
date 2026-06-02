@@ -515,15 +515,31 @@ mod tests {
         // an existing runtime.
         let handle = std::thread::spawn(move || {
             let mut bridge = SyncAsyncBridge::new(client).unwrap();
-            bridge.write_all(&payload_owned).unwrap();
-            bridge.flush().unwrap();
 
-            // Read back exactly the number of bytes we wrote - the echo
-            // server sends them back 1:1.
-            let mut received = vec![0u8; payload_owned.len()];
-            if !received.is_empty() {
-                bridge.read_exact(&mut received).unwrap();
+            if payload_owned.is_empty() {
+                return Vec::new();
             }
+
+            // Interleave writes and reads in chunks to prevent deadlock:
+            // the echo server writes back inline, so both duplex buffer
+            // directions fill if we do a single large write_all before
+            // reading. Each chunk must be smaller than the duplex buffer
+            // (64 KiB) so the echo round-trip fits without blocking.
+            let chunk_size = 32 * 1024;
+            let mut received = Vec::with_capacity(payload_owned.len());
+            let mut offset = 0;
+
+            while offset < payload_owned.len() {
+                let end = (offset + chunk_size).min(payload_owned.len());
+                bridge.write_all(&payload_owned[offset..end]).unwrap();
+                bridge.flush().unwrap();
+
+                let mut buf = vec![0u8; end - offset];
+                bridge.read_exact(&mut buf).unwrap();
+                received.extend_from_slice(&buf);
+                offset = end;
+            }
+
             received
         });
 
