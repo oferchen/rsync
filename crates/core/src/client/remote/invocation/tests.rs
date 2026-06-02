@@ -3,7 +3,7 @@
 use std::ffi::{OsStr, OsString};
 
 use compress::algorithm::CompressionAlgorithm;
-use transfer::setup::build_capability_string;
+use transfer::setup::build_capability_string_suffix;
 
 use super::builder::RemoteInvocationBuilder;
 use super::transfer_role::{determine_transfer_role, operand_is_remote};
@@ -13,8 +13,8 @@ use crate::client::config::{ClientConfig, IconvSetting, TransferTimeout};
 #[test]
 fn builds_receiver_invocation_with_sender_flag() {
     // Pull: local is receiver -> remote needs --sender (upstream options.c:2598).
-    // ISI.h: default inc_recursive_send is true, so the capability string
-    // is build_capability_string(true).
+    // upstream: options.c:2710 - capability string is embedded in the compact
+    // flag string, producing one argument like `-re.iLsfxCIvu`.
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
     let args = builder.build("/remote/path");
@@ -22,13 +22,12 @@ fn builds_receiver_invocation_with_sender_flag() {
     assert_eq!(args[0], "rsync");
     assert_eq!(args[1], "--server");
     assert_eq!(args[2], "--sender");
-    // upstream: options.c:2710 - capability string is appended directly to
-    // the compact flag string (e.g. `-re.iLsfxCIvu`), not a separate arg.
     let flags = args[3].to_string_lossy();
     assert!(flags.starts_with('-'), "flags should start with -: {flags}");
+    let expected_suffix = build_capability_string_suffix(true);
     assert!(
-        flags.contains("e."),
-        "capability string must be embedded in flag string: {flags}"
+        flags.contains(&expected_suffix),
+        "capability suffix '{expected_suffix}' must be embedded in flag string: {flags}"
     );
     assert_eq!(args[4], ".");
     assert_eq!(args[5], "/remote/path");
@@ -37,8 +36,8 @@ fn builds_receiver_invocation_with_sender_flag() {
 #[test]
 fn builds_sender_invocation_no_sender_flag() {
     // Push: local is sender -> remote is receiver, no --sender flag.
-    // ISI.h: default inc_recursive_send is true, so the capability string
-    // is build_capability_string(true).
+    // upstream: options.c:2710 - capability string is embedded in the compact
+    // flag string, producing one argument like `-re.iLsfxCIvu`.
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/remote/path");
@@ -46,12 +45,12 @@ fn builds_sender_invocation_no_sender_flag() {
     assert_eq!(args[0], "rsync");
     assert_eq!(args[1], "--server");
     // No --sender flag for push - flags come next.
-    // upstream: capability string is embedded in the flag string.
     let flags = args[2].to_string_lossy();
     assert!(flags.starts_with('-'), "flags should start with -: {flags}");
+    let expected_suffix = build_capability_string_suffix(true);
     assert!(
-        flags.contains("e."),
-        "capability string must be embedded in flag string: {flags}"
+        flags.contains(&expected_suffix),
+        "capability suffix '{expected_suffix}' must be embedded in flag string: {flags}"
     );
     assert_eq!(args[3], ".");
     assert_eq!(args[4], "/remote/path");
@@ -1699,41 +1698,39 @@ fn default_rsync_path_is_rsync() {
 
 #[test]
 fn capability_string_embedded_in_sender_flag_string() {
-    // upstream: options.c:2710 - capability string is appended directly to
-    // the compact flag string, not emitted as a separate argument.
+    // upstream: options.c:2710 - capability suffix is embedded in the compact
+    // flag string, not sent as a separate argument.
     let config = ClientConfig::builder().build();
     let args = build_sender_args(&config);
-    let expected = build_capability_string(true);
-    // The capability string (e.g. "-e.iLsfxCIvu") with leading '-' stripped
-    // should be embedded in the compact flag string.
-    let suffix = expected.strip_prefix('-').unwrap();
+    let expected_suffix = build_capability_string_suffix(true);
     let flag_str = find_flag_string(&args);
     assert!(
-        flag_str.ends_with(suffix),
-        "expected capability suffix {suffix} embedded in flag string {flag_str}"
+        flag_str.ends_with(&expected_suffix),
+        "expected capability suffix '{expected_suffix}' embedded in flag string '{flag_str}'"
     );
-    // Must NOT appear as a standalone argument.
+    // Must NOT appear as a standalone `-e.xxx` argument.
+    let standalone = format!("-{expected_suffix}");
     assert!(
-        !args.iter().any(|a| a == &expected),
+        !args.iter().any(|a| a == &standalone),
         "capability string must not be a separate argument: {args:?}"
     );
 }
 
 #[test]
 fn capability_string_embedded_in_receiver_flag_string() {
-    // upstream: options.c:2710 - capability string is appended directly to
-    // the compact flag string, not emitted as a separate argument.
+    // upstream: options.c:2710 - capability suffix is embedded in the compact
+    // flag string, not sent as a separate argument.
     let config = ClientConfig::builder().build();
     let args = build_receiver_args(&config);
-    let expected = build_capability_string(true);
-    let suffix = expected.strip_prefix('-').unwrap();
+    let expected_suffix = build_capability_string_suffix(true);
     let flag_str = find_flag_string(&args);
     assert!(
-        flag_str.ends_with(suffix),
-        "expected capability suffix {suffix} embedded in flag string {flag_str}"
+        flag_str.ends_with(&expected_suffix),
+        "expected capability suffix '{expected_suffix}' embedded in flag string '{flag_str}'"
     );
+    let standalone = format!("-{expected_suffix}");
     assert!(
-        !args.iter().any(|a| a == &expected),
+        !args.iter().any(|a| a == &standalone),
         "capability string must not be a separate argument: {args:?}"
     );
 }
@@ -2233,13 +2230,12 @@ fn all_flags_enabled_produces_valid_invocation() {
         );
     }
 
-    // upstream: capability string is embedded in the flag string, not separate.
-    let caps = build_capability_string(true);
-    let caps_suffix = caps.strip_prefix('-').unwrap();
+    // upstream: options.c:2710 - capability suffix is embedded in flag string.
+    let expected_suffix = build_capability_string_suffix(true);
     let flag_str = find_flag_string(&args);
     assert!(
-        flag_str.ends_with(caps_suffix),
-        "all-flags test: capability suffix {caps_suffix} must be in flag string {flag_str}"
+        flag_str.ends_with(&expected_suffix),
+        "all-flags test: capability suffix '{expected_suffix}' must be in flag string '{flag_str}'"
     );
     assert!(args.contains(&".".to_owned()));
     assert!(args.contains(&"/path".to_owned()));

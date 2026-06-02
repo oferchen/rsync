@@ -637,7 +637,7 @@ fn test_single_remote_source_returns_single_variant() {
 #[test]
 fn test_remote_invocation_with_multiple_paths() {
     use core::client::{ClientConfig, remote::RemoteInvocationBuilder, remote::RemoteRole};
-    use transfer::setup::build_capability_string;
+    use transfer::setup::build_capability_string_suffix;
 
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
@@ -650,13 +650,12 @@ fn test_remote_invocation_with_multiple_paths() {
     let flags_idx = 3;
     let flags = args[flags_idx].to_string_lossy();
     assert!(flags.starts_with('-'));
-    // upstream: options.c:2710 - capability string is now embedded in the
-    // compact flag string (e.g. `-re.iLsfxCIvu`), not a separate argument.
-    let expected_caps = build_capability_string(true);
-    let caps_suffix = expected_caps.strip_prefix('-').unwrap();
+    // upstream: options.c:2710 - capability string is embedded in the compact
+    // flag string (e.g. `-re.iLsfxCIvu`), not a separate argument.
+    let expected_suffix = build_capability_string_suffix(true);
     assert!(
-        flags.ends_with(caps_suffix),
-        "capability suffix {caps_suffix} must be embedded in flag string: {flags}"
+        flags.ends_with(&expected_suffix),
+        "capability suffix '{expected_suffix}' must be embedded in flag string: {flags}"
     );
     let dot_idx = flags_idx + 1;
     assert_eq!(args[dot_idx].to_string_lossy(), ".");

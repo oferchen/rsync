@@ -7,7 +7,7 @@
 use std::io::Write;
 
 use protocol::ProtocolVersion;
-use transfer::setup::build_capability_string;
+use transfer::setup::build_capability_string_suffix;
 
 use crate::client::config::{ClientConfig, DeleteMode, IconvSetting, ReferenceDirectoryKind};
 use crate::client::error::{ClientError, socket_error};
@@ -160,10 +160,8 @@ pub(super) fn build_full_daemon_args(
     if protocol.as_u8() >= 30 {
         // upstream: compat.c:177-178 daemon 'i' check, compat.c:720
         // set_allow_inc_recurse() - capability flags for protocol 30+.
-        let capability = build_capability_string(config.inc_recursive_send());
-        if let Some(suffix) = capability.strip_prefix('-') {
-            flag_string.push_str(suffix);
-        }
+        let capability_suffix = build_capability_string_suffix(config.inc_recursive_send());
+        flag_string.push_str(&capability_suffix);
     }
     if !flag_string.is_empty() {
         args.push(flag_string);
