@@ -25,7 +25,7 @@ mod negotiator;
 mod restrictions;
 mod types;
 
-pub use capability::build_capability_string;
+pub use capability::{build_capability_string, build_capability_string_suffix};
 pub use compat::exchange_compat_flags_direct;
 pub use negotiator::{
     CapabilityNegotiator, ChecksumSeedExchanger, CompatFlagsExchanger, ProtocolNegotiator,

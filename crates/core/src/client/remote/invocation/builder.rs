@@ -16,7 +16,7 @@ use super::super::super::config::{
     StrongChecksumAlgorithm, TransferTimeout,
 };
 use super::{RemoteRole, SecludedInvocation};
-use transfer::setup::build_capability_string;
+use transfer::setup::build_capability_string_suffix;
 
 /// Builder for constructing remote rsync `--server` invocation arguments.
 ///
@@ -187,12 +187,8 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // only the first short-flag argument as the compact flag string.
         // upstream: compat.c:720 set_allow_inc_recurse() - capability gate.
         // upstream: options.c:3003-3050 maybe_add_e_option() - capability string.
-        let capability = build_capability_string(self.config.inc_recursive_send());
-        // build_capability_string returns "-e.xxx"; strip the leading '-' and
-        // append the remainder (e.g. "e.iLsfxCIvu") to the flag string.
-        if let Some(suffix) = capability.strip_prefix('-') {
-            flags.push_str(suffix);
-        }
+        let capability_suffix = build_capability_string_suffix(self.config.inc_recursive_send());
+        flags.push_str(&capability_suffix);
 
         if !flags.is_empty() {
             args.push(OsString::from(flags));
