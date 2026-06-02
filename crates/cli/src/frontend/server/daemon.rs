@@ -63,55 +63,6 @@ pub(crate) fn server_mode_requested(args: &[OsString]) -> bool {
     has_server && !has_daemon
 }
 
-/// Returns `true` when the invocation requests stdio daemon mode.
-///
-/// upstream: main.c:1843-1844 - when both `am_server` and `am_daemon` are
-/// set, upstream rsync runs the daemon protocol over stdin/stdout via
-/// `start_daemon(STDIN_FILENO, STDOUT_FILENO)`. This is the remote-shell
-/// daemon mode used by `rsync -e ssh host::module`.
-pub(crate) fn stdio_daemon_mode_requested(args: &[OsString]) -> bool {
-    let mut has_server = false;
-    let mut has_daemon = false;
-    for arg in args.iter().skip(1) {
-        if arg == "--" {
-            break;
-        }
-        if arg == "--server" {
-            has_server = true;
-        }
-        if arg == "--daemon" {
-            has_daemon = true;
-        }
-    }
-    has_server && has_daemon
-}
-
-/// Extracts daemon arguments from a `--server --daemon` invocation.
-///
-/// Strips `--server` and `--daemon` flags, returning the remaining arguments
-/// that should be passed to `daemon::run_stdio_session`. The `--config` and
-/// `--log-file` options are preserved.
-pub(crate) fn stdio_daemon_arguments(args: &[OsString]) -> Vec<OsString> {
-    let mut result = Vec::with_capacity(args.len());
-    let mut reached_double_dash = false;
-
-    for arg in args.iter().skip(1) {
-        if !reached_double_dash && arg == "--" {
-            reached_double_dash = true;
-            result.push(arg.clone());
-            continue;
-        }
-
-        if !reached_double_dash && (arg == "--server" || arg == "--daemon") {
-            continue;
-        }
-
-        result.push(arg.clone());
-    }
-
-    result
-}
-
 /// Returns `true` when the invocation requests remote-shell daemon mode.
 ///
 /// This is the `--server --daemon` combination where rsync serves the daemon
@@ -251,28 +202,6 @@ where
         super::super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
 
     write_daemon_unavailable_error(stderr, program_brand);
-    1
-}
-
-/// Runs a daemon session over stdin/stdout (remote-shell daemon mode).
-///
-/// upstream: main.c:1843-1844 - `start_daemon(STDIN_FILENO, STDOUT_FILENO)`
-/// when both `am_server` and `am_daemon` are set. This is the path used by
-/// `rsync -e ssh host::module` where the remote rsync is invoked with
-/// `--server --daemon`.
-#[cfg(unix)]
-pub(crate) fn run_stdio_daemon_mode(args: Vec<OsString>) -> i32 {
-    match daemon::run_stdio_session(&args, true) {
-        Ok(()) => 0,
-        Err(e) => e.exit_code(),
-    }
-}
-
-/// Reports that stdio daemon mode is unavailable on Windows.
-#[cfg(windows)]
-pub(crate) fn run_stdio_daemon_mode(args: Vec<OsString>) -> i32 {
-    let _ = args;
-    eprintln!("daemon mode is not supported on this platform");
     1
 }
 
