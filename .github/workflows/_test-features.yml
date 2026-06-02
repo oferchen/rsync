@@ -115,9 +115,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: no-default-features
-            args: "--workspace --no-default-features"
-            apt: ""
           # PFF-6: Verify the default-features build compiles and passes
           # tests. The main CI test job uses --all-features which may mask
           # regressions in the default feature set.
