@@ -868,10 +868,6 @@ fn module_fake_super_yes_parses_to_true_for_am_root_demotion() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// TLS directive tests - gated behind `daemon-tls` feature
-// ---------------------------------------------------------------------------
-
 #[cfg(feature = "daemon-tls")]
 mod tls_directives {
     use super::*;
