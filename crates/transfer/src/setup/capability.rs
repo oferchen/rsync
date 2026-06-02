@@ -131,12 +131,36 @@ const fn iconv_capability_compiled_in() -> bool {
 /// Builds the `-e.xxx` capability string from the `CAPABILITY_MAPPINGS` table.
 ///
 /// This is the single source of truth for which capability characters we
-/// advertise. Both SSH (`invocation.rs`) and daemon (`daemon_transfer.rs`)
-/// callers use this instead of hardcoding the string.
+/// advertise. Used when the capability string must be a standalone argument
+/// (e.g., daemon text protocol where args are newline-separated).
 ///
 /// Mirrors upstream `options.c:3003-3050 maybe_add_e_option()`.
 pub fn build_capability_string(allow_inc_recurse: bool) -> String {
     let mut result = String::from("-e.");
+    append_capability_chars(&mut result, allow_inc_recurse);
+    result
+}
+
+/// Builds the `e.xxx` capability suffix for embedding into a compact flag string.
+///
+/// Upstream `options.c:2710` appends the capability characters directly into
+/// the same argstr buffer that holds the transfer flags, producing a single
+/// argument like `-logDtprHve.iLsfxCIvu`. This function returns the `e.xxx`
+/// portion without the leading `-` so callers can concatenate it with their
+/// flag string.
+///
+/// Mirrors upstream `options.c:3003-3050 maybe_add_e_option()`.
+pub fn build_capability_string_suffix(allow_inc_recurse: bool) -> String {
+    let mut result = String::from("e.");
+    append_capability_chars(&mut result, allow_inc_recurse);
+    result
+}
+
+/// Appends capability characters to the given buffer.
+///
+/// Shared by both `build_capability_string` (standalone `-e.xxx`) and
+/// `build_capability_string_suffix` (embeddable `e.xxx`).
+fn append_capability_chars(buf: &mut String, allow_inc_recurse: bool) {
     for mapping in CAPABILITY_MAPPINGS {
         if !mapping.platform_ok {
             continue;
@@ -147,9 +171,8 @@ pub fn build_capability_string(allow_inc_recurse: bool) -> String {
         if mapping.requires_iconv && !iconv_capability_compiled_in() {
             continue;
         }
-        result.push(mapping.char);
+        buf.push(mapping.char);
     }
-    result
 }
 
 /// Parses client capabilities from the `-e` option argument.
