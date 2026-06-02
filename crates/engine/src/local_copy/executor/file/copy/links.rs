@@ -178,6 +178,26 @@ pub(super) fn process_links(
         // Without this check, an up-to-date hardlink emits `hf+++++++++`
         // and unnecessarily removes + re-creates the destination entry.
         if is_already_hardlinked(destination, &existing_target) {
+            if let Some(existing) = existing_metadata {
+                ::metadata::apply_file_metadata_if_changed(
+                    destination,
+                    metadata,
+                    existing,
+                    &metadata_options,
+                )
+                .map_err(map_metadata_error)?;
+            }
+            #[cfg(all(unix, feature = "xattr"))]
+            sync_xattrs_if_requested(
+                preserve_xattrs,
+                mode,
+                source,
+                destination,
+                true,
+                context.filter_program(),
+            )?;
+            #[cfg(all(any(unix, windows), feature = "acl"))]
+            sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
             context.record_hard_link(metadata, destination);
             context.summary_mut().record_regular_file_matched();
             let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
