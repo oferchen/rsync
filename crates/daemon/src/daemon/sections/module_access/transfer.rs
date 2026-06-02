@@ -219,17 +219,51 @@ fn engage_landlock_sandbox(
     }
 }
 
-/// Sets up the TCP streams for the transfer.
+/// Transfer stream pair: separate read and write handles for the transfer engine.
 ///
-/// Configures TCP_NODELAY and clones the stream for concurrent read/write.
-/// Returns the read and write streams on success, or sends an error and returns `None`.
+/// For TCP connections, both sides are cloned `TcpStream` handles pointing at
+/// the same socket. For stdio connections (remote-shell daemon mode), the reader
+/// wraps stdin and the writer wraps stdout.
+struct TransferStreams {
+    read: Box<dyn Read + Send>,
+    write: Box<dyn Write + Send>,
+    /// Whether the write side supports TCP shutdown (false for stdio/pipes).
+    supports_tcp_shutdown: bool,
+}
+
+/// Sets up the transfer streams for the transfer engine.
+///
+/// For TCP/TLS connections, configures TCP_NODELAY and clones the stream to get
+/// independent read/write handles. For stdio connections (remote-shell daemon
+/// mode), opens fresh stdin/stdout handles since the original pair is consumed
+/// by the BufReader.
+///
+/// Returns the transfer streams on success, or sends an error and returns `None`.
 fn setup_transfer_streams(
     ctx: &mut ModuleRequestContext<'_>,
-) -> io::Result<Option<(TcpStream, TcpStream)>> {
+) -> io::Result<Option<TransferStreams>> {
     let stream = ctx.reader.get_mut();
     stream.set_nodelay(true)?;
 
-    let read_stream = match stream.tcp_stream().try_clone() {
+    if stream.is_stdio() {
+        // For stdio mode, the DaemonStream wraps a StdioPair (stdin + stdout).
+        // The BufReader has consumed it, but the transfer engine needs separate
+        // read/write handles. We open fresh stdin/stdout handles here - the
+        // buffered data from the BufReader is captured in HandshakeResult.buffered
+        // and chained ahead of stdin by run_server_with_handshake.
+        // upstream: start_daemon(STDIN_FILENO, STDOUT_FILENO) uses the same
+        // fds for both handshake and transfer.
+        let stdin = io::stdin();
+        let stdout = io::stdout();
+        return Ok(Some(TransferStreams {
+            read: Box::new(stdin),
+            write: Box::new(stdout),
+            supports_tcp_shutdown: false,
+        }));
+    }
+
+    let tcp = stream.tcp_stream().expect("non-stdio stream has tcp_stream");
+    let read_stream = match tcp.try_clone() {
         Ok(s) => s,
         Err(err) => {
             let payload = format!("@ERROR: failed to clone stream: {err}");
@@ -238,7 +272,7 @@ fn setup_transfer_streams(
         }
     };
 
-    let write_stream = match stream.tcp_stream().try_clone() {
+    let write_stream = match tcp.try_clone() {
         Ok(s) => s,
         Err(err) => {
             return Err(io::Error::other(format!(
@@ -247,7 +281,11 @@ fn setup_transfer_streams(
         }
     };
 
-    Ok(Some((read_stream, write_stream)))
+    Ok(Some(TransferStreams {
+        read: Box::new(read_stream),
+        write: Box::new(write_stream),
+        supports_tcp_shutdown: true,
+    }))
 }
 
 /// Builds the handshake result for the transfer.
@@ -283,8 +321,8 @@ fn execute_transfer(
     ctx: &ModuleRequestContext<'_>,
     config: ServerConfig,
     handshake: HandshakeResult,
-    read_stream: &mut TcpStream,
-    write_stream: &mut TcpStream,
+    read_stream: &mut dyn Read,
+    write_stream: &mut dyn Write,
     role: ServerRole,
     final_protocol: ProtocolVersion,
     module: &ModuleRuntime,
@@ -622,8 +660,8 @@ fn process_approved_module(
         return Ok(());
     }
 
-    let (mut read_stream, mut write_stream) = match setup_transfer_streams(ctx)? {
-        Some(streams) => streams,
+    let mut streams = match setup_transfer_streams(ctx)? {
+        Some(s) => s,
         None => return Ok(()),
     };
 
@@ -714,12 +752,13 @@ fn process_approved_module(
     let handshake = build_handshake_result(ctx.reader, negotiated_protocol, client_args, module);
     let final_protocol = handshake.protocol;
 
+    let supports_tcp_shutdown = streams.supports_tcp_shutdown;
     let exit_status = execute_transfer(
         ctx,
         config,
         handshake,
-        &mut read_stream,
-        &mut write_stream,
+        &mut *streams.read,
+        &mut *streams.write,
         role,
         final_protocol,
         module,
@@ -731,7 +770,11 @@ fn process_approved_module(
     // interprets as "connection unexpectedly closed" (exit code 12).
     // upstream: daemon child exits via exit_cleanup() which lets the kernel
     // perform clean socket shutdown with proper FIN/ACK sequence.
-    let _ = write_stream.shutdown(std::net::Shutdown::Write);
+    // For stdio streams (remote-shell daemon mode), TCP shutdown is not
+    // applicable - the pipe/fd closes naturally when dropped.
+    if supports_tcp_shutdown {
+        let _ = ctx.reader.get_mut().shutdown(std::net::Shutdown::Write);
+    }
 
     // Run post-xfer exec if configured
     // upstream: clientserver.c - post_exec() runs after the transfer, regardless of outcome
