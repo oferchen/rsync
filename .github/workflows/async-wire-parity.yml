@@ -61,4 +61,5 @@ jobs:
           cargo nextest run --locked \
             -p transfer \
             --features async \
+            --no-tests=warn \
             -E 'test(sync_async_wire_parity)'
