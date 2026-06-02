@@ -728,8 +728,11 @@ fn includes_verbosity_flags() {
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/path");
 
+    // Count 'v' only in the transfer-flag portion, excluding the embedded
+    // capability suffix (which contains its own 'v' in e.g. `e.iLsfxCIvu`).
     let flags = args[2].to_string_lossy();
-    let v_count = flags.chars().filter(|c| *c == 'v').count();
+    let transfer_portion = transfer_flags_portion(&flags);
+    let v_count = transfer_portion.chars().filter(|c| *c == 'v').count();
     assert_eq!(v_count, 3, "expected 3 'v' chars in flags: {flags}");
 }
 
