@@ -23,7 +23,11 @@ pub(crate) use proxy::{
 pub(crate) enum DaemonStreamReader {
     /// Cloned TCP socket used for reading.
     Tcp(TcpStream),
-    /// Child process stdout.
+    /// Connect program read half: Unix socketpair clone (Unix) or child
+    /// stdout pipe (non-Unix).
+    #[cfg(unix)]
+    Program(std::os::unix::net::UnixStream),
+    #[cfg(not(unix))]
     Program(std::process::ChildStdout),
 }
 
@@ -31,7 +35,7 @@ impl Read for DaemonStreamReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
             Self::Tcp(stream) => stream.read(buf),
-            Self::Program(stdout) => stdout.read(buf),
+            Self::Program(reader) => reader.read(buf),
         }
     }
 }
@@ -40,7 +44,11 @@ impl Read for DaemonStreamReader {
 pub(crate) enum DaemonStreamWriter {
     /// Original TCP socket used for writing.
     Tcp(TcpStream),
-    /// Child process stdin.
+    /// Connect program write half: Unix socketpair clone (Unix) or child
+    /// stdin pipe (non-Unix).
+    #[cfg(unix)]
+    Program(std::os::unix::net::UnixStream),
+    #[cfg(not(unix))]
     Program(std::process::ChildStdin),
 }
 
@@ -48,14 +56,14 @@ impl Write for DaemonStreamWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
             Self::Tcp(stream) => stream.write(buf),
-            Self::Program(stdin) => stdin.write(buf),
+            Self::Program(writer) => writer.write(buf),
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
         match self {
             Self::Tcp(stream) => stream.flush(),
-            Self::Program(stdin) => stdin.flush(),
+            Self::Program(writer) => writer.flush(),
         }
     }
 }
@@ -186,8 +194,9 @@ impl DaemonStream {
     /// Splits the daemon stream into independent read and write halves.
     ///
     /// For TCP, the socket is cloned (separate fd) so reader and writer
-    /// can be used concurrently. For connect programs, the child's stdout
-    /// and stdin pipes are returned directly.
+    /// can be used concurrently. For connect programs on Unix, the
+    /// socketpair fd is cloned; on non-Unix the child's stdout and stdin
+    /// pipes are returned directly.
     ///
     /// Returns `(reader, writer, guard)`. The guard must be held alive for
     /// the duration of the transfer - for connect programs it owns the
@@ -205,11 +214,11 @@ impl DaemonStream {
                 ))
             }
             Self::Program(prog) => {
-                let (child, stdin, stdout) = prog.into_parts();
+                let parts = prog.into_parts()?;
                 Ok((
-                    DaemonStreamReader::Program(stdout),
-                    DaemonStreamWriter::Program(stdin),
-                    DaemonStreamGuard::Child(child),
+                    DaemonStreamReader::Program(parts.reader),
+                    DaemonStreamWriter::Program(parts.writer),
+                    DaemonStreamGuard::Child(parts.child),
                 ))
             }
             #[cfg(feature = "client-tls")]
