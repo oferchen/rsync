@@ -1,0 +1,166 @@
+name: Upstream Testsuite
+
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'tools/ci/run_upstream_testsuite.sh'
+      - 'tools/ci/upstream_testsuite_known_failures.conf'
+      - '.github/workflows/upstream-testsuite.yml'
+  pull_request:
+    paths:
+      - 'crates/**'
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'tools/ci/run_upstream_testsuite.sh'
+      - 'tools/ci/upstream_testsuite_known_failures.conf'
+      - '.github/workflows/upstream-testsuite.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: upstream-testsuite-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: "full"
+  CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
+  UPSTREAM_RSYNC_VERSION: "3.4.2"
+
+jobs:
+  upstream-testsuite:
+    name: upstream testsuite
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Not a required check - there are known failures. The runner script
+    # exits non-zero only on UNEXPECTED failures (tests not in
+    # known_failures.conf) or UNEXPECTED passes (tests in known_failures.conf
+    # that start passing). Both conditions surface regressions worth
+    # investigating, but should not block PRs while the failure list
+    # stabilizes.
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: upstream-testsuite
+          cache-on-failure: true
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@acb598e5ddbc6f68a970c5da0688d2f3a9f04d05 # v1.6.0
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev
+          version: ${{ env.CACHE_VERSION }}
+
+      - name: Cache upstream rsync source
+        id: cache-upstream
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            target/interop/upstream-src/rsync-${{ env.UPSTREAM_RSYNC_VERSION }}
+          key: upstream-testsuite-src-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}
+
+      - name: Build oc-rsync (release)
+        run: cargo build --locked --release --bin oc-rsync
+
+      - name: Run upstream testsuite
+        id: testsuite
+        env:
+          OC_RSYNC_BIN: target/release/oc-rsync
+          UPSTREAM_VERSION: ${{ env.UPSTREAM_RSYNC_VERSION }}
+        run: |
+          set -euo pipefail
+          mkdir -p target/interop
+          bash tools/ci/run_upstream_testsuite.sh 2>&1 | tee target/interop/upstream-testsuite-output.log
+        continue-on-error: true
+
+      - name: Generate job summary
+        if: always()
+        run: |
+          set -euo pipefail
+          OUTPUT_LOG="target/interop/upstream-testsuite-output.log"
+
+          echo "## Upstream Testsuite Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ ! -f "$OUTPUT_LOG" ]]; then
+            echo "No test output found." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          # Extract the summary block from the runner output
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          sed -n '/^----/,$ p' "$OUTPUT_LOG" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+
+          # Highlight UPASS results - these mean known_failures.conf needs updating
+          UPASS_LINES=$(grep '^UPASS' "$OUTPUT_LOG" || true)
+          if [[ -n "$UPASS_LINES" ]]; then
+            echo "### Unexpected Passes (UPASS)" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "These tests are listed in \`tools/ci/upstream_testsuite_known_failures.conf\` but now pass." >> "$GITHUB_STEP_SUMMARY"
+            echo "Remove them from the known failures list." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "$UPASS_LINES" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Highlight unexpected FAILs
+          FAIL_LINES=$(grep '^FAIL' "$OUTPUT_LOG" || true)
+          if [[ -n "$FAIL_LINES" ]]; then
+            echo "### Unexpected Failures" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "These tests failed and are NOT in the known failures list." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "$FAIL_LINES" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Show per-test results table
+          echo "<details><summary>Full test results</summary>" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Status | Test |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|------|" >> "$GITHUB_STEP_SUMMARY"
+          grep -E '^(PASS|FAIL|XFAIL|UPASS|SKIP)' "$OUTPUT_LOG" | while IFS= read -r line; do
+            STATUS=$(echo "$line" | awk '{print $1}')
+            TEST=$(echo "$line" | awk '{print $2}')
+            echo "| $STATUS | $TEST |" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "</details>" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload testsuite logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: upstream-testsuite-logs
+          path: |
+            target/interop/upstream-testsuite/
+            target/interop/upstream-testsuite-output.log
+          if-no-files-found: ignore
+          retention-days: 14
