@@ -162,16 +162,6 @@ mod exit_code_1_syntax {
     }
 
     #[test]
-    fn conflicting_server_and_daemon_returns_syntax_error() {
-        let output = run_rsync(&["--server", "--daemon"]);
-        assert_exit_code(
-            &output,
-            ExitCode::Syntax,
-            "conflicting --server and --daemon",
-        );
-    }
-
-    #[test]
     fn empty_filter_pattern_returns_syntax_error() {
         let test_dir = TestDir::new().expect("create test dir");
         let src_dir = test_dir.mkdir("src").unwrap();
@@ -1028,16 +1018,6 @@ mod binary_exit_codes {
         assert!(
             code == 1 || code == 23,
             "Missing option argument should return error, got {code}"
-        );
-    }
-
-    #[test]
-    fn conflicting_options_server_daemon_returns_syntax_error() {
-        let output = run_rsync(&["--server", "--daemon"]);
-        assert_exit_code(
-            &output,
-            ExitCode::Syntax,
-            "conflicting --server and --daemon options",
         );
     }
 

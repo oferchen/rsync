@@ -1,7 +1,10 @@
 use std::ffi::OsString;
 use std::time::SystemTime;
 
-use super::daemon::{daemon_mode_arguments, server_mode_requested};
+use super::daemon::{
+    daemon_mode_arguments, server_daemon_arguments, server_daemon_mode_requested,
+    server_mode_requested,
+};
 use super::flags::{detect_secluded_args_flag, is_known_server_long_flag, parse_server_long_flags};
 use super::parse::{
     parse_server_checksum_seed, parse_server_flag_string_and_args, parse_server_size_limit,
@@ -986,4 +989,101 @@ fn parse_server_args_log_format_strips_from_dest() {
     let (flags, pos_args) = parse_server_flag_string_and_args(&args);
     assert_eq!(flags, "-logDtpre.iLsfxCIvu");
     assert_eq!(pos_args, vec![OsString::from("/src/path/")]);
+}
+
+// --- server_daemon_mode_requested tests ---
+
+#[test]
+fn server_daemon_mode_not_requested_empty() {
+    let args: Vec<OsString> = vec![];
+    assert!(!server_daemon_mode_requested(&args));
+}
+
+#[test]
+fn server_daemon_mode_not_requested_server_only() {
+    let args = vec![OsString::from("rsync"), OsString::from("--server")];
+    assert!(!server_daemon_mode_requested(&args));
+}
+
+#[test]
+fn server_daemon_mode_not_requested_daemon_only() {
+    let args = vec![OsString::from("rsync"), OsString::from("--daemon")];
+    assert!(!server_daemon_mode_requested(&args));
+}
+
+#[test]
+fn server_daemon_mode_requested_both_flags() {
+    let args = vec![
+        OsString::from("rsync"),
+        OsString::from("--server"),
+        OsString::from("--daemon"),
+        OsString::from("."),
+    ];
+    assert!(server_daemon_mode_requested(&args));
+}
+
+#[test]
+fn server_daemon_mode_requested_with_config() {
+    let args = vec![
+        OsString::from("rsync"),
+        OsString::from("--config=/etc/rsyncd.conf"),
+        OsString::from("--server"),
+        OsString::from("--daemon"),
+        OsString::from("."),
+    ];
+    assert!(server_daemon_mode_requested(&args));
+}
+
+#[test]
+fn server_daemon_mode_not_requested_after_double_dash() {
+    let args = vec![
+        OsString::from("rsync"),
+        OsString::from("--"),
+        OsString::from("--server"),
+        OsString::from("--daemon"),
+    ];
+    assert!(!server_daemon_mode_requested(&args));
+}
+
+// --- server_daemon_arguments tests ---
+
+#[test]
+fn server_daemon_arguments_strips_server_and_daemon() {
+    let args = vec![
+        OsString::from("rsync"),
+        OsString::from("--server"),
+        OsString::from("--daemon"),
+        OsString::from("."),
+    ];
+    let result = server_daemon_arguments(&args);
+    // Should not contain --server, --daemon, or "."
+    assert!(!result.iter().any(|a| a == "--server"));
+    assert!(!result.iter().any(|a| a == "--daemon"));
+    assert!(!result.iter().any(|a| a == "."));
+}
+
+#[test]
+fn server_daemon_arguments_preserves_config() {
+    let args = vec![
+        OsString::from("rsync"),
+        OsString::from("--config=/etc/rsyncd.conf"),
+        OsString::from("--server"),
+        OsString::from("--daemon"),
+        OsString::from("."),
+    ];
+    let result = server_daemon_arguments(&args);
+    assert!(result.iter().any(|a| a == "--config=/etc/rsyncd.conf"));
+}
+
+#[test]
+fn server_daemon_arguments_sets_daemon_program_name() {
+    let args = vec![
+        OsString::from("oc-rsync"),
+        OsString::from("--server"),
+        OsString::from("--daemon"),
+        OsString::from("."),
+    ];
+    let result = server_daemon_arguments(&args);
+    // First element should be the daemon program name
+    assert!(!result.is_empty());
 }

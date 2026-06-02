@@ -197,6 +197,98 @@ pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
     serve_connections(options, external_signal_flags, pre_bound_listener)
 }
 
+/// Runs the daemon protocol over stdin/stdout for remote-shell daemon mode.
+///
+/// This implements the `--server --daemon` path where the daemon protocol is
+/// served over inherited file descriptors instead of a TCP listener. Used when
+/// a remote shell (e.g., SSH via `lsh.sh`) invokes the daemon, matching
+/// upstream rsync's `start_daemon(STDIN_FILENO, STDOUT_FILENO)` in `main.c`.
+///
+/// The function loads configuration (from `--config` or default paths), builds
+/// the module table, and serves a single connection on the provided
+/// stdin/stdout streams. No TCP binding or signal handler registration occurs.
+///
+/// upstream: main.c:1843-1844 - `if (am_server && am_daemon) return
+/// start_daemon(STDIN_FILENO, STDOUT_FILENO);`
+///
+/// # Errors
+///
+/// Returns a `DaemonError` if configuration loading fails or the session
+/// encounters an I/O error.
+pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
+    let brand = config.brand();
+    let options =
+        RuntimeOptions::parse_with_brand(config.arguments(), brand, config.load_default_paths())?;
+
+    let RuntimeOptions {
+        modules,
+        motd_lines,
+        bandwidth_limit,
+        bandwidth_burst,
+        log_file,
+        reverse_lookup,
+        ..
+    } = options;
+
+    let log_sink = if let Some(path) = log_file {
+        Some(open_log_sink(&path, brand)?)
+    } else {
+        None
+    };
+
+    let connection_limiter: Option<Arc<ConnectionLimiter>> = None;
+    let modules: Vec<ModuleRuntime> = modules
+        .into_iter()
+        .map(|definition| ModuleRuntime::new(definition, connection_limiter.clone()))
+        .collect();
+
+    // Build a DaemonStream::Stdio from process stdin/stdout.
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    let pair = crate::daemon_stream::StdioPair::new(Box::new(stdin), Box::new(stdout));
+    let stream = DaemonStream::stdio(pair);
+
+    // upstream: start_daemon() with stdin/stdout fds uses 127.0.0.1:0 as the
+    // synthetic peer address. In remote-shell daemon mode the real peer address
+    // is not available since there is no TCP socket to query.
+    let peer_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+
+    // Resolve hostname for the synthetic peer (will resolve localhost).
+    let peer_host = if reverse_lookup {
+        resolve_peer_hostname(peer_addr.ip())
+    } else {
+        None
+    };
+
+    if let Some(log) = log_sink.as_ref() {
+        log_connection(log, peer_host.as_deref(), peer_addr);
+    }
+
+    handle_legacy_session(
+        stream,
+        peer_addr,
+        LegacySessionParams {
+            modules: &modules,
+            motd_lines: &motd_lines,
+            daemon_limit: bandwidth_limit,
+            daemon_burst: bandwidth_burst,
+            log_sink,
+            peer_host,
+            reverse_lookup,
+        },
+    )
+    .map_err(|error| {
+        DaemonError::new(
+            SOCKET_IO_EXIT_CODE,
+            rsync_error!(
+                SOCKET_IO_EXIT_CODE,
+                format!("stdio daemon session failed: {error}")
+            )
+            .with_role(Role::Daemon),
+        )
+    })
+}
+
 /// Runs the daemon orchestration using the hybrid tokio listener.
 ///
 /// This is the implementation skeleton tracked under issue #1935. The
