@@ -272,8 +272,13 @@ impl GeneratorContext {
     /// In client mode, writes directly to the process stdout via the
     /// itemize callback, matching upstream's `rwrite()` `FCLIENT` path.
     ///
+    /// Suppresses output when `iflags` has no significant flags set (the file
+    /// is completely unchanged), matching upstream's gate in `itemize()` at
+    /// `generator.c:574-576`.
+    ///
     /// # Upstream Reference
     ///
+    /// - `generator.c:574-576` - `iflags & (SIGNIFICANT_ITEM_FLAGS|ITEM_REPORT_XATTR)`
     /// - `sender.c:287` - `maybe_log_item()` for non-transfer items
     /// - `sender.c:430` - `log_item()` after file transfer
     /// - `log.c:330-340` - `rwrite()`: when `am_server`, sends MSG_INFO;
@@ -286,6 +291,12 @@ impl GeneratorContext {
         itemize_cb: &mut Option<&mut dyn super::super::ItemizeCallback>,
     ) -> io::Result<()> {
         if !self.config.flags.info_flags.itemize {
+            return Ok(());
+        }
+        // upstream: generator.c:574-576 - only emit when significant flags are
+        // set. When iflags == 0 (file is completely up-to-date), no line is
+        // produced.
+        if !iflags.has_significant_flags() {
             return Ok(());
         }
         if ndx >= self.file_list.len() {

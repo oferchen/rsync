@@ -201,4 +201,28 @@ impl LocalCopyChangeSet {
     pub const fn missing_data(&self) -> bool {
         self.missing_data
     }
+
+    /// Returns `true` when at least one attribute flag is set.
+    ///
+    /// Used to gate itemize output: upstream rsync only emits an itemize line
+    /// when `iflags & SIGNIFICANT_ITEM_FLAGS` is non-zero. For up-to-date
+    /// files where no attribute differs, the line is suppressed entirely.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:574-576` - `iflags & (SIGNIFICANT_ITEM_FLAGS|ITEM_REPORT_XATTR)`
+    #[must_use]
+    pub const fn has_any_change(&self) -> bool {
+        self.checksum_changed
+            || self.size_changed
+            || self.time_change.is_some()
+            || self.permissions_changed
+            || self.owner_changed
+            || self.group_changed
+            || self.access_time_changed
+            || self.create_time_changed
+            || self.acl_changed
+            || self.xattr_changed
+            || self.missing_data
+    }
 }
