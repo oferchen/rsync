@@ -31,6 +31,33 @@ use ::metadata::apply_file_metadata_with_options;
 use super::super::super::super::CROSS_DEVICE_ERROR_CODE;
 use super::super::guard::remove_existing_destination;
 
+/// Returns `true` when `destination` is already hardlinked to `target`.
+///
+/// On Unix this compares (device, inode) pairs. On non-Unix platforms
+/// (where inode-level inspection is unavailable) the function always
+/// returns `false`, causing the link to be re-created harmlessly.
+///
+/// upstream: hlink.c - `hard_link_check()` skips re-creation when the
+/// destination inode already matches the source group leader.
+fn is_already_hardlinked(destination: &Path, target: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let Ok(dest_meta) = fs::symlink_metadata(destination) else {
+            return false;
+        };
+        let Ok(target_meta) = fs::symlink_metadata(target) else {
+            return false;
+        };
+        dest_meta.dev() == target_meta.dev() && dest_meta.ino() == target_meta.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (destination, target);
+        false
+    }
+}
+
 /// Result of hard-link and reference-directory processing for a file.
 pub(super) struct LinkOutcome {
     pub(super) copy_source_override: Option<PathBuf>,
@@ -146,6 +173,60 @@ pub(super) fn process_links(
 
     // 2. link to an already-copied inode we cached
     if let Some(existing_target) = context.existing_hard_link_target(metadata) {
+        // upstream: hlink.c - hard_link_check() skips re-creation when the
+        // destination already shares the same inode as the group leader.
+        // Without this check, an up-to-date hardlink emits `hf+++++++++`
+        // and unnecessarily removes + re-creates the destination entry.
+        if is_already_hardlinked(destination, &existing_target) {
+            context.record_hard_link(metadata, destination);
+            context.summary_mut().record_regular_file_matched();
+            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+            let total_bytes = Some(metadata_snapshot.len());
+            let change_set = LocalCopyChangeSet::for_file(
+                metadata,
+                existing_metadata,
+                &metadata_options,
+                true,
+                false,
+                {
+                    #[cfg(all(unix, feature = "xattr"))]
+                    {
+                        preserve_xattrs
+                    }
+                    #[cfg(not(all(unix, feature = "xattr")))]
+                    {
+                        false
+                    }
+                },
+                {
+                    #[cfg(all(any(unix, windows), feature = "acl"))]
+                    {
+                        preserve_acls
+                    }
+                    #[cfg(not(all(any(unix, windows), feature = "acl")))]
+                    {
+                        false
+                    }
+                },
+            );
+            context.record(
+                LocalCopyRecord::new(
+                    record_path.to_path_buf(),
+                    LocalCopyAction::MetadataReused,
+                    0,
+                    total_bytes,
+                    Duration::default(),
+                    Some(metadata_snapshot),
+                )
+                .with_change_set(change_set),
+            );
+            remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
+            return Ok(LinkOutcome {
+                copy_source_override: None,
+                completed: true,
+            });
+        }
+
         let mut attempted_commit = false;
         loop {
             match create_hard_link(&existing_target, destination) {
