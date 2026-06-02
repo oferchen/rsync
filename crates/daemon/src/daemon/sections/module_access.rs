@@ -1,5 +1,3 @@
-// Module access - client module requests, authentication, and transfer setup.
-//
 // upstream: clientserver.c - `rsync_module()` processes a client's module
 // request after the `@RSYNCD:` greeting exchange.
 

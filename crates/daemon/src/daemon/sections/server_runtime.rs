@@ -1,7 +1,5 @@
-// Server runtime: bind, accept loop, and per-connection dispatch.
-//
 // upstream: clientserver.c - `daemon_main()` binds the TCP listener, enters
-// the accept loop, and forks a child per connection. Our thread-based model
+// the accept loop, and forks a child per connection. The thread-based model
 // replaces fork with `std::thread::spawn` + `catch_unwind`.
 
 include!("server_runtime/listener.rs");
