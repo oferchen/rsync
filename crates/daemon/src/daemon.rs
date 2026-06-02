@@ -177,9 +177,15 @@ include!("daemon/sections/group_expansion.rs");
 /// Runs the daemon orchestration using the provided configuration.
 ///
 /// Parses runtime options from the `DaemonConfig` arguments, loads
-/// `rsyncd.conf`, binds a TCP listener (defaulting to `0.0.0.0:873`), and
-/// enters the connection accept loop. Each accepted connection is handled in
-/// a dedicated thread with `catch_unwind` crash isolation.
+/// `rsyncd.conf`, and either serves a single session over stdin/stdout
+/// (inetd/connect-program mode) or binds a TCP listener and enters the
+/// connection accept loop.
+///
+/// upstream: clientserver.c:1496-1510 - `daemon_main()` checks
+/// `is_a_socket(STDIN_FILENO)` before binding TCP. When stdin is a socket
+/// (inetd, xinetd, systemd socket activation, or `RSYNC_CONNECT_PROG`),
+/// the daemon serves one session over the inherited file descriptors and
+/// exits. Otherwise it proceeds to the normal TCP accept loop.
 ///
 /// # Errors
 ///
@@ -194,6 +200,14 @@ pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
         config.brand(),
         config.load_default_paths(),
     )?;
+
+    // upstream: clientserver.c:1498 - `if (is_a_socket(STDIN_FILENO))`
+    // When stdin is a socket, serve a single session over stdio (inetd mode)
+    // instead of binding a TCP listener.
+    if is_stdin_socket() {
+        return serve_inetd_session(options);
+    }
+
     serve_connections(options, external_signal_flags, pre_bound_listener)
 }
 
@@ -426,3 +440,5 @@ include!("daemon/sections/auth_helpers.rs");
 include!("daemon/sections/module_parsing.rs");
 
 include!("daemon/sections/stdio_session.rs");
+
+include!("daemon/sections/inetd.rs");
