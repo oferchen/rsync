@@ -61,13 +61,12 @@ pub fn run_stdio_session(
         // upstream: rsync.h:31 - RSYNCD_USERCONF = "rsyncd.conf"
         if is_rsh_daemon {
             let user_conf = OsString::from("rsyncd.conf");
-            if PathBuf::from(&user_conf).exists() {
-                if options
+            if PathBuf::from(&user_conf).exists()
+                && options
                     .load_config_modules(&user_conf, &mut seen_modules)
                     .is_ok()
-                {
-                    loaded = true;
-                }
+            {
+                loaded = true;
             }
         }
 
