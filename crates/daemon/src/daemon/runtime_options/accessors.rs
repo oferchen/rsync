@@ -14,14 +14,6 @@ impl RuntimeOptions {
         self.listen_backlog
     }
 
-    /// Returns the configured TCP port from the config file `port` directive.
-    ///
-    /// Upstream: `daemon-parm.txt` - `port` INTEGER, P_GLOBAL, default 0.
-    #[allow(dead_code)] // REASON: accessor for daemon listener; wired when async daemon starts
-    pub(crate) fn rsync_port(&self) -> Option<u16> {
-        self.rsync_port
-    }
-
     /// Returns the configured socket options string.
     ///
     /// Upstream: `daemon-parm.txt` - `socket options` STRING. Comma-separated
@@ -56,6 +48,11 @@ impl RuntimeOptions {
 #[cfg(test)]
 #[allow(dead_code)]
 impl RuntimeOptions {
+    /// Returns the configured TCP port from the config file `port` directive.
+    pub(super) fn rsync_port(&self) -> Option<u16> {
+        self.rsync_port
+    }
+
     pub(super) fn modules(&self) -> &[ModuleDefinition] {
         &self.modules
     }

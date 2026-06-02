@@ -119,7 +119,7 @@ jobs:
           /usr/bin/time -v -o "$WORK/oc-rsyncd.time" \
             "$OC_RSYNC" --daemon --no-detach \
               --config "$WORK/oc-rsyncd.conf" \
-              > "$WORK/oc-rsyncd.stdout" 2> "$WORK/oc-rsyncd.stderr" &
+              </dev/null > "$WORK/oc-rsyncd.stdout" 2> "$WORK/oc-rsyncd.stderr" &
           echo $! > "$WORK/oc-rsyncd.runpid"
 
           # Wait for the listener to bind before issuing pulls.

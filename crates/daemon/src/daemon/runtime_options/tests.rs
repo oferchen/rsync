@@ -648,4 +648,47 @@ mod runtime_options_tests {
         assert_eq!(options.bind_address(), DEFAULT_BIND_ADDRESS);
         assert!(!options.bind_address_overridden);
     }
+
+    #[test]
+    fn port_from_config_sets_binding_port() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "port = 8873\n[m]\npath = /srv/m\n").expect("write config");
+
+        let args = vec![
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert_eq!(options.port, 8873);
+        assert_eq!(options.rsync_port, Some(8873));
+    }
+
+    #[test]
+    fn cli_port_overrides_config_port() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "port = 8873\n[m]\npath = /srv/m\n").expect("write config");
+
+        let args = vec![
+            OsString::from("--port"),
+            OsString::from("9999"),
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert_eq!(options.port, 9999);
+    }
+
+    #[test]
+    fn config_without_port_keeps_default() {
+        let mut file = NamedTempFile::new().expect("config file");
+        writeln!(file, "[m]\npath = /srv/m\n").expect("write config");
+
+        let args = vec![
+            OsString::from("--config"),
+            file.path().as_os_str().to_os_string(),
+        ];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert_eq!(options.port, DEFAULT_PORT);
+        assert!(options.rsync_port.is_none());
+    }
 }
