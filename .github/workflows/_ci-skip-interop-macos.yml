@@ -1,0 +1,14 @@
+name: CI skip interop (macOS)
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  interop-with-upstream-macos:
+    name: interop with upstream rsync (macOS)
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Skipped — no code changes"
