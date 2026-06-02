@@ -128,8 +128,6 @@ impl ConnectionState {
 mod tests {
     use super::*;
 
-    // -- Valid transitions -------------------------------------------------
-
     #[test]
     fn greeting_to_module_select() {
         let result = ConnectionState::Greeting.transition(ConnectionState::ModuleSelect);
@@ -177,8 +175,6 @@ mod tests {
         let result = ConnectionState::Transferring.transition(ConnectionState::Closing);
         assert_eq!(result, Ok(ConnectionState::Closing));
     }
-
-    // -- Invalid transitions -----------------------------------------------
 
     #[test]
     fn greeting_to_greeting() {
@@ -288,8 +284,6 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // -- Happy-path lifecycle -----------------------------------------------
-
     #[test]
     fn full_lifecycle_with_auth() {
         let state = ConnectionState::Greeting;
@@ -308,8 +302,6 @@ mod tests {
         let state = state.transition(ConnectionState::Closing).unwrap();
         assert!(state.is_terminal());
     }
-
-    // -- Edge cases ---------------------------------------------------------
 
     #[test]
     fn early_close_from_greeting() {
@@ -346,8 +338,6 @@ mod tests {
         assert!(state.transition(ConnectionState::ModuleSelect).is_err());
         assert!(state.transition(ConnectionState::Greeting).is_err());
     }
-
-    // -- valid_transitions --------------------------------------------------
 
     #[test]
     fn valid_transitions_greeting() {
@@ -392,8 +382,6 @@ mod tests {
         assert!(valid.is_empty());
     }
 
-    // -- is_terminal --------------------------------------------------------
-
     #[test]
     fn only_closing_is_terminal() {
         assert!(!ConnectionState::Greeting.is_terminal());
@@ -402,8 +390,6 @@ mod tests {
         assert!(!ConnectionState::Transferring.is_terminal());
         assert!(ConnectionState::Closing.is_terminal());
     }
-
-    // -- InvalidTransition formatting ----------------------------------------
 
     #[test]
     fn invalid_transition_display() {
@@ -465,8 +451,6 @@ mod tests {
         assert_ne!(a, b);
     }
 
-    // -- Clone / Copy / Hash -----------------------------------------------
-
     #[test]
     fn connection_state_clone_copy() {
         let state = ConnectionState::Greeting;
@@ -495,8 +479,6 @@ mod tests {
         let cloned = err;
         assert_eq!(err, cloned);
     }
-
-    // -- Sole state authority (FSW-7 audit) -----------------------------------
 
     /// Confirms that `ConnectionState` is the sole mechanism for tracking the
     /// daemon connection lifecycle. No ad-hoc booleans, phase counters, or
@@ -542,8 +524,6 @@ mod tests {
             }
         }
     }
-
-    // -- Exhaustive transition matrix ----------------------------------------
 
     /// Verifies every possible (from, to) pair against the expected outcome.
     #[test]
