@@ -165,7 +165,7 @@ jobs:
             local failures=0
             timeout "${SOAK_TIMEOUT_SECONDS}" bash -c '
               seq 1 "${SOAK_CONNECTIONS}" \
-                | xargs -n 1 -P "${SOAK_PARALLELISM}" -I {} bash -c "one_pull {}"
+                | xargs -P "${SOAK_PARALLELISM}" -I {} bash -c "one_pull {}"
             ' || failures=$?
             end=$(date +%s.%N)
 
@@ -187,7 +187,11 @@ jobs:
           # Sample daemon peak RSS (VmHWM, kB) while it is still alive;
           # /usr/bin/time -v only writes its summary on process exit.
           PID=$(cat "$WORK/oc-rsyncd.runpid")
-          PEAK_RSS_KB=$(awk '/VmHWM/ {print $2}' "/proc/$PID/status")
+          if kill -0 "$PID" 2>/dev/null; then
+            PEAK_RSS_KB=$(awk '/VmHWM/ {print $2}' "/proc/$PID/status")
+          else
+            PEAK_RSS_KB="0"
+          fi
           echo "$PEAK_RSS_KB" > "$RESULTS/daemon-peak-rss-kb"
 
       - name: Assert soak invariants
