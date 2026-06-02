@@ -26,6 +26,11 @@ upstream_version="${UPSTREAM_VERSION:-3.4.2}"
 upstream_src_root="${workspace_root}/target/interop/upstream-src"
 upstream_src_dir="${upstream_src_root}/rsync-${upstream_version}"
 oc_rsync_bin="${OC_RSYNC_BIN:-${workspace_root}/target/release/oc-rsync}"
+# Resolve to absolute path - test scripts cd into the upstream source tree,
+# so a relative OC_RSYNC_BIN would break.
+if [[ "$oc_rsync_bin" != /* ]]; then
+    oc_rsync_bin="${workspace_root}/${oc_rsync_bin}"
+fi
 known_failures_conf="${workspace_root}/tools/ci/upstream_testsuite_known_failures.conf"
 log_root="${workspace_root}/target/interop/upstream-testsuite"
 testrun_timeout="${TESTRUN_TIMEOUT:-300}"
