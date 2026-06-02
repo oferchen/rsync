@@ -1,0 +1,14 @@
+name: CI skip interop (Windows)
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  interop-with-upstream-windows:
+    name: interop with upstream rsync (Windows, best-effort)
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Skipped — no code changes"
