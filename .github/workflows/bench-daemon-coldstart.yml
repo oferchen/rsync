@@ -125,11 +125,11 @@ jobs:
           OC_RSYNC="${{ github.workspace }}/target/release/oc-rsync"
 
           "$OC_RSYNC" --daemon --no-detach --config "$WORK/oc-rsyncd.conf" \
-            > "$WORK/oc-rsyncd.stdout" 2> "$WORK/oc-rsyncd.stderr" &
+            </dev/null > "$WORK/oc-rsyncd.stdout" 2> "$WORK/oc-rsyncd.stderr" &
           echo $! > "$WORK/oc-rsyncd.runpid"
 
           rsync --daemon --no-detach --config "$WORK/rsyncd.conf" \
-            > "$WORK/rsyncd.stdout" 2> "$WORK/rsyncd.stderr" &
+            </dev/null > "$WORK/rsyncd.stdout" 2> "$WORK/rsyncd.stderr" &
           echo $! > "$WORK/rsyncd.runpid"
 
           # Wait briefly for both listeners to bind.

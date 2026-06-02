@@ -81,8 +81,13 @@ impl RuntimeOptions {
             self.set_listen_backlog_from_config(backlog, &origin)?;
         }
 
+        // upstream: clientserver.c - config `port` overrides the default
+        // listening port unless CLI `--port` was already given.
         if let Some((port, _origin)) = parsed.rsync_port {
             self.rsync_port = Some(port);
+            if !self.port_overridden {
+                self.port = port;
+            }
         }
 
         if let Some((opts, origin)) = parsed.socket_options {
