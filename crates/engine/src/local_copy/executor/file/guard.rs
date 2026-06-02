@@ -349,10 +349,13 @@ impl DestinationWriteGuard {
                     }
                     remove_existing_destination(&self.final_path)?;
                 }
-                // upstream: receiver.c:finish_transfer() - cross-device fallback
-                // copies data then applies metadata via set_file_attrs() on the
-                // new destination inode.
+                // upstream: util1.c:robust_rename() EXDEV fallback calls
+                // copy_file() which calls unlink_and_reopen() - removing the
+                // existing destination before creating a fresh file. Without
+                // this unlink, fs::copy fails with EACCES when the existing
+                // destination has restrictive permissions (e.g. mode 440).
                 Err(error) if error.kind() == io::ErrorKind::CrossesDevices => {
+                    remove_existing_destination(&self.final_path)?;
                     fs::copy(&temp_path, &self.final_path).map_err(|copy_error| {
                         LocalCopyError::io(
                             self.finalise_action(),
