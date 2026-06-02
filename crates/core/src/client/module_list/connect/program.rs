@@ -344,12 +344,17 @@ impl ConnectProgramStream {
 
         #[cfg(unix)]
         {
-            let writer = transport.socket.try_clone()?;
-            Ok(ConnectProgramParts {
-                child,
-                reader: transport.socket,
-                writer,
-            })
+            match transport.socket.try_clone() {
+                Ok(writer) => Ok(ConnectProgramParts {
+                    child,
+                    reader: transport.socket,
+                    writer,
+                }),
+                Err(e) => {
+                    let _ = child.wait();
+                    Err(e)
+                }
+            }
         }
 
         #[cfg(not(unix))]
