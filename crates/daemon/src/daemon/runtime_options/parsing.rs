@@ -41,6 +41,7 @@ impl RuntimeOptions {
         while let Some(argument) = iter.next() {
             if let Some(value) = take_option_value(argument, &mut iter, "--port")? {
                 options.port = parse_port(&value)?;
+                options.port_overridden = true;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--bind")? {
                 let addr = parse_bind_address(&value)?;
                 options.set_bind_address(addr)?;

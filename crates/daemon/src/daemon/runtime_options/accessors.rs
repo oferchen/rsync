@@ -17,7 +17,6 @@ impl RuntimeOptions {
     /// Returns the configured TCP port from the config file `port` directive.
     ///
     /// Upstream: `daemon-parm.txt` - `port` INTEGER, P_GLOBAL, default 0.
-    #[allow(dead_code)] // REASON: accessor for daemon listener; wired when async daemon starts
     pub(crate) fn rsync_port(&self) -> Option<u16> {
         self.rsync_port
     }
