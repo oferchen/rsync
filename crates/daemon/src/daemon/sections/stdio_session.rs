@@ -128,7 +128,7 @@ pub fn run_stdio_session(
     .map_err(|error| {
         DaemonError::new(
             SOCKET_IO_EXIT_CODE,
-            rsync_error!(SOCKET_IO_EXIT_CODE, "stdio daemon session failed: {error}")
+            rsync_error!(SOCKET_IO_EXIT_CODE, format!("stdio daemon session failed: {error}"))
                 .with_role(Role::Daemon),
         )
     })
