@@ -179,6 +179,19 @@ impl DaemonStream {
         Self::Program(stream)
     }
 
+    /// Creates a `DaemonStream` from a child process's stdio handles.
+    ///
+    /// Used by daemon-over-remote-shell mode where the caller spawns
+    /// the SSH process directly and needs to wrap its pipes as a daemon
+    /// transport.
+    pub(crate) fn from_child_process(
+        child: std::process::Child,
+        stdin: std::process::ChildStdin,
+        stdout: std::process::ChildStdout,
+    ) -> Self {
+        Self::Program(ConnectProgramStream::new(child, stdin, stdout))
+    }
+
     /// Returns a reference to the underlying `TcpStream` if this is a TCP
     /// connection. Used for applying socket-level options that only apply
     /// to real sockets (not connect programs or TLS).
