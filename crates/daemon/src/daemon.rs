@@ -424,3 +424,5 @@ include!("daemon/sections/proxy_protocol.rs");
 include!("daemon/sections/auth_helpers.rs");
 
 include!("daemon/sections/module_parsing.rs");
+
+include!("daemon/sections/stdio_session.rs");

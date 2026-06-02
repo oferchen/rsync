@@ -202,6 +202,6 @@ pub use config::{DaemonConfig, DaemonConfigBuilder};
 #[cfg(feature = "async-daemon")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async-daemon")))]
 pub use daemon::run_async_daemon;
-pub use daemon::{run_daemon, run_daemon_stdio};
+pub use daemon::{run_daemon, run_daemon_stdio, run_stdio_session};
 pub use daemon_stream::{DaemonStream, StdioPair};
 pub use error::DaemonError;
