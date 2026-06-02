@@ -234,9 +234,7 @@ fn stdio_daemon_arguments_strips_server_and_daemon() {
     assert!(!result.iter().any(|a| a == "--server"));
     assert!(!result.iter().any(|a| a == "--daemon"));
     assert!(result.iter().any(|a| a == "--config=/etc/rsyncd.conf"));
-    assert!(result
-        .iter()
-        .any(|a| a == "--log-file=/var/log/rsyncd.log"));
+    assert!(result.iter().any(|a| a == "--log-file=/var/log/rsyncd.log"));
 }
 
 #[test]

@@ -102,7 +102,10 @@ pub fn run_stdio_session(
         .map(|definition| ModuleRuntime::new(definition, connection_limiter.clone()))
         .collect();
 
-    let stream = DaemonStream::stdio();
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+    let pair = crate::daemon_stream::StdioPair::new(Box::new(stdin), Box::new(stdout));
+    let stream = DaemonStream::stdio(pair);
 
     // upstream: clientserver.c:1286-1287 - for rsh-daemon, am_daemon is set
     // to -1 as a flag distinguishing it from a network daemon. We use a
