@@ -124,6 +124,7 @@ fn finish_module_builder(
         default_incoming,
         default_outgoing,
         default_use_chroot,
+        &state.module_defaults,
     )
 }
 

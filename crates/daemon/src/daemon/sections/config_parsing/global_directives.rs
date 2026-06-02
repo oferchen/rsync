@@ -4,6 +4,47 @@
 // (the global section), including the `include` directive that triggers
 // recursive config file parsing and result merging.
 
+/// Default values for P_LOCAL module parameters set in the global section.
+///
+/// upstream: loadparm.c - when a P_LOCAL parameter appears in the global
+/// section, it sets the default value (`def_ptr`) that all subsequently
+/// parsed modules inherit via `init_section()` / `copy_section()`.
+#[derive(Default)]
+struct GlobalModuleDefaults {
+    exclude: Vec<String>,
+    include: Vec<String>,
+    filter: Vec<String>,
+    max_verbosity: Option<i32>,
+    transfer_logging: Option<bool>,
+    log_format: Option<String>,
+    log_file: Option<PathBuf>,
+    hosts_allow: Option<Vec<HostPattern>>,
+    hosts_deny: Option<Vec<HostPattern>>,
+    timeout: Option<Option<NonZeroU64>>,
+    dont_compress: Option<String>,
+    read_only: Option<bool>,
+    write_only: Option<bool>,
+    listable: Option<bool>,
+    munge_symlinks: Option<Option<bool>>,
+    numeric_ids: Option<bool>,
+    fake_super: Option<bool>,
+    max_connections: Option<Option<NonZeroU32>>,
+    ignore_errors: Option<bool>,
+    ignore_nonreadable: Option<bool>,
+    strict_modes: Option<bool>,
+    forward_lookup: Option<bool>,
+    open_noatime: Option<bool>,
+    exclude_from: Option<PathBuf>,
+    include_from: Option<PathBuf>,
+    comment: Option<String>,
+    early_exec: Option<String>,
+    pre_xfer_exec: Option<String>,
+    post_xfer_exec: Option<String>,
+    name_converter: Option<String>,
+    temp_dir: Option<String>,
+    charset: Option<String>,
+}
+
 /// Mutable context holding all global-section state accumulated during parsing.
 ///
 /// Passed by reference into `apply_global_directive` to avoid a long parameter
@@ -31,6 +72,11 @@ struct GlobalParseState {
     rsync_port: Option<(u16, ConfigDirectiveOrigin)>,
     daemon_chroot: Option<(PathBuf, ConfigDirectiveOrigin)>,
     modules: Vec<ModuleDefinition>,
+    /// P_LOCAL parameter defaults from the global section.
+    ///
+    /// upstream: loadparm.c - P_LOCAL parameters in the global section set
+    /// defaults inherited by all modules that don't override them.
+    module_defaults: GlobalModuleDefaults,
 }
 
 impl GlobalParseState {
@@ -58,6 +104,7 @@ impl GlobalParseState {
             rsync_port: None,
             daemon_chroot: None,
             modules: Vec::new(),
+            module_defaults: GlobalModuleDefaults::default(),
         }
     }
 
@@ -737,18 +784,245 @@ fn apply_global_directive(
                 state.daemon_chroot = Some((PathBuf::from(trimmed), origin));
             }
         }
-        // upstream: loadparm.c - P_LOCAL directives in the global section are
-        // silently accepted as module defaults that apply to all modules which
-        // do not override them. We ignore them here because they are processed
-        // at the module level when the module definition inherits global defaults.
-        "munge symlinks" | "hosts allow" | "hosts deny" | "log file" | "transfer logging"
-        | "log format" | "exclude" | "exclude from" | "include from" | "max verbosity"
-        | "timeout" | "dont compress" | "pre-xfer exec" | "post-xfer exec" | "auth users"
-        | "strict modes" | "comment" | "path" | "read only" | "write only" | "list"
-        | "filter" | "charset" | "numeric ids" | "ignore errors" | "ignore nonreadable"
-        | "fake super" | "max connections" => {
-            // Silently accepted - not yet wired as inheritable module defaults.
+        // upstream: loadparm.c - P_LOCAL directives in the global section set
+        // default values inherited by all modules that don't override them.
+        // When bInGlobalSection is true, parm_ptr = def_ptr, so the value
+        // written becomes the default for all subsequent module sections
+        // (via init_section -> copy_section).
+        "exclude" => {
+            if !value.is_empty() {
+                state.module_defaults.exclude.push(value.to_owned());
+            }
         }
+        // Note: "include" as a P_LOCAL default is not handled here because
+        // our key=value parser already claims "include" for config file
+        // inclusion (upstream uses "&include /path" which doesn't collide).
+        "filter" => {
+            if !value.is_empty() {
+                state.module_defaults.filter.push(value.to_owned());
+            }
+        }
+        "max verbosity" => {
+            let parsed: i32 = value.parse().map_err(|_| {
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!("invalid integer value '{value}' for 'max verbosity'"),
+                )
+            })?;
+            state.module_defaults.max_verbosity = Some(parsed);
+        }
+        "transfer logging" => {
+            let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!("invalid boolean value '{value}' for 'transfer logging'"),
+                )
+            })?;
+            state.module_defaults.transfer_logging = Some(parsed);
+        }
+        "log format" => {
+            if !value.is_empty() {
+                state.module_defaults.log_format = Some(value.to_owned());
+            }
+        }
+        "log file" => {
+            if !value.is_empty() {
+                let resolved = resolve_config_relative_path(canonical, value);
+                state.module_defaults.log_file = Some(resolved);
+            }
+        }
+        "hosts allow" => {
+            let patterns = parse_host_list(value, path, line_number, "hosts allow")?;
+            state.module_defaults.hosts_allow = Some(patterns);
+        }
+        "hosts deny" => {
+            let patterns = parse_host_list(value, path, line_number, "hosts deny")?;
+            state.module_defaults.hosts_deny = Some(patterns);
+        }
+        "timeout" => {
+            let timeout = parse_timeout_seconds(value).ok_or_else(|| {
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!("invalid timeout '{value}'"),
+                )
+            })?;
+            state.module_defaults.timeout = Some(timeout);
+        }
+        "dont compress" => {
+            if !value.is_empty() {
+                state.module_defaults.dont_compress = Some(value.to_owned());
+            }
+        }
+        "read only" => {
+            let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!("invalid boolean value '{value}' for 'read only'"),
+                )
+            })?;
+            state.module_defaults.read_only = Some(parsed);
+        }
+        "write only" => {
+            let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!("invalid boolean value '{value}' for 'write only'"),
+                )
+            })?;
+            state.module_defaults.write_only = Some(parsed);
+        }
+        "list" => {
+            let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!("invalid boolean value '{value}' for 'list'"),
+                )
+            })?;
+            state.module_defaults.listable = Some(parsed);
+        }
+        "munge symlinks" => {
+            let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!("invalid boolean value '{value}' for 'munge symlinks'"),
+                )
+            })?;
+            state.module_defaults.munge_symlinks = Some(Some(parsed));
+        }
+        "numeric ids" => {
+            let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!("invalid boolean value '{value}' for 'numeric ids'"),
+                )
+            })?;
+            state.module_defaults.numeric_ids = Some(parsed);
+        }
+        "fake super" => {
+            let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!("invalid boolean value '{value}' for 'fake super'"),
+                )
+            })?;
+            state.module_defaults.fake_super = Some(parsed);
+        }
+        "max connections" => {
+            let max = parse_max_connections_directive(value).ok_or_else(|| {
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!("invalid max connections value '{value}'"),
+                )
+            })?;
+            state.module_defaults.max_connections = Some(max);
+        }
+        "ignore errors" => {
+            let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!("invalid boolean value '{value}' for 'ignore errors'"),
+                )
+            })?;
+            state.module_defaults.ignore_errors = Some(parsed);
+        }
+        "ignore nonreadable" => {
+            let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!("invalid boolean value '{value}' for 'ignore nonreadable'"),
+                )
+            })?;
+            state.module_defaults.ignore_nonreadable = Some(parsed);
+        }
+        "strict modes" => {
+            let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!("invalid boolean value '{value}' for 'strict modes'"),
+                )
+            })?;
+            state.module_defaults.strict_modes = Some(parsed);
+        }
+        "forward lookup" => {
+            // forward lookup is both P_LOCAL and has a global handler above
+            // for reverse_lookup. This arm handles the module-default case.
+            let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!("invalid boolean value '{value}' for 'forward lookup'"),
+                )
+            })?;
+            state.module_defaults.forward_lookup = Some(parsed);
+        }
+        "open noatime" => {
+            let parsed = parse_boolean_directive(value).ok_or_else(|| {
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!("invalid boolean value '{value}' for 'open noatime'"),
+                )
+            })?;
+            state.module_defaults.open_noatime = Some(parsed);
+        }
+        "exclude from" => {
+            if !value.is_empty() {
+                let resolved = resolve_config_relative_path(canonical, value);
+                state.module_defaults.exclude_from = Some(resolved);
+            }
+        }
+        "include from" => {
+            if !value.is_empty() {
+                let resolved = resolve_config_relative_path(canonical, value);
+                state.module_defaults.include_from = Some(resolved);
+            }
+        }
+        "comment" => {
+            if !value.is_empty() {
+                state.module_defaults.comment = Some(value.to_owned());
+            }
+        }
+        "early exec" => {
+            if !value.is_empty() {
+                state.module_defaults.early_exec = Some(value.to_owned());
+            }
+        }
+        "pre-xfer exec" => {
+            if !value.is_empty() {
+                state.module_defaults.pre_xfer_exec = Some(value.to_owned());
+            }
+        }
+        "post-xfer exec" => {
+            if !value.is_empty() {
+                state.module_defaults.post_xfer_exec = Some(value.to_owned());
+            }
+        }
+        "name converter" => {
+            if !value.is_empty() {
+                state.module_defaults.name_converter = Some(value.to_owned());
+            }
+        }
+        "charset" => {
+            if !value.is_empty() {
+                state.module_defaults.charset = Some(value.to_owned());
+            }
+        }
+        // P_LOCAL directives that only make sense per-module - silently accepted
+        // but not stored as inheritable defaults.
+        "path" | "auth users" => {}
         _ => {
             eprintln!(
                 "warning: unknown global directive '{}' in '{}' line {} [daemon={}]",
