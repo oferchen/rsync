@@ -39,12 +39,12 @@ pub fn run_stdio_session(
     let mut iter = arguments.iter();
     while let Some(argument) = iter.next() {
         if let Some(value) = take_option_value(argument, &mut iter, "--config")
-            .map_err(|e| DaemonError::new(1, rsync_error!(1, "{e}").with_role(Role::Daemon)))?
+            .map_err(|e| DaemonError::new(1, rsync_error!(1, format!("{e}")).with_role(Role::Daemon)))?
         {
             options.load_config_modules(&value, &mut seen_modules)?;
             has_explicit_config = true;
         } else if let Some(value) = take_option_value(argument, &mut iter, "--log-file")
-            .map_err(|e| DaemonError::new(1, rsync_error!(1, "{e}").with_role(Role::Daemon)))?
+            .map_err(|e| DaemonError::new(1, rsync_error!(1, format!("{e}")).with_role(Role::Daemon)))?
         {
             options.set_log_file(PathBuf::from(value))?;
         }
