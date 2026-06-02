@@ -547,3 +547,147 @@ fn mode_0000_preserve_in_existing_file_update() {
     assert_eq!(metadata.permissions().mode() & 0o777, 0o000);
     assert_eq!(fs::read(&destination).expect("read dest"), b"new");
 }
+
+/// Verifies that directory setgid inheritance is preserved during copy.
+///
+/// Mirrors upstream's `testsuite/dir-sgid.test`: when creating destination
+/// directories inside a setgid parent, the OS-level setgid inheritance from
+/// `mkdir()` must survive the transfer. Without `--perms`, no chmod is
+/// applied to newly-created directories, so the inherited setgid bit stays.
+///
+/// This test only runs on Linux because macOS/BSD do not propagate the
+/// setgid bit on `mkdir()` in the same way. If the filesystem does not
+/// support directory setgid inheritance (e.g., some tmpfs configurations),
+/// the test is skipped gracefully.
+// upstream: rsync.c:510-516 - `inherit = !preserve_perms && FLAG_DIR_CREATED`
+// preserves the on-disk S_ISGID when no --perms is specified.
+#[cfg(target_os = "linux")]
+#[test]
+fn dir_setgid_inheritance_preserved_without_perms() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let parent = temp.path().join("sgid_parent");
+    fs::create_dir(&parent).expect("create parent");
+
+    // Set the setgid bit on the parent directory.
+    fs::set_permissions(&parent, PermissionsExt::from_mode(0o2770)).expect("chmod parent");
+
+    // Probe whether the filesystem supports directory setgid inheritance.
+    let probe = parent.join("probe");
+    fs::create_dir(&probe).expect("create probe");
+    let probe_mode = fs::metadata(&probe).expect("probe meta").permissions().mode();
+    if probe_mode & 0o2000 == 0 {
+        // Filesystem does not propagate setgid - skip gracefully.
+        return;
+    }
+    fs::remove_dir(&probe).expect("remove probe");
+
+    // Build a source tree: a directory containing a file and a subdirectory.
+    let source = temp.path().join("src");
+    let source_subdir = source.join("subdir");
+    fs::create_dir_all(&source_subdir).expect("create source tree");
+    fs::write(source.join("file.txt"), b"hello").expect("write file");
+    fs::write(source_subdir.join("nested.txt"), b"world").expect("write nested");
+
+    // Destination is inside the setgid parent - a non-existent directory
+    // with a trailing slash so oc-rsync creates it as a wrapper.
+    let dest = parent.join("dest");
+    let mut dest_operand = dest.clone().into_os_string();
+    dest_operand.push("/");
+
+    let operands = vec![source.into_os_string(), dest_operand];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // No --perms: permissions are NOT explicitly applied to new directories.
+    let options = LocalCopyOptions::default().recursive(true);
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // The wrapper directory `dest/` should inherit setgid from the parent.
+    let dest_mode = fs::metadata(&dest).expect("dest meta").permissions().mode();
+    assert_ne!(
+        dest_mode & 0o2000,
+        0,
+        "wrapper directory should inherit setgid from parent (mode {dest_mode:#o})"
+    );
+
+    // The transferred source directory inside `dest/` should also have setgid
+    // (inherited from `dest/` which inherited from the sgid parent).
+    let copied_src = dest.join("src");
+    let copied_mode = fs::metadata(&copied_src)
+        .expect("copied dir meta")
+        .permissions()
+        .mode();
+    assert_ne!(
+        copied_mode & 0o2000,
+        0,
+        "copied directory should inherit setgid (mode {copied_mode:#o})"
+    );
+
+    // The nested subdirectory should also have setgid.
+    let nested = copied_src.join("subdir");
+    let nested_mode = fs::metadata(&nested)
+        .expect("nested dir meta")
+        .permissions()
+        .mode();
+    assert_ne!(
+        nested_mode & 0o2000,
+        0,
+        "nested directory should inherit setgid (mode {nested_mode:#o})"
+    );
+}
+
+/// Verifies that setgid is NOT inherited when the parent lacks it.
+///
+/// The counterpart to `dir_setgid_inheritance_preserved_without_perms`:
+/// when the destination parent does NOT have setgid, newly-created
+/// directories should NOT have it either.
+// upstream: testsuite/dir-sgid.test - "testit setgid-off 700 ..."
+#[cfg(target_os = "linux")]
+#[test]
+fn dir_no_setgid_when_parent_lacks_it() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let parent = temp.path().join("no_sgid_parent");
+    fs::create_dir(&parent).expect("create parent");
+
+    // Parent does NOT have setgid - just normal 0770.
+    fs::set_permissions(&parent, PermissionsExt::from_mode(0o0770)).expect("chmod parent");
+
+    // Build a simple source tree.
+    let source = temp.path().join("src");
+    fs::create_dir_all(&source).expect("create source");
+    fs::write(source.join("file.txt"), b"hello").expect("write file");
+
+    let dest = parent.join("dest");
+    let mut dest_operand = dest.clone().into_os_string();
+    dest_operand.push("/");
+
+    let operands = vec![source.into_os_string(), dest_operand];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default().recursive(true);
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // Neither the wrapper nor the copied directory should have setgid.
+    let dest_mode = fs::metadata(&dest).expect("dest meta").permissions().mode();
+    assert_eq!(
+        dest_mode & 0o2000,
+        0,
+        "wrapper directory should NOT have setgid (mode {dest_mode:#o})"
+    );
+
+    let copied_src = dest.join("src");
+    let copied_mode = fs::metadata(&copied_src)
+        .expect("copied dir meta")
+        .permissions()
+        .mode();
+    assert_eq!(
+        copied_mode & 0o2000,
+        0,
+        "copied directory should NOT have setgid (mode {copied_mode:#o})"
+    );
+}

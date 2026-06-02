@@ -88,10 +88,12 @@ build_upstream_helpers() {
                 --disable-zstd --disable-lz4 >configure.log 2>&1 \
                 || { tail -50 configure.log; exit 1; }
         fi
-        # `make all` is the simplest way to get tls, getgroups, and the
-        # upstream rsync binary built (the binary is not used as $RSYNC
-        # but lsh.sh and a few tests reference $TOOLDIR/rsync).
-        make all >make.log 2>&1 || { tail -100 make.log; exit 1; }
+        # Build the upstream rsync binary (some tests reference
+        # $TOOLDIR/rsync) plus the test helper programs (tls, getgroups)
+        # that the testsuite's check_perms and rsync_getgroups functions
+        # require. The helpers are part of CHECK_PROGS in upstream's
+        # Makefile, not the `all` target, so they must be named explicitly.
+        make all tls getgroups >make.log 2>&1 || { tail -100 make.log; exit 1; }
     )
 }
 
