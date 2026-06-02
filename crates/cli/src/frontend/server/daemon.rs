@@ -87,6 +87,7 @@ pub(crate) fn server_daemon_mode_requested(args: &[OsString]) -> bool {
 /// Strips `--server` and `--daemon` from the argument list, retaining any
 /// `--config=<path>` or other daemon-relevant options. The returned vector
 /// is suitable for passing to `DaemonConfig::builder().arguments(...)`.
+#[cfg(any(unix, test))]
 pub(crate) fn server_daemon_arguments(args: &[OsString]) -> Vec<OsString> {
     let program_name = super::super::detect_program_name(args.first().map(OsString::as_os_str));
     let daemon_program = match program_name {
