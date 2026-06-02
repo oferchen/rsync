@@ -11,7 +11,7 @@ mod tests;
 
 use std::io::{self, Write};
 
-use core::client::ClientEvent;
+use core::client::{ClientEvent, ClientEventKind};
 
 use super::tokens::{OutFormat, OutFormatContext, OutFormatToken};
 
@@ -48,6 +48,21 @@ impl OutFormat {
     }
 }
 
+/// Returns `true` when the event should be suppressed from `--out-format` output.
+///
+/// Mirrors the upstream gate in `generator.c:574-576`: when `iflags == 0`
+/// (no significant attribute changes and the file was not transferred), the
+/// itemize line is suppressed. In the local-copy path, this corresponds to
+/// `MetadataReused` events whose `change_set` reports no changes and that
+/// were not newly created.
+///
+/// upstream: generator.c:574-576 - `iflags & (SIGNIFICANT_ITEM_FLAGS|ITEM_REPORT_XATTR)`
+fn should_suppress_event(event: &ClientEvent) -> bool {
+    matches!(event.kind(), ClientEventKind::MetadataReused)
+        && !event.was_created()
+        && !event.change_set().has_any_change()
+}
+
 /// Emits each event using the supplied `--out-format` specification.
 pub(crate) fn emit_out_format<W: Write + ?Sized>(
     events: &[ClientEvent],
@@ -56,6 +71,9 @@ pub(crate) fn emit_out_format<W: Write + ?Sized>(
     writer: &mut W,
 ) -> io::Result<()> {
     for event in events {
+        if should_suppress_event(event) {
+            continue;
+        }
         format.render(event, context, writer)?;
     }
     Ok(())

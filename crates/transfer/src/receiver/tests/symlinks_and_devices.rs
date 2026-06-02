@@ -115,10 +115,9 @@ fn emit_itemize_up_to_date_file() {
 
     ctx.emit_itemize(&mut writer, &iflags, &entry).unwrap();
 
-    assert_eq!(writer.messages.len(), 1);
-    let msg = String::from_utf8_lossy(&writer.messages[0]);
-    // No transfer, no changes - dots collapse to spaces
-    assert_eq!(msg, ".f          unchanged.txt\n");
+    // upstream: generator.c:574-576 - no output when iflags has no significant
+    // flags (file is completely unchanged)
+    assert_eq!(writer.messages.len(), 0);
 }
 
 #[test]

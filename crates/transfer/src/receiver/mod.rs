@@ -655,8 +655,13 @@ impl ReceiverContext {
     /// multiplexed message. Uses `is_sender: false` since the daemon is receiving
     /// files (producing `>` direction indicator).
     ///
+    /// Suppresses output when `iflags` has no significant flags set (the file is
+    /// completely unchanged), matching upstream's gate in `itemize()` at
+    /// `generator.c:574-576`.
+    ///
     /// # Upstream Reference
     ///
+    /// - `generator.c:574-576` - `iflags & (SIGNIFICANT_ITEM_FLAGS|ITEM_REPORT_XATTR)`
     /// - `generator.c:2260` - `itemize()` in receiver's generator context
     /// - `log.c:330-340` - `rwrite()` converts to `send_msg(MSG_INFO)` when `am_server`
     fn emit_itemize<W: crate::writer::MsgInfoSender + ?Sized>(
@@ -666,6 +671,13 @@ impl ReceiverContext {
         entry: &protocol::flist::FileEntry,
     ) -> std::io::Result<()> {
         if !self.should_emit_itemize() {
+            return Ok(());
+        }
+        // upstream: generator.c:574-576 - only emit when significant flags are
+        // set. When iflags == 0 (file is completely up-to-date), no line is
+        // produced. INFO_GTE(NAME, 2) and stdout_format_has_i > 1 gates are
+        // not applicable on the server side (the client controls display).
+        if !iflags.has_significant_flags() {
             return Ok(());
         }
         let ctx = self.itemize_context();

@@ -123,6 +123,21 @@ impl ItemFlags {
         (self.raw & Self::SIGNIFICANT_ITEM_FLAGS) as u16
     }
 
+    /// Returns true if the item has any significant flags set.
+    ///
+    /// Used to gate itemize output: upstream only emits an itemize line when
+    /// at least one significant flag (or `ITEM_REPORT_XATTR`) is set. When
+    /// `iflags == 0` (completely unchanged file), no output is produced
+    /// unless verbosity is high or an extended name follows.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:574-576` - `iflags & (SIGNIFICANT_ITEM_FLAGS|ITEM_REPORT_XATTR)`
+    #[must_use]
+    pub const fn has_significant_flags(&self) -> bool {
+        self.raw & (Self::SIGNIFICANT_ITEM_FLAGS | Self::ITEM_REPORT_XATTR) != 0
+    }
+
     /// Returns true if the item needs data transfer.
     #[must_use]
     pub const fn needs_transfer(&self) -> bool {
