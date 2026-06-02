@@ -339,7 +339,7 @@ impl ConnectProgramStream {
     /// sockets are handles to the same underlying socketpair fd (via
     /// `try_clone`). On non-Unix, returns `(child, stdout, stdin)`.
     pub(super) fn into_parts(mut self) -> io::Result<ConnectProgramParts> {
-        let mut child = self.child.take().expect("child already taken");
+        let child = self.child.take().expect("child already taken");
         let transport = self.transport.take().expect("transport already taken");
 
         #[cfg(unix)]
@@ -351,6 +351,7 @@ impl ConnectProgramStream {
                     writer,
                 }),
                 Err(e) => {
+                    let mut child = child;
                     let _ = child.wait();
                     Err(e)
                 }
