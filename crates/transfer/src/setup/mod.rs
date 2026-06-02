@@ -189,11 +189,15 @@ pub fn setup_protocol_with<'a>(
 
 /// Builds compatibility flags for our side of the connection.
 ///
-/// In daemon server mode, parses the client's `-e` capability string to
-/// determine which flags to enable. In SSH/client mode, uses platform
-/// defaults.
+/// In daemon server mode, parses the client's `-e` capability string from
+/// `client_args`. In SSH server mode, extracts it from the compact
+/// `flag_string`. In SSH/client mode, uses platform defaults.
 ///
 /// Returns the flags and optionally the parsed client info string.
+///
+/// upstream: compat.c:161-179 - `set_allow_inc_recurse()` sets `client_info`
+/// from `shell_cmd` (SSH) or `maybe_add_e_option()` (local), then
+/// compat.c:712-732 uses `client_info` to build compat flags.
 fn build_our_flags<'a>(
     config: &ProtocolSetupConfig<'a>,
     negotiator: &dyn ProtocolNegotiator,
@@ -204,38 +208,75 @@ fn build_our_flags<'a>(
         let client_info = negotiator.parse_client_info(args);
         let flags = negotiator.build_flags_from_client_info(&client_info, config.allow_inc_recurse);
         (flags, Some(client_info))
+    } else if config.is_server {
+        if let Some(flag_str) = config.flag_string {
+            // SSH server mode: extract capability string from the compact
+            // flag string. Upstream sets `client_info = shell_cmd` where
+            // `shell_cmd` is the value of the `-e` option parsed from the
+            // compact flag string (compat.c:163-164).
+            //
+            // Wrap the flag string in a slice so parse_client_info can
+            // scan it for the embedded `-e.xxx` capability chars.
+            let args = [flag_str.to_owned()];
+            let client_info = negotiator.parse_client_info(&args);
+            if client_info.is_empty() {
+                // No `-e` in flag string - use platform defaults.
+                // This matches upstream where `shell_cmd` is empty.
+                (build_default_flags(config.allow_inc_recurse), None)
+            } else {
+                let flags =
+                    negotiator.build_flags_from_client_info(&client_info, config.allow_inc_recurse);
+                (
+                    flags,
+                    Some(std::borrow::Cow::Owned(client_info.into_owned())),
+                )
+            }
+        } else {
+            // SSH server mode without flag string - use platform defaults.
+            (build_default_flags(config.allow_inc_recurse), None)
+        }
     } else {
-        // SSH/client mode: set all flags we support, matching upstream
+        // Client mode: set all flags we support, matching upstream
         // compat.c:712-732 which sets flags based on compile-time features
         // and the capability string advertised to the peer.
-        let mut flags = CompatibilityFlags::CHECKSUM_SEED_FIX
-            | CompatibilityFlags::VARINT_FLIST_FLAGS
-            | CompatibilityFlags::SAFE_FILE_LIST
-            | CompatibilityFlags::AVOID_XATTR_OPTIMIZATION
-            | CompatibilityFlags::INPLACE_PARTIAL_DIR
-            | CompatibilityFlags::ID0_NAMES;
-
-        // upstream: CAN_SET_SYMLINK_TIMES at compat.c:713-714
-        #[cfg(unix)]
-        {
-            flags |= CompatibilityFlags::SYMLINK_TIMES;
-        }
-
-        // upstream: compat.c:715-716 - CF_SYMLINK_ICONV is gated on
-        // `#ifdef ICONV_OPTION`. Mirror that with the `iconv` cargo feature
-        // so SSH/client builds without iconv neither set the flag locally
-        // nor advertise 's' to the peer (see capability::CAPABILITY_MAPPINGS).
-        #[cfg(all(unix, feature = "iconv"))]
-        {
-            flags |= CompatibilityFlags::SYMLINK_ICONV;
-        }
-
-        if config.allow_inc_recurse {
-            flags |= CompatibilityFlags::INC_RECURSE;
-        }
-
-        (flags, None)
+        (build_default_flags(config.allow_inc_recurse), None)
     }
+}
+
+/// Builds the default set of compatibility flags for our platform.
+///
+/// Used when we are the client (advertising our capabilities) or when
+/// the server has no capability string from the remote.
+///
+/// upstream: compat.c:712-732 - flags set based on compile-time features.
+fn build_default_flags(allow_inc_recurse: bool) -> CompatibilityFlags {
+    let mut flags = CompatibilityFlags::CHECKSUM_SEED_FIX
+        | CompatibilityFlags::VARINT_FLIST_FLAGS
+        | CompatibilityFlags::SAFE_FILE_LIST
+        | CompatibilityFlags::AVOID_XATTR_OPTIMIZATION
+        | CompatibilityFlags::INPLACE_PARTIAL_DIR
+        | CompatibilityFlags::ID0_NAMES;
+
+    // upstream: CAN_SET_SYMLINK_TIMES at compat.c:713-714
+    #[cfg(unix)]
+    {
+        flags |= CompatibilityFlags::SYMLINK_TIMES;
+    }
+
+    // upstream: compat.c:715-716 - CF_SYMLINK_ICONV is gated on
+    // `#ifdef ICONV_OPTION`. Mirror that with the `iconv` cargo feature
+    // so SSH/client builds without iconv neither set the flag locally
+    // nor advertise 's' to the peer (see capability::CAPABILITY_MAPPINGS).
+    #[cfg(all(unix, feature = "iconv"))]
+    {
+        flags |= CompatibilityFlags::SYMLINK_ICONV;
+    }
+
+    if allow_inc_recurse {
+        flags |= CompatibilityFlags::INC_RECURSE;
+    }
+
+    flags
 }
 
 /// Determines whether capability negotiation (vstring exchange) should occur.

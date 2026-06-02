@@ -47,6 +47,19 @@ pub struct ProtocolSetupConfig<'a> {
     /// None for SSH mode or when acting as client.
     pub client_args: Option<&'a [String]>,
 
+    /// Raw compact flag string from SSH server mode (e.g. `-logDtprze.iLsfxCIvu`).
+    ///
+    /// In SSH server mode, `client_args` is `None` because the CLI frontend
+    /// has already parsed the argv into `ServerConfig`. The capability string
+    /// (`-e.xxx`) is embedded in this compact flag string. When set, the
+    /// server extracts the capability chars from it instead of unconditionally
+    /// enabling all compat flags.
+    ///
+    /// upstream: compat.c:163-164 - `client_info = shell_cmd ? shell_cmd : ""`
+    /// where `shell_cmd` is the value of the `-e` option parsed from the
+    /// compact flag string.
+    pub flag_string: Option<&'a str>,
+
     /// Whether we are the server in this connection.
     ///
     /// Controls compat flags and checksum seed direction:
@@ -121,6 +134,7 @@ impl<'a> ProtocolSetupConfig<'a> {
             protocol,
             skip_compat_exchange: false,
             client_args: None,
+            flag_string: None,
             is_server,
             is_daemon_mode: false,
             do_compression: false,
@@ -141,6 +155,13 @@ impl<'a> ProtocolSetupConfig<'a> {
     #[must_use]
     pub const fn with_client_args(mut self, args: Option<&'a [String]>) -> Self {
         self.client_args = args;
+        self
+    }
+
+    /// Sets [`Self::flag_string`].
+    #[must_use]
+    pub const fn with_flag_string(mut self, flag_string: Option<&'a str>) -> Self {
+        self.flag_string = flag_string;
         self
     }
 

@@ -412,10 +412,20 @@ pub fn run_server_with_handshake<W: Write>(
         && (config.role == ServerRole::Generator
             || (!config.flags.delete && !config.flags.prune_empty_dirs));
 
+    // In SSH server mode (client_args is None), pass the compact flag string
+    // so setup_protocol can extract the `-e.xxx` capability string from it.
+    // upstream: compat.c:163-164 - `client_info = shell_cmd` for SSH mode.
+    let flag_str_ref = if handshake.client_args.is_none() && is_server {
+        Some(config.flag_string.as_str())
+    } else {
+        None
+    };
+
     let setup_config = setup::ProtocolSetupConfig {
         protocol: handshake.protocol,
         skip_compat_exchange: handshake.compat_exchanged,
         client_args: handshake.client_args.as_deref(),
+        flag_string: flag_str_ref,
         is_server,
         is_daemon_mode,
         do_compression,
