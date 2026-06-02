@@ -22,12 +22,16 @@ fn builds_receiver_invocation_with_sender_flag() {
     assert_eq!(args[0], "rsync");
     assert_eq!(args[1], "--server");
     assert_eq!(args[2], "--sender");
+    // upstream: options.c:2710 - capability string is appended directly to
+    // the compact flag string (e.g. `-re.iLsfxCIvu`), not a separate arg.
     let flags = args[3].to_string_lossy();
     assert!(flags.starts_with('-'), "flags should start with -: {flags}");
-    let expected_caps = build_capability_string(true);
-    assert_eq!(args[4], *expected_caps);
-    assert_eq!(args[5], ".");
-    assert_eq!(args[6], "/remote/path");
+    assert!(
+        flags.contains("e."),
+        "capability string must be embedded in flag string: {flags}"
+    );
+    assert_eq!(args[4], ".");
+    assert_eq!(args[5], "/remote/path");
 }
 
 #[test]
@@ -41,71 +45,81 @@ fn builds_sender_invocation_no_sender_flag() {
 
     assert_eq!(args[0], "rsync");
     assert_eq!(args[1], "--server");
-    // No --sender flag for push - flags come next
+    // No --sender flag for push - flags come next.
+    // upstream: capability string is embedded in the flag string.
     let flags = args[2].to_string_lossy();
     assert!(flags.starts_with('-'), "flags should start with -: {flags}");
-    let expected_caps = build_capability_string(true);
-    assert_eq!(args[3], *expected_caps);
-    assert_eq!(args[4], ".");
-    assert_eq!(args[5], "/remote/path");
+    assert!(
+        flags.contains("e."),
+        "capability string must be embedded in flag string: {flags}"
+    );
+    assert_eq!(args[3], ".");
+    assert_eq!(args[4], "/remote/path");
 }
 
 #[test]
 fn ssh_sender_includes_inc_recurse_capability_by_default() {
     // ISI.h: sender-side INC_RECURSE is default-on, matching upstream rsync
     // 3.4.x. SSH push transfers include the 'i' capability bit by default.
+    // upstream: the capability string is embedded in the compact flag string.
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/remote/path");
 
-    let caps = args
-        .iter()
-        .find(|a| a.to_string_lossy().starts_with("-e."))
-        .expect("capability string present");
-    let caps_str = caps.to_string_lossy();
+    // Capability string is now embedded in the compact flag string, not separate.
+    let flag_str = args[2].to_string_lossy();
     assert!(
-        caps_str.contains('i'),
-        "default sender capability string must include 'i': {caps_str}"
+        flag_str.contains("e."),
+        "flag string must contain embedded capability: {flag_str}"
     );
-    assert_eq!(*caps, *build_capability_string(true));
+    // Extract the capability portion after "e."
+    let caps_portion = flag_str.split("e.").nth(1).expect("e. separator");
+    assert!(
+        caps_portion.contains('i'),
+        "default sender capability string must include 'i': {flag_str}"
+    );
 }
 
 #[test]
 fn ssh_sender_omits_inc_recurse_when_no_inc_recursive_set() {
     // `--no-inc-recursive` clears `allow_inc_recurse`; the capability bit
     // is suppressed in both transfer directions. Tracker #1862.
+    // upstream: capability string is embedded in the compact flag string.
     let config = ClientConfig::builder().inc_recursive_send(false).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/remote/path");
 
-    let caps = args
-        .iter()
-        .find(|a| a.to_string_lossy().starts_with("-e."))
-        .expect("capability string present");
-    let caps_str = caps.to_string_lossy();
+    let flag_str = args[2].to_string_lossy();
     assert!(
-        !caps_str.contains('i'),
-        "--no-inc-recursive must suppress 'i' on sender capability: {caps_str}"
+        flag_str.contains("e."),
+        "flag string must contain embedded capability: {flag_str}"
     );
-    assert_eq!(*caps, *build_capability_string(false));
+    let caps_portion = flag_str.split("e.").nth(1).expect("e. separator");
+    assert!(
+        !caps_portion.contains('i'),
+        "--no-inc-recursive must suppress 'i' on sender capability: {flag_str}"
+    );
 }
 
 #[test]
 fn ssh_receiver_includes_inc_recurse_capability_by_default() {
     // ISI.h: sender-side INC_RECURSE is default-on, matching upstream rsync
     // 3.4.x. Pull transfers also include the 'i' capability bit by default.
+    // upstream: capability string is embedded in the compact flag string.
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
     let args = builder.build("/remote/path");
 
-    let caps = args
-        .iter()
-        .find(|a| a.to_string_lossy().starts_with("-e."))
-        .expect("capability string present");
-    let caps_str = caps.to_string_lossy();
+    // Pull: args[3] is the flag string (after --server, --sender)
+    let flag_str = args[3].to_string_lossy();
     assert!(
-        caps_str.contains('i'),
-        "default receiver capability string must include 'i': {caps_str}"
+        flag_str.contains("e."),
+        "flag string must contain embedded capability: {flag_str}"
+    );
+    let caps_portion = flag_str.split("e.").nth(1).expect("e. separator");
+    assert!(
+        caps_portion.contains('i'),
+        "default receiver capability string must include 'i': {flag_str}"
     );
 }
 
@@ -113,18 +127,21 @@ fn ssh_receiver_includes_inc_recurse_capability_by_default() {
 fn ssh_receiver_omits_inc_recurse_when_no_inc_recursive_set() {
     // `--no-inc-recursive` applies to both directions, matching upstream's
     // single `allow_inc_recurse` global.
+    // upstream: capability string is embedded in the compact flag string.
     let config = ClientConfig::builder().inc_recursive_send(false).build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
     let args = builder.build("/remote/path");
 
-    let caps = args
-        .iter()
-        .find(|a| a.to_string_lossy().starts_with("-e."))
-        .expect("capability string present");
-    let caps_str = caps.to_string_lossy();
+    // Pull: args[3] is the flag string (after --server, --sender)
+    let flag_str = args[3].to_string_lossy();
     assert!(
-        !caps_str.contains('i'),
-        "--no-inc-recursive must suppress 'i' on receiver capability: {caps_str}"
+        flag_str.contains("e."),
+        "flag string must contain embedded capability: {flag_str}"
+    );
+    let caps_portion = flag_str.split("e.").nth(1).expect("e. separator");
+    assert!(
+        !caps_portion.contains('i'),
+        "--no-inc-recursive must suppress 'i' on receiver capability: {flag_str}"
     );
 }
 
@@ -183,11 +200,15 @@ fn includes_log_format_for_itemize() {
         args_str.contains(&"--log-format=%i".to_string()),
         "expected --log-format=%i in args: {args_str:?}"
     );
-    // Must NOT appear as a compact flag
+    // Itemize must NOT appear as a transfer-flag character in the compact
+    // flag string. The `i` in the capability suffix (`e.iLsfxCIvu`) is the
+    // INC_RECURSE bit, not the itemize flag - so we check only the transfer
+    // portion (before `e.`).
     let flags = args[2].to_string_lossy();
+    let transfer_portion = transfer_flags_portion(&flags);
     assert!(
-        !flags.contains(".i"),
-        "itemize should not be a compact flag: {flags}"
+        !transfer_portion.contains('i'),
+        "itemize should not be a compact transfer flag: {flags}"
     );
 }
 
@@ -707,8 +728,11 @@ fn includes_verbosity_flags() {
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/path");
 
+    // Count 'v' only in the transfer-flag portion, excluding the embedded
+    // capability suffix (which contains its own 'v' in e.g. `e.iLsfxCIvu`).
     let flags = args[2].to_string_lossy();
-    let v_count = flags.chars().filter(|c| *c == 'v').count();
+    let transfer_portion = transfer_flags_portion(&flags);
+    let v_count = transfer_portion.chars().filter(|c| *c == 'v').count();
     assert_eq!(v_count, 3, "expected 3 'v' chars in flags: {flags}");
 }
 
@@ -958,20 +982,39 @@ fn build_sender_args(config: &ClientConfig) -> Vec<String> {
 
 /// Helper: finds the compact flag string in an args vector.
 ///
-/// The flag string starts with `-` but not `--`, and is not the capability
-/// string (`-e.xxx`). This handles variable positioning caused by
-/// `--ignore-errors` and `--fsync` appearing before the flag string.
+/// The flag string starts with `-` but not `--`. Since the capability string
+/// is now embedded in the flag string (e.g. `-re.iLsfxCIvu`), this returns
+/// the combined string. Variable positioning is handled by skipping `--xxx` args.
 fn find_flag_string(args: &[String]) -> &str {
     args.iter()
-        .find(|a| a.starts_with('-') && !a.starts_with("--") && !a.starts_with("-e."))
+        .find(|a| a.starts_with('-') && !a.starts_with("--"))
         .map(|s| s.as_str())
         .expect("flag string not found in args")
 }
 
-/// Helper: extracts the compact flag string from a push (Sender) invocation.
+/// Helper: extracts the transfer-flag portion of the compact flag string
+/// (everything before `e.`), excluding the embedded capability suffix.
+///
+/// upstream: the compact flag string is `-<transfer-flags>e.<capabilities>`.
+/// This returns only the `<transfer-flags>` portion so counting and negative
+/// assertions are not affected by the capability characters.
+fn transfer_flags_portion(flag_string: &str) -> &str {
+    // The capability string starts at the first 'e.' after the leading '-'.
+    if let Some(pos) = flag_string[1..].find("e.") {
+        &flag_string[..pos + 1]
+    } else {
+        flag_string
+    }
+}
+
+/// Helper: extracts the transfer-flag portion from a push (Sender) invocation.
+///
+/// Returns only the transfer flags (before `e.`), excluding the embedded
+/// capability suffix, so that per-flag assertions are not affected by
+/// capability characters like `v`, `x`, `L`.
 fn sender_flag_string(config: &ClientConfig) -> String {
     let args = build_sender_args(config);
-    find_flag_string(&args).to_owned()
+    transfer_flags_portion(find_flag_string(&args)).to_owned()
 }
 
 /// Helper: builds a pull (Receiver) invocation and returns the args vector.
@@ -984,10 +1027,13 @@ fn build_receiver_args(config: &ClientConfig) -> Vec<String> {
         .collect()
 }
 
-/// Helper: extracts the compact flag string from a pull (Receiver) invocation.
+/// Helper: extracts the transfer-flag portion from a pull (Receiver) invocation.
+///
+/// Returns only the transfer flags (before `e.`), excluding the embedded
+/// capability suffix.
 fn receiver_flag_string(config: &ClientConfig) -> String {
     let args = build_receiver_args(config);
-    find_flag_string(&args).to_owned()
+    transfer_flags_portion(find_flag_string(&args)).to_owned()
 }
 
 #[test]
@@ -1652,28 +1698,43 @@ fn default_rsync_path_is_rsync() {
 }
 
 #[test]
-fn capability_string_present_in_sender_args() {
-    // ISI.h: default inc_recursive_send is true, so the sender args carry
-    // build_capability_string(true).
+fn capability_string_embedded_in_sender_flag_string() {
+    // upstream: options.c:2710 - capability string is appended directly to
+    // the compact flag string, not emitted as a separate argument.
     let config = ClientConfig::builder().build();
     let args = build_sender_args(&config);
     let expected = build_capability_string(true);
+    // The capability string (e.g. "-e.iLsfxCIvu") with leading '-' stripped
+    // should be embedded in the compact flag string.
+    let suffix = expected.strip_prefix('-').unwrap();
+    let flag_str = find_flag_string(&args);
     assert!(
-        args.iter().any(|a| a == &expected),
-        "expected capability string {expected} in args: {args:?}"
+        flag_str.ends_with(suffix),
+        "expected capability suffix {suffix} embedded in flag string {flag_str}"
+    );
+    // Must NOT appear as a standalone argument.
+    assert!(
+        !args.iter().any(|a| a == &expected),
+        "capability string must not be a separate argument: {args:?}"
     );
 }
 
 #[test]
-fn capability_string_present_in_receiver_args() {
-    // ISI.h: default inc_recursive_send is true, so the receiver args carry
-    // build_capability_string(true).
+fn capability_string_embedded_in_receiver_flag_string() {
+    // upstream: options.c:2710 - capability string is appended directly to
+    // the compact flag string, not emitted as a separate argument.
     let config = ClientConfig::builder().build();
     let args = build_receiver_args(&config);
     let expected = build_capability_string(true);
+    let suffix = expected.strip_prefix('-').unwrap();
+    let flag_str = find_flag_string(&args);
     assert!(
-        args.iter().any(|a| a == &expected),
-        "expected capability string {expected} in args: {args:?}"
+        flag_str.ends_with(suffix),
+        "expected capability suffix {suffix} embedded in flag string {flag_str}"
+    );
+    assert!(
+        !args.iter().any(|a| a == &expected),
+        "capability string must not be a separate argument: {args:?}"
     );
 }
 
@@ -2067,7 +2128,8 @@ fn all_flags_enabled_produces_valid_invocation() {
     assert!(args.contains(&"--ignore-errors".to_owned()));
     assert!(args.contains(&"--fsync".to_owned()));
 
-    let flags = find_flag_string(&args);
+    let full_flags = find_flag_string(&args);
+    let flags = transfer_flags_portion(full_flags);
     for (ch, name) in [
         ('l', "links"),
         ('L', "copy_links"),
@@ -2171,7 +2233,14 @@ fn all_flags_enabled_produces_valid_invocation() {
         );
     }
 
-    assert!(args.contains(&build_capability_string(true)));
+    // upstream: capability string is embedded in the flag string, not separate.
+    let caps = build_capability_string(true);
+    let caps_suffix = caps.strip_prefix('-').unwrap();
+    let flag_str = find_flag_string(&args);
+    assert!(
+        flag_str.ends_with(caps_suffix),
+        "all-flags test: capability suffix {caps_suffix} must be in flag string {flag_str}"
+    );
     assert!(args.contains(&".".to_owned()));
     assert!(args.contains(&"/path".to_owned()));
 }

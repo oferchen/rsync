@@ -178,7 +178,22 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from(format!("--io-uring-depth={depth}")));
         }
 
-        let flags = self.build_flag_string();
+        let mut flags = self.build_flag_string();
+
+        // upstream: options.c:2710 - maybe_add_e_option() appends the `e.xxx`
+        // capability string directly onto the compact flag string, producing a
+        // single argument like `-logDtpre.iLsfxCIvu`. Emitting it as a separate
+        // `-e.xxx` argument would confuse the server-side parser which treats
+        // only the first short-flag argument as the compact flag string.
+        // upstream: compat.c:720 set_allow_inc_recurse() - capability gate.
+        // upstream: options.c:3003-3050 maybe_add_e_option() - capability string.
+        let capability = build_capability_string(self.config.inc_recursive_send());
+        // build_capability_string returns "-e.xxx"; strip the leading '-' and
+        // append the remainder (e.g. "e.iLsfxCIvu") to the flag string.
+        if let Some(suffix) = capability.strip_prefix('-') {
+            flags.push_str(suffix);
+        }
+
         if !flags.is_empty() {
             args.push(OsString::from(flags));
         }
@@ -187,15 +202,6 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // Order mirrors upstream options.c server_options().
         self.append_long_form_args(&mut args);
 
-        // SSH transfers advertise the INC_RECURSE (`'i'`) capability in both
-        // directions by default, mirroring upstream's `allow_inc_recurse = 1`
-        // initialization. `--no-inc-recursive` clears the flag and suppresses
-        // the bit, matching `set_allow_inc_recurse()`.
-        // upstream: compat.c:720 set_allow_inc_recurse() - capability gate.
-        // upstream: options.c:3003-3050 maybe_add_e_option() - capability string.
-        args.push(OsString::from(build_capability_string(
-            self.config.inc_recursive_send(),
-        )));
         args.push(OsString::from("."));
 
         // upstream: options.c:2533 safe_arg() - when old_style_args >= 1,

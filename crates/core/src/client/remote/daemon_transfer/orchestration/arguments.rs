@@ -153,17 +153,20 @@ pub(super) fn build_full_daemon_args(
     }
 
     // upstream: options.c:2594-2713 - single-character flag string (e.g., "-logDtprzc").
-    let flag_string = flags::build_server_flag_string(config);
+    // upstream: options.c:2710 - maybe_add_e_option() appends the capability
+    // string directly onto the compact flag string, producing a single argument
+    // like `-logDtpre.iLsfxCIvu`. We follow the same format for interop.
+    let mut flag_string = flags::build_server_flag_string(config);
+    if protocol.as_u8() >= 30 {
+        // upstream: compat.c:177-178 daemon 'i' check, compat.c:720
+        // set_allow_inc_recurse() - capability flags for protocol 30+.
+        let capability = build_capability_string(config.inc_recursive_send());
+        if let Some(suffix) = capability.strip_prefix('-') {
+            flag_string.push_str(suffix);
+        }
+    }
     if !flag_string.is_empty() {
         args.push(flag_string);
-    }
-
-    // upstream: options.c:2707-2713 maybe_add_e_option, compat.c:177-178 daemon
-    // 'i' check, compat.c:720 set_allow_inc_recurse() - capability flags for
-    // protocol 30+; INC_RECURSE ('i') is advertised in both directions by
-    // default and `--no-inc-recursive` clears the gate.
-    if protocol.as_u8() >= 30 {
-        args.push(build_capability_string(config.inc_recursive_send()));
     }
 
     let we_are_sender = !is_sender;
