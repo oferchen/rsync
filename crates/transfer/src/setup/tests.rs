@@ -29,6 +29,132 @@ fn parse_client_info_returns_empty_when_not_found() {
 }
 
 #[test]
+fn parse_client_info_from_compact_server_flag_string() {
+    // upstream: options.c:2710 - maybe_add_e_option appends -e.LsfxCIvu
+    // to the compact flag string. parse_client_info must extract it.
+    let args = vec!["-logDtprze.iLsfxCIvu".to_owned()];
+    let info = parse_client_info(&args);
+    assert_eq!(info, "iLsfxCIvu");
+}
+
+#[test]
+fn parse_client_info_from_compact_flag_string_with_secluded_args() {
+    // upstream: server_options() produces -slogDtprze.iLsfxCIvu when
+    // protect_args + all capabilities are active.
+    let args = vec!["-slogDtprze.iLsfxCIvu".to_owned()];
+    let info = parse_client_info(&args);
+    assert_eq!(info, "iLsfxCIvu");
+}
+
+#[test]
+fn parse_client_info_from_compact_flag_string_without_e() {
+    // When no -e is present (protocol < 30), returns empty.
+    let args = vec!["-logDtpr".to_owned()];
+    let info = parse_client_info(&args);
+    assert_eq!(info, "");
+}
+
+#[test]
+fn ssh_server_flag_string_limits_compat_flags() {
+    // SSH server mode: when flag_string is provided, the server extracts
+    // capabilities from the embedded `-e.xxx` and delegates to
+    // build_flags_from_client_info. The mock negotiator returns fixed
+    // flags without INC_RECURSE, confirming the flag_string path is taken
+    // instead of the default-all-flags path. Detailed capability-to-flag
+    // mapping is covered by build_compat_flags_from_client_info tests.
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let mut stdin = &b"\x03md5"[..];
+    let mut stdout = Vec::new();
+
+    let config = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: None,
+        flag_string: Some("-logDtprze.LsfxCIvu"),
+        is_server: true,
+        is_daemon_mode: false,
+        do_compression: false,
+        compress_choice: None,
+        checksum_seed: Some(42),
+        allow_inc_recurse: true,
+    };
+
+    let mock = MockNegotiator::new();
+    let result = setup_protocol_with(&mut stdout, &mut stdin, &config, &mock)
+        .expect("SSH server with flag_string should succeed");
+
+    let flags = result.compat_flags.unwrap();
+    // Mock returns CHECKSUM_SEED_FIX | VARINT_FLIST_FLAGS without
+    // INC_RECURSE, confirming the flag_string code path was taken
+    // (the default-all-flags path would include INC_RECURSE when
+    // allow_inc_recurse is true).
+    assert!(
+        !flags.contains(CompatibilityFlags::INC_RECURSE),
+        "flag_string path should use negotiator's build_flags_from_client_info, not defaults"
+    );
+}
+
+#[test]
+fn ssh_server_flag_string_enables_advertised_caps() {
+    // SSH server mode: capabilities the remote advertises should be enabled.
+    let protocol = ProtocolVersion::try_from(31).unwrap();
+    let mut stdin = &b"\x03md5"[..];
+    let mut stdout = Vec::new();
+
+    let config = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: None,
+        flag_string: Some("-logDtprze.iLsfxCIvu"),
+        is_server: true,
+        is_daemon_mode: false,
+        do_compression: false,
+        compress_choice: None,
+        checksum_seed: Some(42),
+        allow_inc_recurse: true,
+    };
+
+    let mock = MockNegotiator::new();
+    let result = setup_protocol_with(&mut stdout, &mut stdin, &config, &mock)
+        .expect("SSH server with full caps should succeed");
+
+    let flags = result.compat_flags.unwrap();
+    // The MockNegotiator returns its own flags, so we just verify
+    // the code path was taken without error. The detailed flag checking
+    // is covered by build_compat_flags_from_client_info tests above.
+    assert!(result.negotiated_algorithms.is_some());
+    let _ = flags;
+}
+
+#[test]
+fn ssh_server_no_flag_string_uses_defaults() {
+    // SSH server mode without flag_string falls back to platform defaults.
+    let protocol = ProtocolVersion::try_from(29).unwrap();
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let config = ProtocolSetupConfig {
+        protocol,
+        skip_compat_exchange: false,
+        client_args: None,
+        flag_string: None,
+        is_server: true,
+        is_daemon_mode: false,
+        do_compression: false,
+        compress_choice: None,
+        checksum_seed: Some(42),
+        allow_inc_recurse: false,
+    };
+
+    let result = setup_protocol(&mut stdout, &mut stdin, &config)
+        .expect("SSH server without flag_string should succeed");
+
+    // Protocol 29 skips compat exchange entirely.
+    assert!(result.compat_flags.is_none());
+    assert_eq!(result.checksum_seed, 42);
+}
+
+#[test]
 #[cfg(unix)]
 fn build_compat_flags_enables_symlink_times_when_client_advertises_l() {
     let flags = build_compat_flags_from_client_info("LfxCIvu", true);
@@ -145,6 +271,7 @@ fn setup_protocol_below_30_returns_none_for_algorithms_and_compat() {
         protocol,
         skip_compat_exchange: false,
         client_args: None,
+        flag_string: None,
         is_server: true,
         is_daemon_mode: false,
         do_compression: false,
@@ -183,6 +310,7 @@ fn setup_protocol_skip_compat_exchange_skips_flags() {
         protocol,
         skip_compat_exchange: true, // SKIP
         client_args: None,
+        flag_string: None,
         is_server: true,
         is_daemon_mode: false,
         do_compression: false,
@@ -224,6 +352,7 @@ fn setup_protocol_server_writes_compat_flags_and_seed() {
         protocol,
         skip_compat_exchange: false,
         client_args: Some(&client_args), // client_args with 'v' capability
+        flag_string: None,
         is_server: true,
         is_daemon_mode: true, // server advertises, client reads
         do_compression: false,
@@ -278,7 +407,8 @@ fn setup_protocol_client_reads_compat_flags_from_server() {
         protocol,
         skip_compat_exchange: false,
         client_args: None, // not needed for client mode
-        is_server: false,  // CLIENT mode
+        flag_string: None,
+        is_server: false, // CLIENT mode
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
@@ -320,6 +450,7 @@ fn setup_protocol_server_generates_deterministic_seeds() {
         protocol,
         skip_compat_exchange: false,
         client_args: None,
+        flag_string: None,
         is_server: true,
         is_daemon_mode: false,
         do_compression: false,
@@ -368,6 +499,7 @@ fn setup_protocol_ssh_mode_bidirectional_exchange() {
         protocol,
         skip_compat_exchange: false,
         client_args: None,
+        flag_string: None,
         is_server: false, // CLIENT
         is_daemon_mode: false,
         do_compression: false,
@@ -410,6 +542,7 @@ fn setup_protocol_client_args_affects_compat_flags() {
         protocol,
         skip_compat_exchange: false,
         client_args: Some(&client_args_minimal), // Only 'v' capability
+        flag_string: None,
         is_server: true,
         is_daemon_mode: true,
         do_compression: false,
@@ -440,6 +573,7 @@ fn setup_protocol_client_args_affects_compat_flags() {
         protocol,
         skip_compat_exchange: false,
         client_args: Some(&client_args_full), // Full capabilities
+        flag_string: None,
         is_server: true,
         is_daemon_mode: true,
         do_compression: false,
@@ -482,6 +616,7 @@ fn setup_protocol_protocol_30_minimum_for_compat_exchange() {
         protocol: protocol_30,
         skip_compat_exchange: false,
         client_args: Some(&client_args),
+        flag_string: None,
         is_server: true,
         is_daemon_mode: true,
         do_compression: false,
@@ -512,6 +647,7 @@ fn protocol_setup_config_builder_new_sets_defaults() {
     assert!(config.is_server);
     assert!(!config.skip_compat_exchange);
     assert!(config.client_args.is_none());
+    assert!(config.flag_string.is_none());
     assert!(!config.is_daemon_mode);
     assert!(!config.do_compression);
     assert!(config.compress_choice.is_none());
@@ -552,6 +688,7 @@ fn protocol_setup_config_builder_partial_configuration() {
     // Other fields should still be at defaults
     assert!(!config.skip_compat_exchange);
     assert!(config.client_args.is_none());
+    assert!(config.flag_string.is_none());
     assert!(config.checksum_seed.is_none());
 }
 
@@ -866,6 +1003,7 @@ fn setup_protocol_server_v_flag_uses_single_byte_encoding() {
         protocol,
         skip_compat_exchange: false,
         client_args: Some(&client_args),
+        flag_string: None,
         is_server: true,
         is_daemon_mode: true,
         do_compression: false,
@@ -911,6 +1049,7 @@ fn setup_protocol_server_v_flag_enables_negotiation() {
         protocol,
         skip_compat_exchange: false,
         client_args: Some(&client_args),
+        flag_string: None,
         is_server: true,
         is_daemon_mode: true,
         do_compression: false,
@@ -942,6 +1081,7 @@ fn setup_protocol_server_v_flag_with_both_v_and_uppercase_v() {
         protocol,
         skip_compat_exchange: false,
         client_args: Some(&client_args_v),
+        flag_string: None,
         is_server: true,
         is_daemon_mode: true,
         do_compression: false,
@@ -960,6 +1100,7 @@ fn setup_protocol_server_v_flag_with_both_v_and_uppercase_v() {
         protocol,
         skip_compat_exchange: false,
         client_args: Some(&client_args_both),
+        flag_string: None,
         is_server: true,
         is_daemon_mode: true,
         do_compression: false,
@@ -1153,6 +1294,7 @@ fn setup_protocol_with_mock_negotiator_server_mode() {
         protocol,
         skip_compat_exchange: false,
         client_args: Some(&client_args),
+        flag_string: None,
         is_server: true,
         is_daemon_mode: true,
         do_compression: false,
@@ -1197,6 +1339,7 @@ fn setup_protocol_with_mock_negotiator_client_mode() {
         protocol,
         skip_compat_exchange: false,
         client_args: None,
+        flag_string: None,
         is_server: false,
         is_daemon_mode: false,
         do_compression: false,
@@ -1490,6 +1633,7 @@ fn compress_choice_override_skips_vstring_and_uses_algorithm() {
         protocol,
         skip_compat_exchange: false,
         client_args: Some(&client_args),
+        flag_string: None,
         is_server: true,
         is_daemon_mode: true,
         do_compression: true,
@@ -1523,6 +1667,7 @@ fn compress_choice_none_allows_normal_negotiation() {
         protocol,
         skip_compat_exchange: false,
         client_args: Some(&client_args),
+        flag_string: None,
         is_server: true,
         is_daemon_mode: true,
         do_compression: true,
@@ -1556,6 +1701,7 @@ fn compress_choice_zlib_override_on_legacy_protocol() {
         protocol,
         skip_compat_exchange: false,
         client_args: None,
+        flag_string: None,
         is_server: true,
         is_daemon_mode: false,
         do_compression: true,

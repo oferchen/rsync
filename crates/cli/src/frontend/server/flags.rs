@@ -10,11 +10,32 @@ use engine::{ReferenceDirectory, ReferenceDirectoryKind};
 
 /// Detects whether secluded-args mode is requested in the server arguments.
 ///
-/// In secluded-args mode, the client sends `-s` as a standalone argument
-/// on the command line (not as part of a combined flag string). The server
-/// then reads the full argument list from stdin before proceeding.
+/// Upstream rsync's `server_options()` (options.c:2604) embeds `s` in the
+/// compact flag string when `protect_args` is active - e.g.
+/// `-slogDtprze.iLsfxCIvu`. The `s` appears in the transfer-flag portion
+/// (before the first `.`), never in the capability/info suffix.
+///
+/// This function checks both standalone `-s` and `s` embedded in compact
+/// flag arguments (single-dash args that are not long flags).
+///
+/// upstream: options.c:792 - `{"secluded-args", 's', ...}`
 pub(crate) fn detect_secluded_args_flag(args: &[OsString]) -> bool {
-    args.iter().skip(1).any(|a| a == "-s")
+    args.iter().skip(1).any(|a| {
+        let s = a.to_string_lossy();
+        if s == "-s" {
+            return true;
+        }
+        // Check compact flag strings: starts with `-`, not `--`.
+        // Only scan the transfer-flag portion (before the first `.`)
+        // because `s` after the dot is the symlink-iconv capability char,
+        // not secluded-args.
+        // upstream: options.c:2604 - protect_args placed at argstr[1]
+        if s.starts_with('-') && !s.starts_with("--") && s.len() > 1 {
+            let transfer_portion = s[1..].split('.').next().unwrap_or("");
+            return transfer_portion.contains('s');
+        }
+        false
+    })
 }
 
 /// Long-form flags extracted from the server argument list.
