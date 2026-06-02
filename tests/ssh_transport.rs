@@ -648,12 +648,17 @@ fn test_remote_invocation_with_multiple_paths() {
     // Receiver (pull) -> --sender flag present
     assert_eq!(args[2].to_string_lossy(), "--sender");
     let flags_idx = 3;
-    assert!(args[flags_idx].to_string_lossy().starts_with('-'));
-    // ISI.h: sender-side INC_RECURSE is default-on; the capability string
-    // includes 'i', matching upstream rsync 3.4.x.
+    let flags = args[flags_idx].to_string_lossy();
+    assert!(flags.starts_with('-'));
+    // upstream: options.c:2710 - capability string is now embedded in the
+    // compact flag string (e.g. `-re.iLsfxCIvu`), not a separate argument.
     let expected_caps = build_capability_string(true);
-    assert_eq!(args[flags_idx + 1].to_string_lossy(), expected_caps);
-    let dot_idx = flags_idx + 2;
+    let caps_suffix = expected_caps.strip_prefix('-').unwrap();
+    assert!(
+        flags.ends_with(caps_suffix),
+        "capability suffix {caps_suffix} must be embedded in flag string: {flags}"
+    );
+    let dot_idx = flags_idx + 1;
     assert_eq!(args[dot_idx].to_string_lossy(), ".");
     // Paths come after "."
     assert_eq!(args[dot_idx + 1].to_string_lossy(), "/path1");
