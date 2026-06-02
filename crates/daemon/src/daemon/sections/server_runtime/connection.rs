@@ -260,6 +260,7 @@ fn apply_client_options(
 ) {
     // upstream: clientserver.c - set_socket_options() is called
     // on the accepted client fd before the session handler runs.
+    // Skipped for stdio streams which have no underlying TCP socket.
     if !client_socket_options.is_empty() {
         let Some(tcp) = stream.tcp_stream() else {
             return;
