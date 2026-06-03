@@ -557,10 +557,11 @@ fn encode_with_replacement(
             encoding_rs::EncoderResult::OutputFull => {
                 // Need more output space, loop will reallocate.
             }
-            encoding_rs::EncoderResult::Unmappable(ch) => {
+            encoding_rs::EncoderResult::Unmappable(_) => {
                 had_replacements = true;
                 output.push(b'?');
-                remaining = &remaining[ch.len_utf8()..];
+                // encoding_rs includes the unmappable character in
+                // `consumed`, so `remaining` is already past it.
             }
         }
     }
