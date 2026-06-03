@@ -43,11 +43,6 @@ fn run_daemon_enforces_bwlimit_during_module_list() {
 
     let mut total_bytes = 0usize;
 
-    line.clear();
-    reader.read_line(&mut line).expect("capabilities");
-    assert_eq!(line, "@RSYNCD: CAP modules\n");
-    total_bytes += line.len();
-
     // upstream: no @RSYNCD: OK before module listing
 
     line.clear();

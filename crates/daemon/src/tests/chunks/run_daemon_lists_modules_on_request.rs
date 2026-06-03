@@ -31,10 +31,6 @@ fn run_daemon_lists_modules_on_request() {
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush list request");
 
-    line.clear();
-    reader.read_line(&mut line).expect("capabilities");
-    assert_eq!(line, "@RSYNCD: CAP modules\n");
-
     // upstream: no @RSYNCD: OK before module listing
 
     line.clear();
