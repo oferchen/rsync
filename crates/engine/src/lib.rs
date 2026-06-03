@@ -192,9 +192,6 @@ pub use concurrent_delta::{
     WholeFileStrategy,
 };
 
-/// Global cleanup registry for temporary files on abnormal termination.
-pub use cleanup::CleanupManager;
-
 /// Common error types for engine operations.
 pub use error::{EngineError, EngineResult};
 
