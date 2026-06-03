@@ -142,7 +142,7 @@ pub(super) fn process_file(
                     None
                 };
 
-                let was_copy = commit_file(
+                let outcome = commit_file(
                     &begin,
                     config,
                     &mut cleanup_guard,
@@ -153,7 +153,7 @@ pub(super) fn process_file(
                 // Temp file has been renamed to its final destination (or
                 // kept via guard.keep()), so remove it from the global
                 // cleanup registry - it is no longer an orphan candidate.
-                if needs_rename {
+                if needs_rename && outcome.delayed_path.is_none() {
                     CleanupManager::global().unregister_temp_file(cleanup_guard.path());
                 }
 
@@ -161,7 +161,14 @@ pub(super) fn process_file(
                 // (no pre-rename step), or re-apply after cross-device
                 // copy since fs::copy does not preserve ownership,
                 // timestamps, ACLs, or xattrs.
-                let metadata_error = if needs_rename && !was_copy {
+                // When delay_updates staged the file, apply metadata to
+                // the staging path (it will be renamed to final later).
+                let metadata_error = if outcome.delayed_path.is_some() {
+                    // upstream: receiver.c:924 - finish_transfer(partialptr, ...)
+                    // applies metadata to the staged partial file.
+                    let staged = outcome.delayed_path.as_ref().unwrap();
+                    apply_file_metadata(staged, &begin, config)
+                } else if needs_rename && !outcome.was_copy {
                     pre_meta_error
                 } else {
                     apply_file_metadata(&begin.file_path, &begin, config)
@@ -174,6 +181,7 @@ pub(super) fn process_file(
                     file_entry_index: begin.file_entry_index,
                     metadata_error,
                     computed_checksum,
+                    delayed_path: outcome.delayed_path,
                 });
             }
             FileMessage::Abort { reason } => {
@@ -280,7 +288,7 @@ pub(super) fn process_whole_file(
         None
     };
 
-    let was_copy = commit_file(
+    let outcome = commit_file(
         &begin,
         config,
         &mut cleanup_guard,
@@ -288,11 +296,14 @@ pub(super) fn process_whole_file(
         bytes_written,
     )?;
 
-    if needs_rename {
+    if needs_rename && outcome.delayed_path.is_none() {
         CleanupManager::global().unregister_temp_file(cleanup_guard.path());
     }
 
-    let metadata_error = if needs_rename && !was_copy {
+    let metadata_error = if outcome.delayed_path.is_some() {
+        let staged = outcome.delayed_path.as_ref().unwrap();
+        apply_file_metadata(staged, &begin, config)
+    } else if needs_rename && !outcome.was_copy {
         pre_meta_error
     } else {
         apply_file_metadata(&begin.file_path, &begin, config)
@@ -305,6 +316,7 @@ pub(super) fn process_whole_file(
         file_entry_index: begin.file_entry_index,
         metadata_error,
         computed_checksum,
+        delayed_path: outcome.delayed_path,
     })
 }
 
@@ -437,26 +449,60 @@ fn make_writer<'a>(
     Ok(Writer::Buffered(ReusableBufWriter::new(file, write_buf)))
 }
 
+/// Commit result indicating whether a cross-device copy occurred and
+/// whether the file was staged to the partial dir for delayed updates.
+struct CommitOutcome {
+    /// True when a cross-device copy was needed (EXDEV fallback).
+    was_copy: bool,
+    /// When `--delay-updates` staged the file to `.~tmp~`, holds the
+    /// staging path. `None` for immediate commits and inplace writes.
+    delayed_path: Option<PathBuf>,
+}
+
 /// Performs backup, atomic rename, and inplace truncation after writing.
 ///
-/// Returns `true` when a cross-device copy was needed (EXDEV fallback),
-/// `false` otherwise. Callers use this to decide whether metadata must be
-/// re-applied to the final path.
+/// When `delay_updates` is true and the file uses temp+rename, stages the
+/// file to `.~tmp~/<filename>` in the same parent directory instead of
+/// renaming to the final destination. The caller reports the staging path
+/// back so the receiver can perform a bulk rename sweep at phase 2.
 ///
 /// When io_uring is available (Linux 5.11+ with `IORING_OP_RENAMEAT`), the
 /// temp-file rename is submitted as an io_uring SQE instead of a synchronous
 /// `rename(2)` syscall. Falls back to `std::fs::rename` on all other
 /// platforms or when the kernel lacks the opcode.
+///
+/// # Upstream Reference
+///
+/// - `receiver.c:906-929`: delay_updates stages to partial dir
+/// - `receiver.c:422-450`: `handle_delayed_updates()` bulk rename
 fn commit_file(
     begin: &BeginMessage,
     config: &DiskCommitConfig,
     cleanup_guard: &mut TempFileGuard,
     needs_rename: bool,
     bytes_written: u64,
-) -> io::Result<bool> {
+) -> io::Result<CommitOutcome> {
     // upstream: backup.c:make_backup() - rename existing file before overwrite
-    if let Some(ref backup_config) = config.backup {
-        make_backup(&begin.file_path, backup_config)?;
+    // With delay_updates, backup happens during the sweep, not here.
+    if !config.delay_updates {
+        if let Some(ref backup_config) = config.backup {
+            make_backup(&begin.file_path, backup_config)?;
+        }
+    }
+
+    if needs_rename && config.delay_updates {
+        // upstream: receiver.c:916-929 - stage to partial dir (.~tmp~)
+        let staging_path = partial_dir_path(&begin.file_path);
+        if let Some(parent) = staging_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let result = rename_with_io_uring_fallback(cleanup_guard.path(), &staging_path)?;
+        CleanupManager::global().unregister_temp_file(cleanup_guard.path());
+        cleanup_guard.keep();
+        return Ok(CommitOutcome {
+            was_copy: result,
+            delayed_path: Some(staging_path),
+        });
     }
 
     let was_copy = if needs_rename {
@@ -479,7 +525,27 @@ fn commit_file(
         false
     };
     cleanup_guard.keep();
-    Ok(was_copy)
+    Ok(CommitOutcome {
+        was_copy,
+        delayed_path: None,
+    })
+}
+
+/// Upstream partial dir name for `--delay-updates` staging.
+///
+/// upstream: options.c - `static char tmp_partialdir[] = ".~tmp~";`
+const DELAY_UPDATES_PARTIAL_DIR: &str = ".~tmp~";
+
+/// Computes the `.~tmp~/<filename>` staging path for a destination file.
+///
+/// upstream: receiver.c:430 - `partial_dir_fname(fname)` returns
+/// `<parent>/.~tmp~/<basename>`.
+fn partial_dir_path(file_path: &Path) -> PathBuf {
+    let parent = file_path.parent().unwrap_or(Path::new("."));
+    let basename = file_path
+        .file_name()
+        .unwrap_or_else(|| std::ffi::OsStr::new("unknown"));
+    parent.join(DELAY_UPDATES_PARTIAL_DIR).join(basename)
 }
 
 /// Retains a partial temp file instead of deleting it on interrupt.
@@ -886,5 +952,22 @@ mod tests {
             first, second,
             "io_uring RENAMEAT2 availability must be consistent"
         );
+    }
+
+    /// Verifies `partial_dir_path` constructs `.~tmp~/<basename>` under the
+    /// file's parent directory, matching upstream `options.c:tmp_partialdir`.
+    #[test]
+    fn partial_dir_path_constructs_staging_path() {
+        let path = Path::new("/dest/subdir/file.txt");
+        let staging = partial_dir_path(path);
+        assert_eq!(staging, PathBuf::from("/dest/subdir/.~tmp~/file.txt"));
+    }
+
+    /// Verifies `partial_dir_path` handles files directly in the root dest dir.
+    #[test]
+    fn partial_dir_path_root_level_file() {
+        let path = Path::new("/dest/file.txt");
+        let staging = partial_dir_path(path);
+        assert_eq!(staging, PathBuf::from("/dest/.~tmp~/file.txt"));
     }
 }

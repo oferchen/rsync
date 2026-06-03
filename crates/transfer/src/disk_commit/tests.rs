@@ -12,6 +12,7 @@ use super::thread::spawn_disk_thread;
 fn default_config() {
     let config = DiskCommitConfig::default();
     assert!(!config.do_fsync);
+    assert!(!config.delay_updates);
     assert_eq!(
         config.channel_capacity,
         super::config::DEFAULT_CHANNEL_CAPACITY
@@ -492,6 +493,117 @@ fn commit_file_rename_replaces_existing_via_io_uring_or_fallback() {
     let result = h.result_rx.recv().unwrap().unwrap();
     assert_eq!(result.bytes_written, 11);
     assert_eq!(fs::read(&file_path).unwrap(), b"new content");
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+/// Verifies that with `delay_updates` enabled, the disk thread stages files
+/// to `.~tmp~/<filename>` instead of renaming to the final destination.
+/// The final rename is deferred to the receiver's phase 2 sweep.
+///
+/// upstream: receiver.c:906-929 - delay_updates stages to partial dir
+#[test]
+fn delay_updates_stages_to_partial_dir() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("delayed.dat");
+
+    let config = DiskCommitConfig {
+        delay_updates: true,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 13,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"delayed write".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Commit).unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result.bytes_written, 13);
+
+    // File should NOT be at the final path yet.
+    assert!(
+        !file_path.exists(),
+        "final path should not exist when delay_updates is active"
+    );
+
+    // File should be staged in the .~tmp~ partial dir.
+    let staging_path = dir.path().join(".~tmp~").join("delayed.dat");
+    assert!(
+        staging_path.exists(),
+        "file should be staged at .~tmp~/<basename>"
+    );
+    assert_eq!(fs::read(&staging_path).unwrap(), b"delayed write");
+
+    // CommitResult should report the delayed path.
+    assert_eq!(
+        result.delayed_path,
+        Some(staging_path.clone()),
+        "CommitResult must report the staging path"
+    );
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+
+    // Cleanup: remove .~tmp~ dir
+    let _ = fs::remove_file(&staging_path);
+    let _ = fs::remove_dir(dir.path().join(".~tmp~"));
+}
+
+/// Verifies that the coalesced WholeFile path also stages to `.~tmp~`
+/// when `delay_updates` is enabled.
+#[test]
+fn delay_updates_whole_file_stages_to_partial_dir() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("whole_delayed.dat");
+
+    let config = DiskCommitConfig {
+        delay_updates: true,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::WholeFile {
+            begin: Box::new(BeginMessage {
+                file_path: file_path.clone(),
+                target_size: 14,
+                file_entry_index: 0,
+                checksum_verifier: None,
+                is_device_target: false,
+                is_inplace: false,
+                append_offset: 0,
+                xattr_list: None,
+            }),
+            data: b"whole delayed!".to_vec(),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result.bytes_written, 14);
+    assert!(
+        !file_path.exists(),
+        "final path should not exist with delay_updates"
+    );
+
+    let staging_path = dir.path().join(".~tmp~").join("whole_delayed.dat");
+    assert!(staging_path.exists(), "file staged at .~tmp~/<basename>");
+    assert_eq!(fs::read(&staging_path).unwrap(), b"whole delayed!");
+    assert_eq!(result.delayed_path, Some(staging_path));
 
     h.file_tx.send(FileMessage::Shutdown).unwrap();
     h.join_handle.join().unwrap();
