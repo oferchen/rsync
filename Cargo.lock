@@ -1331,7 +1331,7 @@ dependencies = [
  "rayon",
  "rustc-hash 2.1.2",
  "rustix",
- "signature 0.6.2",
+ "signature 0.6.3",
  "tempfile",
  "test-support",
  "thiserror 2.0.18",
@@ -2234,7 +2234,7 @@ dependencies = [
  "protocol",
  "rand 0.10.1",
  "rustc-hash 2.1.2",
- "signature 0.6.2",
+ "signature 0.6.3",
  "tempfile",
  "thiserror 2.0.18",
  "tracing",
@@ -4200,7 +4200,7 @@ dependencies = [
  "protocol",
  "rand 0.10.1",
  "rayon",
- "signature 0.6.2",
+ "signature 0.6.3",
  "tempfile",
  "test-support",
  "thiserror 2.0.18",
@@ -4918,7 +4918,7 @@ dependencies = [
 
 [[package]]
 name = "writeable"
-version = "0.6.2"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ffae5123b2d3fc086436f8834ae3ab053a283cfac8fe0a0b8eaae044768a4c4"
 
@@ -5080,7 +5080,7 @@ dependencies = [
 
 [[package]]
 name = "zlib-rs"
-version = "0.6.2"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3be3d40e40a133f9c916ee3f9f4fa2d9d63435b5fbe1bfc6d9dae0aa0ada1513"
 
