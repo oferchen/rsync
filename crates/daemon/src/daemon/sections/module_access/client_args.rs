@@ -361,6 +361,13 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
             "--existing" => {
                 config.file_selection.existing_only = true;
             }
+            // upstream: options.c:817-818
+            "--ignore-missing-args" => {
+                config.file_selection.ignore_missing_args = true;
+            }
+            "--delete-missing-args" => {
+                config.file_selection.delete_missing_args = true;
+            }
             // upstream: options.c:2933-2942
             "--inplace" => {
                 config.write.inplace = true;

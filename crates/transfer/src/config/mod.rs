@@ -182,6 +182,34 @@ pub struct FileSelectionConfig {
     pub files_from_path: Option<String>,
     /// Use NUL bytes as delimiters for `--files-from` input (`--from0`).
     pub from0: bool,
+    /// Silently skip source entries that do not exist (`--ignore-missing-args`).
+    ///
+    /// When true and a top-level source path (or `--files-from` entry) returns
+    /// ENOENT during file list building, the entry is silently omitted from the
+    /// file list with no error or warning.
+    ///
+    /// Mutually exclusive with `delete_missing_args` - if both are set,
+    /// `delete_missing_args` takes precedence (upstream: `missing_args == 2`).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:send_file_list()` - `missing_args == 1`
+    /// - `options.c:817` - `--ignore-missing-args`
+    pub ignore_missing_args: bool,
+    /// Delete destination entries whose source has vanished (`--delete-missing-args`).
+    ///
+    /// When true and a top-level source path (or `--files-from` entry) returns
+    /// ENOENT during file list building, a mode-0 sentinel entry is emitted into
+    /// the file list. The receiver interprets this sentinel as an instruction to
+    /// delete the corresponding destination path.
+    ///
+    /// Takes precedence over `ignore_missing_args` when both are set.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:send_file_list()` - `missing_args == 2`
+    /// - `options.c:818` - `--delete-missing-args`
+    pub delete_missing_args: bool,
 }
 
 /// Configuration supplied to the server entry point.

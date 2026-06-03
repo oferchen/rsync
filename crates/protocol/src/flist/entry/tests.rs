@@ -1435,3 +1435,21 @@ fn extras_presence_bitfield_independence() {
     assert_eq!(entry.hardlink_idx(), None);
     assert_eq!(entry.hardlink_dev(), None);
 }
+
+#[test]
+fn set_mode_overrides_constructor_mode() {
+    // upstream: flist.c:2257 - delete-missing-args sets file->mode = 0
+    let mut entry = FileEntry::new_file("sentinel.txt".into(), 0, 0o644);
+    assert_eq!(entry.mode(), 0o100644); // S_IFREG | 0644
+    entry.set_mode(0);
+    assert_eq!(entry.mode(), 0);
+}
+
+#[test]
+fn set_mode_to_zero_clears_type_and_permissions() {
+    let mut entry = FileEntry::new_directory("dir".into(), 0o755);
+    assert_ne!(entry.mode(), 0);
+    entry.set_mode(0);
+    assert_eq!(entry.mode(), 0);
+    assert_eq!(entry.permissions(), 0);
+}

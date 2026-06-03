@@ -22,6 +22,90 @@ use super::super::io_error_flags;
 use super::batch_stat::{StatResult, batch_stat_dir_entries};
 
 impl GeneratorContext {
+    /// Pre-checks a top-level source entry and walks it if it exists.
+    ///
+    /// Returns `true` if the entry was processed (exists or was handled as a
+    /// mode-0 sentinel), `false` if the caller should skip to the next entry.
+    ///
+    /// This method applies `--ignore-missing-args` and `--delete-missing-args`
+    /// semantics for top-level source paths and `--files-from` entries. The
+    /// distinction from recursive children (which use [`walk_path`] directly)
+    /// is critical: a missing top-level source is "never existed at flist time"
+    /// (upstream `link_stat ... failed`, exit 23), while a missing recursive
+    /// child is "vanished during walk" (upstream `file has vanished`, exit 24).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2254-2272` - `link_stat` + `missing_args` handling per source
+    pub(in crate::generator) fn try_walk_source_entry(
+        &mut self,
+        base: &Path,
+        path: &Path,
+    ) -> io::Result<bool> {
+        // Pre-stat to detect ENOENT before walk_path processes the entry.
+        match self.resolve_symlink_metadata(path, base) {
+            Ok(_) => {
+                // Path exists - delegate to normal walk_path.
+                self.walk_path(base, path.to_path_buf())?;
+                Ok(true)
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                match self.missing_args_mode() {
+                    // upstream: flist.c:2261 - missing_args == 1: silently skip
+                    1 => Ok(false),
+                    // upstream: flist.c:2254-2258 - missing_args == 2: emit mode-0 sentinel
+                    2 => {
+                        self.emit_delete_sentinel(base, path)?;
+                        Ok(true)
+                    }
+                    // upstream: flist.c:1810 - default: link_stat failed + IOERR_GENERAL
+                    _ => {
+                        // FFV-4: emit the correct error message and error flag
+                        // for a source that never existed at flist build time.
+                        eprintln!(
+                            "rsync: [sender] link_stat \"{}\" failed: {} ({})",
+                            path.display(),
+                            e,
+                            e.raw_os_error().unwrap_or(0),
+                        );
+                        self.add_io_error(io_error_flags::IOERR_GENERAL);
+                        Ok(false)
+                    }
+                }
+            }
+            Err(e) => {
+                // Non-ENOENT error: log as link_stat failure and record.
+                self.log_stat_error(path, &e);
+                self.record_io_error(&e);
+                Ok(false)
+            }
+        }
+    }
+
+    /// Emits a mode-0 sentinel file entry for `--delete-missing-args`.
+    ///
+    /// The sentinel has `mode == 0`, which the receiver interprets as an
+    /// instruction to delete the corresponding destination path. The entry
+    /// carries the relative name so the receiver can locate the target.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2254-2258` - `missing_args == 2`: `make_file()` + `file->mode = 0`
+    fn emit_delete_sentinel(&mut self, base: &Path, path: &Path) -> io::Result<()> {
+        let relative = path.strip_prefix(base).unwrap_or(path).to_path_buf();
+        let relative = if relative.as_os_str().is_empty() {
+            PathBuf::from(path.file_name().unwrap_or(path.as_os_str()))
+        } else {
+            relative
+        };
+        // upstream: mode=0 signals "delete this entry" to the receiver.
+        // Create a regular file entry then override mode to 0.
+        let mut entry = protocol::flist::FileEntry::new_file(relative, 0, 0);
+        entry.set_mode(0);
+        self.push_file_item(entry, path.to_path_buf());
+        Ok(())
+    }
+
     /// Recursively walks a path and adds entries to the file list.
     ///
     /// # Upstream Reference
