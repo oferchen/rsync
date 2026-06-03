@@ -877,10 +877,7 @@ mod tests {
             "final path must not exist after shutdown without sweep"
         );
         let staging = dir.path().join(".~tmp~").join("shutdown_staged.dat");
-        assert!(
-            staging.exists(),
-            "staged file must persist after shutdown"
-        );
+        assert!(staging.exists(), "staged file must persist after shutdown");
         assert_eq!(std::fs::read(&staging).unwrap(), b"shutdown stage");
     }
 
