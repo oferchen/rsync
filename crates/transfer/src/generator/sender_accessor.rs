@@ -256,10 +256,6 @@ pub fn should_skip_entry<T: FileEntryAccessor>(entry: &T) -> bool {
     !entry.is_file()
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(all(test, feature = "flat-flist"))]
 mod tests {
     use protocol::flist::{FileEntry, FileEntryAccessor};

@@ -2898,10 +2898,6 @@ fn server_mode_flushes_writer_before_filter_list_read() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// INC_RECURSE SegmentScheduler regression tests
-// ---------------------------------------------------------------------------
-
 #[test]
 fn segment_scheduler_dispatches_when_remaining_below_threshold() {
     // When remaining entries known to the receiver are below

@@ -190,10 +190,6 @@ fn file_checksum_matches(
     digest[..cmp_len] == expected[..cmp_len]
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use protocol::flist::FileEntry;

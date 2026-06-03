@@ -9,10 +9,6 @@
 use crate::role::ServerRole;
 use crate::transfer_state::{TransferPhase, TransferPipeline};
 
-// ---------------------------------------------------------------------------
-// Pipeline initialization
-// ---------------------------------------------------------------------------
-
 #[test]
 fn pipeline_for_receiver_starts_at_handshake() {
     let pipeline = TransferPipeline::new(ServerRole::Receiver);
@@ -26,10 +22,6 @@ fn pipeline_for_generator_starts_at_handshake() {
     assert_eq!(pipeline.phase(), TransferPhase::Handshake);
     assert_eq!(pipeline.role(), ServerRole::Generator);
 }
-
-// ---------------------------------------------------------------------------
-// Orchestration-level transition sequence (mirrors run_server_with_handshake)
-// ---------------------------------------------------------------------------
 
 #[test]
 fn orchestration_advances_handshake_to_filter_exchange() {
@@ -107,10 +99,6 @@ fn generator_lifecycle_matches_orchestration_phases() {
     assert!(pipeline.is_complete());
 }
 
-// ---------------------------------------------------------------------------
-// Invalid transition enforcement
-// ---------------------------------------------------------------------------
-
 #[test]
 fn skipping_filter_exchange_is_rejected() {
     let mut pipeline = TransferPipeline::new(ServerRole::Receiver);
@@ -150,10 +138,6 @@ fn advancing_past_complete_is_rejected() {
     let err = pipeline.advance().unwrap_err();
     assert_eq!(err.current, TransferPhase::Complete);
 }
-
-// ---------------------------------------------------------------------------
-// Sole state authority (FSW-7 audit)
-// ---------------------------------------------------------------------------
 
 /// Confirms that `TransferPipeline` is the sole mechanism for tracking the
 /// transfer lifecycle. No ad-hoc booleans, phase counters, or state strings
@@ -218,10 +202,6 @@ fn transfer_pipeline_is_sole_lifecycle_authority() {
     assert!(pipeline.is_complete());
 }
 
-// ---------------------------------------------------------------------------
-// fsm_error conversion
-// ---------------------------------------------------------------------------
-
 #[test]
 fn fsm_error_produces_io_error() {
     let err = crate::transfer_state::InvalidTransition {
@@ -240,10 +220,6 @@ fn fsm_error_produces_io_error() {
         "error should mention target phase: {msg}"
     );
 }
-
-// ---------------------------------------------------------------------------
-// Test helper validation
-// ---------------------------------------------------------------------------
 
 #[test]
 fn receiver_new_for_test_starts_at_filter_exchange() {
@@ -300,10 +276,6 @@ fn generator_new_for_test_starts_at_filter_exchange() {
     assert_eq!(ctx.protocol().as_u8(), 32);
 }
 
-// ---------------------------------------------------------------------------
-// Extended edge cases: skip rejection at every orchestration boundary
-// ---------------------------------------------------------------------------
-
 #[test]
 fn skipping_file_list_transfer_is_rejected() {
     let mut pipeline = TransferPipeline::new(ServerRole::Receiver);
@@ -342,10 +314,6 @@ fn skipping_finalization_is_rejected() {
     assert_eq!(pipeline.phase(), TransferPhase::DeltaTransfer);
 }
 
-// ---------------------------------------------------------------------------
-// Extended edge cases: backward rejection at additional boundaries
-// ---------------------------------------------------------------------------
-
 #[test]
 fn backward_from_complete_to_finalization_is_rejected() {
     let mut pipeline = TransferPipeline::new(ServerRole::Generator);
@@ -369,10 +337,6 @@ fn backward_from_finalization_to_handshake_is_rejected() {
     assert_eq!(err.target, TransferPhase::Handshake);
     assert_eq!(pipeline.phase(), TransferPhase::Finalization);
 }
-
-// ---------------------------------------------------------------------------
-// Self-transition rejection at orchestration-relevant phases
-// ---------------------------------------------------------------------------
 
 #[test]
 fn self_transition_at_filter_exchange_is_rejected() {
@@ -399,10 +363,6 @@ fn self_transition_at_delta_transfer_is_rejected() {
     assert_eq!(err.target, TransferPhase::DeltaTransfer);
     assert_eq!(pipeline.phase(), TransferPhase::DeltaTransfer);
 }
-
-// ---------------------------------------------------------------------------
-// State preservation: pipeline is not mutated on failed advance
-// ---------------------------------------------------------------------------
 
 #[test]
 fn failed_advance_to_preserves_state() {
@@ -433,10 +393,6 @@ fn failed_advance_from_complete_preserves_state() {
     assert!(pipeline.is_complete());
 }
 
-// ---------------------------------------------------------------------------
-// Both roles traverse the same state sequence
-// ---------------------------------------------------------------------------
-
 #[test]
 fn both_roles_have_identical_phase_sequence() {
     let phases = [
@@ -458,10 +414,6 @@ fn both_roles_have_identical_phase_sequence() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// is_complete is false for all non-terminal phases
-// ---------------------------------------------------------------------------
-
 #[test]
 fn is_complete_false_for_all_non_terminal_phases() {
     let mut pipeline = TransferPipeline::new(ServerRole::Receiver);
@@ -480,10 +432,6 @@ fn is_complete_false_for_all_non_terminal_phases() {
     pipeline.advance_to(TransferPhase::Complete).unwrap();
     assert!(pipeline.is_complete());
 }
-
-// ---------------------------------------------------------------------------
-// advance_through in orchestration context
-// ---------------------------------------------------------------------------
 
 #[test]
 fn advance_through_multiple_phases_is_valid() {
@@ -512,10 +460,6 @@ fn advance_through_backward_from_mid_pipeline_is_rejected() {
     assert_eq!(pipeline.phase(), TransferPhase::DeltaTransfer);
 }
 
-// ---------------------------------------------------------------------------
-// fsm_error conversion edge cases
-// ---------------------------------------------------------------------------
-
 #[test]
 fn fsm_error_forward_skip_produces_io_error() {
     let err = crate::transfer_state::InvalidTransition {
@@ -539,10 +483,6 @@ fn fsm_error_self_transition_produces_io_error() {
     assert_eq!(io_err.kind(), std::io::ErrorKind::InvalidData);
     assert!(io_err.to_string().contains("complete"));
 }
-
-// ---------------------------------------------------------------------------
-// Generator-specific invalid transitions mirror receiver rejections
-// ---------------------------------------------------------------------------
 
 #[test]
 fn generator_skipping_filter_exchange_is_rejected() {
