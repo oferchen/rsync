@@ -152,6 +152,16 @@ pub struct DiskCommitConfig {
     /// - `cleanup.c:105-115` - `handle_partial_dir()` in cleanup path
     /// - `receiver.c:340-345` - partial file rename on interrupt
     pub partial_mode: PartialMode,
+    /// When true, files are staged to a `.~tmp~` partial directory instead
+    /// of being renamed to their final destination immediately. The caller
+    /// must perform a final rename sweep at the phase 2 boundary.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:546-547`: `delayed_bits = bitbag_create()`
+    /// - `receiver.c:906-929`: staging to partial dir when `delay_updates`
+    /// - `receiver.c:584-585`: `handle_delayed_updates()` at phase 2
+    pub delay_updates: bool,
 }
 
 impl Default for DiskCommitConfig {
@@ -172,6 +182,7 @@ impl Default for DiskCommitConfig {
             io_uring_depth: None,
             iocp_policy: fast_io::IocpPolicy::Auto,
             partial_mode: PartialMode::None,
+            delay_updates: false,
         }
     }
 }

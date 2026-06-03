@@ -28,12 +28,17 @@ use crate::transfer_ops::{
     RequestConfig, ResponseContext, process_file_response_streaming, send_file_request,
 };
 
+/// Result type for the pipelined transfer closure:
+/// `(files_transferred, bytes, literal, matched, redo_indices, delayed_updates)`.
+type PipelineResult = (usize, u64, u64, u64, Vec<usize>, Vec<(PathBuf, PathBuf)>);
+
 impl ReceiverContext {
     /// Pipelined transfer loop with decoupled network/disk I/O.
     ///
     /// Fills a sliding window of file requests, computes signatures in parallel
     /// when the batch exceeds the configured signature threshold, then processes responses
-    /// with a background disk commit thread. Returns `(files_transferred, bytes, redo_indices)`.
+    /// with a background disk commit thread. Returns
+    /// `(files_transferred, bytes, literal, matched, redo_indices, delayed_updates)`.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::receiver) fn run_pipeline_loop_decoupled<
         R: Read,
@@ -49,7 +54,7 @@ impl ReceiverContext {
         is_redo_pass: bool,
         total_files: usize,
         progress: &mut Option<&mut dyn crate::TransferProgressCallback>,
-    ) -> io::Result<(usize, u64, u64, u64, Vec<usize>)> {
+    ) -> io::Result<PipelineResult> {
         use crate::disk_commit::{BackupConfig, DiskCommitConfig, PartialMode};
         use crate::pipeline::receiver::PipelinedReceiver;
         use crate::shared::TransferDeadline;
@@ -61,7 +66,7 @@ impl ReceiverContext {
         // upstream: generator.c sends itemize immediately per-file via rwrite()
         if files_to_transfer.is_empty() {
             writer.flush()?;
-            return Ok((0, 0, 0, 0, Vec::new()));
+            return Ok((0, 0, 0, 0, Vec::new(), Vec::new()));
         }
 
         let deadline = TransferDeadline::from_system_time(self.config.stop_at);
@@ -145,6 +150,7 @@ impl ReceiverContext {
             io_uring_policy: self.config.write.io_uring_policy,
             io_uring_depth: self.config.write.io_uring_depth,
             partial_mode,
+            delay_updates: self.config.write.delay_updates,
             ..DiskCommitConfig::default()
         };
         let mut pipelined_receiver = PipelinedReceiver::new(disk_config);
@@ -152,7 +158,7 @@ impl ReceiverContext {
             let _ = pipelined_receiver.take_redo_indices();
         }
 
-        let result = (|| -> io::Result<(usize, u64, u64, u64, Vec<usize>)> {
+        let result = (|| -> io::Result<PipelineResult> {
             // Track how many requests the sender has received (flushed) but
             // not yet responded to. We only flush the write buffer when this
             // drops to zero - otherwise the sender already has queued requests.
@@ -394,6 +400,7 @@ impl ReceiverContext {
             }
 
             let redo_indices = pipelined_receiver.take_redo_indices();
+            let delayed = pipelined_receiver.take_delayed_updates();
 
             Ok((
                 files_transferred,
@@ -401,6 +408,7 @@ impl ReceiverContext {
                 total_literal_bytes,
                 total_matched_bytes,
                 redo_indices,
+                delayed,
             ))
         })();
 

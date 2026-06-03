@@ -103,6 +103,7 @@ impl ReceiverContext {
         let mut literal_data: u64 = 0;
         let mut matched_data: u64 = 0;
         let mut redo_count: usize = 0;
+        let mut all_delayed_updates: Vec<(PathBuf, PathBuf)> = Vec::new();
 
         // upstream: generator.c:1845 - dry_run sends NDX requests without data
         if self.config.flags.dry_run {
@@ -111,12 +112,14 @@ impl ReceiverContext {
             let total_files = files_to_transfer.len();
             let redo_config = pipeline_config.clone();
             let redo_indices;
+            let delayed;
             (
                 files_transferred,
                 bytes_received,
                 literal_data,
                 matched_data,
                 redo_indices,
+                delayed,
             ) = self.run_pipeline_loop_decoupled(
                 reader,
                 writer,
@@ -128,6 +131,7 @@ impl ReceiverContext {
                 total_files,
                 &mut progress,
             )?;
+            all_delayed_updates.extend(delayed);
 
             // Phase 2: redo pass for files that failed checksum verification.
             redo_count = redo_indices.len();
@@ -149,8 +153,8 @@ impl ReceiverContext {
                     })
                     .collect();
 
-                let (redo_transferred, redo_bytes, redo_literal, redo_matched, _) = self
-                    .run_pipeline_loop_decoupled(
+                let (redo_transferred, redo_bytes, redo_literal, redo_matched, _, redo_delayed) =
+                    self.run_pipeline_loop_decoupled(
                         reader,
                         writer,
                         redo_config,
@@ -166,6 +170,7 @@ impl ReceiverContext {
                 bytes_received += redo_bytes;
                 literal_data += redo_literal;
                 matched_data += redo_matched;
+                all_delayed_updates.extend(redo_delayed);
             }
         }
 
@@ -173,6 +178,20 @@ impl ReceiverContext {
         self.create_hardlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer);
         #[cfg(not(unix))]
         self.create_hardlinks(&setup.dest_dir, writer);
+
+        // upstream: receiver.c:584-585 - handle_delayed_updates() at phase 2
+        if !all_delayed_updates.is_empty() {
+            let backup_cfg = if self.config.flags.backup {
+                Some(crate::disk_commit::BackupConfig {
+                    dest_dir: setup.dest_dir.clone(),
+                    backup_dir: self.config.backup_dir.as_ref().map(PathBuf::from),
+                    suffix: self.config.effective_backup_suffix().into(),
+                })
+            } else {
+                None
+            };
+            super::handle_delayed_updates(&all_delayed_updates, backup_cfg);
+        }
 
         stats.files_transferred = files_transferred;
         stats.bytes_received = bytes_received;
