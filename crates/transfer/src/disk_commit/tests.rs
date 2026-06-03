@@ -580,6 +580,9 @@ fn partial_mode_partial_retains_file_on_shutdown() {
     );
     assert_eq!(fs::read(&file_path).unwrap(), b"partial data");
 
+    // Drop the sender so the disk thread's recv() returns Err and exits.
+    // The Shutdown above was consumed by process_file, not disk_thread_main.
+    drop(h.file_tx);
     h.join_handle.join().unwrap();
 }
 
@@ -621,6 +624,8 @@ fn partial_mode_none_deletes_file_on_shutdown() {
         "temp file must be deleted when partial mode is None"
     );
 
+    // Drop the sender so the disk thread's recv() returns Err and exits.
+    drop(h.file_tx);
     h.join_handle.join().unwrap();
 }
 
@@ -717,6 +722,8 @@ fn partial_mode_partial_dir_retains_file_in_directory() {
         "destination file must not exist when using partial-dir"
     );
 
+    // Drop the sender so the disk thread's recv() returns Err and exits.
+    drop(h.file_tx);
     h.join_handle.join().unwrap();
 }
 
@@ -756,6 +763,8 @@ fn partial_mode_no_retention_without_data() {
         "no partial retention without literal data"
     );
 
+    // Drop the sender so the disk thread's recv() returns Err and exits.
+    drop(h.file_tx);
     h.join_handle.join().unwrap();
 }
 
@@ -842,5 +851,7 @@ fn partial_mode_relative_partial_dir() {
     );
     assert_eq!(fs::read(&partial_path).unwrap(), b"relative partial");
 
+    // Drop the sender so the disk thread's recv() returns Err and exits.
+    drop(h.file_tx);
     h.join_handle.join().unwrap();
 }

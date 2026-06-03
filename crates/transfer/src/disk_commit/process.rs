@@ -88,9 +88,11 @@ pub(super) fn process_file(
             Ok(m) => m,
             Err(_) => {
                 // Channel disconnected - treat as an interrupt.
-                // Flush buffered data before considering partial retention.
+                // Flush buffered data and commit any batched writes (io_uring/
+                // IOCP) before considering partial retention. flush_and_sync
+                // handles Buffered/Macos; finish handles IoUring/Iocp.
                 let _ = output.flush_and_sync(false, &begin.file_path);
-                drop(output);
+                let _ = output.finish(false, &begin.file_path);
                 // upstream: cleanup.c - retain partial on unexpected disconnect
                 if bytes_written > 0 && needs_rename {
                     retain_partial_file(&config.partial_mode, &mut cleanup_guard, &begin.file_path);
@@ -175,10 +177,10 @@ pub(super) fn process_file(
                 });
             }
             FileMessage::Abort { reason } => {
-                // Flush buffered data before considering partial retention
-                // so the temp file contains all received data.
+                // Flush buffered data and commit any batched writes (io_uring/
+                // IOCP) so the temp file contains all received data.
                 let _ = output.flush_and_sync(false, &begin.file_path);
-                drop(output);
+                let _ = output.finish(false, &begin.file_path);
                 // upstream: cleanup.c:105-115 - on abort, retain temp file
                 // if partial mode is enabled and literal data was received.
                 // bytes_written > 0 is a proxy for upstream's got_literal:
@@ -191,9 +193,10 @@ pub(super) fn process_file(
                 return Err(io::Error::other(reason));
             }
             FileMessage::Shutdown => {
-                // Flush buffered data before considering partial retention.
+                // Flush buffered data and commit any batched writes (io_uring/
+                // IOCP) before considering partial retention.
                 let _ = output.flush_and_sync(false, &begin.file_path);
-                drop(output);
+                let _ = output.finish(false, &begin.file_path);
                 // upstream: cleanup.c - same partial retention on shutdown
                 if bytes_written > 0 && needs_rename {
                     retain_partial_file(&config.partial_mode, &mut cleanup_guard, &begin.file_path);
