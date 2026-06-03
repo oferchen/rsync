@@ -116,4 +116,14 @@ pub struct CommitResult {
     pub metadata_error: Option<(PathBuf, String)>,
     /// Computed per-file checksum, if verification was deferred to the disk thread.
     pub computed_checksum: Option<ComputedChecksum>,
+    /// When `--delay-updates` is active, the staging path where the file was
+    /// placed instead of its final destination. The receiver collects these
+    /// and performs a bulk rename sweep at the phase 2 boundary.
+    ///
+    /// `None` when delay-updates is off or for inplace/device writes.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:927-928`: `bitbag_set_bit(delayed_bits, ndx)`
+    pub delayed_path: Option<PathBuf>,
 }

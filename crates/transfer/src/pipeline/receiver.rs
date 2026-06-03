@@ -71,6 +71,15 @@ pub struct PipelinedReceiver {
     /// The caller retrieves these via [`Self::drain_warnings`] and routes
     /// them through the multiplexed protocol writer.
     warnings: Vec<String>,
+    /// Files staged to `.~tmp~` partial dir when `--delay-updates` is active.
+    /// Each entry is `(staging_path, final_path)`. The receiver performs a
+    /// bulk rename sweep at the phase 2 boundary.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:546-547`: `delayed_bits = bitbag_create()`
+    /// - `receiver.c:584-585`: `handle_delayed_updates()` sweep
+    delayed_updates: Vec<(PathBuf, PathBuf)>,
 }
 
 impl PipelinedReceiver {
@@ -88,6 +97,7 @@ impl PipelinedReceiver {
             redo_enabled: true,
             permission_error_count: 0,
             warnings: Vec::new(),
+            delayed_updates: Vec::new(),
         }
     }
 
@@ -147,6 +157,7 @@ impl PipelinedReceiver {
         loop {
             match self.result_rx.try_recv() {
                 Ok(Ok(result)) => {
+                    self.collect_delayed_update(&result);
                     self.verify_checksum(&result)?;
                     bytes += result.bytes_written;
                     if let Some(err) = result.metadata_error {
@@ -206,6 +217,7 @@ impl PipelinedReceiver {
         while self.pending_commits > 0 {
             match self.result_rx.recv() {
                 Ok(Ok(result)) => {
+                    self.collect_delayed_update(&result);
                     self.verify_checksum(&result)?;
                     bytes += result.bytes_written;
                     if let Some(err) = result.metadata_error {
@@ -296,6 +308,35 @@ impl PipelinedReceiver {
         }
 
         Ok(())
+    }
+
+    /// Collects a delayed update entry from a commit result, if present.
+    ///
+    /// Uses the pending checksum queue to recover the final destination path
+    /// (which is stored there as `file_path`). The staging path comes from
+    /// `CommitResult::delayed_path`.
+    fn collect_delayed_update(&mut self, result: &CommitResult) {
+        if let Some(ref staged) = result.delayed_path {
+            // The expected_checksums queue is FIFO and hasn't been popped
+            // yet (verify_checksum pops it). Peek at the front entry.
+            if let Some(pending) = self.expected_checksums.front() {
+                self.delayed_updates
+                    .push((staged.clone(), pending.file_path.clone()));
+            }
+        }
+    }
+
+    /// Returns and clears the accumulated delayed update entries.
+    ///
+    /// Each entry is `(staging_path, final_path)`. The receiver calls this
+    /// at the phase 2 boundary and renames each file from its staging
+    /// location to the final destination.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:584-585`: `handle_delayed_updates()` at phase 2
+    pub fn take_delayed_updates(&mut self) -> Vec<(PathBuf, PathBuf)> {
+        std::mem::take(&mut self.delayed_updates)
     }
 
     /// Drains newly detected redo indices without disabling redo mode.
@@ -497,6 +538,7 @@ mod tests {
                 bytes: computed_bytes,
                 len: 4,
             }),
+            delayed_path: None,
         };
 
         // In phase 1 (redo_enabled=true), this should NOT return an error.
@@ -544,6 +586,7 @@ mod tests {
                 bytes: computed_bytes,
                 len: 4,
             }),
+            delayed_path: None,
         };
 
         // In phase 2, mismatch should still return Ok (error is logged, not fatal).
@@ -581,6 +624,7 @@ mod tests {
                 bytes: expected,
                 len: 4,
             }),
+            delayed_path: None,
         };
 
         pr.verify_checksum(&result).unwrap();
@@ -677,5 +721,104 @@ mod tests {
             msg,
             "ERROR: /tmp/a/b failed verification -- update discarded."
         );
+    }
+
+    /// Verifies `collect_delayed_update` captures the staging path from
+    /// `CommitResult::delayed_path` paired with the final destination from
+    /// the pending checksum queue.
+    #[test]
+    fn collect_delayed_update_tracks_staging_and_final_path() {
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default());
+
+        // Simulate a pending checksum entry (which carries the final path).
+        pr.expected_checksums.push_back(PendingChecksum {
+            expected: [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
+            len: 0,
+            file_path: PathBuf::from("/dest/file.txt"),
+            file_index: 0,
+        });
+
+        let result = CommitResult {
+            bytes_written: 42,
+            file_entry_index: 0,
+            metadata_error: None,
+            computed_checksum: None,
+            delayed_path: Some(PathBuf::from("/dest/.~tmp~/file.txt")),
+        };
+
+        pr.collect_delayed_update(&result);
+
+        let updates = pr.take_delayed_updates();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].0, PathBuf::from("/dest/.~tmp~/file.txt"));
+        assert_eq!(updates[0].1, PathBuf::from("/dest/file.txt"));
+
+        drop(pr);
+    }
+
+    /// Verifies that `take_delayed_updates` returns empty when no files
+    /// were staged.
+    #[test]
+    fn take_delayed_updates_empty_when_no_delays() {
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default());
+        assert!(pr.take_delayed_updates().is_empty());
+        drop(pr);
+    }
+
+    /// End-to-end: disk thread with `delay_updates` stages a file, and
+    /// `PipelinedReceiver` captures the delayed path through the result
+    /// drain.
+    #[test]
+    fn delay_updates_end_to_end_through_mediator() {
+        let dir = test_support::create_tempdir();
+        let file_path = dir.path().join("e2e.dat");
+
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig {
+            delay_updates: true,
+            ..DiskCommitConfig::default()
+        });
+
+        pr.file_sender()
+            .send(FileMessage::WholeFile {
+                begin: Box::new(BeginMessage {
+                    file_path: file_path.clone(),
+                    target_size: 10,
+                    file_entry_index: 0,
+                    checksum_verifier: None,
+                    is_device_target: false,
+                    is_inplace: false,
+                    append_offset: 0,
+                    xattr_list: None,
+                }),
+                data: b"e2e staged".to_vec(),
+            })
+            .unwrap();
+
+        pr.note_commit_sent(
+            [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
+            0,
+            file_path.clone(),
+            0,
+        );
+
+        let (bytes, errors) = pr.drain_all_results().unwrap();
+        assert_eq!(bytes, 10);
+        assert!(errors.is_empty());
+
+        // Final path should NOT exist - file is staged.
+        assert!(!file_path.exists());
+
+        // Staging path should exist.
+        let staging = dir.path().join(".~tmp~").join("e2e.dat");
+        assert!(staging.exists());
+        assert_eq!(std::fs::read(&staging).unwrap(), b"e2e staged");
+
+        // PipelinedReceiver tracked the delayed update.
+        let updates = pr.take_delayed_updates();
+        assert_eq!(updates.len(), 1);
+        assert_eq!(updates[0].0, staging);
+        assert_eq!(updates[0].1, file_path);
+
+        drop(pr);
     }
 }
