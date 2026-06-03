@@ -93,6 +93,11 @@ impl GeneratorContext {
     /// - `flist.c:2254-2258` - `missing_args == 2`: `make_file()` + `file->mode = 0`
     fn emit_delete_sentinel(&mut self, base: &Path, path: &Path) -> io::Result<()> {
         let relative = path.strip_prefix(base).unwrap_or(path).to_path_buf();
+        let relative = if relative.as_os_str().is_empty() {
+            PathBuf::from(path.file_name().unwrap_or(path.as_os_str()))
+        } else {
+            relative
+        };
         // upstream: mode=0 signals "delete this entry" to the receiver.
         // Create a regular file entry then override mode to 0.
         let mut entry = protocol::flist::FileEntry::new_file(relative, 0, 0);
