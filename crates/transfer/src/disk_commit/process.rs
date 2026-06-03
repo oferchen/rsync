@@ -818,7 +818,7 @@ pub fn delay_updates_staging_path(final_path: &Path) -> PathBuf {
     let parent = final_path.parent().unwrap_or_else(|| Path::new("."));
     let file_name = final_path
         .file_name()
-        .unwrap_or_else(|| final_path.as_os_str());
+        .unwrap_or(final_path.as_os_str());
     parent
         .join(super::config::DELAY_UPDATES_PARTIAL_DIR)
         .join(file_name)
