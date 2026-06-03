@@ -5,7 +5,7 @@ use std::fs;
 use crate::pipeline::messages::{BeginMessage, FileMessage};
 use crate::pipeline::spsc::TryRecvError;
 
-use super::config::{DiskCommitConfig, PartialMode, DELAY_UPDATES_PARTIAL_DIR};
+use super::config::{DELAY_UPDATES_PARTIAL_DIR, DiskCommitConfig, PartialMode};
 use super::process::{CommitOutcome, delay_updates_staging_path, handle_delayed_updates};
 use super::thread::spawn_disk_thread;
 
