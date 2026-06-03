@@ -109,10 +109,23 @@ impl InfoFlags {
 
     /// Check if progress messages should be shown.
     ///
-    /// This corresponds to the `progress` info flag.
+    /// This corresponds to the `progress` info flag. Returns `true` for both
+    /// per-file progress (level 1) and overall progress2 (level 2).
     #[must_use]
     pub const fn should_show_progress(&self) -> bool {
         self.levels.get(InfoFlag::Progress) > 0
+    }
+
+    /// Check if overall (progress2) mode is active.
+    ///
+    /// Returns `true` when `--info=progress2` was specified, which sets the
+    /// progress flag to level 2. Level 1 is per-file progress; level 2 is the
+    /// overall transfer progress matching upstream's `INFO_GTE(PROGRESS, 2)`.
+    ///
+    /// upstream: rsync.h `INFO_GTE(PROGRESS, 2)` guard in progress.c
+    #[must_use]
+    pub const fn is_progress2(&self) -> bool {
+        self.levels.get(InfoFlag::Progress) >= 2
     }
 
     /// Check if statistics should be shown.
@@ -429,6 +442,7 @@ mod tests {
 
         flags.levels_mut().set(InfoFlag::Progress, 2);
         assert!(flags.should_show_progress());
+        assert!(flags.is_progress2());
 
         flags.levels_mut().set(InfoFlag::Stats, 1);
         assert!(flags.should_show_stats());
@@ -471,6 +485,41 @@ mod tests {
         assert!(!flags.should_show_skip());
         assert!(!flags.should_show_flist());
         assert!(!flags.should_show_progress());
+        assert!(!flags.is_progress2());
+    }
+
+    /// upstream: rsync.h `INFO_GTE(PROGRESS, 2)` - progress2 is active at
+    /// level 2 but not at level 0 or 1.
+    #[test]
+    fn test_is_progress2_levels() {
+        let mut flags = InfoFlags::default();
+        assert!(!flags.is_progress2(), "level 0: not progress2");
+
+        flags.levels_mut().set(InfoFlag::Progress, 1);
+        assert!(!flags.is_progress2(), "level 1: not progress2");
+        assert!(flags.should_show_progress(), "level 1: progress enabled");
+
+        flags.levels_mut().set(InfoFlag::Progress, 2);
+        assert!(flags.is_progress2(), "level 2: progress2");
+        assert!(flags.should_show_progress(), "level 2: progress enabled");
+    }
+
+    /// `--info=progress2` should parse correctly and set progress2 mode.
+    #[test]
+    fn test_parse_info_progress2() {
+        let flags = parse_info_flags("progress2").unwrap();
+        assert!(flags.should_show_progress());
+        assert!(flags.is_progress2());
+        assert_eq!(flags.levels().get(InfoFlag::Progress), 2);
+    }
+
+    /// `--info=progress` (level 1) is per-file progress, not progress2.
+    #[test]
+    fn test_parse_info_progress1_not_progress2() {
+        let flags = parse_info_flags("progress").unwrap();
+        assert!(flags.should_show_progress());
+        assert!(!flags.is_progress2());
+        assert_eq!(flags.levels().get(InfoFlag::Progress), 1);
     }
 
     #[test]
