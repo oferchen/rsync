@@ -31,7 +31,6 @@ use std::time::Duration;
 
 use engine::batch::BatchWriter;
 
-use super::super::{DAEMON_SOCKET_TIMEOUT, IPC_EXIT_CODE};
 use super::super::config::ClientConfig;
 use super::super::error::{ClientError, invalid_argument_error, socket_error};
 use super::super::module_list::{
@@ -39,6 +38,7 @@ use super::super::module_list::{
 };
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
+use super::super::{DAEMON_SOCKET_TIMEOUT, IPC_EXIT_CODE};
 use super::batch_support::build_batch_context;
 use super::invocation::{RemoteRole, TransferSpec, determine_transfer_role};
 
@@ -279,9 +279,9 @@ pub fn run_daemon_over_remote_shell(
 
     // upstream: main.c:594-604 - when daemon_connection > 0, the remote
     // command is `rsync_path --server --daemon .` with no server_options().
-    let shell_args = config.remote_shell().ok_or_else(|| {
-        invalid_argument_error("daemon-over-remote-shell requires -e/--rsh", 1)
-    })?;
+    let shell_args = config
+        .remote_shell()
+        .ok_or_else(|| invalid_argument_error("daemon-over-remote-shell requires -e/--rsh", 1))?;
 
     let ssh_program = if shell_args.is_empty() {
         OsStr::new("ssh")
@@ -315,10 +315,7 @@ pub fn run_daemon_over_remote_shell(
     cmd.arg(request.address.host());
 
     let rsync_path = config.rsync_path().unwrap_or(OsStr::new("rsync"));
-    cmd.arg(rsync_path)
-        .arg("--server")
-        .arg("--daemon")
-        .arg(".");
+    cmd.arg(rsync_path).arg("--server").arg("--daemon").arg(".");
 
     // upstream: main.c:1571-1572 - set_env_num("RSYNC_PORT", env_port)
     cmd.env("RSYNC_PORT", request.address.port().to_string());
@@ -334,16 +331,10 @@ pub fn run_daemon_over_remote_shell(
     })?;
 
     let stdin = child.stdin.take().ok_or_else(|| {
-        invalid_argument_error(
-            "remote shell process did not expose stdin",
-            IPC_EXIT_CODE,
-        )
+        invalid_argument_error("remote shell process did not expose stdin", IPC_EXIT_CODE)
     })?;
     let stdout = child.stdout.take().ok_or_else(|| {
-        invalid_argument_error(
-            "remote shell process did not expose stdout",
-            IPC_EXIT_CODE,
-        )
+        invalid_argument_error("remote shell process did not expose stdout", IPC_EXIT_CODE)
     })?;
 
     let stream = DaemonStream::from_child_process(child, stdin, stdout);
