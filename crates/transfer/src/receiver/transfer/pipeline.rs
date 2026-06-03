@@ -167,252 +167,250 @@ impl ReceiverContext {
             // naturally batching writes until the output buffer is full.
             let mut flushed_pending: usize = 0;
 
-                loop {
-                    if let Some(ref dl) = deadline {
-                        if dl.is_reached() {
-                            break;
-                        }
-                    }
-
-                    // Collect a batch of files, compute signatures (potentially in
-                    // parallel for incremental sync), then send requests sequentially.
-                    {
-                        use rayon::prelude::*;
-
-                        let batch: Vec<_> = file_iter
-                            .by_ref()
-                            .take(pipeline.available_slots())
-                            .collect();
-
-                        if !batch.is_empty() && !is_redo_pass {
-                            // Extract basis config fields for the closure to avoid
-                            // capturing &self across rayon worker boundaries.
-                            let fuzzy_level = self.config.flags.fuzzy_level;
-                            let ref_dirs = &self.config.reference_directories;
-                            let protocol = self.protocol;
-                            let whole_file = self.config.flags.whole_file;
-                            let dest_dir = &setup.dest_dir;
-                            let checksum_length = setup.checksum_length;
-                            let checksum_algorithm = setup.checksum_algorithm;
-                            let sig_threshold = self
-                                .parallel_thresholds
-                                .for_op(crate::parallel_io::ParallelOp::Signature);
-
-                            // Ordering: wire protocol requires file requests in file-list index order.
-                            // Preserved by par_iter().map().collect() + sequential zip/send loop below.
-                            // Violation sends signatures for wrong files, corrupting delta transfer.
-                            let sig_results: Vec<_> = if batch.len() >= sig_threshold {
-                                batch
-                                    .par_iter()
-                                    .map(|(_, file_entry, file_path)| {
-                                        let basis_config = BasisFileConfig {
-                                            file_path,
-                                            dest_dir,
-                                            relative_path: file_entry.path(),
-                                            target_size: file_entry.size(),
-                                            fuzzy_level,
-                                            reference_directories: ref_dirs,
-                                            protocol,
-                                            checksum_length,
-                                            checksum_algorithm,
-                                            whole_file,
-                                        };
-                                        find_basis_file_with_config(&basis_config)
-                                    })
-                                    .collect()
-                            } else {
-                                batch
-                                    .iter()
-                                    .map(|(_, file_entry, file_path)| {
-                                        let basis_config = BasisFileConfig {
-                                            file_path,
-                                            dest_dir,
-                                            relative_path: file_entry.path(),
-                                            target_size: file_entry.size(),
-                                            fuzzy_level,
-                                            reference_directories: ref_dirs,
-                                            protocol,
-                                            checksum_length,
-                                            checksum_algorithm,
-                                            whole_file,
-                                        };
-                                        find_basis_file_with_config(&basis_config)
-                                    })
-                                    .collect()
-                            };
-
-                            // Send requests sequentially (wire order matters).
-                            for ((file_idx, file_entry, file_path), basis_result) in
-                                batch.into_iter().zip(sig_results)
-                            {
-                                if self.config.flags.verbose && self.config.connection.client_mode {
-                                    info_log!(Name, 1, "{}", file_entry.path().display());
-                                }
-
-                                let is_new_file = basis_result.is_empty();
-                                let pending = send_file_request(
-                                    writer,
-                                    &mut ndx_write_codec,
-                                    self.flat_to_wire_ndx(file_idx),
-                                    file_path.clone(),
-                                    basis_result.signature,
-                                    basis_result.basis_path,
-                                    file_entry.size(),
-                                    &request_config,
-                                )?;
-
-                                pipeline.push(pending);
-                                pending_files_info.push_back((
-                                    file_idx,
-                                    file_path,
-                                    file_entry,
-                                    is_new_file,
-                                ));
-                            }
-                        } else {
-                            // Redo pass or empty batch: no basis files, skip signatures.
-                            for (file_idx, file_entry, file_path) in batch {
-                                if self.config.flags.verbose && self.config.connection.client_mode {
-                                    info_log!(Name, 1, "{}", file_entry.path().display());
-                                }
-
-                                let pending = send_file_request(
-                                    writer,
-                                    &mut ndx_write_codec,
-                                    self.flat_to_wire_ndx(file_idx),
-                                    file_path.clone(),
-                                    None,
-                                    None,
-                                    file_entry.size(),
-                                    &request_config,
-                                )?;
-
-                                pipeline.push(pending);
-                                pending_files_info.push_back((
-                                    file_idx, file_path, file_entry,
-                                    true, // is_new_file: no basis in redo pass
-                                ));
-                            }
-                        }
-                    }
-
-                    if pipeline.is_empty() {
+            loop {
+                if let Some(ref dl) = deadline {
+                    if dl.is_reached() {
                         break;
-                    }
-
-                    // Flush only when the sender has no queued requests left.
-                    if flushed_pending == 0 {
-                        writer.flush()?;
-                        flushed_pending = pipeline.outstanding();
-                    }
-
-                    // Process one response from a previously flushed request.
-                    let pending = pipeline.pop().expect("pipeline not empty");
-                    flushed_pending = flushed_pending.saturating_sub(1);
-                    let (file_idx, file_path, file_entry, is_new_file) =
-                        pending_files_info.pop_front().expect("pipeline not empty");
-
-                    let response_ctx = ResponseContext {
-                        config: &request_config,
-                        #[cfg(unix)]
-                        sandbox: setup.sandbox.as_ref(),
-                        #[cfg(unix)]
-                        dest_dir: Some(setup.dest_dir.as_path()),
-                    };
-
-                    let xattr_list = self.resolve_xattr_list(file_entry);
-                    let is_device_target =
-                        self.config.write.write_devices && file_entry.is_device();
-                    let result = process_file_response_streaming(
-                        reader,
-                        &mut ndx_read_codec,
-                        pending,
-                        &response_ctx,
-                        &mut checksum_verifier,
-                        pipelined_receiver.file_sender(),
-                        pipelined_receiver.buf_return_rx(),
-                        file_idx,
-                        is_device_target,
-                        xattr_list,
-                        &mut token_reader,
-                    )?;
-
-                    pipelined_receiver.note_commit_sent(
-                        result.expected_checksum,
-                        result.checksum_len,
-                        file_path,
-                        file_idx,
-                    );
-
-                    // Non-blocking: collect any ready disk results.
-                    let (disk_bytes, disk_meta_errors) =
-                        pipelined_receiver.drain_ready_results()?;
-                    bytes_received += disk_bytes;
-                    metadata_errors.extend(disk_meta_errors);
-
-                    // Route accumulated warnings through the multiplexed writer
-                    // instead of eprintln (which deadlocks in daemon handler threads).
-                    for warning in pipelined_receiver.drain_warnings() {
-                        let _ = writer.send_msg_info(warning.as_bytes());
-                    }
-
-                    bytes_received += result.total_bytes;
-                    total_literal_bytes += result.literal_bytes;
-                    total_matched_bytes += result.matched_bytes;
-                    files_transferred += 1;
-
-                    // upstream: receiver.c:950 - log_item() after successful file transfer
-                    {
-                        use crate::generator::ItemFlags;
-                        let raw = ItemFlags::ITEM_TRANSFER
-                            | if is_new_file {
-                                ItemFlags::ITEM_IS_NEW
-                            } else {
-                                0
-                            };
-                        let iflags = ItemFlags::from_raw(raw);
-                        let _ = self.emit_itemize(writer, &iflags, file_entry);
-                    }
-
-                    if let Some(cb) = progress.as_mut() {
-                        let event = crate::TransferProgressEvent {
-                            path: file_entry.path(),
-                            file_bytes: result.total_bytes,
-                            total_file_bytes: Some(file_entry.size()),
-                            files_done: files_transferred,
-                            total_files,
-                            // Receiver-side INC_RECURSE collects every sub-list via
-                            // `receive_extra_file_lists` before the pipeline begins,
-                            // so the file list is always complete when progress is
-                            // emitted. upstream: progress.c:79-82 rprint_progress.
-                            flist_eof: true,
-                        };
-                        cb.on_file_transferred(&event);
                     }
                 }
 
-                // Drain all remaining disk results
-                let (disk_bytes, disk_meta_errors) = pipelined_receiver.drain_all_results()?;
+                // Collect a batch of files, compute signatures (potentially in
+                // parallel for incremental sync), then send requests sequentially.
+                {
+                    use rayon::prelude::*;
+
+                    let batch: Vec<_> = file_iter
+                        .by_ref()
+                        .take(pipeline.available_slots())
+                        .collect();
+
+                    if !batch.is_empty() && !is_redo_pass {
+                        // Extract basis config fields for the closure to avoid
+                        // capturing &self across rayon worker boundaries.
+                        let fuzzy_level = self.config.flags.fuzzy_level;
+                        let ref_dirs = &self.config.reference_directories;
+                        let protocol = self.protocol;
+                        let whole_file = self.config.flags.whole_file;
+                        let dest_dir = &setup.dest_dir;
+                        let checksum_length = setup.checksum_length;
+                        let checksum_algorithm = setup.checksum_algorithm;
+                        let sig_threshold = self
+                            .parallel_thresholds
+                            .for_op(crate::parallel_io::ParallelOp::Signature);
+
+                        // Ordering: wire protocol requires file requests in file-list index order.
+                        // Preserved by par_iter().map().collect() + sequential zip/send loop below.
+                        // Violation sends signatures for wrong files, corrupting delta transfer.
+                        let sig_results: Vec<_> = if batch.len() >= sig_threshold {
+                            batch
+                                .par_iter()
+                                .map(|(_, file_entry, file_path)| {
+                                    let basis_config = BasisFileConfig {
+                                        file_path,
+                                        dest_dir,
+                                        relative_path: file_entry.path(),
+                                        target_size: file_entry.size(),
+                                        fuzzy_level,
+                                        reference_directories: ref_dirs,
+                                        protocol,
+                                        checksum_length,
+                                        checksum_algorithm,
+                                        whole_file,
+                                    };
+                                    find_basis_file_with_config(&basis_config)
+                                })
+                                .collect()
+                        } else {
+                            batch
+                                .iter()
+                                .map(|(_, file_entry, file_path)| {
+                                    let basis_config = BasisFileConfig {
+                                        file_path,
+                                        dest_dir,
+                                        relative_path: file_entry.path(),
+                                        target_size: file_entry.size(),
+                                        fuzzy_level,
+                                        reference_directories: ref_dirs,
+                                        protocol,
+                                        checksum_length,
+                                        checksum_algorithm,
+                                        whole_file,
+                                    };
+                                    find_basis_file_with_config(&basis_config)
+                                })
+                                .collect()
+                        };
+
+                        // Send requests sequentially (wire order matters).
+                        for ((file_idx, file_entry, file_path), basis_result) in
+                            batch.into_iter().zip(sig_results)
+                        {
+                            if self.config.flags.verbose && self.config.connection.client_mode {
+                                info_log!(Name, 1, "{}", file_entry.path().display());
+                            }
+
+                            let is_new_file = basis_result.is_empty();
+                            let pending = send_file_request(
+                                writer,
+                                &mut ndx_write_codec,
+                                self.flat_to_wire_ndx(file_idx),
+                                file_path.clone(),
+                                basis_result.signature,
+                                basis_result.basis_path,
+                                file_entry.size(),
+                                &request_config,
+                            )?;
+
+                            pipeline.push(pending);
+                            pending_files_info.push_back((
+                                file_idx,
+                                file_path,
+                                file_entry,
+                                is_new_file,
+                            ));
+                        }
+                    } else {
+                        // Redo pass or empty batch: no basis files, skip signatures.
+                        for (file_idx, file_entry, file_path) in batch {
+                            if self.config.flags.verbose && self.config.connection.client_mode {
+                                info_log!(Name, 1, "{}", file_entry.path().display());
+                            }
+
+                            let pending = send_file_request(
+                                writer,
+                                &mut ndx_write_codec,
+                                self.flat_to_wire_ndx(file_idx),
+                                file_path.clone(),
+                                None,
+                                None,
+                                file_entry.size(),
+                                &request_config,
+                            )?;
+
+                            pipeline.push(pending);
+                            pending_files_info.push_back((
+                                file_idx, file_path, file_entry,
+                                true, // is_new_file: no basis in redo pass
+                            ));
+                        }
+                    }
+                }
+
+                if pipeline.is_empty() {
+                    break;
+                }
+
+                // Flush only when the sender has no queued requests left.
+                if flushed_pending == 0 {
+                    writer.flush()?;
+                    flushed_pending = pipeline.outstanding();
+                }
+
+                // Process one response from a previously flushed request.
+                let pending = pipeline.pop().expect("pipeline not empty");
+                flushed_pending = flushed_pending.saturating_sub(1);
+                let (file_idx, file_path, file_entry, is_new_file) =
+                    pending_files_info.pop_front().expect("pipeline not empty");
+
+                let response_ctx = ResponseContext {
+                    config: &request_config,
+                    #[cfg(unix)]
+                    sandbox: setup.sandbox.as_ref(),
+                    #[cfg(unix)]
+                    dest_dir: Some(setup.dest_dir.as_path()),
+                };
+
+                let xattr_list = self.resolve_xattr_list(file_entry);
+                let is_device_target = self.config.write.write_devices && file_entry.is_device();
+                let result = process_file_response_streaming(
+                    reader,
+                    &mut ndx_read_codec,
+                    pending,
+                    &response_ctx,
+                    &mut checksum_verifier,
+                    pipelined_receiver.file_sender(),
+                    pipelined_receiver.buf_return_rx(),
+                    file_idx,
+                    is_device_target,
+                    xattr_list,
+                    &mut token_reader,
+                )?;
+
+                pipelined_receiver.note_commit_sent(
+                    result.expected_checksum,
+                    result.checksum_len,
+                    file_path,
+                    file_idx,
+                );
+
+                // Non-blocking: collect any ready disk results.
+                let (disk_bytes, disk_meta_errors) = pipelined_receiver.drain_ready_results()?;
                 bytes_received += disk_bytes;
                 metadata_errors.extend(disk_meta_errors);
 
-                // Route accumulated warnings through the multiplexed writer.
+                // Route accumulated warnings through the multiplexed writer
+                // instead of eprintln (which deadlocks in daemon handler threads).
                 for warning in pipelined_receiver.drain_warnings() {
                     let _ = writer.send_msg_info(warning.as_bytes());
                 }
 
-                let redo_indices = pipelined_receiver.take_redo_indices();
-                let delayed = pipelined_receiver.take_delayed_updates();
+                bytes_received += result.total_bytes;
+                total_literal_bytes += result.literal_bytes;
+                total_matched_bytes += result.matched_bytes;
+                files_transferred += 1;
 
-                Ok((
-                    files_transferred,
-                    bytes_received,
-                    total_literal_bytes,
-                    total_matched_bytes,
-                    redo_indices,
-                    delayed,
-                ))
-            })();
+                // upstream: receiver.c:950 - log_item() after successful file transfer
+                {
+                    use crate::generator::ItemFlags;
+                    let raw = ItemFlags::ITEM_TRANSFER
+                        | if is_new_file {
+                            ItemFlags::ITEM_IS_NEW
+                        } else {
+                            0
+                        };
+                    let iflags = ItemFlags::from_raw(raw);
+                    let _ = self.emit_itemize(writer, &iflags, file_entry);
+                }
+
+                if let Some(cb) = progress.as_mut() {
+                    let event = crate::TransferProgressEvent {
+                        path: file_entry.path(),
+                        file_bytes: result.total_bytes,
+                        total_file_bytes: Some(file_entry.size()),
+                        files_done: files_transferred,
+                        total_files,
+                        // Receiver-side INC_RECURSE collects every sub-list via
+                        // `receive_extra_file_lists` before the pipeline begins,
+                        // so the file list is always complete when progress is
+                        // emitted. upstream: progress.c:79-82 rprint_progress.
+                        flist_eof: true,
+                    };
+                    cb.on_file_transferred(&event);
+                }
+            }
+
+            // Drain all remaining disk results
+            let (disk_bytes, disk_meta_errors) = pipelined_receiver.drain_all_results()?;
+            bytes_received += disk_bytes;
+            metadata_errors.extend(disk_meta_errors);
+
+            // Route accumulated warnings through the multiplexed writer.
+            for warning in pipelined_receiver.drain_warnings() {
+                let _ = writer.send_msg_info(warning.as_bytes());
+            }
+
+            let redo_indices = pipelined_receiver.take_redo_indices();
+            let delayed = pipelined_receiver.take_delayed_updates();
+
+            Ok((
+                files_transferred,
+                bytes_received,
+                total_literal_bytes,
+                total_matched_bytes,
+                redo_indices,
+                delayed,
+            ))
+        })();
 
         // Graceful shutdown regardless of success or failure.
         let _ = pipelined_receiver.shutdown();
