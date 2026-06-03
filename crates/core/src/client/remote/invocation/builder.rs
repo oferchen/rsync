@@ -366,6 +366,14 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--existing"));
         }
 
+        // upstream: options.c:817-818 - missing_args forwarded as long-form.
+        if self.config.ignore_missing_args() {
+            args.push(OsString::from("--ignore-missing-args"));
+        }
+        if self.config.delete_missing_args() {
+            args.push(OsString::from("--delete-missing-args"));
+        }
+
         if self.config.remove_source_files() {
             args.push(OsString::from("--remove-source-files"));
         }

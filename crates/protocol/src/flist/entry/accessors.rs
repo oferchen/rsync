@@ -154,6 +154,19 @@ impl FileEntry {
         self.mode
     }
 
+    /// Sets the Unix mode bits (type + permissions).
+    ///
+    /// Used to create mode-0 sentinel entries for `--delete-missing-args`,
+    /// where the receiver interprets `mode == 0` as a deletion signal.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2257` - `file->mode = 0` for delete-missing-args sentinel
+    #[inline]
+    pub fn set_mode(&mut self, mode: u32) {
+        self.mode = mode;
+    }
+
     /// Returns the permission bits only (without type).
     #[inline]
     #[must_use]

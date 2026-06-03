@@ -2559,6 +2559,7 @@ mod files_from {
 
     #[test]
     fn build_file_list_with_base_skips_missing_files() {
+        // FFV-4: default mode emits link_stat error and sets IOERR_GENERAL (exit 23).
         let temp_dir = TempDir::new().unwrap();
         let src = temp_dir.path().join("src");
         std::fs::create_dir_all(&src).unwrap();
@@ -2577,6 +2578,214 @@ mod files_from {
         let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
         assert!(names.contains(&"exists.txt"));
         assert!(!names.contains(&"missing.txt"));
+
+        // upstream: flist.c:1810 - ENOENT for a --files-from entry that never
+        // existed should set IOERR_GENERAL (exit 23), not IOERR_VANISHED (exit 24).
+        assert_ne!(
+            ctx.io_error() & io_error_flags::IOERR_GENERAL,
+            0,
+            "missing source should set IOERR_GENERAL"
+        );
+        assert_eq!(
+            ctx.io_error() & io_error_flags::IOERR_VANISHED,
+            0,
+            "missing source should NOT set IOERR_VANISHED"
+        );
+    }
+
+    #[test]
+    fn build_file_list_with_base_ignore_missing_args_skips_silently() {
+        // FFV-2: --ignore-missing-args silently skips missing entries with exit 0.
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("exists.txt"), "data").unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.args = vec![OsString::from(&src)];
+        config.file_selection.ignore_missing_args = true;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        let file_paths = vec![src.join("exists.txt"), src.join("missing.txt")];
+        let count = ctx.build_file_list_with_base(&src, &file_paths).unwrap();
+
+        // Dot entry + exists.txt; missing.txt silently skipped.
+        assert_eq!(count, 2, "dot + exists.txt");
+        let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+        assert!(names.contains(&"exists.txt"));
+        assert!(!names.contains(&"missing.txt"));
+
+        // No io_error flags should be set - the missing entry is silently ignored.
+        assert_eq!(ctx.io_error(), 0, "ignore-missing-args should not set io_error");
+    }
+
+    #[test]
+    fn build_file_list_with_base_delete_missing_args_emits_sentinel() {
+        // FFV-3: --delete-missing-args emits a mode-0 sentinel for receiver deletion.
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("exists.txt"), "data").unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.args = vec![OsString::from(&src)];
+        config.file_selection.delete_missing_args = true;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        let file_paths = vec![src.join("exists.txt"), src.join("missing.txt")];
+        let count = ctx.build_file_list_with_base(&src, &file_paths).unwrap();
+
+        // Dot entry + exists.txt + mode-0 sentinel for missing.txt
+        assert_eq!(count, 3, "dot + exists.txt + sentinel for missing.txt");
+        let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+        assert!(names.contains(&"exists.txt"));
+
+        // The sentinel entry should have mode == 0.
+        let sentinel = ctx
+            .file_list()
+            .iter()
+            .find(|e| e.name() == "missing.txt")
+            .expect("sentinel entry for missing.txt should be in file list");
+        assert_eq!(
+            sentinel.mode(),
+            0,
+            "delete-missing-args sentinel must have mode 0"
+        );
+        assert_eq!(sentinel.size(), 0, "sentinel size should be 0");
+
+        // No io_error flags should be set - exit 0.
+        assert_eq!(ctx.io_error(), 0, "delete-missing-args should not set io_error");
+    }
+
+    #[test]
+    fn build_file_list_with_base_delete_overrides_ignore_missing_args() {
+        // When both flags are set, delete-missing-args takes precedence.
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.args = vec![OsString::from(&src)];
+        config.file_selection.ignore_missing_args = true;
+        config.file_selection.delete_missing_args = true;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        let file_paths = vec![src.join("missing.txt")];
+        let count = ctx.build_file_list_with_base(&src, &file_paths).unwrap();
+
+        // Dot entry + mode-0 sentinel (delete takes precedence over ignore).
+        assert_eq!(count, 2, "dot + sentinel for missing.txt");
+        let sentinel = ctx
+            .file_list()
+            .iter()
+            .find(|e| e.name() == "missing.txt")
+            .expect("sentinel should exist when delete takes precedence");
+        assert_eq!(sentinel.mode(), 0);
+    }
+
+    #[test]
+    fn missing_args_mode_returns_correct_values() {
+        let handshake = test_handshake();
+
+        // Default: mode 0
+        let config = test_config();
+        let ctx = GeneratorContext::new_for_test(&handshake, config);
+        assert_eq!(ctx.missing_args_mode(), 0);
+
+        // --ignore-missing-args: mode 1
+        let mut config = test_config();
+        config.file_selection.ignore_missing_args = true;
+        let ctx = GeneratorContext::new_for_test(&handshake, config);
+        assert_eq!(ctx.missing_args_mode(), 1);
+
+        // --delete-missing-args: mode 2
+        let mut config = test_config();
+        config.file_selection.delete_missing_args = true;
+        let ctx = GeneratorContext::new_for_test(&handshake, config);
+        assert_eq!(ctx.missing_args_mode(), 2);
+
+        // Both set: mode 2 (delete takes precedence)
+        let mut config = test_config();
+        config.file_selection.ignore_missing_args = true;
+        config.file_selection.delete_missing_args = true;
+        let ctx = GeneratorContext::new_for_test(&handshake, config);
+        assert_eq!(ctx.missing_args_mode(), 2);
+    }
+
+    #[test]
+    fn build_file_list_ignore_missing_args_top_level_source() {
+        // FFV-2 for build_file_list (non-files-from path).
+        let temp_dir = TempDir::new().unwrap();
+        let existing = temp_dir.path().join("exists.txt");
+        std::fs::write(&existing, "data").unwrap();
+        let missing = temp_dir.path().join("no_such_file.txt");
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.file_selection.ignore_missing_args = true;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        let count = ctx
+            .build_file_list(&[existing.clone(), missing])
+            .unwrap();
+
+        assert_eq!(count, 1, "only exists.txt should be in the list");
+        assert_eq!(ctx.io_error(), 0, "no error for silently skipped source");
+    }
+
+    #[test]
+    fn build_file_list_delete_missing_args_top_level_source() {
+        // FFV-3 for build_file_list (non-files-from path).
+        let temp_dir = TempDir::new().unwrap();
+        let existing = temp_dir.path().join("exists.txt");
+        std::fs::write(&existing, "data").unwrap();
+        let missing = temp_dir.path().join("no_such_file.txt");
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.file_selection.delete_missing_args = true;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        let count = ctx
+            .build_file_list(&[existing.clone(), missing])
+            .unwrap();
+
+        // exists.txt + mode-0 sentinel for missing
+        assert_eq!(count, 2, "exists.txt + sentinel");
+        let sentinel = ctx
+            .file_list()
+            .iter()
+            .find(|e| e.name() == "no_such_file.txt")
+            .expect("sentinel for missing source");
+        assert_eq!(sentinel.mode(), 0);
+        assert_eq!(ctx.io_error(), 0);
+    }
+
+    #[test]
+    fn build_file_list_default_missing_source_sets_general_error() {
+        // FFV-4 for build_file_list: default mode emits IOERR_GENERAL, not VANISHED.
+        let temp_dir = TempDir::new().unwrap();
+        let missing = temp_dir.path().join("nonexistent.txt");
+
+        let handshake = test_handshake();
+        let config = test_config();
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        ctx.build_file_list(&[missing]).unwrap();
+
+        assert_ne!(
+            ctx.io_error() & io_error_flags::IOERR_GENERAL,
+            0,
+            "default mode should set IOERR_GENERAL for missing source"
+        );
+        assert_eq!(
+            ctx.io_error() & io_error_flags::IOERR_VANISHED,
+            0,
+            "default mode should NOT set IOERR_VANISHED for top-level missing source"
+        );
     }
 
     #[test]
