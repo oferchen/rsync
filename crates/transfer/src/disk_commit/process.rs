@@ -579,6 +579,22 @@ fn retain_partial_file(
             let temp_path = cleanup_guard.path().to_path_buf();
             match rename_with_io_uring_fallback(cleanup_guard.path(), dest_path) {
                 Ok(_) => {
+                    // upstream: cleanup.c:174-178 - stamp modtime=0 on
+                    // retained partial files so --update does not skip them
+                    // as "up to date" on the next run. Only for plain
+                    // --partial, not --partial-dir (upstream uses
+                    // handle_partial_dir() for --partial-dir which does not
+                    // zero the mtime).
+                    let epoch = filetime::FileTime::zero();
+                    if let Err(e) = filetime::set_file_mtime(dest_path, epoch) {
+                        logging::debug_log!(
+                            Io,
+                            1,
+                            "failed to set mtime=0 on partial file {}: {}",
+                            dest_path.display(),
+                            e
+                        );
+                    }
                     logging::debug_log!(Io, 1, "retained partial file: {}", dest_path.display());
                     CleanupManager::global().unregister_temp_file(&temp_path);
                     cleanup_guard.keep();
