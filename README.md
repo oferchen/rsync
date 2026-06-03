@@ -14,12 +14,12 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 **Release:** 0.6.2 (alpha) - Wire-compatible drop-in replacement for rsync 3.4.3 (and 3.4.2 / 3.4.1, protocols 28-32).
 
-All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop tested against upstream rsync 3.0.9, 3.1.3, 3.4.1, 3.4.2, and 3.4.3, plus upstream rsync's own `testsuite/*.test` corpus driven against `oc-rsync` as `$RSYNC` (canonical "does oc-rsync look like rsync from upstream's perspective" check; non-blocking with a known-failures roster).
+All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop tested against upstream rsync 2.6.9, 3.0.9, 3.1.3, 3.4.1, 3.4.2, and 3.4.3. Upstream rsync's own `testsuite/*.test` corpus runs in CI against `oc-rsync` as `$RSYNC` - all tests now pass (known-failures roster is empty).
 
 | Component | Status |
 |-----------|--------|
-| **Transfer** | Local, SSH, daemon push/pull |
-| **Delta** | Rolling + strong checksums, block matching |
+| **Transfer** | Local, SSH, daemon push/pull, daemon-over-remote-shell (`host::module`) |
+| **Delta** | Rolling + strong checksums, block matching, parallel receive-delta pipeline |
 | **Metadata** | Permissions, timestamps, ownership, ACLs (`-A`), xattrs (`-X`) |
 | **File handling** | Sparse, hardlinks, symlinks, devices, FIFOs |
 | **Deletion** | `--delete` (before/during/after/delay), `--delete-excluded` |
@@ -27,11 +27,12 @@ All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation,
 | **Checksums** | MD4, MD5, XXH3/XXH128 with SIMD (AVX2, SSE2, NEON) |
 | **Incremental recursion** | Pull and push directions, enabled by default |
 | **Batch** | `--write-batch` / `--read-batch` roundtrip |
-| **Daemon** | Negotiation, auth, modules, chroot, syslog, pre/post-xfer exec |
+| **Daemon** | Negotiation, auth, modules, chroot, syslog, pre/post-xfer exec, native TLS (rustls) |
 | **Filtering** | `--filter`, `--exclude`, `--include`, `.rsync-filter`, `--files-from` |
 | **Reference dirs** | `--compare-dest`, `--link-dest`, `--copy-dest` |
 | **Options** | `--delay-updates`, `--inplace`, `--partial`, `--iconv`, fuzzy matching |
 | **I/O** | io_uring (Linux 5.6+), `copy_file_range`, `clonefile` (macOS), adaptive buffers |
+| **Memory** | Flat file list with arena allocation for efficient scaling at high file counts |
 | **Platforms** | Linux, macOS (full); Windows (NTFS DACL partial, xattrs via NTFS ADS, IOCP socket I/O; no symlinks/devices) |
 
 ### Platform Support
@@ -97,7 +98,9 @@ Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
 - SIMD vs scalar self-test added (cargo-fuzz target + unit test) cross-validating AVX2, SSE2, NEON, and scalar implementations at startup (3.4.2 parity)
 
 **Upstream interop**
-- Pinned upstream interop matrix bumped to rsync **3.4.2** (in addition to 3.0.9, 3.1.3, 3.4.1)
+- Pinned upstream interop matrix bumped to rsync **3.4.3** (in addition to 2.6.9, 3.0.9, 3.1.3, 3.4.1, 3.4.2)
+- All upstream `testsuite/*.test` tests now pass - known-failures roster is empty
+- Wire differential fuzzing validates protocol-level byte equivalence against upstream
 - Scheduled GitHub Actions watcher for new upstream releases
 
 **Code quality**
@@ -118,7 +121,7 @@ Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
 
 ### Interop Testing
 
-Tested against upstream rsync **2.6.9**, **3.0.9**, **3.1.3**, **3.4.1**, and **3.4.2** in CI across protocols 28-32. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth. See the [full interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for per-version, per-feature, and per-platform detail.
+Tested against upstream rsync **2.6.9**, **3.0.9**, **3.1.3**, **3.4.1**, **3.4.2**, and **3.4.3** in CI across protocols 28-32. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth. Wire differential fuzzing against upstream rsync validates protocol-level byte equivalence. See the [full interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for per-version, per-feature, and per-platform detail.
 
 ### Supported rsync protocol versions
 
@@ -145,8 +148,9 @@ Per-version dispatch is implemented as `protocol_version` gates in the wire code
 | 3.1.3                  | 31       | push, pull, daemon       | gating |
 | 3.4.1                  | 32       | push, pull, daemon, SSH  | gating |
 | 3.4.2                  | 32       | push, pull, daemon       | gating |
+| 3.4.3                  | 32       | push, pull, daemon, SSH  | gating |
 
-Wire format is verified byte-identical to upstream rsync via CI golden-byte tests for the listed versions. Other versions may work but are not regression-tested.
+Wire format is verified byte-identical to upstream rsync via CI golden-byte tests for the listed versions. Wire differential fuzzing validates protocol-level byte equivalence against upstream. Other versions may work but are not regression-tested.
 
 ### Linux io_uring kernel-tier support
 
@@ -233,7 +237,7 @@ Three one-shot warnings may appear on stderr (sync path) or via `tracing` target
 
 ### Known Limitations / Architectural Trade-offs
 
-oc-rsync is wire-compatible with upstream rsync 3.4.1, but a few architectural choices and unfinished surfaces are worth calling out for operators planning a deployment:
+oc-rsync is wire-compatible with upstream rsync 3.4.3, but a few architectural choices and unfinished surfaces are worth calling out for operators planning a deployment:
 
 - **io_uring kernel requirement.** Provided buffer rings (PBUF_RING) require Linux **5.19+**; older 5.6-5.18 kernels fall back to standard buffered I/O via runtime probing.
 - **Fixed io_uring buffer pool.** The registered buffer pool is sized at compile time (1024 × 4 KiB = 4 MiB) and does not adapt under sustained I/O pressure. Workloads with very high concurrent file fan-out may see throughput plateau before saturating the device.
@@ -379,6 +383,9 @@ oc-rsync -av rsync://host/module/ ./local/
 # Daemon push
 oc-rsync -av ./local/ rsync://host/module/
 
+# Daemon over remote shell (SSH-based daemon access)
+oc-rsync -av host::module/path/ ./local/
+
 # Run as daemon
 oc-rsync --daemon --config=/etc/oc-rsyncd/oc-rsyncd.conf
 
@@ -469,7 +476,7 @@ All crates enforce `#![deny(unsafe_code)]`. Targeted `#[allow(unsafe_code)]` is 
 - **protocol** - One isolated allow in `multiplex::helpers` for frame parsing
 - **windows-gnu-eh** - Windows GNU exception handling shims
 
-Not vulnerable to known upstream rsync CVEs (CVE-2024-12084 through CVE-2024-12088, CVE-2024-12747).
+Not vulnerable to known upstream rsync CVEs (CVE-2024-12084 through CVE-2024-12088, CVE-2024-12747). All CVE mitigations complete (SEC-1, SEC-2, SEC-3, SEC-MK series). TOCTOU path-based syscalls replaced with `*at` variants throughout.
 
 ### Upstream rsync 3.4.3 hardening
 
