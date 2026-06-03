@@ -2225,28 +2225,13 @@ fn partial_mode_partial_stamps_mtime_zero_on_shutdown() {
     assert!(file_path.exists(), "partial file must be retained");
     assert_eq!(fs::read(&file_path).unwrap(), b"partial content");
 
-    // The retained partial file must have mtime=0 (epoch).
-    // On Windows, NTFS cannot represent epoch 0 - set_file_mtime
-    // silently clamps to the NTFS minimum (1601-01-01). We verify that
-    // the mtime was moved far into the past rather than asserting exact
-    // zero.
+    // The retained partial file must have mtime = Unix epoch (1970-01-01).
     let mtime = filetime::FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
-    #[cfg(unix)]
+    let unix_epoch = filetime::FileTime::from_unix_time(0, 0);
     assert_eq!(
-        mtime,
-        filetime::FileTime::zero(),
-        "partial file mtime must be stamped to epoch 0"
+        mtime, unix_epoch,
+        "partial file mtime must be stamped to Unix epoch"
     );
-    #[cfg(windows)]
-    {
-        let threshold = std::time::SystemTime::now() - std::time::Duration::from_secs(86400);
-        let one_day_ago = filetime::FileTime::from_system_time(threshold);
-        assert!(
-            mtime < one_day_ago,
-            "partial file mtime must be stamped to the past, got {:?}",
-            mtime,
-        );
-    }
 
     drop(h.file_tx);
     h.join_handle.join().unwrap();
@@ -2294,22 +2279,11 @@ fn partial_mode_partial_stamps_mtime_zero_on_abort() {
     assert!(file_path.exists(), "partial file must be retained on abort");
 
     let mtime = filetime::FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
-    #[cfg(unix)]
+    let unix_epoch = filetime::FileTime::from_unix_time(0, 0);
     assert_eq!(
-        mtime,
-        filetime::FileTime::zero(),
-        "partial file mtime must be epoch 0 on abort"
+        mtime, unix_epoch,
+        "partial file mtime must be stamped to Unix epoch on abort"
     );
-    #[cfg(windows)]
-    {
-        let threshold = std::time::SystemTime::now() - std::time::Duration::from_secs(86400);
-        let one_day_ago = filetime::FileTime::from_system_time(threshold);
-        assert!(
-            mtime < one_day_ago,
-            "partial file mtime must be stamped to the past on abort, got {:?}",
-            mtime,
-        );
-    }
 
     h.file_tx.send(FileMessage::Shutdown).unwrap();
     h.join_handle.join().unwrap();
@@ -2357,13 +2331,13 @@ fn partial_mode_partial_dir_does_not_stamp_mtime_zero() {
         "partial file must exist in partial-dir"
     );
 
-    // partial-dir files should NOT have mtime=0.
+    // partial-dir files should NOT have mtime stamped to epoch.
     let mtime =
         filetime::FileTime::from_last_modification_time(&fs::metadata(&partial_path).unwrap());
+    let unix_epoch = filetime::FileTime::from_unix_time(0, 0);
     assert_ne!(
-        mtime,
-        filetime::FileTime::zero(),
-        "partial-dir files must not have mtime stamped to 0"
+        mtime, unix_epoch,
+        "partial-dir files must not have mtime stamped to epoch"
     );
 
     drop(h.file_tx);
@@ -2411,20 +2385,9 @@ fn partial_mode_partial_stamps_mtime_zero_on_disconnect() {
     );
 
     let mtime = filetime::FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
-    #[cfg(unix)]
+    let unix_epoch = filetime::FileTime::from_unix_time(0, 0);
     assert_eq!(
-        mtime,
-        filetime::FileTime::zero(),
-        "partial file mtime must be epoch 0 on disconnect"
+        mtime, unix_epoch,
+        "partial file mtime must be stamped to Unix epoch on disconnect"
     );
-    #[cfg(windows)]
-    {
-        let threshold = std::time::SystemTime::now() - std::time::Duration::from_secs(86400);
-        let one_day_ago = filetime::FileTime::from_system_time(threshold);
-        assert!(
-            mtime < one_day_ago,
-            "partial file mtime must be stamped to the past on disconnect, got {:?}",
-            mtime,
-        );
-    }
 }

@@ -591,7 +591,15 @@ fn retain_partial_file(
                     // --partial, not --partial-dir (upstream uses
                     // handle_partial_dir() for --partial-dir which does not
                     // zero the mtime).
-                    let epoch = filetime::FileTime::zero();
+                    //
+                    // Use from_unix_time(0, 0) rather than FileTime::zero()
+                    // because on Windows, zero() maps to the Windows epoch
+                    // (1601-01-01) which becomes an all-zero FILETIME -
+                    // SetFileTime treats that as "do not change", silently
+                    // skipping the stamp. from_unix_time(0, 0) maps to
+                    // 1970-01-01 which is a non-zero FILETIME that Windows
+                    // will actually apply.
+                    let epoch = filetime::FileTime::from_unix_time(0, 0);
                     if let Err(e) = filetime::set_file_mtime(dest_path, epoch) {
                         logging::debug_log!(
                             Io,
