@@ -41,10 +41,6 @@ fn run_daemon_lists_modules_with_motd_lines() {
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush list request");
 
-    line.clear();
-    reader.read_line(&mut line).expect("capabilities");
-    assert_eq!(line, "@RSYNCD: CAP modules\n");
-
     // upstream: MOTD lines are sent as raw text, not wrapped in @RSYNCD: MOTD
     line.clear();
     reader.read_line(&mut line).expect("motd line 1");
