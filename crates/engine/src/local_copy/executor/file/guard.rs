@@ -312,9 +312,6 @@ impl DestinationWriteGuard {
     /// kernel lacks the opcode.
     ///
     /// upstream: `util1.c:robust_rename()` - retry up to 4 times on `ETXTBSY`.
-    // TODO: SEC-1.j receiver wiring - DirSandbox not in scope, defer pending
-    // `DestinationWriteGuard` carrying a sandbox handle threaded through the
-    // local-copy executor and its callers; cross-crate API change.
     /// Returns `true` when commit used a cross-device copy instead of rename.
     fn commit_named_temp_file(&self, temp_path: PathBuf) -> Result<bool, LocalCopyError> {
         let mut tries = 4u32;
