@@ -2226,8 +2226,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_shutdown() {
     assert_eq!(fs::read(&file_path).unwrap(), b"partial content");
 
     // The retained partial file must have mtime=0 (epoch).
-    let mtime =
-        filetime::FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
+    let mtime = filetime::FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
     assert_eq!(
         mtime,
         filetime::FileTime::zero(),
@@ -2279,8 +2278,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_abort() {
 
     assert!(file_path.exists(), "partial file must be retained on abort");
 
-    let mtime =
-        filetime::FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
+    let mtime = filetime::FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
     assert_eq!(
         mtime,
         filetime::FileTime::zero(),
@@ -2386,8 +2384,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_disconnect() {
         "partial file must be retained on disconnect"
     );
 
-    let mtime =
-        filetime::FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
+    let mtime = filetime::FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
     assert_eq!(
         mtime,
         filetime::FileTime::zero(),
