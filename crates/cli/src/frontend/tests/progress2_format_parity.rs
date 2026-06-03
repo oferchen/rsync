@@ -68,9 +68,7 @@ fn validate_final_tick(line: &str) -> Result<(), String> {
         .ok_or_else(|| format!("malformed xfr trailer: {trimmed:?}"))?;
     let trailer = &trimmed[trailer_start..];
     if !trailer.ends_with(')') {
-        return Err(format!(
-            "xfr trailer missing closing paren: {trailer:?}"
-        ));
+        return Err(format!("xfr trailer missing closing paren: {trailer:?}"));
     }
     if !trailer.contains(", ") {
         return Err(format!(
@@ -89,10 +87,7 @@ fn validate_final_tick(line: &str) -> Result<(), String> {
         ));
     }
     let parts: Vec<&str> = chk_value.split('/').collect();
-    if parts.len() != 2
-        || parts[0].parse::<u64>().is_err()
-        || parts[1].parse::<u64>().is_err()
-    {
+    if parts.len() != 2 || parts[0].parse::<u64>().is_err() || parts[1].parse::<u64>().is_err() {
         return Err(format!(
             "chk value not in N/M numeric format: {chk_value:?}"
         ));
@@ -115,16 +110,12 @@ fn validate_inflight_tick(line: &str) -> Result<(), String> {
 
     // Must contain a percentage
     if !trimmed.contains('%') {
-        return Err(format!(
-            "in-flight tick missing percentage: {trimmed:?}"
-        ));
+        return Err(format!("in-flight tick missing percentage: {trimmed:?}"));
     }
 
     // Must contain a rate unit
     if !trimmed.contains("B/s") {
-        return Err(format!(
-            "in-flight tick missing rate unit: {trimmed:?}"
-        ));
+        return Err(format!("in-flight tick missing rate unit: {trimmed:?}"));
     }
 
     // Must contain time field
@@ -212,9 +203,7 @@ fn setup_single_file(name: &str, size: usize) -> (tempfile::TempDir, std::path::
 }
 
 /// Creates a temp directory with multiple source files.
-fn setup_multiple_files(
-    files: &[(&str, usize)],
-) -> (tempfile::TempDir, std::path::PathBuf) {
+fn setup_multiple_files(files: &[(&str, usize)]) -> (tempfile::TempDir, std::path::PathBuf) {
     let tmp = tempfile::tempdir().expect("tempdir");
     let source_dir = tmp.path().join("source");
     std::fs::create_dir_all(&source_dir).expect("create source dir");
@@ -332,8 +321,7 @@ fn progress2_time_field_uses_hmmss_format() {
     let lines = split_progress2_lines(&output);
 
     for line in &lines {
-        validate_time_field(line)
-            .unwrap_or_else(|e| panic!("time field validation failed: {e}"));
+        validate_time_field(line).unwrap_or_else(|e| panic!("time field validation failed: {e}"));
     }
 }
 
@@ -544,8 +532,7 @@ fn progress2_rate_unit_tier_boundaries() {
 fn progress2_rate_from_value_matches_cumulative_tiers() {
     for &rate in &[512.0_f64, 1_048_576.0, 1_073_741_824.0] {
         let cumulative = format_progress_rate_decimal(rate);
-        let from_value =
-            format_progress_rate_from_value(rate, HumanReadableMode::Disabled);
+        let from_value = format_progress_rate_from_value(rate, HumanReadableMode::Disabled);
         assert_eq!(
             cumulative, from_value,
             "from_value should match cumulative for rate={rate}"
@@ -699,7 +686,10 @@ fn progress2_cli_multiple_files_format_parity() {
 /// upstream: progress.c:108-134 rprint_progress
 #[test]
 fn progress2_composed_line_field_order_matches_upstream() {
-    let bytes_field = format!("{:>15}", format_progress_bytes(1_536, HumanReadableMode::Disabled));
+    let bytes_field = format!(
+        "{:>15}",
+        format_progress_bytes(1_536, HumanReadableMode::Disabled)
+    );
     let percent_field = format!("{:>4}", format_progress_percent(100, Some(1_536)));
     let rate_field = format!(
         "{:>11}",
@@ -708,9 +698,8 @@ fn progress2_composed_line_field_order_matches_upstream() {
     let time_field = format!("{:>10}", format_progress_elapsed(Duration::from_secs(1)));
 
     // Compose a final tick line
-    let line = format!(
-        "{bytes_field} {percent_field} {rate_field} {time_field} (xfr#1, to-chk=0/1)"
-    );
+    let line =
+        format!("{bytes_field} {percent_field} {rate_field} {time_field} (xfr#1, to-chk=0/1)");
 
     // Verify field widths
     assert_eq!(bytes_field.len(), 15, "bytes field width");
@@ -738,17 +727,26 @@ fn progress2_composed_line_field_order_matches_upstream() {
 /// upstream: progress.c:100 - in-flight ticks emit trailing spaces
 #[test]
 fn progress2_composed_inflight_line_field_order_matches_upstream() {
-    let bytes_field = format!("{:>15}", format_progress_bytes(512, HumanReadableMode::Disabled));
+    let bytes_field = format!(
+        "{:>15}",
+        format_progress_bytes(512, HumanReadableMode::Disabled)
+    );
     let percent_field = format!("{:>4}", format_progress_percent(512, Some(1_024)));
     let rate_field = format!(
         "{:>11}",
         format_progress_rate(512, Duration::from_millis(500), HumanReadableMode::Disabled)
     );
-    let time_field = format!("{:>10}", format_progress_elapsed(Duration::from_millis(500)));
+    let time_field = format!(
+        "{:>10}",
+        format_progress_elapsed(Duration::from_millis(500))
+    );
 
     // In-flight line ends with two trailing spaces
     let line = format!("{bytes_field} {percent_field} {rate_field} {time_field}  ");
 
     validate_inflight_tick(&line).unwrap_or_else(|e| panic!("{e}"));
-    assert!(!line.contains("xfr#"), "in-flight line should not have xfr trailer");
+    assert!(
+        !line.contains("xfr#"),
+        "in-flight line should not have xfr trailer"
+    );
 }
