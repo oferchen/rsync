@@ -1446,14 +1446,11 @@ fn partial_dir_mid_stream_has_intermediate_size() {
     let partial_size = fs::metadata(&partial_path).unwrap().len();
     assert!(
         partial_size > 0,
-        "partial file must not be empty (got {} bytes)",
-        partial_size
+        "partial file must not be empty (got {partial_size} bytes)",
     );
     assert!(
         partial_size < target_size,
-        "partial file ({} bytes) must be smaller than target ({} bytes)",
-        partial_size,
-        target_size
+        "partial file ({partial_size} bytes) must be smaller than target ({target_size} bytes)",
     );
     assert_eq!(partial_size, 300);
 
