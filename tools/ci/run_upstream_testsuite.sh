@@ -77,6 +77,10 @@ build_upstream_helpers() {
     if [[ -f "${upstream_src_dir}/shconfig" && \
           -x "${upstream_src_dir}/tls" && \
           -x "${upstream_src_dir}/getgroups" && \
+          -x "${upstream_src_dir}/getfsdev" && \
+          -x "${upstream_src_dir}/trimslash" && \
+          -x "${upstream_src_dir}/t_unsafe" && \
+          -x "${upstream_src_dir}/wildtest" && \
           -x "${upstream_src_dir}/support/lsh.sh" ]]; then
         return
     fi
@@ -89,11 +93,18 @@ build_upstream_helpers() {
                 || { tail -50 configure.log; exit 1; }
         fi
         # Build the upstream rsync binary (some tests reference
-        # $TOOLDIR/rsync) plus the test helper programs (tls, getgroups)
-        # that the testsuite's check_perms and rsync_getgroups functions
-        # require. The helpers are part of CHECK_PROGS in upstream's
-        # Makefile, not the `all` target, so they must be named explicitly.
-        make all tls getgroups >make.log 2>&1 || { tail -100 make.log; exit 1; }
+        # $TOOLDIR/rsync) plus the CHECK_PROGS helper programs that
+        # various tests require:
+        #   tls        - check_perms (many tests)
+        #   getgroups  - rsync_getgroups (dir-sgid, acls tests)
+        #   getfsdev   - chmod-temp-dir (cross-filesystem temp dir)
+        #   trimslash  - trimslash test
+        #   t_unsafe   - unsafe-byname test
+        #   wildtest   - wildmatch test
+        # These are part of CHECK_PROGS in upstream's Makefile, not the
+        # `all` target, so they must be named explicitly.
+        make all tls getgroups getfsdev trimslash t_unsafe wildtest \
+            >make.log 2>&1 || { tail -100 make.log; exit 1; }
     )
 }
 
