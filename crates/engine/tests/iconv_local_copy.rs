@@ -202,3 +202,268 @@ fn iconv_applies_to_nested_filenames_recursively() {
         "nested Latin-1 name missing; got {leaf_names:?}"
     );
 }
+
+/// Full round-trip: UTF-8 source -> Latin-1 intermediate -> UTF-8 final.
+///
+/// Creates source files whose UTF-8 filenames use five distinct Latin-1
+/// accented characters (e-acute, n-tilde, u-diaeresis, o-diaeresis,
+/// a-grave) spread across a flat file, a nested file, and a subdirectory.
+/// The forward leg converts UTF-8 to ISO-8859-1 on disk; the reverse leg
+/// converts ISO-8859-1 back to UTF-8. After both legs, every filename
+/// must be byte-identical to the original and every file's payload must
+/// be intact.
+///
+/// This exercises the composed iconv path that upstream rsync uses for
+/// bidirectional syncs between machines with different locale charsets:
+///   - Sender: `iconv_open(UTF-8, LOCAL)` then `iconv_open(REMOTE, UTF-8)`
+///   - Receiver: `iconv_open(UTF-8, REMOTE)` then `iconv_open(LOCAL, UTF-8)`
+///
+/// upstream: rsync.c:118-140 setup_iconv(), flist.c:1579-1603 send,
+///           flist.c:738-754 recv.
+#[test]
+fn iconv_utf8_latin1_round_trip_preserves_filenames() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    let intermediate = temp.path().join("intermediate");
+    let final_dest = temp.path().join("final");
+    fs::create_dir_all(source.join("données")).expect("create nested dir");
+    fs::create_dir_all(&intermediate).expect("create intermediate");
+    fs::create_dir_all(&final_dest).expect("create final");
+
+    // Five distinct Latin-1-representable accented characters:
+    //   é (U+00E9, UTF-8 c3 a9, Latin-1 e9)
+    //   ñ (U+00F1, UTF-8 c3 b1, Latin-1 f1)
+    //   ü (U+00FC, UTF-8 c3 bc, Latin-1 fc)
+    //   ö (U+00F6, UTF-8 c3 b6, Latin-1 f6)
+    //   à (U+00E0, UTF-8 c3 a0, Latin-1 e0)
+    let files: &[(&[u8], &[u8])] = &[
+        // "café.txt" - e-acute
+        (b"caf\xc3\xa9.txt", b"espresso"),
+        // "señor.txt" - n-tilde
+        (b"se\xc3\xb1or.txt", b"hola"),
+        // "grüß.txt" - u-diaeresis (ß is also Latin-1: df)
+        (b"gr\xc3\xbc\xc3\x9f.txt", b"hallo"),
+        // "données/König.txt" - nested, o-diaeresis
+        (b"donn\xc3\xa9es/K\xc3\xb6nig.txt", b"nested-payload"),
+        // "voilà.txt" - a-grave
+        (b"voil\xc3\xa0.txt", b"bonjour"),
+    ];
+
+    for &(name_bytes, payload) in files {
+        let path = source.join(OsStr::from_bytes(name_bytes));
+        fs::write(&path, payload).expect("write source file");
+    }
+
+    // ---- Forward leg: UTF-8 -> ISO-8859-1 ----
+    let fwd_converter = FilenameConverter::new("UTF-8", "ISO-8859-1").expect("forward converter");
+    let fwd_operands = vec![
+        source.into_os_string(),
+        intermediate.clone().into_os_string(),
+    ];
+    let fwd_plan = LocalCopyPlan::from_operands(&fwd_operands).expect("forward plan");
+    let fwd_options = LocalCopyOptions::default()
+        .recursive(true)
+        .with_iconv(Some(fwd_converter));
+
+    fwd_plan
+        .execute_with_options(LocalCopyExecution::Apply, fwd_options)
+        .expect("forward local copy succeeds");
+
+    // Verify intermediate filenames are in Latin-1 encoding.
+    let inter_root = intermediate.join("source");
+    let inter_names = list_raw_names(&inter_root);
+
+    // Expected Latin-1 basenames (sorted):
+    //   "café.txt"    -> caf e9 .txt
+    //   "données"     -> donn e9 es     (directory)
+    //   "grüß.txt"    -> gr fc df .txt
+    //   "señor.txt"   -> se f1 or .txt
+    //   "voilà.txt"   -> voil e0 .txt
+    let expected_latin1: Vec<Vec<u8>> = {
+        let mut v = vec![
+            b"caf\xe9.txt".to_vec(),
+            b"donn\xe9es".to_vec(),
+            b"gr\xfc\xdf.txt".to_vec(),
+            b"se\xf1or.txt".to_vec(),
+            b"voil\xe0.txt".to_vec(),
+        ];
+        v.sort();
+        v
+    };
+    assert_eq!(
+        inter_names, expected_latin1,
+        "intermediate must have Latin-1 encoded filenames; got {inter_names:?}"
+    );
+
+    // Verify nested file exists with Latin-1 encoded name.
+    let inter_nested = inter_root.join(OsStr::from_bytes(b"donn\xe9es"));
+    let nested_names = list_raw_names(&inter_nested);
+    assert_eq!(
+        nested_names,
+        vec![b"K\xf6nig.txt".to_vec()],
+        "nested Latin-1 name wrong; got {nested_names:?}"
+    );
+
+    // ---- Reverse leg: ISO-8859-1 -> UTF-8 ----
+    let rev_converter = FilenameConverter::new("ISO-8859-1", "UTF-8").expect("reverse converter");
+    let rev_operands = vec![
+        inter_root.into_os_string(),
+        final_dest.clone().into_os_string(),
+    ];
+    let rev_plan = LocalCopyPlan::from_operands(&rev_operands).expect("reverse plan");
+    let rev_options = LocalCopyOptions::default()
+        .recursive(true)
+        .with_iconv(Some(rev_converter));
+
+    rev_plan
+        .execute_with_options(LocalCopyExecution::Apply, rev_options)
+        .expect("reverse local copy succeeds");
+
+    // The reverse leg copies inter_root (named "source") into final_dest,
+    // so the tree lands at final_dest/source/.
+    let final_root = final_dest.join("source");
+    let final_names = list_raw_names(&final_root);
+
+    // After the round-trip, filenames must be back in UTF-8.
+    let expected_utf8: Vec<Vec<u8>> = {
+        let mut v = vec![
+            b"caf\xc3\xa9.txt".to_vec(),
+            b"donn\xc3\xa9es".to_vec(),
+            b"gr\xc3\xbc\xc3\x9f.txt".to_vec(),
+            b"se\xc3\xb1or.txt".to_vec(),
+            b"voil\xc3\xa0.txt".to_vec(),
+        ];
+        v.sort();
+        v
+    };
+    assert_eq!(
+        final_names, expected_utf8,
+        "round-tripped filenames must match original UTF-8; got {final_names:?}"
+    );
+
+    // Verify nested round-trip.
+    let final_nested_dir = OsString::from_vec(b"donn\xc3\xa9es".to_vec());
+    let final_nested = final_root.join(&final_nested_dir);
+    let final_nested_names = list_raw_names(&final_nested);
+    assert_eq!(
+        final_nested_names,
+        vec![b"K\xc3\xb6nig.txt".to_vec()],
+        "nested filename must round-trip to UTF-8; got {final_nested_names:?}"
+    );
+
+    // Verify every file's payload survived the round-trip intact.
+    let payload_checks: &[(&[u8], &[u8])] = &[
+        (b"caf\xc3\xa9.txt", b"espresso"),
+        (b"se\xc3\xb1or.txt", b"hola"),
+        (b"gr\xc3\xbc\xc3\x9f.txt", b"hallo"),
+        (b"voil\xc3\xa0.txt", b"bonjour"),
+    ];
+    for &(name_bytes, expected_payload) in payload_checks {
+        let path = final_root.join(OsStr::from_bytes(name_bytes));
+        let actual = fs::read(&path).unwrap_or_else(|e| {
+            panic!(
+                "read round-tripped file {:?}: {e}",
+                String::from_utf8_lossy(name_bytes)
+            )
+        });
+        assert_eq!(
+            actual,
+            expected_payload,
+            "payload mismatch for {:?}",
+            String::from_utf8_lossy(name_bytes)
+        );
+    }
+
+    let nested_path = final_nested.join(OsStr::from_bytes(b"K\xc3\xb6nig.txt"));
+    let nested_payload = fs::read(&nested_path).expect("read nested round-tripped file");
+    assert_eq!(
+        nested_payload, b"nested-payload",
+        "nested payload must survive round-trip"
+    );
+}
+
+/// Round-trip with a trailing slash on the source operand, which copies
+/// directory *contents* rather than the directory itself. Verifies the
+/// iconv path handles both source-as-subdirectory and source-as-contents
+/// semantics correctly.
+///
+/// upstream: main.c:978-982 - trailing-slash causes XMIT_TOP_DIR
+///           semantics on the source, copying contents into dest.
+#[test]
+fn iconv_round_trip_trailing_slash_copies_contents() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    let intermediate = temp.path().join("intermediate");
+    let final_dest = temp.path().join("final");
+    fs::create_dir_all(&source).expect("create source");
+    fs::create_dir_all(&intermediate).expect("create intermediate");
+    fs::create_dir_all(&final_dest).expect("create final");
+
+    // Two files with accented UTF-8 names.
+    let name_a = OsStr::from_bytes(b"r\xc3\xa9sum\xc3\xa9.txt");
+    let name_b = OsStr::from_bytes(b"\xc3\xbcber.txt");
+    fs::write(source.join(name_a), b"cv-data").expect("write a");
+    fs::write(source.join(name_b), b"uber-data").expect("write b");
+
+    // Forward: trailing slash -> contents land directly in intermediate.
+    let fwd_converter = FilenameConverter::new("UTF-8", "ISO-8859-1").expect("forward converter");
+    let mut src_os = source.clone().into_os_string();
+    src_os.push("/");
+    let fwd_operands = vec![src_os, intermediate.clone().into_os_string()];
+    let fwd_plan = LocalCopyPlan::from_operands(&fwd_operands).expect("forward plan");
+    let fwd_options = LocalCopyOptions::default()
+        .recursive(true)
+        .with_iconv(Some(fwd_converter));
+
+    fwd_plan
+        .execute_with_options(LocalCopyExecution::Apply, fwd_options)
+        .expect("forward copy succeeds");
+
+    // With trailing slash, files land directly in intermediate/ (no
+    // "source" subdirectory).
+    let inter_names = list_raw_names(&intermediate);
+    let expected_latin1: Vec<Vec<u8>> = {
+        let mut v = vec![b"r\xe9sum\xe9.txt".to_vec(), b"\xfcber.txt".to_vec()];
+        v.sort();
+        v
+    };
+    assert_eq!(
+        inter_names, expected_latin1,
+        "trailing-slash forward must produce Latin-1 names; got {inter_names:?}"
+    );
+
+    // Reverse: trailing slash on intermediate.
+    let rev_converter = FilenameConverter::new("ISO-8859-1", "UTF-8").expect("reverse converter");
+    let mut inter_os = intermediate.into_os_string();
+    inter_os.push("/");
+    let rev_operands = vec![inter_os, final_dest.clone().into_os_string()];
+    let rev_plan = LocalCopyPlan::from_operands(&rev_operands).expect("reverse plan");
+    let rev_options = LocalCopyOptions::default()
+        .recursive(true)
+        .with_iconv(Some(rev_converter));
+
+    rev_plan
+        .execute_with_options(LocalCopyExecution::Apply, rev_options)
+        .expect("reverse copy succeeds");
+
+    let final_names = list_raw_names(&final_dest);
+    let expected_utf8: Vec<Vec<u8>> = {
+        let mut v = vec![
+            b"r\xc3\xa9sum\xc3\xa9.txt".to_vec(),
+            b"\xc3\xbcber.txt".to_vec(),
+        ];
+        v.sort();
+        v
+    };
+    assert_eq!(
+        final_names, expected_utf8,
+        "trailing-slash round-trip must recover UTF-8 names; got {final_names:?}"
+    );
+
+    // Payload integrity.
+    let path_a = final_dest.join(OsStr::from_bytes(b"r\xc3\xa9sum\xc3\xa9.txt"));
+    assert_eq!(fs::read(&path_a).expect("read a"), b"cv-data");
+
+    let path_b = final_dest.join(OsStr::from_bytes(b"\xc3\xbcber.txt"));
+    assert_eq!(fs::read(&path_b).expect("read b"), b"uber-data");
+}
