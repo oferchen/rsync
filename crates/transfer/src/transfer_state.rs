@@ -273,10 +273,6 @@ impl TransferPipeline {
 mod tests {
     use super::*;
 
-    // -----------------------------------------------------------------------
-    // TransferPhase unit tests
-    // -----------------------------------------------------------------------
-
     #[test]
     fn phase_ordinals_are_monotonically_increasing() {
         let phases = [
@@ -362,10 +358,6 @@ mod tests {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // TransferPipeline - construction
-    // -----------------------------------------------------------------------
-
     #[test]
     fn new_pipeline_starts_at_handshake() {
         let pipeline = TransferPipeline::new(ServerRole::Receiver);
@@ -381,10 +373,6 @@ mod tests {
         let generator = TransferPipeline::new(ServerRole::Generator);
         assert_eq!(generator.role(), ServerRole::Generator);
     }
-
-    // -----------------------------------------------------------------------
-    // TransferPipeline::advance - happy path
-    // -----------------------------------------------------------------------
 
     #[test]
     fn advance_walks_through_all_phases() {
@@ -417,10 +405,6 @@ mod tests {
         assert_eq!(err.current, TransferPhase::Complete);
     }
 
-    // -----------------------------------------------------------------------
-    // TransferPipeline::advance_to - valid single-step transitions
-    // -----------------------------------------------------------------------
-
     #[test]
     fn advance_to_each_successor_succeeds() {
         let mut pipeline = TransferPipeline::new(ServerRole::Receiver);
@@ -442,10 +426,6 @@ mod tests {
         pipeline.advance_to(TransferPhase::Complete).unwrap();
         assert_eq!(pipeline.phase(), TransferPhase::Complete);
     }
-
-    // -----------------------------------------------------------------------
-    // TransferPipeline::advance_to - invalid transitions
-    // -----------------------------------------------------------------------
 
     #[test]
     fn advance_to_same_phase_is_invalid() {
@@ -489,10 +469,6 @@ mod tests {
         let err = pipeline.advance_to(TransferPhase::Handshake).unwrap_err();
         assert_eq!(err.current, TransferPhase::Complete);
     }
-
-    // -----------------------------------------------------------------------
-    // TransferPipeline::advance_through
-    // -----------------------------------------------------------------------
 
     #[test]
     fn advance_through_multi_step_succeeds() {
@@ -544,10 +520,6 @@ mod tests {
         assert_eq!(pipeline.phase(), TransferPhase::DeltaTransfer);
     }
 
-    // -----------------------------------------------------------------------
-    // Full happy-path lifecycle
-    // -----------------------------------------------------------------------
-
     #[test]
     fn full_lifecycle_receiver() {
         let mut pipeline = TransferPipeline::new(ServerRole::Receiver);
@@ -586,10 +558,6 @@ mod tests {
         assert!(pipeline.is_complete());
         assert_eq!(pipeline.role(), ServerRole::Generator);
     }
-
-    // -----------------------------------------------------------------------
-    // Edge cases and error message quality
-    // -----------------------------------------------------------------------
 
     #[test]
     fn double_advance_to_same_target_fails() {
