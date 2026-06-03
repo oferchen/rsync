@@ -32,11 +32,14 @@ mod pair;
 /// `--debug=ICONV` producer emissions for charset setup.
 pub mod trace;
 
-pub use converter::{EncodingConverter, FilenameConverter, converter_from_locale};
+pub use converter::{
+    ConversionOutcome, EncodingConverter, FilenameConverter, converter_from_locale,
+};
 pub use error::{ConversionError, EncodingError};
 pub use pair::EncodingPair;
 pub use trace::{
-    IconvRole, trace_msg_checking_charset, trace_msg_checking_via_isprint, trace_peer_charset,
+    IconvRole, trace_conversion_warning, trace_msg_checking_charset,
+    trace_msg_checking_via_isprint, trace_peer_charset,
 };
 
 #[cfg(test)]
@@ -328,5 +331,185 @@ mod tests {
         let conv1 = EncodingConverter::identity();
         let conv2 = EncodingConverter::identity();
         assert_eq!(conv1, conv2);
+    }
+
+    // ---- Lossy conversion tests ----
+
+    #[test]
+    fn lossy_identity_passes_through_without_replacement() {
+        let conv = FilenameConverter::identity();
+        let input = b"hello.txt";
+        let outcome = conv.remote_to_local_lossy(input);
+        assert_eq!(&*outcome.output, input);
+        assert!(!outcome.had_replacements);
+
+        let outcome = conv.local_to_remote_lossy(input);
+        assert_eq!(&*outcome.output, input);
+        assert!(!outcome.had_replacements);
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn lossy_remote_to_local_valid_bytes_no_replacement() {
+        // UTF-8 "café" -> ISO-8859-1: should convert without replacements.
+        let conv = FilenameConverter::new("ISO-8859-1", "UTF-8").unwrap();
+        let utf8_bytes = "café".as_bytes();
+        let outcome = conv.remote_to_local_lossy(utf8_bytes);
+        assert_eq!(&*outcome.output, &[0x63, 0x61, 0x66, 0xe9]);
+        assert!(!outcome.had_replacements);
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn lossy_local_to_remote_valid_bytes_no_replacement() {
+        // ISO-8859-1 "café" -> UTF-8: should convert without replacements.
+        let conv = FilenameConverter::new("ISO-8859-1", "UTF-8").unwrap();
+        let latin1_bytes = &[0x63, 0x61, 0x66, 0xe9];
+        let outcome = conv.local_to_remote_lossy(latin1_bytes);
+        assert_eq!(&*outcome.output, "café".as_bytes());
+        assert!(!outcome.had_replacements);
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn lossy_remote_to_local_unmappable_chars_replaced() {
+        // Convert UTF-8 with CJK character to ISO-8859-1 (cannot represent CJK).
+        // The CJK character should be replaced with '?'.
+        let conv = FilenameConverter::new("ISO-8859-1", "UTF-8").unwrap();
+        let utf8_with_cjk = "file_\u{4e16}\u{754c}.txt"; // file_世界.txt
+        let outcome = conv.remote_to_local_lossy(utf8_with_cjk.as_bytes());
+        assert!(outcome.had_replacements);
+        // CJK characters replaced with '?', ASCII parts preserved.
+        assert_eq!(&*outcome.output, b"file_??.txt");
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn lossy_local_to_remote_unmappable_chars_replaced() {
+        // UTF-8 local with CJK -> ASCII remote (cannot represent CJK).
+        let conv = FilenameConverter::new("UTF-8", "windows-1252").unwrap();
+        let utf8_with_cjk = "dir_\u{4e16}/file.txt";
+        let outcome = conv.local_to_remote_lossy(utf8_with_cjk.as_bytes());
+        assert!(outcome.had_replacements);
+        assert_eq!(&*outcome.output, b"dir_?/file.txt");
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn lossy_round_trip_ascii_preserves_content() {
+        let conv = FilenameConverter::new("UTF-8", "ISO-8859-1").unwrap();
+        let original = b"hello_world_123.txt";
+        let to_remote = conv.local_to_remote_lossy(original);
+        assert!(!to_remote.had_replacements);
+        let back = conv.remote_to_local_lossy(&to_remote.output);
+        assert!(!back.had_replacements);
+        assert_eq!(&*back.output, &original[..]);
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn lossy_strict_fails_where_lossy_succeeds() {
+        // Strict conversion should fail for unmappable characters.
+        let conv = FilenameConverter::new("ISO-8859-1", "UTF-8").unwrap();
+        let utf8_with_cjk = "file_\u{4e16}.txt";
+
+        // Strict: fails.
+        let strict_result = conv.remote_to_local(utf8_with_cjk.as_bytes());
+        assert!(strict_result.is_err());
+
+        // Lossy: succeeds with replacement.
+        let lossy_result = conv.remote_to_local_lossy(utf8_with_cjk.as_bytes());
+        assert!(lossy_result.had_replacements);
+        assert_eq!(&*lossy_result.output, b"file_?.txt");
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn trace_conversion_warning_emits_at_level_1() {
+        use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+
+        let mut cfg = VerbosityConfig::default();
+        cfg.debug.iconv = 1;
+        init(cfg);
+        let _ = drain_events();
+
+        trace_conversion_warning(
+            IconvRole::Client,
+            "café_\u{4e16}.txt",
+            "UTF-8",
+            "windows-1252",
+        );
+
+        let events = drain_events();
+        let iconv_msgs: Vec<_> = events
+            .into_iter()
+            .filter_map(|e| match e {
+                DiagnosticEvent::Debug {
+                    flag: DebugFlag::Iconv,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(iconv_msgs.len(), 1);
+        assert!(
+            iconv_msgs[0].contains("cannot convert filename"),
+            "expected conversion warning, got: {}",
+            iconv_msgs[0]
+        );
+        assert!(iconv_msgs[0].contains("UTF-8 -> windows-1252"));
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn trace_conversion_warning_suppressed_at_level_0() {
+        use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+
+        let mut cfg = VerbosityConfig::default();
+        cfg.debug.iconv = 0;
+        init(cfg);
+        let _ = drain_events();
+
+        trace_conversion_warning(IconvRole::Server, "test.txt", "UTF-8", "ISO-8859-1");
+
+        let events = drain_events();
+        let iconv_msgs: Vec<_> = events
+            .into_iter()
+            .filter_map(|e| match e {
+                DiagnosticEvent::Debug {
+                    flag: DebugFlag::Iconv,
+                    ..
+                } => Some(()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            iconv_msgs.is_empty(),
+            "conversion warning must be suppressed at level 0"
+        );
+    }
+
+    #[cfg(feature = "iconv")]
+    #[test]
+    fn lossy_invalid_utf8_in_remote_decodes_with_replacement() {
+        // Remote is UTF-8 but the bytes are invalid UTF-8.
+        // encoding_rs decodes invalid UTF-8 sequences as U+FFFD.
+        let conv = FilenameConverter::new("UTF-8", "UTF-8").unwrap();
+        // Identity converter returns input unchanged.
+        assert!(conv.is_identity());
+
+        // Non-identity: local=latin1, remote=UTF-8.
+        let conv = FilenameConverter::new("ISO-8859-1", "UTF-8").unwrap();
+        // Valid UTF-8 prefix + invalid continuation byte.
+        let invalid_utf8 = &[b'f', b'i', b'l', b'e', 0xFF, b'.', b't', b'x', b't'];
+        let outcome = conv.remote_to_local_lossy(invalid_utf8);
+        assert!(outcome.had_replacements);
+        // The invalid 0xFF byte triggers U+FFFD in UTF-8 decode, then the
+        // encoder maps it to '?' in ISO-8859-1 output.
+        // ASCII parts survive unchanged.
+        assert!(outcome.output.starts_with(b"file"));
+        assert!(outcome.output.ends_with(b".txt"));
     }
 }

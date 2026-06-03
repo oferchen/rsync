@@ -408,7 +408,9 @@ fn transport_split(
 /// instead of writing them, so the async pump can ship the buffer with
 /// `AsyncWriteExt::write_all`.
 ///
-/// upstream: rsync.c:283-320 send_protected_args() / iconvbufs(ic_send).
+/// upstream: rsync.c:283-320 send_protected_args() / iconvbufs(ic_send)
+/// uses `ICB_INCLUDE_BAD`: invalid bytes are passed through verbatim.
+/// We use lossy conversion which replaces unconvertible bytes with `?`.
 fn encode_secluded_args(
     args: &[&str],
     iconv: Option<&protocol::iconv::FilenameConverter>,
@@ -416,10 +418,10 @@ fn encode_secluded_args(
     let mut payload = Vec::new();
     for arg in args {
         match iconv {
-            Some(converter) => match converter.local_to_remote(arg.as_bytes()) {
-                Ok(bytes) => payload.extend_from_slice(&bytes),
-                Err(_) => payload.extend_from_slice(arg.as_bytes()),
-            },
+            Some(converter) => {
+                let outcome = converter.local_to_remote_lossy(arg.as_bytes());
+                payload.extend_from_slice(&outcome.output);
+            }
             None => payload.extend_from_slice(arg.as_bytes()),
         }
         payload.push(0);

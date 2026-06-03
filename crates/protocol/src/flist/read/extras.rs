@@ -57,16 +57,23 @@ impl FileListReader {
         // advertised CF_SYMLINK_ICONV) and ic_recv is configured, run the
         // target through iconvbufs(ic_recv, ...) so the receiver sees the
         // local-charset bytes rather than the wire-charset (UTF-8) bytes.
+        // On conversion failure, upstream warns and empties the target
+        // (flist.c:1141-1148). We use lossy conversion instead, replacing
+        // unconvertible bytes with '?' and warning.
         let target_bytes: std::borrow::Cow<'_, [u8]> = match self.iconv.as_ref() {
-            Some(converter) => match converter.remote_to_local(&target_bytes) {
-                Ok(converted) => converted,
-                Err(e) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("symlink target encoding conversion failed: {e}"),
-                    ));
+            Some(converter) => {
+                let outcome = converter.remote_to_local_lossy(&target_bytes);
+                if outcome.had_replacements {
+                    // upstream: flist.c:1142-1145 - warn about unconvertible symlink
+                    crate::iconv::trace_conversion_warning(
+                        crate::iconv::IconvRole::Client,
+                        &String::from_utf8_lossy(&target_bytes),
+                        converter.remote_encoding_name(),
+                        converter.local_encoding_name(),
+                    );
                 }
-            },
+                outcome.output
+            }
             None => std::borrow::Cow::Borrowed(target_bytes.as_slice()),
         };
 
