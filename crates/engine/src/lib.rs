@@ -244,6 +244,11 @@ pub use walk::{DirectoryWalker, FilteredWalker, WalkConfig, WalkEntry, WalkError
 /// remains valid after a panicking thread is unwound.
 pub use util::poison::{lock_or_recover, read_or_recover, write_or_recover};
 
+/// Global cleanup manager for tracking and removing stale temp files on
+/// abnormal exit. Used by the transfer pipeline to register temp files
+/// before writing and unregister them after a successful commit/rename.
+pub use util::cleanup::CleanupManager;
+
 /// Async I/O operations (available with `async` feature).
 #[cfg(feature = "async")]
 pub use async_io::{AsyncBatchCopier, AsyncFileCopier, AsyncIoError, CopyProgress, CopyResult};

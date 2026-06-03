@@ -48,6 +48,9 @@ pub(super) fn process_file(
     iocp_batch: Option<&mut fast_io::IocpDiskBatch>,
 ) -> io::Result<CommitResult> {
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
+    if needs_rename {
+        CleanupManager::global().register_temp_file(cleanup_guard.path().to_path_buf());
+    }
 
     // Register the temp file with the global cleanup manager so a SIGKILL
     // (which bypasses Drop) still removes orphaned temp files on restart.
@@ -200,6 +203,9 @@ pub(super) fn process_whole_file(
     iocp_batch: Option<&mut fast_io::IocpDiskBatch>,
 ) -> io::Result<CommitResult> {
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
+    if needs_rename {
+        CleanupManager::global().register_temp_file(cleanup_guard.path().to_path_buf());
+    }
 
     if needs_rename {
         CleanupManager::global().register_temp_file(cleanup_guard.path().to_path_buf());
@@ -422,7 +428,9 @@ fn commit_file(
     }
 
     let was_copy = if needs_rename {
-        rename_with_io_uring_fallback(cleanup_guard.path(), &begin.file_path)?
+        let result = rename_with_io_uring_fallback(cleanup_guard.path(), &begin.file_path)?;
+        CleanupManager::global().unregister_temp_file(cleanup_guard.path());
+        result
     } else if begin.is_inplace {
         // upstream: receiver.c:340 - set_file_length(fd, F_LENGTH(file))
         // In append mode, bytes_written only counts newly received data -
