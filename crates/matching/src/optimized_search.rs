@@ -210,10 +210,8 @@ mod tests {
         ];
         let tag_table = TagTable::new(&blocks);
 
-        // Should match low 16 bits: 0x5678 and 0x1234
         assert!(tag_table.might_match(0x12345678));
         assert!(tag_table.might_match(0x9abc1234));
-        // Any checksum with same low 16 bits should match
         assert!(tag_table.might_match(0xFFFF5678));
         assert!(tag_table.might_match(0x00001234));
     }
@@ -393,7 +391,6 @@ mod tests {
         }];
         let table = BlockHashTable::new(blocks);
 
-        // Checksum with different low 16 bits should be rejected by tag table
         let strong = vec![0xab, 0xcd, 0xef, 0x01];
         let matched = table.find_match(0x12341234, &strong);
         assert!(matched.is_none());
@@ -409,7 +406,6 @@ mod tests {
         }];
         let table = BlockHashTable::new(blocks);
 
-        // Correct rolling checksum but wrong strong checksum
         let wrong_strong = vec![0xff, 0xff, 0xff, 0xff];
         let matched = table.find_match(0x12345678, &wrong_strong);
         assert!(matched.is_none());
@@ -417,7 +413,6 @@ mod tests {
 
     #[test]
     fn test_collision_handling() {
-        // Multiple blocks with the same rolling checksum
         let blocks = vec![
             BlockEntry {
                 index: 0,
@@ -443,7 +438,6 @@ mod tests {
         let weak_matches = table.find_weak_matches(0x12345678);
         assert_eq!(weak_matches.len(), 3);
 
-        // Strong checksum disambiguates the colliding rolling checksums.
         let matched = table.find_match(0x12345678, &[0xbb, 0xbb]);
         assert!(matched.is_some());
         assert_eq!(matched.unwrap().index, 1);

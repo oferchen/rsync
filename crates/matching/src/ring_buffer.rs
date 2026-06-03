@@ -97,7 +97,6 @@ impl RingBuffer {
             self.len += 1;
             None
         } else {
-            // Buffer full: overwrite the oldest byte (at head) and return it.
             let outgoing = self.buffer[self.head];
             self.buffer[self.head] = byte;
             self.head = (self.head + 1) % self.buffer.len();
@@ -368,7 +367,6 @@ mod tests {
         for i in 0..10u8 {
             buf.push_back(i);
         }
-        // 10 pushes into a capacity-3 buffer leave the last three values.
         assert_eq!(buf.pop_front(), Some(7));
         assert_eq!(buf.pop_front(), Some(8));
         assert_eq!(buf.pop_front(), Some(9));
@@ -450,7 +448,6 @@ mod tests {
         assert_eq!(buf.len(), 1);
         assert_eq!(buf.as_slice(), &[42]);
 
-        // Pushing into a full capacity-1 buffer evicts and returns the prior byte.
         assert_eq!(buf.push_back(99), Some(42));
         assert!(buf.is_full());
         assert_eq!(buf.len(), 1);

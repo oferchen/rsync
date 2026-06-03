@@ -147,7 +147,6 @@ fn bithash_rejects_at_least_seven_eighths_of_known_misses() {
     let n_blocks = 1000usize;
     let mut bh = BitHash::with_block_count(n_blocks);
 
-    // Build the inserted set deterministically.
     let mut inserted = std::collections::HashSet::with_capacity(n_blocks);
     let mut rng = 0xC0FFEE_u64;
     while inserted.len() < n_blocks {
