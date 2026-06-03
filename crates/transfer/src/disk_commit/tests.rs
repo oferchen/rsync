@@ -5,7 +5,7 @@ use std::fs;
 use crate::pipeline::messages::{BeginMessage, FileMessage};
 use crate::pipeline::spsc::TryRecvError;
 
-use super::config::DiskCommitConfig;
+use super::config::{DiskCommitConfig, PartialMode};
 use super::thread::spawn_disk_thread;
 
 #[test]
@@ -530,5 +530,317 @@ fn whole_file_commit_via_io_uring_or_fallback() {
     assert_eq!(fs::read(&file_path).unwrap(), b"whole iouring");
 
     h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+// --- PIR-2: Partial file retention tests ---
+
+#[test]
+fn partial_mode_default_is_none() {
+    let config = DiskCommitConfig::default();
+    assert_eq!(config.partial_mode, PartialMode::None);
+}
+
+#[test]
+fn partial_mode_partial_retains_file_on_shutdown() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("partial_shutdown.dat");
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::Partial,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 100,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"partial data".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+
+    let result = h.result_rx.recv().unwrap();
+    assert!(result.is_err());
+
+    // With PartialMode::Partial, the temp file should be renamed to dest.
+    assert!(
+        file_path.exists(),
+        "partial file must be retained at destination on shutdown"
+    );
+    assert_eq!(fs::read(&file_path).unwrap(), b"partial data");
+
+    h.join_handle.join().unwrap();
+}
+
+#[test]
+fn partial_mode_none_deletes_file_on_shutdown() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("no_partial_shutdown.dat");
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::None,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 100,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"will be deleted".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+
+    let result = h.result_rx.recv().unwrap();
+    assert!(result.is_err());
+
+    // With PartialMode::None, the temp file should be deleted.
+    assert!(
+        !file_path.exists(),
+        "temp file must be deleted when partial mode is None"
+    );
+
+    h.join_handle.join().unwrap();
+}
+
+#[test]
+fn partial_mode_partial_retains_file_on_abort() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("partial_abort.dat");
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::Partial,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 100,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"abort data".to_vec()))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Abort {
+            reason: "test abort".into(),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap();
+    assert!(result.is_err());
+
+    // With PartialMode::Partial, the temp file should be renamed to dest.
+    assert!(
+        file_path.exists(),
+        "partial file must be retained at destination on abort"
+    );
+    assert_eq!(fs::read(&file_path).unwrap(), b"abort data");
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+#[test]
+fn partial_mode_partial_dir_retains_file_in_directory() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("partial_dir_test.dat");
+    let partial_dir = dir.path().join(".rsync-partial");
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::PartialDir(partial_dir.clone()),
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 100,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"partial dir data".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+
+    let result = h.result_rx.recv().unwrap();
+    assert!(result.is_err());
+
+    // The temp file should be moved to partial-dir/filename.
+    let partial_path = partial_dir.join("partial_dir_test.dat");
+    assert!(
+        partial_path.exists(),
+        "partial file must be retained in partial directory"
+    );
+    assert_eq!(fs::read(&partial_path).unwrap(), b"partial dir data");
+    // The original dest path should not exist.
+    assert!(
+        !file_path.exists(),
+        "destination file must not exist when using partial-dir"
+    );
+
+    h.join_handle.join().unwrap();
+}
+
+#[test]
+fn partial_mode_no_retention_without_data() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("no_data_partial.dat");
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::Partial,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    // Begin but send no chunks - upstream's got_literal would be false.
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 100,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+
+    let result = h.result_rx.recv().unwrap();
+    assert!(result.is_err());
+
+    // No data was written, so no partial retention.
+    assert!(
+        !file_path.exists(),
+        "no partial retention without literal data"
+    );
+
+    h.join_handle.join().unwrap();
+}
+
+#[test]
+fn partial_mode_channel_disconnect_retains_file() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("disconnect_partial.dat");
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::Partial,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 100,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"disconnect data".to_vec()))
+        .unwrap();
+
+    // Drop the sender to simulate channel disconnect.
+    drop(h.file_tx);
+
+    // The disk thread should exit and retain the partial file.
+    h.join_handle.join().unwrap();
+
+    assert!(
+        file_path.exists(),
+        "partial file must be retained on channel disconnect"
+    );
+    assert_eq!(fs::read(&file_path).unwrap(), b"disconnect data");
+}
+
+#[test]
+fn partial_mode_relative_partial_dir() {
+    let dir = test_support::create_tempdir();
+    let dest_dir = dir.path().join("dest");
+    fs::create_dir(&dest_dir).unwrap();
+    let file_path = dest_dir.join("relative_partial.dat");
+
+    // Relative partial-dir: resolved relative to the file's parent directory.
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::PartialDir(std::path::PathBuf::from(".rsync-partial")),
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 100,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"relative partial".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+
+    let result = h.result_rx.recv().unwrap();
+    assert!(result.is_err());
+
+    let partial_path = dest_dir.join(".rsync-partial").join("relative_partial.dat");
+    assert!(
+        partial_path.exists(),
+        "partial file must be retained in relative partial directory"
+    );
+    assert_eq!(fs::read(&partial_path).unwrap(), b"relative partial");
+
     h.join_handle.join().unwrap();
 }

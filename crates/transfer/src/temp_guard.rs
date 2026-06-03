@@ -354,6 +354,79 @@ impl TempFileGuard {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// Renames the temp file into a partial directory for later resume.
+    ///
+    /// Computes the target path as `partial_dir / filename` where `filename`
+    /// is derived from `dest_path` (the final destination). Creates the
+    /// partial directory if it does not exist.
+    ///
+    /// On success, marks the guard as kept (no deletion on drop) and returns
+    /// `Ok(partial_path)`. On failure, returns the I/O error - the caller
+    /// should let the guard drop normally to clean up the temp file.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `cleanup.c:105-115` - `handle_partial_dir()` constructs the partial
+    ///   path and calls `do_rename()` to move the temp file there.
+    /// - `util1.c:robust_rename()` - cross-device fallback with copy+remove.
+    pub fn rename_to_partial_dir(
+        &mut self,
+        dest_path: &Path,
+        partial_dir: &Path,
+    ) -> io::Result<PathBuf> {
+        let file_name = dest_path
+            .file_name()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "destination has no filename"))?;
+
+        // upstream: cleanup.c constructs partial path as partial_dir/filename
+        // For relative partial dirs, the path is relative to the file's parent.
+        let partial_path = if partial_dir.is_absolute() {
+            partial_dir.join(file_name)
+        } else {
+            // Relative partial-dir: place under the file's parent directory.
+            // upstream: cleanup.c uses the same parent as the destination.
+            let parent = dest_path.parent().unwrap_or(Path::new("."));
+            parent.join(partial_dir).join(file_name)
+        };
+
+        // Create the partial directory if it does not exist.
+        if let Some(parent) = partial_path.parent() {
+            if !parent.exists() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+
+        // Rename temp file to the partial path, with cross-device fallback.
+        match fs::rename(self.path(), &partial_path) {
+            Ok(()) => {
+                self.keep_on_drop = true;
+                Ok(partial_path)
+            }
+            Err(ref e) if is_cross_device_error(e) => {
+                // upstream: util1.c:robust_rename() - copy + unlink on EXDEV
+                fs::copy(self.path(), &partial_path)?;
+                // The guard's drop will remove the source temp file.
+                self.keep_on_drop = true;
+                let _ = fs::remove_file(self.path());
+                Ok(partial_path)
+            }
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// Returns `true` when an I/O error represents a cross-device link (EXDEV).
+fn is_cross_device_error(e: &io::Error) -> bool {
+    match e.raw_os_error() {
+        #[cfg(unix)]
+        Some(code) => code == libc::EXDEV,
+        #[cfg(windows)]
+        Some(code) => code == 17, // ERROR_NOT_SAME_DEVICE
+        #[cfg(not(any(unix, windows)))]
+        Some(_) => false,
+        None => false,
+    }
 }
 
 impl Drop for TempFileGuard {
@@ -777,5 +850,80 @@ mod tests {
             !renamed_temp.exists(),
             "sandbox-anchored unlink must remove the original temp file"
         );
+    }
+
+    #[test]
+    fn rename_to_partial_dir_absolute() {
+        let dir = tempdir().expect("create temp dir");
+        let temp_path = dir.path().join("temp_file.tmp");
+        let partial_dir = dir.path().join("partial");
+        let dest_path = dir.path().join("final_dest.txt");
+
+        fs::write(&temp_path, b"partial content").unwrap();
+
+        let mut guard = TempFileGuard::new(temp_path.clone());
+        let result = guard.rename_to_partial_dir(&dest_path, &partial_dir);
+
+        assert!(result.is_ok());
+        let partial_path = result.unwrap();
+        assert_eq!(partial_path, partial_dir.join("final_dest.txt"));
+        assert!(partial_path.exists());
+        assert_eq!(fs::read(&partial_path).unwrap(), b"partial content");
+        assert!(!temp_path.exists());
+        // Guard should be marked kept.
+        assert!(guard.keep_on_drop);
+    }
+
+    #[test]
+    fn rename_to_partial_dir_relative() {
+        let dir = tempdir().expect("create temp dir");
+        let dest_dir = dir.path().join("dest");
+        fs::create_dir(&dest_dir).unwrap();
+        let temp_path = dir.path().join("temp_file.tmp");
+        let dest_path = dest_dir.join("file.dat");
+
+        fs::write(&temp_path, b"relative partial").unwrap();
+
+        let mut guard = TempFileGuard::new(temp_path.clone());
+        let relative_dir = Path::new(".rsync-partial");
+        let result = guard.rename_to_partial_dir(&dest_path, relative_dir);
+
+        assert!(result.is_ok());
+        let partial_path = result.unwrap();
+        assert_eq!(partial_path, dest_dir.join(".rsync-partial").join("file.dat"));
+        assert!(partial_path.exists());
+        assert_eq!(fs::read(&partial_path).unwrap(), b"relative partial");
+    }
+
+    #[test]
+    fn rename_to_partial_dir_creates_missing_directory() {
+        let dir = tempdir().expect("create temp dir");
+        let temp_path = dir.path().join("temp.tmp");
+        let partial_dir = dir.path().join("deep").join("nested").join("partial");
+        let dest_path = dir.path().join("file.txt");
+
+        fs::write(&temp_path, b"nested partial").unwrap();
+
+        let mut guard = TempFileGuard::new(temp_path.clone());
+        let result = guard.rename_to_partial_dir(&dest_path, &partial_dir);
+
+        assert!(result.is_ok());
+        let partial_path = result.unwrap();
+        assert!(partial_path.exists());
+        assert_eq!(fs::read(&partial_path).unwrap(), b"nested partial");
+    }
+
+    #[test]
+    fn rename_to_partial_dir_no_filename_returns_error() {
+        let dir = tempdir().expect("create temp dir");
+        let temp_path = dir.path().join("temp.tmp");
+        let partial_dir = dir.path().join("partial");
+
+        fs::write(&temp_path, b"data").unwrap();
+
+        let mut guard = TempFileGuard::new(temp_path);
+        let result = guard.rename_to_partial_dir(Path::new("/"), &partial_dir);
+
+        assert!(result.is_err());
     }
 }
