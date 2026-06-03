@@ -253,7 +253,6 @@ impl DeltaGenerator {
                 digest.sum2()
             );
 
-            // Match using two-slice view to avoid O(block_len) rotation when wrapped.
             // upstream: match.c:144-190 - try want_i hint before hash probe.
             // The want_i hint deliberately bypasses the matched-block bitmap:
             // the hint targets the just-matched index plus one, which the

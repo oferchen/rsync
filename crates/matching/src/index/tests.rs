@@ -281,8 +281,6 @@ fn find_match_bytes_uses_strong_checksum_for_collision() {
     let found1 = index.find_match_bytes(block1_digest, &block1_window);
     assert!(found1.is_some(), "block 1 should match");
 
-    // Same rolling-checksum lookup key, but different content: the strong
-    // checksum disambiguates and rejects the false positive.
     let no_match = index.find_match_bytes(block0_digest, &block1_window);
     assert!(
         no_match.is_none(),
@@ -321,7 +319,6 @@ fn rebuild_reuses_allocation() {
     let has_full = index.rebuild(&sig2, SignatureAlgorithm::Md4);
     assert!(has_full, "second signature should have full blocks");
 
-    // The lookup-table allocation must be reused, not shrunk, after rebuild.
     assert!(
         index.lookup.capacity() >= capacity_before,
         "capacity should be preserved across rebuild"
