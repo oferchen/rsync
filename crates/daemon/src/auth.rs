@@ -272,7 +272,6 @@ impl SecretsFile {
         for raw_line in content.lines() {
             let line = raw_line.trim_end_matches('\r');
 
-            // Skip empty lines and comments
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
