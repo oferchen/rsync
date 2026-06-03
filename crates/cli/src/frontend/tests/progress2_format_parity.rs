@@ -690,7 +690,7 @@ fn progress2_composed_line_field_order_matches_upstream() {
         "{:>15}",
         format_progress_bytes(1_536, HumanReadableMode::Disabled)
     );
-    let percent_field = format!("{:>4}", format_progress_percent(100, Some(1_536)));
+    let percent_field = format!("{:>4}", format_progress_percent(1_536, Some(1_536)));
     let rate_field = format!(
         "{:>11}",
         format_progress_rate(1_536, Duration::from_secs(1), HumanReadableMode::Disabled)
