@@ -138,9 +138,7 @@ fn sigterm_and_wait(child: &mut Child) {
                     // Last resort: SIGKILL if SIGTERM didn't work.
                     let _ = child.kill();
                     let _ = child.wait();
-                    panic!(
-                        "client pid {pid} did not exit within {EXIT_WAIT:?} after SIGTERM"
-                    );
+                    panic!("client pid {pid} did not exit within {EXIT_WAIT:?} after SIGTERM");
                 }
                 thread::sleep(Duration::from_millis(50));
             }
@@ -282,10 +280,7 @@ fn no_partial_flag_cleans_up_on_mid_transfer_kill() {
         !dest_file.exists(),
         "without --partial, the destination file must not exist after interrupt; \
          found {} bytes at {}",
-        dest_file
-            .metadata()
-            .map(|m| m.len())
-            .unwrap_or(0),
+        dest_file.metadata().map(|m| m.len()).unwrap_or(0),
         dest_file.display()
     );
 
@@ -298,10 +293,7 @@ fn no_partial_flag_cleans_up_on_mid_transfer_kill() {
         entries.is_empty(),
         "no files should remain in destination directory without --partial; \
          found: {:?}",
-        entries
-            .iter()
-            .map(|e| e.file_name())
-            .collect::<Vec<_>>()
+        entries.iter().map(|e| e.file_name()).collect::<Vec<_>>()
     );
 }
 
