@@ -21,6 +21,8 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ### Features
 
+- Daemon-over-remote-shell mode for SSH with `::` operands (#5364)
+- `--server --daemon` remote-shell daemon mode over stdio (#5353)
 - `flush_workers`/`drain_inflight` barrier API on `ParallelDeltaApplier` (FFB-2) (#4665)
 - Warn when `rsync --compress` meets SSH `-C` (double-compression detection, SSC-1) (#4667)
 - Warn on SSH stderr socketpair-to-pipe fallback (SSF-2) (#4663)
@@ -45,6 +47,35 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ### Bug Fixes
 
+- Remove erroneous CAP assertion from daemon config test (#5367)
+- Align daemon module listing protocol with upstream behavior (#5366)
+- Remove stale SEC-1.j TODO comments from completed task (#5365)
+- Use socketpair instead of pipes for RSYNC_CONNECT_PROG child stdin (#5363)
+- Detect inetd/connect-program stdin socket in standalone daemon (#5359)
+- Build tls/getgroups helpers for upstream testsuite and remove last known failures (#5358)
+- Run daemon protocol over stdio for remote-shell and connect-program modes (#5357)
+- Add `build_capability_string_suffix` and remove ssh-basic from known failures (#5356)
+- Embed capability string in compact flag string for server mode (#5352)
+- Prevent deadlock in sync bridge multi-chunk wire parity test (#5351)
+- Add `.nojekyll` to prevent Liquid template errors in GitHub Pages (#5349)
+- Upstream testsuite hardlinks test compatibility (#5346)
+- Resolve relative `OC_RSYNC_BIN` path in upstream testsuite runner (#5345)
+- Remove chmod-temp-dir from upstream testsuite known failures (#5344)
+- Export `setfacl_nodef` in upstream testsuite harness for ACL tests (#5343)
+- Apply metadata before rename to match upstream `finish_transfer` semantics (#5338)
+- Parse secluded-args and capability string from compact server flag string (#5336)
+- Inherit `P_LOCAL` directives from global `rsyncd.conf` section into module context (#5334)
+- Update clap error message assertion for clap 4.6 wording (#5331)
+- Preserve atime independently of mtime in local copy metadata path (#5328)
+- Unlink destination before cross-device copy in temp-dir fallback (#5327)
+- Widen `open_daemon_stream` visibility for cross-module re-export (#5323)
+- Use explicit builder in `to_builder_allows_modification` test (#5322)
+- Align debug flag level tests with upstream clamping behavior (#5321)
+- Wire `--old-args` through client config to unblock upstream 00-hello test (#5320)
+- Clamp `--debug` flag levels to `MAX_OUT_LEVEL` instead of rejecting (#5319)
+- Preserve original wire NDX for INC_RECURSE gap echo-back (#5318)
+- Support `RSYNC_CONNECT_PROG` and double-colon syntax in daemon transport (#5317)
+- Implement `-VV` JSON output and remove atimes from known failures (#5316)
 - Gate `kqueue_stub` `c_int` import on non-unix only (#4429)
 - Import `FileReader` trait for `IoUringFileReader::open` (#4452)
 - Clippy compliance in `nvme_data_path` bench (#4454)
@@ -55,6 +86,7 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ### Refactoring
 
+- Comment cleanup for daemon crate (#5362)
 - Rename `apply_chunk_parallel` to `apply_one_chunk` for clarity (RJN-2) (#4660)
 - Extract `spill/tempfile.rs` (SPL-3) (#4434)
 - Channel-based drain shutdown for delete emitter (ATU-4) (#4401)
@@ -85,6 +117,8 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ### Documentation
 
+- Add interop compatibility status document (#5361)
+- Publish interop compatibility status document (#5360)
 - **SSH transport**: documented the opt-in `rsync_io/ssh-socketpair-stderr`
   Cargo feature - what it does (socketpair-backed SSH stderr instead of an
   anonymous pipe), why it exists (avoid deadlock when chatty remote children
@@ -136,6 +170,19 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ### CI/Build
 
+- Install `libxxhash-dev` and guard grep pipeline in upstream testsuite (#5350)
+- Add upstream rsync testsuite workflow with UPASS detection (#5342)
+- Standardize cache keys and add missing `CARGO_TERM_COLOR` (#5341)
+- Align ci-skip interop job names with `ci.yml` check names (#5340)
+- Fix ci-skip path filters to avoid overlap with `ci.yml` (#5339)
+- Add `--no-tests=warn` to async-wire-parity workflow (#5337)
+- Add nextest `--profile ci`, `--locked`, and missing timeouts (#5335)
+- Pin all GitHub Actions to SHA hashes (#5333)
+- Standardize cache keys on `Cargo.lock` (#5332)
+- Fix daemon bench workflows using wrong package name (#5330)
+- Fix xargs flag conflict and proc/status race in daemon concurrency CI (#5329)
+- Remove job-level `if` conditions that broke push-triggered CI runs (#5326)
+- Reduce runner contention by limiting non-required jobs to schedule (#5324)
 - Matrix benchmark-release and harden `parallel_determinism` (#4443)
 - Apply top quick wins from workflow audit (#4432)
 - Weekly fuzz coverage report workflow (FCV-9) (#4403)
@@ -144,6 +191,9 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ### Other Changes
 
+- Triage environment-dependent upstream testsuite known failures (#5355)
+- Triage environment-dependent upstream testsuite known failures as root (#5354)
+- Format crtime test builder chain inline (#5325)
 - Add SAFETY comments to the remaining 21 unsafe blocks (#4440)
 - Consolidate cross-crate deps into `[workspace.dependencies]` (#4436)
 - Gate Unix-only test modules and deny broken rustdoc links (#4430)
