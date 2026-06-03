@@ -298,8 +298,12 @@ pub(crate) struct ConnectProgramStream {
 /// (mirroring upstream rsync's `sock_exec()` which returns a single fd).
 /// On non-Unix, separate pipe handles are used.
 #[cfg(unix)]
-struct ProgramTransport {
-    socket: std::os::unix::net::UnixStream,
+enum ProgramTransport {
+    Socket(std::os::unix::net::UnixStream),
+    Pipe {
+        stdin: std::process::ChildStdin,
+        stdout: std::process::ChildStdout,
+    },
 }
 
 #[cfg(not(unix))]
@@ -314,22 +318,28 @@ impl ConnectProgramStream {
     fn from_socketpair(child: Child, parent_socket: std::os::unix::net::UnixStream) -> Self {
         Self {
             child: Some(child),
-            transport: Some(ProgramTransport {
-                socket: parent_socket,
-            }),
+            transport: Some(ProgramTransport::Socket(parent_socket)),
         }
     }
 
-    /// Creates a stream backed by OS pipes (non-Unix fallback).
-    #[cfg(not(unix))]
-    fn from_pipes(
+    /// Creates a stream backed by OS pipes.
+    ///
+    /// On non-Unix this is the only transport. On Unix this is used for
+    /// daemon-over-remote-shell where SSH pipes do not need the socketpair
+    /// trick required by `RSYNC_CONNECT_PROG` inetd detection.
+    pub(super) fn from_pipes(
         child: Child,
         stdin: std::process::ChildStdin,
         stdout: std::process::ChildStdout,
     ) -> Self {
+        #[cfg(unix)]
+        let transport = ProgramTransport::Pipe { stdin, stdout };
+        #[cfg(not(unix))]
+        let transport = ProgramTransport { stdin, stdout };
+
         Self {
             child: Some(child),
-            transport: Some(ProgramTransport { stdin, stdout }),
+            transport: Some(transport),
         }
     }
 
@@ -344,17 +354,24 @@ impl ConnectProgramStream {
 
         #[cfg(unix)]
         {
-            match transport.socket.try_clone() {
-                Ok(writer) => Ok(ConnectProgramParts {
+            match transport {
+                ProgramTransport::Socket(socket) => match socket.try_clone() {
+                    Ok(writer) => Ok(ConnectProgramParts {
+                        child,
+                        reader: ProgramReader::Socket(socket),
+                        writer: ProgramWriter::Socket(writer),
+                    }),
+                    Err(e) => {
+                        let mut child = child;
+                        let _ = child.wait();
+                        Err(e)
+                    }
+                },
+                ProgramTransport::Pipe { stdin, stdout } => Ok(ConnectProgramParts {
                     child,
-                    reader: transport.socket,
-                    writer,
+                    reader: ProgramReader::Pipe(stdout),
+                    writer: ProgramWriter::Pipe(stdin),
                 }),
-                Err(e) => {
-                    let mut child = child;
-                    let _ = child.wait();
-                    Err(e)
-                }
             }
         }
 
@@ -373,75 +390,119 @@ impl ConnectProgramStream {
 pub(super) struct ConnectProgramParts {
     /// The child process handle.
     pub(super) child: Child,
-    /// Read half: Unix socketpair clone or child stdout pipe.
+    /// Read half: Unix socketpair clone, child stdout pipe, or equivalent.
     #[cfg(unix)]
-    pub(super) reader: std::os::unix::net::UnixStream,
+    pub(super) reader: ProgramReader,
     #[cfg(not(unix))]
     pub(super) reader: std::process::ChildStdout,
-    /// Write half: Unix socketpair clone or child stdin pipe.
+    /// Write half: Unix socketpair clone, child stdin pipe, or equivalent.
     #[cfg(unix)]
-    pub(super) writer: std::os::unix::net::UnixStream,
+    pub(super) writer: ProgramWriter,
     #[cfg(not(unix))]
     pub(super) writer: std::process::ChildStdin,
 }
 
+/// Read half of a connect program stream on Unix.
+///
+/// Either a cloned socketpair end (for `RSYNC_CONNECT_PROG`) or a child
+/// stdout pipe (for daemon-over-remote-shell).
+#[cfg(unix)]
+pub(in crate::client) enum ProgramReader {
+    Socket(std::os::unix::net::UnixStream),
+    Pipe(std::process::ChildStdout),
+}
+
+#[cfg(unix)]
+impl Read for ProgramReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::Socket(s) => s.read(buf),
+            Self::Pipe(p) => p.read(buf),
+        }
+    }
+}
+
+/// Write half of a connect program stream on Unix.
+///
+/// Either a cloned socketpair end (for `RSYNC_CONNECT_PROG`) or a child
+/// stdin pipe (for daemon-over-remote-shell).
+#[cfg(unix)]
+pub(in crate::client) enum ProgramWriter {
+    Socket(std::os::unix::net::UnixStream),
+    Pipe(std::process::ChildStdin),
+}
+
+#[cfg(unix)]
+impl Write for ProgramWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Self::Socket(s) => s.write(buf),
+            Self::Pipe(p) => p.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Self::Socket(s) => s.flush(),
+            Self::Pipe(p) => p.flush(),
+        }
+    }
+}
+
 impl Read for ConnectProgramStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let transport = self
+            .transport
+            .as_mut()
+            .expect("transport taken by into_parts");
         #[cfg(unix)]
         {
-            self.transport
-                .as_mut()
-                .expect("transport taken by into_parts")
-                .socket
-                .read(buf)
+            match transport {
+                ProgramTransport::Socket(socket) => socket.read(buf),
+                ProgramTransport::Pipe { stdout, .. } => stdout.read(buf),
+            }
         }
         #[cfg(not(unix))]
         {
-            self.transport
-                .as_mut()
-                .expect("transport taken by into_parts")
-                .stdout
-                .read(buf)
+            transport.stdout.read(buf)
         }
     }
 }
 
 impl Write for ConnectProgramStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let transport = self
+            .transport
+            .as_mut()
+            .expect("transport taken by into_parts");
         #[cfg(unix)]
         {
-            self.transport
-                .as_mut()
-                .expect("transport taken by into_parts")
-                .socket
-                .write(buf)
+            match transport {
+                ProgramTransport::Socket(socket) => socket.write(buf),
+                ProgramTransport::Pipe { stdin, .. } => stdin.write(buf),
+            }
         }
         #[cfg(not(unix))]
         {
-            self.transport
-                .as_mut()
-                .expect("transport taken by into_parts")
-                .stdin
-                .write(buf)
+            transport.stdin.write(buf)
         }
     }
 
     fn flush(&mut self) -> io::Result<()> {
+        let transport = self
+            .transport
+            .as_mut()
+            .expect("transport taken by into_parts");
         #[cfg(unix)]
         {
-            self.transport
-                .as_mut()
-                .expect("transport taken by into_parts")
-                .socket
-                .flush()
+            match transport {
+                ProgramTransport::Socket(socket) => socket.flush(),
+                ProgramTransport::Pipe { stdin, .. } => stdin.flush(),
+            }
         }
         #[cfg(not(unix))]
         {
-            self.transport
-                .as_mut()
-                .expect("transport taken by into_parts")
-                .stdin
-                .flush()
+            transport.stdin.flush()
         }
     }
 }

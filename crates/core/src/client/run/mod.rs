@@ -201,6 +201,12 @@ fn run_client_internal(
     });
 
     if has_daemon_url {
+        // upstream: main.c:1571-1586 - when `-e`/`--rsh` is active with `::`,
+        // the client spawns SSH with `rsync --server --daemon .` as the remote
+        // command, then speaks the daemon protocol over the SSH pipes.
+        if config.remote_shell().is_some() {
+            return remote::run_daemon_over_remote_shell(&config, observer, batch_writer);
+        }
         return remote::run_daemon_transfer(&config, observer, batch_writer);
     }
 

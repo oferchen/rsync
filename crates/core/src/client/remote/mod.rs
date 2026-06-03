@@ -40,7 +40,7 @@ pub use async_ssh_transport::{
     ENV_OPT_IN as ASYNC_SSH_ENV_OPT_IN, is_enabled_by_env as async_ssh_enabled,
     run_async_ssh_transfer,
 };
-pub use daemon_transfer::run_daemon_transfer;
+pub use daemon_transfer::{run_daemon_over_remote_shell, run_daemon_transfer};
 #[cfg(feature = "embedded-ssh")]
 pub(crate) use embedded_ssh_transfer::is_ssh_url;
 #[cfg(feature = "embedded-ssh")]
