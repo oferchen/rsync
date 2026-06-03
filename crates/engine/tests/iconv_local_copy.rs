@@ -255,8 +255,7 @@ fn iconv_utf8_latin1_round_trip_preserves_filenames() {
     }
 
     // ---- Forward leg: UTF-8 -> ISO-8859-1 ----
-    let fwd_converter =
-        FilenameConverter::new("UTF-8", "ISO-8859-1").expect("forward converter");
+    let fwd_converter = FilenameConverter::new("UTF-8", "ISO-8859-1").expect("forward converter");
     let fwd_operands = vec![
         source.into_os_string(),
         intermediate.clone().into_os_string(),
@@ -306,8 +305,7 @@ fn iconv_utf8_latin1_round_trip_preserves_filenames() {
     );
 
     // ---- Reverse leg: ISO-8859-1 -> UTF-8 ----
-    let rev_converter =
-        FilenameConverter::new("ISO-8859-1", "UTF-8").expect("reverse converter");
+    let rev_converter = FilenameConverter::new("ISO-8859-1", "UTF-8").expect("reverse converter");
     let rev_operands = vec![
         inter_root.into_os_string(),
         final_dest.clone().into_os_string(),
@@ -369,7 +367,8 @@ fn iconv_utf8_latin1_round_trip_preserves_filenames() {
             )
         });
         assert_eq!(
-            actual, expected_payload,
+            actual,
+            expected_payload,
             "payload mismatch for {:?}",
             String::from_utf8_lossy(name_bytes)
         );
@@ -407,8 +406,7 @@ fn iconv_round_trip_trailing_slash_copies_contents() {
     fs::write(source.join(name_b), b"uber-data").expect("write b");
 
     // Forward: trailing slash -> contents land directly in intermediate.
-    let fwd_converter =
-        FilenameConverter::new("UTF-8", "ISO-8859-1").expect("forward converter");
+    let fwd_converter = FilenameConverter::new("UTF-8", "ISO-8859-1").expect("forward converter");
     let mut src_os = source.clone().into_os_string();
     src_os.push("/");
     let fwd_operands = vec![src_os, intermediate.clone().into_os_string()];
@@ -425,10 +423,7 @@ fn iconv_round_trip_trailing_slash_copies_contents() {
     // "source" subdirectory).
     let inter_names = list_raw_names(&intermediate);
     let expected_latin1: Vec<Vec<u8>> = {
-        let mut v = vec![
-            b"r\xe9sum\xe9.txt".to_vec(),
-            b"\xfcber.txt".to_vec(),
-        ];
+        let mut v = vec![b"r\xe9sum\xe9.txt".to_vec(), b"\xfcber.txt".to_vec()];
         v.sort();
         v
     };
@@ -438,8 +433,7 @@ fn iconv_round_trip_trailing_slash_copies_contents() {
     );
 
     // Reverse: trailing slash on intermediate.
-    let rev_converter =
-        FilenameConverter::new("ISO-8859-1", "UTF-8").expect("reverse converter");
+    let rev_converter = FilenameConverter::new("ISO-8859-1", "UTF-8").expect("reverse converter");
     let mut inter_os = intermediate.into_os_string();
     inter_os.push("/");
     let rev_operands = vec![inter_os, final_dest.clone().into_os_string()];
