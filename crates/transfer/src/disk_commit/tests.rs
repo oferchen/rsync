@@ -6,7 +6,7 @@ use crate::pipeline::messages::{BeginMessage, FileMessage};
 use crate::pipeline::spsc::TryRecvError;
 
 use super::config::{DELAY_UPDATES_PARTIAL_DIR, DiskCommitConfig, PartialMode};
-use super::process::{CommitOutcome, delay_updates_staging_path, handle_delayed_updates};
+use super::process::{DelayedUpdateEntry, delay_updates_staging_path, handle_delayed_updates};
 use super::thread::spawn_disk_thread;
 
 #[test]
@@ -1549,7 +1549,7 @@ fn delay_updates_single_file_reaches_final_destination() {
     let final_path = dir.path().join("file.txt");
     fs::write(&staging_path, b"staged content").unwrap();
 
-    let outcomes = vec![CommitOutcome {
+    let outcomes = vec![DelayedUpdateEntry {
         staging_path: staging_path.clone(),
         final_path: final_path.clone(),
     }];
@@ -1581,7 +1581,7 @@ fn delay_updates_multiple_files_reach_final_destination() {
         let staging = staging_dir.join(&name);
         let final_dest = dir.path().join(&name);
         fs::write(&staging, content.as_bytes()).unwrap();
-        outcomes.push(CommitOutcome {
+        outcomes.push(DelayedUpdateEntry {
             staging_path: staging,
             final_path: final_dest,
         });
@@ -1618,7 +1618,7 @@ fn delay_updates_staging_directory_cleaned_up() {
     let final_path = dir.path().join("cleanup.txt");
     fs::write(&staging_path, b"cleanup test").unwrap();
 
-    let outcomes = vec![CommitOutcome {
+    let outcomes = vec![DelayedUpdateEntry {
         staging_path,
         final_path,
     }];
@@ -1657,15 +1657,15 @@ fn delay_updates_nested_directories_all_reach_final_destination() {
     fs::write(staging_sub2.join("deep.txt"), b"deep level").unwrap();
 
     let outcomes = vec![
-        CommitOutcome {
+        DelayedUpdateEntry {
             staging_path: staging_root.join("top.txt"),
             final_path: dest_root.join("top.txt"),
         },
-        CommitOutcome {
+        DelayedUpdateEntry {
             staging_path: staging_sub1.join("mid.txt"),
             final_path: sub1.join("mid.txt"),
         },
-        CommitOutcome {
+        DelayedUpdateEntry {
             staging_path: staging_sub2.join("deep.txt"),
             final_path: sub2.join("deep.txt"),
         },
@@ -1753,7 +1753,7 @@ fn delay_updates_disk_thread_e2e_single_file() {
     );
 
     // Step 2: Run the delay-updates sweep.
-    let outcomes = vec![CommitOutcome {
+    let outcomes = vec![DelayedUpdateEntry {
         staging_path: staging_path.clone(),
         final_path: final_path.clone(),
     }];
@@ -1813,7 +1813,7 @@ fn delay_updates_disk_thread_e2e_multiple_files() {
         let result = h.result_rx.recv().unwrap().unwrap();
         assert_eq!(result.file_entry_index, i);
 
-        outcomes.push(CommitOutcome {
+        outcomes.push(DelayedUpdateEntry {
             staging_path,
             final_path,
         });
@@ -1896,7 +1896,7 @@ fn delay_updates_disk_thread_e2e_whole_file() {
     assert!(staging_path.exists());
     assert!(!final_path.exists());
 
-    let outcomes = vec![CommitOutcome {
+    let outcomes = vec![DelayedUpdateEntry {
         staging_path: staging_path.clone(),
         final_path: final_path.clone(),
     }];
@@ -1974,11 +1974,11 @@ fn delay_updates_disk_thread_e2e_nested_dirs() {
     assert!(!final_sub_file.exists());
 
     let outcomes = vec![
-        CommitOutcome {
+        DelayedUpdateEntry {
             staging_path: staging_root_file,
             final_path: final_root_file.clone(),
         },
-        CommitOutcome {
+        DelayedUpdateEntry {
             staging_path: staging_sub_file,
             final_path: final_sub_file.clone(),
         },
@@ -2021,7 +2021,7 @@ fn delay_updates_staging_path_roundtrip() {
         let content = format!("data-{i}");
         fs::write(&staging_path, content.as_bytes()).unwrap();
 
-        outcomes.push(CommitOutcome {
+        outcomes.push(DelayedUpdateEntry {
             staging_path,
             final_path,
         });
@@ -2059,7 +2059,7 @@ fn delay_updates_sweep_replaces_existing_files() {
     let staging_path = staging_dir.join("existing.txt");
     fs::write(&staging_path, b"new content").unwrap();
 
-    let outcomes = vec![CommitOutcome {
+    let outcomes = vec![DelayedUpdateEntry {
         staging_path,
         final_path: final_path.clone(),
     }];

@@ -36,5 +36,5 @@ pub use self::config::{
     BackupConfig, DEFAULT_CHANNEL_CAPACITY, DELAY_UPDATES_PARTIAL_DIR, DiskCommitConfig,
     PartialMode,
 };
-pub use self::process::{CommitOutcome, delay_updates_staging_path, handle_delayed_updates};
+pub use self::process::{DelayedUpdateEntry, delay_updates_staging_path, handle_delayed_updates};
 pub use self::thread::{DiskThreadHandle, spawn_disk_thread};

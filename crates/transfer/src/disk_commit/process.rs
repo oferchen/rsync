@@ -726,14 +726,14 @@ fn finalize_checksum(verifier: Option<ChecksumVerifier>) -> Option<ComputedCheck
     })
 }
 
-/// Outcome of a committed file during `--delay-updates` transfers.
+/// Entry for the `--delay-updates` bulk rename sweep.
 ///
 /// Each entry records the staging path (inside `.~tmp~/`) and the final
 /// destination path. After all files are committed by the disk thread, the
-/// caller collects these outcomes and passes them to
+/// caller collects these entries and passes them to
 /// [`handle_delayed_updates`] for the bulk rename sweep.
 #[derive(Debug, Clone)]
-pub struct CommitOutcome {
+pub struct DelayedUpdateEntry {
     /// Path where the file was staged (inside the `.~tmp~/` directory).
     pub staging_path: PathBuf,
     /// Final destination path where the file should appear.
@@ -757,7 +757,7 @@ pub struct CommitOutcome {
 /// renamed are not rolled back - the operation is best-effort, matching
 /// upstream rsync behavior where a failed rename is logged and the sweep
 /// continues.
-pub fn handle_delayed_updates(outcomes: &[CommitOutcome]) -> io::Result<()> {
+pub fn handle_delayed_updates(outcomes: &[DelayedUpdateEntry]) -> io::Result<()> {
     // upstream: receiver.c:422-450 - iterate delayed_bits, rename each file
     // from partialptr to fname, then handle_partial_dir(partialptr, PDIR_DELETE)
     let mut staging_dirs = std::collections::BTreeSet::new();
