@@ -691,7 +691,6 @@ fn process_approved_module(
         pid: std::process::id(),
     };
 
-    // Run pre-xfer exec if configured
     // upstream: clientserver.c - pre_exec() runs before the transfer starts.
     // Early-input data (if any) is piped to the script's stdin.
     if let Some(command) = module.pre_xfer_exec.as_deref().filter(|_| xfer_exec_enabled()) {
@@ -776,7 +775,6 @@ fn process_approved_module(
         let _ = ctx.reader.get_mut().shutdown(std::net::Shutdown::Write);
     }
 
-    // Run post-xfer exec if configured
     // upstream: clientserver.c - post_exec() runs after the transfer, regardless of outcome
     if let Some(command) = module.post_xfer_exec.as_deref().filter(|_| xfer_exec_enabled()) {
         let expanded_command = expand_exec_command(command, &exec_path_ctx);
