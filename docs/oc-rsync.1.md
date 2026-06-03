@@ -578,22 +578,60 @@ NEON) are used where available, with automatic scalar fallbacks.
     **--remove-sent-files**.
 
 **--partial**
-:   Keep partially transferred files on error for later resumption.
+:   Keep partially transferred files when a transfer is interrupted (signal,
+    connection drop, or error). Without this option, **oc-rsync** deletes the
+    temporary file for any incomplete transfer, leaving the destination
+    unchanged.
+
+    When **--partial** is active, the incomplete temporary file is renamed to
+    the final destination path, replacing any existing file. On Unix the
+    retained file's modification time is set to the epoch (1970-01-01
+    00:00:00 UTC) so that a subsequent **--update** run will not skip it -
+    the epoch mtime is always older than any real source file. On Windows
+    (NTFS), the epoch mtime cannot be represented; the file keeps whatever
+    mtime it had at the time of interruption.
+
+    On a subsequent run, **oc-rsync** detects that the destination file
+    differs from the source (by size and mtime) and uses it as a basis for
+    delta transfer, resuming where the previous transfer left off.
 
 **--no-partial**
-:   Discard partially transferred files on error.
+:   Discard partially transferred files on error. This is the default
+    behavior: the temporary file is removed and the destination is left
+    unchanged.
 
 **--partial-dir**=*DIR*
-:   Store partially transferred files in *DIR*. Implies **--partial**.
+:   Store partially transferred files in *DIR* instead of at the final
+    destination path. Implies **--partial**.
+
+    When a transfer is interrupted, the incomplete temporary file is moved
+    into *DIR* (using the destination's relative path as the filename within
+    *DIR*). On a subsequent run, the receiver checks *DIR* for a matching
+    basis file and uses it for delta transfer resumption.
+
+    This avoids leaving incomplete files at their final destination, which
+    is useful when other processes read from the destination tree.
 
 **-T**, **--temp-dir**=*DIR*
 :   Store temporary files in *DIR* while transferring. Also available as
     **--tmp-dir**.
 
 **--delay-updates**
-:   Put all updated files into place at end of transfer. Uses temporary
-    files and renames them after all transfers complete, providing atomic
-    updates at the cost of additional disk space.
+:   Accumulate all updated files in a staging area and rename them to their
+    final destinations only after the entire transfer completes
+    successfully. This provides atomic updates at the cost of additional
+    disk space.
+
+    When no explicit **--partial-dir** is configured, **--delay-updates**
+    implicitly sets **--partial-dir** to **.~tmp~** and enables
+    **--partial**. Files are written into the staging directory during the
+    transfer and moved to their final paths in a single rename sweep at the
+    end.
+
+    If the transfer is interrupted before the final rename sweep, all files
+    remain in the staging directory (**.~tmp~** or the configured
+    **--partial-dir**). The destination tree is untouched. A subsequent run
+    resumes from the staged files.
 
 **--no-delay-updates**
 :   Write updated files immediately during the transfer.
@@ -1290,6 +1328,49 @@ warnings go to the **tracing** target **ssh::stderr**.
     stderr is wired straight to the parent terminal. **stderr_capture()**
     returns empty for this session; consume diagnostics from the parent's own
     stderr instead.
+
+## Interrupt behavior with --partial and --delay-updates
+
+When **oc-rsync** is interrupted mid-transfer (SIGINT, SIGTERM, connection
+drop, or I/O error), its cleanup behavior depends on which options are
+active:
+
+**No --partial (default)**
+:   The temporary file for the in-progress transfer is deleted. The
+    destination tree is unchanged - either the previous version of the file
+    remains or no file exists if this was an initial copy.
+
+**--partial**
+:   The incomplete temporary file is renamed to the final destination path.
+    On Unix, the file's modification time is stamped to the epoch
+    (1970-01-01 00:00:00 UTC). This guarantees that a subsequent
+    **--update** run will not skip the file, because the epoch mtime is
+    always older than any real source file. On the next run, **oc-rsync**
+    uses the partial file as a basis for delta transfer and only fetches the
+    missing data.
+
+**--partial-dir**=*DIR*
+:   The incomplete temporary file is moved into *DIR* rather than to the
+    final destination. The destination tree remains unchanged. On a
+    subsequent run, the receiver finds the partial file in *DIR* and uses it
+    as a delta basis.
+
+**--delay-updates**
+:   All files that completed before the interrupt remain in the staging
+    directory (**.~tmp~** by default, or the directory given by
+    **--partial-dir**). No file is renamed to its final destination. The
+    destination tree is unchanged. A subsequent run picks up the staged
+    files and resumes.
+
+### Cross-platform note
+
+Windows NTFS cannot represent a modification time of 1970-01-01 00:00:00
+UTC (the epoch). On Windows, when **--partial** retains a file after an
+interrupt, the file keeps whatever mtime it had at the time of
+interruption. This means **--update** may skip the partial file if its mtime
+is newer than the source. To force re-transfer on Windows, either omit
+**--update** on the retry run, or use **--partial-dir** instead so that the
+partial file does not occupy the final destination path.
 
 # COMPATIBILITY
 
