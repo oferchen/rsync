@@ -1,7 +1,9 @@
 use super::super::connection::DaemonTransferRequest;
 use super::arguments::build_full_daemon_args;
 use super::server_config::{build_server_config_for_generator, build_server_config_for_receiver};
-use super::transfer::{is_dry_run_remote_close, read_files_from_for_forwarding};
+use super::transfer::{
+    DaemonProgressAdapter, is_dry_run_remote_close, read_files_from_for_forwarding,
+};
 
 use crate::client::config::ClientConfig;
 use crate::client::module_list::DaemonAddress;
@@ -771,6 +773,138 @@ mod files_from_forwarding_tests {
         let data = conn.files_from_data.take().unwrap();
         assert_eq!(data, b"file1.txt\0file2.txt\0\0");
         assert!(conn.files_from_data.is_none());
+    }
+}
+
+mod daemon_progress_adapter_tests {
+    use super::*;
+    use crate::client::progress::{ClientProgressObserver, ClientProgressUpdate};
+    use crate::server::{TransferProgressCallback, TransferProgressEvent};
+    use std::path::Path;
+    use std::time::{Duration, Instant};
+
+    /// Captures progress updates for assertion in tests.
+    struct CapturingObserver {
+        updates: Vec<(u64, usize, usize, bool)>,
+    }
+
+    impl CapturingObserver {
+        fn new() -> Self {
+            Self {
+                updates: Vec::new(),
+            }
+        }
+    }
+
+    impl ClientProgressObserver for CapturingObserver {
+        fn on_progress(&mut self, update: &ClientProgressUpdate) {
+            self.updates.push((
+                update.overall_transferred(),
+                update.index(),
+                update.total(),
+                update.flist_eof(),
+            ));
+        }
+    }
+
+    #[test]
+    fn adapter_accumulates_bytes_across_files() {
+        let mut observer = CapturingObserver::new();
+        let start = Instant::now();
+        let mut adapter = DaemonProgressAdapter::new(&mut observer, start);
+
+        let event1 = TransferProgressEvent {
+            path: Path::new("file1.txt"),
+            file_bytes: 1000,
+            total_file_bytes: Some(1000),
+            files_done: 1,
+            total_files: 3,
+            flist_eof: true,
+        };
+        adapter.on_file_transferred(&event1);
+
+        let event2 = TransferProgressEvent {
+            path: Path::new("file2.txt"),
+            file_bytes: 2000,
+            total_file_bytes: Some(2000),
+            files_done: 2,
+            total_files: 3,
+            flist_eof: true,
+        };
+        adapter.on_file_transferred(&event2);
+
+        assert_eq!(observer.updates.len(), 2);
+        // First update: 1000 bytes
+        assert_eq!(observer.updates[0].0, 1000);
+        assert_eq!(observer.updates[0].1, 1);
+        assert_eq!(observer.updates[0].2, 3);
+        // Second update: 1000 + 2000 = 3000 bytes cumulative
+        assert_eq!(observer.updates[1].0, 3000);
+        assert_eq!(observer.updates[1].1, 2);
+        assert_eq!(observer.updates[1].2, 3);
+    }
+
+    #[test]
+    fn adapter_forwards_flist_eof_flag() {
+        let mut observer = CapturingObserver::new();
+        let start = Instant::now();
+        let mut adapter = DaemonProgressAdapter::new(&mut observer, start);
+
+        let event = TransferProgressEvent {
+            path: Path::new("inc.txt"),
+            file_bytes: 500,
+            total_file_bytes: Some(500),
+            files_done: 1,
+            total_files: 2,
+            flist_eof: false,
+        };
+        adapter.on_file_transferred(&event);
+
+        assert_eq!(observer.updates.len(), 1);
+        assert!(!observer.updates[0].3, "flist_eof should be false");
+    }
+
+    #[test]
+    fn adapter_single_file_reports_correct_totals() {
+        let mut observer = CapturingObserver::new();
+        let start = Instant::now();
+        let mut adapter = DaemonProgressAdapter::new(&mut observer, start);
+
+        let event = TransferProgressEvent {
+            path: Path::new("only.bin"),
+            file_bytes: 4096,
+            total_file_bytes: Some(4096),
+            files_done: 1,
+            total_files: 1,
+            flist_eof: true,
+        };
+        adapter.on_file_transferred(&event);
+
+        assert_eq!(observer.updates.len(), 1);
+        assert_eq!(observer.updates[0].0, 4096);
+        assert_eq!(observer.updates[0].1, 1);
+        assert_eq!(observer.updates[0].2, 1);
+        assert!(observer.updates[0].3);
+    }
+
+    #[test]
+    fn adapter_zero_byte_file_handled() {
+        let mut observer = CapturingObserver::new();
+        let start = Instant::now();
+        let mut adapter = DaemonProgressAdapter::new(&mut observer, start);
+
+        let event = TransferProgressEvent {
+            path: Path::new("empty.txt"),
+            file_bytes: 0,
+            total_file_bytes: Some(0),
+            files_done: 1,
+            total_files: 2,
+            flist_eof: true,
+        };
+        adapter.on_file_transferred(&event);
+
+        assert_eq!(observer.updates.len(), 1);
+        assert_eq!(observer.updates[0].0, 0);
     }
 }
 
