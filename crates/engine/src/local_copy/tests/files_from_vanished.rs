@@ -10,26 +10,36 @@
 // upstream rsync emits "file has vanished" and exits with
 // RERR_VANISHED (24). The remaining files in the transfer must still
 // be copied.
+//
+// Each source file is passed as an individual operand so the plan
+// records them explicitly. Directory operands defer enumeration to
+// execute() time, which would silently skip removed files.
 #[test]
 fn vanished_source_exits_with_vanished_code_and_copies_remaining() {
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    fs::write(source_root.join("keep.txt"), b"persistent content").expect("write keep");
-    fs::write(source_root.join("vanish.txt"), b"ephemeral content").expect("write vanish");
-    fs::write(source_root.join("also_keep.txt"), b"also persistent").expect("write also_keep");
+    let keep_src = source_root.join("keep.txt");
+    let vanish_src = source_root.join("vanish.txt");
+    let also_keep_src = source_root.join("also_keep.txt");
+    fs::write(&keep_src, b"persistent content").expect("write keep");
+    fs::write(&vanish_src, b"ephemeral content").expect("write vanish");
+    fs::write(&also_keep_src, b"also persistent").expect("write also_keep");
 
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    let mut source_operand = source_root.clone().into_os_string();
-    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
-    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let operands = vec![
+        keep_src.into_os_string(),
+        vanish_src.clone().into_os_string(),
+        also_keep_src.into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // Delete one source file after the plan is built.
-    fs::remove_file(source_root.join("vanish.txt")).expect("delete vanish");
+    fs::remove_file(&vanish_src).expect("delete vanish");
 
     let result = plan.execute();
 
@@ -97,18 +107,22 @@ fn ignore_missing_args_suppresses_vanished_error() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    fs::write(source_root.join("present.txt"), b"present content").expect("write present");
-    fs::write(source_root.join("gone.txt"), b"will vanish").expect("write gone");
+    let present_src = source_root.join("present.txt");
+    let gone_src = source_root.join("gone.txt");
+    fs::write(&present_src, b"present content").expect("write present");
+    fs::write(&gone_src, b"will vanish").expect("write gone");
 
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    let mut source_operand = source_root.clone().into_os_string();
-    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
-    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let operands = vec![
+        present_src.into_os_string(),
+        gone_src.clone().into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    fs::remove_file(source_root.join("gone.txt")).expect("delete gone");
+    fs::remove_file(&gone_src).expect("delete gone");
 
     let summary = plan
         .execute_with_options(
@@ -117,7 +131,6 @@ fn ignore_missing_args_suppresses_vanished_error() {
         )
         .expect("ignore-missing-args should succeed (exit 0)");
 
-    // The surviving file must be copied.
     assert!(
         dest_root.join("present.txt").exists(),
         "present.txt should be copied"
@@ -140,20 +153,24 @@ fn ignore_missing_args_all_vanished_exits_zero() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    fs::write(source_root.join("a.txt"), b"aaa").expect("write a");
-    fs::write(source_root.join("b.txt"), b"bbb").expect("write b");
+    let a_src = source_root.join("a.txt");
+    let b_src = source_root.join("b.txt");
+    fs::write(&a_src, b"aaa").expect("write a");
+    fs::write(&b_src, b"bbb").expect("write b");
 
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    let mut source_operand = source_root.clone().into_os_string();
-    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
-    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let operands = vec![
+        a_src.clone().into_os_string(),
+        b_src.clone().into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // Remove all source files.
-    fs::remove_file(source_root.join("a.txt")).expect("delete a");
-    fs::remove_file(source_root.join("b.txt")).expect("delete b");
+    fs::remove_file(&a_src).expect("delete a");
+    fs::remove_file(&b_src).expect("delete b");
 
     let summary = plan
         .execute_with_options(
