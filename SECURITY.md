@@ -68,10 +68,10 @@ oc-rsync monitors upstream rsync CVEs to verify continued non-applicability. Rec
 | CVE-2024-12087 | Path traversal via --inc-recursive | Not vulnerable | Path sanitization |
 | CVE-2024-12088 | --safe-links bypass | Mitigated | Rust path handling |
 | CVE-2024-12747 | Symlink race condition | Mitigated | TOCTOU is OS-level |
-| CVE-2026-29518 | TOCTOU symlink race in daemon receiver (`use chroot = no`) | **Mostly fixed** | Path-based syscalls have been migrated to `*at` variants routed through `DirSandbox` with `openat2(RESOLVE_BENEATH \| RESOLVE_NO_SYMLINKS)` runtime detection (SEC-1.a..n). A Landlock LSM defense-in-depth layer (SEC-1.p, PR #4702) allowlists `module.path` on the daemon receiver via Landlock 0.4 (v1/v2/v3 best-effort, kernel 5.13+), so even residual receiver call sites that have not yet been wired through `DirSandbox` are bounded by a kernel-enforced filesystem allowlist. Receiver call-site wiring for the SEC-1.i / SEC-1.j helpers is the remaining gap (see SEC-1 progress note below). Umbrella tracking issue #2516. |
+| CVE-2026-29518 | TOCTOU symlink race in daemon receiver (`use chroot = no`) | **Fixed** | All path-based syscalls have been migrated to `*at` variants routed through `DirSandbox` with `openat2(RESOLVE_BENEATH \| RESOLVE_NO_SYMLINKS)` runtime detection (SEC-1.a..q2). Device/FIFO node creation uses `mknodat`/`mkfifoat` (SEC-MK.a..h). A Landlock LSM defense-in-depth layer (SEC-1.p, PR #4702) allowlists `module.path` on the daemon receiver via Landlock 0.4 (v1/v2/v3 best-effort, kernel 5.13+). Umbrella tracking issue #2516. |
 | CVE-2026-43617 | Reverse-DNS lookup after daemon chroot causes hostname ACL bypass | Not vulnerable | `module_peer_hostname` runs in `module_access::listing` / `request` phases (`crates/daemon/src/daemon/sections/module_access/listing.rs:52`, `request.rs:269`) which complete before `chroot/setuid` in `transfer.rs:346-360`. |
 | CVE-2026-43618 | Integer overflow in compressed-token decoder causes memory disclosure | Mitigated | `crates/compress/src/zstd.rs:218,224` and `crates/compress/src/zlib/decoder.rs:61,67` use `saturating_add` for byte counters; explicit regression test `counting_writer_saturating_add_prevents_overflow` (`zlib/tests.rs:186-189`). Rust bounds-checking would panic on any post-overflow OOB index, not leak memory. |
-| CVE-2026-43619 | Symlink races on chmod/lchown/utimes/rename/unlink/mkdir/symlink/mknod/link/rmdir/lstat | **Mostly fixed** | Same root cause as CVE-2026-29518. All `*at` helpers shipped: `lstat` / `unlink` / `rmdir` / `mkdir` / `symlink` / `link` migrated to `fstatat` / `unlinkat` / `mkdirat` / `symlinkat` / `linkat`; `chmod` / `lchown` / `utimes` migrated to `fchmodat` / `fchownat` / `utimensat` (SEC-1.i, PR #4690); `rename` migrated to `renameat` (SEC-1.j, PR #4693). The SEC-1.p Landlock LSM defense-in-depth layer (PR #4702) confines the daemon receiver to the configured `module.path` via Landlock 0.4 (kernel 5.13+), capping the blast radius of any residual unconverted call site. Receiver wiring follow-up tracked separately (see SEC-1 progress note below). Umbrella tracking issue #2516. |
+| CVE-2026-43619 | Symlink races on chmod/lchown/utimes/rename/unlink/mkdir/symlink/mknod/link/rmdir/lstat | **Fixed** | Same root cause as CVE-2026-29518. All `*at` helpers shipped and receiver call sites fully wired: `lstat` / `unlink` / `rmdir` / `mkdir` / `symlink` / `link` migrated to `fstatat` / `unlinkat` / `mkdirat` / `symlinkat` / `linkat`; `chmod` / `lchown` / `utimes` migrated to `fchmodat` / `fchownat` / `utimensat` (SEC-1.i, PR #4690); `rename` migrated to `renameat` (SEC-1.j, PR #4693); `mknod` / `mkfifo` migrated to `mknodat` / `mkfifoat` (SEC-MK.a..h). Receiver wiring for SEC-1.i/j helpers completed (SEC-1.q/q2). The `recursive_unlinkat` helper shipped (SEC-1.s). The SEC-1.p Landlock LSM defense-in-depth layer (PR #4702) confines the daemon receiver to the configured `module.path` via Landlock 0.4 (kernel 5.13+). Umbrella tracking issue #2516. |
 | CVE-2026-43620 | OOB read in `recv_files` via negative `parent_ndx` → client SIGSEGV | Not vulnerable | oc-rsync consumes the parent reference as `Option<usize>` and indexes into a bounds-checked `Vec` (`crates/protocol/src/flist/dir_tree.rs`). The validating entry point `DirectoryTree::try_add_directory` returns `DirTreeError::OutOfBoundsParent` on a malformed wire index; the unchecked `add_directory` aborts via Rust's bounds-check panic. Regression coverage: `try_add_directory_rejects_out_of_range_parent_idx`, `try_add_directory_rejects_boundary_off_by_one`, `add_directory_panics_safely_on_oob_parent_idx` in `crates/protocol/src/flist/dir_tree.rs`. SEC-4 closed. |
 | CVE-2026-45232 | Off-by-one stack write in HTTP CONNECT proxy response handler | Mitigated | `read_proxy_line()` in `crates/core/src/client/module_list/connect/proxy.rs` reads byte-by-byte into a heap `Vec<u8>` and explicitly caps the response line at `MAX_PROXY_LINE_BYTES = 1024` bytes, matching upstream's `establish_proxy_connection()` ceiling (socket.c:53). The C off-by-one stack-write is structurally impossible (bounds-checked `Vec::push`), and indefinite buffering is bounded by the explicit cap. Audit: SEC-2.a (PR #4609); upstream-parity alignment SEC-2.b. |
 
@@ -88,9 +88,9 @@ rsync 3.4.3 (released 2026-05-20) is a major security release closing six CVEs a
 - **NULL-check on `localtime_r()` in `timestring()`** - oc-rsync uses `chrono`/`time` for timestamp formatting; out-of-range timestamps return `Err` rather than dereferencing a null pointer.
 
 Open follow-ups:
-- **SEC-1** (TOCTOU on path-based daemon syscalls under `use_chroot=false`) - umbrella issue #2516, decomposed into SEC-1.a..p. All `*at` helpers have shipped (SEC-1.a..n, including SEC-1.i in #4690 and SEC-1.j in #4693), and the SEC-1.p Landlock LSM defense-in-depth layer has shipped (PR #4702). The remaining work is receiver call-site wiring through `DirSandbox` for the deferred SEC-1.i / SEC-1.j sites (see SEC-1 progress note below). Beta-blocker status lifts once that receiver wiring lands.
+- **SEC-1** (TOCTOU on path-based daemon syscalls under `use_chroot=false`) - **Fixed.** Umbrella issue #2516, decomposed into SEC-1.a..s. All `*at` helpers shipped (SEC-1.a..n), receiver call-site wiring completed (SEC-1.q/q2), `DeleteFs` trait sandbox refactor shipped (SEC-1.q), `recursive_unlinkat` helper shipped (SEC-1.s), and `mknodat`/`mkfifoat` migration completed (SEC-MK.a..h). The SEC-1.p Landlock LSM defense-in-depth layer shipped (PR #4702).
 - **SEC-2.b** (cosmetic: align proxy-line cap from 4096 to upstream's 1024) - SEC-2.a confirmed the structural mitigation is already in place via the 4096-byte cap at `connect/proxy.rs:337-372`; SEC-2.b is purely an upstream-parity tightening, not a security gap.
-- **SEC-3** (confirm hyphen-prefixed hostname rejection in SSH operand parse) - SEC-3.a audit in flight.
+- **SEC-3** (confirm hyphen-prefixed hostname rejection in SSH operand parse) - **Fixed.** SEC-3.a audit, SEC-3.b validation, and SEC-3.c regression coverage all completed.
 - **SEC-4** (regression test for malformed `parent_node_idx` per CVE-2026-43620 mitigation) - closed. `DirectoryTree::try_add_directory` validates the wire-supplied parent index and returns `DirTreeError::OutOfBoundsParent`; three regression tests in `crates/protocol/src/flist/dir_tree.rs` pin down both the graceful-reject path and the worst-case controlled-panic path (no SIGSEGV).
 
 #### SEC-1 progress (CVE-2026-29518 / CVE-2026-43619)
@@ -108,13 +108,14 @@ Shipped:
 - **SEC-1.n** (PR #4678): interop regression coverage confirming legitimate symlinks still transfer correctly under the new `*at` paths.
 - **SEC-1.p** (PR #4702, shipped 2026-05-22): Landlock LSM defense-in-depth for the daemon receiver. `crates/fast_io/src/landlock.rs` wraps Landlock 0.4 (v1/v2/v3 best-effort, kernel 5.13+); `crates/daemon/src/daemon/sections/module_access/transfer.rs::engage_landlock_sandbox` allowlists `module.path` immediately before the receiver pipeline starts, so any residual unconverted path-based syscall is bounded by a kernel-enforced filesystem allowlist.
 
-Remaining work:
-- **mknodat for device / FIFO nodes** - DEFERRED (closure doc #4694; not on the daemon-reachable surface).
-- **Receiver wiring for SEC-1.i helpers** - DEFERRED (carrier-first staging; metadata crate does not yet carry `DirSandbox`). Bounded by the SEC-1.p Landlock layer in the interim.
-- **Receiver wiring for SEC-1.j deferred sites** - DEFERRED (`disk_commit`, `transfer_ops/response`, `local_copy/executor`; cross-thread carrier plumbing required). Bounded by the SEC-1.p Landlock layer in the interim.
+Additionally shipped since the last update:
+- **SEC-1.q** (DeleteFs trait sandbox refactor): deletion operations route through the `DirSandbox`-backed `DeleteFs` trait.
+- **SEC-1.q2** (Receiver-deletion sandbox wiring): all receiver deletion call sites fully wired through `DirSandbox`.
+- **SEC-1.s** (`recursive_unlinkat` helper): recursive directory removal uses `unlinkat` throughout, closing the last TOCTOU window in directory tree deletion.
+- **SEC-MK.a..h** (`mknodat`/`mkfifoat` sandbox migration): device and FIFO node creation migrated to `*at` variants routed through `DirSandbox`. Previously deferred (closure doc #4694); now complete.
 - **SEC-1.p Landlock LSM defense-in-depth** - Linux 5.13+ kernel-side allowlist over the module root, engaged per-connection after `apply_module_privilege_restrictions` returns. Even a future regression that calls a path-based syscall directly (bypassing `DirSandbox`) is rejected by the kernel with `EACCES`. Client-supplied `--temp-dir` / `--partial-dir` / `--backup-dir` paths that resolve outside the module root are rejected at the wire-protocol layer rather than widening the allowlist. Best-effort ABI downgrade picks the highest level the running kernel exposes (v3 on 6.2+, v2 on 5.19+, v1 on 5.13+). Stub returns `Unavailable` on non-Linux targets so the SEC-1 `*at` chain remains the sole defense there.
 
-Target full-Fixed status: when receiver wiring for both SEC-1.i and SEC-1.j callers is complete and the SEC-1.m / SEC-1.n regression suites continue to pass against the fully-wired pipeline. The SEC-1.p Landlock layer is already in place; it complements, but does not substitute for, completing the `*at` chain.
+**Status: Fixed.** All receiver call sites are wired through `DirSandbox`, and the SEC-1.m / SEC-1.n regression suites pass against the fully-wired pipeline. The SEC-1.p Landlock layer provides defense-in-depth.
 
 CI integration: as of 2026-05-21 the interop job (`.github/workflows/_interop.yml`) runs upstream rsync's own `testsuite/*.test` corpus against oc-rsync as `$RSYNC`, pinned to upstream 3.4.3 by default. The known-failures roster lives at `tools/ci/upstream_testsuite_known_failures.conf`.
 
@@ -155,20 +156,47 @@ For each new upstream rsync CVE:
 
 ## Fuzzing
 
-The repo ships cargo-fuzz targets for security-critical parsing and SIMD parity:
+The repo ships 24 cargo-fuzz targets covering security-critical parsing, SIMD parity, and differential fuzzing against upstream rsync:
 
-```bash
-cd fuzz
-cargo +nightly fuzz run fuzz_varint
-cargo +nightly fuzz run fuzz_delta
-cargo +nightly fuzz run fuzz_multiplex_frame
-cargo +nightly fuzz run fuzz_legacy_greeting
-cargo +nightly fuzz run simd_checksum_parity
-```
+**Core protocol parsing:**
+- `varint_decode` - variable-length integer codec
+- `multiplex_frame_parse` - multiplex `MSG_*` frame parsing
+- `legacy_greeting` - daemon `@RSYNCD:` greeting parser
+- `ndx_codec` - file-list index codec
+- `protocol_wire` - generic protocol wire format
+- `flist_entry_decode` - file-list entry decoder
+- `incremental_flist` - incremental file-list segments
+- `capability_flags` (FCV-10) - negotiation prologue capability flags
+- `vstring` (FCV-14) - vstring parser
+- `auth_response` - daemon authentication response
 
-`simd_checksum_parity` cross-validates the AVX2, SSE2, NEON, and scalar
-rolling/strong checksum paths against random inputs (see #2103). See `fuzz/README.md`
-for detailed fuzzing instructions.
+**Daemon and configuration:**
+- `daemon_greeting` - daemon greeting generation
+- `rsyncd_conf` (FCV-16) - `rsyncd.conf` line parser
+- `batch_reader` (FCV-12) - rsync batch file header
+- `bwlimit` (FCV-15) - bwlimit CLI string parser
+
+**Metadata and extensions:**
+- `acl_xattr_wire` (FCV-11) - ACL/xattr wire format
+- `filter_list_wire` - filter list wire format
+
+**Compression:**
+- `decompressor_zlib` - zlib decompression
+- `decompressor_zstd` - zstd decompression
+
+**SIMD parity:**
+- `simd_checksum_parity` - cross-validates AVX2, SSE2, NEON, and scalar rolling/strong checksum paths against random inputs (see #2103)
+
+**Filter rules:**
+- `filter_rules_vs_upstream` - filter rule evaluation vs upstream behavior
+- `filter_differential` - differential filter testing
+
+**Differential fuzzing (upstream wire parity):**
+- `differential_outcome` (WDF-3) - outcome-based differential fuzzing against upstream rsync
+- `differential_multiplex` (WDF-4) - multiplex frame differential fuzzing
+- `differential_flist` (WDF-5) - flist wire format differential fuzzing
+
+See `fuzz/README.md` for detailed fuzzing instructions.
 
 ## Hardening Notes
 
