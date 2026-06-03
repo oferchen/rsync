@@ -101,10 +101,7 @@ pub(in crate::receiver) fn handle_delayed_updates(
                     }
                 }
                 if let Err(e) = fs::rename(final_path, &backup_path) {
-                    eprintln!(
-                        "rsync: backup failed for {}: {e}",
-                        final_path.display()
-                    );
+                    eprintln!("rsync: backup failed for {}: {e}", final_path.display());
                 }
             }
         }

@@ -28,6 +28,10 @@ use crate::transfer_ops::{
     RequestConfig, ResponseContext, process_file_response_streaming, send_file_request,
 };
 
+/// Result type for the pipelined transfer closure:
+/// `(files_transferred, bytes, literal, matched, redo_indices, delayed_updates)`.
+type PipelineResult = (usize, u64, u64, u64, Vec<usize>, Vec<(PathBuf, PathBuf)>);
+
 impl ReceiverContext {
     /// Pipelined transfer loop with decoupled network/disk I/O.
     ///
@@ -154,7 +158,7 @@ impl ReceiverContext {
             let _ = pipelined_receiver.take_redo_indices();
         }
 
-        let result = (|| -> io::Result<(usize, u64, u64, u64, Vec<usize>, Vec<(PathBuf, PathBuf)>)> {
+        let result = (|| -> io::Result<PipelineResult> {
             // Track how many requests the sender has received (flushed) but
             // not yet responded to. We only flush the write buffer when this
             // drops to zero - otherwise the sender already has queued requests.
