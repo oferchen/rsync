@@ -54,7 +54,7 @@ impl ReceiverContext {
         is_redo_pass: bool,
         total_files: usize,
         progress: &mut Option<&mut dyn crate::TransferProgressCallback>,
-    ) -> io::Result<(usize, u64, u64, u64, Vec<usize>, Vec<(PathBuf, PathBuf)>)> {
+    ) -> io::Result<PipelineResult> {
         use crate::disk_commit::{BackupConfig, DiskCommitConfig, PartialMode};
         use crate::pipeline::receiver::PipelinedReceiver;
         use crate::shared::TransferDeadline;
