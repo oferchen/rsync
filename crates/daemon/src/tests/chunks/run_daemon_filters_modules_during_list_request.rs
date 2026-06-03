@@ -39,12 +39,6 @@ fn run_daemon_filters_modules_during_list_request() {
     stream.flush().expect("flush list request");
 
     line.clear();
-    reader.read_line(&mut line).expect("capabilities");
-    assert_eq!(line, "@RSYNCD: CAP modules\n");
-
-    // upstream: no @RSYNCD: OK before module listing
-
-    line.clear();
     reader.read_line(&mut line).expect("public module");
     assert_eq!(line, "public         \t\n");
 
