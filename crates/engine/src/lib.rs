@@ -192,9 +192,6 @@ pub use concurrent_delta::{
     WholeFileStrategy,
 };
 
-/// Global cleanup registry for temporary files on abnormal termination.
-pub use cleanup::CleanupManager;
-
 /// Common error types for engine operations.
 pub use error::{EngineError, EngineResult};
 
@@ -243,6 +240,11 @@ pub use walk::{DirectoryWalker, FilteredWalker, WalkConfig, WalkEntry, WalkError
 /// Poison-tolerant lock acquisition helpers for `Mutex`/`RwLock` state that
 /// remains valid after a panicking thread is unwound.
 pub use util::poison::{lock_or_recover, read_or_recover, write_or_recover};
+
+/// Global cleanup manager for tracking and removing stale temp files on
+/// abnormal exit. Used by the transfer pipeline to register temp files
+/// before writing and unregister them after a successful commit/rename.
+pub use util::cleanup::CleanupManager;
 
 /// Async I/O operations (available with `async` feature).
 #[cfg(feature = "async")]
