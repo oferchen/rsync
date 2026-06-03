@@ -60,11 +60,11 @@ use orchestration::{run_pull_transfer, run_push_transfer, send_daemon_arguments}
 /// testsuite) and double-colon syntax (`host::module/path`).
 #[cfg_attr(
     feature = "tracing",
-    instrument(skip(config, _observer), name = "daemon_transfer")
+    instrument(skip(config, observer), name = "daemon_transfer")
 )]
 pub fn run_daemon_transfer(
     config: &ClientConfig,
-    _observer: Option<&mut dyn ClientProgressObserver>,
+    observer: Option<&mut dyn ClientProgressObserver>,
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
@@ -209,6 +209,7 @@ pub fn run_daemon_transfer(
             protocol,
             batch_ctx,
             buffered,
+            observer,
         ),
         RemoteRole::Sender => run_push_transfer(
             config,
@@ -219,6 +220,7 @@ pub fn run_daemon_transfer(
             protocol,
             batch_ctx,
             buffered,
+            observer,
         ),
         RemoteRole::Proxy => {
             unreachable!("Proxy transfers via daemon are rejected earlier")
@@ -238,11 +240,11 @@ pub fn run_daemon_transfer(
 /// communicating via stdin/stdout.
 #[cfg_attr(
     feature = "tracing",
-    instrument(skip(config, _observer), name = "daemon_over_remote_shell")
+    instrument(skip(config, observer), name = "daemon_over_remote_shell")
 )]
 pub fn run_daemon_over_remote_shell(
     config: &ClientConfig,
-    _observer: Option<&mut dyn ClientProgressObserver>,
+    observer: Option<&mut dyn ClientProgressObserver>,
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
@@ -387,6 +389,7 @@ pub fn run_daemon_over_remote_shell(
             protocol,
             batch_ctx,
             buffered,
+            observer,
         ),
         RemoteRole::Sender => run_push_transfer(
             config,
@@ -397,6 +400,7 @@ pub fn run_daemon_over_remote_shell(
             protocol,
             batch_ctx,
             buffered,
+            observer,
         ),
         RemoteRole::Proxy => {
             unreachable!("Proxy transfers via daemon-over-remote-shell are rejected earlier")

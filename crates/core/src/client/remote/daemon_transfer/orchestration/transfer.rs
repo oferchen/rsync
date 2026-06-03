@@ -4,6 +4,8 @@
 //! establishing the handshake result, and delegating to `run_server_with_handshake`.
 
 use std::io::Write;
+use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
 use protocol::ProtocolVersion;
@@ -13,10 +15,12 @@ use super::stats::convert_server_stats_to_summary;
 use crate::client::config::ClientConfig;
 use crate::client::error::{ClientError, invalid_argument_error};
 use crate::client::module_list::{DaemonStreamGuard, DaemonStreamReader, DaemonStreamWriter};
+use crate::client::progress::ClientProgressObserver;
 use crate::client::remote::batch_support::{BatchContext, build_batch_recording};
 use crate::client::remote::flags;
 use crate::client::summary::ClientSummary;
 use crate::server::handshake::HandshakeResult;
+use crate::server::{TransferProgressCallback, TransferProgressEvent};
 
 /// Executes a pull transfer (remote to local).
 ///
@@ -39,6 +43,7 @@ pub(crate) fn run_pull_transfer(
     protocol: ProtocolVersion,
     batch_ctx: Option<BatchContext>,
     buffered: Vec<u8>,
+    observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
     let filter_rules = flags::build_wire_format_rules(config.filter_rules())?;
 
@@ -63,12 +68,17 @@ pub(crate) fn run_pull_transfer(
         .map(|ctx| build_batch_recording(ctx, false));
 
     let start = Instant::now();
+    let mut adapter = observer.map(|obs| DaemonProgressAdapter::new(obs, start));
+    let progress: Option<&mut dyn TransferProgressCallback> = adapter
+        .as_mut()
+        .map(|a| a as &mut dyn TransferProgressCallback);
+
     let server_stats = crate::server::run_server_with_handshake(
         server_config,
         handshake,
         reader,
         writer,
-        None,
+        progress,
         batch_recording,
         None,
     )
@@ -99,6 +109,7 @@ pub(crate) fn run_push_transfer(
     protocol: ProtocolVersion,
     batch_ctx: Option<BatchContext>,
     buffered: Vec<u8>,
+    observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
     let filter_rules = flags::build_wire_format_rules(config.filter_rules())?;
 
@@ -115,6 +126,10 @@ pub(crate) fn run_push_transfer(
         .map(|ctx| build_batch_recording(ctx, true));
 
     let start = Instant::now();
+    let mut adapter = observer.map(|obs| DaemonProgressAdapter::new(obs, start));
+    let progress: Option<&mut dyn TransferProgressCallback> = adapter
+        .as_mut()
+        .map(|a| a as &mut dyn TransferProgressCallback);
 
     // upstream: log.c:330-340 - when !am_server, rwrite() sends itemize to
     // FCLIENT (stdout); the callback writes directly to process stdout.
@@ -130,7 +145,7 @@ pub(crate) fn run_push_transfer(
         handshake,
         reader,
         writer,
-        None,
+        progress,
         batch_recording,
         if wants_itemize {
             Some(&mut itemize_cb as &mut dyn crate::server::ItemizeCallback)
@@ -188,6 +203,56 @@ pub(super) fn is_dry_run_remote_close(error: &std::io::Error) -> bool {
             | std::io::ErrorKind::UnexpectedEof
             | std::io::ErrorKind::WouldBlock
     )
+}
+
+/// Adapts a [`ClientProgressObserver`] to [`TransferProgressCallback`].
+///
+/// Converts server-side per-file progress events into client-side progress
+/// updates, enabling live progress display during daemon transfers. Mirrors
+/// the `ServerProgressAdapter` in the SSH transfer path.
+///
+/// upstream: progress.c - `end_progress()` is called after each file completes,
+/// updating cumulative bytes and triggering the progress display.
+pub(super) struct DaemonProgressAdapter<'a> {
+    observer: &'a mut dyn ClientProgressObserver,
+    start: Instant,
+    overall_transferred: u64,
+}
+
+impl<'a> DaemonProgressAdapter<'a> {
+    pub(super) fn new(observer: &'a mut dyn ClientProgressObserver, start: Instant) -> Self {
+        Self {
+            observer,
+            start,
+            overall_transferred: 0,
+        }
+    }
+}
+
+impl TransferProgressCallback for DaemonProgressAdapter<'_> {
+    fn on_file_transferred(&mut self, event: &TransferProgressEvent<'_>) {
+        self.overall_transferred += event.file_bytes;
+
+        let client_event = crate::client::summary::ClientEvent::from_progress(
+            event.path,
+            event.file_bytes,
+            event.total_file_bytes,
+            self.start.elapsed(),
+            Arc::from(Path::new("")),
+        );
+
+        let update = crate::client::progress::ClientProgressUpdate::from_transfer_event(
+            client_event,
+            event.files_done,
+            event.total_files,
+            event.total_file_bytes,
+            self.overall_transferred,
+            self.start.elapsed(),
+            event.flist_eof,
+        );
+
+        self.observer.on_progress(&update);
+    }
 }
 
 /// Reads the `--files-from` source and serializes it into the wire format
