@@ -29,6 +29,7 @@ pub struct FilterRuleSpec {
     applies_to_receiver: bool,
     perishable: bool,
     xattr_only: bool,
+    negate: bool,
 }
 
 impl FilterRuleSpec {
@@ -44,6 +45,7 @@ impl FilterRuleSpec {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         }
     }
 
@@ -59,6 +61,7 @@ impl FilterRuleSpec {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         }
     }
 
@@ -73,6 +76,7 @@ impl FilterRuleSpec {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         }
     }
 
@@ -87,6 +91,7 @@ impl FilterRuleSpec {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         }
     }
 
@@ -101,6 +106,7 @@ impl FilterRuleSpec {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         }
     }
 
@@ -116,6 +122,7 @@ impl FilterRuleSpec {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         }
     }
 
@@ -131,6 +138,7 @@ impl FilterRuleSpec {
             applies_to_receiver: true,
             perishable: false,
             xattr_only: false,
+            negate: false,
         }
     }
 
@@ -145,6 +153,7 @@ impl FilterRuleSpec {
             applies_to_receiver: false,
             perishable: false,
             xattr_only: false,
+            negate: false,
         }
     }
 
@@ -159,6 +168,7 @@ impl FilterRuleSpec {
             applies_to_receiver: false,
             perishable: false,
             xattr_only: false,
+            negate: false,
         }
     }
 
@@ -263,6 +273,22 @@ impl FilterRuleSpec {
     pub const fn with_receiver(mut self, applies: bool) -> Self {
         self.applies_to_receiver = applies;
         self
+    }
+
+    /// Inverts the match result of the pattern.
+    ///
+    /// A negated exclude rule keeps paths that match the pattern instead of
+    /// excluding them. Mirrors the `!` modifier from upstream `exclude.c`.
+    #[must_use]
+    pub const fn with_negate(mut self, negate: bool) -> Self {
+        self.negate = negate;
+        self
+    }
+
+    /// Reports whether the rule inverts its match result.
+    #[must_use]
+    pub const fn is_negated(&self) -> bool {
+        self.negate
     }
 
     /// Anchors the pattern to the root of the transfer when requested.

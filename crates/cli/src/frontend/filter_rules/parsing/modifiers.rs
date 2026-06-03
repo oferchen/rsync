@@ -9,6 +9,7 @@ pub(super) struct RuleModifierState {
     receiver: Option<bool>,
     perishable: bool,
     xattr_only: bool,
+    negate: bool,
 }
 
 pub(super) fn parse_rule_modifiers(
@@ -36,6 +37,11 @@ pub(super) fn parse_rule_modifiers(
                 if state.sender.is_none() {
                     state.sender = Some(false);
                 }
+            }
+            '!' => {
+                // upstream: exclude.c - '!' modifier inverts the match result
+                // (FILTRULE_NEGATE). Not valid on merge-file rules.
+                state.negate = true;
             }
             'p' => {
                 if allow_perishable {
@@ -103,6 +109,10 @@ pub(super) fn apply_rule_modifiers(
 
     if modifiers.perishable {
         rule = rule.with_perishable(true);
+    }
+
+    if modifiers.negate {
+        rule = rule.with_negate(true);
     }
 
     if modifiers.xattr_only {
@@ -199,6 +209,20 @@ mod tests {
     fn parse_rule_modifiers_xattr_when_disallowed() {
         let result = parse_rule_modifiers("x", "+", true, false);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_rule_modifiers_negate() {
+        let result = parse_rule_modifiers("!", "-", true, true).expect("parse");
+        assert!(result.negate);
+    }
+
+    #[test]
+    fn parse_rule_modifiers_negate_with_others() {
+        let result = parse_rule_modifiers("!s", "-", true, true).expect("parse");
+        assert!(result.negate);
+        assert_eq!(result.sender, Some(true));
+        assert_eq!(result.receiver, Some(false));
     }
 
     #[test]
@@ -321,6 +345,21 @@ mod tests {
         };
         let result = apply_rule_modifiers(rule, modifiers, "P");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn apply_rule_modifiers_negate() {
+        let rule = FilterRuleSpec::exclude("*.rs".to_owned());
+        let modifiers = RuleModifierState {
+            anchor_root: false,
+            sender: None,
+            receiver: None,
+            perishable: false,
+            xattr_only: false,
+            negate: true,
+        };
+        let result = apply_rule_modifiers(rule, modifiers, "-").expect("apply");
+        assert!(result.is_negated());
     }
 
     #[test]
