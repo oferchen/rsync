@@ -37,7 +37,7 @@ rustc-hash = { workspace = true }
 rustix = { workspace = true, features = ["fs", "param", "process"] }
 tempfile = { workspace = true }
 tokio = { workspace = true, optional = true, features = ["fs", "io-util", "sync", "rt"] }
-filetime = { workspace = true, optional = true }
+filetime = { workspace = true }
 zstd = { version = "0.13", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -169,7 +169,7 @@ iouring-data-writes = ["fast_io/iouring-data-writes"]
 # ============================================================================
 
 # Async runtime support - enables tokio-based async I/O for file operations
-async = ["dep:tokio", "dep:filetime"]
+async = ["dep:tokio"]
 
 # ============================================================================
 # Debugging Features
@@ -179,7 +179,6 @@ async = ["dep:tokio", "dep:filetime"]
 tracing = ["dep:tracing"]
 
 [dev-dependencies]
-filetime = { workspace = true }
 tempfile = { workspace = true }
 test-support = { path = "../test-support" }
 bandwidth = { path = "../bandwidth", features = ["test-support"] }
