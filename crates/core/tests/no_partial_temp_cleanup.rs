@@ -239,8 +239,7 @@ fn no_partial_single_file_no_residue_on_kill() {
     let temp_orphans = find_temp_files(dest_dir.path());
     assert!(
         temp_orphans.is_empty(),
-        "temp file orphans found in destination: {:?}",
-        temp_orphans
+        "temp file orphans found in destination: {temp_orphans:?}",
     );
 
     // Destination directory must be completely empty.
@@ -305,8 +304,7 @@ fn no_partial_multi_file_no_residue_on_kill() {
     let temp_orphans = find_temp_files(dest_dir.path());
     assert!(
         temp_orphans.is_empty(),
-        "temp file orphans found after multi-file kill: {:?}",
-        temp_orphans
+        "temp file orphans found after multi-file kill: {temp_orphans:?}",
     );
 
     // Files that completed before the kill may exist (small files transfer
@@ -377,8 +375,7 @@ fn no_partial_preserves_dirs_but_removes_temps() {
     let temp_orphans = find_temp_files(dest_dir.path());
     assert!(
         temp_orphans.is_empty(),
-        "temp file orphans found in nested directory tree: {:?}",
-        temp_orphans
+        "temp file orphans found in nested directory tree: {temp_orphans:?}",
     );
 
     // Verify no incomplete files exist.
@@ -452,8 +449,7 @@ fn upstream_client_no_partial_cleans_up_on_kill() {
     let temp_orphans = find_temp_files(dest_dir.path());
     assert!(
         temp_orphans.is_empty(),
-        "upstream rsync left temp file orphans: {:?}",
-        temp_orphans
+        "upstream rsync left temp file orphans: {temp_orphans:?}",
     );
 
     assert_dest_clean(dest_dir.path(), "upstream client no-partial");

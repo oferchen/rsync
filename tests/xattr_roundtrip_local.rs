@@ -19,9 +19,11 @@
 #[cfg(unix)]
 mod integration;
 
+#[cfg(target_os = "linux")]
+use integration::xattr_roundtrip::is_root;
 #[cfg(unix)]
 use integration::xattr_roundtrip::{
-    FixtureFile, XattrEntry, XattrTestFixture, is_root, verify_xattr_roundtrip,
+    FixtureFile, XattrEntry, XattrTestFixture, verify_xattr_roundtrip,
 };
 
 /// Single file with a single user-namespace xattr.
