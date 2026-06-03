@@ -32,7 +32,9 @@ mod pair;
 /// `--debug=ICONV` producer emissions for charset setup.
 pub mod trace;
 
-pub use converter::{ConversionOutcome, EncodingConverter, FilenameConverter, converter_from_locale};
+pub use converter::{
+    ConversionOutcome, EncodingConverter, FilenameConverter, converter_from_locale,
+};
 pub use error::{ConversionError, EncodingError};
 pub use pair::EncodingPair;
 pub use trace::{

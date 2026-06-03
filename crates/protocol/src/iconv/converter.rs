@@ -525,7 +525,10 @@ impl FilenameConverter {
 ///   Since we go through a Unicode intermediate representation, verbatim
 ///   copy is not possible; `?` is the closest portable substitute.
 #[cfg(feature = "iconv")]
-fn encode_with_replacement(utf8: &str, encoding: &'static encoding_rs::Encoding) -> (Vec<u8>, bool) {
+fn encode_with_replacement(
+    utf8: &str,
+    encoding: &'static encoding_rs::Encoding,
+) -> (Vec<u8>, bool) {
     // Fast path: UTF-8 target encoding never has unmappable characters.
     if encoding == encoding_rs::UTF_8 {
         return (utf8.as_bytes().to_vec(), false);
@@ -544,11 +547,8 @@ fn encode_with_replacement(utf8: &str, encoding: &'static encoding_rs::Encoding)
         let start = output.len();
         output.resize(start + needed, 0);
 
-        let (result, consumed, written) = encoder.encode_from_utf8_without_replacement(
-            remaining,
-            &mut output[start..],
-            false,
-        );
+        let (result, consumed, written) =
+            encoder.encode_from_utf8_without_replacement(remaining, &mut output[start..], false);
         output.truncate(start + written);
         remaining = &remaining[consumed..];
 

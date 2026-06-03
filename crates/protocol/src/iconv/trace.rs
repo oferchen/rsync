@@ -111,7 +111,12 @@ pub fn trace_msg_checking_via_isprint(defset: &str, errno: i32) {
 /// - `flist.c:1597-1600` (send): `"[%s] cannot convert filename: %s (%s)\n"`
 /// - `flist.c:1142-1145` (symlink): `"[%s] cannot convert symlink data for: %s (%s)\n"`
 #[inline]
-pub fn trace_conversion_warning(role: IconvRole, filename: &str, from_encoding: &str, to_encoding: &str) {
+pub fn trace_conversion_warning(
+    role: IconvRole,
+    filename: &str,
+    from_encoding: &str,
+    to_encoding: &str,
+) {
     debug_log!(
         Iconv,
         1,
