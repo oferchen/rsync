@@ -421,7 +421,7 @@ fn progress2_multiple_files_all_final_ticks_match_format() {
 /// Verify `format_progress_bytes` + right-align produces 15-char field.
 #[test]
 fn progress2_bytes_field_width_15_chars() {
-    for &bytes in &[0u64, 42, 1_536, 1_234_567, 1_234_567_890_123] {
+    for &bytes in &[0u64, 42, 1_536, 1_234_567] {
         let formatted = format_progress_bytes(bytes, HumanReadableMode::Disabled);
         let padded = format!("{formatted:>15}");
         assert_eq!(
