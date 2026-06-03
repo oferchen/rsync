@@ -82,6 +82,7 @@ pub(crate) fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option
 /// Emits `modules` unconditionally when modules are present, and appends
 /// `authlist` when at least one module requires authentication. Returns an
 /// empty vec when no modules are configured.
+#[cfg(test)]
 pub(crate) fn advertised_capability_lines(modules: &[ModuleRuntime]) -> Vec<String> {
     if modules.is_empty() {
         return Vec::new();
