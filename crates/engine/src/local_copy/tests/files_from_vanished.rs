@@ -167,16 +167,19 @@ fn ignore_missing_args_all_vanished_exits_zero() {
 
 // FFV-7: --delete-missing-args removes destination file for vanished source.
 //
-// When a source file vanishes and this flag is active, the corresponding
-// destination entry must be deleted. The transfer succeeds (exit 0).
+// When a source file listed as an operand vanishes between plan creation
+// and execution, --delete-missing-args deletes the corresponding destination
+// entry. The transfer succeeds (exit 0).
 #[test]
 fn delete_missing_args_removes_destination_for_vanished_source() {
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    fs::write(source_root.join("stay.txt"), b"stays").expect("write stay");
-    fs::write(source_root.join("disappear.txt"), b"will vanish").expect("write disappear");
+    let stay_src = source_root.join("stay.txt");
+    let disappear_src = source_root.join("disappear.txt");
+    fs::write(&stay_src, b"stays").expect("write stay");
+    fs::write(&disappear_src, b"will vanish").expect("write disappear");
 
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
@@ -186,13 +189,18 @@ fn delete_missing_args_removes_destination_for_vanished_source() {
     // Also pre-populate a file that should remain.
     fs::write(dest_root.join("stay.txt"), b"old stay").expect("write dest stay");
 
-    let mut source_operand = source_root.clone().into_os_string();
-    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
-    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    // Each source file is an individual operand - this is how --delete-missing-args
+    // works: it applies to top-level args that vanish, not files discovered during
+    // directory traversal.
+    let operands = vec![
+        stay_src.into_os_string(),
+        disappear_src.clone().into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // Remove source - the corresponding destination entry should be deleted.
-    fs::remove_file(source_root.join("disappear.txt")).expect("delete disappear from source");
+    fs::remove_file(&disappear_src).expect("delete disappear from source");
 
     let summary = plan
         .execute_with_options(
@@ -226,19 +234,24 @@ fn delete_missing_args_no_destination_entry_succeeds() {
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
 
-    fs::write(source_root.join("present.txt"), b"present").expect("write present");
-    fs::write(source_root.join("phantom.txt"), b"phantom").expect("write phantom");
+    let present_src = source_root.join("present.txt");
+    let phantom_src = source_root.join("phantom.txt");
+    fs::write(&present_src, b"present").expect("write present");
+    fs::write(&phantom_src, b"phantom").expect("write phantom");
 
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest");
 
-    let mut source_operand = source_root.clone().into_os_string();
-    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
-    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    // Each source file is an individual operand.
+    let operands = vec![
+        present_src.into_os_string(),
+        phantom_src.clone().into_os_string(),
+        dest_root.clone().into_os_string(),
+    ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // Remove source - but no destination entry exists for it.
-    fs::remove_file(source_root.join("phantom.txt")).expect("delete phantom from source");
+    fs::remove_file(&phantom_src).expect("delete phantom from source");
 
     let summary = plan
         .execute_with_options(
