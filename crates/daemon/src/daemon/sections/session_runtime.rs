@@ -291,7 +291,9 @@ fn handle_legacy_session(
     let request = request.unwrap_or_default();
 
     if request == "#list" {
-        advertise_capabilities(reader.get_mut(), modules, messages)?;
+        // upstream: clientserver.c - the #list handler does NOT send
+        // @RSYNCD: CAP before the module listing. Capabilities are only
+        // sent after module selection during the transfer handshake.
         if let Some(log) = log_sink.as_ref() {
             log_list_request(log, peer_host.as_deref(), peer_addr);
         }

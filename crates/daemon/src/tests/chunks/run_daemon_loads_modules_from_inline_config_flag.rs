@@ -39,11 +39,7 @@ fn run_daemon_loads_modules_from_inline_config_flag() {
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush list request");
 
-    line.clear();
-    reader.read_line(&mut line).expect("capabilities");
-    assert_eq!(line, "@RSYNCD: CAP modules\n");
-
-    // upstream: no @RSYNCD: OK before module listing
+    // upstream: no @RSYNCD: OK or CAP lines before module listing
 
     line.clear();
     reader.read_line(&mut line).expect("module listing");
