@@ -565,12 +565,11 @@ mod tests {
         let client_config = Arc::new(russh::client::Config::default());
         let _ = host_pubkey; // Host key verification handled by StrictHostKeyChecking::No.
 
-        let handle = russh::client::connect(client_config, ("127.0.0.1", port), handler)
+        russh::client::connect(client_config, ("127.0.0.1", port), handler)
             .await
-            .expect("connect to mock server");
+            .expect("connect to mock server")
 
-        // kh_dir is dropped here, cleaning up the temp known_hosts file.
-        handle
+        // kh_dir is dropped at end of scope, cleaning up the temp file.
     }
 
     #[tokio::test]
