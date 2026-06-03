@@ -26,10 +26,6 @@ use protocol::flist::FileEntryAccessor;
 use super::item_flags::ItemFlags;
 use super::itemize::ItemizeContext;
 
-// ---------------------------------------------------------------------------
-// Itemize formatting
-// ---------------------------------------------------------------------------
-
 /// Formats the 11-character itemize string from raw item flags and any entry type.
 ///
 /// Generic counterpart of [`super::itemize::format_iflags`] that accepts any
@@ -227,10 +223,6 @@ pub fn format_itemize_line_generic<T: FileEntryAccessor>(
     format!("{iflags_str} {name}{link_target}\n")
 }
 
-// ---------------------------------------------------------------------------
-// Quick-check
-// ---------------------------------------------------------------------------
-
 /// Pure-function quick-check over any `FileEntryAccessor`.
 ///
 /// Generic counterpart of [`super::super::receiver::quick_check::quick_check_matches`].
@@ -320,10 +312,6 @@ pub fn dest_mtime_newer_generic<T: FileEntryAccessor>(
     }
 }
 
-// ---------------------------------------------------------------------------
-// Hardlink detection
-// ---------------------------------------------------------------------------
-
 /// Returns true if this entry is a hardlink follower via `FileEntryAccessor`.
 ///
 /// Generic counterpart of the concrete `is_hardlink_follower` in
@@ -338,10 +326,6 @@ pub fn dest_mtime_newer_generic<T: FileEntryAccessor>(
 pub fn is_hardlink_follower_generic<T: FileEntryAccessor>(entry: &T) -> bool {
     entry.flags().hlinked() && !entry.flags().hlink_first()
 }
-
-// ---------------------------------------------------------------------------
-// Internal helper (shared with concrete quick_check)
-// ---------------------------------------------------------------------------
 
 /// Computes a file's checksum and compares it against an expected value.
 ///
@@ -378,10 +362,6 @@ fn file_checksum_matches(
     let cmp_len = expected.len().min(len);
     digest[..cmp_len] == expected[..cmp_len]
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
