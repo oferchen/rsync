@@ -765,6 +765,125 @@ mod tests {
         drop(pr);
     }
 
+    /// Verifies that when `PipelinedReceiver` is dropped (simulating an
+    /// interrupted transfer), staged files remain in `.~tmp~/` and are not
+    /// renamed. The caller never calls `handle_delayed_updates()`, so files
+    /// persist as valid partials for resume.
+    ///
+    /// upstream: receiver.c:584-585 - handle_delayed_updates() only after
+    /// successful transfer; interruption leaves staged files intact.
+    #[test]
+    fn delay_updates_drop_without_sweep_preserves_staged_files() {
+        let dir = test_support::create_tempdir();
+        let file_path = dir.path().join("drop_staged.dat");
+
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig {
+            delay_updates: true,
+            ..DiskCommitConfig::default()
+        });
+
+        pr.file_sender()
+            .send(FileMessage::WholeFile {
+                begin: Box::new(BeginMessage {
+                    file_path: file_path.clone(),
+                    target_size: 11,
+                    file_entry_index: 0,
+                    checksum_verifier: None,
+                    is_device_target: false,
+                    is_inplace: false,
+                    append_offset: 0,
+                    xattr_list: None,
+                }),
+                data: b"drop staged".to_vec(),
+            })
+            .unwrap();
+
+        pr.note_commit_sent(
+            [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
+            0,
+            file_path.clone(),
+            0,
+        );
+
+        let (bytes, errors) = pr.drain_all_results().unwrap();
+        assert_eq!(bytes, 11);
+        assert!(errors.is_empty());
+
+        // Collect delayed updates but do NOT call handle_delayed_updates().
+        let updates = pr.take_delayed_updates();
+        assert_eq!(updates.len(), 1);
+
+        // Drop the mediator (simulating interrupted transfer).
+        drop(pr);
+
+        // File must remain in staging, not at final destination.
+        assert!(
+            !file_path.exists(),
+            "final path must not exist when sweep is skipped"
+        );
+        let staging = dir.path().join(".~tmp~").join("drop_staged.dat");
+        assert!(
+            staging.exists(),
+            "staged file must persist after mediator drop"
+        );
+        assert_eq!(std::fs::read(&staging).unwrap(), b"drop staged");
+    }
+
+    /// Verifies that `PipelinedReceiver::shutdown()` with delay_updates does
+    /// not perform the rename sweep. The sweep is the caller's responsibility,
+    /// not the mediator's. When the caller does not sweep (interrupt path),
+    /// staged files persist.
+    #[test]
+    fn delay_updates_shutdown_without_sweep_preserves_staged_files() {
+        let dir = test_support::create_tempdir();
+        let file_path = dir.path().join("shutdown_staged.dat");
+
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig {
+            delay_updates: true,
+            ..DiskCommitConfig::default()
+        });
+
+        pr.file_sender()
+            .send(FileMessage::WholeFile {
+                begin: Box::new(BeginMessage {
+                    file_path: file_path.clone(),
+                    target_size: 14,
+                    file_entry_index: 0,
+                    checksum_verifier: None,
+                    is_device_target: false,
+                    is_inplace: false,
+                    append_offset: 0,
+                    xattr_list: None,
+                }),
+                data: b"shutdown stage".to_vec(),
+            })
+            .unwrap();
+
+        pr.note_commit_sent(
+            [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
+            0,
+            file_path.clone(),
+            0,
+        );
+
+        // Explicit shutdown (not drop) - still no sweep.
+        let (bytes, errors) = pr.shutdown().unwrap();
+        assert_eq!(bytes, 14);
+        assert!(errors.is_empty());
+
+        // File must remain staged.
+        assert!(
+            !file_path.exists(),
+            "final path must not exist after shutdown without sweep"
+        );
+        let staging = dir.path().join(".~tmp~").join("shutdown_staged.dat");
+        assert!(
+            staging.exists(),
+            "staged file must persist after shutdown"
+        );
+        assert_eq!(std::fs::read(&staging).unwrap(), b"shutdown stage");
+    }
+
     /// End-to-end: disk thread with `delay_updates` stages a file, and
     /// `PipelinedReceiver` captures the delayed path through the result
     /// drain.
