@@ -372,7 +372,6 @@ fn split_filter_tokens(s: &str) -> Vec<String> {
         i += 1;
     }
 
-    // Push the last token
     let token = s[start..].trim();
     if !token.is_empty() {
         tokens.push(token.to_string());
