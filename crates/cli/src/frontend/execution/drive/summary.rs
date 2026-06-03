@@ -83,7 +83,12 @@ where
 
     let mut live_progress = requested_progress_mode.map(|mode| {
         with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
-            LiveProgress::with_output_config(writer, mode, human_readable_mode, progress_output_config)
+            LiveProgress::with_output_config(
+                writer,
+                mode,
+                human_readable_mode,
+                progress_output_config,
+            )
         })
     });
 

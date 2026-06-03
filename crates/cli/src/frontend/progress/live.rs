@@ -75,7 +75,12 @@ impl<'a> LiveProgress<'a> {
         mode: ProgressMode,
         human_readable: HumanReadableMode,
     ) -> Self {
-        Self::with_output_config(writer, mode, human_readable, ProgressOutputConfig::default())
+        Self::with_output_config(
+            writer,
+            mode,
+            human_readable,
+            ProgressOutputConfig::default(),
+        )
     }
 
     pub(crate) fn with_output_config(
@@ -130,7 +135,11 @@ impl<'a> LiveProgress<'a> {
     /// relies on `output_needs_newline` + terminal process group checks in
     /// `show_progress` to suppress output when backgrounded or piped.
     fn line_restart(&self) -> &'static str {
-        if self.output_config.is_terminal { "\r" } else { "\n" }
+        if self.output_config.is_terminal {
+            "\r"
+        } else {
+            "\n"
+        }
     }
 
     /// Flushes the writer after a progress tick if the outbuf mode requires it.
