@@ -407,7 +407,7 @@ pub(super) struct ConnectProgramParts {
 /// Either a cloned socketpair end (for `RSYNC_CONNECT_PROG`) or a child
 /// stdout pipe (for daemon-over-remote-shell).
 #[cfg(unix)]
-pub(super) enum ProgramReader {
+pub(in crate::client) enum ProgramReader {
     Socket(std::os::unix::net::UnixStream),
     Pipe(std::process::ChildStdout),
 }
@@ -427,7 +427,7 @@ impl Read for ProgramReader {
 /// Either a cloned socketpair end (for `RSYNC_CONNECT_PROG`) or a child
 /// stdin pipe (for daemon-over-remote-shell).
 #[cfg(unix)]
-pub(super) enum ProgramWriter {
+pub(in crate::client) enum ProgramWriter {
     Socket(std::os::unix::net::UnixStream),
     Pipe(std::process::ChildStdin),
 }
