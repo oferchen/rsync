@@ -121,11 +121,9 @@ fn include_non_ascii_pattern_allows_file_under_iconv() {
     fs::write(source.join(resume_name), b"resume data").expect("write resume");
     fs::write(source.join(notes_name), b"notes data").expect("write notes");
 
-    let filter_set = FilterSet::from_rules([
-        FilterRule::include("résumé*"),
-        FilterRule::exclude("*"),
-    ])
-    .expect("filter compiles");
+    let filter_set =
+        FilterSet::from_rules([FilterRule::include("résumé*"), FilterRule::exclude("*")])
+            .expect("filter compiles");
     let converter = FilenameConverter::new("UTF-8", "ISO-8859-1").expect("converter");
 
     let operands = vec![source.into_os_string(), dest.into_os_string()];
@@ -184,8 +182,7 @@ fn filter_works_with_reverse_iconv_direction() {
     fs::write(source.join(keep_name), b"keeper").expect("write keep");
 
     // Exclude pattern uses glob prefix to match Latin-1 filename.
-    let filter_set =
-        FilterSet::from_rules([FilterRule::exclude("caf*")]).expect("filter compiles");
+    let filter_set = FilterSet::from_rules([FilterRule::exclude("caf*")]).expect("filter compiles");
     let converter = FilenameConverter::new("ISO-8859-1", "UTF-8").expect("converter");
 
     let operands = vec![source.into_os_string(), dest.into_os_string()];
