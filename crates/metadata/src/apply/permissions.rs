@@ -16,6 +16,78 @@ use std::io;
 #[cfg(unix)]
 use std::os::fd::BorrowedFd;
 
+/// Returns the process umask, cached for thread safety.
+///
+/// upstream: `main.c` stores `orig_umask` once at startup. We query it
+/// the first time a permission application needs the umask and cache the
+/// result so the double set-and-restore syscall happens at most once per
+/// process.
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn cached_umask() -> u32 {
+    use std::sync::OnceLock;
+    static UMASK: OnceLock<u32> = OnceLock::new();
+    *UMASK.get_or_init(|| {
+        // SAFETY: umask is a standard POSIX call. We set it to 0 to read
+        // the current value, then immediately restore it. This is a
+        // well-known pattern (used by upstream rsync main.c, GNU coreutils,
+        // etc.). The OnceLock ensures this pair of calls happens at most
+        // once per process, eliminating any window for concurrent umask
+        // modifications.
+        let old = unsafe { libc::umask(0) };
+        unsafe { libc::umask(old) };
+        old as u32
+    })
+}
+
+/// Computes the destination file mode matching upstream `rsync.c:dest_mode()`.
+///
+/// When `-p` (preserve permissions) is not active, upstream rsync still applies
+/// the source mode masked by the umask-derived default permissions. This ensures
+/// that execute bits from the source are preserved (masked by umask) instead of
+/// being lost to `open()`'s default `0o666 & ~umask`.
+///
+/// For new files: `source_mode & (~0o7777 | dflt_perms)`
+/// For existing files: keeps existing permissions (returns `None`)
+///
+/// upstream: rsync.c:449-472 `dest_mode()`
+/// upstream: generator.c:2280 `dflt_perms = (ACCESSPERMS & ~orig_umask)`
+#[cfg(unix)]
+fn compute_dest_mode(
+    source_mode: u32,
+    is_new: bool,
+    existing: Option<&fs::Metadata>,
+) -> Option<u32> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if is_new {
+        // upstream: dest_mode() for new files:
+        // new_mode = flist_mode & (~CHMOD_BITS | dflt_perms)
+        let dflt_perms = 0o777 & !cached_umask();
+        let new_mode = source_mode & (!0o7777 | dflt_perms);
+        // Skip the chmod if the mode already matches
+        if let Some(existing) = existing {
+            if (existing.permissions().mode() & 0o7777) == (new_mode & 0o7777) {
+                return None;
+            }
+        }
+        Some(new_mode)
+    } else if let Some(existing) = existing {
+        // upstream: dest_mode() for existing files returns
+        // (flist_mode & ~CHMOD_BITS) | (stat_mode & CHMOD_BITS)
+        // which keeps existing permissions. No chmod needed.
+        let stat_mode = existing.permissions().mode();
+        let new_mode = (source_mode & !0o7777) | (stat_mode & 0o7777);
+        if (new_mode & 0o7777) != (stat_mode & 0o7777) {
+            Some(new_mode)
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
 /// Sets permissions on `destination` to match `metadata` (full mode on Unix,
 /// read-only flag on Windows).
 ///
@@ -96,6 +168,24 @@ pub(super) fn apply_permissions_with_chmod(
 
     if options.permissions() || options.executability() {
         apply_permissions_without_chmod(destination, metadata, options, existing)?;
+        return Ok(());
+    }
+
+    // upstream: rsync.c:dest_mode() - when no explicit permission option is
+    // active, still apply source-mode-based permissions masked by umask.
+    // Without this, newly created files get `0o666 & ~umask` from open()
+    // instead of `source_mode & (~CHMOD_BITS | dflt_perms)`.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let source_mode = metadata.permissions().mode();
+        if let Some(new_mode) =
+            compute_dest_mode(source_mode, options.destination_is_new(), existing)
+        {
+            let permissions = PermissionsExt::from_mode(new_mode);
+            fs::set_permissions(destination, permissions)
+                .map_err(|error| MetadataError::new("apply dest_mode", destination, error))?;
+        }
     }
 
     Ok(())
@@ -168,6 +258,28 @@ pub(super) fn apply_permissions_with_chmod_fd(
 
     if options.executability() && metadata.is_file() {
         apply_permissions_without_chmod(destination, metadata, options, existing)?;
+        return Ok(());
+    }
+
+    // upstream: rsync.c:dest_mode() - when no explicit permission option is
+    // active, still apply source-mode-based permissions masked by umask.
+    let source_mode = metadata.permissions().mode();
+    if let Some(new_mode) =
+        compute_dest_mode(source_mode, options.destination_is_new(), existing)
+    {
+        if let Some(fd) = fd {
+            unix_fs::fchmod(
+                fd,
+                unix_fs::Mode::from_raw_mode(new_mode as rustix::fs::RawMode),
+            )
+            .map_err(|error| {
+                MetadataError::new("apply dest_mode", destination, io::Error::from(error))
+            })?;
+        } else {
+            let permissions = PermissionsExt::from_mode(new_mode);
+            fs::set_permissions(destination, permissions)
+                .map_err(|error| MetadataError::new("apply dest_mode", destination, error))?;
+        }
     }
 
     Ok(())

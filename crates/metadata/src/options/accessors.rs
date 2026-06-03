@@ -88,4 +88,12 @@ impl MetadataOptions {
     pub const fn group_mapping(&self) -> Option<&GroupMapping> {
         self.group_mapping.as_ref()
     }
+
+    /// Reports whether the destination file was newly created during this transfer.
+    ///
+    /// upstream: rsync.c:dest_mode() distinguishes new vs existing files.
+    #[must_use]
+    pub const fn destination_is_new(&self) -> bool {
+        self.destination_is_new
+    }
 }

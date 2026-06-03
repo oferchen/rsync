@@ -144,4 +144,15 @@ impl MetadataOptions {
         self.group_mapping = mapping;
         self
     }
+
+    /// Marks the destination as newly created during this transfer.
+    ///
+    /// upstream: rsync.c:dest_mode() uses `exists` to determine whether to
+    /// apply umask-masked source permissions (new file) or keep existing
+    /// permissions (existing file).
+    #[must_use]
+    pub const fn with_destination_is_new(mut self, is_new: bool) -> Self {
+        self.destination_is_new = is_new;
+        self
+    }
 }
