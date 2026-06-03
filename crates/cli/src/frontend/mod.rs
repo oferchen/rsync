@@ -83,7 +83,7 @@ use std::io::{self, Write};
 pub mod arguments;
 mod command_builder;
 mod execution;
-mod outbuf;
+pub(crate) mod outbuf;
 
 #[cfg(test)]
 pub(crate) use command_builder::clap_command;
