@@ -119,7 +119,6 @@ fn acl_roundtrip_nested_directory_with_default_acl() {
     #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     {
         eprintln!("skip: default ACLs only supported on Linux/FreeBSD");
-        return;
     }
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]

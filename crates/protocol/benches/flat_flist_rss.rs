@@ -185,7 +185,7 @@ fn macos_rss_bytes() -> usize {
     // MACH_TASK_BASIC_INFO = 20
     const MACH_TASK_BASIC_INFO: u32 = 20;
 
-    extern "C" {
+    unsafe extern "C" {
         fn mach_task_self() -> u32;
         fn task_info(
             target_task: u32,
