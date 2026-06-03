@@ -2445,7 +2445,13 @@ mod files_from {
         // sends the entire path (minus the leading slash, stripped post-sort
         // by the receiver) as the relative name. Regression test for #4074.
         let temp_dir = TempDir::new().unwrap();
-        let src_dir = temp_dir.path().join("usr").join("bin");
+        // Canonicalize to resolve symlinks in the temp path. On macOS, /var is
+        // a symlink to /private/var - emit_implied_parents uses
+        // symlink_metadata which skips symlink components (is_dir() is false
+        // for symlinks), so the ancestor loop below would fail on the bare
+        // "var" entry.
+        let temp_root = temp_dir.path().canonicalize().unwrap();
+        let src_dir = temp_root.join("usr").join("bin");
         std::fs::create_dir_all(&src_dir).unwrap();
         std::fs::write(src_dir.join("ar"), b"x").unwrap();
 
