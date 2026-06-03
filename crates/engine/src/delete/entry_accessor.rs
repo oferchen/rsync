@@ -44,10 +44,6 @@ use super::extras::classify;
 use super::plan::{DeleteEntry, HardlinkCohortId};
 use super::traversal::DirTraversalCursor;
 
-// ---------------------------------------------------------------------------
-// segment_basenames_generic (mirrors extras::segment_basenames)
-// ---------------------------------------------------------------------------
-
 /// Collects the leaf basenames from a slice of accessor-backed entries into
 /// a hash set keyed by [`OsString`].
 ///
@@ -73,10 +69,6 @@ pub fn segment_basenames_generic<T: FileEntryAccessor>(entries: &[T]) -> HashSet
     }
     set
 }
-
-// ---------------------------------------------------------------------------
-// collect_child_dirs_generic (mirrors traversal logic in observe_segment)
-// ---------------------------------------------------------------------------
 
 /// Extracts child directory basenames from an accessor-backed entry slice,
 /// producing fully-qualified paths relative to `parent_dir`.
@@ -120,10 +112,6 @@ pub fn collect_child_dirs_generic<T: FileEntryAccessor>(
     }
     children
 }
-
-// ---------------------------------------------------------------------------
-// build_cohort_index_generic (mirrors CohortIndex::build_from_flist_segment)
-// ---------------------------------------------------------------------------
 
 /// Read-only cohort index built from accessor-backed entries.
 ///
@@ -255,10 +243,6 @@ impl GenericCohortIndex {
     }
 }
 
-// ---------------------------------------------------------------------------
-// compute_extras_generic (mirrors extras::compute_extras)
-// ---------------------------------------------------------------------------
-
 /// Lists `dest_dir`, subtracts every basename that appears in
 /// `segment_entries`, and classifies each surviving entry by kind.
 ///
@@ -280,10 +264,6 @@ pub fn compute_extras_generic<T: FileEntryAccessor>(
 ) -> io::Result<Vec<DeleteEntry>> {
     compute_extras_with_cohorts_generic(dest_dir, segment_entries, None)
 }
-
-// ---------------------------------------------------------------------------
-// compute_extras_with_cohorts_generic (mirrors extras::compute_extras_with_cohorts)
-// ---------------------------------------------------------------------------
 
 /// Variant of [`compute_extras_generic`] that attaches a hardlink cohort
 /// tag to each surviving entry whose destination basename matches a member
@@ -324,10 +304,6 @@ pub fn compute_extras_with_cohorts_generic<T: FileEntryAccessor>(
     Ok(extras)
 }
 
-// ---------------------------------------------------------------------------
-// observe_segment_generic (extends DirTraversalCursor)
-// ---------------------------------------------------------------------------
-
 impl DirTraversalCursor {
     /// Records the directory children observed in one flist segment,
     /// accepting any `T: FileEntryAccessor` instead of `&[FileEntry]`.
@@ -367,10 +343,6 @@ impl DirTraversalCursor {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use std::ffi::OsStr;
@@ -379,10 +351,6 @@ mod tests {
     use protocol::flist::FileEntry;
 
     use super::*;
-
-    // -----------------------------------------------------------------------
-    // segment_basenames_generic tests
-    // -----------------------------------------------------------------------
 
     #[test]
     fn basenames_empty_slice() {
@@ -435,10 +403,6 @@ mod tests {
         assert_eq!(set.len(), 1);
         assert!(set.contains(&OsString::from("leaf.txt")));
     }
-
-    // -----------------------------------------------------------------------
-    // collect_child_dirs_generic tests
-    // -----------------------------------------------------------------------
 
     #[test]
     fn child_dirs_empty_slice() {
@@ -500,10 +464,6 @@ mod tests {
             ]
         );
     }
-
-    // -----------------------------------------------------------------------
-    // GenericCohortIndex tests
-    // -----------------------------------------------------------------------
 
     fn leader(name: &str) -> FileEntry {
         let mut entry = FileEntry::new_file(PathBuf::from(name), 0, 0o644);
@@ -687,10 +647,6 @@ mod tests {
         }
     }
 
-    // -----------------------------------------------------------------------
-    // compute_extras_generic tests
-    // -----------------------------------------------------------------------
-
     fn flist_file(name: &str) -> FileEntry {
         FileEntry::new_file(PathBuf::from(name), 0, 0o644)
     }
@@ -784,10 +740,6 @@ mod tests {
             assert!(entry.hardlink_cohort.is_none());
         }
     }
-
-    // -----------------------------------------------------------------------
-    // observe_segment_generic tests
-    // -----------------------------------------------------------------------
 
     fn dir_entry(name: &str) -> FileEntry {
         FileEntry::new_directory(PathBuf::from(name), 0o755)

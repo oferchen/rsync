@@ -179,17 +179,9 @@ impl HardlinkTracker {
 
     /// Registers a file with its device/inode pair.
     ///
-    /// If this is the first file with this `(dev, ino)`, it becomes the source.
-    /// Subsequent files with the same key become links to the first.
-    ///
-    /// # Arguments
-    ///
-    /// * `key` - Device and inode pair from `stat()`
-    /// * `file_index` - Index of this file in the file list
-    ///
-    /// # Returns
-    ///
-    /// `true` if this is the first file with this key (source), `false` if it's a link.
+    /// If this is the first file with this `(dev, ino)`, it becomes the source
+    /// and returns `true`. Subsequent files with the same key become links
+    /// and return `false`.
     pub fn register(&mut self, key: HardlinkKey, file_index: i32) -> bool {
         match self.groups.get_mut(&key) {
             Some(group) => {
@@ -209,15 +201,8 @@ impl HardlinkTracker {
 
     /// Resolves the action to take for a file.
     ///
-    /// # Arguments
-    ///
-    /// * `file_index` - Index of the file in the file list
-    ///
-    /// # Returns
-    ///
-    /// - `HardlinkAction::Transfer` if the file should be transferred normally
-    /// - `HardlinkAction::LinkTo(source)` if it should be hardlinked to `source`
-    /// - `HardlinkAction::Skip` if the file was never registered (shouldn't happen)
+    /// Returns `Transfer` for the group source, `LinkTo(source)` for
+    /// subsequent members, or `Skip` if the file was never registered.
     #[must_use]
     pub fn resolve(&self, file_index: i32) -> HardlinkAction {
         self.actions
@@ -226,15 +211,7 @@ impl HardlinkTracker {
             .unwrap_or(HardlinkAction::Skip)
     }
 
-    /// Checks if a file is the source of a hardlink group.
-    ///
-    /// # Arguments
-    ///
-    /// * `file_index` - Index of the file in the file list
-    ///
-    /// # Returns
-    ///
-    /// `true` if this file is the first in its hardlink group, `false` otherwise.
+    /// Returns `true` if this file is the source of a hardlink group.
     #[must_use]
     pub fn is_hardlink_source(&self, file_index: i32) -> bool {
         matches!(self.resolve(file_index), HardlinkAction::Transfer)
@@ -244,16 +221,8 @@ impl HardlinkTracker {
                 .any(|g| g.source_index == file_index && !g.link_indices.is_empty())
     }
 
-    /// Gets the hardlink target index for a file.
-    ///
-    /// # Arguments
-    ///
-    /// * `file_index` - Index of the file in the file list
-    ///
-    /// # Returns
-    ///
-    /// - `Some(source_index)` if this file should be linked to `source_index`
-    /// - `None` if this file should be transferred normally or was never registered
+    /// Returns the source index this file should be linked to, or `None`
+    /// if the file should be transferred normally.
     pub fn get_hardlink_target(&self, file_index: i32) -> Option<i32> {
         match self.resolve(file_index) {
             HardlinkAction::LinkTo(target) => Some(target),

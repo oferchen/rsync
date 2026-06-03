@@ -54,12 +54,7 @@ impl fmt::Display for DeletePhase {
 
 /// Traces the start of a deletion phase.
 ///
-/// Emits a tracing event that marks the beginning of a deletion phase.
-/// In upstream rsync, this corresponds to entering delete_files() or similar.
-///
-/// # Arguments
-///
-/// * `phase` - The deletion phase being started
+/// In upstream rsync, this corresponds to entering `delete_files()`.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_delete_phase_start(phase: DeletePhase) {
@@ -75,15 +70,7 @@ pub fn trace_delete_phase_start(phase: DeletePhase) {
 #[inline]
 pub fn trace_delete_phase_start(_phase: DeletePhase) {}
 
-/// Traces the completion of a deletion phase.
-///
-/// Emits summary statistics for the deletion phase, including count and timing.
-///
-/// # Arguments
-///
-/// * `phase` - The deletion phase being completed
-/// * `deleted_count` - Total number of files/directories deleted
-/// * `elapsed` - Time taken for this phase
+/// Traces the completion of a deletion phase with count and timing.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_delete_phase_end(phase: DeletePhase, deleted_count: usize, elapsed: Duration) {
@@ -102,14 +89,6 @@ pub fn trace_delete_phase_end(phase: DeletePhase, deleted_count: usize, elapsed:
 pub fn trace_delete_phase_end(_phase: DeletePhase, _deleted_count: usize, _elapsed: Duration) {}
 
 /// Traces an individual file or directory deletion.
-///
-/// Logs when a single file or directory is successfully deleted during
-/// a deletion phase.
-///
-/// # Arguments
-///
-/// * `path` - Relative path of the deleted file or directory
-/// * `is_directory` - True if this is a directory, false if it's a file
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_delete_file(path: &str, is_directory: bool) {
@@ -126,15 +105,7 @@ pub fn trace_delete_file(path: &str, is_directory: bool) {
 #[inline]
 pub fn trace_delete_file(_path: &str, _is_directory: bool) {}
 
-/// Traces a skipped deletion.
-///
-/// Logs when a file or directory deletion is skipped due to constraints
-/// like `--max-delete` limits or filter rules.
-///
-/// # Arguments
-///
-/// * `path` - Relative path of the skipped item
-/// * `reason` - Human-readable reason for skipping (e.g., "max-delete limit", "filter rule")
+/// Traces a skipped deletion due to `--max-delete` or filter rules.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_delete_skipped(path: &str, reason: &str) {
@@ -151,14 +122,7 @@ pub fn trace_delete_skipped(path: &str, reason: &str) {
 #[inline]
 pub fn trace_delete_skipped(_path: &str, _reason: &str) {}
 
-/// Traces a deletion error.
-///
-/// Logs when an attempt to delete a file or directory fails.
-///
-/// # Arguments
-///
-/// * `path` - Relative path of the item that failed to delete
-/// * `error` - Human-readable error description
+/// Traces a failed deletion attempt.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_delete_error(path: &str, error: &str) {
@@ -175,17 +139,7 @@ pub fn trace_delete_error(path: &str, error: &str) {
 #[inline]
 pub fn trace_delete_error(_path: &str, _error: &str) {}
 
-/// Traces a summary of all deletion operations.
-///
-/// Emits aggregate statistics for the entire deletion session, including
-/// total deletions, skips, errors, and elapsed time.
-///
-/// # Arguments
-///
-/// * `total_deleted` - Total number of files/directories deleted
-/// * `total_skipped` - Total number of deletions skipped
-/// * `total_errors` - Total number of deletion errors
-/// * `elapsed` - Total time elapsed for all deletion operations
+/// Traces aggregate deletion statistics for the session.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_delete_summary(
@@ -282,10 +236,6 @@ impl DeleteTracer {
     }
 
     /// Starts tracking a deletion phase, recording the start time.
-    ///
-    /// # Arguments
-    ///
-    /// * `phase` - The deletion phase being started
     pub fn start_phase(&mut self, phase: DeletePhase) {
         if self.session_start_time.is_none() {
             self.session_start_time = Some(Instant::now());

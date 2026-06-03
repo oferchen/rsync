@@ -28,12 +28,7 @@ const FLIST_TARGET: &str = "rsync::flist";
 
 /// Traces the start of a file list send operation.
 ///
-/// Emits a tracing span that tracks the duration of sending the file list.
 /// In upstream rsync, this corresponds to the entry point of `send_file_list()`.
-///
-/// # Arguments
-///
-/// * `expected_count` - Estimated number of files to be sent (may be 0 if unknown)
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_send_file_list_start(expected_count: usize) {
@@ -51,15 +46,7 @@ pub fn trace_send_file_list_start(_expected_count: usize) {}
 
 /// Traces a single file list entry being sent.
 ///
-/// Logs detailed metadata for each file being transmitted, matching upstream
-/// rsync's per-file debug output format from flist.c.
-///
-/// # Arguments
-///
-/// * `name` - Relative path of the file
-/// * `size` - File size in bytes
-/// * `mtime` - Modification time as Unix timestamp
-/// * `mode` - File mode bits (Unix permissions + file type)
+/// Matches upstream rsync's per-file debug output format from `flist.c`.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_send_file_list_entry(name: &str, size: u64, mtime: i64, mode: u32) {
@@ -78,16 +65,7 @@ pub fn trace_send_file_list_entry(name: &str, size: u64, mtime: i64, mode: u32) 
 #[inline]
 pub fn trace_send_file_list_entry(_name: &str, _size: u64, _mtime: i64, _mode: u32) {}
 
-/// Traces the completion of a file list send operation.
-///
-/// Emits summary statistics for the entire send operation, matching the
-/// output format of upstream rsync's flist.c completion logging.
-///
-/// # Arguments
-///
-/// * `count` - Total number of files sent
-/// * `total_size` - Aggregate size of all files in bytes
-/// * `elapsed` - Time taken to build and send the list
+/// Traces the completion of a file list send with count and timing.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_send_file_list_end(count: usize, total_size: u64, elapsed: Duration) {
@@ -124,13 +102,6 @@ pub fn trace_recv_file_list_start() {
 pub fn trace_recv_file_list_start() {}
 
 /// Traces a single file list entry being received.
-///
-/// Logs metadata for each file entry as it arrives from the peer.
-///
-/// # Arguments
-///
-/// * `name` - Relative path of the file
-/// * `size` - File size in bytes
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_recv_file_list_entry(name: &str, size: u64) {
@@ -147,15 +118,7 @@ pub fn trace_recv_file_list_entry(name: &str, size: u64) {
 #[inline]
 pub fn trace_recv_file_list_entry(_name: &str, _size: u64) {}
 
-/// Traces the completion of a file list receive operation.
-///
-/// Emits summary statistics for the entire receive operation.
-///
-/// # Arguments
-///
-/// * `count` - Total number of files received
-/// * `total_size` - Aggregate size of all files in bytes
-/// * `elapsed` - Time taken to receive and process the list
+/// Traces the completion of a file list receive with count and timing.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_recv_file_list_end(count: usize, total_size: u64, elapsed: Duration) {
@@ -242,35 +205,18 @@ impl FlistTracer {
     }
 
     /// Records a file entry, incrementing count and accumulating size.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - File name (used only when tracing is enabled)
-    /// * `size` - File size in bytes
     pub fn record_entry(&mut self, _name: &str, size: u64) {
         self.count += 1;
         self.total_size = self.total_size.saturating_add(size);
     }
 
     /// Records a send entry with full metadata and emits a trace event.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Relative path of the file
-    /// * `size` - File size in bytes
-    /// * `mtime` - Modification time as Unix timestamp
-    /// * `mode` - File mode bits
     pub fn record_send_entry(&mut self, name: &str, size: u64, mtime: i64, mode: u32) {
         trace_send_file_list_entry(name, size, mtime, mode);
         self.record_entry(name, size);
     }
 
     /// Records a receive entry and emits a trace event.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Relative path of the file
-    /// * `size` - File size in bytes
     pub fn record_recv_entry(&mut self, name: &str, size: u64) {
         trace_recv_file_list_entry(name, size);
         self.record_entry(name, size);

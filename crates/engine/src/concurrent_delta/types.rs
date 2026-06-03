@@ -124,17 +124,8 @@ impl DeltaWork {
         }
     }
 
-    /// Creates a new delta transfer work item with actual literal/matched byte counts
-    /// accumulated during delta token stream processing.
-    ///
-    /// # Arguments
-    ///
-    /// * `ndx` - File list index
-    /// * `dest_path` - Destination path for the reconstructed file
-    /// * `basis_path` - Path to the basis file used for block matching
-    /// * `target_size` - Expected target file size
-    /// * `literal_bytes` - Bytes received as literal data over the wire
-    /// * `matched_bytes` - Bytes copied from the basis file via block references
+    /// Creates a new delta transfer work item with literal/matched byte
+    /// counts accumulated during delta token stream processing.
     #[must_use]
     pub fn delta(
         ndx: impl Into<FileNdx>,
@@ -160,22 +151,10 @@ impl DeltaWork {
     /// Creates a delta transfer work item that triggers self-contained
     /// block matching against a local source file.
     ///
-    /// Unlike [`DeltaWork::delta`], this constructor stores both the basis and
-    /// the source paths, enabling
-    /// [`DeltaTransferStrategy`](super::strategy::DeltaTransferStrategy) to
-    /// run the full [`DeltaGenerator`](matching::DeltaGenerator) pipeline:
-    /// signature generation from the basis, rolling+strong checksum block
-    /// matching against the source, literal/COPY token emission, and applied
-    /// script written to the destination. Returned stats reflect the actual
-    /// matching outcome.
-    ///
-    /// # Arguments
-    ///
-    /// * `ndx` - File list index
-    /// * `dest_path` - Destination path where the reconstructed file is written
-    /// * `basis_path` - Path to the basis file used for block matching
-    /// * `source_path` - Path to the source file consumed by the matcher
-    /// * `target_size` - Expected target file size (typically equals source size)
+    /// Unlike [`DeltaWork::delta`], this stores both basis and source paths,
+    /// enabling [`DeltaTransferStrategy`](super::strategy::DeltaTransferStrategy)
+    /// to run the full signature/block-matching/delta-apply pipeline.
+    /// Returned stats reflect the actual matching outcome.
     #[must_use]
     pub fn delta_with_source(
         ndx: impl Into<FileNdx>,
