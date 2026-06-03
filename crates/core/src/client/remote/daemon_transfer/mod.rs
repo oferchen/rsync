@@ -23,19 +23,22 @@ mod orchestration;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
+use std::ffi::OsStr;
 use std::io::BufReader;
+use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use engine::batch::BatchWriter;
 
-use super::super::DAEMON_SOCKET_TIMEOUT;
 use super::super::config::ClientConfig;
 use super::super::error::{ClientError, invalid_argument_error, socket_error};
 use super::super::module_list::{
-    apply_socket_options, open_daemon_stream, resolve_connect_timeout,
+    DaemonStream, apply_socket_options, open_daemon_stream, resolve_connect_timeout,
 };
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
+use super::super::{DAEMON_SOCKET_TIMEOUT, IPC_EXIT_CODE};
 use super::batch_support::build_batch_context;
 use super::invocation::{RemoteRole, TransferSpec, determine_transfer_role};
 
@@ -219,6 +222,184 @@ pub fn run_daemon_transfer(
         ),
         RemoteRole::Proxy => {
             unreachable!("Proxy transfers via daemon are rejected earlier")
+        }
+    }
+}
+
+/// Executes a daemon transfer tunneled over a remote shell (SSH with `::` syntax).
+///
+/// Mirrors upstream `main.c:1577-1586`: when `-e`/`--rsh` is active with a
+/// double-colon operand, the client spawns the remote shell with
+/// `rsync --server --daemon .` as the remote command, then speaks the
+/// `@RSYNCD:` daemon protocol over the shell's stdio pipes.
+///
+/// This avoids opening a direct TCP connection to the rsync daemon port -
+/// instead the daemon runs on the remote end as a child of the SSH session,
+/// communicating via stdin/stdout.
+#[cfg_attr(
+    feature = "tracing",
+    instrument(skip(config, _observer), name = "daemon_over_remote_shell")
+)]
+pub fn run_daemon_over_remote_shell(
+    config: &ClientConfig,
+    _observer: Option<&mut dyn ClientProgressObserver>,
+    batch_writer: Option<Arc<Mutex<BatchWriter>>>,
+) -> Result<ClientSummary, ClientError> {
+    let args = config.transfer_args();
+    if args.len() < 2 {
+        return Err(invalid_argument_error(
+            "need at least one source and one destination",
+            1,
+        ));
+    }
+
+    let (sources, destination) = args.split_at(args.len() - 1);
+    let destination = &destination[0];
+
+    let transfer_spec = determine_transfer_role(sources, destination)?;
+    let role = transfer_spec.role();
+    let local_paths = match &transfer_spec {
+        TransferSpec::Push { local_sources, .. } => local_sources.clone(),
+        TransferSpec::Pull { local_dest, .. } => vec![local_dest.clone()],
+        TransferSpec::Proxy { .. } => {
+            return Err(invalid_argument_error(
+                "remote-to-remote transfers via daemon-over-remote-shell are not supported",
+                1,
+            ));
+        }
+    };
+
+    let daemon_operand = config
+        .transfer_args()
+        .iter()
+        .find(|arg| arg.to_string_lossy().contains("::"))
+        .ok_or_else(|| invalid_argument_error("no host::module operand found", 1))?;
+    let daemon_operand_str = daemon_operand.to_string_lossy();
+    let request = DaemonTransferRequest::parse_double_colon(&daemon_operand_str)?;
+
+    // upstream: main.c:594-604 - when daemon_connection > 0, the remote
+    // command is `rsync_path --server --daemon .` with no server_options().
+    let shell_args = config
+        .remote_shell()
+        .ok_or_else(|| invalid_argument_error("daemon-over-remote-shell requires -e/--rsh", 1))?;
+
+    let ssh_program = if shell_args.is_empty() {
+        OsStr::new("ssh")
+    } else {
+        &shell_args[0]
+    };
+    let mut cmd = Command::new(ssh_program);
+
+    for opt in shell_args.iter().skip(1) {
+        cmd.arg(opt);
+    }
+
+    if let Some(bind_addr) = config.bind_address() {
+        cmd.arg("-o")
+            .arg(format!("BindAddress={}", bind_addr.socket().ip()));
+    }
+
+    if let Some(jump) = config.jump_hosts() {
+        cmd.arg("-J").arg(jump);
+    }
+
+    if let Some(timeout) = config.connect_timeout().effective(Duration::from_secs(30)) {
+        cmd.arg("-o")
+            .arg(format!("ConnectTimeout={}", timeout.as_secs()));
+    }
+
+    if let Some(user) = &request.username {
+        cmd.arg("-l").arg(user);
+    }
+
+    cmd.arg(request.address.host());
+
+    let rsync_path = config.rsync_path().unwrap_or(OsStr::new("rsync"));
+    cmd.arg(rsync_path).arg("--server").arg("--daemon").arg(".");
+
+    // upstream: main.c:1571-1572 - set_env_num("RSYNC_PORT", env_port)
+    cmd.env("RSYNC_PORT", request.address.port().to_string());
+    cmd.stdin(Stdio::piped());
+    cmd.stdout(Stdio::piped());
+    cmd.stderr(Stdio::inherit());
+
+    let mut child = cmd.spawn().map_err(|e| {
+        invalid_argument_error(
+            &format!("failed to spawn remote shell for daemon-over-rsh: {e}"),
+            IPC_EXIT_CODE,
+        )
+    })?;
+
+    let stdin = child.stdin.take().ok_or_else(|| {
+        invalid_argument_error("remote shell process did not expose stdin", IPC_EXIT_CODE)
+    })?;
+    let stdout = child.stdout.take().ok_or_else(|| {
+        invalid_argument_error("remote shell process did not expose stdout", IPC_EXIT_CODE)
+    })?;
+
+    let stream = DaemonStream::from_child_process(child, stdin, stdout);
+
+    let transfer_timeout = config
+        .timeout()
+        .as_seconds()
+        .map(|s| Duration::from_secs(s.get()));
+    stream
+        .configure_transfer_options(true, transfer_timeout)
+        .map_err(|e| socket_error("configure transfer options on", "remote shell stream", e))?;
+
+    let (reader_half, mut writer_half, guard) = stream
+        .split()
+        .map_err(|e| socket_error("split remote shell stream for", "handshake", e))?;
+    let mut buf_reader = BufReader::new(reader_half);
+
+    let output_motd = !config.no_motd();
+    let protocol = perform_daemon_handshake(
+        &mut buf_reader,
+        &mut writer_half,
+        &request,
+        output_motd,
+        config.daemon_params(),
+        config.early_input(),
+        config.protocol_version(),
+    )?;
+
+    let daemon_is_sender = matches!(role, RemoteRole::Receiver);
+    send_daemon_arguments(
+        &mut writer_half,
+        config,
+        &request,
+        protocol,
+        daemon_is_sender,
+    )?;
+
+    let batch_ctx = batch_writer.map(|bw| build_batch_context(config, bw));
+
+    let buffered = buf_reader.buffer().to_vec();
+    let mut reader_half = buf_reader.into_inner();
+
+    match role {
+        RemoteRole::Receiver => run_pull_transfer(
+            config,
+            &mut reader_half,
+            &mut writer_half,
+            guard,
+            &local_paths,
+            protocol,
+            batch_ctx,
+            buffered,
+        ),
+        RemoteRole::Sender => run_push_transfer(
+            config,
+            &mut reader_half,
+            &mut writer_half,
+            guard,
+            &local_paths,
+            protocol,
+            batch_ctx,
+            buffered,
+        ),
+        RemoteRole::Proxy => {
+            unreachable!("Proxy transfers via daemon-over-remote-shell are rejected earlier")
         }
     }
 }
