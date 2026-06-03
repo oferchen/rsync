@@ -104,9 +104,10 @@ fn exclude_non_ascii_pattern_prevents_iconv_copy() {
 // 2. Include pattern with non-ASCII characters under --iconv
 // =========================================================================
 
-/// An `--include='résumé*'` followed by `--exclude='*'` should allow
-/// only files matching the include through. With `--iconv=UTF-8,ISO-8859-1`
-/// active, the surviving file's destination name should be transcoded.
+/// An `--include='résumé*' --include='*/' --exclude='*'` filter chain
+/// should allow only files matching the include through while permitting
+/// directory traversal. With `--iconv=UTF-8,ISO-8859-1` active, the
+/// surviving file's destination name should be transcoded.
 #[test]
 fn include_non_ascii_pattern_allows_file_under_iconv() {
     let temp = tempdir().expect("tempdir");
@@ -121,9 +122,12 @@ fn include_non_ascii_pattern_allows_file_under_iconv() {
     fs::write(source.join(resume_name), b"resume data").expect("write resume");
     fs::write(source.join(notes_name), b"notes data").expect("write notes");
 
-    let filter_set =
-        FilterSet::from_rules([FilterRule::include("résumé*"), FilterRule::exclude("*")])
-            .expect("filter compiles");
+    let filter_set = FilterSet::from_rules([
+        FilterRule::include("résumé*"),
+        FilterRule::include("*/"), // Include directories for traversal
+        FilterRule::exclude("*"),
+    ])
+    .expect("filter compiles");
     let converter = FilenameConverter::new("UTF-8", "ISO-8859-1").expect("converter");
 
     let operands = vec![source.into_os_string(), dest.into_os_string()];
