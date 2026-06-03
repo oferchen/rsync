@@ -12,7 +12,7 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 ## Status
 
-**Release:** 0.6.2 (alpha) - Wire-compatible drop-in replacement for rsync 3.4.3 (and 3.4.2 / 3.4.1, protocols 28-32).
+**Release:** 0.6.3 (beta) - Wire-compatible drop-in replacement for rsync 3.4.3 (and 3.4.2 / 3.4.1, protocols 28-32).
 
 All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop tested against upstream rsync 2.6.9, 3.0.9, 3.1.3, 3.4.1, 3.4.2, and 3.4.3. Upstream rsync's own `testsuite/*.test` corpus runs in CI against `oc-rsync` as `$RSYNC` - all tests now pass (known-failures roster is empty).
 
@@ -55,6 +55,35 @@ The primary platform is Linux. macOS is well-supported with parity for all metad
 | Optimized file copy | ✓ `copy_file_range` | ✓ `fcopyfile` | ✓ `CopyFileExW` | All three are wired into the local-copy executor with standard-I/O fallback. |
 
 Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
+
+### What's New (v0.6.3)
+
+**Daemon-over-remote-shell**
+- `host::module` syntax now routes through SSH to a remote daemon (`--server --daemon` mode), matching upstream's daemon-over-remote-shell transport (#5353, #5364)
+- `RSYNC_CONNECT_PROG` support for custom connection programs (#5317)
+
+**Upstream testsuite parity**
+- All upstream `testsuite/*.test` scripts pass with zero known failures - the roster is now empty (#5342, #5346, #5355, #5358)
+- Dedicated CI workflow runs the upstream testsuite on every push with UPASS detection (#5342)
+
+**Security**
+- SEC-1 TOCTOU sandbox promoted from MOSTLY FIXED to COMPLETE - all path-based daemon syscalls now use `*at` dirfd-scoped equivalents (#4693, #4690, #4683)
+
+**Bug fixes**
+- Daemon module listing protocol aligned with upstream behavior (#5366)
+- Metadata applied before rename to match upstream `finish_transfer` semantics (#5338)
+- Secluded-args and capability string parsing from compact server flag string (#5336)
+- `P_LOCAL` directives inherited from global `rsyncd.conf` section into module context (#5334)
+- Atime preserved independently of mtime in local copy metadata path (#5328)
+- Socketpair used instead of pipes for `RSYNC_CONNECT_PROG` child stdin (#5363)
+
+**CI improvements**
+- All GitHub Actions pinned to SHA hashes for supply chain safety (#5333)
+- Nextest profiles, `--locked` builds, and standardized cache keys (#5335, #5332, #5341)
+- Non-required beta/nightly jobs moved to schedule-only to reduce runner contention (#5324)
+
+**Code quality**
+- Comment cleanup across engine, daemon, matching, and transfer crates (#5369, #5370, #5371, #5373)
 
 ### What's New (v0.6.2)
 

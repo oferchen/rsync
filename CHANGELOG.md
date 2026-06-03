@@ -4,10 +4,10 @@ All notable changes to oc-rsync are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-oc-rsync is wire-compatible with upstream rsync 3.4.1 (protocol 32). Release
+oc-rsync is wire-compatible with upstream rsync 3.4.3 (protocol 32). Release
 tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
-## [Unreleased]
+## [0.6.3] - 2026-06-03
 
 ### Security
 
@@ -231,4 +231,5 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
     keyed by packed `(rsum_low, bucket_idx)` entries, giving sequential probes
     cache-friendly access and removing per-bucket heap allocations.
 
-[Unreleased]: https://github.com/oferchen/rsync/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/oferchen/rsync/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/oferchen/rsync/compare/v0.6.2...v0.6.3
