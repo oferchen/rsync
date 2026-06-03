@@ -23,10 +23,10 @@ pub(crate) use proxy::{
 pub(crate) enum DaemonStreamReader {
     /// Cloned TCP socket used for reading.
     Tcp(TcpStream),
-    /// Connect program read half: Unix socketpair clone (Unix) or child
-    /// stdout pipe (non-Unix).
+    /// Connect program read half: Unix socketpair clone or child stdout
+    /// pipe (Unix), or child stdout pipe (non-Unix).
     #[cfg(unix)]
-    Program(std::os::unix::net::UnixStream),
+    Program(program::ProgramReader),
     #[cfg(not(unix))]
     Program(std::process::ChildStdout),
 }
@@ -44,10 +44,10 @@ impl Read for DaemonStreamReader {
 pub(crate) enum DaemonStreamWriter {
     /// Original TCP socket used for writing.
     Tcp(TcpStream),
-    /// Connect program write half: Unix socketpair clone (Unix) or child
-    /// stdin pipe (non-Unix).
+    /// Connect program write half: Unix socketpair clone or child stdin
+    /// pipe (Unix), or child stdin pipe (non-Unix).
     #[cfg(unix)]
-    Program(std::os::unix::net::UnixStream),
+    Program(program::ProgramWriter),
     #[cfg(not(unix))]
     Program(std::process::ChildStdin),
 }
@@ -189,7 +189,7 @@ impl DaemonStream {
         stdin: std::process::ChildStdin,
         stdout: std::process::ChildStdout,
     ) -> Self {
-        Self::Program(ConnectProgramStream::new(child, stdin, stdout))
+        Self::Program(ConnectProgramStream::from_pipes(child, stdin, stdout))
     }
 
     /// Returns a reference to the underlying `TcpStream` if this is a TCP
