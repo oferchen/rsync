@@ -10,6 +10,7 @@
 /// stamped to 0 (the Unix epoch). On the next run with `--update`, the
 /// partial file's mtime=0 is older than every real source timestamp, so
 /// the transfer proceeds and replaces the partial with full content.
+#[cfg(unix)]
 #[test]
 fn update_transfers_file_when_dest_has_epoch_mtime() {
     let temp = tempdir().expect("tempdir");
@@ -115,6 +116,7 @@ fn update_skips_file_when_dest_has_future_mtime() {
 /// Validates the mtime=0 interaction with --update across multiple files
 /// in a directory, where some have epoch mtime and others have real
 /// timestamps.
+#[cfg(unix)]
 #[test]
 fn update_recursive_transfers_epoch_mtime_files_only() {
     let temp = tempdir().expect("tempdir");
