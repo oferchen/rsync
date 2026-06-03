@@ -375,9 +375,9 @@ impl TempFileGuard {
         dest_path: &Path,
         partial_dir: &Path,
     ) -> io::Result<PathBuf> {
-        let file_name = dest_path
-            .file_name()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "destination has no filename"))?;
+        let file_name = dest_path.file_name().ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "destination has no filename")
+        })?;
 
         // upstream: cleanup.c constructs partial path as partial_dir/filename
         // For relative partial dirs, the path is relative to the file's parent.
@@ -890,7 +890,10 @@ mod tests {
 
         assert!(result.is_ok());
         let partial_path = result.unwrap();
-        assert_eq!(partial_path, dest_dir.join(".rsync-partial").join("file.dat"));
+        assert_eq!(
+            partial_path,
+            dest_dir.join(".rsync-partial").join("file.dat")
+        );
         assert!(partial_path.exists());
         assert_eq!(fs::read(&partial_path).unwrap(), b"relative partial");
     }

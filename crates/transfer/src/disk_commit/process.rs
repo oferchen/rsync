@@ -93,11 +93,7 @@ pub(super) fn process_file(
                 drop(output);
                 // upstream: cleanup.c - retain partial on unexpected disconnect
                 if bytes_written > 0 && needs_rename {
-                    retain_partial_file(
-                        &config.partial_mode,
-                        &mut cleanup_guard,
-                        &begin.file_path,
-                    );
+                    retain_partial_file(&config.partial_mode, &mut cleanup_guard, &begin.file_path);
                 }
                 drop(cleanup_guard);
                 return Err(io::Error::new(
@@ -189,11 +185,7 @@ pub(super) fn process_file(
                 // if any data was written, the transfer made progress worth
                 // retaining for later resume.
                 if bytes_written > 0 && needs_rename {
-                    retain_partial_file(
-                        &config.partial_mode,
-                        &mut cleanup_guard,
-                        &begin.file_path,
-                    );
+                    retain_partial_file(&config.partial_mode, &mut cleanup_guard, &begin.file_path);
                 }
                 drop(cleanup_guard);
                 return Err(io::Error::other(reason));
@@ -204,11 +196,7 @@ pub(super) fn process_file(
                 drop(output);
                 // upstream: cleanup.c - same partial retention on shutdown
                 if bytes_written > 0 && needs_rename {
-                    retain_partial_file(
-                        &config.partial_mode,
-                        &mut cleanup_guard,
-                        &begin.file_path,
-                    );
+                    retain_partial_file(&config.partial_mode, &mut cleanup_guard, &begin.file_path);
                 }
                 drop(cleanup_guard);
                 return Err(io::Error::new(
