@@ -855,3 +855,358 @@ fn partial_mode_relative_partial_dir() {
     drop(h.file_tx);
     h.join_handle.join().unwrap();
 }
+
+// --- PIR-4.c: CleanupManager integration tests ---
+
+/// Verifies that the disk commit thread registers temp files with the global
+/// `CleanupManager` during transfer, and that calling `cleanup()` removes
+/// orphaned temp files from disk. This simulates the signal handler path
+/// where a SIGINT/SIGTERM fires mid-transfer: the handler calls `cleanup()`
+/// before exit, removing temp files that never reached the commit+rename step.
+#[test]
+fn cleanup_manager_removes_orphaned_temp_files_on_simulated_signal() {
+    let manager = engine::CleanupManager::global();
+    manager.reset_for_testing();
+
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("orphan_cleanup.dat");
+
+    let config = DiskCommitConfig::default();
+    let h = spawn_disk_thread(config);
+
+    // Send Begin (creates temp file and registers it with CleanupManager)
+    // and a Chunk so that data is written.
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 1024,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"orphan data".to_vec()))
+        .unwrap();
+
+    // Wait for the buffer to be recycled - this proves the disk thread has
+    // processed both Begin (creating + registering the temp file) and Chunk.
+    let _recycled = h.buf_return_rx.recv().unwrap();
+
+    // The temp file is now on disk and registered with CleanupManager.
+    assert!(
+        manager.temp_file_count() >= 1,
+        "temp file must be registered with CleanupManager during active transfer"
+    );
+
+    // Find the orphaned temp file on disk. It follows the `.filename.XXXXXX`
+    // naming convention in the same directory as the destination file.
+    let parent = file_path.parent().unwrap();
+    let orphans: Vec<_> = fs::read_dir(parent)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name();
+            let s = name.to_string_lossy();
+            s.starts_with(".orphan_cleanup.dat.")
+        })
+        .collect();
+    assert!(
+        !orphans.is_empty(),
+        "temp file with .filename.XXXXXX pattern must exist on disk"
+    );
+
+    // Simulate SIGINT cleanup: call cleanup() directly, bypassing normal commit.
+    manager.cleanup();
+
+    // The orphaned temp file should be removed from disk.
+    let remaining: Vec<_> = fs::read_dir(parent)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name();
+            let s = name.to_string_lossy();
+            s.starts_with(".orphan_cleanup.dat.")
+        })
+        .collect();
+    assert!(
+        remaining.is_empty(),
+        "orphaned temp file must be removed after CleanupManager::cleanup()"
+    );
+
+    // The final destination should not exist (never committed).
+    assert!(
+        !file_path.exists(),
+        "destination file must not exist - transfer was never committed"
+    );
+
+    // Drop sender to unblock the disk thread so it can exit.
+    drop(h.file_tx);
+    h.join_handle.join().unwrap();
+}
+
+/// Verifies that successfully committed files are unregistered from
+/// `CleanupManager`, so a subsequent `cleanup()` call does not remove them.
+/// This is the counterpart to the orphan test: committed files must survive.
+#[test]
+fn cleanup_manager_unregisters_on_successful_commit() {
+    let manager = engine::CleanupManager::global();
+    manager.reset_for_testing();
+
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("committed_file.dat");
+
+    let config = DiskCommitConfig::default();
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 13,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"committed dat".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Commit).unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result.bytes_written, 13);
+
+    // After successful commit, the temp file is renamed to the final path
+    // and unregistered from CleanupManager.
+    assert_eq!(
+        manager.temp_file_count(),
+        0,
+        "committed file must be unregistered from CleanupManager"
+    );
+
+    // Calling cleanup() should have no effect on the committed file.
+    manager.cleanup();
+    assert!(
+        file_path.exists(),
+        "committed file must survive CleanupManager::cleanup()"
+    );
+    assert_eq!(fs::read(&file_path).unwrap(), b"committed dat");
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+/// Verifies cleanup across multiple in-flight files: one committed, one
+/// orphaned. Only the orphan should be removed by `cleanup()`.
+#[test]
+fn cleanup_manager_mixed_committed_and_orphaned_files() {
+    let manager = engine::CleanupManager::global();
+    manager.reset_for_testing();
+
+    let dir = test_support::create_tempdir();
+    let committed_path = dir.path().join("committed.dat");
+    let orphan_path = dir.path().join("orphan.dat");
+
+    let config = DiskCommitConfig::default();
+    let h = spawn_disk_thread(config);
+
+    // File 1: commit successfully.
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: committed_path.clone(),
+            target_size: 4,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Chunk(b"good".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Commit).unwrap();
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result.bytes_written, 4);
+
+    // File 2: begin + chunk but no commit (will be orphaned).
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: orphan_path.clone(),
+            target_size: 1024,
+            file_entry_index: 1,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Chunk(b"orphan".to_vec()))
+        .unwrap();
+
+    // Wait for the orphan chunk to be processed.
+    let _recycled = h.buf_return_rx.recv().unwrap(); // committed file's buffer
+    let _recycled = h.buf_return_rx.recv().unwrap(); // orphan file's buffer
+
+    // At this point file 1 is committed (unregistered), file 2 is orphaned
+    // (still registered). CleanupManager should have at least 1 entry.
+    assert!(
+        manager.temp_file_count() >= 1,
+        "orphaned temp file must be registered"
+    );
+
+    // Verify the orphan temp file exists on disk.
+    let parent = dir.path();
+    let orphan_temps: Vec<_> = fs::read_dir(parent)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name();
+            let s = name.to_string_lossy();
+            s.starts_with(".orphan.dat.")
+        })
+        .collect();
+    assert!(
+        !orphan_temps.is_empty(),
+        "orphan temp file must exist on disk before cleanup"
+    );
+
+    // Simulate signal: cleanup removes orphaned temp files.
+    manager.cleanup();
+
+    // Orphan temp file should be gone.
+    let remaining: Vec<_> = fs::read_dir(parent)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let name = e.file_name();
+            let s = name.to_string_lossy();
+            s.starts_with(".orphan.dat.")
+        })
+        .collect();
+    assert!(
+        remaining.is_empty(),
+        "orphaned temp file must be removed after cleanup()"
+    );
+
+    // Committed file must survive.
+    assert!(
+        committed_path.exists(),
+        "committed file must survive cleanup()"
+    );
+    assert_eq!(fs::read(&committed_path).unwrap(), b"good");
+
+    // Orphan destination must not exist.
+    assert!(
+        !orphan_path.exists(),
+        "orphan destination must not exist - never committed"
+    );
+
+    // Clean up: drop sender so disk thread exits.
+    drop(h.file_tx);
+    h.join_handle.join().unwrap();
+}
+
+/// Verifies that `WholeFile` (coalesced single-chunk path) also unregisters
+/// from `CleanupManager` after commit, matching the chunked path behavior.
+#[test]
+fn cleanup_manager_whole_file_unregisters_on_commit() {
+    let manager = engine::CleanupManager::global();
+    manager.reset_for_testing();
+
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("whole_cleanup.dat");
+
+    let config = DiskCommitConfig::default();
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::WholeFile {
+            begin: Box::new(BeginMessage {
+                file_path: file_path.clone(),
+                target_size: 10,
+                file_entry_index: 0,
+                checksum_verifier: None,
+                is_device_target: false,
+                is_inplace: false,
+                append_offset: 0,
+                xattr_list: None,
+            }),
+            data: b"whole file".to_vec(),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result.bytes_written, 10);
+
+    // After WholeFile commit, the temp file is unregistered.
+    assert_eq!(
+        manager.temp_file_count(),
+        0,
+        "WholeFile path must unregister from CleanupManager after commit"
+    );
+
+    // Cleanup must not affect the committed file.
+    manager.cleanup();
+    assert!(file_path.exists(), "committed file must survive cleanup()");
+    assert_eq!(fs::read(&file_path).unwrap(), b"whole file");
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+/// Verifies that inplace writes (which skip temp+rename) do not register
+/// with `CleanupManager`. Inplace writes go directly to the destination,
+/// so there is no orphan temp file to clean up.
+#[test]
+fn cleanup_manager_inplace_skips_registration() {
+    let manager = engine::CleanupManager::global();
+    manager.reset_for_testing();
+
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("inplace.dat");
+
+    let config = DiskCommitConfig::default();
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 7,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: true,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Chunk(b"inplace".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Commit).unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result.bytes_written, 7);
+
+    // Inplace writes go directly to the destination - no temp file registration.
+    assert_eq!(
+        manager.temp_file_count(),
+        0,
+        "inplace writes must not register temp files with CleanupManager"
+    );
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
