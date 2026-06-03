@@ -29,14 +29,7 @@ const SEND_TARGET: &str = "rsync::send";
 
 /// Traces the start of a file send operation.
 ///
-/// Emits a tracing span that tracks the start of sending a file's data.
 /// In upstream rsync, this corresponds to the entry point of `send_files()`.
-///
-/// # Arguments
-///
-/// * `name` - Relative path of the file being sent
-/// * `file_size` - Size of the file in bytes
-/// * `index` - File list index for this file
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_send_file_start(name: &str, file_size: u64, index: usize) {
@@ -54,16 +47,7 @@ pub fn trace_send_file_start(name: &str, file_size: u64, index: usize) {
 #[inline]
 pub fn trace_send_file_start(_name: &str, _file_size: u64, _index: usize) {}
 
-/// Traces the completion of a file send operation.
-///
-/// Logs summary statistics for a completed file send, including total bytes
-/// transmitted and time elapsed.
-///
-/// # Arguments
-///
-/// * `name` - Relative path of the file
-/// * `bytes_sent` - Total bytes sent (including deltas and literals)
-/// * `elapsed` - Time taken to send the file
+/// Traces the completion of a file send with byte count and timing.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_send_file_end(name: &str, bytes_sent: u64, elapsed: Duration) {
@@ -81,17 +65,7 @@ pub fn trace_send_file_end(name: &str, bytes_sent: u64, elapsed: Duration) {
 #[inline]
 pub fn trace_send_file_end(_name: &str, _bytes_sent: u64, _elapsed: Duration) {}
 
-/// Traces the start of delta generation for a file.
-///
-/// Emits a trace event when beginning to compute deltas between basis and
-/// target files. In upstream rsync, this corresponds to delta computation
-/// in sender.c.
-///
-/// # Arguments
-///
-/// * `name` - Relative path of the file
-/// * `basis_size` - Size of the basis file in bytes
-/// * `target_size` - Size of the target file in bytes
+/// Traces the start of delta generation between basis and target files.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_delta_start(name: &str, basis_size: u64, target_size: u64) {
@@ -109,16 +83,7 @@ pub fn trace_delta_start(name: &str, basis_size: u64, target_size: u64) {
 #[inline]
 pub fn trace_delta_start(_name: &str, _basis_size: u64, _target_size: u64) {}
 
-/// Traces a block match event during delta generation.
-///
-/// Logs when a block from the target matches a block in the basis file,
-/// allowing compression via reference rather than literal transmission.
-///
-/// # Arguments
-///
-/// * `block_index` - Index of the matched block in the basis file
-/// * `offset` - Offset in the target file where the match occurs
-/// * `length` - Length of the matched block in bytes
+/// Traces a block match during delta generation.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_delta_match(block_index: usize, offset: u64, length: u32) {
@@ -136,15 +101,7 @@ pub fn trace_delta_match(block_index: usize, offset: u64, length: u32) {
 #[inline]
 pub fn trace_delta_match(_block_index: usize, _offset: u64, _length: u32) {}
 
-/// Traces a literal data event during delta generation.
-///
-/// Logs when literal data must be transmitted because no matching block
-/// was found in the basis file.
-///
-/// # Arguments
-///
-/// * `offset` - Offset in the target file for the literal data
-/// * `length` - Length of the literal data in bytes
+/// Traces a literal data span with no basis match during delta generation.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_delta_literal(offset: u64, length: u32) {
@@ -161,17 +118,7 @@ pub fn trace_delta_literal(offset: u64, length: u32) {
 #[inline]
 pub fn trace_delta_literal(_offset: u64, _length: u32) {}
 
-/// Traces the completion of delta generation for a file.
-///
-/// Emits summary statistics showing how much data was matched versus
-/// transmitted as literals.
-///
-/// # Arguments
-///
-/// * `name` - Relative path of the file
-/// * `matched_bytes` - Total bytes matched from basis file
-/// * `literal_bytes` - Total bytes sent as literals
-/// * `elapsed` - Time taken to generate the delta
+/// Traces the completion of delta generation with matched/literal breakdown.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_delta_end(name: &str, matched_bytes: u64, literal_bytes: u64, elapsed: Duration) {
@@ -190,16 +137,7 @@ pub fn trace_delta_end(name: &str, matched_bytes: u64, literal_bytes: u64, elaps
 #[inline]
 pub fn trace_delta_end(_name: &str, _matched_bytes: u64, _literal_bytes: u64, _elapsed: Duration) {}
 
-/// Traces checksum generation for a file.
-///
-/// Logs when generating rolling checksums for basis file blocks, which
-/// is necessary before delta computation can begin.
-///
-/// # Arguments
-///
-/// * `name` - Relative path of the file
-/// * `block_count` - Number of blocks to checksum
-/// * `block_size` - Size of each block in bytes
+/// Traces rolling checksum generation for basis file blocks.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_checksum_generation(name: &str, block_count: usize, block_size: u32) {
@@ -217,16 +155,7 @@ pub fn trace_checksum_generation(name: &str, block_count: usize, block_size: u32
 #[inline]
 pub fn trace_checksum_generation(_name: &str, _block_count: usize, _block_size: u32) {}
 
-/// Traces a summary of all send operations.
-///
-/// Emits aggregate statistics for the entire send session, including total
-/// files processed, bytes sent, and elapsed time.
-///
-/// # Arguments
-///
-/// * `total_files` - Total number of files sent
-/// * `total_bytes` - Total bytes sent across all files
-/// * `total_elapsed` - Total time elapsed for all send operations
+/// Traces aggregate send statistics for the session.
 #[cfg(feature = "tracing")]
 #[inline]
 pub fn trace_send_summary(total_files: usize, total_bytes: u64, total_elapsed: Duration) {
@@ -314,15 +243,7 @@ impl SendTracer {
         }
     }
 
-    /// Starts tracking a file send operation.
-    ///
-    /// Records the start time for the current file and emits a trace event.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Relative path of the file
-    /// * `file_size` - Size of the file in bytes
-    /// * `index` - File list index
+    /// Starts tracking a file send operation and emits a trace event.
     pub fn start_file(&mut self, name: &str, file_size: u64, index: usize) {
         if self.session_start.is_none() {
             self.session_start = Some(Instant::now());
@@ -332,34 +253,18 @@ impl SendTracer {
     }
 
     /// Records a block match event during delta generation.
-    ///
-    /// # Arguments
-    ///
-    /// * `block_index` - Index of the matched block
-    /// * `offset` - Offset in the target file
-    /// * `length` - Length of the matched block
     pub fn record_match(&mut self, block_index: usize, offset: u64, length: u32) {
         self.matched_bytes = self.matched_bytes.saturating_add(u64::from(length));
         trace_delta_match(block_index, offset, length);
     }
 
     /// Records a literal data event during delta generation.
-    ///
-    /// # Arguments
-    ///
-    /// * `offset` - Offset in the target file
-    /// * `length` - Length of the literal data
     pub fn record_literal(&mut self, offset: u64, length: u32) {
         self.literal_bytes = self.literal_bytes.saturating_add(u64::from(length));
         trace_delta_literal(offset, length);
     }
 
     /// Ends tracking for the current file and emits a summary trace event.
-    ///
-    /// # Arguments
-    ///
-    /// * `name` - Relative path of the file
-    /// * `bytes_sent` - Total bytes sent for this file
     pub fn end_file(&mut self, name: &str, bytes_sent: u64) {
         let elapsed = self.current_file_elapsed();
         self.files_sent += 1;

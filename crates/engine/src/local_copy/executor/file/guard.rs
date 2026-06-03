@@ -20,9 +20,7 @@ use super::paths::{
 
 /// Removes an existing destination file.
 ///
-/// This function removes a file at the given path. If the file does not exist,
-/// the function succeeds without error. This is useful for cleanup operations
-/// where the file may or may not exist.
+/// If the file does not exist, succeeds without error.
 ///
 /// # Errors
 ///
@@ -40,12 +38,11 @@ pub fn remove_existing_destination(path: &Path) -> Result<(), LocalCopyError> {
     }
 }
 
-/// Removes an incomplete destination file, ignoring errors.
+/// Removes an incomplete destination file, ignoring all errors.
 ///
-/// This function attempts to remove a file that represents an incomplete transfer.
-/// Unlike [`remove_existing_destination`], this function silently ignores all errors
-/// including permission errors, as it's typically called during error recovery where
-/// the original error should be preserved.
+/// Unlike [`remove_existing_destination`], silently ignores permission errors
+/// since this is called during error recovery where the original error takes
+/// priority.
 pub fn remove_incomplete_destination(destination: &Path) {
     if let Err(error) = fs::remove_file(destination)
         && error.kind() != io::ErrorKind::NotFound
@@ -119,27 +116,13 @@ pub struct DestinationWriteGuard {
 impl DestinationWriteGuard {
     /// Creates a new write guard with an associated temporary file.
     ///
-    /// This function creates a temporary file for writing and returns both the guard
-    /// and an open file handle. The temporary file is created in the same directory as
-    /// the destination (or in `temp_dir` if provided) to ensure atomic rename operations.
-    ///
-    /// # Arguments
-    ///
-    /// * `destination` - The final destination path for the file
-    /// * `partial` - If `true`, creates a partial file that is preserved on failure
-    /// * `partial_dir` - Optional directory for partial files (only used if `partial` is `true`)
-    /// * `temp_dir` - Optional directory for temporary files (only used if `partial` is `false`)
-    ///
-    /// # Returns
-    ///
-    /// Returns a tuple of `(DestinationWriteGuard, File)` where the file is open for writing.
+    /// The temporary file is created in the same directory as the
+    /// destination (or in `temp_dir` if provided) to ensure atomic rename.
     ///
     /// # Errors
     ///
-    /// Returns an error if:
-    /// - The temporary file cannot be created
-    /// - The destination directory does not exist
-    /// - Permission is denied
+    /// Returns an error if the temporary file cannot be created, the
+    /// destination directory does not exist, or permission is denied.
     pub fn new(
         destination: &Path,
         partial: bool,
