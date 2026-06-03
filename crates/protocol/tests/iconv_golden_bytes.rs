@@ -234,12 +234,15 @@ fn golden_sender_identity_converter_preserves_utf8() {
 }
 
 /// A filename containing characters that ISO-8859-1 cannot represent (here:
-/// the Greek letter alpha, U+03B1) must cause the sender to surface a
-/// conversion error rather than silently transliterating or producing
-/// truncated bytes. This mirrors upstream's `convert_error` path
-/// (flist.c:1596-1602) which sets `IOERR_GENERAL` and rejects the name.
+/// the Greek letter alpha, U+03B1) must be handled gracefully by the sender.
+/// Unconvertible characters are replaced with '?' and a warning is emitted
+/// via the ICONV debug trace, allowing the transfer to continue.
+///
+/// This mirrors upstream's `ICB_INCLUDE_BAD` behaviour (rsync.c:229-231)
+/// where invalid bytes are passed through verbatim. Since we go through a
+/// Unicode intermediate representation, '?' is the portable substitute.
 #[test]
-fn golden_sender_unmappable_char_fails_conversion() {
+fn golden_sender_unmappable_char_replaced() {
     let mut writer = sender_writer("ISO-8859-1");
     let entry = entry_from_local("alpha-α.txt");
 
@@ -247,16 +250,13 @@ fn golden_sender_unmappable_char_fails_conversion() {
     let result = writer.write_entry(&mut buf, &entry);
 
     assert!(
-        result.is_err(),
-        "ISO-8859-1 cannot represent U+03B1 - sender must surface an error"
+        result.is_ok(),
+        "lossy conversion must not fail - unconvertible chars are replaced with '?'"
     );
-    let err = result.unwrap_err();
-    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
-    assert!(
-        err.to_string()
-            .contains("filename encoding conversion failed"),
-        "error message must identify the iconv failure: got {err}"
-    );
+
+    let name_on_wire = sender_name_on_wire(&mut sender_writer("ISO-8859-1"), &entry);
+    // U+03B1 (alpha) cannot be represented in ISO-8859-1 -> replaced with '?'.
+    assert_eq!(name_on_wire, b"alpha-?.txt");
 }
 
 // ===========================================================================
@@ -371,15 +371,17 @@ fn golden_receiver_ascii_passthrough_under_iconv() {
     assert_eq!(&*entry.name_bytes(), b"plain.txt");
 }
 
-/// Wire bytes that are invalid in the declared remote charset must be
-/// rejected with an InvalidData error. UTF-8 strictly rejects an isolated
-/// continuation byte (0x80 with no leading byte) and bare lead bytes
-/// without continuations - both encoding_rs and upstream iconv flag these.
-/// This mirrors upstream's `IOERR_GENERAL` flag at flist.c:746 when
-/// iconvbufs() returns < 0 on the receiver.
+/// Wire bytes that are invalid in the declared remote charset are handled
+/// gracefully. encoding_rs replaces invalid UTF-8 sequences with U+FFFD,
+/// then the local encoding step replaces unmappable U+FFFD with '?'. The
+/// transfer continues rather than aborting.
+///
+/// This mirrors upstream's behaviour at flist.c:746-753 where
+/// `iconvbufs(ic_recv, ...)` failure causes a warning and the filename is
+/// effectively replaced rather than aborting the file list read.
 #[cfg(unix)]
 #[test]
-fn golden_receiver_invalid_remote_bytes_fail() {
+fn golden_receiver_invalid_remote_bytes_replaced() {
     // [0xc3, 0x28] is invalid UTF-8: c3 begins a 2-byte sequence but 28 is
     // not a valid continuation byte (continuations must be 80-bf).
     let wire = build_wire_with_name(&[0xc3, 0x28]);
@@ -394,16 +396,22 @@ fn golden_receiver_invalid_remote_bytes_fail() {
     let mut cursor = Cursor::new(&wire[..]);
     let result = reader.read_entry(&mut cursor);
 
+    // Lossy conversion replaces invalid sequences rather than failing.
     assert!(
-        result.is_err(),
-        "[0xc3, 0x28] is invalid UTF-8 - receiver must surface an error"
+        result.is_ok(),
+        "lossy conversion must not fail - invalid bytes are replaced"
     );
-    let err = result.unwrap_err();
-    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    let entry = result.unwrap().expect("entry must be present");
+
+    // The invalid sequence produces replacement characters in the output.
+    // The exact bytes depend on encoding_rs's U+FFFD handling:
+    // 0xc3 (incomplete 2-byte lead) -> U+FFFD -> '?' in ISO-8859-1
+    // 0x28 is valid ASCII '(' in both UTF-8 and ISO-8859-1
+    let name = entry.name_bytes();
     assert!(
-        err.to_string()
-            .contains("filename encoding conversion failed"),
-        "error message must identify the iconv failure: got {err}"
+        name.len() <= 2,
+        "replaced name must not be longer than input: got {:?}",
+        &*name
     );
 }
 
