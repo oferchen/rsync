@@ -11,7 +11,8 @@ use crate::frontend::execution::drive::module_listing::{
     ModuleListingInputs, maybe_handle_module_listing,
 };
 use crate::frontend::execution::drive::{config, filters, metadata, options, summary, validation};
-use crate::frontend::progress::StderrMode;
+use crate::frontend::outbuf::parse_outbuf_mode;
+use crate::frontend::progress::{ProgressOutputConfig, StderrMode};
 use crate::frontend::{
     arguments::{ParsedArgs, StopRequest},
     execution::{
@@ -25,7 +26,7 @@ use core::{message::Role, rsync_error};
 use logging::VerbosityConfig;
 use logging_sink::MessageSink;
 use std::fs::{File, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
@@ -195,7 +196,7 @@ where
         append_verify,
         msgs_to_stderr: msgs_to_stderr_option,
         stderr_mode,
-        outbuf: _,
+        outbuf,
         max_alloc,
         itemize_changes,
         whole_file,
@@ -862,6 +863,24 @@ where
 
     let config = builder.build();
 
+    // upstream: progress.c:234-238 checks `tcgetpgrp(STDOUT_FILENO)` to
+    // suppress progress when the process is not in the foreground terminal
+    // group. We detect terminal status on the output destination (stdout
+    // by default, stderr when msgs_to_stderr is active) to decide between
+    // `\r` (in-place overwrite on terminals) and `\n` (readable when piped).
+    let progress_is_terminal = if msgs_to_stderr_enabled {
+        std::io::stderr().is_terminal()
+    } else {
+        std::io::stdout().is_terminal()
+    };
+    let outbuf_mode = outbuf
+        .as_ref()
+        .and_then(|v| parse_outbuf_mode(v.as_os_str()).ok());
+    let progress_output_config = ProgressOutputConfig {
+        is_terminal: progress_is_terminal,
+        outbuf_mode,
+    };
+
     summary::execute_transfer(
         stdout,
         stderr,
@@ -870,6 +889,7 @@ where
             msgs_to_stderr: msgs_to_stderr_enabled,
             stderr_mode: stderr_mode_setting,
             progress_mode,
+            progress_output_config,
             human_readable_mode,
             itemize_changes,
             stats_level,
