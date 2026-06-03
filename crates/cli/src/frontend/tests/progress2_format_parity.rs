@@ -383,7 +383,7 @@ fn progress2_multiple_files_sequential_xfr_indices() {
     let last_xfr_line = lines
         .iter()
         .filter(|l| l.contains("xfr#"))
-        .last()
+        .next_back()
         .expect("should have xfr lines");
     assert!(
         last_xfr_line.contains("to-chk=0/"),
