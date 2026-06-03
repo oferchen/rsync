@@ -1678,3 +1678,47 @@ fn resolve_file_list_entries_with_dot_relative_paths() {
     let expected_1 = Path::new("/base").join("../parent/file.txt");
     assert_eq!(entries[1], expected_1.as_os_str());
 }
+
+#[test]
+fn resolve_files_from_entry_with_embedded_dot_marker_skips_extra_marker() {
+    use crate::frontend::execution::resolve_file_list_entries;
+
+    // upstream: flist.c:2316-2318 - entries like "from/./dir/subdir" already
+    // contain a "./" transfer root marker. The resolver must NOT add another
+    // "./" because the engine splits at the first marker, and a double marker
+    // would incorrectly keep "from/" in the destination path.
+    let mut entries = vec![
+        OsString::from("from/./dir/subdir"),
+        OsString::from("from/./dir/subdir/foobar.baz"),
+        OsString::from("simple.txt"),
+    ];
+    let operands = vec![OsString::from("/scratch"), OsString::from("/dest")];
+
+    resolve_file_list_entries(&mut entries, &operands, false, true);
+
+    // Entry with embedded marker: base joined directly, no extra "./"
+    let expected_0 = Path::new("/scratch").join("from/./dir/subdir");
+    assert_eq!(entries[0], expected_0.as_os_str());
+
+    let expected_1 = Path::new("/scratch").join("from/./dir/subdir/foobar.baz");
+    assert_eq!(entries[1], expected_1.as_os_str());
+
+    // Entry without marker: base/./entry as before
+    let expected_2 = Path::new("/scratch/.").join("simple.txt");
+    assert_eq!(entries[2], expected_2.as_os_str());
+}
+
+#[test]
+fn resolve_files_from_entry_with_leading_dot_slash_skips_extra_marker() {
+    use crate::frontend::execution::resolve_file_list_entries;
+
+    // Entry starting with "./" already has a marker at position 0.
+    let mut entries = vec![OsString::from("./dir/file.txt")];
+    let operands = vec![OsString::from("/scratch"), OsString::from("/dest")];
+
+    resolve_file_list_entries(&mut entries, &operands, false, true);
+
+    // Should join directly: /scratch/./dir/file.txt
+    let expected = Path::new("/scratch").join("./dir/file.txt");
+    assert_eq!(entries[0], expected.as_os_str());
+}
