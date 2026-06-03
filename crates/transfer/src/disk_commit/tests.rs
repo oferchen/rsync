@@ -1210,3 +1210,301 @@ fn cleanup_manager_inplace_skips_registration() {
     h.file_tx.send(FileMessage::Shutdown).unwrap();
     h.join_handle.join().unwrap();
 }
+// --- PIR-6.b: --partial-dir mid-transfer interrupt interop tests ---
+
+/// Verifies that aborting a multi-chunk transfer mid-stream with
+/// `PartialMode::PartialDir` moves the partial file to the partial-dir,
+/// not the final destination. The partial file should contain only the
+/// data written before the abort.
+///
+/// upstream: cleanup.c:105-115 - handle_partial_dir() on abort
+#[test]
+fn partial_dir_abort_mid_stream_moves_to_partial_dir() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("mid_abort.dat");
+    let partial_dir = dir.path().join(".rsync-part");
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::PartialDir(partial_dir.clone()),
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    // Begin a file that would be 300 bytes total.
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 300,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    // Write two chunks, then abort before completing.
+    h.file_tx
+        .send(FileMessage::Chunk(b"first-chunk-".to_vec()))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Chunk(b"second-chunk-".to_vec()))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Abort {
+            reason: "simulated mid-transfer kill".into(),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap();
+    assert!(result.is_err());
+
+    // Partial file must be in the partial-dir, not at the destination.
+    let partial_path = partial_dir.join("mid_abort.dat");
+    assert!(
+        partial_path.exists(),
+        "partial file must be in partial-dir after abort"
+    );
+    assert!(
+        !file_path.exists(),
+        "destination must NOT have the file after abort with partial-dir"
+    );
+
+    // The partial file should have the data written before the abort.
+    let content = fs::read(&partial_path).unwrap();
+    assert_eq!(content, b"first-chunk-second-chunk-");
+    assert!(
+        !content.is_empty(),
+        "partial file must contain data from written chunks"
+    );
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+/// Verifies that a channel disconnect (simulating SIGKILL / connection drop)
+/// during a transfer with `PartialMode::PartialDir` retains the partial
+/// file in the partial-dir. The final destination must not exist.
+///
+/// upstream: cleanup.c - retain partial on unexpected disconnect
+#[test]
+fn partial_dir_channel_disconnect_moves_to_partial_dir() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("disconnect_dir.dat");
+    let partial_dir = dir.path().join(".rsync-part");
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::PartialDir(partial_dir.clone()),
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 1024,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"data-before-kill".to_vec()))
+        .unwrap();
+
+    // Drop the sender to simulate a sudden connection loss / kill.
+    drop(h.file_tx);
+    h.join_handle.join().unwrap();
+
+    let partial_path = partial_dir.join("disconnect_dir.dat");
+    assert!(
+        partial_path.exists(),
+        "partial file must be in partial-dir after channel disconnect"
+    );
+    assert!(
+        !file_path.exists(),
+        "destination must NOT exist after channel disconnect with partial-dir"
+    );
+    assert_eq!(fs::read(&partial_path).unwrap(), b"data-before-kill");
+}
+
+/// Verifies that the partial-dir is auto-created when it does not exist
+/// at interrupt time. upstream rsync's cleanup.c creates the directory
+/// on demand via handle_partial_dir().
+#[test]
+fn partial_dir_auto_created_on_interrupt() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("autocreate.dat");
+    let partial_dir = dir.path().join(".auto-partial");
+
+    // The partial-dir does NOT exist yet.
+    assert!(!partial_dir.exists());
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::PartialDir(partial_dir.clone()),
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 200,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"trigger-autocreate".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+
+    let result = h.result_rx.recv().unwrap();
+    assert!(result.is_err());
+
+    // The partial-dir must have been created on demand.
+    assert!(
+        partial_dir.exists(),
+        "partial-dir must be auto-created when it does not exist"
+    );
+    assert!(partial_dir.is_dir());
+
+    let partial_path = partial_dir.join("autocreate.dat");
+    assert!(
+        partial_path.exists(),
+        "partial file must be placed in the auto-created directory"
+    );
+    assert_eq!(fs::read(&partial_path).unwrap(), b"trigger-autocreate");
+
+    // Destination must not exist.
+    assert!(
+        !file_path.exists(),
+        "destination must NOT exist when using partial-dir"
+    );
+
+    drop(h.file_tx);
+    h.join_handle.join().unwrap();
+}
+
+/// Verifies mid-stream interrupt with multiple chunks written: the partial
+/// file in the partial-dir has a size between zero and the target, proving
+/// it captured a true partial transfer.
+#[test]
+fn partial_dir_mid_stream_has_intermediate_size() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("midsize.dat");
+    let partial_dir = dir.path().join(".rsync-part");
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::PartialDir(partial_dir.clone()),
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    let target_size: u64 = 1000;
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    // Write 3 chunks of 100 bytes each (300 of 1000 target).
+    let chunk = vec![0xAB_u8; 100];
+    for _ in 0..3 {
+        h.file_tx.send(FileMessage::Chunk(chunk.clone())).unwrap();
+    }
+
+    h.file_tx
+        .send(FileMessage::Abort {
+            reason: "interrupt at 300/1000 bytes".into(),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap();
+    assert!(result.is_err());
+
+    let partial_path = partial_dir.join("midsize.dat");
+    assert!(partial_path.exists());
+
+    let partial_size = fs::metadata(&partial_path).unwrap().len();
+    assert!(
+        partial_size > 0,
+        "partial file must not be empty (got {partial_size} bytes)",
+    );
+    assert!(
+        partial_size < target_size,
+        "partial file ({partial_size} bytes) must be smaller than target ({target_size} bytes)",
+    );
+    assert_eq!(partial_size, 300);
+
+    assert!(!file_path.exists(), "destination must not exist");
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+/// Verifies that the whole-file (coalesced) path does NOT retain a partial
+/// when the transfer completes successfully - only interrupted transfers
+/// use the partial-dir.
+#[test]
+fn partial_dir_whole_file_success_no_leftover_in_partial_dir() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("whole_ok.dat");
+    let partial_dir = dir.path().join(".rsync-part");
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::PartialDir(partial_dir.clone()),
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::WholeFile {
+            begin: Box::new(BeginMessage {
+                file_path: file_path.clone(),
+                target_size: 12,
+                file_entry_index: 0,
+                checksum_verifier: None,
+                is_device_target: false,
+                is_inplace: false,
+                append_offset: 0,
+                xattr_list: None,
+            }),
+            data: b"complete-dat".to_vec(),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result.bytes_written, 12);
+
+    // Destination should exist with full content.
+    assert!(file_path.exists());
+    assert_eq!(fs::read(&file_path).unwrap(), b"complete-dat");
+
+    // No leftover in partial-dir (dir may or may not exist, but file must not).
+    let would_be_partial = partial_dir.join("whole_ok.dat");
+    assert!(
+        !would_be_partial.exists(),
+        "successful transfer must not leave a file in partial-dir"
+    );
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
