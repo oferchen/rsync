@@ -1428,9 +1428,7 @@ fn partial_dir_mid_stream_has_intermediate_size() {
     // Write 3 chunks of 100 bytes each (300 of 1000 target).
     let chunk = vec![0xAB_u8; 100];
     for _ in 0..3 {
-        h.file_tx
-            .send(FileMessage::Chunk(chunk.clone()))
-            .unwrap();
+        h.file_tx.send(FileMessage::Chunk(chunk.clone())).unwrap();
     }
 
     h.file_tx
