@@ -57,6 +57,12 @@ pub struct BackupConfig {
     pub suffix: OsString,
 }
 
+/// Subdirectory name used by upstream rsync for staging files when
+/// `--delay-updates` is active and no explicit `--partial-dir` is given.
+///
+/// upstream: options.c - `static char tmp_partialdir[] = ".~tmp~";`
+pub const DELAY_UPDATES_PARTIAL_DIR: &str = ".~tmp~";
+
 /// Default SPSC channel capacity for the disk commit thread.
 ///
 /// 128 slots x ~32 KB average chunk = 4 MB peak memory from buffered messages.
