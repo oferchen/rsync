@@ -1524,10 +1524,7 @@ fn delay_updates_staging_path_computes_correct_path() {
 fn delay_updates_staging_path_root_level_file() {
     let final_path = std::path::Path::new("/dest/top.txt");
     let staging = delay_updates_staging_path(final_path);
-    assert_eq!(
-        staging,
-        std::path::PathBuf::from("/dest/.~tmp~/top.txt")
-    );
+    assert_eq!(staging, std::path::PathBuf::from("/dest/.~tmp~/top.txt"));
 }
 
 #[test]
@@ -1596,17 +1593,16 @@ fn delay_updates_multiple_files_reach_final_destination() {
         let name = format!("file{i}.dat");
         let expected = format!("content-{i}");
         let final_dest = dir.path().join(&name);
-        assert!(final_dest.exists(), "{name} must exist at final destination");
+        assert!(
+            final_dest.exists(),
+            "{name} must exist at final destination"
+        );
         assert_eq!(fs::read(&final_dest).unwrap(), expected.as_bytes());
     }
 
     // All staging files must be gone.
     assert!(
-        fs::read_dir(&staging_dir).is_err()
-            || fs::read_dir(&staging_dir)
-                .unwrap()
-                .count()
-                == 0,
+        fs::read_dir(&staging_dir).is_err() || fs::read_dir(&staging_dir).unwrap().count() == 0,
         "staging directory should be empty or removed"
     );
 }
