@@ -50,7 +50,7 @@ impl ReceiverContext {
         total_files: usize,
         progress: &mut Option<&mut dyn crate::TransferProgressCallback>,
     ) -> io::Result<(usize, u64, u64, u64, Vec<usize>)> {
-        use crate::disk_commit::{BackupConfig, DiskCommitConfig};
+        use crate::disk_commit::{BackupConfig, DiskCommitConfig, PartialMode};
         use crate::pipeline::receiver::PipelinedReceiver;
         use crate::shared::TransferDeadline;
 
@@ -123,6 +123,14 @@ impl ReceiverContext {
             None
         };
         let file_list_arc = Arc::new(self.file_list.clone());
+        // upstream: cleanup.c - compute partial mode from --partial / --partial-dir flags
+        let partial_mode = if let Some(ref dir) = self.config.partial_dir {
+            PartialMode::PartialDir(dir.clone())
+        } else if self.config.flags.partial {
+            PartialMode::Partial
+        } else {
+            PartialMode::None
+        };
         let disk_config = DiskCommitConfig {
             do_fsync: self.config.write.fsync,
             use_sparse: self.config.flags.sparse,
@@ -136,6 +144,7 @@ impl ReceiverContext {
             acl_cache: setup.acl_cache.clone(),
             io_uring_policy: self.config.write.io_uring_policy,
             io_uring_depth: self.config.write.io_uring_depth,
+            partial_mode,
             ..DiskCommitConfig::default()
         };
         let mut pipelined_receiver = PipelinedReceiver::new(disk_config);

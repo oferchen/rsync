@@ -308,6 +308,17 @@ pub struct ServerConfig {
     /// - `compat.c:777-778`: `if (compat_flags & CF_INPLACE_PARTIAL_DIR) inplace_partial = 1;`
     /// - `receiver.c:797`: `one_inplace = inplace_partial && fnamecmp_type == FNAMECMP_PARTIAL_DIR;`
     pub has_partial_dir: bool,
+    /// Directory path for storing partial files on interrupt (`--partial-dir=DIR`).
+    ///
+    /// When set, interrupted transfers move the incomplete temp file into this
+    /// directory instead of deleting it. On subsequent transfers, the receiver
+    /// checks this directory for a basis file to resume from.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:partial_dir` - `--partial-dir=DIR` option
+    /// - `cleanup.c:handle_partial_dir()` - moves temp to partial-dir on interrupt
+    pub partial_dir: Option<std::path::PathBuf>,
     /// Backup directory path (long-form `--backup-dir=DIR`).
     ///
     /// When set with `--backup`, displaced files are placed in this directory
@@ -418,6 +429,7 @@ impl Default for ServerConfig {
             stop_at: None,
             qsort: false,
             has_partial_dir: false,
+            partial_dir: None,
             backup_dir: None,
             backup_suffix: None,
             daemon_filter_rules: Vec::new(),
