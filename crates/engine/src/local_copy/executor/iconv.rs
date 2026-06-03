@@ -77,14 +77,13 @@ fn bytes_to_os_string(bytes: Vec<u8>) -> OsString {
 /// converter, or the round-trip produced bytes equal to the input. This
 /// preserves the no-allocation hot path for transfers without `--iconv`.
 ///
-/// When the converter rejects the input (e.g. invalid LOCAL bytes that
-/// cannot be represented in REMOTE), the original component is returned
-/// unchanged. Upstream rsync surfaces this as an `IOERR_GENERAL` plus a
-/// `cannot convert filename` line on the sender side; here we degrade to
-/// pass-through to keep the transfer making progress, matching the
-/// existing receiver-side fallback in
-/// [`with_iconv`](protocol::flist::read::FileListReader::with_iconv)
-/// callers which also continue past `InvalidData` filename rows.
+/// When the converter encounters bytes that cannot be represented in the
+/// target encoding, unconvertible characters are replaced with `?` rather
+/// than aborting the transfer. This mirrors upstream rsync's
+/// `ICB_INCLUDE_BAD` behaviour (rsync.c:229-231) where invalid bytes are
+/// passed through verbatim. A warning is emitted via
+/// [`trace_conversion_warning`](protocol::iconv::trace_conversion_warning)
+/// when replacement occurs.
 #[must_use]
 pub(crate) fn transcode_filename_component<'a>(
     name: &'a OsStr,
@@ -98,10 +97,18 @@ pub(crate) fn transcode_filename_component<'a>(
     }
 
     let bytes = os_str_to_bytes(name);
-    match converter.local_to_remote(bytes) {
-        Ok(Cow::Borrowed(borrowed)) if borrowed.as_ptr() == bytes.as_ptr() => Cow::Borrowed(name),
-        Ok(converted) => Cow::Owned(bytes_to_os_string(converted.into_owned())),
-        Err(_) => Cow::Borrowed(name),
+    let outcome = converter.local_to_remote_lossy(bytes);
+    if outcome.had_replacements {
+        protocol::iconv::trace_conversion_warning(
+            protocol::iconv::IconvRole::Client,
+            &String::from_utf8_lossy(bytes),
+            converter.local_encoding_name(),
+            converter.remote_encoding_name(),
+        );
+    }
+    match outcome.output {
+        Cow::Borrowed(b) if std::ptr::eq(b, bytes) => Cow::Borrowed(name),
+        output => Cow::Owned(bytes_to_os_string(output.into_owned())),
     }
 }
 
@@ -154,13 +161,15 @@ mod tests {
 
     #[cfg(all(unix, feature = "iconv"))]
     #[test]
-    fn invalid_bytes_fall_back_to_pass_through() {
+    fn invalid_bytes_replaced_with_lossy_conversion() {
         use std::os::unix::ffi::OsStrExt;
 
-        // Lone continuation byte is not valid UTF-8.
+        // Lone continuation byte 0x80 is not valid UTF-8. encoding_rs
+        // decodes it as U+FFFD, which ISO-8859-1 cannot represent, so
+        // the lossy encoder replaces it with '?'.
         let bad = OsStr::from_bytes(b"bad\x80name");
         let conv = FilenameConverter::new("UTF-8", "ISO-8859-1").expect("ctor");
         let out = transcode_filename_component(bad, Some(&conv));
-        assert_eq!(out.as_bytes(), b"bad\x80name");
+        assert_eq!(out.as_bytes(), b"bad?name");
     }
 }

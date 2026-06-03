@@ -98,6 +98,31 @@ pub fn trace_msg_checking_via_isprint(defset: &str, errno: i32) {
     );
 }
 
+/// Traces a filename conversion warning at ICONV level 1.
+///
+/// Emitted when a lossy conversion replaces unconvertible bytes. This
+/// corresponds to upstream's `rprintf(FERROR_UTF8, ...)` or
+/// `rprintf(FERROR_XFER, ...)` warnings in `flist.c:746-749` and
+/// `flist.c:1597-1600`.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:746-749` (recv): `"[%s] cannot convert filename: %s (%s)\n"`
+/// - `flist.c:1597-1600` (send): `"[%s] cannot convert filename: %s (%s)\n"`
+/// - `flist.c:1142-1145` (symlink): `"[%s] cannot convert symlink data for: %s (%s)\n"`
+#[inline]
+pub fn trace_conversion_warning(role: IconvRole, filename: &str, from_encoding: &str, to_encoding: &str) {
+    debug_log!(
+        Iconv,
+        1,
+        "[{}] cannot convert filename: {} ({} -> {})",
+        role,
+        filename,
+        from_encoding,
+        to_encoding
+    );
+}
+
 #[cfg(test)]
 mod tests {
     //! Pinning tests for ICONV emission shapes. Strings match upstream

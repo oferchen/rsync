@@ -306,19 +306,33 @@ impl FileListWriter {
     /// Applies iconv encoding conversion to a filename.
     ///
     /// When `--iconv` is used, filenames are converted from the local encoding
-    /// to the remote encoding before transmission.
+    /// to the remote encoding before transmission. Unconvertible bytes are
+    /// replaced with `?` rather than aborting the transfer, matching upstream
+    /// rsync's behaviour of warning and continuing.
+    ///
+    /// # Upstream Reference
+    ///
+    /// `flist.c:1580-1603` - `send_file_entry()` runs filenames through
+    /// `iconvbufs(ic_send, ...)`. On failure, upstream sets
+    /// `io_error |= IOERR_GENERAL`, warns, and returns `NULL` (skips the
+    /// entry). We use lossy conversion instead, which replaces
+    /// unconvertible bytes with `?` and warns.
     pub(super) fn apply_encoding_conversion<'a>(
         &self,
         name: &'a [u8],
     ) -> io::Result<std::borrow::Cow<'a, [u8]>> {
         if let Some(ref converter) = self.iconv {
-            match converter.local_to_remote(name) {
-                Ok(converted) => Ok(converted),
-                Err(e) => Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("filename encoding conversion failed: {e}"),
-                )),
+            let outcome = converter.local_to_remote_lossy(name);
+            if outcome.had_replacements {
+                // upstream: flist.c:1597-1600 - warn about unconvertible filename
+                crate::iconv::trace_conversion_warning(
+                    crate::iconv::IconvRole::Server,
+                    &String::from_utf8_lossy(name),
+                    converter.local_encoding_name(),
+                    converter.remote_encoding_name(),
+                );
             }
+            Ok(outcome.output)
         } else {
             Ok(std::borrow::Cow::Borrowed(name))
         }

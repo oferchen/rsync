@@ -1,4 +1,25 @@
 //! Filename encoding converter between local and remote character sets.
+//!
+//! Provides both strict and lossy conversion modes:
+//!
+//! - **Strict** (`remote_to_local`, `local_to_remote`): returns `Err` on
+//!   unconvertible bytes. Used by callers that need to handle failures
+//!   explicitly (e.g., flist reader/writer which skip the entry and set
+//!   `io_error`).
+//!
+//! - **Lossy** (`remote_to_local_lossy`, `local_to_remote_lossy`): replaces
+//!   unconvertible bytes with a replacement character and returns a
+//!   [`ConversionOutcome`] indicating whether any replacements occurred.
+//!   Used by callers that pass bad bytes through verbatim (e.g.,
+//!   `send_protected_args`, `--files-from` exchange).
+//!
+//! # Upstream Reference
+//!
+//! - `rsync.c:179` `iconvbufs()` - central conversion with `ICB_INCLUDE_BAD`
+//!   flag controlling whether invalid bytes are passed through or cause errors.
+//! - `flist.c:745` - recv uses `ICB_INIT` only (strict).
+//! - `io.c:1283` - `read_line(RL_CONVERT)` uses `ICB_INCLUDE_BAD` (lossy).
+//! - `rsync.c:305` - `send_protected_args` uses `ICB_INCLUDE_BAD` (lossy).
 
 use std::borrow::Cow;
 
@@ -11,6 +32,21 @@ use super::error::{ConversionError, EncodingError};
 ///
 /// When the `iconv` feature is disabled, only UTF-8 is supported.
 pub type EncodingConverter = FilenameConverter;
+
+/// Result of a lossy encoding conversion.
+///
+/// Contains the converted bytes and metadata about whether any bytes
+/// were replaced during conversion. This mirrors upstream rsync's
+/// `iconvbufs()` with `ICB_INCLUDE_BAD` set, where invalid bytes are
+/// included verbatim rather than causing an error.
+#[derive(Debug, Clone)]
+pub struct ConversionOutcome<'a> {
+    /// The converted bytes. When `had_replacements` is true, some bytes
+    /// were replaced with a substitution character.
+    pub output: Cow<'a, [u8]>,
+    /// Whether any bytes were replaced during conversion.
+    pub had_replacements: bool,
+}
 
 /// Filename encoding converter.
 ///
@@ -258,6 +294,93 @@ impl FilenameConverter {
         Ok(Cow::Borrowed(bytes))
     }
 
+    /// Converts a filename from remote encoding to local encoding, replacing
+    /// unconvertible bytes rather than failing.
+    ///
+    /// Invalid sequences in the remote encoding are decoded as U+FFFD
+    /// (replacement character). Characters that cannot be represented in the
+    /// local encoding are replaced with `?`. The returned
+    /// [`ConversionOutcome`] indicates whether any replacements occurred.
+    ///
+    /// This mirrors upstream `iconvbufs()` with `ICB_INCLUDE_BAD` set
+    /// (rsync.c:229-231), where invalid bytes are passed through verbatim
+    /// rather than causing `EILSEQ`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `io.c:1283` - `read_line(RL_CONVERT)` uses `ICB_INCLUDE_BAD`
+    /// - `rsync.c:305` - `send_protected_args` uses `ICB_INCLUDE_BAD`
+    #[cfg(feature = "iconv")]
+    pub fn remote_to_local_lossy<'a>(&self, bytes: &'a [u8]) -> ConversionOutcome<'a> {
+        if self.is_identity() {
+            return ConversionOutcome {
+                output: Cow::Borrowed(bytes),
+                had_replacements: false,
+            };
+        }
+
+        // Decode from remote encoding to UTF-8. encoding_rs replaces
+        // invalid sequences with U+FFFD and reports via had_errors.
+        let (decoded, _, decode_had_errors) = self.remote_encoding.decode(bytes);
+
+        // Encode from UTF-8 to local encoding with replacement.
+        let (encoded, had_encode_errors) = encode_with_replacement(&decoded, self.local_encoding);
+
+        ConversionOutcome {
+            output: Cow::Owned(encoded),
+            had_replacements: decode_had_errors || had_encode_errors,
+        }
+    }
+
+    /// Converts a filename from local encoding to remote encoding, replacing
+    /// unconvertible bytes rather than failing.
+    ///
+    /// Invalid sequences in the local encoding are decoded as U+FFFD
+    /// (replacement character). Characters that cannot be represented in the
+    /// remote encoding are replaced with `?`. The returned
+    /// [`ConversionOutcome`] indicates whether any replacements occurred.
+    ///
+    /// This mirrors upstream `iconvbufs()` with `ICB_INCLUDE_BAD` set
+    /// (rsync.c:229-231).
+    #[cfg(feature = "iconv")]
+    pub fn local_to_remote_lossy<'a>(&self, bytes: &'a [u8]) -> ConversionOutcome<'a> {
+        if self.is_identity() {
+            return ConversionOutcome {
+                output: Cow::Borrowed(bytes),
+                had_replacements: false,
+            };
+        }
+
+        // Decode from local encoding to UTF-8.
+        let (decoded, _, decode_had_errors) = self.local_encoding.decode(bytes);
+
+        // Encode from UTF-8 to remote encoding with replacement.
+        let (encoded, had_encode_errors) = encode_with_replacement(&decoded, self.remote_encoding);
+
+        ConversionOutcome {
+            output: Cow::Owned(encoded),
+            had_replacements: decode_had_errors || had_encode_errors,
+        }
+    }
+
+    /// No-op lossy conversion when iconv feature is disabled.
+    #[cfg(not(feature = "iconv"))]
+    pub fn remote_to_local_lossy<'a>(&self, bytes: &'a [u8]) -> ConversionOutcome<'a> {
+        ConversionOutcome {
+            output: Cow::Borrowed(bytes),
+            had_replacements: false,
+        }
+    }
+
+    /// No-op lossy conversion when iconv feature is disabled.
+    #[cfg(not(feature = "iconv"))]
+    pub fn local_to_remote_lossy<'a>(&self, bytes: &'a [u8]) -> ConversionOutcome<'a> {
+        ConversionOutcome {
+            output: Cow::Borrowed(bytes),
+            had_replacements: false,
+        }
+    }
+
     /// Returns the local encoding name.
     #[must_use]
     pub fn local_encoding_name(&self) -> &'static str {
@@ -386,6 +509,73 @@ impl FilenameConverter {
             lossy: false,
         })
     }
+}
+
+/// Encodes a UTF-8 string into the target encoding, replacing unmappable
+/// characters with `?` instead of using `encoding_rs`'s default HTML numeric
+/// character reference substitution.
+///
+/// Returns the encoded bytes and a flag indicating whether any replacements
+/// were made. The `?` replacement matches upstream rsync's single-byte
+/// pass-through behaviour for `ICB_INCLUDE_BAD` in single-byte encodings.
+///
+/// # Upstream Reference
+///
+/// - `rsync.c:261` - `*obuf++ = *ibuf++` copies the invalid byte verbatim.
+///   Since we go through a Unicode intermediate representation, verbatim
+///   copy is not possible; `?` is the closest portable substitute.
+#[cfg(feature = "iconv")]
+fn encode_with_replacement(utf8: &str, encoding: &'static encoding_rs::Encoding) -> (Vec<u8>, bool) {
+    // Fast path: UTF-8 target encoding never has unmappable characters.
+    if encoding == encoding_rs::UTF_8 {
+        return (utf8.as_bytes().to_vec(), false);
+    }
+
+    let mut encoder = encoding.new_encoder();
+    let mut output = Vec::with_capacity(utf8.len());
+    let mut had_replacements = false;
+    let mut remaining = utf8;
+
+    // Process all input, replacing unmappable characters with '?'.
+    while !remaining.is_empty() {
+        let needed = encoder
+            .max_buffer_length_from_utf8_without_replacement(remaining.len())
+            .unwrap_or(remaining.len() * 4);
+        let start = output.len();
+        output.resize(start + needed, 0);
+
+        let (result, consumed, written) = encoder.encode_from_utf8_without_replacement(
+            remaining,
+            &mut output[start..],
+            false,
+        );
+        output.truncate(start + written);
+        remaining = &remaining[consumed..];
+
+        match result {
+            encoding_rs::EncoderResult::InputEmpty => break,
+            encoding_rs::EncoderResult::OutputFull => {
+                // Need more output space, loop will reallocate.
+            }
+            encoding_rs::EncoderResult::Unmappable(ch) => {
+                had_replacements = true;
+                output.push(b'?');
+                remaining = &remaining[ch.len_utf8()..];
+            }
+        }
+    }
+
+    // Flush any pending state in stateful encodings (e.g., ISO-2022-JP).
+    let flush_needed = encoder
+        .max_buffer_length_from_utf8_without_replacement(0)
+        .unwrap_or(16);
+    let start = output.len();
+    output.resize(start + flush_needed, 0);
+    let (_result, _consumed, written) =
+        encoder.encode_from_utf8_without_replacement("", &mut output[start..], true);
+    output.truncate(start + written);
+
+    (output, had_replacements)
 }
 
 /// Normalizes encoding names for lookup.

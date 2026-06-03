@@ -101,25 +101,35 @@ impl FileListReader {
     /// Applies iconv encoding conversion to a filename.
     ///
     /// When `--iconv` is used, filenames are converted from the remote encoding
-    /// to the local encoding. This enables interoperability between systems
-    /// with different character encodings.
+    /// to the local encoding. Unconvertible bytes are replaced rather than
+    /// causing the transfer to abort, matching upstream rsync's behaviour of
+    /// warning and continuing.
     ///
     /// # Upstream Reference
     ///
     /// `flist.c:738-754` `recv_file_entry()` runs the freshly-read filename
-    /// through `iconvbufs(ic_recv, ...)` before `clean_fname()`. The
-    /// prefix-compression buffer (`lastname` / `state.prev_name()`)
+    /// through `iconvbufs(ic_recv, ...)` before `clean_fname()`. On failure,
+    /// upstream sets `io_error |= IOERR_GENERAL`, emits an `FERROR_UTF8`
+    /// warning, and zeroes the output length (effectively skipping the
+    /// entry). We use lossy conversion instead, which replaces unconvertible
+    /// bytes with `?` and warns via `trace_conversion_warning`.
+    ///
+    /// The prefix-compression buffer (`lastname` / `state.prev_name()`)
     /// intentionally retains the wire bytes so subsequent entries can share
     /// the prefix before any conversion is applied.
     pub(super) fn apply_encoding_conversion(&self, name: Vec<u8>) -> io::Result<Vec<u8>> {
         if let Some(ref converter) = self.iconv {
-            match converter.remote_to_local(&name) {
-                Ok(converted) => Ok(converted.into_owned()),
-                Err(e) => Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("filename encoding conversion failed: {e}"),
-                )),
+            let outcome = converter.remote_to_local_lossy(&name);
+            if outcome.had_replacements {
+                // upstream: flist.c:746-749 - warn about unconvertible filename
+                crate::iconv::trace_conversion_warning(
+                    crate::iconv::IconvRole::Client,
+                    &String::from_utf8_lossy(&name),
+                    converter.remote_encoding_name(),
+                    converter.local_encoding_name(),
+                );
             }
+            Ok(outcome.output.into_owned())
         } else {
             Ok(name)
         }
