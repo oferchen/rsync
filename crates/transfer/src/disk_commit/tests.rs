@@ -1879,7 +1879,7 @@ fn delay_updates_disk_thread_e2e_whole_file() {
         .send(FileMessage::WholeFile {
             begin: Box::new(BeginMessage {
                 file_path: staging_path.clone(),
-                target_size: 16,
+                target_size: 17,
                 file_entry_index: 0,
                 checksum_verifier: None,
                 is_device_target: false,
@@ -1892,7 +1892,7 @@ fn delay_updates_disk_thread_e2e_whole_file() {
         .unwrap();
 
     let result = h.result_rx.recv().unwrap().unwrap();
-    assert_eq!(result.bytes_written, 16);
+    assert_eq!(result.bytes_written, 17);
 
     h.file_tx.send(FileMessage::Shutdown).unwrap();
     h.join_handle.join().unwrap();
