@@ -305,6 +305,8 @@ mod transfer_request_with_bwlimit_tests;
 mod transfer_request_with_cvs_tests;
 #[path = "transfer_request_with_delete.rs"]
 mod transfer_request_with_delete_tests;
+#[path = "transfer_request_with_duplicates.rs"]
+mod transfer_request_with_duplicates_tests;
 #[path = "transfer_request_with_exclude.rs"]
 mod transfer_request_with_exclude_tests;
 #[cfg(unix)]

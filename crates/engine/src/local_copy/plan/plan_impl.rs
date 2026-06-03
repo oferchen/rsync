@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::path::Path;
 
@@ -52,10 +53,19 @@ impl LocalCopyPlan {
             return Err(LocalCopyError::missing_operands());
         }
 
-        let sources: Vec<SourceSpec> = operands[..operands.len() - 1]
+        // upstream: flist.c:3004-3012 - flist_sort_and_clean() deduplicates
+        // entries with identical paths via FLAG_DUPLICATE, keeping only the
+        // first occurrence. We deduplicate source operands here to prevent
+        // the same directory or file from being processed multiple times.
+        let all_sources: Vec<SourceSpec> = operands[..operands.len() - 1]
             .iter()
             .map(SourceSpec::from_operand)
             .collect::<Result<_, _>>()?;
+        let mut seen = HashSet::with_capacity(all_sources.len());
+        let sources: Vec<SourceSpec> = all_sources
+            .into_iter()
+            .filter(|s| seen.insert(s.path().to_path_buf()))
+            .collect();
 
         if sources.is_empty() {
             return Err(LocalCopyError::invalid_argument(
@@ -281,5 +291,52 @@ mod tests {
         let plan = LocalCopyPlan::from_operands(&operands).unwrap();
         let debug = format!("{plan:?}");
         assert!(debug.contains("LocalCopyPlan"));
+    }
+
+    /// upstream: flist.c:3004-3012 - flist_sort_and_clean() marks duplicate
+    /// entries with FLAG_DUPLICATE. Passing the same source operand multiple
+    /// times must not produce duplicate entries in the plan.
+    #[test]
+    fn from_operands_deduplicates_identical_sources() {
+        let operands = vec![
+            OsString::from("src"),
+            OsString::from("src"),
+            OsString::from("src"),
+            OsString::from("dst"),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).unwrap();
+        assert_eq!(plan.sources().len(), 1);
+    }
+
+    #[test]
+    fn from_operands_deduplicates_trailing_slash_sources() {
+        let operands = vec![
+            OsString::from("dir/"),
+            OsString::from("dir/"),
+            OsString::from("dir/"),
+            OsString::from("dir/"),
+            OsString::from("dir/"),
+            OsString::from("dst"),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).unwrap();
+        assert_eq!(plan.sources().len(), 1);
+        assert!(plan.sources()[0].copy_contents());
+    }
+
+    #[test]
+    fn from_operands_preserves_distinct_sources() {
+        let operands = vec![
+            OsString::from("src1"),
+            OsString::from("src2"),
+            OsString::from("src1"),
+            OsString::from("src3"),
+            OsString::from("src2"),
+            OsString::from("dst"),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).unwrap();
+        assert_eq!(plan.sources().len(), 3);
+        assert_eq!(plan.sources()[0].path(), Path::new("src1"));
+        assert_eq!(plan.sources()[1].path(), Path::new("src2"));
+        assert_eq!(plan.sources()[2].path(), Path::new("src3"));
     }
 }
