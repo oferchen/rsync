@@ -552,7 +552,6 @@ fn partial_dir_path(file_path: &Path) -> PathBuf {
         .file_name()
         .unwrap_or_else(|| std::ffi::OsStr::new("unknown"));
     parent.join(DELAY_UPDATES_PARTIAL_DIR).join(basename)
-<<<<<<< HEAD
 }
 
 /// Retains a partial temp file instead of deleting it on interrupt.
