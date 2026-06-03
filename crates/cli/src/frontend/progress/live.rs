@@ -69,6 +69,7 @@ pub(crate) struct LiveProgress<'a> {
 }
 
 impl<'a> LiveProgress<'a> {
+    #[cfg(test)]
     pub(crate) fn new(
         writer: &'a mut dyn Write,
         mode: ProgressMode,
