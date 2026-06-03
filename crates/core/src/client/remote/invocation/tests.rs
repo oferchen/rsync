@@ -454,6 +454,8 @@ const UPSTREAM_SERVER_LONG_ARGS: &[&str] = &[
     "--ignore-times",
     "--ignore-existing",
     "--existing",
+    "--ignore-missing-args",
+    "--delete-missing-args",
     "--remove-source-files",
     "--no-implied-dirs",
     "--fake-super",

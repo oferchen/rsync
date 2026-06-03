@@ -400,6 +400,18 @@ impl ServerConfigBuilder {
         self
     }
 
+    /// Enables or disables silently skipping missing source entries.
+    pub fn ignore_missing_args(&mut self, enabled: bool) -> &mut Self {
+        self.file_selection.ignore_missing_args = enabled;
+        self
+    }
+
+    /// Enables or disables deleting destination entries for missing sources.
+    pub fn delete_missing_args(&mut self, enabled: bool) -> &mut Self {
+        self.file_selection.delete_missing_args = enabled;
+        self
+    }
+
     /// Enables or disables detailed transfer statistics.
     pub fn do_stats(&mut self, enabled: bool) -> &mut Self {
         self.do_stats = enabled;

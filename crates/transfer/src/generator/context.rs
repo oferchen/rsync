@@ -475,6 +475,28 @@ impl GeneratorContext {
         )))
     }
 
+    /// Returns the upstream `missing_args` mode for ENOENT handling.
+    ///
+    /// Maps the two boolean flags to the upstream integer convention:
+    /// - `0` (default): emit `link_stat ... failed` warning, set IOERR_GENERAL
+    /// - `1` (`--ignore-missing-args`): silently skip the entry
+    /// - `2` (`--delete-missing-args`): emit mode-0 sentinel for receiver deletion
+    ///
+    /// `delete_missing_args` takes precedence when both are set.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:send_file_list()` - `missing_args` variable (0/1/2)
+    pub(crate) fn missing_args_mode(&self) -> u8 {
+        if self.config.file_selection.delete_missing_args {
+            2
+        } else if self.config.file_selection.ignore_missing_args {
+            1
+        } else {
+            0
+        }
+    }
+
     /// Validates that a file index is within bounds of the file list.
     pub(crate) fn validate_file_index(&self, ndx: usize) -> std::io::Result<()> {
         if ndx >= self.file_list.len() {

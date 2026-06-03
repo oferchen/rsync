@@ -102,6 +102,8 @@ mod chaining {
             .existing_only(false)
             .size_only(true)
             .from0(true)
+            .ignore_missing_args(true)
+            .delete_missing_args(true)
             .build()
             .expect("valid config");
 
@@ -111,6 +113,8 @@ mod chaining {
         assert!(!config.file_selection.existing_only);
         assert!(config.file_selection.size_only);
         assert!(config.file_selection.from0);
+        assert!(config.file_selection.ignore_missing_args);
+        assert!(config.file_selection.delete_missing_args);
     }
 
     #[test]
@@ -179,6 +183,8 @@ mod defaults {
         assert!(!config.file_selection.ignore_existing);
         assert!(!config.file_selection.existing_only);
         assert!(!config.file_selection.size_only);
+        assert!(!config.file_selection.ignore_missing_args);
+        assert!(!config.file_selection.delete_missing_args);
     }
 
     #[test]

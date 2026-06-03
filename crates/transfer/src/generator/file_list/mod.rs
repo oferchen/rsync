@@ -77,10 +77,15 @@ impl GeneratorContext {
             } else {
                 (base_path.clone(), base_path.clone())
             };
+            // upstream: flist.c:2254-2272 - pre-stat each top-level source and
+            // apply missing_args handling. Separates "source never existed" from
+            // "source vanished during recursive walk".
+            if !self.try_walk_source_entry(&base, &path)? {
+                continue;
+            }
             if relative_paths {
                 self.emit_implied_parents(&base, &path, &mut implied_ancestors)?;
             }
-            self.walk_path(&base, path)?;
         }
 
         // upstream: flist.c:f_name_cmp() - sort both arrays via indirect permutation.
@@ -201,7 +206,13 @@ impl GeneratorContext {
         // relative paths are computed correctly (e.g., "hello.txt" instead
         // of an empty string).
         for path in file_paths {
-            self.walk_path(base_dir, path.clone())?;
+            // upstream: flist.c:2254-2272 - pre-stat each --files-from entry
+            // and apply missing_args handling before walk_path. This separates
+            // "source never existed" (ENOENT at flist time) from "source vanished
+            // during recursive walk" (ENOENT during child traversal).
+            if !self.try_walk_source_entry(base_dir, path)? {
+                continue;
+            }
         }
 
         // upstream: flist.c:f_name_cmp() - sort via indirect permutation
