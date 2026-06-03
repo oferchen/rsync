@@ -4,9 +4,9 @@
 /// module listing requests (#list) during the daemon negotiation protocol.
 
 #[test]
-fn daemon_negotiation_module_list_sends_capabilities_before_ok() {
-    // Verify that when a client requests a module listing, the daemon
-    // sends capabilities before the OK acknowledgment.
+fn daemon_negotiation_module_list_sends_listing_directly() {
+    // upstream: clientserver.c sends module listing directly after #list,
+    // without @RSYNCD: CAP or @RSYNCD: OK preamble.
     let _lock = ENV_LOCK.lock().expect("env lock");
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
@@ -40,15 +40,7 @@ fn daemon_negotiation_module_list_sends_capabilities_before_ok() {
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush");
 
-    // Should receive CAP line
-    line.clear();
-    reader.read_line(&mut line).expect("capabilities line");
-    assert!(
-        line.starts_with("@RSYNCD: CAP"),
-        "Expected CAP response, got: {line}"
-    );
-
-    // upstream: no @RSYNCD: OK before module listing - go straight to modules.
+    // upstream: no @RSYNCD: OK or CAP before module listing - straight to modules.
     // Read module listing - upstream: clientserver.c:1254 uses %-15s\t%s\n format
     line.clear();
     reader.read_line(&mut line).expect("module listing");
@@ -112,9 +104,7 @@ fn daemon_negotiation_module_list_respects_listable_flag() {
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush");
 
-    // Skip CAP line (no OK line before listing in upstream protocol)
-    line.clear();
-    reader.read_line(&mut line).expect("cap");
+    // upstream: no @RSYNCD: OK or CAP lines before module listing
 
     // Read all module lines until EXIT
     let mut modules = Vec::new();
@@ -178,9 +168,7 @@ fn daemon_negotiation_module_list_includes_comments() {
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush");
 
-    // Skip CAP line (no OK line before listing in upstream protocol)
-    line.clear();
-    reader.read_line(&mut line).expect("cap");
+    // upstream: no @RSYNCD: OK or CAP lines before module listing
 
     // Read module line
     line.clear();

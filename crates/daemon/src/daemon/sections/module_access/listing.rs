@@ -61,5 +61,11 @@ fn respond_with_module_list(
     }
 
     messages.write_exit(stream, limiter)?;
-    stream.flush()
+    // upstream: the client may close the connection immediately after reading
+    // @RSYNCD: EXIT, so a BrokenPipe on flush is expected and harmless.
+    match stream.flush() {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Err(e) => Err(e),
+    }
 }
