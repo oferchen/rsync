@@ -187,7 +187,10 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                 );
                 // upstream: progress.c:102-116 - progress2 uses the sliding-window
                 // rate from the 5-slot ring buffer, not the cumulative rate.
-                let window_rate = self.overall_remaining.window_rate(now, bytes).unwrap_or(0.0);
+                let window_rate = self
+                    .overall_remaining
+                    .window_rate(now, bytes)
+                    .unwrap_or(0.0);
                 let rate_field = format!(
                     "{:>11}",
                     format_progress_rate_from_value(window_rate, self.human_readable)
@@ -237,9 +240,7 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                 } else {
                     // upstream: progress.c:100 - in-flight ticks use trailing
                     // `"  "` (two spaces) instead of the xfr trailer.
-                    let line = format!(
-                        "{size_field} {percent_field} {rate_field} {time_field}  "
-                    );
+                    let line = format!("{size_field} {percent_field} {rate_field} {time_field}  ");
                     self.write_overall_line(&line)?;
                     self.line_active = true;
                 }
