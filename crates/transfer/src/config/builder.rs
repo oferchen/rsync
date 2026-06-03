@@ -77,6 +77,7 @@ pub struct ServerConfigBuilder {
     stop_at: Option<SystemTime>,
     qsort: bool,
     has_partial_dir: bool,
+    partial_dir: Option<PathBuf>,
     backup_dir: Option<String>,
     backup_suffix: Option<String>,
     daemon_filter_rules: Vec<FilterRuleWireFormat>,
@@ -113,6 +114,7 @@ impl ServerConfigBuilder {
             stop_at: None,
             qsort: false,
             has_partial_dir: false,
+            partial_dir: None,
             backup_dir: None,
             backup_suffix: None,
             daemon_filter_rules: Vec::new(),
@@ -334,6 +336,15 @@ impl ServerConfigBuilder {
         self
     }
 
+    /// Sets the directory path for storing partial files on interrupt.
+    pub fn partial_dir(&mut self, dir: Option<PathBuf>) -> &mut Self {
+        self.partial_dir = dir;
+        if self.partial_dir.is_some() {
+            self.has_partial_dir = true;
+        }
+        self
+    }
+
     /// Sets the backup directory path (`--backup-dir`).
     pub fn backup_dir(&mut self, dir: Option<String>) -> &mut Self {
         self.backup_dir = dir;
@@ -515,6 +526,7 @@ impl ServerConfigBuilder {
             stop_at: self.stop_at,
             qsort: self.qsort,
             has_partial_dir: self.has_partial_dir,
+            partial_dir: self.partial_dir.clone(),
             backup_dir: self.backup_dir.clone(),
             backup_suffix: self.backup_suffix.clone(),
             daemon_filter_rules: self.daemon_filter_rules.clone(),

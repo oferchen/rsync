@@ -25,7 +25,7 @@ use crate::temp_guard::open_tmpfile;
 #[cfg(unix)]
 use crate::temp_guard::open_tmpfile_sandboxed;
 
-use super::config::{BackupConfig, DiskCommitConfig};
+use super::config::{BackupConfig, DiskCommitConfig, PartialMode};
 use super::writer::{ReusableBufWriter, Writer};
 
 /// Processes a single file: open, write chunks, commit or abort.
@@ -84,12 +84,26 @@ pub(super) fn process_file(
     let mut bytes_written: u64 = 0;
 
     loop {
-        let msg = file_rx.recv().map_err(|_| {
-            io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "disk thread: channel disconnected while processing file",
-            )
-        })?;
+        let msg = match file_rx.recv() {
+            Ok(m) => m,
+            Err(_) => {
+                // Channel disconnected - treat as an interrupt.
+                // Flush buffered data and commit any batched writes (io_uring/
+                // IOCP) before considering partial retention. flush_and_sync
+                // handles Buffered/Macos; finish handles IoUring/Iocp.
+                let _ = output.flush_and_sync(false, &begin.file_path);
+                let _ = output.finish(false, &begin.file_path);
+                // upstream: cleanup.c - retain partial on unexpected disconnect
+                if bytes_written > 0 && needs_rename {
+                    retain_partial_file(&config.partial_mode, &mut cleanup_guard, &begin.file_path);
+                }
+                drop(cleanup_guard);
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "disk thread: channel disconnected while processing file",
+                ));
+            }
+        };
 
         match msg {
             FileMessage::Chunk(data) => {
@@ -163,12 +177,30 @@ pub(super) fn process_file(
                 });
             }
             FileMessage::Abort { reason } => {
-                drop(output);
+                // Flush buffered data and commit any batched writes (io_uring/
+                // IOCP) so the temp file contains all received data.
+                let _ = output.flush_and_sync(false, &begin.file_path);
+                let _ = output.finish(false, &begin.file_path);
+                // upstream: cleanup.c:105-115 - on abort, retain temp file
+                // if partial mode is enabled and literal data was received.
+                // bytes_written > 0 is a proxy for upstream's got_literal:
+                // if any data was written, the transfer made progress worth
+                // retaining for later resume.
+                if bytes_written > 0 && needs_rename {
+                    retain_partial_file(&config.partial_mode, &mut cleanup_guard, &begin.file_path);
+                }
                 drop(cleanup_guard);
                 return Err(io::Error::other(reason));
             }
             FileMessage::Shutdown => {
-                drop(output);
+                // Flush buffered data and commit any batched writes (io_uring/
+                // IOCP) before considering partial retention.
+                let _ = output.flush_and_sync(false, &begin.file_path);
+                let _ = output.finish(false, &begin.file_path);
+                // upstream: cleanup.c - same partial retention on shutdown
+                if bytes_written > 0 && needs_rename {
+                    retain_partial_file(&config.partial_mode, &mut cleanup_guard, &begin.file_path);
+                }
                 drop(cleanup_guard);
                 return Err(io::Error::new(
                     io::ErrorKind::Interrupted,
@@ -448,6 +480,79 @@ fn commit_file(
     };
     cleanup_guard.keep();
     Ok(was_copy)
+}
+
+/// Retains a partial temp file instead of deleting it on interrupt.
+///
+/// Depending on the `PartialMode`:
+/// - `None`: does nothing (the guard's Drop will delete the temp file).
+/// - `Partial`: renames the temp file to the final destination path, so
+///   the incomplete file is available for resume on the next run.
+/// - `PartialDir(dir)`: moves the temp file into the partial directory,
+///   using the destination filename as the target name.
+///
+/// Errors are logged and silently ignored - partial retention is best-effort.
+/// On failure, the guard's Drop will clean up the temp file.
+///
+/// # Upstream Reference
+///
+/// - `cleanup.c:105-115` - `handle_partial_dir()` moves temp to partial-dir
+/// - `cleanup.c:130-135` - `keep_partial && got_literal` guard
+/// - `receiver.c:340-345` - `do_rename(partialptr, fname)` for `--partial`
+fn retain_partial_file(
+    partial_mode: &PartialMode,
+    cleanup_guard: &mut TempFileGuard,
+    dest_path: &Path,
+) {
+    match partial_mode {
+        PartialMode::None => {}
+        PartialMode::Partial => {
+            // upstream: cleanup.c:130-135 - rename temp file directly to
+            // the destination. The incomplete content replaces any existing
+            // file at the destination path.
+            let temp_path = cleanup_guard.path().to_path_buf();
+            match rename_with_io_uring_fallback(cleanup_guard.path(), dest_path) {
+                Ok(_) => {
+                    logging::debug_log!(Io, 1, "retained partial file: {}", dest_path.display());
+                    CleanupManager::global().unregister_temp_file(&temp_path);
+                    cleanup_guard.keep();
+                }
+                Err(e) => {
+                    logging::debug_log!(
+                        Io,
+                        1,
+                        "failed to retain partial file {}: {}",
+                        dest_path.display(),
+                        e
+                    );
+                }
+            }
+        }
+        PartialMode::PartialDir(dir) => {
+            // upstream: cleanup.c:105-115 - move temp file into partial-dir
+            let temp_path = cleanup_guard.path().to_path_buf();
+            match cleanup_guard.rename_to_partial_dir(dest_path, dir) {
+                Ok(partial_path) => {
+                    CleanupManager::global().unregister_temp_file(&temp_path);
+                    logging::debug_log!(
+                        Io,
+                        1,
+                        "retained partial file in partial-dir: {}",
+                        partial_path.display()
+                    );
+                }
+                Err(e) => {
+                    logging::debug_log!(
+                        Io,
+                        1,
+                        "failed to retain partial file in {}: {}",
+                        dir.display(),
+                        e
+                    );
+                }
+            }
+        }
+    }
 }
 
 /// Renames a temp file to its final destination, trying io_uring first.

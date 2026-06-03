@@ -1,7 +1,8 @@
 //! Configuration types for the disk commit thread.
 //!
-//! Provides `DiskCommitConfig` and `BackupConfig` which control how the disk
-//! thread writes, syncs, and commits files.
+//! Provides `DiskCommitConfig`, `BackupConfig`, and `PartialMode` which
+//! control how the disk thread writes, syncs, commits files, and handles
+//! interrupted transfers.
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -9,6 +10,36 @@ use std::sync::Arc;
 
 use metadata::MetadataOptions;
 use protocol::acl::AclCache;
+
+/// Controls partial file retention on interrupted transfers.
+///
+/// When a transfer is interrupted (signal, connection drop, error), upstream
+/// rsync either deletes the temp file (default) or retains it for later resume
+/// via `--partial` or `--partial-dir`.
+///
+/// # Upstream Reference
+///
+/// - `cleanup.c:105-115` - `handle_partial_dir()` renames temp to partial-dir
+/// - `options.c:keep_partial` - `--partial` flag
+/// - `options.c:partial_dir` - `--partial-dir=DIR` option
+/// - `receiver.c:340-345` - `do_rename(partialptr, fname)` on interrupt
+#[derive(Debug, Clone, Default, Eq, PartialEq)]
+pub enum PartialMode {
+    /// No partial retention: delete temp files on interrupt (default behavior).
+    #[default]
+    None,
+    /// Retain partial files at the destination path on interrupt (`--partial`).
+    ///
+    /// The incomplete temp file is renamed to the final destination, replacing
+    /// any existing file. This allows resuming the transfer on a subsequent run.
+    Partial,
+    /// Retain partial files in a designated directory on interrupt (`--partial-dir=DIR`).
+    ///
+    /// The incomplete temp file is moved to `DIR/relative_path` instead of
+    /// being deleted. On subsequent transfers, the receiver checks this
+    /// directory for a basis file to resume from.
+    PartialDir(PathBuf),
+}
 
 /// Backup configuration for creating backup copies before overwriting.
 ///
@@ -109,6 +140,18 @@ pub struct DiskCommitConfig {
     /// `GetQueuedCompletionStatusEx`. Falls back to standard buffered
     /// I/O on non-Windows targets or when the policy is `Disabled`.
     pub iocp_policy: fast_io::IocpPolicy,
+    /// Controls partial file retention on interrupted transfers.
+    ///
+    /// When set to [`PartialMode::Partial`] or [`PartialMode::PartialDir`],
+    /// the disk thread retains temp files on shutdown/abort instead of
+    /// deleting them, matching upstream rsync's `--partial` / `--partial-dir`
+    /// behavior.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `cleanup.c:105-115` - `handle_partial_dir()` in cleanup path
+    /// - `receiver.c:340-345` - partial file rename on interrupt
+    pub partial_mode: PartialMode,
 }
 
 impl Default for DiskCommitConfig {
@@ -128,6 +171,7 @@ impl Default for DiskCommitConfig {
             io_uring_policy: fast_io::IoUringPolicy::Auto,
             io_uring_depth: None,
             iocp_policy: fast_io::IocpPolicy::Auto,
+            partial_mode: PartialMode::None,
         }
     }
 }
