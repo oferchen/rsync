@@ -816,9 +816,7 @@ pub fn handle_delayed_updates(outcomes: &[DelayedUpdateEntry]) -> io::Result<()>
 /// - `receiver.c:410-415` - compute `partialptr` from `partial_dir` + `fname`
 pub fn delay_updates_staging_path(final_path: &Path) -> PathBuf {
     let parent = final_path.parent().unwrap_or_else(|| Path::new("."));
-    let file_name = final_path
-        .file_name()
-        .unwrap_or(final_path.as_os_str());
+    let file_name = final_path.file_name().unwrap_or(final_path.as_os_str());
     parent
         .join(super::config::DELAY_UPDATES_PARTIAL_DIR)
         .join(file_name)
