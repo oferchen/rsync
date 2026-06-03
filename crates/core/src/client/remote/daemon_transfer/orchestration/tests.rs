@@ -781,7 +781,7 @@ mod daemon_progress_adapter_tests {
     use crate::client::progress::{ClientProgressObserver, ClientProgressUpdate};
     use crate::server::{TransferProgressCallback, TransferProgressEvent};
     use std::path::Path;
-    use std::time::{Duration, Instant};
+    use std::time::Instant;
 
     /// Captures progress updates for assertion in tests.
     struct CapturingObserver {
