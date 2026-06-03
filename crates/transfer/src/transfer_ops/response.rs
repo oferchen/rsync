@@ -16,6 +16,8 @@ use fast_io::FileWriter;
 
 use protocol::codec::NdxCodec;
 
+use engine::CleanupManager;
+
 use crate::adaptive_buffer::adaptive_writer_capacity;
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
 use crate::map_file::MapFile;
@@ -102,6 +104,10 @@ pub fn process_file_response<R: Read>(
         let (f, guard) = open_tmpfile(&file_path, ctx.config.temp_dir)?;
         (f, guard, true)
     };
+
+    if needs_rename {
+        CleanupManager::global().register_temp_file(cleanup_guard.path().to_path_buf());
+    }
 
     // upstream: receiver.c:307-308 - in append mode, seek past existing content
     // so new data is written at the end of the file
@@ -340,6 +346,7 @@ pub fn process_file_response<R: Read>(
                 fs::rename(cleanup_guard.path(), &file_path)?;
             }
         }
+        CleanupManager::global().unregister_temp_file(cleanup_guard.path());
     } else if ctx.config.inplace {
         // Inplace: truncate to final size.
         // upstream: receiver.c:340 - set_file_length(fd, F_LENGTH(file))

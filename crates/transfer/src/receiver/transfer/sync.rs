@@ -14,6 +14,8 @@ use protocol::stats::DeleteStats;
 
 use metadata::apply_metadata_from_file_entry;
 
+use engine::CleanupManager;
+
 use crate::adaptive_buffer::adaptive_writer_capacity;
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
 use crate::map_file::MapFile;
@@ -209,6 +211,7 @@ impl ReceiverContext {
             )?;
             #[cfg(not(unix))]
             let (file, mut temp_guard) = open_tmpfile(&file_path, self.config.temp_dir.as_deref())?;
+            CleanupManager::global().register_temp_file(temp_guard.path().to_path_buf());
             let target_size = file_entry.size();
             let writer_capacity = adaptive_writer_capacity(target_size);
             let mut output = std::io::BufWriter::with_capacity(writer_capacity, file);
@@ -371,6 +374,7 @@ impl ReceiverContext {
                     fs::rename(temp_guard.path(), &file_path)?;
                 }
             }
+            CleanupManager::global().unregister_temp_file(temp_guard.path());
             temp_guard.keep();
 
             if let Err(meta_err) =

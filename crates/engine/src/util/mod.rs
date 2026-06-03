@@ -1,7 +1,8 @@
 //! Internal utilities shared across engine submodules.
 //!
-//! Currently exposes [`self::poison`] for recovering from lock poisoning on
+//! Exposes [`self::poison`] for recovering from lock poisoning on
 //! synchronization primitives whose protected state remains valid after a
-//! panic.
+//! panic, and [`self::cleanup`] for global temp-file cleanup coordination.
 
+pub mod cleanup;
 pub mod poison;
