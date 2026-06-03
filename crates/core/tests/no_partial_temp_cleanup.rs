@@ -349,10 +349,7 @@ fn no_partial_preserves_dirs_but_removes_temps() {
     // Create nested directory structure with files at each level.
     let test_data = generate_test_data(TEST_FILE_SIZE);
     create_test_file(&daemon.module_path().join("root.bin"), &test_data);
-    create_test_file(
-        &daemon.module_path().join("subdir/nested.bin"),
-        &test_data,
-    );
+    create_test_file(&daemon.module_path().join("subdir/nested.bin"), &test_data);
     create_test_file(
         &daemon.module_path().join("subdir/deep/leaf.bin"),
         &test_data,
