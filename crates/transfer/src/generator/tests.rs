@@ -2617,7 +2617,11 @@ mod files_from {
         assert!(!names.contains(&"missing.txt"));
 
         // No io_error flags should be set - the missing entry is silently ignored.
-        assert_eq!(ctx.io_error(), 0, "ignore-missing-args should not set io_error");
+        assert_eq!(
+            ctx.io_error(),
+            0,
+            "ignore-missing-args should not set io_error"
+        );
     }
 
     #[test]
@@ -2656,7 +2660,11 @@ mod files_from {
         assert_eq!(sentinel.size(), 0, "sentinel size should be 0");
 
         // No io_error flags should be set - exit 0.
-        assert_eq!(ctx.io_error(), 0, "delete-missing-args should not set io_error");
+        assert_eq!(
+            ctx.io_error(),
+            0,
+            "delete-missing-args should not set io_error"
+        );
     }
 
     #[test]
@@ -2728,9 +2736,7 @@ mod files_from {
         config.file_selection.ignore_missing_args = true;
         let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
-        let count = ctx
-            .build_file_list(&[existing.clone(), missing])
-            .unwrap();
+        let count = ctx.build_file_list(&[existing.clone(), missing]).unwrap();
 
         assert_eq!(count, 1, "only exists.txt should be in the list");
         assert_eq!(ctx.io_error(), 0, "no error for silently skipped source");
@@ -2749,9 +2755,7 @@ mod files_from {
         config.file_selection.delete_missing_args = true;
         let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
-        let count = ctx
-            .build_file_list(&[existing.clone(), missing])
-            .unwrap();
+        let count = ctx.build_file_list(&[existing.clone(), missing]).unwrap();
 
         // exists.txt + mode-0 sentinel for missing
         assert_eq!(count, 2, "exists.txt + sentinel");
