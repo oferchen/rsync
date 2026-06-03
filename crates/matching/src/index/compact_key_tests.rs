@@ -111,15 +111,9 @@ fn bucket_collisions_resolved_by_lower_half_check() {
     assert_eq!(b, vec![22]);
     assert_eq!(c, vec![33]);
 
-    // A lower-half discriminator that was never inserted into the shared
-    // bucket must produce no hits, even though the bucket itself is
-    // populated.
     let none: Vec<usize> = table.find_all(0x00FF, bucket_sum2).collect();
     assert!(none.is_empty(), "unrelated discriminator must not leak");
 
-    // The bucket address derives from `rsum >> 16` for every callable
-    // synthesis, so the bench-internal helper and the bucket-for helper
-    // agree on the placement.
     let synthesized_rsum = (u32::from(bucket_sum2) << 16) | 0x0001;
     assert_eq!(
         DeltaSignatureIndex::bucket_for(synthesized_rsum),
@@ -244,8 +238,6 @@ fn compact_key_state_resets_in_rebuild() {
     let ok = index.rebuild(&sig_two, SignatureAlgorithm::Md4);
     assert!(ok, "rebuild with full-length blocks must succeed");
 
-    // The old basis must no longer match: every byte sequence from
-    // `basis_one` was wiped from the compact bucket chains.
     assert!(
         index.find_match_bytes(pre_digest, &pre_window).is_none(),
         "stale pre-rebuild basis must not resurface as a match"

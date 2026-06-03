@@ -162,7 +162,6 @@ fn prune_skips_consumed_block_on_repeat_lookup() {
 
     index.mark_consumed(second as u32);
 
-    // Every sibling exhausted: the bucket walk now reports no match.
     assert!(
         index.find_match_bytes(digest, window).is_none(),
         "with both siblings consumed, the probe must return None"
