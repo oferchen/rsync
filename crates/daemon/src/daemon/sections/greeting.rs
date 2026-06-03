@@ -77,25 +77,6 @@ pub(crate) fn read_trimmed_line<R: BufRead>(reader: &mut R) -> io::Result<Option
     Ok(Some(line))
 }
 
-fn advertise_capabilities(
-    stream: &mut DaemonStream,
-    modules: &[ModuleRuntime],
-    messages: &LegacyMessageCache,
-) -> io::Result<()> {
-    for payload in advertised_capability_lines(modules) {
-        let message = messages.render(LegacyDaemonMessage::Capabilities {
-            flags: payload.as_str(),
-        });
-        stream.write_all(message.as_bytes())?;
-    }
-
-    if modules.is_empty() {
-        Ok(())
-    } else {
-        stream.flush()
-    }
-}
-
 /// Returns the `@RSYNCD: capabilities` lines to advertise to the client.
 ///
 /// Emits `modules` unconditionally when modules are present, and appends
