@@ -2239,8 +2239,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_shutdown() {
     );
     #[cfg(windows)]
     {
-        let threshold =
-            std::time::SystemTime::now() - std::time::Duration::from_secs(86400);
+        let threshold = std::time::SystemTime::now() - std::time::Duration::from_secs(86400);
         let one_day_ago = filetime::FileTime::from_system_time(threshold);
         assert!(
             mtime < one_day_ago,
@@ -2303,8 +2302,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_abort() {
     );
     #[cfg(windows)]
     {
-        let threshold =
-            std::time::SystemTime::now() - std::time::Duration::from_secs(86400);
+        let threshold = std::time::SystemTime::now() - std::time::Duration::from_secs(86400);
         let one_day_ago = filetime::FileTime::from_system_time(threshold);
         assert!(
             mtime < one_day_ago,
@@ -2421,8 +2419,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_disconnect() {
     );
     #[cfg(windows)]
     {
-        let threshold =
-            std::time::SystemTime::now() - std::time::Duration::from_secs(86400);
+        let threshold = std::time::SystemTime::now() - std::time::Duration::from_secs(86400);
         let one_day_ago = filetime::FileTime::from_system_time(threshold);
         assert!(
             mtime < one_day_ago,
