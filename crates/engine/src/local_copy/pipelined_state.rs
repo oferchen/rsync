@@ -112,35 +112,17 @@ pub struct PipelineStats {
 /// Manages the lifecycle of entries through the pipeline: enqueuing, marking
 /// ready, dequeuing for processing, submitting responses, and processing responses.
 pub struct PipelineController {
-    /// Current state of the pipeline.
     state: PipelineState,
-    /// Maximum number of entries allowed in the pipeline simultaneously.
     capacity: usize,
-    /// Queue of entries waiting to be processed.
     pending_entries: VecDeque<usize>,
-    /// Queue of entries that are ready to process.
     ready_entries: VecDeque<usize>,
-    /// Queue of processed responses waiting to be handled.
     pending_responses: VecDeque<usize>,
-    /// Whether the wire has been exhausted (no more entries to read).
     wire_exhausted: bool,
-    /// Pipeline statistics.
     stats: PipelineStats,
 }
 
 impl PipelineController {
     /// Creates a new pipeline controller with the specified capacity.
-    ///
-    /// # Arguments
-    ///
-    /// * `capacity` - Maximum number of entries in the pipeline simultaneously
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// let controller = PipelineController::new(8);
-    /// assert_eq!(controller.capacity(), 8);
-    /// ```
     #[must_use]
     pub fn new(capacity: usize) -> Self {
         Self {
@@ -222,10 +204,6 @@ impl PipelineController {
 
     /// Enqueues a new entry into the pipeline.
     ///
-    /// # Arguments
-    ///
-    /// * `entry_id` - Unique identifier for the entry
-    ///
     /// # Panics
     ///
     /// Panics if the pipeline is at capacity.
@@ -243,10 +221,6 @@ impl PipelineController {
     /// Marks an entry as ready to process.
     ///
     /// The entry must currently be in the pending queue.
-    ///
-    /// # Arguments
-    ///
-    /// * `entry_id` - Entry to mark as ready
     pub fn mark_ready(&mut self, entry_id: usize) {
         if let Some(pos) = self.pending_entries.iter().position(|&id| id == entry_id) {
             self.pending_entries.remove(pos);
@@ -268,10 +242,6 @@ impl PipelineController {
     }
 
     /// Submits a processed response.
-    ///
-    /// # Arguments
-    ///
-    /// * `entry_id` - Entry whose response is being submitted
     pub fn submit_response(&mut self, entry_id: usize) {
         self.pending_responses.push_back(entry_id);
     }
@@ -308,10 +278,6 @@ impl PipelineController {
     }
 
     /// Explicitly transitions to a new state.
-    ///
-    /// # Arguments
-    ///
-    /// * `state` - Target state
     pub fn transition_to(&mut self, state: PipelineState) {
         self.state = state;
     }

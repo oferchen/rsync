@@ -122,41 +122,15 @@ impl<'a> DeletionContext<'a> {
     }
 }
 
-/// Determines if a destination entry is extraneous (not in source).
-///
-/// An entry is extraneous if its name does not appear in the source
-/// entry list. This is the core logic for identifying files to delete.
-///
-/// # Arguments
-///
-/// * `entry_name` - Name of the destination entry
-/// * `source_entries` - Names of entries in the source directory
-///
-/// # Returns
-///
-/// `true` if the entry should be considered for deletion.
+/// Returns `true` if `entry_name` does not appear in `source_entries`.
 pub fn is_extraneous_entry<S: AsRef<OsStr>>(entry_name: &OsStr, source_entries: &[S]) -> bool {
     !source_entries.iter().any(|s| s.as_ref() == entry_name)
 }
 
 /// Determines if an entry should be deleted based on context and filters.
 ///
-/// This function encapsulates the deletion decision logic, considering:
-/// - Whether deletion is enabled
-/// - Filter rules and exclusion patterns
-/// - The --delete-excluded flag
-/// - The --max-delete limit
-///
-/// # Arguments
-///
-/// * `entry_name` - Name of the entry to check
-/// * `source_entries` - Names of source entries to keep
-/// * `context` - Deletion context with settings and limits
-/// * `filter_allows_deletion` - Function to check if filters allow deletion
-///
-/// # Returns
-///
-/// `true` if the entry should be deleted.
+/// Checks deletion-enabled state, `--max-delete` limits, extraneous
+/// membership, and filter rules before returning `true`.
 pub fn should_delete_entry<S, F>(
     entry_name: &OsStr,
     source_entries: &[S],
@@ -184,18 +158,7 @@ where
     }
 }
 
-/// Builds a set of entry names to keep (avoid deletion).
-///
-/// This helper function creates an efficient lookup structure for
-/// checking if an entry should be preserved.
-///
-/// # Arguments
-///
-/// * `entries` - Iterator of entry names to keep
-///
-/// # Returns
-///
-/// A `HashSet` containing the entry names.
+/// Builds a `HashSet` of entry names to preserve from deletion.
 #[must_use]
 pub fn build_keep_set<'a, I, S>(entries: I) -> HashSet<&'a OsStr>
 where
