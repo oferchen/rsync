@@ -700,7 +700,7 @@ fn read_acl_normalized(path: &Path) -> io::Result<Vec<String>> {
             // ACE lines are indented and start with a number followed by colon.
             if trimmed.starts_with(|c: char| c.is_ascii_digit()) && trimmed.contains(':') {
                 // Strip the leading index number for stable comparison.
-                let after_colon = trimmed.splitn(2, ": ").nth(1)?;
+                let (_, after_colon) = trimmed.split_once(": ")?;
                 Some(normalize_macos_ace(after_colon))
             } else {
                 None
@@ -771,11 +771,8 @@ fn macos_perms_str(perms: u8, is_dir: bool) -> String {
         parts.push("write");
     }
     if perms & 1 != 0 {
-        if is_dir {
-            parts.push("execute");
-        } else {
-            parts.push("execute");
-        }
+        let _ = is_dir; // same permission label regardless of file type
+        parts.push("execute");
     }
     parts.join(",")
 }

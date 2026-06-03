@@ -213,9 +213,8 @@ impl IconvSetting {
             Self::LocaleDefault => Some(converter_from_locale()),
             Self::Explicit { local, remote } => {
                 let remote_charset = remote.as_deref().unwrap_or("UTF-8");
-                match FilenameConverter::new(local, remote_charset) {
-                    Ok(converter) => Some(converter),
-                    Err(_error) => {
+                FilenameConverter::new(local, remote_charset)
+                    .inspect_err(|_error| {
                         #[cfg(feature = "tracing")]
                         tracing::warn!(
                             local = %local,
@@ -223,9 +222,8 @@ impl IconvSetting {
                             error = %_error,
                             "--iconv: unsupported charset pair; local-copy filenames will not be transcoded",
                         );
-                        None
-                    }
-                }
+                    })
+                    .ok()
             }
         }
     }
