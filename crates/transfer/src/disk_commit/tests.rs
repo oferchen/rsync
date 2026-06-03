@@ -5,7 +5,8 @@ use std::fs;
 use crate::pipeline::messages::{BeginMessage, FileMessage};
 use crate::pipeline::spsc::TryRecvError;
 
-use super::config::{DiskCommitConfig, PartialMode};
+use super::config::{DiskCommitConfig, PartialMode, DELAY_UPDATES_PARTIAL_DIR};
+use super::process::{CommitOutcome, delay_updates_staging_path, handle_delayed_updates};
 use super::thread::spawn_disk_thread;
 
 #[test]
@@ -1507,4 +1508,571 @@ fn partial_dir_whole_file_success_no_leftover_in_partial_dir() {
 
     h.file_tx.send(FileMessage::Shutdown).unwrap();
     h.join_handle.join().unwrap();
+}
+
+#[test]
+fn delay_updates_staging_path_computes_correct_path() {
+    let final_path = std::path::Path::new("/dest/subdir/file.txt");
+    let staging = delay_updates_staging_path(final_path);
+    assert_eq!(
+        staging,
+        std::path::PathBuf::from("/dest/subdir/.~tmp~/file.txt")
+    );
+}
+
+#[test]
+fn delay_updates_staging_path_root_level_file() {
+    let final_path = std::path::Path::new("/dest/top.txt");
+    let staging = delay_updates_staging_path(final_path);
+    assert_eq!(
+        staging,
+        std::path::PathBuf::from("/dest/.~tmp~/top.txt")
+    );
+}
+
+#[test]
+fn delay_updates_staging_path_deeply_nested() {
+    let final_path = std::path::Path::new("/dest/a/b/c/deep.txt");
+    let staging = delay_updates_staging_path(final_path);
+    assert_eq!(
+        staging,
+        std::path::PathBuf::from("/dest/a/b/c/.~tmp~/deep.txt")
+    );
+}
+
+/// Files committed to `.~tmp~/` staging paths are renamed to final
+/// destinations after `handle_delayed_updates()` runs.
+#[test]
+fn delay_updates_single_file_reaches_final_destination() {
+    let dir = test_support::create_tempdir();
+    let staging_dir = dir.path().join(DELAY_UPDATES_PARTIAL_DIR);
+    fs::create_dir(&staging_dir).unwrap();
+
+    let staging_path = staging_dir.join("file.txt");
+    let final_path = dir.path().join("file.txt");
+    fs::write(&staging_path, b"staged content").unwrap();
+
+    let outcomes = vec![CommitOutcome {
+        staging_path: staging_path.clone(),
+        final_path: final_path.clone(),
+    }];
+
+    handle_delayed_updates(&outcomes).unwrap();
+
+    assert!(
+        final_path.exists(),
+        "file must appear at final destination after sweep"
+    );
+    assert_eq!(fs::read(&final_path).unwrap(), b"staged content");
+    assert!(
+        !staging_path.exists(),
+        "staging path must be empty after rename"
+    );
+}
+
+/// Multiple files all reach their final destination after the sweep.
+#[test]
+fn delay_updates_multiple_files_reach_final_destination() {
+    let dir = test_support::create_tempdir();
+    let staging_dir = dir.path().join(DELAY_UPDATES_PARTIAL_DIR);
+    fs::create_dir(&staging_dir).unwrap();
+
+    let mut outcomes = Vec::new();
+    for i in 0..5 {
+        let name = format!("file{i}.dat");
+        let content = format!("content-{i}");
+        let staging = staging_dir.join(&name);
+        let final_dest = dir.path().join(&name);
+        fs::write(&staging, content.as_bytes()).unwrap();
+        outcomes.push(CommitOutcome {
+            staging_path: staging,
+            final_path: final_dest,
+        });
+    }
+
+    handle_delayed_updates(&outcomes).unwrap();
+
+    for i in 0..5 {
+        let name = format!("file{i}.dat");
+        let expected = format!("content-{i}");
+        let final_dest = dir.path().join(&name);
+        assert!(final_dest.exists(), "{name} must exist at final destination");
+        assert_eq!(fs::read(&final_dest).unwrap(), expected.as_bytes());
+    }
+
+    // All staging files must be gone.
+    assert!(
+        fs::read_dir(&staging_dir).is_err()
+            || fs::read_dir(&staging_dir)
+                .unwrap()
+                .count()
+                == 0,
+        "staging directory should be empty or removed"
+    );
+}
+
+/// The `.~tmp~/` staging directory is removed after the sweep completes.
+#[test]
+fn delay_updates_staging_directory_cleaned_up() {
+    let dir = test_support::create_tempdir();
+    let staging_dir = dir.path().join(DELAY_UPDATES_PARTIAL_DIR);
+    fs::create_dir(&staging_dir).unwrap();
+
+    let staging_path = staging_dir.join("cleanup.txt");
+    let final_path = dir.path().join("cleanup.txt");
+    fs::write(&staging_path, b"cleanup test").unwrap();
+
+    let outcomes = vec![CommitOutcome {
+        staging_path,
+        final_path,
+    }];
+
+    handle_delayed_updates(&outcomes).unwrap();
+
+    assert!(
+        !staging_dir.exists(),
+        ".~tmp~ staging directory must be removed after sweep"
+    );
+}
+
+/// Nested directory structures: files in subdirectories each have their own
+/// `.~tmp~/` staging directory, all cleaned up after the sweep.
+#[test]
+fn delay_updates_nested_directories_all_reach_final_destination() {
+    let dir = test_support::create_tempdir();
+    let dest_root = dir.path().join("dest");
+
+    // Create nested directory structure with staging dirs.
+    let sub1 = dest_root.join("sub1");
+    let sub2 = dest_root.join("sub1").join("sub2");
+    fs::create_dir_all(&sub1).unwrap();
+    fs::create_dir_all(&sub2).unwrap();
+
+    let staging_root = dest_root.join(DELAY_UPDATES_PARTIAL_DIR);
+    let staging_sub1 = sub1.join(DELAY_UPDATES_PARTIAL_DIR);
+    let staging_sub2 = sub2.join(DELAY_UPDATES_PARTIAL_DIR);
+    fs::create_dir(&staging_root).unwrap();
+    fs::create_dir(&staging_sub1).unwrap();
+    fs::create_dir(&staging_sub2).unwrap();
+
+    // Stage files at each level.
+    fs::write(staging_root.join("top.txt"), b"top level").unwrap();
+    fs::write(staging_sub1.join("mid.txt"), b"mid level").unwrap();
+    fs::write(staging_sub2.join("deep.txt"), b"deep level").unwrap();
+
+    let outcomes = vec![
+        CommitOutcome {
+            staging_path: staging_root.join("top.txt"),
+            final_path: dest_root.join("top.txt"),
+        },
+        CommitOutcome {
+            staging_path: staging_sub1.join("mid.txt"),
+            final_path: sub1.join("mid.txt"),
+        },
+        CommitOutcome {
+            staging_path: staging_sub2.join("deep.txt"),
+            final_path: sub2.join("deep.txt"),
+        },
+    ];
+
+    handle_delayed_updates(&outcomes).unwrap();
+
+    // Verify all files at final destinations.
+    assert_eq!(fs::read(dest_root.join("top.txt")).unwrap(), b"top level");
+    assert_eq!(fs::read(sub1.join("mid.txt")).unwrap(), b"mid level");
+    assert_eq!(fs::read(sub2.join("deep.txt")).unwrap(), b"deep level");
+
+    // All staging directories must be removed.
+    assert!(
+        !staging_root.exists(),
+        "root .~tmp~ directory must be removed"
+    );
+    assert!(
+        !staging_sub1.exists(),
+        "sub1 .~tmp~ directory must be removed"
+    );
+    assert!(
+        !staging_sub2.exists(),
+        "sub2 .~tmp~ directory must be removed"
+    );
+}
+
+/// Empty outcomes list is a no-op.
+#[test]
+fn delay_updates_empty_outcomes_is_noop() {
+    handle_delayed_updates(&[]).unwrap();
+}
+
+/// End-to-end: disk commit thread writes files to staging paths, then
+/// `handle_delayed_updates` renames them to final destinations.
+///
+/// This simulates the full --delay-updates remote receiver flow:
+/// 1. The file_path in BeginMessage points to `.~tmp~/filename`.
+/// 2. The disk thread commits the file to that staging path.
+/// 3. After all files complete, handle_delayed_updates renames to final.
+#[test]
+fn delay_updates_disk_thread_e2e_single_file() {
+    let dir = test_support::create_tempdir();
+    let staging_dir = dir.path().join(DELAY_UPDATES_PARTIAL_DIR);
+    fs::create_dir(&staging_dir).unwrap();
+
+    let staging_path = staging_dir.join("e2e.dat");
+    let final_path = dir.path().join("e2e.dat");
+
+    // Step 1: Use the disk thread to write to the staging path.
+    let h = spawn_disk_thread(DiskCommitConfig::default());
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: staging_path.clone(),
+            target_size: 12,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"e2e content!".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Commit).unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result.bytes_written, 12);
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+
+    // After disk thread commit, file should be at staging path, not final.
+    assert!(
+        staging_path.exists(),
+        "file must be at staging path after disk thread commit"
+    );
+    assert!(
+        !final_path.exists(),
+        "file must NOT be at final path before sweep"
+    );
+
+    // Step 2: Run the delay-updates sweep.
+    let outcomes = vec![CommitOutcome {
+        staging_path: staging_path.clone(),
+        final_path: final_path.clone(),
+    }];
+
+    handle_delayed_updates(&outcomes).unwrap();
+
+    // After sweep, file should be at final destination.
+    assert!(
+        final_path.exists(),
+        "file must appear at final destination after sweep"
+    );
+    assert_eq!(fs::read(&final_path).unwrap(), b"e2e content!");
+    assert!(
+        !staging_path.exists(),
+        "staging path must be empty after sweep"
+    );
+    assert!(
+        !staging_dir.exists(),
+        ".~tmp~ directory must be removed after sweep"
+    );
+}
+
+/// End-to-end: multiple files through the disk thread then bulk sweep.
+#[test]
+fn delay_updates_disk_thread_e2e_multiple_files() {
+    let dir = test_support::create_tempdir();
+    let staging_dir = dir.path().join(DELAY_UPDATES_PARTIAL_DIR);
+    fs::create_dir(&staging_dir).unwrap();
+
+    let h = spawn_disk_thread(DiskCommitConfig::default());
+
+    let mut outcomes = Vec::new();
+    for i in 0..4 {
+        let name = format!("multi{i}.dat");
+        let content = format!("multi-content-{i}");
+        let staging_path = staging_dir.join(&name);
+        let final_path = dir.path().join(&name);
+
+        h.file_tx
+            .send(FileMessage::Begin(Box::new(BeginMessage {
+                file_path: staging_path.clone(),
+                target_size: content.len() as u64,
+                file_entry_index: i,
+                checksum_verifier: None,
+                is_device_target: false,
+                is_inplace: false,
+                append_offset: 0,
+                xattr_list: None,
+            })))
+            .unwrap();
+
+        h.file_tx
+            .send(FileMessage::Chunk(content.into_bytes()))
+            .unwrap();
+        h.file_tx.send(FileMessage::Commit).unwrap();
+
+        let result = h.result_rx.recv().unwrap().unwrap();
+        assert_eq!(result.file_entry_index, i);
+
+        outcomes.push(CommitOutcome {
+            staging_path,
+            final_path,
+        });
+    }
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+
+    // Before sweep: all files at staging, none at final.
+    for outcome in &outcomes {
+        assert!(
+            outcome.staging_path.exists(),
+            "staging must exist before sweep: {}",
+            outcome.staging_path.display()
+        );
+        assert!(
+            !outcome.final_path.exists(),
+            "final must not exist before sweep: {}",
+            outcome.final_path.display()
+        );
+    }
+
+    handle_delayed_updates(&outcomes).unwrap();
+
+    // After sweep: all files at final, staging dir removed.
+    for (i, outcome) in outcomes.iter().enumerate() {
+        let expected = format!("multi-content-{i}");
+        assert!(
+            outcome.final_path.exists(),
+            "final must exist after sweep: {}",
+            outcome.final_path.display()
+        );
+        assert_eq!(fs::read(&outcome.final_path).unwrap(), expected.as_bytes());
+        assert!(
+            !outcome.staging_path.exists(),
+            "staging must be gone after sweep: {}",
+            outcome.staging_path.display()
+        );
+    }
+    assert!(
+        !staging_dir.exists(),
+        ".~tmp~ directory must be removed after sweep"
+    );
+}
+
+/// End-to-end with whole-file coalesced writes through the disk thread.
+#[test]
+fn delay_updates_disk_thread_e2e_whole_file() {
+    let dir = test_support::create_tempdir();
+    let staging_dir = dir.path().join(DELAY_UPDATES_PARTIAL_DIR);
+    fs::create_dir(&staging_dir).unwrap();
+
+    let staging_path = staging_dir.join("whole.dat");
+    let final_path = dir.path().join("whole.dat");
+
+    let h = spawn_disk_thread(DiskCommitConfig::default());
+
+    h.file_tx
+        .send(FileMessage::WholeFile {
+            begin: Box::new(BeginMessage {
+                file_path: staging_path.clone(),
+                target_size: 16,
+                file_entry_index: 0,
+                checksum_verifier: None,
+                is_device_target: false,
+                is_inplace: false,
+                append_offset: 0,
+                xattr_list: None,
+            }),
+            data: b"whole file sweep!".to_vec(),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result.bytes_written, 16);
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+
+    assert!(staging_path.exists());
+    assert!(!final_path.exists());
+
+    let outcomes = vec![CommitOutcome {
+        staging_path: staging_path.clone(),
+        final_path: final_path.clone(),
+    }];
+
+    handle_delayed_updates(&outcomes).unwrap();
+
+    assert!(final_path.exists());
+    assert_eq!(fs::read(&final_path).unwrap(), b"whole file sweep!");
+    assert!(!staging_dir.exists());
+}
+
+/// End-to-end with nested subdirectories through the disk thread.
+#[test]
+fn delay_updates_disk_thread_e2e_nested_dirs() {
+    let dir = test_support::create_tempdir();
+    let sub = dir.path().join("subdir");
+    fs::create_dir(&sub).unwrap();
+
+    let staging_root = dir.path().join(DELAY_UPDATES_PARTIAL_DIR);
+    let staging_sub = sub.join(DELAY_UPDATES_PARTIAL_DIR);
+    fs::create_dir(&staging_root).unwrap();
+    fs::create_dir(&staging_sub).unwrap();
+
+    let h = spawn_disk_thread(DiskCommitConfig::default());
+
+    // File at root level staging.
+    let staging_root_file = staging_root.join("root.txt");
+    let final_root_file = dir.path().join("root.txt");
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: staging_root_file.clone(),
+            target_size: 9,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Chunk(b"root data".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Commit).unwrap();
+    let _ = h.result_rx.recv().unwrap().unwrap();
+
+    // File at sub level staging.
+    let staging_sub_file = staging_sub.join("nested.txt");
+    let final_sub_file = sub.join("nested.txt");
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: staging_sub_file.clone(),
+            target_size: 11,
+            file_entry_index: 1,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Chunk(b"nested data".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Commit).unwrap();
+    let _ = h.result_rx.recv().unwrap().unwrap();
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+
+    // Before sweep.
+    assert!(staging_root_file.exists());
+    assert!(staging_sub_file.exists());
+    assert!(!final_root_file.exists());
+    assert!(!final_sub_file.exists());
+
+    let outcomes = vec![
+        CommitOutcome {
+            staging_path: staging_root_file,
+            final_path: final_root_file.clone(),
+        },
+        CommitOutcome {
+            staging_path: staging_sub_file,
+            final_path: final_sub_file.clone(),
+        },
+    ];
+
+    handle_delayed_updates(&outcomes).unwrap();
+
+    // After sweep.
+    assert_eq!(fs::read(&final_root_file).unwrap(), b"root data");
+    assert_eq!(fs::read(&final_sub_file).unwrap(), b"nested data");
+    assert!(!staging_root.exists(), "root .~tmp~ must be removed");
+    assert!(!staging_sub.exists(), "sub .~tmp~ must be removed");
+}
+
+/// Verifies the constant matches the upstream rsync `.~tmp~` value.
+#[test]
+fn delay_updates_partial_dir_constant_matches_upstream() {
+    assert_eq!(DELAY_UPDATES_PARTIAL_DIR, ".~tmp~");
+}
+
+/// `delay_updates_staging_path` round-trips with `handle_delayed_updates`:
+/// compute staging paths, create files there, sweep, and verify final.
+#[test]
+fn delay_updates_staging_path_roundtrip() {
+    let dir = test_support::create_tempdir();
+    let dest = dir.path().join("dest");
+    fs::create_dir(&dest).unwrap();
+
+    let files = ["alpha.txt", "beta.txt", "gamma.txt"];
+    let mut outcomes = Vec::new();
+
+    for (i, name) in files.iter().enumerate() {
+        let final_path = dest.join(name);
+        let staging_path = delay_updates_staging_path(&final_path);
+
+        // Create staging directory and file.
+        if let Some(parent) = staging_path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        let content = format!("data-{i}");
+        fs::write(&staging_path, content.as_bytes()).unwrap();
+
+        outcomes.push(CommitOutcome {
+            staging_path,
+            final_path,
+        });
+    }
+
+    handle_delayed_updates(&outcomes).unwrap();
+
+    for (i, name) in files.iter().enumerate() {
+        let expected = format!("data-{i}");
+        assert_eq!(
+            fs::read(dest.join(name)).unwrap(),
+            expected.as_bytes(),
+            "{name} content mismatch"
+        );
+    }
+
+    assert!(
+        !dest.join(DELAY_UPDATES_PARTIAL_DIR).exists(),
+        ".~tmp~ staging directory must be removed"
+    );
+}
+
+/// Sweep replaces existing destination files atomically.
+#[test]
+fn delay_updates_sweep_replaces_existing_files() {
+    let dir = test_support::create_tempdir();
+    let staging_dir = dir.path().join(DELAY_UPDATES_PARTIAL_DIR);
+    fs::create_dir(&staging_dir).unwrap();
+
+    // Pre-existing destination file.
+    let final_path = dir.path().join("existing.txt");
+    fs::write(&final_path, b"old content").unwrap();
+
+    // Staged replacement.
+    let staging_path = staging_dir.join("existing.txt");
+    fs::write(&staging_path, b"new content").unwrap();
+
+    let outcomes = vec![CommitOutcome {
+        staging_path,
+        final_path: final_path.clone(),
+    }];
+
+    handle_delayed_updates(&outcomes).unwrap();
+
+    assert_eq!(
+        fs::read(&final_path).unwrap(),
+        b"new content",
+        "sweep must replace existing destination content"
+    );
 }
