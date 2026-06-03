@@ -159,6 +159,38 @@ impl ClientProgressUpdate {
     }
 }
 
+impl ClientProgressUpdate {
+    /// Creates a mid-transfer (non-final) progress update for testing.
+    ///
+    /// Identical to [`from_transfer_event`](Self::from_transfer_event) except
+    /// `is_final()` returns `false`, simulating an in-flight progress tick
+    /// before the file transfer completes.
+    #[doc(hidden)]
+    pub fn from_transfer_event_mid(
+        event: ClientEvent,
+        files_done: usize,
+        total_files: usize,
+        total_bytes: Option<u64>,
+        overall_transferred: u64,
+        overall_total_bytes: Option<u64>,
+        overall_elapsed: Duration,
+        flist_eof: bool,
+    ) -> Self {
+        Self {
+            event,
+            total: total_files,
+            remaining: total_files.saturating_sub(files_done),
+            index: files_done,
+            total_bytes,
+            final_update: false,
+            overall_transferred,
+            overall_total_bytes,
+            overall_elapsed,
+            flist_eof,
+        }
+    }
+}
+
 impl<F> ClientProgressObserver for F
 where
     F: FnMut(&ClientProgressUpdate),

@@ -152,6 +152,40 @@ pub(crate) fn format_progress_rate_human(rate: f64) -> String {
     format!("{}{}", display.0, display.1)
 }
 
+/// Formats a pre-computed transfer rate (bytes/sec) for the progress line.
+///
+/// Unlike [`format_progress_rate`] which computes the rate from cumulative
+/// bytes and elapsed time, this function accepts a rate value directly.
+/// This supports the sliding-window rate used in progress2 mode, where
+/// the rate comes from the [`RemainingTimeEstimator::window_rate`] method
+/// rather than a simple bytes/elapsed division.
+///
+/// upstream: progress.c:108-116 rprint_progress - rate unit selection
+pub(crate) fn format_progress_rate_from_value(
+    rate: f64,
+    human_readable: HumanReadableMode,
+) -> String {
+    if rate <= 0.0 {
+        return if human_readable.is_enabled() {
+            "0.00B/s".to_owned()
+        } else {
+            "0.00kB/s".to_owned()
+        };
+    }
+
+    let decimal = format_progress_rate_decimal(rate);
+    if !human_readable.is_enabled() {
+        return decimal;
+    }
+
+    let human = format_progress_rate_human(rate);
+    if human_readable.includes_exact() && human != decimal {
+        format!("{human} ({decimal})")
+    } else {
+        human
+    }
+}
+
 /// Computes the throughput in bytes per second for the provided measurements.
 pub(crate) fn compute_rate(bytes: u64, elapsed: Duration) -> Option<f64> {
     if elapsed.is_zero() {
@@ -260,5 +294,42 @@ mod tests {
         // 1 GiB/s prints in GB/s.
         let gb = format_progress_rate_decimal(1024.0 * 1024.0 * 1024.0);
         assert!(gb.ends_with("GB/s"), "{gb}");
+    }
+
+    /// `format_progress_rate_from_value` accepts a pre-computed rate instead of
+    /// deriving it from bytes/elapsed, supporting the sliding-window rate used
+    /// in progress2 mode.
+    #[test]
+    fn format_progress_rate_from_value_zero() {
+        let result = format_progress_rate_from_value(0.0, HumanReadableMode::Disabled);
+        assert_eq!(result, "0.00kB/s");
+    }
+
+    #[test]
+    fn format_progress_rate_from_value_negative() {
+        let result = format_progress_rate_from_value(-1.0, HumanReadableMode::Disabled);
+        assert_eq!(result, "0.00kB/s");
+    }
+
+    #[test]
+    fn format_progress_rate_from_value_kb_range() {
+        let result = format_progress_rate_from_value(512.0, HumanReadableMode::Disabled);
+        assert!(result.ends_with("kB/s"), "expected kB/s: {result}");
+    }
+
+    #[test]
+    fn format_progress_rate_from_value_mb_range() {
+        let result =
+            format_progress_rate_from_value(2.0 * 1024.0 * 1024.0, HumanReadableMode::Disabled);
+        assert!(result.ends_with("MB/s"), "expected MB/s: {result}");
+    }
+
+    #[test]
+    fn format_progress_rate_from_value_gb_range() {
+        let result = format_progress_rate_from_value(
+            2.0 * 1024.0 * 1024.0 * 1024.0,
+            HumanReadableMode::Disabled,
+        );
+        assert!(result.ends_with("GB/s"), "expected GB/s: {result}");
     }
 }

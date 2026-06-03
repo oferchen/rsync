@@ -107,6 +107,24 @@ impl RemainingTimeEstimator {
         Some(bytes_left as f64 / rate)
     }
 
+    /// Returns the sliding-window rate in bytes per second, computed as
+    /// `(current_ofs - oldest_ofs) / elapsed_seconds`. Returns `None` if the
+    /// estimator is unprimed. Returns `Some(0.0)` when stalled (no bytes
+    /// transferred over the window), matching upstream's `rate` variable in
+    /// `rprint_progress` (progress.c:102-104).
+    ///
+    /// upstream: progress.c:102-104 rprint_progress - rate computation from
+    /// oldest retained sample to current position.
+    pub(crate) fn window_rate(&self, now: Instant, ofs: u64) -> Option<f64> {
+        let oldest = self.samples[self.oldest]?;
+        let bytes_delta = ofs.saturating_sub(oldest.ofs);
+        let elapsed = now.saturating_duration_since(oldest.at).as_secs_f64();
+        if elapsed <= 0.0 || bytes_delta == 0 {
+            return Some(0.0);
+        }
+        Some(bytes_delta as f64 / elapsed)
+    }
+
     /// Renders the remaining time as `H:MM:SS` (matching upstream's
     /// `%4u:%02u:%02u`, progress.c:121-122), or the `??:??:??` placeholder
     /// when the value exceeds upstream's `9999*3600`-second clamp. A stalled
@@ -419,5 +437,50 @@ mod tests {
             est.render(t0 + Duration::from_secs(1), 1, 1 + over_limit),
             "??:??:??"
         );
+    }
+
+    /// upstream: progress.c:102-104 - window rate is computed from the oldest
+    /// retained sample to the current position.
+    #[test]
+    fn window_rate_unprimed_returns_none() {
+        let est = RemainingTimeEstimator::new();
+        let now = Instant::now();
+        // Unprimed estimator has no samples, so window_rate returns None.
+        assert!(est.window_rate(now, 1_000).is_none());
+    }
+
+    #[test]
+    fn window_rate_steady_throughput() {
+        let mut est = RemainingTimeEstimator::new();
+        let t0 = Instant::now();
+        let rate: u64 = 1_000_000;
+        for sec in 0..=5 {
+            est.observe(at(t0, sec), sec * rate);
+        }
+        let computed = est.window_rate(at(t0, 5), 5 * rate).expect("rate");
+        assert!(
+            (computed - 1_000_000.0).abs() < 10_000.0,
+            "expected ~1MB/s, got {computed}"
+        );
+    }
+
+    #[test]
+    fn window_rate_stalled_returns_zero() {
+        let mut est = RemainingTimeEstimator::new();
+        let t0 = Instant::now();
+        est.observe(t0, 100);
+        est.observe(at(t0, 1), 100);
+        est.observe(at(t0, 2), 100);
+        let rate = est.window_rate(at(t0, 2), 100).expect("rate");
+        assert_eq!(rate, 0.0, "stalled window should yield zero rate");
+    }
+
+    #[test]
+    fn window_rate_zero_elapsed_returns_zero() {
+        let mut est = RemainingTimeEstimator::new();
+        let t0 = Instant::now();
+        est.observe(t0, 0);
+        let rate = est.window_rate(t0, 1_000).expect("rate");
+        assert_eq!(rate, 0.0, "zero elapsed should yield zero rate");
     }
 }
