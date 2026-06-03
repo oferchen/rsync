@@ -13,7 +13,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use engine::{compute_backup_path, trace_make_backup_rename};
+use engine::{CleanupManager, compute_backup_path, trace_make_backup_rename};
 use protocol::acl::AclCache;
 
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
@@ -48,6 +48,14 @@ pub(super) fn process_file(
     iocp_batch: Option<&mut fast_io::IocpDiskBatch>,
 ) -> io::Result<CommitResult> {
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
+
+    // Register the temp file with the global cleanup manager so a SIGKILL
+    // (which bypasses Drop) still removes orphaned temp files on restart.
+    // Only temp+rename paths produce actual temp files; inplace and device
+    // writes operate on the final destination.
+    if needs_rename {
+        CleanupManager::global().register_temp_file(cleanup_guard.path().to_path_buf());
+    }
 
     let mut output = make_writer(
         file,
@@ -125,6 +133,13 @@ pub(super) fn process_file(
                     bytes_written,
                 )?;
 
+                // Temp file has been renamed to its final destination (or
+                // kept via guard.keep()), so remove it from the global
+                // cleanup registry - it is no longer an orphan candidate.
+                if needs_rename {
+                    CleanupManager::global().unregister_temp_file(cleanup_guard.path());
+                }
+
                 // After commit: apply metadata for inplace/device paths
                 // (no pre-rename step), or re-apply after cross-device
                 // copy since fs::copy does not preserve ownership,
@@ -186,6 +201,10 @@ pub(super) fn process_whole_file(
 ) -> io::Result<CommitResult> {
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
 
+    if needs_rename {
+        CleanupManager::global().register_temp_file(cleanup_guard.path().to_path_buf());
+    }
+
     let mut output = make_writer(
         file,
         write_buf,
@@ -230,6 +249,10 @@ pub(super) fn process_whole_file(
         needs_rename,
         bytes_written,
     )?;
+
+    if needs_rename {
+        CleanupManager::global().unregister_temp_file(cleanup_guard.path());
+    }
 
     let metadata_error = if needs_rename && !was_copy {
         pre_meta_error

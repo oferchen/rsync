@@ -128,6 +128,7 @@
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 pub mod async_io;
 
+pub mod cleanup;
 pub mod concurrent_delta;
 pub mod delete;
 pub mod delta;
@@ -190,6 +191,9 @@ pub use concurrent_delta::{
     ReclaimMode, ReorderBuffer, ReorderStats, SpillCompression, SpillGranularity, SpillPolicy,
     WholeFileStrategy,
 };
+
+/// Global cleanup registry for temporary files on abnormal termination.
+pub use cleanup::CleanupManager;
 
 /// Common error types for engine operations.
 pub use error::{EngineError, EngineResult};
