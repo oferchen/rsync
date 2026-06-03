@@ -14,7 +14,10 @@ use logging_sink::MessageSink;
 
 use crate::frontend::{
     out_format::{OutFormat, OutFormatContext},
-    progress::{LiveProgress, NameOutputLevel, ProgressMode, StderrMode, emit_transfer_summary},
+    progress::{
+        LiveProgress, NameOutputLevel, ProgressMode, ProgressOutputConfig, StderrMode,
+        emit_transfer_summary,
+    },
 };
 
 use super::messages::emit_message_with_fallback;
@@ -32,6 +35,7 @@ pub(crate) struct TransferExecutionInputs<'a> {
     pub(crate) msgs_to_stderr: bool,
     pub(crate) stderr_mode: StderrMode,
     pub(crate) progress_mode: Option<ProgressMode>,
+    pub(crate) progress_output_config: ProgressOutputConfig,
     pub(crate) human_readable_mode: HumanReadableMode,
     pub(crate) itemize_changes: bool,
     pub(crate) stats_level: u8,
@@ -59,6 +63,7 @@ where
         msgs_to_stderr,
         stderr_mode,
         progress_mode: requested_progress_mode,
+        progress_output_config,
         human_readable_mode,
         itemize_changes,
         stats_level,
@@ -78,7 +83,7 @@ where
 
     let mut live_progress = requested_progress_mode.map(|mode| {
         with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
-            LiveProgress::new(writer, mode, human_readable_mode)
+            LiveProgress::with_output_config(writer, mode, human_readable_mode, progress_output_config)
         })
     });
 
