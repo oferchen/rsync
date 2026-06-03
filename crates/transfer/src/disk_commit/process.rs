@@ -137,8 +137,7 @@ pub(super) fn process_file(
                 // kept via guard.keep()), so remove it from the global
                 // cleanup registry - it is no longer an orphan candidate.
                 if needs_rename {
-                    CleanupManager::global()
-                        .unregister_temp_file(cleanup_guard.path());
+                    CleanupManager::global().unregister_temp_file(cleanup_guard.path());
                 }
 
                 // After commit: apply metadata for inplace/device paths
