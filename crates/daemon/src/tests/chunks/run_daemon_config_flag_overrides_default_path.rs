@@ -53,23 +53,14 @@ fn run_daemon_config_flag_overrides_default_path() {
     stream.write_all(b"#list\n").expect("send list request");
     stream.flush().expect("flush list request");
 
-    // Read capabilities
-    line.clear();
-    reader.read_line(&mut line).expect("capabilities");
-    assert_eq!(line, "@RSYNCD: CAP modules\n");
+    // upstream: no @RSYNCD: OK or CAP lines before module listing
 
-    // upstream: no @RSYNCD: OK before module listing
-
-    // Verify the custom module appears in the listing
+    // upstream: clientserver.c:1254 uses %-15s\t%s\n format
     line.clear();
     reader.read_line(&mut line).expect("module listing");
-    assert!(
-        line.contains("custom_share"),
-        "expected module 'custom_share' in listing, got: {line}"
-    );
-    assert!(
-        line.contains("Custom config test"),
-        "expected comment 'Custom config test' in listing, got: {line}"
+    assert_eq!(
+        line, "custom_share   \tCustom config test\n",
+        "Expected %-15s aligned module with comment, got: {line}"
     );
 
     // Read exit
