@@ -8,8 +8,8 @@
 use std::hint::black_box;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -236,14 +236,8 @@ fn percentiles_are_monotonic() {
     let p50 = metrics.percentile(0.50);
     let p95 = metrics.percentile(0.95);
     let p99 = metrics.percentile(0.99);
-    assert!(
-        p50 <= p95,
-        "p50 ({p50:?}) should be <= p95 ({p95:?})"
-    );
-    assert!(
-        p95 <= p99,
-        "p95 ({p95:?}) should be <= p99 ({p99:?})"
-    );
+    assert!(p50 <= p95, "p50 ({p50:?}) should be <= p95 ({p95:?})");
+    assert!(p95 <= p99, "p95 ({p95:?}) should be <= p99 ({p99:?})");
 }
 
 /// Verifies that wall time increases sub-linearly: doubling concurrency

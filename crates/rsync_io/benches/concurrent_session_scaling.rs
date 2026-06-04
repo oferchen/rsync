@@ -47,8 +47,8 @@
 use std::hint::black_box;
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -248,17 +248,12 @@ fn bench_concurrent_throughput(c: &mut Criterion) {
     for &n in CONCURRENCY_LEVELS {
         let total_bytes = (n * SESSION_PAYLOAD) as u64;
         group.throughput(Throughput::Bytes(total_bytes));
-        group.bench_with_input(
-            BenchmarkId::new("sessions", n),
-            &n,
-            |b, &concurrency| {
-                b.iter(|| {
-                    let metrics =
-                        run_concurrent_sessions(concurrency).expect("concurrent sessions");
-                    black_box(&metrics.wall_time);
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("sessions", n), &n, |b, &concurrency| {
+            b.iter(|| {
+                let metrics = run_concurrent_sessions(concurrency).expect("concurrent sessions");
+                black_box(&metrics.wall_time);
+            });
+        });
     }
     group.finish();
 }
@@ -275,21 +270,17 @@ fn bench_concurrent_tail_latency(c: &mut Criterion) {
     group.sample_size(10);
 
     for &n in CONCURRENCY_LEVELS {
-        group.bench_with_input(
-            BenchmarkId::new("sessions", n),
-            &n,
-            |b, &concurrency| {
-                b.iter_custom(|iters| {
-                    let mut total = Duration::ZERO;
-                    for _ in 0..iters {
-                        let metrics =
-                            run_concurrent_sessions(concurrency).expect("concurrent sessions");
-                        total += metrics.percentile(0.99);
-                    }
-                    total
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("sessions", n), &n, |b, &concurrency| {
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    let metrics =
+                        run_concurrent_sessions(concurrency).expect("concurrent sessions");
+                    total += metrics.percentile(0.99);
+                }
+                total
+            });
+        });
     }
     group.finish();
 }
@@ -307,31 +298,27 @@ fn bench_thread_saturation(c: &mut Criterion) {
     group.sample_size(10);
 
     for &n in CONCURRENCY_LEVELS {
-        group.bench_with_input(
-            BenchmarkId::new("sessions", n),
-            &n,
-            |b, &concurrency| {
-                b.iter_custom(|iters| {
-                    let mut total_wall = Duration::ZERO;
-                    for _ in 0..iters {
-                        let metrics =
-                            run_concurrent_sessions(concurrency).expect("concurrent sessions");
-                        // Log saturation data for manual analysis.
-                        eprintln!(
-                            "  [N={concurrency}] wall={:.1}ms p50={:.1}ms p95={:.1}ms \
+        group.bench_with_input(BenchmarkId::new("sessions", n), &n, |b, &concurrency| {
+            b.iter_custom(|iters| {
+                let mut total_wall = Duration::ZERO;
+                for _ in 0..iters {
+                    let metrics =
+                        run_concurrent_sessions(concurrency).expect("concurrent sessions");
+                    // Log saturation data for manual analysis.
+                    eprintln!(
+                        "  [N={concurrency}] wall={:.1}ms p50={:.1}ms p95={:.1}ms \
                              p99={:.1}ms peak_threads={}",
-                            metrics.wall_time.as_secs_f64() * 1000.0,
-                            metrics.percentile(0.50).as_secs_f64() * 1000.0,
-                            metrics.percentile(0.95).as_secs_f64() * 1000.0,
-                            metrics.percentile(0.99).as_secs_f64() * 1000.0,
-                            metrics.peak_threads,
-                        );
-                        total_wall += metrics.wall_time;
-                    }
-                    total_wall
-                });
-            },
-        );
+                        metrics.wall_time.as_secs_f64() * 1000.0,
+                        metrics.percentile(0.50).as_secs_f64() * 1000.0,
+                        metrics.percentile(0.95).as_secs_f64() * 1000.0,
+                        metrics.percentile(0.99).as_secs_f64() * 1000.0,
+                        metrics.peak_threads,
+                    );
+                    total_wall += metrics.wall_time;
+                }
+                total_wall
+            });
+        });
     }
     group.finish();
 }
