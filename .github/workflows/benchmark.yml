@@ -196,18 +196,15 @@ jobs:
 
           REPORT=$(cat benchmark_report.md)
 
-          NEW_BODY=$(cat <<EOF
-          ${CURRENT_BODY}
+          {
+            printf '%s\n' "$CURRENT_BODY"
+            echo ""
+            echo "---"
+            echo ""
+            printf '%s\n' "$REPORT"
+          } > /tmp/release_body.md
 
-          ---
-
-          ${REPORT}
-          EOF
-          )
-          # Strip leading whitespace from heredoc indentation
-          NEW_BODY=$(echo "$NEW_BODY" | sed 's/^          //')
-
-          gh release edit "$TAG" --notes "$NEW_BODY"
+          gh release edit "$TAG" --notes-file /tmp/release_body.md
 
       - name: Upload benchmark assets to release
         if: steps.release_tag.outputs.tag != ''

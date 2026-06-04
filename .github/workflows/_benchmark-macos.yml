@@ -78,10 +78,13 @@ jobs:
 
           cd rsync-3.4.2
           if [ ! -f rsync ]; then
+            BREW_PREFIX="$(brew --prefix)"
+            PKG_CONFIG_PATH="${BREW_PREFIX}/opt/openssl@3/lib/pkgconfig:${BREW_PREFIX}/opt/xxhash/lib/pkgconfig:${BREW_PREFIX}/opt/zstd/lib/pkgconfig:${BREW_PREFIX}/opt/lz4/lib/pkgconfig:${PKG_CONFIG_PATH:-}" \
             ./configure \
               --with-included-popt \
               --disable-md2man \
-              CFLAGS="-O2"
+              CFLAGS="-O2 -I${BREW_PREFIX}/include" \
+              LDFLAGS="-L${BREW_PREFIX}/lib"
             make -j$(sysctl -n hw.ncpu)
           fi
 
