@@ -424,7 +424,12 @@ impl GeneratorContext {
         Some(algo)
     }
 
-    /// Opens a source file for reading, using io_uring for large files when available.
+    /// Opens a source file for reading with `BufReader` buffering.
+    ///
+    /// Suitable for callers that perform many small or random reads (e.g., the
+    /// delta generator's rolling-checksum scan). For callers that manage their
+    /// own large read buffer, use [`open_source_unbuffered`](Self::open_source_unbuffered)
+    /// to avoid an extra copy layer.
     ///
     /// Files at or above the io_uring read threshold (1 MB) use `reader_from_path`,
     /// which creates an io_uring-backed reader on Linux 5.6+ (respecting the
@@ -473,6 +478,48 @@ impl GeneratorContext {
             adaptive_buffer_size(file_size),
             f,
         )))
+    }
+
+    /// Opens a source file without intermediate buffering.
+    ///
+    /// Identical to [`open_source_reader`](Self::open_source_reader) except the
+    /// fallback path returns the raw `File` instead of wrapping it in a
+    /// `BufReader`. Callers that manage their own read buffer (e.g.,
+    /// `stream_whole_file_transfer` with its 256 KB staging buffer and
+    /// `read_exact` calls) should use this to avoid an extra memcpy per byte
+    /// through the `BufReader`'s internal buffer.
+    ///
+    /// The io_uring fast path is unchanged - it already returns a reader with
+    /// its own internal buffering strategy.
+    pub(crate) fn open_source_unbuffered(
+        &self,
+        path: &std::path::Path,
+        file_size: u64,
+    ) -> std::io::Result<Box<dyn std::io::Read>> {
+        // 1 MB threshold: io_uring ring creation has fixed overhead that only
+        // pays off for larger reads where batched syscalls reduce total cost.
+        const IO_URING_READ_THRESHOLD: u64 = 1024 * 1024;
+
+        let use_noatime = self.config.write.open_noatime;
+
+        if !use_noatime
+            && file_size >= IO_URING_READ_THRESHOLD
+            && self.config.write.io_uring_policy != fast_io::IoUringPolicy::Disabled
+        {
+            match fast_io::reader_from_path_with_depth(
+                path,
+                self.config.write.io_uring_policy,
+                self.config.write.io_uring_depth,
+            ) {
+                Ok(r) => return Ok(Box::new(r)),
+                Err(_) => {
+                    // Fall through to raw File on io_uring failure
+                }
+            }
+        }
+
+        let f = open_source::open_source_with_noatime(path, use_noatime)?;
+        Ok(Box::new(f))
     }
 
     /// Returns the upstream `missing_args` mode for ENOENT handling.

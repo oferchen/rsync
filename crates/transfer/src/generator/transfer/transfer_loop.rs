@@ -452,7 +452,12 @@ impl GeneratorContext {
                 bytes_sent += delta_total_bytes;
             } else {
                 // upstream: sender.c:354-369 - whole-file path; MSG_NO_SEND on open failure
-                let source: Box<dyn Read> = match self.open_source_reader(source_path, file_size) {
+                // Use unbuffered reader: stream_whole_file_transfer manages its
+                // own 256 KB staging buffer with read_exact, so a BufReader would
+                // only add an extra memcpy per byte through its internal buffer.
+                let source: Box<dyn Read> = match self
+                    .open_source_unbuffered(source_path, file_size)
+                {
                     Ok(r) => r,
                     Err(e) => {
                         self.record_open_failure(&mut *writer, wire_ndx, &e, &source_path_display)?;
