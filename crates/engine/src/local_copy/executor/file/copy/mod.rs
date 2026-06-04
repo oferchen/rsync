@@ -39,7 +39,7 @@ pub(crate) fn copy_file(
     relative: Option<&Path>,
 ) -> Result<bool, LocalCopyError> {
     context.enforce_timeout()?;
-    let metadata_options = context.metadata_options();
+    let mut metadata_options = context.metadata_options();
     let mode = context.mode();
     let file_type = metadata.file_type();
 
@@ -173,6 +173,10 @@ pub(crate) fn copy_file(
     let whole_file_enabled = context.whole_file_enabled();
     let compress_enabled = context.should_compress(record_path.as_path());
     let relative_for_link = relative.unwrap_or(record_path.as_path());
+
+    // upstream: rsync.c:dest_mode() uses `exists` to apply umask-masked source
+    // permissions for new files vs keeping existing permissions for updates.
+    metadata_options = metadata_options.with_destination_is_new(!destination_previously_existed);
 
     let link_outcome = links::process_links(
         context,

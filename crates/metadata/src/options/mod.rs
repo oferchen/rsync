@@ -34,6 +34,10 @@ pub struct MetadataOptions {
     pub(crate) chmod: Option<ChmodModifiers>,
     pub(crate) user_mapping: Option<UserMapping>,
     pub(crate) group_mapping: Option<GroupMapping>,
+    /// When true, the destination file was newly created during this transfer.
+    /// upstream: rsync.c:dest_mode() uses `exists` parameter to distinguish
+    /// between new and existing files for permission computation.
+    pub(crate) destination_is_new: bool,
 }
 
 impl MetadataOptions {
@@ -58,6 +62,7 @@ impl MetadataOptions {
             chmod: None,
             user_mapping: None,
             group_mapping: None,
+            destination_is_new: false,
         }
     }
 }
