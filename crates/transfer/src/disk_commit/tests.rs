@@ -2184,3 +2184,210 @@ fn delay_updates_sweep_replaces_existing_files() {
         "sweep must replace existing destination content"
     );
 }
+
+// --- PIR-3: Partial file mtime=0 stamp tests ---
+
+/// Verifies that a partial file retained via `--partial` has its mtime
+/// stamped to epoch 0. Upstream cleanup.c:174-178 does this so that a
+/// subsequent `--update` run does not skip the partial file as "up to date".
+#[test]
+fn partial_mode_partial_stamps_mtime_zero_on_shutdown() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("partial_mtime_zero.dat");
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::Partial,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 100,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"partial content".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+
+    let result = h.result_rx.recv().unwrap();
+    assert!(result.is_err());
+
+    assert!(file_path.exists(), "partial file must be retained");
+    assert_eq!(fs::read(&file_path).unwrap(), b"partial content");
+
+    // The retained partial file must have mtime = Unix epoch (1970-01-01).
+    let mtime = filetime::FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
+    let unix_epoch = filetime::FileTime::from_unix_time(0, 0);
+    assert_eq!(
+        mtime, unix_epoch,
+        "partial file mtime must be stamped to Unix epoch"
+    );
+
+    drop(h.file_tx);
+    h.join_handle.join().unwrap();
+}
+
+/// Verifies that mtime=0 is also stamped on partial files retained via
+/// abort (not just shutdown). Both interrupt paths go through
+/// `retain_partial_file`.
+#[test]
+fn partial_mode_partial_stamps_mtime_zero_on_abort() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("partial_mtime_zero_abort.dat");
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::Partial,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 100,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"abort partial".to_vec()))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Abort {
+            reason: "test abort".into(),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap();
+    assert!(result.is_err());
+
+    assert!(file_path.exists(), "partial file must be retained on abort");
+
+    let mtime = filetime::FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
+    let unix_epoch = filetime::FileTime::from_unix_time(0, 0);
+    assert_eq!(
+        mtime, unix_epoch,
+        "partial file mtime must be stamped to Unix epoch on abort"
+    );
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+/// Verifies that partial files retained via `--partial-dir` do NOT have
+/// their mtime stamped to 0. Upstream only stamps mtime=0 for plain
+/// `--partial` (cleanup.c:174-178), not `--partial-dir`.
+#[test]
+fn partial_mode_partial_dir_does_not_stamp_mtime_zero() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("partial_dir_mtime.dat");
+    let partial_dir = dir.path().join(".rsync-partial");
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::PartialDir(partial_dir.clone()),
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 100,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"partial dir content".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+
+    let result = h.result_rx.recv().unwrap();
+    assert!(result.is_err());
+
+    let partial_path = partial_dir.join("partial_dir_mtime.dat");
+    assert!(
+        partial_path.exists(),
+        "partial file must exist in partial-dir"
+    );
+
+    // partial-dir files should NOT have mtime stamped to epoch.
+    let mtime =
+        filetime::FileTime::from_last_modification_time(&fs::metadata(&partial_path).unwrap());
+    let unix_epoch = filetime::FileTime::from_unix_time(0, 0);
+    assert_ne!(
+        mtime, unix_epoch,
+        "partial-dir files must not have mtime stamped to epoch"
+    );
+
+    drop(h.file_tx);
+    h.join_handle.join().unwrap();
+}
+
+/// Verifies that mtime=0 is stamped on partial files retained via channel
+/// disconnect (connection drop). This is another interrupt path that goes
+/// through `retain_partial_file`.
+#[test]
+fn partial_mode_partial_stamps_mtime_zero_on_disconnect() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("partial_mtime_disconnect.dat");
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::Partial,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 100,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"disconnect partial".to_vec()))
+        .unwrap();
+
+    // Drop sender to simulate channel disconnect.
+    drop(h.file_tx);
+    h.join_handle.join().unwrap();
+
+    assert!(
+        file_path.exists(),
+        "partial file must be retained on disconnect"
+    );
+
+    let mtime = filetime::FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
+    let unix_epoch = filetime::FileTime::from_unix_time(0, 0);
+    assert_eq!(
+        mtime, unix_epoch,
+        "partial file mtime must be stamped to Unix epoch on disconnect"
+    );
+}

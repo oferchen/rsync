@@ -92,6 +92,8 @@ pub(super) fn process_file(
                 // IOCP) before considering partial retention. flush_and_sync
                 // handles Buffered/Macos; finish handles IoUring/Iocp.
                 let _ = output.flush_and_sync(false, &begin.file_path);
+                // finish() takes `self`, closing the file handle before
+                // rename+mtime stamp (Windows resets mtime on handle close).
                 let _ = output.finish(false, &begin.file_path);
                 // upstream: cleanup.c - retain partial on unexpected disconnect
                 if bytes_written > 0 && needs_rename {
@@ -188,6 +190,8 @@ pub(super) fn process_file(
                 // Flush buffered data and commit any batched writes (io_uring/
                 // IOCP) so the temp file contains all received data.
                 let _ = output.flush_and_sync(false, &begin.file_path);
+                // finish() takes `self`, closing the file handle before
+                // rename+mtime stamp (Windows resets mtime on handle close).
                 let _ = output.finish(false, &begin.file_path);
                 // upstream: cleanup.c:105-115 - on abort, retain temp file
                 // if partial mode is enabled and literal data was received.
@@ -204,6 +208,8 @@ pub(super) fn process_file(
                 // Flush buffered data and commit any batched writes (io_uring/
                 // IOCP) before considering partial retention.
                 let _ = output.flush_and_sync(false, &begin.file_path);
+                // finish() takes `self`, closing the file handle before
+                // rename+mtime stamp (Windows resets mtime on handle close).
                 let _ = output.finish(false, &begin.file_path);
                 // upstream: cleanup.c - same partial retention on shutdown
                 if bytes_written > 0 && needs_rename {
@@ -579,6 +585,30 @@ fn retain_partial_file(
             let temp_path = cleanup_guard.path().to_path_buf();
             match rename_with_io_uring_fallback(cleanup_guard.path(), dest_path) {
                 Ok(_) => {
+                    // upstream: cleanup.c:174-178 - stamp modtime=0 on
+                    // retained partial files so --update does not skip them
+                    // as "up to date" on the next run. Only for plain
+                    // --partial, not --partial-dir (upstream uses
+                    // handle_partial_dir() for --partial-dir which does not
+                    // zero the mtime).
+                    //
+                    // Use from_unix_time(0, 0) rather than FileTime::zero()
+                    // because on Windows, zero() maps to the Windows epoch
+                    // (1601-01-01) which becomes an all-zero FILETIME -
+                    // SetFileTime treats that as "do not change", silently
+                    // skipping the stamp. from_unix_time(0, 0) maps to
+                    // 1970-01-01 which is a non-zero FILETIME that Windows
+                    // will actually apply.
+                    let epoch = filetime::FileTime::from_unix_time(0, 0);
+                    if let Err(e) = filetime::set_file_mtime(dest_path, epoch) {
+                        logging::debug_log!(
+                            Io,
+                            1,
+                            "failed to set mtime=0 on partial file {}: {}",
+                            dest_path.display(),
+                            e
+                        );
+                    }
                     logging::debug_log!(Io, 1, "retained partial file: {}", dest_path.display());
                     CleanupManager::global().unregister_temp_file(&temp_path);
                     cleanup_guard.keep();
