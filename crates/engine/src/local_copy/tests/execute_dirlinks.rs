@@ -624,3 +624,119 @@ fn keep_dirlinks_does_not_apply_when_source_sends_file_over_symlink_to_dir() {
     // The original symlink target directory contents should be untouched
     assert!(real_dir.join("inside.txt").exists(), "target contents should be preserved");
 }
+
+/// Regression test for upstream rsync 3.4.3 fix: `-K` (copy-dirlinks) must not
+/// cause "failed verification -- update discarded" errors when the receiver
+/// writes through a directory symlink during a delta transfer.
+///
+/// Scenario:
+/// 1. Source tree has `subdir/file.bin` (a regular directory).
+/// 2. Destination has `subdir` as a symlink to a real directory (the `-K` pattern).
+/// 3. An initial sync with `-K` populates the file through the symlink.
+/// 4. The source file is modified slightly, triggering a delta (not whole-file) transfer.
+/// 5. The second sync with `-K` must succeed - the receiver sandbox (RESOLVE_BENEATH)
+///    must resolve the path through the directory symlink correctly for verification.
+#[cfg(unix)]
+#[test]
+fn keep_dirlinks_delta_transfer_through_symlink_succeeds() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    fs::create_dir_all(source_root.join("subdir")).expect("create source subdir");
+
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+
+    // Create real target directory and make dest/subdir a symlink to it
+    let real_target = temp.path().join("real-target");
+    fs::create_dir_all(&real_target).expect("create real target");
+    symlink(&real_target, dest_root.join("subdir")).expect("create symlink subdir");
+
+    // Write a file large enough to exercise the delta algorithm (>= 2 blocks).
+    // The file has a prefix that stays constant and a suffix that changes,
+    // forcing the delta engine to emit both COPY and DATA tokens.
+    let block_size = 700;
+    let prefix = vec![b'A'; block_size];
+    let initial_suffix = vec![b'B'; block_size];
+
+    let mut initial_content = Vec::with_capacity(block_size * 2);
+    initial_content.extend_from_slice(&prefix);
+    initial_content.extend_from_slice(&initial_suffix);
+
+    let source_file = source_root.join("subdir/file.bin");
+    fs::write(&source_file, &initial_content).expect("write source file");
+
+    // Step 1: initial sync with -K to establish the baseline through the symlink
+    let mut source_operand = source_root.clone().into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand.clone(), dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().keep_dirlinks(true),
+    )
+    .expect("initial sync with -K succeeds");
+
+    // Verify the file landed through the symlink into the real target
+    let dest_file = real_target.join("file.bin");
+    assert_eq!(
+        fs::read(&dest_file).expect("read initial file"),
+        initial_content,
+        "initial file should match source content"
+    );
+
+    // Step 2: modify the source file - change the suffix to trigger a delta transfer
+    let modified_suffix = vec![b'C'; block_size];
+    let mut modified_content = Vec::with_capacity(block_size * 2);
+    modified_content.extend_from_slice(&prefix);
+    modified_content.extend_from_slice(&modified_suffix);
+
+    fs::write(&source_file, &modified_content).expect("write modified source file");
+    set_file_mtime(
+        &source_file,
+        FileTime::from_unix_time(2_000_000, 0),
+    )
+    .expect("set source mtime");
+
+    // Backdate the destination file so quick-check does not skip it
+    set_file_mtime(&dest_file, FileTime::from_unix_time(1_000_000, 0))
+        .expect("set dest mtime");
+
+    // Step 3: second sync with -K and whole_file(false) to force a delta transfer.
+    // This is the critical path - the receiver must resolve the temp file and
+    // final rename through the directory symlink without verification failure.
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .keep_dirlinks(true)
+                .whole_file(false),
+        )
+        .expect("delta sync with -K through directory symlink must succeed");
+
+    // Verify the delta transfer actually occurred (not a whole-file copy)
+    assert_eq!(summary.files_copied(), 1, "one file should be transferred");
+    assert!(
+        summary.matched_bytes() > 0,
+        "delta transfer should have matched bytes from the unchanged prefix"
+    );
+
+    // Verify the file was updated correctly through the symlink
+    assert_eq!(
+        fs::read(&dest_file).expect("read updated file"),
+        modified_content,
+        "file through symlink should match modified source"
+    );
+
+    // Verify the symlink is still intact
+    let subdir_meta = fs::symlink_metadata(dest_root.join("subdir")).expect("subdir metadata");
+    assert!(
+        subdir_meta.file_type().is_symlink(),
+        "subdir should remain a symlink after delta transfer with -K"
+    );
+}
