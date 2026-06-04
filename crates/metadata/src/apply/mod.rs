@@ -215,7 +215,7 @@ pub fn metadata_unchanged(
     #[cfg(unix)]
     if options.permissions() {
         use std::os::unix::fs::MetadataExt;
-        if (cached_meta.permissions().mode() & 0o7777) != (entry.permissions() & 0o7777) {
+        if (cached_meta.mode() & 0o7777) != (entry.permissions() & 0o7777) {
             return false;
         }
     }
