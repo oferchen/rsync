@@ -1593,7 +1593,7 @@ fn zlib_decoder_rejects_oversized_accumulated_compressed_data() {
     // Payload (content doesn't matter - the decoder will try to
     // inflate it and may fail, but the cap check happens before
     // decompression)
-    block.extend(std::iter::repeat(0xAA).take(payload_len));
+    block.extend(std::iter::repeat_n(0xAA, payload_len));
     // Next DEFLATED_DATA header (flag + low byte will be read by the
     // next iteration of the accumulation loop)
     let next_flag = DEFLATED_DATA | ((payload_len >> 8) as u8);
@@ -1615,7 +1615,6 @@ fn zlib_decoder_rejects_oversized_accumulated_compressed_data() {
     assert!(
         err.to_string()
             .contains("accumulated compressed data exceeds"),
-        "unexpected error message: {}",
-        err
+        "unexpected error message: {err}"
     );
 }
