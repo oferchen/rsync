@@ -264,9 +264,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
     // upstream: rsync.c:dest_mode() - when no explicit permission option is
     // active, still apply source-mode-based permissions masked by umask.
     let source_mode = metadata.permissions().mode();
-    if let Some(new_mode) =
-        compute_dest_mode(source_mode, options.destination_is_new(), existing)
-    {
+    if let Some(new_mode) = compute_dest_mode(source_mode, options.destination_is_new(), existing) {
         if let Some(fd) = fd {
             unix_fs::fchmod(
                 fd,
