@@ -151,12 +151,16 @@ impl std::io::Write for ChannelWriter {
 /// provides a fully configured `SshConfig` (with any CLI overrides applied)
 /// and the remote command string. The function:
 ///
-/// 1. Creates a tokio current-thread runtime
-/// 2. Resolves the host via DNS
-/// 3. Establishes the SSH connection
-/// 4. Authenticates (agent, key files, password - in OpenSSH order)
-/// 5. Opens a session channel and executes the remote command
-/// 6. Spawns a background task to bridge async channel I/O to sync handles
+/// 1. Spawns a dedicated bridge thread with its own tokio runtime
+/// 2. On that thread: resolves the host via DNS, establishes the SSH connection,
+///    authenticates, opens a session channel, and executes the remote command
+/// 3. Runs the async-to-sync bridge loop on that thread, forwarding channel
+///    data to/from sync mpsc handles
+/// 4. Returns synchronous `Read`/`Write` handles to the caller
+///
+/// The bridge thread keeps the tokio runtime alive for the entire duration
+/// of the SSH session. It exits naturally when the channel closes (EOF from
+/// the remote side or writer half dropped by the caller).
 ///
 /// # Arguments
 ///
@@ -174,24 +178,127 @@ pub fn connect_and_exec(
     remote_command: &str,
     stdin_data: Option<&[u8]>,
 ) -> Result<(ChannelReader, ChannelWriter), SshError> {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| SshError::Io(std::io::Error::other(format!("async runtime: {e}"))))?;
+    let (data_tx, data_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(64);
+    let (write_tx, write_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
+    let (setup_tx, setup_rx) = std::sync::mpsc::sync_channel::<Result<(), SshError>>(1);
 
-    rt.block_on(connect_and_exec_async(
-        ssh_config,
-        remote_command,
-        stdin_data,
+    let ssh_config = ssh_config.clone();
+    let remote_command = remote_command.to_owned();
+    let stdin_data = stdin_data.map(|d| d.to_vec());
+
+    std::thread::Builder::new()
+        .name("ssh-bridge".to_owned())
+        .spawn(move || {
+            let rt = match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(e) => {
+                    let _ = setup_tx.send(Err(SshError::Io(std::io::Error::other(format!(
+                        "async runtime: {e}"
+                    )))));
+                    return;
+                }
+            };
+
+            rt.block_on(bridge_main(
+                &ssh_config,
+                &remote_command,
+                stdin_data.as_deref(),
+                data_tx,
+                write_rx,
+                setup_tx,
+            ));
+        })
+        .map_err(SshError::Io)?;
+
+    setup_rx
+        .recv()
+        .map_err(|_| {
+            SshError::Io(std::io::Error::other(
+                "SSH bridge thread terminated during setup",
+            ))
+        })?
+        ?;
+
+    Ok((
+        ChannelReader {
+            rx: data_rx,
+            partial: None,
+        },
+        ChannelWriter { tx: write_tx },
     ))
 }
 
-/// Async implementation of `connect_and_exec`.
-async fn connect_and_exec_async(
+/// Runs the full SSH lifecycle on the bridge thread: setup, then bridge loop.
+///
+/// Signals setup completion (or failure) via `setup_tx`, then runs the
+/// bridge loop which keeps the tokio runtime alive until the channel closes.
+async fn bridge_main(
     ssh_config: &SshConfig,
     remote_command: &str,
     stdin_data: Option<&[u8]>,
-) -> Result<(ChannelReader, ChannelWriter), SshError> {
+    data_tx: std::sync::mpsc::SyncSender<Vec<u8>>,
+    mut write_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
+    setup_tx: std::sync::mpsc::SyncSender<Result<(), SshError>>,
+) {
+    let (mut channel, handle, channel_id) =
+        match ssh_setup(ssh_config, remote_command, stdin_data).await {
+            Ok(result) => result,
+            Err(e) => {
+                let _ = setup_tx.send(Err(e));
+                return;
+            }
+        };
+
+    if setup_tx.send(Ok(())).is_err() {
+        return;
+    }
+
+    loop {
+        tokio::select! {
+            msg = channel.wait() => {
+                match msg {
+                    Some(russh::ChannelMsg::Data { data }) => {
+                        if data_tx.send(data.to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                    Some(russh::ChannelMsg::Eof) | None => {
+                        break;
+                    }
+                    _ => continue,
+                }
+            }
+            write_data = write_rx.recv() => {
+                match write_data {
+                    Some(data) => {
+                        if handle.data(channel_id, data).await.is_err() {
+                            break;
+                        }
+                    }
+                    None => break,
+                }
+            }
+        }
+    }
+}
+
+/// Performs SSH connection setup: DNS resolution, connect, auth, channel
+/// open, exec, and optional initial stdin data delivery.
+async fn ssh_setup(
+    ssh_config: &SshConfig,
+    remote_command: &str,
+    stdin_data: Option<&[u8]>,
+) -> Result<
+    (
+        russh::Channel<russh::client::Msg>,
+        russh::client::Handle<SshClientHandler>,
+        russh::ChannelId,
+    ),
+    SshError,
+> {
     let addrs = resolve_host(&ssh_config.host, ssh_config.port, ssh_config.ip_preference).await?;
 
     let addr = addrs
@@ -231,62 +338,21 @@ async fn connect_and_exec_async(
         .await
         .map_err(SshError::Connect)?;
 
-    let (data_tx, data_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(64);
-    let (write_tx, mut write_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(64);
-
     let channel_id = channel.id();
-    let mut channel_for_read = channel;
-
-    // Handle is not Clone in russh, so share via Arc<Mutex<_>> to allow the
-    // async bridge task to write while the caller still holds a reference.
-    let handle_shared = Arc::new(tokio::sync::Mutex::new(handle));
-    let handle_for_write = handle_shared.clone();
-
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                msg = channel_for_read.wait() => {
-                    match msg {
-                        Some(russh::ChannelMsg::Data { data }) => {
-                            if data_tx.send(data.to_vec()).is_err() {
-                                break;
-                            }
-                        }
-                        Some(russh::ChannelMsg::Eof) | None => {
-                            break;
-                        }
-                        _ => continue,
-                    }
-                }
-                write_data = write_rx.recv() => {
-                    match write_data {
-                        Some(data) => {
-                            let h = handle_for_write.lock().await;
-                            if h.data(channel_id, data).await.is_err() {
-                                break;
-                            }
-                        }
-                        None => break,
-                    }
-                }
-            }
-        }
-    });
 
     if let Some(data) = stdin_data {
-        write_tx
-            .send(data.to_vec())
+        handle
+            .data(channel_id, data.to_vec())
             .await
-            .map_err(|e| SshError::Io(std::io::Error::new(std::io::ErrorKind::BrokenPipe, e)))?;
+            .map_err(|_| {
+                SshError::Io(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "channel closed during initial stdin delivery",
+                ))
+            })?;
     }
 
-    Ok((
-        ChannelReader {
-            rx: data_rx,
-            partial: None,
-        },
-        ChannelWriter { tx: write_tx },
-    ))
+    Ok((channel, handle, channel_id))
 }
 
 #[cfg(test)]
