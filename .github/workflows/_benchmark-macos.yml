@@ -93,12 +93,22 @@ jobs:
 
       - name: Set up SSH loopback
         run: |
-          mkdir -p ~/.ssh
+          # Ensure sshd is running (macOS 15+ needs launchctl, older uses systemsetup)
+          sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist 2>/dev/null \
+            || sudo systemsetup -setremotelogin on 2>/dev/null \
+            || true
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
           ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
           cat ~/.ssh/id_ed25519.pub >> ~/.ssh/authorized_keys
           chmod 600 ~/.ssh/authorized_keys
-          # macOS: enable remote login via system preferences API
-          sudo systemsetup -setremotelogin on 2>/dev/null || true
+          # Pin localhost to our key to avoid "too many auth failures" from
+          # runner-provisioned keys (macOS 15 runners carry multiple identities).
+          cat >> ~/.ssh/config <<'SSH_EOF'
+          Host localhost
+            IdentityFile ~/.ssh/id_ed25519
+            IdentitiesOnly yes
+          SSH_EOF
+          chmod 600 ~/.ssh/config
           ssh -o StrictHostKeyChecking=no localhost true
 
       - name: Run benchmark
