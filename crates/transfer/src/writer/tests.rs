@@ -949,7 +949,10 @@ fn multiplex_writer_send_message_sets_dirty() {
         let mut mux = MultiplexWriter::new(&mut tracker);
         mux.send_message(MessageCode::Info, b"line\n").unwrap();
         // MSG_INFO does not immediately flush, but dirty should be set
-        assert_eq!(tracker.flush_count, 0, "MSG_INFO must not flush immediately");
+        assert_eq!(
+            tracker.flush_count, 0,
+            "MSG_INFO must not flush immediately"
+        );
         mux.flush().unwrap();
     }
     assert_eq!(
