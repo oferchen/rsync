@@ -680,16 +680,12 @@ fn thread_stack_overhead_10k() {
     assert_all_accounted(&result);
 
     if result.succeeded > 0 {
-        let total_stack_reserved =
-            u64::from(result.succeeded) * DEFAULT_THREAD_STACK_BYTES;
+        let total_stack_reserved = u64::from(result.succeeded) * DEFAULT_THREAD_STACK_BYTES;
         let stack_reserved_mib = total_stack_reserved as f64 / (1024.0 * 1024.0);
         let stack_reserved_gib = total_stack_reserved as f64 / (1024.0 * 1024.0 * 1024.0);
         eprintln!();
         eprintln!("[daemon-stress] === Thread-Stack Overhead Profile (10K) ===");
-        eprintln!(
-            "  threads spawned:        {}",
-            result.succeeded
-        );
+        eprintln!("  threads spawned:        {}", result.succeeded);
         eprintln!(
             "  per-thread stack:       {} KiB",
             DEFAULT_THREAD_STACK_BYTES / 1024
@@ -698,9 +694,7 @@ fn thread_stack_overhead_10k() {
             "  total stack reserved:   {stack_reserved_mib:.1} MiB ({stack_reserved_gib:.2} GiB)"
         );
 
-        if let (Some(baseline), Some(peak)) =
-            (result.baseline_rss_bytes, result.peak_rss_bytes)
-        {
+        if let (Some(baseline), Some(peak)) = (result.baseline_rss_bytes, result.peak_rss_bytes) {
             let rss_delta = peak.saturating_sub(baseline);
             let rss_delta_mib = rss_delta as f64 / (1024.0 * 1024.0);
             let per_thread_rss = rss_delta as f64 / f64::from(result.succeeded);
@@ -716,9 +710,7 @@ fn thread_stack_overhead_10k() {
                 0.0
             };
 
-            eprintln!(
-                "  RSS delta (peak-base):  {rss_delta_mib:.2} MiB"
-            );
+            eprintln!("  RSS delta (peak-base):  {rss_delta_mib:.2} MiB");
             eprintln!(
                 "  per-thread RSS:         {per_thread_rss_kib:.1} KiB \
                  ({touched_pct:.2}% of reserved stack)"
@@ -747,8 +739,7 @@ fn thread_stack_overhead_10k() {
 /// Asserts that every attempted connection is accounted for in one of the
 /// outcome buckets.
 fn assert_all_accounted(result: &StressResult) {
-    let accounted =
-        result.succeeded + result.refused + result.emfile + result.other_errors;
+    let accounted = result.succeeded + result.refused + result.emfile + result.other_errors;
     assert!(
         accounted == result.target_connections,
         "scenario must account for every attempted connection \
