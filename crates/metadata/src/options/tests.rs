@@ -241,10 +241,7 @@ fn has_any_preservation_false_when_all_cleared() {
     let opts = MetadataOptions::new()
         .preserve_permissions(false)
         .preserve_times(false);
-    assert!(
-        !opts.has_any_preservation(),
-        "no preservation flags active"
-    );
+    assert!(!opts.has_any_preservation(), "no preservation flags active");
 }
 
 #[test]
@@ -256,29 +253,30 @@ fn has_any_preservation_detects_each_flag() {
 
     assert!(base.clone().preserve_owner(true).has_any_preservation());
     assert!(base.clone().preserve_group(true).has_any_preservation());
-    assert!(base
-        .clone()
-        .preserve_executability(true)
-        .has_any_preservation());
+    assert!(
+        base.clone()
+            .preserve_executability(true)
+            .has_any_preservation()
+    );
     assert!(base.clone().preserve_times(true).has_any_preservation());
     assert!(base.clone().preserve_atimes(true).has_any_preservation());
-    assert!(base
-        .clone()
-        .preserve_crtimes(true)
-        .has_any_preservation());
+    assert!(base.clone().preserve_crtimes(true).has_any_preservation());
     assert!(base.clone().fake_super(true).has_any_preservation());
-    assert!(base
-        .clone()
-        .with_owner_override(Some(0))
-        .has_any_preservation());
-    assert!(base
-        .clone()
-        .with_group_override(Some(0))
-        .has_any_preservation());
-    assert!(base
-        .clone()
-        .with_chmod(Some(ChmodModifiers::parse("g+x").expect("parse")))
-        .has_any_preservation());
+    assert!(
+        base.clone()
+            .with_owner_override(Some(0))
+            .has_any_preservation()
+    );
+    assert!(
+        base.clone()
+            .with_group_override(Some(0))
+            .has_any_preservation()
+    );
+    assert!(
+        base.clone()
+            .with_chmod(Some(ChmodModifiers::parse("g+x").expect("parse")))
+            .has_any_preservation()
+    );
 }
 
 #[test]

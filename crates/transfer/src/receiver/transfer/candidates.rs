@@ -208,9 +208,9 @@ impl ReceiverContext {
                             metadata_errors.push((file_path, e.to_string()));
                         } else if has_xattrs {
                             if let Some(ref xattr_list) = self.resolve_xattr_list(entry) {
-                                if let Err(e) = metadata::apply_xattrs_from_list(
-                                    &file_path, xattr_list, true,
-                                ) {
+                                if let Err(e) =
+                                    metadata::apply_xattrs_from_list(&file_path, xattr_list, true)
+                                {
                                     metadata_errors.push((file_path, e.to_string()));
                                 }
                             }
