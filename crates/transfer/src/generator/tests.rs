@@ -3454,7 +3454,7 @@ fn batched_flush_wire_byte_parity() {
                 (i as u64 + 1) * 1000,
                 0o644,
             );
-            e.set_mtime(1700000000 + i as u32, 0);
+            e.set_mtime(1700000000_i64 + i as i64, 0);
             e
         })
         .collect();
@@ -3464,11 +3464,11 @@ fn batched_flush_wire_byte_parity() {
         let mut inner = Vec::<u8>::new();
         let mut mux = MultiplexWriter::new(&mut inner);
 
-        let mut gen = GeneratorContext::new_for_test(&handshake, test_config());
+        let mut gen_ctx = GeneratorContext::new_for_test(&handshake, test_config());
         for entry in &entries {
-            gen.file_list.push(entry.clone());
+            gen_ctx.file_list.push(entry.clone());
         }
-        let mut flist_writer = gen.build_flist_writer();
+        let mut flist_writer = gen_ctx.build_flist_writer();
         for entry in &entries {
             flist_writer.write_entry(&mut mux, entry).unwrap();
         }
@@ -3484,11 +3484,11 @@ fn batched_flush_wire_byte_parity() {
         let mut inner = Vec::<u8>::new();
         let mut mux = MultiplexWriter::new(&mut inner);
 
-        let mut gen = GeneratorContext::new_for_test(&handshake, test_config());
+        let mut gen_ctx = GeneratorContext::new_for_test(&handshake, test_config());
         for entry in &entries {
-            gen.file_list.push(entry.clone());
+            gen_ctx.file_list.push(entry.clone());
         }
-        let mut flist_writer = gen.build_flist_writer();
+        let mut flist_writer = gen_ctx.build_flist_writer();
         for entry in &entries {
             flist_writer.write_entry(&mut mux, entry).unwrap();
             flush_with_count(&mut mux).unwrap();
