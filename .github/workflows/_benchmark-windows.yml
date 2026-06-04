@@ -101,16 +101,18 @@ jobs:
       - name: Build oc-rsync (release, iocp)
         run: cargo build --locked --release --features iocp --bin oc-rsync
 
-      - name: Install MSYS2 with rsync + hyperfine
+      - name: Install MSYS2 with rsync
         uses: msys2/setup-msys2@e9898307ac31d1a803454791be09ab9973336e1c # v2.31.1
         with:
           msystem: MSYS
           update: false
           install: >-
             rsync
-            hyperfine
             diffutils
             coreutils
+
+      - name: Install hyperfine
+        run: cargo install hyperfine --locked
 
       - name: Run throughput benchmark
         shell: msys2 {0}
