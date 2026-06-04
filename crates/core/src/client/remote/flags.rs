@@ -172,7 +172,7 @@ pub(crate) fn build_wire_format_rules(
                     sender_side: spec.applies_to_sender(),
                     receiver_side: spec.applies_to_receiver(),
                     perishable: spec.is_perishable(),
-                    negate: false,
+                    negate: spec.is_negated(),
                 });
                 continue;
             }
@@ -192,7 +192,7 @@ pub(crate) fn build_wire_format_rules(
             sender_side: spec.applies_to_sender(),
             receiver_side: spec.applies_to_receiver(),
             perishable: spec.is_perishable(),
-            negate: false,
+            negate: spec.is_negated(),
         };
 
         if let Some(options) = spec.dir_merge_options() {

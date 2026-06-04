@@ -744,4 +744,45 @@ mod tests {
         let result = parse_filter_directive(OsStr::new("+   *.txt"));
         assert!(result.is_ok());
     }
+
+    #[test]
+    fn exclude_negate_modifier_short() {
+        let result = parse_filter_directive(OsStr::new("-! */"));
+        assert!(result.is_ok());
+        match result.unwrap() {
+            FilterDirective::Rule(spec) => {
+                assert_eq!(spec.kind(), FilterRuleKind::Exclude);
+                assert!(spec.is_negated());
+                assert_eq!(spec.pattern(), "*/");
+            }
+            _ => panic!("expected Rule directive"),
+        }
+    }
+
+    #[test]
+    fn exclude_negate_modifier_keyword() {
+        let result = parse_filter_directive(OsStr::new("exclude,! */"));
+        assert!(result.is_ok());
+        match result.unwrap() {
+            FilterDirective::Rule(spec) => {
+                assert_eq!(spec.kind(), FilterRuleKind::Exclude);
+                assert!(spec.is_negated());
+                assert_eq!(spec.pattern(), "*/");
+            }
+            _ => panic!("expected Rule directive"),
+        }
+    }
+
+    #[test]
+    fn include_negate_modifier() {
+        let result = parse_filter_directive(OsStr::new("+! *.txt"));
+        assert!(result.is_ok());
+        match result.unwrap() {
+            FilterDirective::Rule(spec) => {
+                assert_eq!(spec.kind(), FilterRuleKind::Include);
+                assert!(spec.is_negated());
+            }
+            _ => panic!("expected Rule directive"),
+        }
+    }
 }
