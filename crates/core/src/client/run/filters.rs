@@ -25,24 +25,28 @@ pub(crate) fn compile_filter_program(
                 EngineFilterRule::include(rule.pattern().to_owned())
                     .with_sides(rule.applies_to_sender(), rule.applies_to_receiver())
                     .with_perishable(rule.is_perishable())
-                    .with_xattr_only(rule.is_xattr_only()),
+                    .with_xattr_only(rule.is_xattr_only())
+                    .with_negate(rule.is_negated()),
             )),
             FilterRuleKind::Exclude => entries.push(FilterProgramEntry::Rule(
                 EngineFilterRule::exclude(rule.pattern().to_owned())
                     .with_sides(rule.applies_to_sender(), rule.applies_to_receiver())
                     .with_perishable(rule.is_perishable())
-                    .with_xattr_only(rule.is_xattr_only()),
+                    .with_xattr_only(rule.is_xattr_only())
+                    .with_negate(rule.is_negated()),
             )),
             FilterRuleKind::Clear => entries.push(FilterProgramEntry::Clear),
             FilterRuleKind::Protect => entries.push(FilterProgramEntry::Rule(
                 EngineFilterRule::protect(rule.pattern().to_owned())
                     .with_sides(rule.applies_to_sender(), rule.applies_to_receiver())
-                    .with_perishable(rule.is_perishable()),
+                    .with_perishable(rule.is_perishable())
+                    .with_negate(rule.is_negated()),
             )),
             FilterRuleKind::Risk => entries.push(FilterProgramEntry::Rule(
                 EngineFilterRule::risk(rule.pattern().to_owned())
                     .with_sides(rule.applies_to_sender(), rule.applies_to_receiver())
-                    .with_perishable(rule.is_perishable()),
+                    .with_perishable(rule.is_perishable())
+                    .with_negate(rule.is_negated()),
             )),
             FilterRuleKind::DirMerge => {
                 entries.push(FilterProgramEntry::DirMerge(DirMergeRule::new(
