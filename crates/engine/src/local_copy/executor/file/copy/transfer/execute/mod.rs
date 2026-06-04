@@ -426,9 +426,7 @@ pub(in crate::local_copy) fn execute_transfer(
 
     // When backup moved the basis file, point the delta transfer at its new
     // location so it can read matched blocks from the backup copy.
-    let delta_basis = delta_basis_override
-        .as_deref()
-        .unwrap_or(destination);
+    let delta_basis = delta_basis_override.as_deref().unwrap_or(destination);
     let copy_result = context.copy_file_contents(
         &mut reader,
         &mut writer,
