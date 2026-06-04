@@ -211,6 +211,9 @@ fn anchored_directory_only_pattern() {
 
     // Only matches directory at root
     assert!(!set.allows(Path::new("node_modules"), true));
+    // Anchored literal excludes still generate descendant matchers so that
+    // paths inside the excluded directory are excluded when checked
+    // individually (e.g., by the receiver).
     assert!(!set.allows(Path::new("node_modules/package"), false));
     // Does not match file with same name
     assert!(set.allows(Path::new("node_modules"), false));

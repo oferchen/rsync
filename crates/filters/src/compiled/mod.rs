@@ -56,13 +56,26 @@ impl CompiledRule {
         }
 
         let mut descendant_patterns = HashSet::new();
-        // upstream: exclude.c - excluding a directory excludes its contents,
-        // but including a directory does NOT include its contents (they must
-        // match their own rules). Only Exclude/Protect/Risk get descendants.
+        // upstream: exclude.c:rule_matches - excluding a directory excludes
+        // its contents, but including a directory does NOT include its contents
+        // (they must match their own rules).
+        //
+        // Anchored wildcard patterns (e.g., `/*`, `/*.txt`) must NOT generate
+        // descendant matchers because `*/**` would incorrectly match nested
+        // paths like `down/file.txt`. For these patterns, traversal control
+        // (the sender/generator skips excluded directories) handles exclusion.
+        //
+        // Anchored literal patterns (e.g., `/build`, `/target/`) still need
+        // `{core}/**` descendants so that paths like `build/output` are
+        // excluded when checked individually (e.g., by the receiver).
+        let has_glob_wildcard =
+            core_pattern.contains('*') || core_pattern.contains('?') || core_pattern.contains('[');
+        let slash_anchored = pattern.starts_with('/');
         if matches!(
             action,
             FilterAction::Exclude | FilterAction::Protect | FilterAction::Risk
-        ) {
+        ) && !(slash_anchored && has_glob_wildcard)
+        {
             descendant_patterns.insert(format!("{core_pattern}/**"));
             if !anchored {
                 descendant_patterns.insert(format!("**/{core_pattern}/**"));
@@ -191,6 +204,82 @@ mod tests {
             !compiled.descendant_matchers.is_empty(),
             "exclude directory-only rules must have descendant matchers"
         );
+    }
+
+    /// Anchored wildcard exclude patterns must NOT generate descendant
+    /// matchers because `*/**` would incorrectly match nested paths like
+    /// `down/file.txt`.
+    ///
+    /// upstream: exclude.c:rule_matches - for wildcard patterns like `/*`,
+    /// traversal control handles exclusion of directory contents.
+    #[test]
+    fn anchored_wildcard_exclude_has_no_descendant_matchers() {
+        for pattern in &["/*", "/*.txt", "/cache_?/"] {
+            let rule = FilterRule {
+                action: FilterAction::Exclude,
+                pattern: pattern.to_string(),
+                applies_to_sender: true,
+                applies_to_receiver: true,
+                perishable: false,
+                xattr_only: false,
+                negate: false,
+                exclude_only: false,
+                no_inherit: false,
+            };
+            let compiled = CompiledRule::new(rule).unwrap();
+            assert!(
+                compiled.descendant_matchers.is_empty(),
+                "anchored wildcard pattern {pattern:?} must not have descendant matchers"
+            );
+        }
+    }
+
+    /// Anchored literal exclude patterns still need descendant matchers so
+    /// that paths like `build/output` are excluded when the receiver checks
+    /// them individually (without traversal-skip control).
+    #[test]
+    fn anchored_literal_exclude_has_descendant_matchers() {
+        for pattern in &["/build", "/build/", "/target/"] {
+            let rule = FilterRule {
+                action: FilterAction::Exclude,
+                pattern: pattern.to_string(),
+                applies_to_sender: true,
+                applies_to_receiver: true,
+                perishable: false,
+                xattr_only: false,
+                negate: false,
+                exclude_only: false,
+                no_inherit: false,
+            };
+            let compiled = CompiledRule::new(rule).unwrap();
+            assert!(
+                !compiled.descendant_matchers.is_empty(),
+                "anchored literal pattern {pattern:?} must have descendant matchers"
+            );
+        }
+    }
+
+    /// Unanchored exclude patterns still generate descendant matchers.
+    #[test]
+    fn unanchored_exclude_has_descendant_matchers() {
+        for pattern in &["build", "*.bak", "cache/"] {
+            let rule = FilterRule {
+                action: FilterAction::Exclude,
+                pattern: pattern.to_string(),
+                applies_to_sender: true,
+                applies_to_receiver: true,
+                perishable: false,
+                xattr_only: false,
+                negate: false,
+                exclude_only: false,
+                no_inherit: false,
+            };
+            let compiled = CompiledRule::new(rule).unwrap();
+            assert!(
+                !compiled.descendant_matchers.is_empty(),
+                "unanchored pattern {pattern:?} must have descendant matchers"
+            );
+        }
     }
 
     #[test]
