@@ -290,12 +290,13 @@ mod tests {
         assert!(!compiled.matches(Path::new("down/sub/deep.txt"), false));
     }
 
-    /// Verifies `--exclude=/build` does not match contents via descendants.
+    /// Verifies `--exclude=/build` matches the directory and its descendants.
     ///
-    /// Anchored literal excludes rely on traversal to skip contents of
-    /// excluded directories, not on pattern expansion.
+    /// Anchored literal excludes generate descendant matchers (`build/**`) so
+    /// that paths like `build/output.o` are excluded when checked individually
+    /// (e.g., by the receiver which does not perform traversal-skip).
     #[test]
-    fn anchored_literal_exclude_does_not_match_descendants() {
+    fn anchored_literal_exclude_matches_descendants() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
             pattern: "/build".to_owned(),
@@ -310,7 +311,7 @@ mod tests {
         let compiled = CompiledRule::new(rule).unwrap();
 
         assert!(compiled.matches(Path::new("build"), false));
-        assert!(!compiled.matches(Path::new("build/output.o"), false));
+        assert!(compiled.matches(Path::new("build/output.o"), false));
         assert!(!compiled.matches(Path::new("src/build"), false));
     }
 
