@@ -16,6 +16,18 @@ use super::{
     TOKENRUN_LONG, TOKENRUN_REL, read_deflated_data_length, write_deflated_data_pieces,
 };
 
+/// Maximum aggregate size of accumulated compressed data in a single
+/// DEFLATED_DATA sequence before decompression (64 MiB).
+///
+/// Defence-in-depth: bounds the memory a peer can force the decoder to
+/// allocate by sending an unbounded chain of consecutive DEFLATED_DATA
+/// blocks. Rust's `usize` arithmetic prevents the integer-overflow CVE
+/// that affected upstream C, but an explicit cap prevents OOM from
+/// crafted input.
+///
+/// upstream: token.c defence-in-depth - bound accumulated compressed data (3.4.3)
+pub(super) const MAX_ACCUMULATED_COMPRESSED_BYTES: usize = 64 * 1024 * 1024;
+
 /// Zlib encoder state for sending compressed tokens.
 ///
 /// Manages a persistent deflate stream for compressing literal data.
@@ -332,6 +344,7 @@ impl ZlibTokenDecoder {
             reader.read_exact(&mut self.compressed_input_buf[start..start + len])?;
 
             // Accumulate consecutive DEFLATED_DATA blocks
+            // upstream: token.c defence-in-depth - bound accumulated compressed data (3.4.3)
             loop {
                 let mut peek = [0u8; 1];
                 reader.read_exact(&mut peek)?;
@@ -339,6 +352,17 @@ impl ZlibTokenDecoder {
 
                 if (next_flag & 0xC0) == DEFLATED_DATA {
                     let next_len = read_deflated_data_length(reader, next_flag)?;
+                    if self.compressed_input_buf.len() + next_len
+                        > MAX_ACCUMULATED_COMPRESSED_BYTES
+                    {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "accumulated compressed data exceeds {} byte cap",
+                                MAX_ACCUMULATED_COMPRESSED_BYTES,
+                            ),
+                        ));
+                    }
                     let s = self.compressed_input_buf.len();
                     self.compressed_input_buf.resize(s + next_len, 0);
                     reader.read_exact(&mut self.compressed_input_buf[s..s + next_len])?;
