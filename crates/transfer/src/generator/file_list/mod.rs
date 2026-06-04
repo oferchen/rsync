@@ -301,7 +301,12 @@ impl GeneratorContext {
                 continue;
             }
             let full = base.join(&relative_ancestor);
-            let meta = match std::fs::symlink_metadata(&full) {
+            // upstream: flist.c:1949 - `copy_links = 1` is set before
+            // emitting implied parents, so stat() follows symlinks. On
+            // macOS /var is a symlink to /private/var; using
+            // symlink_metadata would skip it (is_dir() false for a
+            // symlink), breaking the ancestor chain.
+            let meta = match std::fs::metadata(&full) {
                 Ok(m) if m.is_dir() => m,
                 _ => continue,
             };
