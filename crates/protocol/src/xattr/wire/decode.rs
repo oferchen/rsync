@@ -257,9 +257,7 @@ pub fn recv_xattr_values<R: Read>(reader: &mut R, list: &mut XattrList) -> io::R
             if len > MAX_WIRE_XATTR_VALUE_LEN {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!(
-                        "xattr value length {len} exceeds maximum {MAX_WIRE_XATTR_VALUE_LEN}"
-                    ),
+                    format!("xattr value length {len} exceeds maximum {MAX_WIRE_XATTR_VALUE_LEN}"),
                 ));
             }
             let mut value = vec![0u8; len];
