@@ -25,7 +25,7 @@
 //!
 //! Identical to BR-3i.f so the cells line up cell-for-cell:
 //!
-//! 1. Worker count - `{1, 2, 4, 8, available_parallelism()}` deduplicated.
+//! 1. Worker count - `{1, 2, 4, 8, 16, available_parallelism()}` deduplicated.
 //! 2. Checksum strategy - `{MD4, MD5, XXH3}`.
 //! 3. Workload shape - large_chunks_few_files vs small_chunks_many_files.
 //!
@@ -40,6 +40,16 @@
 //! whether some other lock (e.g. the per-file [`SlotBarrier`]) is now the
 //! gate. Numbers from this group complement - they do not replace - the
 //! main cores-vs-throughput sweep.
+//!
+//! # Concurrent dispatch probe
+//!
+//! The `concurrent_dispatch` group drives `apply_one_chunk` from N rayon
+//! workers in parallel, each targeting a distinct file. Every call
+//! independently acquires and releases a DashMap shard guard, so the
+//! bench amplifies the number of shard operations per iteration relative
+//! to `apply_batch_parallel`. Linear throughput scaling as workers grow
+//! confirms the shard layout is not the bottleneck; sub-linear scaling
+//! points at per-file mutex or hash-distribution contention.
 //!
 //! # Reproducibility
 //!
@@ -64,8 +74,7 @@
 //! - `crates/engine/src/concurrent_delta/parallel_apply.rs` - the
 //!   implementation under measurement.
 //!
-//! Run: `cargo bench -p engine --features parallel-receive-delta \
-//!     --bench br_3j_f_dashmap_cores_vs_throughput`
+//! Run: `cargo bench -p engine --bench br_3j_f_dashmap_cores_vs_throughput`
 
 #![deny(unsafe_code)]
 
@@ -194,11 +203,15 @@ fn with_expected_digests(
 }
 
 /// Worker counts swept per (workload, strategy) cell. Always includes 1,
-/// 2, 4, 8 and the machine's reported parallelism so 4- and 16-core
-/// hosts both produce a meaningful curve.
+/// 2, 4, 8, 16, and the machine's reported parallelism so the curve
+/// covers the full range from single-threaded through high core counts.
+/// 16 is included unconditionally so the DashMap shard scaling is
+/// visible even when the host has fewer physical cores - the rayon pool
+/// will over-subscribe, which is the interesting contention regime for
+/// the outer map.
 fn worker_counts() -> Vec<usize> {
     let host = available_parallelism().map(|n| n.get()).unwrap_or(1);
-    let mut counts = vec![1usize, 2, 4, 8, host];
+    let mut counts = vec![1usize, 2, 4, 8, 16, host];
     counts.sort_unstable();
     counts.dedup();
     counts
@@ -358,6 +371,97 @@ fn bench_register_finish_churn(c: &mut Criterion, workload: Workload) {
     group.finish();
 }
 
+/// Concurrent dispatch contention benchmark.
+///
+/// Exercises the DashMap lookup hot path by dispatching single chunks to
+/// distinct files from N rayon workers simultaneously. Under the
+/// pre-DashMap `Mutex<HashMap>` layout every dispatch serialised behind
+/// one lock regardless of file identity; the DashMap layout partitions
+/// the keyspace across shards so lookups to distinct files run in
+/// parallel. This bench makes the difference visible by measuring
+/// throughput as worker count grows: linear scaling indicates the shard
+/// layout is not the bottleneck; sub-linear scaling means either the
+/// per-file mutex or the shard hash is introducing contention.
+///
+/// Uses `apply_one_chunk` (the per-chunk entry point) rather than
+/// `apply_batch_parallel` so each dispatch independently acquires and
+/// releases a DashMap shard guard, amplifying the number of shard
+/// operations per iteration.
+fn bench_concurrent_dispatch(c: &mut Criterion) {
+    let mut group =
+        c.benchmark_group("br_3j_f_dashmap_cores_vs_throughput/concurrent_dispatch");
+
+    // 512 files, each receiving 8 chunks of 4 KiB. Total 16 MiB.
+    // File count chosen to exceed DashMap's default shard count (num_cpus * 4)
+    // so every shard serves multiple files.
+    const FILES: u32 = 512;
+    const CHUNKS_PER_FILE: u64 = 8;
+    const CHUNK_SIZE: usize = 4 * 1024;
+    let total_bytes = FILES as u64 * CHUNKS_PER_FILE * CHUNK_SIZE as u64;
+
+    group.throughput(Throughput::Bytes(total_bytes));
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(8));
+
+    // Pre-build chunks outside the timed region. Chunks are grouped by
+    // file so rayon's work-stealing spreads them across files naturally.
+    let mut chunks: Vec<DeltaChunk> = Vec::with_capacity(FILES as usize * CHUNKS_PER_FILE as usize);
+    for file_idx in 0..FILES {
+        for seq in 0..CHUNKS_PER_FILE {
+            let seed = SEED_ROOT
+                ^ 0xD15D_A7C4_u64.wrapping_mul(file_idx as u64)
+                ^ seq.wrapping_mul(0x94D0_49BB_1331_11EB);
+            let mut rng = SmallRng::seed_from_u64(seed);
+            let mut payload = vec![0u8; CHUNK_SIZE];
+            rng.fill_bytes(&mut payload);
+            chunks.push(DeltaChunk::literal(FileNdx::new(file_idx), seq, payload));
+        }
+    }
+
+    for &workers in &worker_counts() {
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(workers)
+            .thread_name(|i| format!("dispatch-contention-{i}"))
+            .build()
+            .expect("rayon pool");
+
+        let id = BenchmarkId::new(
+            format!("per_chunk_dispatch/threads={workers}"),
+            "512_files_8_chunks",
+        );
+        group.bench_with_input(id, &workers, |b, _| {
+            b.iter(|| {
+                let applier = ParallelDeltaApplier::new(workers);
+                for i in 0..FILES {
+                    applier
+                        .register_file(FileNdx::new(i), Box::new(CountingSink))
+                        .expect("register");
+                }
+                // Dispatch each chunk through apply_one_chunk so every
+                // call independently acquires/releases a DashMap shard.
+                pool.install(|| {
+                    use rayon::prelude::*;
+                    chunks.par_iter().for_each(|chunk| {
+                        applier
+                            .apply_one_chunk(chunk.clone())
+                            .expect("apply_one_chunk");
+                    });
+                });
+                let mut total = 0u64;
+                for i in 0..FILES {
+                    total += applier
+                        .bytes_written(FileNdx::new(i))
+                        .expect("bytes_written");
+                    let _ = applier.finish_file(FileNdx::new(i)).expect("finish");
+                }
+                black_box(total);
+            });
+        });
+    }
+
+    group.finish();
+}
+
 fn bench_br_3j_f(c: &mut Criterion) {
     let workload_a = build_workload(
         "large_chunks_few_files",
@@ -383,6 +487,7 @@ fn bench_br_3j_f(c: &mut Criterion) {
     bench_workload_sweep(c, workload_a);
     bench_workload_sweep(c, workload_b);
     bench_register_finish_churn(c, workload_c);
+    bench_concurrent_dispatch(c);
 }
 
 criterion_group!(benches, bench_br_3j_f);
