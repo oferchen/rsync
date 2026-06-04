@@ -455,7 +455,9 @@ impl GeneratorContext {
                 // Use unbuffered reader: stream_whole_file_transfer manages its
                 // own 256 KB staging buffer with read_exact, so a BufReader would
                 // only add an extra memcpy per byte through its internal buffer.
-                let source: Box<dyn Read> = match self.open_source_unbuffered(source_path, file_size) {
+                let source: Box<dyn Read> = match self
+                    .open_source_unbuffered(source_path, file_size)
+                {
                     Ok(r) => r,
                     Err(e) => {
                         self.record_open_failure(&mut *writer, wire_ndx, &e, &source_path_display)?;
