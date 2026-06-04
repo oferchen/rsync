@@ -640,10 +640,8 @@ mod touch_up_dirs_tests {
 
         ctx.touch_up_dirs(dir.path());
 
-        let parent_actual =
-            FileTime::from_last_modification_time(&fs::metadata(&parent).unwrap());
-        let child_actual =
-            FileTime::from_last_modification_time(&fs::metadata(&child).unwrap());
+        let parent_actual = FileTime::from_last_modification_time(&fs::metadata(&parent).unwrap());
+        let child_actual = FileTime::from_last_modification_time(&fs::metadata(&child).unwrap());
 
         assert_eq!(
             parent_actual,
@@ -673,8 +671,7 @@ mod touch_up_dirs_tests {
 
         ctx.touch_up_dirs(dir.path());
 
-        let actual =
-            FileTime::from_last_modification_time(&fs::metadata(dir.path()).unwrap());
+        let actual = FileTime::from_last_modification_time(&fs::metadata(dir.path()).unwrap());
         let expected = FileTime::from_unix_time(desired_secs, 0);
         assert_eq!(actual, expected, "dest_dir mtime should match '.' entry");
     }
@@ -700,8 +697,7 @@ mod touch_up_dirs_tests {
 
         ctx.touch_up_dirs(dir.path());
 
-        let actual =
-            FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
+        let actual = FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
         assert_eq!(
             actual, past,
             "touch_up_dirs must not modify non-directory entries"
