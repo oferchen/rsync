@@ -261,10 +261,7 @@ fn sender_only_risk_does_not_clear_receiver_protection() {
 /// Regression test for #5421.
 #[test]
 fn anchored_wildcard_exclude_allows_included_directory_contents() {
-    let rules = [
-        FilterRule::include("/down/"),
-        FilterRule::exclude("/*"),
-    ];
+    let rules = [FilterRule::include("/down/"), FilterRule::exclude("/*")];
     let set = FilterSet::from_rules(rules).expect("compiled");
 
     // `down/` is explicitly included - matched by the include rule.
