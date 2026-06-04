@@ -47,10 +47,7 @@ fn run_in_order(count: u64) -> u64 {
 /// because every insert must walk to a deeper internal node before the
 /// final gap-fill drains the entire range in one pass.
 fn run_reverse_order(count: u64) -> u64 {
-    assert!(
-        count % WINDOW == 0,
-        "reverse-order pattern requires count to be a multiple of WINDOW",
-    );
+    let count = (count / WINDOW) * WINDOW;
     let mut buf: BoundedReorderBuffer<u64> = BoundedReorderBuffer::new(WINDOW);
     let mut sum: u64 = 0;
     let mut base: u64 = 0;
