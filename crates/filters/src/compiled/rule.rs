@@ -259,6 +259,62 @@ mod tests {
         assert!(compiled.matches(Path::new("src/lib/util.o"), false));
     }
 
+    /// Verifies `--exclude='/*'` matches root-level items but NOT nested paths.
+    ///
+    /// upstream: exclude.c:rule_matches - an anchored wildcard `/*` matches
+    /// single-component root-level names only. `down/file.txt` must NOT match
+    /// because the pattern is anchored and `*` does not cross `/` boundaries.
+    /// Regression test for #5421.
+    #[test]
+    fn anchored_wildcard_exclude_does_not_match_nested_paths() {
+        let rule = FilterRule {
+            action: FilterAction::Exclude,
+            pattern: "/*".to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: false,
+            exclude_only: false,
+            no_inherit: false,
+        };
+        let compiled = CompiledRule::new(rule).unwrap();
+
+        // Root-level items match the anchored `*` pattern.
+        assert!(compiled.matches(Path::new("file.txt"), false));
+        assert!(compiled.matches(Path::new("down"), true));
+
+        // Nested paths must NOT match - this was the bug in #5421 where
+        // descendant matchers (`*/**`) incorrectly matched any nested path.
+        assert!(!compiled.matches(Path::new("down/file.txt"), false));
+        assert!(!compiled.matches(Path::new("down/sub/deep.txt"), false));
+    }
+
+    /// Verifies `--exclude=/build` matches the directory and its descendants.
+    ///
+    /// Anchored literal excludes generate descendant matchers (`build/**`) so
+    /// that paths like `build/output.o` are excluded when checked individually
+    /// (e.g., by the receiver which does not perform traversal-skip).
+    #[test]
+    fn anchored_literal_exclude_matches_descendants() {
+        let rule = FilterRule {
+            action: FilterAction::Exclude,
+            pattern: "/build".to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: false,
+            exclude_only: false,
+            no_inherit: false,
+        };
+        let compiled = CompiledRule::new(rule).unwrap();
+
+        assert!(compiled.matches(Path::new("build"), false));
+        assert!(compiled.matches(Path::new("build/output.o"), false));
+        assert!(!compiled.matches(Path::new("src/build"), false));
+    }
+
     #[test]
     fn compiled_rule_negate_inverts_match() {
         let rule = FilterRule {
