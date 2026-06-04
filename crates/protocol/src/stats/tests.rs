@@ -437,6 +437,89 @@ fn delete_stats_total() {
     assert_eq!(empty.total(), 0);
 }
 
+/// upstream: io.c - MAX_WIRE_DEL_STAT defence-in-depth (3.4.3)
+#[test]
+fn delete_stats_rejects_oversized_wire_value() {
+    use crate::varint::write_varint;
+
+    // Encode a value just above MAX_WIRE_DEL_STAT (0x3FFF_FFFF = 1_073_741_823)
+    let oversized: i32 = 0x3FFF_FFFF + 1;
+    let mut buf = Vec::new();
+    write_varint(&mut buf, oversized).unwrap();
+    // Pad with four more zero varints so read_from can attempt all 5 fields.
+    for _ in 0..4 {
+        write_varint(&mut buf, 0).unwrap();
+    }
+
+    let mut cursor = Cursor::new(&buf);
+    let err = DeleteStats::read_from(&mut cursor).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string().contains("MAX_WIRE_DEL_STAT"),
+        "error should mention MAX_WIRE_DEL_STAT, got: {err}"
+    );
+}
+
+/// upstream: io.c - MAX_WIRE_DEL_STAT defence-in-depth (3.4.3)
+#[test]
+fn delete_stats_rejects_negative_wire_value() {
+    use crate::varint::write_varint;
+
+    let mut buf = Vec::new();
+    write_varint(&mut buf, -1).unwrap();
+    for _ in 0..4 {
+        write_varint(&mut buf, 0).unwrap();
+    }
+
+    let mut cursor = Cursor::new(&buf);
+    let err = DeleteStats::read_from(&mut cursor).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string().contains("MAX_WIRE_DEL_STAT"),
+        "negative value should be rejected, got: {err}"
+    );
+}
+
+/// Values at exactly MAX_WIRE_DEL_STAT must be accepted.
+#[test]
+fn delete_stats_accepts_value_at_cap() {
+    use crate::varint::write_varint;
+
+    let at_cap: i32 = 0x3FFF_FFFF;
+    let mut buf = Vec::new();
+    write_varint(&mut buf, at_cap).unwrap();
+    for _ in 0..4 {
+        write_varint(&mut buf, 0).unwrap();
+    }
+
+    let mut cursor = Cursor::new(&buf);
+    let decoded = DeleteStats::read_from(&mut cursor).unwrap();
+    assert_eq!(decoded.files, at_cap as u32);
+}
+
+/// Oversized value in a non-first field is also rejected.
+#[test]
+fn delete_stats_rejects_oversized_in_middle_field() {
+    use crate::varint::write_varint;
+
+    let oversized: i32 = 0x3FFF_FFFF + 1;
+    let mut buf = Vec::new();
+    // files=0, dirs=oversized
+    write_varint(&mut buf, 0).unwrap();
+    write_varint(&mut buf, oversized).unwrap();
+    for _ in 0..3 {
+        write_varint(&mut buf, 0).unwrap();
+    }
+
+    let mut cursor = Cursor::new(&buf);
+    let err = DeleteStats::read_from(&mut cursor).unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string().contains("dirs"),
+        "error should name the 'dirs' field, got: {err}"
+    );
+}
+
 #[cfg(feature = "serde")]
 mod serde_tests {
     use crate::stats::{DeleteStats, TransferStats};
