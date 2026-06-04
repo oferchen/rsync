@@ -285,16 +285,8 @@ fn requires_apply_true_for_each_flag_independently() {
     assert!(base.clone().preserve_atimes(true).requires_apply());
     assert!(base.clone().preserve_crtimes(true).requires_apply());
     assert!(base.clone().fake_super(true).requires_apply());
-    assert!(
-        base.clone()
-            .with_owner_override(Some(0))
-            .requires_apply()
-    );
-    assert!(
-        base.clone()
-            .with_group_override(Some(0))
-            .requires_apply()
-    );
+    assert!(base.clone().with_owner_override(Some(0)).requires_apply());
+    assert!(base.clone().with_group_override(Some(0)).requires_apply());
     assert!(
         base.clone()
             .with_chmod(Some(ChmodModifiers::parse("u+x").unwrap()))
