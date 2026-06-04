@@ -43,6 +43,7 @@ impl Default for ItemizeContext {
     }
 }
 
+#[cfg(test)]
 /// Formats the 11-character itemize string from raw item flags and file entry.
 ///
 /// Produces the upstream `YXcstpoguax` string where:
