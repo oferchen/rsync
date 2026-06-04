@@ -88,6 +88,9 @@ pub(crate) struct SymbolicClause {
     pub(crate) op: Operation,
     pub(crate) who: WhoMask,
     pub(crate) perms: PermSpec,
+    /// When true, no explicit who-specifier (u/g/o/a) was given.
+    /// upstream: exclude.c applies `~orig_umask` masking in this case.
+    pub(crate) who_implied: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -231,6 +234,7 @@ mod tests {
             op: Operation::Add,
             who: WhoMask::new(true, true, true),
             perms: PermSpec::default(),
+            who_implied: false,
         };
         let cloned = clause.clone();
         assert_eq!(clause, cloned);
@@ -253,6 +257,7 @@ mod tests {
             op: Operation::Assign,
             who: WhoMask::new(true, false, false),
             perms: PermSpec::default(),
+            who_implied: false,
         });
         assert!(matches!(kind, ClauseKind::Symbolic(_)));
     }

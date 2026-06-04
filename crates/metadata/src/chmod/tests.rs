@@ -75,3 +75,41 @@ fn user_group_copy_clauses_are_respected() {
     let mode = modifiers.apply(0o640, file_type);
     assert_eq!(mode & 0o777, 0o666);
 }
+
+/// Verifies that `D+w` (no explicit who) applies umask masking.
+///
+/// upstream: chmod.c - when no who-specifier is given, `bits = (where *
+/// what) & ~orig_umask`. With a typical umask of 022, `+w` only grants
+/// owner-write (0200), NOT group-write or other-write.
+#[cfg(unix)]
+#[test]
+#[allow(unsafe_code)]
+fn implied_who_applies_umask_masking() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let dir_path = temp.path().join("testdir");
+    std::fs::create_dir(&dir_path).expect("create dir");
+    let dir_type = std::fs::metadata(&dir_path)
+        .expect("dir metadata")
+        .file_type();
+
+    // Parse the upstream testsuite spec: ug-s,a+rX,D+w
+    let modifiers = ChmodModifiers::parse("ug-s,a+rX,D+w").expect("parse");
+    // Starting from 0775 (rwxrwxr-x) which is a common directory default
+    let mode = modifiers.apply(0o2775, dir_type);
+    // After ug-s: clears setuid+setgid -> 0o775
+    // After a+rX: adds read+exec for all (dirs always get exec) -> 0o775
+    // After D+w: adds write, but masked by ~umask
+    // With umask 022: D+w adds 0o200 (user write only) -> 0o775
+    // With umask 000: D+w would add 0o222 (all write) -> 0o777
+    // The test just checks that other-write is NOT set when umask blocks it
+    let umask = unsafe { libc::umask(0) };
+    unsafe { libc::umask(umask) };
+    if umask & 0o002 != 0 {
+        // umask blocks other-write, so D+w should not grant it
+        assert_eq!(
+            mode & 0o002,
+            0,
+            "D+w should not grant other-write when umask blocks it"
+        );
+    }
+}
