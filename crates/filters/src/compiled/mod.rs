@@ -70,10 +70,11 @@ impl CompiledRule {
         // excluded when checked individually (e.g., by the receiver).
         let has_glob_wildcard =
             core_pattern.contains('*') || core_pattern.contains('?') || core_pattern.contains('[');
+        let slash_anchored = pattern.starts_with('/');
         if matches!(
             action,
             FilterAction::Exclude | FilterAction::Protect | FilterAction::Risk
-        ) && !(anchored && has_glob_wildcard)
+        ) && !(slash_anchored && has_glob_wildcard)
         {
             descendant_patterns.insert(format!("{core_pattern}/**"));
             if !anchored {
