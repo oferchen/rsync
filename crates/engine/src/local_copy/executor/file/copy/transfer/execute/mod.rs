@@ -104,6 +104,21 @@ pub(in crate::local_copy) fn execute_transfer(
         }
     }
 
+    // Build delta signature BEFORE backup renames the destination away.
+    // upstream: receiver.c - the basis file must be read while it still exists
+    // at the destination path. If backup runs first, the rename causes ENOENT
+    // which is_vanished_error() misclassifies as a source vanish (exit 24).
+    let delta_signature = if !whole_file_enabled {
+        match existing_metadata {
+            Some(existing) if existing.is_file() => {
+                build_delta_signature(destination, existing, context.block_size_override())?
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+
     if let Some(existing) = existing_metadata {
         context.backup_existing_entry(destination, relative, existing.file_type())?;
     }
@@ -233,17 +248,12 @@ pub(in crate::local_copy) fn execute_transfer(
         }
     }
 
-    // Build delta signature when a basis file exists and we are not appending.
-    // For inplace mode, delta transfer reads existing blocks before overwriting.
-    let delta_signature = if append_offset == 0 && !whole_file_enabled {
-        match existing_metadata {
-            Some(existing) if existing.is_file() => {
-                build_delta_signature(destination, existing, context.block_size_override())?
-            }
-            _ => None,
-        }
-    } else {
+    // Discard the pre-computed delta signature when appending - delta transfer
+    // is not applicable in append mode.
+    let delta_signature = if append_offset > 0 {
         None
+    } else {
+        delta_signature
     };
 
     let (mut reader, copy_source) = if let Some(ref override_path) = copy_source_override {

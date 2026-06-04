@@ -2000,3 +2000,58 @@ fn symsafe_default_verbosity_suppresses_notice() {
         "expected no SYMSAFE notice at default verbosity; got {symsafe_msgs:?}"
     );
 }
+
+/// Verifies that --backup combined with --no-whole-file (delta transfer)
+/// succeeds without false "file has vanished" errors.
+///
+/// Regression test for #5405: when backup renamed the destination before
+/// `build_delta_signature` could read it, the resulting ENOENT was
+/// misclassified as a vanished source file (exit 24). The fix moves
+/// signature computation before the backup rename.
+#[test]
+fn backup_with_no_whole_file_does_not_produce_vanished_error() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    // Use content large enough to produce a meaningful delta signature
+    // (must exceed the block size threshold so the delta path is exercised).
+    let old_content: Vec<u8> = (0..32_768).map(|i| (i % 251) as u8).collect();
+    let mut new_content = old_content.clone();
+    // Modify a small region so delta transfer finds partial matches.
+    for byte in new_content.iter_mut().take(256) {
+        *byte = byte.wrapping_add(1);
+    }
+
+    let source_file = ctx.source.join("delta.bin");
+    fs::write(&source_file, &new_content).expect("write source");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing = dest_root.join("delta.bin");
+    fs::write(&existing, &old_content).expect("write dest");
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .whole_file(false);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("backup + no-whole-file must not fail with vanished error");
+
+    let backup = dest_root.join("delta.bin~");
+    assert!(backup.exists(), "backup missing at {}", backup.display());
+    assert_eq!(
+        fs::read(&backup).expect("read backup"),
+        old_content,
+        "backup must contain original content"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("delta.bin")).expect("read dest"),
+        new_content,
+        "destination must contain updated content"
+    );
+}
