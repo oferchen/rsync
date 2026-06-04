@@ -248,10 +248,7 @@ impl DaemonStream {
     /// programs, TLS). TCP_NODELAY is intentionally not set - upstream rsync
     /// does not set it on daemon connections (clientserver.c:1346 only sets
     /// SO_KEEPALIVE).
-    pub(crate) fn configure_transfer_options(
-        &self,
-        timeout: Option<Duration>,
-    ) -> io::Result<()> {
+    pub(crate) fn configure_transfer_options(&self, timeout: Option<Duration>) -> io::Result<()> {
         if let Self::Tcp(stream) = self {
             stream.set_read_timeout(timeout)?;
             stream.set_write_timeout(timeout)?;
