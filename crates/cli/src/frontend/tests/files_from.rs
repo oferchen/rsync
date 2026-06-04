@@ -1703,8 +1703,12 @@ fn resolve_files_from_entry_with_embedded_dot_marker_skips_extra_marker() {
     let expected_1 = Path::new("/scratch").join("from/./dir/subdir/foobar.baz");
     assert_eq!(entries[1], expected_1.as_os_str());
 
-    // Entry without marker: base/./entry as before
-    let expected_2 = Path::new("/scratch/.").join("simple.txt");
+    // Entry without marker: base/./entry as before.
+    // Build expected with the same push sequence as the implementation so
+    // platform-specific separators match (Windows uses '\' between components).
+    let mut expected_2 = Path::new("/scratch").to_path_buf();
+    expected_2.push(".");
+    expected_2.push("simple.txt");
     assert_eq!(entries[2], expected_2.as_os_str());
 }
 
