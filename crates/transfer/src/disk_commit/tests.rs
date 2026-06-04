@@ -2391,3 +2391,312 @@ fn partial_mode_partial_stamps_mtime_zero_on_disconnect() {
         "partial file mtime must be stamped to Unix epoch on disconnect"
     );
 }
+
+// --- PIR-5.d: Delay-updates interrupt behavior tests ---
+
+/// Verifies that when a transfer with `delay_updates` is interrupted via
+/// Shutdown after some files have been committed, already-staged files remain
+/// in `.~tmp~/` and are NOT renamed to their final destinations.
+///
+/// This mirrors upstream behavior: `handle_delayed_updates()` is never called
+/// when the transfer is interrupted, so partially-transferred files stay in
+/// the staging directory as valid partials for resume.
+///
+/// upstream: receiver.c:584-585 - handle_delayed_updates() only at phase 2
+#[test]
+fn delay_updates_interrupt_leaves_committed_files_in_staging() {
+    let dir = test_support::create_tempdir();
+
+    let config = DiskCommitConfig {
+        delay_updates: true,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    // Commit file 1 successfully - it should be staged in .~tmp~/.
+    let file1_path = dir.path().join("file1.dat");
+    h.file_tx
+        .send(FileMessage::WholeFile {
+            begin: Box::new(BeginMessage {
+                file_path: file1_path.clone(),
+                target_size: 12,
+                file_entry_index: 0,
+                checksum_verifier: None,
+                is_device_target: false,
+                is_inplace: false,
+                append_offset: 0,
+                xattr_list: None,
+            }),
+            data: b"file1 staged".to_vec(),
+        })
+        .unwrap();
+
+    let result1 = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result1.bytes_written, 12);
+    assert!(result1.delayed_path.is_some());
+
+    // Commit file 2 successfully - also staged.
+    let file2_path = dir.path().join("file2.dat");
+    h.file_tx
+        .send(FileMessage::WholeFile {
+            begin: Box::new(BeginMessage {
+                file_path: file2_path.clone(),
+                target_size: 12,
+                file_entry_index: 1,
+                checksum_verifier: None,
+                is_device_target: false,
+                is_inplace: false,
+                append_offset: 0,
+                xattr_list: None,
+            }),
+            data: b"file2 staged".to_vec(),
+        })
+        .unwrap();
+
+    let result2 = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result2.bytes_written, 12);
+    assert!(result2.delayed_path.is_some());
+
+    // Simulate interrupt: send Shutdown instead of continuing the transfer.
+    // The rename sweep (handle_delayed_updates) is never called.
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+
+    // Final paths must NOT exist - no rename sweep was performed.
+    assert!(
+        !file1_path.exists(),
+        "file1 final path must not exist after interrupt"
+    );
+    assert!(
+        !file2_path.exists(),
+        "file2 final path must not exist after interrupt"
+    );
+
+    // Staging paths must still exist with correct content.
+    let staging1 = dir.path().join(".~tmp~").join("file1.dat");
+    let staging2 = dir.path().join(".~tmp~").join("file2.dat");
+    assert!(
+        staging1.exists(),
+        "file1 must remain in .~tmp~/ after interrupt"
+    );
+    assert!(
+        staging2.exists(),
+        "file2 must remain in .~tmp~/ after interrupt"
+    );
+    assert_eq!(fs::read(&staging1).unwrap(), b"file1 staged");
+    assert_eq!(fs::read(&staging2).unwrap(), b"file2 staged");
+}
+
+/// Verifies that when a file is mid-transfer (Begin + Chunk sent, no Commit)
+/// and the disk thread receives Shutdown with `delay_updates`, the in-progress
+/// file's temp file is cleaned up but any previously committed files remain
+/// staged in `.~tmp~/`.
+///
+/// upstream: receiver.c:584 - handle_delayed_updates() only after successful
+/// completion; interrupted transfers leave staged files for resume.
+#[test]
+fn delay_updates_interrupt_mid_file_retains_prior_staged_files() {
+    let dir = test_support::create_tempdir();
+
+    let config = DiskCommitConfig {
+        delay_updates: true,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    // Commit file 1 successfully.
+    let file1_path = dir.path().join("committed.dat");
+    h.file_tx
+        .send(FileMessage::WholeFile {
+            begin: Box::new(BeginMessage {
+                file_path: file1_path.clone(),
+                target_size: 9,
+                file_entry_index: 0,
+                checksum_verifier: None,
+                is_device_target: false,
+                is_inplace: false,
+                append_offset: 0,
+                xattr_list: None,
+            }),
+            data: b"committed".to_vec(),
+        })
+        .unwrap();
+
+    let result1 = h.result_rx.recv().unwrap().unwrap();
+    assert_eq!(result1.bytes_written, 9);
+
+    // Start file 2 but interrupt before Commit.
+    let file2_path = dir.path().join("interrupted.dat");
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file2_path.clone(),
+            target_size: 100,
+            file_entry_index: 1,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"partial".to_vec()))
+        .unwrap();
+
+    // Interrupt: Shutdown while file 2 is in progress.
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+
+    // The in-progress file returns an error.
+    let result2 = h.result_rx.recv().unwrap();
+    assert!(result2.is_err());
+
+    h.join_handle.join().unwrap();
+
+    // File 1 must remain staged in .~tmp~/.
+    let staging1 = dir.path().join(".~tmp~").join("committed.dat");
+    assert!(
+        staging1.exists(),
+        "previously committed file must remain staged after interrupt"
+    );
+    assert_eq!(fs::read(&staging1).unwrap(), b"committed");
+
+    // Neither file should be at the final destination.
+    assert!(!file1_path.exists(), "file1 must not be at final path");
+    assert!(!file2_path.exists(), "file2 must not be at final path");
+}
+
+/// Verifies that the separation between "commit to staging" and "sweep to
+/// final" is correct: after committing files with `delay_updates`, the disk
+/// thread has only staged them; a manual `fs::rename` sweep confirms the
+/// staged content is valid and complete. Without the sweep, files remain
+/// as partials for resume.
+///
+/// upstream: receiver.c:422-450 - handle_delayed_updates() bulk rename
+#[test]
+fn delay_updates_manual_sweep_after_commit_moves_to_final() {
+    let dir = test_support::create_tempdir();
+
+    let config = DiskCommitConfig {
+        delay_updates: true,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    // Commit two files.
+    let file1_path = dir.path().join("sweep1.dat");
+    h.file_tx
+        .send(FileMessage::WholeFile {
+            begin: Box::new(BeginMessage {
+                file_path: file1_path.clone(),
+                target_size: 6,
+                file_entry_index: 0,
+                checksum_verifier: None,
+                is_device_target: false,
+                is_inplace: false,
+                append_offset: 0,
+                xattr_list: None,
+            }),
+            data: b"sweep1".to_vec(),
+        })
+        .unwrap();
+
+    let r1 = h.result_rx.recv().unwrap().unwrap();
+
+    let file2_path = dir.path().join("sweep2.dat");
+    h.file_tx
+        .send(FileMessage::WholeFile {
+            begin: Box::new(BeginMessage {
+                file_path: file2_path.clone(),
+                target_size: 6,
+                file_entry_index: 1,
+                checksum_verifier: None,
+                is_device_target: false,
+                is_inplace: false,
+                append_offset: 0,
+                xattr_list: None,
+            }),
+            data: b"sweep2".to_vec(),
+        })
+        .unwrap();
+
+    let r2 = h.result_rx.recv().unwrap().unwrap();
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+
+    // Before sweep: files in staging, not at final path.
+    assert!(!file1_path.exists());
+    assert!(!file2_path.exists());
+    let staging1 = r1.delayed_path.clone().unwrap();
+    let staging2 = r2.delayed_path.clone().unwrap();
+    assert!(staging1.exists());
+    assert!(staging2.exists());
+
+    // Simulate the sweep manually (what handle_delayed_updates does).
+    fs::rename(&staging1, &file1_path).unwrap();
+    fs::rename(&staging2, &file2_path).unwrap();
+
+    // After sweep: files at final path, staging paths removed.
+    assert!(file1_path.exists());
+    assert!(file2_path.exists());
+    assert_eq!(fs::read(&file1_path).unwrap(), b"sweep1");
+    assert_eq!(fs::read(&file2_path).unwrap(), b"sweep2");
+    assert!(!staging1.exists());
+    assert!(!staging2.exists());
+}
+
+/// Verifies that channel disconnect (simulating process crash) with
+/// `delay_updates` leaves committed files in `.~tmp~/` staging directory.
+///
+/// upstream: when rsync is killed mid-transfer, the rename sweep never
+/// runs and staged files persist for resume.
+#[test]
+fn delay_updates_channel_disconnect_preserves_staged_files() {
+    let dir = test_support::create_tempdir();
+
+    let config = DiskCommitConfig {
+        delay_updates: true,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config);
+
+    // Commit a file successfully.
+    let file_path = dir.path().join("disconnect.dat");
+    h.file_tx
+        .send(FileMessage::WholeFile {
+            begin: Box::new(BeginMessage {
+                file_path: file_path.clone(),
+                target_size: 14,
+                file_entry_index: 0,
+                checksum_verifier: None,
+                is_device_target: false,
+                is_inplace: false,
+                append_offset: 0,
+                xattr_list: None,
+            }),
+            data: b"disconnect data".to_vec(),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    assert!(result.delayed_path.is_some());
+
+    // Drop the sender to simulate channel disconnect (crash).
+    drop(h.file_tx);
+    h.join_handle.join().unwrap();
+
+    // File must NOT be at final path.
+    assert!(
+        !file_path.exists(),
+        "final path must not exist after disconnect"
+    );
+
+    // File must remain staged.
+    let staging = dir.path().join(".~tmp~").join("disconnect.dat");
+    assert!(
+        staging.exists(),
+        "staged file must persist after channel disconnect"
+    );
+    assert_eq!(fs::read(&staging).unwrap(), b"disconnect data");
+}

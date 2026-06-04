@@ -202,7 +202,15 @@ fn disk_thread_main(
                     disk_batch.as_mut(),
                     iocp_batch.as_mut(),
                 );
-                if result_tx.send(result).is_err() {
+                // process_file consumes Shutdown/disconnect from the channel.
+                // When it returns Interrupted (shutdown) or BrokenPipe
+                // (disconnect), the main loop must exit - no more messages
+                // will arrive.
+                let is_terminal = matches!(
+                    &result,
+                    Err(e) if matches!(e.kind(), io::ErrorKind::Interrupted | io::ErrorKind::BrokenPipe)
+                );
+                if result_tx.send(result).is_err() || is_terminal {
                     break;
                 }
             }

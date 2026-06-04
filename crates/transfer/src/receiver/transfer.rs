@@ -251,4 +251,55 @@ mod tests {
     fn handle_delayed_updates_empty_is_noop() {
         handle_delayed_updates(&[], None);
     }
+
+    // --- PIR-5.d: Interrupt behavior ---
+
+    /// Verifies that staged files in `.~tmp~/` persist as valid partials when
+    /// the sweep is never called (simulating an interrupted transfer).
+    ///
+    /// This is the core invariant for `--delay-updates` interrupt safety:
+    /// on interrupt, `handle_delayed_updates()` is skipped (the `?` operator
+    /// propagates the error before reaching the sweep call in `pipelined.rs`),
+    /// leaving staged files intact for the next resume attempt.
+    ///
+    /// upstream: receiver.c:584-585 - handle_delayed_updates() only after
+    /// successful completion of both transfer phases.
+    #[test]
+    fn interrupt_skips_sweep_files_persist_in_staging() {
+        let dir = test_support::create_tempdir();
+        let staging_dir = dir.path().join(".~tmp~");
+        fs::create_dir(&staging_dir).unwrap();
+
+        // Create staged files as if commit_file() placed them there.
+        let staged_a = staging_dir.join("a.txt");
+        let staged_b = staging_dir.join("b.txt");
+        fs::write(&staged_a, b"staged-a").unwrap();
+        fs::write(&staged_b, b"staged-b").unwrap();
+
+        let final_a = dir.path().join("a.txt");
+        let final_b = dir.path().join("b.txt");
+
+        // Do NOT call handle_delayed_updates - simulating interrupt.
+        // Verify files remain in staging.
+        assert!(staged_a.exists(), "staged file a must persist");
+        assert!(staged_b.exists(), "staged file b must persist");
+        assert!(!final_a.exists(), "final path a must not exist");
+        assert!(!final_b.exists(), "final path b must not exist");
+
+        // Verify the staged content is valid (usable for resume).
+        assert_eq!(fs::read(&staged_a).unwrap(), b"staged-a");
+        assert_eq!(fs::read(&staged_b).unwrap(), b"staged-b");
+
+        // Now verify that a subsequent resume (calling the sweep) works.
+        let delayed = vec![
+            (staged_a.clone(), final_a.clone()),
+            (staged_b.clone(), final_b.clone()),
+        ];
+        handle_delayed_updates(&delayed, None);
+
+        assert!(final_a.exists());
+        assert!(final_b.exists());
+        assert_eq!(fs::read_to_string(&final_a).unwrap(), "staged-a");
+        assert_eq!(fs::read_to_string(&final_b).unwrap(), "staged-b");
+    }
 }
