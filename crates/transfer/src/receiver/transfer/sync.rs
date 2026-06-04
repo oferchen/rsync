@@ -12,7 +12,7 @@ use logging::{PhaseTimer, info_log};
 use protocol::codec::{MonotonicNdxWriter, NdxCodec, create_ndx_codec};
 use protocol::stats::DeleteStats;
 
-use metadata::apply_metadata_from_file_entry;
+use metadata::apply_metadata_with_cached_stat;
 
 use engine::CleanupManager;
 
@@ -377,8 +377,11 @@ impl ReceiverContext {
             CleanupManager::global().unregister_temp_file(temp_guard.path());
             temp_guard.keep();
 
+            // Skip the stat inside apply_metadata_from_file_entry: the file
+            // was just renamed from a temp file, so pass None to apply
+            // ownership/permissions/timestamps unconditionally.
             if let Err(meta_err) =
-                apply_metadata_from_file_entry(&file_path, file_entry, &metadata_opts)
+                apply_metadata_with_cached_stat(&file_path, file_entry, &metadata_opts, None)
             {
                 metadata_errors.push((file_path.clone(), meta_err.to_string()));
             } else if let Some(ref xattr_list) = self.resolve_xattr_list(file_entry) {

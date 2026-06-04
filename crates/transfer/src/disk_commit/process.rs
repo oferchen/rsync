@@ -750,7 +750,10 @@ fn apply_metadata_acls_and_xattrs(
         _ => return None,
     };
 
-    if let Err(e) = metadata::apply_metadata_from_file_entry(file_path, entry, opts) {
+    // Skip the stat inside apply_metadata_from_file_entry: the file was
+    // just renamed into place from a temp file, so its metadata will not
+    // match the desired entry. Pass None to apply unconditionally.
+    if let Err(e) = metadata::apply_metadata_with_cached_stat(file_path, entry, opts, None) {
         return Some((file_path.to_path_buf(), e.to_string()));
     }
 

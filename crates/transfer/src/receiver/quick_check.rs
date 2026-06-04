@@ -14,7 +14,7 @@ use protocol::flist::FileEntry;
 use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
 use crate::delta_apply::ChecksumVerifier;
 
-use metadata::{MetadataOptions, apply_metadata_from_file_entry};
+use metadata::{MetadataOptions, apply_metadata_with_cached_stat};
 use protocol::acl::AclCache;
 
 use super::apply_acls_from_receiver_cache;
@@ -177,7 +177,11 @@ pub(super) fn try_reference_dest(
                 }
                 // Try io_uring LINKAT on Linux 5.15+, fall back to std::fs::hard_link.
                 if fast_io::hard_link(&ref_path, &dest_path).is_ok() {
-                    if let Err(e) = apply_metadata_from_file_entry(&dest_path, entry, metadata_opts)
+                    // Skip the stat syscall inside apply_metadata_from_file_entry:
+                    // the hard link shares the reference file's inode, and we
+                    // unconditionally apply the desired ownership/permissions.
+                    if let Err(e) =
+                        apply_metadata_with_cached_stat(&dest_path, entry, metadata_opts, None)
                     {
                         metadata_errors.push((dest_path.clone(), e.to_string()));
                     }
@@ -199,8 +203,12 @@ pub(super) fn try_reference_dest(
                 }
                 match fs::copy(&ref_path, &dest_path) {
                     Ok(_) => {
+                        // Skip the stat inside apply_metadata_from_file_entry:
+                        // we just created this file, so its metadata does not
+                        // match the desired entry yet. Pass None to apply
+                        // unconditionally without a redundant stat.
                         if let Err(e) =
-                            apply_metadata_from_file_entry(&dest_path, entry, metadata_opts)
+                            apply_metadata_with_cached_stat(&dest_path, entry, metadata_opts, None)
                         {
                             metadata_errors.push((dest_path.clone(), e.to_string()));
                         }
