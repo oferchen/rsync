@@ -148,8 +148,7 @@ fn overlapping_ops(basis_size: usize) -> Vec<CopyOp> {
 fn apply_copy_basis_range(basis: &File, dest: &File, ops: &[CopyOp]) -> io::Result<u64> {
     let mut total: u64 = 0;
     for op in ops {
-        let copied =
-            fast_io::copy_basis_range(basis, op.basis_off, dest, op.dest_off, op.len)?;
+        let copied = fast_io::copy_basis_range(basis, op.basis_off, dest, op.dest_off, op.len)?;
         total += copied as u64;
     }
     Ok(total)
@@ -221,11 +220,7 @@ fn apply_pread_write(basis: &File, dest: &File, ops: &[CopyOp]) -> io::Result<u6
 }
 
 /// Runs one benchmark group for a given access pattern.
-fn bench_pattern(
-    c: &mut Criterion,
-    group_name: &str,
-    ops_fn: fn(usize) -> Vec<CopyOp>,
-) {
+fn bench_pattern(c: &mut Criterion, group_name: &str, ops_fn: fn(usize) -> Vec<CopyOp>) {
     let mut group = c.benchmark_group(group_name);
     group.sample_size(10);
 
@@ -250,19 +245,15 @@ fn bench_pattern(
         );
 
         // pread+write baseline
-        group.bench_with_input(
-            BenchmarkId::new("pread_write", label),
-            &size,
-            |b, &size| {
-                let dir = TempDir::new().unwrap();
-                let basis = create_basis(dir.path(), size);
-                let dest = create_dest(dir.path(), size);
-                b.iter(|| {
-                    let copied = apply_pread_write(&basis, &dest, &ops).unwrap();
-                    black_box(copied)
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("pread_write", label), &size, |b, &size| {
+            let dir = TempDir::new().unwrap();
+            let basis = create_basis(dir.path(), size);
+            let dest = create_dest(dir.path(), size);
+            b.iter(|| {
+                let copied = apply_pread_write(&basis, &dest, &ops).unwrap();
+                black_box(copied)
+            });
+        });
     }
 
     group.finish();
@@ -305,8 +296,7 @@ fn bench_single_block(c: &mut Criterion) {
                 let basis = create_basis(dir.path(), bsize);
                 let dest = create_dest(dir.path(), bsize);
                 b.iter(|| {
-                    let copied =
-                        fast_io::copy_basis_range(&basis, 0, &dest, 0, bsize).unwrap();
+                    let copied = fast_io::copy_basis_range(&basis, 0, &dest, 0, bsize).unwrap();
                     black_box(copied)
                 });
             },
