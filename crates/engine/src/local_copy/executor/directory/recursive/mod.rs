@@ -98,7 +98,7 @@ pub(crate) fn copy_directory_recursive(
     let directory_ready = Cell::new(!destination_missing);
     let mut created_directory_on_disk = false;
     let creation_record_pending = destination_missing && relative.is_some();
-    let mut pending_record: Option<LocalCopyRecord> = None;
+    let mut record_emitted = false;
     let metadata_record = relative.map(|rel| {
         (
             rel.to_path_buf(),
@@ -137,10 +137,11 @@ pub(crate) fn copy_directory_recursive(
             created_directory_on_disk = true;
         }
 
-        if pending_record.is_none()
-            && let Some((ref rel_path, ref snapshot)) = metadata_record
-        {
-            pending_record = Some(
+        // upstream: generator.c:recv_generator() - directory records appear
+        // BEFORE their children in the itemize output. Emit the record
+        // immediately so it precedes child entries in the record stream.
+        if !record_emitted && let Some((ref rel_path, ref snapshot)) = metadata_record {
+            context.record(
                 LocalCopyRecord::new(
                     rel_path.clone(),
                     LocalCopyAction::DirectoryCreated,
@@ -151,6 +152,7 @@ pub(crate) fn copy_directory_recursive(
                 )
                 .with_creation(true),
             );
+            record_emitted = true;
         }
 
         Ok(())
@@ -158,7 +160,7 @@ pub(crate) fn copy_directory_recursive(
 
     if !context.recursive_enabled() {
         ensure_directory(context)?;
-        record_directory_completion(context, creation_record_pending, pending_record.take());
+        record_directory_completion(context, creation_record_pending, None);
         if !context.mode().is_dry_run() {
             apply_final_directory_metadata(
                 context,
@@ -250,7 +252,7 @@ pub(crate) fn copy_directory_recursive(
         return Ok(false);
     }
 
-    record_directory_completion(context, creation_record_pending, pending_record);
+    record_directory_completion(context, creation_record_pending, None);
 
     if !context.mode().is_dry_run() {
         apply_final_directory_metadata(
