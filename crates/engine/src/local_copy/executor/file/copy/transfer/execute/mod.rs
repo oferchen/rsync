@@ -35,6 +35,7 @@ use super::super::super::append::{AppendMode, determine_append_mode};
 use super::super::super::comparison::{
     Xxh64DedupOutcome, build_delta_signature, xxh64_dedup_check,
 };
+use super::super::super::compute_backup_path;
 use super::super::super::guard::remove_incomplete_destination;
 use super::super::super::preallocate::maybe_preallocate_destination;
 use super::TransferFlags;
@@ -119,8 +120,31 @@ pub(in crate::local_copy) fn execute_transfer(
         None
     };
 
+    // Track where the old destination ended up after a potential backup rename.
+    // When --backup renames the basis file away, the delta transfer must read
+    // matched blocks from the backup location instead of the original destination.
+    // upstream: receiver.c - the basis fd is opened before make_backup() runs;
+    // here we track the new path because we cannot hold the fd across the
+    // temp-file/inplace writer setup.
+    let mut delta_basis_override: Option<PathBuf> = None;
     if let Some(existing) = existing_metadata {
         context.backup_existing_entry(destination, relative, existing.file_type())?;
+        // When backup renamed the basis file and delta transfer will need it,
+        // record the backup path so copy_file_contents reads from the right
+        // location. The delta signature is only built for regular files, so
+        // this condition is sufficient.
+        if delta_signature.is_some()
+            && context.options().backup_enabled()
+            && !context.mode().is_dry_run()
+        {
+            delta_basis_override = Some(compute_backup_path(
+                context.destination_root(),
+                destination,
+                None,
+                context.options().backup_directory(),
+                context.options().backup_suffix(),
+            ));
+        }
     }
 
     if !file_type.is_file() {
@@ -400,6 +424,11 @@ pub(in crate::local_copy) fn execute_transfer(
         }
     );
 
+    // When backup moved the basis file, point the delta transfer at its new
+    // location so it can read matched blocks from the backup copy.
+    let delta_basis = delta_basis_override
+        .as_deref()
+        .unwrap_or(destination);
     let copy_result = context.copy_file_contents(
         &mut reader,
         &mut writer,
@@ -407,7 +436,7 @@ pub(in crate::local_copy) fn execute_transfer(
         use_sparse_writes,
         compress_enabled,
         source,
-        destination,
+        delta_basis,
         record_path,
         delta_signature.as_ref(),
         file_size,

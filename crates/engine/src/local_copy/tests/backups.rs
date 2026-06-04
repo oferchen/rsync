@@ -2007,7 +2007,8 @@ fn symsafe_default_verbosity_suppresses_notice() {
 /// Regression test for #5405: when backup renamed the destination before
 /// `build_delta_signature` could read it, the resulting ENOENT was
 /// misclassified as a vanished source file (exit 24). The fix moves
-/// signature computation before the backup rename.
+/// signature computation before the backup rename and redirects the
+/// delta transfer to read matched blocks from the backup location.
 #[test]
 fn backup_with_no_whole_file_does_not_produce_vanished_error() {
     let ctx = test_helpers::setup_copy_test();
