@@ -1,9 +1,10 @@
 //! Directory creation logic - batch and incremental modes.
 //!
 //! Handles `create_directories` (parallel metadata application),
-//! `ensure_relative_parents` (for `--relative` paths), and
+//! `ensure_relative_parents` (for `--relative` paths),
 //! `create_directory_incremental` (single-directory creation during
-//! incremental recursion).
+//! incremental recursion), and `touch_up_dirs` (mtime repair after
+//! file writes clobber directory timestamps).
 
 use std::fs;
 use std::io;
@@ -432,5 +433,274 @@ impl ReceiverContext {
         }
 
         Ok(Some(is_new))
+    }
+
+    /// Re-applies directory mtimes after all file transfers complete.
+    ///
+    /// Writing files into a directory updates the directory's mtime to the
+    /// current time (OS behavior). This method walks all directory entries
+    /// in reverse order (deepest first) and re-sets each mtime from the
+    /// file list entry, so parent directory timestamps are not disturbed
+    /// by child directory mtime updates.
+    ///
+    /// Gated on `preserve_times` (`-t` / `--times`). Skipped for dry-run
+    /// and when backups are active (upstream skips directories that need
+    /// backup handling).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:2080-2133` - `touch_up_dirs(dir_flist, -1)` iterates
+    ///   in reverse order to handle deepest-first ordering.
+    /// - `generator.c:2398-2399` - `need_retouch_dir_times` gating:
+    ///   `preserve_mtimes && !omit_dir_times`.
+    pub(in crate::receiver) fn touch_up_dirs(&self, dest_dir: &Path) {
+        // upstream: generator.c:2398 - need_retouch_dir_times =
+        // preserve_mtimes && !omit_dir_times
+        if !self.config.flags.times || self.config.flags.dry_run {
+            return;
+        }
+
+        // upstream: generator.c:2101 - skip when make_backups && !backup_dir
+        // (directory mtimes are changed by backup file creation)
+        if self.config.flags.backup && self.config.backup_dir.is_none() {
+            return;
+        }
+
+        // Iterate in reverse so deepest directories are touched first.
+        // This prevents a parent's mtime from being clobbered when we
+        // later utimensat a child directory under it.
+        // upstream: generator.c:2083 - for (i = dir_flist->used - 1; i >= 0; i--)
+        for entry in self.file_list.iter().rev() {
+            if !entry.is_dir() {
+                continue;
+            }
+
+            let relative_path = entry.path();
+            let dir_path = if relative_path.as_os_str() == "." {
+                dest_dir.to_path_buf()
+            } else {
+                dest_dir.join(relative_path)
+            };
+
+            let mtime = filetime::FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
+
+            // Only update if the current mtime differs from the desired one.
+            let needs_update = match fs::metadata(&dir_path) {
+                Ok(meta) => filetime::FileTime::from_last_modification_time(&meta) != mtime,
+                Err(_) => false, // directory may not exist (permission denied, etc.)
+            };
+
+            if needs_update {
+                if let Err(e) = filetime::set_file_mtime(&dir_path, mtime) {
+                    debug_log!(
+                        Recv,
+                        1,
+                        "touch_up_dirs: failed to set mtime on {}: {}",
+                        dir_path.display(),
+                        e
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod touch_up_dirs_tests {
+    use std::ffi::OsString;
+    use std::fs;
+
+    use filetime::FileTime;
+    use protocol::ProtocolVersion;
+    use protocol::flist::FileEntry;
+
+    use crate::config::ServerConfig;
+    use crate::flags::ParsedServerFlags;
+    use crate::handshake::HandshakeResult;
+    use crate::receiver::ReceiverContext;
+    use crate::role::ServerRole;
+
+    fn handshake() -> HandshakeResult {
+        HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        }
+    }
+
+    fn config_with_times(times: bool) -> ServerConfig {
+        ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-r".to_owned(),
+            flags: ParsedServerFlags {
+                times,
+                recursive: true,
+                ..ParsedServerFlags::default()
+            },
+            args: vec![OsString::from(".")],
+            ..Default::default()
+        }
+    }
+
+    /// After writing files into a directory, the OS clobbers the directory
+    /// mtime with the current time. `touch_up_dirs` must re-apply the
+    /// original mtime from the file list entry.
+    ///
+    /// upstream: generator.c:2080-2133 - touch_up_dirs()
+    #[test]
+    fn restores_directory_mtime_after_file_writes() {
+        let dir = test_support::create_tempdir();
+        let sub = dir.path().join("subdir");
+        fs::create_dir(&sub).unwrap();
+
+        // Write a file into the directory to clobber its mtime.
+        fs::write(sub.join("file.txt"), b"hello").unwrap();
+
+        // The desired mtime is in the past (2020-01-01 00:00:00 UTC).
+        let desired_secs: i64 = 1_577_836_800;
+        let mut entry = FileEntry::new_directory("subdir".into(), 0o755);
+        entry.set_mtime(desired_secs, 0);
+
+        let hs = handshake();
+        let config = config_with_times(true);
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
+        ctx.file_list = vec![entry];
+
+        ctx.touch_up_dirs(dir.path());
+
+        let meta = fs::metadata(&sub).unwrap();
+        let actual = FileTime::from_last_modification_time(&meta);
+        let expected = FileTime::from_unix_time(desired_secs, 0);
+        assert_eq!(
+            actual, expected,
+            "directory mtime should be restored to the file list value"
+        );
+    }
+
+    /// When `--times` is not set, `touch_up_dirs` must be a no-op.
+    #[test]
+    fn skipped_when_times_not_set() {
+        let dir = test_support::create_tempdir();
+        let sub = dir.path().join("subdir");
+        fs::create_dir(&sub).unwrap();
+
+        // Record the current mtime before touch_up_dirs.
+        let before = FileTime::from_last_modification_time(&fs::metadata(&sub).unwrap());
+
+        let desired_secs: i64 = 1_577_836_800;
+        let mut entry = FileEntry::new_directory("subdir".into(), 0o755);
+        entry.set_mtime(desired_secs, 0);
+
+        let hs = handshake();
+        let config = config_with_times(false);
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
+        ctx.file_list = vec![entry];
+
+        ctx.touch_up_dirs(dir.path());
+
+        let after = FileTime::from_last_modification_time(&fs::metadata(&sub).unwrap());
+        assert_eq!(
+            before, after,
+            "directory mtime must not change when --times is off"
+        );
+    }
+
+    /// Deepest directories must be processed first so that setting a parent
+    /// mtime is not immediately clobbered by a child directory mtime update.
+    #[test]
+    fn processes_deepest_directories_first() {
+        let dir = test_support::create_tempdir();
+        let parent = dir.path().join("parent");
+        let child = parent.join("child");
+        fs::create_dir_all(&child).unwrap();
+
+        // Write into child to clobber parent mtime.
+        fs::write(child.join("file.txt"), b"data").unwrap();
+
+        let parent_secs: i64 = 1_577_836_800;
+        let child_secs: i64 = 1_577_923_200; // one day later
+
+        let mut parent_entry = FileEntry::new_directory("parent".into(), 0o755);
+        parent_entry.set_mtime(parent_secs, 0);
+
+        let mut child_entry = FileEntry::new_directory("parent/child".into(), 0o755);
+        child_entry.set_mtime(child_secs, 0);
+
+        let hs = handshake();
+        let config = config_with_times(true);
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
+        // Parent comes first in file list (natural order).
+        ctx.file_list = vec![parent_entry, child_entry];
+
+        ctx.touch_up_dirs(dir.path());
+
+        let parent_actual = FileTime::from_last_modification_time(&fs::metadata(&parent).unwrap());
+        let child_actual = FileTime::from_last_modification_time(&fs::metadata(&child).unwrap());
+
+        assert_eq!(
+            parent_actual,
+            FileTime::from_unix_time(parent_secs, 0),
+            "parent directory mtime must be restored"
+        );
+        assert_eq!(
+            child_actual,
+            FileTime::from_unix_time(child_secs, 0),
+            "child directory mtime must be restored"
+        );
+    }
+
+    /// The root directory entry (path = ".") must map to `dest_dir` itself.
+    #[test]
+    fn handles_dot_directory_entry() {
+        let dir = test_support::create_tempdir();
+
+        let desired_secs: i64 = 1_577_836_800;
+        let mut entry = FileEntry::new_directory(".".into(), 0o755);
+        entry.set_mtime(desired_secs, 0);
+
+        let hs = handshake();
+        let config = config_with_times(true);
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
+        ctx.file_list = vec![entry];
+
+        ctx.touch_up_dirs(dir.path());
+
+        let actual = FileTime::from_last_modification_time(&fs::metadata(dir.path()).unwrap());
+        let expected = FileTime::from_unix_time(desired_secs, 0);
+        assert_eq!(actual, expected, "dest_dir mtime should match '.' entry");
+    }
+
+    /// Non-directory entries in the file list must be ignored.
+    #[test]
+    fn ignores_non_directory_entries() {
+        let dir = test_support::create_tempdir();
+        let file_path = dir.path().join("file.txt");
+        fs::write(&file_path, b"content").unwrap();
+
+        // Backdate the file so we can detect if touch_up_dirs changes it.
+        let past = FileTime::from_unix_time(1_500_000_000, 0);
+        filetime::set_file_mtime(&file_path, past).unwrap();
+
+        let mut file_entry = FileEntry::new_file("file.txt".into(), 7, 0o644);
+        file_entry.set_mtime(1_577_836_800, 0);
+
+        let hs = handshake();
+        let config = config_with_times(true);
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
+        ctx.file_list = vec![file_entry];
+
+        ctx.touch_up_dirs(dir.path());
+
+        let actual = FileTime::from_last_modification_time(&fs::metadata(&file_path).unwrap());
+        assert_eq!(
+            actual, past,
+            "touch_up_dirs must not modify non-directory entries"
+        );
     }
 }
