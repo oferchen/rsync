@@ -12,7 +12,7 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 ## Status
 
-**Release:** 0.6.3 (beta) - Wire-compatible drop-in replacement for rsync 3.4.3 (and 3.4.2 / 3.4.1, protocols 28-32).
+**Release:** 0.6.3 - Wire-compatible drop-in replacement for rsync 3.4.3 (and 3.4.2 / 3.4.1, protocols 28-32).
 
 All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop tested against upstream rsync 2.6.9, 3.0.9, 3.1.3, 3.4.1, 3.4.2, and 3.4.3. Upstream rsync's own `testsuite/*.test` corpus runs in CI against `oc-rsync` as `$RSYNC` - all tests now pass (known-failures roster is empty).
 
