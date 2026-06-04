@@ -521,7 +521,11 @@ mod tests {
     fn reclaim_segment_clears_entries_in_range() {
         let mut list = DualFileList::new();
         for i in 0..5 {
-            list.push(FileEntry::new_file(format!("file_{i}.txt").into(), (i + 1) as u64 * 100, 0o644));
+            list.push(FileEntry::new_file(
+                format!("file_{i}.txt").into(),
+                (i + 1) as u64 * 100,
+                0o644,
+            ));
         }
 
         // Reclaim entries [1..3)

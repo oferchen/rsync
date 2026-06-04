@@ -3331,8 +3331,8 @@ fn nonempty_segment_also_sends_wire_bytes() {
 
 #[test]
 fn reclaim_oldest_segment_frees_first_segment_entries() {
-    use protocol::flist::FileEntry;
     use protocol::CompatibilityFlags;
+    use protocol::flist::FileEntry;
 
     let mut handshake = test_handshake_with_protocol(32);
     handshake.compat_flags = Some(CompatibilityFlags::INC_RECURSE);
@@ -3342,7 +3342,11 @@ fn reclaim_oldest_segment_frees_first_segment_entries() {
     // Simulate 3 segments: [0..3), [3..5), [5..7)
     for i in 0..7 {
         ctx.push_file_item(
-            FileEntry::new_file(format!("dir/file_{i}.txt").into(), (i + 1) as u64 * 100, 0o644),
+            FileEntry::new_file(
+                format!("dir/file_{i}.txt").into(),
+                (i + 1) as u64 * 100,
+                0o644,
+            ),
             PathBuf::from(format!("/src/dir/file_{i}.txt")),
         );
     }

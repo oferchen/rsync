@@ -475,7 +475,8 @@ fn receiver_reclaim_noop_with_single_segment() {
     let config = test_config();
     let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
-    ctx.file_list.push(FileEntry::new_file("f.txt".into(), 100, 0o644));
+    ctx.file_list
+        .push(FileEntry::new_file("f.txt".into(), 100, 0o644));
     // Single segment - no reclamation possible.
     ctx.reclaim_oldest_segment();
     assert_eq!(ctx.first_segment_idx, 0);
