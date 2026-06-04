@@ -627,8 +627,7 @@ mod tests {
 
             assert_eq!(
                 mmap_digest, buffered_digest,
-                "mmap and buffered digests differ for {:?}",
-                algorithm
+                "mmap and buffered digests differ for {algorithm:?}",
             );
         }
     }
