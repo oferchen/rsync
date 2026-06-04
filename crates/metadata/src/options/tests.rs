@@ -166,6 +166,8 @@ fn defaults_match_expected_configuration() {
     assert!(options.user_mapping().is_none());
     assert!(options.group_mapping().is_none());
 
+    assert!(!options.destination_is_new());
+
     assert_eq!(MetadataOptions::default(), options);
 }
 
@@ -201,6 +203,18 @@ fn builder_methods_apply_requested_flags() {
     assert_eq!(options.chmod(), Some(&modifiers));
     assert_eq!(options.user_mapping(), Some(&user_map));
     assert_eq!(options.group_mapping(), Some(&group_map));
+}
+
+#[test]
+fn destination_is_new_defaults_to_false_and_can_be_set() {
+    let options = MetadataOptions::new();
+    assert!(!options.destination_is_new());
+
+    let options = options.with_destination_is_new(true);
+    assert!(options.destination_is_new());
+
+    let options = options.with_destination_is_new(false);
+    assert!(!options.destination_is_new());
 }
 
 #[test]
