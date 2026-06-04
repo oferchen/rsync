@@ -7,7 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 oc-rsync is wire-compatible with upstream rsync 3.4.3 (protocol 32). Release
 tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
-## [0.6.3] - 2026-06-03
+## [0.6.3] - 2026-06-04
 
 ### Security
 
@@ -21,6 +21,15 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ### Features
 
+- `--delay-updates` final rename sweep in remote receiver (#5398)
+- `--partial` / `--partial-dir` file retention on interrupt (#5388)
+- `--info=progress2` sliding-window rate, format, and parsing (#5382)
+- Wire progress tracker into daemon transfer pipeline (#5383)
+- `--ignore-missing-args` and `--delete-missing-args` flags (#5384)
+- Handle invalid byte sequences in `FilenameConverter` (#5385)
+- Handle progress2 interaction with `--outbuf` and terminal detection
+- Stamp `mtime=0` on retained partial files for plain `--partial` (#5430)
+- Negate modifier (`!`) for filter rules (#5426)
 - Daemon-over-remote-shell mode for SSH with `::` operands (#5364)
 - `--server --daemon` remote-shell daemon mode over stdio (#5353)
 - `flush_workers`/`drain_inflight` barrier API on `ParallelDeltaApplier` (FFB-2) (#4665)
@@ -47,6 +56,20 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ### Bug Fixes
 
+- Suppress descendant matchers for anchored wildcard filter patterns (#5441)
+- Build delta signature before backup rename to prevent false vanished error (#5440)
+- Skip parent directory preparation in dry-run mode (#5439)
+- Re-apply directory mtimes after transfer to prevent clobbering by child writes (#5442)
+- Emit directory records before children in itemize output (#5432)
+- Apply umask masking for chmod clauses without explicit who-specifier (#5428)
+- Implement `dest_mode()` computation for non-preserve-perms transfers (#5427)
+- Deduplicate repeated source operands to prevent duplicate transfers (#5425)
+- Handle embedded `/./` markers in `--files-from` entries (#5433)
+- Follow symlinks when emitting implied parent directories (#5436)
+- Preserve directory mtime after deferred deletions (#5431)
+- Force dry-run mode for `--only-write-batch` local transfers (#5424)
+- Allow `--rsync-path` on local copies to match upstream behavior
+- Gracefully skip daemon scenarios when upstream rsync cannot bind
 - Remove erroneous CAP assertion from daemon config test (#5367)
 - Align daemon module listing protocol with upstream behavior (#5366)
 - Remove stale SEC-1.j TODO comments from completed task (#5365)
@@ -98,6 +121,17 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ### Tests
 
+- Validate progress2 output format matches upstream rsync (#5392)
+- `--delay-updates` sweep tests for remote transfer path (#5397)
+- Interop test for no-partial mid-transfer temp file removal
+- `--partial-dir` mid-transfer interrupt interop tests (#5395)
+- Verify `mtime=0` partial files are not skipped by `--update` (#5389)
+- Interop tests for `--partial` mid-transfer kill retention
+- `--iconv=utf8,latin1` filename round-trip integration test
+- `CleanupManager` integration tests for disk commit thread
+- FFV-5/6/7 tests for `--files-from` vanished file handling
+- `--iconv` with non-ASCII filter rules interop tests
+- `--delay-updates` interrupt leaves files in partial-dir
 - Comprehensive symlink-swap attack regression for SEC-1 sandbox (SEC-1.m) (#4675)
 - Legitimate symlink transfers must not regress under SEC-1 sandbox (SEC-1.n) (#4678)
 - Socketpair-to-pipe fallback warning fires exactly once (SSF-4) (#4684)
@@ -117,6 +151,8 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ### Documentation
 
+- User guide for partial file interrupt behavior (#5437)
+- Document `--partial` interrupt semantics (#5399)
 - Add interop compatibility status document (#5361)
 - Publish interop compatibility status document (#5360)
 - **SSH transport**: documented the opt-in `rsync_io/ssh-socketpair-stderr`
@@ -170,6 +206,7 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ### CI/Build
 
+- Add iconv feature to CI test matrix (#5386)
 - Install `libxxhash-dev` and guard grep pipeline in upstream testsuite (#5350)
 - Add upstream rsync testsuite workflow with UPASS detection (#5342)
 - Standardize cache keys and add missing `CARGO_TERM_COLOR` (#5341)
