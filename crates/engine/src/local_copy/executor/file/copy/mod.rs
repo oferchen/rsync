@@ -126,10 +126,11 @@ pub(crate) fn copy_file(
         return Ok(true);
     }
 
-    if let Some(parent) = destination.parent() {
-        context.prepare_parent_directory(parent)?;
-    }
-
+    // Dry-run check must precede parent directory preparation. When
+    // --no-implied-dirs is active, prepare_parent_directory fails with NotFound
+    // for missing parents. That NotFound error is misclassified as "file has
+    // vanished" by the caller. In dry-run mode no filesystem mutations occur,
+    // so preparing the parent is unnecessary.
     if mode.is_dry_run() {
         dry_run::handle_dry_run(
             context,
@@ -142,6 +143,10 @@ pub(crate) fn copy_file(
             },
         )?;
         return Ok(true);
+    }
+
+    if let Some(parent) = destination.parent() {
+        context.prepare_parent_directory(parent)?;
     }
 
     if existing::handle_existing_skips(

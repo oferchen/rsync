@@ -1060,3 +1060,48 @@ fn dry_run_with_inplace_does_not_modify_destination() {
         "dry run with inplace must not modify destination"
     );
 }
+
+/// Regression test: dry-run with `--no-implied-dirs` must not fail with a false
+/// "file has vanished" error when the destination parent directory does not
+/// exist. The prepare_parent_directory call must be skipped entirely in
+/// dry-run mode, because no filesystem mutations are needed.
+///
+/// upstream: receiver.c:recv_files() - dry-run short-circuits before mkdir
+#[test]
+fn dry_run_with_no_implied_dirs_and_missing_parent_succeeds() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let nested = source_root.join("sub").join("deep");
+    fs::create_dir_all(&nested).expect("create nested source dirs");
+    fs::write(nested.join("file.txt"), b"hello").expect("write file");
+
+    let dest_root = temp.path().join("dest");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+
+    // --relative with ./ anchor preserves sub/deep/ in the destination.
+    // With --no-implied-dirs the intermediate sub/deep/ is NOT auto-created.
+    let mut source_operand = source_root.clone().into_os_string();
+    source_operand.push("/./");
+    source_operand.push("sub/deep/file.txt");
+
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .relative_paths(true)
+        .implied_dirs(false);
+
+    // Before the fix, this returned Err with a NotFound IO error that the
+    // caller misclassified as "file has vanished".
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::DryRun, options)
+        .expect("dry run with --no-implied-dirs must succeed");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(summary.bytes_copied(), 5);
+    // Destination must not be created in dry-run mode.
+    assert!(
+        !dest_root.join("sub").exists(),
+        "dry run must not create directories"
+    );
+}

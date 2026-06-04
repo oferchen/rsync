@@ -427,7 +427,7 @@ fn execute_without_implied_dirs_requires_existing_parent() {
 }
 
 #[test]
-fn execute_dry_run_without_implied_dirs_requires_existing_parent() {
+fn execute_dry_run_without_implied_dirs_skips_parent_check() {
     let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("missing").join("dest.txt");
@@ -440,17 +440,9 @@ fn execute_dry_run_without_implied_dirs_requires_existing_parent() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().implied_dirs(false);
 
-    let error = plan
-        .execute_with_options(LocalCopyExecution::DryRun, options)
-        .expect_err("dry-run should error");
+    plan.execute_with_options(LocalCopyExecution::DryRun, options)
+        .expect("dry-run succeeds without checking parent");
 
-    match error.kind() {
-        LocalCopyErrorKind::Io { action, path, .. } => {
-            assert_eq!(*action, "create parent directory");
-            assert_eq!(path, destination.parent().expect("parent"));
-        }
-        other => panic!("unexpected error kind: {other:?}"),
-    }
     assert!(!destination.exists());
 }
 
