@@ -106,6 +106,10 @@ fn implied_who_applies_umask_masking() {
     unsafe { libc::umask(umask) };
     if umask & 0o002 != 0 {
         // umask blocks other-write, so D+w should not grant it
-        assert_eq!(mode & 0o002, 0, "D+w should not grant other-write when umask blocks it");
+        assert_eq!(
+            mode & 0o002,
+            0,
+            "D+w should not grant other-write when umask blocks it"
+        );
     }
 }
