@@ -86,7 +86,8 @@ fn parse_clause(text: &str) -> Result<Clause, ChmodError> {
         }
     }
 
-    if !consumed_who {
+    let who_implied = !consumed_who;
+    if who_implied {
         who = WhoMask::new(true, true, true);
     }
 
@@ -110,6 +111,7 @@ fn parse_clause(text: &str) -> Result<Clause, ChmodError> {
             op,
             who,
             perms: spec,
+            who_implied,
         }),
     })
 }

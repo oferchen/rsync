@@ -44,9 +44,42 @@ pub(crate) fn apply_clauses(_clauses: &[Clause], mode: u32, _file_type: std::fs:
     mode
 }
 
+/// Returns the process umask, cached for thread safety.
+///
+/// upstream: `main.c` stores `orig_umask` once at startup. We query it
+/// the first time a chmod clause with an implied who-specifier is applied
+/// and cache the result so the double set-and-restore syscall happens at
+/// most once per process.
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn cached_umask() -> u32 {
+    use std::sync::OnceLock;
+    static UMASK: OnceLock<u32> = OnceLock::new();
+    *UMASK.get_or_init(|| {
+        // SAFETY: umask is a standard POSIX call. We set it to 0 to read
+        // the current value, then immediately restore it. This is a
+        // well-known pattern (used by upstream rsync main.c, GNU coreutils,
+        // etc.). The OnceLock ensures this pair of calls happens at most
+        // once per process, eliminating any window for concurrent umask
+        // modifications.
+        let old = unsafe { libc::umask(0) };
+        unsafe { libc::umask(old) };
+        old as u32
+    })
+}
+
 #[cfg(unix)]
 fn apply_symbolic_clause(mut mode: u32, clause: &SymbolicClause, is_dir: bool) -> u32 {
     let before = mode;
+
+    // upstream: chmod.c - when no who-specifier is given, the computed
+    // permission bits are masked by ~orig_umask. This prevents `+w` from
+    // granting world-writable when the umask forbids it.
+    let umask_mask = if clause.who_implied {
+        !cached_umask() & 0o777
+    } else {
+        0o777
+    };
 
     for dest in [Dest::User, Dest::Group, Dest::Other] {
         if !dest.includes(clause) {
@@ -83,7 +116,7 @@ fn apply_symbolic_clause(mut mode: u32, clause: &SymbolicClause, is_dir: bool) -
             }
         }
 
-        let add_bits = permission_bits(&clause.perms, dest, is_dir, before);
+        let add_bits = permission_bits(&clause.perms, dest, is_dir, before) & umask_mask;
         match clause.op {
             Operation::Add | Operation::Assign => {
                 bits |= add_bits & mask;
