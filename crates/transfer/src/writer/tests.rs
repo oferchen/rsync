@@ -848,3 +848,205 @@ fn coalesced_msg_info_wire_bytes_identical() {
         "coalesced frames must be byte-identical to individual frames"
     );
 }
+
+// Dirty-flag flush optimization tests (BPR-X)
+
+#[test]
+fn multiplex_writer_flush_without_write_skips_syscall() {
+    // When no data has been written, flush() should not call inner.flush().
+    // This is the core optimization for BPR-1/2/3/6/9: the generator transfer
+    // loop calls flush_with_count() per iteration, but many iterations produce
+    // no output (control NDX handling, non-transfer items).
+    let mut tracker = FlushTracker::new();
+    {
+        let mut mux = MultiplexWriter::new(&mut tracker);
+        // Flush with no data written - should skip inner.flush()
+        mux.flush().unwrap();
+        mux.flush().unwrap();
+        mux.flush().unwrap();
+    }
+    assert_eq!(
+        tracker.flush_count, 0,
+        "flush without prior write must skip inner.flush() syscall"
+    );
+}
+
+#[test]
+fn multiplex_writer_flush_after_write_calls_syscall() {
+    // After data is written, flush() must call inner.flush() exactly once.
+    let mut tracker = FlushTracker::new();
+    {
+        let mut mux = MultiplexWriter::new(&mut tracker);
+        mux.write_all(b"hello").unwrap();
+        mux.flush().unwrap();
+    }
+    assert_eq!(
+        tracker.flush_count, 1,
+        "flush after write must call inner.flush() exactly once"
+    );
+}
+
+#[test]
+fn multiplex_writer_consecutive_flushes_deduplicated() {
+    // After a write + flush, subsequent flushes should be no-ops.
+    let mut tracker = FlushTracker::new();
+    {
+        let mut mux = MultiplexWriter::new(&mut tracker);
+        mux.write_all(b"data").unwrap();
+        mux.flush().unwrap();
+        // These should all be no-ops
+        mux.flush().unwrap();
+        mux.flush().unwrap();
+        mux.flush().unwrap();
+    }
+    assert_eq!(
+        tracker.flush_count, 1,
+        "consecutive flushes after first must be deduplicated"
+    );
+}
+
+#[test]
+fn multiplex_writer_write_flush_write_flush_counts_two() {
+    // Write-flush-write-flush should produce exactly 2 inner.flush() calls.
+    let mut tracker = FlushTracker::new();
+    {
+        let mut mux = MultiplexWriter::new(&mut tracker);
+        mux.write_all(b"first").unwrap();
+        mux.flush().unwrap();
+        mux.write_all(b"second").unwrap();
+        mux.flush().unwrap();
+    }
+    assert_eq!(
+        tracker.flush_count, 2,
+        "write-flush-write-flush must produce exactly 2 syscalls"
+    );
+}
+
+#[test]
+fn multiplex_writer_large_write_bypasses_buffer_sets_dirty() {
+    // Writes larger than buffer_size bypass the internal buffer and go
+    // directly to the inner writer. This must still set the dirty flag.
+    let mut tracker = FlushTracker::new();
+    {
+        let mut mux = MultiplexWriter::new(&mut tracker);
+        // Write more than DEFAULT_BUFFER_SIZE (64KB)
+        let large = vec![0u8; 128 * 1024];
+        mux.write_all(&large).unwrap();
+        mux.flush().unwrap();
+    }
+    assert_eq!(
+        tracker.flush_count, 1,
+        "large write must set dirty flag so flush calls inner.flush()"
+    );
+}
+
+#[test]
+fn multiplex_writer_send_message_sets_dirty() {
+    // send_message writes to the inner writer even for batchable codes
+    // (MSG_INFO). The dirty flag must be set so a subsequent flush drains.
+    let mut tracker = FlushTracker::new();
+    {
+        let mut mux = MultiplexWriter::new(&mut tracker);
+        mux.send_message(MessageCode::Info, b"line\n").unwrap();
+        // MSG_INFO does not immediately flush, but dirty should be set
+        assert_eq!(tracker.flush_count, 0, "MSG_INFO must not flush immediately");
+        mux.flush().unwrap();
+    }
+    assert_eq!(
+        tracker.flush_count, 1,
+        "flush after send_message(MSG_INFO) must call inner.flush()"
+    );
+}
+
+#[test]
+fn multiplex_writer_send_error_clears_dirty() {
+    // MSG_ERROR calls inner.flush() immediately, which should clear dirty.
+    // A subsequent flush() should be a no-op.
+    let mut tracker = FlushTracker::new();
+    {
+        let mut mux = MultiplexWriter::new(&mut tracker);
+        mux.send_message(MessageCode::Error, b"fatal").unwrap();
+        assert_eq!(tracker.flush_count, 1, "MSG_ERROR must flush immediately");
+        // This flush should be a no-op since MSG_ERROR already flushed
+        mux.flush().unwrap();
+    }
+    assert_eq!(
+        tracker.flush_count, 1,
+        "flush after MSG_ERROR must be deduplicated"
+    );
+}
+
+#[test]
+fn multiplex_writer_write_vectored_sets_dirty() {
+    // Vectored writes that go directly to inner must set dirty.
+    let mut tracker = FlushTracker::new();
+    {
+        let mut mux = MultiplexWriter::new(&mut tracker);
+        // Large vectored write exceeding buffer size
+        let chunk = vec![0u8; 40 * 1024];
+        let bufs = [IoSlice::new(&chunk), IoSlice::new(&chunk)];
+        mux.write_vectored(&bufs).unwrap();
+        mux.flush().unwrap();
+    }
+    assert_eq!(
+        tracker.flush_count, 1,
+        "large vectored write must set dirty flag"
+    );
+}
+
+#[test]
+fn multiplex_writer_small_vectored_write_buffered_no_flush() {
+    // Small vectored writes that fit in the buffer should not set dirty
+    // until flush_buffer drains them.
+    let mut tracker = FlushTracker::new();
+    {
+        let mut mux = MultiplexWriter::new(&mut tracker);
+        let bufs = [IoSlice::new(b"hello"), IoSlice::new(b"world")];
+        mux.write_vectored(&bufs).unwrap();
+        // Data is buffered, not yet written to inner
+        assert_eq!(tracker.flush_count, 0);
+        mux.flush().unwrap();
+    }
+    assert_eq!(
+        tracker.flush_count, 1,
+        "flush must drain buffered vectored data"
+    );
+}
+
+#[test]
+fn server_writer_flush_dedup_through_multiplex() {
+    // Verify the optimization works through the ServerWriter enum dispatch.
+    let mut tracker = FlushTracker::new();
+    {
+        let mut writer = ServerWriter::new_plain(&mut tracker)
+            .activate_multiplex()
+            .unwrap();
+        // Three flushes with no data should produce zero inner.flush() calls
+        writer.flush().unwrap();
+        writer.flush().unwrap();
+        writer.flush().unwrap();
+    }
+    assert_eq!(
+        tracker.flush_count, 0,
+        "ServerWriter::Multiplex must propagate dirty-flag optimization"
+    );
+}
+
+#[test]
+fn server_writer_write_raw_clears_dirty() {
+    // write_raw flushes the buffer and writes + flushes raw data.
+    // After write_raw, subsequent flushes should be no-ops.
+    let mut tracker = FlushTracker::new();
+    {
+        let mut writer = ServerWriter::new_plain(&mut tracker)
+            .activate_multiplex()
+            .unwrap();
+        writer.write_raw(b"raw data").unwrap();
+        // write_raw calls inner.flush(), so dirty should be cleared
+        writer.flush().unwrap();
+    }
+    assert_eq!(
+        tracker.flush_count, 1,
+        "write_raw must clear dirty; subsequent flush must be a no-op"
+    );
+}
