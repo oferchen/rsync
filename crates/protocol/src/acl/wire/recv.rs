@@ -8,8 +8,8 @@ use std::io::{self, Read};
 use crate::varint::read_varint;
 
 use super::super::constants::{
-    NAME_IS_USER, NO_ENTRY, XMIT_GROUP_OBJ, XMIT_MASK_OBJ, XMIT_NAME_LIST, XMIT_OTHER_OBJ,
-    XMIT_USER_OBJ,
+    MAX_WIRE_ACL_ENTRIES, NAME_IS_USER, NO_ENTRY, XMIT_GROUP_OBJ, XMIT_MASK_OBJ, XMIT_NAME_LIST,
+    XMIT_OTHER_OBJ, XMIT_USER_OBJ,
 };
 use super::super::entry::{AclCache, IdAccess, IdaEntries, RsyncAcl};
 use super::encoding::decode_access;
@@ -26,6 +26,12 @@ use super::types::{AclType, RecvAclResult};
 /// Mirrors `recv_ida_entries()` in `acls.c` lines 697-729.
 pub fn recv_ida_entries<R: Read + ?Sized>(reader: &mut R) -> io::Result<(IdaEntries, u8)> {
     let count = read_varint(reader)? as usize;
+    if count > MAX_WIRE_ACL_ENTRIES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("ACL entry count {count} exceeds maximum {MAX_WIRE_ACL_ENTRIES}"),
+        ));
+    }
     let mut entries = IdaEntries::with_capacity(count);
     let mut computed_mask: u8 = 0;
 

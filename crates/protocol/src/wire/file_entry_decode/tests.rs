@@ -617,3 +617,59 @@ fn decode_symlink_target_far_exceeding_max_length() {
         assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
     }
 }
+
+#[test]
+fn decode_name_exceeds_maxpathlen() {
+    use crate::varint::write_varint;
+
+    let mut buf = Vec::new();
+    // same_len = 200 (XMIT_SAME_NAME set)
+    buf.push(200u8);
+    // suffix_len via XMIT_LONG_NAME + protocol >= 30: varint encoding of 3900
+    // same_len(200) + suffix_len(3900) = 4100 >= MAXPATHLEN(4096)
+    write_varint(&mut buf, 3900).unwrap();
+
+    let flags = (XMIT_SAME_NAME as u32) | (XMIT_LONG_NAME as u32);
+    let prev_name = vec![b'a'; 200];
+    let mut cursor = Cursor::new(buf);
+    let result = decode_name(&mut cursor, flags, &prev_name, 32);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("exceeds maximum"));
+}
+
+#[test]
+fn decode_name_at_maxpathlen_boundary() {
+    // same_len(0) + suffix_len(4095) = 4095 < MAXPATHLEN(4096) - should succeed
+    let suffix = vec![b'b'; 4095];
+
+    // Use XMIT_LONG_NAME for lengths > 255
+    let mut buf = Vec::new();
+    use crate::varint::write_varint;
+    write_varint(&mut buf, 4095).unwrap();
+    buf.extend_from_slice(&suffix);
+
+    let flags = XMIT_LONG_NAME as u32;
+    let mut cursor = Cursor::new(buf);
+    let result = decode_name(&mut cursor, flags, b"", 32);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap().len(), 4095);
+}
+
+#[test]
+fn decode_name_exactly_at_maxpathlen_rejected() {
+    // same_len(0) + suffix_len(4096) = 4096 >= MAXPATHLEN(4096) - should fail
+    use crate::varint::write_varint;
+
+    let mut buf = Vec::new();
+    write_varint(&mut buf, 4096).unwrap();
+
+    let flags = XMIT_LONG_NAME as u32;
+    let mut cursor = Cursor::new(buf);
+    let result = decode_name(&mut cursor, flags, b"", 32);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("exceeds maximum"));
+}

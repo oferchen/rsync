@@ -970,3 +970,127 @@ fn user_prefix_preserved_in_wire_bytes() {
     // Payload follows the name + NUL terminator.
     assert_eq!(&buf[position + needle.len()..], b"bar");
 }
+
+#[test]
+fn read_definitions_exceeds_max_count() {
+    use crate::xattr::MAX_WIRE_XATTR_COUNT;
+
+    let mut buf = Vec::new();
+    write_varint(&mut buf, (MAX_WIRE_XATTR_COUNT as i32) + 1).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let result = read_xattr_definitions(&mut cursor);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("exceeds maximum"));
+}
+
+#[test]
+fn read_definitions_exceeds_max_name_len() {
+    use crate::xattr::MAX_WIRE_XATTR_NAME_LEN;
+
+    let mut buf = Vec::new();
+    write_varint(&mut buf, 1).unwrap();
+    write_varint(&mut buf, (MAX_WIRE_XATTR_NAME_LEN as i32) + 1).unwrap();
+    write_varint(&mut buf, 0).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let result = read_xattr_definitions(&mut cursor);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("exceeds maximum"));
+}
+
+#[test]
+fn read_definitions_exceeds_max_value_len() {
+    use crate::xattr::MAX_WIRE_XATTR_VALUE_LEN;
+
+    let mut buf = Vec::new();
+    write_varint(&mut buf, 1).unwrap();
+    write_varint(&mut buf, 5).unwrap();
+    write_varint(&mut buf, (MAX_WIRE_XATTR_VALUE_LEN + 1) as i32).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let result = read_xattr_definitions(&mut cursor);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("exceeds maximum"));
+}
+
+#[test]
+fn recv_xattr_exceeds_max_count() {
+    use crate::xattr::MAX_WIRE_XATTR_COUNT;
+
+    let mut buf = Vec::new();
+    // ndx + 1 = 0 means ndx = -1, so literal path
+    write_varint(&mut buf, 0).unwrap();
+    write_varint(&mut buf, (MAX_WIRE_XATTR_COUNT as i32) + 1).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let result = recv_xattr(&mut cursor);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("exceeds maximum"));
+}
+
+#[test]
+fn recv_xattr_exceeds_max_name_len() {
+    use crate::xattr::MAX_WIRE_XATTR_NAME_LEN;
+
+    let mut buf = Vec::new();
+    write_varint(&mut buf, 0).unwrap();
+    write_varint(&mut buf, 1).unwrap();
+    write_varint(&mut buf, (MAX_WIRE_XATTR_NAME_LEN as i32) + 1).unwrap();
+    write_varint(&mut buf, 0).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let result = recv_xattr(&mut cursor);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("exceeds maximum"));
+}
+
+#[test]
+fn recv_xattr_exceeds_max_value_len() {
+    use crate::xattr::MAX_WIRE_XATTR_VALUE_LEN;
+
+    let mut buf = Vec::new();
+    write_varint(&mut buf, 0).unwrap();
+    write_varint(&mut buf, 1).unwrap();
+    write_varint(&mut buf, 5).unwrap();
+    write_varint(&mut buf, (MAX_WIRE_XATTR_VALUE_LEN + 1) as i32).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let result = recv_xattr(&mut cursor);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("exceeds maximum"));
+}
+
+#[test]
+fn recv_xattr_values_exceeds_max_value_len() {
+    use crate::xattr::MAX_WIRE_XATTR_VALUE_LEN;
+
+    let mut list = XattrList::new();
+    list.push(XattrEntry::abbreviated(
+        b"user.test".to_vec(),
+        vec![0u8; MAX_XATTR_DIGEST_LEN],
+        100,
+    ));
+
+    let mut buf = Vec::new();
+    write_varint(&mut buf, (MAX_WIRE_XATTR_VALUE_LEN + 1) as i32).unwrap();
+
+    let mut cursor = Cursor::new(buf);
+    let result = recv_xattr_values(&mut cursor, &mut list);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("exceeds maximum"));
+}
