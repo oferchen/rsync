@@ -88,6 +88,10 @@ name = "flist_rss_fixture"
 harness = false
 
 [[bench]]
+name = "flist_rss_regression"
+harness = false
+
+[[bench]]
 name = "flat_flist_rss"
 harness = false
 required-features = ["flat-flist"]
