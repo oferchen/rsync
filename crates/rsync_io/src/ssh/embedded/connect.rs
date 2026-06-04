@@ -213,14 +213,11 @@ pub fn connect_and_exec(
         })
         .map_err(SshError::Io)?;
 
-    setup_rx
-        .recv()
-        .map_err(|_| {
-            SshError::Io(std::io::Error::other(
-                "SSH bridge thread terminated during setup",
-            ))
-        })?
-        ?;
+    setup_rx.recv().map_err(|_| {
+        SshError::Io(std::io::Error::other(
+            "SSH bridge thread terminated during setup",
+        ))
+    })??;
 
     Ok((
         ChannelReader {
@@ -341,15 +338,12 @@ async fn ssh_setup(
     let channel_id = channel.id();
 
     if let Some(data) = stdin_data {
-        handle
-            .data(channel_id, data.to_vec())
-            .await
-            .map_err(|_| {
-                SshError::Io(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "channel closed during initial stdin delivery",
-                ))
-            })?;
+        handle.data(channel_id, data.to_vec()).await.map_err(|_| {
+            SshError::Io(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "channel closed during initial stdin delivery",
+            ))
+        })?;
     }
 
     Ok((channel, handle, channel_id))
