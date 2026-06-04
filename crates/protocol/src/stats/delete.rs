@@ -5,6 +5,15 @@
 
 use std::io::{self, Read, Write};
 
+/// Maximum acceptable value for a single delete-stats wire field.
+///
+/// Rejects unreasonably large values from the wire to prevent signed-integer
+/// overflow when the receiver accumulates counts across multiple
+/// `NDX_DEL_STATS` messages.
+///
+/// upstream: io.c - MAX_WIRE_DEL_STAT defence-in-depth (3.4.3)
+const MAX_WIRE_DEL_STAT: i32 = 0x3FFF_FFFF;
+
 /// Deletion statistics exchanged via `NDX_DEL_STATS`.
 ///
 /// These are sent separately from transfer stats to report deletion counts
@@ -85,17 +94,22 @@ impl DeleteStats {
 
     /// Reads delete stats from a stream in wire format.
     ///
+    /// Each field is capped at [`MAX_WIRE_DEL_STAT`] to reject unreasonably
+    /// large values from the wire before they can cause overflow during
+    /// accumulation.
+    ///
     /// # Errors
     ///
-    /// Returns an error if reading from the stream fails.
+    /// Returns an error if reading from the stream fails or if any field
+    /// exceeds [`MAX_WIRE_DEL_STAT`].
     pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
         use crate::varint::read_varint;
 
-        let files = read_varint(reader)? as u32;
-        let dirs = read_varint(reader)? as u32;
-        let symlinks = read_varint(reader)? as u32;
-        let devices = read_varint(reader)? as u32;
-        let specials = read_varint(reader)? as u32;
+        let files = read_capped_del_stat(read_varint(reader)?, "files")?;
+        let dirs = read_capped_del_stat(read_varint(reader)?, "dirs")?;
+        let symlinks = read_capped_del_stat(read_varint(reader)?, "symlinks")?;
+        let devices = read_capped_del_stat(read_varint(reader)?, "devices")?;
+        let specials = read_capped_del_stat(read_varint(reader)?, "specials")?;
 
         Ok(Self {
             files,
@@ -105,4 +119,21 @@ impl DeleteStats {
             specials,
         })
     }
+}
+
+/// Validates and converts a varint-decoded delete-stat field.
+///
+/// Rejects negative values and values exceeding [`MAX_WIRE_DEL_STAT`].
+///
+/// upstream: io.c - MAX_WIRE_DEL_STAT defence-in-depth (3.4.3)
+fn read_capped_del_stat(raw: i32, field: &str) -> io::Result<u32> {
+    if raw < 0 || raw > MAX_WIRE_DEL_STAT {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "delete stat '{field}' value {raw} exceeds MAX_WIRE_DEL_STAT ({MAX_WIRE_DEL_STAT})"
+            ),
+        ));
+    }
+    Ok(raw as u32)
 }
