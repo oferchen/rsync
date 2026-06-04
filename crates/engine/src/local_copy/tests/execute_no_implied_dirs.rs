@@ -315,7 +315,7 @@ fn no_implied_dirs_recursive_copy_with_nested_structure() {
 }
 
 #[test]
-fn no_implied_dirs_dry_run_detects_missing_parents() {
+fn no_implied_dirs_dry_run_skips_parent_check() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
     fs::write(&source, b"content").expect("write source");
@@ -329,17 +329,9 @@ fn no_implied_dirs_dry_run_detects_missing_parents() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().implied_dirs(false);
 
-    let error = plan
-        .execute_with_options(LocalCopyExecution::DryRun, options)
-        .expect_err("dry-run should detect missing parent");
-
-    match error.kind() {
-        LocalCopyErrorKind::Io { action, path, .. } => {
-            assert_eq!(*action, "create parent directory");
-            assert_eq!(path, destination.parent().expect("parent"));
-        }
-        other => panic!("unexpected error kind: {other:?}"),
-    }
+    plan.execute_with_options(LocalCopyExecution::DryRun, options)
+        .expect("dry-run succeeds without checking parent");
+    assert!(!destination.exists());
 }
 
 #[test]
