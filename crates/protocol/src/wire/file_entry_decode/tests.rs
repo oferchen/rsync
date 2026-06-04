@@ -643,8 +643,6 @@ fn decode_name_exceeds_maxpathlen() {
 fn decode_name_at_maxpathlen_boundary() {
     // same_len(0) + suffix_len(4095) = 4095 < MAXPATHLEN(4096) - should succeed
     let suffix = vec![b'b'; 4095];
-    let mut buf = Vec::new();
-    buf.push(suffix.len() as u8); // Won't fit in u8, use XMIT_LONG_NAME
 
     // Use XMIT_LONG_NAME for lengths > 255
     let mut buf = Vec::new();
