@@ -243,8 +243,7 @@ pub fn metadata_unchanged(
     // upstream: generator.c:485-486 - any_time_differs(sxp, file, fname)
     if options.times() {
         let current_mtime = filetime::FileTime::from_last_modification_time(cached_meta);
-        let entry_mtime =
-            filetime::FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
+        let entry_mtime = filetime::FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
         if current_mtime != entry_mtime {
             return false;
         }
