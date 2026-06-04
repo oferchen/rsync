@@ -357,8 +357,7 @@ impl ZlibTokenDecoder {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
                             format!(
-                                "accumulated compressed data exceeds {} byte cap",
-                                MAX_ACCUMULATED_COMPRESSED_BYTES,
+                                "accumulated compressed data exceeds {MAX_ACCUMULATED_COMPRESSED_BYTES} byte cap",
                             ),
                         ));
                     }
