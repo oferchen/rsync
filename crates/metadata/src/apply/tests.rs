@@ -1147,11 +1147,7 @@ fn metadata_unchanged_returns_true_when_all_attrs_match() {
     let meta = fs::metadata(&dest).expect("metadata");
     let mtime = FileTime::from_last_modification_time(&meta);
 
-    let mut entry = FileEntry::new_file(
-        "unchanged.txt".into(),
-        4,
-        meta.mode() & 0o7777,
-    );
+    let mut entry = FileEntry::new_file("unchanged.txt".into(), 4, meta.mode() & 0o7777);
     entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
     entry.set_uid(meta.uid());
     entry.set_gid(meta.gid());
@@ -1212,11 +1208,7 @@ fn metadata_unchanged_returns_false_on_mtime_mismatch() {
 
     let meta = fs::metadata(&dest).expect("metadata");
 
-    let mut entry = FileEntry::new_file(
-        "mtime-mismatch.txt".into(),
-        4,
-        meta.mode() & 0o7777,
-    );
+    let mut entry = FileEntry::new_file("mtime-mismatch.txt".into(), 4, meta.mode() & 0o7777);
     // Set a different mtime
     entry.set_mtime(1_600_000_000, 0);
     entry.set_uid(meta.uid());
