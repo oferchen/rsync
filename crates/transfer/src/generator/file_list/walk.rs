@@ -42,11 +42,13 @@ impl GeneratorContext {
         base: &Path,
         path: &Path,
     ) -> io::Result<bool> {
-        // Pre-stat to detect ENOENT before walk_path processes the entry.
+        // upstream: flist.c:2390 - link_stat() once, then pass &st to
+        // send_file_name(). Reuse the metadata to avoid a redundant stat
+        // inside walk_path_with_metadata.
         match self.resolve_symlink_metadata(path, base) {
-            Ok(_) => {
-                // Path exists - delegate to normal walk_path.
-                self.walk_path(base, path.to_path_buf())?;
+            Ok(metadata) => {
+                // Path exists - pass pre-resolved metadata directly.
+                self.walk_path_with_metadata(base, path.to_path_buf(), metadata, true)?;
                 Ok(true)
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
@@ -104,32 +106,6 @@ impl GeneratorContext {
         entry.set_mode(0);
         self.push_file_item(entry, path.to_path_buf());
         Ok(())
-    }
-
-    /// Recursively walks a path and adds entries to the file list.
-    ///
-    /// # Upstream Reference
-    ///
-    /// When the source path is a directory ending with '/', upstream rsync includes
-    /// the directory itself as "." entry in the file list. This allows the receiver
-    /// to create the destination directory and properly set its attributes.
-    ///
-    /// See flist.c:send_file_list() which adds "." for the top-level directory.
-    pub(in crate::generator) fn walk_path(&mut self, base: &Path, path: PathBuf) -> io::Result<()> {
-        // upstream: flist.c:readlink_stat() - resolve symlinks based on flags:
-        // --copy-links: follow ALL symlinks (stat instead of lstat)
-        // --copy-unsafe-links: follow only UNSAFE symlinks (stat if target escapes tree)
-        // otherwise: use lstat (preserve symlinks as-is)
-        let metadata = match self.resolve_symlink_metadata(&path, base) {
-            Ok(m) => m,
-            Err(e) => {
-                self.log_stat_error(&path, &e);
-                self.record_io_error(&e);
-                return Ok(());
-            }
-        };
-
-        self.walk_path_with_metadata(base, path, metadata, true)
     }
 
     /// Walks a path with pre-resolved metadata, skipping the initial stat call.
