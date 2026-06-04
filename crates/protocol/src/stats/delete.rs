@@ -127,7 +127,7 @@ impl DeleteStats {
 ///
 /// upstream: io.c - MAX_WIRE_DEL_STAT defence-in-depth (3.4.3)
 fn read_capped_del_stat(raw: i32, field: &str) -> io::Result<u32> {
-    if raw < 0 || raw > MAX_WIRE_DEL_STAT {
+    if !(0..=MAX_WIRE_DEL_STAT).contains(&raw) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!(
