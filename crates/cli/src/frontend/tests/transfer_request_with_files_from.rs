@@ -97,3 +97,61 @@ fn files_from_excludes_unlisted_files() {
         "file3.txt must not be copied - it is not in the --files-from list"
     );
 }
+
+/// Verifies that `--files-from` entries with embedded `/./` markers produce
+/// the correct destination path structure.
+///
+/// Upstream rsync uses `/./` within a file list entry to split the path:
+/// everything before becomes a chdir prefix (relative to the source argument)
+/// and everything after becomes the transferred relative filename at the
+/// destination.
+///
+/// # Upstream Reference
+///
+/// - `testsuite/files-from.test` - tests `from/./dir/subdir` entries
+/// - `flist.c:2316-2318` - `strstr(fbuf, "/./")` splits at marker
+#[test]
+fn files_from_embedded_dot_marker_determines_destination_structure() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let scratch = tmp.path().join("scratch");
+
+    // Create: scratch/from/dir/subdir/file.txt
+    let subdir = scratch.join("from").join("dir").join("subdir");
+    std::fs::create_dir_all(&subdir).expect("create subdir");
+    std::fs::write(subdir.join("file.txt"), b"hello").expect("write file");
+
+    // File list uses "from/./dir/subdir/file.txt" - the "./" marker means
+    // "from" is the chdir prefix and "dir/subdir/file.txt" is the transfer name.
+    let list_path = tmp.path().join("filelist");
+    std::fs::write(&list_path, "from/./dir/subdir/file.txt\n").expect("write list");
+
+    let dest = tmp.path().join("dest");
+    std::fs::create_dir(&dest).expect("create dest");
+
+    let (code, _stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-av"),
+        OsString::from(format!("--files-from={}", list_path.display())),
+        scratch.clone().into_os_string(),
+        OsString::from(format!("{}/", dest.display())),
+    ]);
+
+    assert_eq!(code, 0, "transfer should succeed");
+
+    // The file should appear at dest/dir/subdir/file.txt (not dest/from/dir/...)
+    // because "/./'' splits the path: "from" is just a chdir prefix.
+    assert!(
+        dest.join("dir").join("subdir").join("file.txt").exists(),
+        "file should be at dir/subdir/file.txt, not from/dir/subdir/file.txt"
+    );
+    assert!(
+        !dest.join("from").exists(),
+        "the 'from' directory prefix should NOT appear at the destination"
+    );
+    assert_eq!(
+        std::fs::read(dest.join("dir").join("subdir").join("file.txt")).expect("read"),
+        b"hello"
+    );
+}
