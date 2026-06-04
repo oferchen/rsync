@@ -38,7 +38,7 @@ fn duplicate_source_operands_copy_each_file_once() {
     // Pass the source 10 times, like upstream's duplicates.test
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        OsString::from("-avv"),
+        OsString::from("-av"),
         OsString::from(&source_str),
         OsString::from(&source_str),
         OsString::from(&source_str),
