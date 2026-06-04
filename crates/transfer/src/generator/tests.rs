@@ -3398,3 +3398,297 @@ fn reclaim_oldest_segment_noop_without_inc_recurse() {
     assert_eq!(ctx.incremental.first_segment_idx, 0);
     assert_eq!(ctx.file_list()[0].name(), "file.txt");
 }
+
+/// Wire-byte parity regression test for batched generator flush (BPR-1.h).
+///
+/// The generator transfer loop (sender.c:send_files) calls `flush_with_count`
+/// once per iteration rather than after each individual write. This batched
+/// flush reduces TCP segment count but must not alter the logical data the
+/// receiver sees on the wire.
+///
+/// This test verifies the invariant by serializing a multi-entry file list
+/// through a `MultiplexWriter` with two flush disciplines:
+///
+/// 1. **Batched**: all entries written, single flush at end (matches the
+///    transfer loop pattern after BPR-1.d).
+/// 2. **Sequential**: flush after each entry (pre-BPR-1.d pattern).
+///
+/// The logical data payload (MSG_DATA content after stripping frame headers)
+/// must be byte-identical. The batched variant should produce fewer frames.
+#[test]
+fn batched_flush_wire_byte_parity() {
+    use super::super::writer::multiplex::MultiplexWriter;
+    use protocol::{MessageCode, recv_msg};
+
+    // Helper: extract logical data bytes from multiplex wire output by
+    // draining MSG_DATA frames and concatenating their payloads.
+    fn extract_data_payload(wire: &[u8]) -> (Vec<u8>, usize) {
+        let mut cursor = Cursor::new(wire);
+        let mut data = Vec::new();
+        let mut frame_count = 0usize;
+        loop {
+            match recv_msg(&mut cursor) {
+                Ok(frame) => {
+                    assert_eq!(
+                        frame.code(),
+                        MessageCode::Data,
+                        "expected MSG_DATA frames only"
+                    );
+                    data.extend_from_slice(frame.payload());
+                    frame_count += 1;
+                }
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => panic!("unexpected recv_msg error: {e}"),
+            }
+        }
+        (data, frame_count)
+    }
+
+    // Build 5 file entries with distinct names and sizes so the flist
+    // encoder emits non-trivial per-entry wire data.
+    let handshake = test_handshake();
+    let entries: Vec<protocol::flist::FileEntry> = (0..5)
+        .map(|i| {
+            let mut e = protocol::flist::FileEntry::new_file(
+                format!("file_{i}.dat").into(),
+                (i as u64 + 1) * 1000,
+                0o644,
+            );
+            e.set_mtime(1700000000 + i as u32, 0);
+            e
+        })
+        .collect();
+
+    // --- Batched flush: write all entries, flush once at end ---
+    let batched_wire = {
+        let mut inner = Vec::<u8>::new();
+        let mut mux = MultiplexWriter::new(&mut inner);
+
+        let mut gen = GeneratorContext::new_for_test(&handshake, test_config());
+        for entry in &entries {
+            gen.file_list.push(entry.clone());
+        }
+        let mut flist_writer = gen.build_flist_writer();
+        for entry in &entries {
+            flist_writer.write_entry(&mut mux, entry).unwrap();
+        }
+        flist_writer.write_end(&mut mux, None).unwrap();
+        // Single batched flush - matches the transfer loop pattern
+        flush_with_count(&mut mux).unwrap();
+        drop(mux);
+        inner
+    };
+
+    // --- Sequential flush: flush after each entry write ---
+    let sequential_wire = {
+        let mut inner = Vec::<u8>::new();
+        let mut mux = MultiplexWriter::new(&mut inner);
+
+        let mut gen = GeneratorContext::new_for_test(&handshake, test_config());
+        for entry in &entries {
+            gen.file_list.push(entry.clone());
+        }
+        let mut flist_writer = gen.build_flist_writer();
+        for entry in &entries {
+            flist_writer.write_entry(&mut mux, entry).unwrap();
+            flush_with_count(&mut mux).unwrap();
+        }
+        flist_writer.write_end(&mut mux, None).unwrap();
+        flush_with_count(&mut mux).unwrap();
+        drop(mux);
+        inner
+    };
+
+    let (batched_data, batched_frames) = extract_data_payload(&batched_wire);
+    let (sequential_data, sequential_frames) = extract_data_payload(&sequential_wire);
+
+    // Core invariant: logical data bytes are identical regardless of flush
+    // discipline. If this assertion fails, a flush-discipline change has
+    // altered the wire content, which would break receiver compatibility.
+    assert_eq!(
+        batched_data, sequential_data,
+        "batched and sequential flush must produce byte-identical logical data \
+         (batched={} bytes, sequential={} bytes)",
+        batched_data.len(),
+        sequential_data.len()
+    );
+
+    // Verify the optimization: batched flush should coalesce writes into
+    // fewer MSG_DATA frames than per-entry flushing.
+    assert!(
+        batched_frames <= sequential_frames,
+        "batched flush should produce no more frames than sequential \
+         (batched={batched_frames}, sequential={sequential_frames})"
+    );
+
+    // Sanity: both produced non-trivial output (at least the 5 entries + end marker).
+    assert!(
+        !batched_data.is_empty(),
+        "batched flush must produce non-empty wire data"
+    );
+}
+
+/// Wire-byte parity for NDX_DONE echoes under batched vs sequential flush.
+///
+/// The transfer loop echoes `NDX_DONE` during phase transitions and
+/// INC_RECURSE flist-free paths. Each echo is followed by `flush_with_count`.
+/// This test verifies that multiple NDX_DONE writes followed by a single
+/// batched flush produce byte-identical logical data as individual
+/// write+flush pairs.
+#[test]
+fn batched_flush_ndx_done_echo_parity() {
+    use super::super::writer::multiplex::MultiplexWriter;
+    use protocol::codec::{MonotonicNdxWriter, NdxCodec};
+    use protocol::{MessageCode, recv_msg};
+
+    fn extract_data_payload(wire: &[u8]) -> Vec<u8> {
+        let mut cursor = Cursor::new(wire);
+        let mut data = Vec::new();
+        loop {
+            match recv_msg(&mut cursor) {
+                Ok(frame) => {
+                    assert_eq!(frame.code(), MessageCode::Data);
+                    data.extend_from_slice(frame.payload());
+                }
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => panic!("unexpected recv_msg error: {e}"),
+            }
+        }
+        data
+    }
+
+    // Write 3 NDX_DONE echoes (simulating INC_RECURSE flist-free path)
+    let batched_wire = {
+        let mut inner = Vec::<u8>::new();
+        let mut mux = MultiplexWriter::new(&mut inner);
+        let mut ndx_codec = MonotonicNdxWriter::new(32);
+        ndx_codec.write_ndx_done(&mut mux).unwrap();
+        ndx_codec.write_ndx_done(&mut mux).unwrap();
+        ndx_codec.write_ndx_done(&mut mux).unwrap();
+        // Single batched flush
+        flush_with_count(&mut mux).unwrap();
+        drop(mux);
+        inner
+    };
+
+    let sequential_wire = {
+        let mut inner = Vec::<u8>::new();
+        let mut mux = MultiplexWriter::new(&mut inner);
+        let mut ndx_codec = MonotonicNdxWriter::new(32);
+        ndx_codec.write_ndx_done(&mut mux).unwrap();
+        flush_with_count(&mut mux).unwrap();
+        ndx_codec.write_ndx_done(&mut mux).unwrap();
+        flush_with_count(&mut mux).unwrap();
+        ndx_codec.write_ndx_done(&mut mux).unwrap();
+        flush_with_count(&mut mux).unwrap();
+        drop(mux);
+        inner
+    };
+
+    let batched_data = extract_data_payload(&batched_wire);
+    let sequential_data = extract_data_payload(&sequential_wire);
+
+    assert_eq!(
+        batched_data, sequential_data,
+        "NDX_DONE echo data must be byte-identical under batched vs sequential flush \
+         (batched={} bytes, sequential={} bytes)",
+        batched_data.len(),
+        sequential_data.len()
+    );
+
+    // Each NDX_DONE in protocol 32 (modern codec) is a single 0x00 byte.
+    assert_eq!(
+        batched_data,
+        vec![0x00, 0x00, 0x00],
+        "3 NDX_DONE echoes should produce 3 zero bytes (modern codec)"
+    );
+}
+
+/// Wire-byte parity for mixed NDX writes and file data under batched flush.
+///
+/// Simulates the transfer loop's write pattern: NDX (file index) + iflags +
+/// file data, followed by a single `flush_with_count`. Verifies that the
+/// logical wire stream is identical to per-write flushing.
+#[test]
+fn batched_flush_mixed_ndx_and_data_parity() {
+    use super::super::writer::multiplex::MultiplexWriter;
+    use protocol::codec::{MonotonicNdxWriter, NdxCodec};
+    use protocol::{MessageCode, recv_msg};
+
+    fn extract_data_payload(wire: &[u8]) -> Vec<u8> {
+        let mut cursor = Cursor::new(wire);
+        let mut data = Vec::new();
+        loop {
+            match recv_msg(&mut cursor) {
+                Ok(frame) => {
+                    assert_eq!(frame.code(), MessageCode::Data);
+                    data.extend_from_slice(frame.payload());
+                }
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => panic!("unexpected recv_msg error: {e}"),
+            }
+        }
+        data
+    }
+
+    // Simulated transfer loop iteration: write NDX + iflags + literal data
+    // for 3 files, mimicking the write_ndx_and_attrs + delta data pattern.
+    let iflags_transfer: [u8; 2] = (ItemFlags::ITEM_TRANSFER as u16).to_le_bytes();
+    let file_data: [&[u8]; 3] = [b"alpha-content", b"beta-data-longer", b"g"];
+
+    let batched_wire = {
+        let mut inner = Vec::<u8>::new();
+        let mut mux = MultiplexWriter::new(&mut inner);
+        let mut ndx_codec = MonotonicNdxWriter::new(32);
+        for (i, data) in file_data.iter().enumerate() {
+            ndx_codec.write_ndx(&mut mux, i as i32).unwrap();
+            mux.write_all(&iflags_transfer).unwrap();
+            mux.write_all(data).unwrap();
+        }
+        // Single batched flush at end of iteration
+        flush_with_count(&mut mux).unwrap();
+        // Final NDX_DONE
+        ndx_codec.write_ndx_done(&mut mux).unwrap();
+        flush_with_count(&mut mux).unwrap();
+        drop(mux);
+        inner
+    };
+
+    let sequential_wire = {
+        let mut inner = Vec::<u8>::new();
+        let mut mux = MultiplexWriter::new(&mut inner);
+        let mut ndx_codec = MonotonicNdxWriter::new(32);
+        for (i, data) in file_data.iter().enumerate() {
+            ndx_codec.write_ndx(&mut mux, i as i32).unwrap();
+            mux.write_all(&iflags_transfer).unwrap();
+            mux.write_all(data).unwrap();
+            flush_with_count(&mut mux).unwrap();
+        }
+        ndx_codec.write_ndx_done(&mut mux).unwrap();
+        flush_with_count(&mut mux).unwrap();
+        drop(mux);
+        inner
+    };
+
+    let batched_data = extract_data_payload(&batched_wire);
+    let sequential_data = extract_data_payload(&sequential_wire);
+
+    assert_eq!(
+        batched_data, sequential_data,
+        "mixed NDX+data must be byte-identical under batched vs sequential flush \
+         (batched={} bytes, sequential={} bytes)",
+        batched_data.len(),
+        sequential_data.len()
+    );
+
+    // Verify non-trivial content was written (NDX bytes + iflags + file data).
+    let expected_min_len = 3 /* NDX bytes for indices 0,1,2 (modern codec) */
+        + 3 * 2 /* iflags per file */
+        + file_data.iter().map(|d| d.len()).sum::<usize>()
+        + 1; /* NDX_DONE */
+    assert!(
+        batched_data.len() >= expected_min_len,
+        "expected at least {expected_min_len} bytes, got {}",
+        batched_data.len()
+    );
+}
