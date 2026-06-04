@@ -18,6 +18,7 @@
 //! - `options.c:server_options()` - Remote `--server` argument construction
 
 use std::ffi::{OsStr, OsString};
+use std::io::BufReader;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -554,9 +555,14 @@ fn run_server_over_ssh_connection(
     progress: Option<&mut dyn crate::server::TransferProgressCallback>,
     batch_ctx: Option<BatchContext>,
 ) -> Result<crate::server::ServerStats, ClientError> {
-    let (mut reader, mut writer, mut child_handle) = connection
+    let (reader, mut writer, mut child_handle) = connection
         .split()
         .map_err(|e| invalid_argument_error(&format!("failed to split SSH connection: {e}"), 23))?;
+
+    // upstream: io.c read_buf() uses 32KB read-ahead buffering. Without this,
+    // each multiplex frame header (4 bytes) + payload triggers separate syscalls
+    // on the SSH pipe.
+    let mut reader = BufReader::with_capacity(32768, reader);
 
     let batch_recording = batch_ctx.as_ref().map(|ctx| {
         let is_sender = config.role == ServerRole::Generator;
