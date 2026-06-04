@@ -189,6 +189,87 @@ pub fn apply_file_metadata_with_fd_if_changed(
     Ok(())
 }
 
+/// Fast check whether all metadata attributes already match the destination.
+///
+/// Mirrors upstream `generator.c:461 unchanged_attrs()` - a pure in-memory
+/// comparison that avoids the function-call overhead of the full
+/// [`apply_metadata_with_cached_stat`] path. Returns `true` when every
+/// preserved attribute (permissions, ownership, timestamps) matches the
+/// cached stat, so the caller can skip the metadata-application chain
+/// entirely on the no-change quick-check path.
+///
+/// # Upstream Reference
+///
+/// - `generator.c:461-502` - `unchanged_attrs()` checks `perms_differ`,
+///   `ownership_differs`, `any_time_differs`, `acls_differ`, `xattrs_differ`
+/// - `generator.c:1809-1814` - quick-check match calls `set_file_attrs` only
+///   when `unchanged_attrs` would fail (implicit - upstream always calls
+///   `set_file_attrs` but its internal guards skip every syscall when nothing
+///   differs)
+pub fn metadata_unchanged(
+    entry: &protocol::flist::FileEntry,
+    options: &MetadataOptions,
+    cached_meta: &fs::Metadata,
+) -> bool {
+    // upstream: generator.c:487-488 - perms_differ(file, sxp)
+    #[cfg(unix)]
+    if options.permissions() {
+        use std::os::unix::fs::MetadataExt;
+        if (cached_meta.mode() & 0o7777) != (entry.permissions() & 0o7777) {
+            return false;
+        }
+    }
+
+    // upstream: generator.c:489-490 - ownership_differs(file, sxp)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if options.owner() {
+            if let Some(uid) = entry.uid() {
+                if cached_meta.uid() != uid {
+                    return false;
+                }
+            }
+        }
+        if options.group() {
+            if let Some(gid) = entry.gid() {
+                if cached_meta.gid() != gid {
+                    return false;
+                }
+            }
+        }
+    }
+
+    // upstream: generator.c:485-486 - any_time_differs(sxp, file, fname)
+    if options.times() {
+        let current_mtime = filetime::FileTime::from_last_modification_time(cached_meta);
+        let entry_mtime = filetime::FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
+        if current_mtime != entry_mtime {
+            return false;
+        }
+    }
+
+    if options.atimes() && entry.atime() != 0 {
+        let current_atime = filetime::FileTime::from_last_access_time(cached_meta);
+        let entry_atime = filetime::FileTime::from_unix_time(entry.atime(), 0);
+        if current_atime != entry_atime {
+            return false;
+        }
+    }
+
+    // chmod modifiers need the full apply path regardless of stat match
+    if options.chmod().is_some() {
+        return false;
+    }
+
+    // Owner/group overrides need the full apply path
+    if options.owner_override().is_some() || options.group_override().is_some() {
+        return false;
+    }
+
+    true
+}
+
 /// Applies metadata from `metadata` to the destination symbolic link without
 /// following the link target. Delegates to [`apply_symlink_metadata_with_options`]
 /// with default options.

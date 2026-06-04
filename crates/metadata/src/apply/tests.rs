@@ -1132,3 +1132,147 @@ fn fake_super_off_does_not_write_stat_xattr_via_local_metadata() {
         "user.rsync.%stat must not appear without --fake-super; got {raw:?}"
     );
 }
+
+// --- metadata_unchanged tests ---
+
+#[cfg(unix)]
+#[test]
+fn metadata_unchanged_returns_true_when_all_attrs_match() {
+    use protocol::flist::FileEntry;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("unchanged.txt");
+    fs::write(&dest, b"data").expect("write dest");
+
+    let meta = fs::metadata(&dest).expect("metadata");
+    let mtime = FileTime::from_last_modification_time(&meta);
+
+    let mut entry = FileEntry::new_file("unchanged.txt".into(), 4, meta.mode() & 0o7777);
+    entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
+    entry.set_uid(meta.uid());
+    entry.set_gid(meta.gid());
+
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(true)
+        .preserve_owner(true)
+        .preserve_group(true);
+
+    assert!(
+        metadata_unchanged(&entry, &opts, &meta),
+        "should return true when all attributes match"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn metadata_unchanged_returns_false_on_permission_mismatch() {
+    use protocol::flist::FileEntry;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("perm-mismatch.txt");
+    fs::write(&dest, b"data").expect("write dest");
+
+    let meta = fs::metadata(&dest).expect("metadata");
+    let mtime = FileTime::from_last_modification_time(&meta);
+
+    // Use different permissions than what's on disk
+    let disk_mode = meta.mode() & 0o7777;
+    let different_mode = disk_mode ^ 0o020; // flip group write bit
+
+    let mut entry = FileEntry::new_file("perm-mismatch.txt".into(), 4, different_mode);
+    entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
+    entry.set_uid(meta.uid());
+    entry.set_gid(meta.gid());
+
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(true)
+        .preserve_owner(true)
+        .preserve_group(true);
+
+    assert!(
+        !metadata_unchanged(&entry, &opts, &meta),
+        "should return false when permissions differ"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn metadata_unchanged_returns_false_on_mtime_mismatch() {
+    use protocol::flist::FileEntry;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("mtime-mismatch.txt");
+    fs::write(&dest, b"data").expect("write dest");
+
+    let meta = fs::metadata(&dest).expect("metadata");
+
+    let mut entry = FileEntry::new_file("mtime-mismatch.txt".into(), 4, meta.mode() & 0o7777);
+    // Set a different mtime
+    entry.set_mtime(1_600_000_000, 0);
+    entry.set_uid(meta.uid());
+    entry.set_gid(meta.gid());
+
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(true)
+        .preserve_owner(true)
+        .preserve_group(true);
+
+    assert!(
+        !metadata_unchanged(&entry, &opts, &meta),
+        "should return false when mtime differs"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn metadata_unchanged_ignores_perms_when_not_preserved() {
+    use protocol::flist::FileEntry;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("no-perms.txt");
+    fs::write(&dest, b"data").expect("write dest");
+
+    let meta = fs::metadata(&dest).expect("metadata");
+    let mtime = FileTime::from_last_modification_time(&meta);
+
+    // Permissions differ but preservation is disabled
+    let mut entry = FileEntry::new_file("no-perms.txt".into(), 4, 0o777);
+    entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
+    entry.set_uid(meta.uid());
+    entry.set_gid(meta.gid());
+
+    let opts = MetadataOptions::new()
+        .preserve_permissions(false)
+        .preserve_times(true)
+        .preserve_owner(true)
+        .preserve_group(true);
+
+    assert!(
+        metadata_unchanged(&entry, &opts, &meta),
+        "should return true when perms differ but preservation is off"
+    );
+}
+
+#[test]
+fn metadata_unchanged_returns_false_when_chmod_active() {
+    use protocol::flist::FileEntry;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("chmod-active.txt");
+    fs::write(&dest, b"data").expect("write dest");
+
+    let meta = fs::metadata(&dest).expect("metadata");
+
+    let entry = FileEntry::new_file("chmod-active.txt".into(), 4, 0o644);
+
+    let chmod = crate::ChmodModifiers::parse("u+x").expect("parse chmod");
+    let opts = MetadataOptions::new().with_chmod(Some(chmod));
+
+    assert!(
+        !metadata_unchanged(&entry, &opts, &meta),
+        "should return false when chmod modifiers are active"
+    );
+}
