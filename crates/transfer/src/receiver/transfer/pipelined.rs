@@ -193,6 +193,10 @@ impl ReceiverContext {
             super::handle_delayed_updates(&all_delayed_updates, backup_cfg);
         }
 
+        // upstream: generator.c:2080-2133 - touch_up_dirs() re-applies
+        // directory mtimes after file writes clobber them.
+        self.touch_up_dirs(&setup.dest_dir);
+
         self.finalize_transfer(reader, writer)?;
 
         let total_source_bytes: u64 = self.file_list.iter().map(|e| e.size()).sum();
