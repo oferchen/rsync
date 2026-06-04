@@ -137,11 +137,13 @@ impl GeneratorContext {
                 }
             }
 
-            // upstream: io.c perform_io() flushes buffered output while waiting
-            // for input via select(). Our Read/Write traits are independent, so
-            // we must explicitly flush before blocking on read to prevent deadlock
-            // when buffered delta data hasn't reached the receiver yet.
-            flush_with_count(writer)?;
+            // upstream: io.c perform_io() uses select() to drain buffered output
+            // while waiting for input. The generator pipeline sends NDX requests
+            // independently of the sender's delta writes, so a per-file flush is
+            // unnecessary. The 64KB multiplex buffer auto-flushes when full, and
+            // phase-boundary flushes (NDX_DONE echoes, final goodbye) ensure
+            // protocol transitions are not stalled. Upstream batches ~1000 files
+            // per flush via maybe_flush_socket() with MIN_FILECNT_LOOKAHEAD.
 
             // upstream: sender.c:210-462 - read NDX request from receiver
             let ndx = match ndx_read_codec.read_ndx(&mut *reader) {
@@ -357,7 +359,6 @@ impl GeneratorContext {
                     cb.on_itemize(&format!("{name}\n"));
                 }
                 files_transferred += 1;
-                flush_with_count(writer)?;
                 continue;
             }
 

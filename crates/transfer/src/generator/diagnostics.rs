@@ -59,8 +59,8 @@ pub fn ndx_convert_totals() -> (u64, u64) {
 static FLUSH_CALLS: AtomicU64 = AtomicU64::new(0);
 
 /// Records a flush invocation on the generator transfer hot path. Used by the
-/// transfer loop (per-iteration, NDX_DONE echo, dry-run, final NDX_DONE) to
-/// bump [`FLUSH_CALLS`] for INC_RECURSE diagnostic I3 (#2198).
+/// transfer loop (NDX_DONE echo, phase transition, final NDX_DONE) to bump
+/// [`FLUSH_CALLS`] for INC_RECURSE diagnostic I3 (#2198).
 pub(crate) fn flush_with_count<W: Write>(writer: &mut W) -> io::Result<()> {
     FLUSH_CALLS.fetch_add(1, Ordering::Relaxed);
     writer.flush()
