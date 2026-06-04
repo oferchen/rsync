@@ -147,15 +147,17 @@ pub fn run_daemon_transfer(
     }
 
     // upstream: io.c - select_timeout() uses io_timeout for all transfer I/O.
-    // Configure TCP_NODELAY and transfer-phase timeouts before splitting.
+    // Configure transfer-phase timeouts before splitting.
     // For TCP, settings apply to both halves (shared underlying socket).
     // For connect programs, this is a no-op.
+    // TCP_NODELAY is intentionally not set - upstream rsync does not set it on
+    // daemon connections (clientserver.c:1346 only sets SO_KEEPALIVE).
     let transfer_timeout = config
         .timeout()
         .as_seconds()
         .map(|s| std::time::Duration::from_secs(s.get()));
     stream
-        .configure_transfer_options(true, transfer_timeout)
+        .configure_transfer_options(transfer_timeout)
         .map_err(|e| socket_error("configure transfer options on", "daemon socket", e))?;
 
     // Split the stream into read/write halves for the handshake. The line-based
@@ -346,7 +348,7 @@ pub fn run_daemon_over_remote_shell(
         .as_seconds()
         .map(|s| Duration::from_secs(s.get()));
     stream
-        .configure_transfer_options(true, transfer_timeout)
+        .configure_transfer_options(transfer_timeout)
         .map_err(|e| socket_error("configure transfer options on", "remote shell stream", e))?;
 
     let (reader_half, mut writer_half, guard) = stream

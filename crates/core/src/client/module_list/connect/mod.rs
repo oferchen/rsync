@@ -244,17 +244,15 @@ impl DaemonStream {
 
     /// Configures TCP-specific socket options for the transfer phase.
     ///
-    /// Sets TCP_NODELAY and applies read/write timeouts. No-op for
-    /// non-TCP transports (connect programs, TLS).
+    /// Applies read/write timeouts. No-op for non-TCP transports (connect
+    /// programs, TLS). TCP_NODELAY is intentionally not set - upstream rsync
+    /// does not set it on daemon connections (clientserver.c:1346 only sets
+    /// SO_KEEPALIVE).
     pub(crate) fn configure_transfer_options(
         &self,
-        nodelay: bool,
         timeout: Option<Duration>,
     ) -> io::Result<()> {
         if let Self::Tcp(stream) = self {
-            if nodelay {
-                stream.set_nodelay(true)?;
-            }
             stream.set_read_timeout(timeout)?;
             stream.set_write_timeout(timeout)?;
         }

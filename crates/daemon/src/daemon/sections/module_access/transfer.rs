@@ -233,17 +233,20 @@ struct TransferStreams {
 
 /// Sets up the transfer streams for the transfer engine.
 ///
-/// For TCP/TLS connections, configures TCP_NODELAY and clones the stream to get
-/// independent read/write handles. For stdio connections (remote-shell daemon
-/// mode), opens fresh stdin/stdout handles since the original pair is consumed
-/// by the BufReader.
+/// For TCP/TLS connections, clones the stream to get independent read/write
+/// handles. For stdio connections (remote-shell daemon mode), opens fresh
+/// stdin/stdout handles since the original pair is consumed by the BufReader.
+///
+/// TCP_NODELAY is intentionally not set - upstream rsync does not set it on
+/// daemon connections (clientserver.c:1346 only sets SO_KEEPALIVE). Leaving
+/// Nagle's algorithm enabled allows the kernel to coalesce small writes into
+/// fewer TCP segments.
 ///
 /// Returns the transfer streams on success, or sends an error and returns `None`.
 fn setup_transfer_streams(
     ctx: &mut ModuleRequestContext<'_>,
 ) -> io::Result<Option<TransferStreams>> {
     let stream = ctx.reader.get_mut();
-    stream.set_nodelay(true)?;
 
     if stream.is_stdio() {
         // For stdio mode, the DaemonStream wraps a StdioPair (stdin + stdout).
