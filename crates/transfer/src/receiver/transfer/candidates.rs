@@ -15,7 +15,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use logging::{debug_gte, debug_log, info_log};
-use metadata::{MetadataOptions, apply_metadata_with_cached_stat};
+use metadata::{MetadataOptions, apply_metadata_with_cached_stat, metadata_unchanged};
 use protocol::flist::FileEntry;
 
 use crate::receiver::directory::FailedDirectories;
@@ -168,14 +168,25 @@ impl ReceiverContext {
                     size_only,
                     always_checksum,
                 ) {
+                    // upstream: generator.c:461 unchanged_attrs() - fast-path
+                    // check avoids the per-function-call overhead of the full
+                    // apply_metadata chain when all attributes already match.
+                    // On a no-change scan this eliminates ownership mapping,
+                    // permission comparison, and timestamp construction for
+                    // every file that passes quick-check.
+                    if !metadata_unchanged(entry, metadata_opts, meta) {
+                        if let Err(e) = apply_metadata_with_cached_stat(
+                            &file_path,
+                            entry,
+                            metadata_opts,
+                            dest_meta,
+                        ) {
+                            metadata_errors.push((file_path.clone(), e.to_string()));
+                        }
+                    }
                     // upstream: generator.c:2260 - itemize() for up-to-date files
                     let iflags = crate::generator::ItemFlags::from_raw(0);
                     let _ = self.emit_itemize(writer, &iflags, entry);
-                    if let Err(e) =
-                        apply_metadata_with_cached_stat(&file_path, entry, metadata_opts, dest_meta)
-                    {
-                        metadata_errors.push((file_path.clone(), e.to_string()));
-                    }
                     if let Err(e) = apply_acls_from_receiver_cache(
                         &file_path,
                         entry,
