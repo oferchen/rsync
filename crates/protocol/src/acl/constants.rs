@@ -71,3 +71,13 @@ pub const ACL_VALID_OBJ_BITS: u32 = 0x07;
 ///
 /// Access bits are shifted left by 2 to make room for XFLAG bits.
 pub const ACCESS_SHIFT: u32 = 2;
+
+/// Defence-in-depth cap on the number of ACL named entries from the wire.
+///
+/// POSIX ACLs typically have fewer than a dozen named entries. 4096 is
+/// well above any real-world usage while preventing a malicious peer from
+/// forcing unbounded allocations via a crafted count varint.
+///
+/// upstream: acls.c `recv_ida_entries()` uses `EXPAND_ITEM_LIST` which
+/// reallocs but has no explicit count cap.
+pub const MAX_WIRE_ACL_ENTRIES: usize = 4096;

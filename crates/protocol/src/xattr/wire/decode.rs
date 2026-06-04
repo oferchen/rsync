@@ -11,7 +11,10 @@
 use std::io::{self, Read};
 
 use crate::varint::read_varint;
-use crate::xattr::{MAX_FULL_DATUM, MAX_XATTR_DIGEST_LEN, XattrEntry, XattrList};
+use crate::xattr::{
+    MAX_FULL_DATUM, MAX_WIRE_XATTR_COUNT, MAX_WIRE_XATTR_NAME_LEN, MAX_WIRE_XATTR_VALUE_LEN,
+    MAX_XATTR_DIGEST_LEN, XattrEntry, XattrList,
+};
 
 use super::encode::compute_xattr_checksum;
 use super::types::{RecvXattrResult, XattrDefinition, XattrSet};
@@ -58,6 +61,12 @@ pub fn read_xattr_definitions<R: Read>(reader: &mut R) -> io::Result<XattrSet> {
         ));
     }
     let count = count as usize;
+    if count > MAX_WIRE_XATTR_COUNT {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("xattr count {count} exceeds maximum {MAX_WIRE_XATTR_COUNT}"),
+        ));
+    }
 
     let mut entries = Vec::with_capacity(count);
 
@@ -65,6 +74,21 @@ pub fn read_xattr_definitions<R: Read>(reader: &mut R) -> io::Result<XattrSet> {
         // upstream: name_len = read_varint(f); datum_len = read_varint(f)
         let name_len = read_varint(reader)? as usize;
         let datum_len = read_varint(reader)? as usize;
+
+        if name_len > MAX_WIRE_XATTR_NAME_LEN {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("xattr name length {name_len} exceeds maximum {MAX_WIRE_XATTR_NAME_LEN}"),
+            ));
+        }
+        if datum_len > MAX_WIRE_XATTR_VALUE_LEN {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "xattr value length {datum_len} exceeds maximum {MAX_WIRE_XATTR_VALUE_LEN}"
+                ),
+            ));
+        }
 
         let mut name = vec![0u8; name_len];
         reader.read_exact(&mut name)?;
@@ -124,11 +148,32 @@ pub fn recv_xattr<R: Read>(reader: &mut R) -> io::Result<RecvXattrResult> {
     }
 
     let count = read_varint(reader)? as usize;
+    if count > MAX_WIRE_XATTR_COUNT {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("xattr count {count} exceeds maximum {MAX_WIRE_XATTR_COUNT}"),
+        ));
+    }
     let mut list = XattrList::new();
 
     for _ in 0..count {
         let name_len = read_varint(reader)? as usize;
         let datum_len = read_varint(reader)? as usize;
+
+        if name_len > MAX_WIRE_XATTR_NAME_LEN {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("xattr name length {name_len} exceeds maximum {MAX_WIRE_XATTR_NAME_LEN}"),
+            ));
+        }
+        if datum_len > MAX_WIRE_XATTR_VALUE_LEN {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "xattr value length {datum_len} exceeds maximum {MAX_WIRE_XATTR_VALUE_LEN}"
+                ),
+            ));
+        }
 
         // upstream: name_len includes a trailing NUL terminator on the wire
         let mut name = vec![0u8; name_len];
@@ -209,6 +254,14 @@ pub fn recv_xattr_values<R: Read>(reader: &mut R, list: &mut XattrList) -> io::R
     for entry in list.entries_mut() {
         if entry.state().needs_request() {
             let len = read_varint(reader)? as usize;
+            if len > MAX_WIRE_XATTR_VALUE_LEN {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "xattr value length {len} exceeds maximum {MAX_WIRE_XATTR_VALUE_LEN}"
+                    ),
+                ));
+            }
             let mut value = vec![0u8; len];
             reader.read_exact(&mut value)?;
             entry.set_full_value(value);

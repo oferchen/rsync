@@ -66,6 +66,36 @@ pub const RSYNC_PREFIX: &str = "user.rsync.";
 #[cfg(not(target_os = "linux"))]
 pub const RSYNC_PREFIX: &str = "rsync.";
 
+/// Defence-in-depth cap on the number of xattr entries per file from the wire.
+///
+/// Linux `listxattr(2)` returns at most `XATTR_LIST_MAX` (65536) bytes of
+/// name data. With a minimum 2-byte name per entry that is at most ~32K
+/// entries. 1024 is well above any real-world usage while preventing a
+/// malicious peer from forcing billions of allocations.
+///
+/// upstream: xattrs.c `receive_xattr()` uses `EXPAND_ITEM_LIST` which
+/// reallocs but has no explicit count cap.
+pub const MAX_WIRE_XATTR_COUNT: usize = 1024;
+
+/// Defence-in-depth cap on a single xattr name length from the wire.
+///
+/// Linux `XATTR_NAME_MAX` is 255 bytes. We allow 1024 to accommodate
+/// non-Linux platforms with longer names while still bounding allocation.
+///
+/// upstream: xattrs.c checks `name_len < 1` and NUL terminator but has
+/// no upper bound beyond the overflow check against `SIZE_MAX`.
+pub const MAX_WIRE_XATTR_NAME_LEN: usize = 1024;
+
+/// Defence-in-depth cap on a single xattr value length from the wire (64 MiB).
+///
+/// Linux `XATTR_SIZE_MAX` is 65536 bytes, but some filesystems (XFS, Btrfs)
+/// and platforms (macOS resource forks) allow larger values. 64 MiB is
+/// generous enough for any legitimate xattr while bounding allocation.
+///
+/// upstream: xattrs.c does an overflow check against `SIZE_MAX` but has
+/// no practical upper bound.
+pub const MAX_WIRE_XATTR_VALUE_LEN: usize = 64 * 1024 * 1024;
+
 /// User namespace prefix for xattrs.
 pub const USER_PREFIX: &str = "user.";
 

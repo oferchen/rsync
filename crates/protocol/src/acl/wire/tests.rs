@@ -403,6 +403,36 @@ fn send_recv_file_acl_no_default() {
 }
 
 #[test]
+fn recv_ida_entries_exceeds_max_count() {
+    use crate::acl::constants::MAX_WIRE_ACL_ENTRIES;
+    use crate::varint::write_varint;
+
+    let mut data = Vec::new();
+    write_varint(&mut data, (MAX_WIRE_ACL_ENTRIES as i32) + 1).unwrap();
+
+    let mut cursor = Cursor::new(data);
+    let result = recv_ida_entries(&mut cursor);
+    assert!(result.is_err());
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("exceeds maximum"));
+}
+
+#[test]
+fn recv_ida_entries_at_max_count_accepted() {
+    use crate::varint::write_varint;
+
+    let mut data = Vec::new();
+    // Count = 0, which is <= MAX_WIRE_ACL_ENTRIES
+    write_varint(&mut data, 0).unwrap();
+
+    let mut cursor = Cursor::new(data);
+    let (entries, mask) = recv_ida_entries(&mut cursor).unwrap();
+    assert_eq!(entries.len(), 0);
+    assert_eq!(mask, 0);
+}
+
+#[test]
 fn send_recv_acl_with_mask_obj() {
     let mut acl = RsyncAcl::new();
     acl.user_obj = 0x07;
