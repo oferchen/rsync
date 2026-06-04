@@ -542,15 +542,24 @@ mod tests {
     }
 
     /// Connect to the mock server and return a client handle.
+    ///
+    /// Uses an isolated temporary known_hosts file so the test never reads
+    /// or conflicts with the system `~/.ssh/known_hosts`.
     async fn connect_to_mock(
         port: u16,
         host_pubkey: &russh::keys::PublicKey,
     ) -> russh::client::Handle<SshClientHandler> {
+        // Create an empty known_hosts in a temp dir to avoid conflicts with
+        // the system known_hosts (which may already have a different key for
+        // 127.0.0.1 at this port from prior test runs or CI jobs).
+        let kh_dir = tempfile::tempdir().expect("tempdir for known_hosts");
+        let kh_path = kh_dir.path().join("known_hosts");
+
         let handler = SshClientHandler::new(
             "127.0.0.1".to_owned(),
             port,
             super::super::types::StrictHostKeyChecking::No,
-            None,
+            Some(kh_path),
         );
 
         let client_config = Arc::new(russh::client::Config::default());
@@ -559,6 +568,8 @@ mod tests {
         russh::client::connect(client_config, ("127.0.0.1", port), handler)
             .await
             .expect("connect to mock server")
+
+        // kh_dir is dropped at end of scope, cleaning up the temp file.
     }
 
     #[tokio::test]

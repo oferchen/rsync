@@ -262,6 +262,8 @@ mod password_tests;
 mod pow_tests;
 #[path = "process.rs"]
 mod process_tests;
+#[path = "progress2_format_parity.rs"]
+mod progress2_format_parity_tests;
 #[path = "progress_format_upstream.rs"]
 mod progress_format_upstream_tests;
 #[path = "progress_live.rs"]
