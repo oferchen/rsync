@@ -148,17 +148,13 @@ fn bench_bandwidth_constrained(c: &mut Criterion) {
         let mut group = c.benchmark_group(format!("bw_constrained/{bps_label}"));
         group.throughput(Throughput::Bytes(total_bytes));
 
-        group.bench_with_input(
-            BenchmarkId::new("xxh3", bps_label),
-            &blocks,
-            |b, blocks| {
-                b.iter(|| {
-                    hash_with_bandwidth(blocks, bps, |blk| {
-                        black_box(Xxh3::digest(0, black_box(blk)));
-                    });
+        group.bench_with_input(BenchmarkId::new("xxh3", bps_label), &blocks, |b, blocks| {
+            b.iter(|| {
+                hash_with_bandwidth(blocks, bps, |blk| {
+                    black_box(Xxh3::digest(0, black_box(blk)));
                 });
-            },
-        );
+            });
+        });
 
         group.bench_with_input(
             BenchmarkId::new("xxh3_128", bps_label),
@@ -172,29 +168,21 @@ fn bench_bandwidth_constrained(c: &mut Criterion) {
             },
         );
 
-        group.bench_with_input(
-            BenchmarkId::new("md5", bps_label),
-            &blocks,
-            |b, blocks| {
-                b.iter(|| {
-                    hash_with_bandwidth(blocks, bps, |blk| {
-                        black_box(Md5::digest(black_box(blk)));
-                    });
+        group.bench_with_input(BenchmarkId::new("md5", bps_label), &blocks, |b, blocks| {
+            b.iter(|| {
+                hash_with_bandwidth(blocks, bps, |blk| {
+                    black_box(Md5::digest(black_box(blk)));
                 });
-            },
-        );
+            });
+        });
 
-        group.bench_with_input(
-            BenchmarkId::new("md4", bps_label),
-            &blocks,
-            |b, blocks| {
-                b.iter(|| {
-                    hash_with_bandwidth(blocks, bps, |blk| {
-                        black_box(Md4::digest(black_box(blk)));
-                    });
+        group.bench_with_input(BenchmarkId::new("md4", bps_label), &blocks, |b, blocks| {
+            b.iter(|| {
+                hash_with_bandwidth(blocks, bps, |blk| {
+                    black_box(Md4::digest(black_box(blk)));
                 });
-            },
-        );
+            });
+        });
 
         group.finish();
     }
@@ -341,7 +329,10 @@ fn bench_simd_vs_scalar_md5(c: &mut Criterion) {
     // --- SIMD path: restore native level, create a fresh dispatcher ---
     group.bench_function(
         BenchmarkId::new(
-            format!("simd_{}", native_backend.name().to_lowercase().replace(' ', "_")),
+            format!(
+                "simd_{}",
+                native_backend.name().to_lowercase().replace(' ', "_")
+            ),
             format!("batch{MD5_BATCH_WIDTH}"),
         ),
         |b| {
@@ -364,7 +355,10 @@ fn bench_simd_vs_scalar_md5(c: &mut Criterion) {
     });
 
     group.bench_function(
-        format!("single_simd_{}", native_backend.name().to_lowercase().replace(' ', "_")),
+        format!(
+            "single_simd_{}",
+            native_backend.name().to_lowercase().replace(' ', "_")
+        ),
         |b| {
             reset_simd_override_for_tests(SimdLevel::Auto);
             let simd_dispatcher = Dispatcher::detect();
