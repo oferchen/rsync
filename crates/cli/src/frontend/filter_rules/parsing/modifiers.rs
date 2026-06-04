@@ -256,6 +256,7 @@ mod tests {
             receiver: None,
             perishable: false,
             xattr_only: false,
+            negate: false,
         };
         let result = apply_rule_modifiers(rule, modifiers, "+").expect("apply");
         assert!(result.pattern().starts_with('/'));
@@ -270,6 +271,7 @@ mod tests {
             receiver: None,
             perishable: false,
             xattr_only: false,
+            negate: false,
         };
         let result = apply_rule_modifiers(rule, modifiers, "+").expect("apply");
         assert!(result.applies_to_sender());
@@ -284,6 +286,7 @@ mod tests {
             receiver: Some(true),
             perishable: false,
             xattr_only: false,
+            negate: false,
         };
         let result = apply_rule_modifiers(rule, modifiers, "+").expect("apply");
         assert!(result.applies_to_receiver());
@@ -298,6 +301,7 @@ mod tests {
             receiver: None,
             perishable: true,
             xattr_only: false,
+            negate: false,
         };
         let result = apply_rule_modifiers(rule, modifiers, "+").expect("apply");
         assert!(result.is_perishable());
@@ -312,6 +316,7 @@ mod tests {
             receiver: None,
             perishable: false,
             xattr_only: true,
+            negate: false,
         };
         let result = apply_rule_modifiers(rule, modifiers, "+").expect("apply");
         assert!(result.is_xattr_only());
@@ -328,6 +333,7 @@ mod tests {
             receiver: None,
             perishable: false,
             xattr_only: true,
+            negate: false,
         };
         let result = apply_rule_modifiers(rule, modifiers, "-").expect("apply");
         assert!(result.is_xattr_only());
@@ -342,6 +348,7 @@ mod tests {
             receiver: None,
             perishable: false,
             xattr_only: true,
+            negate: false,
         };
         let result = apply_rule_modifiers(rule, modifiers, "P");
         assert!(result.is_err());
