@@ -9,6 +9,14 @@ use crate::varint::{read_int, read_varint};
 
 use super::super::file_entry::{XMIT_LONG_NAME, XMIT_SAME_NAME};
 
+/// Maximum total file name length on the wire.
+///
+/// Matches upstream rsync's `MAXPATHLEN` (4096). Upstream checks
+/// `l2 >= MAXPATHLEN - l1` before allocating the name buffer.
+///
+/// upstream: rsync.h `MAXPATHLEN`, flist.c:recv_file_entry()
+const MAXPATHLEN: usize = 4096;
+
 /// Decodes a file name with prefix decompression.
 ///
 /// The rsync protocol compresses file names by sharing common prefixes with
@@ -66,6 +74,18 @@ pub fn decode_name<R: Read>(
         reader.read_exact(&mut buf)?;
         buf[0] as usize
     };
+
+    // upstream: flist.c `l2 >= MAXPATHLEN - l1` overflow exit
+    if same_len + suffix_len >= MAXPATHLEN {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "filename length {} exceeds maximum {}",
+                same_len + suffix_len,
+                MAXPATHLEN - 1,
+            ),
+        ));
+    }
 
     let mut suffix = vec![0u8; suffix_len];
     reader.read_exact(&mut suffix)?;
