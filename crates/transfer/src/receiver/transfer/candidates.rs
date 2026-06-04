@@ -23,7 +23,7 @@ use crate::receiver::quick_check::{
     dest_mtime_newer, is_hardlink_follower, quick_check_matches, try_reference_dest,
 };
 use crate::receiver::stats::TransferStats;
-use crate::receiver::{apply_acls_from_receiver_cache, ReceiverContext};
+use crate::receiver::{ReceiverContext, apply_acls_from_receiver_cache};
 
 impl ReceiverContext {
     /// Builds the list of files that need transfer, applying quick-check to skip
