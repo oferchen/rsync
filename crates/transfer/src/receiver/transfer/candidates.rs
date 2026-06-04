@@ -23,7 +23,7 @@ use crate::receiver::quick_check::{
     dest_mtime_newer, is_hardlink_follower, quick_check_matches, try_reference_dest,
 };
 use crate::receiver::stats::TransferStats;
-use crate::receiver::{ReceiverContext, apply_acls_from_receiver_cache};
+use crate::receiver::{apply_acls_from_receiver_cache, ReceiverContext};
 
 impl ReceiverContext {
     /// Builds the list of files that need transfer, applying quick-check to skip
@@ -283,12 +283,9 @@ impl ReceiverContext {
 
         // upstream: rsync.c:set_file_attrs() -> set_acl() for ACL preservation
         if has_acls {
-            if let Err(e) = apply_acls_from_receiver_cache(
-                file_path,
-                entry,
-                acl_cache,
-                !entry.is_symlink(),
-            ) {
+            if let Err(e) =
+                apply_acls_from_receiver_cache(file_path, entry, acl_cache, !entry.is_symlink())
+            {
                 metadata_errors.push((file_path.to_path_buf(), e.to_string()));
                 return;
             }
@@ -297,9 +294,7 @@ impl ReceiverContext {
         // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
         if has_xattrs {
             if let Some(ref xattr_list) = self.resolve_xattr_list(entry) {
-                if let Err(e) =
-                    metadata::apply_xattrs_from_list(file_path, xattr_list, true)
-                {
+                if let Err(e) = metadata::apply_xattrs_from_list(file_path, xattr_list, true) {
                     metadata_errors.push((file_path.to_path_buf(), e.to_string()));
                 }
             }
