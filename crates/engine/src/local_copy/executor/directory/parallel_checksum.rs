@@ -27,6 +27,7 @@ use std::sync::Arc;
 use rayon::prelude::*;
 
 use checksums::strong::{Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
+use fast_io::mmap_reader::{MMAP_THRESHOLD, MmapReader};
 
 use crate::local_copy::buffer_pool::{BufferPool, global_buffer_pool};
 use crate::signature::SignatureAlgorithm;
@@ -138,15 +139,29 @@ pub(crate) fn prefetch_checksums(
 
 /// Computes the checksum of a single file.
 ///
-/// Uses the pre-cached `file_size` from the file list entry rather than
-/// calling `file.metadata()`, eliminating a redundant fstat syscall per file.
-/// upstream: checksum.c:402 `file_checksum()` uses the stat-cached size.
+/// upstream: checksum.c:402 `file_checksum()` uses `map_file()` (mmap) for I/O
+/// and the stat-cached size. We mirror this by trying mmap first to eliminate
+/// read syscalls, falling back to buffered reads on mmap failure.
 fn compute_file_checksum(
     path: &Path,
     file_size: u64,
     algorithm: SignatureAlgorithm,
     buffer_pool: &Arc<BufferPool>,
 ) -> Option<FileChecksum> {
+    // upstream: checksum.c:415 - map_file(fd, len, MAX_MAP_SIZE, CHUNK_SIZE)
+    // Try mmap first for files at or above the threshold - eliminates all
+    // read syscalls and enables zero-copy hashing directly from mapped pages.
+    if file_size >= MMAP_THRESHOLD {
+        if let Ok(mmap) = MmapReader::open(path) {
+            let _ = mmap.advise_sequential();
+            let digest = hash_mapped_contents(mmap.as_slice(), algorithm);
+            return Some(FileChecksum {
+                digest,
+                size: file_size,
+            });
+        }
+    }
+
     let file = File::open(path).ok()?;
     let digest = hash_file_contents(file, file_size, algorithm, buffer_pool).ok()?;
 
@@ -235,6 +250,37 @@ fn hash_file_contents(
     };
 
     Ok(digest)
+}
+
+/// Hashes memory-mapped file contents using the specified algorithm.
+///
+/// Operates on a contiguous byte slice from an mmap'd file, avoiding all
+/// read syscalls. This mirrors upstream rsync's `file_checksum()` which
+/// uses `map_file()` + `map_ptr()` to hash directly from mapped pages.
+///
+/// upstream: checksum.c:415-492 - all hash algorithms operate on map_ptr() slices
+fn hash_mapped_contents(data: &[u8], algorithm: SignatureAlgorithm) -> Vec<u8> {
+    match algorithm {
+        SignatureAlgorithm::Md4 => Md4::digest(data).as_ref().to_vec(),
+        SignatureAlgorithm::Md4Seeded { seed } => {
+            // upstream: checksum.c:377-380 - append checksum_seed as 4 LE bytes
+            let mut hasher = Md4::new();
+            hasher.update(data);
+            if seed != 0 {
+                hasher.update(&seed.to_le_bytes());
+            }
+            hasher.finalize().as_ref().to_vec()
+        }
+        SignatureAlgorithm::Md5 { seed_config } => {
+            let mut hasher = Md5::with_seed(seed_config);
+            hasher.update(data);
+            hasher.finalize().as_ref().to_vec()
+        }
+        SignatureAlgorithm::Sha1 => Sha1::digest(data).as_ref().to_vec(),
+        SignatureAlgorithm::Xxh64 { seed } => Xxh64::digest(seed, data).as_ref().to_vec(),
+        SignatureAlgorithm::Xxh3 { seed } => Xxh3::digest(seed, data).as_ref().to_vec(),
+        SignatureAlgorithm::Xxh3_128 { seed } => Xxh3_128::digest(seed, data).as_ref().to_vec(),
+    }
 }
 
 /// Checks if a file pair should be skipped based on prefetched checksums.
@@ -489,6 +535,101 @@ mod tests {
         let result = results.get(&source).unwrap();
 
         assert!(result.checksums_match());
+    }
+
+    #[test]
+    fn prefetch_checksums_mmap_path_matches_identical_large_files() {
+        let dir = create_tempdir();
+        let source = dir.path().join("large_source.bin");
+        let destination = dir.path().join("large_dest.bin");
+
+        // File size above MMAP_THRESHOLD (64 KiB) to exercise the mmap path
+        let size = (MMAP_THRESHOLD as usize) + 1024;
+        let content: Vec<u8> = (0u8..=255).cycle().take(size).collect();
+        fs::write(&source, &content).unwrap();
+        fs::write(&destination, &content).unwrap();
+
+        let pairs = vec![FilePair {
+            source: source.clone(),
+            destination: destination.clone(),
+            source_size: size as u64,
+            destination_size: size as u64,
+        }];
+
+        let algorithm = SignatureAlgorithm::Xxh3_128 { seed: 0 };
+        let results = prefetch_checksums(&pairs, algorithm);
+        let result = results.get(&source).unwrap();
+
+        assert!(result.checksums_match());
+        assert!(result.source_checksum.is_some());
+        assert!(result.destination_checksum.is_some());
+    }
+
+    #[test]
+    fn prefetch_checksums_mmap_detects_different_large_files() {
+        let dir = create_tempdir();
+        let source = dir.path().join("large_source.bin");
+        let destination = dir.path().join("large_dest.bin");
+
+        let size = (MMAP_THRESHOLD as usize) + 1024;
+        let src_content: Vec<u8> = (0u8..=255).cycle().take(size).collect();
+        let mut dst_content = src_content.clone();
+        // Flip a byte near the end to force a checksum difference
+        dst_content[size - 1] ^= 0xFF;
+        fs::write(&source, &src_content).unwrap();
+        fs::write(&destination, &dst_content).unwrap();
+
+        let pairs = vec![FilePair {
+            source: source.clone(),
+            destination: destination.clone(),
+            source_size: size as u64,
+            destination_size: size as u64,
+        }];
+
+        let algorithm = SignatureAlgorithm::Xxh3_128 { seed: 0 };
+        let results = prefetch_checksums(&pairs, algorithm);
+        let result = results.get(&source).unwrap();
+
+        assert!(!result.checksums_match());
+    }
+
+    #[test]
+    fn hash_mapped_matches_buffered_for_all_algorithms() {
+        let dir = create_tempdir();
+        let size = (MMAP_THRESHOLD as usize) + 512;
+        let content: Vec<u8> = (0u8..=255).cycle().take(size).collect();
+        let path = dir.path().join("test_file.bin");
+        fs::write(&path, &content).unwrap();
+
+        let buffer_pool = global_buffer_pool();
+
+        // Test each algorithm produces identical results via mmap vs buffered
+        let algorithms: Vec<SignatureAlgorithm> = vec![
+            SignatureAlgorithm::Md5 {
+                seed_config: checksums::strong::Md5Seed::none(),
+            },
+            SignatureAlgorithm::Xxh3 { seed: 42 },
+            SignatureAlgorithm::Xxh3_128 { seed: 42 },
+            SignatureAlgorithm::Xxh64 { seed: 42 },
+            SignatureAlgorithm::Sha1,
+            SignatureAlgorithm::Md4,
+        ];
+
+        for algorithm in algorithms {
+            // Mmap path
+            let mmap = MmapReader::open(&path).unwrap();
+            let mmap_digest = hash_mapped_contents(mmap.as_slice(), algorithm);
+
+            // Buffered path
+            let file = File::open(&path).unwrap();
+            let buffered_digest =
+                hash_file_contents(file, size as u64, algorithm, &buffer_pool).unwrap();
+
+            assert_eq!(
+                mmap_digest, buffered_digest,
+                "mmap and buffered digests differ for {algorithm:?}",
+            );
+        }
     }
 
     #[test]
