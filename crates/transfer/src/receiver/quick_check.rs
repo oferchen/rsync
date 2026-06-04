@@ -269,7 +269,8 @@ fn file_checksum_matches(
         return false;
     };
     let mut hasher = ChecksumVerifier::for_algorithm(algorithm);
-    let mut buf = [0u8; 64 * 1024];
+    // upstream: rsync.h:159 MAX_MAP_SIZE = 256*1024
+    let mut buf = vec![0u8; 256 * 1024];
     let mut remaining = file_size;
     while remaining > 0 {
         let to_read = buf.len().min(remaining as usize);
