@@ -557,6 +557,11 @@ jobs:
           brew install openssl@3 || true
           echo "OPENSSL_DIR=$(brew --prefix openssl@3)" >> "$GITHUB_ENV"
 
+      - name: Configure vendored OpenSSL for cross-compile
+        if: matrix.arch == 'x86_64'
+        shell: bash
+        run: echo "OC_RSYNC_PACKAGE_FEATURES=openssl-vendored" >> "$GITHUB_ENV"
+
       - name: Build tarball
         shell: bash
         run: cargo xtask package --tarball --tarball-target ${{ matrix.target }} --profile dist
