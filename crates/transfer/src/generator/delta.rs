@@ -11,14 +11,18 @@
 //! - `sender.c:354-430` - File transfer with delta or whole-file paths
 //! - `token.c` - Token encoding with optional compression
 
+#[cfg(test)]
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use logging::debug_log;
 use protocol::wire::{
-    CHUNK_SIZE, CompressedTokenEncoder, DeltaOp, write_token_end, write_token_stream,
+    CHUNK_SIZE, CompressedTokenEncoder, DeltaOp, write_token_block_match, write_token_end,
+    write_token_literal,
 };
+#[cfg(test)]
+use protocol::wire::write_token_stream;
 use protocol::{ChecksumAlgorithm, CompressionAlgorithm};
 
 use engine::delta::{DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken};
@@ -280,12 +284,18 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
 /// byte that will appear in the reconstructed file through `sum_update()`,
 /// including matched-block data read back from the source via `map_ptr()`.
 ///
+/// Superseded by [`write_delta_with_inline_checksum`] which computes the
+/// checksum in the same pass as the wire write, eliminating a second file
+/// open+read. Retained for tests that need to verify the checksum
+/// independently of the wire write.
+///
 /// # Upstream Reference
 ///
 /// - `match.c:370` - `sum_init(xfer_sum_nni, checksum_seed)`
 /// - `match.c:383-385` - `sum_update()` on literal data
 /// - `match.c:matched():131-135` - `sum_update()` on matched block data
 /// - `checksum.c:686` - `sum_end(char *sum)` finalizes into caller buffer
+#[cfg(test)]
 pub(super) fn compute_file_checksum(
     script: &DeltaScript,
     algorithm: ChecksumAlgorithm,
@@ -381,28 +391,16 @@ pub(super) fn script_to_wire_delta(script: DeltaScript, block_length: u32) -> Ve
 
 /// Writes delta tokens to the wire, using compression if enabled.
 ///
-/// When compression is None or `CompressionAlgorithm::None`, uses the plain
-/// token format (`write_token_stream`). Otherwise, uses the compressed token
-/// format with DEFLATED_DATA headers as expected by upstream rsync.
-///
-/// For CPRES_ZLIB mode, after each block match token the matched block's data
-/// is fed to the compressor dictionary via `see_token()`, keeping the deflate
-/// stream synchronized between sender and receiver. The receiver performs the
-/// corresponding `see_deflate_token()` call. CPRES_ZLIBX skips this step.
-///
-/// # Arguments
-///
-/// * `writer` - Output stream for compressed tokens
-/// * `ops` - Delta operations to encode
-/// * `compression` - Negotiated compression algorithm
-/// * `source_path` - Path to the source file, needed to re-read matched block
-///   data for CPRES_ZLIB dictionary synchronization
+/// Superseded by [`write_delta_with_inline_checksum`] which merges checksum
+/// computation into the same pass. Retained for tests that verify compression
+/// independently of checksumming.
 ///
 /// # Upstream Reference
 ///
 /// - `token.c:send_token()` - switches between simple and deflated token sending
 /// - `token.c:send_deflated_token()` lines 460-484 - dictionary sync after block match
 /// - `token.c:see_deflate_token()` lines 631-670 - receiver-side dictionary sync
+#[cfg(test)]
 pub(super) fn write_delta_with_compression<W: Write>(
     writer: &mut W,
     ops: &[DeltaOp],
@@ -462,4 +460,126 @@ pub(super) fn write_delta_with_compression<W: Write>(
         }
         None => write_token_stream(writer, ops),
     }
+}
+
+/// Result of writing a delta to the wire with inline checksum computation.
+pub(super) struct InlineChecksumResult {
+    /// Whole-file checksum computed during the wire-write pass.
+    pub checksum_buf: [u8; ChecksumVerifier::MAX_DIGEST_LEN],
+    /// Number of valid bytes in `checksum_buf`.
+    pub checksum_len: usize,
+}
+
+/// Writes delta tokens to the wire and computes the file checksum in a single pass.
+///
+/// Merges the work of `write_delta_with_compression` and `compute_file_checksum`
+/// into one iteration over the delta ops. For Copy tokens, source data is read
+/// once and fed to both the checksum verifier and (for CPRES_ZLIB) the compressor
+/// dictionary, eliminating the extra file open+read pass that
+/// `compute_file_checksum` previously performed.
+///
+/// # Upstream Reference
+///
+/// Mirrors upstream `match.c:matched()` where `sum_update()` and `send_token()`
+/// operate on the same `map_ptr()` data in a single pass, and
+/// `token.c:send_deflated_token()` feeds the same data to the compressor
+/// dictionary.
+pub(super) fn write_delta_with_inline_checksum<W: Write>(
+    writer: &mut W,
+    ops: &[DeltaOp],
+    encoder: Option<&mut CompressedTokenEncoder>,
+    is_zlib: bool,
+    source_path: &Path,
+    use_noatime: bool,
+    checksum_algorithm: ChecksumAlgorithm,
+) -> io::Result<InlineChecksumResult> {
+    let mut verifier = ChecksumVerifier::for_algorithm(checksum_algorithm);
+
+    // Lazily open source file only when Copy tokens are present.
+    // A single file handle serves both checksum and dictionary sync.
+    let has_copies = ops.iter().any(|op| matches!(op, DeltaOp::Copy { .. }));
+    let mut source_file = if has_copies {
+        Some(io::BufReader::new(
+            super::open_source::open_source_with_noatime(source_path, use_noatime)?,
+        ))
+    } else {
+        None
+    };
+    let mut source_offset: u64 = 0;
+    let mut read_buf = Vec::new();
+
+    match encoder {
+        Some(encoder) => {
+            let needs_dict_sync = is_zlib && has_copies;
+
+            for op in ops {
+                match op {
+                    DeltaOp::Literal(data) => {
+                        verifier.update(data);
+                        encoder.send_literal(writer, data)?;
+                        source_offset += data.len() as u64;
+                    }
+                    DeltaOp::Copy {
+                        block_index,
+                        length,
+                    } => {
+                        encoder.send_block_match(writer, *block_index)?;
+
+                        // Read block data once, feed to both checksum and dict sync.
+                        let len = *length as usize;
+                        read_buf.clear();
+                        read_buf.resize(len, 0);
+                        if let Some(ref mut file) = source_file {
+                            file.seek(SeekFrom::Start(source_offset))?;
+                            file.read_exact(&mut read_buf)?;
+                        }
+                        verifier.update(&read_buf);
+                        if needs_dict_sync {
+                            encoder.see_token(&read_buf)?;
+                        }
+                        source_offset += u64::from(*length);
+                    }
+                }
+            }
+
+            encoder.finish(writer)?;
+        }
+        None => {
+            // Uncompressed path: write tokens and compute checksum in one pass.
+            for op in ops {
+                match op {
+                    DeltaOp::Literal(data) => {
+                        verifier.update(data);
+                        write_token_literal(writer, data)?;
+                    }
+                    DeltaOp::Copy {
+                        block_index,
+                        length,
+                    } => {
+                        write_token_block_match(writer, *block_index)?;
+
+                        // Read block data for checksum computation.
+                        let len = *length as usize;
+                        read_buf.clear();
+                        read_buf.resize(len, 0);
+                        if let Some(ref mut file) = source_file {
+                            file.seek(SeekFrom::Start(source_offset))?;
+                            file.read_exact(&mut read_buf)?;
+                        }
+                        verifier.update(&read_buf);
+                        source_offset += u64::from(*length);
+                    }
+                }
+            }
+            write_token_end(writer)?;
+        }
+    }
+
+    let mut checksum_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    let checksum_len = verifier.finalize_into(&mut checksum_buf);
+
+    Ok(InlineChecksumResult {
+        checksum_buf,
+        checksum_len,
+    })
 }
