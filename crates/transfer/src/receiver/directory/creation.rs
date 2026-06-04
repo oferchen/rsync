@@ -11,7 +11,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use logging::{debug_log, info_log};
-use metadata::{MetadataOptions, apply_metadata_from_file_entry};
+use metadata::{MetadataOptions, apply_metadata_with_cached_stat};
 use protocol::acl::AclCache;
 use protocol::flist::FileEntry;
 use protocol::xattr::XattrList;
@@ -189,7 +189,7 @@ impl ReceiverContext {
                 .for_op(crate::parallel_io::ParallelOp::Metadata),
             move |(dir_path, entry, xattr_list)| {
                 if let Err(e) =
-                    apply_metadata_from_file_entry(&dir_path, &entry, &metadata_opts_clone)
+                    apply_metadata_with_cached_stat(&dir_path, &entry, &metadata_opts_clone, None)
                 {
                     return Some((dir_path, e.to_string()));
                 }
@@ -386,7 +386,9 @@ impl ReceiverContext {
         }
 
         // Apply metadata (non-fatal errors)
-        if let Err(e) = apply_metadata_from_file_entry(&dir_path, entry, metadata_opts) {
+        // Skip the stat inside apply_metadata_from_file_entry: the
+        // directory was just created, so pass None to apply unconditionally.
+        if let Err(e) = apply_metadata_with_cached_stat(&dir_path, entry, metadata_opts, None) {
             if self.config.flags.verbose && self.config.connection.client_mode {
                 info_log!(
                     Misc,
