@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use super::super::wire_path::path_bytes_to_wire;
 use super::FileEntry;
-use super::core::extract_dirname;
+use super::core::{
+    PRESENT_HLINKED, PRESENT_HLINK_FIRST, PRESENT_TOP_DIR, extract_dirname,
+};
 use super::extras::FileEntryExtras;
 use super::file_type::FileType;
 
@@ -147,14 +149,20 @@ impl FileEntry {
         self.size = size;
     }
 
-    /// Returns the Unix mode bits (type + permissions).
+    /// Returns the Unix mode bits (type + permissions) as `u32`.
+    ///
+    /// Internally stored as `u16` (matching upstream rsync's `uint16 mode`,
+    /// rsync.h:805). Widened to `u32` on return for API compatibility.
     #[inline]
     #[must_use]
     pub const fn mode(&self) -> u32 {
-        self.mode
+        self.mode as u32
     }
 
     /// Sets the Unix mode bits (type + permissions).
+    ///
+    /// Truncates to 16 bits - only the lower 16 bits carry meaning in POSIX
+    /// mode values (4-bit type mask + 12-bit permissions).
     ///
     /// Used to create mode-0 sentinel entries for `--delete-missing-args`,
     /// where the receiver interprets `mode == 0` as a deletion signal.
@@ -164,20 +172,20 @@ impl FileEntry {
     /// - `flist.c:2257` - `file->mode = 0` for delete-missing-args sentinel
     #[inline]
     pub fn set_mode(&mut self, mode: u32) {
-        self.mode = mode;
+        self.mode = mode as u16;
     }
 
     /// Returns the permission bits only (without type).
     #[inline]
     #[must_use]
     pub const fn permissions(&self) -> u32 {
-        self.mode & 0o7777
+        (self.mode as u32) & 0o7777
     }
 
     /// Returns the file type.
     #[must_use]
     pub fn file_type(&self) -> FileType {
-        FileType::from_mode(self.mode).unwrap_or(FileType::Regular)
+        FileType::from_mode(self.mode as u32).unwrap_or(FileType::Regular)
     }
 
     /// Returns the modification time as seconds since Unix epoch.
@@ -241,46 +249,93 @@ impl FileEntry {
         })
     }
 
-    /// Returns the wire format flags.
+    /// Returns true if this is a top-level directory in the transfer.
+    ///
+    /// Corresponds to upstream's `FLAG_TOP_DIR`. Used to scope `--delete`
+    /// to top-level directories. Stored in the `present` bitfield rather
+    /// than a separate `FileFlags` struct.
+    #[inline]
     #[must_use]
-    pub const fn flags(&self) -> super::super::flags::FileFlags {
-        self.flags
+    pub const fn top_dir(&self) -> bool {
+        self.present & PRESENT_TOP_DIR != 0
     }
 
-    /// Sets the wire format flags.
-    ///
-    /// Used by the generator to mark top-level directories with `XMIT_TOP_DIR`.
-    pub fn set_flags(&mut self, flags: super::super::flags::FileFlags) {
-        self.flags = flags;
+    /// Sets or clears the top-directory flag.
+    #[inline]
+    pub fn set_top_dir(&mut self, top: bool) {
+        if top {
+            self.present |= PRESENT_TOP_DIR;
+        } else {
+            self.present &= !PRESENT_TOP_DIR;
+        }
     }
 
-    /// Returns a mutable reference to the wire format flags.
+    /// Returns true if this entry has hardlink information.
     ///
-    /// Used by `match_hard_links()` to reassign leader/follower status in-place
-    /// after sorting without copying the entire flags struct.
-    pub fn flags_mut(&mut self) -> &mut super::super::flags::FileFlags {
-        &mut self.flags
+    /// Corresponds to upstream's `FLAG_HLINKED`. Indicates the entry belongs
+    /// to a hardlink group. Stored in the `present` bitfield.
+    #[inline]
+    #[must_use]
+    pub const fn hlinked(&self) -> bool {
+        self.present & PRESENT_HLINKED != 0
+    }
+
+    /// Sets or clears the hardlink flag.
+    ///
+    /// Called by `normalize_pre30_hardlinks()` and `match_hard_links()` to
+    /// mark entries that belong to a hardlink group.
+    #[inline]
+    pub fn set_hlinked(&mut self, linked: bool) {
+        if linked {
+            self.present |= PRESENT_HLINKED;
+        } else {
+            self.present &= !PRESENT_HLINKED;
+        }
+    }
+
+    /// Returns true if this is the first (leader) entry in a hardlink group.
+    ///
+    /// Corresponds to upstream's `FLAG_HLINK_FIRST`. Only meaningful when
+    /// `hlinked()` is also true.
+    #[inline]
+    #[must_use]
+    pub const fn hlink_first(&self) -> bool {
+        self.present & PRESENT_HLINK_FIRST != 0
+    }
+
+    /// Sets or clears the hardlink-first flag.
+    ///
+    /// Called by `match_hard_links()` after sorting to reassign
+    /// leader/follower status based on sorted order rather than wire order.
+    /// upstream: hlink.c:match_hard_links() reassigns FLAG_HLINK_FIRST.
+    #[inline]
+    pub fn set_hlink_first(&mut self, first: bool) {
+        if first {
+            self.present |= PRESENT_HLINK_FIRST;
+        } else {
+            self.present &= !PRESENT_HLINK_FIRST;
+        }
     }
 
     /// Returns true if this entry is a directory.
     #[inline]
     #[must_use]
     pub const fn is_dir(&self) -> bool {
-        self.mode & 0o170000 == 0o040000 // S_IFDIR
+        self.mode as u32 & 0o170000 == 0o040000 // S_IFDIR
     }
 
     /// Returns true if this entry is a regular file.
     #[inline]
     #[must_use]
     pub const fn is_file(&self) -> bool {
-        self.mode & 0o170000 == 0o100000 // S_IFREG
+        self.mode as u32 & 0o170000 == 0o100000 // S_IFREG
     }
 
     /// Returns true if this entry is a symbolic link.
     #[inline]
     #[must_use]
     pub const fn is_symlink(&self) -> bool {
-        self.mode & 0o170000 == 0o120000 // S_IFLNK
+        self.mode as u32 & 0o170000 == 0o120000 // S_IFLNK
     }
 
     /// Sets the modification time.
@@ -541,7 +596,7 @@ impl FileEntry {
     #[inline]
     #[must_use]
     pub const fn is_device(&self) -> bool {
-        let type_bits = self.mode & 0o170000;
+        let type_bits = self.mode as u32 & 0o170000;
         type_bits == 0o060000 || type_bits == 0o020000 // S_IFBLK or S_IFCHR
     }
 
@@ -549,21 +604,21 @@ impl FileEntry {
     #[inline]
     #[must_use]
     pub const fn is_block_device(&self) -> bool {
-        self.mode & 0o170000 == 0o060000 // S_IFBLK
+        self.mode as u32 & 0o170000 == 0o060000 // S_IFBLK
     }
 
     /// Returns true if this entry is a character device.
     #[inline]
     #[must_use]
     pub const fn is_char_device(&self) -> bool {
-        self.mode & 0o170000 == 0o020000 // S_IFCHR
+        self.mode as u32 & 0o170000 == 0o020000 // S_IFCHR
     }
 
     /// Returns true if this entry is a special file (socket or FIFO).
     #[inline]
     #[must_use]
     pub const fn is_special(&self) -> bool {
-        let type_bits = self.mode & 0o170000;
+        let type_bits = self.mode as u32 & 0o170000;
         type_bits == 0o140000 || type_bits == 0o010000 // S_IFSOCK or S_IFIFO
     }
 
