@@ -107,6 +107,13 @@ impl<'a> CopyContext<'a> {
     }
 
     /// Executes all queued deferred deletions, unless I/O errors suppress them.
+    ///
+    /// Deletions modify the parent directory's mtime. When `-t` is active the
+    /// directory mtime was already set by `apply_final_directory_metadata`.
+    /// Capture each directory's mtime before deletion and restore it afterwards
+    /// to match upstream rsync's behaviour where the receiver sets directory
+    /// times independently of the generator's delayed-deletion phase.
+    // upstream: generator.c:2419 do_delayed_deletions() runs after generate_files()
     pub(super) fn flush_deferred_deletions(&mut self) -> Result<(), LocalCopyError> {
         if !self.deletions_allowed() {
             // I/O errors occurred and --ignore-errors is not set;
@@ -114,11 +121,25 @@ impl<'a> CopyContext<'a> {
             self.deferred_ops.deletions.clear();
             return Ok(());
         }
+        let preserve_times = self.metadata_options().times()
+            && !self.omit_dir_times_enabled();
         let pending = std::mem::take(&mut self.deferred_ops.deletions);
         for entry in pending {
             self.enforce_timeout()?;
+            // Capture directory mtime before deletion modifies it.
+            let saved_times = if preserve_times {
+                fs::metadata(&entry.destination).ok().map(|m| {
+                    filetime::FileTime::from_last_modification_time(&m)
+                })
+            } else {
+                None
+            };
             let relative = entry.relative.as_deref();
             delete_extraneous_entries(self, entry.destination.as_path(), relative, &entry.keep)?;
+            // Restore directory mtime that deletion invalidated.
+            if let Some(mtime) = saved_times {
+                let _ = filetime::set_file_mtime(&entry.destination, mtime);
+            }
         }
         Ok(())
     }
