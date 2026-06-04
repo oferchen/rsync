@@ -352,8 +352,7 @@ impl ZlibTokenDecoder {
 
                 if (next_flag & 0xC0) == DEFLATED_DATA {
                     let next_len = read_deflated_data_length(reader, next_flag)?;
-                    if self.compressed_input_buf.len() + next_len
-                        > MAX_ACCUMULATED_COMPRESSED_BYTES
+                    if self.compressed_input_buf.len() + next_len > MAX_ACCUMULATED_COMPRESSED_BYTES
                     {
                         return Err(io::Error::new(
                             io::ErrorKind::InvalidData,
