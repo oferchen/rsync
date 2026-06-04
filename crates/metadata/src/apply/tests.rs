@@ -1150,7 +1150,7 @@ fn metadata_unchanged_returns_true_when_all_attrs_match() {
     let mut entry = FileEntry::new_file(
         "unchanged.txt".into(),
         4,
-        meta.permissions().mode() & 0o7777,
+        meta.mode() & 0o7777,
     );
     entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
     entry.set_uid(meta.uid());
@@ -1181,7 +1181,7 @@ fn metadata_unchanged_returns_false_on_permission_mismatch() {
     let mtime = FileTime::from_last_modification_time(&meta);
 
     // Use different permissions than what's on disk
-    let disk_mode = meta.permissions().mode() & 0o7777;
+    let disk_mode = meta.mode() & 0o7777;
     let different_mode = disk_mode ^ 0o020; // flip group write bit
 
     let mut entry = FileEntry::new_file("perm-mismatch.txt".into(), 4, different_mode);
@@ -1215,7 +1215,7 @@ fn metadata_unchanged_returns_false_on_mtime_mismatch() {
     let mut entry = FileEntry::new_file(
         "mtime-mismatch.txt".into(),
         4,
-        meta.permissions().mode() & 0o7777,
+        meta.mode() & 0o7777,
     );
     // Set a different mtime
     entry.set_mtime(1_600_000_000, 0);
