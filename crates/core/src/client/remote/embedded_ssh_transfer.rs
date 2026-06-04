@@ -20,6 +20,7 @@
 //! - `main.c:client_run()` - Role dispatch after SSH connection
 
 use std::ffi::OsString;
+use std::io::BufReader;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -301,12 +302,15 @@ fn run_transfer_over_embedded_ssh(
         Some(data)
     };
 
-    let (mut reader, mut writer) = rsync_io::ssh::embedded::connect_and_exec(
+    let (reader, mut writer) = rsync_io::ssh::embedded::connect_and_exec(
         &ssh_config,
         &remote_command,
         stdin_data.as_deref(),
     )
     .map_err(|e| invalid_argument_error(&format!("embedded SSH connection failed: {e}"), 5))?;
+
+    // upstream: io.c read_buf() uses 32KB read-ahead buffering.
+    let mut reader = BufReader::with_capacity(32768, reader);
 
     let start = Instant::now();
     let batch_recording = batch_ctx.as_ref().map(|ctx| {
@@ -340,8 +344,9 @@ fn run_transfer_over_embedded_ssh(
     // transfer succeeded; a failed transfer carries the more informative
     // diagnostic and should not be masked by a shutdown-phase error.
     drop(writer);
+    let mut channel_reader = reader.into_inner();
     let goodbye_outcome =
-        reader.wait_for_eof_with_timeout(rsync_io::ssh::embedded::SSH_GOODBYE_TIMEOUT);
+        channel_reader.wait_for_eof_with_timeout(rsync_io::ssh::embedded::SSH_GOODBYE_TIMEOUT);
     let elapsed = start.elapsed();
 
     match transfer_result {
