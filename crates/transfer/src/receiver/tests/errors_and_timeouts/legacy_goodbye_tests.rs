@@ -65,7 +65,7 @@ fn proto29_supports_goodbye_but_not_extended() {
 
 #[test]
 fn exchange_phase_done_proto28_single_phase() {
-    let ctx = receiver_for(28);
+    let mut ctx = receiver_for(28);
 
     let mut sender_input = Vec::new();
     sender_input.extend_from_slice(&NDX_DONE_LE); // echo for phase 1
@@ -87,7 +87,7 @@ fn exchange_phase_done_proto28_single_phase() {
 
 #[test]
 fn exchange_phase_done_proto29_two_phases() {
-    let ctx = receiver_for(29);
+    let mut ctx = receiver_for(29);
 
     let mut sender_input = Vec::new();
     for _ in 0..3 {
@@ -152,7 +152,7 @@ fn legacy_ndx_done_wire_format_matches_read_int() {
 
 #[test]
 fn exchange_phase_done_proto28_reads_all_sender_bytes() {
-    let ctx = receiver_for(28);
+    let mut ctx = receiver_for(28);
 
     let mut sender_input = Vec::new();
     sender_input.extend_from_slice(&NDX_DONE_LE);
