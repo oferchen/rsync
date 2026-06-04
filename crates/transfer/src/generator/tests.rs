@@ -3506,7 +3506,8 @@ fn batched_flush_wire_byte_parity() {
     // discipline. If this assertion fails, a flush-discipline change has
     // altered the wire content, which would break receiver compatibility.
     assert_eq!(
-        batched_data, sequential_data,
+        batched_data,
+        sequential_data,
         "batched and sequential flush must produce byte-identical logical data \
          (batched={} bytes, sequential={} bytes)",
         batched_data.len(),
@@ -3589,7 +3590,8 @@ fn batched_flush_ndx_done_echo_parity() {
     let sequential_data = extract_data_payload(&sequential_wire);
 
     assert_eq!(
-        batched_data, sequential_data,
+        batched_data,
+        sequential_data,
         "NDX_DONE echo data must be byte-identical under batched vs sequential flush \
          (batched={} bytes, sequential={} bytes)",
         batched_data.len(),
@@ -3674,7 +3676,8 @@ fn batched_flush_mixed_ndx_and_data_parity() {
     let sequential_data = extract_data_payload(&sequential_wire);
 
     assert_eq!(
-        batched_data, sequential_data,
+        batched_data,
+        sequential_data,
         "mixed NDX+data must be byte-identical under batched vs sequential flush \
          (batched={} bytes, sequential={} bytes)",
         batched_data.len(),
