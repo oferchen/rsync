@@ -254,6 +254,33 @@ fn sender_only_risk_does_not_clear_receiver_protection() {
     assert!(!set.allows_deletion(Path::new("keep/item.txt"), false));
 }
 
+/// upstream testsuite: `--include=/down/ --exclude='/*'` must allow files
+/// inside `down/` because the anchored `/*` exclude only matches root-level
+/// items and does not propagate to descendants via pattern expansion.
+///
+/// Regression test for #5421.
+#[test]
+fn anchored_wildcard_exclude_allows_included_directory_contents() {
+    let rules = [
+        FilterRule::include("/down/"),
+        FilterRule::exclude("/*"),
+    ];
+    let set = FilterSet::from_rules(rules).expect("compiled");
+
+    // `down/` is explicitly included - matched by the include rule.
+    assert!(set.allows(Path::new("down"), true));
+
+    // Files inside `down/` must be allowed - they do not match any rule
+    // (the anchored `/*` only matches root-level names), so the default
+    // allow-all applies.
+    assert!(set.allows(Path::new("down/file.txt"), false));
+    assert!(set.allows(Path::new("down/sub/deep.txt"), false));
+
+    // Root-level items other than `down/` are excluded by `/*`.
+    assert!(!set.allows(Path::new("other.txt"), false));
+    assert!(!set.allows(Path::new("build"), true));
+}
+
 /// Tests for negated pattern matching (upstream rsync `!` modifier).
 mod negate_tests {
     use super::*;
