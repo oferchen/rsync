@@ -140,9 +140,7 @@ pub(crate) fn copy_directory_recursive(
         // upstream: generator.c:recv_generator() - directory records appear
         // BEFORE their children in the itemize output. Emit the record
         // immediately so it precedes child entries in the record stream.
-        if !record_emitted
-            && let Some((ref rel_path, ref snapshot)) = metadata_record
-        {
+        if !record_emitted && let Some((ref rel_path, ref snapshot)) = metadata_record {
             context.record(
                 LocalCopyRecord::new(
                     rel_path.clone(),
