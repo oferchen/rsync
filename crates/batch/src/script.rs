@@ -23,6 +23,25 @@ use std::os::unix::fs::PermissionsExt;
 ///   without a shebang line. The `.sh` file is opened with mode `S_IRUSR |
 ///   S_IWUSR | S_IXUSR` (0o700).
 pub fn generate_script(config: &BatchConfig) -> BatchResult<()> {
+    generate_script_with_filters(config, None)
+}
+
+/// Generate a shell script for replaying a batch file with optional filter rules.
+///
+/// When `filter_rules` is `Some`, the script includes `--filter=._-` (protocol
+/// 29+) or `--exclude-from=-` (older protocols) and appends the rules as a
+/// heredoc so that the replay applies the same filters used during batch
+/// creation.
+///
+/// # Upstream Reference
+///
+/// - `batch.c:205-222`: `write_filter_rules()` embeds filter rules in the
+///   shell script using a `<<'#E#'` heredoc.
+/// - `batch.c:262-267`: filter option selection based on protocol version.
+pub fn generate_script_with_filters(
+    config: &BatchConfig,
+    filter_rules: Option<&str>,
+) -> BatchResult<()> {
     let script_path = config.script_file_path();
     let batch_name = config.batch_file_path().to_string_lossy();
     let mut file = File::create(&script_path).map_err(|e| {
@@ -33,11 +52,39 @@ pub fn generate_script(config: &BatchConfig) -> BatchResult<()> {
     })?;
 
     // upstream: write_batch_shell_file() writes the command without a shebang
-    writeln!(
-        file,
-        "oc-rsync --read-batch={} ${{1:-.}}",
-        shell_quote(&batch_name)
-    )?;
+    write!(file, "oc-rsync")?;
+
+    // upstream: batch.c:262-267 - embed filter option before --read-batch
+    // so the heredoc at the end of the script feeds rules into stdin
+    if filter_rules.is_some() {
+        if config.protocol_version >= 29 {
+            // upstream: batch.c:263-264 write_opt("--filter", "._-")
+            write!(file, " --filter=._-")?;
+        } else {
+            // upstream: batch.c:265-266 write_opt("--exclude-from", "-")
+            write!(file, " --exclude-from=-")?;
+        }
+    }
+
+    // upstream: batch.c:292-294 - write --read-batch with the batch file path
+    write!(file, " --read-batch={}", shell_quote(&batch_name))?;
+
+    // upstream: batch.c:300-304 - destination placeholder
+    write!(file, " ${{1:-.}}")?;
+
+    // upstream: batch.c:305-306 - append filter rules as heredoc
+    if let Some(rules) = filter_rules {
+        // upstream: batch.c:209 write_sbuf(fd, " <<'#E#'\n")
+        writeln!(file, " <<'#E#'")?;
+        write!(file, "{rules}")?;
+        if !rules.ends_with('\n') {
+            writeln!(file)?;
+        }
+        // upstream: batch.c:221 write_sbuf(fd, "#E#")
+        write!(file, "#E#")?;
+    }
+
+    writeln!(file)?;
 
     file.flush()?;
 
@@ -465,6 +512,108 @@ mod tests {
             !content.contains("--include=*.txt"),
             "Include args should be stripped: {content}"
         );
+    }
+
+    /// Verify that `generate_script_with_filters` embeds filter rules via heredoc
+    /// and adds --filter=._- for protocol >= 29.
+    ///
+    /// upstream: batch.c:205-222 write_filter_rules() + batch.c:262-267 option.
+    #[test]
+    fn test_generate_script_with_filters_embeds_heredoc() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("test.batch");
+
+        let config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            31,
+        );
+
+        let filter_rules = "- *.tmp\n+ */\n+ *.txt\n- *\n";
+
+        let result = generate_script_with_filters(&config, Some(filter_rules));
+        assert!(result.is_ok());
+
+        let script_path = config.script_file_path();
+        let content = fs::read_to_string(&script_path).unwrap();
+
+        assert!(
+            content.contains("--filter=._-"),
+            "Script must include --filter=._- for protocol >= 29: {content}"
+        );
+        assert!(content.contains("--read-batch="));
+        assert!(content.contains("<<'#E#'"));
+        assert!(content.contains(filter_rules));
+        assert!(content.contains("#E#"));
+        assert!(
+            !content.starts_with("#!/bin/sh"),
+            "Upstream rsync batch scripts have no shebang"
+        );
+    }
+
+    /// Verify that `generate_script_with_filters` without rules produces a
+    /// clean script with no heredoc or filter options.
+    #[test]
+    fn test_generate_script_with_filters_none_produces_clean_script() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("test.batch");
+
+        let config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            31,
+        );
+
+        let result = generate_script_with_filters(&config, None);
+        assert!(result.is_ok());
+
+        let script_path = config.script_file_path();
+        let content = fs::read_to_string(&script_path).unwrap();
+
+        assert!(
+            !content.contains("--filter"),
+            "No --filter option without filter rules: {content}"
+        );
+        assert!(
+            !content.contains("#E#"),
+            "No heredoc without filter rules: {content}"
+        );
+        assert!(content.contains("--read-batch="));
+        assert!(content.contains("oc-rsync"));
+    }
+
+    /// Verify that protocol < 29 uses --exclude-from=- instead of --filter=._-.
+    ///
+    /// upstream: batch.c:265-266 write_opt("--exclude-from", "-")
+    #[test]
+    fn test_generate_script_with_filters_protocol_28_exclude_from() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("test.batch");
+
+        let config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            28,
+        );
+
+        let filter_rules = "- *.log\n";
+
+        let result = generate_script_with_filters(&config, Some(filter_rules));
+        assert!(result.is_ok());
+
+        let script_path = config.script_file_path();
+        let content = fs::read_to_string(&script_path).unwrap();
+
+        assert!(
+            content.contains("--exclude-from=-"),
+            "Script must include --exclude-from=- for protocol < 29: {content}"
+        );
+        assert!(
+            !content.contains("--filter=._-"),
+            "Should not use --filter for protocol < 29: {content}"
+        );
+        assert!(content.contains("<<'#E#'"));
+        assert!(content.contains("- *.log"));
     }
 
     #[test]
