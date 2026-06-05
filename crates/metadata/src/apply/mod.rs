@@ -206,24 +206,24 @@ pub fn apply_file_metadata_with_fd_if_changed(
 ///   when `unchanged_attrs` would fail (implicit - upstream always calls
 ///   `set_file_attrs` but its internal guards skip every syscall when nothing
 ///   differs)
+#[inline]
 pub fn metadata_unchanged(
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
     cached_meta: &fs::Metadata,
 ) -> bool {
-    // upstream: generator.c:487-488 - perms_differ(file, sxp)
-    #[cfg(unix)]
-    if options.permissions() {
-        use std::os::unix::fs::MetadataExt;
-        if (cached_meta.mode() & 0o7777) != (entry.permissions() & 0o7777) {
-            return false;
-        }
-    }
-
-    // upstream: generator.c:489-490 - ownership_differs(file, sxp)
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
+
+        // upstream: generator.c:487-488 - perms_differ(file, sxp)
+        if options.permissions()
+            && (cached_meta.mode() & 0o7777) != (entry.permissions() & 0o7777)
+        {
+            return false;
+        }
+
+        // upstream: generator.c:489-490 - ownership_differs(file, sxp)
         if options.owner() {
             if let Some(uid) = entry.uid() {
                 if cached_meta.uid() != uid {
@@ -238,22 +238,43 @@ pub fn metadata_unchanged(
                 }
             }
         }
-    }
 
-    // upstream: generator.c:485-486 - any_time_differs(sxp, file, fname)
-    if options.times() {
-        let current_mtime = filetime::FileTime::from_last_modification_time(cached_meta);
-        let entry_mtime = filetime::FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
-        if current_mtime != entry_mtime {
+        // upstream: generator.c:485-486 - any_time_differs(sxp, file, fname)
+        // Compare raw seconds + nanoseconds directly instead of constructing
+        // FileTime structs on the hot path.
+        if options.times()
+            && (cached_meta.mtime() != entry.mtime()
+                || cached_meta.mtime_nsec() as u32 != entry.mtime_nsec())
+        {
+            return false;
+        }
+
+        // upstream: rsync.c unchanged_attrs - atime comparison uses seconds only
+        if options.atimes()
+            && entry.atime() != 0
+            && (cached_meta.atime() != entry.atime() || cached_meta.atime_nsec() != 0)
+        {
             return false;
         }
     }
 
-    if options.atimes() && entry.atime() != 0 {
-        let current_atime = filetime::FileTime::from_last_access_time(cached_meta);
-        let entry_atime = filetime::FileTime::from_unix_time(entry.atime(), 0);
-        if current_atime != entry_atime {
-            return false;
+    #[cfg(not(unix))]
+    {
+        if options.times() {
+            let current_mtime = filetime::FileTime::from_last_modification_time(cached_meta);
+            let entry_mtime =
+                filetime::FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
+            if current_mtime != entry_mtime {
+                return false;
+            }
+        }
+
+        if options.atimes() && entry.atime() != 0 {
+            let current_atime = filetime::FileTime::from_last_access_time(cached_meta);
+            let entry_atime = filetime::FileTime::from_unix_time(entry.atime(), 0);
+            if current_atime != entry_atime {
+                return false;
+            }
         }
     }
 
@@ -263,7 +284,6 @@ pub fn metadata_unchanged(
     #[cfg(unix)]
     if let Some(chmod) = options.chmod() {
         use std::os::unix::fs::MetadataExt;
-        // Start with the entry's mode when -p is active, else the current mode
         let base_mode = if options.permissions() {
             entry.permissions()
         } else {
@@ -279,7 +299,6 @@ pub fn metadata_unchanged(
         return false;
     }
 
-    // Owner/group overrides: compare override values against cached stat.
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;

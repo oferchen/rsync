@@ -193,10 +193,6 @@ impl ReceiverContext {
                     size_only,
                     always_checksum,
                 ) {
-                    // upstream: generator.c:1814 - set_file_attrs() + itemize()
-                    // for files that passed quick-check. Metadata is applied to
-                    // synchronize ownership/permissions/timestamps even when the
-                    // file content is unchanged.
                     self.apply_no_change_metadata(
                         writer,
                         &file_path,
