@@ -286,7 +286,10 @@ fn apply_cli_overrides(ssh_config: &mut SshConfig, config: &ClientConfig) {
     // This mirrors the subprocess SSH path (ssh_transfer.rs) where
     // config.connect_timeout().effective(30s) drives -o ConnectTimeout.
     if !ssh_connect_timeout_set {
-        if let Some(duration) = config.connect_timeout().effective(ssh_config.connect_timeout) {
+        if let Some(duration) = config
+            .connect_timeout()
+            .effective(ssh_config.connect_timeout)
+        {
             ssh_config.connect_timeout = duration;
         } else {
             // TransferTimeout::Disabled (--contimeout=0) - disable connect timeout.
@@ -777,8 +780,8 @@ mod tests {
 
     #[test]
     fn contimeout_applied_as_fallback_when_no_ssh_connect_timeout() {
-        use std::num::NonZeroU64;
         use super::super::super::TransferTimeout;
+        use std::num::NonZeroU64;
 
         let mut ssh_config = SshConfig::default();
         let config = ClientConfig::builder()
@@ -791,8 +794,8 @@ mod tests {
 
     #[test]
     fn ssh_connect_timeout_takes_precedence_over_contimeout() {
-        use std::num::NonZeroU64;
         use super::super::super::TransferTimeout;
+        use std::num::NonZeroU64;
 
         let mut ssh_config = SshConfig::default();
         let config = ClientConfig::builder()
@@ -817,7 +820,11 @@ mod tests {
 
         let mut ssh_config = SshConfig::default();
         let original_timeout = ssh_config.connect_timeout;
-        assert_ne!(original_timeout, Duration::ZERO, "precondition: default is non-zero");
+        assert_ne!(
+            original_timeout,
+            Duration::ZERO,
+            "precondition: default is non-zero"
+        );
 
         let config = ClientConfig::builder()
             .connect_timeout(TransferTimeout::Disabled)
@@ -851,8 +858,8 @@ mod tests {
 
     #[test]
     fn contimeout_with_embedded_ssh_config_but_no_ssh_timeout() {
-        use std::num::NonZeroU64;
         use super::super::super::TransferTimeout;
+        use std::num::NonZeroU64;
 
         let mut ssh_config = SshConfig::default();
         let config = ClientConfig::builder()
