@@ -504,10 +504,8 @@ mod tests {
         ];
         let filter_text = serialize_filter_rules(&rules);
 
-        let result = engine::batch::script::generate_script_with_filters(
-            &batch_cfg,
-            Some(&filter_text),
-        );
+        let result =
+            engine::batch::script::generate_script_with_filters(&batch_cfg, Some(&filter_text));
         assert!(result.is_ok());
 
         let script_path = batch_cfg.script_file_path();

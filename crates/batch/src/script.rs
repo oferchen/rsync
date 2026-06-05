@@ -67,11 +67,7 @@ pub fn generate_script_with_filters(
     }
 
     // upstream: batch.c:292-294 - write --read-batch with the batch file path
-    write!(
-        file,
-        " --read-batch={}",
-        shell_quote(&batch_name)
-    )?;
+    write!(file, " --read-batch={}", shell_quote(&batch_name))?;
 
     // upstream: batch.c:300-304 - destination placeholder
     write!(file, " ${{1:-.}}")?;
