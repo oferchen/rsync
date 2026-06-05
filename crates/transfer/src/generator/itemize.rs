@@ -43,6 +43,7 @@ impl Default for ItemizeContext {
     }
 }
 
+#[cfg(test)]
 /// Formats the 11-character itemize string from raw item flags and file entry.
 ///
 /// Produces the upstream `YXcstpoguax` string where:
@@ -208,6 +209,9 @@ pub(crate) fn format_iflags(
 /// Produces `"{iflags_str} {filename}\n"` matching upstream's default
 /// `stdout_format = "%i %n%L"` when `--itemize-changes` is active.
 ///
+/// Uses a single `String` buffer to avoid intermediate allocations from
+/// `format_iflags`, path display, and symlink target formatting.
+///
 /// # Upstream Reference
 ///
 /// - `options.c:2336-2338` - `stdout_format = "%i %n%L"` for `-i`
@@ -219,28 +223,166 @@ pub(crate) fn format_itemize_line(
     is_sender: bool,
     ctx: &ItemizeContext,
 ) -> String {
-    let iflags_str = format_iflags(iflags, entry, is_sender, ctx);
+    use std::fmt::Write;
+
+    // Pre-allocate: 11 (iflags) + 1 (space) + ~32 (path estimate) + 1 (newline)
+    let mut buf = String::with_capacity(48);
+    write_iflags_into(&mut buf, iflags, entry, is_sender, ctx);
+    buf.push(' ');
+
+    // upstream: log.c:627-636 - %n expansion
     let path = entry.path();
-    let path_display = path.display();
+    let _ = write!(buf, "{}", path.display());
 
     // upstream: log.c:633-634 - append '/' for directories
-    let name = if entry.is_dir() {
-        format!("{path_display}/")
-    } else {
-        path_display.to_string()
-    };
+    if entry.is_dir() {
+        buf.push('/');
+    }
 
     // upstream: log.c:637-653 - append " -> target" for symlinks
-    let link_target = if entry.is_symlink() {
-        entry
-            .link_target()
-            .map(|t| format!(" -> {}", t.display()))
-            .unwrap_or_default()
+    if entry.is_symlink() {
+        if let Some(target) = entry.link_target() {
+            let _ = write!(buf, " -> {}", target.display());
+        }
+    }
+
+    buf.push('\n');
+    buf
+}
+
+/// Writes the 11-character itemize flags directly into a `String` buffer.
+///
+/// Avoids the intermediate `String` allocation of [`format_iflags`] by
+/// appending characters directly. The logic mirrors `format_iflags` exactly.
+fn write_iflags_into(
+    buf: &mut String,
+    iflags: &ItemFlags,
+    entry: &FileEntry,
+    is_sender: bool,
+    ctx: &ItemizeContext,
+) {
+    let raw = iflags.raw();
+
+    // upstream: log.c:696-698 - deleted items
+    if raw & ItemFlags::ITEM_DELETED != 0 {
+        buf.push_str("*deleting  ");
+        return;
+    }
+
+    let mut c = ['.'; 11];
+
+    c[0] = if raw & ItemFlags::ITEM_LOCAL_CHANGE != 0 {
+        if raw & ItemFlags::ITEM_XNAME_FOLLOWS != 0 {
+            'h'
+        } else {
+            'c'
+        }
+    } else if raw & ItemFlags::ITEM_TRANSFER == 0 {
+        '.'
+    } else if is_sender {
+        '<'
     } else {
-        String::new()
+        '>'
     };
 
-    format!("{iflags_str} {name}{link_target}\n")
+    let is_symlink = entry.is_symlink();
+    c[1] = if is_symlink {
+        'L'
+    } else if entry.is_dir() {
+        'd'
+    } else if entry.is_special() {
+        'S'
+    } else if entry.is_device() {
+        'D'
+    } else {
+        'f'
+    };
+
+    c[2] = if raw & ItemFlags::ITEM_REPORT_CHANGE != 0 {
+        'c'
+    } else {
+        '.'
+    };
+
+    c[3] = if is_symlink {
+        '.'
+    } else if raw & ItemFlags::ITEM_REPORT_SIZE != 0 {
+        's'
+    } else {
+        '.'
+    };
+
+    c[4] = if raw & ItemFlags::ITEM_REPORT_TIME == 0 {
+        '.'
+    } else if is_symlink {
+        if !ctx.preserve_mtimes
+            || !ctx.receiver_symlink_times
+            || (raw & ItemFlags::ITEM_REPORT_TIMEFAIL != 0)
+        {
+            'T'
+        } else {
+            't'
+        }
+    } else if !ctx.preserve_mtimes {
+        'T'
+    } else {
+        't'
+    };
+
+    c[5] = if raw & ItemFlags::ITEM_REPORT_PERMS != 0 {
+        'p'
+    } else {
+        '.'
+    };
+    c[6] = if raw & ItemFlags::ITEM_REPORT_OWNER != 0 {
+        'o'
+    } else {
+        '.'
+    };
+    c[7] = if raw & ItemFlags::ITEM_REPORT_GROUP != 0 {
+        'g'
+    } else {
+        '.'
+    };
+
+    let has_atime = raw & ItemFlags::ITEM_REPORT_ATIME != 0;
+    let has_crtime = raw & ItemFlags::ITEM_REPORT_CRTIME != 0;
+    c[8] = match (has_atime, has_crtime) {
+        (true, true) => 'b',
+        (true, false) => 'u',
+        (false, true) => 'n',
+        (false, false) => '.',
+    };
+
+    c[9] = if raw & ItemFlags::ITEM_REPORT_ACL != 0 {
+        'a'
+    } else {
+        '.'
+    };
+    c[10] = if raw & ItemFlags::ITEM_REPORT_XATTR != 0 {
+        'x'
+    } else {
+        '.'
+    };
+
+    if raw & (ItemFlags::ITEM_IS_NEW | ItemFlags::ITEM_MISSING_DATA) != 0 {
+        let ch = if raw & ItemFlags::ITEM_IS_NEW != 0 {
+            '+'
+        } else {
+            '?'
+        };
+        for slot in c[2..].iter_mut() {
+            *slot = ch;
+        }
+    } else if matches!(c[0], '.' | 'h' | 'c') && c[2..].iter().all(|&ch| ch == '.') {
+        for slot in c[2..].iter_mut() {
+            *slot = ' ';
+        }
+    }
+
+    for &ch in &c {
+        buf.push(ch);
+    }
 }
 
 #[cfg(test)]
