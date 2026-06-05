@@ -347,8 +347,14 @@ mod tests {
         fn gid(&self) -> Option<u32> {
             None
         }
-        fn flags(&self) -> protocol::flist::FileFlags {
-            protocol::flist::FileFlags::from_u32(0)
+        fn top_dir(&self) -> bool {
+            false
+        }
+        fn hlinked(&self) -> bool {
+            false
+        }
+        fn hlink_first(&self) -> bool {
+            false
         }
         fn content_dir(&self) -> bool {
             self.is_dir()
