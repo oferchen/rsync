@@ -79,3 +79,7 @@ harness = false
 [[bench]]
 name = "ssh_sync_vs_async"
 harness = false
+
+[[bench]]
+name = "concurrent_session_scaling"
+harness = false
