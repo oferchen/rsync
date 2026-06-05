@@ -130,17 +130,25 @@ mod tests {
         assert!(!rendered.contains("{{PREV_VERSION}}"));
     }
 
+    fn init_git_repo(dir: &Path) {
+        Command::new("git")
+            .args(["init"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args(["-c", "user.name=test", "-c", "user.email=test@test.com", "commit", "--allow-empty", "-m", "init"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+    }
+
     #[test]
     fn render_to_file_creates_output() {
         let dir = tempdir().unwrap();
         create_test_workspace(dir.path());
 
-        // Initialize a git repo so find_previous_tag works
-        Command::new("git")
-            .args(["init"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
+        init_git_repo(dir.path());
         Command::new("git")
             .args(["tag", "v0.5.0"])
             .current_dir(dir.path())
@@ -165,11 +173,7 @@ mod tests {
         let dir = tempdir().unwrap();
         create_test_workspace(dir.path());
 
-        Command::new("git")
-            .args(["init"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
+        init_git_repo(dir.path());
 
         let output_path = dir.path().join("RELEASE.md");
 
@@ -196,11 +200,7 @@ mod tests {
     #[test]
     fn find_previous_tag_falls_back_to_v0() {
         let dir = tempdir().unwrap();
-        Command::new("git")
-            .args(["init"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
+        init_git_repo(dir.path());
 
         let tag = find_previous_tag(dir.path(), "v1.0.0").unwrap();
         assert_eq!(tag, "v0.0.0");
@@ -209,16 +209,7 @@ mod tests {
     #[test]
     fn find_previous_tag_skips_current_version() {
         let dir = tempdir().unwrap();
-        Command::new("git")
-            .args(["init"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args(["commit", "--allow-empty", "-m", "init"])
-            .current_dir(dir.path())
-            .output()
-            .unwrap();
+        init_git_repo(dir.path());
         Command::new("git")
             .args(["tag", "v0.5.0"])
             .current_dir(dir.path())
