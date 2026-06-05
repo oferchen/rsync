@@ -87,6 +87,7 @@ pub(crate) fn copy_directory_recursive(
     let list_start = Instant::now();
     let entries = read_directory_entries_sorted(source)?;
     context.record_file_list_generation(list_start.elapsed());
+    context.reserve_event_capacity(entries.len());
     context.register_progress();
 
     let dir_merge_guard = context.enter_directory(source)?;
