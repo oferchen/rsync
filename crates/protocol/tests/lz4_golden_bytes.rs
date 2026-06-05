@@ -729,7 +729,7 @@ fn golden_lz4_output_differs_from_zstd() {
     let lz4_encoded = lz4_encode(&[Lz4TestToken::Literal(input.to_vec())]);
 
     // Encode with zstd
-    let mut zstd_encoder = CompressedTokenEncoder::new_zstd(3).unwrap();
+    let mut zstd_encoder = CompressedTokenEncoder::new_zstd(3, None).unwrap();
     let mut zstd_encoded = Vec::new();
     zstd_encoder.send_literal(&mut zstd_encoded, input).unwrap();
     zstd_encoder.finish(&mut zstd_encoded).unwrap();

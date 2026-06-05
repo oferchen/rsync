@@ -198,6 +198,17 @@ impl ServerConfigBuilder {
         self
     }
 
+    /// Sets the zstd worker thread count from `--compress-threads=N`.
+    ///
+    /// Forwarded to `ZSTD_c_nbWorkers` when zstd is the negotiated
+    /// compression algorithm.
+    ///
+    /// upstream: `options.c:89`, `token.c:701`
+    pub fn compression_threads(&mut self, threads: Option<std::num::NonZeroU8>) -> &mut Self {
+        self.connection.compression_threads = threads;
+        self
+    }
+
     /// Sets pre-read `--files-from` data for forwarding to a remote daemon.
     pub fn files_from_data(&mut self, data: Option<Vec<u8>>) -> &mut Self {
         self.connection.files_from_data = data;

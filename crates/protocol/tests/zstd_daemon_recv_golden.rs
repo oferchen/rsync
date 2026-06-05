@@ -61,7 +61,7 @@ fn medium_input() -> Vec<u8> {
 
 /// Encodes a literal-only stream using zstd at daemon default level (3).
 fn encode_literal_only(input: &[u8]) -> Vec<u8> {
-    let mut encoder = CompressedTokenEncoder::new_zstd(3).unwrap();
+    let mut encoder = CompressedTokenEncoder::new_zstd(3, None).unwrap();
     let mut output = Vec::new();
     encoder.send_literal(&mut output, input).unwrap();
     encoder.finish(&mut output).unwrap();
@@ -70,7 +70,7 @@ fn encode_literal_only(input: &[u8]) -> Vec<u8> {
 
 /// Encodes a mixed literal + block-match stream at daemon default level (3).
 fn encode_mixed(literals: &[&[u8]], block_indices: &[u32]) -> Vec<u8> {
-    let mut encoder = CompressedTokenEncoder::new_zstd(3).unwrap();
+    let mut encoder = CompressedTokenEncoder::new_zstd(3, None).unwrap();
     let mut output = Vec::new();
 
     // Interleave: literal, block, literal, block, ...
@@ -380,7 +380,7 @@ fn golden_zstd_daemon_recv_decode_interleaved() {
 /// state resets between files)
 #[test]
 fn golden_zstd_daemon_recv_multi_file_session() {
-    let mut encoder = CompressedTokenEncoder::new_zstd(3).unwrap();
+    let mut encoder = CompressedTokenEncoder::new_zstd(3, None).unwrap();
     let mut wire = Vec::new();
 
     // File 1: daemon auth response
@@ -446,7 +446,7 @@ fn golden_zstd_daemon_recv_multi_file_session() {
 #[test]
 fn golden_zstd_daemon_recv_cross_file_dictionary_benefit() {
     // Encode file 1 then file 2 in a session
-    let mut encoder = CompressedTokenEncoder::new_zstd(3).unwrap();
+    let mut encoder = CompressedTokenEncoder::new_zstd(3, None).unwrap();
     let mut session_wire = Vec::new();
 
     let shared_content = b"drwxr-xr-x  2 root root 4096 shared_data.txt\n";
@@ -491,12 +491,12 @@ fn golden_zstd_daemon_recv_cross_file_dictionary_benefit() {
 fn golden_zstd_daemon_recv_level_3_differs_from_level_1() {
     let input = medium_input();
 
-    let mut enc3 = CompressedTokenEncoder::new_zstd(3).unwrap();
+    let mut enc3 = CompressedTokenEncoder::new_zstd(3, None).unwrap();
     let mut wire3 = Vec::new();
     enc3.send_literal(&mut wire3, &input).unwrap();
     enc3.finish(&mut wire3).unwrap();
 
-    let mut enc1 = CompressedTokenEncoder::new_zstd(1).unwrap();
+    let mut enc1 = CompressedTokenEncoder::new_zstd(1, None).unwrap();
     let mut wire1 = Vec::new();
     enc1.send_literal(&mut wire1, &input).unwrap();
     enc1.finish(&mut wire1).unwrap();

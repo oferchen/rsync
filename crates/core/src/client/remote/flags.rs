@@ -262,6 +262,8 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // for top-level source paths and --files-from entries.
     server_config.file_selection.ignore_missing_args = config.ignore_missing_args();
     server_config.file_selection.delete_missing_args = config.delete_missing_args();
+    // upstream: options.c:89 do_compression_threads, token.c:701 ZSTD_c_nbWorkers
+    server_config.connection.compression_threads = config.compression_threads();
 }
 
 #[cfg(test)]
@@ -371,6 +373,25 @@ mod tests {
         apply_common_server_flags(&config, &mut server_config);
         assert!(!server_config.file_selection.ignore_missing_args);
         assert!(!server_config.file_selection.delete_missing_args);
+    }
+
+    #[test]
+    fn apply_common_server_flags_propagates_compression_threads() {
+        let threads = std::num::NonZeroU8::new(4).unwrap();
+        let config = ClientConfig::builder()
+            .compression_threads(Some(threads))
+            .build();
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert_eq!(server_config.connection.compression_threads, Some(threads));
+    }
+
+    #[test]
+    fn apply_common_server_flags_compression_threads_default_none() {
+        let config = ClientConfig::default();
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert_eq!(server_config.connection.compression_threads, None);
     }
 
     #[test]

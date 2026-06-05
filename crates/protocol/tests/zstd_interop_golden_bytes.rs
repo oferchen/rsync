@@ -96,7 +96,7 @@ fn decode_all_zstd(data: &[u8]) -> (Vec<u8>, Vec<u32>) {
 
 /// Encodes a literal-only token stream at the given zstd compression level.
 fn encode_literal(data: &[u8], level: i32) -> Vec<u8> {
-    let mut encoder = CompressedTokenEncoder::new_zstd(level).unwrap();
+    let mut encoder = CompressedTokenEncoder::new_zstd(level, None).unwrap();
     let mut output = Vec::new();
     encoder.send_literal(&mut output, data).unwrap();
     encoder.finish(&mut output).unwrap();
@@ -105,7 +105,7 @@ fn encode_literal(data: &[u8], level: i32) -> Vec<u8> {
 
 /// Encodes a mixed stream of literals and block matches.
 fn encode_mixed(tokens: &[InteropToken], level: i32) -> Vec<u8> {
-    let mut encoder = CompressedTokenEncoder::new_zstd(level).unwrap();
+    let mut encoder = CompressedTokenEncoder::new_zstd(level, None).unwrap();
     let mut output = Vec::new();
 
     for token in tokens {
@@ -685,7 +685,7 @@ fn interop_multi_file_session_persistent_context() {
         b"# config.yml\nhost: rsync.example.com\nport: 873\nmodule: backup\n",
     ];
 
-    let mut encoder = CompressedTokenEncoder::new_zstd(3).unwrap();
+    let mut encoder = CompressedTokenEncoder::new_zstd(3, None).unwrap();
     let mut wire = Vec::new();
 
     // Encode all three files
@@ -727,7 +727,7 @@ fn interop_cross_file_dictionary_improves_compression() {
     let shared_line = b"drwxr-xr-x  2 root root 4096 shared_module_data.txt\n";
 
     // Encode file 1 (establishes dictionary) then file 2 (benefits)
-    let mut encoder = CompressedTokenEncoder::new_zstd(3).unwrap();
+    let mut encoder = CompressedTokenEncoder::new_zstd(3, None).unwrap();
     let mut session_wire = Vec::new();
 
     encoder
@@ -965,7 +965,7 @@ fn interop_roundtrip_incremental_transfer_pattern() {
 /// upstream: token.c:772-775 - token==-1 with no preceding data
 #[test]
 fn interop_roundtrip_empty_file() {
-    let mut encoder = CompressedTokenEncoder::new_zstd(3).unwrap();
+    let mut encoder = CompressedTokenEncoder::new_zstd(3, None).unwrap();
     let mut wire = Vec::new();
     encoder.finish(&mut wire).unwrap();
 

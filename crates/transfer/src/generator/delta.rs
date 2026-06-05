@@ -37,9 +37,14 @@ use crate::role_trailer::error_location;
 /// files - upstream rsync uses a single compression context for the entire
 /// session. Call `encoder.reset()` is handled internally by `finish()`.
 ///
+/// `workers` plumbs `--compress-threads=N` through to zstd's
+/// `ZSTD_c_nbWorkers`. Ignored for non-zstd algorithms.
+///
 /// upstream: token.c dispatches on `do_compression` to select the codec.
+/// upstream: token.c:701 - `ZSTD_CCtx_setParameter(.., ZSTD_c_nbWorkers, ..)`
 pub(super) fn create_token_encoder(
     algo: CompressionAlgorithm,
+    workers: Option<std::num::NonZeroU8>,
 ) -> io::Result<Option<CompressedTokenEncoder>> {
     match algo {
         CompressionAlgorithm::Zlib | CompressionAlgorithm::ZlibX => {
@@ -50,10 +55,16 @@ pub(super) fn create_token_encoder(
             Ok(Some(enc))
         }
         #[cfg(feature = "zstd")]
-        CompressionAlgorithm::Zstd => Ok(Some(CompressedTokenEncoder::new_zstd(3)?)),
+        CompressionAlgorithm::Zstd => Ok(Some(CompressedTokenEncoder::new_zstd(3, workers)?)),
         #[cfg(feature = "lz4")]
-        CompressionAlgorithm::LZ4 => Ok(Some(CompressedTokenEncoder::new_lz4())),
-        _ => Ok(None),
+        CompressionAlgorithm::LZ4 => {
+            let _ = workers;
+            Ok(Some(CompressedTokenEncoder::new_lz4()))
+        }
+        _ => {
+            let _ = workers;
+            Ok(None)
+        }
     }
 }
 
@@ -514,4 +525,51 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
         checksum_buf,
         checksum_len,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn create_token_encoder_zstd_no_workers() {
+        let encoder = create_token_encoder(CompressionAlgorithm::Zstd, None)
+            .expect("zstd encoder creation should succeed");
+        assert!(encoder.is_some(), "zstd should produce an encoder");
+    }
+
+    #[cfg(feature = "zstd")]
+    #[test]
+    fn create_token_encoder_zstd_with_workers() {
+        let workers = std::num::NonZeroU8::new(1);
+        let encoder = create_token_encoder(CompressionAlgorithm::Zstd, workers)
+            .expect("zstd encoder with workers=1 should succeed");
+        assert!(encoder.is_some(), "zstd should produce an encoder");
+    }
+
+    #[test]
+    fn create_token_encoder_zlib_ignores_workers() {
+        let workers = std::num::NonZeroU8::new(4);
+        let encoder = create_token_encoder(CompressionAlgorithm::Zlib, workers)
+            .expect("zlib encoder should succeed even with workers");
+        assert!(encoder.is_some(), "zlib should produce an encoder");
+    }
+
+    #[test]
+    fn create_token_encoder_zlibx_ignores_workers() {
+        let workers = std::num::NonZeroU8::new(4);
+        let encoder = create_token_encoder(CompressionAlgorithm::ZlibX, workers)
+            .expect("zlibx encoder should succeed even with workers");
+        assert!(encoder.is_some(), "zlibx should produce an encoder");
+    }
+
+    #[cfg(feature = "lz4")]
+    #[test]
+    fn create_token_encoder_lz4_ignores_workers() {
+        let workers = std::num::NonZeroU8::new(4);
+        let encoder = create_token_encoder(CompressionAlgorithm::LZ4, workers)
+            .expect("lz4 encoder should succeed even with workers");
+        assert!(encoder.is_some(), "lz4 should produce an encoder");
+    }
 }
