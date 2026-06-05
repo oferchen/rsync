@@ -583,9 +583,7 @@ mod tests {
         let after_incompressible = ctrl.current_level();
         assert!(
             after_incompressible < after_compressible,
-            "level should decrease after switching to incompressible data: {} vs {}",
-            after_incompressible,
-            after_compressible,
+            "level should decrease after switching to incompressible data: {after_incompressible} vs {after_compressible}",
         );
     }
 
