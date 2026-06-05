@@ -242,11 +242,7 @@ fn build_entries(count: usize, path_fn: fn(usize) -> PathBuf) -> Vec<FileEntry> 
 /// path distribution, then prints a detailed per-entry overhead report.
 ///
 /// Returns (rss_delta_bytes, entries_count) for assertion use.
-fn measure_and_report(
-    label: &str,
-    count: usize,
-    path_fn: fn(usize) -> PathBuf,
-) -> (usize, usize) {
+fn measure_and_report(label: &str, count: usize, path_fn: fn(usize) -> PathBuf) -> (usize, usize) {
     // Force a GC-like settling by dropping any prior large allocations.
     // The allocator may not return pages to the OS immediately, but the
     // delta measurement is still meaningful within a single run.
@@ -279,11 +275,10 @@ fn measure_and_report(
         rss_delta as f64 / 1_048_576.0
     );
     eprintln!("  Per-entry RSS:           {per_entry_rss:.1}B");
-    eprintln!(
-        "  Upstream reference:      {UPSTREAM_BYTES_PER_ENTRY:.1}B/entry"
-    );
+    eprintln!("  Upstream reference:      {UPSTREAM_BYTES_PER_ENTRY:.1}B/entry");
     eprintln!("  Ratio vs upstream:       {vs_upstream:.2}x");
-    eprintln!("  Heap overhead/entry:     {:.1}B (RSS - Vec backing)",
+    eprintln!(
+        "  Heap overhead/entry:     {:.1}B (RSS - Vec backing)",
         (rss_delta.saturating_sub(vec_backing)) as f64 / entry_count as f64
     );
     eprintln!("=================================================");
@@ -388,16 +383,12 @@ fn bench_scaling_linearity(c: &mut Criterion) {
 
     for &count in SCALES {
         group.throughput(Throughput::Elements(count as u64));
-        group.bench_with_input(
-            BenchmarkId::from_parameter(count),
-            &count,
-            |b, &n| {
-                b.iter(|| {
-                    let entries = build_entries(n, shared_path);
-                    black_box(&entries);
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, &n| {
+            b.iter(|| {
+                let entries = build_entries(n, shared_path);
+                black_box(&entries);
+            });
+        });
     }
 
     // Print scaling analysis.
