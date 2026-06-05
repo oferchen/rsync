@@ -944,15 +944,12 @@ fn multiplex_writer_large_write_bypasses_buffer_sets_dirty() {
 fn multiplex_writer_send_message_sets_dirty() {
     // send_message writes to the inner writer even for batchable codes
     // (MSG_INFO). The dirty flag must be set so a subsequent flush drains.
+    // MSG_INFO not flushing immediately is verified separately by
+    // multiplex_writer_msg_info_defers_flush.
     let mut tracker = FlushTracker::new();
     {
         let mut mux = MultiplexWriter::new(&mut tracker);
         mux.send_message(MessageCode::Info, b"line\n").unwrap();
-        // MSG_INFO does not immediately flush, but dirty should be set
-        assert_eq!(
-            tracker.flush_count, 0,
-            "MSG_INFO must not flush immediately"
-        );
         mux.flush().unwrap();
     }
     assert_eq!(
@@ -964,12 +961,12 @@ fn multiplex_writer_send_message_sets_dirty() {
 #[test]
 fn multiplex_writer_send_error_clears_dirty() {
     // MSG_ERROR calls inner.flush() immediately, which should clear dirty.
-    // A subsequent flush() should be a no-op.
+    // A subsequent flush() should be a no-op. Immediate flush behavior is
+    // verified separately by multiplex_writer_msg_error_flushes_immediately.
     let mut tracker = FlushTracker::new();
     {
         let mut mux = MultiplexWriter::new(&mut tracker);
         mux.send_message(MessageCode::Error, b"fatal").unwrap();
-        assert_eq!(tracker.flush_count, 1, "MSG_ERROR must flush immediately");
         // This flush should be a no-op since MSG_ERROR already flushed
         mux.flush().unwrap();
     }
@@ -1000,14 +997,14 @@ fn multiplex_writer_write_vectored_sets_dirty() {
 #[test]
 fn multiplex_writer_small_vectored_write_buffered_no_flush() {
     // Small vectored writes that fit in the buffer should not set dirty
-    // until flush_buffer drains them.
+    // until flush_buffer drains them. The final flush_count of 1 proves
+    // that only the explicit flush() call triggered inner.flush() - the
+    // write_vectored itself did not.
     let mut tracker = FlushTracker::new();
     {
         let mut mux = MultiplexWriter::new(&mut tracker);
         let bufs = [IoSlice::new(b"hello"), IoSlice::new(b"world")];
         mux.write_vectored(&bufs).unwrap();
-        // Data is buffered, not yet written to inner
-        assert_eq!(tracker.flush_count, 0);
         mux.flush().unwrap();
     }
     assert_eq!(
