@@ -226,52 +226,72 @@ fn parse_remote_operands_urls(
     }
 }
 
-/// Applies CLI `--ssh-*` overrides to an `SshConfig`.
+/// Applies CLI `--ssh-*` overrides and `--contimeout` fallback to an `SshConfig`.
+///
+/// `--ssh-connect-timeout` takes precedence over `--contimeout`. When neither
+/// is set, `SshConfig`'s default (30s) is preserved. When `--contimeout` is
+/// explicitly disabled (value 0), the connect timeout is set to zero, mirroring
+/// how the subprocess SSH path handles `TransferTimeout::Disabled`.
+///
+/// upstream: options.c - `--contimeout` is forwarded as SSH's `-o ConnectTimeout`.
 fn apply_cli_overrides(ssh_config: &mut SshConfig, config: &ClientConfig) {
-    let Some(opts) = config.embedded_ssh_config() else {
-        return;
-    };
+    let mut ssh_connect_timeout_set = false;
 
-    if !opts.ciphers.is_empty() {
-        ssh_config.ciphers = Some(opts.ciphers.clone());
+    if let Some(opts) = config.embedded_ssh_config() {
+        if !opts.ciphers.is_empty() {
+            ssh_config.ciphers = Some(opts.ciphers.clone());
+        }
+
+        if let Some(timeout_secs) = opts.connect_timeout_secs {
+            ssh_config.connect_timeout = Duration::from_secs(timeout_secs);
+            ssh_connect_timeout_set = true;
+        }
+
+        if let Some(keepalive_secs) = opts.keepalive_interval_secs {
+            ssh_config.keepalive_interval = if keepalive_secs == 0 {
+                None
+            } else {
+                Some(Duration::from_secs(keepalive_secs))
+            };
+        }
+
+        if !opts.identity_files.is_empty() {
+            ssh_config.identity_files = opts.identity_files.clone();
+        }
+
+        if opts.no_agent {
+            ssh_config.use_agent = false;
+        }
+
+        if let Some(ref policy) = opts.strict_host_key_checking {
+            use rsync_io::ssh::embedded::StrictHostKeyChecking;
+            ssh_config.strict_host_key_checking = match policy.as_str() {
+                "yes" => StrictHostKeyChecking::Yes,
+                "no" => StrictHostKeyChecking::No,
+                _ => StrictHostKeyChecking::Ask,
+            };
+        }
+
+        if opts.prefer_ipv6 {
+            use rsync_io::ssh::embedded::IpPreference;
+            ssh_config.ip_preference = IpPreference::PreferV6;
+        }
+
+        if let Some(port) = opts.port {
+            ssh_config.port = port;
+        }
     }
 
-    if let Some(timeout_secs) = opts.connect_timeout_secs {
-        ssh_config.connect_timeout = Duration::from_secs(timeout_secs);
-    }
-
-    if let Some(keepalive_secs) = opts.keepalive_interval_secs {
-        ssh_config.keepalive_interval = if keepalive_secs == 0 {
-            None
+    // Apply --contimeout as fallback when --ssh-connect-timeout was not set.
+    // This mirrors the subprocess SSH path (ssh_transfer.rs) where
+    // config.connect_timeout().effective(30s) drives -o ConnectTimeout.
+    if !ssh_connect_timeout_set {
+        if let Some(duration) = config.connect_timeout().effective(ssh_config.connect_timeout) {
+            ssh_config.connect_timeout = duration;
         } else {
-            Some(Duration::from_secs(keepalive_secs))
-        };
-    }
-
-    if !opts.identity_files.is_empty() {
-        ssh_config.identity_files = opts.identity_files.clone();
-    }
-
-    if opts.no_agent {
-        ssh_config.use_agent = false;
-    }
-
-    if let Some(ref policy) = opts.strict_host_key_checking {
-        use rsync_io::ssh::embedded::StrictHostKeyChecking;
-        ssh_config.strict_host_key_checking = match policy.as_str() {
-            "yes" => StrictHostKeyChecking::Yes,
-            "no" => StrictHostKeyChecking::No,
-            _ => StrictHostKeyChecking::Ask,
-        };
-    }
-
-    if opts.prefer_ipv6 {
-        use rsync_io::ssh::embedded::IpPreference;
-        ssh_config.ip_preference = IpPreference::PreferV6;
-    }
-
-    if let Some(port) = opts.port {
-        ssh_config.port = port;
+            // TransferTimeout::Disabled (--contimeout=0) - disable connect timeout.
+            ssh_config.connect_timeout = Duration::ZERO;
+        }
     }
 }
 
@@ -753,5 +773,102 @@ mod tests {
             .build();
         let result = run_embedded_ssh_transfer(&config, None, None);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn contimeout_applied_as_fallback_when_no_ssh_connect_timeout() {
+        use std::num::NonZeroU64;
+        use super::super::super::TransferTimeout;
+
+        let mut ssh_config = SshConfig::default();
+        let config = ClientConfig::builder()
+            .connect_timeout(TransferTimeout::Seconds(NonZeroU64::new(15).unwrap()))
+            .build();
+
+        apply_cli_overrides(&mut ssh_config, &config);
+        assert_eq!(ssh_config.connect_timeout, Duration::from_secs(15));
+    }
+
+    #[test]
+    fn ssh_connect_timeout_takes_precedence_over_contimeout() {
+        use std::num::NonZeroU64;
+        use super::super::super::TransferTimeout;
+
+        let mut ssh_config = SshConfig::default();
+        let config = ClientConfig::builder()
+            .connect_timeout(TransferTimeout::Seconds(NonZeroU64::new(60).unwrap()))
+            .embedded_ssh_config(Some(EmbeddedSshOptions {
+                connect_timeout_secs: Some(10),
+                ..Default::default()
+            }))
+            .build();
+
+        apply_cli_overrides(&mut ssh_config, &config);
+        assert_eq!(
+            ssh_config.connect_timeout,
+            Duration::from_secs(10),
+            "--ssh-connect-timeout should take precedence over --contimeout"
+        );
+    }
+
+    #[test]
+    fn contimeout_disabled_sets_zero_timeout() {
+        use super::super::super::TransferTimeout;
+
+        let mut ssh_config = SshConfig::default();
+        let original_timeout = ssh_config.connect_timeout;
+        assert_ne!(original_timeout, Duration::ZERO, "precondition: default is non-zero");
+
+        let config = ClientConfig::builder()
+            .connect_timeout(TransferTimeout::Disabled)
+            .build();
+
+        apply_cli_overrides(&mut ssh_config, &config);
+        assert_eq!(
+            ssh_config.connect_timeout,
+            Duration::ZERO,
+            "--contimeout=0 should disable the connect timeout"
+        );
+    }
+
+    #[test]
+    fn contimeout_default_preserves_ssh_config_default() {
+        use super::super::super::TransferTimeout;
+
+        let mut ssh_config = SshConfig::default();
+        let original_timeout = ssh_config.connect_timeout;
+
+        let config = ClientConfig::builder()
+            .connect_timeout(TransferTimeout::Default)
+            .build();
+
+        apply_cli_overrides(&mut ssh_config, &config);
+        assert_eq!(
+            ssh_config.connect_timeout, original_timeout,
+            "default --contimeout should preserve SshConfig's default timeout"
+        );
+    }
+
+    #[test]
+    fn contimeout_with_embedded_ssh_config_but_no_ssh_timeout() {
+        use std::num::NonZeroU64;
+        use super::super::super::TransferTimeout;
+
+        let mut ssh_config = SshConfig::default();
+        let config = ClientConfig::builder()
+            .connect_timeout(TransferTimeout::Seconds(NonZeroU64::new(25).unwrap()))
+            .embedded_ssh_config(Some(EmbeddedSshOptions {
+                no_agent: true,
+                ..Default::default()
+            }))
+            .build();
+
+        apply_cli_overrides(&mut ssh_config, &config);
+        assert!(!ssh_config.use_agent, "--ssh-no-agent should still apply");
+        assert_eq!(
+            ssh_config.connect_timeout,
+            Duration::from_secs(25),
+            "--contimeout should apply when --ssh-connect-timeout is not set"
+        );
     }
 }
