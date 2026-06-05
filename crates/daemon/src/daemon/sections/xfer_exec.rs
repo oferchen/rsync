@@ -14,8 +14,9 @@ fn xfer_exec_enabled() -> bool {
 /// environment variables for pre/post-xfer exec commands.
 ///
 /// Upstream: `clientserver.c` sets `RSYNC_MODULE_NAME`, `RSYNC_MODULE_PATH`,
-/// `RSYNC_HOST_ADDR`, `RSYNC_HOST_NAME`, `RSYNC_USER_NAME`, and
-/// `RSYNC_REQUEST` before invoking `pre-xfer exec` and `post-xfer exec`.
+/// `RSYNC_HOST_ADDR`, `RSYNC_HOST_NAME`, `RSYNC_USER_NAME`, `RSYNC_REQUEST`,
+/// `RSYNC_ARG#`, and `RSYNC_PID` before invoking `pre-xfer exec` and
+/// `post-xfer exec`.
 struct XferExecContext<'a> {
     module_name: &'a str,
     module_path: &'a Path,
@@ -23,6 +24,12 @@ struct XferExecContext<'a> {
     host_name: Option<&'a str>,
     user_name: Option<&'a str>,
     request: &'a str,
+    /// Numbered client arguments for `RSYNC_ARG0`, `RSYNC_ARG1`, etc.
+    ///
+    /// upstream: clientserver.c:write_pre_exec_args() - sets `RSYNC_ARG<n>`
+    /// for each argument the client sent. `RSYNC_ARG0` is typically the
+    /// server command name (`rsync`), `RSYNC_ARG1..N` are the remaining args.
+    client_args: &'a [String],
 }
 
 /// Builds a shell command with upstream-compatible environment variables.
@@ -48,13 +55,16 @@ fn build_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessComman
     cmd.env("RSYNC_MODULE_NAME", ctx.module_name);
     cmd.env("RSYNC_MODULE_PATH", ctx.module_path);
     cmd.env("RSYNC_HOST_ADDR", ctx.host_addr.to_string());
-    cmd.env(
-        "RSYNC_HOST_NAME",
-        ctx.host_name.unwrap_or_default(),
-    );
+    cmd.env("RSYNC_HOST_NAME", ctx.host_name.unwrap_or_default());
     cmd.env("RSYNC_USER_NAME", ctx.user_name.unwrap_or_default());
     cmd.env("RSYNC_REQUEST", ctx.request);
     cmd.env("RSYNC_PID", std::process::id().to_string());
+
+    // upstream: clientserver.c:write_pre_exec_args() - set numbered RSYNC_ARG<n>
+    // env vars from the client's argument list.
+    for (i, arg) in ctx.client_args.iter().enumerate() {
+        cmd.env(format!("RSYNC_ARG{i}"), arg);
+    }
 
     cmd
 }
@@ -67,10 +77,7 @@ fn build_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessComman
 ///
 /// Upstream: `clientserver.c` - `early_exec()` runs early in the connection,
 /// before authentication and argument exchange.
-fn run_early_exec(
-    command: &str,
-    ctx: &XferExecContext<'_>,
-) -> io::Result<Result<(), String>> {
+fn run_early_exec(command: &str, ctx: &XferExecContext<'_>) -> io::Result<Result<(), String>> {
     let mut cmd = build_xfer_command(command, ctx);
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::null());
@@ -101,11 +108,42 @@ fn run_early_exec(
     }
 }
 
+/// Result of a successful pre-xfer exec invocation.
+///
+/// Carries captured stdout from the script so the caller can relay it to the
+/// client as an informational message before the transfer begins.
+///
+/// upstream: clientserver.c:pre_exec() - stdout from the script is sent to the
+/// client via `rprintf(FINFO, ...)`.
+#[derive(Debug)]
+struct PreXferOutput {
+    /// Captured stdout from the pre-xfer exec script, trimmed of trailing
+    /// whitespace. Empty when the script produced no output.
+    stdout: String,
+}
+
+/// Error from a failed pre-xfer exec invocation.
+///
+/// Carries both the error message (for the `@ERROR` response) and any captured
+/// stdout (to relay to the client before the error).
+#[derive(Debug)]
+struct PreXferError {
+    /// Human-readable error description including exit code and module name.
+    message: String,
+    /// Captured stdout from the script, trimmed. Sent to the client before the
+    /// `@ERROR` line, matching upstream behaviour.
+    stdout: String,
+}
+
 /// Runs the pre-xfer exec command for a daemon module.
 ///
 /// The command is executed via `sh -c` (Unix) or `cmd /C` (Windows) with
 /// upstream-compatible environment variables. If the command exits non-zero,
 /// returns an error indicating the transfer should be denied.
+///
+/// Stdout from the script is captured and returned in both the success and
+/// error paths. The caller is responsible for sending it to the client as an
+/// info message (on success) or before the `@ERROR` response (on failure).
 ///
 /// When `early_input` is `Some`, the data is written to the child process's
 /// stdin before closing it. This mirrors upstream `clientserver.c:583-584`
@@ -113,12 +151,13 @@ fn run_early_exec(
 /// early-input data to the pre-xfer exec script.
 ///
 /// Upstream: `clientserver.c` - `pre_exec()` / `write_pre_exec_args()` runs
-/// the command and pipes early-input data to its stdin.
+/// the command, captures stdout for the client, and pipes early-input data to
+/// its stdin.
 fn run_pre_xfer_exec(
     command: &str,
     ctx: &XferExecContext<'_>,
     early_input: Option<&[u8]>,
-) -> io::Result<Result<(), String>> {
+) -> io::Result<Result<PreXferOutput, PreXferError>> {
     let mut cmd = build_xfer_command(command, ctx);
 
     if early_input.is_some() {
@@ -126,7 +165,9 @@ fn run_pre_xfer_exec(
     } else {
         cmd.stdin(Stdio::null());
     }
-    cmd.stdout(Stdio::null());
+    // upstream: clientserver.c:pre_exec() - stdout is captured and relayed to
+    // the client as an informational message.
+    cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
 
     let mut child = cmd.spawn()?;
@@ -142,9 +183,10 @@ fn run_pre_xfer_exec(
     }
 
     let output = child.wait_with_output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
     if output.status.success() {
-        Ok(Ok(()))
+        Ok(Ok(PreXferOutput { stdout }))
     } else {
         let code = output.status.code().unwrap_or(-1);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -152,17 +194,17 @@ fn run_pre_xfer_exec(
 
         let message = if stderr_trimmed.is_empty() {
             format!(
-                "pre-xfer exec command failed with exit code {code} for module '{}'",
+                "pre-xfer exec returned {code} for module '{}'",
                 ctx.module_name
             )
         } else {
             format!(
-                "pre-xfer exec command failed with exit code {code} for module '{}': {stderr_trimmed}",
+                "pre-xfer exec returned {code} for module '{}': {stderr_trimmed}",
                 ctx.module_name
             )
         };
 
-        Ok(Err(message))
+        Ok(Err(PreXferError { message, stdout }))
     }
 }
 
@@ -218,6 +260,8 @@ mod xfer_exec_tests {
     use super::*;
     use std::net::Ipv4Addr;
 
+    const TEST_ARGS: [String; 0] = [];
+
     fn test_context() -> XferExecContext<'static> {
         XferExecContext {
             module_name: "testmod",
@@ -226,6 +270,7 @@ mod xfer_exec_tests {
             host_name: Some("client.example.com"),
             user_name: Some("testuser"),
             request: "testmod/subdir",
+            client_args: &TEST_ARGS,
         }
     }
 
@@ -255,10 +300,7 @@ mod xfer_exec_tests {
             Some("client.example.com")
         );
         assert_eq!(find_env("RSYNC_USER_NAME").as_deref(), Some("testuser"));
-        assert_eq!(
-            find_env("RSYNC_REQUEST").as_deref(),
-            Some("testmod/subdir")
-        );
+        assert_eq!(find_env("RSYNC_REQUEST").as_deref(), Some("testmod/subdir"));
 
         let pid_str = find_env("RSYNC_PID");
         assert!(pid_str.is_some(), "RSYNC_PID should be set");
@@ -278,6 +320,7 @@ mod xfer_exec_tests {
             host_name: None,
             user_name: None,
             request: "mod",
+            client_args: &TEST_ARGS,
         };
         let cmd = build_xfer_command("echo test", &ctx);
         let envs: Vec<_> = cmd.get_envs().collect();
@@ -368,20 +411,20 @@ mod xfer_exec_tests {
         let ctx = test_context();
         let result = run_pre_xfer_exec("false", &ctx, None).expect("command should run");
         assert!(result.is_err());
-        let msg = result.unwrap_err();
-        assert!(msg.contains("pre-xfer exec command failed"));
-        assert!(msg.contains("testmod"));
+        let err = result.unwrap_err();
+        assert!(err.message.contains("pre-xfer exec returned"));
+        assert!(err.message.contains("testmod"));
     }
 
     #[cfg(unix)]
     #[test]
     fn run_pre_xfer_exec_captures_stderr() {
         let ctx = test_context();
-        let result =
-            run_pre_xfer_exec("echo 'custom error' >&2; exit 1", &ctx, None).expect("command should run");
+        let result = run_pre_xfer_exec("echo 'custom error' >&2; exit 1", &ctx, None)
+            .expect("command should run");
         assert!(result.is_err());
-        let msg = result.unwrap_err();
-        assert!(msg.contains("custom error"));
+        let err = result.unwrap_err();
+        assert!(err.message.contains("custom error"));
     }
 
     #[cfg(unix)]
@@ -400,12 +443,7 @@ mod xfer_exec_tests {
     #[test]
     fn run_post_xfer_exec_passes_exit_status_env() {
         let ctx = test_context();
-        run_post_xfer_exec(
-            "test \"$RSYNC_EXIT_STATUS\" = \"42\"",
-            &ctx,
-            42,
-            None,
-        );
+        run_post_xfer_exec("test \"$RSYNC_EXIT_STATUS\" = \"42\"", &ctx, 42, None);
     }
 
     #[cfg(unix)]
@@ -421,8 +459,8 @@ mod xfer_exec_tests {
         let ctx = test_context();
         // sh -c with a non-existent command will still run (sh exists), so
         // the command itself returns non-zero rather than an I/O error.
-        let result = run_pre_xfer_exec("/nonexistent/binary/path", &ctx, None)
-            .expect("sh -c should run");
+        let result =
+            run_pre_xfer_exec("/nonexistent/binary/path", &ctx, None).expect("sh -c should run");
         assert!(result.is_err());
     }
 
@@ -435,8 +473,7 @@ mod xfer_exec_tests {
         // The script reads stdin and writes it to a file so we can verify.
         let cmd = format!("cat > '{}'", out_path.display());
         let data = b"early-input-payload-for-pre-xfer";
-        let result = run_pre_xfer_exec(&cmd, &ctx, Some(data))
-            .expect("command should run");
+        let result = run_pre_xfer_exec(&cmd, &ctx, Some(data)).expect("command should run");
         assert!(result.is_ok(), "script should exit 0");
         let captured = std::fs::read(&out_path).expect("output file should exist");
         assert_eq!(captured, data);
@@ -446,9 +483,8 @@ mod xfer_exec_tests {
     #[test]
     fn run_pre_xfer_exec_without_early_input_has_closed_stdin() {
         let ctx = test_context();
-        // `cat` with no stdin and null redirect exits 0 immediately.
-        let result = run_pre_xfer_exec("cat", &ctx, None)
-            .expect("command should run");
+        // `cat` with null stdin exits 0 immediately.
+        let result = run_pre_xfer_exec("cat", &ctx, None).expect("command should run");
         assert!(result.is_ok());
     }
 
@@ -461,8 +497,7 @@ mod xfer_exec_tests {
         let cmd = format!("cat > '{}'", out_path.display());
         // All byte values 0x00..=0xFF
         let data: Vec<u8> = (0..=255u8).collect();
-        let result = run_pre_xfer_exec(&cmd, &ctx, Some(&data))
-            .expect("command should run");
+        let result = run_pre_xfer_exec(&cmd, &ctx, Some(&data)).expect("command should run");
         assert!(result.is_ok());
         let captured = std::fs::read(&out_path).expect("output file should exist");
         assert_eq!(captured, data);
@@ -470,14 +505,18 @@ mod xfer_exec_tests {
 
     #[test]
     fn xfer_exec_enabled_returns_true_when_env_unset() {
-        let _lock = crate::test_env::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard = crate::test_env::EnvGuard::remove("RSYNC_NO_XFER_EXEC");
         assert!(xfer_exec_enabled());
     }
 
     #[test]
     fn xfer_exec_enabled_returns_false_when_env_set() {
-        let _lock = crate::test_env::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard =
             crate::test_env::EnvGuard::set("RSYNC_NO_XFER_EXEC", std::ffi::OsStr::new("1"));
         assert!(!xfer_exec_enabled());
@@ -485,9 +524,157 @@ mod xfer_exec_tests {
 
     #[test]
     fn xfer_exec_enabled_returns_false_for_empty_value() {
-        let _lock = crate::test_env::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _guard =
-            crate::test_env::EnvGuard::set("RSYNC_NO_XFER_EXEC", std::ffi::OsStr::new(""));
+        let _lock = crate::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::test_env::EnvGuard::set("RSYNC_NO_XFER_EXEC", std::ffi::OsStr::new(""));
         assert!(!xfer_exec_enabled());
+    }
+
+    #[test]
+    fn build_xfer_command_sets_rsync_arg_env_vars() {
+        let args = vec![
+            "rsync".to_string(),
+            "--server".to_string(),
+            "--sender".to_string(),
+            "-vlogDtpr".to_string(),
+            ".".to_string(),
+            "testmod/".to_string(),
+        ];
+        let ctx = XferExecContext {
+            module_name: "testmod",
+            module_path: Path::new("/srv/testmod"),
+            host_addr: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
+            host_name: Some("client.example.com"),
+            user_name: Some("testuser"),
+            request: "testmod/subdir",
+            client_args: &args,
+        };
+        let cmd = build_xfer_command("echo test", &ctx);
+        let envs: Vec<_> = cmd.get_envs().collect();
+
+        let find_env = |key: &str| -> Option<String> {
+            envs.iter()
+                .find(|(k, _)| k == &key)
+                .and_then(|(_, v)| v.map(|s| s.to_string_lossy().into_owned()))
+        };
+
+        assert_eq!(find_env("RSYNC_ARG0").as_deref(), Some("rsync"));
+        assert_eq!(find_env("RSYNC_ARG1").as_deref(), Some("--server"));
+        assert_eq!(find_env("RSYNC_ARG2").as_deref(), Some("--sender"));
+        assert_eq!(find_env("RSYNC_ARG3").as_deref(), Some("-vlogDtpr"));
+        assert_eq!(find_env("RSYNC_ARG4").as_deref(), Some("."));
+        assert_eq!(find_env("RSYNC_ARG5").as_deref(), Some("testmod/"));
+        assert!(find_env("RSYNC_ARG6").is_none());
+    }
+
+    #[test]
+    fn build_xfer_command_no_rsync_arg_vars_with_empty_args() {
+        let args: Vec<String> = vec![];
+        let ctx = XferExecContext {
+            module_name: "testmod",
+            module_path: Path::new("/srv/testmod"),
+            host_addr: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
+            host_name: Some("client.example.com"),
+            user_name: Some("testuser"),
+            request: "testmod/subdir",
+            client_args: &args,
+        };
+        let cmd = build_xfer_command("echo test", &ctx);
+        let envs: Vec<_> = cmd.get_envs().collect();
+
+        let find_env = |key: &str| -> Option<String> {
+            envs.iter()
+                .find(|(k, _)| k == &key)
+                .and_then(|(_, v)| v.map(|s| s.to_string_lossy().into_owned()))
+        };
+
+        assert!(find_env("RSYNC_ARG0").is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_pre_xfer_exec_captures_stdout_on_success() {
+        let ctx = test_context();
+        let result =
+            run_pre_xfer_exec("echo 'hello from script'", &ctx, None).expect("command should run");
+        let output = result.expect("should succeed");
+        assert_eq!(output.stdout, "hello from script");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_pre_xfer_exec_captures_stdout_on_failure() {
+        let ctx = test_context();
+        let result = run_pre_xfer_exec("echo 'pre-xfer info'; exit 1", &ctx, None)
+            .expect("command should run");
+        let err = result.unwrap_err();
+        assert_eq!(err.stdout, "pre-xfer info");
+        assert!(err.message.contains("pre-xfer exec returned"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_pre_xfer_exec_empty_stdout_on_success() {
+        let ctx = test_context();
+        let result = run_pre_xfer_exec("true", &ctx, None).expect("command should run");
+        let output = result.expect("should succeed");
+        assert!(output.stdout.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_pre_xfer_exec_multiline_stdout() {
+        let ctx = test_context();
+        let result = run_pre_xfer_exec("echo 'line1'; echo 'line2'; echo 'line3'", &ctx, None)
+            .expect("command should run");
+        let output = result.expect("should succeed");
+        assert!(output.stdout.contains("line1"));
+        assert!(output.stdout.contains("line2"));
+        assert!(output.stdout.contains("line3"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_pre_xfer_exec_rsync_arg_env_vars_available() {
+        let args = vec!["rsync".to_string(), "--server".to_string()];
+        let ctx = XferExecContext {
+            module_name: "testmod",
+            module_path: Path::new("/srv/testmod"),
+            host_addr: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
+            host_name: Some("client.example.com"),
+            user_name: Some("testuser"),
+            request: "testmod/subdir",
+            client_args: &args,
+        };
+        let result = run_pre_xfer_exec(
+            "test \"$RSYNC_ARG0\" = \"rsync\" && test \"$RSYNC_ARG1\" = \"--server\"",
+            &ctx,
+            None,
+        )
+        .expect("command should run");
+        assert!(result.is_ok(), "RSYNC_ARG env vars should be set correctly");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_post_xfer_exec_rsync_arg_env_vars_available() {
+        let args = vec!["rsync".to_string(), "--sender".to_string()];
+        let ctx = XferExecContext {
+            module_name: "testmod",
+            module_path: Path::new("/srv/testmod"),
+            host_addr: IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)),
+            host_name: Some("client.example.com"),
+            user_name: Some("testuser"),
+            request: "testmod/subdir",
+            client_args: &args,
+        };
+        // The post-xfer exec should also see RSYNC_ARG env vars.
+        run_post_xfer_exec(
+            "test \"$RSYNC_ARG0\" = \"rsync\" && test \"$RSYNC_ARG1\" = \"--sender\"",
+            &ctx,
+            0,
+            None,
+        );
     }
 }
