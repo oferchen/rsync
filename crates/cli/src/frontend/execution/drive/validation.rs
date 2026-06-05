@@ -14,8 +14,7 @@ pub(crate) const REMOTE_OPTION_REMOTE_ONLY_MESSAGE: &str =
 pub(crate) const PROTOCOL_DAEMON_ONLY_MESSAGE: &str =
     "the --protocol option may only be used when accessing an rsync daemon";
 /// Error message when a password option is used without a daemon connection.
-pub(crate) const PASSWORD_DAEMON_ONLY_MESSAGE: &str =
-    "the --password-file and --password-command options may only be used when accessing an rsync daemon";
+pub(crate) const PASSWORD_DAEMON_ONLY_MESSAGE: &str = "the --password-file and --password-command options may only be used when accessing an rsync daemon";
 /// Error message when `--connect-program` is used without a daemon connection.
 pub(crate) const CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE: &str =
     "the --connect-program option may only be used when accessing an rsync daemon";

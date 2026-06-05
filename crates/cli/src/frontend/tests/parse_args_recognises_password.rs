@@ -49,8 +49,5 @@ fn parse_args_recognises_password_command() {
     ])
     .expect("parse");
 
-    assert_eq!(
-        parsed.password_command,
-        Some(OsString::from("echo secret"))
-    );
+    assert_eq!(parsed.password_command, Some(OsString::from("echo secret")));
 }

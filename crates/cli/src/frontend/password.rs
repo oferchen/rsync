@@ -90,15 +90,16 @@ pub(crate) fn load_password_command(command: &OsStr) -> Result<Vec<u8>, Message>
         );
     }
 
-    let output = build_shell_command(command)
-        .output()
-        .map_err(|error| {
-            rsync_error!(
-                1,
-                format!("failed to execute password command '{}': {}", command_str, error)
+    let output = build_shell_command(command).output().map_err(|error| {
+        rsync_error!(
+            1,
+            format!(
+                "failed to execute password command '{}': {}",
+                command_str, error
             )
-            .with_role(Role::Client)
-        })?;
+        )
+        .with_role(Role::Client)
+    })?;
 
     if !output.status.success() {
         let code = output
@@ -120,16 +121,11 @@ pub(crate) fn load_password_command(command: &OsStr) -> Result<Vec<u8>, Message>
     trim_trailing_newlines(&mut bytes);
 
     if bytes.is_empty() {
-        return Err(
-            rsync_error!(
-                1,
-                format!(
-                    "password command '{}' produced no output",
-                    command_str
-                )
-            )
-            .with_role(Role::Client),
-        );
+        return Err(rsync_error!(
+            1,
+            format!("password command '{}' produced no output", command_str)
+        )
+        .with_role(Role::Client));
     }
 
     Ok(bytes)
