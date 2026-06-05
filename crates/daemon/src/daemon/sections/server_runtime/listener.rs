@@ -37,6 +37,16 @@ const fn normalize_peer_address(addr: SocketAddr) -> SocketAddr {
     }
 }
 
+/// Default TCP listen backlog when not overridden by `listen backlog` in the
+/// daemon configuration file.
+///
+/// Upstream rsync defaults to 5 (`daemon-parm.txt`), which is too low for
+/// production workloads - the kernel drops SYN packets once the backlog queue
+/// is full, creating a hard ceiling around 250 concurrent connections.
+/// A backlog of 128 matches `SOMAXCONN` on most Linux systems and is the
+/// standard default for production TCP servers.
+const DEFAULT_LISTEN_BACKLOG: i32 = 128;
+
 /// Interval between signal flag checks in the accept loop.
 ///
 /// The listener uses a non-blocking timeout so the loop can periodically

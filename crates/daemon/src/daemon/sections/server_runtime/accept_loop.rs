@@ -134,10 +134,6 @@ fn serve_connections(
         bound_addresses = vec![local_addr];
         listeners = vec![listener];
     } else {
-        // upstream: daemon-parm.txt - listen_backlog INTEGER, default 5.
-        // Using socket2 to create the listener allows explicit control over the
-        // backlog argument passed to listen(2).
-        const DEFAULT_LISTEN_BACKLOG: i32 = 5;
         let backlog = listen_backlog.map_or(DEFAULT_LISTEN_BACKLOG, |v| v as i32);
 
         listeners = Vec::with_capacity(bind_addresses.len());

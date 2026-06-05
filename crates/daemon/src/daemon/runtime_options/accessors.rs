@@ -9,7 +9,8 @@ impl RuntimeOptions {
 
     /// Returns the configured TCP listen backlog.
     ///
-    /// Upstream: `daemon-parm.txt` - `listen_backlog` INTEGER, default 5.
+    /// Upstream: `daemon-parm.txt` - `listen_backlog` INTEGER (upstream default 5,
+    /// oc-rsync default 128 for better connection scaling).
     pub(crate) fn listen_backlog(&self) -> Option<u32> {
         self.listen_backlog
     }

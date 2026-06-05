@@ -127,8 +127,9 @@ impl GlobalConfig {
 
     /// Returns the TCP listen backlog, if configured.
     ///
-    /// Upstream: `daemon-parm.txt` - `listen_backlog` INTEGER, default 5.
-    /// Controls the backlog argument passed to `listen(2)` on the daemon socket.
+    /// Upstream: `daemon-parm.txt` - `listen_backlog` INTEGER (upstream default 5,
+    /// oc-rsync default 128). Controls the backlog argument passed to `listen(2)`
+    /// on the daemon socket.
     pub fn listen_backlog(&self) -> Option<u32> {
         self.listen_backlog
     }
