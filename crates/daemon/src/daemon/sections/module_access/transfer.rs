@@ -70,7 +70,10 @@ fn validate_client_paths_in_module(
             Some(("--partial-dir", rest.to_owned()))
         } else if let Some(rest) = arg.strip_prefix("--backup-dir=") {
             Some(("--backup-dir", rest.to_owned()))
-        } else if matches!(arg.as_str(), "--temp-dir" | "--partial-dir" | "--backup-dir") {
+        } else if matches!(
+            arg.as_str(),
+            "--temp-dir" | "--partial-dir" | "--backup-dir"
+        ) {
             iter.next().map(|v| (arg.as_str(), v.clone()))
         } else {
             None
@@ -87,16 +90,12 @@ fn validate_client_paths_in_module(
             continue;
         }
 
-        let canonical = path
-            .canonicalize()
-            .unwrap_or_else(|_| path.to_path_buf());
+        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         if canonical.starts_with(&module_root) {
             continue;
         }
 
-        let payload = format!(
-            "@ERROR: {flag} path '{raw_path}' is outside module root"
-        );
+        let payload = format!("@ERROR: {flag} path '{raw_path}' is outside module root");
         send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
         if let Some(log) = ctx.log_sink {
             let text = format!(
@@ -262,7 +261,9 @@ fn setup_transfer_streams(
         }));
     }
 
-    let tcp = stream.tcp_stream().expect("non-stdio stream has tcp_stream");
+    let tcp = stream
+        .tcp_stream()
+        .expect("non-stdio stream has tcp_stream");
     let read_stream = match tcp.try_clone() {
         Ok(s) => s,
         Err(err) => {
@@ -345,8 +346,15 @@ fn execute_transfer(
     // exchanges (NDX_DONE, stats, goodbye) when TCP backpressure occurs,
     // causing 10-second hangs. Standard I/O handles partial writes correctly,
     // matching upstream rsync's socket I/O model.
-    let result =
-        run_server_with_handshake(config, handshake, read_stream, write_stream, None, None, None);
+    let result = run_server_with_handshake(
+        config,
+        handshake,
+        read_stream,
+        write_stream,
+        None,
+        None,
+        None,
+    );
 
     match result {
         Ok(_server_stats) => {
@@ -500,22 +508,14 @@ fn process_approved_module(
             match run_early_exec(&expanded_command, &early_ctx) {
                 Ok(Ok(())) => {
                     if let Some(log) = ctx.log_sink {
-                        let text = format!(
-                            "early exec succeeded for module '{}'",
-                            ctx.request
-                        );
+                        let text = format!("early exec succeeded for module '{}'", ctx.request);
                         let message = rsync_info!(text).with_role(Role::Daemon);
                         log_message(log, &message);
                     }
                 }
                 Ok(Err(error_msg)) => {
                     let payload = format!("@ERROR: {error_msg}");
-                    send_error_and_exit(
-                        ctx.reader.get_mut(),
-                        ctx.limiter,
-                        ctx.messages,
-                        &payload,
-                    )?;
+                    send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
                     return Ok(());
                 }
                 Err(err) => {
@@ -523,12 +523,7 @@ fn process_approved_module(
                         "@ERROR: failed to run early exec command for module '{}': {err}",
                         ctx.request
                     );
-                    send_error_and_exit(
-                        ctx.reader.get_mut(),
-                        ctx.limiter,
-                        ctx.messages,
-                        &payload,
-                    )?;
+                    send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
                     return Ok(());
                 }
             }
@@ -607,12 +602,7 @@ fn process_approved_module(
             Ok(nc) => Some(install_name_converter(nc)),
             Err(err) => {
                 let payload = format!("@ERROR: name-converter exec failed: {err}");
-                send_error_and_exit(
-                    ctx.reader.get_mut(),
-                    ctx.limiter,
-                    ctx.messages,
-                    &payload,
-                )?;
+                send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
                 return Ok(());
             }
         }
@@ -697,25 +687,26 @@ fn process_approved_module(
     // upstream: clientserver.c - pre_exec() runs before the transfer starts.
     // Early-input data (if any) is piped to the script's stdin. Stdout from the
     // script is sent to the client as an info message.
-    if let Some(command) = module.pre_xfer_exec.as_deref().filter(|_| xfer_exec_enabled()) {
+    if let Some(command) = module
+        .pre_xfer_exec
+        .as_deref()
+        .filter(|_| xfer_exec_enabled())
+    {
         let expanded_command = expand_exec_command(command, &exec_path_ctx);
-        match run_pre_xfer_exec(&expanded_command, &xfer_ctx, ctx.early_input_data.as_deref()) {
+        match run_pre_xfer_exec(
+            &expanded_command,
+            &xfer_ctx,
+            ctx.early_input_data.as_deref(),
+        ) {
             Ok(Ok(output)) => {
                 // upstream: clientserver.c:pre_exec() - stdout from the script is
                 // sent to the client as an info message before the transfer.
                 if !output.stdout.is_empty() {
-                    write_limited(
-                        ctx.reader.get_mut(),
-                        ctx.limiter,
-                        output.stdout.as_bytes(),
-                    )?;
+                    write_limited(ctx.reader.get_mut(), ctx.limiter, output.stdout.as_bytes())?;
                     write_limited(ctx.reader.get_mut(), ctx.limiter, b"\n")?;
                 }
                 if let Some(log) = ctx.log_sink {
-                    let text = format!(
-                        "pre-xfer exec succeeded for module '{}'",
-                        ctx.request
-                    );
+                    let text = format!("pre-xfer exec succeeded for module '{}'", ctx.request);
                     let message = rsync_info!(text).with_role(Role::Daemon);
                     log_message(log, &message);
                 }
@@ -724,20 +715,11 @@ fn process_approved_module(
                 // upstream: clientserver.c - stdout from the script is sent to the
                 // client before the @ERROR line.
                 if !err.stdout.is_empty() {
-                    write_limited(
-                        ctx.reader.get_mut(),
-                        ctx.limiter,
-                        err.stdout.as_bytes(),
-                    )?;
+                    write_limited(ctx.reader.get_mut(), ctx.limiter, err.stdout.as_bytes())?;
                     write_limited(ctx.reader.get_mut(), ctx.limiter, b"\n")?;
                 }
                 let payload = format!("@ERROR: {}", err.message);
-                send_error_and_exit(
-                    ctx.reader.get_mut(),
-                    ctx.limiter,
-                    ctx.messages,
-                    &payload,
-                )?;
+                send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
                 if let Some(log) = ctx.log_sink {
                     let message = rsync_error!(1, err.message).with_role(Role::Daemon);
                     log_message(log, &message);
@@ -750,12 +732,7 @@ fn process_approved_module(
                     ctx.request
                 );
                 let payload = format!("@ERROR: {error_msg}");
-                send_error_and_exit(
-                    ctx.reader.get_mut(),
-                    ctx.limiter,
-                    ctx.messages,
-                    &payload,
-                )?;
+                send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
                 if let Some(log) = ctx.log_sink {
                     let message = rsync_error!(1, error_msg).with_role(Role::Daemon);
                     log_message(log, &message);
@@ -772,7 +749,8 @@ fn process_approved_module(
         .transition(ConnectionState::Transferring)
         .map_err(transition_error)?;
 
-    let handshake = build_handshake_result(ctx.reader, negotiated_protocol, client_args.clone(), module);
+    let handshake =
+        build_handshake_result(ctx.reader, negotiated_protocol, client_args.clone(), module);
     let final_protocol = handshake.protocol;
 
     let supports_tcp_shutdown = streams.supports_tcp_shutdown;
@@ -800,7 +778,11 @@ fn process_approved_module(
     }
 
     // upstream: clientserver.c - post_exec() runs after the transfer, regardless of outcome
-    if let Some(command) = module.post_xfer_exec.as_deref().filter(|_| xfer_exec_enabled()) {
+    if let Some(command) = module
+        .post_xfer_exec
+        .as_deref()
+        .filter(|_| xfer_exec_enabled())
+    {
         let expanded_command = expand_exec_command(command, &exec_path_ctx);
         run_post_xfer_exec(&expanded_command, &xfer_ctx, exit_status, ctx.log_sink);
     }

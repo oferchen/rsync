@@ -55,10 +55,7 @@ fn build_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessComman
     cmd.env("RSYNC_MODULE_NAME", ctx.module_name);
     cmd.env("RSYNC_MODULE_PATH", ctx.module_path);
     cmd.env("RSYNC_HOST_ADDR", ctx.host_addr.to_string());
-    cmd.env(
-        "RSYNC_HOST_NAME",
-        ctx.host_name.unwrap_or_default(),
-    );
+    cmd.env("RSYNC_HOST_NAME", ctx.host_name.unwrap_or_default());
     cmd.env("RSYNC_USER_NAME", ctx.user_name.unwrap_or_default());
     cmd.env("RSYNC_REQUEST", ctx.request);
     cmd.env("RSYNC_PID", std::process::id().to_string());
@@ -80,10 +77,7 @@ fn build_xfer_command(command: &str, ctx: &XferExecContext<'_>) -> ProcessComman
 ///
 /// Upstream: `clientserver.c` - `early_exec()` runs early in the connection,
 /// before authentication and argument exchange.
-fn run_early_exec(
-    command: &str,
-    ctx: &XferExecContext<'_>,
-) -> io::Result<Result<(), String>> {
+fn run_early_exec(command: &str, ctx: &XferExecContext<'_>) -> io::Result<Result<(), String>> {
     let mut cmd = build_xfer_command(command, ctx);
     cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::null());
@@ -305,10 +299,7 @@ mod xfer_exec_tests {
             Some("client.example.com")
         );
         assert_eq!(find_env("RSYNC_USER_NAME").as_deref(), Some("testuser"));
-        assert_eq!(
-            find_env("RSYNC_REQUEST").as_deref(),
-            Some("testmod/subdir")
-        );
+        assert_eq!(find_env("RSYNC_REQUEST").as_deref(), Some("testmod/subdir"));
 
         let pid_str = find_env("RSYNC_PID");
         assert!(pid_str.is_some(), "RSYNC_PID should be set");
@@ -428,8 +419,8 @@ mod xfer_exec_tests {
     #[test]
     fn run_pre_xfer_exec_captures_stderr() {
         let ctx = test_context();
-        let result =
-            run_pre_xfer_exec("echo 'custom error' >&2; exit 1", &ctx, None).expect("command should run");
+        let result = run_pre_xfer_exec("echo 'custom error' >&2; exit 1", &ctx, None)
+            .expect("command should run");
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(err.message.contains("custom error"));
@@ -451,12 +442,7 @@ mod xfer_exec_tests {
     #[test]
     fn run_post_xfer_exec_passes_exit_status_env() {
         let ctx = test_context();
-        run_post_xfer_exec(
-            "test \"$RSYNC_EXIT_STATUS\" = \"42\"",
-            &ctx,
-            42,
-            None,
-        );
+        run_post_xfer_exec("test \"$RSYNC_EXIT_STATUS\" = \"42\"", &ctx, 42, None);
     }
 
     #[cfg(unix)]
@@ -472,8 +458,8 @@ mod xfer_exec_tests {
         let ctx = test_context();
         // sh -c with a non-existent command will still run (sh exists), so
         // the command itself returns non-zero rather than an I/O error.
-        let result = run_pre_xfer_exec("/nonexistent/binary/path", &ctx, None)
-            .expect("sh -c should run");
+        let result =
+            run_pre_xfer_exec("/nonexistent/binary/path", &ctx, None).expect("sh -c should run");
         assert!(result.is_err());
     }
 
@@ -486,8 +472,7 @@ mod xfer_exec_tests {
         // The script reads stdin and writes it to a file so we can verify.
         let cmd = format!("cat > '{}'", out_path.display());
         let data = b"early-input-payload-for-pre-xfer";
-        let result = run_pre_xfer_exec(&cmd, &ctx, Some(data))
-            .expect("command should run");
+        let result = run_pre_xfer_exec(&cmd, &ctx, Some(data)).expect("command should run");
         assert!(result.is_ok(), "script should exit 0");
         let captured = std::fs::read(&out_path).expect("output file should exist");
         assert_eq!(captured, data);
@@ -498,8 +483,7 @@ mod xfer_exec_tests {
     fn run_pre_xfer_exec_without_early_input_has_closed_stdin() {
         let ctx = test_context();
         // `cat` with null stdin exits 0 immediately.
-        let result = run_pre_xfer_exec("cat", &ctx, None)
-            .expect("command should run");
+        let result = run_pre_xfer_exec("cat", &ctx, None).expect("command should run");
         assert!(result.is_ok());
     }
 
@@ -512,8 +496,7 @@ mod xfer_exec_tests {
         let cmd = format!("cat > '{}'", out_path.display());
         // All byte values 0x00..=0xFF
         let data: Vec<u8> = (0..=255u8).collect();
-        let result = run_pre_xfer_exec(&cmd, &ctx, Some(&data))
-            .expect("command should run");
+        let result = run_pre_xfer_exec(&cmd, &ctx, Some(&data)).expect("command should run");
         assert!(result.is_ok());
         let captured = std::fs::read(&out_path).expect("output file should exist");
         assert_eq!(captured, data);
@@ -521,14 +504,18 @@ mod xfer_exec_tests {
 
     #[test]
     fn xfer_exec_enabled_returns_true_when_env_unset() {
-        let _lock = crate::test_env::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard = crate::test_env::EnvGuard::remove("RSYNC_NO_XFER_EXEC");
         assert!(xfer_exec_enabled());
     }
 
     #[test]
     fn xfer_exec_enabled_returns_false_when_env_set() {
-        let _lock = crate::test_env::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _lock = crate::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let _guard =
             crate::test_env::EnvGuard::set("RSYNC_NO_XFER_EXEC", std::ffi::OsStr::new("1"));
         assert!(!xfer_exec_enabled());
@@ -536,9 +523,10 @@ mod xfer_exec_tests {
 
     #[test]
     fn xfer_exec_enabled_returns_false_for_empty_value() {
-        let _lock = crate::test_env::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let _guard =
-            crate::test_env::EnvGuard::set("RSYNC_NO_XFER_EXEC", std::ffi::OsStr::new(""));
+        let _lock = crate::test_env::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let _guard = crate::test_env::EnvGuard::set("RSYNC_NO_XFER_EXEC", std::ffi::OsStr::new(""));
         assert!(!xfer_exec_enabled());
     }
 
@@ -607,8 +595,8 @@ mod xfer_exec_tests {
     #[test]
     fn run_pre_xfer_exec_captures_stdout_on_success() {
         let ctx = test_context();
-        let result = run_pre_xfer_exec("echo 'hello from script'", &ctx, None)
-            .expect("command should run");
+        let result =
+            run_pre_xfer_exec("echo 'hello from script'", &ctx, None).expect("command should run");
         let output = result.expect("should succeed");
         assert_eq!(output.stdout, "hello from script");
     }
@@ -617,12 +605,8 @@ mod xfer_exec_tests {
     #[test]
     fn run_pre_xfer_exec_captures_stdout_on_failure() {
         let ctx = test_context();
-        let result = run_pre_xfer_exec(
-            "echo 'pre-xfer info'; exit 1",
-            &ctx,
-            None,
-        )
-        .expect("command should run");
+        let result = run_pre_xfer_exec("echo 'pre-xfer info'; exit 1", &ctx, None)
+            .expect("command should run");
         let err = result.unwrap_err();
         assert_eq!(err.stdout, "pre-xfer info");
         assert!(err.message.contains("pre-xfer exec returned"));
@@ -632,8 +616,7 @@ mod xfer_exec_tests {
     #[test]
     fn run_pre_xfer_exec_empty_stdout_on_success() {
         let ctx = test_context();
-        let result = run_pre_xfer_exec("true", &ctx, None)
-            .expect("command should run");
+        let result = run_pre_xfer_exec("true", &ctx, None).expect("command should run");
         let output = result.expect("should succeed");
         assert!(output.stdout.is_empty());
     }
@@ -642,12 +625,8 @@ mod xfer_exec_tests {
     #[test]
     fn run_pre_xfer_exec_multiline_stdout() {
         let ctx = test_context();
-        let result = run_pre_xfer_exec(
-            "echo 'line1'; echo 'line2'; echo 'line3'",
-            &ctx,
-            None,
-        )
-        .expect("command should run");
+        let result = run_pre_xfer_exec("echo 'line1'; echo 'line2'; echo 'line3'", &ctx, None)
+            .expect("command should run");
         let output = result.expect("should succeed");
         assert!(output.stdout.contains("line1"));
         assert!(output.stdout.contains("line2"));
