@@ -185,6 +185,11 @@ pub(crate) fn plan_directory_entries<'a>(
     };
     let mut planned_entries = Vec::with_capacity(entries.len());
 
+    // Reusable buffer for building relative paths. When a base relative
+    // path is provided, we push each entry name and pop it after use,
+    // avoiding a per-entry PathBuf allocation from Path::join.
+    let mut relative_buf = relative.map(Path::to_path_buf);
+
     for entry in entries {
         context.enforce_timeout()?;
         context.register_progress();
@@ -226,9 +231,11 @@ pub(crate) fn plan_directory_entries<'a>(
             }
         }
 
-        let relative_path = match relative {
-            Some(base) => base.join(Path::new(&file_name)),
-            None => PathBuf::from(Path::new(&file_name)),
+        let relative_path = if let Some(buf) = &mut relative_buf {
+            buf.push(Path::new(&file_name));
+            buf.clone()
+        } else {
+            PathBuf::from(Path::new(&file_name))
         };
         context.record_file_list_entry(non_empty_path(relative_path.as_path()));
 
@@ -350,6 +357,9 @@ pub(crate) fn plan_directory_entries<'a>(
             action,
             metadata_override,
         });
+        if let Some(buf) = &mut relative_buf {
+            buf.pop();
+        }
     }
 
     Ok(DirectoryPlan {
@@ -425,6 +435,10 @@ fn plan_directory_entries_with_prefetch<'a>(
     };
     let mut planned_entries = Vec::with_capacity(entries.len());
 
+    // Reusable buffer for building relative paths (same optimization as
+    // plan_directory_entries).
+    let mut relative_buf = relative.map(Path::to_path_buf);
+
     for (entry, prefetch) in entries.iter().zip(prefetched.iter()) {
         context.enforce_timeout()?;
         context.register_progress();
@@ -468,9 +482,11 @@ fn plan_directory_entries_with_prefetch<'a>(
             }
         }
 
-        let relative_path = match relative {
-            Some(base) => base.join(Path::new(&file_name)),
-            None => PathBuf::from(Path::new(&file_name)),
+        let relative_path = if let Some(buf) = &mut relative_buf {
+            buf.push(Path::new(&file_name));
+            buf.clone()
+        } else {
+            PathBuf::from(Path::new(&file_name))
         };
         context.record_file_list_entry(non_empty_path(relative_path.as_path()));
 
@@ -617,6 +633,9 @@ fn plan_directory_entries_with_prefetch<'a>(
             action,
             metadata_override,
         });
+        if let Some(buf) = &mut relative_buf {
+            buf.pop();
+        }
     }
 
     Ok(DirectoryPlan {
