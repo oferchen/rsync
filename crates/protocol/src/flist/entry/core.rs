@@ -110,7 +110,7 @@ pub struct FileEntry {
     /// Stored as `u16` matching upstream rsync's `uint16 mode` (rsync.h:805).
     /// POSIX mode values fit in 16 bits (4-bit type mask `S_IFMT` = `0o170000`
     /// + 12-bit permissions `0o7777`). The accessor returns `u32` for API
-    /// compatibility with callers that use `u32` mode constants.
+    ///   compatibility with callers that use `u32` mode constants.
     pub(super) mode: u16,
 
     // 1-byte aligned fields
