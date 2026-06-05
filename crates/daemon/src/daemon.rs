@@ -140,6 +140,42 @@ pub(crate) const MODULE_MAX_CONNECTIONS_PAYLOAD: &str =
 ///
 /// upstream: clientserver.c:748 - `@ERROR: failed to open lock file\n`
 pub(crate) const MODULE_LOCK_ERROR_PAYLOAD: &str = "@ERROR: failed to open lock file";
+/// Error payload returned when chroot fails during module setup.
+///
+/// upstream: clientserver.c:981 - `@ERROR: chroot failed\n`
+pub(crate) const CHROOT_FAILED_PAYLOAD: &str = "@ERROR: chroot failed";
+/// Error payload returned when chdir fails during module setup.
+///
+/// upstream: clientserver.c:647 - `@ERROR: chdir failed\n`
+pub(crate) const CHDIR_FAILED_PAYLOAD: &str = "@ERROR: chdir failed";
+/// Error payload returned when setuid fails after chroot.
+///
+/// upstream: clientserver.c:1039 - `@ERROR: setuid failed\n`
+pub(crate) const SETUID_FAILED_PAYLOAD: &str = "@ERROR: setuid failed";
+/// Error payload returned when setgid fails after chroot.
+///
+/// upstream: clientserver.c:1010 - `@ERROR: setgid failed\n`
+pub(crate) const SETGID_FAILED_PAYLOAD: &str = "@ERROR: setgid failed";
+/// Error payload returned when setgroups fails after chroot.
+///
+/// upstream: clientserver.c:1017 - `@ERROR: setgroups failed\n`
+pub(crate) const SETGROUPS_FAILED_PAYLOAD: &str = "@ERROR: setgroups failed";
+/// Error payload returned when a module's uid directive is invalid.
+///
+/// upstream: clientserver.c:783 - `@ERROR: invalid uid %s\n`
+pub(crate) const INVALID_UID_PAYLOAD: &str = "@ERROR: invalid uid {uid}";
+/// Error payload returned when a module's gid directive is invalid.
+///
+/// upstream: clientserver.c:656 - `@ERROR: invalid gid %s\n`
+pub(crate) const INVALID_GID_PAYLOAD: &str = "@ERROR: invalid gid {gid}";
+/// Error payload returned when a module is read-only and the client pushes.
+///
+/// upstream: clientserver.c (implied by lp_read_only check)
+pub(crate) const MODULE_READ_ONLY_PAYLOAD: &str = "@ERROR: module is read only";
+/// Error payload returned when a module is write-only and the client pulls.
+///
+/// upstream: clientserver.c (implied by lp_write_only check)
+pub(crate) const MODULE_WRITE_ONLY_PAYLOAD: &str = "@ERROR: module is write only";
 mod module_state;
 #[cfg(test)]
 use self::module_state::TEST_CONFIG_CANDIDATES;
