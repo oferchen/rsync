@@ -204,10 +204,7 @@ impl ServerConfigBuilder {
     /// compression algorithm.
     ///
     /// upstream: `options.c:89`, `token.c:701`
-    pub fn compression_threads(
-        &mut self,
-        threads: Option<std::num::NonZeroU8>,
-    ) -> &mut Self {
+    pub fn compression_threads(&mut self, threads: Option<std::num::NonZeroU8>) -> &mut Self {
         self.connection.compression_threads = threads;
         self
     }

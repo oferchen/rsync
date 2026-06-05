@@ -383,10 +383,7 @@ mod tests {
             .build();
         let mut server_config = ServerConfig::default();
         apply_common_server_flags(&config, &mut server_config);
-        assert_eq!(
-            server_config.connection.compression_threads,
-            Some(threads)
-        );
+        assert_eq!(server_config.connection.compression_threads, Some(threads));
     }
 
     #[test]

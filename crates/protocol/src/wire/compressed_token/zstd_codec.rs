@@ -76,10 +76,7 @@ impl ZstdTokenEncoder {
     /// matching upstream's `do_compression_threads = 0` default.
     ///
     /// upstream: token.c:701 - `ZSTD_CCtx_setParameter(zstd_cctx, ZSTD_c_nbWorkers, do_compression_threads)`
-    pub(super) fn new(
-        level: i32,
-        workers: Option<std::num::NonZeroU8>,
-    ) -> io::Result<Self> {
+    pub(super) fn new(level: i32, workers: Option<std::num::NonZeroU8>) -> io::Result<Self> {
         let mut encoder = ZstdRawEncoder::new(level)?;
         if let Some(n) = workers {
             encoder
