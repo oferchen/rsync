@@ -644,9 +644,11 @@ mod tests {
 
     #[test]
     fn build_client_config_forwards_keepalive() {
-        let mut ssh_config = SshConfig::default();
-        ssh_config.keepalive_interval = Some(Duration::from_secs(15));
-        ssh_config.keepalive_max_count = 5;
+        let ssh_config = SshConfig {
+            keepalive_interval: Some(Duration::from_secs(15)),
+            keepalive_max_count: 5,
+            ..SshConfig::default()
+        };
 
         let config = build_client_config(&ssh_config);
         assert_eq!(config.keepalive_interval, Some(Duration::from_secs(15)));
@@ -655,8 +657,10 @@ mod tests {
 
     #[test]
     fn build_client_config_no_keepalive_when_disabled() {
-        let mut ssh_config = SshConfig::default();
-        ssh_config.keepalive_interval = None;
+        let ssh_config = SshConfig {
+            keepalive_interval: None,
+            ..SshConfig::default()
+        };
 
         let config = build_client_config(&ssh_config);
         assert!(config.keepalive_interval.is_none());
@@ -664,11 +668,13 @@ mod tests {
 
     #[test]
     fn build_client_config_applies_user_ciphers() {
-        let mut ssh_config = SshConfig::default();
-        ssh_config.ciphers = Some(vec![
-            "aes256-gcm@openssh.com".to_owned(),
-            "chacha20-poly1305@openssh.com".to_owned(),
-        ]);
+        let ssh_config = SshConfig {
+            ciphers: Some(vec![
+                "aes256-gcm@openssh.com".to_owned(),
+                "chacha20-poly1305@openssh.com".to_owned(),
+            ]),
+            ..SshConfig::default()
+        };
 
         let config = build_client_config(&ssh_config);
         let cipher_names: Vec<&str> = config.preferred.cipher.iter().map(|c| c.as_ref()).collect();
