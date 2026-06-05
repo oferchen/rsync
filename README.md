@@ -58,32 +58,50 @@ Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
 
 ### What's New (v0.6.3)
 
-**Daemon-over-remote-shell**
-- `host::module` syntax now routes through SSH to a remote daemon (`--server --daemon` mode), matching upstream's daemon-over-remote-shell transport (#5353, #5364)
+**Daemon features**
+- `pre-xfer exec` / `post-xfer exec` directives with `RSYNC_ARG#` env vars and stdout capture (#5503)
+- `--password-command` option for daemon authentication (#5500)
+- Parse missing upstream `rsyncd.conf` directives and warn on unknown keys (#5489)
+- `host::module` syntax routes through SSH to a remote daemon (`--server --daemon` mode) (#5353, #5364)
 - `RSYNC_CONNECT_PROG` support for custom connection programs (#5317)
 
+**Transfer options**
+- Forward `--stop-at` deadline to remote server in SSH transfers (#5499)
+- Forward `--remote-option` (`-M`) args to remote rsync process (#5498)
+- Wire `--compress-threads` through transfer pipeline to zstd encoder (#5496)
+- Embed filter rules in batch replay scripts (#5495)
+- Wire `--info` subcategory dispatch to thread-local verbosity config (#5494)
+
+**Performance**
+- Optimize generator no-change scan path for 100K-file scale - pre-computed config flags, skip metadata/ACL/xattr when disabled, avoid per-file allocations (#5466, #5468)
+- Eliminate redundant stat calls in metadata no-change path (#5492)
+- Compact `FileEntry` from 88 to 80 bytes per entry (#5481)
+- Unify multiplex flush discipline across transfer roles (#5464)
+- Reduce per-file overhead in SSH push/pull paths (#5469, #5470, #5471)
+- Reclaim completed INC_RECURSE flist segments to reduce RSS (#5467)
+- Increase checksum read buffer from 64KB to 256KB (#5460)
+- Tune mimalloc arena reservation and purge delay for lower RSS (#5488)
+- Reuse readdir buffer and replace `Path::join` with `PathBuf::push/pop` in traversal (#5483, #5484)
+- Tune russh client config for faster SSH handshake (#5490)
+
+**Bug fixes**
+- Align daemon `@ERROR` responses with upstream rsync wording (#5504)
+- Forward `--trust-sender` and `--checksum-seed` to remote server (#5501)
+- Wire `--contimeout` to embedded SSH (russh) connection path (#5497)
+- Increase default daemon listen backlog from 5 to 128 (#5487)
+- Daemon module listing protocol aligned with upstream behavior (#5366)
+- Socketpair used instead of pipes for `RSYNC_CONNECT_PROG` child stdin (#5363)
+
 **Upstream testsuite parity**
-- All upstream `testsuite/*.test` scripts pass with zero known failures - the roster is now empty (#5342, #5346, #5355, #5358)
+- All upstream `testsuite/*.test` scripts pass with zero known failures (#5342, #5346, #5355, #5358)
 - Dedicated CI workflow runs the upstream testsuite on every push with UPASS detection (#5342)
 
 **Security**
 - SEC-1 TOCTOU sandbox promoted from MOSTLY FIXED to COMPLETE - all path-based daemon syscalls now use `*at` dirfd-scoped equivalents (#4693, #4690, #4683)
 
-**Bug fixes**
-- Daemon module listing protocol aligned with upstream behavior (#5366)
-- Metadata applied before rename to match upstream `finish_transfer` semantics (#5338)
-- Secluded-args and capability string parsing from compact server flag string (#5336)
-- `P_LOCAL` directives inherited from global `rsyncd.conf` section into module context (#5334)
-- Atime preserved independently of mtime in local copy metadata path (#5328)
-- Socketpair used instead of pipes for `RSYNC_CONNECT_PROG` child stdin (#5363)
-
 **CI improvements**
 - All GitHub Actions pinned to SHA hashes for supply chain safety (#5333)
 - Nextest profiles, `--locked` builds, and standardized cache keys (#5335, #5332, #5341)
-- Non-required beta/nightly jobs moved to schedule-only to reduce runner contention (#5324)
-
-**Code quality**
-- Comment cleanup across engine, daemon, matching, and transfer crates (#5369, #5370, #5371, #5373)
 
 ### What's New (v0.6.2)
 
