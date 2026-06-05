@@ -165,10 +165,7 @@ impl GeneratorContext {
         if let Ok(meta) = std::fs::symlink_metadata(base_dir) {
             if meta.is_dir() {
                 let mut dot_entry = self.create_entry(base_dir, PathBuf::from("."), &meta)?;
-                dot_entry.set_flags(protocol::flist::FileFlags::new(
-                    protocol::flist::XMIT_TOP_DIR,
-                    0,
-                ));
+                dot_entry.set_top_dir(true);
                 self.push_file_item(dot_entry, base_dir.to_path_buf());
             }
         }

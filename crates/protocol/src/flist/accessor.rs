@@ -14,7 +14,6 @@
 use std::borrow::Cow;
 
 use super::entry::FileType;
-use super::flags::FileFlags;
 
 /// Read-only accessor for file-list entry metadata.
 ///
@@ -73,8 +72,16 @@ pub trait FileEntryAccessor {
     /// Returns the group ID if ownership is being preserved.
     fn gid(&self) -> Option<u32>;
 
-    /// Returns the wire format flags.
-    fn flags(&self) -> FileFlags;
+    // -- Persisted wire flags --
+
+    /// Returns true if this is a top-level directory in the transfer.
+    fn top_dir(&self) -> bool;
+
+    /// Returns true if this entry has hardlink information.
+    fn hlinked(&self) -> bool;
+
+    /// Returns true if this is the first (leader) entry in a hardlink group.
+    fn hlink_first(&self) -> bool;
 
     // -- Type queries --
 
@@ -218,8 +225,16 @@ impl FileEntryAccessor for FileEntry {
         self.gid()
     }
 
-    fn flags(&self) -> FileFlags {
-        self.flags()
+    fn top_dir(&self) -> bool {
+        self.top_dir()
+    }
+
+    fn hlinked(&self) -> bool {
+        self.hlinked()
+    }
+
+    fn hlink_first(&self) -> bool {
+        self.hlink_first()
     }
 
     fn content_dir(&self) -> bool {
@@ -307,7 +322,6 @@ mod flat_impl {
 
     use super::super::flat::{FlatFileEntry, PRESENT_CONTENT_DIR};
     use super::FileEntryAccessor;
-    use super::FileFlags;
 
     impl<'a> FileEntryAccessor for FlatFileEntry<'a> {
         fn name(&self) -> &str {
@@ -346,8 +360,19 @@ mod flat_impl {
             self.header.gid()
         }
 
-        fn flags(&self) -> FileFlags {
-            FileFlags::from_u32(u32::from(self.header.flags))
+        fn top_dir(&self) -> bool {
+            use crate::flist::flags::FileFlags;
+            FileFlags::from_u32(u32::from(self.header.flags)).top_dir()
+        }
+
+        fn hlinked(&self) -> bool {
+            use crate::flist::flags::FileFlags;
+            FileFlags::from_u32(u32::from(self.header.flags)).hlinked()
+        }
+
+        fn hlink_first(&self) -> bool {
+            use crate::flist::flags::FileFlags;
+            FileFlags::from_u32(u32::from(self.header.flags)).hlink_first()
         }
 
         fn content_dir(&self) -> bool {

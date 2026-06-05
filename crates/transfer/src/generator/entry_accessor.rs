@@ -324,7 +324,7 @@ pub fn dest_mtime_newer_generic<T: FileEntryAccessor>(
 /// - `hlink.c:284` - `hard_link_check()` called for non-first entries
 #[must_use]
 pub fn is_hardlink_follower_generic<T: FileEntryAccessor>(entry: &T) -> bool {
-    entry.flags().hlinked() && !entry.flags().hlink_first()
+    entry.hlinked() && !entry.hlink_first()
 }
 
 /// Computes a file's checksum and compares it against an expected value.
@@ -725,8 +725,8 @@ mod tests {
     fn hardlink_follower_generic_leader() {
         let mut entry = make_file_entry("test.txt");
         // Leader has both HLINKED and HLINK_FIRST
-        entry.flags_mut().set_hlinked(true);
-        entry.flags_mut().set_hlink_first(true);
+        entry.set_hlinked(true);
+        entry.set_hlink_first(true);
         assert!(!is_hardlink_follower_generic(&entry));
     }
 
@@ -734,7 +734,7 @@ mod tests {
     fn hardlink_follower_generic_follower() {
         let mut entry = make_file_entry("test.txt");
         // Follower has HLINKED but NOT HLINK_FIRST
-        entry.flags_mut().set_hlinked(true);
+        entry.set_hlinked(true);
         assert!(is_hardlink_follower_generic(&entry));
     }
 
@@ -769,12 +769,12 @@ mod tests {
     #[test]
     fn hardlink_follower_and_leader_are_exclusive() {
         let mut follower = make_file_entry("f.txt");
-        follower.flags_mut().set_hlinked(true);
+        follower.set_hlinked(true);
         assert!(is_hardlink_follower_generic(&follower));
 
         let mut leader = make_file_entry("l.txt");
-        leader.flags_mut().set_hlinked(true);
-        leader.flags_mut().set_hlink_first(true);
+        leader.set_hlinked(true);
+        leader.set_hlink_first(true);
         assert!(!is_hardlink_follower_generic(&leader));
 
         let plain = make_file_entry("p.txt");

@@ -106,7 +106,7 @@ fn build_protocol_file_entry(
     // upstream: flist.c:send_file_entry() - FLAG_TOP_DIR marks root source
     // entries so --delete knows which directories are transfer roots.
     if is_top_dir && file_type.is_dir() {
-        entry.flags_mut().primary |= protocol::flist::XMIT_TOP_DIR;
+        entry.set_top_dir(true);
     }
 
     entry

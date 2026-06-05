@@ -191,8 +191,9 @@ pub fn output_flist_entry(role: ProcessRole, ndx: i32, entry: &FileEntry) {
     let gid_str = entry
         .gid()
         .map_or(String::new(), |gid| format!(" gid={gid}"));
-    let flags = entry.flags();
-    let flags_value = flags.primary as u32 | ((flags.extended as u32) << 8);
+    let flags_value = (entry.top_dir() as u32)
+        | ((entry.hlinked() as u32) << 9)
+        | ((entry.hlink_first() as u32) << 12);
 
     debug_log!(
         Flist,

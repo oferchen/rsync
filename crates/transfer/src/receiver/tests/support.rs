@@ -8,7 +8,7 @@ use std::io::{self, Write};
 
 use engine::delta::{DeltaScript, DeltaToken};
 use protocol::ProtocolVersion;
-use protocol::flist::{FileEntry, XMIT_HLINK_FIRST, XMIT_HLINKED};
+use protocol::flist::FileEntry;
 use protocol::wire::DeltaOp;
 
 use crate::config::ServerConfig;
@@ -147,7 +147,8 @@ pub(super) fn receiver_with_hardlinks(entries: Vec<FileEntry>) -> ReceiverContex
 /// Helper to create a hardlink leader entry with appropriate flags.
 pub(super) fn make_hlink_leader(name: &str, size: u64, gnum: u32) -> FileEntry {
     let mut entry = FileEntry::new_file(name.into(), size, 0o644);
-    entry.flags_mut().extended |= XMIT_HLINKED | XMIT_HLINK_FIRST;
+    entry.set_hlinked(true);
+    entry.set_hlink_first(true);
     entry.set_hardlink_idx(gnum);
     entry
 }
@@ -155,7 +156,7 @@ pub(super) fn make_hlink_leader(name: &str, size: u64, gnum: u32) -> FileEntry {
 /// Helper to create a hardlink follower entry with appropriate flags.
 pub(super) fn make_hlink_follower(name: &str, size: u64, gnum: u32) -> FileEntry {
     let mut entry = FileEntry::new_file(name.into(), size, 0o644);
-    entry.flags_mut().extended |= XMIT_HLINKED;
+    entry.set_hlinked(true);
     entry.set_hardlink_idx(gnum);
     entry
 }

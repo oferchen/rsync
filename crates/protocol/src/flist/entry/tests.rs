@@ -246,7 +246,9 @@ fn directory_size_is_zero() {
 #[test]
 fn file_entry_flags_accessor() {
     let entry = FileEntry::new_file("test.txt".into(), 100, 0o644);
-    let _flags = entry.flags();
+    assert!(!entry.top_dir());
+    assert!(!entry.hlinked());
+    assert!(!entry.hlink_first());
 }
 
 #[test]
@@ -290,20 +292,21 @@ fn dirname_shared_across_entries() {
     assert!(Arc::ptr_eq(entry1.dirname(), entry2.dirname()));
 }
 
-/// Verifies the struct size optimization: FileEntry should be <= 88 bytes
-/// inline on Unix (down from 96 bytes before packing uid/gid/content_dir into
-/// a presence bitfield, and from ~295 bytes before the Box<FileEntryExtras>
-/// refactor). On Windows the cap is <= 96 because `PathBuf` is 8 bytes larger
-/// than on Unix (Windows `Wtf8Buf` carries an extra `is_known_utf8` bool, which
-/// pads the inner `OsString` from 24 to 32 bytes). This guards against
-/// accidental field additions that bloat the hot path.
+/// Verifies the struct size optimization: FileEntry should be <= 80 bytes
+/// inline on Unix (down from 88 bytes before packing FileFlags into the
+/// presence bitfield and narrowing mode to u16, from 96 bytes before
+/// packing uid/gid/content_dir, and from ~295 bytes before the
+/// Box<FileEntryExtras> refactor). On Windows the cap is <= 88 because
+/// `PathBuf` is 8 bytes larger (Windows `Wtf8Buf` carries an extra
+/// `is_known_utf8` bool, padding `OsString` from 24 to 32 bytes). This
+/// guards against accidental field additions that bloat the hot path.
 #[test]
 fn file_entry_size_optimized() {
     let size = std::mem::size_of::<FileEntry>();
     #[cfg(not(windows))]
-    const MAX: usize = 88;
+    const MAX: usize = 80;
     #[cfg(windows)]
-    const MAX: usize = 96;
+    const MAX: usize = 88;
     assert!(
         size <= MAX,
         "FileEntry is {size} bytes; expected <= {MAX}. \
@@ -315,13 +318,16 @@ fn file_entry_size_optimized() {
 /// bitfield must keep the struct at or below the prior 96-byte (Unix) /
 /// 104-byte (Windows) inline size, and must round-trip the absent/present
 /// distinction the old `Option<u32>` fields encoded.
+///
+/// RSS-2 further reduced the struct by packing FileFlags (3 bytes) into
+/// the presence bitfield and narrowing mode from u32 to u16.
 #[test]
 fn file_entry_presence_bitfield_roundtrip() {
     // (a) size did not regress against the pre-compaction layout.
     #[cfg(not(windows))]
-    const PREVIOUS: usize = 96;
+    const PREVIOUS: usize = 88;
     #[cfg(windows)]
-    const PREVIOUS: usize = 104;
+    const PREVIOUS: usize = 96;
     let size = std::mem::size_of::<FileEntry>();
     assert!(
         size <= PREVIOUS,
@@ -935,22 +941,31 @@ fn content_dir_default_and_set() {
     assert!(entry.content_dir());
 }
 
-/// flags_mut allows in-place mutation.
+/// Dedicated flag setters allow in-place mutation without a separate struct.
 #[test]
-fn flags_mut_accessor() {
+fn flags_set_roundtrip() {
     let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
-    let original = entry.flags();
-    let _flags_mut = entry.flags_mut();
-    assert_eq!(entry.flags(), original);
-}
+    assert!(!entry.top_dir());
+    assert!(!entry.hlinked());
+    assert!(!entry.hlink_first());
 
-/// set_flags replaces flags.
-#[test]
-fn set_flags_replaces() {
-    let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
-    let flags = crate::flist::flags::FileFlags::default();
-    entry.set_flags(flags);
-    assert_eq!(entry.flags(), flags);
+    entry.set_top_dir(true);
+    assert!(entry.top_dir());
+    assert!(!entry.hlinked());
+
+    entry.set_hlinked(true);
+    entry.set_hlink_first(true);
+    assert!(entry.hlinked());
+    assert!(entry.hlink_first());
+    assert!(entry.top_dir()); // other bits undisturbed
+
+    entry.set_hlink_first(false);
+    assert!(entry.hlinked());
+    assert!(!entry.hlink_first());
+
+    entry.set_top_dir(false);
+    assert!(!entry.top_dir());
+    assert!(entry.hlinked());
 }
 
 /// Getter roundtrip: set each extras field individually from a fresh entry,

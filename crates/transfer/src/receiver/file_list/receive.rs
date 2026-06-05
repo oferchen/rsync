@@ -80,7 +80,7 @@ impl ReceiverContext {
             let &(_flat_start, ndx_start) =
                 self.ndx_segments.last().expect("initial segment exists");
             for (i, entry) in self.file_list.iter_mut().enumerate() {
-                if entry.flags().hlink_first() {
+                if entry.hlink_first() {
                     entry.set_hardlink_idx((ndx_start + i as i32) as u32);
                 }
             }
@@ -201,7 +201,7 @@ impl ReceiverContext {
             // assigned before sorting.
             if self.config.flags.hard_links {
                 for (i, entry) in self.file_list[flat_start..].iter_mut().enumerate() {
-                    if entry.flags().hlink_first() {
+                    if entry.hlink_first() {
                         entry.set_hardlink_idx((seg_ndx_start + i as i32) as u32);
                     }
                 }
