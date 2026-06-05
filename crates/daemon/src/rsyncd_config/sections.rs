@@ -240,6 +240,51 @@ pub struct ModuleConfig {
     pub(crate) name_converter: Option<String>,
     pub(crate) strict_modes: bool,
     pub(crate) open_noatime: bool,
+    /// Character set for filename conversion.
+    ///
+    /// upstream: daemon-parm.txt - `charset` STRING, P_LOCAL, default NULL.
+    pub(crate) charset: Option<String>,
+    /// Temporary directory for partial transfers.
+    ///
+    /// upstream: daemon-parm.txt - `temp_dir` PATH, P_LOCAL, default NULL.
+    pub(crate) temp_dir: Option<PathBuf>,
+    /// Whether to perform DNS forward lookups for connecting hosts (default: true).
+    ///
+    /// upstream: daemon-parm.txt - `forward_lookup` BOOL, P_LOCAL, default True.
+    pub(crate) forward_lookup: bool,
+    /// Whether to perform DNS reverse lookups for connecting hosts (default: true).
+    ///
+    /// upstream: daemon-parm.txt - `reverse_lookup` BOOL, P_LOCAL, default True.
+    pub(crate) reverse_lookup: bool,
+    /// Whether to ignore I/O errors during delete operations (default: false).
+    ///
+    /// upstream: daemon-parm.txt - `ignore_errors` BOOL, P_LOCAL, default False.
+    pub(crate) ignore_errors: bool,
+    /// Whether to skip files that are not readable (default: false).
+    ///
+    /// upstream: daemon-parm.txt - `ignore_nonreadable` BOOL, P_LOCAL, default False.
+    pub(crate) ignore_nonreadable: bool,
+    /// Whether to mangle symlinks for safety (tri-state: None = unset).
+    ///
+    /// upstream: daemon-parm.txt - `munge_symlinks` BOOL3, P_LOCAL, default Unset.
+    pub(crate) munge_symlinks: Option<bool>,
+    /// Per-module log file path override.
+    ///
+    /// upstream: daemon-parm.txt - `log_file` STRING, P_LOCAL, default NULL.
+    pub(crate) module_log_file: Option<PathBuf>,
+    /// Per-module log format string override.
+    ///
+    /// upstream: daemon-parm.txt - `log_format` STRING, P_LOCAL,
+    /// default "%o %h [%a] %m (%u) %f %l".
+    pub(crate) module_log_format: Option<String>,
+    /// Per-module syslog facility override.
+    ///
+    /// upstream: daemon-parm.txt - `syslog_facility` ENUM, P_LOCAL, default LOG_DAEMON.
+    pub(crate) module_syslog_facility: Option<String>,
+    /// Per-module syslog tag override.
+    ///
+    /// upstream: daemon-parm.txt - `syslog_tag` STRING, P_LOCAL, default "rsyncd".
+    pub(crate) module_syslog_tag: Option<String>,
 }
 
 impl ModuleConfig {
@@ -473,5 +518,87 @@ impl ModuleConfig {
     /// Upstream: `loadparm.c` - `open noatime` parameter, default false.
     pub fn open_noatime(&self) -> bool {
         self.open_noatime
+    }
+
+    /// Returns the charset for filename conversion, if specified.
+    ///
+    /// Upstream: `loadparm.c` - `charset` parameter, default NULL.
+    pub fn charset(&self) -> Option<&str> {
+        self.charset.as_deref()
+    }
+
+    /// Returns the temporary directory for partial transfers, if specified.
+    ///
+    /// Upstream: `loadparm.c` - `temp dir` parameter, default NULL.
+    pub fn temp_dir(&self) -> Option<&Path> {
+        self.temp_dir.as_deref()
+    }
+
+    /// Returns whether DNS forward lookups are enabled (default: true).
+    ///
+    /// Upstream: `loadparm.c` - `forward lookup` parameter, default true.
+    pub fn forward_lookup(&self) -> bool {
+        self.forward_lookup
+    }
+
+    /// Returns whether DNS reverse lookups are enabled (default: true).
+    ///
+    /// Upstream: `loadparm.c` - `reverse lookup` parameter, default true.
+    pub fn reverse_lookup(&self) -> bool {
+        self.reverse_lookup
+    }
+
+    /// Returns whether I/O errors during delete are ignored (default: false).
+    ///
+    /// Upstream: `loadparm.c` - `ignore errors` parameter, default false.
+    pub fn ignore_errors(&self) -> bool {
+        self.ignore_errors
+    }
+
+    /// Returns whether unreadable files are silently skipped (default: false).
+    ///
+    /// Upstream: `loadparm.c` - `ignore nonreadable` parameter, default false.
+    pub fn ignore_nonreadable(&self) -> bool {
+        self.ignore_nonreadable
+    }
+
+    /// Returns the munge symlinks setting (None = unset/auto).
+    ///
+    /// When unset, the daemon determines symlink munging based on the
+    /// `use chroot` setting. Upstream: `loadparm.c` - `munge symlinks`
+    /// parameter, default Unset (BOOL3).
+    pub fn munge_symlinks(&self) -> Option<bool> {
+        self.munge_symlinks
+    }
+
+    /// Returns the per-module log file path, if specified.
+    ///
+    /// Upstream: `loadparm.c` - `log file` parameter (P_LOCAL), default NULL.
+    pub fn module_log_file(&self) -> Option<&Path> {
+        self.module_log_file.as_deref()
+    }
+
+    /// Returns the per-module log format string, if specified.
+    ///
+    /// Upstream: `loadparm.c` - `log format` parameter (P_LOCAL),
+    /// default "%o %h [%a] %m (%u) %f %l".
+    pub fn module_log_format(&self) -> Option<&str> {
+        self.module_log_format.as_deref()
+    }
+
+    /// Returns the per-module syslog facility, if specified.
+    ///
+    /// Upstream: `loadparm.c` - `syslog facility` parameter (P_LOCAL),
+    /// default LOG_DAEMON.
+    pub fn module_syslog_facility(&self) -> Option<&str> {
+        self.module_syslog_facility.as_deref()
+    }
+
+    /// Returns the per-module syslog tag, if specified.
+    ///
+    /// Upstream: `loadparm.c` - `syslog tag` parameter (P_LOCAL),
+    /// default "rsyncd".
+    pub fn module_syslog_tag(&self) -> Option<&str> {
+        self.module_syslog_tag.as_deref()
     }
 }
