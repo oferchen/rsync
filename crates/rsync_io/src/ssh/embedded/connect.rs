@@ -382,9 +382,7 @@ fn resolve_cipher_names(names: &[String]) -> Vec<russh::cipher::Name> {
 
     if resolved.is_empty() {
         // Fallback to russh defaults if all names were unrecognized.
-        resolved = russh::Preferred::DEFAULT
-            .cipher
-            .to_vec();
+        resolved = russh::Preferred::DEFAULT.cipher.to_vec();
     }
     resolved
 }
@@ -673,8 +671,7 @@ mod tests {
         ]);
 
         let config = build_client_config(&ssh_config);
-        let cipher_names: Vec<&str> =
-            config.preferred.cipher.iter().map(|c| c.as_ref()).collect();
+        let cipher_names: Vec<&str> = config.preferred.cipher.iter().map(|c| c.as_ref()).collect();
         assert_eq!(cipher_names.len(), 2);
         assert_eq!(cipher_names[0], "aes256-gcm@openssh.com");
         assert_eq!(cipher_names[1], "chacha20-poly1305@openssh.com");
@@ -684,8 +681,7 @@ mod tests {
     fn build_client_config_uses_hardware_detected_ciphers_by_default() {
         let ssh_config = SshConfig::default();
         let config = build_client_config(&ssh_config);
-        let cipher_names: Vec<&str> =
-            config.preferred.cipher.iter().map(|c| c.as_ref()).collect();
+        let cipher_names: Vec<&str> = config.preferred.cipher.iter().map(|c| c.as_ref()).collect();
 
         // Should contain the three ciphers from cipher::default_ciphers().
         assert_eq!(cipher_names.len(), 3);
@@ -731,6 +727,9 @@ mod tests {
     fn resolve_cipher_names_empty_input_falls_back() {
         let names: Vec<String> = Vec::new();
         let resolved = resolve_cipher_names(&names);
-        assert!(!resolved.is_empty(), "empty input should fall back to defaults");
+        assert!(
+            !resolved.is_empty(),
+            "empty input should fall back to defaults"
+        );
     }
 }
