@@ -402,6 +402,10 @@ pub(super) fn apply_permissions_from_entry(
             return Ok(());
         }
 
+        // Track whether the -p path actually changed permissions so the
+        // --chmod branch below knows if cached_meta is still valid.
+        let mut perms_changed = false;
+
         if options.permissions() {
             let mode = entry.permissions();
             // upstream: rsync.c:set_file_attrs() - skips chmod when mode already matches
@@ -415,13 +419,17 @@ pub(super) fn apply_permissions_from_entry(
                 fs::set_permissions(destination, permissions).map_err(|error| {
                     MetadataError::new("preserve permissions", destination, error)
                 })?;
+                perms_changed = true;
             }
         }
 
         if let Some(chmod) = options.chmod() {
-            // upstream: rsync.c:set_file_attrs() - read current mode before applying chmod modifiers
+            // upstream: rsync.c:set_file_attrs() - read current mode before
+            // applying chmod modifiers. When -p changed permissions above we
+            // must re-stat; when -p matched (no change) we reuse cached_meta
+            // to avoid a redundant stat syscall on the no-change path.
             let fresh_meta;
-            let current_meta = if options.permissions() {
+            let current_meta = if options.permissions() && perms_changed {
                 fresh_meta = fs::metadata(destination)
                     .map_err(|error| MetadataError::new("read permissions", destination, error))?;
                 &fresh_meta

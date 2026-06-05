@@ -117,9 +117,38 @@ impl MetadataOptions {
             || self.preserve_times
             || self.preserve_atimes
             || self.preserve_crtimes
+            || self.fake_super
             || self.owner_override.is_some()
             || self.group_override.is_some()
             || self.chmod.is_some()
+    }
+
+    /// Returns `true` when at least one metadata preservation flag is active.
+    ///
+    /// Used by the receiver's quick-check skip path to avoid entering the
+    /// `apply_metadata_with_cached_stat` call chain when no attributes would
+    /// be inspected. Each inner function (`apply_ownership_from_entry`,
+    /// `apply_permissions_from_entry`, `apply_timestamps_from_entry`) already
+    /// has its own early-exit guard, but skipping the entire chain saves the
+    /// function-call overhead per file.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:574-625` - `set_file_attrs()` is unconditionally called for
+    ///   quick-check matched files. oc-rsync mirrors this by always calling the
+    ///   apply chain when `requires_apply()` returns true.
+    #[must_use]
+    pub const fn requires_apply(&self) -> bool {
+        self.preserve_owner
+            || self.preserve_group
+            || self.preserve_executability
+            || self.preserve_permissions
+            || self.preserve_times
+            || self.preserve_atimes
+            || self.preserve_crtimes
             || self.fake_super
+            || self.owner_override.is_some()
+            || self.group_override.is_some()
+            || self.chmod.is_some()
     }
 }

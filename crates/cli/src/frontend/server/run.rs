@@ -95,11 +95,19 @@ where
     // silently ignores unknown tokens so a newer client can forward names
     // this build has not learned yet. The well-formed empty/level errors
     // still surface so malformed input is not swallowed entirely.
-    if !long_flags.info.is_empty()
-        && let Err(message) = super::super::execution::parse_info_flags_server(&long_flags.info)
-    {
-        write_server_error(stderr, program_brand, message.text().to_owned());
-        return 1;
+    if !long_flags.info.is_empty() {
+        match super::super::execution::parse_info_flags_server(&long_flags.info) {
+            Ok(settings) => {
+                // Apply resolved info levels to the thread-local config so
+                // info_log! callsites on the server side respect the client's
+                // --info settings.
+                settings.apply_to_thread_local();
+            }
+            Err(message) => {
+                write_server_error(stderr, program_brand, message.text().to_owned());
+                return 1;
+            }
+        }
     }
 
     // Boolean and move-only flags applied after value parsing releases its borrow.

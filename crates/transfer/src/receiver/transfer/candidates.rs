@@ -151,12 +151,19 @@ impl ReceiverContext {
 
         // Phase C: Sequential post-processing with stat results.
         //
-        // Pre-compute per-loop invariants to skip function-call overhead on
-        // the no-change hot path. Upstream's set_file_attrs() similarly
-        // short-circuits when preservation flags are all off.
-        let has_metadata_work = metadata_opts.has_any_preservation();
+        // Pre-compute feature flags to avoid per-file method dispatch on the
+        // quick-check skip path. For a no-change scan (SSH push where all
+        // files are up-to-date), this loop processes every file without
+        // producing any transfer work, so minimising per-iteration overhead
+        // is critical.
+        //
+        // upstream: generator.c generate_files() loop uses global variables
+        // for the same purpose (preserve_perms, preserve_mtimes, etc.).
+        let needs_metadata_apply = metadata_opts.requires_apply();
         let has_acl_cache = acl_cache.is_some();
         let has_xattrs = self.config.flags.xattrs;
+        let emit_itemize = self.should_emit_itemize();
+
         let mut files_to_transfer = Vec::with_capacity(stat_results.len());
         for (idx, file_path, dest_meta) in stat_results {
             let entry = &self.file_list[idx];
@@ -175,15 +182,13 @@ impl ReceiverContext {
                     size_only,
                     always_checksum,
                 ) {
-                    // upstream: rsync.c:set_file_attrs() - apply metadata only
-                    // when at least one preservation flag is active. Each
-                    // sub-function already skips its syscall when the cached stat
-                    // matches, but the function-call chain itself costs ~3
-                    // indirect calls per file on the no-change path.
-                    // Additionally, upstream: generator.c:461 unchanged_attrs()
-                    // fast-path check avoids per-function-call overhead when all
-                    // attributes already match.
-                    if has_metadata_work && !metadata_unchanged(entry, metadata_opts, meta) {
+                    // upstream: generator.c:1814-1816 - quick-check matched:
+                    // apply metadata (set_file_attrs) then itemize. Skip the
+                    // chain entirely when no preservation flags are active.
+                    // upstream: generator.c:461 unchanged_attrs() - fast-path
+                    // check avoids apply_metadata overhead when all attributes
+                    // already match.
+                    if needs_metadata_apply && !metadata_unchanged(entry, metadata_opts, meta) {
                         if let Err(e) = apply_metadata_with_cached_stat(
                             &file_path,
                             entry,
@@ -193,11 +198,15 @@ impl ReceiverContext {
                             metadata_errors.push((file_path.clone(), e.to_string()));
                         }
                     }
-                    // upstream: generator.c:2260 - itemize() for up-to-date files
-                    let iflags = crate::generator::ItemFlags::from_raw(0);
-                    let _ = self.emit_itemize(writer, &iflags, entry);
-                    // ACL and xattr application use else-if chaining because
-                    // each error branch moves `file_path` into metadata_errors.
+
+                    // upstream: generator.c:574-576 - itemize() for up-to-date
+                    // files. Only emitted when significant iflags are set; zero
+                    // iflags (completely unchanged) produces no output.
+                    if emit_itemize {
+                        let iflags = crate::generator::ItemFlags::from_raw(0);
+                        let _ = self.emit_itemize(writer, &iflags, entry);
+                    }
+
                     if has_acl_cache {
                         if let Err(e) = apply_acls_from_receiver_cache(
                             &file_path,
@@ -205,17 +214,10 @@ impl ReceiverContext {
                             acl_cache,
                             !entry.is_symlink(),
                         ) {
-                            metadata_errors.push((file_path, e.to_string()));
-                        } else if has_xattrs {
-                            if let Some(ref xattr_list) = self.resolve_xattr_list(entry) {
-                                if let Err(e) =
-                                    metadata::apply_xattrs_from_list(&file_path, xattr_list, true)
-                                {
-                                    metadata_errors.push((file_path, e.to_string()));
-                                }
-                            }
+                            metadata_errors.push((file_path.clone(), e.to_string()));
                         }
-                    } else if has_xattrs {
+                    }
+                    if has_xattrs {
                         if let Some(ref xattr_list) = self.resolve_xattr_list(entry) {
                             // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
                             if let Err(e) =

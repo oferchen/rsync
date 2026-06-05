@@ -292,8 +292,13 @@ fn file_entry_to_flat(
 
     let flat_extras = build_flat_extras(entry);
 
-    let flags = entry.flags();
-    let flags_u16 = u16::from(flags.primary) | (u16::from(flags.extended) << 8);
+    // Reconstruct a u16 flags value from the persisted bits for the flat
+    // header's `flags` field. Only the 3 persisted wire flags survive
+    // past decoding (top_dir, hlinked, hlink_first); the remaining XMIT
+    // bits are transient wire-encoding state discarded at reception.
+    let flags_u16 = (entry.top_dir() as u16)
+        | ((entry.hlinked() as u16) << 9)
+        | ((entry.hlink_first() as u16) << 12);
 
     let header = FileEntryHeader {
         mtime: entry.mtime(),

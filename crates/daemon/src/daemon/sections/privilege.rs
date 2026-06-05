@@ -107,6 +107,7 @@ fn drop_privileges(
 /// (`clientserver.c:779,818`); oc-rsync only drops when the config sets an
 /// explicit numeric `uid`/`gid` and otherwise relies on the daemon-level
 /// `uid`/`gid` directives applied before the accept loop.
+#[cfg(test)]
 fn apply_module_privilege_restrictions(
     module: &ModuleDefinition,
     log_sink: &SharedLogSink,
