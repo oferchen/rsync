@@ -31,6 +31,8 @@ mod writer;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_partial_interrupt_parity;
 
 pub use self::config::{
     BackupConfig, DEFAULT_CHANNEL_CAPACITY, DELAY_UPDATES_PARTIAL_DIR, DiskCommitConfig,
