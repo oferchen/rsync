@@ -80,8 +80,15 @@ pub struct ClientEvent {
 }
 
 impl ClientEvent {
-    pub(crate) fn from_record(record: &LocalCopyRecord, destination_root: Arc<Path>) -> Self {
-        let kind = match record.action() {
+    /// Creates an event by consuming a [`LocalCopyRecord`], moving heap-allocated
+    /// fields instead of cloning them.
+    pub(crate) fn from_record_owned(
+        record: LocalCopyRecord,
+        destination_root: Arc<Path>,
+    ) -> Self {
+        let (relative_path, action, bytes_transferred, total_bytes, elapsed, metadata, was_created, change_set) =
+            record.into_parts();
+        let kind = match &action {
             LocalCopyAction::DataCopied => ClientEventKind::DataCopied,
             LocalCopyAction::MetadataReused => ClientEventKind::MetadataReused,
             LocalCopyAction::HardLink => ClientEventKind::HardLink,
@@ -101,8 +108,8 @@ impl ClientEvent {
             LocalCopyAction::EntryDeleted => ClientEventKind::EntryDeleted,
             LocalCopyAction::SourceRemoved => ClientEventKind::SourceRemoved,
         };
-        let created = match record.action() {
-            LocalCopyAction::DataCopied => record.was_created(),
+        let created = match &action {
+            LocalCopyAction::DataCopied => was_created,
             LocalCopyAction::DirectoryCreated
             | LocalCopyAction::SymlinkCopied
             | LocalCopyAction::FifoCopied
@@ -120,20 +127,18 @@ impl ClientEvent {
             | LocalCopyAction::SourceRemoved => false,
         };
         let destination_path =
-            Self::resolve_destination_path(&destination_root, record.relative_path());
+            Self::resolve_destination_path(&destination_root, &relative_path);
         Self {
-            relative_path: record.relative_path().to_path_buf(),
+            relative_path,
             kind,
-            bytes_transferred: record.bytes_transferred(),
-            total_bytes: record.total_bytes(),
-            elapsed: record.elapsed(),
-            metadata: record
-                .metadata()
-                .map(ClientEntryMetadata::from_local_copy_metadata),
+            bytes_transferred,
+            total_bytes,
+            elapsed,
+            metadata: metadata.map(ClientEntryMetadata::from_local_copy_metadata_owned),
             created,
             destination_root,
             destination_path,
-            change_set: record.change_set(),
+            change_set,
         }
     }
 
