@@ -34,13 +34,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use engine::local_copy::{
-    LocalCopyAction, LocalCopyExecution, LocalCopyOptions, LocalCopyPlan, LocalCopyProgress,
-    LocalCopyRecord, LocalCopyRecordHandler,
+    LocalCopyExecution, LocalCopyOptions, LocalCopyPlan, LocalCopyProgress, LocalCopyRecord,
+    LocalCopyRecordHandler,
 };
 
 use super::ClientError;
 use super::error::map_local_copy_error;
-use super::summary::ClientEvent;
+use super::summary::{ClientEvent, ClientEventKind};
 
 /// Progress update emitted while executing a client transfer.
 #[derive(Clone, Debug)]
@@ -225,15 +225,14 @@ impl<'a> ClientProgressForwarder<'a> {
             .execute_with_report(LocalCopyExecution::DryRun, options)
             .map_err(map_local_copy_error)?;
 
-        let destination_root: Arc<Path> = Arc::from(preview_report.destination_root());
-        let total = preview_report
-            .records()
-            .iter()
-            .map(|record| ClientEvent::from_record(record, Arc::clone(&destination_root)))
+        let (summary, records, destination_root) = preview_report.into_parts();
+        let destination_root: Arc<Path> = Arc::from(destination_root);
+        let total = records
+            .into_iter()
+            .map(|record| ClientEvent::from_record_owned(record, Arc::clone(&destination_root)))
             .filter(|event| event.kind().is_progress())
             .count();
 
-        let summary = preview_report.summary();
         let total_bytes = summary.total_source_bytes();
 
         Ok(Self {
@@ -255,7 +254,7 @@ impl<'a> ClientProgressForwarder<'a> {
 
 impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
     fn handle(&mut self, record: LocalCopyRecord) {
-        let event = ClientEvent::from_record(&record, Arc::clone(&self.destination_root));
+        let event = ClientEvent::from_record_owned(record, Arc::clone(&self.destination_root));
         if !event.kind().is_progress() {
             return;
         }
@@ -264,8 +263,8 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
         let index = self.emitted;
         let remaining = self.total.saturating_sub(index);
 
-        let total_bytes = if matches!(record.action(), LocalCopyAction::DataCopied) {
-            record.total_bytes()
+        let total_bytes = if matches!(event.kind(), ClientEventKind::DataCopied) {
+            event.total_bytes()
         } else {
             None
         };

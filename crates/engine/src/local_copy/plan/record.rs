@@ -100,6 +100,36 @@ impl LocalCopyRecord {
         self.change_set = change_set;
         self
     }
+
+    /// Consumes the record and returns its constituent fields.
+    ///
+    /// Enables callers to move heap-allocated fields (notably `relative_path`
+    /// and `metadata`) instead of cloning them.
+    #[must_use]
+    #[allow(clippy::type_complexity)]
+    pub fn into_parts(
+        self,
+    ) -> (
+        PathBuf,
+        LocalCopyAction,
+        u64,
+        Option<u64>,
+        Duration,
+        Option<LocalCopyMetadata>,
+        bool,
+        LocalCopyChangeSet,
+    ) {
+        (
+            self.relative_path,
+            self.action,
+            self.bytes_transferred,
+            self.total_bytes,
+            self.elapsed,
+            self.metadata,
+            self.created,
+            self.change_set,
+        )
+    }
 }
 
 /// Observer invoked for each [`LocalCopyRecord`] emitted during execution.
@@ -282,5 +312,19 @@ mod tests {
             );
             assert_eq!(record.action(), &action);
         }
+    }
+
+    #[test]
+    fn into_parts_moves_relative_path() {
+        let record = test_record().with_creation(true);
+        let (path, action, bytes, total, elapsed, meta, created, change_set) = record.into_parts();
+        assert_eq!(path, Path::new("test/file.txt"));
+        assert_eq!(action, LocalCopyAction::DataCopied);
+        assert_eq!(bytes, 1024);
+        assert_eq!(total, Some(2048));
+        assert_eq!(elapsed, Duration::from_millis(100));
+        assert!(meta.is_none());
+        assert!(created);
+        assert_eq!(change_set, LocalCopyChangeSet::new());
     }
 }
