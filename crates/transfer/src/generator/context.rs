@@ -560,4 +560,45 @@ impl GeneratorContext {
         }
         Ok(())
     }
+
+    /// Reclaims heap data from the oldest unreclaimed INC_RECURSE segment.
+    ///
+    /// Frees PathBuf, dirname Arc, and extras Box allocations for all entries
+    /// in the segment while keeping entries in place so NDX-based indexing
+    /// remains valid. Advances `first_segment_idx` to the next segment.
+    ///
+    /// No-op when there is only one segment remaining (the current segment
+    /// must not be reclaimed while the transfer loop may still access it)
+    /// or when all segments have already been reclaimed.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2945 flist_free()` - frees completed file list segments
+    /// - `sender.c:244` - `flist_free(first_flist)` in sender transfer loop
+    pub(crate) fn reclaim_oldest_segment(&mut self) {
+        let segments = &self.incremental.ndx_segments;
+        let first = self.incremental.first_segment_idx;
+
+        // Must have at least 2 segments to reclaim (keep the current one).
+        if first + 1 >= segments.len() {
+            return;
+        }
+
+        let start = segments[first].0;
+        let end = segments[first + 1].0;
+
+        logging::debug_log!(
+            Flist,
+            2,
+            "reclaiming segment {} entries [{start}..{end})",
+            first
+        );
+
+        self.file_list.reclaim_segment(start, end);
+        // Also reclaim the parallel full_paths entries.
+        for path in &mut self.full_paths[start..end] {
+            *path = std::path::PathBuf::new();
+        }
+        self.incremental.first_segment_idx += 1;
+    }
 }

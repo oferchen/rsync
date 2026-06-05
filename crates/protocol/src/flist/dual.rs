@@ -172,6 +172,29 @@ impl DualFileList {
     pub fn into_vec(self) -> Vec<FileEntry> {
         self.legacy
     }
+
+    /// Reclaims heap data from entries in the range `[start..end)`.
+    ///
+    /// Calls [`FileEntry::reclaim_heap_data`] on each entry in the range,
+    /// freeing PathBuf, dirname Arc, and extras Box allocations while
+    /// keeping the entries in place so NDX-based indexing remains valid.
+    ///
+    /// This mirrors upstream rsync's `flist_free()` which deallocates
+    /// completed INC_RECURSE segments during the transfer loop.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `end > self.len()` or `start > end`.
+    pub fn reclaim_segment(&mut self, start: usize, end: usize) {
+        assert!(
+            end <= self.legacy.len() && start <= end,
+            "reclaim_segment: [{start}..{end}) out of bounds (len={})",
+            self.legacy.len()
+        );
+        for entry in &mut self.legacy[start..end] {
+            entry.reclaim_heap_data();
+        }
+    }
 }
 
 impl Default for DualFileList {
@@ -492,6 +515,55 @@ mod tests {
         list.as_mut_vec().sort_by(|a, b| a.name().cmp(b.name()));
         assert_eq!(list[0].name(), "a.txt");
         assert_eq!(list[1].name(), "z.txt");
+    }
+
+    #[test]
+    fn reclaim_segment_clears_entries_in_range() {
+        let mut list = DualFileList::new();
+        for i in 0..5 {
+            list.push(FileEntry::new_file(
+                format!("file_{i}.txt").into(),
+                (i + 1) as u64 * 100,
+                0o644,
+            ));
+        }
+
+        // Reclaim entries [1..3)
+        list.reclaim_segment(1, 3);
+
+        // Unreclaimed entries are intact.
+        assert_eq!(list[0].name(), "file_0.txt");
+        assert_eq!(list[0].size(), 100);
+        assert_eq!(list[3].name(), "file_3.txt");
+        assert_eq!(list[4].name(), "file_4.txt");
+
+        // Reclaimed entries have empty names and zero sizes.
+        assert_eq!(list[1].name(), "");
+        assert_eq!(list[1].size(), 0);
+        assert_eq!(list[2].name(), "");
+        assert_eq!(list[2].size(), 0);
+
+        // List length is unchanged (entries stay in place).
+        assert_eq!(list.len(), 5);
+    }
+
+    #[test]
+    fn reclaim_segment_empty_range_is_noop() {
+        let mut list = DualFileList::new();
+        list.push(FileEntry::new_file("a.txt".into(), 10, 0o644));
+        list.reclaim_segment(0, 0);
+        assert_eq!(list[0].name(), "a.txt");
+    }
+
+    #[test]
+    fn reclaim_segment_full_range() {
+        let mut list = DualFileList::new();
+        list.push(FileEntry::new_file("a.txt".into(), 10, 0o644));
+        list.push(FileEntry::new_file("b.txt".into(), 20, 0o644));
+        list.reclaim_segment(0, 2);
+        assert_eq!(list[0].name(), "");
+        assert_eq!(list[1].name(), "");
+        assert_eq!(list.len(), 2);
     }
 
     // --- flat-flist feature tests ---

@@ -163,6 +163,11 @@ impl GeneratorContext {
                         // flist_free(first_flist) loop.
                         if inc_recurse && flist_done_remaining > 0 {
                             flist_done_remaining -= 1;
+                            // upstream: sender.c:244 - flist_free(first_flist)
+                            // Reclaim heap data from the oldest completed segment
+                            // to reduce RSS. Entries stay in place for NDX indexing
+                            // but their PathBuf/extras allocations are freed.
+                            self.reclaim_oldest_segment();
                             if let Err(e) = ndx_write_codec
                                 .write_ndx_done(&mut *writer)
                                 .and_then(|()| flush_with_count(&mut *writer))
