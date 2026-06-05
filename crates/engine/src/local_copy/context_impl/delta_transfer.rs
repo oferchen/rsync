@@ -230,6 +230,7 @@ impl<'a> CopyContext<'a> {
             })?;
             let delta = compressed_total.saturating_sub(compressed_progress);
             self.register_limiter_bytes(delta);
+            self.record_adaptive_compression(literal_bytes, compressed_total);
             FileCopyOutcome::new(literal_bytes, Some(compressed_total))
         } else {
             FileCopyOutcome::new(literal_bytes, None)

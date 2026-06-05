@@ -96,6 +96,13 @@ impl LocalCopyOptionsBuilder {
         self
     }
 
+    /// Enables adaptive compression level tuning across files.
+    #[must_use]
+    pub fn adaptive_compress(mut self, enabled: bool) -> Self {
+        self.adaptive_compress = enabled;
+        self
+    }
+
     /// Sets the skip-compress list for file suffixes.
     #[must_use]
     pub fn skip_compress(mut self, list: SkipCompressList) -> Self {

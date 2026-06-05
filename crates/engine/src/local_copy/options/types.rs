@@ -113,6 +113,7 @@ pub struct LocalCopyOptions {
     /// Worker count for `ZSTD_c_nbWorkers`, only meaningful for zstd.
     /// upstream: `token.c:701`, `options.c:89`.
     pub(super) compression_threads: Option<NonZeroU8>,
+    pub(super) adaptive_compress: bool,
     pub(super) skip_compress: SkipCompressList,
     pub(super) open_noatime: bool,
     pub(super) whole_file: Option<bool>,
@@ -269,6 +270,7 @@ impl LocalCopyOptions {
             compression_level_override: None,
             compression_level: CompressionLevel::Default,
             compression_threads: None,
+            adaptive_compress: false,
             skip_compress: SkipCompressList::default(),
             open_noatime: false,
             whole_file: None,

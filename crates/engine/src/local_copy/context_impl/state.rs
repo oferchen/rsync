@@ -84,6 +84,33 @@ impl<'a> CopyContext<'a> {
                 .with_preserve_crtimes(options.preserve_crtimes())
         });
 
+        let adaptive_level = if options.compress_enabled() && options.adaptive_compress_enabled() {
+            let initial = options.compression_level();
+            let level_i32 = match initial {
+                CompressionLevel::None => 0,
+                CompressionLevel::Fast => 1,
+                CompressionLevel::Default => 6,
+                CompressionLevel::Best => 9,
+                CompressionLevel::Precise(v) => i32::from(v.get()),
+            };
+            match options.compression_algorithm() {
+                CompressionAlgorithm::Zlib => {
+                    Some(compress::strategy::adaptive_level::AdaptiveLevelController::for_zlib(
+                        level_i32,
+                    ))
+                }
+                #[cfg(feature = "zstd")]
+                CompressionAlgorithm::Zstd => {
+                    Some(compress::strategy::adaptive_level::AdaptiveLevelController::for_zstd(
+                        level_i32,
+                    ))
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+
         Self {
             mode,
             options,
@@ -122,6 +149,7 @@ impl<'a> CopyContext<'a> {
             batch_flist_index: 0,
             batch_ndx_codec,
             readdir_buf: Vec::new(),
+            adaptive_level,
         }
     }
 
