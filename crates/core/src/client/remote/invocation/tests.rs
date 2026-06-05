@@ -473,6 +473,8 @@ const UPSTREAM_SERVER_LONG_ARGS: &[&str] = &[
     "--write-devices",
     "--open-noatime",
     "--preallocate",
+    "--trust-sender",
+    "--checksum-seed",
     "--stop-at",
 ];
 
@@ -1162,6 +1164,46 @@ fn numeric_ids_is_long_form_not_in_flag_string() {
     assert!(
         args.iter().any(|a| a == "--numeric-ids"),
         "expected --numeric-ids in long-form args: {args:?}"
+    );
+}
+
+#[test]
+fn includes_trust_sender_long_arg() {
+    let config = ClientConfig::builder().trust_sender(true).build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--trust-sender"),
+        "expected --trust-sender in args: {args:?}"
+    );
+}
+
+#[test]
+fn omits_trust_sender_when_not_set() {
+    let config = ClientConfig::builder().build();
+    let args = build_sender_args(&config);
+    assert!(
+        !args.iter().any(|a| a == "--trust-sender"),
+        "unexpected --trust-sender in args: {args:?}"
+    );
+}
+
+#[test]
+fn includes_checksum_seed_long_arg() {
+    let config = ClientConfig::builder().checksum_seed(Some(12345)).build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--checksum-seed=12345"),
+        "expected --checksum-seed=12345 in args: {args:?}"
+    );
+}
+
+#[test]
+fn omits_checksum_seed_when_none() {
+    let config = ClientConfig::builder().build();
+    let args = build_sender_args(&config);
+    assert!(
+        !args.iter().any(|a| a.starts_with("--checksum-seed=")),
+        "unexpected --checksum-seed in args: {args:?}"
     );
 }
 
@@ -2074,6 +2116,8 @@ fn all_flags_enabled_produces_valid_invocation() {
         .prune_empty_dirs(true)
         .verbosity(2)
         // Long-form args
+        .trust_sender(true)
+        .checksum_seed(Some(42))
         .ignore_errors(true)
         .fsync(true)
         .delete_excluded(true)
@@ -2178,6 +2222,8 @@ fn all_flags_enabled_produces_valid_invocation() {
         "--delete-excluded",
         "--force",
         "--numeric-ids",
+        "--trust-sender",
+        "--checksum-seed=42",
         "--max-delete=50",
         "--max-size=1000000",
         "--min-size=100",
@@ -2821,4 +2867,138 @@ fn unix_secs_to_utc_y2k() {
     // 2000-01-01T00:00:00 UTC = 946_684_800 (well-known Y2K timestamp)
     let (y, m, d, h, min) = unix_secs_to_utc_components(946_684_800);
     assert_eq!((y, m, d, h, min), (2000, 1, 1, 0, 0));
+}
+
+// -----------------------------------------------------------------------
+// Remote option (-M / --remote-option) forwarding
+// -----------------------------------------------------------------------
+
+#[test]
+fn remote_options_appended_to_sender_invocation() {
+    // upstream: options.c:2986-2993 - remote_options[] appended after all
+    // other server args, before "." and remote paths.
+    let config = ClientConfig::builder()
+        .remote_options(vec!["--bwlimit=100", "--compress-level=1"])
+        .build();
+    let args = build_sender_args(&config);
+
+    assert!(
+        args.iter().any(|a| a == "--bwlimit=100"),
+        "expected --bwlimit=100 from -M in args: {args:?}"
+    );
+    assert!(
+        args.iter().any(|a| a == "--compress-level=1"),
+        "expected --compress-level=1 from -M in args: {args:?}"
+    );
+}
+
+#[test]
+fn remote_options_appended_to_receiver_invocation() {
+    let config = ClientConfig::builder()
+        .remote_options(vec!["--timeout=60"])
+        .build();
+    let args = build_receiver_args(&config);
+
+    assert!(
+        args.iter().any(|a| a == "--timeout=60"),
+        "expected --timeout=60 from -M in args: {args:?}"
+    );
+}
+
+#[test]
+fn remote_options_appear_before_dot_placeholder() {
+    // upstream: server_options() appends remote_options before returning,
+    // then do_cmd() appends "." and paths. So remote options must precede ".".
+    let config = ClientConfig::builder()
+        .remote_options(vec!["--bwlimit=200"])
+        .build();
+    let args = build_sender_args(&config);
+
+    let dot_idx = args.iter().position(|a| a == ".").unwrap();
+    let opt_idx = args.iter().position(|a| a == "--bwlimit=200").unwrap();
+    assert!(
+        opt_idx < dot_idx,
+        "remote option should appear before '.' placeholder: {args:?}"
+    );
+}
+
+#[test]
+fn remote_options_appear_after_locally_derived_args() {
+    // Remote options should come after all locally-derived long-form args
+    // but before "." and paths.
+    let config = ClientConfig::builder()
+        .numeric_ids(true)
+        .remote_options(vec!["--max-delete=50"])
+        .build();
+    let args = build_sender_args(&config);
+
+    let numeric_idx = args.iter().position(|a| a == "--numeric-ids").unwrap();
+    let remote_idx = args.iter().position(|a| a == "--max-delete=50").unwrap();
+    assert!(
+        remote_idx > numeric_idx,
+        "remote option should appear after locally-derived args: {args:?}"
+    );
+}
+
+#[test]
+fn empty_remote_options_adds_nothing() {
+    let config_with = ClientConfig::builder()
+        .remote_options(Vec::<&str>::new())
+        .build();
+    let config_without = ClientConfig::builder().build();
+    let args_with = build_sender_args(&config_with);
+    let args_without = build_sender_args(&config_without);
+
+    assert_eq!(
+        args_with, args_without,
+        "empty remote_options should produce identical invocation"
+    );
+}
+
+#[test]
+fn multiple_remote_options_preserve_order() {
+    let config = ClientConfig::builder()
+        .remote_options(vec!["--first", "--second", "--third"])
+        .build();
+    let args = build_sender_args(&config);
+
+    let first_idx = args.iter().position(|a| a == "--first").unwrap();
+    let second_idx = args.iter().position(|a| a == "--second").unwrap();
+    let third_idx = args.iter().position(|a| a == "--third").unwrap();
+    assert!(
+        first_idx < second_idx && second_idx < third_idx,
+        "remote options must preserve insertion order: {args:?}"
+    );
+}
+
+#[test]
+fn remote_options_forwarded_in_secluded_mode() {
+    let config = ClientConfig::builder()
+        .protect_args(Some(true))
+        .remote_options(vec!["--bwlimit=500"])
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let secluded = builder.build_secluded(&["/path"]);
+
+    assert!(
+        secluded.stdin_args.iter().any(|a| a == "--bwlimit=500"),
+        "secluded stdin_args should contain remote option: {:?}",
+        secluded.stdin_args
+    );
+}
+
+#[test]
+fn remote_options_not_on_upstream_allowlist_still_forwarded() {
+    // Remote options (-M) are user-provided overrides forwarded verbatim.
+    // They deliberately bypass the upstream long-arg allowlist because they
+    // are explicitly requested by the user.
+    let config = ClientConfig::builder()
+        .remote_options(vec!["--custom-extension=value"])
+        .build();
+    let args = build_sender_args(&config);
+
+    assert!(
+        args.iter().any(|a| a == "--custom-extension=value"),
+        "remote options should be forwarded verbatim: {args:?}"
+    );
 }
