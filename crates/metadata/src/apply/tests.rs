@@ -1256,23 +1256,146 @@ fn metadata_unchanged_ignores_perms_when_not_preserved() {
     );
 }
 
+#[cfg(unix)]
 #[test]
-fn metadata_unchanged_returns_false_when_chmod_active() {
+fn metadata_unchanged_returns_false_when_chmod_would_change_mode() {
     use protocol::flist::FileEntry;
 
     let temp = tempdir().expect("tempdir");
-    let dest = temp.path().join("chmod-active.txt");
+    let dest = temp.path().join("chmod-changes.txt");
     fs::write(&dest, b"data").expect("write dest");
 
     let meta = fs::metadata(&dest).expect("metadata");
 
-    let entry = FileEntry::new_file("chmod-active.txt".into(), 4, 0o644);
+    let entry = FileEntry::new_file("chmod-changes.txt".into(), 4, 0o644);
 
+    // u+x would change 0o644 to 0o744
     let chmod = crate::ChmodModifiers::parse("u+x").expect("parse chmod");
     let opts = MetadataOptions::new().with_chmod(Some(chmod));
 
     assert!(
         !metadata_unchanged(&entry, &opts, &meta),
-        "should return false when chmod modifiers are active"
+        "should return false when chmod would change mode"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn metadata_unchanged_returns_true_when_chmod_is_noop() {
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("chmod-noop.txt");
+    fs::write(&dest, b"data").expect("write dest");
+    fs::set_permissions(&dest, PermissionsExt::from_mode(0o755)).expect("set perms");
+
+    let meta = fs::metadata(&dest).expect("metadata");
+    let mtime = FileTime::from_last_modification_time(&meta);
+
+    let mut entry = FileEntry::new_file("chmod-noop.txt".into(), 4, meta.mode() & 0o7777);
+    entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
+    entry.set_uid(meta.uid());
+    entry.set_gid(meta.gid());
+
+    // u+x on a file that already has u+x is a no-op
+    let chmod = crate::ChmodModifiers::parse("u+x").expect("parse chmod");
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(true)
+        .preserve_owner(true)
+        .preserve_group(true)
+        .with_chmod(Some(chmod));
+
+    assert!(
+        metadata_unchanged(&entry, &opts, &meta),
+        "should return true when chmod modifier does not change mode"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn metadata_unchanged_returns_true_when_owner_override_matches() {
+    use protocol::flist::FileEntry;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("owner-match.txt");
+    fs::write(&dest, b"data").expect("write dest");
+
+    let meta = fs::metadata(&dest).expect("metadata");
+    let mtime = FileTime::from_last_modification_time(&meta);
+
+    let mut entry = FileEntry::new_file("owner-match.txt".into(), 4, meta.mode() & 0o7777);
+    entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
+    entry.set_uid(meta.uid());
+    entry.set_gid(meta.gid());
+
+    // Set owner override to current UID - no actual change needed
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(true)
+        .with_owner_override(Some(meta.uid()));
+
+    assert!(
+        metadata_unchanged(&entry, &opts, &meta),
+        "should return true when owner override matches current uid"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn metadata_unchanged_returns_false_when_owner_override_differs() {
+    use protocol::flist::FileEntry;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("owner-differ.txt");
+    fs::write(&dest, b"data").expect("write dest");
+
+    let meta = fs::metadata(&dest).expect("metadata");
+    let mtime = FileTime::from_last_modification_time(&meta);
+
+    let mut entry = FileEntry::new_file("owner-differ.txt".into(), 4, meta.mode() & 0o7777);
+    entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
+    entry.set_uid(meta.uid());
+    entry.set_gid(meta.gid());
+
+    // Set owner override to a different UID
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(true)
+        .with_owner_override(Some(meta.uid() + 1));
+
+    assert!(
+        !metadata_unchanged(&entry, &opts, &meta),
+        "should return false when owner override differs from current uid"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn metadata_unchanged_returns_true_when_group_override_matches() {
+    use protocol::flist::FileEntry;
+
+    let temp = tempdir().expect("tempdir");
+    let dest = temp.path().join("group-match.txt");
+    fs::write(&dest, b"data").expect("write dest");
+
+    let meta = fs::metadata(&dest).expect("metadata");
+    let mtime = FileTime::from_last_modification_time(&meta);
+
+    let mut entry = FileEntry::new_file("group-match.txt".into(), 4, meta.mode() & 0o7777);
+    entry.set_mtime(mtime.unix_seconds(), mtime.nanoseconds());
+    entry.set_uid(meta.uid());
+    entry.set_gid(meta.gid());
+
+    // Set group override to current GID - no actual change needed
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(true)
+        .with_group_override(Some(meta.gid()));
+
+    assert!(
+        metadata_unchanged(&entry, &opts, &meta),
+        "should return true when group override matches current gid"
     );
 }
