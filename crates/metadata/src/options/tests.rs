@@ -252,3 +252,44 @@ fn overrides_and_chmod_can_be_cleared() {
     assert!(cleared.group_override().is_none());
     assert!(cleared.chmod().is_none());
 }
+
+#[test]
+fn requires_apply_true_for_default_options() {
+    // Default MetadataOptions has preserve_permissions=true and
+    // preserve_times=true, so requires_apply must be true.
+    let opts = MetadataOptions::new();
+    assert!(opts.requires_apply());
+}
+
+#[test]
+fn requires_apply_false_when_all_flags_cleared() {
+    let opts = MetadataOptions::new()
+        .preserve_permissions(false)
+        .preserve_times(false)
+        .preserve_owner(false)
+        .preserve_group(false);
+    assert!(!opts.requires_apply());
+}
+
+#[test]
+fn requires_apply_true_for_each_flag_independently() {
+    let base = MetadataOptions::new()
+        .preserve_permissions(false)
+        .preserve_times(false);
+
+    assert!(base.clone().preserve_owner(true).requires_apply());
+    assert!(base.clone().preserve_group(true).requires_apply());
+    assert!(base.clone().preserve_executability(true).requires_apply());
+    assert!(base.clone().preserve_permissions(true).requires_apply());
+    assert!(base.clone().preserve_times(true).requires_apply());
+    assert!(base.clone().preserve_atimes(true).requires_apply());
+    assert!(base.clone().preserve_crtimes(true).requires_apply());
+    assert!(base.clone().fake_super(true).requires_apply());
+    assert!(base.clone().with_owner_override(Some(0)).requires_apply());
+    assert!(base.clone().with_group_override(Some(0)).requires_apply());
+    assert!(
+        base.clone()
+            .with_chmod(Some(ChmodModifiers::parse("u+x").unwrap()))
+            .requires_apply()
+    );
+}
