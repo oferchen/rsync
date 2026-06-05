@@ -483,7 +483,11 @@ mod tests {
             ctrl.record_output_bytes(2_000);
             ctrl.record_file_complete();
         }
-        assert_eq!(ctrl.current_level(), 9, "level should reach max for highly compressible data");
+        assert_eq!(
+            ctrl.current_level(),
+            9,
+            "level should reach max for highly compressible data"
+        );
     }
 
     #[test]
@@ -495,7 +499,11 @@ mod tests {
             ctrl.record_output_bytes(9_900);
             ctrl.record_file_complete();
         }
-        assert_eq!(ctrl.current_level(), 1, "level should reach min for incompressible data");
+        assert_eq!(
+            ctrl.current_level(),
+            1,
+            "level should reach min for incompressible data"
+        );
     }
 
     #[test]

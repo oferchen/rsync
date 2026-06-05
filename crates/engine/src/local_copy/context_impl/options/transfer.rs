@@ -88,10 +88,6 @@ impl<'a> CopyContext<'a> {
         self.compress_enabled() && !self.options.should_skip_compress(relative)
     }
 
-    pub(super) const fn adaptive_compress_enabled(&self) -> bool {
-        self.options.adaptive_compress_enabled()
-    }
-
     pub(super) const fn compression_level(&self) -> CompressionLevel {
         self.options.compression_level()
     }
