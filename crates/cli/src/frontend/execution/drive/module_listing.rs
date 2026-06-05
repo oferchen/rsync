@@ -1,6 +1,5 @@
 use std::ffi::OsString;
 use std::io::Write;
-use std::path::Path;
 
 use core::client::{
     AddressMode, BindAddress, ModuleListOptions, ModuleListRequest, TransferTimeout,
@@ -9,9 +8,7 @@ use core::client::{
 use logging_sink::MessageSink;
 use protocol::ProtocolVersion;
 
-use crate::frontend::{
-    execution::render_module_list, password::load_optional_password, write_message,
-};
+use crate::frontend::{execution::render_module_list, write_message};
 
 /// Inputs for attempting a daemon module listing request.
 pub(super) struct ModuleListingInputs<'a> {
@@ -19,7 +16,7 @@ pub(super) struct ModuleListingInputs<'a> {
     pub remainder: &'a [OsString],
     pub daemon_port: Option<u16>,
     pub desired_protocol: Option<ProtocolVersion>,
-    pub password_file: Option<&'a Path>,
+    pub password_override: Option<Vec<u8>>,
     pub no_motd: bool,
     pub address_mode: AddressMode,
     pub bind_address: Option<&'a BindAddress>,
@@ -47,7 +44,7 @@ where
         remainder,
         daemon_port,
         desired_protocol,
-        password_file,
+        password_override,
         no_motd,
         address_mode,
         bind_address,
@@ -78,17 +75,6 @@ where
         request.with_protocol(protocol)
     } else {
         request
-    };
-
-    let password_override = match load_optional_password(password_file) {
-        Ok(secret) => secret,
-        Err(message) => {
-            if write_message(&message, stderr).is_err() {
-                let fallback = message.to_string();
-                let _ = writeln!(stderr.writer_mut(), "{fallback}");
-            }
-            return Some(1);
-        }
     };
 
     let list_options = ModuleListOptions::default()

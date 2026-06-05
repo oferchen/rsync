@@ -179,6 +179,7 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
     daemon_params: &[String],
     early_input: Option<&Path>,
     protocol_override: Option<ProtocolVersion>,
+    password_override: Option<&[u8]>,
 ) -> Result<ProtocolVersion, ClientError> {
     let mut greeting = String::new();
     reader.read_line(&mut greeting).map_err(|e| {
@@ -273,12 +274,16 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
         let trimmed = line.trim();
 
         if let Some(challenge) = trimmed.strip_prefix("@RSYNCD: AUTHREQD ") {
-            let secret = load_daemon_password().ok_or_else(|| {
-                daemon_error(
-                    "daemon requires authentication but RSYNC_PASSWORD not set",
-                    CLIENT_SERVER_PROTOCOL_EXIT_CODE,
-                )
-            })?;
+            let secret = password_override
+                .map(|s| s.to_vec())
+                .or_else(load_daemon_password)
+                .ok_or_else(|| {
+                    daemon_error(
+                        "daemon requires authentication but no password source available \
+                         (use --password-command, --password-file, or RSYNC_PASSWORD)",
+                        CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+                    )
+                })?;
 
             let username = request.username.clone().unwrap_or_else(|| {
                 std::env::var("USER")

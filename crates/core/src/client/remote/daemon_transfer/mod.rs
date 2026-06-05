@@ -175,6 +175,7 @@ pub fn run_daemon_transfer(
         config.daemon_params(),
         config.early_input(),
         config.protocol_version(),
+        config.password_override(),
     )?;
 
     // For pull (we receive), the daemon is the sender, so is_sender=true.
@@ -363,6 +364,7 @@ pub fn run_daemon_over_remote_shell(
         config.daemon_params(),
         config.early_input(),
         config.protocol_version(),
+        config.password_override(),
     )?;
 
     let daemon_is_sender = matches!(role, RemoteRole::Receiver);

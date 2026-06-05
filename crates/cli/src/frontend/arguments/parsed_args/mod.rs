@@ -124,6 +124,9 @@ pub struct ParsedArgs {
     /// `--password-file` - file containing daemon authentication password.
     pub password_file: Option<OsString>,
 
+    /// `--password-command` - shell command whose stdout provides the daemon password.
+    pub password_command: Option<OsString>,
+
     /// `--archive`, `-a` - shorthand for `-rlptgoD`.
     pub archive: bool,
 

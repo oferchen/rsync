@@ -52,3 +52,30 @@ fn password_file_dash_conflicts_with_files_from_dash() {
     let rendered = String::from_utf8(stderr).expect("diagnostic is UTF-8");
     assert!(rendered.contains("--password-file=- cannot be combined with --files-from=-"));
 }
+
+#[test]
+fn password_command_requires_daemon_operands() {
+    use tempfile::tempdir;
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+    std::fs::write(&source, b"data").expect("write source");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--password-command=echo secret"),
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ]);
+
+    assert_eq!(code, 1);
+    assert!(stdout.is_empty());
+    let rendered = String::from_utf8(stderr).expect("diagnostic is UTF-8");
+    assert!(
+        rendered.contains("--password-command") || rendered.contains("--password-file"),
+        "expected password daemon-only diagnostic, got: {rendered}"
+    );
+    assert!(rendered.contains("rsync daemon"));
+    assert!(!destination.exists());
+}

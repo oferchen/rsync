@@ -222,6 +222,12 @@ pub struct ClientConfig {
     /// `in_memory_only` to `true`. Precedence: **CLI > env > defaults**.
     pub(super) no_spill: bool,
     pub(super) no_motd: bool,
+    /// Pre-loaded password override for daemon authentication.
+    ///
+    /// When `Some`, this password takes precedence over the `RSYNC_PASSWORD`
+    /// environment variable during daemon handshake. Populated from
+    /// `--password-command` or `--password-file` at the CLI layer.
+    pub(super) password_override: Option<Vec<u8>>,
     /// Extra options forwarded to the remote rsync process via `-M` / `--remote-option`.
     ///
     /// Each entry is a complete option string (e.g. `--bwlimit=100`) appended
@@ -397,6 +403,7 @@ impl Default for ClientConfig {
             spill_threshold_bytes: None,
             no_spill: false,
             no_motd: false,
+            password_override: None,
             remote_options: Vec::new(),
             daemon_params: Vec::new(),
             protocol_version: None,

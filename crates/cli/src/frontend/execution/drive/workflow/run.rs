@@ -204,6 +204,7 @@ where
         xattrs,
         no_motd,
         password_file,
+        password_command,
         protocol,
         timeout,
         contimeout,
@@ -272,6 +273,16 @@ where
     if let Err(code) = validate_stdin_sources_conflict(&password_file, &files_from, stderr) {
         return code;
     }
+
+    // Resolve daemon password from the available sources in precedence order:
+    // --password-command > --password-file > RSYNC_PASSWORD (handled later in core)
+    let password_override = match crate::frontend::password::resolve_password(
+        password_command.as_deref(),
+        password_file.as_deref(),
+    ) {
+        Ok(password) => password,
+        Err(message) => return fail_with_message(message, stderr),
+    };
 
     let desired_protocol = match resolve_desired_protocol(protocol.as_ref(), stderr) {
         Ok(protocol) => protocol,
@@ -447,7 +458,7 @@ where
             remainder: &remainder,
             daemon_port,
             desired_protocol,
-            password_file: password_file.as_deref(),
+            password_override: password_override.clone(),
             no_motd,
             address_mode,
             bind_address: bind_address.as_ref(),
@@ -609,7 +620,8 @@ where
     if !is_daemon_transfer {
         if let Some(exit_code) = validation::validate_local_only_options(
             desired_protocol,
-            password_file.as_ref(),
+            password_override.is_some(),
+            password_file.is_some() || password_command.is_some(),
             connect_program.as_ref(),
             parsed.rsync_path.as_ref(),
             &remote_options,
@@ -828,6 +840,7 @@ where
         jump_hosts: jump_host,
         batch_config,
         no_motd,
+        password_override,
         remote_options,
         daemon_params: dparam
             .into_iter()

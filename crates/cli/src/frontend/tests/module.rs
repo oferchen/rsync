@@ -120,6 +120,44 @@ fn module_list_uses_password_file_for_authentication() {
 }
 
 #[test]
+fn module_list_uses_password_command_for_authentication() {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD_NO_PAD;
+    use checksums::strong::Sha512;
+
+    let challenge = "cmd-test";
+    let secret = b"cmd-secret";
+    let expected_digest = {
+        let mut hasher = Sha512::new();
+        hasher.update(secret);
+        hasher.update(challenge.as_bytes());
+        let digest = hasher.finalize();
+        STANDARD_NO_PAD.encode(digest)
+    };
+
+    let expected_credentials = format!("user {expected_digest}");
+    let (addr, handle) = spawn_auth_stub_daemon(
+        challenge,
+        expected_credentials,
+        vec!["@RSYNCD: OK\n", "protected\n", "@RSYNCD: EXIT\n"],
+    );
+
+    let url = format!("rsync://user@{}:{}/", addr.ip(), addr.port());
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--password-command=echo cmd-secret"),
+        OsString::from(url),
+    ]);
+
+    assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
+    assert!(stderr.is_empty());
+    let rendered = String::from_utf8(stdout).expect("module listing is UTF-8");
+    assert!(rendered.contains("protected"));
+
+    handle.join().expect("server thread");
+}
+
+#[test]
 fn module_list_reads_password_from_stdin() {
     use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD_NO_PAD;

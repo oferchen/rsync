@@ -79,6 +79,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "  -F            Alias for per-directory .rsync-filter handling (repeat to also load receiver-side files).\n",
             "      --files-from=FILE  Read additional source operands from FILE.\n",
             "      --password-file=FILE  Read daemon passwords from FILE when contacting rsync:// daemons.\n",
+            "      --password-command=COMMAND  Run COMMAND via system shell and read daemon password from stdout.\n",
             "      --no-motd    Suppress daemon MOTD lines when listing rsync:// modules.\n",
             "      --from0      Treat file list entries as NUL-terminated records.\n",
             "      --no-from0  Disable NUL-terminated file list handling.\n",
