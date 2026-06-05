@@ -17,15 +17,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use logging::info_log;
-use protocol::codec::{create_ndx_codec, MonotonicNdxWriter, NdxCodec};
+use protocol::codec::{MonotonicNdxWriter, NdxCodec, create_ndx_codec};
 use protocol::flist::FileEntry;
 
 use crate::delta_apply::ChecksumVerifier;
 use crate::pipeline::{PipelineConfig, PipelineState};
-use crate::receiver::basis::{find_basis_file_with_config, BasisFileConfig};
+use crate::receiver::basis::{BasisFileConfig, find_basis_file_with_config};
 use crate::receiver::{PipelineSetup, ReceiverContext};
 use crate::transfer_ops::{
-    process_file_response_streaming, send_file_request, RequestConfig, ResponseContext,
+    RequestConfig, ResponseContext, process_file_response_streaming, send_file_request,
 };
 
 /// Result type for the pipelined transfer closure:
