@@ -1291,7 +1291,7 @@ fn read_entry_rejects_name_exceeding_maxpathlen() {
 
     // Craft a wire entry with XMIT_LONG_NAME and suffix_len = 4096 (>= MAXPATHLEN).
     let mut data = Vec::new();
-    let xmit_flags = 0x01u16 | XMIT_LONG_NAME;
+    let xmit_flags = 0x01u16 | u16::from(XMIT_LONG_NAME);
     encode_varint_to_vec(xmit_flags as i32, &mut data);
     // XMIT_LONG_NAME: suffix_len is read via codec (varint for proto 30+)
     encode_varint_to_vec(4096, &mut data);
