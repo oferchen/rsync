@@ -608,8 +608,7 @@ mod linux {
         #[allow(unsafe_code)]
         let raw = unsafe {
             let mut how: libc::open_how = std::mem::zeroed();
-            how.flags =
-                (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64;
+            how.flags = (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64;
             how.mode = 0;
             how.resolve = libc::RESOLVE_BENEATH;
 
