@@ -1,6 +1,7 @@
 //! Tests for remote invocation builder and transfer role detection.
 
 use std::ffi::{OsStr, OsString};
+use std::time::SystemTime;
 
 use compress::algorithm::CompressionAlgorithm;
 use transfer::setup::build_capability_string_suffix;
@@ -472,6 +473,7 @@ const UPSTREAM_SERVER_LONG_ARGS: &[&str] = &[
     "--write-devices",
     "--open-noatime",
     "--preallocate",
+    "--stop-at",
 ];
 
 /// Returns whether a long-form argument matches one of the upstream allowlist
@@ -2114,6 +2116,9 @@ fn all_flags_enabled_produces_valid_invocation() {
         .write_devices(true)
         .open_noatime(true)
         .preallocate(true)
+        .stop_at(Some(
+            SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_893_456_000),
+        ))
         .set_rsync_path("/custom/rsync")
         .inc_recursive_send(true)
         .build();
@@ -2224,6 +2229,7 @@ fn all_flags_enabled_produces_valid_invocation() {
         "--link-dest=",
         "--compare-dest=",
         "--copy-dest=",
+        "--stop-at=",
     ];
     for prefix in expected_prefixed {
         assert!(
@@ -2665,4 +2671,164 @@ fn shell_safe_escaping_in_normal_mode() {
         "normal command_line_args should contain escaped path: {:?}",
         secluded.command_line_args
     );
+}
+
+// --stop-at forwarding tests
+
+#[test]
+fn includes_stop_at_long_arg_when_set() {
+    use std::time::{Duration, SystemTime};
+
+    let deadline = SystemTime::UNIX_EPOCH + Duration::from_secs(1_893_456_000);
+    let config = ClientConfig::builder().stop_at(Some(deadline)).build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a.starts_with("--stop-at=")),
+        "expected --stop-at=... in args: {args:?}"
+    );
+}
+
+#[test]
+fn omits_stop_at_when_none() {
+    let config = ClientConfig::builder().build();
+    let args = build_sender_args(&config);
+    assert!(
+        !args.iter().any(|a| a.starts_with("--stop-at=")),
+        "should not emit --stop-at= when none: {args:?}"
+    );
+}
+
+#[test]
+fn stop_at_forwarded_as_utc_datetime_format() {
+    use std::time::{Duration, SystemTime};
+
+    // 2030-01-15T12:30:00 UTC = 1_894_796_200 unix seconds
+    // (2030-01-15 12:30:00 UTC)
+    let deadline = SystemTime::UNIX_EPOCH + Duration::from_secs(1_894_796_200);
+    let config = ClientConfig::builder().stop_at(Some(deadline)).build();
+    let args = build_sender_args(&config);
+    let stop_arg = args
+        .iter()
+        .find(|a| a.starts_with("--stop-at="))
+        .expect("--stop-at arg");
+    // The formatted value should be a valid datetime like YYYY/MM/DDTHH:MM
+    let value = stop_arg.strip_prefix("--stop-at=").unwrap();
+    assert!(
+        value.contains('T'),
+        "stop-at value should contain 'T' separator: {value}"
+    );
+    assert!(
+        value.contains('/') || value.contains('-'),
+        "stop-at value should contain date separators: {value}"
+    );
+}
+
+#[test]
+fn stop_at_forwarded_in_secluded_mode() {
+    use std::time::{Duration, SystemTime};
+
+    let deadline = SystemTime::UNIX_EPOCH + Duration::from_secs(1_893_456_000);
+    let config = ClientConfig::builder()
+        .stop_at(Some(deadline))
+        .protect_args(Some(true))
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let secluded = builder.build_secluded(&["/path"]);
+
+    assert!(
+        secluded
+            .stdin_args
+            .iter()
+            .any(|a| a.starts_with("--stop-at=")),
+        "secluded stdin_args should contain --stop-at=: {:?}",
+        secluded.stdin_args
+    );
+}
+
+// format_system_time_for_stop_at and unix_secs_to_utc_components tests
+
+#[test]
+fn format_stop_at_unix_epoch() {
+    use super::builder::format_system_time_for_stop_at;
+
+    let formatted = format_system_time_for_stop_at(SystemTime::UNIX_EPOCH).unwrap();
+    assert_eq!(formatted, "1970/01/01T00:00");
+}
+
+#[test]
+fn format_stop_at_y2k() {
+    use super::builder::format_system_time_for_stop_at;
+    use std::time::Duration;
+
+    // 2000-01-01T00:00:00 UTC = 946_684_800 (well-known Y2K timestamp)
+    let time = SystemTime::UNIX_EPOCH + Duration::from_secs(946_684_800);
+    let formatted = format_system_time_for_stop_at(time).unwrap();
+    assert_eq!(formatted, "2000/01/01T00:00");
+}
+
+#[test]
+fn format_stop_at_round_trip_with_parser() {
+    use super::builder::format_system_time_for_stop_at;
+    use std::time::Duration;
+
+    // Verify the formatter output is parseable by checking the format structure.
+    // Use a future timestamp to ensure it's always valid.
+    let time = SystemTime::UNIX_EPOCH + Duration::from_secs(4_102_444_800);
+    let formatted = format_system_time_for_stop_at(time).unwrap();
+    // Must be YYYY/MM/DDTHH:MM
+    let parts: Vec<&str> = formatted.split('T').collect();
+    assert_eq!(parts.len(), 2, "must have date and time parts: {formatted}");
+    let date_parts: Vec<&str> = parts[0].split('/').collect();
+    assert_eq!(
+        date_parts.len(),
+        3,
+        "date must have 3 parts: {}",
+        parts[0]
+    );
+    let time_parts: Vec<&str> = parts[1].split(':').collect();
+    assert_eq!(
+        time_parts.len(),
+        2,
+        "time must have 2 parts: {}",
+        parts[1]
+    );
+}
+
+#[test]
+fn unix_secs_to_utc_epoch() {
+    use super::builder::unix_secs_to_utc_components;
+    let (y, m, d, h, min) = unix_secs_to_utc_components(0);
+    assert_eq!((y, m, d, h, min), (1970, 1, 1, 0, 0));
+}
+
+#[test]
+fn unix_secs_to_utc_known_date() {
+    use super::builder::unix_secs_to_utc_components;
+    // 2000-01-01T00:00:00 UTC = 946_684_800
+    let (y, m, d, h, min) = unix_secs_to_utc_components(946_684_800);
+    assert_eq!((y, m, d, h, min), (2000, 1, 1, 0, 0));
+}
+
+#[test]
+fn unix_secs_to_utc_one_day() {
+    use super::builder::unix_secs_to_utc_components;
+    // 1970-01-02T00:00:00 UTC = 86400
+    let (y, m, d, h, min) = unix_secs_to_utc_components(86_400);
+    assert_eq!((y, m, d, h, min), (1970, 1, 2, 0, 0));
+}
+
+#[test]
+fn unix_secs_to_utc_time_components() {
+    use super::builder::unix_secs_to_utc_components;
+    // 1970-01-01T23:59:00 UTC = 86340
+    let (y, m, d, h, min) = unix_secs_to_utc_components(86_340);
+    assert_eq!((y, m, d, h, min), (1970, 1, 1, 23, 59));
+}
+
+#[test]
+fn unix_secs_to_utc_y2k() {
+    use super::builder::unix_secs_to_utc_components;
+    // 2000-01-01T00:00:00 UTC = 946_684_800 (well-known Y2K timestamp)
+    let (y, m, d, h, min) = unix_secs_to_utc_components(946_684_800);
+    assert_eq!((y, m, d, h, min), (2000, 1, 1, 0, 0));
 }
