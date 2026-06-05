@@ -712,7 +712,7 @@ mod tests {
         ];
         let resolved = resolve_cipher_names(&names);
         assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].0, "aes128-gcm@openssh.com");
+        assert_eq!(resolved[0].as_ref(), "aes128-gcm@openssh.com");
     }
 
     #[test]
