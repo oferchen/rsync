@@ -4,9 +4,7 @@ use std::sync::Arc;
 
 use super::super::wire_path::path_bytes_to_wire;
 use super::FileEntry;
-use super::core::{
-    PRESENT_HLINKED, PRESENT_HLINK_FIRST, PRESENT_TOP_DIR, extract_dirname,
-};
+use super::core::{PRESENT_HLINK_FIRST, PRESENT_HLINKED, PRESENT_TOP_DIR, extract_dirname};
 use super::extras::FileEntryExtras;
 use super::file_type::FileType;
 

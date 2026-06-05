@@ -438,14 +438,8 @@ mod tests {
         let mut seg2 = vec![d, e, f];
         match_hard_links(&mut seg2, &mut prior_hlinks);
 
-        assert!(
-            !seg2[0].hlink_first(),
-            "gnum 10 cross-segment follower"
-        );
-        assert!(
-            !seg2[1].hlink_first(),
-            "gnum 20 cross-segment follower"
-        );
+        assert!(!seg2[0].hlink_first(), "gnum 10 cross-segment follower");
+        assert!(!seg2[1].hlink_first(), "gnum 20 cross-segment follower");
         assert!(seg2[2].hlink_first(), "gnum 30 new leader in seg2");
     }
 }
