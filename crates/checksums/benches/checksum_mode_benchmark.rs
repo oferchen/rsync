@@ -25,11 +25,7 @@ use checksums::strong::{Md5, StrongDigest, Xxh3, Xxh3_128};
 /// File sizes that represent typical workloads in `--checksum` mode.
 /// 1 MB covers small config files batched together, 10 MB covers typical
 /// source trees, 100 MB covers media or build artifacts.
-const FILE_SIZES: &[(usize, &str)] = &[
-    (1 << 20, "1MB"),
-    (10 << 20, "10MB"),
-    (100 << 20, "100MB"),
-];
+const FILE_SIZES: &[(usize, &str)] = &[(1 << 20, "1MB"), (10 << 20, "10MB"), (100 << 20, "100MB")];
 
 /// Smaller sizes for pure-hash throughput where 100 MB would dominate runtime.
 const HASH_SIZES: &[(usize, &str)] = &[
@@ -75,13 +71,9 @@ fn bench_whole_file_hash_throughput(c: &mut Criterion) {
         group.throughput(Throughput::Bytes(size as u64));
 
         // XXH3/128 - post-CSM-8 default for --checksum mode
-        group.bench_with_input(
-            BenchmarkId::new("xxh3_128", label),
-            &data,
-            |b, data| {
-                b.iter(|| black_box(Xxh3_128::digest(0, black_box(data))));
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("xxh3_128", label), &data, |b, data| {
+            b.iter(|| black_box(Xxh3_128::digest(0, black_box(data))));
+        });
 
         // MD5 - pre-CSM-8 default (the slow path)
         group.bench_with_input(BenchmarkId::new("md5", label), &data, |b, data| {
@@ -131,16 +123,12 @@ fn bench_whole_file_hash_with_io(c: &mut Criterion) {
         );
 
         // MD5 with file I/O - the production path before CSM-8
-        group.bench_with_input(
-            BenchmarkId::new("md5_file", label),
-            &paths,
-            |b, paths| {
-                b.iter(|| {
-                    let results = hash_files_parallel::<Md5>(black_box(paths), 64 * 1024);
-                    black_box(results)
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::new("md5_file", label), &paths, |b, paths| {
+            b.iter(|| {
+                let results = hash_files_parallel::<Md5>(black_box(paths), 64 * 1024);
+                black_box(results)
+            });
+        });
     }
 
     group.finish();
@@ -181,16 +169,12 @@ fn bench_parallel_whole_file_hash(c: &mut Criterion) {
         },
     );
 
-    group.bench_with_input(
-        BenchmarkId::new("md5", "100x1MB"),
-        &paths,
-        |b, paths| {
-            b.iter(|| {
-                let results = hash_files_parallel::<Md5>(black_box(paths), 64 * 1024);
-                black_box(results)
-            });
-        },
-    );
+    group.bench_with_input(BenchmarkId::new("md5", "100x1MB"), &paths, |b, paths| {
+        b.iter(|| {
+            let results = hash_files_parallel::<Md5>(black_box(paths), 64 * 1024);
+            black_box(results)
+        });
+    });
 
     group.finish();
 }
