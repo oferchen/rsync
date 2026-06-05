@@ -696,6 +696,31 @@ fn set_rsync_path_sets_value() {
 }
 
 #[test]
+fn remote_options_default_is_empty() {
+    let config = builder().build();
+    assert!(config.remote_options().is_empty());
+}
+
+#[test]
+fn remote_options_sets_values() {
+    let config = builder()
+        .remote_options(vec!["--bwlimit=100", "--compress-level=1"])
+        .build();
+    assert_eq!(config.remote_options().len(), 2);
+    assert_eq!(config.remote_options()[0], "--bwlimit=100");
+    assert_eq!(config.remote_options()[1], "--compress-level=1");
+}
+
+#[test]
+fn remote_options_empty_clears_values() {
+    let config = builder()
+        .remote_options(vec!["--bwlimit=100"])
+        .remote_options(Vec::<&str>::new())
+        .build();
+    assert!(config.remote_options().is_empty());
+}
+
+#[test]
 fn early_input_sets_path() {
     let config = builder()
         .early_input(Some(PathBuf::from("/tmp/early-input")))

@@ -154,6 +154,8 @@ pub(crate) struct ConfigInputs {
     pub(crate) jump_hosts: Option<OsString>,
     pub(crate) batch_config: Option<BatchConfig>,
     pub(crate) no_motd: bool,
+    /// Extra options forwarded to the remote rsync process via `-M`.
+    pub(crate) remote_options: Vec<OsString>,
     pub(crate) daemon_params: Vec<String>,
     pub(crate) files_from: FilesFromSource,
     pub(crate) from0: bool,
@@ -385,5 +387,6 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
     builder
         .force_event_collection(force_event_collection)
         .no_motd(inputs.no_motd)
+        .remote_options(inputs.remote_options)
         .daemon_params(inputs.daemon_params)
 }

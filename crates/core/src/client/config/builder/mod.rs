@@ -262,6 +262,7 @@ pub struct ClientConfigBuilder {
     spill_threshold_bytes: Option<u64>,
     no_spill: bool,
     no_motd: bool,
+    remote_options: Vec<OsString>,
     daemon_params: Vec<String>,
     protocol_version: Option<protocol::ProtocolVersion>,
     #[cfg(feature = "embedded-ssh")]
@@ -494,6 +495,7 @@ impl ClientConfigBuilder {
             spill_threshold_bytes: self.spill_threshold_bytes,
             no_spill: self.no_spill,
             no_motd: self.no_motd,
+            remote_options: self.remote_options,
             daemon_params: self.daemon_params,
             protocol_version: self.protocol_version,
             #[cfg(feature = "embedded-ssh")]

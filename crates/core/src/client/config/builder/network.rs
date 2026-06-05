@@ -109,6 +109,32 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Sets extra options to forward to the remote rsync process.
+    ///
+    /// Each entry in the iterator is a complete option string (e.g. `--bwlimit=100`)
+    /// that will be appended verbatim to the server command line after all
+    /// locally-derived arguments. Mirrors upstream `options.c:server_options()`
+    /// which appends `remote_options[]` at the end of the server args.
+    ///
+    /// # Example
+    /// ```
+    /// # use core::client::ClientConfig;
+    /// let config = ClientConfig::builder()
+    ///     .remote_options(vec!["--bwlimit=100", "--compress-level=1"])
+    ///     .build();
+    /// ```
+    #[must_use]
+    #[doc(alias = "--remote-option")]
+    #[doc(alias = "-M")]
+    pub fn remote_options<I, S>(mut self, opts: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<OsString>,
+    {
+        self.remote_options = opts.into_iter().map(Into::into).collect();
+        self
+    }
+
     /// Configures a custom remote shell command for SSH transfers.
     ///
     /// This method accepts an iterable of command arguments where the first element

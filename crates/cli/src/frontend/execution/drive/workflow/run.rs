@@ -828,6 +828,7 @@ where
         jump_hosts: jump_host,
         batch_config,
         no_motd,
+        remote_options,
         daemon_params: dparam
             .into_iter()
             .map(|s| s.to_string_lossy().into_owned())
