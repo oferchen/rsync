@@ -2779,19 +2779,9 @@ fn format_stop_at_round_trip_with_parser() {
     let parts: Vec<&str> = formatted.split('T').collect();
     assert_eq!(parts.len(), 2, "must have date and time parts: {formatted}");
     let date_parts: Vec<&str> = parts[0].split('/').collect();
-    assert_eq!(
-        date_parts.len(),
-        3,
-        "date must have 3 parts: {}",
-        parts[0]
-    );
+    assert_eq!(date_parts.len(), 3, "date must have 3 parts: {}", parts[0]);
     let time_parts: Vec<&str> = parts[1].split(':').collect();
-    assert_eq!(
-        time_parts.len(),
-        2,
-        "time must have 2 parts: {}",
-        parts[1]
-    );
+    assert_eq!(time_parts.len(), 2, "time must have 2 parts: {}", parts[1]);
 }
 
 #[test]
