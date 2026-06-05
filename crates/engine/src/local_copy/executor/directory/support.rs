@@ -28,10 +28,20 @@ const PARALLEL_THRESHOLD: usize = 32;
 /// Reads directory entries and fetches metadata, using parallel stat calls
 /// when entry count exceeds the threshold, falling back to sequential for
 /// small directories.
-pub(crate) fn read_directory_entries_sorted(
+#[cfg(test)]
+fn read_directory_entries_sorted(path: &Path) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
+    let mut pending = Vec::new();
+    read_directory_entries_sorted_reuse(path, &mut pending)
+}
+
+/// Reads directory entries into a reusable `pending` buffer, avoiding a fresh
+/// heap allocation for the intermediate `(OsString, PathBuf)` collection on
+/// every directory visited during recursive traversal.
+pub(crate) fn read_directory_entries_sorted_reuse(
     path: &Path,
+    pending: &mut Vec<(OsString, PathBuf)>,
 ) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
-    read_directory_entries_sorted_parallel(path)
+    read_directory_entries_sorted_parallel(path, pending)
 }
 
 /// Sequential implementation: reads entries and fetches metadata one at a time.
@@ -69,15 +79,20 @@ fn read_directory_entries_sorted_sequential(
 ///
 /// For directories with many entries, this significantly reduces wall-clock time
 /// by overlapping multiple stat() syscalls across CPU cores.
+///
+/// The `pending` buffer is cleared and refilled each call, reusing the heap
+/// allocation across recursive directory traversal instead of allocating a
+/// fresh `Vec` per directory.
 fn read_directory_entries_sorted_parallel(
     path: &Path,
+    pending: &mut Vec<(OsString, PathBuf)>,
 ) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
     // Phase 1: Collect paths sequentially - read_dir iteration is inherently
     // sequential on every platform.
     let read_dir =
         fs::read_dir(path).map_err(|error| LocalCopyError::io("read directory", path, error))?;
 
-    let mut pending: Vec<(OsString, PathBuf)> = Vec::new();
+    pending.clear();
     for entry in read_dir {
         let entry =
             entry.map_err(|error| LocalCopyError::io("read directory entry", path, error))?;
@@ -86,7 +101,7 @@ fn read_directory_entries_sorted_parallel(
 
     if pending.len() < PARALLEL_THRESHOLD {
         let mut entries = Vec::with_capacity(pending.len());
-        for (file_name, entry_path) in pending {
+        for (file_name, entry_path) in pending.drain(..) {
             let metadata = fs::symlink_metadata(&entry_path).map_err(|error| {
                 LocalCopyError::io("inspect directory entry", entry_path.clone(), error)
             })?;
@@ -102,7 +117,14 @@ fn read_directory_entries_sorted_parallel(
 
     // Parallel metadata fetch loses traversal order; sort is applied after
     // collection so local copies stay deterministic.
-    let results: Vec<Result<DirectoryEntry, (PathBuf, std::io::Error)>> = pending
+    //
+    // Take elements into a temporary Vec for rayon's into_par_iter.
+    // Reserve capacity afterwards so the buffer stays reusable across
+    // recursive directory visits without re-allocating.
+    let capacity = pending.len();
+    let batch = std::mem::take(pending);
+    pending.reserve(capacity);
+    let results: Vec<Result<DirectoryEntry, (PathBuf, std::io::Error)>> = batch
         .into_par_iter()
         .map(
             |(file_name, entry_path)| match fs::symlink_metadata(&entry_path) {
@@ -445,7 +467,8 @@ mod tests {
             std::fs::create_dir(temp.path().join(&name)).expect("mkdir");
         }
 
-        let parallel = super::read_directory_entries_sorted_parallel(temp.path()).unwrap();
+        let parallel =
+            super::read_directory_entries_sorted_parallel(temp.path(), &mut Vec::new()).unwrap();
         let sequential = read_directory_entries_sorted_sequential(temp.path()).unwrap();
 
         assert_eq!(parallel.len(), sequential.len());
@@ -468,7 +491,7 @@ mod tests {
         }
 
         // Should still work correctly (uses sequential path internally)
-        let result = super::read_directory_entries_sorted_parallel(temp.path());
+        let result = super::read_directory_entries_sorted_parallel(temp.path(), &mut Vec::new());
         assert!(result.is_ok());
         let entries = result.unwrap();
         assert_eq!(entries.len(), 5);
@@ -490,7 +513,7 @@ mod tests {
                 .expect("write");
         }
 
-        let result = super::read_directory_entries_sorted_parallel(temp.path());
+        let result = super::read_directory_entries_sorted_parallel(temp.path(), &mut Vec::new());
         assert!(result.is_ok());
         let entries = result.unwrap();
 
@@ -524,7 +547,7 @@ mod tests {
             }
         }
 
-        let result = super::read_directory_entries_sorted_parallel(temp.path());
+        let result = super::read_directory_entries_sorted_parallel(temp.path(), &mut Vec::new());
         assert!(result.is_ok());
         let _entries = result.unwrap();
 
@@ -540,5 +563,35 @@ mod tests {
                 assert!(entry.metadata.file_type().is_symlink());
             }
         }
+    }
+
+    #[test]
+    fn reuse_buffer_preserves_capacity_across_directories() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let dir_a = temp.path().join("a");
+        let dir_b = temp.path().join("b");
+        std::fs::create_dir(&dir_a).expect("mkdir a");
+        std::fs::create_dir(&dir_b).expect("mkdir b");
+
+        for i in 0..10 {
+            std::fs::write(dir_a.join(format!("file_{i}.txt")), b"content").expect("write a");
+        }
+        for i in 0..3 {
+            std::fs::write(dir_b.join(format!("file_{i}.txt")), b"content").expect("write b");
+        }
+
+        let mut buf = Vec::new();
+        assert_eq!(buf.capacity(), 0);
+
+        let entries_a = super::read_directory_entries_sorted_reuse(&dir_a, &mut buf).unwrap();
+        assert_eq!(entries_a.len(), 10);
+        // After draining, the buffer keeps its heap capacity.
+        assert!(buf.capacity() >= 10);
+
+        let saved_capacity = buf.capacity();
+        let entries_b = super::read_directory_entries_sorted_reuse(&dir_b, &mut buf).unwrap();
+        assert_eq!(entries_b.len(), 3);
+        // Capacity stays at the high-water mark from the larger directory.
+        assert_eq!(buf.capacity(), saved_capacity);
     }
 }
