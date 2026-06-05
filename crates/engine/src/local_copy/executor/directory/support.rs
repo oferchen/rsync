@@ -28,7 +28,8 @@ const PARALLEL_THRESHOLD: usize = 32;
 /// Reads directory entries and fetches metadata, using parallel stat calls
 /// when entry count exceeds the threshold, falling back to sequential for
 /// small directories.
-pub(crate) fn read_directory_entries_sorted(
+#[cfg(test)]
+fn read_directory_entries_sorted(
     path: &Path,
 ) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
     let mut pending = Vec::new();
@@ -119,9 +120,12 @@ fn read_directory_entries_sorted_parallel(
     // Parallel metadata fetch loses traversal order; sort is applied after
     // collection so local copies stay deterministic.
     //
-    // Drain elements into a temporary Vec for rayon's into_par_iter while
-    // preserving pending's heap capacity for reuse at the next directory.
-    let batch: Vec<_> = pending.drain(..).collect();
+    // Take elements into a temporary Vec for rayon's into_par_iter.
+    // Reserve capacity afterwards so the buffer stays reusable across
+    // recursive directory visits without re-allocating.
+    let capacity = pending.len();
+    let batch = std::mem::take(pending);
+    pending.reserve(capacity);
     let results: Vec<Result<DirectoryEntry, (PathBuf, std::io::Error)>> = batch
         .into_par_iter()
         .map(
