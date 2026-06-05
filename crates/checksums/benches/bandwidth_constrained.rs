@@ -39,7 +39,7 @@ use std::time::{Duration, Instant};
 
 use checksums::cpu_features::{SimdLevel, reset_simd_override_for_tests};
 use checksums::md5_backend::Dispatcher;
-use checksums::strong::{Md4, Md5, StrongDigest, Xxh3, Xxh3_128};
+use checksums::strong::{Md4, Md5, Xxh3, Xxh3_128};
 
 // ---------------------------------------------------------------------------
 // Constants
