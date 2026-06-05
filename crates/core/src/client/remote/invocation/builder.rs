@@ -353,6 +353,17 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--numeric-ids"));
         }
 
+        // upstream: options.c:2889-2890 - --trust-sender forwarded as long-form.
+        if self.config.trust_sender() {
+            args.push(OsString::from("--trust-sender"));
+        }
+
+        // upstream: options.c:2892-2894 - --checksum-seed=N forwarded so the
+        // server uses the same seed for rolling and strong checksum generation.
+        if let Some(seed) = self.config.checksum_seed() {
+            args.push(OsString::from(format!("--checksum-seed={seed}")));
+        }
+
         if self.config.size_only() {
             args.push(OsString::from("--size-only"));
         }
