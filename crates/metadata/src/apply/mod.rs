@@ -257,12 +257,44 @@ pub fn metadata_unchanged(
         }
     }
 
-    // chmod modifiers need the full apply path regardless of stat match
+    // upstream: generator.c:495-502 - chmod modifiers applied on top of the
+    // entry's mode. Evaluate the modifier against the current stat and only
+    // fall through to the full apply path when the result would differ.
+    #[cfg(unix)]
+    if let Some(chmod) = options.chmod() {
+        use std::os::unix::fs::MetadataExt;
+        // Start with the entry's mode when -p is active, else the current mode
+        let base_mode = if options.permissions() {
+            entry.permissions()
+        } else {
+            cached_meta.mode()
+        };
+        let new_mode = chmod.apply(base_mode, cached_meta.file_type());
+        if (cached_meta.mode() & 0o7777) != (new_mode & 0o7777) {
+            return false;
+        }
+    }
+    #[cfg(not(unix))]
     if options.chmod().is_some() {
         return false;
     }
 
-    // Owner/group overrides need the full apply path
+    // Owner/group overrides: compare override values against cached stat.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Some(uid) = options.owner_override() {
+            if cached_meta.uid() != uid {
+                return false;
+            }
+        }
+        if let Some(gid) = options.group_override() {
+            if cached_meta.gid() != gid {
+                return false;
+            }
+        }
+    }
+    #[cfg(not(unix))]
     if options.owner_override().is_some() || options.group_override().is_some() {
         return false;
     }
