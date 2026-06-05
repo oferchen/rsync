@@ -4,11 +4,13 @@
 //! TCP connect, authentication, channel open, and command execution. Returns
 //! synchronous `Read`/`Write` handles suitable for the rsync protocol layer.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::mpsc::RecvTimeoutError;
 use std::time::{Duration, Instant};
 
 use super::auth::authenticate;
+use super::cipher;
 use super::config::SshConfig;
 use super::error::SshError;
 use super::handler::SshClientHandler;
@@ -282,6 +284,111 @@ async fn bridge_main(
     }
 }
 
+/// SSH channel window size tuned for rsync bulk transfers.
+///
+/// 16 MB is large enough to keep the pipeline full across a 100 Mbps link
+/// with 100 ms RTT (bandwidth-delay product = 1.25 MB), while staying well
+/// below the 2 GB SSH protocol limit. Larger windows reduce flow-control
+/// stalls during file-list and delta-data phases.
+const SSH_WINDOW_SIZE: u32 = 16 * 1024 * 1024;
+
+/// Maximum SSH packet payload size.
+///
+/// 64 KB matches OpenSSH's default `MaxPacketSize` and reduces per-packet
+/// framing overhead compared to russh's default 32 KB.
+const SSH_MAX_PACKET_SIZE: u32 = 64 * 1024;
+
+/// KEX preference order for rsync transfers.
+///
+/// Curve25519 first for speed, then DH-G14 and DH-GEX as fallbacks for
+/// legacy servers. Omits post-quantum (ML-KEM) and large DH groups (15-18)
+/// which add latency without benefit for typical rsync use cases.
+/// upstream: OpenSSH 9.x defaults to curve25519-sha256 first.
+const FAST_KEX_ORDER: &[russh::kex::Name] = &[
+    russh::kex::CURVE25519,
+    russh::kex::CURVE25519_PRE_RFC_8731,
+    russh::kex::DH_G14_SHA256,
+    russh::kex::DH_GEX_SHA256,
+    russh::kex::EXTENSION_SUPPORT_AS_CLIENT,
+    russh::kex::EXTENSION_OPENSSH_STRICT_KEX_AS_CLIENT,
+];
+
+/// Builds a `russh::client::Config` tuned for rsync transfers.
+///
+/// Key optimizations over `Config::default()`:
+///
+/// - **`nodelay: true`** - disables Nagle's algorithm so SSH handshake
+///   roundtrips (KEX, auth, channel open, exec) are not delayed by TCP
+///   coalescing. Upstream OpenSSH sets `TCP_NODELAY` by default.
+/// - **Curve25519 KEX first** - prefers the fast `curve25519-sha256` key
+///   exchange over the post-quantum `mlkem768x25519-sha256` hybrid,
+///   avoiding the extra CPU and bandwidth cost of ML-KEM encapsulation
+///   when post-quantum security is not required.
+/// - **Hardware-aware cipher selection** - applies the preference list
+///   from `SshConfig.ciphers` (or the hardware-detected defaults from
+///   `cipher::default_ciphers()`) to prefer AES-GCM on CPUs with AES-NI
+///   and ChaCha20-Poly1305 on others.
+/// - **Larger window and packet sizes** - reduces flow-control stalls
+///   and per-packet framing overhead for bulk data transfer.
+/// - **Keepalive forwarding** - propagates the user-configured keepalive
+///   interval and max count from `SshConfig`.
+fn build_client_config(ssh_config: &SshConfig) -> russh::client::Config {
+    let kex = Cow::Borrowed(FAST_KEX_ORDER);
+
+    // Cipher preference: honor user config or use hardware-detected defaults.
+    let cipher_names = ssh_config
+        .ciphers
+        .clone()
+        .unwrap_or_else(cipher::default_ciphers);
+    let cipher_list = resolve_cipher_names(&cipher_names);
+
+    let preferred = russh::Preferred {
+        kex,
+        cipher: Cow::Owned(cipher_list),
+        ..Default::default()
+    };
+
+    russh::client::Config {
+        // Disable Nagle's algorithm for low-latency handshake roundtrips.
+        // upstream: OpenSSH sets TCP_NODELAY unconditionally (sshconnect.c).
+        nodelay: true,
+        window_size: SSH_WINDOW_SIZE,
+        maximum_packet_size: SSH_MAX_PACKET_SIZE,
+        preferred,
+        keepalive_interval: ssh_config.keepalive_interval,
+        keepalive_max: ssh_config.keepalive_max_count as usize,
+        ..Default::default()
+    }
+}
+
+/// Maps cipher name strings to `russh::cipher::Name` constants.
+///
+/// Unknown names are silently dropped - russh would reject them during
+/// negotiation anyway. If all names are unknown, falls back to russh's
+/// built-in cipher order.
+fn resolve_cipher_names(names: &[String]) -> Vec<russh::cipher::Name> {
+    let mut resolved: Vec<russh::cipher::Name> = names
+        .iter()
+        .filter_map(|name| match name.as_str() {
+            "chacha20-poly1305@openssh.com" => Some(russh::cipher::CHACHA20_POLY1305),
+            "aes128-gcm@openssh.com" => Some(russh::cipher::AES_128_GCM),
+            "aes256-gcm@openssh.com" => Some(russh::cipher::AES_256_GCM),
+            "aes128-ctr" => Some(russh::cipher::AES_128_CTR),
+            "aes192-ctr" => Some(russh::cipher::AES_192_CTR),
+            "aes256-ctr" => Some(russh::cipher::AES_256_CTR),
+            _ => None,
+        })
+        .collect();
+
+    if resolved.is_empty() {
+        // Fallback to russh defaults if all names were unrecognized.
+        resolved = russh::Preferred::DEFAULT
+            .cipher
+            .to_vec();
+    }
+    resolved
+}
+
 /// Performs SSH connection setup: DNS resolution, connect, auth, channel
 /// open, exec, and optional initial stdin data delivery.
 async fn ssh_setup(
@@ -306,7 +413,7 @@ async fn ssh_setup(
             preference: "any".to_owned(),
         })?;
 
-    let client_config = Arc::new(russh::client::Config::default());
+    let client_config = Arc::new(build_client_config(ssh_config));
 
     let handler = SshClientHandler::new(
         ssh_config.host.clone(),
@@ -484,5 +591,146 @@ mod tests {
         let result = std::io::Write::write(&mut writer, b"data");
         assert!(result.is_err());
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::BrokenPipe);
+    }
+
+    // -----------------------------------------------------------------------
+    // Tests for optimized client config construction.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn build_client_config_enables_nodelay() {
+        let ssh_config = SshConfig::default();
+        let config = build_client_config(&ssh_config);
+        assert!(config.nodelay, "TCP_NODELAY must be enabled");
+    }
+
+    #[test]
+    fn build_client_config_uses_tuned_window_size() {
+        let ssh_config = SshConfig::default();
+        let config = build_client_config(&ssh_config);
+        assert_eq!(config.window_size, SSH_WINDOW_SIZE);
+        assert!(
+            config.window_size > 2_097_152,
+            "window should exceed the 2 MB default"
+        );
+    }
+
+    #[test]
+    fn build_client_config_uses_tuned_packet_size() {
+        let ssh_config = SshConfig::default();
+        let config = build_client_config(&ssh_config);
+        assert_eq!(config.maximum_packet_size, SSH_MAX_PACKET_SIZE);
+    }
+
+    #[test]
+    fn build_client_config_prefers_curve25519_kex() {
+        let ssh_config = SshConfig::default();
+        let config = build_client_config(&ssh_config);
+        let kex_names: Vec<&str> = config.preferred.kex.iter().map(|k| k.as_ref()).collect();
+        assert_eq!(
+            kex_names[0], "curve25519-sha256",
+            "curve25519-sha256 must be first KEX preference"
+        );
+    }
+
+    #[test]
+    fn build_client_config_excludes_post_quantum_kex() {
+        let ssh_config = SshConfig::default();
+        let config = build_client_config(&ssh_config);
+        let kex_names: Vec<&str> = config.preferred.kex.iter().map(|k| k.as_ref()).collect();
+        assert!(
+            !kex_names.contains(&"mlkem768x25519-sha256"),
+            "post-quantum KEX should not be in the fast-path preference list"
+        );
+    }
+
+    #[test]
+    fn build_client_config_forwards_keepalive() {
+        let mut ssh_config = SshConfig::default();
+        ssh_config.keepalive_interval = Some(Duration::from_secs(15));
+        ssh_config.keepalive_max_count = 5;
+
+        let config = build_client_config(&ssh_config);
+        assert_eq!(config.keepalive_interval, Some(Duration::from_secs(15)));
+        assert_eq!(config.keepalive_max, 5);
+    }
+
+    #[test]
+    fn build_client_config_no_keepalive_when_disabled() {
+        let mut ssh_config = SshConfig::default();
+        ssh_config.keepalive_interval = None;
+
+        let config = build_client_config(&ssh_config);
+        assert!(config.keepalive_interval.is_none());
+    }
+
+    #[test]
+    fn build_client_config_applies_user_ciphers() {
+        let mut ssh_config = SshConfig::default();
+        ssh_config.ciphers = Some(vec![
+            "aes256-gcm@openssh.com".to_owned(),
+            "chacha20-poly1305@openssh.com".to_owned(),
+        ]);
+
+        let config = build_client_config(&ssh_config);
+        let cipher_names: Vec<&str> =
+            config.preferred.cipher.iter().map(|c| c.as_ref()).collect();
+        assert_eq!(cipher_names.len(), 2);
+        assert_eq!(cipher_names[0], "aes256-gcm@openssh.com");
+        assert_eq!(cipher_names[1], "chacha20-poly1305@openssh.com");
+    }
+
+    #[test]
+    fn build_client_config_uses_hardware_detected_ciphers_by_default() {
+        let ssh_config = SshConfig::default();
+        let config = build_client_config(&ssh_config);
+        let cipher_names: Vec<&str> =
+            config.preferred.cipher.iter().map(|c| c.as_ref()).collect();
+
+        // Should contain the three ciphers from cipher::default_ciphers().
+        assert_eq!(cipher_names.len(), 3);
+        assert!(cipher_names.contains(&"chacha20-poly1305@openssh.com"));
+        assert!(cipher_names.contains(&"aes128-gcm@openssh.com"));
+        assert!(cipher_names.contains(&"aes256-gcm@openssh.com"));
+    }
+
+    #[test]
+    fn resolve_cipher_names_maps_known_ciphers() {
+        let names = vec![
+            "aes128-gcm@openssh.com".to_owned(),
+            "chacha20-poly1305@openssh.com".to_owned(),
+            "aes256-ctr".to_owned(),
+        ];
+        let resolved = resolve_cipher_names(&names);
+        assert_eq!(resolved.len(), 3);
+        assert_eq!(resolved[0].as_ref(), "aes128-gcm@openssh.com");
+        assert_eq!(resolved[1].as_ref(), "chacha20-poly1305@openssh.com");
+        assert_eq!(resolved[2].as_ref(), "aes256-ctr");
+    }
+
+    #[test]
+    fn resolve_cipher_names_drops_unknown_names() {
+        let names = vec![
+            "aes128-gcm@openssh.com".to_owned(),
+            "totally-made-up-cipher".to_owned(),
+        ];
+        let resolved = resolve_cipher_names(&names);
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].0, "aes128-gcm@openssh.com");
+    }
+
+    #[test]
+    fn resolve_cipher_names_falls_back_on_all_unknown() {
+        let names = vec!["unknown-cipher".to_owned()];
+        let resolved = resolve_cipher_names(&names);
+        // Falls back to russh defaults - should not be empty.
+        assert!(!resolved.is_empty());
+    }
+
+    #[test]
+    fn resolve_cipher_names_empty_input_falls_back() {
+        let names: Vec<String> = Vec::new();
+        let resolved = resolve_cipher_names(&names);
+        assert!(!resolved.is_empty(), "empty input should fall back to defaults");
     }
 }
