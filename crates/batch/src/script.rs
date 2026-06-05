@@ -29,7 +29,7 @@ pub fn generate_script(config: &BatchConfig) -> BatchResult<()> {
 /// Generate a shell script for replaying a batch file with optional filter rules.
 ///
 /// When `filter_rules` is `Some`, the script includes `--filter=._-` (protocol
-/// >= 29) or `--exclude-from=-` (protocol < 29) and appends the rules as a
+/// 29+) or `--exclude-from=-` (older protocols) and appends the rules as a
 /// heredoc so that the replay applies the same filters used during batch
 /// creation.
 ///
