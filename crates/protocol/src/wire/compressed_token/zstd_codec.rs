@@ -79,9 +79,11 @@ impl ZstdTokenEncoder {
     pub(super) fn new(level: i32, workers: Option<std::num::NonZeroU8>) -> io::Result<Self> {
         let mut encoder = ZstdRawEncoder::new(level)?;
         if let Some(n) = workers {
-            encoder
-                .set_parameter(zstd::stream::raw::CParameter::NbWorkers(u32::from(n.get())))
-                .map_err(io::Error::other)?;
+            // Silently ignore failures - zstd rejects ZSTD_c_nbWorkers
+            // when built without multi-thread support (the `zstdmt` Cargo
+            // feature). The encoder still works in single-threaded mode.
+            let _ = encoder
+                .set_parameter(zstd::stream::raw::CParameter::NbWorkers(u32::from(n.get())));
         }
         Ok(Self {
             encoder,
@@ -1002,18 +1004,23 @@ mod tests {
     ///
     /// When `Some(N)` is passed, `ZSTD_c_nbWorkers` is set on the raw encoder.
     /// Whether true multi-threaded compression activates depends on the `zstdmt`
-    /// Cargo feature of the zstd-safe crate, but the parameter must always be
-    /// accepted without returning an error.
+    /// Cargo feature of the zstd-safe crate. Without `zstdmt`, the
+    /// `ZSTD_c_nbWorkers` parameter is silently ignored and the encoder falls
+    /// back to single-threaded mode.
     #[test]
     fn zstd_encoder_accepts_workers_parameter() {
         // None (single-threaded) always works.
         let enc_none = ZstdTokenEncoder::new(3, None);
         assert!(enc_none.is_ok(), "None workers should succeed");
 
-        // Some(1) is always valid - even without the zstdmt feature, requesting
-        // 1 worker is equivalent to single-threaded mode.
+        // Some(N) always succeeds - NbWorkers failure is silently ignored,
+        // so the encoder falls back to single-threaded mode when zstdmt
+        // is not available.
         let enc_one = ZstdTokenEncoder::new(3, std::num::NonZeroU8::new(1));
         assert!(enc_one.is_ok(), "1 worker should succeed");
+
+        let enc_four = ZstdTokenEncoder::new(3, std::num::NonZeroU8::new(4));
+        assert!(enc_four.is_ok(), "4 workers should succeed (fallback to single-threaded without zstdmt)");
     }
 
     /// Verifies that a zstd encoder created with workers produces output that
