@@ -272,9 +272,12 @@ impl ReceiverContext {
         // already match. On a no-change scan this eliminates ownership mapping,
         // permission comparison, and timestamp construction for every file.
         if !metadata_unchanged(entry, metadata_opts, stat_meta) {
-            if let Err(e) =
-                apply_metadata_with_cached_stat(file_path, entry, metadata_opts, Some(stat_meta.clone()))
-            {
+            if let Err(e) = apply_metadata_with_cached_stat(
+                file_path,
+                entry,
+                metadata_opts,
+                Some(stat_meta.clone()),
+            ) {
                 metadata_errors.push((file_path.to_path_buf(), e.to_string()));
             }
         }
