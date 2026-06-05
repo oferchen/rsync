@@ -91,7 +91,7 @@ pub(super) fn process_planned_entry(
 fn dispatch_copy_action(
     context: &mut CopyContext,
     planned: &PlannedEntry<'_>,
-    target_buf: &mut PathBuf,
+    target_buf: &mut Path,
     entry_metadata: &std::fs::Metadata,
     record_relative: Option<&Path>,
     ensure_directory: &mut impl FnMut(&mut CopyContext) -> Result<(), LocalCopyError>,

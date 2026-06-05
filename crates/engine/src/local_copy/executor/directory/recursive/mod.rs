@@ -15,7 +15,7 @@ mod entry;
 
 use std::cell::Cell;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use crate::local_copy::overrides::device_identifier;
