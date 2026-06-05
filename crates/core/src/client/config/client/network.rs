@@ -60,6 +60,17 @@ impl ClientConfig {
         self.stop_at
     }
 
+    /// Returns the extra options forwarded to the remote rsync process.
+    ///
+    /// Empty when no `-M` / `--remote-option` flags were specified.
+    /// upstream: `options.c:server_options()` appends these after all other
+    /// server arguments.
+    #[doc(alias = "--remote-option")]
+    #[doc(alias = "-M")]
+    pub fn remote_options(&self) -> &[OsString] {
+        &self.remote_options
+    }
+
     /// Returns the custom remote shell command arguments, if specified.
     #[doc(alias = "--rsh")]
     #[doc(alias = "-e")]
@@ -229,6 +240,12 @@ mod tests {
     fn stop_at_default_is_none() {
         let config = default_config();
         assert!(config.stop_at().is_none());
+    }
+
+    #[test]
+    fn remote_options_default_is_empty() {
+        let config = default_config();
+        assert!(config.remote_options().is_empty());
     }
 
     #[test]

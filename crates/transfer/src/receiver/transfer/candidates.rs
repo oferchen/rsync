@@ -174,6 +174,7 @@ impl ReceiverContext {
 
         // Phase C: Sequential post-processing with stat results.
         // Pre-size for the expected minority that need transfer.
+        let needs_metadata_apply = metadata_opts.requires_apply();
         let mut files_to_transfer = Vec::with_capacity(stat_results.len() / 4 + 1);
         for (idx, file_path, dest_meta) in stat_results {
             let entry = &self.file_list[idx];
@@ -207,6 +208,7 @@ impl ReceiverContext {
                         emit_itemize,
                         has_acls,
                         has_xattrs,
+                        needs_metadata_apply,
                     );
                     continue;
                 }
@@ -258,6 +260,7 @@ impl ReceiverContext {
         emit_itemize: bool,
         has_acls: bool,
         has_xattrs: bool,
+        needs_metadata_apply: bool,
     ) {
         // upstream: generator.c:1816 - itemize() with iflags=0 for up-to-date
         // files. iflags=0 has no significant flags, so emit_itemize will suppress
@@ -269,9 +272,10 @@ impl ReceiverContext {
 
         // upstream: generator.c:461 unchanged_attrs() - fast-path check avoids
         // the per-function-call overhead of apply_metadata when all attributes
-        // already match. On a no-change scan this eliminates ownership mapping,
-        // permission comparison, and timestamp construction for every file.
-        if !metadata_unchanged(entry, metadata_opts, stat_meta) {
+        // already match. Skip entirely when no preservation flags are active.
+        // On a no-change scan this eliminates ownership mapping, permission
+        // comparison, and timestamp construction for every file.
+        if needs_metadata_apply && !metadata_unchanged(entry, metadata_opts, stat_meta) {
             if let Err(e) = apply_metadata_with_cached_stat(
                 file_path,
                 entry,

@@ -130,6 +130,59 @@ impl InfoFlagSettings {
         }
     }
 
+    /// Apply resolved settings to the thread-local verbosity config.
+    ///
+    /// For each subcategory that was explicitly set (non-None), this calls
+    /// `logging::apply_info_flag()` with the resolved level. This correctly
+    /// handles composite tokens like "all", "none", and bare numeric levels
+    /// that `apply_info_flag()` alone cannot parse, because
+    /// `InfoFlagSettings` has already resolved them into per-flag levels.
+    ///
+    /// upstream: options.c set_output_verbosity - cumulative flag application
+    pub(crate) fn apply_to_thread_local(&self) {
+        let apply = |name: &str, level: Option<u8>| {
+            if let Some(lvl) = level {
+                let _ = logging::apply_info_flag(&format!("{name}{lvl}"));
+            }
+        };
+
+        // progress level comes from the ProgressSetting enum
+        match self.progress {
+            ProgressSetting::Unspecified => {}
+            ProgressSetting::Disabled => {
+                let _ = logging::apply_info_flag("progress0");
+            }
+            ProgressSetting::PerFile => {
+                let _ = logging::apply_info_flag("progress1");
+            }
+            ProgressSetting::Overall => {
+                let _ = logging::apply_info_flag("progress2");
+            }
+        }
+
+        // name level comes from the NameOutputLevel enum
+        if let Some(ref level) = self.name {
+            let lvl = match level {
+                NameOutputLevel::Disabled => 0,
+                NameOutputLevel::UpdatedOnly => 1,
+                NameOutputLevel::UpdatedAndUnchanged => 2,
+            };
+            let _ = logging::apply_info_flag(&format!("name{lvl}"));
+        }
+
+        apply("stats", self.stats);
+        apply("backup", self.backup);
+        apply("copy", self.copy);
+        apply("del", self.del);
+        apply("flist", self.flist);
+        apply("misc", self.misc);
+        apply("mount", self.mount);
+        apply("nonreg", self.nonreg);
+        apply("remove", self.remove);
+        apply("skip", self.skip);
+        apply("symsafe", self.symsafe);
+    }
+
     fn spec_for(name: &str) -> Option<&'static InfoFlagSpec> {
         INFO_FLAG_SPECS.iter().find(|spec| spec.name == name)
     }

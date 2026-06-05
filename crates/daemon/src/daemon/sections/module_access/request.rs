@@ -62,10 +62,14 @@ fn send_error_and_exit(
 
 /// Sends an access denied response to the client and closes the session.
 ///
-/// This writes the "@ERROR: access denied" message with the module name,
-/// host, and peer address, then sends the daemon exit marker.
+/// When the module has `list = false`, the daemon hides the module's existence
+/// by sending `@ERROR: Unknown module` instead of the real access denied
+/// message. This prevents unauthenticated clients from probing which hidden
+/// modules exist.
 ///
-/// upstream: clientserver.c:733 - `@ERROR: access denied to %s from %s (%s)\n`
+/// upstream: clientserver.c:729-735 - when `!lp_list(i)`, sends
+/// `@ERROR: Unknown module '%s'`; otherwise sends
+/// `@ERROR: access denied to %s from %s (%s)`.
 fn deny_module(
     stream: &mut DaemonStream,
     module: &ModuleDefinition,
@@ -75,16 +79,18 @@ fn deny_module(
     messages: &LegacyMessageCache,
 ) -> io::Result<()> {
     let module_display = sanitize_module_identifier(&module.name);
-    let addr_str = peer_ip.to_string();
-    let host_display = host.unwrap_or(&addr_str);
-    let payload = ACCESS_DENIED_PAYLOAD
-        .replace("{module}", module_display.as_ref())
-        .replace("{host}", host_display)
-        .replace("{addr}", &addr_str);
-    write_limited(stream, limiter, payload.as_bytes())?;
-    write_limited(stream, limiter, b"\n")?;
-    messages.write_exit(stream, limiter)?;
-    stream.flush()
+    let payload = if !module.listable {
+        // upstream: clientserver.c:730 - hide module existence for non-listable modules.
+        UNKNOWN_MODULE_PAYLOAD.replace("{module}", module_display.as_ref())
+    } else {
+        let addr_str = peer_ip.to_string();
+        let host_display = host.unwrap_or(&addr_str);
+        ACCESS_DENIED_PAYLOAD
+            .replace("{module}", module_display.as_ref())
+            .replace("{host}", host_display)
+            .replace("{addr}", &addr_str)
+    };
+    send_error_and_exit(stream, limiter, messages, &payload)
 }
 
 /// Sends the "@RSYNCD: OK" acknowledgment to the client.
@@ -223,15 +229,12 @@ fn handle_unknown_module(
 ) -> io::Result<()> {
     let module_display = sanitize_module_identifier(request);
     let payload = UNKNOWN_MODULE_PAYLOAD.replace("{module}", module_display.as_ref());
-    write_limited(stream, limiter, payload.as_bytes())?;
-    write_limited(stream, limiter, b"\n")?;
 
     if let Some(log) = log_sink {
         log_unknown_module(log, session_peer_host, peer_ip, request);
     }
 
-    messages.write_exit(stream, limiter)?;
-    stream.flush()
+    send_error_and_exit(stream, limiter, messages, &payload)
 }
 
 /// Handles a denied module access.

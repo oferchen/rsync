@@ -209,7 +209,7 @@ impl ReceiverContext {
             // this covers leaders that matched quick-check (not transferred) or
             // were processed via the sync path.
             for entry in &self.file_list {
-                if entry.flags().hlink_first() {
+                if entry.hlink_first() {
                     let gnum = match entry.hardlink_idx() {
                         Some(idx) => idx,
                         None => continue,
@@ -232,7 +232,7 @@ impl ReceiverContext {
 
             // Second pass: link followers to their leaders.
             for (follower_ndx, entry) in self.file_list.iter().enumerate() {
-                if !entry.flags().hlinked() || entry.flags().hlink_first() {
+                if !entry.hlinked() || entry.hlink_first() {
                     continue;
                 }
                 let leader_idx = match entry.hardlink_idx() {

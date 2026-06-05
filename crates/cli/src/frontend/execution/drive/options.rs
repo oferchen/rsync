@@ -148,16 +148,16 @@ where
                 name_overridden = true;
             }
 
-            for info_arg in info_args {
-                if let Some(s) = info_arg.to_str() {
-                    for token in s.split(',') {
-                        let token = token.trim();
-                        if !token.is_empty() && token != "help" {
-                            let _ = logging::apply_info_flag(token);
-                        }
-                    }
-                }
-            }
+            // Apply all resolved info flag levels to the thread-local
+            // VerbosityConfig. This replaces the prior token-by-token loop
+            // which could not handle composite tokens like "all", "none",
+            // or bare numeric levels (those tokens silently failed in
+            // logging::apply_info_flag). The resolved InfoFlagSettings
+            // already handles all token forms correctly, so applying the
+            // fully-resolved per-flag levels ensures the thread-local
+            // config matches what the user requested.
+            // upstream: options.c set_output_verbosity / parse_output_words
+            settings.apply_to_thread_local();
 
             Ok(InfoFlagsResult {
                 progress_setting,
