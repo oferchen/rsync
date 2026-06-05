@@ -308,7 +308,11 @@ fn apply_delete_side_effects(
         };
 
         if is_dir {
-            record_directory_subtree(context, &path, &entry_relative)?;
+            // Reusable buffers for recursive subtree traversal - avoids
+            // per-entry Path::join allocations inside the recursion.
+            let mut subtree_path = path.clone();
+            let mut subtree_relative = entry_relative.clone();
+            record_directory_subtree(context, &mut subtree_path, &mut subtree_relative)?;
         }
 
         if !context.mode().is_dry_run() {
@@ -337,18 +341,21 @@ fn apply_delete_side_effects(
 /// summary counters before the emitter wipes the directory via
 /// `remove_dir_all`. Matches upstream's per-entry counting in
 /// `delete_in_dir`.
+///
+/// Uses `PathBuf::push`/`pop` on reusable buffers to avoid per-entry
+/// allocations from `Path::join` in the recursive traversal.
 fn record_directory_subtree(
     context: &mut CopyContext,
-    dir_path: &Path,
-    dir_relative: &Path,
+    path_buf: &mut PathBuf,
+    relative_buf: &mut PathBuf,
 ) -> Result<(), LocalCopyError> {
-    let read_dir = match fs::read_dir(dir_path) {
+    let read_dir = match fs::read_dir(path_buf.as_path()) {
         Ok(iter) => iter,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
         Err(error) => {
             return Err(LocalCopyError::io(
                 "read extraneous directory",
-                dir_path.to_path_buf(),
+                path_buf.clone(),
                 error,
             ));
         }
@@ -356,27 +363,27 @@ fn record_directory_subtree(
     for entry in read_dir {
         context.enforce_timeout()?;
         let entry = entry.map_err(|error| {
-            LocalCopyError::io("read extraneous directory entry", dir_path, error)
+            LocalCopyError::io("read extraneous directory entry", path_buf.as_path(), error)
         })?;
         let name = entry.file_name();
-        let child_path = dir_path.join(&name);
-        let child_relative = dir_relative.join(&name);
+        path_buf.push(&name);
+        relative_buf.push(&name);
         let file_type = entry.file_type().map_err(|error| {
             LocalCopyError::io(
                 "inspect extraneous directory entry",
-                child_path.clone(),
+                path_buf.clone(),
                 error,
             )
         })?;
         if file_type.is_dir() {
-            record_directory_subtree(context, &child_path, &child_relative)?;
-            info_log!(Del, 1, "deleting directory {}", child_relative.display());
+            record_directory_subtree(context, path_buf, relative_buf)?;
+            info_log!(Del, 1, "deleting directory {}", relative_buf.display());
         } else {
-            info_log!(Del, 1, "deleting {}", child_relative.display());
+            info_log!(Del, 1, "deleting {}", relative_buf.display());
         }
         context.summary_mut().record_deletion();
         context.record(LocalCopyRecord::new(
-            child_relative,
+            relative_buf.clone(),
             LocalCopyAction::EntryDeleted,
             0,
             None,
@@ -384,6 +391,8 @@ fn record_directory_subtree(
             None,
         ));
         context.register_progress();
+        relative_buf.pop();
+        path_buf.pop();
     }
     Ok(())
 }

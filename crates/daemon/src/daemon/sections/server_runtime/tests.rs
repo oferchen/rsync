@@ -958,3 +958,12 @@ fn accept_loop_recovers_after_disconnect() {
     // must not write a refusal line to the socket.
     assert!(!refuse_if_at_capacity(&mut server_stream, peer, &state));
 }
+
+#[test]
+fn default_listen_backlog_is_128() {
+    // The default backlog must be high enough for production workloads.
+    // A value of 5 (upstream's historical default) causes connection drops
+    // under moderate concurrency. 128 matches SOMAXCONN on most Linux
+    // systems and is the standard default for production TCP servers.
+    assert_eq!(DEFAULT_LISTEN_BACKLOG, 128);
+}

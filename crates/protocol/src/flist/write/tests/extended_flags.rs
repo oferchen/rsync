@@ -88,7 +88,7 @@ fn extended_flags_all_basic_flags_combinations() {
         let mut cursor = Cursor::new(&buf[..]);
         let mut reader = FileListReader::new(protocol);
         let read = reader.read_entry(&mut cursor).unwrap().unwrap();
-        assert!(read.flags().top_dir(), "XMIT_TOP_DIR should round-trip");
+        assert!(read.top_dir(), "XMIT_TOP_DIR should round-trip");
     }
 
     // Test XMIT_LONG_NAME (paths > 255 bytes)

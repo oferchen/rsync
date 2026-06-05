@@ -90,7 +90,7 @@ impl FileListWriter {
     fn calculate_basic_flags(&self, entry: &FileEntry, same_len: usize, suffix_len: usize) -> u32 {
         let mut xflags: u32 = 0;
 
-        if entry.is_dir() && entry.flags().top_dir() {
+        if entry.is_dir() && entry.top_dir() {
             xflags |= XMIT_TOP_DIR as u32;
         }
 

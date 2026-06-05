@@ -8,6 +8,84 @@
 // and argument parsing, it calls `chdir(lp_path())`, `chroot(".")`,
 // `setgid()`/`setuid()`, and then enters the transfer pipeline.
 
+/// Applies chroot and privilege restrictions, sending upstream-compatible
+/// `@ERROR` messages on failure.
+///
+/// Upstream sends distinct error strings for each failure type:
+/// - `@ERROR: chroot failed` (clientserver.c:981)
+/// - `@ERROR: setgid failed` (clientserver.c:1010)
+/// - `@ERROR: setgroups failed` (clientserver.c:1017)
+/// - `@ERROR: setuid failed` (clientserver.c:1039)
+///
+/// Returns `Ok(true)` when restrictions applied successfully or were not
+/// configured. Returns `Ok(false)` after sending an error to the client.
+fn apply_privilege_restrictions_with_upstream_errors(
+    ctx: &mut ModuleRequestContext<'_>,
+    module: &ModuleRuntime,
+) -> io::Result<bool> {
+    let needs_chroot = module.use_chroot;
+    let needs_privdrop = module.uid.is_some() || module.gid.is_some();
+
+    if !needs_chroot && !needs_privdrop {
+        return Ok(true);
+    }
+
+    // Resolve log sink: use the configured one, or create a fallback.
+    let fallback_sink;
+    let log_sink: &SharedLogSink = match ctx.log_sink {
+        Some(log) => log,
+        None => {
+            fallback_sink = open_privilege_fallback_sink();
+            &fallback_sink
+        }
+    };
+
+    // upstream: clientserver.c:978-984 - chroot first, then privilege drop.
+    if needs_chroot {
+        if let Err(err) = apply_chroot(&module.path, log_sink) {
+            // upstream: clientserver.c:981 - `@ERROR: chroot failed\n`
+            // upstream: clientserver.c:647 - `@ERROR: chdir failed\n`
+            let text = err.to_string();
+            let payload = if text.contains("chdir") {
+                CHDIR_FAILED_PAYLOAD
+            } else {
+                CHROOT_FAILED_PAYLOAD
+            };
+            send_error_and_exit(
+                ctx.reader.get_mut(),
+                ctx.limiter,
+                ctx.messages,
+                payload,
+            )?;
+            return Ok(false);
+        }
+    }
+
+    if needs_privdrop {
+        if let Err(err) = drop_privileges(module.uid, module.gid, log_sink) {
+            // Distinguish upstream error messages based on the error text.
+            // upstream: clientserver.c:1010/1017/1039
+            let text = err.to_string();
+            let payload = if text.contains("setgroups") {
+                SETGROUPS_FAILED_PAYLOAD
+            } else if text.contains("setuid") {
+                SETUID_FAILED_PAYLOAD
+            } else {
+                SETGID_FAILED_PAYLOAD
+            };
+            send_error_and_exit(
+                ctx.reader.get_mut(),
+                ctx.limiter,
+                ctx.messages,
+                payload,
+            )?;
+            return Ok(false);
+        }
+    }
+
+    Ok(true)
+}
+
 /// Validates that the module path exists.
 ///
 /// Returns `true` if the path exists, or sends an error and returns `false`.
@@ -117,7 +195,7 @@ fn validate_client_paths_in_module(
 
 /// Engages the SEC-1.p Landlock LSM allowlist for the receiver path.
 ///
-/// Called immediately after [`apply_module_privilege_restrictions`] has
+/// Called immediately after `apply_module_privilege_restrictions` has
 /// applied chroot + uid/gid drop so the kernel allowlist covers exactly the
 /// writable surface the remainder of the connection needs. The stub on
 /// non-Linux targets short-circuits to `Unavailable` so the wire-in does
@@ -545,13 +623,21 @@ fn process_approved_module(
     // A read-only module must reject pushes; a write-only module must reject pulls.
     let role = determine_server_role(&client_args);
     if module.read_only && matches!(role, ServerRole::Receiver) {
-        let payload = "@ERROR: module is read only".to_string();
-        send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+        send_error_and_exit(
+            ctx.reader.get_mut(),
+            ctx.limiter,
+            ctx.messages,
+            MODULE_READ_ONLY_PAYLOAD,
+        )?;
         return Ok(());
     }
     if module.write_only && matches!(role, ServerRole::Generator) {
-        let payload = "@ERROR: module is write only".to_string();
-        send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+        send_error_and_exit(
+            ctx.reader.get_mut(),
+            ctx.limiter,
+            ctx.messages,
+            MODULE_WRITE_ONLY_PAYLOAD,
+        )?;
         return Ok(());
     }
 
@@ -573,19 +659,10 @@ fn process_approved_module(
     // is now the module directory itself.
     // upstream: clientserver.c:rsync_module() - chroot + setuid/setgid happen
     // after auth and arg reading but before the transfer starts.
-    if let Some(log) = ctx.log_sink {
-        if let Err(err) = apply_module_privilege_restrictions(module, log) {
-            let payload = format!("@ERROR: chroot/privilege setup failed: {err}");
-            send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
-            return Ok(());
-        }
-    } else if module.use_chroot || module.uid.is_some() || module.gid.is_some() {
-        let sink = open_privilege_fallback_sink();
-        if let Err(err) = apply_module_privilege_restrictions(module, &sink) {
-            let payload = format!("@ERROR: chroot/privilege setup failed: {err}");
-            send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
-            return Ok(());
-        }
+    // Split into separate steps so each failure sends the correct upstream
+    // error message: `@ERROR: chroot failed` vs `@ERROR: setuid failed` etc.
+    if !apply_privilege_restrictions_with_upstream_errors(ctx, module)? {
+        return Ok(());
     }
 
     // upstream: clientserver.c:962-969 - spawn name converter after privilege

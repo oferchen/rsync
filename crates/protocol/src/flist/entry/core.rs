@@ -18,6 +18,23 @@ pub(super) const PRESENT_GID: u8 = 1 << 1;
 /// Set by default for directories; cleared for XMIT_NO_CONTENT_DIR (implied or
 /// content-less) directories. Non-directories report `true` via the accessor.
 pub(super) const PRESENT_CONTENT_DIR: u8 = 1 << 2;
+/// Presence bit: this is a top-level directory in the transfer.
+///
+/// Corresponds to upstream's `FLAG_TOP_DIR` (rsync.h). Used to scope
+/// `--delete` to top-level directories. Packed here instead of in a
+/// separate `FileFlags` struct to save 3 bytes per entry.
+pub(super) const PRESENT_TOP_DIR: u8 = 1 << 3;
+/// Presence bit: this entry has hardlink information.
+///
+/// Corresponds to upstream's `FLAG_HLINKED` (rsync.h). Indicates the entry
+/// belongs to a hardlink group. Packed here to avoid per-entry `FileFlags`.
+pub(super) const PRESENT_HLINKED: u8 = 1 << 4;
+/// Presence bit: this is the first (leader) entry in a hardlink group.
+///
+/// Corresponds to upstream's `FLAG_HLINK_FIRST` (rsync.h). Only meaningful
+/// when `PRESENT_HLINKED` is also set. Packed here to avoid per-entry
+/// `FileFlags`.
+pub(super) const PRESENT_HLINK_FIRST: u8 = 1 << 5;
 
 /// A single entry in the rsync file list.
 ///
@@ -31,14 +48,21 @@ pub(super) const PRESENT_CONTENT_DIR: u8 = 1 << 2;
 /// Rarely-used fields (symlink targets, device numbers, hardlink info,
 /// ACL/xattr indices, atime/crtime) are stored in a boxed `FileEntryExtras`
 /// that is only allocated when at least one such field is set. This reduces
-/// the common-case inline size from ~295 bytes to ~88 bytes - matching
+/// the common-case inline size from ~295 bytes to ~80 bytes - matching
 /// upstream rsync's conditional field allocation pattern.
 ///
-/// `uid`, `gid`, and the directory content flag are packed via a `present`
-/// bitfield rather than `Option`/`bool`, reclaiming the discriminant padding
-/// that `Option<u32>` and a trailing `bool` cost. This mirrors upstream's
-/// conditional `file_extras` layout where each extra is a plain 4-byte slot
-/// gated by a presence flag.
+/// `uid`, `gid`, the directory content flag, and the three persisted wire
+/// flags (`top_dir`, `hlinked`, `hlink_first`) are packed into a single
+/// `present: u8` bitfield. This eliminates the 3-byte `FileFlags` struct
+/// that previously stored 24 bits of wire-encoding state, of which only 3
+/// bits survived past decoding. The remaining XMIT flags (same_uid,
+/// same_gid, same_mode, same_time, etc.) are transient wire-encoding state
+/// recomputed by `FileListWriter::calculate_xflags()` during send.
+///
+/// The `mode` field uses `u16` to match upstream rsync's `uint16 mode`
+/// (rsync.h:805), saving 2 bytes vs the prior `u32`. POSIX mode values
+/// (4-bit type + 12-bit permissions) fit in 16 bits; the accessor returns
+/// `u32` for API compatibility.
 ///
 /// # Path Interning
 ///
@@ -77,19 +101,28 @@ pub struct FileEntry {
     pub(super) uid: u32,
     /// Group ID raw value. Meaningful only when `PRESENT_GID` is set in `present`.
     pub(super) gid: u32,
-    /// Unix mode bits (type + permissions).
-    pub(super) mode: u32,
     /// Modification time nanoseconds (protocol 31+).
     pub(super) mtime_nsec: u32,
 
     // 2-byte aligned fields
-    /// Entry flags from wire format.
-    pub(super) flags: super::super::flags::FileFlags,
+    /// Unix mode bits (type + permissions).
+    ///
+    /// Stored as `u16` matching upstream rsync's `uint16 mode` (rsync.h:805).
+    /// POSIX mode values fit in 16 bits (4-bit type mask `S_IFMT` = `0o170000`
+    /// + 12-bit permissions `0o7777`). The accessor returns `u32` for API
+    ///   compatibility with callers that use `u32` mode constants.
+    pub(super) mode: u16,
 
     // 1-byte aligned fields
-    /// Presence bitfield for `uid`, `gid`, and the directory content flag.
+    /// Presence bitfield for metadata and persisted wire flags.
     ///
-    /// See `PRESENT_UID`, `PRESENT_GID`, and `PRESENT_CONTENT_DIR`.
+    /// Bits 0-2: metadata presence (`PRESENT_UID`, `PRESENT_GID`,
+    /// `PRESENT_CONTENT_DIR`).
+    /// Bits 3-5: persisted wire flags (`PRESENT_TOP_DIR`, `PRESENT_HLINKED`,
+    /// `PRESENT_HLINK_FIRST`). These are the only 3 of 24 XMIT wire flags
+    /// that survive past decoding - the rest are transient delta-encoding
+    /// state recomputed during send.
+    /// Bits 6-7: reserved.
     pub(super) present: u8,
 }
 
@@ -114,9 +147,8 @@ impl Clone for FileEntry {
             extras: self.extras.clone(),
             uid: self.uid,
             gid: self.gid,
-            mode: self.mode,
             mtime_nsec: self.mtime_nsec,
-            flags: self.flags,
+            mode: self.mode,
             present: self.present,
         }
     }
@@ -131,10 +163,13 @@ impl std::fmt::Debug for FileEntry {
             .field("mtime", &self.mtime)
             .field("uid", &self.uid())
             .field("gid", &self.gid())
-            .field("mode", &self.mode)
+            .field("mode", &self.mode())
             .field("mtime_nsec", &self.mtime_nsec)
-            .field("flags", &self.flags)
-            .field("content_dir", &self.content_dir());
+            .field("present", &self.present)
+            .field("content_dir", &self.content_dir())
+            .field("top_dir", &self.top_dir())
+            .field("hlinked", &self.hlinked())
+            .field("hlink_first", &self.hlink_first());
         if let Some(extras) = &self.extras {
             s.field("extras", extras);
         }
@@ -152,8 +187,7 @@ impl PartialEq for FileEntry {
             && self.gid() == other.gid()
             && self.mode == other.mode
             && self.mtime_nsec == other.mtime_nsec
-            && self.flags == other.flags
-            && self.content_dir() == other.content_dir()
+            && self.present == other.present
             && self.extras == other.extras
     }
 }

@@ -451,6 +451,8 @@ const UPSTREAM_SERVER_LONG_ARGS: &[&str] = &[
     "--safe-links",
     "--munge-links",
     "--numeric-ids",
+    "--trust-sender",
+    "--checksum-seed",
     "--size-only",
     "--ignore-times",
     "--ignore-existing",
@@ -473,8 +475,6 @@ const UPSTREAM_SERVER_LONG_ARGS: &[&str] = &[
     "--write-devices",
     "--open-noatime",
     "--preallocate",
-    "--trust-sender",
-    "--checksum-seed",
     "--stop-at",
 ];
 
@@ -2103,6 +2103,8 @@ fn all_flags_enabled_produces_valid_invocation() {
         .acls(true)
         .xattrs(true)
         .numeric_ids(true)
+        .trust_sender(true)
+        .checksum_seed(Some(42))
         .dry_run(true)
         .delete_before(true)
         .whole_file(true)
@@ -2116,8 +2118,6 @@ fn all_flags_enabled_produces_valid_invocation() {
         .prune_empty_dirs(true)
         .verbosity(2)
         // Long-form args
-        .trust_sender(true)
-        .checksum_seed(Some(42))
         .ignore_errors(true)
         .fsync(true)
         .delete_excluded(true)
@@ -2972,33 +2972,40 @@ fn multiple_remote_options_preserve_order() {
 }
 
 #[test]
-fn remote_options_forwarded_in_secluded_mode() {
+fn remote_options_included_in_secluded_stdin_args() {
+    // When protect_args is active, remote options must appear in the
+    // stdin_args (the full argument list), not on the SSH command line.
     let config = ClientConfig::builder()
         .protect_args(Some(true))
         .remote_options(vec!["--bwlimit=500"])
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let secluded = builder.build_secluded(&["/path"]);
+    let secluded = builder.build_secluded(&["/data"]);
 
     assert!(
         secluded.stdin_args.iter().any(|a| a == "--bwlimit=500"),
         "secluded stdin_args should contain remote option: {:?}",
         secluded.stdin_args
     );
+    // The minimal SSH command line should NOT contain the remote option.
+    assert!(
+        !secluded
+            .command_line_args
+            .iter()
+            .any(|a| a.to_string_lossy() == "--bwlimit=500"),
+        "secluded command_line_args should NOT contain remote option: {:?}",
+        secluded.command_line_args
+    );
 }
 
 #[test]
-fn remote_options_not_on_upstream_allowlist_still_forwarded() {
-    // Remote options (-M) are user-provided overrides forwarded verbatim.
-    // They deliberately bypass the upstream long-arg allowlist because they
-    // are explicitly requested by the user.
-    let config = ClientConfig::builder()
-        .remote_options(vec!["--custom-extension=value"])
-        .build();
+fn remote_option_short_flag_forwarded_verbatim() {
+    // -M can forward short flags like -v or compound options.
+    let config = ClientConfig::builder().remote_options(vec!["-v"]).build();
     let args = build_sender_args(&config);
 
     assert!(
-        args.iter().any(|a| a == "--custom-extension=value"),
-        "remote options should be forwarded verbatim: {args:?}"
+        args.iter().any(|a| a == "-v"),
+        "expected short flag -v from -M in args: {args:?}"
     );
 }
