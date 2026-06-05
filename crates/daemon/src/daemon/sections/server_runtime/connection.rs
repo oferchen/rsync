@@ -137,7 +137,7 @@ fn refuse_if_at_capacity(
 
     // Mirror upstream wording exactly. The trailing newline is part of the
     // protocol-framed `@ERROR:` reply (`io_printf` writes the literal `\n`).
-    let payload = format!("@ERROR: max connections ({limit}) reached -- try again later\n");
+    let payload = format!("{}\n", MODULE_MAX_CONNECTIONS_PAYLOAD.replace("{limit}", &limit.to_string()));
     if let Err(error) = stream.write_all(payload.as_bytes())
         && let Some(log) = state.log_sink.as_ref()
     {

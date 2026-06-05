@@ -212,8 +212,5 @@ fn send_auth_failed(
 ) -> io::Result<()> {
     let module_display = sanitize_module_identifier(&module.name);
     let payload = AUTH_FAILED_PAYLOAD.replace("{module}", module_display.as_ref());
-    write_limited(stream, limiter, payload.as_bytes())?;
-    write_limited(stream, limiter, b"\n")?;
-    messages.write_exit(stream, limiter)?;
-    stream.flush()
+    send_error_and_exit(stream, limiter, messages, &payload)
 }
