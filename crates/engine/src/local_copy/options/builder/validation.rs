@@ -123,6 +123,7 @@ impl LocalCopyOptionsBuilder {
             compression_level_override: self.compression_level_override,
             compression_level: self.compression_level,
             compression_threads: self.compression_threads,
+            adaptive_compress: self.adaptive_compress,
             skip_compress: self.skip_compress,
             open_noatime: self.open_noatime,
             whole_file: self.whole_file,

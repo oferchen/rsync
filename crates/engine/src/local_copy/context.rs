@@ -43,6 +43,7 @@ use ::metadata::{MetadataOptions, apply_file_metadata_with_options};
 use bandwidth::{BandwidthLimitComponents, BandwidthLimiter};
 use checksums::RollingChecksum;
 use compress::algorithm::CompressionAlgorithm;
+use compress::strategy::adaptive_level::AdaptiveLevelController;
 use compress::zlib::CompressionLevel;
 use filters::FilterRule;
 use logging::info_log;
@@ -159,6 +160,9 @@ pub(crate) struct CopyContext<'a> {
     /// allocation for the intermediate `(OsString, PathBuf)` collection per
     /// directory during recursive traversal.
     readdir_buf: Vec<(OsString, PathBuf)>,
+    /// Adaptive compression level controller that adjusts compression level
+    /// between files based on observed compression ratios.
+    adaptive_level: Option<AdaptiveLevelController>,
 }
 
 /// Path and type context for metadata finalization.

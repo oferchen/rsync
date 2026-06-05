@@ -77,7 +77,8 @@ mod traits;
 mod tests;
 
 pub use adaptive_level::{
-    AdaptiveLevelConfig, AdaptiveLevelStrategy, DefaultAdaptiveLevelStrategy, LevelBounds,
+    AdaptiveLevelConfig, AdaptiveLevelController, AdaptiveLevelStrategy,
+    DefaultAdaptiveLevelStrategy, LevelBounds,
 };
 #[cfg(feature = "lz4")]
 pub use impls::Lz4Strategy;

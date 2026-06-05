@@ -8,13 +8,38 @@ impl<'a> CopyContext<'a> {
             return Ok(None);
         }
 
+        let level = if let Some(ctrl) = &self.adaptive_level {
+            // Convert the adaptive strategy's recommended i32 level to a
+            // CompressionLevel. The controller clamps to codec-valid bounds.
+            let recommended = ctrl.current_level();
+            if recommended == 0 {
+                CompressionLevel::None
+            } else if let Some(nz) = std::num::NonZeroU8::new(recommended as u8) {
+                CompressionLevel::Precise(nz)
+            } else {
+                self.compression_level()
+            }
+        } else {
+            self.compression_level()
+        };
+
         ActiveCompressor::new_with_workers(
             self.compression_algorithm(),
-            self.compression_level(),
+            level,
             self.compression_threads(),
         )
         .map(Some)
         .map_err(|error| LocalCopyError::io("initialise compression", source, error))
+    }
+
+    /// Feeds compression ratio feedback to the adaptive level controller
+    /// after a file finishes compressing.
+    fn record_adaptive_compression(&mut self, input_bytes: u64, compressed_bytes: u64) {
+        if let Some(ctrl) = &mut self.adaptive_level {
+            ctrl.record_input_bytes(input_bytes);
+            ctrl.record_output_bytes(compressed_bytes);
+            ctrl.record_file_complete();
+        }
     }
 
     fn register_limiter_bytes(&mut self, bytes: u64) {
@@ -379,6 +404,7 @@ impl<'a> CopyContext<'a> {
             self.register_progress();
             let delta = compressed_total.saturating_sub(compressed_progress);
             self.register_limiter_bytes(delta);
+            self.record_adaptive_compression(literal_bytes, compressed_total);
             FileCopyOutcome::new(literal_bytes, Some(compressed_total))
         } else {
             FileCopyOutcome::new(literal_bytes, None)
@@ -489,6 +515,7 @@ impl<'a> CopyContext<'a> {
             self.register_progress();
             let delta = compressed_total.saturating_sub(compressed_progress);
             self.register_limiter_bytes(delta);
+            self.record_adaptive_compression(literal_bytes, compressed_total);
             FileCopyOutcome::new(literal_bytes, Some(compressed_total))
         } else {
             FileCopyOutcome::new(literal_bytes, None)
