@@ -82,12 +82,17 @@ pub struct ClientEvent {
 impl ClientEvent {
     /// Creates an event by consuming a [`LocalCopyRecord`], moving heap-allocated
     /// fields instead of cloning them.
-    pub(crate) fn from_record_owned(
-        record: LocalCopyRecord,
-        destination_root: Arc<Path>,
-    ) -> Self {
-        let (relative_path, action, bytes_transferred, total_bytes, elapsed, metadata, was_created, change_set) =
-            record.into_parts();
+    pub(crate) fn from_record_owned(record: LocalCopyRecord, destination_root: Arc<Path>) -> Self {
+        let (
+            relative_path,
+            action,
+            bytes_transferred,
+            total_bytes,
+            elapsed,
+            metadata,
+            was_created,
+            change_set,
+        ) = record.into_parts();
         let kind = match &action {
             LocalCopyAction::DataCopied => ClientEventKind::DataCopied,
             LocalCopyAction::MetadataReused => ClientEventKind::MetadataReused,
