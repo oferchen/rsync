@@ -227,6 +227,15 @@ fn test_password_file_defaults_to_none() {
 }
 
 #[test]
+fn test_password_command_defaults_to_none() {
+    let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
+    assert_eq!(
+        args.password_command, None,
+        "password_command should default to None"
+    );
+}
+
+#[test]
 fn test_chown_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
     assert_eq!(args.chown, None, "chown should default to None");

@@ -55,6 +55,17 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Sets a pre-loaded password override for daemon authentication.
+    ///
+    /// When `Some`, this password takes precedence over the `RSYNC_PASSWORD`
+    /// environment variable during the daemon handshake. Typically populated
+    /// from `--password-command` or `--password-file`.
+    #[must_use]
+    pub fn password_override(mut self, password: Option<Vec<u8>>) -> Self {
+        self.password_override = password;
+        self
+    }
+
     /// Configures daemon parameter overrides sent during the daemon handshake.
     ///
     /// Each entry should be a `key=value` string that overrides a module-level

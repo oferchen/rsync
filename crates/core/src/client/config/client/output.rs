@@ -63,6 +63,16 @@ impl ClientConfig {
         self.no_motd
     }
 
+    /// Returns the pre-loaded password override for daemon authentication.
+    ///
+    /// When `Some`, this password takes precedence over the `RSYNC_PASSWORD`
+    /// environment variable during the daemon handshake. Populated from
+    /// `--password-command` or `--password-file` at the CLI layer.
+    #[must_use]
+    pub fn password_override(&self) -> Option<&[u8]> {
+        self.password_override.as_deref()
+    }
+
     /// Returns the daemon parameter overrides to send during the daemon handshake.
     ///
     /// Each entry is a `key=value` string that overrides a module-level
