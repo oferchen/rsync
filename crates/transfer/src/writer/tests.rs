@@ -985,7 +985,8 @@ fn multiplex_writer_write_vectored_sets_dirty() {
         // Large vectored write exceeding buffer size
         let chunk = vec![0u8; 40 * 1024];
         let bufs = [IoSlice::new(&chunk), IoSlice::new(&chunk)];
-        mux.write_vectored(&bufs).unwrap();
+        let n = mux.write_vectored(&bufs).unwrap();
+        assert!(n > 0);
         mux.flush().unwrap();
     }
     assert_eq!(
@@ -1004,7 +1005,8 @@ fn multiplex_writer_small_vectored_write_buffered_no_flush() {
     {
         let mut mux = MultiplexWriter::new(&mut tracker);
         let bufs = [IoSlice::new(b"hello"), IoSlice::new(b"world")];
-        mux.write_vectored(&bufs).unwrap();
+        let n = mux.write_vectored(&bufs).unwrap();
+        assert!(n > 0);
         mux.flush().unwrap();
     }
     assert_eq!(
