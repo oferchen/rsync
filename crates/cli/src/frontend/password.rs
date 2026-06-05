@@ -368,11 +368,7 @@ mod tests {
 
     #[test]
     fn load_password_command_reads_echo_output() {
-        let cmd = if cfg!(windows) {
-            OsString::from("echo cmd-secret")
-        } else {
-            OsString::from("echo cmd-secret")
-        };
+        let cmd = OsString::from("echo cmd-secret");
 
         let password = load_password_command(&cmd).expect("echo command");
         assert_eq!(password, b"cmd-secret");

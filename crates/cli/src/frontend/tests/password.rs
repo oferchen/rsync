@@ -74,8 +74,7 @@ fn password_command_requires_daemon_operands() {
     let rendered = String::from_utf8(stderr).expect("diagnostic is UTF-8");
     assert!(
         rendered.contains("--password-command") || rendered.contains("--password-file"),
-        "expected password daemon-only diagnostic, got: {}",
-        rendered
+        "expected password daemon-only diagnostic, got: {rendered}"
     );
     assert!(rendered.contains("rsync daemon"));
     assert!(!destination.exists());
