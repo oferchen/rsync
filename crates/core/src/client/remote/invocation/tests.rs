@@ -2799,9 +2799,7 @@ fn remote_options_included_in_secluded_stdin_args() {
 #[test]
 fn remote_option_short_flag_forwarded_verbatim() {
     // -M can forward short flags like -v or compound options.
-    let config = ClientConfig::builder()
-        .remote_options(vec!["-v"])
-        .build();
+    let config = ClientConfig::builder().remote_options(vec!["-v"]).build();
     let args = build_sender_args(&config);
 
     assert!(

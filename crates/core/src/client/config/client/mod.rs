@@ -397,6 +397,7 @@ impl Default for ClientConfig {
             spill_threshold_bytes: None,
             no_spill: false,
             no_motd: false,
+            remote_options: Vec::new(),
             daemon_params: Vec::new(),
             protocol_version: None,
             #[cfg(feature = "embedded-ssh")]
