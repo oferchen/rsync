@@ -7,7 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 oc-rsync is wire-compatible with upstream rsync 3.4.3 (protocol 32). Release
 tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
-## [0.6.3] - 2026-06-04
+## [0.6.3] - 2026-06-05
 
 ### Security
 
@@ -21,6 +21,14 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ### Features
 
+- `pre-xfer exec` / `post-xfer exec` daemon directives with `RSYNC_ARG#` env vars and stdout capture (#5503)
+- `--password-command` option for daemon authentication (#5500)
+- Forward `--stop-at` deadline to remote server in SSH transfers (#5499)
+- Forward `--remote-option` (`-M`) args to remote rsync process (#5498)
+- Wire `--compress-threads` through transfer pipeline to zstd encoder (#5496)
+- Embed filter rules in batch replay scripts (#5495)
+- Wire `--info` subcategory dispatch to thread-local verbosity config (#5494)
+- Parse missing upstream `rsyncd.conf` directives and warn on unknown keys (#5489)
 - `--delay-updates` final rename sweep in remote receiver (#5398)
 - `--partial` / `--partial-dir` file retention on interrupt (#5388)
 - `--info=progress2` sliding-window rate, format, and parsing (#5382)
@@ -56,6 +64,10 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ### Bug Fixes
 
+- Align daemon `@ERROR` responses with upstream rsync wording (#5504)
+- Forward `--trust-sender` and `--checksum-seed` to remote server (#5501)
+- Wire `--contimeout` to embedded SSH (russh) connection path (#5497)
+- Increase default daemon listen backlog from 5 to 128 (#5487)
 - Suppress descendant matchers for anchored wildcard filter patterns (#5441)
 - Build delta signature before backup rename to prevent false vanished error (#5440)
 - Skip parent directory preparation in dry-run mode (#5439)
@@ -121,6 +133,9 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ### Tests
 
+- IP/CIDR host ACL allow/deny validation tests (#5502)
+- `--partial` interrupt parity interop tests (#5480)
+- Wire-byte parity for batched generator flush (#5463)
 - Validate progress2 output format matches upstream rsync (#5392)
 - `--delay-updates` sweep tests for remote transfer path (#5397)
 - Interop test for no-partial mid-transfer temp file removal
@@ -237,6 +252,35 @@ tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
 ### Performance
 
+- Add million-file RSS benchmark scaffold (#5478)
+- Add DashMap concurrent-access benchmark scaffold (#5479)
+- Add checksum wall-clock benchmark scaffold (#5476)
+- Add daemon connection scaling benchmark scaffold (#5475)
+- Add `copy_basis_range` benchmark scaffold (#5474)
+- Add concurrent session scaling benchmark scaffold (#5473)
+- Add bandwidth-constrained checksum benchmark scaffold (#5472)
+- Add SEND_ZC zero-copy benchmark scaffold (#5477)
+- Tune russh client config for faster SSH handshake (#5490)
+- Optimize generator no-change scan path (#5466)
+- Optimize no-change scan path for 100K-file scale (#5468)
+- Eliminate redundant stat calls in metadata no-change path (#5492)
+- Add `metadata_unchanged` fast-path for no-change generator scan (#5462)
+- Unify multiplex flush discipline across transfer roles (#5464)
+- Compact `FileEntry` from 88 to 80 bytes per entry (#5481)
+- Reduce per-file overhead in SSH push no-change scan path (#5471)
+- Eliminate redundant file reads in SSH push sender path (#5470)
+- Eliminate redundant stat syscalls in SSH pull path (#5469)
+- Implement remaining checksum overhead optimizations (#5465)
+- Reclaim completed INC_RECURSE flist segments to reduce RSS (#5467)
+- Increase checksum read buffer from 64KB to 256KB (#5460)
+- Add BufReader wrapping for SSH pull read path (#5461)
+- Remove intermediate BufReader from whole-file transfer (#5459)
+- Tune mimalloc arena reservation and purge delay for lower RSS (#5488)
+- Reuse readdir buffer across recursive directory traversal (#5484)
+- Replace `Path::join` with `PathBuf::push/pop` in traversal (#5483)
+- Eliminate heap allocations in `format_decimal_bytes` (#5486)
+- Use move semantics for `ClientEvent` conversion (#5485)
+- Pre-size `Vec<LocalCopyRecord>` to eliminate growth copies (#5482)
 - Scaffold PIP-6 end-to-end parallel-vs-sequential bench harness (#4679)
 - Scaffold BR-3j.f DashMap cores-vs-throughput re-bench harness (#4682)
 - Scaffold IUS-3 SEND_ZC vs plain SEND bench harness (#4680)
