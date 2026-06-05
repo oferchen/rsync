@@ -115,6 +115,7 @@ fn run_early_exec(command: &str, ctx: &XferExecContext<'_>) -> io::Result<Result
 ///
 /// upstream: clientserver.c:pre_exec() - stdout from the script is sent to the
 /// client via `rprintf(FINFO, ...)`.
+#[derive(Debug)]
 struct PreXferOutput {
     /// Captured stdout from the pre-xfer exec script, trimmed of trailing
     /// whitespace. Empty when the script produced no output.
