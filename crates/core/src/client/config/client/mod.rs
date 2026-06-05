@@ -222,6 +222,13 @@ pub struct ClientConfig {
     /// `in_memory_only` to `true`. Precedence: **CLI > env > defaults**.
     pub(super) no_spill: bool,
     pub(super) no_motd: bool,
+    /// Extra options forwarded to the remote rsync process via `-M` / `--remote-option`.
+    ///
+    /// Each entry is a complete option string (e.g. `--bwlimit=100`) appended
+    /// verbatim to the server command line after all locally-derived arguments.
+    /// upstream: `options.c:server_options()` appends `remote_options[]` at the
+    /// end of the server argument vector.
+    pub(super) remote_options: Vec<OsString>,
     pub(super) daemon_params: Vec<String>,
     pub(super) protocol_version: Option<protocol::ProtocolVersion>,
     #[cfg(feature = "embedded-ssh")]

@@ -2666,3 +2666,146 @@ fn shell_safe_escaping_in_normal_mode() {
         secluded.command_line_args
     );
 }
+
+// -----------------------------------------------------------------------
+// Remote option (-M / --remote-option) forwarding
+// -----------------------------------------------------------------------
+
+#[test]
+fn remote_options_appended_to_sender_invocation() {
+    // upstream: options.c:2986-2993 - remote_options[] appended after all
+    // other server args, before "." and remote paths.
+    let config = ClientConfig::builder()
+        .remote_options(vec!["--bwlimit=100", "--compress-level=1"])
+        .build();
+    let args = build_sender_args(&config);
+
+    assert!(
+        args.iter().any(|a| a == "--bwlimit=100"),
+        "expected --bwlimit=100 from -M in args: {args:?}"
+    );
+    assert!(
+        args.iter().any(|a| a == "--compress-level=1"),
+        "expected --compress-level=1 from -M in args: {args:?}"
+    );
+}
+
+#[test]
+fn remote_options_appended_to_receiver_invocation() {
+    let config = ClientConfig::builder()
+        .remote_options(vec!["--timeout=60"])
+        .build();
+    let args = build_receiver_args(&config);
+
+    assert!(
+        args.iter().any(|a| a == "--timeout=60"),
+        "expected --timeout=60 from -M in args: {args:?}"
+    );
+}
+
+#[test]
+fn remote_options_appear_before_dot_placeholder() {
+    // upstream: server_options() appends remote_options before returning,
+    // then do_cmd() appends "." and paths. So remote options must precede ".".
+    let config = ClientConfig::builder()
+        .remote_options(vec!["--bwlimit=200"])
+        .build();
+    let args = build_sender_args(&config);
+
+    let dot_idx = args.iter().position(|a| a == ".").unwrap();
+    let opt_idx = args.iter().position(|a| a == "--bwlimit=200").unwrap();
+    assert!(
+        opt_idx < dot_idx,
+        "remote option should appear before '.' placeholder: {args:?}"
+    );
+}
+
+#[test]
+fn remote_options_appear_after_locally_derived_args() {
+    // Remote options should come after all locally-derived long-form args
+    // but before "." and paths.
+    let config = ClientConfig::builder()
+        .numeric_ids(true)
+        .remote_options(vec!["--max-delete=50"])
+        .build();
+    let args = build_sender_args(&config);
+
+    let numeric_idx = args.iter().position(|a| a == "--numeric-ids").unwrap();
+    let remote_idx = args.iter().position(|a| a == "--max-delete=50").unwrap();
+    assert!(
+        remote_idx > numeric_idx,
+        "remote option should appear after locally-derived args: {args:?}"
+    );
+}
+
+#[test]
+fn empty_remote_options_adds_nothing() {
+    let config_with = ClientConfig::builder()
+        .remote_options(Vec::<&str>::new())
+        .build();
+    let config_without = ClientConfig::builder().build();
+    let args_with = build_sender_args(&config_with);
+    let args_without = build_sender_args(&config_without);
+
+    assert_eq!(
+        args_with, args_without,
+        "empty remote_options should produce identical invocation"
+    );
+}
+
+#[test]
+fn multiple_remote_options_preserve_order() {
+    let config = ClientConfig::builder()
+        .remote_options(vec!["--first", "--second", "--third"])
+        .build();
+    let args = build_sender_args(&config);
+
+    let first_idx = args.iter().position(|a| a == "--first").unwrap();
+    let second_idx = args.iter().position(|a| a == "--second").unwrap();
+    let third_idx = args.iter().position(|a| a == "--third").unwrap();
+    assert!(
+        first_idx < second_idx && second_idx < third_idx,
+        "remote options must preserve insertion order: {args:?}"
+    );
+}
+
+#[test]
+fn remote_options_included_in_secluded_stdin_args() {
+    // When protect_args is active, remote options must appear in the
+    // stdin_args (the full argument list), not on the SSH command line.
+    let config = ClientConfig::builder()
+        .protect_args(Some(true))
+        .remote_options(vec!["--bwlimit=500"])
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let secluded = builder.build_secluded(&["/data"]);
+
+    assert!(
+        secluded.stdin_args.iter().any(|a| a == "--bwlimit=500"),
+        "secluded stdin_args should contain remote option: {:?}",
+        secluded.stdin_args
+    );
+    // The minimal SSH command line should NOT contain the remote option.
+    assert!(
+        !secluded
+            .command_line_args
+            .iter()
+            .any(|a| a.to_string_lossy() == "--bwlimit=500"),
+        "secluded command_line_args should NOT contain remote option: {:?}",
+        secluded.command_line_args
+    );
+}
+
+#[test]
+fn remote_option_short_flag_forwarded_verbatim() {
+    // -M can forward short flags like -v or compound options.
+    let config = ClientConfig::builder()
+        .remote_options(vec!["-v"])
+        .build();
+    let args = build_sender_args(&config);
+
+    assert!(
+        args.iter().any(|a| a == "-v"),
+        "expected short flag -v from -M in args: {args:?}"
+    );
+}
