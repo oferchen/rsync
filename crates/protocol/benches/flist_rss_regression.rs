@@ -39,6 +39,9 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 
 use protocol::flist::{FileEntry, PathInterner};
 
+/// A named path distribution: label and generator function.
+type PathDistribution = (&'static str, fn(usize) -> PathBuf);
+
 /// Entry counts for parameterized measurement.
 ///
 /// 100K is the minimum for meaningful per-entry overhead estimation.
@@ -303,7 +306,7 @@ fn bench_flist_construction(c: &mut Criterion) {
     group.sample_size(10);
     group.measurement_time(std::time::Duration::from_secs(15));
 
-    let distributions: &[(&str, fn(usize) -> PathBuf)] = &[
+    let distributions: &[PathDistribution] = &[
         ("flat", flat_path),
         ("deep", deep_path),
         ("shared", shared_path),
