@@ -1453,3 +1453,46 @@ fn set_mode_to_zero_clears_type_and_permissions() {
     assert_eq!(entry.mode(), 0);
     assert_eq!(entry.permissions(), 0);
 }
+
+#[test]
+fn reclaim_heap_data_clears_name_and_extras() {
+    let mut entry = FileEntry::new_file("src/deep/path/file.rs".into(), 4096, 0o644);
+    entry.set_uid(1000);
+    entry.set_gid(2000);
+    entry.set_checksum(vec![0xAB; 16]);
+    entry.set_user_name("alice".to_string());
+
+    assert!(!entry.name().is_empty());
+    assert!(entry.checksum().is_some());
+    assert!(entry.user_name().is_some());
+
+    entry.reclaim_heap_data();
+
+    assert_eq!(entry.name(), "");
+    assert_eq!(entry.size(), 0);
+    assert_eq!(entry.mtime(), 0);
+    assert_eq!(entry.mode(), 0);
+    assert!(entry.uid().is_none());
+    assert!(entry.gid().is_none());
+    assert!(entry.checksum().is_none());
+    assert!(entry.user_name().is_none());
+}
+
+#[test]
+fn reclaim_heap_data_on_symlink_drops_target() {
+    let mut entry = FileEntry::new_symlink("link".into(), "/usr/lib/target".into());
+    assert!(entry.link_target().is_some());
+
+    entry.reclaim_heap_data();
+
+    assert_eq!(entry.name(), "");
+    assert!(entry.link_target().is_none());
+}
+
+#[test]
+fn reclaim_heap_data_on_minimal_entry_is_safe() {
+    let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
+    // No extras, no checksum - should not panic.
+    entry.reclaim_heap_data();
+    assert_eq!(entry.name(), "");
+}

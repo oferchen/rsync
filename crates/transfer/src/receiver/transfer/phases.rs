@@ -30,7 +30,7 @@ impl ReceiverContext {
     /// Without INC_RECURSE, alternates send/receive for each phase boundary.
     /// Always reads a final NDX_DONE from the sender after all phases complete.
     pub(in crate::receiver) fn exchange_phase_done<R: Read, W: Write + ?Sized>(
-        &self,
+        &mut self,
         reader: &mut R,
         writer: &mut W,
         ndx_write_codec: &mut NdxCodecEnum,
@@ -49,6 +49,10 @@ impl ReceiverContext {
         if inc_recurse {
             let num_segments = self.ndx_segments.len();
             for _ in 0..num_segments {
+                // upstream: receiver.c:573 - flist_free(first_flist)
+                // Reclaim heap data from the oldest completed segment
+                // to reduce RSS before sending the per-segment NDX_DONE.
+                self.reclaim_oldest_segment();
                 ndx_write_codec.write_ndx_done(&mut *writer)?;
                 writer.flush()?;
                 self.read_expected_ndx_done(ndx_read_codec, reader, "segment completion")?;

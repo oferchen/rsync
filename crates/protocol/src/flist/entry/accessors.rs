@@ -566,4 +566,39 @@ impl FileEntry {
         let type_bits = self.mode & 0o170000;
         type_bits == 0o140000 || type_bits == 0o010000 // S_IFSOCK or S_IFIFO
     }
+
+    /// Releases heap-allocated data from this entry to reduce RSS.
+    ///
+    /// Clears the `name` (PathBuf), resets `dirname` to a shared empty arc,
+    /// and drops the `extras` box. Scalar fields (size, mtime, mode, uid,
+    /// gid) are zeroed. After reclamation the entry remains a valid struct
+    /// but its accessors return empty/zero values.
+    ///
+    /// This mirrors upstream rsync's `flist_free()` which deallocates
+    /// completed INC_RECURSE segments during the transfer loop. Without
+    /// reclamation, all segment entries stay in memory for the entire
+    /// transfer lifetime, causing 4-11x RSS amplification at scale.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2945 flist_free()` - frees completed file list segments
+    /// - `sender.c:244` - sender calls `flist_free(first_flist)` on NDX_DONE
+    /// - `receiver.c:573` - receiver calls `flist_free(first_flist)` on NDX_DONE
+    pub fn reclaim_heap_data(&mut self) {
+        // Drop the path buffer contents without deallocating.
+        self.name = PathBuf::new();
+        // Reset dirname to a shared empty arc.
+        self.dirname = Arc::from(Path::new(""));
+        // Drop the extras box.
+        self.extras = None;
+        // Zero scalar fields - not strictly necessary for memory but
+        // makes reclaimed entries clearly inert.
+        self.size = 0;
+        self.mtime = 0;
+        self.mode = 0;
+        self.uid = 0;
+        self.gid = 0;
+        self.mtime_nsec = 0;
+        self.present = 0;
+    }
 }

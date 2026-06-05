@@ -166,6 +166,17 @@ pub struct ReceiverContext {
     ///
     /// upstream: flist.c:2931 - `flist->ndx_start = prev->ndx_start + prev->used + 1`
     ndx_segments: Vec<(usize, i32)>,
+    /// Index into `ndx_segments` of the oldest unreclaimed segment.
+    ///
+    /// Advances by one each time a completed segment is reclaimed via
+    /// `reclaim_oldest_segment()`. Mirrors upstream's `first_flist`
+    /// pointer which advances as segments are freed by `flist_free()`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:101` - `first_flist` pointer
+    /// - `receiver.c:573` - `flist_free(first_flist)` advances `first_flist`
+    first_segment_idx: usize,
     /// Cached file list reader for compression state continuity across sub-lists.
     ///
     /// Upstream rsync uses `static` variables in `recv_file_entry()` that persist
@@ -295,6 +306,7 @@ impl ReceiverContext {
             compat_flags: handshake.compat_flags,
             checksum_seed: handshake.checksum_seed,
             ndx_segments: vec![(0, initial_ndx_start)],
+            first_segment_idx: 0,
             flist_reader_cache: None,
             uid_list: IdList::new(),
             gid_list: IdList::new(),
@@ -683,6 +695,43 @@ impl ReceiverContext {
         let ctx = self.itemize_context();
         let line = crate::generator::itemize::format_itemize_line(iflags, entry, false, &ctx);
         writer.send_msg_info(line.as_bytes())
+    }
+
+    /// Reclaims heap data from the oldest unreclaimed INC_RECURSE segment.
+    ///
+    /// Frees PathBuf, dirname Arc, and extras Box allocations for all entries
+    /// in the segment while keeping entries in place so NDX-based indexing
+    /// remains valid. Advances `first_segment_idx` to the next segment.
+    ///
+    /// No-op when there is only one segment remaining or when all segments
+    /// have already been reclaimed.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:2945 flist_free()` - frees completed file list segments
+    /// - `receiver.c:573` - `flist_free(first_flist)` in receiver transfer loop
+    pub(in crate::receiver) fn reclaim_oldest_segment(&mut self) {
+        let first = self.first_segment_idx;
+
+        // Must have at least 2 segments to reclaim (keep the current one).
+        if first + 1 >= self.ndx_segments.len() {
+            return;
+        }
+
+        let start = self.ndx_segments[first].0;
+        let end = self.ndx_segments[first + 1].0;
+
+        logging::debug_log!(
+            Flist,
+            2,
+            "reclaiming segment {} entries [{start}..{end})",
+            first
+        );
+
+        for entry in &mut self.file_list[start..end] {
+            entry.reclaim_heap_data();
+        }
+        self.first_segment_idx += 1;
     }
 }
 

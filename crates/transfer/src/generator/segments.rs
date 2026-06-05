@@ -162,6 +162,18 @@ pub(crate) struct IncrementalState {
     ///
     /// Without INC_RECURSE, this contains a single entry `(0, 0)`.
     pub(crate) ndx_segments: Vec<(usize, i32)>,
+    /// Index into `ndx_segments` of the oldest unreclaimed segment.
+    ///
+    /// Advances by one each time a completed segment is reclaimed via
+    /// `reclaim_oldest_segment()`. Mirrors upstream's `first_flist`
+    /// pointer which advances through the circular list as segments
+    /// are freed by `flist_free()`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:101` - `first_flist` pointer
+    /// - `sender.c:244` - `flist_free(first_flist)` advances `first_flist`
+    pub(crate) first_segment_idx: usize,
 }
 
 impl IncrementalState {
@@ -173,6 +185,7 @@ impl IncrementalState {
             flist_writer_cache: None,
             initial_segment_count: None,
             ndx_segments: vec![(0, initial_ndx_start)],
+            first_segment_idx: 0,
         }
     }
 }

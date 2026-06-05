@@ -3328,3 +3328,73 @@ fn nonempty_segment_also_sends_wire_bytes() {
         "last wire byte must be end-of-flist marker"
     );
 }
+
+#[test]
+fn reclaim_oldest_segment_frees_first_segment_entries() {
+    use protocol::CompatibilityFlags;
+    use protocol::flist::FileEntry;
+
+    let mut handshake = test_handshake_with_protocol(32);
+    handshake.compat_flags = Some(CompatibilityFlags::INC_RECURSE);
+    let config = test_config();
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+    // Simulate 3 segments: [0..3), [3..5), [5..7)
+    for i in 0..7 {
+        ctx.push_file_item(
+            FileEntry::new_file(
+                format!("dir/file_{i}.txt").into(),
+                (i + 1) as u64 * 100,
+                0o644,
+            ),
+            PathBuf::from(format!("/src/dir/file_{i}.txt")),
+        );
+    }
+    ctx.incremental.ndx_segments = vec![(0, 1), (3, 5), (5, 8)];
+    ctx.incremental.first_segment_idx = 0;
+
+    // Verify initial state.
+    assert_eq!(ctx.file_list()[0].name(), "dir/file_0.txt");
+    assert_eq!(ctx.file_list()[3].name(), "dir/file_3.txt");
+    assert_eq!(ctx.file_list()[5].name(), "dir/file_5.txt");
+
+    // Reclaim first segment [0..3).
+    ctx.reclaim_oldest_segment();
+    assert_eq!(ctx.incremental.first_segment_idx, 1);
+    assert_eq!(ctx.file_list()[0].name(), ""); // reclaimed
+    assert_eq!(ctx.file_list()[1].name(), ""); // reclaimed
+    assert_eq!(ctx.file_list()[2].name(), ""); // reclaimed
+    assert_eq!(ctx.file_list()[3].name(), "dir/file_3.txt"); // intact
+    assert_eq!(ctx.file_list()[5].name(), "dir/file_5.txt"); // intact
+
+    // Reclaim second segment [3..5).
+    ctx.reclaim_oldest_segment();
+    assert_eq!(ctx.incremental.first_segment_idx, 2);
+    assert_eq!(ctx.file_list()[3].name(), ""); // reclaimed
+    assert_eq!(ctx.file_list()[4].name(), ""); // reclaimed
+    assert_eq!(ctx.file_list()[5].name(), "dir/file_5.txt"); // intact
+
+    // Third reclaim is a no-op (last segment must not be reclaimed).
+    ctx.reclaim_oldest_segment();
+    assert_eq!(ctx.incremental.first_segment_idx, 2); // unchanged
+    assert_eq!(ctx.file_list()[5].name(), "dir/file_5.txt"); // still intact
+}
+
+#[test]
+fn reclaim_oldest_segment_noop_without_inc_recurse() {
+    use protocol::flist::FileEntry;
+
+    let handshake = test_handshake_with_protocol(32);
+    let config = test_config();
+    let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+    ctx.push_file_item(
+        FileEntry::new_file("file.txt".into(), 100, 0o644),
+        PathBuf::from("/src/file.txt"),
+    );
+
+    // Single segment - reclaim is a no-op.
+    ctx.reclaim_oldest_segment();
+    assert_eq!(ctx.incremental.first_segment_idx, 0);
+    assert_eq!(ctx.file_list()[0].name(), "file.txt");
+}
