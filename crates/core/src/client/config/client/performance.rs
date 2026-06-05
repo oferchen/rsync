@@ -52,9 +52,9 @@ impl ClientConfig {
 
     /// Returns the requested zstd worker thread count, when set.
     ///
-    /// `None` lets the codec decide. The value is not yet propagated to the
-    /// zstd encoder; the wiring lands in a follow-up change that consumes
-    /// this accessor from `compress/strategy/zstd.rs`.
+    /// `None` keeps zstd single-threaded. Propagated to the local copy engine
+    /// via `LocalCopyOptions` and to the wire protocol token encoder via
+    /// `ServerConfig::connection::compression_threads`.
     #[must_use]
     #[doc(alias = "--compress-threads")]
     pub const fn compression_threads(&self) -> Option<NonZeroU8> {

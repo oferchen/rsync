@@ -70,8 +70,9 @@ impl GeneratorContext {
         // transfer session. For zstd, the CCtx must persist across file boundaries
         // (one continuous stream). Create once here, reuse across all files.
         let negotiated_compression = self.negotiated_algorithms.map(|n| n.compression);
+        let compression_threads = self.config.connection.compression_threads;
         let mut token_encoder = negotiated_compression
-            .map(create_token_encoder)
+            .map(|algo| create_token_encoder(algo, compression_threads))
             .transpose()?
             .flatten();
 

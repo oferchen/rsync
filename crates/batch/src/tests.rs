@@ -1252,7 +1252,7 @@ mod integration {
 
             // Use zstd encoder for compressed token-format delta
             let mut token_buf = Vec::new();
-            let mut encoder = CompressedTokenEncoder::new_zstd(3).unwrap();
+            let mut encoder = CompressedTokenEncoder::new_zstd(3, None).unwrap();
             encoder.send_literal(&mut token_buf, file_data).unwrap();
             encoder.finish(&mut token_buf).unwrap();
             writer.write_data(&token_buf).unwrap();
@@ -1365,7 +1365,7 @@ mod integration {
 
             // Zstd encoder - see_token is noop, no dictionary sync needed
             let mut token_buf = Vec::new();
-            let mut encoder = CompressedTokenEncoder::new_zstd(3).unwrap();
+            let mut encoder = CompressedTokenEncoder::new_zstd(3, None).unwrap();
 
             // Block 0: copy from basis
             encoder.send_block_match(&mut token_buf, 0).unwrap();

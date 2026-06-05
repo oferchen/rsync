@@ -58,7 +58,7 @@ fn zstd_decode_all(data: &[u8]) -> (Vec<u8>, Vec<u32>) {
 
 /// Encodes tokens using zstd and returns the raw wire bytes.
 fn zstd_encode(tokens: &[ZstdTestToken]) -> Vec<u8> {
-    let mut encoder = CompressedTokenEncoder::new_zstd(3).unwrap();
+    let mut encoder = CompressedTokenEncoder::new_zstd(3, None).unwrap();
     let mut output = Vec::new();
 
     for token in tokens {
@@ -800,7 +800,7 @@ fn golden_zstd_complex_roundtrip() {
 /// state resets), token.c:789 (DCtx created once)
 #[test]
 fn golden_zstd_continuous_stream_across_files() {
-    let mut encoder = CompressedTokenEncoder::new_zstd(3).unwrap();
+    let mut encoder = CompressedTokenEncoder::new_zstd(3, None).unwrap();
     let mut decoder = CompressedTokenDecoder::new_zstd().unwrap();
     let mut shared_buf = Vec::new();
 

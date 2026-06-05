@@ -147,6 +147,17 @@ pub struct ConnectionConfig {
     /// - `compat.c:543`: compression vstrings skipped when compress_choice is set
     /// - `options.c:2800-2805`: `--compress-choice=ALGO` sent as long-form arg
     pub compress_choice: Option<protocol::CompressionAlgorithm>,
+    /// Worker thread count for zstd's `ZSTD_c_nbWorkers` (`--compress-threads=N`).
+    ///
+    /// `None` keeps zstd single-threaded, matching upstream's
+    /// `do_compression_threads = 0` default. Only meaningful when zstd is the
+    /// negotiated compression algorithm.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:89`: `do_compression_threads` global
+    /// - `token.c:701`: `ZSTD_CCtx_setParameter(.., ZSTD_c_nbWorkers, ..)`
+    pub compression_threads: Option<std::num::NonZeroU8>,
     /// Pre-read `--files-from` data for forwarding to a remote daemon.
     ///
     /// When the client has `--files-from` pointing to stdin or a local file,

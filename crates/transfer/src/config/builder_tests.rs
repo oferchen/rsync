@@ -441,4 +441,20 @@ mod builder_error {
         };
         assert_ne!(err1, err2);
     }
+
+    #[test]
+    fn compression_threads_setter_propagates() {
+        let threads = std::num::NonZeroU8::new(4).unwrap();
+        let config = ServerConfigBuilder::new()
+            .compression_threads(Some(threads))
+            .build()
+            .expect("valid");
+        assert_eq!(config.connection.compression_threads, Some(threads));
+    }
+
+    #[test]
+    fn compression_threads_default_is_none() {
+        let config = ServerConfigBuilder::new().build().expect("valid");
+        assert_eq!(config.connection.compression_threads, None);
+    }
 }
