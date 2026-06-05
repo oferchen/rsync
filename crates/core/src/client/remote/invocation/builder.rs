@@ -10,6 +10,7 @@
 //! - `options.c:parse_arguments()` - Server-side argument parsing
 
 use std::ffi::OsString;
+use std::time::SystemTime;
 
 use super::super::super::config::{
     ClientConfig, DeleteMode, FilesFromSource, IconvSetting, ReferenceDirectoryKind,
@@ -307,6 +308,17 @@ impl<'a> RemoteInvocationBuilder<'a> {
 
         if let TransferTimeout::Seconds(secs) = self.config.timeout() {
             args.push(OsString::from(format!("--timeout={}", secs.get())));
+        }
+
+        // upstream: options.c:server_options() - stop_at_utime is forwarded
+        // as --stop-at=YYYY/MM/DDTHH:MM so the remote side enforces the
+        // same deadline. Both --stop-after (duration) and --stop-at (absolute)
+        // are converted to an absolute SystemTime at parse time, so only the
+        // absolute form is forwarded.
+        if let Some(deadline) = self.config.stop_at() {
+            if let Some(formatted) = format_system_time_for_stop_at(deadline) {
+                args.push(OsString::from(format!("--stop-at={formatted}")));
+            }
         }
 
         // upstream: options.c - bwlimit forwarded as bytes-per-second.
@@ -694,4 +706,54 @@ pub(super) fn compression_level_to_numeric(level: compress::zlib::CompressionLev
         CompressionLevel::Best => 9,
         CompressionLevel::Precise(n) => u32::from(n.get()),
     }
+}
+
+/// Formats a `SystemTime` deadline as `YYYY/MM/DDTHH:MM` for the `--stop-at`
+/// server argument.
+///
+/// Uses UTC to avoid timezone ambiguity between local and remote hosts.
+/// Returns `None` if the timestamp predates the UNIX epoch (cannot be
+/// represented).
+///
+/// The format matches upstream rsync's `stopat_format()` in `options.c`, which
+/// produces `YYYY/MM/DDTHH:MM:SS`. We drop seconds (always `:00`) because the
+/// server-side `parse_time()` only parses `HH:MM`.
+///
+/// # Algorithm
+///
+/// Calendar conversion uses Howard Hinnant's `civil_from_days` algorithm for
+/// correct Gregorian date computation without external crate dependencies.
+pub(super) fn format_system_time_for_stop_at(time: SystemTime) -> Option<String> {
+    let secs = time.duration_since(SystemTime::UNIX_EPOCH).ok()?.as_secs();
+    let (year, month, day, hour, minute) = unix_secs_to_utc_components(secs);
+    Some(format!(
+        "{year:04}/{month:02}/{day:02}T{hour:02}:{minute:02}"
+    ))
+}
+
+/// Converts UNIX seconds to UTC calendar components (year, month, day, hour, minute).
+///
+/// Uses Howard Hinnant's `civil_from_days` algorithm (public domain) which
+/// converts a day count since the epoch into Gregorian year/month/day
+/// components in O(1) with no branching on month lengths or leap years.
+pub(super) fn unix_secs_to_utc_components(secs: u64) -> (i32, u8, u8, u8, u8) {
+    let day_secs = secs % 86_400;
+    let hour = (day_secs / 3_600) as u8;
+    let minute = ((day_secs % 3_600) / 60) as u8;
+
+    // civil_from_days: convert days since 1970-01-01 to (year, month, day).
+    // Shift epoch to 0000-03-01 so Feb is the last month of a "year",
+    // simplifying leap-year handling.
+    let z = (secs / 86_400) as i64 + 719_468; // days since 0000-03-01
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u32; // day of era [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // day of year [0, 365]
+    let mp = (5 * doy + 2) / 153; // month prime [0, 11]
+    let d = doy - (153 * mp + 2) / 5 + 1; // day [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }; // month [1, 12]
+    let y = if m <= 2 { y + 1 } else { y }; // adjust year for Jan/Feb
+
+    (y as i32, m as u8, d as u8, hour, minute)
 }
