@@ -316,3 +316,15 @@ required-features = ["io_uring"]
 name = "iouring_high_file_count"
 harness = false
 required-features = ["io_uring"]
+
+# Linux-only bench: SZC.c - IORING_OP_SEND_ZC vs plain IORING_OP_SEND at
+# 100K-file high-IOPS scale (1-4 KiB per file). Complements the IUS-3
+# bench which covered four chunk-shape workloads; this bench targets the
+# many-small-file regime where per-file overhead dominates throughput.
+# Gated by OC_RSYNC_BENCH_SZC_C=1. The send_plain group needs only the
+# `io_uring` feature; the send_zc group requires `iouring-send-zc` and
+# skips at runtime on kernels < 6.0.
+[[bench]]
+name = "szcc_send_zc_100k_iops"
+harness = false
+required-features = ["io_uring"]
