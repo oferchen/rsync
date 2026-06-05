@@ -92,3 +92,7 @@ harness = false
 [[bench]]
 name = "bandwidth_constrained"
 harness = false
+
+[[bench]]
+name = "checksum_mode_benchmark"
+harness = false
