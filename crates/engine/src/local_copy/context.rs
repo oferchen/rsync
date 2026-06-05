@@ -153,6 +153,12 @@ pub(crate) struct CopyContext<'a> {
     /// NDX codec for writing file indices to the batch delta stream.
     /// Persists across files to maintain delta-encoding state (proto >= 30).
     batch_ndx_codec: Option<protocol::codec::NdxCodecEnum>,
+    /// Reusable buffer for directory enumeration in `read_directory_entries_sorted`.
+    ///
+    /// Cleared and refilled at each directory level, avoiding a fresh heap
+    /// allocation for the intermediate `(OsString, PathBuf)` collection per
+    /// directory during recursive traversal.
+    readdir_buf: Vec<(OsString, PathBuf)>,
 }
 
 /// Path and type context for metadata finalization.

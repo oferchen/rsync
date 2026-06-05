@@ -121,6 +121,7 @@ impl<'a> CopyContext<'a> {
             batch_current_delta_idx: 0,
             batch_flist_index: 0,
             batch_ndx_codec,
+            readdir_buf: Vec::new(),
         }
     }
 
@@ -407,6 +408,15 @@ impl<'a> CopyContext<'a> {
         self.checksum_cache
             .as_ref()
             .and_then(|cache| cache.lookup(source))
+    }
+
+    /// Returns a mutable reference to the reusable readdir buffer.
+    ///
+    /// Callers should `clear()` the buffer before filling it. The Vec's heap
+    /// capacity persists across calls, eliminating per-directory allocations
+    /// during recursive traversal.
+    pub(super) fn readdir_buf(&mut self) -> &mut Vec<(OsString, PathBuf)> {
+        &mut self.readdir_buf
     }
 
     /// Clears the checksum cache to free memory after directory processing.

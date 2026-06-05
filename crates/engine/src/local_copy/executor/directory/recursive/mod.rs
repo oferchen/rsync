@@ -32,7 +32,7 @@ use dir_metadata::{apply_final_directory_metadata, record_directory_completion};
 use entry::process_planned_entry;
 
 use super::planner::{apply_pre_transfer_deletions, plan_directory_entries};
-use super::support::read_directory_entries_sorted;
+use super::support::read_directory_entries_sorted_reuse;
 
 /// Recursively copies a directory and its contents from source to destination.
 ///
@@ -85,7 +85,7 @@ pub(crate) fn copy_directory_recursive(
     }
 
     let list_start = Instant::now();
-    let entries = read_directory_entries_sorted(source)?;
+    let entries = read_directory_entries_sorted_reuse(source, context.readdir_buf())?;
     context.record_file_list_generation(list_start.elapsed());
     context.register_progress();
 
