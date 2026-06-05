@@ -169,7 +169,8 @@ pub mod reader;
 /// Shell script generation for batch replay.
 ///
 /// This module provides functions to generate executable shell scripts
-/// that can replay batch files. See [`script::generate_script`] and
+/// that can replay batch files. See [`script::generate_script`],
+/// [`script::generate_script_with_filters`], and
 /// [`script::generate_script_with_args`].
 pub mod script;
 
