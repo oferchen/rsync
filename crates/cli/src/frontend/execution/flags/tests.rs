@@ -1099,3 +1099,157 @@ fn info_flag_numeric_n_caps_each_priority_group_at_per_flag_max() {
         );
     }
 }
+
+// Tests for apply_to_thread_local - verifying that resolved InfoFlagSettings
+// are correctly propagated to the thread-local VerbosityConfig used by
+// info_log! callsites throughout the codebase.
+
+#[test]
+fn apply_to_thread_local_individual_flags() {
+    logging::init(logging::VerbosityConfig::default());
+
+    let mut settings = InfoFlagSettings::default();
+    settings.apply("copy", "copy").unwrap();
+    settings.apply("del", "del").unwrap();
+    settings.apply("flist2", "flist2").unwrap();
+    settings.apply_to_thread_local();
+
+    assert!(logging::info_gte(logging::InfoFlag::Copy, 1));
+    assert!(logging::info_gte(logging::InfoFlag::Del, 1));
+    assert!(logging::info_gte(logging::InfoFlag::Flist, 2));
+    assert!(!logging::info_gte(logging::InfoFlag::Flist, 3));
+    // Unset flags should remain at their default (0)
+    assert!(!logging::info_gte(logging::InfoFlag::Mount, 1));
+}
+
+#[test]
+fn apply_to_thread_local_all_token() {
+    logging::init(logging::VerbosityConfig::default());
+
+    let mut settings = InfoFlagSettings::default();
+    settings.apply("all", "all").unwrap();
+    settings.apply_to_thread_local();
+
+    // All flags should be at level 1 (capped by max_level)
+    assert!(logging::info_gte(logging::InfoFlag::Copy, 1));
+    assert!(logging::info_gte(logging::InfoFlag::Del, 1));
+    assert!(logging::info_gte(logging::InfoFlag::Flist, 1));
+    assert!(logging::info_gte(logging::InfoFlag::Misc, 1));
+    assert!(logging::info_gte(logging::InfoFlag::Name, 1));
+    assert!(logging::info_gte(logging::InfoFlag::Stats, 1));
+    assert!(logging::info_gte(logging::InfoFlag::Backup, 1));
+    assert!(logging::info_gte(logging::InfoFlag::Mount, 1));
+    assert!(logging::info_gte(logging::InfoFlag::Remove, 1));
+    assert!(logging::info_gte(logging::InfoFlag::Skip, 1));
+    assert!(logging::info_gte(logging::InfoFlag::Symsafe, 1));
+    assert!(logging::info_gte(logging::InfoFlag::Nonreg, 1));
+    assert!(logging::info_gte(logging::InfoFlag::Progress, 1));
+}
+
+#[test]
+fn apply_to_thread_local_none_token() {
+    // First enable everything via verbose level
+    logging::init(logging::VerbosityConfig::from_verbose_level(2));
+    assert!(logging::info_gte(logging::InfoFlag::Copy, 1));
+
+    // Then apply none - should zero all flags
+    let mut settings = InfoFlagSettings::default();
+    settings.apply("none", "none").unwrap();
+    settings.apply_to_thread_local();
+
+    assert!(!logging::info_gte(logging::InfoFlag::Copy, 1));
+    assert!(!logging::info_gte(logging::InfoFlag::Del, 1));
+    assert!(!logging::info_gte(logging::InfoFlag::Flist, 1));
+    assert!(!logging::info_gte(logging::InfoFlag::Name, 1));
+    assert!(!logging::info_gte(logging::InfoFlag::Stats, 1));
+    assert!(!logging::info_gte(logging::InfoFlag::Progress, 1));
+}
+
+#[test]
+fn apply_to_thread_local_numeric_level() {
+    logging::init(logging::VerbosityConfig::default());
+
+    let mut settings = InfoFlagSettings::default();
+    settings.apply("2", "2").unwrap();
+    settings.apply_to_thread_local();
+
+    // Level 2 enables all flags, capped by per-flag max_level
+    assert!(logging::info_gte(logging::InfoFlag::Stats, 2));
+    assert!(!logging::info_gte(logging::InfoFlag::Stats, 3));
+    assert!(logging::info_gte(logging::InfoFlag::Flist, 2));
+    assert!(logging::info_gte(logging::InfoFlag::Name, 2));
+    // Flags with max_level=1 are capped at 1
+    assert!(logging::info_gte(logging::InfoFlag::Copy, 1));
+    assert!(!logging::info_gte(logging::InfoFlag::Copy, 2));
+}
+
+#[test]
+fn apply_to_thread_local_all_then_override() {
+    logging::init(logging::VerbosityConfig::default());
+
+    let flags = vec![OsString::from("all,name0")];
+    let settings = parse_info_flags(&flags).unwrap();
+    settings.apply_to_thread_local();
+
+    // all sets name=1, then name0 overrides to 0
+    assert!(!logging::info_gte(logging::InfoFlag::Name, 1));
+    // Other flags should still be enabled
+    assert!(logging::info_gte(logging::InfoFlag::Copy, 1));
+    assert!(logging::info_gte(logging::InfoFlag::Stats, 1));
+}
+
+#[test]
+fn apply_to_thread_local_verbose_then_info_override() {
+    // Start with -v (verbose level 1) which sets NAME=1
+    logging::init(logging::VerbosityConfig::from_verbose_level(1));
+    assert!(logging::info_gte(logging::InfoFlag::Name, 1));
+    assert!(!logging::info_gte(logging::InfoFlag::Backup, 1));
+
+    // Apply --info=backup to enable backup without touching name
+    let flags = vec![OsString::from("backup")];
+    let settings = parse_info_flags(&flags).unwrap();
+    settings.apply_to_thread_local();
+
+    // Name should still be enabled from -v (not touched by --info=backup)
+    assert!(logging::info_gte(logging::InfoFlag::Name, 1));
+    // Backup should now be enabled
+    assert!(logging::info_gte(logging::InfoFlag::Backup, 1));
+}
+
+#[test]
+fn apply_to_thread_local_progress_levels() {
+    logging::init(logging::VerbosityConfig::default());
+
+    let mut settings = InfoFlagSettings::default();
+    settings.apply("progress2", "progress2").unwrap();
+    settings.apply_to_thread_local();
+
+    assert!(logging::info_gte(logging::InfoFlag::Progress, 2));
+
+    // Reset and test progress disabled
+    logging::init(logging::VerbosityConfig::from_verbose_level(1));
+    let mut settings = InfoFlagSettings::default();
+    settings.apply("progress0", "progress0").unwrap();
+    settings.apply_to_thread_local();
+
+    assert!(!logging::info_gte(logging::InfoFlag::Progress, 1));
+}
+
+#[test]
+fn apply_to_thread_local_unset_flags_not_touched() {
+    // Start with verbose level 2 which sets many flags
+    logging::init(logging::VerbosityConfig::from_verbose_level(2));
+    assert!(logging::info_gte(logging::InfoFlag::Mount, 1));
+    assert!(logging::info_gte(logging::InfoFlag::Copy, 1));
+
+    // Apply only stats2 - should not touch other flags
+    let flags = vec![OsString::from("stats2")];
+    let settings = parse_info_flags(&flags).unwrap();
+    settings.apply_to_thread_local();
+
+    // Stats should be updated
+    assert!(logging::info_gte(logging::InfoFlag::Stats, 2));
+    // Other flags from verbose level 2 should remain untouched
+    assert!(logging::info_gte(logging::InfoFlag::Mount, 1));
+    assert!(logging::info_gte(logging::InfoFlag::Copy, 1));
+}
