@@ -36,7 +36,7 @@ impl ReceiverContext {
         W: Write + crate::writer::MsgInfoSender + ?Sized,
     >(
         &'a self,
-        _writer: &mut W,
+        writer: &mut W,
         dest_dir: &Path,
         metadata_opts: &MetadataOptions,
         failed_dirs: Option<&FailedDirectories>,
