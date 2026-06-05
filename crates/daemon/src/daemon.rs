@@ -163,10 +163,12 @@ pub(crate) const SETGROUPS_FAILED_PAYLOAD: &str = "@ERROR: setgroups failed";
 /// Error payload returned when a module's uid directive is invalid.
 ///
 /// upstream: clientserver.c:783 - `@ERROR: invalid uid %s\n`
+#[cfg(test)]
 pub(crate) const INVALID_UID_PAYLOAD: &str = "@ERROR: invalid uid {uid}";
 /// Error payload returned when a module's gid directive is invalid.
 ///
 /// upstream: clientserver.c:656 - `@ERROR: invalid gid %s\n`
+#[cfg(test)]
 pub(crate) const INVALID_GID_PAYLOAD: &str = "@ERROR: invalid gid {gid}";
 /// Error payload returned when a module is read-only and the client pushes.
 ///

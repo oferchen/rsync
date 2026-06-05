@@ -195,7 +195,7 @@ fn validate_client_paths_in_module(
 
 /// Engages the SEC-1.p Landlock LSM allowlist for the receiver path.
 ///
-/// Called immediately after [`apply_module_privilege_restrictions`] has
+/// Called immediately after `apply_module_privilege_restrictions` has
 /// applied chroot + uid/gid drop so the kernel allowlist covers exactly the
 /// writable surface the remainder of the connection needs. The stub on
 /// non-Linux targets short-circuits to `Unavailable` so the wire-in does
