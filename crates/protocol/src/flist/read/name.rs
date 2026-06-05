@@ -19,6 +19,14 @@ use crate::flist::flags::FileFlags;
 
 use super::FileListReader;
 
+/// Maximum total file name length on the wire.
+///
+/// Matches upstream rsync's `MAXPATHLEN` (4096). Upstream checks
+/// `l2 >= MAXPATHLEN - l1` before allocating the name buffer.
+///
+/// upstream: rsync.h `MAXPATHLEN`, flist.c:recv_file_entry()
+const MAXPATHLEN: usize = 4096;
+
 impl FileListReader {
     /// Reads the file name with path compression.
     ///
@@ -72,6 +80,20 @@ impl FileListReader {
                     "same_len {} exceeds previous name length {}",
                     same_len,
                     self.state.prev_name().len()
+                ),
+            ));
+        }
+
+        // upstream: flist.c `l2 >= MAXPATHLEN - l1` overflow exit
+        // Defence-in-depth: reject names that exceed MAXPATHLEN to prevent
+        // unbounded allocation from a malicious sender.
+        if same_len + suffix_len >= MAXPATHLEN {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "filename length {} exceeds maximum {}",
+                    same_len + suffix_len,
+                    MAXPATHLEN - 1,
                 ),
             ));
         }
