@@ -124,6 +124,14 @@ impl<'a> CopyContext<'a> {
         }
     }
 
+    /// Reserves additional capacity in the events buffer to avoid
+    /// growth-copy reallocations when the entry count is known ahead of time.
+    pub(super) fn reserve_event_capacity(&mut self, additional: usize) {
+        if let Some(events) = &mut self.events {
+            events.reserve(additional);
+        }
+    }
+
     /// Records that forward progress was made, resetting the timeout clock.
     pub(in crate::local_copy) fn register_progress(&mut self) {
         self.last_progress = Instant::now();
