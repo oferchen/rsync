@@ -323,8 +323,10 @@ fn write_iflags_into(
         } else {
             't'
         }
+    } else if !ctx.preserve_mtimes {
+        'T'
     } else {
-        if !ctx.preserve_mtimes { 'T' } else { 't' }
+        't'
     };
 
     c[5] = if raw & ItemFlags::ITEM_REPORT_PERMS != 0 {
