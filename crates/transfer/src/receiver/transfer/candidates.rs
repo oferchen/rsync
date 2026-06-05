@@ -188,9 +188,7 @@ impl ReceiverContext {
                     // upstream: generator.c:461 unchanged_attrs() - fast-path
                     // check avoids apply_metadata overhead when all attributes
                     // already match.
-                    if needs_metadata_apply
-                        && !metadata_unchanged(entry, metadata_opts, meta)
-                    {
+                    if needs_metadata_apply && !metadata_unchanged(entry, metadata_opts, meta) {
                         if let Err(e) = apply_metadata_with_cached_stat(
                             &file_path,
                             entry,
