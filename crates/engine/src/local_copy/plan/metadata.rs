@@ -165,6 +165,12 @@ impl LocalCopyMetadata {
     pub fn symlink_target(&self) -> Option<&Path> {
         self.symlink_target.as_deref()
     }
+
+    /// Consumes the metadata and returns the symlink target path, if present.
+    #[must_use]
+    pub fn into_symlink_target(self) -> Option<PathBuf> {
+        self.symlink_target
+    }
 }
 
 #[cfg(test)]

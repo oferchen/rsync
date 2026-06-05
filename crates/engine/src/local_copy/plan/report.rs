@@ -54,6 +54,15 @@ impl LocalCopyReport {
     pub fn destination_root(&self) -> &Path {
         &self.destination_root
     }
+
+    /// Consumes the report and returns its summary, records, and destination root.
+    ///
+    /// Enables callers to move records instead of iterating over borrowed slices,
+    /// avoiding per-record `PathBuf` clones.
+    #[must_use]
+    pub fn into_parts(self) -> (LocalCopySummary, Vec<LocalCopyRecord>, PathBuf) {
+        (self.summary, self.records, self.destination_root)
+    }
 }
 
 #[cfg(test)]
@@ -120,5 +129,15 @@ mod tests {
         let report = LocalCopyReport::default();
         let debug = format!("{report:?}");
         assert!(debug.contains("LocalCopyReport"));
+    }
+
+    #[test]
+    fn into_parts_returns_all_fields() {
+        let dest = PathBuf::from("/dest");
+        let report = LocalCopyReport::new(LocalCopySummary::default(), vec![], dest.clone());
+        let (summary, records, destination_root) = report.into_parts();
+        assert_eq!(summary, LocalCopySummary::default());
+        assert!(records.is_empty());
+        assert_eq!(destination_root, dest);
     }
 }

@@ -58,25 +58,34 @@ pub struct ClientEntryMetadata {
 }
 
 impl ClientEntryMetadata {
-    pub(crate) fn from_local_copy_metadata(metadata: &LocalCopyMetadata) -> Self {
+    /// Creates metadata by consuming a [`LocalCopyMetadata`], moving heap fields.
+    pub(crate) fn from_local_copy_metadata_owned(metadata: LocalCopyMetadata) -> Self {
+        let kind = match metadata.kind() {
+            LocalCopyFileKind::File => ClientEntryKind::File,
+            LocalCopyFileKind::Directory => ClientEntryKind::Directory,
+            LocalCopyFileKind::Symlink => ClientEntryKind::Symlink,
+            LocalCopyFileKind::Fifo => ClientEntryKind::Fifo,
+            LocalCopyFileKind::CharDevice => ClientEntryKind::CharDevice,
+            LocalCopyFileKind::BlockDevice => ClientEntryKind::BlockDevice,
+            LocalCopyFileKind::Socket => ClientEntryKind::Socket,
+            LocalCopyFileKind::Other => ClientEntryKind::Other,
+        };
+        let length = metadata.len();
+        let modified = metadata.modified();
+        let mode = metadata.mode();
+        let uid = metadata.uid();
+        let gid = metadata.gid();
+        let nlink = metadata.nlink();
+        let symlink_target = metadata.into_symlink_target();
         Self {
-            kind: match metadata.kind() {
-                LocalCopyFileKind::File => ClientEntryKind::File,
-                LocalCopyFileKind::Directory => ClientEntryKind::Directory,
-                LocalCopyFileKind::Symlink => ClientEntryKind::Symlink,
-                LocalCopyFileKind::Fifo => ClientEntryKind::Fifo,
-                LocalCopyFileKind::CharDevice => ClientEntryKind::CharDevice,
-                LocalCopyFileKind::BlockDevice => ClientEntryKind::BlockDevice,
-                LocalCopyFileKind::Socket => ClientEntryKind::Socket,
-                LocalCopyFileKind::Other => ClientEntryKind::Other,
-            },
-            length: metadata.len(),
-            modified: metadata.modified(),
-            mode: metadata.mode(),
-            uid: metadata.uid(),
-            gid: metadata.gid(),
-            nlink: metadata.nlink(),
-            symlink_target: metadata.symlink_target().map(Path::to_path_buf),
+            kind,
+            length,
+            modified,
+            mode,
+            uid,
+            gid,
+            nlink,
+            symlink_target,
         }
     }
 

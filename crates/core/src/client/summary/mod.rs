@@ -61,12 +61,11 @@ pub struct ClientSummary {
 
 impl ClientSummary {
     pub(crate) fn from_report(report: LocalCopyReport) -> Self {
-        let stats = *report.summary();
-        let destination_root: Arc<Path> = Arc::from(report.destination_root());
-        let events = report
-            .records()
-            .iter()
-            .map(|record| ClientEvent::from_record(record, Arc::clone(&destination_root)))
+        let (stats, records, destination_root) = report.into_parts();
+        let destination_root: Arc<Path> = Arc::from(destination_root);
+        let events = records
+            .into_iter()
+            .map(|record| ClientEvent::from_record_owned(record, Arc::clone(&destination_root)))
             .collect();
         Self {
             stats,
