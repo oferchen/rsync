@@ -131,8 +131,7 @@ impl ClientEvent {
             | LocalCopyAction::EntryDeleted
             | LocalCopyAction::SourceRemoved => false,
         };
-        let destination_path =
-            Self::resolve_destination_path(&destination_root, &relative_path);
+        let destination_path = Self::resolve_destination_path(&destination_root, &relative_path);
         Self {
             relative_path,
             kind,

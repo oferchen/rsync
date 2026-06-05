@@ -317,8 +317,7 @@ mod tests {
     #[test]
     fn into_parts_moves_relative_path() {
         let record = test_record().with_creation(true);
-        let (path, action, bytes, total, elapsed, meta, created, change_set) =
-            record.into_parts();
+        let (path, action, bytes, total, elapsed, meta, created, change_set) = record.into_parts();
         assert_eq!(path, Path::new("test/file.txt"));
         assert_eq!(action, LocalCopyAction::DataCopied);
         assert_eq!(bytes, 1024);
