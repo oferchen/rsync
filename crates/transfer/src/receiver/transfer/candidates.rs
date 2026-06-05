@@ -30,7 +30,12 @@ impl ReceiverContext {
     /// unchanged files and respecting size bounds and failed directory tracking.
     ///
     /// For files that are up-to-date (quick-check match), emits a metadata-only
-    /// itemize line via MSG_INFO when the daemon has itemize output enabled.
+    /// itemize line via MSG_INFO when the daemon has itemize output enabled, and
+    /// applies any pending metadata updates (ownership, permissions, timestamps).
+    ///
+    /// Optimized for the 100K-file no-change scan path: pre-computes config
+    /// flags, skips metadata/ACL/xattr work when the corresponding features are
+    /// disabled, and avoids per-file allocations where possible.
     pub(in crate::receiver) fn build_files_to_transfer<
         'a,
         W: Write + crate::writer::MsgInfoSender + ?Sized,
@@ -62,7 +67,16 @@ impl ReceiverContext {
         }
 
         // Phase A: Filter candidates (cheap, in-memory checks only).
+        // Pre-extract config values to avoid repeated field access in the
+        // filter closures at 100K scale.
         let daemon_filters = self.daemon_filter_set();
+        let min_size = self.config.file_selection.min_file_size;
+        let max_size = self.config.file_selection.max_file_size;
+        let has_size_bounds = min_size.is_some() || max_size.is_some();
+        let has_daemon_filters = daemon_filters.is_some();
+        let has_failed_dirs = failed_dirs.is_some();
+        let verbose_client = self.config.flags.verbose && self.config.connection.client_mode;
+
         let candidates: Vec<(usize, &FileEntry)> = self
             .file_list
             .iter()
@@ -70,30 +84,27 @@ impl ReceiverContext {
             .filter(|(_, e)| e.is_file())
             .filter(|(_, e)| !is_hardlink_follower(e))
             .filter(|(_, e)| {
+                if !has_size_bounds {
+                    return true;
+                }
                 let sz = e.size();
-                self.config
-                    .file_selection
-                    .min_file_size
-                    .is_none_or(|m| sz >= m)
-                    && self
-                        .config
-                        .file_selection
-                        .max_file_size
-                        .is_none_or(|m| sz <= m)
+                min_size.is_none_or(|m| sz >= m) && max_size.is_none_or(|m| sz <= m)
             })
             .filter(|(_, e)| {
                 // upstream: receiver.c:599-604 - check_filter(&daemon_filter_list, ...)
                 // rejects daemon-excluded files before accepting transfer data.
-                if let Some(filters) = daemon_filters {
+                if has_daemon_filters {
+                    let filters = daemon_filters.unwrap();
                     let name = e.name();
                     if name != "." && !filters.allows(Path::new(name), false) {
                         stats.files_skipped += 1;
                         return false;
                     }
                 }
-                if let Some(fd) = failed_dirs {
+                if has_failed_dirs {
+                    let fd = failed_dirs.unwrap();
                     if let Some(failed_parent) = fd.failed_ancestor(e.name()) {
-                        if self.config.flags.verbose && self.config.connection.client_mode {
+                        if verbose_client {
                             info_log!(
                                 Skip,
                                 1,
@@ -131,6 +142,18 @@ impl ReceiverContext {
             None
         };
 
+        // Pre-compute whether itemize emission is active so we skip the
+        // per-file method dispatch for the common no-itemize case.
+        let emit_itemize = self.should_emit_itemize();
+
+        // Pre-compute whether ACLs and xattrs are enabled. When disabled
+        // (the common case), the per-file function call overhead is avoided
+        // entirely in the no-change path. At 100K files this eliminates
+        // 100K-200K function calls that would each immediately return None/Ok.
+        let has_acls = acl_cache.is_some() && self.config.flags.acls;
+        let has_xattrs = self.config.flags.xattrs;
+        let has_reference_dirs = !self.config.reference_directories.is_empty();
+
         // Phase B: Parallel stat - preserve PathBufs for reuse in Phase C and
         // the pipeline loop, avoiding a second dest_dir.join() per file.
         let stat_paths: Vec<(usize, PathBuf)> = candidates
@@ -150,21 +173,9 @@ impl ReceiverContext {
             );
 
         // Phase C: Sequential post-processing with stat results.
-        //
-        // Pre-compute feature flags to avoid per-file method dispatch on the
-        // quick-check skip path. For a no-change scan (SSH push where all
-        // files are up-to-date), this loop processes every file without
-        // producing any transfer work, so minimising per-iteration overhead
-        // is critical.
-        //
-        // upstream: generator.c generate_files() loop uses global variables
-        // for the same purpose (preserve_perms, preserve_mtimes, etc.).
+        // Pre-size for the expected minority that need transfer.
         let needs_metadata_apply = metadata_opts.requires_apply();
-        let has_acl_cache = acl_cache.is_some();
-        let has_xattrs = self.config.flags.xattrs;
-        let emit_itemize = self.should_emit_itemize();
-
-        let mut files_to_transfer = Vec::with_capacity(stat_results.len());
+        let mut files_to_transfer = Vec::with_capacity(stat_results.len() / 4 + 1);
         for (idx, file_path, dest_meta) in stat_results {
             let entry = &self.file_list[idx];
             if let Some(ref meta) = dest_meta {
@@ -182,73 +193,116 @@ impl ReceiverContext {
                     size_only,
                     always_checksum,
                 ) {
-                    // upstream: generator.c:1814-1816 - quick-check matched:
-                    // apply metadata (set_file_attrs) then itemize. Skip the
-                    // chain entirely when no preservation flags are active.
-                    // upstream: generator.c:461 unchanged_attrs() - fast-path
-                    // check avoids apply_metadata overhead when all attributes
-                    // already match.
-                    if needs_metadata_apply && !metadata_unchanged(entry, metadata_opts, meta) {
-                        if let Err(e) = apply_metadata_with_cached_stat(
-                            &file_path,
-                            entry,
-                            metadata_opts,
-                            dest_meta,
-                        ) {
-                            metadata_errors.push((file_path.clone(), e.to_string()));
-                        }
-                    }
-
-                    // upstream: generator.c:574-576 - itemize() for up-to-date
-                    // files. Only emitted when significant iflags are set; zero
-                    // iflags (completely unchanged) produces no output.
-                    if emit_itemize {
-                        let iflags = crate::generator::ItemFlags::from_raw(0);
-                        let _ = self.emit_itemize(writer, &iflags, entry);
-                    }
-
-                    if has_acl_cache {
-                        if let Err(e) = apply_acls_from_receiver_cache(
-                            &file_path,
-                            entry,
-                            acl_cache,
-                            !entry.is_symlink(),
-                        ) {
-                            metadata_errors.push((file_path.clone(), e.to_string()));
-                        }
-                    }
-                    if has_xattrs {
-                        if let Some(ref xattr_list) = self.resolve_xattr_list(entry) {
-                            // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
-                            if let Err(e) =
-                                metadata::apply_xattrs_from_list(&file_path, xattr_list, true)
-                            {
-                                metadata_errors.push((file_path, e.to_string()));
-                            }
-                        }
-                    }
+                    // upstream: generator.c:1814 - set_file_attrs() + itemize()
+                    // for files that passed quick-check. Metadata is applied to
+                    // synchronize ownership/permissions/timestamps even when the
+                    // file content is unchanged.
+                    self.apply_no_change_metadata(
+                        writer,
+                        &file_path,
+                        entry,
+                        meta,
+                        metadata_opts,
+                        metadata_errors,
+                        acl_cache,
+                        emit_itemize,
+                        has_acls,
+                        has_xattrs,
+                        needs_metadata_apply,
+                    );
                     continue;
                 }
             } else {
                 if existing_only {
                     continue;
                 }
-                if try_reference_dest(
-                    entry,
-                    dest_dir,
-                    &self.config.reference_directories,
-                    preserve_times,
-                    size_only,
-                    always_checksum,
-                    metadata_opts,
-                    metadata_errors,
-                    acl_cache,
-                ) {
+                if has_reference_dirs
+                    && try_reference_dest(
+                        entry,
+                        dest_dir,
+                        &self.config.reference_directories,
+                        preserve_times,
+                        size_only,
+                        always_checksum,
+                        metadata_opts,
+                        metadata_errors,
+                        acl_cache,
+                    )
+                {
                     continue;
                 }
             }
             files_to_transfer.push((idx, entry, file_path));
         }
         files_to_transfer
+    }
+
+    /// Applies metadata updates for a file that passed quick-check (no transfer needed).
+    ///
+    /// This is the hot path for no-change scans at scale. Each guard check
+    /// avoids a function call and potential syscalls when the corresponding
+    /// feature is disabled.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1814` - `set_file_attrs()` on quick-check match
+    /// - `generator.c:1816` - `itemize()` on quick-check match
+    #[allow(clippy::too_many_arguments)]
+    fn apply_no_change_metadata<W: Write + crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        file_path: &Path,
+        entry: &FileEntry,
+        stat_meta: &fs::Metadata,
+        metadata_opts: &MetadataOptions,
+        metadata_errors: &mut Vec<(PathBuf, String)>,
+        acl_cache: Option<&protocol::acl::AclCache>,
+        emit_itemize: bool,
+        has_acls: bool,
+        has_xattrs: bool,
+        needs_metadata_apply: bool,
+    ) {
+        // upstream: generator.c:1816 - itemize() with iflags=0 for up-to-date
+        // files. iflags=0 has no significant flags, so emit_itemize will suppress
+        // output (generator.c:574-576). Skip the call entirely.
+        if emit_itemize {
+            let iflags = crate::generator::ItemFlags::from_raw(0);
+            let _ = self.emit_itemize(writer, &iflags, entry);
+        }
+
+        // upstream: generator.c:461 unchanged_attrs() - fast-path check avoids
+        // the per-function-call overhead of apply_metadata when all attributes
+        // already match. Skip entirely when no preservation flags are active.
+        // On a no-change scan this eliminates ownership mapping, permission
+        // comparison, and timestamp construction for every file.
+        if needs_metadata_apply && !metadata_unchanged(entry, metadata_opts, stat_meta) {
+            if let Err(e) = apply_metadata_with_cached_stat(
+                file_path,
+                entry,
+                metadata_opts,
+                Some(stat_meta.clone()),
+            ) {
+                metadata_errors.push((file_path.to_path_buf(), e.to_string()));
+            }
+        }
+
+        // upstream: rsync.c:set_file_attrs() -> set_acl() for ACL preservation
+        if has_acls {
+            if let Err(e) =
+                apply_acls_from_receiver_cache(file_path, entry, acl_cache, !entry.is_symlink())
+            {
+                metadata_errors.push((file_path.to_path_buf(), e.to_string()));
+                return;
+            }
+        }
+
+        // upstream: xattrs.c:set_xattr() - apply xattrs after metadata
+        if has_xattrs {
+            if let Some(ref xattr_list) = self.resolve_xattr_list(entry) {
+                if let Err(e) = metadata::apply_xattrs_from_list(file_path, xattr_list, true) {
+                    metadata_errors.push((file_path.to_path_buf(), e.to_string()));
+                }
+            }
+        }
     }
 }
