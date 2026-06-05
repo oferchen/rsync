@@ -451,6 +451,9 @@ impl ReceiverContext {
                 !f.contains(protocol::CompatibilityFlags::AVOID_XATTR_OPTIMIZATION)
             });
 
+        // upstream: io.c perform_io() flushes output via select() while waiting
+        // for input. We flush once before blocking on each response read, but
+        // only when needed (the multiplex dirty-flag skips redundant syscalls).
         for &(file_idx, file_entry, _) in files_to_transfer {
             // upstream: generator.c:1925 - write_ndx(f_out, ndx)
             let wire_ndx = self.flat_to_wire_ndx(file_idx);
@@ -467,6 +470,10 @@ impl ReceiverContext {
                 info_log!(Name, 1, "{}", file_entry.path().display());
             }
 
+            // Flush before blocking on the sender's echo. The multiplex
+            // writer's dirty-flag optimization skips the syscall when the
+            // request fits within the 64KB buffer and no prior data was
+            // pending - matching upstream's batched iobuf_out pattern.
             writer.flush()?;
 
             // upstream: sender.c:394-399 - sender echoes write_ndx_and_attrs back
