@@ -1020,30 +1020,21 @@ fn parse_module_log_file() {
 fn parse_module_log_format() {
     let file = write_config("[mod]\npath = /data\nlog format = %o %f %l\n");
     let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
-    assert_eq!(
-        config.modules()[0].module_log_format(),
-        Some("%o %f %l")
-    );
+    assert_eq!(config.modules()[0].module_log_format(), Some("%o %f %l"));
 }
 
 #[test]
 fn parse_module_syslog_facility() {
     let file = write_config("[mod]\npath = /data\nsyslog facility = local3\n");
     let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
-    assert_eq!(
-        config.modules()[0].module_syslog_facility(),
-        Some("local3")
-    );
+    assert_eq!(config.modules()[0].module_syslog_facility(), Some("local3"));
 }
 
 #[test]
 fn parse_module_syslog_tag() {
     let file = write_config("[mod]\npath = /data\nsyslog tag = custom-mod\n");
     let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
-    assert_eq!(
-        config.modules()[0].module_syslog_tag(),
-        Some("custom-mod")
-    );
+    assert_eq!(config.modules()[0].module_syslog_tag(), Some("custom-mod"));
 }
 
 #[test]
@@ -1147,10 +1138,7 @@ fn full_module_with_all_upstream_directives() {
     assert!(m.ignore_errors());
     assert!(m.ignore_nonreadable());
     assert_eq!(m.munge_symlinks(), Some(true));
-    assert_eq!(
-        m.module_log_file(),
-        Some(Path::new("/var/log/module.log"))
-    );
+    assert_eq!(m.module_log_file(), Some(Path::new("/var/log/module.log")));
     assert_eq!(m.module_log_format(), Some("%o %h %f"));
     assert_eq!(m.module_syslog_facility(), Some("local5"));
     assert_eq!(m.module_syslog_tag(), Some("full-mod"));
