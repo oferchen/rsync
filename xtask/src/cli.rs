@@ -60,6 +60,9 @@ pub enum Command {
     /// Run aggregated release-readiness checks.
     Release(ReleaseArgs),
 
+    /// Render, validate, or publish release notes.
+    ReleaseNotes(ReleaseNotesArgs),
+
     /// Generate a CycloneDX SBOM for the workspace.
     Sbom(SbomArgs),
 
@@ -325,6 +328,62 @@ pub struct ReleaseArgs {
     pub skip_upload: bool,
 }
 
+/// Arguments for the `release-notes` command.
+#[derive(Parser, Debug)]
+pub struct ReleaseNotesArgs {
+    #[command(subcommand)]
+    pub command: ReleaseNotesSubcommand,
+}
+
+/// Release-notes subcommands.
+#[derive(Subcommand, Debug, Clone)]
+pub enum ReleaseNotesSubcommand {
+    /// Render the release template with version placeholders.
+    Render(RenderArgs),
+
+    /// Validate CVE statuses between release body and SECURITY.md.
+    Validate(ValidateArgs),
+
+    /// Create or update a GitHub release via the `gh` CLI.
+    Publish(PublishArgs),
+}
+
+/// Arguments for the `release-notes render` subcommand.
+#[derive(Parser, Debug, Clone, Default)]
+pub struct RenderArgs {
+    /// Override the version string (default: from workspace metadata).
+    #[arg(long, value_name = "VERSION")]
+    pub version: Option<String>,
+
+    /// Output file path (default: stdout).
+    #[arg(short, long, value_name = "PATH")]
+    pub output: Option<std::path::PathBuf>,
+}
+
+/// Arguments for the `release-notes validate` subcommand.
+#[derive(Parser, Debug, Clone, Default)]
+pub struct ValidateArgs {
+    /// Path to a rendered release body file (default: `.github/RELEASE_TEMPLATE.md`).
+    #[arg(long, value_name = "PATH")]
+    pub body: Option<std::path::PathBuf>,
+}
+
+/// Arguments for the `release-notes publish` subcommand.
+#[derive(Parser, Debug, Clone)]
+pub struct PublishArgs {
+    /// Git tag for the release (e.g., `v0.7.0`).
+    #[arg(long, value_name = "TAG")]
+    pub tag: String,
+
+    /// Path to the rendered release body file.
+    #[arg(long, value_name = "PATH")]
+    pub body_file: std::path::PathBuf,
+
+    /// Create the release as a draft.
+    #[arg(long)]
+    pub draft: bool,
+}
+
 /// Arguments for the `sbom` command.
 #[derive(Parser, Debug, Default)]
 pub struct SbomArgs {
@@ -372,6 +431,7 @@ impl CommandExt for Command {
             Command::Preflight => Box::new(PreflightTask),
             Command::ReadmeVersion => Box::new(ReadmeVersionTask),
             Command::Release(args) => args.as_task(),
+            Command::ReleaseNotes(_) => Box::new(ReleaseNotesTask),
             Command::Sbom(_) => Box::new(SbomTask),
             Command::Test(args) => args.as_task(),
         }
@@ -527,6 +587,23 @@ impl Task for ReadmeVersionTask {
 
     fn explicit_duration(&self) -> Option<Duration> {
         Some(Duration::from_secs(1))
+    }
+}
+
+/// Task for release notes management.
+struct ReleaseNotesTask;
+
+impl Task for ReleaseNotesTask {
+    fn name(&self) -> &'static str {
+        "release-notes"
+    }
+
+    fn description(&self) -> &'static str {
+        "Render, validate, or publish release notes"
+    }
+
+    fn explicit_duration(&self) -> Option<Duration> {
+        Some(Duration::from_secs(5))
     }
 }
 
@@ -791,6 +868,119 @@ mod tests {
                 assert_eq!(args.data_profile, DataProfile::Small);
             }
             _ => panic!("expected benchmark command"),
+        }
+    }
+
+    #[test]
+    fn parse_release_notes_render() {
+        let cli = Cli::parse_from([
+            "cargo-xtask",
+            "release-notes",
+            "render",
+            "--version",
+            "0.7.0",
+            "--output",
+            "notes.md",
+        ]);
+        match cli.command {
+            Command::ReleaseNotes(args) => match args.command {
+                ReleaseNotesSubcommand::Render(render) => {
+                    assert_eq!(render.version.as_deref(), Some("0.7.0"));
+                    assert_eq!(
+                        render.output,
+                        Some(std::path::PathBuf::from("notes.md")),
+                    );
+                }
+                _ => panic!("expected render subcommand"),
+            },
+            _ => panic!("expected release-notes command"),
+        }
+    }
+
+    #[test]
+    fn parse_release_notes_render_defaults() {
+        let cli = Cli::parse_from(["cargo-xtask", "release-notes", "render"]);
+        match cli.command {
+            Command::ReleaseNotes(args) => match args.command {
+                ReleaseNotesSubcommand::Render(render) => {
+                    assert!(render.version.is_none());
+                    assert!(render.output.is_none());
+                }
+                _ => panic!("expected render subcommand"),
+            },
+            _ => panic!("expected release-notes command"),
+        }
+    }
+
+    #[test]
+    fn parse_release_notes_validate() {
+        let cli = Cli::parse_from([
+            "cargo-xtask",
+            "release-notes",
+            "validate",
+            "--body",
+            "release.md",
+        ]);
+        match cli.command {
+            Command::ReleaseNotes(args) => match args.command {
+                ReleaseNotesSubcommand::Validate(validate) => {
+                    assert_eq!(
+                        validate.body,
+                        Some(std::path::PathBuf::from("release.md")),
+                    );
+                }
+                _ => panic!("expected validate subcommand"),
+            },
+            _ => panic!("expected release-notes command"),
+        }
+    }
+
+    #[test]
+    fn parse_release_notes_publish() {
+        let cli = Cli::parse_from([
+            "cargo-xtask",
+            "release-notes",
+            "publish",
+            "--tag",
+            "v0.7.0",
+            "--body-file",
+            "notes.md",
+            "--draft",
+        ]);
+        match cli.command {
+            Command::ReleaseNotes(args) => match args.command {
+                ReleaseNotesSubcommand::Publish(publish) => {
+                    assert_eq!(publish.tag, "v0.7.0");
+                    assert_eq!(publish.body_file, std::path::PathBuf::from("notes.md"));
+                    assert!(publish.draft);
+                }
+                _ => panic!("expected publish subcommand"),
+            },
+            _ => panic!("expected release-notes command"),
+        }
+    }
+
+    #[test]
+    fn parse_release_notes_publish_no_draft() {
+        let cli = Cli::parse_from([
+            "cargo-xtask",
+            "release-notes",
+            "publish",
+            "--tag",
+            "v0.8.0",
+            "--body-file",
+            "body.md",
+        ]);
+        match cli.command {
+            Command::ReleaseNotes(args) => match args.command {
+                ReleaseNotesSubcommand::Publish(publish) => {
+                    assert_eq!(publish.tag, "v0.8.0");
+                    assert_eq!(publish.body_file, std::path::PathBuf::from("body.md"));
+                    assert!(!publish.draft);
+                }
+                _ => panic!("expected publish subcommand"),
+            },
+            _ => panic!("expected release-notes command"),
         }
     }
 }
