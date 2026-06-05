@@ -60,9 +60,7 @@ fn parity_none_shutdown_deletes_temp() {
 
     let h = spawn_disk_thread(DiskCommitConfig::default());
     h.file_tx.send(begin_msg(dest.clone(), 1024)).unwrap();
-    h.file_tx
-        .send(FileMessage::Chunk(test_data(100)))
-        .unwrap();
+    h.file_tx.send(FileMessage::Chunk(test_data(100))).unwrap();
     h.file_tx.send(FileMessage::Shutdown).unwrap();
 
     let result = h.result_rx.recv().unwrap();
@@ -84,9 +82,7 @@ fn parity_none_abort_deletes_temp() {
 
     let h = spawn_disk_thread(DiskCommitConfig::default());
     h.file_tx.send(begin_msg(dest.clone(), 1024)).unwrap();
-    h.file_tx
-        .send(FileMessage::Chunk(test_data(100)))
-        .unwrap();
+    h.file_tx.send(FileMessage::Chunk(test_data(100))).unwrap();
     h.file_tx
         .send(FileMessage::Abort {
             reason: "test".into(),
@@ -112,9 +108,7 @@ fn parity_none_disconnect_deletes_temp() {
 
     let h = spawn_disk_thread(DiskCommitConfig::default());
     h.file_tx.send(begin_msg(dest.clone(), 1024)).unwrap();
-    h.file_tx
-        .send(FileMessage::Chunk(test_data(100)))
-        .unwrap();
+    h.file_tx.send(FileMessage::Chunk(test_data(100))).unwrap();
 
     drop(h.file_tx);
     h.join_handle.join().unwrap();
@@ -487,9 +481,7 @@ fn parity_partial_retention_unregisters_from_cleanup_manager() {
     let h = spawn_disk_thread(config);
 
     h.file_tx.send(begin_msg(dest.clone(), 1024)).unwrap();
-    h.file_tx
-        .send(FileMessage::Chunk(test_data(100)))
-        .unwrap();
+    h.file_tx.send(FileMessage::Chunk(test_data(100))).unwrap();
 
     // Wait for the chunk to be processed.
     let _recycled = h.buf_return_rx.recv().unwrap();
@@ -536,9 +528,7 @@ fn parity_partial_dir_retention_unregisters_from_cleanup_manager() {
     let h = spawn_disk_thread(config);
 
     h.file_tx.send(begin_msg(dest.clone(), 1024)).unwrap();
-    h.file_tx
-        .send(FileMessage::Chunk(test_data(100)))
-        .unwrap();
+    h.file_tx.send(FileMessage::Chunk(test_data(100))).unwrap();
 
     let _recycled = h.buf_return_rx.recv().unwrap();
 
