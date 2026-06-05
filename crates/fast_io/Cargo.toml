@@ -328,3 +328,12 @@ required-features = ["io_uring"]
 name = "szcc_send_zc_100k_iops"
 harness = false
 required-features = ["io_uring"]
+
+# Cross-platform bench: copy_basis_range (IUD-10 zero-copy fast path for
+# delta-apply COPY tokens) vs portable pread+write baseline. Measures
+# throughput across sequential, random, and overlapping access patterns at
+# 1 MB, 100 MB, and optionally 1 GB (OC_RSYNC_BENCH_LARGE=1). See the
+# file's module doc for the run recipe and what the numbers inform on #2609.
+[[bench]]
+name = "copy_basis_range_delta"
+harness = false
