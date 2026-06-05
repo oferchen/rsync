@@ -886,10 +886,7 @@ mod tests {
             Command::ReleaseNotes(args) => match args.command {
                 ReleaseNotesSubcommand::Render(render) => {
                     assert_eq!(render.version.as_deref(), Some("0.7.0"));
-                    assert_eq!(
-                        render.output,
-                        Some(std::path::PathBuf::from("notes.md")),
-                    );
+                    assert_eq!(render.output, Some(std::path::PathBuf::from("notes.md")),);
                 }
                 _ => panic!("expected render subcommand"),
             },
@@ -924,10 +921,7 @@ mod tests {
         match cli.command {
             Command::ReleaseNotes(args) => match args.command {
                 ReleaseNotesSubcommand::Validate(validate) => {
-                    assert_eq!(
-                        validate.body,
-                        Some(std::path::PathBuf::from("release.md")),
-                    );
+                    assert_eq!(validate.body, Some(std::path::PathBuf::from("release.md")),);
                 }
                 _ => panic!("expected validate subcommand"),
             },

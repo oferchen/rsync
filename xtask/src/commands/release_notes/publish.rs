@@ -21,10 +21,7 @@ pub struct PublishOptions {
 
 /// Creates or updates a GitHub release for the given tag.
 pub fn execute(workspace: &Path, options: PublishOptions) -> TaskResult<()> {
-    ensure_command_available(
-        "gh",
-        "install the GitHub CLI from https://cli.github.com/",
-    )?;
+    ensure_command_available("gh", "install the GitHub CLI from https://cli.github.com/")?;
 
     let body_path = if options.body_file.is_absolute() {
         options.body_file.clone()

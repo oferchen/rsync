@@ -123,10 +123,7 @@ fn extract_cve_rows(content: &str) -> Vec<CveRow> {
         // SECURITY.md has 4 columns: CVE | Upstream Issue | oc-rsync Status | Reason
         let status = find_status_in_columns(&columns);
         if let Some(status) = status {
-            rows.push(CveRow {
-                id: cve_id,
-                status,
-            });
+            rows.push(CveRow { id: cve_id, status });
         }
     }
 
@@ -144,11 +141,7 @@ fn find_status_in_columns(columns: &[&str]) -> Option<String> {
     ];
 
     for col in columns.iter().skip(1) {
-        let cleaned = col
-            .trim()
-            .replace("**", "")
-            .trim()
-            .to_owned();
+        let cleaned = col.trim().replace("**", "").trim().to_owned();
 
         for status in &known_statuses {
             if cleaned.starts_with(status) {
