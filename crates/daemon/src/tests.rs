@@ -152,6 +152,7 @@ include!("tests/chunks/module_definition_only_allow_denies_non_matching.rs");
 include!("tests/chunks/module_definition_only_deny_allows_non_matching.rs");
 include!("tests/chunks/module_definition_wildcard_any_allows_all.rs");
 include!("tests/chunks/module_peer_hostname_missing_resolution_denies_hostname_only_rules.rs");
+include!("tests/chunks/module_peer_hostname_resolution_before_chroot_denies_unknown.rs");
 include!("tests/chunks/module_peer_hostname_skips_lookup_when_disabled.rs");
 include!("tests/chunks/module_peer_hostname_uses_override.rs");
 include!("tests/chunks/module_without_bwlimit_inherits_daemon_cap.rs");
