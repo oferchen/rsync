@@ -13,9 +13,12 @@ use super::limiter_with;
 fn additive_increase_after_target_successes() {
     let limiter = limiter_with(2, 1, 16);
     // Force out of slow-start by recording one fake decrease.
+    // Use .max(1) to mirror production code in release_overload() which
+    // guarantees last_decrease is never zero (zero means "no decrease yet"
+    // and triggers the slow-start doubling path).
     limiter
         .last_decrease
-        .store(AimdLimiter::now_nanos(), Ordering::Release);
+        .store(AimdLimiter::now_nanos().max(1), Ordering::Release);
     // Two successes complete a window of size 2 -> target += 1.
     let t1 = limiter.try_acquire().unwrap();
     t1.record_success();
@@ -35,10 +38,12 @@ fn multiplicative_decrease_halves_target_on_overload() {
 #[test]
 fn increase_clamped_to_max_limit() {
     let limiter = limiter_with(2, 1, 3);
-    // Out of slow-start so additive applies.
+    // Out of slow-start so additive applies (mirror release_overload's .max(1)
+    // to guarantee the value is non-zero on platforms where the first
+    // now_nanos() call can return 0).
     limiter
         .last_decrease
-        .store(AimdLimiter::now_nanos(), Ordering::Release);
+        .store(AimdLimiter::now_nanos().max(1), Ordering::Release);
     // First window: target=2 -> 3 (clamped at max).
     let t1 = limiter.try_acquire().unwrap();
     t1.record_success();
