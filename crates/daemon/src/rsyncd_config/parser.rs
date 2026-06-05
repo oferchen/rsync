@@ -242,7 +242,12 @@ impl<'a> Parser<'a> {
                 global.ssl_ca = Some(PathBuf::from(trimmed));
             }
             _ => {
-                // Unknown global directives are silently ignored for forward compatibility
+                eprintln!(
+                    "warning: unknown global directive '{}' at line {} in '{}'",
+                    key,
+                    self.line_number,
+                    self.path.display(),
+                );
             }
         }
         Ok(())
@@ -385,8 +390,72 @@ impl<'a> Parser<'a> {
             "open noatime" => {
                 builder.open_noatime = Some(self.parse_bool(value)?);
             }
+            "charset" => {
+                builder.charset = if value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_string())
+                };
+            }
+            "temp dir" => {
+                builder.temp_dir = if value.is_empty() {
+                    None
+                } else {
+                    Some(PathBuf::from(value))
+                };
+            }
+            "forward lookup" => {
+                builder.forward_lookup = Some(self.parse_bool(value)?);
+            }
+            "reverse lookup" => {
+                builder.reverse_lookup = Some(self.parse_bool(value)?);
+            }
+            "ignore errors" => {
+                builder.ignore_errors = Some(self.parse_bool(value)?);
+            }
+            "ignore nonreadable" => {
+                builder.ignore_nonreadable = Some(self.parse_bool(value)?);
+            }
+            "munge symlinks" => {
+                builder.munge_symlinks = Some(Some(self.parse_bool(value)?));
+            }
+            // upstream: daemon-parm.txt - these are P_LOCAL directives that can
+            // appear at module level to override the global defaults.
+            "log file" => {
+                builder.module_log_file = if value.is_empty() {
+                    None
+                } else {
+                    Some(PathBuf::from(value))
+                };
+            }
+            "log format" => {
+                builder.module_log_format = if value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_string())
+                };
+            }
+            "syslog facility" => {
+                builder.module_syslog_facility = if value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_string())
+                };
+            }
+            "syslog tag" => {
+                builder.module_syslog_tag = if value.is_empty() {
+                    None
+                } else {
+                    Some(value.to_string())
+                };
+            }
             _ => {
-                // Unknown module directives are silently ignored
+                eprintln!(
+                    "warning: unknown per-module directive '{}' at line {} in '{}'",
+                    key,
+                    self.line_number,
+                    self.path.display(),
+                );
             }
         }
         Ok(())
@@ -492,6 +561,17 @@ struct ModuleBuilder {
     name_converter: Option<String>,
     strict_modes: Option<bool>,
     open_noatime: Option<bool>,
+    charset: Option<String>,
+    temp_dir: Option<PathBuf>,
+    forward_lookup: Option<bool>,
+    reverse_lookup: Option<bool>,
+    ignore_errors: Option<bool>,
+    ignore_nonreadable: Option<bool>,
+    munge_symlinks: Option<Option<bool>>,
+    module_log_file: Option<PathBuf>,
+    module_log_format: Option<String>,
+    module_syslog_facility: Option<String>,
+    module_syslog_tag: Option<String>,
 }
 
 impl ModuleBuilder {
@@ -551,6 +631,17 @@ impl ModuleBuilder {
             name_converter: self.name_converter,
             strict_modes: self.strict_modes.unwrap_or(true),
             open_noatime: self.open_noatime.unwrap_or(false),
+            charset: self.charset,
+            temp_dir: self.temp_dir,
+            forward_lookup: self.forward_lookup.unwrap_or(true),
+            reverse_lookup: self.reverse_lookup.unwrap_or(true),
+            ignore_errors: self.ignore_errors.unwrap_or(false),
+            ignore_nonreadable: self.ignore_nonreadable.unwrap_or(false),
+            munge_symlinks: self.munge_symlinks.unwrap_or(None),
+            module_log_file: self.module_log_file,
+            module_log_format: self.module_log_format,
+            module_syslog_facility: self.module_syslog_facility,
+            module_syslog_tag: self.module_syslog_tag,
         })
     }
 }

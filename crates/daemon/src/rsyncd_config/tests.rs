@@ -868,6 +868,282 @@ fn module_fake_super_yes_parses_to_true_for_am_root_demotion() {
     );
 }
 
+// --- Tests for newly-parsed upstream directives ---
+
+#[test]
+fn parse_charset_directive() {
+    let file = write_config("[mod]\npath = /data\ncharset = utf-8\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert_eq!(config.modules()[0].charset(), Some("utf-8"));
+}
+
+#[test]
+fn charset_default_is_none() {
+    let file = write_config("[mod]\npath = /data\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert!(config.modules()[0].charset().is_none());
+}
+
+#[test]
+fn parse_temp_dir_directive() {
+    let file = write_config("[mod]\npath = /data\ntemp dir = /tmp/rsync\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert_eq!(
+        config.modules()[0].temp_dir(),
+        Some(Path::new("/tmp/rsync"))
+    );
+}
+
+#[test]
+fn temp_dir_default_is_none() {
+    let file = write_config("[mod]\npath = /data\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert!(config.modules()[0].temp_dir().is_none());
+}
+
+#[test]
+fn parse_forward_lookup_yes() {
+    let file = write_config("[mod]\npath = /data\nforward lookup = yes\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert!(config.modules()[0].forward_lookup());
+}
+
+#[test]
+fn parse_forward_lookup_no() {
+    let file = write_config("[mod]\npath = /data\nforward lookup = no\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert!(!config.modules()[0].forward_lookup());
+}
+
+#[test]
+fn forward_lookup_default_is_true() {
+    let file = write_config("[mod]\npath = /data\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert!(config.modules()[0].forward_lookup());
+}
+
+#[test]
+fn parse_reverse_lookup_yes() {
+    let file = write_config("[mod]\npath = /data\nreverse lookup = yes\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert!(config.modules()[0].reverse_lookup());
+}
+
+#[test]
+fn parse_reverse_lookup_no() {
+    let file = write_config("[mod]\npath = /data\nreverse lookup = no\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert!(!config.modules()[0].reverse_lookup());
+}
+
+#[test]
+fn reverse_lookup_default_is_true() {
+    let file = write_config("[mod]\npath = /data\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert!(config.modules()[0].reverse_lookup());
+}
+
+#[test]
+fn parse_ignore_errors_yes() {
+    let file = write_config("[mod]\npath = /data\nignore errors = yes\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert!(config.modules()[0].ignore_errors());
+}
+
+#[test]
+fn parse_ignore_errors_no() {
+    let file = write_config("[mod]\npath = /data\nignore errors = no\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert!(!config.modules()[0].ignore_errors());
+}
+
+#[test]
+fn ignore_errors_default_is_false() {
+    let file = write_config("[mod]\npath = /data\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert!(!config.modules()[0].ignore_errors());
+}
+
+#[test]
+fn parse_ignore_nonreadable_yes() {
+    let file = write_config("[mod]\npath = /data\nignore nonreadable = yes\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert!(config.modules()[0].ignore_nonreadable());
+}
+
+#[test]
+fn parse_ignore_nonreadable_no() {
+    let file = write_config("[mod]\npath = /data\nignore nonreadable = no\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert!(!config.modules()[0].ignore_nonreadable());
+}
+
+#[test]
+fn ignore_nonreadable_default_is_false() {
+    let file = write_config("[mod]\npath = /data\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert!(!config.modules()[0].ignore_nonreadable());
+}
+
+#[test]
+fn parse_munge_symlinks_yes() {
+    let file = write_config("[mod]\npath = /data\nmunge symlinks = yes\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert_eq!(config.modules()[0].munge_symlinks(), Some(true));
+}
+
+#[test]
+fn parse_munge_symlinks_no() {
+    let file = write_config("[mod]\npath = /data\nmunge symlinks = no\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert_eq!(config.modules()[0].munge_symlinks(), Some(false));
+}
+
+#[test]
+fn munge_symlinks_default_is_none() {
+    let file = write_config("[mod]\npath = /data\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert!(config.modules()[0].munge_symlinks().is_none());
+}
+
+#[test]
+fn parse_module_log_file() {
+    let file = write_config("[mod]\npath = /data\nlog file = /var/log/mod.log\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert_eq!(
+        config.modules()[0].module_log_file(),
+        Some(Path::new("/var/log/mod.log"))
+    );
+}
+
+#[test]
+fn parse_module_log_format() {
+    let file = write_config("[mod]\npath = /data\nlog format = %o %f %l\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert_eq!(config.modules()[0].module_log_format(), Some("%o %f %l"));
+}
+
+#[test]
+fn parse_module_syslog_facility() {
+    let file = write_config("[mod]\npath = /data\nsyslog facility = local3\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert_eq!(config.modules()[0].module_syslog_facility(), Some("local3"));
+}
+
+#[test]
+fn parse_module_syslog_tag() {
+    let file = write_config("[mod]\npath = /data\nsyslog tag = custom-mod\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    assert_eq!(config.modules()[0].module_syslog_tag(), Some("custom-mod"));
+}
+
+#[test]
+fn module_level_log_directives_default_to_none() {
+    let file = write_config("[mod]\npath = /data\n");
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    let module = &config.modules()[0];
+    assert!(module.module_log_file().is_none());
+    assert!(module.module_log_format().is_none());
+    assert!(module.module_syslog_facility().is_none());
+    assert!(module.module_syslog_tag().is_none());
+}
+
+#[test]
+fn per_module_directives_do_not_bleed_across_modules() {
+    let file = write_config(
+        "[alpha]\n\
+         path = /srv/alpha\n\
+         charset = utf-8\n\
+         forward lookup = no\n\
+         ignore errors = yes\n\
+         munge symlinks = yes\n\
+         log file = /var/log/alpha.log\n\
+         \n\
+         [beta]\n\
+         path = /srv/beta\n",
+    );
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+
+    let alpha = config.get_module("alpha").unwrap();
+    assert_eq!(alpha.charset(), Some("utf-8"));
+    assert!(!alpha.forward_lookup());
+    assert!(alpha.ignore_errors());
+    assert_eq!(alpha.munge_symlinks(), Some(true));
+    assert_eq!(
+        alpha.module_log_file(),
+        Some(Path::new("/var/log/alpha.log"))
+    );
+
+    let beta = config.get_module("beta").unwrap();
+    assert!(beta.charset().is_none());
+    assert!(beta.forward_lookup());
+    assert!(!beta.ignore_errors());
+    assert!(beta.munge_symlinks().is_none());
+    assert!(beta.module_log_file().is_none());
+}
+
+#[test]
+fn full_module_with_all_upstream_directives() {
+    let file = write_config(
+        "[full]\n\
+         path = /srv/full\n\
+         comment = Full module\n\
+         read only = no\n\
+         write only = no\n\
+         list = yes\n\
+         uid = nobody\n\
+         gid = nogroup\n\
+         max connections = 10\n\
+         lock file = /var/lock/rsync\n\
+         auth users = user1, user2\n\
+         secrets file = /etc/rsyncd.secrets\n\
+         hosts allow = 192.168.1.0/24\n\
+         hosts deny = *\n\
+         exclude = .git/\n\
+         include = *.txt\n\
+         filter = - *.tmp\n\
+         timeout = 300\n\
+         use chroot = no\n\
+         numeric ids = yes\n\
+         fake super = yes\n\
+         transfer logging = yes\n\
+         refuse options = delete, hardlinks\n\
+         dont compress = *.zip *.gz\n\
+         early exec = /usr/local/bin/early-check\n\
+         pre-xfer exec = /usr/local/bin/pre-xfer\n\
+         post-xfer exec = /usr/local/bin/post-xfer\n\
+         name converter = /usr/local/bin/nameconv\n\
+         strict modes = no\n\
+         open noatime = yes\n\
+         charset = utf-8\n\
+         temp dir = /tmp/rsync-temp\n\
+         forward lookup = no\n\
+         reverse lookup = no\n\
+         ignore errors = yes\n\
+         ignore nonreadable = yes\n\
+         munge symlinks = yes\n\
+         log file = /var/log/module.log\n\
+         log format = %o %h %f\n\
+         syslog facility = local5\n\
+         syslog tag = full-mod\n",
+    );
+    let config = RsyncdConfig::from_file(file.path()).expect("parse succeeds");
+    let m = &config.modules()[0];
+
+    assert_eq!(m.name(), "full");
+    assert_eq!(m.charset(), Some("utf-8"));
+    assert_eq!(m.temp_dir(), Some(Path::new("/tmp/rsync-temp")));
+    assert!(!m.forward_lookup());
+    assert!(!m.reverse_lookup());
+    assert!(m.ignore_errors());
+    assert!(m.ignore_nonreadable());
+    assert_eq!(m.munge_symlinks(), Some(true));
+    assert_eq!(m.module_log_file(), Some(Path::new("/var/log/module.log")));
+    assert_eq!(m.module_log_format(), Some("%o %h %f"));
+    assert_eq!(m.module_syslog_facility(), Some("local5"));
+    assert_eq!(m.module_syslog_tag(), Some("full-mod"));
+}
+
 #[cfg(feature = "daemon-tls")]
 mod tls_directives {
     use super::*;
