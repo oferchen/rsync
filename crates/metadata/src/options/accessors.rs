@@ -99,6 +99,32 @@ impl MetadataOptions {
 
     /// Returns `true` when at least one metadata preservation flag is active.
     ///
+    /// When this returns `false`, `apply_metadata_with_cached_stat` is a no-op
+    /// because none of the ownership, permission, or timestamp sub-functions
+    /// will issue any syscalls. Callers can skip the entire metadata application
+    /// chain on the no-change path.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:set_file_attrs()` - only applies ownership, permissions, and
+    ///   timestamps when the corresponding global flags are set
+    #[must_use]
+    pub const fn has_any_preservation(&self) -> bool {
+        self.preserve_owner
+            || self.preserve_group
+            || self.preserve_executability
+            || self.preserve_permissions
+            || self.preserve_times
+            || self.preserve_atimes
+            || self.preserve_crtimes
+            || self.fake_super
+            || self.owner_override.is_some()
+            || self.group_override.is_some()
+            || self.chmod.is_some()
+    }
+
+    /// Returns `true` when at least one metadata preservation flag is active.
+    ///
     /// Used by the receiver's quick-check skip path to avoid entering the
     /// `apply_metadata_with_cached_stat` call chain when no attributes would
     /// be inspected. Each inner function (`apply_ownership_from_entry`,
