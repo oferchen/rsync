@@ -88,3 +88,7 @@ harness = false
 [[bench]]
 name = "md5_multibuffer_benchmark"
 harness = false
+
+[[bench]]
+name = "bandwidth_constrained"
+harness = false
