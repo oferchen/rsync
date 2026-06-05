@@ -686,6 +686,7 @@ where
     let existing = matches.get_flag("existing");
     let update = matches.get_flag("update");
     let password_file = matches.remove_one::<OsString>("password-file");
+    let password_command = matches.remove_one::<OsString>("password-command");
     // upstream: options.c does not range-check --protocol at parse time.
     // Incompatible versions fail during negotiation with RERR_PROTOCOL (exit 2).
     let protocol = matches.remove_one::<OsString>("protocol");
@@ -860,6 +861,7 @@ where
         xattrs,
         no_motd,
         password_file,
+        password_command,
         protocol,
         timeout,
         contimeout,

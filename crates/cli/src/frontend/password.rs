@@ -2,8 +2,9 @@
 //!
 //! This module centralises password loading logic so the sprawling argument
 //! parser in `lib.rs` can delegate to cohesive helpers. The functions here keep
-//! responsibility focused on reading passwords from standard input or from
-//! filesystem paths while enforcing upstream rsync's permission checks.
+//! responsibility focused on reading passwords from standard input, from
+//! filesystem paths, or from external commands while enforcing upstream rsync's
+//! permission checks.
 //! Tests operate through the exported helpers rather than touching the
 //! implementation details directly, which keeps the core file smaller and easier
 //! to audit.
@@ -12,9 +13,11 @@ use core::{
     message::{Message, Role},
     rsync_error,
 };
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::Path;
+use std::process::Command;
 
 #[cfg(test)]
 use std::cell::RefCell;
@@ -37,6 +40,119 @@ pub(crate) fn load_optional_password(path: Option<&Path>) -> Result<Option<Vec<u
     match path {
         Some(path) => load_password_file(path).map(Some),
         None => Ok(None),
+    }
+}
+
+/// Resolves the daemon password from the available sources in precedence order.
+///
+/// The resolution chain mirrors upstream rsync's auth_client() with the addition
+/// of `--password-command`:
+///
+/// 1. `--password-command=COMMAND` - run COMMAND via the system shell, read stdout
+/// 2. `--password-file=FILE` - read password from a file (or `-` for stdin)
+///
+/// Returns `Ok(None)` when neither source is specified (the caller falls through
+/// to `RSYNC_PASSWORD` env var at the core layer).
+pub(crate) fn resolve_password(
+    password_command: Option<&OsStr>,
+    password_file: Option<&Path>,
+) -> Result<Option<Vec<u8>>, Message> {
+    if let Some(command) = password_command {
+        return load_password_command(command).map(Some);
+    }
+    load_optional_password(password_file)
+}
+
+/// Runs an external command via the system shell and reads the password from
+/// its standard output.
+///
+/// The command string is passed to the platform's shell interpreter:
+/// - Unix: `/bin/sh -c <command>`
+/// - Windows: `cmd.exe /C <command>`
+///
+/// Only the first line of output is used. Trailing newlines and carriage returns
+/// are stripped, matching `--password-file` semantics. The command must produce
+/// at least one byte of output and must exit with status 0.
+///
+/// # Security model
+///
+/// The command string is user-provided and intentionally executed as-is. This
+/// enables integration with secret managers (e.g., `pass show rsync/server`,
+/// `vault read -field=password secret/rsync`). The caller is responsible for
+/// the safety of the command they provide.
+pub(crate) fn load_password_command(command: &OsStr) -> Result<Vec<u8>, Message> {
+    let command_str = command.to_string_lossy();
+
+    if command_str.is_empty() {
+        return Err(
+            rsync_error!(1, "--password-command requires a non-empty command string")
+                .with_role(Role::Client),
+        );
+    }
+
+    let output = build_shell_command(command)
+        .output()
+        .map_err(|error| {
+            rsync_error!(
+                1,
+                format!("failed to execute password command '{}': {}", command_str, error)
+            )
+            .with_role(Role::Client)
+        })?;
+
+    if !output.status.success() {
+        let code = output
+            .status
+            .code()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "signal".to_owned());
+        return Err(rsync_error!(
+            1,
+            format!(
+                "password command '{}' failed with exit code {}",
+                command_str, code
+            )
+        )
+        .with_role(Role::Client));
+    }
+
+    let mut bytes = first_line(&output.stdout);
+    trim_trailing_newlines(&mut bytes);
+
+    if bytes.is_empty() {
+        return Err(
+            rsync_error!(
+                1,
+                format!(
+                    "password command '{}' produced no output",
+                    command_str
+                )
+            )
+            .with_role(Role::Client),
+        );
+    }
+
+    Ok(bytes)
+}
+
+/// Builds a [`Command`] that invokes the given string through the platform shell.
+fn build_shell_command(command: &OsStr) -> Command {
+    #[cfg(not(windows))]
+    let (shell, flag) = ("/bin/sh", "-c");
+    #[cfg(windows)]
+    let (shell, flag) = ("cmd.exe", "/C");
+
+    let mut cmd = Command::new(shell);
+    cmd.arg(flag).arg(command);
+    cmd
+}
+
+/// Extracts the first line from raw byte output.
+fn first_line(bytes: &[u8]) -> Vec<u8> {
+    if let Some(pos) = bytes.iter().position(|&b| b == b'\n') {
+        bytes[..pos].to_vec()
+    } else {
+        bytes.to_vec()
     }
 }
 
@@ -158,6 +274,7 @@ pub(crate) fn set_password_stdin_input(data: Vec<u8>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
     use std::io::Write;
 
     use tempfile::NamedTempFile;
@@ -242,5 +359,117 @@ mod tests {
             "unexpected diagnostic: {}",
             error.text()
         );
+    }
+
+    #[test]
+    fn first_line_extracts_before_newline() {
+        assert_eq!(first_line(b"hello\nworld"), b"hello");
+        assert_eq!(first_line(b"only-line"), b"only-line");
+        assert_eq!(first_line(b""), b"");
+        assert_eq!(first_line(b"\n"), b"");
+        assert_eq!(first_line(b"line1\nline2\nline3"), b"line1");
+    }
+
+    #[test]
+    fn load_password_command_reads_echo_output() {
+        let cmd = if cfg!(windows) {
+            OsString::from("echo cmd-secret")
+        } else {
+            OsString::from("echo cmd-secret")
+        };
+
+        let password = load_password_command(&cmd).expect("echo command");
+        assert_eq!(password, b"cmd-secret");
+    }
+
+    #[test]
+    fn load_password_command_strips_trailing_newlines() {
+        let cmd = if cfg!(windows) {
+            OsString::from("echo cmd-stripped")
+        } else {
+            OsString::from("printf 'cmd-stripped\\n\\r\\n'")
+        };
+
+        let password = load_password_command(&cmd).expect("newline stripping");
+        assert_eq!(password, b"cmd-stripped");
+    }
+
+    #[test]
+    fn load_password_command_takes_only_first_line() {
+        #[cfg(unix)]
+        {
+            let cmd = OsString::from("printf 'first-line\\nsecond-line\\n'");
+            let password = load_password_command(&cmd).expect("first line only");
+            assert_eq!(password, b"first-line");
+        }
+    }
+
+    #[test]
+    fn load_password_command_rejects_empty_command() {
+        let error = load_password_command(OsStr::new("")).expect_err("empty command");
+
+        assert_eq!(error.code(), Some(1));
+        assert_eq!(error.role(), Some(Role::Client));
+        assert!(
+            error.text().contains("non-empty command string"),
+            "unexpected diagnostic: {}",
+            error.text()
+        );
+    }
+
+    #[test]
+    fn load_password_command_rejects_failing_command() {
+        let cmd = OsString::from("exit 42");
+        let error = load_password_command(&cmd).expect_err("non-zero exit");
+
+        assert_eq!(error.code(), Some(1));
+        assert_eq!(error.role(), Some(Role::Client));
+        assert!(
+            error.text().contains("failed with exit code 42"),
+            "unexpected diagnostic: {}",
+            error.text()
+        );
+    }
+
+    #[test]
+    fn load_password_command_rejects_empty_output() {
+        let cmd = OsString::from("true");
+        let error = load_password_command(&cmd).expect_err("empty output");
+
+        assert_eq!(error.code(), Some(1));
+        assert_eq!(error.role(), Some(Role::Client));
+        assert!(
+            error.text().contains("produced no output"),
+            "unexpected diagnostic: {}",
+            error.text()
+        );
+    }
+
+    #[test]
+    fn resolve_password_prefers_command_over_file() {
+        let mut file = NamedTempFile::new().expect("create temp file");
+        file.write_all(b"file-secret\n").expect("write secret");
+        let path = file.into_temp_path();
+
+        let cmd = OsString::from("echo cmd-secret");
+        let password = resolve_password(Some(&cmd), Some(path.as_ref())).expect("resolve");
+
+        assert_eq!(password, Some(b"cmd-secret".to_vec()));
+    }
+
+    #[test]
+    fn resolve_password_falls_back_to_file() {
+        let mut file = NamedTempFile::new().expect("create temp file");
+        file.write_all(b"file-secret\n").expect("write secret");
+        let path = file.into_temp_path();
+
+        let password = resolve_password(None, Some(path.as_ref())).expect("resolve");
+        assert_eq!(password, Some(b"file-secret".to_vec()));
+    }
+
+    #[test]
+    fn resolve_password_returns_none_when_no_source() {
+        let password = resolve_password(None, None).expect("resolve");
+        assert_eq!(password, None);
     }
 }

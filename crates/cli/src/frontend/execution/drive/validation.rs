@@ -1,6 +1,5 @@
 use std::ffi::OsString;
 use std::io::Write;
-use std::path::PathBuf;
 
 use core::{message::Role, rsync_error};
 use logging_sink::MessageSink;
@@ -14,9 +13,9 @@ pub(crate) const REMOTE_OPTION_REMOTE_ONLY_MESSAGE: &str =
 /// Error message when `--protocol` is used without a daemon connection.
 pub(crate) const PROTOCOL_DAEMON_ONLY_MESSAGE: &str =
     "the --protocol option may only be used when accessing an rsync daemon";
-/// Error message when `--password-file` is used without a daemon connection.
-pub(crate) const PASSWORD_FILE_DAEMON_ONLY_MESSAGE: &str =
-    "the --password-file option may only be used when accessing an rsync daemon";
+/// Error message when a password option is used without a daemon connection.
+pub(crate) const PASSWORD_DAEMON_ONLY_MESSAGE: &str =
+    "the --password-file and --password-command options may only be used when accessing an rsync daemon";
 /// Error message when `--connect-program` is used without a daemon connection.
 pub(crate) const CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE: &str =
     "the --connect-program option may only be used when accessing an rsync daemon";
@@ -31,7 +30,8 @@ pub(crate) const CONNECT_PROGRAM_DAEMON_ONLY_MESSAGE: &str =
 /// this behavior (e.g., the exclude test passes `--rsync-path` on local runs).
 pub(super) fn validate_local_only_options<Err>(
     desired_protocol: Option<ProtocolVersion>,
-    password_file: Option<&PathBuf>,
+    has_password_override: bool,
+    has_password_option: bool,
     connect_program: Option<&OsString>,
     _rsync_path: Option<&OsString>,
     remote_options: &[OsString],
@@ -54,10 +54,10 @@ where
         ));
     }
 
-    if password_file.is_some() {
+    if has_password_override || has_password_option {
         return Some(reject_local_only_option(
             stderr,
-            PASSWORD_FILE_DAEMON_ONLY_MESSAGE,
+            PASSWORD_DAEMON_ONLY_MESSAGE,
         ));
     }
 

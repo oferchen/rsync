@@ -595,6 +595,14 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .action(ArgAction::Set),
             )
             .arg(
+                Arg::new("password-command")
+                    .long("password-command")
+                    .value_name("COMMAND")
+                    .help("Run COMMAND via the system shell and read daemon password from its stdout.")
+                    .value_parser(OsStringValueParser::new())
+                    .action(ArgAction::Set),
+            )
+            .arg(
                 Arg::new("motd")
                     .long("motd")
                     .help("Display daemon MOTD lines when listing rsync:// modules.")
