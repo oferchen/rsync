@@ -388,8 +388,7 @@ fn bench_register_finish_churn(c: &mut Criterion, workload: Workload) {
 /// releases a DashMap shard guard, amplifying the number of shard
 /// operations per iteration.
 fn bench_concurrent_dispatch(c: &mut Criterion) {
-    let mut group =
-        c.benchmark_group("br_3j_f_dashmap_cores_vs_throughput/concurrent_dispatch");
+    let mut group = c.benchmark_group("br_3j_f_dashmap_cores_vs_throughput/concurrent_dispatch");
 
     // 512 files, each receiving 8 chunks of 4 KiB. Total 16 MiB.
     // File count chosen to exceed DashMap's default shard count (num_cpus * 4)
