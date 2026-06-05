@@ -1,6 +1,6 @@
 ## oc-rsync {{VERSION}}
 
-Wire-compatible with upstream rsync 3.4.1 (protocol 32).
+Wire-compatible with upstream rsync 3.4.3 (protocol 32).
 
 ### Install
 
@@ -33,17 +33,37 @@ The `-beta` / `-nightly` suffix denotes the **Rust toolchain** the artifact was 
 
 ---
 
+### Highlights
+
+<!-- Per-release: write 1-2 sentence summaries per category. Delete categories with no changes. -->
+
+**Daemon features.** <!-- e.g. new directives, auth changes, config parsing -->
+
+**Transfer options.** <!-- e.g. new CLI flags, option wiring, batch mode -->
+
+**Performance.** <!-- e.g. hot-path optimizations, memory reductions, I/O changes -->
+
+**Bug fixes.** <!-- e.g. count + notable fixes -->
+
+**Testing.** <!-- e.g. new test coverage, interop additions -->
+
+---
+
 ### Security
 
-See `SECURITY.md` for the canonical mitigation roster and `docs/design/sec-1-completion-summary-2026-05-22.md` for the SEC-1 sub-task (`.a`-`.p`) ship state. Release authors: copy the rows that changed this cycle from the `SECURITY.md` CVE table into the placeholder below; drop unaffected rows.
+See `SECURITY.md` for the canonical mitigation roster and `docs/design/sec-1-completion-summary-2026-05-22.md` for the SEC-1 sub-task (`.a`-`.p`) ship state.
+
+<!-- Copy rows that changed this cycle from the SECURITY.md CVE table; drop unaffected rows. -->
 
 **Active mitigations**
 
 | CVE | Description | Status | Cite |
 |-----|-------------|--------|------|
-| CVE-XXXX-XXXXX | _short upstream description_ | _Fixed / Mostly fixed / Mitigated / Not vulnerable_ | PR #NNNN, `SECURITY.md` |
+| CVE-2026-29518 | Path traversal via symlink race | Fixed | SEC-1.a-q2, `SECURITY.md` |
+| CVE-2026-43619 | Privilege escalation via TOCTOU | Fixed | SEC-1.a-q2, `SECURITY.md` |
 
-Status values mirror `SECURITY.md` ("Fixed", "Mostly fixed", "Mitigated", "Not vulnerable"). Use "Mostly fixed" when the primary syscall surface is migrated but deferred callers are tracked separately.
+<!-- Status values: "Fixed", "Mostly fixed", "Mitigated", "Not vulnerable". -->
+<!-- Use "Mostly fixed" when the primary syscall surface is migrated but deferred callers are tracked separately. -->
 
 **Defense-in-depth.** This release ships the SEC-1 `*at` syscall chain (`fstatat`, `unlinkat`, `mkdirat`, `symlinkat`, `linkat`, `fchmodat`, `fchownat`, `utimensat`, `renameat`) routed through a per-transfer `DirSandbox` carrier with `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` runtime detection. The optional `landlock` Cargo feature (Linux 5.13+) layers kernel-enforced `PathBeneath` allowlisting on top; daemons on older kernels run with the `*at` chain as the sole TOCTOU defense, which is itself sufficient against CVE-2026-29518 / CVE-2026-43619.
 
@@ -73,3 +93,5 @@ Full per-opcode kernel-floor matrix: see `docs/audit/iouring-opcode-kernel-floor
 oc-rsync continues to support protocol versions 28-32 inclusive, matching upstream rsync 2.6.x through 3.4.x. Protocol back-negotiation to 28 is exercised by wire-byte regression tests and a periodic CI matrix against rsync 2.6.9 (built from source). Protocols `<= 27` (rsync 2.5.x and earlier) remain unsupported. See `docs/design/rp28-k-1-protocol-drop-vs-keep-decision.md` for the decision rationale and `docs/design/rp28-k-2-execution-record.md` for the execution record.
 
 ---
+
+**Full changelog:** https://github.com/oferchen/rsync/compare/{{PREV_VERSION}}...{{VERSION}}

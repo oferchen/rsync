@@ -10,5 +10,6 @@ pub mod package;
 pub mod preflight;
 pub mod readme_version;
 pub mod release;
+pub mod release_notes;
 pub mod sbom;
 pub mod test;
