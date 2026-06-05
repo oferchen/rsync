@@ -17,8 +17,8 @@ use protocol::codec::{
 use protocol::stats::DeleteStats;
 
 use super::super::delta::{
-    compute_file_checksum, create_token_encoder, script_to_wire_delta, stream_whole_file_transfer,
-    write_delta_with_compression,
+    create_token_encoder, script_to_wire_delta, stream_whole_file_transfer,
+    write_delta_with_inline_checksum,
 };
 use super::super::item_flags::ItemFlags;
 use super::super::{
@@ -425,15 +425,6 @@ impl GeneratorContext {
 
                 let checksum_algorithm = self.get_checksum_algorithm();
                 let use_noatime = self.config.write.open_noatime;
-                let (checksum_buf, checksum_len) = compute_file_checksum(
-                    &delta_script,
-                    checksum_algorithm,
-                    self.checksum_seed,
-                    self.compat_flags.as_ref(),
-                    source_path,
-                    block_length,
-                    use_noatime,
-                )?;
                 let delta_total_bytes = delta_script.total_bytes();
                 let wire_ops = script_to_wire_delta(delta_script, block_length);
                 let use_compression = self.file_compression(source_path).is_some();
@@ -441,7 +432,11 @@ impl GeneratorContext {
                     negotiated_compression,
                     Some(protocol::CompressionAlgorithm::Zlib)
                 );
-                write_delta_with_compression(
+                // upstream: match.c:matched() - compute file checksum inline
+                // during the wire-write pass, eliminating the separate
+                // compute_file_checksum() call that re-opened and re-read the
+                // source file.
+                let result = write_delta_with_inline_checksum(
                     &mut *writer,
                     &wire_ops,
                     if use_compression {
@@ -452,8 +447,9 @@ impl GeneratorContext {
                     is_zlib,
                     source_path,
                     use_noatime,
+                    checksum_algorithm,
                 )?;
-                writer.write_all(&checksum_buf[..checksum_len])?;
+                writer.write_all(&result.checksum_buf[..result.checksum_len])?;
                 bytes_sent += delta_total_bytes;
             } else {
                 // upstream: sender.c:354-369 - whole-file path; MSG_NO_SEND on open failure

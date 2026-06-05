@@ -189,41 +189,92 @@ impl io::Read for SyncReader {
     }
 }
 
+/// Internal write buffer capacity for [`SyncWriter`].
+///
+/// Small writes (4-byte multiplex headers, NDX values, etc.) are coalesced
+/// into this staging buffer instead of allocating a `Vec` per write and
+/// sending it over the channel. The buffer is flushed when full or when
+/// `flush()` is called. Sized to match upstream rsync's `IO_BUFFER_SIZE`
+/// (32 KB) - large enough to batch a full multiplex frame's header + data.
+const SYNC_WRITER_BUF_SIZE: usize = 32 * 1024;
+
 /// Synchronous writer half returned by [`into_sync_halves`].
 ///
-/// Forwards each `write` call as a single message on a bounded
-/// `tokio::sync::mpsc::Sender` via `blocking_send`, which honors
+/// Coalesces small writes into an internal staging buffer to reduce
+/// per-write heap allocations and channel sends. Data is flushed to the
+/// channel when the buffer fills or when `flush()` is called explicitly.
+/// Each channel message still uses `blocking_send` which honors
 /// backpressure: when the channel is full the calling thread blocks until
 /// the async side drains capacity. A closed receiver surfaces as
 /// [`io::ErrorKind::BrokenPipe`].
 pub struct SyncWriter {
     tx: Option<tokio_mpsc::Sender<Vec<u8>>>,
+    /// Staging buffer for small writes. Avoids allocating a `Vec<u8>` per
+    /// `write()` call and amortizes the channel-send overhead across many
+    /// small writes (4-byte headers, varint NDX values, etc.).
+    buf: Vec<u8>,
 }
 
 impl SyncWriter {
     fn new(tx: tokio_mpsc::Sender<Vec<u8>>) -> Self {
-        Self { tx: Some(tx) }
+        Self {
+            tx: Some(tx),
+            buf: Vec::with_capacity(SYNC_WRITER_BUF_SIZE),
+        }
+    }
+
+    /// Sends the staging buffer contents through the channel and clears it.
+    fn flush_buf(&mut self) -> io::Result<()> {
+        if self.buf.is_empty() {
+            return Ok(());
+        }
+        let tx = self
+            .tx
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "writer shut down"))?;
+        let chunk = std::mem::replace(&mut self.buf, Vec::with_capacity(SYNC_WRITER_BUF_SIZE));
+        tx.blocking_send(chunk)
+            .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))?;
+        Ok(())
     }
 }
 
 impl io::Write for SyncWriter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        let tx = self
-            .tx
-            .as_ref()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "writer shut down"))?;
-        tx.blocking_send(buf.to_vec())
-            .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))?;
+        if buf.is_empty() {
+            return Ok(0);
+        }
+
+        // Large writes bypass the staging buffer to avoid an extra memcpy.
+        if buf.len() >= SYNC_WRITER_BUF_SIZE {
+            self.flush_buf()?;
+            let tx = self
+                .tx
+                .as_ref()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::BrokenPipe, "writer shut down"))?;
+            tx.blocking_send(buf.to_vec())
+                .map_err(|e| io::Error::new(io::ErrorKind::BrokenPipe, e))?;
+            return Ok(buf.len());
+        }
+
+        // Flush if appending would exceed capacity.
+        if self.buf.len() + buf.len() > SYNC_WRITER_BUF_SIZE {
+            self.flush_buf()?;
+        }
+
+        self.buf.extend_from_slice(buf);
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+        self.flush_buf()
     }
 }
 
 impl Drop for SyncWriter {
     fn drop(&mut self) {
+        // Best-effort flush of any remaining buffered data before closing.
+        let _ = self.flush_buf();
         // Dropping the sender signals EOF to the outbound pump, which then
         // closes the async write half cleanly.
         self.tx = None;
@@ -402,7 +453,7 @@ mod tests {
     }
 
     /// `SyncWriter` returns `BrokenPipe` once the downstream receiver is
-    /// gone.
+    /// gone. Small writes are buffered, so the error surfaces on `flush()`.
     #[test]
     fn sync_writer_to_closed_channel_is_broken_pipe() {
         // Build the channel outside a runtime - blocking_send must not be
@@ -410,7 +461,10 @@ mod tests {
         let (tx, rx) = tokio_mpsc::channel::<Vec<u8>>(1);
         drop(rx);
         let mut writer = SyncWriter::new(tx);
-        let err = writer.write_all(b"x").unwrap_err();
+        // Small write succeeds because it stays in the staging buffer.
+        writer.write_all(b"x").unwrap();
+        // Flush forces the channel send, which detects the closed receiver.
+        let err = writer.flush().unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
     }
 
@@ -434,10 +488,14 @@ mod tests {
         let mut writer = SyncWriter::new(tx);
         let (signal_tx, signal_rx) = std_mpsc::channel::<()>();
 
+        // Write data larger than the staging buffer to force a flush,
+        // which will block because the channel is full.
+        let large_payload = vec![0x42u8; SYNC_WRITER_BUF_SIZE + 1];
+
         let handle = std::thread::spawn(move || {
             // Notify that the writer is about to block.
             signal_tx.send(()).unwrap();
-            writer.write_all(b"second").unwrap();
+            writer.write_all(&large_payload).unwrap();
         });
 
         // Wait for the writer thread to be ready and prove the second write
@@ -447,9 +505,9 @@ mod tests {
         let first = rt.block_on(rx.recv()).unwrap();
         assert_eq!(first, b"first");
 
-        // Once a slot is free the second write should complete promptly.
+        // Once a slot is free the large write should complete promptly.
         let second = rt.block_on(rx.recv()).unwrap();
-        assert_eq!(second, b"second");
+        assert_eq!(second.len(), SYNC_WRITER_BUF_SIZE + 1);
         handle.join().unwrap();
     }
 
