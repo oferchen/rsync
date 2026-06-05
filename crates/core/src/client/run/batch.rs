@@ -12,7 +12,7 @@ use engine::batch::{BatchConfig, BatchStats, BatchWriter};
 use crate::message::Role;
 use crate::rsync_error;
 
-use super::super::config::ClientConfig;
+use super::super::config::{ClientConfig, FilterRuleKind, FilterRuleSpec};
 use super::super::error::ClientError;
 use super::super::remote;
 use super::super::summary::ClientSummary;
@@ -132,11 +132,16 @@ pub(crate) fn write_batch_header(
 
 /// Writes trailing stats, flushes the batch file, and generates the replay script.
 ///
+/// When filter rules are active in `config`, the replay script embeds them
+/// using the same heredoc format as upstream `batch.c:write_filter_rules()`,
+/// ensuring the replay applies identical filters.
+///
 /// Called after a successful transfer to finalize the batch recording.
 /// Mirrors upstream `main.c:374-383` for stats writing.
 pub(crate) fn finalize_batch(
     writer_arc: &Arc<Mutex<BatchWriter>>,
     batch_cfg: &BatchConfig,
+    config: &ClientConfig,
     summary: &ClientSummary,
 ) -> Result<(), ClientError> {
     {
@@ -198,7 +203,15 @@ pub(crate) fn finalize_batch(
         }
     }
 
-    if let Err(e) = engine::batch::script::generate_script(batch_cfg) {
+    // upstream: batch.c:305-306 - embed filter rules in the replay script
+    let filter_text = serialize_filter_rules(config.filter_rules());
+    let filter_opt = if filter_text.is_empty() {
+        None
+    } else {
+        Some(filter_text.as_str())
+    };
+
+    if let Err(e) = engine::batch::script::generate_script_with_filters(batch_cfg, filter_opt) {
         let msg = format!("failed to generate batch script: {e}");
         return Err(ClientError::new(
             1,
@@ -207,6 +220,82 @@ pub(crate) fn finalize_batch(
     }
 
     Ok(())
+}
+
+/// Serializes filter rules into the text format used by batch script heredocs.
+///
+/// Each rule is formatted as a single line matching upstream rsync's
+/// `batch.c:write_filter_rules()` / `exclude.c:get_rule_prefix()` output:
+///
+/// ```text
+/// {prefix} {pattern}[/]\n
+/// ```
+///
+/// The prefix encodes the rule action (`+`/`-`/`P`/`R`/`:`) and modifier
+/// flags (`s`/`r`/`p`/`x`/`!`). A trailing `/` is appended for
+/// directory-only patterns. Returns an empty string when no rules are present.
+///
+/// # Upstream Reference
+///
+/// - `batch.c:205-222`: `write_filter_rules()` iterates filter_list
+/// - `exclude.c:1525-1587`: `get_rule_prefix()` builds the prefix string
+fn serialize_filter_rules(rules: &[FilterRuleSpec]) -> String {
+    if rules.is_empty() {
+        return String::new();
+    }
+
+    let mut output = String::new();
+    for rule in rules {
+        // upstream: exclude.c:1532-1541 - action prefix
+        let action_char = match rule.kind() {
+            FilterRuleKind::Include => '+',
+            FilterRuleKind::Exclude | FilterRuleKind::ExcludeIfPresent => '-',
+            FilterRuleKind::Protect => 'P',
+            FilterRuleKind::Risk => 'R',
+            FilterRuleKind::DirMerge => ':',
+            FilterRuleKind::Clear => '!',
+        };
+        output.push(action_char);
+
+        // upstream: exclude.c:1546-1547 - negate modifier
+        if rule.is_negated() {
+            output.push('!');
+        }
+
+        // upstream: exclude.c:1564-1565 - xattr modifier
+        if rule.is_xattr_only() {
+            output.push('x');
+        }
+
+        // upstream: exclude.c:1566-1572 - sender/receiver side modifiers
+        if rule.applies_to_sender() && !rule.applies_to_receiver() {
+            output.push('s');
+        }
+        if rule.applies_to_receiver() && !rule.applies_to_sender() {
+            output.push('r');
+        }
+
+        // upstream: exclude.c:1573-1578 - perishable modifier
+        if rule.is_perishable() {
+            output.push('p');
+        }
+
+        // upstream: exclude.c:1581-1582 - space separator before pattern
+        output.push(' ');
+
+        // upstream: batch.c:213-214 - pattern text
+        let pattern = rule.pattern();
+        output.push_str(pattern);
+
+        // upstream: batch.c:215-216 - trailing '/' for directory-only rules.
+        // FilterRuleSpec stores the trailing '/' as part of the pattern text,
+        // so we do not append an extra one.
+
+        // upstream: batch.c:217 - newline terminator (non-null-terminated mode)
+        output.push('\n');
+    }
+
+    output
 }
 
 /// Replay a batch file to reconstruct the transfer at the destination.
@@ -303,6 +392,200 @@ mod tests {
         assert!(
             !flags.do_compression,
             "do_compression must be false - oc-rsync captures uncompressed data"
+        );
+    }
+
+    // --- serialize_filter_rules tests ---
+
+    #[test]
+    fn serialize_empty_rules_returns_empty_string() {
+        assert_eq!(serialize_filter_rules(&[]), "");
+    }
+
+    #[test]
+    fn serialize_exclude_rule() {
+        let rules = [FilterRuleSpec::exclude("*.tmp")];
+        let output = serialize_filter_rules(&rules);
+        assert_eq!(output, "- *.tmp\n");
+    }
+
+    #[test]
+    fn serialize_include_rule() {
+        let rules = [FilterRuleSpec::include("*.rs")];
+        let output = serialize_filter_rules(&rules);
+        assert_eq!(output, "+ *.rs\n");
+    }
+
+    #[test]
+    fn serialize_protect_rule() {
+        let rules = [FilterRuleSpec::protect("/data")];
+        let output = serialize_filter_rules(&rules);
+        // upstream: protect is 'P', receiver-only gets 'r' modifier
+        assert_eq!(output, "Pr /data\n");
+    }
+
+    #[test]
+    fn serialize_risk_rule() {
+        let rules = [FilterRuleSpec::risk("/temp")];
+        let output = serialize_filter_rules(&rules);
+        // upstream: risk is 'R', receiver-only gets 'r' modifier
+        assert_eq!(output, "Rr /temp\n");
+    }
+
+    #[test]
+    fn serialize_clear_rule() {
+        let rules = [FilterRuleSpec::clear()];
+        let output = serialize_filter_rules(&rules);
+        assert_eq!(output, "! \n");
+    }
+
+    #[test]
+    fn serialize_multiple_rules() {
+        let rules = [
+            FilterRuleSpec::exclude("*.tmp"),
+            FilterRuleSpec::include("*/"),
+            FilterRuleSpec::include("*.txt"),
+            FilterRuleSpec::exclude("*"),
+        ];
+        let output = serialize_filter_rules(&rules);
+        assert_eq!(output, "- *.tmp\n+ */\n+ *.txt\n- *\n");
+    }
+
+    #[test]
+    fn serialize_sender_only_rule() {
+        let rules = [FilterRuleSpec::hide("*.bak")];
+        let output = serialize_filter_rules(&rules);
+        // upstream: sender-only gets 's' modifier
+        assert_eq!(output, "-s *.bak\n");
+    }
+
+    #[test]
+    fn serialize_perishable_rule() {
+        let rules = [FilterRuleSpec::exclude("*.tmp").with_perishable(true)];
+        let output = serialize_filter_rules(&rules);
+        assert_eq!(output, "-p *.tmp\n");
+    }
+
+    #[test]
+    fn serialize_xattr_only_rule() {
+        let rules = [FilterRuleSpec::exclude("user.*").with_xattr_only(true)];
+        let output = serialize_filter_rules(&rules);
+        assert_eq!(output, "-x user.*\n");
+    }
+
+    #[test]
+    fn serialize_negated_rule() {
+        let rules = [FilterRuleSpec::exclude("*.txt").with_negate(true)];
+        let output = serialize_filter_rules(&rules);
+        assert_eq!(output, "-! *.txt\n");
+    }
+
+    #[test]
+    fn serialize_directory_only_pattern() {
+        // FilterRuleSpec stores the trailing '/' as part of the pattern
+        let rules = [FilterRuleSpec::exclude("build/")];
+        let output = serialize_filter_rules(&rules);
+        assert_eq!(output, "- build/\n");
+    }
+
+    /// Full round-trip: serialize rules, embed in batch script, verify output.
+    #[test]
+    fn serialize_and_embed_in_batch_script() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("roundtrip.batch");
+        let batch_cfg = BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), 31)
+            .with_checksum_seed(1);
+
+        let rules = [
+            FilterRuleSpec::exclude("*.tmp"),
+            FilterRuleSpec::include("*/"),
+            FilterRuleSpec::include("*.txt"),
+            FilterRuleSpec::exclude("*"),
+        ];
+        let filter_text = serialize_filter_rules(&rules);
+
+        let result =
+            engine::batch::script::generate_script_with_filters(&batch_cfg, Some(&filter_text));
+        assert!(result.is_ok());
+
+        let script_path = batch_cfg.script_file_path();
+        let content = std::fs::read_to_string(&script_path).unwrap();
+        assert!(
+            content.contains("--filter=._-"),
+            "Script must include --filter=._- for protocol >= 29: {content}"
+        );
+        assert!(content.contains("<<'#E#'"));
+        assert!(content.contains("- *.tmp\n+ */\n+ *.txt\n- *\n"));
+        assert!(content.contains("#E#"));
+        assert!(content.contains("--read-batch="));
+    }
+
+    /// Verify finalize_batch embeds filter rules from config.
+    #[test]
+    fn finalize_batch_embeds_filter_rules_in_script() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("finalize.batch");
+        let batch_cfg = BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), 31)
+            .with_checksum_seed(1);
+
+        let writer_arc = create_batch_writer(&batch_cfg).unwrap();
+
+        let config = ClientConfig::builder()
+            .compress(false)
+            .add_filter_rule(FilterRuleSpec::exclude("*.log"))
+            .add_filter_rule(FilterRuleSpec::include("*.txt"))
+            .batch_config(Some(batch_cfg.clone()))
+            .build();
+
+        write_batch_header(&writer_arc, &config).unwrap();
+
+        let summary = ClientSummary::from_summary(engine::local_copy::LocalCopySummary::default());
+        let result = finalize_batch(&writer_arc, &batch_cfg, &config, &summary);
+        assert!(result.is_ok());
+
+        let script_path = batch_cfg.script_file_path();
+        let content = std::fs::read_to_string(&script_path).unwrap();
+        assert!(
+            content.contains("--filter=._-"),
+            "Script should embed filter option: {content}"
+        );
+        assert!(
+            content.contains("- *.log"),
+            "Script should contain exclude rule: {content}"
+        );
+        assert!(
+            content.contains("+ *.txt"),
+            "Script should contain include rule: {content}"
+        );
+        assert!(content.contains("<<'#E#'"), "Script should contain heredoc");
+    }
+
+    /// Verify finalize_batch produces clean script when no filter rules.
+    #[test]
+    fn finalize_batch_no_filters_produces_clean_script() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("nofilt.batch");
+        let batch_cfg = BatchConfig::new(BatchMode::Write, path.to_string_lossy().to_string(), 31)
+            .with_checksum_seed(1);
+
+        let writer_arc = create_batch_writer(&batch_cfg).unwrap();
+
+        let config = config_with_compress(false);
+        write_batch_header(&writer_arc, &config).unwrap();
+
+        let summary = ClientSummary::from_summary(engine::local_copy::LocalCopySummary::default());
+        let result = finalize_batch(&writer_arc, &batch_cfg, &config, &summary);
+        assert!(result.is_ok());
+
+        let script_path = batch_cfg.script_file_path();
+        let content = std::fs::read_to_string(&script_path).unwrap();
+        assert!(
+            !content.contains("--filter"),
+            "No --filter without rules: {content}"
+        );
+        assert!(
+            !content.contains("#E#"),
+            "No heredoc without rules: {content}"
         );
     }
 }

@@ -232,7 +232,7 @@ fn run_client_internal(
                 if let Some(ref writer_arc) = batch_writer
                     && let Some(batch_cfg) = config.batch_config()
                 {
-                    batch::finalize_batch(writer_arc, batch_cfg, &summary)?;
+                    batch::finalize_batch(writer_arc, batch_cfg, &config, &summary)?;
                 }
 
                 return Ok(summary);
@@ -256,7 +256,7 @@ fn run_client_internal(
         if let Some(ref writer_arc) = batch_writer
             && let Some(batch_cfg) = config.batch_config()
         {
-            batch::finalize_batch(writer_arc, batch_cfg, &summary)?;
+            batch::finalize_batch(writer_arc, batch_cfg, &config, &summary)?;
         }
 
         return Ok(summary);
@@ -347,7 +347,7 @@ fn run_client_internal(
     if let Some(ref writer_arc) = batch_writer
         && let Some(batch_cfg) = config.batch_config()
     {
-        batch::finalize_batch(writer_arc, batch_cfg, &summary)?;
+        batch::finalize_batch(writer_arc, batch_cfg, &config, &summary)?;
     }
 
     Ok(summary)
