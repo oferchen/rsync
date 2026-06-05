@@ -25,17 +25,30 @@ pub(crate) fn format_size(bytes: u64, human_readable: HumanReadableMode) -> Stri
 }
 
 pub(crate) fn format_decimal_bytes(bytes: u64) -> String {
-    let mut digits = bytes.to_string();
-    let mut groups = Vec::new();
-
-    while digits.len() > 3 {
-        let chunk = digits.split_off(digits.len() - 3);
-        groups.push(chunk);
+    if bytes == 0 {
+        return String::from("0");
     }
 
-    groups.push(digits);
-    groups.reverse();
-    groups.join(",")
+    // u64::MAX with commas is 26 chars: "18,446,744,073,709,551,615"
+    let mut buf = [0u8; 26];
+    let mut pos = buf.len();
+    let mut n = bytes;
+    let mut digit_count: u8 = 0;
+
+    while n > 0 {
+        if digit_count == 3 {
+            pos -= 1;
+            buf[pos] = b',';
+            digit_count = 0;
+        }
+        pos -= 1;
+        buf[pos] = b'0' + (n % 10) as u8;
+        n /= 10;
+        digit_count += 1;
+    }
+
+    // SAFETY: buf[pos..] contains only ASCII digits and commas.
+    String::from(std::str::from_utf8(&buf[pos..]).expect("ASCII-only content"))
 }
 
 pub(crate) fn format_human_bytes(bytes: u64) -> String {
@@ -87,6 +100,18 @@ mod tests {
     fn format_decimal_bytes_millions() {
         assert_eq!(format_decimal_bytes(1_000_000), "1,000,000");
         assert_eq!(format_decimal_bytes(123_456_789), "123,456,789");
+    }
+
+    #[test]
+    fn format_decimal_bytes_edge_cases() {
+        assert_eq!(format_decimal_bytes(1), "1");
+        assert_eq!(format_decimal_bytes(10), "10");
+        assert_eq!(format_decimal_bytes(100), "100");
+        assert_eq!(format_decimal_bytes(1_000), "1,000");
+        assert_eq!(format_decimal_bytes(10_000), "10,000");
+        assert_eq!(format_decimal_bytes(100_000), "100,000");
+        assert_eq!(format_decimal_bytes(1_000_000_000), "1,000,000,000");
+        assert_eq!(format_decimal_bytes(u64::MAX), "18,446,744,073,709,551,615");
     }
 
     #[test]

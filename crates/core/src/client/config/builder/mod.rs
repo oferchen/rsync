@@ -263,6 +263,7 @@ pub struct ClientConfigBuilder {
     no_spill: bool,
     no_motd: bool,
     password_override: Option<Vec<u8>>,
+    remote_options: Vec<OsString>,
     daemon_params: Vec<String>,
     protocol_version: Option<protocol::ProtocolVersion>,
     #[cfg(feature = "embedded-ssh")]
@@ -496,6 +497,7 @@ impl ClientConfigBuilder {
             no_spill: self.no_spill,
             no_motd: self.no_motd,
             password_override: self.password_override,
+            remote_options: self.remote_options,
             daemon_params: self.daemon_params,
             protocol_version: self.protocol_version,
             #[cfg(feature = "embedded-ssh")]

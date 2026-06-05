@@ -38,9 +38,8 @@ impl FileEntry {
             extras,
             uid: 0,
             gid: 0,
-            mode: file_type.to_mode_bits() | (permissions & 0o7777),
+            mode: (file_type.to_mode_bits() | (permissions & 0o7777)) as u16,
             mtime_nsec: 0,
-            flags: super::super::flags::FileFlags::default(),
             // Directories have content by default; uid/gid start absent.
             present: PRESENT_CONTENT_DIR,
         }
@@ -109,7 +108,7 @@ impl FileEntry {
         flags: super::super::flags::FileFlags,
     ) -> Self {
         let dirname = extract_dirname(&name);
-        Self {
+        let mut entry = Self {
             name,
             dirname,
             size,
@@ -117,11 +116,16 @@ impl FileEntry {
             extras: None,
             uid: 0,
             gid: 0,
-            mode,
+            mode: mode as u16,
             mtime_nsec,
-            flags,
             present: PRESENT_CONTENT_DIR,
-        }
+        };
+        // Persist the semantically-significant wire flags into the
+        // presence bitfield so tests round-trip correctly.
+        entry.set_top_dir(flags.top_dir());
+        entry.set_hlinked(flags.hlinked());
+        entry.set_hlink_first(flags.hlink_first());
+        entry
     }
 
     /// Creates a file entry from raw bytes (wire format, optimized).
@@ -133,6 +137,10 @@ impl FileEntry {
     /// The dirname is extracted from the path automatically. For interned
     /// dirname sharing, use [`Self::set_dirname`] after construction with a
     /// value from [`super::super::intern::PathInterner`].
+    ///
+    /// The `flags` parameter carries wire-encoding flags. Only the three
+    /// semantically persistent bits (`top_dir`, `hlinked`, `hlink_first`)
+    /// are stored; the remaining delta-encoding flags are discarded.
     ///
     /// This is the preferred constructor for wire protocol decoding.
     #[must_use]
@@ -158,7 +166,7 @@ impl FileEntry {
         };
 
         let dirname = extract_dirname(&path);
-        Self {
+        let mut entry = Self {
             name: path,
             dirname,
             size,
@@ -166,10 +174,16 @@ impl FileEntry {
             extras: None,
             uid: 0,
             gid: 0,
-            mode,
+            mode: mode as u16,
             mtime_nsec,
-            flags,
             present: PRESENT_CONTENT_DIR,
-        }
+        };
+        // Persist the 3 semantically-significant wire flags into the
+        // presence bitfield. The remaining XMIT flags are transient
+        // delta-encoding state recomputed during send.
+        entry.set_top_dir(flags.top_dir());
+        entry.set_hlinked(flags.hlinked());
+        entry.set_hlink_first(flags.hlink_first());
+        entry
     }
 }

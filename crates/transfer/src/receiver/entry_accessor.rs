@@ -115,7 +115,7 @@ pub fn dest_mtime_newer_generic<T: FileEntryAccessor + ?Sized>(
 /// - `generator.c:1539` - `F_HLINK_NOT_FIRST(file)` check
 /// - `hlink.c:284` - `hard_link_check()` called for non-first entries
 pub fn is_hardlink_follower_generic<T: FileEntryAccessor + ?Sized>(entry: &T) -> bool {
-    entry.flags().hlinked() && !entry.flags().hlink_first()
+    entry.hlinked() && !entry.hlink_first()
 }
 
 /// Applies ACLs from the receiver's ACL cache to a destination file.
@@ -210,8 +210,8 @@ mod tests {
     #[test]
     fn hardlink_leader_is_not_follower() {
         let mut entry = FileEntry::new_file("leader.txt".into(), 100, 0o644);
-        entry.flags_mut().set_hlinked(true);
-        entry.flags_mut().set_hlink_first(true);
+        entry.set_hlinked(true);
+        entry.set_hlink_first(true);
         assert!(!is_hardlink_follower_generic(&entry));
     }
 
@@ -219,8 +219,8 @@ mod tests {
     #[test]
     fn hardlink_follower_detected() {
         let mut entry = FileEntry::new_file("follower.txt".into(), 100, 0o644);
-        entry.flags_mut().set_hlinked(true);
-        entry.flags_mut().set_hlink_first(false);
+        entry.set_hlinked(true);
+        entry.set_hlink_first(false);
         assert!(is_hardlink_follower_generic(&entry));
     }
 
@@ -238,8 +238,8 @@ mod tests {
     #[test]
     fn follower_generic_matches_concrete_leader() {
         let mut entry = FileEntry::new_file("leader.txt".into(), 100, 0o644);
-        entry.flags_mut().set_hlinked(true);
-        entry.flags_mut().set_hlink_first(true);
+        entry.set_hlinked(true);
+        entry.set_hlink_first(true);
         assert_eq!(
             is_hardlink_follower_generic(&entry),
             super::super::quick_check::is_hardlink_follower(&entry),
@@ -250,7 +250,7 @@ mod tests {
     #[test]
     fn follower_generic_matches_concrete_follower() {
         let mut entry = FileEntry::new_file("follower.txt".into(), 100, 0o644);
-        entry.flags_mut().set_hlinked(true);
+        entry.set_hlinked(true);
         assert_eq!(
             is_hardlink_follower_generic(&entry),
             super::super::quick_check::is_hardlink_follower(&entry),
@@ -406,7 +406,7 @@ mod tests {
     #[test]
     fn hardlink_follower_via_trait_object() {
         let mut entry = FileEntry::new_file("f.txt".into(), 0, 0o644);
-        entry.flags_mut().set_hlinked(true);
+        entry.set_hlinked(true);
         let acc: &dyn FileEntryAccessor = &entry;
         assert!(is_hardlink_follower_generic(acc));
     }

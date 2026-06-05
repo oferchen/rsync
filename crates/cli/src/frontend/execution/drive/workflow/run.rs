@@ -841,6 +841,7 @@ where
         batch_config,
         no_motd,
         password_override,
+        remote_options,
         daemon_params: dparam
             .into_iter()
             .map(|s| s.to_string_lossy().into_owned())

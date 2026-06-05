@@ -131,6 +131,7 @@ include!("tests/chunks/module_bwlimit_unlimited_with_burst_override_clears_daemo
 include!("tests/chunks/module_bwlimit_unlimited_with_explicit_burst_preserves_daemon_cap.rs");
 include!("tests/chunks/module_bwlimit_updates_burst_without_lowering_limit.rs");
 include!("tests/chunks/module_bwlimit_zero_burst_clears_existing_burst.rs");
+include!("tests/chunks/module_definition_empty_acls_allow_all.rs");
 include!("tests/chunks/module_definition_hostname_allow_matches_exact.rs");
 include!("tests/chunks/module_definition_hostname_deny_takes_precedence.rs");
 include!("tests/chunks/module_definition_hostname_suffix_matches.rs");
@@ -138,6 +139,18 @@ include!("tests/chunks/module_definition_hostname_wildcard_collapses_consecutive
 include!("tests/chunks/module_definition_hostname_wildcard_handles_multiple_asterisks.rs");
 include!("tests/chunks/module_definition_hostname_wildcard_matches.rs");
 include!("tests/chunks/module_definition_hostname_wildcard_treats_question_as_single_character.rs");
+include!("tests/chunks/module_definition_ipv4_allow_deny_precedence.rs");
+include!("tests/chunks/module_definition_ipv4_allow_matches_exact.rs");
+include!("tests/chunks/module_definition_ipv4_cidr_24_boundary.rs");
+include!("tests/chunks/module_definition_ipv4_cidr_allow_matches_subnet.rs");
+include!("tests/chunks/module_definition_ipv4_deny_blocks_matching_ip.rs");
+include!("tests/chunks/module_definition_ipv4_deny_cidr_blocks_subnet.rs");
+include!("tests/chunks/module_definition_ipv6_allow_matches_exact.rs");
+include!("tests/chunks/module_definition_ipv6_cidr_allow_matches_prefix.rs");
+include!("tests/chunks/module_definition_mixed_ip_and_hostname_acl.rs");
+include!("tests/chunks/module_definition_only_allow_denies_non_matching.rs");
+include!("tests/chunks/module_definition_only_deny_allows_non_matching.rs");
+include!("tests/chunks/module_definition_wildcard_any_allows_all.rs");
 include!("tests/chunks/module_peer_hostname_missing_resolution_denies_hostname_only_rules.rs");
 include!("tests/chunks/module_peer_hostname_skips_lookup_when_disabled.rs");
 include!("tests/chunks/module_peer_hostname_uses_override.rs");
@@ -223,6 +236,7 @@ include!("tests/chunks/daemon_negotiation_module_listing.rs");
 include!("tests/chunks/daemon_negotiation_authentication.rs");
 include!("tests/chunks/daemon_negotiation_version.rs");
 include!("tests/chunks/daemon_negotiation_error_handling.rs");
+include!("tests/chunks/daemon_negotiation_error_host_allow_blocks_unlisted.rs");
 // Protocol 28 forced-mode daemon negotiation
 include!("tests/chunks/daemon_protocol_28_forced_negotiation.rs");
 include!("tests/chunks/runtime_options_allows_relative_path_when_use_chroot_disabled.rs");

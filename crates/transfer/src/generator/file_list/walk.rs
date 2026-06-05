@@ -130,10 +130,7 @@ impl GeneratorContext {
         // root transfer directory. Enables delete_in_dir() when --delete is active.
         if relative.as_os_str().is_empty() && metadata.is_dir() {
             let mut dot_entry = self.create_entry(&path, PathBuf::from("."), &metadata)?;
-            dot_entry.set_flags(protocol::flist::FileFlags::new(
-                protocol::flist::XMIT_TOP_DIR,
-                0,
-            ));
+            dot_entry.set_top_dir(true);
             self.push_file_item(dot_entry, path.clone());
 
             // upstream: exclude.c:push_local_filters() - read per-directory
@@ -208,10 +205,7 @@ impl GeneratorContext {
         // --relative the directory entry has a non-empty relative name (e.g.
         // "tmp/dbg/src/usr/bin") instead of ".", but it still needs the flag.
         if is_top_level && metadata.is_dir() {
-            entry.set_flags(protocol::flist::FileFlags::new(
-                protocol::flist::XMIT_TOP_DIR,
-                0,
-            ));
+            entry.set_top_dir(true);
         }
 
         // upstream: flist.c:send_file_list() - scan directory before recording entry

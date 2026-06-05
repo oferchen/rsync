@@ -30,7 +30,7 @@ use super::apply_acls_from_receiver_cache;
 /// - `generator.c:1539` - `F_HLINK_NOT_FIRST(file)` check
 /// - `hlink.c:284` - `hard_link_check()` called for non-first entries
 pub(super) fn is_hardlink_follower(entry: &FileEntry) -> bool {
-    entry.flags().hlinked() && !entry.flags().hlink_first()
+    entry.hlinked() && !entry.hlink_first()
 }
 
 /// Pure-function quick-check: compares destination stat against source entry.

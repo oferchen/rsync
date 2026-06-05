@@ -14,6 +14,13 @@ use protocol::{MessageCode, MessageHeader};
 /// Buffers writes to avoid sending tiny multiplex frames for every write call.
 /// Mirrors upstream rsync's `iobuf_out` buffering pattern in `io.c`.
 ///
+/// Tracks a `dirty` flag to avoid redundant `inner.flush()` syscalls when
+/// no data has been written since the last successful flush. This eliminates
+/// the per-file flush overhead that caused BPR regressions (BPR-1/2/3/6/9)
+/// where oc-rsync issued 1 syscall per file vs upstream's ~10-files-per-write
+/// batching pattern. Phase boundaries and control messages still flush
+/// immediately when data is pending.
+///
 /// When a `batch_recorder` is attached, all data written through the `Write`
 /// trait (pre-multiplex framing) is copied to the recorder. This mirrors
 /// upstream rsync's `write_batch_monitor_out` in `io.c:write_buf()` which
@@ -23,6 +30,11 @@ pub(crate) struct MultiplexWriter<W> {
     buffer: Vec<u8>,
     /// Buffer size matching upstream rsync's IO_BUFFER_SIZE pattern.
     buffer_size: usize,
+    /// True when data has been written to `inner` since the last successful
+    /// `inner.flush()`. Prevents redundant flush syscalls on transfer hot
+    /// paths where `flush()` is called per-iteration but many iterations
+    /// produce no output (control NDX handling, non-transfer items).
+    dirty: bool,
     /// Optional recorder for batch mode - captures pre-mux data.
     /// upstream: `io.c` `write_batch_monitor_out` + `safe_write(batch_fd, buf, len)`
     pub(crate) batch_recorder: Option<Arc<Mutex<dyn Write + Send>>>,
@@ -44,6 +56,7 @@ impl<W: Write> MultiplexWriter<W> {
             inner,
             buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             buffer_size: DEFAULT_BUFFER_SIZE,
+            dirty: false,
             batch_recorder: None,
         }
     }
@@ -54,6 +67,7 @@ impl<W: Write> MultiplexWriter<W> {
             let code = MessageCode::Data;
             protocol::send_msg(&mut self.inner, code, &self.buffer)?;
             self.buffer.clear();
+            self.dirty = true;
         }
         Ok(())
     }
@@ -73,8 +87,10 @@ impl<W: Write> MultiplexWriter<W> {
     pub(crate) fn send_message(&mut self, code: MessageCode, payload: &[u8]) -> io::Result<()> {
         self.flush_buffer()?;
         protocol::send_msg(&mut self.inner, code, payload)?;
+        self.dirty = true;
         if code.requires_immediate_flush() {
             self.inner.flush()?;
+            self.dirty = false;
         }
         Ok(())
     }
@@ -86,7 +102,9 @@ impl<W: Write> MultiplexWriter<W> {
     pub(crate) fn write_raw(&mut self, data: &[u8]) -> io::Result<()> {
         self.flush_buffer()?;
         self.inner.write_all(data)?;
-        self.inner.flush()
+        self.inner.flush()?;
+        self.dirty = false;
+        Ok(())
     }
 }
 
@@ -114,6 +132,7 @@ impl<W: Write> Write for MultiplexWriter<W> {
         if buf.len() >= self.buffer_size {
             let code = MessageCode::Data;
             protocol::send_msg(&mut self.inner, code, buf)?;
+            self.dirty = true;
             return Ok(buf.len());
         }
 
@@ -170,6 +189,7 @@ impl<W: Write> Write for MultiplexWriter<W> {
             for buf in bufs {
                 self.inner.write_all(buf)?;
             }
+            self.dirty = true;
         }
 
         Ok(total_len)
@@ -177,6 +197,10 @@ impl<W: Write> Write for MultiplexWriter<W> {
 
     fn flush(&mut self) -> io::Result<()> {
         self.flush_buffer()?;
-        self.inner.flush()
+        if self.dirty {
+            self.inner.flush()?;
+            self.dirty = false;
+        }
+        Ok(())
     }
 }
