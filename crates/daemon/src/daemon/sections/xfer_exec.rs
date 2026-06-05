@@ -131,6 +131,7 @@ struct PreXferOutput {
 ///
 /// Carries both the error message (for the `@ERROR` response) and any captured
 /// stdout (to relay to the client before the error).
+#[derive(Debug)]
 struct PreXferError {
     /// Human-readable error description including exit code and module name.
     message: String,
