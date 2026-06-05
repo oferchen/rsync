@@ -450,6 +450,8 @@ const UPSTREAM_SERVER_LONG_ARGS: &[&str] = &[
     "--safe-links",
     "--munge-links",
     "--numeric-ids",
+    "--trust-sender",
+    "--checksum-seed",
     "--size-only",
     "--ignore-times",
     "--ignore-existing",
@@ -1160,6 +1162,46 @@ fn numeric_ids_is_long_form_not_in_flag_string() {
     assert!(
         args.iter().any(|a| a == "--numeric-ids"),
         "expected --numeric-ids in long-form args: {args:?}"
+    );
+}
+
+#[test]
+fn includes_trust_sender_long_arg() {
+    let config = ClientConfig::builder().trust_sender(true).build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--trust-sender"),
+        "expected --trust-sender in args: {args:?}"
+    );
+}
+
+#[test]
+fn omits_trust_sender_when_not_set() {
+    let config = ClientConfig::builder().build();
+    let args = build_sender_args(&config);
+    assert!(
+        !args.iter().any(|a| a == "--trust-sender"),
+        "unexpected --trust-sender in args: {args:?}"
+    );
+}
+
+#[test]
+fn includes_checksum_seed_long_arg() {
+    let config = ClientConfig::builder().checksum_seed(Some(12345)).build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--checksum-seed=12345"),
+        "expected --checksum-seed=12345 in args: {args:?}"
+    );
+}
+
+#[test]
+fn omits_checksum_seed_when_none() {
+    let config = ClientConfig::builder().build();
+    let args = build_sender_args(&config);
+    assert!(
+        !args.iter().any(|a| a.starts_with("--checksum-seed=")),
+        "unexpected --checksum-seed in args: {args:?}"
     );
 }
 
@@ -2059,6 +2101,8 @@ fn all_flags_enabled_produces_valid_invocation() {
         .acls(true)
         .xattrs(true)
         .numeric_ids(true)
+        .trust_sender(true)
+        .checksum_seed(Some(42))
         .dry_run(true)
         .delete_before(true)
         .whole_file(true)
@@ -2173,6 +2217,8 @@ fn all_flags_enabled_produces_valid_invocation() {
         "--delete-excluded",
         "--force",
         "--numeric-ids",
+        "--trust-sender",
+        "--checksum-seed=42",
         "--max-delete=50",
         "--max-size=1000000",
         "--min-size=100",
