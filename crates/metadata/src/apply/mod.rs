@@ -217,8 +217,7 @@ pub fn metadata_unchanged(
         use std::os::unix::fs::MetadataExt;
 
         // upstream: generator.c:487-488 - perms_differ(file, sxp)
-        if options.permissions()
-            && (cached_meta.mode() & 0o7777) != (entry.permissions() & 0o7777)
+        if options.permissions() && (cached_meta.mode() & 0o7777) != (entry.permissions() & 0o7777)
         {
             return false;
         }
@@ -262,8 +261,7 @@ pub fn metadata_unchanged(
     {
         if options.times() {
             let current_mtime = filetime::FileTime::from_last_modification_time(cached_meta);
-            let entry_mtime =
-                filetime::FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
+            let entry_mtime = filetime::FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
             if current_mtime != entry_mtime {
                 return false;
             }
