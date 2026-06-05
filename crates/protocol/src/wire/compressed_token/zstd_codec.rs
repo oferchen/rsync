@@ -82,8 +82,8 @@ impl ZstdTokenEncoder {
             // Silently ignore failures - zstd rejects ZSTD_c_nbWorkers
             // when built without multi-thread support (the `zstdmt` Cargo
             // feature). The encoder still works in single-threaded mode.
-            let _ = encoder
-                .set_parameter(zstd::stream::raw::CParameter::NbWorkers(u32::from(n.get())));
+            let _ =
+                encoder.set_parameter(zstd::stream::raw::CParameter::NbWorkers(u32::from(n.get())));
         }
         Ok(Self {
             encoder,
@@ -1020,7 +1020,10 @@ mod tests {
         assert!(enc_one.is_ok(), "1 worker should succeed");
 
         let enc_four = ZstdTokenEncoder::new(3, std::num::NonZeroU8::new(4));
-        assert!(enc_four.is_ok(), "4 workers should succeed (fallback to single-threaded without zstdmt)");
+        assert!(
+            enc_four.is_ok(),
+            "4 workers should succeed (fallback to single-threaded without zstdmt)"
+        );
     }
 
     /// Verifies that a zstd encoder created with workers produces output that
