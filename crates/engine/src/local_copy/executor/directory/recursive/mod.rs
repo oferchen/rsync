@@ -15,7 +15,7 @@ mod entry;
 
 use std::cell::Cell;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use crate::local_copy::overrides::device_identifier;
@@ -195,12 +195,17 @@ pub(crate) fn copy_directory_recursive(
         }
     }
 
+    // Reusable buffer for target paths. Seeded once with the destination
+    // directory; each entry pushes its name and pops it after use, avoiding
+    // a per-entry PathBuf allocation from Path::join.
+    let mut target_buf = destination.to_path_buf();
+
     let mut first_entry_io_error: Option<LocalCopyError> = None;
     for planned in &plan.planned_entries {
         let result = process_planned_entry(
             context,
             planned,
-            destination,
+            &mut target_buf,
             &mut ensure_directory,
             root_device,
         );
