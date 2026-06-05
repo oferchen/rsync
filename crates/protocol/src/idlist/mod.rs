@@ -290,9 +290,7 @@ impl IdList {
             if count > MAX_WIRE_ID_LIST_ENTRIES {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!(
-                        "ID list entry count exceeds maximum {MAX_WIRE_ID_LIST_ENTRIES}"
-                    ),
+                    format!("ID list entry count exceeds maximum {MAX_WIRE_ID_LIST_ENTRIES}"),
                 ));
             }
 
@@ -693,7 +691,10 @@ mod tests {
 
         let mut list = IdList::new();
         let result = list.read(&mut data.as_slice(), false, 30, |_| None);
-        assert!(result.is_ok(), "ID list at cap should be accepted, got: {result:?}");
+        assert!(
+            result.is_ok(),
+            "ID list at cap should be accepted, got: {result:?}"
+        );
         // HashMap deduplicates, but we inserted unique IDs, so length should match.
         assert_eq!(list.len(), MAX_WIRE_ID_LIST_ENTRIES);
     }
