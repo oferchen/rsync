@@ -202,7 +202,6 @@ impl ReceiverContext {
                         entry,
                         meta,
                         metadata_opts,
-                        dest_meta,
                         metadata_errors,
                         acl_cache,
                         emit_itemize,
@@ -254,7 +253,6 @@ impl ReceiverContext {
         entry: &FileEntry,
         stat_meta: &fs::Metadata,
         metadata_opts: &MetadataOptions,
-        dest_meta: Option<fs::Metadata>,
         metadata_errors: &mut Vec<(PathBuf, String)>,
         acl_cache: Option<&protocol::acl::AclCache>,
         emit_itemize: bool,
@@ -275,7 +273,7 @@ impl ReceiverContext {
         // permission comparison, and timestamp construction for every file.
         if !metadata_unchanged(entry, metadata_opts, stat_meta) {
             if let Err(e) =
-                apply_metadata_with_cached_stat(file_path, entry, metadata_opts, dest_meta)
+                apply_metadata_with_cached_stat(file_path, entry, metadata_opts, Some(stat_meta.clone()))
             {
                 metadata_errors.push((file_path.to_path_buf(), e.to_string()));
             }
