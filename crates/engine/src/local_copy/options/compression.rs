@@ -57,6 +57,24 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Enables or disables adaptive compression level tuning.
+    ///
+    /// When enabled, the compression level is adjusted between files based on
+    /// observed compression ratios. Incompressible data ratchets the level down
+    /// to save CPU; highly compressible data ratchets it up for better ratio.
+    /// The adaptation is sender-side only and does not affect the wire format.
+    #[must_use]
+    pub const fn adaptive_compress(mut self, enabled: bool) -> Self {
+        self.adaptive_compress = enabled;
+        self
+    }
+
+    /// Returns whether adaptive compression level tuning is enabled.
+    #[must_use]
+    pub const fn adaptive_compress_enabled(&self) -> bool {
+        self.adaptive_compress
+    }
+
     /// Overrides the suffix list used to disable compression for specific files.
     #[must_use]
     pub fn with_skip_compress(mut self, list: SkipCompressList) -> Self {
@@ -290,5 +308,25 @@ mod tests {
             opts.compression_algorithm(),
             CompressionAlgorithm::default_algorithm()
         );
+    }
+
+    #[test]
+    fn adaptive_compress_default_disabled() {
+        let opts = LocalCopyOptions::new();
+        assert!(!opts.adaptive_compress_enabled());
+    }
+
+    #[test]
+    fn adaptive_compress_enables() {
+        let opts = LocalCopyOptions::new().adaptive_compress(true);
+        assert!(opts.adaptive_compress_enabled());
+    }
+
+    #[test]
+    fn adaptive_compress_disables() {
+        let opts = LocalCopyOptions::new()
+            .adaptive_compress(true)
+            .adaptive_compress(false);
+        assert!(!opts.adaptive_compress_enabled());
     }
 }
