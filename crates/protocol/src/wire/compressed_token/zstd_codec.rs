@@ -70,8 +70,22 @@ pub(super) struct ZstdTokenEncoder {
 
 impl ZstdTokenEncoder {
     /// Creates a new zstd encoder with the specified compression level.
-    pub(super) fn new(level: i32) -> io::Result<Self> {
-        let encoder = ZstdRawEncoder::new(level)?;
+    ///
+    /// `workers` plumbs `--compress-threads=N` through to zstd's
+    /// `ZSTD_c_nbWorkers`. `None` keeps the encoder single-threaded,
+    /// matching upstream's `do_compression_threads = 0` default.
+    ///
+    /// upstream: token.c:701 - `ZSTD_CCtx_setParameter(zstd_cctx, ZSTD_c_nbWorkers, do_compression_threads)`
+    pub(super) fn new(
+        level: i32,
+        workers: Option<std::num::NonZeroU8>,
+    ) -> io::Result<Self> {
+        let mut encoder = ZstdRawEncoder::new(level)?;
+        if let Some(n) = workers {
+            encoder
+                .set_parameter(zstd::stream::raw::CParameter::NbWorkers(u32::from(n.get())))
+                .map_err(io::Error::other)?;
+        }
         Ok(Self {
             encoder,
             output_buf: vec![0u8; MAX_DATA_COUNT],
@@ -492,7 +506,7 @@ mod tests {
 
     #[test]
     fn zstd_roundtrip_literal_only() {
-        let mut encoder = ZstdTokenEncoder::new(3).unwrap();
+        let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();
         let mut encoded = Vec::new();
 
         let data = b"Hello, zstd compressed token world!";
@@ -516,7 +530,7 @@ mod tests {
 
     #[test]
     fn zstd_roundtrip_block_matches() {
-        let mut encoder = ZstdTokenEncoder::new(3).unwrap();
+        let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();
         let mut encoded = Vec::new();
 
         encoder.send_literal(&mut encoded, b"prefix").unwrap();
@@ -544,7 +558,7 @@ mod tests {
 
     #[test]
     fn zstd_roundtrip_large_literal() {
-        let mut encoder = ZstdTokenEncoder::new(3).unwrap();
+        let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();
         let mut encoded = Vec::new();
 
         // Large literal exceeding CHUNK_SIZE
@@ -569,7 +583,7 @@ mod tests {
 
     #[test]
     fn zstd_see_token_is_noop() {
-        let mut encoder = ZstdTokenEncoder::new(3).unwrap();
+        let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();
         encoder.see_token(b"anything").unwrap();
 
         let mut decoder = ZstdTokenDecoder::new().unwrap();
@@ -578,7 +592,7 @@ mod tests {
 
     #[test]
     fn zstd_consecutive_block_matches_use_run_encoding() {
-        let mut encoder = ZstdTokenEncoder::new(3).unwrap();
+        let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();
         let mut encoded = Vec::new();
 
         // Consecutive blocks should use run encoding
@@ -612,7 +626,7 @@ mod tests {
     /// upstream: token.c lines 755-763
     #[test]
     fn zstd_flush_produces_single_deflated_data_block_for_small_input() {
-        let mut encoder = ZstdTokenEncoder::new(3).unwrap();
+        let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();
         let mut encoded = Vec::new();
 
         let data = b"small literal data for flush test";
@@ -665,7 +679,7 @@ mod tests {
     /// for each literal+token pair, matching upstream's output ordering.
     #[test]
     fn zstd_wire_format_ordering() {
-        let mut encoder = ZstdTokenEncoder::new(3).unwrap();
+        let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();
         let mut encoded = Vec::new();
 
         // Literal followed by block match, then another literal + finish
@@ -732,7 +746,7 @@ mod tests {
     /// upstream: token.c line 755 - write when zstd_out_buff.pos == zstd_out_buff.size
     #[test]
     fn zstd_large_literal_splits_into_max_data_count_blocks() {
-        let mut encoder = ZstdTokenEncoder::new(1).unwrap();
+        let mut encoder = ZstdTokenEncoder::new(1, None).unwrap();
         let mut encoded = Vec::new();
 
         // Use a large dataset so that even with zstd level 1 compression,
@@ -819,7 +833,7 @@ mod tests {
     /// run state resets), token.c:789 (DCtx created once)
     #[test]
     fn zstd_continuous_stream_across_files() {
-        let mut encoder = ZstdTokenEncoder::new(3).unwrap();
+        let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();
         let mut decoder = ZstdTokenDecoder::new().unwrap();
         let mut encoded = Vec::new();
 
@@ -856,7 +870,7 @@ mod tests {
     /// no DEFLATED_DATA blocks before the token.
     #[test]
     fn zstd_block_match_without_literals_no_deflated_data() {
-        let mut encoder = ZstdTokenEncoder::new(3).unwrap();
+        let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();
         let mut encoded = Vec::new();
 
         encoder.send_block_match(&mut encoded, 42).unwrap();
@@ -892,7 +906,7 @@ mod tests {
     /// token.c lines 758-759.
     #[test]
     fn zstd_deflated_data_header_matches_upstream() {
-        let mut encoder = ZstdTokenEncoder::new(3).unwrap();
+        let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();
         let mut encoded = Vec::new();
 
         encoder.send_literal(&mut encoded, b"test").unwrap();
@@ -929,7 +943,7 @@ mod tests {
     /// correct flush boundaries with one flush per token boundary.
     #[test]
     fn zstd_interleaved_literal_block_flush_boundaries() {
-        let mut encoder = ZstdTokenEncoder::new(3).unwrap();
+        let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();
         let mut encoded = Vec::new();
 
         // Pattern: lit, match, lit, match, lit, match, end
@@ -964,7 +978,7 @@ mod tests {
     /// Verifies that empty literal data (only block matches) roundtrips.
     #[test]
     fn zstd_only_block_matches_roundtrip() {
-        let mut encoder = ZstdTokenEncoder::new(3).unwrap();
+        let mut encoder = ZstdTokenEncoder::new(3, None).unwrap();
         let mut encoded = Vec::new();
 
         encoder.send_block_match(&mut encoded, 10).unwrap();
@@ -985,5 +999,52 @@ mod tests {
         }
 
         assert_eq!(blocks, vec![10, 20, 30]);
+    }
+
+    /// Verifies that the workers parameter is accepted without error.
+    ///
+    /// When `Some(N)` is passed, `ZSTD_c_nbWorkers` is set on the raw encoder.
+    /// Whether true multi-threaded compression activates depends on the `zstdmt`
+    /// Cargo feature of the zstd-safe crate, but the parameter must always be
+    /// accepted without returning an error.
+    #[test]
+    fn zstd_encoder_accepts_workers_parameter() {
+        // None (single-threaded) always works.
+        let enc_none = ZstdTokenEncoder::new(3, None);
+        assert!(enc_none.is_ok(), "None workers should succeed");
+
+        // Some(1) is always valid - even without the zstdmt feature, requesting
+        // 1 worker is equivalent to single-threaded mode.
+        let enc_one = ZstdTokenEncoder::new(3, std::num::NonZeroU8::new(1));
+        assert!(enc_one.is_ok(), "1 worker should succeed");
+    }
+
+    /// Verifies that a zstd encoder created with workers produces output that
+    /// the decoder can round-trip.
+    #[test]
+    fn zstd_encoder_with_workers_roundtrips() {
+        let mut encoder = ZstdTokenEncoder::new(3, std::num::NonZeroU8::new(1)).unwrap();
+        let mut encoded = Vec::new();
+
+        let data = b"round-trip test data with workers=1";
+        encoder.send_literal(&mut encoded, data).unwrap();
+        encoder.send_block_match(&mut encoded, 7).unwrap();
+        encoder.finish(&mut encoded).unwrap();
+
+        let mut decoder = ZstdTokenDecoder::new().unwrap();
+        let mut cursor = Cursor::new(&encoded);
+        let mut literals = Vec::new();
+        let mut blocks = Vec::new();
+
+        loop {
+            match decoder.recv_token(&mut cursor).unwrap() {
+                CompressedToken::Literal(d) => literals.extend_from_slice(&d),
+                CompressedToken::BlockMatch(idx) => blocks.push(idx),
+                CompressedToken::End => break,
+            }
+        }
+
+        assert_eq!(literals, data);
+        assert_eq!(blocks, vec![7]);
     }
 }

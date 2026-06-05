@@ -63,11 +63,17 @@ impl CompressedTokenEncoder {
 
     /// Creates a new zstd encoder with the specified compression level.
     ///
-    /// upstream: token.c:send_zstd_token()
+    /// `workers` plumbs `--compress-threads=N` through to zstd's
+    /// `ZSTD_c_nbWorkers`. `None` keeps the encoder single-threaded.
+    ///
+    /// upstream: token.c:send_zstd_token(), token.c:701
     #[cfg(feature = "zstd")]
-    pub fn new_zstd(level: i32) -> io::Result<Self> {
+    pub fn new_zstd(
+        level: i32,
+        workers: Option<std::num::NonZeroU8>,
+    ) -> io::Result<Self> {
         Ok(Self {
-            inner: EncoderInner::Zstd(ZstdTokenEncoder::new(level)?),
+            inner: EncoderInner::Zstd(ZstdTokenEncoder::new(level, workers)?),
         })
     }
 
