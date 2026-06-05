@@ -111,10 +111,7 @@ mod tests {
         assert_eq!(format_decimal_bytes(10_000), "10,000");
         assert_eq!(format_decimal_bytes(100_000), "100,000");
         assert_eq!(format_decimal_bytes(1_000_000_000), "1,000,000,000");
-        assert_eq!(
-            format_decimal_bytes(u64::MAX),
-            "18,446,744,073,709,551,615"
-        );
+        assert_eq!(format_decimal_bytes(u64::MAX), "18,446,744,073,709,551,615");
     }
 
     #[test]
