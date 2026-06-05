@@ -491,6 +491,12 @@ impl<'a> RemoteInvocationBuilder<'a> {
                 args.push(OsString::from(format!("--iconv={forwarded}")));
             }
         }
+
+        // upstream: options.c:2986-2993 - remote_options[] are appended after
+        // all other server arguments. Each -M value is forwarded verbatim.
+        for opt in self.config.remote_options() {
+            args.push(opt.clone());
+        }
     }
 
     /// Builds the compact flag string from client configuration.
