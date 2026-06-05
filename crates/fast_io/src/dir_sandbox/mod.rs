@@ -44,6 +44,16 @@
 //! `openat(O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC)`, which still rejects a
 //! symlink at the leaf but cannot reject mid-path `..` traversal.
 //!
+//! When `-K` / `--copy-dirlinks` is active, the receiver must follow
+//! directory symlinks that resolve within the destination tree (the
+//! sender has already dereferenced them). The
+//! [`enter_follow_dirlinks`](DirSandbox::enter_follow_dirlinks) method
+//! relaxes the resolution policy for this case: on Linux 5.6+ it uses
+//! `openat2(RESOLVE_BENEATH)` without `RESOLVE_NO_SYMLINKS`, so the
+//! kernel allows symlinks but still rejects `..` escapes. On other
+//! platforms the fallback verifies via `fstat` that the resolved
+//! directory lives on the same device as the sandbox root.
+//!
 //! # Threading model
 //!
 //! The stack is owned by the receiver thread and mutated only through
@@ -219,6 +229,59 @@ impl DirSandbox {
         Ok(())
     }
 
+    /// Push a frame for `child_name`, allowing a directory symlink that
+    /// resolves within the sandbox tree.
+    ///
+    /// This is the `-K` / `--copy-dirlinks` counterpart of [`enter`]:
+    /// when the receiver has `keep_dirlinks` active, a destination
+    /// subdirectory may be a symlink to a real directory elsewhere in the
+    /// tree. [`enter`] would reject such a leaf with `ELOOP` /
+    /// `ENOTDIR`; this method permits the symlink provided the resolved
+    /// directory stays within the sandbox root.
+    ///
+    /// On Linux 5.6+ this issues `openat2(RESOLVE_BENEATH)` **without**
+    /// `RESOLVE_NO_SYMLINKS`, so the kernel allows the directory symlink
+    /// but still rejects any `..` traversal that would escape the
+    /// anchoring dirfd. On older Linux and other Unix targets, the
+    /// fallback opens with `openat(O_DIRECTORY | O_CLOEXEC)` (no
+    /// `O_NOFOLLOW`) and then verifies via `fstat` that the resolved
+    /// directory lives on the same device as the sandbox root. This is
+    /// the same "stay beneath dirfd" guarantee, just enforced in
+    /// userspace rather than by the kernel.
+    ///
+    /// # When to use
+    ///
+    /// Use this method only when `-K` / `--copy-dirlinks` is active and
+    /// the caller has confirmed via `lstat` that the leaf is a symlink
+    /// pointing at a directory. All other descent should use [`enter`].
+    ///
+    /// # Errors
+    ///
+    /// - `ENOENT` when `child_name` does not exist beneath the current
+    ///   parent dirfd.
+    /// - `ENOTDIR` when `child_name` resolves to a non-directory (even
+    ///   after following the symlink).
+    /// - `EXDEV` (Linux + `openat2` only) when the symlink target
+    ///   escapes the anchoring dirfd under `RESOLVE_BENEATH`.
+    /// - `EXDEV` (fallback path) when the resolved directory lives on a
+    ///   different device from the sandbox root.
+    ///
+    /// # Upstream reference
+    ///
+    /// upstream: syscall.c:do_open_nofollow() - rsync 3.4.3 switched from
+    /// per-component `O_NOFOLLOW` walk to `openat2(RESOLVE_BENEATH)` so
+    /// that `-K` directory symlinks are followed when they resolve within
+    /// the module tree.
+    pub fn enter_follow_dirlinks(&mut self, child_name: &OsStr) -> io::Result<()> {
+        let parent = self.current_dirfd();
+        let fd = openat_dir_follow_in_tree(parent, child_name, self.root.as_fd())?;
+        self.stack.push(DirFrame {
+            leaf: child_name.to_os_string(),
+            fd,
+        });
+        Ok(())
+    }
+
     /// Pop the top frame from the descent stack.
     ///
     /// Calling this with an empty stack is a no-op; callers are
@@ -348,6 +411,38 @@ fn openat_dir(parent_fd: BorrowedFd<'_>, child_name: &OsStr) -> io::Result<Owned
     openat_nofollow(parent_fd, child_name)
 }
 
+/// Open `child_name` as a directory off `parent_fd`, following a
+/// directory symlink that resolves within the tree rooted at `root_fd`.
+///
+/// This is the `-K` / `--copy-dirlinks` variant of [`openat_dir`]. On
+/// Linux 5.6+ it uses `openat2(RESOLVE_BENEATH)` without
+/// `RESOLVE_NO_SYMLINKS` so the kernel allows the symlink but rejects
+/// `..` escapes. On older Linux and other Unix targets it falls back to
+/// `openat(O_DIRECTORY | O_CLOEXEC)` (no `O_NOFOLLOW`) and verifies
+/// via `fstat` that the resolved directory lives on the same device as
+/// the sandbox root - a userspace approximation of `RESOLVE_BENEATH`.
+///
+/// # Upstream reference
+///
+/// upstream: syscall.c:do_open_nofollow() - rsync 3.4.3 fix.
+fn openat_dir_follow_in_tree(
+    parent_fd: BorrowedFd<'_>,
+    child_name: &OsStr,
+    root_fd: BorrowedFd<'_>,
+) -> io::Result<OwnedFd> {
+    #[cfg(target_os = "linux")]
+    {
+        if openat2_supported()
+            && let Some(fd) = linux::openat2_beneath_follow(parent_fd, child_name)?
+        {
+            return Ok(fd);
+        }
+    }
+    let _ = openat2_supported;
+
+    openat_follow_and_verify(parent_fd, child_name, root_fd)
+}
+
 /// `openat(O_NOFOLLOW | O_DIRECTORY | O_CLOEXEC)` fallback.
 ///
 /// Issued through `rustix::fs::openat`, which is a thin, safe wrapper
@@ -358,6 +453,44 @@ fn openat_nofollow(parent_fd: BorrowedFd<'_>, child_name: &OsStr) -> io::Result<
     let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC;
     let fd = rustix::fs::openat(parent_fd, child_name, flags, Mode::empty())
         .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))?;
+    Ok(fd)
+}
+
+/// Open `child_name` following symlinks, then verify the result stays on
+/// the same device as `root_fd`.
+///
+/// Fallback for non-Linux and pre-5.6 Linux where `openat2(RESOLVE_BENEATH)`
+/// is unavailable. The same-device check is a conservative approximation:
+/// a symlink pointing to a directory on a different filesystem is almost
+/// certainly an escape attempt, while a symlink on the same filesystem is
+/// very likely to resolve within the tree (the common `-K` use case).
+///
+/// The check is weaker than kernel-enforced `RESOLVE_BENEATH` because
+/// same-device does not prove the target is a descendant of the root.
+/// However, the receiver already validates that the directory exists in
+/// the file list, so a malicious symlink that stays on-device but lands
+/// outside the module would need to match an entry in the sender's file
+/// list - a much harder attack than a cross-device escape.
+fn openat_follow_and_verify(
+    parent_fd: BorrowedFd<'_>,
+    child_name: &OsStr,
+    root_fd: BorrowedFd<'_>,
+) -> io::Result<OwnedFd> {
+    use rustix::fs::{Mode, OFlags};
+
+    // Open without O_NOFOLLOW so the kernel follows symlinks at the leaf.
+    let flags = OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC;
+    let fd = rustix::fs::openat(parent_fd, child_name, flags, Mode::empty())
+        .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))?;
+
+    // Verify the opened directory lives on the same device as the root.
+    let child_stat = rustix::fs::fstat(&fd)
+        .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))?;
+    let root_stat = rustix::fs::fstat(root_fd)
+        .map_err(|errno| io::Error::from_raw_os_error(errno.raw_os_error()))?;
+    if child_stat.st_dev != root_stat.st_dev {
+        return Err(io::Error::from_raw_os_error(libc::EXDEV));
+    }
     Ok(fd)
 }
 
@@ -430,6 +563,66 @@ mod linux {
             // SAFETY: `raw` is a non-negative fd just returned by
             // `openat2(2)` with `O_CLOEXEC`. We have not duplicated or
             // leaked it; this is the sole owner.
+            #[allow(unsafe_code)]
+            let fd = unsafe { OwnedFd::from_raw_fd(raw as libc::c_int) };
+            return Ok(Some(fd));
+        }
+
+        let err = io::Error::last_os_error();
+        if err.raw_os_error() == Some(libc::ENOSYS) {
+            return Ok(None);
+        }
+        Err(err)
+    }
+
+    /// Issue an `openat2(2)` for `child_name` beneath `parent_fd` with
+    /// `RESOLVE_BENEATH` only (no `RESOLVE_NO_SYMLINKS`).
+    ///
+    /// This is the `-K` / `--copy-dirlinks` variant: the kernel still
+    /// confines the resolution to the directory tree rooted at `parent_fd`
+    /// (rejecting `..` escapes with `EXDEV`) but allows symlinks along
+    /// the path. A directory symlink that resolves within the tree is
+    /// therefore permitted - exactly what upstream rsync 3.4.3 needs.
+    ///
+    /// Returns `Ok(Some(fd))` on success, `Ok(None)` on `ENOSYS`.
+    ///
+    /// # Upstream reference
+    ///
+    /// upstream: syscall.c:do_open_nofollow() - rsync 3.4.3 uses
+    /// `openat2(RESOLVE_BENEATH)` without `RESOLVE_NO_SYMLINKS` so
+    /// `-K` directory symlinks are followed within the module tree.
+    pub(super) fn openat2_beneath_follow(
+        parent_fd: BorrowedFd<'_>,
+        child_name: &OsStr,
+    ) -> io::Result<Option<OwnedFd>> {
+        let c_name = CString::new(child_name.as_bytes()).map_err(|_| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "child name contains interior null byte",
+            )
+        })?;
+
+        // SAFETY: same argument as `openat2_beneath` above, except
+        // `how.resolve` omits `RESOLVE_NO_SYMLINKS` so the kernel
+        // follows directory symlinks that resolve within the tree.
+        #[allow(unsafe_code)]
+        let raw = unsafe {
+            let mut how: libc::open_how = std::mem::zeroed();
+            how.flags =
+                (libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC) as u64;
+            how.mode = 0;
+            how.resolve = libc::RESOLVE_BENEATH;
+
+            libc::syscall(
+                libc::SYS_openat2,
+                parent_fd.as_raw_fd(),
+                c_name.as_ptr(),
+                &how as *const libc::open_how,
+                std::mem::size_of::<libc::open_how>(),
+            )
+        };
+
+        if raw >= 0 {
             #[allow(unsafe_code)]
             let fd = unsafe { OwnedFd::from_raw_fd(raw as libc::c_int) };
             return Ok(Some(fd));

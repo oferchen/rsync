@@ -220,3 +220,102 @@ fn root_arc_clones_share_owner() {
     assert!(Arc::ptr_eq(&arc1, &arc2));
     assert_eq!(arc1.as_raw_fd(), sandbox.root_dirfd().as_raw_fd());
 }
+
+// ================================================================
+// enter_follow_dirlinks tests: -K / --copy-dirlinks regression fix
+// ================================================================
+
+#[test]
+fn enter_follow_dirlinks_allows_in_tree_symlink() {
+    let (_keep, root) = canonical_tempdir();
+    // Create a real directory and a symlink to it inside the tree.
+    let real = root.join("real");
+    std::fs::create_dir(&real).expect("create real dir");
+    symlink(&real, root.join("link")).expect("symlink");
+
+    let mut sandbox = DirSandbox::open_root(&root).expect("open root");
+    // enter() would reject this symlink; enter_follow_dirlinks permits it.
+    sandbox
+        .enter_follow_dirlinks(std::ffi::OsStr::new("link"))
+        .expect("enter_follow_dirlinks must succeed for in-tree symlink");
+    assert_eq!(sandbox.depth(), 1);
+    assert!(sandbox.current_dirfd().as_raw_fd() >= 0);
+    sandbox.exit();
+    assert_eq!(sandbox.depth(), 0);
+}
+
+#[test]
+fn enter_follow_dirlinks_works_on_real_directory() {
+    let (_keep, root) = canonical_tempdir();
+    std::fs::create_dir(root.join("real")).expect("mkdir");
+
+    let mut sandbox = DirSandbox::open_root(&root).expect("open root");
+    sandbox
+        .enter_follow_dirlinks(std::ffi::OsStr::new("real"))
+        .expect("enter_follow_dirlinks must succeed for real directory");
+    assert_eq!(sandbox.depth(), 1);
+}
+
+#[test]
+fn enter_follow_dirlinks_rejects_nonexistent() {
+    let (_keep, root) = canonical_tempdir();
+    let mut sandbox = DirSandbox::open_root(&root).expect("open root");
+    let err = sandbox
+        .enter_follow_dirlinks(std::ffi::OsStr::new("nope"))
+        .expect_err("missing child must error");
+    assert_eq!(err.raw_os_error(), Some(libc::ENOENT));
+    assert_eq!(sandbox.depth(), 0);
+}
+
+#[test]
+fn enter_follow_dirlinks_rejects_file_child() {
+    let (_keep, root) = canonical_tempdir();
+    std::fs::write(root.join("file"), b"x").expect("write file");
+
+    let mut sandbox = DirSandbox::open_root(&root).expect("open root");
+    let err = sandbox
+        .enter_follow_dirlinks(std::ffi::OsStr::new("file"))
+        .expect_err("file child must error");
+    assert_eq!(err.raw_os_error(), Some(libc::ENOTDIR));
+    assert_eq!(sandbox.depth(), 0);
+}
+
+#[test]
+fn enter_follow_dirlinks_nested_descent_through_symlink() {
+    let (_keep, root) = canonical_tempdir();
+    // Tree: root/real_a/real_b, root/link_a -> root/real_a
+    std::fs::create_dir(root.join("real_a")).expect("mkdir real_a");
+    std::fs::create_dir(root.join("real_a/real_b")).expect("mkdir real_a/real_b");
+    symlink(root.join("real_a"), root.join("link_a")).expect("symlink");
+
+    let mut sandbox = DirSandbox::open_root(&root).expect("open root");
+    // Descend through the symlink, then into a real subdirectory.
+    sandbox
+        .enter_follow_dirlinks(std::ffi::OsStr::new("link_a"))
+        .expect("enter symlink");
+    assert_eq!(sandbox.depth(), 1);
+    sandbox
+        .enter(std::ffi::OsStr::new("real_b"))
+        .expect("enter real child within symlinked parent");
+    assert_eq!(sandbox.depth(), 2);
+    sandbox.exit();
+    sandbox.exit();
+    assert_eq!(sandbox.depth(), 0);
+}
+
+#[test]
+fn enter_follow_dirlinks_preserves_stack_on_failure() {
+    let (_keep, root) = canonical_tempdir();
+    std::fs::create_dir(root.join("real")).expect("mkdir");
+
+    let mut sandbox = DirSandbox::open_root(&root).expect("open root");
+    sandbox
+        .enter(std::ffi::OsStr::new("real"))
+        .expect("enter real");
+    assert_eq!(sandbox.depth(), 1);
+
+    // Attempt to enter a nonexistent child via the follow path.
+    let _ = sandbox.enter_follow_dirlinks(std::ffi::OsStr::new("gone"));
+    // Stack must not be corrupted on failure.
+    assert_eq!(sandbox.depth(), 1);
+}
