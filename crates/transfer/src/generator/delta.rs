@@ -15,12 +15,12 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 use logging::debug_log;
+#[cfg(test)]
+use protocol::wire::write_token_stream;
 use protocol::wire::{
     CHUNK_SIZE, CompressedTokenEncoder, DeltaOp, write_token_block_match, write_token_end,
     write_token_literal,
 };
-#[cfg(test)]
-use protocol::wire::write_token_stream;
 use protocol::{ChecksumAlgorithm, CompressionAlgorithm};
 
 use engine::delta::{DeltaGenerator, DeltaScript, DeltaSignatureIndex, DeltaToken};
