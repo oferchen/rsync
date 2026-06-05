@@ -29,9 +29,7 @@ const PARALLEL_THRESHOLD: usize = 32;
 /// when entry count exceeds the threshold, falling back to sequential for
 /// small directories.
 #[cfg(test)]
-fn read_directory_entries_sorted(
-    path: &Path,
-) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
+fn read_directory_entries_sorted(path: &Path) -> Result<Vec<DirectoryEntry>, LocalCopyError> {
     let mut pending = Vec::new();
     read_directory_entries_sorted_reuse(path, &mut pending)
 }
