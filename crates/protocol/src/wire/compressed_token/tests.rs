@@ -1499,6 +1499,118 @@ fn zlib_decoder_rejects_i32_min_token() {
     assert_eq!(err.kind(), io::ErrorKind::InvalidData);
 }
 
+/// CVE-2026-43618 regression: the decoder must reject `TOKEN_REL`
+/// accumulation that would overflow `rx_token` past `i32::MAX`.
+///
+/// A malicious sender can craft a stream of `TOKEN_REL` tokens whose
+/// relative offsets sum past `i32::MAX`, wrapping the internal `rx_token`
+/// counter to negative. After `as u32` cast the negative value becomes a
+/// large block index, causing the receiver to read from an out-of-bounds
+/// position in the basis file - leaking process memory.
+///
+/// upstream: token.c defence-in-depth (3.4.3) - bounded rx_token accumulation
+fn assert_rejects_token_rel_overflow(mut decoder: CompressedTokenDecoder) {
+    // Start with TOKEN_LONG setting rx_token near i32::MAX, then send a
+    // TOKEN_REL that would push it past the boundary.
+    let near_max: i32 = i32::MAX - 10;
+    let mut wire = Vec::new();
+    // Set rx_token = near_max via TOKEN_LONG
+    wire.push(TOKEN_LONG);
+    wire.extend_from_slice(&near_max.to_le_bytes());
+    // TOKEN_REL with relative offset 63 (maximum single-step increment).
+    // near_max + 63 overflows i32::MAX.
+    wire.push(TOKEN_REL | 63);
+
+    let mut cursor = Cursor::new(&wire);
+    // First token: BlockMatch(near_max) - should succeed
+    let token = decoder.recv_token(&mut cursor).unwrap();
+    assert!(matches!(token, CompressedToken::BlockMatch(_)));
+
+    // Second token: TOKEN_REL +63 should overflow and be rejected
+    let err = decoder
+        .recv_token(&mut cursor)
+        .expect_err("decoder must reject TOKEN_REL overflow");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string().contains("token index overflow"),
+        "unexpected error message: {err}"
+    );
+}
+
+#[test]
+fn zlib_decoder_rejects_token_rel_overflow() {
+    assert_rejects_token_rel_overflow(CompressedTokenDecoder::new());
+}
+
+#[cfg(feature = "zstd")]
+#[test]
+fn zstd_decoder_rejects_token_rel_overflow() {
+    assert_rejects_token_rel_overflow(CompressedTokenDecoder::new_zstd().unwrap());
+}
+
+#[cfg(feature = "lz4")]
+#[test]
+fn lz4_decoder_rejects_token_rel_overflow() {
+    assert_rejects_token_rel_overflow(CompressedTokenDecoder::new_lz4());
+}
+
+/// CVE-2026-43618 regression: the decoder must reject run emission that
+/// would overflow `rx_token` past `i32::MAX`.
+///
+/// A TOKENRUN_LONG starting near `i32::MAX` with a non-trivial run count
+/// causes the run emission loop to increment `rx_token` past the signed
+/// maximum. Without checked arithmetic, the counter wraps to negative and
+/// `as u32` produces a huge block index.
+///
+/// upstream: token.c defence-in-depth (3.4.3) - bounded run emission
+fn assert_rejects_run_overflow(mut decoder: CompressedTokenDecoder) {
+    // TOKENRUN_LONG with token = i32::MAX - 1 and run count = 5.
+    // The first token (i32::MAX - 1) succeeds, then the run emits
+    // tokens at i32::MAX - 1 + 1 = i32::MAX (ok), then +1 = overflow.
+    let start: i32 = i32::MAX - 1;
+    let run_count: u16 = 5;
+    let mut wire = Vec::new();
+    wire.push(TOKENRUN_LONG);
+    wire.extend_from_slice(&start.to_le_bytes());
+    wire.extend_from_slice(&run_count.to_le_bytes());
+
+    let mut cursor = Cursor::new(&wire);
+    // First token: BlockMatch(i32::MAX - 1) - succeeds
+    let t1 = decoder.recv_token(&mut cursor).unwrap();
+    assert!(matches!(t1, CompressedToken::BlockMatch(v) if v == (i32::MAX - 1) as u32));
+
+    // Second token: rx_token = i32::MAX - succeeds
+    let t2 = decoder.recv_token(&mut cursor).unwrap();
+    assert!(matches!(t2, CompressedToken::BlockMatch(v) if v == i32::MAX as u32));
+
+    // Third token: rx_token = i32::MAX + 1 - must overflow
+    let err = decoder
+        .recv_token(&mut cursor)
+        .expect_err("decoder must reject run overflow");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string().contains("token index overflow"),
+        "unexpected error message: {err}"
+    );
+}
+
+#[test]
+fn zlib_decoder_rejects_run_overflow() {
+    assert_rejects_run_overflow(CompressedTokenDecoder::new());
+}
+
+#[cfg(feature = "zstd")]
+#[test]
+fn zstd_decoder_rejects_run_overflow() {
+    assert_rejects_run_overflow(CompressedTokenDecoder::new_zstd().unwrap());
+}
+
+#[cfg(feature = "lz4")]
+#[test]
+fn lz4_decoder_rejects_run_overflow() {
+    assert_rejects_run_overflow(CompressedTokenDecoder::new_lz4());
+}
+
 /// Defence-in-depth: the zlib decoder must reject accumulated compressed
 /// data that exceeds `MAX_ACCUMULATED_COMPRESSED_BYTES` (64 MiB).
 ///

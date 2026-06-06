@@ -368,9 +368,16 @@ impl ZstdTokenDecoder {
 
         // Emit pending run tokens
         // upstream: token.c lines 871-876 (r_running state)
+        // upstream: token.c defence-in-depth (3.4.3) - checked increment
+        // prevents rx_token from wrapping past i32::MAX during long runs.
         if self.rx_run > 0 {
             self.rx_run -= 1;
-            self.rx_token += 1;
+            self.rx_token = self.rx_token.checked_add(1).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "token index overflow in compressed stream run",
+                )
+            })?;
             return Ok(CompressedToken::BlockMatch(self.rx_token as u32));
         }
 
@@ -455,7 +462,15 @@ impl ZstdTokenDecoder {
         // upstream: token.c lines 831-841
         if flag & TOKEN_REL != 0 {
             let rel = (flag & 0x3F) as i32;
-            self.rx_token += rel;
+            // upstream: token.c defence-in-depth (3.4.3) - checked addition
+            // prevents rx_token from wrapping past i32::MAX via repeated
+            // TOKEN_REL accumulation from a malicious sender.
+            self.rx_token = self.rx_token.checked_add(rel).ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "token index overflow in compressed stream",
+                )
+            })?;
 
             if (flag >> 6) & 1 != 0 {
                 let mut run_buf = [0u8; 2];
