@@ -419,4 +419,35 @@ mod tests {
         assert!(!compiled.matches(Path::new("subdir/debug.log"), false));
         assert!(!compiled.matches(Path::new("subdir/report.csv"), false));
     }
+
+    /// Verifies that an `exclude = ?` daemon-config rule does not block
+    /// deletion of multi-character filenames. The upstream daemon-delete-stats
+    /// test ships with a global `exclude = ? foobar.baz` directive; the single-
+    /// character glob `?` must only match a single-character filename, never
+    /// `delete.txt` or any longer name.
+    ///
+    /// Regression test for the upstream-testsuite `daemon-delete-stats` failure.
+    #[test]
+    fn single_char_wildcard_does_not_match_multichar_names() {
+        let rule = FilterRule {
+            action: FilterAction::Exclude,
+            pattern: "?".to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: false,
+            exclude_only: false,
+            no_inherit: false,
+        };
+        let compiled = CompiledRule::new(rule).unwrap();
+
+        // The bare ? glob matches single-character names only.
+        assert!(compiled.matches(Path::new("a"), false));
+        // Multi-character names must not match either at the root or at depth.
+        assert!(!compiled.matches(Path::new("delete.txt"), false));
+        assert!(!compiled.matches(Path::new("keep.txt"), false));
+        assert!(!compiled.matches(Path::new("subdir/delete.txt"), false));
+    }
+
 }

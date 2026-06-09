@@ -329,6 +329,13 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
             "--delete-excluded" => {
                 config.flags.delete = true;
             }
+            // upstream: options.c:2838-2839 - --stats sets do_stats which causes
+            // INFO_STATS to level 2+. Without this flag, the generator does not
+            // emit NDX_DEL_STATS during the goodbye phase and the client sender's
+            // "Number of deleted files" line stays at zero on daemon uploads.
+            "--stats" => {
+                config.do_stats = true;
+            }
             // upstream: options.c:2836-2837
             "--size-only" => {
                 config.file_selection.size_only = true;
