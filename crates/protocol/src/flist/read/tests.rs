@@ -1296,7 +1296,7 @@ fn read_entry_rejects_name_exceeding_maxpathlen() {
     // XMIT_LONG_NAME: suffix_len is read via codec (varint for proto 30+)
     encode_varint_to_vec(4096, &mut data);
     // We don't need actual bytes since the length check should reject first.
-    data.extend(std::iter::repeat(b'a').take(4096));
+    data.extend(std::iter::repeat_n(b'a', 4096));
 
     let mut cursor = Cursor::new(&data[..]);
     let mut reader = FileListReader::with_compat_flags(protocol, flags);
