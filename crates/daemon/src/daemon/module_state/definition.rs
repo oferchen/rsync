@@ -156,14 +156,42 @@ impl ModuleDefinition {
     /// is non-empty the peer must match at least one allow pattern. If the
     /// peer matches any deny pattern, access is refused.
     ///
+    /// Fail-closed semantics for GHSA-rjfm-3w2m-jf4f: when the peer's
+    /// hostname is unresolvable (`None`) and ANY `hosts deny` rule is
+    /// hostname-based, access is refused. Upstream relies on reverse DNS
+    /// being available at access-check time (it performs the lookup before
+    /// `daemon chroot` so the result is cached); oc-rsync uses a thread-per-
+    /// connection model where `daemon chroot` is applied process-wide at
+    /// startup, so per-peer DNS can fail post-chroot when the chroot lacks
+    /// NSS configuration. Treating an unresolved hostname as a potential
+    /// match for hostname-based deny patterns closes the bypass that the
+    /// upstream patch closes by guaranteeing a resolved name.
+    ///
     /// upstream: clientserver.c - `allow_access()` checks `hosts allow` and
     /// `hosts deny` using `match_hostname()` and `match_address()`.
+    /// upstream: clientserver.c (3.4.3 commit c38f20c5) - reverse DNS before
+    /// chroot ensures `client_name()` returns a real hostname when ACLs are
+    /// evaluated.
     pub(crate) fn permits(&self, addr: std::net::IpAddr, hostname: Option<&str>) -> bool {
         if !self.hosts_allow.is_empty()
             && !self
                 .hosts_allow
                 .iter()
                 .any(|pattern| pattern.matches(addr, hostname))
+        {
+            return false;
+        }
+
+        // GHSA-rjfm-3w2m-jf4f: fail closed when hostname resolution failed
+        // and any deny rule is hostname-based. Without this guard, a peer
+        // whose reverse DNS returns no name (e.g., because the daemon's
+        // chroot lacks `/etc/resolv.conf` and the NSS shared objects)
+        // silently bypasses hostname-pattern deny rules.
+        if hostname.is_none()
+            && self
+                .hosts_deny
+                .iter()
+                .any(|pattern| pattern.requires_hostname())
         {
             return false;
         }
