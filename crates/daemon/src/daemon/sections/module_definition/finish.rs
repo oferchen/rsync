@@ -39,6 +39,12 @@ impl ModuleDefinitionBuilder {
         // `use chroot` does not apply there. The check uses `Path::is_absolute()`
         // which rejects Unix-style paths (e.g. `/srv/docs`) on Windows for lack
         // of a drive letter. Mirrors the sibling fix in `module_parsing.rs`.
+        //
+        // The bare root `/` is `is_absolute()` and is accepted intentionally:
+        // upstream loadparm.c (P_PATH) preserves a single-slash module path
+        // verbatim, and clientserver.c serves from it both with and without
+        // chroot (the chroot("/") path is a no-op). See the upstream
+        // daemon-path-root-read scenario.
         #[cfg(unix)]
         if use_chroot && !path.is_absolute() {
             return Err(config_parse_error(

@@ -2132,4 +2132,38 @@ mod config_parsing_tests {
         let result = parse_config_modules(file.path()).unwrap();
         assert!(result.modules[0].log_file.is_none());
     }
+
+    /// Modules may legitimately serve the filesystem root.
+    ///
+    /// upstream: loadparm.c stores `path = /` verbatim (P_PATH only strips
+    /// trailing slashes when `len > 1`, so the bare `/` is preserved), and
+    /// clientserver.c serves it directly when `use chroot = no`. oc-rsync
+    /// must accept the same form for wire-compatible daemon configs.
+    #[test]
+    #[cfg(unix)]
+    fn parse_module_path_root_without_chroot() {
+        let config = "[root]\npath = /\nuse chroot = no\n";
+        let file = write_config(config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].name, "root");
+        assert_eq!(result.modules[0].path, PathBuf::from("/"));
+        assert!(!result.modules[0].use_chroot);
+    }
+
+    /// Upstream tolerates `path = /` with `use chroot = yes` as well: the
+    /// resulting `chroot("/")` is a no-op rather than an error, and the parser
+    /// must not reject the configuration on that basis.
+    #[test]
+    #[cfg(unix)]
+    fn parse_module_path_root_with_chroot() {
+        let config = "[root]\npath = /\nuse chroot = yes\n";
+        let file = write_config(config);
+        let result = parse_config_modules(file.path()).expect("parse succeeds");
+
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].path, PathBuf::from("/"));
+        assert!(result.modules[0].use_chroot);
+    }
 }
