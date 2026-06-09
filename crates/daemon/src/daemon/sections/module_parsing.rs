@@ -63,6 +63,126 @@ fn refused_option<'a>(module: &ModuleDefinition, options: &'a [String]) -> Optio
     })
 }
 
+/// Maps a single short-option letter to its canonical long-name (lowercase).
+///
+/// Mirrors the `shortName` -> `longName` columns of upstream's `long_options[]`
+/// table for the subset of options that ship as bundled short letters in the
+/// daemon-mode argument string (e.g. `-vlogDtprez.iLsfxCIvu`). When no mapping
+/// exists the literal letter is returned so wildcard-only refuse rules still
+/// catch it.
+///
+/// upstream: options.c long_options[] - the canonical short/long pairing the
+/// daemon's popt-based refuse check uses to compare against `refuse options`.
+fn short_option_long_name(letter: char) -> &'static str {
+    match letter {
+        'v' => "verbose",
+        'q' => "quiet",
+        'h' => "human-readable",
+        'n' => "dry-run",
+        'a' => "archive",
+        'r' => "recursive",
+        'd' => "dirs",
+        'p' => "perms",
+        'E' => "executability",
+        'A' => "acls",
+        'X' => "xattrs",
+        't' => "times",
+        'U' => "atimes",
+        'N' => "crtimes",
+        'O' => "omit-dir-times",
+        'J' => "omit-link-times",
+        'o' => "owner",
+        'g' => "group",
+        'D' => "devices",
+        'l' => "links",
+        'L' => "copy-links",
+        'k' => "copy-dirlinks",
+        'K' => "keep-dirlinks",
+        'H' => "hard-links",
+        'R' => "relative",
+        'I' => "ignore-times",
+        'x' => "one-file-system",
+        'u' => "update",
+        'S' => "sparse",
+        'F' => "filter",
+        'C' => "cvs-exclude",
+        'W' => "whole-file",
+        'c' => "checksum",
+        'y' => "fuzzy",
+        'z' => "compress",
+        'P' => "partial",
+        'm' => "prune-empty-dirs",
+        'i' => "itemize-changes",
+        'b' => "backup",
+        's' => "secluded-args",
+        'V' => "version",
+        'B' => "block-size",
+        'T' => "temp-dir",
+        'M' => "remote-option",
+        'f' => "filter",
+        'e' => "e",
+        _ => "",
+    }
+}
+
+/// Checks whether any client argument is refused by the module's refuse list.
+///
+/// Expands bundled short options (e.g. `-vlogDtprez.iLsfxCIvu`) into their
+/// long-name equivalents so a `refuse options = compress` rule rejects `-z`
+/// inside a packed letter string the same way upstream rsync's popt-based
+/// refuse check does.
+///
+/// Returns the long-name of the first refused option (formatted with the
+/// `--` prefix to match the upstream `--<longname>` diagnostic) so callers
+/// can include it verbatim in the error message.
+///
+/// upstream: clientserver.c - the daemon runs `parse_arguments()` on the
+/// post-OK arg list; popt treats each bundled short letter as a separate
+/// option and rejects any that the module's refuse list disabled.
+fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Option<String> {
+    if module.refuse_options.is_empty() {
+        return None;
+    }
+
+    for arg in client_args {
+        let trimmed = arg.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("--") {
+            let canonical = canonical_option(rest);
+            if canonical.is_empty() {
+                continue;
+            }
+            if is_option_refused(&module.refuse_options, &canonical) {
+                return Some(format!("--{canonical}"));
+            }
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix('-') {
+            // Skip the dot-suffix capability string (e.g. `.LsfxCIvu`) and any
+            // option-argument that follows a letter (e.g. `e.LsfxCIvu`).
+            let letters = rest.split('.').next().unwrap_or("");
+            for letter in letters.chars() {
+                if !letter.is_ascii_alphabetic() {
+                    break;
+                }
+                let long = short_option_long_name(letter);
+                let candidate = if long.is_empty() {
+                    letter.to_ascii_lowercase().to_string()
+                } else {
+                    long.to_owned()
+                };
+                if is_option_refused(&module.refuse_options, &candidate) {
+                    return Some(if long.is_empty() {
+                        format!("-{letter}")
+                    } else {
+                        format!("--{long}")
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Evaluates a canonical option name against an ordered refuse list.
 ///
 /// Processes rules left-to-right. A rule starting with `!` negates a previous

@@ -613,6 +613,15 @@ fn process_approved_module(
         None => return Ok(()),
     };
 
+    // upstream: clientserver.c:rsync_module() -> parse_arguments() applies the
+    // module's `refuse options` list against the actual client argv after the
+    // post-OK `read_args()` round-trip. The earlier check at the OPTION-line
+    // pre-handshake stage only sees client-supplied dparam overrides, never
+    // the real transfer flags (e.g. `-z` packed into `-vlogDtprez.iLsfxCIvu`).
+    if let Some(refused) = refused_client_arg(module, &client_args) {
+        return handle_refused_option(ctx, &refused);
+    }
+
     // Enforce read-only / write-only access restrictions.
     // upstream: clientserver.c:rsync_module() - after reading args, check
     // am_sender against lp_read_only(i) and lp_write_only(i).
