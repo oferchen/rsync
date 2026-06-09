@@ -1087,3 +1087,89 @@ fn server_daemon_arguments_sets_daemon_program_name() {
     // First element should be the daemon program name
     assert!(!result.is_empty());
 }
+
+/// Reproduces the wire layout upstream produces for `rsync -ais lh:src/ dest/`:
+/// the command-line argv carries the server-options head (`--server`,
+/// `--sender`, packed `-slogDtpre.iLsfxCIvu`) and stdin carries a synthetic
+/// "rsync" arg0 followed by `.` and the path tail.
+///
+/// upstream: rsync.c:283 send_protected_args() and io.c:1295 read_args()
+#[test]
+fn secluded_args_round_trip_merges_cmdline_and_stdin() {
+    use std::io::Cursor;
+
+    // Command-line argv as oc-rsync --server receives it under lsh.sh -s.
+    let argv: Vec<OsString> = vec![
+        OsString::from("oc-rsync"),
+        OsString::from("--server"),
+        OsString::from("--sender"),
+        OsString::from("-slogDtpre.iLsfxCIvu"),
+    ];
+
+    // Wire bytes captured from upstream 3.4.3's send_protected_args for
+    // `rsync -ais lh:reproA/from/ /tmp/dest/`:
+    //   rsync\0.\0/home/ofer/reproA/from/\0\0
+    let wire: &[u8] = b"rsync\0.\0/home/ofer/reproA/from/\0\0";
+    let mut reader = Cursor::new(wire);
+    let received = protocol::secluded_args::recv_secluded_args(&mut reader, None)
+        .expect("recv should succeed");
+    assert_eq!(
+        received,
+        vec![
+            "rsync".to_owned(),
+            ".".to_owned(),
+            "/home/ofer/reproA/from/".to_owned(),
+        ],
+    );
+
+    // The fix discards the synthetic arg0 and merges the rest with the
+    // command-line tail. The flag string must come from argv, and the
+    // positional path from stdin.
+    let mut received_iter = received.into_iter();
+    let _arg0 = received_iter.next();
+    let effective_args: Vec<OsString> = argv
+        .iter()
+        .skip(1)
+        .cloned()
+        .chain(received_iter.map(OsString::from))
+        .collect();
+
+    let (flag_string, positional) = parse_server_flag_string_and_args(&effective_args);
+    assert_eq!(flag_string, "-slogDtpre.iLsfxCIvu");
+    assert_eq!(
+        positional,
+        vec![OsString::from("/home/ofer/reproA/from/")],
+    );
+}
+
+/// When `-s` is sent as a standalone short flag (rather than embedded in
+/// the packed flag string), the same merge produces the right split.
+#[test]
+fn secluded_args_round_trip_standalone_s_flag() {
+    use std::io::Cursor;
+
+    let argv: Vec<OsString> = vec![
+        OsString::from("oc-rsync"),
+        OsString::from("--server"),
+        OsString::from("-s"),
+        OsString::from("-logDtpr"),
+    ];
+
+    let wire: &[u8] = b"rsync\0.\0/srv/data/\0\0";
+    let mut reader = Cursor::new(wire);
+    let received = protocol::secluded_args::recv_secluded_args(&mut reader, None)
+        .expect("recv should succeed");
+
+    let mut received_iter = received.into_iter();
+    let _arg0 = received_iter.next();
+    let effective_args: Vec<OsString> = argv
+        .iter()
+        .skip(1)
+        .cloned()
+        .chain(received_iter.map(OsString::from))
+        .collect();
+
+    let (flag_string, positional) = parse_server_flag_string_and_args(&effective_args);
+    assert_eq!(flag_string, "-logDtpr");
+    assert_eq!(positional, vec![OsString::from("/srv/data/")]);
+}
