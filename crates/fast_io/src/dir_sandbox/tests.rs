@@ -228,10 +228,13 @@ fn root_arc_clones_share_owner() {
 #[test]
 fn enter_follow_dirlinks_allows_in_tree_symlink() {
     let (_keep, root) = canonical_tempdir();
-    // Create a real directory and a symlink to it inside the tree.
-    let real = root.join("real");
-    std::fs::create_dir(&real).expect("create real dir");
-    symlink(&real, root.join("link")).expect("symlink");
+    // Create a real directory and a relative symlink to it inside the tree.
+    // RESOLVE_BENEATH rejects symlinks whose targets are absolute paths even
+    // when those paths would resolve in-tree, so the symlink target is
+    // expressed relative to the symlink's parent (matching how rsync's
+    // wire protocol round-trips relative-target symlinks during -K).
+    std::fs::create_dir(root.join("real")).expect("create real dir");
+    symlink("real", root.join("link")).expect("symlink");
 
     let mut sandbox = DirSandbox::open_root(&root).expect("open root");
     // enter() would reject this symlink; enter_follow_dirlinks permits it.
@@ -283,10 +286,12 @@ fn enter_follow_dirlinks_rejects_file_child() {
 #[test]
 fn enter_follow_dirlinks_nested_descent_through_symlink() {
     let (_keep, root) = canonical_tempdir();
-    // Tree: root/real_a/real_b, root/link_a -> root/real_a
+    // Tree: root/real_a/real_b, root/link_a -> real_a (relative target).
+    // See enter_follow_dirlinks_allows_in_tree_symlink for why the target is
+    // expressed relative to the symlink's parent.
     std::fs::create_dir(root.join("real_a")).expect("mkdir real_a");
     std::fs::create_dir(root.join("real_a/real_b")).expect("mkdir real_a/real_b");
-    symlink(root.join("real_a"), root.join("link_a")).expect("symlink");
+    symlink("real_a", root.join("link_a")).expect("symlink");
 
     let mut sandbox = DirSandbox::open_root(&root).expect("open root");
     // Descend through the symlink, then into a real subdirectory.
