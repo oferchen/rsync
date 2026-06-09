@@ -267,7 +267,11 @@ fn extract_module_relative_paths(client_args: &[String], module_name: &str) -> V
 ///
 /// Returns the module path itself when no positional was supplied or when
 /// the stripped tail is empty (push directly into the module root).
-fn resolve_receiver_dest(module_path: &std::path::Path, client_args: &[String], module_name: &str) -> std::path::PathBuf {
+fn resolve_receiver_dest(
+    module_path: &std::path::Path,
+    client_args: &[String],
+    module_name: &str,
+) -> std::path::PathBuf {
     let positionals = extract_module_relative_paths(client_args, module_name);
     // upstream: main.c:1203-1204 - `local_name = get_local_name(flist, argv[0])`
     // uses the FIRST remaining positional (after the `.` placeholder has been
