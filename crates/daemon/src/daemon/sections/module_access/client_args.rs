@@ -210,6 +210,86 @@ fn clamp_verbose_flags(flag_string: &str, max_verbosity: i32) -> String {
         .collect()
 }
 
+/// Extracts the positional path arguments sent by the client after the `.`
+/// separator and strips the leading module-name component from each so the
+/// receiver can resolve them relative to the on-disk module path.
+///
+/// Mirrors upstream `read_args()` (io.c:1295) and `glob_expand_module()`
+/// (util1.c:804): everything before a standalone `.` in the wire arg list is
+/// options/flags; everything after is the client's positional paths. Each
+/// positional begins with the module name (e.g. `upload/realdir/` when the
+/// module is `upload`), which is the prefix `glob_expand_module()` strips
+/// before the path is handed to the server-side option parser.
+///
+/// Returns the stripped relative paths in original order. A path that does
+/// not start with the module name is returned as-is so the caller can still
+/// see it (this matches upstream's loose prefix match - it only strips when
+/// the prefix is present).
+fn extract_module_relative_paths(client_args: &[String], module_name: &str) -> Vec<String> {
+    let mut dot_seen = false;
+    let mut out = Vec::new();
+    for arg in client_args {
+        if !dot_seen {
+            if arg == "." {
+                dot_seen = true;
+            }
+            continue;
+        }
+        // upstream: util1.c:813-814 - `if (strncmp(arg, base, base_len) == 0)
+        // arg += base_len;` - strips the bare module name. The remainder may
+        // be empty (then represents the module root), start with `/`
+        // (subpath), or be the rest of a longer arg sharing the prefix.
+        let stripped = if let Some(rest) = arg.strip_prefix(module_name) {
+            // Only strip when the next char is `/` or end-of-string so we do
+            // not chop the prefix of a sibling module that merely shares a
+            // string prefix (e.g. `uploads/` vs module `upload`).
+            if rest.is_empty() || rest.starts_with('/') {
+                rest.trim_start_matches('/').to_owned()
+            } else {
+                arg.clone()
+            }
+        } else {
+            arg.clone()
+        };
+        out.push(stripped);
+    }
+    out
+}
+
+/// Resolves the receiver's on-disk destination directory from the client's
+/// positional path args.
+///
+/// Mirrors the post-`change_dir(module_chdir)` behaviour upstream relies on:
+/// after upstream's `glob_expand_module()` strips the module name, the
+/// receiver's `get_local_name()` (main.c:697) interprets the remaining path
+/// as relative to the module root on disk. Because oc-rsync does not chdir
+/// per connection, we resolve that join explicitly.
+///
+/// Returns the module path itself when no positional was supplied or when
+/// the stripped tail is empty (push directly into the module root).
+fn resolve_receiver_dest(module_path: &std::path::Path, client_args: &[String], module_name: &str) -> std::path::PathBuf {
+    let positionals = extract_module_relative_paths(client_args, module_name);
+    // upstream: main.c:1203-1204 - `local_name = get_local_name(flist, argv[0])`
+    // uses the FIRST remaining positional (after the `.` placeholder has been
+    // consumed by `do_server_recv` at line 1166). For a receiver that
+    // translates to the last wire positional - the destination.
+    let Some(last) = positionals.last() else {
+        return module_path.to_path_buf();
+    };
+    let tail = last.trim();
+    if tail.is_empty() || tail == "." {
+        return module_path.to_path_buf();
+    }
+    let rel = std::path::Path::new(tail);
+    if rel.is_absolute() {
+        // Defensive: an absolute path here cannot escape the module - join
+        // its components onto the module root by stripping the leading `/`.
+        let stripped = tail.trim_start_matches('/');
+        return module_path.join(stripped);
+    }
+    module_path.join(rel)
+}
+
 /// Builds the server configuration from client arguments.
 ///
 /// Returns the configuration on success, or sends an error and returns `None`.
@@ -229,10 +309,21 @@ fn build_server_config(
     // upstream: clientserver.c - clamp verbose to lp_max_verbosity(i)
     let flag_string = clamp_verbose_flags(&flag_string, module.max_verbosity);
 
+    // upstream: main.c:1203-1204 + util1.c:804 (glob_expand_module) - receivers
+    // resolve their destination by joining the module path with the client's
+    // module-relative tail (e.g. `upload/realdir/` -> module + `realdir/`).
+    // The original argv[0] is always the module root; legacy tests that push
+    // straight into the module root keep that behaviour.
+    let receiver_dest = if role == ServerRole::Receiver {
+        resolve_receiver_dest(std::path::Path::new(&module.path), client_args, &module.name)
+    } else {
+        std::path::PathBuf::from(&module.path)
+    };
+
     match ServerConfig::from_flag_string_and_args(
         role,
         flag_string,
-        vec![OsString::from(&module.path)],
+        vec![OsString::from(receiver_dest.as_os_str())],
     ) {
         Ok(mut cfg) => {
             // Parse long-form arguments that upstream rsync sends via server_options()
@@ -281,6 +372,14 @@ fn build_server_config(
             // Without this wiring the daemon would parse `charset = LATIN1` but
             // never apply it, leaving --iconv negotiation a silent no-op.
             cfg.connection.iconv = resolve_module_charset_converter(module.charset.as_deref());
+
+            // upstream: `use_secure_symlinks = am_daemon && !am_chrooted`
+            // (clientserver.c:1018). Mark the server-side daemon connection so
+            // the receiver's DirSandbox open enforces the symlink-refusal
+            // policy instead of silently falling back to path-based syscalls -
+            // that fall-back is what reopened the chdir-symlink-race attack
+            // window once the original CVE-2026-29518 fix landed.
+            cfg.connection.is_daemon_connection = true;
 
             // upstream: clientserver.c:1106-1107 - `fake super = yes` on the
             // daemon module demotes the receiver's am_root and forces fake-super
