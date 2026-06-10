@@ -5,10 +5,11 @@ set -euo pipefail
 WORKSPACE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$WORKSPACE_ROOT"
 
-UPSTREAM_BIN="target/interop/upstream-install/3.4.2/bin/rsync"
-if [[ ! -x "${UPSTREAM_BIN}" ]]; then
-    UPSTREAM_BIN="target/interop/upstream-install/3.4.1/bin/rsync"
-fi
+UPSTREAM_BIN="target/interop/upstream-install/3.4.4/bin/rsync"
+for fallback in 3.4.3 3.4.2 3.4.1; do
+    [[ -x "${UPSTREAM_BIN}" ]] && break
+    UPSTREAM_BIN="target/interop/upstream-install/${fallback}/bin/rsync"
+done
 TEST_PORT=18873
 OUTPUT_DIR="tests/protocol_handshakes"
 

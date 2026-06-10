@@ -16,13 +16,13 @@
 # Usage:
 #   tools/ci/run_upstream_testsuite.sh                # run all *.test
 #   WHICHTESTS=00-hello.test tools/ci/...sh           # run a single test
-#   UPSTREAM_VERSION=3.4.2 tools/ci/...sh             # pin upstream version
+#   UPSTREAM_VERSION=3.4.4 tools/ci/...sh             # pin upstream version
 #   PRESERVE_SCRATCH=yes tools/ci/...sh               # keep per-test scratch dirs
 
 set -euo pipefail
 
 workspace_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-upstream_version="${UPSTREAM_VERSION:-3.4.3}"
+upstream_version="${UPSTREAM_VERSION:-3.4.4}"
 upstream_src_root="${workspace_root}/target/interop/upstream-src"
 upstream_src_dir="${upstream_src_root}/rsync-${upstream_version}"
 oc_rsync_bin="${OC_RSYNC_BIN:-${workspace_root}/target/release/oc-rsync}"
