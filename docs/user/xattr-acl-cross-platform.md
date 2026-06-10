@@ -108,6 +108,36 @@ upstream rsync behaviour.
 extended attribute passes through the xattr pipeline. This requires root on
 both sides since it lives in the `system.*` namespace.
 
+**SELinux contexts.** On RHEL, Fedora, CentOS and other SELinux-enforcing
+distributions, file labels live in `security.selinux` and are stored as
+opaque bytes by the kernel LSM hook. Under `--xattrs`, oc-rsync preserves
+these labels byte-for-byte, matching upstream rsync's `xattrs.c` handling
+(`rsync_xal_get()` lines 254-258, `receive_xattr()` lines 828-839). The
+namespace passes through the wire verbatim; no SELinux library linkage
+is required at either end.
+
+Operational requirements:
+
+- The **sender** must be able to read `security.selinux`. On Linux this
+  is unrestricted for root and is also permitted for the file owner on
+  most policies; non-root readers without the necessary policy grant
+  will not see the namespace and the label is silently omitted from the
+  transfer (matching upstream).
+- The **receiver** must have `CAP_SYS_ADMIN` (typically root) OR an
+  SELinux policy grant that allows writing to `security.selinux`.
+  Without one of these the kernel returns `EPERM` for the `setxattr`
+  call and the file lands with the receiving host's default context
+  (e.g. `unconfined_u:object_r:default_t:s0`). For SELinux-protected
+  services (`httpd`, `postgresql`, `sshd`, ...) the wrong context will
+  cause AVC denials in enforcing mode; either run the receiver as root,
+  re-label after transfer (`restorecon -R`), or stage the destination
+  on a non-enforcing host.
+- Copying to a destination **without SELinux loaded** is still safe:
+  oc-rsync writes the raw bytes, the kernel either stores them (LSM
+  supports the namespace) or returns `EOPNOTSUPP`. When the destination
+  filesystem accepts the write, a later restore to an enforcing host
+  reconstructs the original label.
+
 ### macOS
 
 **ACLs.** macOS uses NFSv4-style extended ACLs with a richer model than
