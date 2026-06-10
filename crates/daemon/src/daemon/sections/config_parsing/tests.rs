@@ -380,6 +380,44 @@ mod config_parsing_tests {
     }
 
     #[test]
+    fn parse_amp_include_directive() {
+        // upstream: params.c:parse_directives - `&include /path` (whitespace
+        // separator, no '=') is the canonical syntax in rsync 3.4.3.
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let included = format!("[amp_included]\npath = {}\n", path.display());
+        let include_file = write_config(&included);
+
+        let main_config = format!("&include {}\n", include_file.path().display());
+        let main_file = write_config(&main_config);
+
+        let result = parse_config_modules(main_file.path()).expect("parse succeeds");
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].name, "amp_included");
+    }
+
+    #[test]
+    fn parse_amp_merge_directive_with_equals() {
+        // upstream: params.c - `&merge` is the bare-include variant; the
+        // optional '=' separator must also be accepted.
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let included = format!("[merge_included]\npath = {}\n", path.display());
+        let include_file = write_config(&included);
+
+        let main_config = format!("&merge = {}\n", include_file.path().display());
+        let main_file = write_config(&main_config);
+
+        let result = parse_config_modules(main_file.path()).expect("parse succeeds");
+        assert_eq!(result.modules.len(), 1);
+        assert_eq!(result.modules[0].name, "merge_included");
+    }
+
+    #[test]
     fn parse_recursive_include_detected() {
         let dir = TempDir::new().expect("create temp dir");
         let config_path = dir.path().join("config.conf");
