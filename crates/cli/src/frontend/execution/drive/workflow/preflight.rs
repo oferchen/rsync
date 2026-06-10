@@ -1,6 +1,6 @@
 #![deny(unsafe_code)]
 
-use crate::frontend::{arguments::ProgramName, render_help};
+use crate::frontend::{arguments::ProgramName, render_help, render_lsm_status_text};
 use core::{
     client::{BindAddress, TransferTimeout},
     message::Role,
@@ -84,8 +84,8 @@ where
     }
 }
 
-/// Prints help, version, or io_uring status text if requested, returning
-/// the exit code.
+/// Prints help, version, io_uring status, or LSM status text if requested,
+/// returning the exit code.
 ///
 /// `show_version` is a count: 1 = human-readable output (upstream `-V`),
 /// 2+ = machine-readable JSON (upstream `-VV`).
@@ -94,6 +94,7 @@ pub(crate) fn maybe_print_help_or_version<Out>(
     show_help: bool,
     show_version: u8,
     show_io_uring_status: bool,
+    show_lsm_status: bool,
     program_name: ProgramName,
     stdout: &mut Out,
 ) -> Option<i32>
@@ -127,6 +128,13 @@ where
     } else if show_io_uring_status {
         let matrix = fast_io::io_uring_capability_matrix();
         if writeln!(stdout, "{matrix}").is_err() {
+            Some(1)
+        } else {
+            Some(0)
+        }
+    } else if show_lsm_status {
+        let diagnostic = render_lsm_status_text(program_name);
+        if stdout.write_all(diagnostic.as_bytes()).is_err() {
             Some(1)
         } else {
             Some(0)

@@ -148,6 +148,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --no-io-uring-sqpoll  Keep io_uring on but suppress IORING_SETUP_SQPOLL (policy=sqpoll-off). For rootless containers and K8s pods that cannot grant CAP_SYS_NICE.\n",
             "      --io-uring-depth=N  Override io_uring submission queue depth (default 64); must be a power of two between 1 and 32768.\n",
             "      --io-uring-status  Print the io_uring capability matrix and exit.\n",
+            "      --lsm-status  Print the Linux Security Module diagnostic (active LSMs, Landlock, seccomp, io_uring SQPOLL) and exit.\n",
             "      --simd=LEVEL Force the SIMD level used by checksum dispatch (auto, avx512, avx2, sse4, neon, none).\n",
             "      --cow        Allow copy-on-write reflinks for whole-file copies (default).\n",
             "      --no-cow     Disable copy-on-write reflinks; always use the portable std::fs::copy fallback.\n",

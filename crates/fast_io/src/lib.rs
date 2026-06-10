@@ -241,6 +241,14 @@ pub mod kqueue;
 mod io_uring_common;
 mod io_uring_depth;
 mod io_uring_ops;
+/// Linux Security Module (LSM) detection.
+///
+/// Reads `/sys/kernel/security/lsm` and classifies the listed modules.
+/// Used by the CLI `--lsm-status` diagnostic and by the receiver's
+/// `PermissionDenied` audit-log hint to decide when to point operators at
+/// `ausearch`. On non-Linux targets and on Linux hosts without
+/// securityfs mounted the helpers return "no LSMs visible" without error.
+pub mod lsm;
 mod policy;
 /// SQM-3: pin mmap'd basis windows in memory before SQPOLL submissions
 /// so the kthread cannot fault on a page the userspace task has not
