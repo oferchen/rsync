@@ -44,7 +44,14 @@ pub struct DiskThreadHandle {
 /// which uses a single static buffer that is never freed. Here, the disk thread
 /// sends used `Vec<u8>` buffers back through `buf_return_rx` for reuse by the
 /// network thread, eliminating per-chunk malloc/free overhead.
-pub fn spawn_disk_thread(config: DiskCommitConfig) -> DiskThreadHandle {
+///
+/// # Errors
+///
+/// Returns the underlying `io::Error` when `thread::Builder::spawn` fails
+/// (typically `EAGAIN`/`RLIMIT_NPROC` under resource pressure). Surfacing the
+/// failure as a typed error lets the receiver translate it into a transfer
+/// abort instead of taking down the process.
+pub fn spawn_disk_thread(config: DiskCommitConfig) -> io::Result<DiskThreadHandle> {
     let capacity = config.effective_channel_capacity();
     let (file_tx, file_rx) = spsc::channel::<FileMessage>(capacity);
     let (result_tx, result_rx) = spsc::channel::<io::Result<CommitResult>>(capacity * 2);
@@ -52,15 +59,14 @@ pub fn spawn_disk_thread(config: DiskCommitConfig) -> DiskThreadHandle {
 
     let join_handle = thread::Builder::new()
         .name("disk-commit".into())
-        .spawn(move || disk_thread_main(file_rx, result_tx, buf_return_tx, config))
-        .expect("failed to spawn disk-commit thread");
+        .spawn(move || disk_thread_main(file_rx, result_tx, buf_return_tx, config))?;
 
-    DiskThreadHandle {
+    Ok(DiskThreadHandle {
         file_tx,
         result_rx,
         buf_return_rx,
         join_handle,
-    }
+    })
 }
 
 /// Attempts to create an io_uring batch writer based on the configured policy.
