@@ -48,10 +48,10 @@
 //!
 //! # Submodules
 //!
-//! - [`core`] - the [`DeleteContext`] struct, its constructors, the
+//! - `core` - the [`DeleteContext`] struct, its constructors, the
 //!   observation API, and the `emit_*`/`into_emitter` drain plumbing.
-//! - [`outcome`] - the [`DrainOutcome`] returned by every `emit_*` call.
-//! - [`timing`] - the [`EmitterTiming`] enum and its conversions to/from
+//! - `outcome` - the [`DrainOutcome`] returned by every `emit_*` call.
+//! - `timing` - the [`EmitterTiming`] enum and its conversions to/from
 //!   [`crate::local_copy::DeleteTiming`].
 
 mod core;

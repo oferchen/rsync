@@ -5,10 +5,10 @@
 //! and converts server statistics to client summaries.
 //!
 //! Split into focused submodules by responsibility:
-//! - [`arguments`] - daemon argument list construction (single-phase and protect-args)
-//! - [`server_config`] - `ServerConfig` builders for receiver and generator roles
-//! - [`stats`] - server statistics to client summary conversion
-//! - [`transfer`] - pull and push transfer execution
+//! - `arguments` - daemon argument list construction (single-phase and protect-args)
+//! - `server_config` - `ServerConfig` builders for receiver and generator roles
+//! - `stats` - server statistics to client summary conversion
+//! - `transfer` - pull and push transfer execution
 
 mod arguments;
 mod server_config;

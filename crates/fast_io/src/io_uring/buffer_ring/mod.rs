@@ -21,8 +21,8 @@
 //!
 //! # Module layout
 //!
-//! - [`allocator`] - process-wide bgid allocator and counters.
-//! - [`registration`] - kernel registration plumbing and version probe.
+//! - `allocator` - process-wide bgid allocator and counters.
+//! - `registration` - kernel registration plumbing and version probe.
 //! - this file - the [`BufferRing`] type plus its construction, recycling
 //!   and `Drop` logic.
 //!
