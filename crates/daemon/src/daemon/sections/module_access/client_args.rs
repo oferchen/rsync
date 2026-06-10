@@ -291,7 +291,7 @@ fn resolve_receiver_dest(
     // always under `module_path`. Tests cover both forms cross-platform.
     let rel = std::path::Path::new(tail);
     if rel.is_absolute() || tail.starts_with('/') || tail.starts_with('\\') {
-        let stripped = tail.trim_start_matches(|c| c == '/' || c == '\\');
+        let stripped = tail.trim_start_matches(['/', '\\']);
         return module_path.join(stripped);
     }
     module_path.join(rel)

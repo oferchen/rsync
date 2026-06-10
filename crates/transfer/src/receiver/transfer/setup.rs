@@ -275,9 +275,11 @@ fn open_sandbox_for_dest_strict(
                 return Err(io::Error::new(
                     err.kind(),
                     format!(
-                        "refusing to open destination '{}' via a symlink: {err} \
-                         (would expose the chdir-symlink-race attack window)",
-                        dest_dir.display()
+                        "refusing to open destination '{}' via a symlink: \
+                         {err} (errno={}) (would expose the \
+                         chdir-symlink-race attack window)",
+                        dest_dir.display(),
+                        code.unwrap_or(0),
                     ),
                 ));
             }
@@ -397,23 +399,23 @@ mod symlink_race_tests {
 
         let err = open_sandbox_for_dest_strict(&subdir, true)
             .expect_err("daemon receiver must refuse a symlink destination");
-        // The wrapped error preserves `ErrorKind` from the underlying
-        // `DirSandbox::open_root` call (ELOOP -> `FilesystemLoop` on Linux
-        // + openat2; ENOTDIR -> `NotADirectory` on macOS/BSD where
-        // O_DIRECTORY is evaluated before O_NOFOLLOW). Both prove the
-        // symlink was refused at the syscall layer. The wrapped Display
-        // also carries the security-context message so operators see why
-        // the transfer aborted.
-        let kind = err.kind();
+        // The wrapped error embeds the underlying errno from
+        // `DirSandbox::open_root` (ELOOP on Linux + openat2; ENOTDIR on
+        // macOS/BSD where O_DIRECTORY is evaluated before O_NOFOLLOW).
+        // Both prove the symlink was refused at the syscall layer. The
+        // wrapped Display also carries the security-context message so
+        // operators see why the transfer aborted. Asserting on the embedded
+        // errno avoids the unstable `io::ErrorKind::FilesystemLoop` /
+        // `NotADirectory` variants (rust-lang/rust#86442).
+        let msg = err.to_string();
+        let expected_errno_a = format!("errno={}", libc::ELOOP);
+        let expected_errno_b = format!("errno={}", libc::ENOTDIR);
         assert!(
-            matches!(
-                kind,
-                io::ErrorKind::FilesystemLoop | io::ErrorKind::NotADirectory
-            ),
-            "expected FilesystemLoop or NotADirectory ErrorKind, got: {kind:?} ({err})"
+            msg.contains(&expected_errno_a) || msg.contains(&expected_errno_b),
+            "expected ELOOP or ENOTDIR errno embedded in message, got: {err}"
         );
         assert!(
-            err.to_string().contains("chdir-symlink-race"),
+            msg.contains("chdir-symlink-race"),
             "expected chdir-symlink-race security context in message, got: {err}"
         );
     }
