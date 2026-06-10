@@ -280,6 +280,88 @@ fn is_vital_option_rejects_non_vitals() {
     assert!(!is_vital_option("archive"));
 }
 
+#[test]
+fn refused_client_arg_matches_long_form() {
+    // upstream: clientserver.c rejects `--compress` when the module's
+    // `refuse options = compress` rule is active.
+    let module = ModuleDefinition {
+        refuse_options: vec!["compress".to_owned()],
+        ..Default::default()
+    };
+    let args = vec!["--server".to_owned(), "--compress".to_owned()];
+    assert_eq!(
+        refused_client_arg(&module, &args),
+        Some("--compress".to_owned())
+    );
+}
+
+#[test]
+fn refused_client_arg_expands_bundled_short() {
+    // upstream: the daemon expands `-z` inside a packed short-letter
+    // server argstr (e.g. `-vlogDtprez.iLsfxCIvu`) into `--compress` via
+    // popt's longName mapping, then matches against the refuse list.
+    let module = ModuleDefinition {
+        refuse_options: vec!["compress".to_owned()],
+        ..Default::default()
+    };
+    let args = vec![
+        "--server".to_owned(),
+        "-vlogDtprez.iLsfxCIvu".to_owned(),
+        ".".to_owned(),
+        "no-compress/".to_owned(),
+    ];
+    assert_eq!(
+        refused_client_arg(&module, &args),
+        Some("--compress".to_owned())
+    );
+}
+
+#[test]
+fn refused_client_arg_skips_capability_suffix() {
+    // The capability dot-suffix (`.LsfxCIvu`) is not a list of options and
+    // must not be expanded - otherwise wildcard rules would erroneously
+    // refuse them.
+    let module = ModuleDefinition {
+        refuse_options: vec!["fuzzy".to_owned()],
+        ..Default::default()
+    };
+    let args = vec!["-e.LsfxCIvu".to_owned()];
+    assert_eq!(refused_client_arg(&module, &args), None);
+}
+
+#[test]
+fn refused_client_arg_allows_when_refuse_list_empty() {
+    let module = ModuleDefinition {
+        refuse_options: Vec::new(),
+        ..Default::default()
+    };
+    let args = vec!["-avz".to_owned()];
+    assert_eq!(refused_client_arg(&module, &args), None);
+}
+
+#[test]
+fn refused_client_arg_wildcard_spares_vital_e() {
+    // upstream: the `e` short letter (carries the compatibility-flags
+    // string) is exempt from wildcard refuse rules.
+    let module = ModuleDefinition {
+        refuse_options: vec!["*".to_owned()],
+        ..Default::default()
+    };
+    let args = vec!["-e.LsfxCIvu".to_owned()];
+    assert_eq!(refused_client_arg(&module, &args), None);
+}
+
+#[test]
+fn refused_client_arg_short_n_dry_run_spared_by_wildcard() {
+    // upstream: `--dry-run` / `-n` is vital and must survive `*`.
+    let module = ModuleDefinition {
+        refuse_options: vec!["*".to_owned()],
+        ..Default::default()
+    };
+    let args = vec!["-n".to_owned()];
+    assert_eq!(refused_client_arg(&module, &args), None);
+}
+
 
 #[test]
 fn program_name_rsyncd_as_str() {

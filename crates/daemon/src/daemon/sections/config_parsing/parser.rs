@@ -77,13 +77,45 @@ fn parse_config_modules_inner(
                 continue;
             }
 
-            let (key, value) = line.split_once('=').ok_or_else(|| {
-                config_parse_error(path, line_number, "expected 'key = value' directive")
-            })?;
-            let key = key.trim().to_ascii_lowercase();
-            let value = value.trim();
+            // upstream: params.c:Parameter() - directives that start with '&'
+            // (e.g. `&include /path/to/file.conf`, `&merge /path/to/snippet.inc`)
+            // use whitespace as the name/value separator and treat a following
+            // '=' as optional. Detect them before the regular `key = value`
+            // dispatch so the file inclusion syntax is accepted as-written.
+            let (key, value) = if let Some(rest) = line.strip_prefix('&') {
+                let (name, raw_value) = rest
+                    .split_once(|c: char| c.is_whitespace() || c == '=')
+                    .ok_or_else(|| {
+                        config_parse_error(
+                            path,
+                            line_number,
+                            "expected '&directive value' or '&directive = value'",
+                        )
+                    })?;
+                let trimmed_value = raw_value
+                    .trim_start()
+                    .strip_prefix('=')
+                    .unwrap_or(raw_value);
+                (
+                    format!("&{}", name.trim().to_ascii_lowercase()),
+                    trimmed_value.trim(),
+                )
+            } else {
+                let (raw_key, raw_value) = line.split_once('=').ok_or_else(|| {
+                    config_parse_error(path, line_number, "expected 'key = value' directive")
+                })?;
+                (raw_key.trim().to_ascii_lowercase(), raw_value.trim())
+            };
 
-            if let Some(builder) = current.as_mut() {
+            // upstream: params.c:Parse() - the `&include`/`&merge` directives
+            // are dispatched from the top-level switch and apply to the global
+            // configuration regardless of any open module section. Forward
+            // them to the global-directive handler rather than the per-module
+            // setter so the recursive include works after a `[name]` line.
+            let is_amp_directive = key.starts_with('&');
+            if !is_amp_directive
+                && let Some(builder) = current.as_mut()
+            {
                 apply_module_directive(builder, &key, value, path, line_number, &canonical)?;
                 continue;
             }
