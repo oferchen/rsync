@@ -34,12 +34,22 @@
 
 use std::ffi::OsString;
 use std::io;
-use std::os::windows::ffi::OsStringExt;
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::io::AsRawHandle;
+use std::path::Path;
 
-use windows::Win32::Foundation::HANDLE;
+use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Storage::FileSystem::{
+    CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, OPEN_EXISTING,
+};
 use windows::Win32::System::IO::DeviceIoControl;
 use windows::Win32::System::Ioctl::FSCTL_GET_REPARSE_POINT;
+
+/// `FILE_READ_ATTRIBUTES` access right (`winnt.h`). The `windows` crate
+/// exposes this only via `FILE_ACCESS_RIGHTS`; pinning the value locally
+/// avoids the version-dependent re-export and keeps the call site small.
+const FILE_READ_ATTRIBUTES: u32 = 0x0080;
 
 /// Maximum size of a reparse data buffer, per `winnt.h`.
 ///
@@ -209,6 +219,93 @@ pub fn classify_reparse_point(handle: &impl AsRawHandle) -> io::Result<ReparseKi
     }
 
     Ok(classify_from_buffer(&buffer[..returned]))
+}
+
+/// Classify the reparse-point at `path` by opening it with
+/// `FILE_FLAG_OPEN_REPARSE_POINT` and delegating to
+/// [`classify_reparse_point`].
+///
+/// Intended for transfer-side flist generation on Windows, where the caller
+/// already knows from `FILE_ATTRIBUTE_REPARSE_POINT` (or a previous
+/// `std::fs::FileType::is_symlink()` probe) that the entry is some flavour
+/// of reparse point. Centralises the `CreateFileW` call so consumers do not
+/// duplicate the FFI surface or the safety reasoning.
+///
+/// # Errors
+///
+/// Surfaces the underlying `CreateFileW` or `DeviceIoControl` failure as
+/// [`io::Error`] via [`io::Error::last_os_error`]. Callers that want to
+/// treat classification failures as non-fatal (for example, falling back
+/// to a plain symlink emission) should match on the error and continue.
+///
+/// # Cygwin parity
+///
+/// Upstream rsync runs through Cygwin on Windows and never opens a reparse
+/// point directly; this helper exists so the native `oc-rsync` build can
+/// distinguish junctions, mount-points, and cloud placeholders that Cygwin
+/// folds into POSIX symbolic links.
+pub fn classify_path(path: &Path) -> io::Result<ReparseKind> {
+    let handle = open_reparse_handle(path)?;
+    classify_reparse_point(&handle)
+}
+
+/// RAII wrapper that calls [`CloseHandle`] on drop.
+///
+/// The handle is opened with [`open_reparse_handle`] and exposed through
+/// [`AsRawHandle`] so [`classify_reparse_point`] can borrow it without an
+/// allocation.
+struct ReparseHandle(HANDLE);
+
+impl AsRawHandle for ReparseHandle {
+    fn as_raw_handle(&self) -> std::os::windows::io::RawHandle {
+        self.0.0 as std::os::windows::io::RawHandle
+    }
+}
+
+impl Drop for ReparseHandle {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` was returned by `CreateFileW` in
+        // [`open_reparse_handle`] and has not been closed elsewhere; the
+        // guard owns the handle uniquely for its lifetime.
+        unsafe {
+            let _ = CloseHandle(self.0);
+        }
+    }
+}
+
+/// Open `path` with `FILE_FLAG_OPEN_REPARSE_POINT` so the reparse data is
+/// returned by `DeviceIoControl` instead of being followed.
+///
+/// `FILE_FLAG_BACKUP_SEMANTICS` is set so directory reparse points (the
+/// common `mklink /d` and `mklink /j` shapes) can be opened with the same
+/// call. Read access is limited to `FILE_READ_ATTRIBUTES`; sharing is left
+/// permissive (`FILE_SHARE_READ | FILE_SHARE_WRITE`) so we never block a
+/// concurrent enumerator.
+fn open_reparse_handle(path: &Path) -> io::Result<ReparseHandle> {
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    // SAFETY: `wide` is a null-terminated UTF-16 slice owned for the
+    // duration of the call. The combination of `FILE_FLAG_OPEN_REPARSE_POINT`
+    // and `FILE_FLAG_BACKUP_SEMANTICS` is the documented recipe for opening
+    // an arbitrary reparse-point entry without following it; no input or
+    // output buffers are passed besides the path.
+    let handle = unsafe {
+        CreateFileW(
+            windows::core::PCWSTR(wide.as_ptr()),
+            FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            None,
+        )
+    };
+    let handle = handle.map_err(|_| io::Error::last_os_error())?;
+    Ok(ReparseHandle(handle))
 }
 
 /// Classify a reparse-point from an in-memory `REPARSE_DATA_BUFFER` byte
@@ -960,9 +1057,9 @@ mod integration_tests {
     //! runtime when the test environment lacks the privilege rather than
     //! failing the build.
 
-    use super::*;
+    use super::{FILE_READ_ATTRIBUTES, *};
     use std::fs;
-    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::ffi::OsStrExt as _;
     use std::path::Path;
     use std::process::Command;
 
@@ -971,8 +1068,6 @@ mod integration_tests {
         CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ,
         FILE_SHARE_WRITE, OPEN_EXISTING,
     };
-
-    const FILE_READ_ATTRIBUTES: u32 = 0x0080;
 
     struct OwnedHandle(HANDLE);
 
