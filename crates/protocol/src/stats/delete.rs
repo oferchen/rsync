@@ -94,14 +94,14 @@ impl DeleteStats {
 
     /// Reads delete stats from a stream in wire format.
     ///
-    /// Each field is capped at [`MAX_WIRE_DEL_STAT`] to reject unreasonably
+    /// Each field is capped at `MAX_WIRE_DEL_STAT` to reject unreasonably
     /// large values from the wire before they can cause overflow during
     /// accumulation.
     ///
     /// # Errors
     ///
     /// Returns an error if reading from the stream fails or if any field
-    /// exceeds [`MAX_WIRE_DEL_STAT`].
+    /// exceeds `MAX_WIRE_DEL_STAT`.
     pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
         use crate::varint::read_varint;
 
