@@ -1,0 +1,1 @@
+/usr/sbin/oc-rsyncd  --  gen_context(system_u:object_r:oc_rsyncd_exec_t,s0)
