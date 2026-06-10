@@ -130,7 +130,17 @@ impl BufferedMap {
         // overlaps the beginning of the new window AND the new window extends
         // past the old window's end, shift the overlap via copy_within and
         // only read the new portion from disk.
+        //
+        // upstream: fileio.c:236 `realloc_array` only grows the backing buffer;
+        // it never shrinks. Mirror that invariant: when a smaller window is
+        // requested (e.g., the new window is near EOF after a full-size load),
+        // `Vec::resize` would otherwise truncate the bytes the overlap branch
+        // is about to relocate via `copy_within`, panicking on out-of-bounds
+        // source or dropping bytes intended for reuse. Using `.max(buffer.len())`
+        // keeps the buffer monotonically non-decreasing; `window_len` continues
+        // to bound the valid region so callers never observe stale tail bytes.
         let old_end = self.window_start + self.window_len as u64;
+        let target_len = window_size.max(self.buffer.len());
         let (read_start, read_offset) = if self.window_len > 0
             && aligned_start >= self.window_start
             && aligned_start < old_end
@@ -139,13 +149,13 @@ impl BufferedMap {
             let reuse_len = (old_end - aligned_start) as usize;
             let src_offset = (aligned_start - self.window_start) as usize;
 
-            self.buffer.resize(window_size, 0);
+            self.buffer.resize(target_len, 0);
             self.buffer
                 .copy_within(src_offset..src_offset + reuse_len, 0);
 
             (old_end, reuse_len)
         } else {
-            self.buffer.resize(window_size, 0);
+            self.buffer.resize(target_len, 0);
             (aligned_start, 0)
         };
 

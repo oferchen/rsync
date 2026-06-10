@@ -488,6 +488,47 @@ fn window_slide_forward_reuses_overlap() {
     assert_eq!(data, &expected[..]);
 }
 
+/// Reload that requests a smaller window than the buffer's current length
+/// must not drop bytes the overlap branch is about to relocate.
+///
+/// Reproduces the data-loss path flagged during PR #5569 review: upstream
+/// `fileio.c:236` `realloc_array` only grows; mirroring that, `Vec::resize`
+/// must never shrink the buffer while `copy_within` is about to shift a
+/// suffix of the old window to the head of the new window.
+#[test]
+fn load_window_overlap_shrink_preserves_data() {
+    // File size > window cap forces a real overlap-shrink near EOF.
+    let size = 5000;
+    let temp = create_test_file(size);
+    let mut map = BufferedMap::open_with_window(temp.path(), 4096).unwrap();
+
+    // Load 1: aligned_start=0, window_size=min(4096, 5000)=4096.
+    // buffer.len() and window_len both end at 4096.
+    let _ = map.map_ptr(0, 100).unwrap();
+    assert_eq!(map.window_start, 0);
+    assert_eq!(map.window_len, 4096);
+
+    // Load 2: aligned_start=2048 (align_down(3000)), remaining=2952,
+    // window_size=min(4096, 2952)=2952. The overlap branch fires because
+    // [2048, 5000) overlaps [0, 4096) and extends past old_end. With the
+    // never-shrink invariant in place, copy_within(2048..4096, 0) shifts
+    // the tail of the old window in place; the trailing bytes are read
+    // from disk into buffer[2048..2952]; window_len clamps to 2952.
+    let data = map.map_ptr(3000, 1000).unwrap();
+    let expected: Vec<u8> = (3000..4000).map(|i| (i % 256) as u8).collect();
+    assert_eq!(data, &expected[..]);
+    assert_eq!(map.window_start, 2048);
+    assert_eq!(map.window_len, 2952);
+
+    // Every byte of the new window must reflect the file, including the
+    // bytes that landed at offsets near the buffer's old upper bound -
+    // exactly the region that would be silently truncated if the buffer
+    // had been shrunk before copy_within ran.
+    let full = map.map_ptr(2048, 2952).unwrap();
+    let expected_full: Vec<u8> = (2048..5000).map(|i| (i % 256) as u8).collect();
+    assert_eq!(full, &expected_full[..]);
+}
+
 #[test]
 fn window_can_slide_backward() {
     let size = MAX_MAP_SIZE * 2;
