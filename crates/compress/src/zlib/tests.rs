@@ -1152,3 +1152,91 @@ fn counting_encoder_flush_produces_sync_flush() {
         b"token-one data payloadtoken-two different data",
     );
 }
+
+/// UTS-18.k invariant: a malformed insert token whose deflate frame is
+/// truncated past the literal-payload edge must surface a typed
+/// `io::Error` from the streaming decoder, never a panic.
+///
+/// Mirrors the "INSERT token past the basis-window edge" failure mode
+/// documented in `docs/design/zlib-codec-invariants.md` section 1.1:
+/// the wire promises N bytes of decompressed literal but the deflate
+/// stream ends before N bytes have been produced. The receiver pipeline
+/// hands the partial frame to `CountingZlibDecoder` via the
+/// `compressed_token` layer; this test pins the panic-freedom guarantee
+/// at the lowest level.
+#[test]
+fn malformed_deflate_header_returns_err() {
+    // Start a valid deflate frame (`0x78` = BFINAL=0, BTYPE=00, stored
+    // block) but follow it with an inconsistent length/NLEN pair so the
+    // stored-block header fails its ones-complement check. The raw
+    // deflate decoder MUST reject this without aborting.
+    //
+    // Wire layout: byte 0 = block header, bytes 1..3 = LEN, bytes 3..5
+    // = NLEN. LEN = 0x0A and NLEN = 0x0A produce `~LEN != NLEN`, the
+    // canonical malformed stored-block trigger.
+    let malformed: Vec<u8> = vec![0x78, 0x0A, 0x00, 0x0A, 0x00, 0xDE, 0xAD, 0xBE, 0xEF];
+
+    let mut decoder = CountingZlibDecoder::new(Cursor::new(malformed));
+    let mut sink = Vec::new();
+    let result = decoder.read_to_end(&mut sink);
+
+    // The reject path must surface as `Err`, not as a clean Ok with
+    // empty output. A clean Ok would mask a class of malformed-frame
+    // failures the receiver pipeline relies on for fail-loud
+    // semantics.
+    assert!(
+        result.is_err(),
+        "malformed stored-block header must surface as Err, got Ok({})",
+        sink.len(),
+    );
+    // Counter must honour the saturating-add invariant from section
+    // 2.4 of the design doc: bytes_read tracks output produced before
+    // the error, so it cannot exceed what landed in the sink.
+    assert!(
+        decoder.bytes_read() as usize == sink.len(),
+        "bytes_read counter ({}) must match sink length ({})",
+        decoder.bytes_read(),
+        sink.len(),
+    );
+}
+
+/// UTS-18.k invariant: a COPY token that would address bytes past the
+/// decoded-stream edge - the streaming analog of `offset + len >
+/// window_start + window_len` - must surface a typed `io::Error` from
+/// the streaming decoder, never a panic.
+///
+/// Mirrors the "COPY token with offset beyond `window_start +
+/// window_len`" failure mode documented in section 1.2 of the design
+/// doc: a valid deflate frame produces M decompressed bytes, but the
+/// caller continues to pull from the decoder after EOF. The decoder
+/// must signal end-of-stream cleanly (`Ok(0)`) without ever indexing
+/// past the inflate engine's internal output window.
+#[test]
+fn read_beyond_decoded_payload_returns_eof_not_panic() {
+    let payload = b"basis-window literal payload".repeat(4);
+    let compressed =
+        compress_to_vec(&payload, CompressionLevel::Default).expect("compress payload");
+
+    let mut decoder = CountingZlibDecoder::new(Cursor::new(compressed));
+    let mut sink = Vec::new();
+    decoder.read_to_end(&mut sink).expect("decode valid stream");
+    assert_eq!(sink, payload);
+    let bytes_after_valid_decode = decoder.bytes_read();
+
+    // Continuing to read past the end of the decompressed payload must
+    // return `Ok(0)` (clean EOF) on every subsequent call. The decoder
+    // must not panic, and `bytes_read` must not advance past the actual
+    // decoded length.
+    let mut tail_buf = [0u8; 64];
+    for _ in 0..4 {
+        let n = decoder
+            .read(&mut tail_buf)
+            .expect("post-EOF read must not error");
+        assert_eq!(n, 0, "expected Ok(0) past stream end, got {n}");
+    }
+    assert_eq!(
+        decoder.bytes_read(),
+        bytes_after_valid_decode,
+        "bytes_read must not advance past clean EOF",
+    );
+}
