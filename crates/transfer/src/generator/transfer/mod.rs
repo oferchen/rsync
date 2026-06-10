@@ -1,12 +1,12 @@
 //! Main transfer loop and goodbye handshake for the generator role.
 //!
 //! Split into focused submodules:
-//! - [`transfer_loop`] - `run_transfer_loop`, NDX-driven file sending with
+//! - `transfer_loop` - `run_transfer_loop`, NDX-driven file sending with
 //!   delta/whole-file paths across all phases.
-//! - [`goodbye`] - `handle_goodbye` (protocol 31+ extended goodbye with
+//! - `goodbye` - `handle_goodbye` (protocol 31+ extended goodbye with
 //!   `NDX_DEL_STATS`) plus its accumulation helpers.
-//! - [`stats`] - server-side transfer statistics emission.
-//! - [`orchestrator`] - top-level `run` that ties file list building,
+//! - `stats` - server-side transfer statistics emission.
+//! - `orchestrator` - top-level `run` that ties file list building,
 //!   transmission, transfer, and finalization together.
 //!
 //! # Upstream Reference

@@ -7,9 +7,9 @@
 //!
 //! Implementation is split across focused submodules:
 //!
-//! - [`protocol`] - protocol version query accessors
-//! - [`stream`] - stream access, variant downcasts, and transport mapping
-//! - [`parts`] - decomposition into / reassembly from parts, plus trait impls
+//! - `protocol` - protocol version query accessors
+//! - `stream` - stream access, variant downcasts, and transport mapping
+//! - `parts` - decomposition into / reassembly from parts, plus trait impls
 
 mod parts;
 mod protocol;
