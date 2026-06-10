@@ -124,6 +124,18 @@ impl ZlibTokenEncoder {
     ///
     /// Only active in CPRES_ZLIB mode (noop for zlibx).
     /// Reference: upstream token.c lines 463-484.
+    ///
+    /// # Overflow handling
+    ///
+    /// `Z_SYNC_FLUSH` can emit a stored-block header + payload + sync trailer
+    /// that exceeds `compress_buf`. Upstream issue #951 (rsync 3.4.3) addressed
+    /// the symmetric bug in `send_deflated_token()`: a single matched-block
+    /// insert larger than the fixed `obuf` aborted with "deflate on token
+    /// returned 0 (N bytes left)". The fix is to loop until the compressor
+    /// has consumed the chunk *and* has no pending output buffered. The
+    /// discarded output stays inside the deflate dictionary so the receiver's
+    /// matching `see_token()` (see [`ZlibTokenDecoder::see_token`]) stays in
+    /// lockstep without needing the bytes on the wire.
     pub(super) fn see_token(&mut self, data: &[u8]) -> io::Result<()> {
         if self.is_zlibx {
             return Ok(());
@@ -136,9 +148,36 @@ impl ZlibTokenEncoder {
             let chunk = &data[offset..offset + chunk_len];
             toklen -= chunk_len;
 
-            self.compressor
-                .compress(chunk, &mut self.compress_buf, FlushCompress::Sync)
-                .map_err(|e| io::Error::other(e.to_string()))?;
+            // Feed the chunk through the compressor with Sync flush, looping
+            // until the input is fully consumed AND the compressor has no
+            // more pending output. A single Sync flush of a ~64 KiB
+            // incompressible insert produces stored-block output > compress_buf;
+            // the first compress() call consumes the input and fills the
+            // output buffer, leaving residual output trapped inside the
+            // deflate state. We must call compress() again with empty input
+            // to drain the residue. Output bytes are discarded - only the
+            // dictionary update side-effect matters.
+            let mut input = chunk;
+            loop {
+                let before_in = self.compressor.total_in();
+                let before_out = self.compressor.total_out();
+
+                self.compressor
+                    .compress(input, &mut self.compress_buf, FlushCompress::Sync)
+                    .map_err(|e| io::Error::other(e.to_string()))?;
+
+                let consumed = (self.compressor.total_in() - before_in) as usize;
+                let produced = (self.compressor.total_out() - before_out) as usize;
+
+                input = &input[consumed..];
+
+                if input.is_empty() && produced < self.compress_buf.len() {
+                    // Input fully consumed and last call only partially filled
+                    // the output buffer: the Sync flush is complete. Includes
+                    // the produced == 0 case (no residue left to drain).
+                    break;
+                }
+            }
 
             if self.protocol_version >= 31 {
                 offset += chunk_len;
