@@ -215,10 +215,7 @@ impl Drop for MountPointFixture {
         // touching the volume contents. Ignore failures: the test may
         // already have removed the directory, or `mountvol` may be
         // unavailable in the cleanup environment.
-        let _ = Command::new("mountvol")
-            .arg(&self.link)
-            .arg("/d")
-            .status();
+        let _ = Command::new("mountvol").arg(&self.link).arg("/d").status();
         let _ = std::fs::remove_dir(&self.link);
     }
 }
