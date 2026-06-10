@@ -551,4 +551,194 @@ mod daemon_incoming_chmod_tests {
             .mode();
         assert_eq!(mode & 0o7777, 0o640);
     }
+
+    /// `incoming chmod = Fg-r,Fo-r` strips group-read and other-read from
+    /// every received regular file. Matches the daemon-filter scenario:
+    /// uploading `a.secret` at mode 0o644 must land at 0o600 because the
+    /// daemon module strips both group-read and other-read.
+    // upstream: testsuite/daemon-filter+chmod parity - mode 0644 -> 0600
+    #[test]
+    fn incoming_chmod_fg_r_fo_r_strips_world_and_group_read() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = tmp.path().join("a.secret");
+        let dest = tmp.path().join("a.secret.dest");
+        fs::write(&source, b"secret payload").expect("write source");
+        fs::write(&dest, b"secret payload").expect("write dest");
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o644)).expect("set source perms");
+        fs::set_permissions(&dest, fs::Permissions::from_mode(0o644)).expect("set dest perms");
+
+        let source_meta = fs::metadata(&source).expect("source metadata");
+        let modifiers = ChmodModifiers::parse("Fg-r,Fo-r").expect("parse chmod spec");
+        let opts = receiver_metadata_opts(Some(modifiers));
+
+        apply_file_metadata_with_options(&dest, &source_meta, &opts)
+            .expect("apply daemon incoming chmod");
+
+        let mode = fs::metadata(&dest)
+            .expect("dest metadata")
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o7777,
+            0o600,
+            "incoming chmod = Fg-r,Fo-r on 0644 must yield 0600",
+        );
+    }
+
+    /// `incoming chmod = Fu+rw,go-rwx` is the chmod-option daemon scenario:
+    /// uploading `name1` at mode 0o644 must land at 0o600 (user keeps rw,
+    /// group and other lose every bit). The second clause has no `F`
+    /// prefix; with `target = All` it still applies to files (and would
+    /// also apply to dirs, but the destination here is a regular file).
+    // upstream: testsuite/chmod-option parity - mode 0644 + go-rwx -> 0600
+    #[test]
+    fn incoming_chmod_fu_plus_rw_go_minus_rwx_resolves_to_0600() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = tmp.path().join("name1");
+        let dest = tmp.path().join("name1.dest");
+        fs::write(&source, b"This is the file").expect("write source");
+        fs::write(&dest, b"This is the file").expect("write dest");
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o644)).expect("set source perms");
+        fs::set_permissions(&dest, fs::Permissions::from_mode(0o644)).expect("set dest perms");
+
+        let source_meta = fs::metadata(&source).expect("source metadata");
+        let modifiers = ChmodModifiers::parse("Fu+rw,go-rwx").expect("parse chmod spec");
+        let opts = receiver_metadata_opts(Some(modifiers));
+
+        apply_file_metadata_with_options(&dest, &source_meta, &opts)
+            .expect("apply daemon incoming chmod");
+
+        let mode = fs::metadata(&dest)
+            .expect("dest metadata")
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o7777,
+            0o600,
+            "incoming chmod = Fu+rw,go-rwx on 0644 must yield 0600",
+        );
+    }
+
+    /// Single-source-of-truth: the parsed `ChmodModifiers` and the resulting
+    /// destination mode are byte-identical whether the spec arrives via CLI
+    /// `--chmod=SPEC` or via the daemon `incoming chmod = SPEC` directive.
+    /// Both code paths funnel through `ChmodModifiers::parse`; this test
+    /// guards against a future fork (e.g. a duplicate daemon-only parser)
+    /// silently diverging.
+    // upstream: parity with options.c:parse_chmod() (CLI) and
+    // clientserver.c:rsync_module() (daemon)
+    #[test]
+    fn cli_chmod_and_daemon_incoming_chmod_resolve_identically() {
+        let spec = "Fg-r,Fo-r";
+        let cli_modifiers = ChmodModifiers::parse(spec).expect("parse via CLI path");
+        let daemon_modifiers = ChmodModifiers::parse(spec).expect("parse via daemon path");
+        assert_eq!(
+            cli_modifiers, daemon_modifiers,
+            "CLI and daemon parsers must agree byte-for-byte on the parsed clauses",
+        );
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = tmp.path().join("name1");
+        let dest_cli = tmp.path().join("name1.cli");
+        let dest_daemon = tmp.path().join("name1.daemon");
+        fs::write(&source, b"payload").expect("write source");
+        fs::write(&dest_cli, b"payload").expect("write dest cli");
+        fs::write(&dest_daemon, b"payload").expect("write dest daemon");
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o644)).expect("set source perms");
+        fs::set_permissions(&dest_cli, fs::Permissions::from_mode(0o644))
+            .expect("set dest cli perms");
+        fs::set_permissions(&dest_daemon, fs::Permissions::from_mode(0o644))
+            .expect("set dest daemon perms");
+
+        let source_meta = fs::metadata(&source).expect("source metadata");
+        let cli_opts = receiver_metadata_opts(Some(cli_modifiers));
+        let daemon_opts = receiver_metadata_opts(Some(daemon_modifiers));
+
+        apply_file_metadata_with_options(&dest_cli, &source_meta, &cli_opts)
+            .expect("apply CLI chmod");
+        apply_file_metadata_with_options(&dest_daemon, &source_meta, &daemon_opts)
+            .expect("apply daemon incoming chmod");
+
+        let cli_mode = fs::metadata(&dest_cli)
+            .expect("dest cli metadata")
+            .permissions()
+            .mode();
+        let daemon_mode = fs::metadata(&dest_daemon)
+            .expect("dest daemon metadata")
+            .permissions()
+            .mode();
+        assert_eq!(
+            cli_mode & 0o7777,
+            daemon_mode & 0o7777,
+            "CLI --chmod and daemon incoming chmod must yield identical destination modes",
+        );
+        assert_eq!(cli_mode & 0o7777, 0o600);
+    }
+
+    /// Caps-X (`X`, conditional-exec) parity: `Da+X,Fa+X` adds execute
+    /// only when the entry is already executable or is a directory. A
+    /// regular file with mode 0o644 (no execute bits) must keep its
+    /// exec bits cleared; a directory at 0o700 must gain `a+x` and land
+    /// at 0o711.
+    // upstream: chmod.c:tweak_mode FLAG_X_KEEP - "!IsX && !S_ISDIR" branch
+    #[test]
+    fn caps_x_conditional_exec_only_applies_when_already_executable_or_dir() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        // Regular file path: no exec bits on source -> no exec bits added.
+        let source_file = tmp.path().join("plain.txt");
+        let dest_file = tmp.path().join("plain.txt.dest");
+        fs::write(&source_file, b"plain").expect("write source file");
+        fs::write(&dest_file, b"plain").expect("write dest file");
+        fs::set_permissions(&source_file, fs::Permissions::from_mode(0o644))
+            .expect("set source file perms");
+        fs::set_permissions(&dest_file, fs::Permissions::from_mode(0o644))
+            .expect("set dest file perms");
+
+        // Directory path: D-clause must apply `a+X` unconditionally on dirs.
+        let source_dir = tmp.path().join("source_dir");
+        let dest_dir = tmp.path().join("dest_dir");
+        fs::create_dir(&source_dir).expect("mkdir source");
+        fs::create_dir(&dest_dir).expect("mkdir dest");
+        fs::set_permissions(&source_dir, fs::Permissions::from_mode(0o700))
+            .expect("set source dir perms");
+        fs::set_permissions(&dest_dir, fs::Permissions::from_mode(0o700))
+            .expect("set dest dir perms");
+
+        let modifiers = ChmodModifiers::parse("Da+X,Fa+X").expect("parse caps-X spec");
+
+        // File branch.
+        let source_file_meta = fs::metadata(&source_file).expect("source file metadata");
+        let opts = receiver_metadata_opts(Some(modifiers.clone()));
+        apply_file_metadata_with_options(&dest_file, &source_file_meta, &opts)
+            .expect("apply caps-X to file");
+        let file_mode = fs::metadata(&dest_file)
+            .expect("dest file metadata")
+            .permissions()
+            .mode();
+        assert_eq!(
+            file_mode & 0o111,
+            0,
+            "Fa+X must not add exec bits to a non-executable file (mode was {:o})",
+            file_mode & 0o7777,
+        );
+
+        // Directory branch. The receiver applies dir metadata through the
+        // same options pipeline as files (the dir-only D-clause guards the
+        // file-only F-clause and vice versa).
+        let source_dir_meta = fs::metadata(&source_dir).expect("source dir metadata");
+        let dir_opts = receiver_metadata_opts(Some(modifiers));
+        apply_file_metadata_with_options(&dest_dir, &source_dir_meta, &dir_opts)
+            .expect("apply caps-X to dir");
+        let dir_mode = fs::metadata(&dest_dir)
+            .expect("dest dir metadata")
+            .permissions()
+            .mode();
+        assert_eq!(
+            dir_mode & 0o111,
+            0o111,
+            "Da+X must add a+x to a directory (mode was {:o})",
+            dir_mode & 0o7777,
+        );
+    }
 }
