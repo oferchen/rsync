@@ -698,7 +698,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(
             config.temp_dir.as_deref(),
             Some(std::path::Path::new("/tmp/rsync-temp"))
@@ -713,7 +713,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(
             config.temp_dir.as_deref(),
             Some(std::path::Path::new("/staging/area"))
@@ -724,7 +724,7 @@ mod module_access_tests {
     fn apply_long_form_args_temp_dir_defaults_to_none() {
         let args = vec!["--server".to_owned(), ".".to_owned()];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert!(config.temp_dir.is_none());
     }
 
@@ -737,7 +737,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.reference_directories.len(), 1);
         assert_eq!(
             config.reference_directories[0].kind(),
@@ -758,7 +758,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.reference_directories.len(), 1);
         assert_eq!(
             config.reference_directories[0].kind(),
@@ -778,7 +778,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.reference_directories.len(), 1);
         assert_eq!(
             config.reference_directories[0].kind(),
@@ -799,7 +799,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.reference_directories.len(), 1);
         assert_eq!(
             config.reference_directories[0].kind(),
@@ -819,7 +819,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.reference_directories.len(), 1);
         assert_eq!(
             config.reference_directories[0].kind(),
@@ -840,7 +840,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.reference_directories.len(), 2);
         assert_eq!(
             config.reference_directories[0].path(),
@@ -856,7 +856,7 @@ mod module_access_tests {
     fn apply_long_form_args_reference_dirs_default_empty() {
         let args = vec!["--server".to_owned(), ".".to_owned()];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert!(config.reference_directories.is_empty());
     }
 
@@ -868,7 +868,7 @@ mod module_access_tests {
     fn apply_long_form_args_parses_log_format_with_itemize() {
         let args = vec!["--server".to_owned(), "--log-format=%i".to_owned(), ".".to_owned()];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert!(config.flags.info_flags.itemize);
     }
 
@@ -876,7 +876,7 @@ mod module_access_tests {
     fn apply_long_form_args_parses_log_format_with_itemize_and_upper_i() {
         let args = vec!["--server".to_owned(), "--log-format=%i%I".to_owned(), ".".to_owned()];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert!(config.flags.info_flags.itemize);
     }
 
@@ -884,7 +884,7 @@ mod module_access_tests {
     fn apply_long_form_args_parses_out_format_with_itemize() {
         let args = vec!["--server".to_owned(), "--out-format=%i".to_owned(), ".".to_owned()];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert!(config.flags.info_flags.itemize);
     }
 
@@ -892,7 +892,7 @@ mod module_access_tests {
     fn apply_long_form_args_log_format_without_itemize() {
         let args = vec!["--server".to_owned(), "--log-format=%o".to_owned(), ".".to_owned()];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert!(!config.flags.info_flags.itemize);
     }
 
@@ -900,7 +900,7 @@ mod module_access_tests {
     fn apply_long_form_args_log_format_x_no_itemize() {
         let args = vec!["--server".to_owned(), "--log-format=X".to_owned(), ".".to_owned()];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert!(!config.flags.info_flags.itemize);
     }
 
@@ -912,7 +912,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert!(config.write.delay_updates);
     }
 
@@ -920,8 +920,88 @@ mod module_access_tests {
     fn apply_long_form_args_delay_updates_defaults_to_false() {
         let args = vec!["--server".to_owned(), ".".to_owned()];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert!(!config.write.delay_updates);
+    }
+
+    // UTS-15.g: the daemon arg parser must fail loud on a client-only batch
+    // flag instead of silently dropping it. Upstream rsync at
+    // `options.c:1444-1449` emits `rsync: <BAD>: <err> (in daemon mode)` and
+    // exits `RERR_SYNTAX` via `daemon_error:` (options.c:1464-1466). We
+    // mirror that surface: the parser returns the offending arg so the
+    // caller can write an `@ERROR` frame and reject the connection.
+    #[test]
+    fn apply_long_form_args_reports_write_batch_kv_as_unknown() {
+        let args = vec![
+            "--server".to_owned(),
+            "--write-batch=/tmp/bad.batch".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        let offender = apply_long_form_args(&args, &mut config);
+        assert_eq!(offender.as_deref(), Some("--write-batch=/tmp/bad.batch"));
+    }
+
+    #[test]
+    fn apply_long_form_args_reports_read_batch_kv_as_unknown() {
+        let args = vec![
+            "--server".to_owned(),
+            "--read-batch=/tmp/in.batch".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        let offender = apply_long_form_args(&args, &mut config);
+        assert_eq!(offender.as_deref(), Some("--read-batch=/tmp/in.batch"));
+    }
+
+    #[test]
+    fn apply_long_form_args_reports_only_write_batch_kv_as_unknown() {
+        let args = vec![
+            "--server".to_owned(),
+            "--only-write-batch=/tmp/dry.batch".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        let offender = apply_long_form_args(&args, &mut config);
+        assert_eq!(offender.as_deref(), Some("--only-write-batch=/tmp/dry.batch"));
+    }
+
+    // Recognised client args do NOT produce the unknown-arg signal. This
+    // guards against regressions that would mis-classify everyday daemon
+    // argv such as `--delete`, `--temp-dir=`, and reference-directory
+    // values as unknown.
+    #[test]
+    fn apply_long_form_args_recognised_args_do_not_report_unknown() {
+        let args = vec![
+            "--server".to_owned(),
+            "--sender".to_owned(),
+            "-logDtprz".to_owned(),
+            "--delete-before".to_owned(),
+            "--max-delete=10".to_owned(),
+            "--temp-dir=/staging".to_owned(),
+            "--link-dest=/prev".to_owned(),
+            ".".to_owned(),
+            "module/sub".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        let offender = apply_long_form_args(&args, &mut config);
+        assert!(offender.is_none(), "no unknown should be reported: {offender:?}");
+    }
+
+    // Positional path arguments past the `.` separator must not be
+    // mis-classified as unknown options - they are dispatched through
+    // upstream's `glob_expand_module()` (util1.c:804), not popt.
+    #[test]
+    fn apply_long_form_args_positional_paths_are_not_classified() {
+        let args = vec![
+            "--server".to_owned(),
+            "-logDtpr".to_owned(),
+            ".".to_owned(),
+            "module/--write-batch=foo.bin".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        let offender = apply_long_form_args(&args, &mut config);
+        assert!(offender.is_none(), "positional paths must not flag: {offender:?}");
     }
 
     #[test]
@@ -1560,7 +1640,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.backup_dir.as_deref(), Some(".backups"));
         assert!(config.flags.backup);
     }
@@ -1573,7 +1653,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.backup_dir.as_deref(), Some(".backups"));
         assert!(config.flags.backup);
     }
@@ -1589,7 +1669,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.effective_backup_suffix(), "");
     }
 
@@ -1604,7 +1684,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.backup_dir.as_deref(), Some(".backups"));
         assert_eq!(config.effective_backup_suffix(), ".old");
     }
