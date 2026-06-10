@@ -80,7 +80,7 @@ impl DeleteStats {
     /// # Errors
     ///
     /// Returns an error if writing to the stream fails.
-    pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+    pub fn write_to<W: Write + ?Sized>(&self, writer: &mut W) -> io::Result<()> {
         use crate::varint::write_varint;
 
         write_varint(writer, self.files as i32)?;
@@ -101,8 +101,8 @@ impl DeleteStats {
     /// # Errors
     ///
     /// Returns an error if reading from the stream fails or if any field
-    /// exceeds `MAX_WIRE_DEL_STAT`.
-    pub fn read_from<R: Read>(reader: &mut R) -> io::Result<Self> {
+    /// exceeds [`MAX_WIRE_DEL_STAT`].
+    pub fn read_from<R: Read + ?Sized>(reader: &mut R) -> io::Result<Self> {
         use crate::varint::read_varint;
 
         let files = read_capped_del_stat(read_varint(reader)?, "files")?;
