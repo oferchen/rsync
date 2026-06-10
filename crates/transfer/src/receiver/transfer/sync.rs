@@ -74,9 +74,9 @@ impl ReceiverContext {
             sandbox.as_deref(),
         )?;
         #[cfg(unix)]
-        self.create_symlinks(&dest_dir, sandbox.as_deref(), writer);
+        self.create_symlinks(&dest_dir, sandbox.as_deref(), writer)?;
         #[cfg(not(unix))]
-        self.create_symlinks(&dest_dir, writer);
+        self.create_symlinks(&dest_dir, writer)?;
 
         let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
@@ -405,9 +405,9 @@ impl ReceiverContext {
         }
 
         #[cfg(unix)]
-        self.create_hardlinks(&dest_dir, sandbox.as_deref(), writer);
+        self.create_hardlinks(&dest_dir, sandbox.as_deref(), writer)?;
         #[cfg(not(unix))]
-        self.create_hardlinks(&dest_dir, writer);
+        self.create_hardlinks(&dest_dir, writer)?;
 
         // upstream: generator.c:2080-2133 - touch_up_dirs() re-applies
         // directory mtimes after file writes clobber them.
