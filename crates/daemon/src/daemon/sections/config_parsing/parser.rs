@@ -120,6 +120,15 @@ fn parse_config_modules_inner(
                 continue;
             }
 
+            // Finish the open module before recursing into an included file so
+            // the parent module is recorded ahead of any modules pulled in by
+            // `&include`/`&merge`, matching upstream's declaration order.
+            if is_amp_directive
+                && let Some(builder) = current.take()
+            {
+                state.modules.push(finish_module_builder(builder, path, &state)?);
+            }
+
             apply_global_directive(&mut state, &key, value, path, line_number, &canonical, stack)?;
         }
 
