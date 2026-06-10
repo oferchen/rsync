@@ -7,8 +7,8 @@
 //! `clientserver.c:start_daemon_client()`.
 //!
 //! Split into submodules by responsibility:
-//! - [`connection`] - connection establishment, authentication, early-input
-//! - [`orchestration`] - argument building, transfer execution, server config
+//! - `connection` - connection establishment, authentication, early-input
+//! - `orchestration` - argument building, transfer execution, server config
 //!
 //! # Upstream Reference
 //!

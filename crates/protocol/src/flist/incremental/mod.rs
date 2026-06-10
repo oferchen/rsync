@@ -8,9 +8,9 @@
 //!
 //! - [`IncrementalFileList`] - Dependency-tracking state machine that yields
 //!   entries when their parent directories are available.
-//! - [`ready_entry`] - Dispatch logic that determines what action to take for
+//! - `ready_entry` - Dispatch logic that determines what action to take for
 //!   each ready entry based on type, filters, and failed directories.
-//! - [`streaming`] - Wire-level reader that feeds entries into the incremental
+//! - `streaming` - Wire-level reader that feeds entries into the incremental
 //!   processor as they arrive from the network.
 //!
 //! # Usage

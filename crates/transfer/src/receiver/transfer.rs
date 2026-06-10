@@ -4,14 +4,14 @@
 //! entry points plus the common `setup_transfer` initialization. The driving
 //! loops live in their own submodules:
 //!
-//! - [`sync`] - sequential per-file transfer used by `run_sync`.
-//! - [`pipelined`] - decoupled two-phase pipeline used by `run_pipelined`.
-//! - [`pipelined_incremental`] - same as `pipelined` plus incremental directory
+//! - `sync` - sequential per-file transfer used by `run_sync`.
+//! - `pipelined` - decoupled two-phase pipeline used by `run_pipelined`.
+//! - `pipelined_incremental` - same as `pipelined` plus incremental directory
 //!   creation and failed-dir tracking.
-//! - [`setup`] - common multiplex/filter/file-list setup.
-//! - [`phases`] - protocol phase exchange and goodbye handshake.
-//! - [`candidates`] - candidate-file selection for the pipelined paths.
-//! - [`pipeline`] - the inner `run_pipeline_loop_decoupled` plus dry-run loop.
+//! - `setup` - common multiplex/filter/file-list setup.
+//! - `phases` - protocol phase exchange and goodbye handshake.
+//! - `candidates` - candidate-file selection for the pipelined paths.
+//! - `pipeline` - the inner `run_pipeline_loop_decoupled` plus dry-run loop.
 
 mod candidates;
 mod phases;
