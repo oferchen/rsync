@@ -18,6 +18,14 @@ use super::types::{MappingKind, MappingParseError, MappingRule};
 pub struct NameMapping {
     pub(super) rules: Vec<MappingRule>,
     pub(super) kind: MappingKind,
+    /// Original specification string supplied by the caller.
+    ///
+    /// Preserved verbatim (after a trim of surrounding whitespace) so the
+    /// daemon/SSH client can forward the exact value to the server. Re-parsing
+    /// from the rule list would be lossy: a literal `*:1234` would round-trip
+    /// to a wire string that no longer signals the wildcard matcher because
+    /// the rules vector no longer carries the source representation.
+    pub(super) spec: String,
 }
 
 impl NameMapping {
@@ -64,7 +72,22 @@ impl NameMapping {
             rules.push(MappingRule { matcher, target });
         }
 
-        Ok(Self { rules, kind })
+        Ok(Self {
+            rules,
+            kind,
+            spec: trimmed.to_owned(),
+        })
+    }
+
+    /// Returns the original specification string (post-trim) used to construct
+    /// this mapping.
+    ///
+    /// Mirrors upstream rsync's behavior: when the client forwards `--usermap`
+    /// or `--groupmap` to a remote server (SSH or daemon), the spec is shipped
+    /// verbatim so wildcard characters like `*` survive the round trip.
+    #[must_use]
+    pub fn spec(&self) -> &str {
+        &self.spec
     }
 
     /// Finds the first matching rule for the given identifier.

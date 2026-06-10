@@ -510,4 +510,187 @@ mod tests {
         let result = parse_perm_spec("rwz", Operation::Add);
         assert!(result.is_err());
     }
+
+    // Upstream chmod-option.test corpus.
+    //
+    // These specs are taken verbatim from
+    // `testsuite/chmod-option.test` so any drift from upstream's
+    // `chmod.c::parse_chmod()` surfaces here instead of in interop.
+
+    #[test]
+    fn upstream_f600_parses_as_files_only_numeric_clause() {
+        // upstream: chmod-option.test - daemon module exercises `Fo-x`
+        // alongside ad-hoc CLI specs like `F600` in interop suites.
+        let clauses = parse_spec("F600").expect("parses");
+        assert_eq!(clauses.len(), 1);
+        match &clauses[0].kind {
+            ClauseKind::Numeric(num) => {
+                assert_eq!(num.mode, 0o600);
+                assert_eq!(num.target, TargetSelector::Files);
+            }
+            _ => panic!("expected numeric clause"),
+        }
+    }
+
+    #[test]
+    fn upstream_d755_parses_as_directories_only_numeric_clause() {
+        let clauses = parse_spec("D755").expect("parses");
+        assert_eq!(clauses.len(), 1);
+        match &clauses[0].kind {
+            ClauseKind::Numeric(num) => {
+                assert_eq!(num.mode, 0o755);
+                assert_eq!(num.target, TargetSelector::Directories);
+            }
+            _ => panic!("expected numeric clause"),
+        }
+    }
+
+    #[test]
+    fn upstream_fu_eq_rw_go_minus_rwx_parses_two_symbolic_clauses() {
+        // upstream: `Fu=rw,go-rwx` produces two clauses. parse_chmod resets
+        // `flags = 0` after each `,` (chmod.c:106), so the leading `F` only
+        // targets the first clause; the second clause defaults to all targets.
+        let clauses = parse_spec("Fu=rw,go-rwx").expect("parses");
+        assert_eq!(clauses.len(), 2);
+        match &clauses[0].kind {
+            ClauseKind::Symbolic(sym) => {
+                assert_eq!(sym.target, TargetSelector::Files);
+                assert_eq!(sym.op, Operation::Assign);
+                assert!(sym.who.user);
+                assert!(!sym.who.group);
+                assert!(!sym.who.other);
+                assert!(sym.perms.read);
+                assert!(sym.perms.write);
+                assert!(!sym.perms.exec);
+            }
+            _ => panic!("expected symbolic clause for u=rw"),
+        }
+        match &clauses[1].kind {
+            ClauseKind::Symbolic(sym) => {
+                assert_eq!(sym.target, TargetSelector::All);
+                assert_eq!(sym.op, Operation::Remove);
+                assert!(!sym.who.user);
+                assert!(sym.who.group);
+                assert!(sym.who.other);
+                assert!(sym.perms.read);
+                assert!(sym.perms.write);
+                assert!(sym.perms.exec);
+            }
+            _ => panic!("expected symbolic clause for go-rwx"),
+        }
+    }
+
+    #[test]
+    fn upstream_dg_plus_s_parses_directory_only_setgid_add() {
+        // upstream: `Dg+s` is the canonical recipe for new directories to
+        // inherit their parent group. Verify the parser tags it as
+        // directories-only, group who-class, add op, with the setgid flag set
+        // so `apply_special_bits` can fold it into the mode.
+        let clauses = parse_spec("Dg+s").expect("parses");
+        assert_eq!(clauses.len(), 1);
+        match &clauses[0].kind {
+            ClauseKind::Symbolic(sym) => {
+                assert_eq!(sym.target, TargetSelector::Directories);
+                assert_eq!(sym.op, Operation::Add);
+                assert!(sym.who.group);
+                assert!(!sym.who.user);
+                assert!(!sym.who.other);
+                assert!(sym.perms.setgid);
+            }
+            _ => panic!("expected symbolic clause"),
+        }
+    }
+
+    #[test]
+    fn upstream_plus_x_parses_as_conditional_exec_for_all() {
+        // upstream: bare `+X` (no who-class) marks the implied-all who and
+        // sets FLAG_X_KEEP via PermSpec::exec_if_conditional.
+        let clauses = parse_spec("+X").expect("parses");
+        assert_eq!(clauses.len(), 1);
+        match &clauses[0].kind {
+            ClauseKind::Symbolic(sym) => {
+                assert_eq!(sym.target, TargetSelector::All);
+                assert_eq!(sym.op, Operation::Add);
+                assert!(sym.who_implied);
+                assert!(sym.perms.exec_if_conditional);
+                assert!(!sym.perms.exec);
+            }
+            _ => panic!("expected symbolic clause"),
+        }
+    }
+
+    #[test]
+    fn upstream_fo_minus_x_parses_files_only_other_remove_exec() {
+        // upstream: chmod-option.test daemon module - `incoming chmod = Fo-x`.
+        let clauses = parse_spec("Fo-x").expect("parses");
+        assert_eq!(clauses.len(), 1);
+        match &clauses[0].kind {
+            ClauseKind::Symbolic(sym) => {
+                assert_eq!(sym.target, TargetSelector::Files);
+                assert_eq!(sym.op, Operation::Remove);
+                assert!(!sym.who.user);
+                assert!(!sym.who.group);
+                assert!(sym.who.other);
+                assert!(sym.perms.exec);
+            }
+            _ => panic!("expected symbolic clause"),
+        }
+    }
+
+    #[test]
+    fn upstream_ug_minus_s_a_plus_rx_d_plus_w_parses_three_clauses() {
+        // upstream: `--chmod ug-s,a+rX,D+w` from chmod-option.test.
+        let clauses = parse_spec("ug-s,a+rX,D+w").expect("parses");
+        assert_eq!(clauses.len(), 3);
+        match &clauses[0].kind {
+            ClauseKind::Symbolic(sym) => {
+                assert_eq!(sym.op, Operation::Remove);
+                assert!(sym.who.user);
+                assert!(sym.who.group);
+                assert!(!sym.who.other);
+                assert!(sym.perms.setuid);
+                assert!(sym.perms.setgid);
+            }
+            _ => panic!("expected symbolic clause for ug-s"),
+        }
+        match &clauses[1].kind {
+            ClauseKind::Symbolic(sym) => {
+                assert_eq!(sym.op, Operation::Add);
+                assert!(sym.who.user && sym.who.group && sym.who.other);
+                assert!(sym.perms.read);
+                assert!(sym.perms.exec_if_conditional);
+            }
+            _ => panic!("expected symbolic clause for a+rX"),
+        }
+        match &clauses[2].kind {
+            ClauseKind::Symbolic(sym) => {
+                assert_eq!(sym.target, TargetSelector::Directories);
+                assert_eq!(sym.op, Operation::Add);
+                assert!(sym.who_implied);
+                assert!(sym.perms.write);
+            }
+            _ => panic!("expected symbolic clause for D+w"),
+        }
+    }
+
+    #[test]
+    fn upstream_eq_with_empty_rhs_is_reset_to_zero() {
+        // upstream: `u=` clears all user-class permission bits (CHMOD_EQ with
+        // empty bits resolves to ModeAND that strips the who-class and
+        // ModeOR of 0).
+        let clauses = parse_spec("u=").expect("parses");
+        assert_eq!(clauses.len(), 1);
+        match &clauses[0].kind {
+            ClauseKind::Symbolic(sym) => {
+                assert_eq!(sym.op, Operation::Assign);
+                assert!(sym.who.user);
+                assert!(!sym.who.group);
+                assert!(!sym.who.other);
+                assert!(!sym.perms.read);
+                assert!(!sym.perms.write);
+                assert!(!sym.perms.exec);
+            }
+            _ => panic!("expected symbolic clause"),
+        }
+    }
 }

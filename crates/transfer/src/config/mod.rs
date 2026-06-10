@@ -11,6 +11,7 @@ use std::time::SystemTime;
 
 use compress::zlib::CompressionLevel;
 use engine::SkipCompressList;
+use metadata::ChmodModifiers;
 use protocol::FilenameConverter;
 use protocol::ProtocolVersion;
 use protocol::filters::FilterRuleWireFormat;
@@ -420,6 +421,54 @@ pub struct ServerConfig {
     /// - `loadparm.c` - `fake super` module parameter
     /// - `rsync.c:set_file_attrs()` - fake-super stores ownership in xattrs
     pub fake_super: bool,
+    /// Daemon module `incoming chmod` modifiers applied to received files.
+    ///
+    /// Parsed from the module's `incoming chmod = SPEC` directive in
+    /// `rsyncd.conf`. When set, the receiver rewrites the destination mode
+    /// according to the chmod-spec clauses before finalising on-disk
+    /// permissions. Push transfers (client to daemon) consult this value;
+    /// pull transfers ignore it.
+    ///
+    /// Daemon-config-driven; never populated from a client `--chmod` flag.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `clientserver.c:rsync_module()` - `parse_chmod(lp_xxx_chmod(i), &daemon_chmod_modes)`
+    /// - `loadparm.c` - `incoming chmod` module parameter
+    /// - `generator.c` / `receiver.c` - `daemon_chmod_modes` applied to incoming entries
+    pub daemon_incoming_chmod: Option<ChmodModifiers>,
+    /// Daemon module `outgoing chmod` modifiers applied to sent files.
+    ///
+    /// Parsed from the module's `outgoing chmod = SPEC` directive in
+    /// `rsyncd.conf`. When set, the sender rewrites the mode emitted on the
+    /// wire for each file list entry according to the chmod-spec clauses.
+    /// Pull transfers (daemon to client) consult this value; push transfers
+    /// ignore it.
+    ///
+    /// Daemon-config-driven; never populated from a client `--chmod` flag.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `clientserver.c:rsync_module()` - `parse_chmod(lp_xxx_chmod(i), &daemon_chmod_modes)`
+    /// - `loadparm.c` - `outgoing chmod` module parameter
+    /// - `flist.c:make_file()` - `daemon_chmod_modes` applied during flist build
+    pub daemon_outgoing_chmod: Option<ChmodModifiers>,
+    /// When true, munge symlink targets with the `/rsyncd-munged/` prefix.
+    ///
+    /// Sourced from the daemon module's `munge symlinks` directive (or its
+    /// `!use_chroot` auto default). Mirrors upstream's `munge_symlinks`
+    /// global. Propagated into [`ParsedServerFlags::munge_symlinks`] when the
+    /// server config is consumed so the sender (strip on `readlink()`) and
+    /// receiver (prepend on `symlink()` write) apply the bidirectional
+    /// transform.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `clientserver.c:992-1004` - daemon sets `munge_symlinks` from
+    ///   `lp_munge_symlinks()`.
+    /// - `flist.c:222-226` - sender strips the prefix.
+    /// - `flist.c:1122-1126` - receiver prepends the prefix.
+    pub munge_symlinks: bool,
 }
 
 impl Default for ServerConfig {
@@ -449,6 +498,9 @@ impl Default for ServerConfig {
             temp_dir: None,
             skip_compress: None,
             fake_super: false,
+            daemon_incoming_chmod: None,
+            daemon_outgoing_chmod: None,
+            munge_symlinks: false,
         }
     }
 }

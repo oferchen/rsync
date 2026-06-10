@@ -2719,6 +2719,62 @@ fn shell_safe_escaping_in_normal_mode() {
     );
 }
 
+// --usermap / --groupmap forwarding tests
+
+#[cfg(unix)]
+#[test]
+fn includes_groupmap_wildcard_verbatim() {
+    // upstream: options.c:2898 - --groupmap is forwarded verbatim under
+    // `protect_args` (the default). The wildcard `*` must survive so the
+    // receiver's `uidlist.c:parse_name_map()` installs a wildcard rule.
+    let mapping = ::metadata::GroupMapping::parse("*:1234").expect("parse");
+    let config = ClientConfig::builder().group_mapping(Some(mapping)).build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--groupmap=*:1234"),
+        "expected --groupmap=*:1234 verbatim: {args:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn includes_usermap_wildcard_verbatim() {
+    let mapping = ::metadata::UserMapping::parse("*:5678").expect("parse");
+    let config = ClientConfig::builder().user_mapping(Some(mapping)).build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter().any(|a| a == "--usermap=*:5678"),
+        "expected --usermap=*:5678 verbatim: {args:?}"
+    );
+}
+
+#[test]
+fn omits_usermap_and_groupmap_when_unset() {
+    let config = ClientConfig::builder().build();
+    let args = build_sender_args(&config);
+    assert!(
+        !args.iter().any(|a| a.starts_with("--usermap")),
+        "default config must not emit --usermap: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a.starts_with("--groupmap")),
+        "default config must not emit --groupmap: {args:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn forwards_multi_rule_groupmap_verbatim() {
+    let mapping = ::metadata::GroupMapping::parse("100-200:1234,wheel:9999,*:0").expect("parse");
+    let config = ClientConfig::builder().group_mapping(Some(mapping)).build();
+    let args = build_sender_args(&config);
+    assert!(
+        args.iter()
+            .any(|a| a == "--groupmap=100-200:1234,wheel:9999,*:0"),
+        "expected multi-rule groupmap verbatim (no rule reordering): {args:?}"
+    );
+}
+
 // --stop-at forwarding tests
 
 #[test]
