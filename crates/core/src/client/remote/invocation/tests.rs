@@ -2728,9 +2728,7 @@ fn includes_groupmap_wildcard_verbatim() {
     // `protect_args` (the default). The wildcard `*` must survive so the
     // receiver's `uidlist.c:parse_name_map()` installs a wildcard rule.
     let mapping = ::metadata::GroupMapping::parse("*:1234").expect("parse");
-    let config = ClientConfig::builder()
-        .group_mapping(Some(mapping))
-        .build();
+    let config = ClientConfig::builder().group_mapping(Some(mapping)).build();
     let args = build_sender_args(&config);
     assert!(
         args.iter().any(|a| a == "--groupmap=*:1234"),
@@ -2767,11 +2765,8 @@ fn omits_usermap_and_groupmap_when_unset() {
 #[cfg(unix)]
 #[test]
 fn forwards_multi_rule_groupmap_verbatim() {
-    let mapping =
-        ::metadata::GroupMapping::parse("100-200:1234,wheel:9999,*:0").expect("parse");
-    let config = ClientConfig::builder()
-        .group_mapping(Some(mapping))
-        .build();
+    let mapping = ::metadata::GroupMapping::parse("100-200:1234,wheel:9999,*:0").expect("parse");
+    let config = ClientConfig::builder().group_mapping(Some(mapping)).build();
     let args = build_sender_args(&config);
     assert!(
         args.iter()
