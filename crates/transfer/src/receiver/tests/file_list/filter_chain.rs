@@ -39,7 +39,7 @@ fn receiver_filter_chain_protects_from_deletion() {
     ctx.set_filter_chain(::filters::FilterChain::new(global));
 
     let mut writer = TestDeletionWriter;
-    let (stats, _) = ctx
+    let (stats, _, _) = ctx
         .delete_extraneous_files(
             dest,
             #[cfg(unix)]
@@ -91,7 +91,7 @@ fn receiver_filter_chain_empty_allows_all_deletions() {
 
     // Empty filter chain - all deletions should proceed
     let mut writer = TestDeletionWriter;
-    let (stats, _) = ctx
+    let (stats, _, _) = ctx
         .delete_extraneous_files(
             dest,
             #[cfg(unix)]
@@ -147,7 +147,7 @@ fn single_char_wildcard_exclude_does_not_block_top_level_deletion() {
     ctx.set_filter_chain(::filters::FilterChain::new(global));
 
     let mut writer = TestDeletionWriter;
-    let (stats, _) = ctx
+    let (stats, _, _) = ctx
         .delete_extraneous_files(
             dest,
             #[cfg(unix)]
@@ -180,4 +180,187 @@ fn receiver_set_and_get_filter_chain() {
     ctx.set_filter_chain(chain);
 
     assert!(!ctx.filter_chain().is_empty());
+}
+
+/// UTS-16.b.7 regression: an ordinary in-module subdir deletion must succeed
+/// with no io_error bits set, even when the sandbox is plumbed. Pins the
+/// "no over-correction" invariant: the chdir-symlink-race fix in
+/// `delete_extraneous_files` must not poison legitimate sweeps with
+/// `IOERR_GENERAL`.
+///
+/// upstream: generator.c:delete_in_dir() - the legitimate path issues a
+/// successful `secure_relative_open` and never touches io_error.
+#[cfg(unix)]
+#[test]
+fn delete_ordinary_subdir_succeeds_with_no_io_error() {
+    use std::os::unix::ffi::OsStrExt;
+    use std::sync::Arc;
+
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    // Canonicalize so the sandbox open does not trip on macOS
+    // `/tmp -> /private/tmp` under RESOLVE_NO_SYMLINKS.
+    let dest = std::fs::canonicalize(temp_dir.path()).unwrap();
+
+    // Build an in-module subdir with an extraneous file that should be deleted.
+    let subdir = dest.join("subdir");
+    std::fs::create_dir(&subdir).unwrap();
+    std::fs::write(subdir.join("keep.txt"), b"keep").unwrap();
+    std::fs::write(subdir.join("extraneous.txt"), b"extraneous").unwrap();
+
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.flags.delete = true;
+    config.args = vec![OsString::from(
+        std::str::from_utf8(dest.as_os_str().as_bytes()).unwrap(),
+    )];
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+    // Sender's flist: "." + subdir + subdir/keep.txt. extraneous.txt is missing.
+    ctx.file_list
+        .push(FileEntry::new_directory(".".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_directory("subdir".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_file("subdir/keep.txt".into(), 4, 0o644));
+
+    let sandbox = Arc::new(::fast_io::DirSandbox::open_root(&dest).expect("open sandbox"));
+
+    let mut writer = TestDeletionWriter;
+    let (stats, _exceeded, io_error_bits) = ctx
+        .delete_extraneous_files(&dest, Some(&sandbox), &mut writer)
+        .expect("delete pass must not surface io::Error on legitimate trees");
+
+    assert_eq!(
+        io_error_bits, 0,
+        "ordinary subdir deletion must not set IOERR_GENERAL"
+    );
+    assert_eq!(stats.files, 1, "extraneous.txt should be deleted");
+    assert!(
+        !subdir.join("extraneous.txt").exists(),
+        "extraneous.txt must be removed"
+    );
+    assert!(
+        subdir.join("keep.txt").exists(),
+        "keep.txt must survive a clean sweep"
+    );
+}
+
+/// UTS-16.b.6 regression: the chdir-symlink-race attack window. An
+/// attacker plants a symlink at `dest/symlinkattack` pointing outside
+/// the destination root before the receiver's `--delete` scan runs.
+/// The sandbox-anchored scan must refuse to descend through the
+/// symlink and surface `IOERR_GENERAL` so the receiver returns
+/// exit code 23 (`RERR_PARTIAL`) instead of completing silently
+/// while leaving the attacker's symlink in place.
+///
+/// Additionally asserts the outside tree is untouched - the
+/// symlink-refusal must close the syscall before any unlink can
+/// land on the attacker-chosen inode.
+///
+/// upstream: clientserver.c:1018 `use_secure_symlinks` gates the
+/// `do_*_at` wrappers in `syscall.c`; `secure_relative_open` returns
+/// `errno=ELOOP` and the caller sets `io_error |= IOERR_GENERAL`.
+#[cfg(unix)]
+#[test]
+fn delete_symlinked_subdir_surfaces_ioerr_general() {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::symlink;
+    use std::sync::Arc;
+
+    use tempfile::TempDir;
+
+    use crate::generator::io_error_flags::{IOERR_GENERAL, to_exit_code};
+
+    let temp_dir = TempDir::new().unwrap();
+    let parent = std::fs::canonicalize(temp_dir.path()).unwrap();
+
+    // The "sensitive" tree the attacker wants the receiver's scan
+    // (and any follow-up unlink) to land on - sits outside the
+    // destination root.
+    let outside = parent.join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    let outside_sentinel = outside.join("sentinel");
+    std::fs::write(&outside_sentinel, b"must-survive").unwrap();
+
+    let dest = parent.join("dest");
+    std::fs::create_dir(&dest).unwrap();
+
+    // Attacker swaps the destination subdir for a symlink to the
+    // sensitive tree above. The receiver's flist names `symlinkattack/`
+    // as a real subdir, so the scan path matches a single-component
+    // leaf under the sandbox root - the sandbox helper takes the
+    // anchored fast path with O_NOFOLLOW and refuses the leaf.
+    let attack_link = dest.join("symlinkattack");
+    symlink(&outside, &attack_link).unwrap();
+
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.flags.delete = true;
+    config.args = vec![OsString::from(
+        std::str::from_utf8(dest.as_os_str().as_bytes()).unwrap(),
+    )];
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+    // Sender's flist advertises `symlinkattack/` as a directory with a
+    // child, so the deletion scan tries to enumerate the destination
+    // subdir `dest/symlinkattack` to find extraneous entries. The
+    // attacker-controlled destination is a symlink, so the
+    // sandbox-anchored `read_dir` must refuse the leaf with ELOOP /
+    // ENOTDIR rather than enumerating the outside tree.
+    ctx.file_list
+        .push(FileEntry::new_directory(".".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_directory("symlinkattack".into(), 0o755));
+    ctx.file_list.push(FileEntry::new_file(
+        "symlinkattack/keep.txt".into(),
+        4,
+        0o644,
+    ));
+
+    let sandbox = Arc::new(::fast_io::DirSandbox::open_root(&dest).expect("open sandbox"));
+
+    let mut writer = TestDeletionWriter;
+    let (_stats, _exceeded, io_error_bits) = ctx
+        .delete_extraneous_files(&dest, Some(&sandbox), &mut writer)
+        .expect("delete pass returns Ok with IOERR_GENERAL surfaced via bits");
+
+    assert!(
+        io_error_bits & IOERR_GENERAL != 0,
+        "sandbox-rejected scan of a symlinked subdir must surface IOERR_GENERAL \
+         (got 0x{io_error_bits:x})"
+    );
+    assert_eq!(
+        to_exit_code(io_error_bits),
+        23,
+        "IOERR_GENERAL must map to exit code 23 (RERR_PARTIAL)"
+    );
+
+    // Defense-in-depth assertion: the outside tree must be untouched.
+    // The sandbox helper closes the syscall at the O_NOFOLLOW probe
+    // before any unlink dispatch, so the attacker-chosen inode never
+    // sees a write.
+    assert!(
+        outside.is_dir(),
+        "the outside tree must survive the refused scan"
+    );
+    assert!(
+        outside_sentinel.is_file(),
+        "the outside sentinel file must survive untouched"
+    );
+    assert_eq!(
+        std::fs::read(&outside_sentinel).unwrap(),
+        b"must-survive",
+        "the outside sentinel contents must be untouched"
+    );
+
+    // The symlink itself stays in place - the scan refusal must not
+    // implicitly unlink the attacker's symlink either; that decision
+    // belongs to the explicit per-entry deletion path, which the
+    // refusal short-circuited.
+    assert!(
+        attack_link.symlink_metadata().unwrap().file_type().is_symlink(),
+        "the planted symlink must remain in place (scan refusal closes the window without unlinking)"
+    );
 }
