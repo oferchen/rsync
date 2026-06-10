@@ -23,7 +23,7 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  RUSTDOCFLAGS: "--cfg docsrs -D rustdoc::broken_intra_doc_links"
+  RUSTDOCFLAGS: "-D rustdoc::broken_intra_doc_links"
 
 jobs:
   build:
