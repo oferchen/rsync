@@ -3,7 +3,7 @@
 //! This module re-exports the high-level [`SessionHandshake`] type together with helper
 //! functions that detect the negotiation style, perform the binary or legacy handshake,
 //! and expose variant-specific metadata through [`SessionHandshakeParts`]. The
-//! implementation is decomposed across the [`handshake`] and [`parts`] submodules to keep
+//! implementation is decomposed across the `handshake` and `parts` submodules to keep
 //! individual files below the workspace line-count guidelines while preserving the
 //! original public API.
 

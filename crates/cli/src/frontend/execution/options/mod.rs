@@ -6,10 +6,10 @@
 //!
 //! # Submodules
 //!
-//! - [`iconv`] - Charset specification parsing for `--iconv`
-//! - [`numeric`] - Simple numeric argument parsers (`--timeout`, `--max-delete`, etc.)
-//! - [`protocol`] - Protocol version parsing for `--protocol`
-//! - [`size`] - Size specification parsing with unit suffixes (`--block-size`, `--max-size`, etc.)
+//! - `iconv` - Charset specification parsing for `--iconv`
+//! - `numeric` - Simple numeric argument parsers (`--timeout`, `--max-delete`, etc.)
+//! - `protocol` - Protocol version parsing for `--protocol`
+//! - `size` - Size specification parsing with unit suffixes (`--block-size`, `--max-size`, etc.)
 
 mod iconv;
 mod numeric;
