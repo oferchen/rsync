@@ -1,23 +1,22 @@
-/// End-to-end tests for daemon module sub-path pull resolution.
-///
-/// Mirrors upstream `clientserver.c:1073 read_args()` + `util1.c:804
-/// glob_expand_module()` + `flist.c:2338-2349` sender per-positional split:
-/// when a client requests `rsync://h/mod/d1/d2/f2`, the wire emits a single
-/// file-list entry whose name is the basename (`f2`), so the receiver writes
-/// it directly under the destination directory instead of recreating the
-/// full sub-path.
-///
-/// Each test stands up a temporary daemon module, issues a pull, and asserts
-/// the destination layout. The cases cover the four upstream-supported sub-
-/// path shapes: a single file, a sub-directory with trailing slash, a sub-
-/// directory without trailing slash (oc-rsync's non-relative-mode dotdir
-/// semantics flatten the leaf), and a deeply nested file.
-///
-/// # Upstream Reference
-///
-/// - `clientserver.c:1073` - `read_args()` with `mod_name` triggers `glob_expand_module`
-/// - `util1.c:804`         - `glob_expand_module()` strips the module prefix
-/// - `flist.c:2338-2349`   - per-positional `dir/fn` split before `link_stat`
+// End-to-end tests for daemon module sub-path pull resolution.
+//
+// Mirrors upstream `clientserver.c:1073 read_args()` + `util1.c:804
+// glob_expand_module()` + `flist.c:2338-2349` sender per-positional split:
+// when a client requests `rsync://h/mod/d1/d2/f2`, the wire emits a single
+// file-list entry whose name is the basename (`f2`), so the receiver writes
+// it directly under the destination directory instead of recreating the
+// full sub-path.
+//
+// Each test stands up a temporary daemon module, issues a pull, and asserts
+// the destination layout. The cases cover the four upstream-supported sub-
+// path shapes: a single file, a sub-directory with trailing slash, a sub-
+// directory without trailing slash (oc-rsync's non-relative-mode dotdir
+// semantics flatten the leaf), and a deeply nested file.
+//
+// Upstream reference:
+// - `clientserver.c:1073` - `read_args()` with `mod_name` triggers `glob_expand_module`
+// - `util1.c:804`         - `glob_expand_module()` strips the module prefix
+// - `flist.c:2338-2349`   - per-positional `dir/fn` split before `link_stat`
 
 #[cfg(unix)]
 fn write_subpath_daemon_config(temp: &Path, module_dir: &Path) -> PathBuf {
