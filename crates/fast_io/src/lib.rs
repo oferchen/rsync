@@ -320,9 +320,9 @@ pub use io_uring::{
     build_linkat_sqe, build_linkat_sqe_unchecked, build_renameat2_sqe,
     build_renameat2_sqe_unchecked, build_statx_sqe, build_statx_sqe_unchecked,
     is_io_uring_available, linkat_supported, pbuf_ring_supported, reader_from_path,
-    reader_from_path_with_depth, renameat2_blocking, renameat2_supported, sqpoll_fallback_hint,
-    sqpoll_fell_back, sqpoll_unavailability_hint, statx_supported, submit_linkat_blocking,
-    submit_statx_batch, submit_statx_blocking, writer_from_file, writer_from_file_with_depth,
+    reader_from_path_with_depth, renameat2_blocking, renameat2_supported, sqpoll_fell_back,
+    statx_supported, submit_linkat_blocking, submit_statx_batch, submit_statx_blocking,
+    writer_from_file, writer_from_file_with_depth,
 };
 
 #[cfg(all(target_os = "linux", feature = "iouring-data-reads"))]

@@ -1986,13 +1986,23 @@ fn write_delta_with_compression_plain_fallback() {
 }
 
 #[test]
-fn del_stats_sent_without_do_stats_when_deleting() {
-    // URV-6.a: upstream 3.4.4 removed the INFO_GTE(STATS, 2) gate. del_stats
-    // must be emitted whenever delete_mode is active, regardless of --stats.
-    // upstream: generator.c:2394 in 3.4.4 - early path no longer references STATS
+fn del_stats_not_sent_without_do_stats() {
+    // upstream: INFO_GTE(STATS, 2) is false => never send del_stats
     let handshake = test_handshake();
     let mut config = test_config();
     config.do_stats = false;
+    config.flags.delete = true;
+    config.deletion.late_delete = false;
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
+    assert!(!ctx.should_send_del_stats());
+}
+
+#[test]
+fn del_stats_early_sent_with_do_stats_and_delete() {
+    // upstream: generator.c:2377 - early path: INFO_GTE(STATS, 2) && delete_mode
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.do_stats = true;
     config.flags.delete = true;
     config.deletion.late_delete = false;
     let ctx = GeneratorContext::new_for_test(&handshake, config);
@@ -2000,9 +2010,8 @@ fn del_stats_sent_without_do_stats_when_deleting() {
 }
 
 #[test]
-fn del_stats_not_sent_when_no_delete() {
-    // upstream: generator.c:2394 in 3.4.4 - !(delete_mode||force_delete||read_batch)
-    // skips write_del_stats regardless of --stats.
+fn del_stats_early_not_sent_without_delete() {
+    // upstream: generator.c:2377 - early path requires delete_mode || force_delete
     let handshake = test_handshake();
     let mut config = test_config();
     config.do_stats = true;
@@ -2013,52 +2022,39 @@ fn del_stats_not_sent_when_no_delete() {
 }
 
 #[test]
-fn del_stats_early_sent_with_delete() {
-    // upstream: generator.c:2394 in 3.4.4 - early path: delete_mode (no STATS gate)
-    let handshake = test_handshake();
-    let mut config = test_config();
-    config.do_stats = true;
-    config.flags.delete = true;
-    config.deletion.late_delete = false;
-    let ctx = GeneratorContext::new_for_test(&handshake, config);
-    assert!(ctx.should_send_del_stats());
-}
-
-#[test]
-fn del_stats_late_sent_with_delete() {
-    // upstream: generator.c:2439 in 3.4.4 - late path: delete_mode (no STATS gate)
-    let handshake = test_handshake();
-    let mut config = test_config();
-    config.do_stats = true;
-    config.flags.delete = true;
-    config.deletion.late_delete = true;
-    let ctx = GeneratorContext::new_for_test(&handshake, config);
-    assert!(ctx.should_send_del_stats());
-}
-
-#[test]
-fn del_stats_late_sent_without_do_stats() {
-    // URV-6.a: late path must also emit del_stats without --stats in 3.4.4.
-    // upstream: generator.c:2439 in 3.4.4 - no INFO_GTE(STATS, 2) requirement
-    let handshake = test_handshake();
-    let mut config = test_config();
-    config.do_stats = false;
-    config.flags.delete = true;
-    config.deletion.late_delete = true;
-    let ctx = GeneratorContext::new_for_test(&handshake, config);
-    assert!(ctx.should_send_del_stats());
-}
-
-#[test]
-fn del_stats_late_not_sent_without_delete() {
-    // upstream: generator.c:2439 in 3.4.4 - late path skipped when delete inactive
+fn del_stats_late_sent_with_do_stats_only() {
+    // upstream: generator.c:2422 - late path: INFO_GTE(STATS, 2) is sufficient
     let handshake = test_handshake();
     let mut config = test_config();
     config.do_stats = true;
     config.flags.delete = false;
     config.deletion.late_delete = true;
     let ctx = GeneratorContext::new_for_test(&handshake, config);
+    assert!(ctx.should_send_del_stats());
+}
+
+#[test]
+fn del_stats_late_not_sent_without_do_stats() {
+    // upstream: INFO_GTE(STATS, 2) is false => even late path skips del_stats
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.do_stats = false;
+    config.flags.delete = true;
+    config.deletion.late_delete = true;
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
     assert!(!ctx.should_send_del_stats());
+}
+
+#[test]
+fn del_stats_late_with_delete_and_stats() {
+    // upstream: late path with both delete_mode and stats - should send
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.do_stats = true;
+    config.flags.delete = true;
+    config.deletion.late_delete = true;
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
+    assert!(ctx.should_send_del_stats());
 }
 
 #[test]
