@@ -145,7 +145,8 @@ pub use cancel::{
     cancel_all_by_fd, cancel_by_user_data,
 };
 pub use config::{
-    IoUringConfig, IoUringKernelInfo, config_detail, is_io_uring_available, sqpoll_fell_back,
+    IoUringConfig, IoUringKernelInfo, config_detail, is_io_uring_available,
+    sqpoll_fallback_hint, sqpoll_fell_back, sqpoll_unavailability_hint,
 };
 #[cfg(feature = "iouring-data-reads")]
 pub use data_reader::IoUringFileReader;
