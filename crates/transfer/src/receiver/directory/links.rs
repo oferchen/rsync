@@ -45,7 +45,7 @@ impl ReceiverContext {
                 continue;
             }
 
-            let target = match entry.link_target() {
+            let wire_target = match entry.link_target() {
                 Some(t) => t,
                 None => continue,
             };
@@ -54,9 +54,12 @@ impl ReceiverContext {
 
             // upstream: generator.c:1547 - skip unsafe symlinks when --safe-links
             // is set. Check stays here (not in sanitize_file_list) to preserve
-            // protocol index alignment with the sender.
+            // protocol index alignment with the sender. Safe-link evaluation
+            // runs against the wire target (pre-munge) so the policy decision
+            // matches upstream's `flist.c` ordering where the munge prefix is
+            // applied only after safety checks complete.
             if self.config.flags.safe_links
-                && crate::symlink_safety::is_unsafe_symlink(target.as_os_str(), relative_path)
+                && crate::symlink_safety::is_unsafe_symlink(wire_target.as_os_str(), relative_path)
             {
                 // upstream: generator.c:1554 - log skipped unsafe symlinks
                 info_log!(
@@ -64,10 +67,23 @@ impl ReceiverContext {
                     1,
                     "skipping unsafe symlink \"{}\" -> \"{}\"",
                     relative_path.display(),
-                    target.display()
+                    wire_target.display()
                 );
                 continue;
             }
+
+            // upstream: flist.c:1122-1126 - receiver prepends `/rsyncd-munged/`
+            // to the symlink target when the daemon enabled `munge symlinks`,
+            // so the on-disk link cannot resolve outside the module root when
+            // followed. Apply once here so both the quick-check comparison and
+            // the create syscall see the prefixed form.
+            let munged: std::path::PathBuf;
+            let target: &std::path::Path = if self.config.munge_symlinks {
+                munged = apply_symlink_munge_prefix(wire_target);
+                munged.as_path()
+            } else {
+                wire_target.as_path()
+            };
 
             let link_path = dest_dir.join(relative_path);
 
@@ -415,6 +431,27 @@ impl ReceiverContext {
         // during file list reception (normalize_pre30_hardlinks), so the
         // protocol 30+ path above handles both versions uniformly.
     }
+}
+
+/// Prepends the `/rsyncd-munged/` prefix to a symlink target.
+///
+/// Mirrors upstream `flist.c:1122-1126` where the receiver prepends
+/// `SYMLINK_PREFIX` to the wire target so the on-disk symlink cannot resolve
+/// outside the module root when followed. Only invoked when the daemon module
+/// has `munge symlinks = yes` (or the `!use_chroot` auto default).
+///
+/// The transform is a pure byte-level prepend so a non-UTF-8 target still
+/// receives the ASCII prefix without any lossy decode. The matching strip
+/// happens on the sender via `strip_symlink_munge_prefix` in
+/// `crate::generator::file_list::entry`.
+#[cfg(unix)]
+pub(in crate::receiver) fn apply_symlink_munge_prefix(target: &Path) -> std::path::PathBuf {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+    let mut bytes = ::metadata::SYMLINK_MUNGE_PREFIX.as_bytes().to_vec();
+    bytes.extend_from_slice(target.as_os_str().as_bytes());
+    std::path::PathBuf::from(OsString::from_vec(bytes))
 }
 
 #[cfg(test)]

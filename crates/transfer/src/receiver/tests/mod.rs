@@ -19,6 +19,8 @@ mod delta_apply;
 mod errors_and_timeouts;
 mod file_list;
 mod hard_links;
+#[cfg(unix)]
+mod munge_symlinks;
 mod parallel_delta_notice;
 mod partial_resume;
 mod support;
