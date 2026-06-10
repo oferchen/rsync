@@ -1825,6 +1825,12 @@ mod module_access_tests {
     // (URV-5.a): a malicious client must never get as far as causing the
     // receiver to attempt an open() on `../../etc`.
 
+    // The `/etc`-shaped fixtures below are inherently Unix-absolute. On
+    // Windows `/etc` is a relative path, so the lexical helper skips it
+    // (DirSandbox is the authoritative gate there). Gate these cases to
+    // Unix; portable shapes (relative paths, Windows drive-letter forms,
+    // UNC extended-length prefixes) are covered separately below.
+    #[cfg(unix)]
     #[test]
     fn find_outside_module_path_rejects_alt_basis_absolute_escape() {
         let module_dir = tempfile::tempdir().unwrap();
@@ -1858,6 +1864,7 @@ mod module_access_tests {
         assert!(find_outside_module_path(&args, &module_root).is_none());
     }
 
+    #[cfg(unix)]
     #[test]
     fn find_outside_module_path_rejects_alt_basis_long_form_spelling() {
         // upstream sends `--compare-destination` / `--copy-destination` /
@@ -1882,6 +1889,7 @@ mod module_access_tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn find_outside_module_path_separate_arg_form_is_recognised() {
         // Both `--copy-dest=/etc` and `--copy-dest /etc` must be caught -
