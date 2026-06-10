@@ -1,0 +1,35 @@
+# SELinux type-enforcement policy for oc-rsyncd daemon.
+# Compatible with upstream rsync's selinux policy.
+# Build: make -f /usr/share/selinux/devel/Makefile oc_rsyncd.pp
+# Install: semodule -i oc_rsyncd.pp
+# Activate: chcon -t oc_rsyncd_exec_t /usr/sbin/oc-rsyncd
+
+policy_module(oc_rsyncd, 1.0.0)
+
+require {
+    type rsync_data_t;
+    attribute file_type;
+    class capability { net_bind_service chown };
+}
+
+# Define oc-rsyncd domain
+type oc_rsyncd_t;
+type oc_rsyncd_exec_t;
+init_daemon_domain(oc_rsyncd_t, oc_rsyncd_exec_t)
+
+# Allow oc-rsyncd to bind to rsync_port_t (873)
+corenet_tcp_bind_generic_node(oc_rsyncd_t)
+corenet_tcp_bind_rsync_port(oc_rsyncd_t)
+
+# Allow read of config files
+files_read_etc_files(oc_rsyncd_t)
+
+# Allow read/write of module data (uses upstream rsync's data type)
+allow oc_rsyncd_t rsync_data_t:file rw_file_perms;
+allow oc_rsyncd_t rsync_data_t:dir rw_dir_perms;
+
+# Allow chown for --chown module configs
+allow oc_rsyncd_t self:capability { net_bind_service chown };
+
+# Logging
+logging_send_syslog_msg(oc_rsyncd_t)
