@@ -83,9 +83,10 @@ fn module_definition_allow_match_short_circuits_deny() {
 
 #[test]
 fn module_definition_deny_applies_when_allow_does_not_match() {
-    // upstream: access.c:281-288 - when the allow list is non-empty but
+    // upstream: access.c:281-291 - when the allow list is non-empty but
     // the peer matches none of its entries, fall through to the deny list.
-    // A deny-list match here refuses the connection; a non-match admits.
+    // A deny-list match here refuses the connection; a non-match admits
+    // (access.c:290-291 "Allow all other access").
     let def = ModuleDefinition {
         hosts_allow: vec![HostPattern::Ipv4 {
             network: Ipv4Addr::new(192, 168, 0, 0),
@@ -100,10 +101,12 @@ fn module_definition_deny_applies_when_allow_does_not_match() {
     let denied = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
     assert!(!def.permits(denied, None));
 
-    // Peer outside both allow and deny: refused because the allow list is
-    // non-empty and the peer matches nothing (upstream access.c:282).
+    // Peer outside both allow and deny: admitted because access.c:287
+    // returns 0 only on a deny-list match; otherwise access.c:291 allows.
+    // The allow-list non-match short-circuits to refuse only when the
+    // deny list is empty (access.c:281-282).
     let outside_both = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1));
-    assert!(!def.permits(outside_both, None));
+    assert!(def.permits(outside_both, None));
 }
 
 #[test]
