@@ -36,7 +36,7 @@
 //! `Drop` only deallocates user memory and never touches the ring; the
 //! kernel would still hold the pinning until the ring fd later closes.
 //! However, the documented ordering matches the implementation in
-//! [`super::file_reader`] and [`super::file_writer`].
+//! `super::file_reader` and `super::file_writer`.
 //!
 //! # Why Drop does not call `unregister_buffers`
 //!
