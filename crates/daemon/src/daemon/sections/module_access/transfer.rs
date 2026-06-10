@@ -119,43 +119,61 @@ fn validate_module_path(
     Ok(false)
 }
 
-/// Rejects client-supplied `--temp-dir` / `--partial-dir` / `--backup-dir`
-/// paths that resolve outside the module root.
+/// Client-supplied path flags that point at directories the daemon must be
+/// able to write to during the transfer. Each entry is the canonical flag
+/// name as it appears on the wire from the client; both `--flag=value` and
+/// `--flag value` forms are recognised.
 ///
-/// The audit (SEC-1.p, section 10) recommends REJECT over widening the
-/// Landlock allowlist: rsync's own chroot mode behaves the same way, and
-/// expanding the writable surface to honour an attacker-supplied prefix
-/// undermines the whole point of the sandbox. Returns `Ok(true)` when every
-/// requested path is in-tree (or absent); returns `Ok(false)` after
-/// emitting an `@ERROR` reply when a path escapes the module root.
-fn validate_client_paths_in_module(
-    ctx: &mut ModuleRequestContext<'_>,
-    module: &ModuleRuntime,
-    client_args: &[String],
-) -> io::Result<bool> {
-    let Ok(module_root) = module.path.canonicalize() else {
-        // Module path failed to canonicalize - the existence check above
-        // already succeeded, so this is a race or a permission problem; let
-        // the transfer continue and fail with a more precise error later.
-        return Ok(true);
-    };
+/// The list covers two families:
+///
+/// - **Receiver write targets** (`--temp-dir`, `--partial-dir`,
+///   `--backup-dir`): rsync writes files into these locations during a
+///   transfer, so an attacker-supplied absolute path outside the module
+///   root would otherwise escape module containment.
+/// - **Alt-basis sources** (`--compare-dest`, `--copy-dest`, `--link-dest`
+///   plus their long-form `--compare-destination` / `--copy-destination` /
+///   `--link-destination` spellings): the receiver reads (and for
+///   `--copy-dest` / `--link-dest` also `linkat`s from) these locations as
+///   the basis for delta reconstruction. An out-of-module absolute path
+///   here would expose arbitrary filesystem content as a copy source until
+///   the `DirSandbox` open-time check (URV-5.a) catches it. We reject
+///   lexically as the first defense layer so the daemon never opens those
+///   handles in the first place.
+const CONTAINED_PATH_FLAGS: &[&str] = &[
+    "--temp-dir",
+    "--partial-dir",
+    "--backup-dir",
+    "--compare-dest",
+    "--compare-destination",
+    "--copy-dest",
+    "--copy-destination",
+    "--link-dest",
+    "--link-destination",
+];
 
+/// Identifies the first client-supplied flag whose path resolves outside
+/// `module_root`. Returns `Some((flag_name, raw_path))` for the offending
+/// argument, or `None` when every recognised flag is either absent,
+/// relative, or already in-tree.
+///
+/// Pure helper - performs no I/O beyond `canonicalize()` on the supplied
+/// arguments. Side-effects (writing `@ERROR`, logging) live in the caller.
+fn find_outside_module_path(
+    client_args: &[String],
+    module_root: &Path,
+) -> Option<(&'static str, String)> {
     let mut iter = client_args.iter().peekable();
     while let Some(arg) = iter.next() {
-        let candidate = if let Some(rest) = arg.strip_prefix("--temp-dir=") {
-            Some(("--temp-dir", rest.to_owned()))
-        } else if let Some(rest) = arg.strip_prefix("--partial-dir=") {
-            Some(("--partial-dir", rest.to_owned()))
-        } else if let Some(rest) = arg.strip_prefix("--backup-dir=") {
-            Some(("--backup-dir", rest.to_owned()))
-        } else if matches!(
-            arg.as_str(),
-            "--temp-dir" | "--partial-dir" | "--backup-dir"
-        ) {
-            iter.next().map(|v| (arg.as_str(), v.clone()))
-        } else {
-            None
-        };
+        let candidate = CONTAINED_PATH_FLAGS.iter().find_map(|flag| {
+            let eq_prefix = format!("{flag}=");
+            if let Some(rest) = arg.strip_prefix(eq_prefix.as_str()) {
+                Some((*flag, rest.to_owned()))
+            } else if arg.as_str() == *flag {
+                iter.next().map(|v| (*flag, v.clone()))
+            } else {
+                None
+            }
+        });
 
         let Some((flag, raw_path)) = candidate else {
             continue;
@@ -169,27 +187,65 @@ fn validate_client_paths_in_module(
         }
 
         let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        if canonical.starts_with(&module_root) {
+        if canonical.starts_with(module_root) {
             continue;
         }
 
-        let payload = format!("@ERROR: {flag} path '{raw_path}' is outside module root");
-        send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
-        if let Some(log) = ctx.log_sink {
-            let text = format!(
-                "module '{}': rejected {flag}='{raw_path}' from {} ({}) - outside module root '{}'",
-                ctx.request,
-                ctx.effective_host().unwrap_or("unknown"),
-                ctx.peer_ip,
-                module_root.display(),
-            );
-            let message = rsync_error!(1, text).with_role(Role::Daemon);
-            log_message(log, &message);
-        }
-        return Ok(false);
+        return Some((flag, raw_path));
     }
 
-    Ok(true)
+    None
+}
+
+/// Rejects client-supplied path arguments that resolve outside the module
+/// root.
+///
+/// Covers two families of flags (see [`CONTAINED_PATH_FLAGS`]):
+/// - Receiver write targets: `--temp-dir`, `--partial-dir`, `--backup-dir`.
+/// - Alt-basis sources: `--compare-dest`, `--copy-dest`, `--link-dest`
+///   (plus their `--*-destination` long-form spellings).
+///
+/// The audit (SEC-1.p, section 10) recommends REJECT over widening the
+/// Landlock allowlist: rsync's own chroot mode behaves the same way, and
+/// expanding the writable / readable surface to honour an attacker-supplied
+/// prefix undermines the whole point of the sandbox. For alt-basis flags
+/// this is also the first layer of defense in front of the `DirSandbox`
+/// open-time check (URV-5.a), so a malicious client can't even cause the
+/// receiver to attempt an open on `../../etc/passwd`.
+///
+/// Returns `Ok(true)` when every requested path is in-tree (or absent);
+/// returns `Ok(false)` after emitting an `@ERROR` reply when a path escapes
+/// the module root.
+fn validate_client_paths_in_module(
+    ctx: &mut ModuleRequestContext<'_>,
+    module: &ModuleRuntime,
+    client_args: &[String],
+) -> io::Result<bool> {
+    let Ok(module_root) = module.path.canonicalize() else {
+        // Module path failed to canonicalize - the existence check above
+        // already succeeded, so this is a race or a permission problem; let
+        // the transfer continue and fail with a more precise error later.
+        return Ok(true);
+    };
+
+    let Some((flag, raw_path)) = find_outside_module_path(client_args, &module_root) else {
+        return Ok(true);
+    };
+
+    let payload = format!("@ERROR: {flag} path '{raw_path}' is outside module root");
+    send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+    if let Some(log) = ctx.log_sink {
+        let text = format!(
+            "module '{}': rejected {flag}='{raw_path}' from {} ({}) - outside module root '{}'",
+            ctx.request,
+            ctx.effective_host().unwrap_or("unknown"),
+            ctx.peer_ip,
+            module_root.display(),
+        );
+        let message = rsync_error!(1, text).with_role(Role::Daemon);
+        log_message(log, &message);
+    }
+    Ok(false)
 }
 
 /// Engages the SEC-1.p Landlock LSM allowlist for the receiver path.
@@ -651,11 +707,13 @@ fn process_approved_module(
         return Ok(());
     }
 
-    // SEC-1.p: reject client-supplied --temp-dir / --partial-dir /
-    // --backup-dir paths that resolve outside the module root. Done before
-    // chroot so we can report a precise error message; the Landlock
-    // allowlist that follows would otherwise block the writes anyway with
-    // a less descriptive EACCES from the kernel.
+    // SEC-1.p / URV-5.b.1: reject client-supplied --temp-dir /
+    // --partial-dir / --backup-dir / --compare-dest / --copy-dest /
+    // --link-dest paths (both short and `-destination` long-form spellings)
+    // that resolve outside the module root. Done before chroot so we can
+    // report a precise error message; the Landlock allowlist and the
+    // DirSandbox open-time check (URV-5.a) that follow would otherwise
+    // block the access anyway with a less descriptive EACCES.
     if !validate_client_paths_in_module(ctx, module, &client_args)? {
         return Ok(());
     }

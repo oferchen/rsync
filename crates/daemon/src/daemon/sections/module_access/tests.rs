@@ -1816,4 +1816,87 @@ mod module_access_tests {
         // Absolute path is forced under the module root - no escape.
         assert_eq!(dest, std::path::Path::new("/srv/upload/etc/passwd"));
     }
+
+    // URV-5.b.1: alt-basis flags (--compare-dest / --copy-dest / --link-dest
+    // and their `--*-destination` long-form spellings) must be lexically
+    // rejected when they resolve outside the module root, mirroring the
+    // existing temp-dir / partial-dir / backup-dir behaviour. This is the
+    // first defense layer in front of the DirSandbox open-time check
+    // (URV-5.a): a malicious client must never get as far as causing the
+    // receiver to attempt an open() on `../../etc`.
+
+    #[test]
+    fn find_outside_module_path_rejects_alt_basis_absolute_escape() {
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+        // Client tries to use an absolute system path as the copy-dest
+        // basis - this is the GHSA-style "--copy-dest=../../etc" escape
+        // (after the client side resolves the relative form, the daemon
+        // sees an absolute path outside the module root).
+        let args = vec![
+            "--server".to_owned(),
+            "--copy-dest=/etc".to_owned(),
+            ".".to_owned(),
+        ];
+        let result = find_outside_module_path(&args, &module_root);
+        let (flag, raw_path) = result.expect("expected --copy-dest=/etc to be rejected");
+        assert_eq!(flag, "--copy-dest");
+        assert_eq!(raw_path, "/etc");
+    }
+
+    #[test]
+    fn find_outside_module_path_accepts_alt_basis_relative_under_module() {
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+        // Relative paths are accepted - they resolve under the module root
+        // (or inside the chroot CWD) so they cannot escape containment.
+        let args = vec![
+            "--server".to_owned(),
+            "--copy-dest=alt-basis".to_owned(),
+            ".".to_owned(),
+        ];
+        assert!(find_outside_module_path(&args, &module_root).is_none());
+    }
+
+    #[test]
+    fn find_outside_module_path_rejects_alt_basis_long_form_spelling() {
+        // upstream sends `--compare-destination` / `--copy-destination` /
+        // `--link-destination` on the wire when the client uses any of
+        // those flags (options.c:1873-1875). Make sure the long-form
+        // spellings are caught too.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+        for flag in [
+            "--compare-destination",
+            "--copy-destination",
+            "--link-destination",
+        ] {
+            let args = vec![
+                "--server".to_owned(),
+                format!("{flag}=/etc"),
+                ".".to_owned(),
+            ];
+            let (got_flag, _) = find_outside_module_path(&args, &module_root)
+                .unwrap_or_else(|| panic!("expected {flag}=/etc to be rejected"));
+            assert_eq!(got_flag, flag);
+        }
+    }
+
+    #[test]
+    fn find_outside_module_path_separate_arg_form_is_recognised() {
+        // Both `--copy-dest=/etc` and `--copy-dest /etc` must be caught -
+        // upstream serializes either depending on how the user wrote it.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+        let args = vec![
+            "--server".to_owned(),
+            "--link-dest".to_owned(),
+            "/etc".to_owned(),
+            ".".to_owned(),
+        ];
+        let (flag, raw_path) = find_outside_module_path(&args, &module_root)
+            .expect("expected --link-dest /etc to be rejected");
+        assert_eq!(flag, "--link-dest");
+        assert_eq!(raw_path, "/etc");
+    }
 }
