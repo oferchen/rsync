@@ -207,6 +207,17 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .action(ArgAction::SetTrue),
             )
             .arg(
+                Arg::new("lsm-status")
+                    .long("lsm-status")
+                    .help(
+                        "Print the Linux Security Module diagnostic \
+                         (active LSMs, Landlock support, seccomp state, \
+                         io_uring SQPOLL opt-out policy) for the current \
+                         process and exit.",
+                    )
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
                 Arg::new("simd")
                     .long("simd")
                     .value_name("LEVEL")

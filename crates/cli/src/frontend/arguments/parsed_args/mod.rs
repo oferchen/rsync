@@ -40,6 +40,9 @@ pub struct ParsedArgs {
     /// `--io-uring-status` - print the io_uring capability matrix and exit.
     pub show_io_uring_status: bool,
 
+    /// `--lsm-status` - print the Linux Security Module diagnostic and exit.
+    pub show_lsm_status: bool,
+
     /// `--human-readable`, `-h` (repeatable for higher levels).
     pub human_readable: Option<HumanReadableMode>,
 

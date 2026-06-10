@@ -133,3 +133,25 @@ cargo build --release --bin oc-rsync \
 - Stackable with chroot, mount namespaces, AppArmor, SELinux, and Landlock. No extra system dependencies; `seccompiler` is a pure-Rust crate that talks to `seccomp(2)` directly.
 
 The 14-day bake window starts at merge of the opt-in feature. After zero missing-syscall reports, a follow-up PR flips the feature on by default for Linux release builds; operators who need to opt out get `--no-default-features` or a build-time exclude.
+
+## Diagnostics: `--lsm-status` flag
+
+Run the client with `--lsm-status` to print a one-shot Linux Security Module diagnostic for the current process and exit. The output covers the active LSM list, Landlock probe, seccomp state, and io_uring SQPOLL opt-out policy:
+
+```sh
+oc-rsync --lsm-status
+```
+
+Sample output on a 6.x Linux host:
+
+```text
+oc-rsync LSM diagnostic:
+  active LSMs: lockdown,capability,landlock,yama,apparmor,bpf
+  Landlock: available (kernel >= 5.13)
+  seccomp: NOT applied (current process is the CLI, not a daemon worker)
+  --no-io-uring-sqpoll: not set (SQPOLL would be requested if available)
+```
+
+The diagnostic is process-local: it reports the security posture of the CLI process itself, which is **not** a daemon worker. Daemon-side hardening (seccomp filter, Landlock allowlist, capability drop) engages only inside the per-connection worker. Use the daemon startup log to inspect those layers; use `--lsm-status` to confirm that the binary's compile-time `landlock` feature is honoured by the running kernel.
+
+When a mandatory access control LSM (SELinux, AppArmor, Smack, Tomoyo) is present and the receiver path swallows a `Permission denied` while creating destination directories, the client emits a single info-level hint pointing at `ausearch -m AVC -ts recent` so operators can correlate the EACCES with an LSM AVC denial. The hint fires at most once per transfer to keep large file counts from flooding the log.

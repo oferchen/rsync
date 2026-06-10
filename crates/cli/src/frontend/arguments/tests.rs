@@ -991,6 +991,31 @@ mod negation_flags {
         let parsed = parse_test_args(["--no-itemize-changes", "src/", "dst/"]).expect("parse");
         assert!(!parsed.itemize_changes);
     }
+
+    #[test]
+    fn lsm_status_flag_parses_and_dispatches() {
+        // --lsm-status is a top-level diagnostic flag with no value;
+        // the parser surfaces it as a bool the preflight dispatcher
+        // reads to decide whether to print the diagnostic and exit.
+        let parsed = parse_test_args(["--lsm-status"]).expect("parse");
+        assert!(
+            parsed.show_lsm_status,
+            "--lsm-status must set ParsedArgs::show_lsm_status"
+        );
+        assert!(
+            !parsed.show_io_uring_status,
+            "unrelated --io-uring-status flag must stay false"
+        );
+    }
+
+    #[test]
+    fn lsm_status_default_false_without_flag() {
+        let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+        assert!(
+            !parsed.show_lsm_status,
+            "show_lsm_status must default to false when --lsm-status is absent"
+        );
+    }
 }
 
 mod option_values {
