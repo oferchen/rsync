@@ -216,9 +216,7 @@ impl MapStrategy for BufferedMap {
         let end = start.checked_add(len).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!(
-                    "buffered map_file range overflowed: start={start} len={len}"
-                ),
+                format!("buffered map_file range overflowed: start={start} len={len}"),
             )
         })?;
         self.buffer.get(start..end).ok_or_else(|| {
@@ -347,16 +345,16 @@ mod tests {
         // private; drive it through the public `map_ptr` entry that all four
         // untrusted callers use (token_loop.rs, response.rs, sync.rs,
         // applicator.rs).
-        let slice = MapStrategy::map_ptr(&mut map, 0, FILE_SIZE).expect(
-            "legitimate full-file map_ptr must return Ok, not 'exceeds buffer length' Err",
-        );
+        let slice = MapStrategy::map_ptr(&mut map, 0, FILE_SIZE)
+            .expect("legitimate full-file map_ptr must return Ok, not 'exceeds buffer length' Err");
         assert_eq!(slice.len(), FILE_SIZE);
         assert_eq!(slice, &payload[..]);
 
         // The clamp invariant: window_len reflects the file's remaining
         // bytes (48128), never the requested max_window (262144).
         assert_eq!(
-            map.window_len, FILE_SIZE,
+            map.window_len,
+            FILE_SIZE,
             "window_len must clamp to remaining file bytes ({FILE_SIZE}), got {actual}",
             actual = map.window_len,
         );
