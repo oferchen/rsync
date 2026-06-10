@@ -18,7 +18,7 @@ use super::super::super::{
 };
 #[cfg(any(
     not(all(any(unix, windows), feature = "acl")),
-    not(all(unix, feature = "xattr"))
+    not(all(any(unix, windows), feature = "xattr"))
 ))]
 use super::super::messages::fail_with_custom_fallback;
 use super::super::messages::fail_with_message;
@@ -173,7 +173,7 @@ where
     #[cfg(all(any(unix, windows), feature = "acl"))]
     let _ = preserve_acls;
 
-    #[cfg(not(all(unix, feature = "xattr")))]
+    #[cfg(not(all(any(unix, windows), feature = "xattr")))]
     if xattrs.unwrap_or(false) {
         let message = rsync_error!(1, "extended attributes are not supported on this client")
             .with_role(Role::Client);
@@ -181,11 +181,35 @@ where
         return Err(fail_with_custom_fallback(message, fallback, stderr));
     }
 
-    #[cfg(all(unix, feature = "xattr"))]
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
     let _ = xattrs;
 
-    #[cfg(all(unix, feature = "acl", feature = "xattr"))]
+    #[cfg(all(any(unix, windows), feature = "acl", feature = "xattr"))]
     let _ = stderr;
 
     Ok(())
+}
+
+#[cfg(all(test, target_os = "windows", feature = "xattr"))]
+mod tests {
+    use super::validate_feature_support;
+    use logging_sink::MessageSink;
+
+    /// Windows builds with the `xattr` feature must accept `--xattrs` and not
+    /// fall through to the preflight rejection. Mirrors the Unix path so the
+    /// FindFirstStreamW ADS implementation in `metadata::xattr_windows` can run.
+    #[test]
+    fn xattrs_accepted_on_windows_with_feature() {
+        let mut sink = MessageSink::new(Vec::<u8>::new());
+        let result = validate_feature_support(false, Some(true), &mut sink);
+        assert!(
+            result.is_ok(),
+            "--xattrs preflight should succeed on Windows with feature = xattr"
+        );
+        let stderr = String::from_utf8_lossy(sink.writer());
+        assert!(
+            !stderr.contains("extended attributes are not supported on this client"),
+            "preflight should not emit unsupported-xattr rejection: {stderr}"
+        );
+    }
 }
