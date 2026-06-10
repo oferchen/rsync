@@ -145,7 +145,7 @@ Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
 - SIMD vs scalar self-test added (cargo-fuzz target + unit test) cross-validating AVX2, SSE2, NEON, and scalar implementations at startup (3.4.2 parity)
 
 **Upstream interop**
-- Pinned upstream interop matrix bumped to rsync **3.4.4** (in addition to 2.6.9, 3.0.9, 3.1.3, 3.4.1, 3.4.2, 3.4.3)
+- Pinned upstream interop matrix simplified to rsync **3.4.4** as the sole 3.4.x cell (alongside 2.6.9, 3.0.9, 3.1.3); 3.4.1/3.4.2/3.4.3 share the same wire protocol and are superseded by 3.4.4
 - All upstream `testsuite/*.test` tests now pass - known-failures roster is empty
 - Wire differential fuzzing validates protocol-level byte equivalence against upstream
 - Scheduled GitHub Actions watcher for new upstream releases
@@ -168,7 +168,7 @@ Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
 
 ### Interop Testing
 
-Tested against upstream rsync **2.6.9**, **3.0.9**, **3.1.3**, **3.4.1**, **3.4.2**, **3.4.3**, and **3.4.4** in CI across protocols 28-32. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth. Wire differential fuzzing against upstream rsync validates protocol-level byte equivalence. See the [full interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for per-version, per-feature, and per-platform detail.
+Tested against upstream rsync **2.6.9**, **3.0.9**, **3.1.3**, and **3.4.4** in CI across protocols 28-32. The 3.4.x series shares protocol 32 and is represented in the matrix by 3.4.4, the latest conservative regression-fix release; 3.4.1/3.4.2/3.4.3 cells are subsumed because they run identical wire scenarios. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth. Wire differential fuzzing against upstream rsync validates protocol-level byte equivalence. See the [full interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for per-version, per-feature, and per-platform detail.
 
 ### Supported rsync protocol versions
 
@@ -193,9 +193,6 @@ Per-version dispatch is implemented as `protocol_version` gates in the wire code
 | 2.6.9                  | 29       | pull (daemon)            | non-blocking (RP28.d) |
 | 3.0.9                  | 30       | push, pull, daemon       | gating |
 | 3.1.3                  | 31       | push, pull, daemon       | gating |
-| 3.4.1                  | 32       | push, pull, daemon, SSH  | gating |
-| 3.4.2                  | 32       | push, pull, daemon       | gating |
-| 3.4.3                  | 32       | push, pull, daemon, SSH  | gating |
 | 3.4.4                  | 32       | push, pull, daemon, SSH  | gating |
 
 Wire format is verified byte-identical to upstream rsync via CI golden-byte tests for the listed versions. Wire differential fuzzing validates protocol-level byte equivalence against upstream. Other versions may work but are not regression-tested.
