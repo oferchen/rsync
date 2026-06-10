@@ -155,6 +155,8 @@ pub mod splice;
 pub mod syscall_batch;
 /// Zero-copy file writer that pushes literal chunks via `vmsplice` + `splice`.
 pub mod vmsplice_writer;
+/// Windows extended-length path (`\\?\`) prefixing helper.
+pub mod win_path;
 /// Delete-on-close temporary file creation for Windows via `FileDispositionInfo`.
 pub mod win_tmpfile;
 
@@ -304,6 +306,7 @@ pub use temp_file_strategy::WindowsTempFileStrategy;
 pub use temp_file_strategy::{
     DefaultTempFileStrategy, NamedTempFileStrategy, TempFileHandle, TempFileKind, TempFileStrategy,
 };
+pub use win_path::to_extended_path;
 pub use win_tmpfile::{
     WinDeleteOnCloseSupport, WinTempFileResult, WindowsTempFile, clear_delete_on_close,
     commit_delete_on_close, delete_on_close_available, open_delete_on_close_tmpfile,
