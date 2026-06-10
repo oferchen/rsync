@@ -175,7 +175,7 @@ impl Component {
             } else {
                 String::from("library")
             },
-            name: package.name.clone(),
+            name: package.name.to_string(),
             version: package.version.to_string(),
             purl: reference,
         }
