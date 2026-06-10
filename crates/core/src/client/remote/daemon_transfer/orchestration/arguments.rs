@@ -373,7 +373,52 @@ pub(super) fn build_full_daemon_args(
     let module_path = format!("{}/{}", request.module, request.path);
     args.push(module_path);
 
+    strip_client_only_batch_flags(&mut args);
     args
+}
+
+/// Removes `--write-batch`, `--only-write-batch`, and `--read-batch` from a
+/// daemon-bound argument vector.
+///
+/// These are client-local flags: upstream `options.c:server_options()` never
+/// emits `--write-batch` or `--read-batch` to the server. The sole exception
+/// is `--only-write-batch`, which upstream replaces with the literal token
+/// `--only-write-batch=X` at `options.c:2832-2833` to force the server into
+/// dry-run mode; the X value carries no real path.
+///
+/// We never construct daemon argv with batch flags today, but stripping here
+/// is defense-in-depth: a future change that wires `remote_options` or any
+/// other forwarded list into the daemon path would otherwise silently leak
+/// the client's local batch state and cause the daemon to close the wire
+/// mid-transfer (the symptom observed in upstream's batch-mode interop).
+///
+/// Both bare-flag (`--write-batch`) and `key=value` (`--write-batch=PATH`)
+/// forms are stripped. The two-arg form (`--write-batch FILE`) drops the
+/// following positional value so it does not become an orphan module path.
+fn strip_client_only_batch_flags(args: &mut Vec<String>) {
+    const CLIENT_ONLY: &[&str] = &["--write-batch", "--only-write-batch", "--read-batch"];
+
+    let mut i = 0;
+    while i < args.len() {
+        let arg = args[i].as_str();
+        let is_bare = CLIENT_ONLY.iter().any(|flag| arg == *flag);
+        let is_kv = CLIENT_ONLY
+            .iter()
+            .any(|flag| arg.starts_with(flag) && arg.as_bytes().get(flag.len()) == Some(&b'='));
+
+        if is_bare {
+            args.remove(i);
+            if i < args.len() && !args[i].starts_with('-') {
+                args.remove(i);
+            }
+            continue;
+        }
+        if is_kv {
+            args.remove(i);
+            continue;
+        }
+        i += 1;
+    }
 }
 
 /// Characters that the remote shell wrapper (or upstream `unbackslash_arg`)
@@ -564,5 +609,96 @@ mod safe_arg_tests {
         // designed to preserve.
         let escaped = safe_arg_for_daemon("--groupmap=\\*:1234");
         assert_eq!(escaped, "--groupmap=\\\\\\*:1234");
+    }
+}
+
+#[cfg(test)]
+pub(super) mod tests {
+    use super::strip_client_only_batch_flags;
+
+    /// Test helper that exposes the private sanitiser to sibling test
+    /// modules in this crate.
+    pub(crate) fn strip_for_test(args: &mut Vec<String>) {
+        strip_client_only_batch_flags(args);
+    }
+
+    #[test]
+    fn strips_bare_write_batch() {
+        let mut args = vec!["--server".into(), "--write-batch".into(), ".".into()];
+        strip_client_only_batch_flags(&mut args);
+        assert_eq!(args, vec!["--server", "."]);
+    }
+
+    #[test]
+    fn strips_bare_write_batch_with_value() {
+        let mut args = vec![
+            "--server".into(),
+            "--write-batch".into(),
+            "/tmp/out.batch".into(),
+            ".".into(),
+        ];
+        strip_client_only_batch_flags(&mut args);
+        assert_eq!(args, vec!["--server", "."]);
+    }
+
+    #[test]
+    fn strips_kv_write_batch() {
+        let mut args = vec![
+            "--server".into(),
+            "--write-batch=/tmp/out.batch".into(),
+            ".".into(),
+        ];
+        strip_client_only_batch_flags(&mut args);
+        assert_eq!(args, vec!["--server", "."]);
+    }
+
+    #[test]
+    fn strips_kv_read_batch() {
+        let mut args = vec![
+            "--server".into(),
+            "--read-batch=/tmp/in.batch".into(),
+            ".".into(),
+        ];
+        strip_client_only_batch_flags(&mut args);
+        assert_eq!(args, vec!["--server", "."]);
+    }
+
+    #[test]
+    fn strips_only_write_batch() {
+        let mut args = vec![
+            "--server".into(),
+            "--only-write-batch=/tmp/dry.batch".into(),
+            ".".into(),
+        ];
+        strip_client_only_batch_flags(&mut args);
+        assert_eq!(args, vec!["--server", "."]);
+    }
+
+    #[test]
+    fn leaves_non_batch_args_alone() {
+        let mut args = vec![
+            "--server".into(),
+            "--sender".into(),
+            "-logDtprz".into(),
+            "--delete-before".into(),
+            "--max-delete=10".into(),
+            ".".into(),
+            "module/path".into(),
+        ];
+        let original = args.clone();
+        strip_client_only_batch_flags(&mut args);
+        assert_eq!(args, original);
+    }
+
+    #[test]
+    fn does_not_swallow_next_flag_when_two_arg_value_missing() {
+        let mut args = vec![
+            "--server".into(),
+            "--write-batch".into(),
+            "--sender".into(),
+            ".".into(),
+        ];
+        strip_client_only_batch_flags(&mut args);
+        assert_eq!(args, vec!["--server", "--sender", "."]);
     }
 }

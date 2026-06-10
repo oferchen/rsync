@@ -413,6 +413,100 @@ mod protect_args_daemon_tests {
         let received = recv_secluded_args(&mut cursor, None).expect("recv");
         assert_eq!(received, sent);
     }
+
+    // UTS-15.b: the client-side daemon argv builder must never emit
+    // `--write-batch` / `--read-batch` / `--only-write-batch`. They are
+    // client-local flags (upstream `options.c:784-786`) that drive batch-
+    // file tee or replay on the client; routing them to the daemon caused
+    // a silent connection close at protocol byte ~2241725 because the
+    // daemon popt table rejects them in daemon mode
+    // (`options.c:1444-1449`).
+    //
+    // Today no code path adds them to `build_full_daemon_args`, but the
+    // sanitiser at the end of the builder is defense-in-depth: a future
+    // refactor that forwards `remote_options` or any other user-supplied
+    // list into the daemon path would otherwise reintroduce the leak.
+    #[test]
+    fn build_full_args_strips_write_batch_flag() {
+        let config = ClientConfig::default();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+
+        let mut args = build_full_daemon_args(&config, &request, protocol, false);
+        // Simulate a defect upstream of the sanitiser: inject the flag.
+        args.insert(2, "--write-batch=/tmp/batch.out".to_owned());
+
+        super::super::arguments::tests::strip_for_test(&mut args);
+
+        assert!(
+            !args.iter().any(|a| a.starts_with("--write-batch")),
+            "--write-batch must not reach the daemon argv: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_full_args_strips_read_batch_flag_and_orphan_value() {
+        let config = ClientConfig::default();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+
+        let mut args = build_full_daemon_args(&config, &request, protocol, false);
+        // Two-arg form: flag + bare positional value. Both must drop so the
+        // value does not become an orphan path argument the daemon would
+        // mis-parse as a module-relative source.
+        args.insert(2, "--read-batch".to_owned());
+        args.insert(3, "/tmp/batch.in".to_owned());
+
+        super::super::arguments::tests::strip_for_test(&mut args);
+
+        assert!(
+            !args.iter().any(|a| a == "--read-batch"),
+            "--read-batch must not reach the daemon argv: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|a| a == "/tmp/batch.in"),
+            "two-arg value must not orphan-leak: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_full_args_strips_only_write_batch_flag() {
+        let config = ClientConfig::default();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+
+        let mut args = build_full_daemon_args(&config, &request, protocol, false);
+        args.insert(2, "--only-write-batch=/tmp/dry.out".to_owned());
+
+        super::super::arguments::tests::strip_for_test(&mut args);
+
+        assert!(
+            !args.iter().any(|a| a.starts_with("--only-write-batch")),
+            "--only-write-batch must not reach the daemon argv: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_full_args_default_path_emits_no_batch_flags() {
+        // upstream: options.c:server_options() never emits write-batch /
+        // read-batch tokens; the only related token is the literal
+        // `--only-write-batch=X` placeholder at options.c:2832-2833 which
+        // upstream only writes when `write_batch < 0`. The default path of
+        // our builder must mirror that.
+        let config = ClientConfig::default();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        for arg in &args {
+            assert!(
+                !arg.starts_with("--write-batch")
+                    && !arg.starts_with("--read-batch")
+                    && !arg.starts_with("--only-write-batch"),
+                "default daemon argv contained batch flag {arg:?}: {args:?}"
+            );
+        }
+    }
 }
 
 mod server_config_reference_dirs {
