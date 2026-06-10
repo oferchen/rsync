@@ -18,9 +18,9 @@
 //!
 //! # Submodules
 //!
-//! - [`config`] - [`DirMergeConfig`] for per-directory merge file behaviour
-//! - [`scope`] - [`DirFilterGuard`] and internal per-directory scope handling
-//! - [`error`] - [`FilterChainError`] for I/O and parse failures
+//! - `config` - [`DirMergeConfig`] for per-directory merge file behaviour
+//! - `scope` - [`DirFilterGuard`] and internal per-directory scope handling
+//! - `error` - [`FilterChainError`] for I/O and parse failures
 //!
 //! # Upstream References
 //!

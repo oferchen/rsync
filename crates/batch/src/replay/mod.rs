@@ -24,14 +24,14 @@
 //!
 //! # Submodules
 //!
-//! - [`codec`] - compression codec detection (`zlib` vs `zstd`) and decoder
+//! - `codec` - compression codec detection (`zlib` vs `zstd`) and decoder
 //!   construction.
-//! - [`delta`] - low-level delta-application primitives ([`apply_delta_ops`],
+//! - `delta` - low-level delta-application primitives (`apply_delta_ops`,
 //!   `write_literals_to_file`, `choose_block_length`).
-//! - [`dispatch`] - per-file helpers used by the main loop: iflags decoding,
+//! - `dispatch` - per-file helpers used by the main loop: iflags decoding,
 //!   sum-head reading, compressed-token streaming, temp-file commit.
-//! - [`delta_phase`] - the NDX-stream loop that drives per-file delta application.
-//! - [`fs_ops`] - symlink creation and metadata application primitives.
+//! - `delta_phase` - the NDX-stream loop that drives per-file delta application.
+//! - `fs_ops` - symlink creation and metadata application primitives.
 //!
 //! # Upstream Reference
 //!

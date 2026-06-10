@@ -36,7 +36,7 @@
 //! `Drop` only deallocates user memory and never touches the ring; the
 //! kernel would still hold the pinning until the ring fd later closes.
 //! However, the documented ordering matches the implementation in
-//! [`super::file_reader`] and [`super::file_writer`].
+//! `super::file_reader` and `super::file_writer`.
 //!
 //! # Why Drop does not call `unregister_buffers`
 //!
@@ -68,10 +68,10 @@
 //!
 //! # Submodule layout
 //!
-//! - [`registry`] - the [`RegisteredBufferGroup`] coordinator, slot allocator,
+//! - `registry` - the [`RegisteredBufferGroup`] coordinator, slot allocator,
 //!   and [`RegisteredBufferSlot`] handle.
-//! - [`stats`] - re-exports the telemetry types from [`crate::io_uring_common`].
-//! - [`submit`] - `ReadFixed`/`WriteFixed` batch submission helpers and the
+//! - `stats` - re-exports the telemetry types from [`crate::io_uring_common`].
+//! - `submit` - `ReadFixed`/`WriteFixed` batch submission helpers and the
 //!   [`RegisteredBufferSlotInfo`] passed between callers and helpers.
 
 mod registry;

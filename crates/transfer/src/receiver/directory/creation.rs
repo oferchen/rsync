@@ -24,8 +24,10 @@ impl ReceiverContext {
     ///
     /// Two-phase approach: directory creation is sequential (cheap, respects
     /// parent-child ordering), metadata application (`chown`/`chmod`/`utimes`)
-    /// runs in parallel via tokio `spawn_blocking` + semaphore when above
-    /// threshold.
+    /// is dispatched through `crate::parallel_io::map_blocking`, which runs on
+    /// rayon's work-stealing pool when the directory count exceeds the
+    /// `ParallelOp::Metadata` threshold and falls back to sequential iteration
+    /// below it.
     ///
     /// Returns a list of metadata errors encountered (path, error message).
     ///
