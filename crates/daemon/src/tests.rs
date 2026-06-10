@@ -195,6 +195,7 @@ include!("tests/chunks/run_daemon_omits_unlisted_modules_from_listing.rs");
 include!("tests/chunks/run_daemon_panic_isolation_keeps_daemon_alive.rs");
 include!("tests/chunks/run_daemon_records_log_file_entries.rs");
 include!("tests/chunks/run_daemon_refuses_disallowed_module_options.rs");
+include!("tests/chunks/run_daemon_refuse_compress_rejects_bundled_short_z.rs");
 include!("tests/chunks/run_daemon_rejects_duplicate_session_limits.rs");
 include!("tests/chunks/run_daemon_rejects_invalid_max_sessions.rs");
 include!("tests/chunks/run_daemon_rejects_invalid_port.rs");
