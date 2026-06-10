@@ -220,6 +220,7 @@ impl ReceiverContext {
                         preserve_times,
                         size_only,
                         always_checksum,
+                        self.config.flags.copy_links,
                         metadata_opts,
                         metadata_errors,
                         acl_cache,

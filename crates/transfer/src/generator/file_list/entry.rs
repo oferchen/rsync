@@ -80,7 +80,14 @@ impl GeneratorContext {
 
             FileEntry::new_directory(relative_path, mode)
         } else if file_type.is_symlink() {
-            let target = std::fs::read_link(full_path).unwrap_or_else(|_| PathBuf::from(""));
+            let raw_target = std::fs::read_link(full_path).unwrap_or_else(|_| PathBuf::from(""));
+
+            // upstream: flist.c:222-226 - sender strips the `/rsyncd-munged/`
+            // prefix from the readlink result when the daemon module has
+            // `munge symlinks = yes`, restoring the original target before it
+            // is sent on the wire. The matching prepend on the receive side
+            // re-applies the prefix when the link is materialized on disk.
+            let target = strip_symlink_munge_prefix(self.config.munge_symlinks, raw_target);
 
             FileEntry::new_symlink(relative_path, target)
         } else {
@@ -244,6 +251,18 @@ impl GeneratorContext {
             }
         }
 
+        // upstream: clientserver.c:rsync_module() arms `daemon_chmod_modes`
+        // and flist.c:make_file() applies it as the file_struct is built so
+        // the wire-emitted mode reflects the daemon's `outgoing chmod = SPEC`
+        // directive. We mirror that ordering: rewrite the entry's mode after
+        // every other flist field has been populated but before the caller
+        // serialises it. The chmod parser preserves the file-type bits, so
+        // the entry's S_IFREG/S_IFDIR/etc. classification is untouched.
+        if let Some(modifiers) = self.config.daemon_outgoing_chmod.as_ref() {
+            let rewritten = modifiers.apply(entry.mode(), file_type);
+            entry.set_mode(rewritten);
+        }
+
         Ok(entry)
     }
 
@@ -363,6 +382,88 @@ pub(in crate::generator) fn rdev_to_major_minor(rdev: u64) -> (u32, u32) {
     let major = (rdev >> 24) as u32;
     let minor = (rdev & 0xffffff) as u32;
     (major, minor)
+}
+
+/// Strips the `/rsyncd-munged/` prefix from a symlink target when munging is active.
+///
+/// Mirrors upstream `flist.c:222-226`: when the daemon module has
+/// `munge symlinks = yes`, the sender restores the original target before it
+/// is encoded onto the wire so the receiver can reapply the prefix on its
+/// side. The receiver-side write path uses the matching
+/// [`crate::receiver::directory::apply_symlink_munge_prefix`] helper.
+///
+/// Targets that lack the prefix pass through unchanged; this is the
+/// `llen > SYMLINK_PREFIX_LEN && strncmp(...) == 0` branch in upstream's
+/// `readlink_stat()`.
+fn strip_symlink_munge_prefix(munge_symlinks: bool, target: PathBuf) -> PathBuf {
+    if !munge_symlinks {
+        return target;
+    }
+    let prefix_len = ::metadata::SYMLINK_MUNGE_PREFIX.len();
+    // upstream: flist.c:222 - the strncmp guard requires `llen > SYMLINK_PREFIX_LEN`,
+    // so a target consisting of exactly the prefix is left untouched.
+    #[cfg(unix)]
+    {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let bytes = target.as_os_str().as_bytes();
+        let prefix = ::metadata::SYMLINK_MUNGE_PREFIX.as_bytes();
+        if bytes.len() > prefix_len && bytes.starts_with(prefix) {
+            let tail = OsStr::from_bytes(&bytes[prefix_len..]);
+            return PathBuf::from(tail);
+        }
+        target
+    }
+    #[cfg(not(unix))]
+    {
+        match target.to_str() {
+            Some(text)
+                if text.len() > prefix_len
+                    && text.starts_with(::metadata::SYMLINK_MUNGE_PREFIX) =>
+            {
+                PathBuf::from(&text[prefix_len..])
+            }
+            _ => target,
+        }
+    }
+}
+
+#[cfg(test)]
+mod munge_strip_tests {
+    use super::*;
+
+    #[test]
+    fn passes_through_when_disabled() {
+        let original = PathBuf::from("/rsyncd-munged/etc/passwd");
+        let returned = strip_symlink_munge_prefix(false, original.clone());
+        assert_eq!(returned, original);
+    }
+
+    #[test]
+    fn strips_prefix_when_enabled() {
+        let original = PathBuf::from("/rsyncd-munged/etc/passwd");
+        let returned = strip_symlink_munge_prefix(true, original);
+        assert_eq!(returned, PathBuf::from("etc/passwd"));
+    }
+
+    #[test]
+    fn passes_through_unprefixed_target_when_enabled() {
+        let original = PathBuf::from("../sibling");
+        let returned = strip_symlink_munge_prefix(true, original.clone());
+        assert_eq!(returned, original);
+    }
+
+    #[test]
+    fn does_not_strip_exact_prefix_match() {
+        // upstream: flist.c:222 - `llen > SYMLINK_PREFIX_LEN` is strict, so a
+        // target whose entire content is the prefix is left untouched. Without
+        // the strict check we would emit an empty target onto the wire and
+        // diverge from upstream byte-for-byte.
+        let original = PathBuf::from("/rsyncd-munged/");
+        let returned = strip_symlink_munge_prefix(true, original.clone());
+        assert_eq!(returned, original);
+    }
 }
 
 #[cfg(all(test, unix))]
@@ -635,5 +736,180 @@ mod fake_super_round_trip_tests {
             rdev: None,
         };
         assert_eq!(stat.encode(), "100644 0,0 1234:5678");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod daemon_outgoing_chmod_tests {
+    //! Daemon `outgoing chmod = SPEC` regression: the sender must rewrite the
+    //! wire-emitted mode for each file list entry when the daemon module has
+    //! an `outgoing chmod` directive configured. Mirrors upstream
+    //! `clientserver.c:rsync_module()` arming `daemon_chmod_modes` and
+    //! `flist.c:make_file()` applying them as file_struct values are built.
+
+    use super::super::super::GeneratorContext;
+    use crate::config::ServerConfig;
+    use crate::handshake::HandshakeResult;
+    use crate::role::ServerRole;
+    use ::metadata::ChmodModifiers;
+    use protocol::ProtocolVersion;
+    use std::ffi::OsString;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    fn make_generator(outgoing_chmod: Option<ChmodModifiers>) -> GeneratorContext {
+        let handshake = HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let mut config = ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![OsString::from(".")],
+            daemon_outgoing_chmod: outgoing_chmod,
+            ..Default::default()
+        };
+        config.flags.numeric_ids = true;
+        GeneratorContext::new_for_test(&handshake, config)
+    }
+
+    /// `outgoing chmod = Fg-r` must clear the group-read bit on the wire-emitted
+    /// mode for every file entry the sender constructs. The on-disk source
+    /// retains its original permissions; only the file list entry is rewritten.
+    #[test]
+    fn outgoing_chmod_clears_group_read_bit_on_wire() {
+        let tmp = TempDir::new().expect("tempdir");
+        let path = tmp.path().join("source.txt");
+        std::fs::write(&path, b"payload").expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o664))
+            .expect("set source perms");
+
+        let modifiers = ChmodModifiers::parse("Fg-r").expect("parse chmod spec");
+        let ctx = make_generator(Some(modifiers));
+        let meta = std::fs::symlink_metadata(&path).expect("metadata");
+        let entry = ctx
+            .create_entry(&path, PathBuf::from("source.txt"), &meta)
+            .expect("create_entry");
+
+        // Group-read (0o040) must be cleared; other bits left intact.
+        let perms = entry.permissions() & 0o7777;
+        assert_eq!(perms & 0o040, 0, "group-read must be cleared on wire");
+        assert_eq!(perms, 0o624, "Fg-r rewrites 0o664 to 0o624");
+    }
+
+    /// When no `outgoing chmod` is configured, `create_entry` must emit the
+    /// on-disk mode verbatim - no rewrite, no silent default.
+    #[test]
+    fn no_outgoing_chmod_leaves_mode_untouched() {
+        let tmp = TempDir::new().expect("tempdir");
+        let path = tmp.path().join("source.txt");
+        std::fs::write(&path, b"payload").expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o664))
+            .expect("set source perms");
+
+        let ctx = make_generator(None);
+        let meta = std::fs::symlink_metadata(&path).expect("metadata");
+        let entry = ctx
+            .create_entry(&path, PathBuf::from("source.txt"), &meta)
+            .expect("create_entry");
+
+        assert_eq!(entry.permissions() & 0o7777, 0o664);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod munge_symlinks_tests {
+    //! Sender-side `munge symlinks` regression tests.
+    //!
+    //! upstream: flist.c:222-226 - when the daemon enabled `munge symlinks`,
+    //! the sender strips the `/rsyncd-munged/` prefix after `readlink()` so
+    //! the wire format carries the original target. The matching prepend on
+    //! the receive side lives in `crate::receiver::directory::links`.
+
+    use super::super::super::GeneratorContext;
+    use crate::config::ServerConfig;
+    use crate::handshake::HandshakeResult;
+    use crate::role::ServerRole;
+    use protocol::ProtocolVersion;
+    use std::ffi::OsString;
+    use std::os::unix::fs::symlink;
+    use std::path::{Path, PathBuf};
+    use tempfile::TempDir;
+
+    fn generator_with_munge(munge_symlinks: bool) -> GeneratorContext {
+        let handshake = HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let config = ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![OsString::from(".")],
+            munge_symlinks,
+            ..Default::default()
+        };
+        GeneratorContext::new_for_test(&handshake, config)
+    }
+
+    #[test]
+    fn sender_strips_munge_prefix_before_emitting_wire_target() {
+        // upstream: flist.c:222-226 - when the daemon enabled `munge symlinks`,
+        // the sender restores the original target before encoding the flist
+        // entry. Verify the in-memory `FileEntry` carries the stripped path so
+        // the wire format never leaks `/rsyncd-munged/`.
+        let tmp = TempDir::new().unwrap();
+        let link = tmp.path().join("escape");
+        symlink(Path::new("/rsyncd-munged//etc/passwd"), &link).unwrap();
+        let meta = std::fs::symlink_metadata(&link).unwrap();
+
+        let ctx = generator_with_munge(true);
+        let entry = ctx
+            .create_entry(&link, PathBuf::from("escape"), &meta)
+            .unwrap();
+
+        assert_eq!(
+            entry.link_target().map(PathBuf::as_path),
+            Some(Path::new("/etc/passwd")),
+            "sender must strip `/rsyncd-munged/` before transmission \
+             (upstream flist.c:222-226)",
+        );
+    }
+
+    #[test]
+    fn sender_preserves_prefix_when_munge_disabled() {
+        // Negative control: with `munge_symlinks=false` the prefix on the
+        // source link is part of the user's intentional target and must
+        // travel verbatim on the wire.
+        let tmp = TempDir::new().unwrap();
+        let link = tmp.path().join("escape");
+        symlink(Path::new("/rsyncd-munged//etc/passwd"), &link).unwrap();
+        let meta = std::fs::symlink_metadata(&link).unwrap();
+
+        let ctx = generator_with_munge(false);
+        let entry = ctx
+            .create_entry(&link, PathBuf::from("escape"), &meta)
+            .unwrap();
+
+        assert_eq!(
+            entry.link_target().map(PathBuf::as_path),
+            Some(Path::new("/rsyncd-munged//etc/passwd")),
+            "without `munge symlinks`, the prefix is part of the target and \
+             must round-trip verbatim",
+        );
     }
 }

@@ -151,6 +151,7 @@ include!("tests/chunks/module_definition_mixed_ip_and_hostname_acl.rs");
 include!("tests/chunks/module_definition_only_allow_denies_non_matching.rs");
 include!("tests/chunks/module_definition_only_deny_allows_non_matching.rs");
 include!("tests/chunks/module_definition_wildcard_any_allows_all.rs");
+include!("tests/chunks/module_hostname_allow_fails_closed_under_chroot.rs");
 include!("tests/chunks/module_hostname_deny_fails_closed_when_dns_unresolved.rs");
 include!("tests/chunks/module_ip_deny_unaffected_by_dns_failure.rs");
 include!("tests/chunks/module_peer_hostname_missing_resolution_denies_hostname_only_rules.rs");

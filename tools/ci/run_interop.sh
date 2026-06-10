@@ -486,6 +486,7 @@ write_rust_daemon_conf() {
 pid file = ${pid_file}
 port = ${port}
 use chroot = false
+munge symlinks = false
 
 [interop]
 path = ${dest}
@@ -8595,6 +8596,7 @@ test_symlinks_upstream() {
 pid file = ${sl_pid}
 port = ${oc_port}
 use chroot = false
+munge symlinks = false
 
 [interop]
 path = ${sl_dest}
