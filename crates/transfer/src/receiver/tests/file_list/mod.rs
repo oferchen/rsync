@@ -24,6 +24,8 @@
 //! - [`iconv_wire_order`] - regression coverage for the receiver-side
 //!   `--iconv` ordering invariant (file_list stays in sender wire-emit
 //!   order, never re-sorted on local-charset bytes).
+//! - [`missing_args_sentinel`] - UTS-19.f receiver-side handler for the
+//!   mode-0 sentinel emitted by `--delete-missing-args`.
 
 mod delete_pipeline_hook;
 mod filter_chain;
@@ -32,6 +34,7 @@ mod iconv_wire_order;
 mod id_lists;
 mod incremental_directories;
 mod incremental_receiver;
+mod missing_args_sentinel;
 mod ndx_convert;
 mod proto_io_error;
 mod wire_attrs;
