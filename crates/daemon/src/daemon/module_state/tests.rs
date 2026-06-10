@@ -64,7 +64,11 @@ fn module_definition_permits_respects_hosts_deny() {
 }
 
 #[test]
-fn module_definition_deny_takes_precedence_over_allow() {
+fn module_definition_allow_match_short_circuits_deny() {
+    // upstream: access.c:277-279 - "If we match an allow-list item, we
+    // always allow access." A peer matching any allow pattern is admitted
+    // before the deny list is consulted, even when a deny pattern would
+    // otherwise match.
     let def = ModuleDefinition {
         hosts_allow: vec![HostPattern::Any],
         hosts_deny: vec![HostPattern::Ipv4 {
@@ -73,8 +77,109 @@ fn module_definition_deny_takes_precedence_over_allow() {
         }],
         ..Default::default()
     };
+    let peer = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
+    assert!(def.permits(peer, None));
+}
+
+#[test]
+fn module_definition_deny_applies_when_allow_does_not_match() {
+    // upstream: access.c:281-291 - when the allow list is non-empty but
+    // the peer matches none of its entries, fall through to the deny list.
+    // A deny-list match here refuses the connection; a non-match admits
+    // (access.c:290-291 "Allow all other access").
+    let def = ModuleDefinition {
+        hosts_allow: vec![HostPattern::Ipv4 {
+            network: Ipv4Addr::new(192, 168, 0, 0),
+            prefix: 16,
+        }],
+        hosts_deny: vec![HostPattern::Ipv4 {
+            network: Ipv4Addr::new(10, 0, 0, 0),
+            prefix: 8,
+        }],
+        ..Default::default()
+    };
     let denied = IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1));
     assert!(!def.permits(denied, None));
+
+    // Peer outside both allow and deny: admitted because access.c:287
+    // returns 0 only on a deny-list match; otherwise access.c:291 allows.
+    // The allow-list non-match short-circuits to refuse only when the
+    // deny list is empty (access.c:281-282).
+    let outside_both = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1));
+    assert!(def.permits(outside_both, None));
+}
+
+#[test]
+fn module_definition_allow_short_circuit_skips_dns_fail_closed_guard() {
+    // upstream: access.c:277-283 - an allow-list match returns 1 before
+    // the deny list is consulted. A hostname-pattern deny rule combined
+    // with unresolvable reverse DNS must not refuse a peer that already
+    // matched an IP-based allow rule, because upstream never reaches the
+    // deny path in that case. Without the short-circuit the GHSA-rjfm
+    // fail-closed guard would punish a perfectly-allowed peer for a
+    // separate hostname-deny rule that targets a different host.
+    let def = ModuleDefinition {
+        hosts_allow: vec![HostPattern::Ipv4 {
+            network: Ipv4Addr::new(192, 168, 0, 0),
+            prefix: 16,
+        }],
+        hosts_deny: vec![HostPattern::Hostname(HostnamePattern {
+            kind: HostnamePatternKind::Suffix("bad.example".to_owned()),
+        })],
+        ..Default::default()
+    };
+    let allowed = IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50));
+    assert!(def.permits(allowed, None));
+}
+
+#[test]
+fn module_definition_matches_upstream_rsync_fns_allow_list() {
+    // upstream: testsuite/rsync.fns:381 - the testsuite's standard daemon
+    // config carries `hosts allow = localhost 127.0.0.0/24 192.168.0.0/16
+    // 10.0.0.0/8 $hostname` with no `hosts deny`. Every IPv4 in those
+    // ranges must be admitted; every IPv4 outside must be refused. This
+    // pins the CIDR matcher against upstream's testsuite expectations.
+    let def = ModuleDefinition {
+        hosts_allow: vec![
+            HostPattern::Ipv4 {
+                network: Ipv4Addr::new(127, 0, 0, 0),
+                prefix: 24,
+            },
+            HostPattern::Ipv4 {
+                network: Ipv4Addr::new(192, 168, 0, 0),
+                prefix: 16,
+            },
+            HostPattern::Ipv4 {
+                network: Ipv4Addr::new(10, 0, 0, 0),
+                prefix: 8,
+            },
+        ],
+        ..Default::default()
+    };
+    for ip in [
+        Ipv4Addr::new(127, 0, 0, 1),
+        Ipv4Addr::new(127, 0, 0, 255),
+        Ipv4Addr::new(192, 168, 1, 1),
+        Ipv4Addr::new(192, 168, 255, 254),
+        Ipv4Addr::new(10, 0, 0, 1),
+        Ipv4Addr::new(10, 255, 255, 254),
+    ] {
+        assert!(
+            def.permits(IpAddr::V4(ip), None),
+            "{ip} must be permitted by testsuite allow list",
+        );
+    }
+    for ip in [
+        Ipv4Addr::new(127, 0, 1, 1),
+        Ipv4Addr::new(11, 0, 0, 1),
+        Ipv4Addr::new(192, 169, 0, 1),
+        Ipv4Addr::new(203, 0, 113, 5),
+    ] {
+        assert!(
+            !def.permits(IpAddr::V4(ip), None),
+            "{ip} must be refused by testsuite allow list",
+        );
+    }
 }
 
 #[test]
