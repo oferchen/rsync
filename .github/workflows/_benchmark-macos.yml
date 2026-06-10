@@ -1,7 +1,7 @@
 name: Benchmark (macOS throughput)
 
 # Reusable workflow: macOS throughput comparison between oc-rsync and
-# upstream rsync 3.4.2 built from source.
+# upstream rsync 3.4.4 built from source.
 #
 # Best-effort: macOS runners have more wall-clock variance than
 # bare-metal Linux. Numbers are a regression sniff, not a merge gate.
@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   benchmark-macos:
-    name: throughput vs upstream rsync 3.4.2 (macOS, best-effort)
+    name: throughput vs upstream rsync 3.4.4 (macOS, best-effort)
     runs-on: macos-15
     timeout-minutes: ${{ inputs.timeout_minutes || 90 }}
     continue-on-error: true
@@ -62,21 +62,21 @@ jobs:
         id: cache-rsync
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          path: target/interop/upstream-src/rsync-3.4.2
-          key: upstream-rsync-3.4.2-${{ runner.os }}-full
+          path: target/interop/upstream-src/rsync-3.4.4
+          key: upstream-rsync-3.4.4-${{ runner.os }}-full
 
-      - name: Build upstream rsync 3.4.2
+      - name: Build upstream rsync 3.4.4
         if: steps.cache-rsync.outputs.cache-hit != 'true'
         run: |
           set -euo pipefail
           mkdir -p target/interop/upstream-src
           cd target/interop/upstream-src
 
-          if [ ! -d rsync-3.4.2 ]; then
-            curl -L https://download.samba.org/pub/rsync/src/rsync-3.4.2.tar.gz | tar xz
+          if [ ! -d rsync-3.4.4 ]; then
+            curl -L https://download.samba.org/pub/rsync/src/rsync-3.4.4.tar.gz | tar xz
           fi
 
-          cd rsync-3.4.2
+          cd rsync-3.4.4
           if [ ! -f rsync ]; then
             BREW_PREFIX="$(brew --prefix)"
             PKG_CONFIG_PATH="${BREW_PREFIX}/opt/openssl@3/lib/pkgconfig:${BREW_PREFIX}/opt/xxhash/lib/pkgconfig:${BREW_PREFIX}/opt/zstd/lib/pkgconfig:${BREW_PREFIX}/opt/lz4/lib/pkgconfig:${PKG_CONFIG_PATH:-}" \
@@ -89,7 +89,7 @@ jobs:
           fi
 
       - name: Verify upstream rsync binary
-        run: target/interop/upstream-src/rsync-3.4.2/rsync --version | head -3
+        run: target/interop/upstream-src/rsync-3.4.4/rsync --version | head -3
 
       - name: Set up SSH loopback
         run: |

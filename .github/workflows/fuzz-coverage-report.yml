@@ -139,8 +139,10 @@ jobs:
           path: |
             target/interop/upstream-src
             target/interop/upstream-install
-          key: upstream-rsync-3.4.2-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          key: upstream-rsync-3.4.4-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
           restore-keys: |
+            upstream-rsync-3.4.4-${{ runner.os }}-
+            upstream-rsync-3.4.3-${{ runner.os }}-
             upstream-rsync-3.4.2-${{ runner.os }}-
 
       - name: Build upstream rsync
@@ -153,6 +155,8 @@ jobs:
         run: |
           set -euo pipefail
           for candidate in \
+              "${GITHUB_WORKSPACE}/target/interop/upstream-install/3.4.4/bin/rsync" \
+              "${GITHUB_WORKSPACE}/target/interop/upstream-install/3.4.3/bin/rsync" \
               "${GITHUB_WORKSPACE}/target/interop/upstream-install/3.4.2/bin/rsync" \
               "${GITHUB_WORKSPACE}/target/interop/upstream-install/3.4.1/bin/rsync"; do
               if [[ -x "${candidate}" ]]; then

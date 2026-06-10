@@ -106,6 +106,64 @@ fn receiver_filter_chain_empty_allows_all_deletions() {
     assert_eq!(stats.files, 2);
 }
 
+/// Regression test for the upstream-testsuite `daemon-delete-stats` failure.
+///
+/// The test's daemon config carries a global `exclude = ? foobar.baz` rule.
+/// Single-character glob `?` previously caused deletion to skip every
+/// top-level extraneous file because `delete_extraneous_files()` queried the
+/// filter chain with `"./<name>"`. The descendant matcher `?/**` derived
+/// from the bare `?` pattern then treated `.` as a single-character parent
+/// directory and incorrectly excluded the candidate, leaving
+/// `delete.txt` in place. The fix is to strip the implicit `.` prefix
+/// before consulting the filter chain at the deletion root.
+#[test]
+fn single_char_wildcard_exclude_does_not_block_top_level_deletion() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    std::fs::write(dest.join("delete.txt"), b"delete\n").unwrap();
+    std::fs::write(dest.join("keep.txt"), b"keep\n").unwrap();
+
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.flags.delete = true;
+    config.args = vec![OsString::from(dest.to_str().unwrap())];
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+    // Source advertises only `.` and `keep.txt`; `delete.txt` is extraneous.
+    ctx.file_list
+        .push(FileEntry::new_directory(".".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_file("keep.txt".into(), 5, 0o644));
+
+    // Daemon-level `exclude = ? foobar.baz` reproduction.
+    let global = ::filters::FilterSet::from_rules([
+        ::filters::FilterRule::exclude("?"),
+        ::filters::FilterRule::exclude("foobar.baz"),
+    ])
+    .unwrap();
+    ctx.set_filter_chain(::filters::FilterChain::new(global));
+
+    let mut writer = TestDeletionWriter;
+    let (stats, _) = ctx
+        .delete_extraneous_files(
+            dest,
+            #[cfg(unix)]
+            None,
+            &mut writer,
+        )
+        .unwrap();
+
+    assert!(
+        !dest.join("delete.txt").exists(),
+        "delete.txt must be deleted despite the `?` exclude rule"
+    );
+    assert!(dest.join("keep.txt").exists(), "keep.txt must survive");
+    assert_eq!(stats.files, 1);
+}
+
 #[test]
 fn receiver_set_and_get_filter_chain() {
     let handshake = test_handshake();
