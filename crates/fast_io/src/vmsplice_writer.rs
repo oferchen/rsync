@@ -29,7 +29,7 @@
 //!   reference instead of falling back to an internal copy.
 //!
 //! On Linux with the `vmsplice` feature, [`VmspliceFileWriter::write_chunk`]
-//! enforces those gates and falls back to [`std::fs::File::write_all`]
+//! enforces those gates and falls back to `std::fs::File::write_all`
 //! otherwise. Any kernel-side rejection (`ErrorKind::Unsupported`,
 //! `InvalidInput` mapped from `EINVAL`) also drops to the fallback so
 //! unsupported filesystems (tmpfs/FUSE/NFS) keep working.
@@ -147,7 +147,7 @@ impl VmspliceFileWriter {
     ///
     /// Any other case, plus any kernel-side rejection
     /// (`ErrorKind::Unsupported`, `EINVAL` mapped to `InvalidInput`), routes
-    /// to [`File::write_all`].
+    /// to `File::write_all`.
     ///
     /// # Errors
     ///
