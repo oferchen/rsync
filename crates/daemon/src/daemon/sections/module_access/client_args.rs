@@ -526,7 +526,8 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
                 // alias for --out-format. The server parses it to set
                 // stdout_format_has_i (options.c:2327-2331) which drives itemize
                 // emission. We only need the %i presence, not the full format.
-                } else if let Some(fmt) = arg.strip_prefix("--log-format=")
+                } else if let Some(fmt) = arg
+                    .strip_prefix("--log-format=")
                     .or_else(|| arg.strip_prefix("--out-format="))
                 {
                     if fmt.contains("%i") {
@@ -626,8 +627,7 @@ mod iconv_charset_converter_tests {
 
     #[test]
     fn iconv_charset_dot_means_locale_default() {
-        let converter =
-            resolve_module_charset_converter(Some(".")).expect("dot should resolve");
+        let converter = resolve_module_charset_converter(Some(".")).expect("dot should resolve");
         assert!(converter.is_identity());
     }
 
@@ -635,8 +635,8 @@ mod iconv_charset_converter_tests {
     fn iconv_charset_comma_with_dot_resolves_to_identity() {
         // upstream: rsync.c:118-120 - server side honours the post-comma value.
         // upstream: rsync.c:125-126 - "." means "use locale default".
-        let converter = resolve_module_charset_converter(Some("UTF-8,."))
-            .expect("dot remote should resolve");
+        let converter =
+            resolve_module_charset_converter(Some("UTF-8,.")).expect("dot remote should resolve");
         assert!(converter.is_identity());
     }
 

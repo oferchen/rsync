@@ -449,5 +449,4 @@ mod tests {
         assert!(!compiled.matches(Path::new("keep.txt"), false));
         assert!(!compiled.matches(Path::new("subdir/delete.txt"), false));
     }
-
 }
