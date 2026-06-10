@@ -109,6 +109,13 @@ impl ReceiverContext {
             // chdir-symlink-race refusal becomes a non-zero exit instead of a
             // silent skip.
             stats.io_error |= io_bits;
+            // Carry the counters into the receiver context so the goodbye
+            // handshake can emit NDX_DEL_STATS to the peer sender. URV-6.b
+            // landed the on-disk deletion but the counters were never
+            // propagated to the wire, so client `--stats` reported
+            // "Number of deleted files: 0" on every daemon upload.
+            // upstream: generator.c:2393-2398 - early write_del_stats() emission.
+            self.pending_del_stats = delete_stats;
         }
 
         let files_to_transfer = self.build_files_to_transfer(
