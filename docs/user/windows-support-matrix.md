@@ -20,13 +20,13 @@ flight are marked "Design only" or "Audit only" with a tracking link.
 |---|---|---|
 | Basic file transfer (`-r`, `-a`) | Shipped | `crates/fast_io/src/iocp/file_reader.rs`, `crates/fast_io/src/iocp/file_writer.rs` |
 | Hard links (`-H`) | Shipped | `crates/transfer/src/receiver/directory/links.rs:367` (`std::fs::hard_link`) |
-| Symbolic links (`-l`) | Shipped | `std::os::windows::fs::symlink_file` / `symlink_dir` (Windows test coverage at `crates/engine/src/local_copy/tests/executor_file_operations.rs:128`) |
+| Symbolic links (`-l`) | Shipped | `std::os::windows::fs::symlink_file` / `symlink_dir` (Windows test coverage at `crates/engine/src/local_copy/tests/executor_file_operations.rs:128`; end-to-end push round-trip at `crates/metadata/tests/windows_symlink_junction_transfer.rs::dir_symlink_push_preserves_link`, gated on `SeCreateSymbolicLinkPrivilege`). |
 | Sparse files (`-S`) | Shipped (cross-platform zero-run detection) | `crates/fast_io/src/policy.rs:144` (no `FSCTL_SET_ZERO_DATA` call site found in tree) |
 | Timestamps (`-t`) | Shipped | `filetime` crate; NTFS 100 ns resolution |
 | NTFS Alternate Data Streams (ADS) via `--xattrs` | Design + backend shipped, preflight rejects flag | `crates/metadata/src/xattr_windows.rs:57` (FindFirstStreamW/FindNextStreamW backend exists); `crates/cli/src/frontend/execution/drive/workflow/preflight.rs:176-180` still rejects `--xattrs` on Windows. Follow-up: PR #5564. |
 | Long paths (>260 chars) via `\\?\` prefix | Audit only | `crates/fast_io/src/iocp/file_reader.rs:315` (`to_wide_path` does NOT prepend `\\?\`). Long-path test at `crates/fast_io/tests/ntfs_edge_cases.rs:128` exercises the kernel acceptance but not a helper. Follow-up: PR #5575. |
 | Reparse-point classification (junctions, mount points, OneDrive) | Design only | No `FSCTL_GET_REPARSE_POINT` or `classify_reparse_point` call site exists under `crates/metadata/src/`. Audit doc: `docs/audit/windows-reparse-point-classification.md`. Follow-up: PR #5579. |
-| Junctions | Followed as directory symlinks (default kernel behaviour) | No classifier wired; transfer-time handling unverified. |
+| Junctions | Followed as directory symlinks (default kernel behaviour); transfer round-trip exercised | Transfer round-trip: `crates/metadata/tests/windows_symlink_junction_transfer.rs::junction_push_preserves_junction` (runs unconditionally; `mklink /j` does not require elevation). |
 | Mount points | Followed as directory symlinks (default kernel behaviour) | No classifier wired. |
 | OneDrive / Cloud Files placeholders | Not classified | Placeholder-only files may transfer as zero-length until #5579 lands. |
 | Case-insensitive FS conflict detection | Audit only | No `case_insensitive` collision-detection call site found under `crates/transfer/src/` or `crates/engine/src/`. Audit doc: `docs/audit/windows-case-insensitive-conflict-detection.md`. |
@@ -168,7 +168,10 @@ Tracking tasks:
 - WPC-V.1-5 audits: this revision.
 - WPC-3 / WPC-4 follow-up: PR #5564 (`--xattrs` preflight gate).
 - WPC-5 / WPC-6 follow-up: PR #5575 (`to_extended_path` helper).
-- WPC-8 / WPC-9 follow-up: PR #5579 (reparse-point classifier).
+- WPC-8 / WPC-9 follow-up: PR #5579 (reparse-point classifier), PR #5583
+  (RAII fixture helpers), PR #5592 (reparse-data parser), plus this
+  revision (symlink + junction transfer round-trip at
+  `crates/metadata/tests/windows_symlink_junction_transfer.rs`).
 - WIN-G series: EH ABI status (.c), release implications (.d), this
   matrix update (.g).
 - WPG series (IOCP profiling): WPG-1..10 designed; hardware deferred.

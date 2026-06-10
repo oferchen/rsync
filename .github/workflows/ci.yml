@@ -394,9 +394,23 @@ jobs:
       - name: Build metadata (--features acl,xattr)
         run: cargo build --locked -p metadata --features acl,xattr
 
+      # Build oc-rsync.exe so the metadata integration tests that spawn the
+      # binary as a subprocess (windows_ads_xattrs_roundtrip,
+      # windows_symlink_junction_transfer) exercise the real transfer path
+      # rather than skipping. Builds at the default debug profile to keep
+      # the CI run fast; the integration tests probe target/debug first.
+      # Tests that require admin privileges (e.g. `mklink /d` for directory
+      # symlinks) still skip cleanly on the unelevated stock runner.
+      - name: Build oc-rsync (for subprocess integration tests)
+        run: cargo build --locked -p bin --bin oc-rsync
+
       # Run the full metadata test suite with both features enabled. This
-      # covers acl_windows::tests (DACL round-trip) and xattr_windows::tests
-      # (NTFS Alternate Data Streams).
+      # covers acl_windows::tests (DACL round-trip), xattr_windows::tests
+      # (NTFS Alternate Data Streams), and the end-to-end reparse-point
+      # transfer tests in windows_symlink_junction_transfer.rs. Symlink
+      # cases skip cleanly without `SeCreateSymbolicLinkPrivilege`; the
+      # junction case runs unconditionally (`mklink /j` does not require
+      # elevation on Windows 10+).
       - name: Test metadata (--features acl,xattr)
         run: cargo nextest run --locked -p metadata --features acl,xattr
 
