@@ -34,9 +34,9 @@
 //!
 //! # Submodule layout
 //!
-//! - [`buffer`]: accumulation-buffer enum and the bounce-copy telemetry counter.
-//! - [`writer`]: `WriteFile` dispatch, overlapped-handle lifecycle, batched submission.
-//! - [`completion`]: `GetQueuedCompletionStatusEx` drain, NTSTATUS mapping, test fault injector.
+//! - `buffer`: accumulation-buffer enum and the bounce-copy telemetry counter.
+//! - `writer`: `WriteFile` dispatch, overlapped-handle lifecycle, batched submission.
+//! - `completion`: `GetQueuedCompletionStatusEx` drain, NTSTATUS mapping, test fault injector.
 //!
 //! # Upstream Reference
 //!

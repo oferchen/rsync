@@ -152,41 +152,59 @@ pub(crate) struct ModuleDefinition {
 impl ModuleDefinition {
     /// Checks whether a peer is permitted to access this module.
     ///
-    /// Evaluates `hosts allow` then `hosts deny` patterns. If `hosts allow`
-    /// is non-empty the peer must match at least one allow pattern. If the
-    /// peer matches any deny pattern, access is refused.
+    /// Mirrors upstream `access.c::allow_access()` exactly:
+    ///
+    /// 1. If `hosts allow` is non-empty and the peer matches any allow
+    ///    pattern, access is granted - the deny list is not consulted.
+    /// 2. If `hosts allow` is non-empty and the peer matches no allow
+    ///    pattern and `hosts deny` is empty, access is refused.
+    /// 3. Otherwise the deny list is consulted. If the peer matches any
+    ///    deny pattern, access is refused. Otherwise access is granted.
     ///
     /// Fail-closed semantics for GHSA-rjfm-3w2m-jf4f: when the peer's
     /// hostname is unresolvable (`None`) and ANY `hosts deny` rule is
-    /// hostname-based, access is refused. Upstream relies on reverse DNS
-    /// being available at access-check time (it performs the lookup before
-    /// `daemon chroot` so the result is cached); oc-rsync uses a thread-per-
-    /// connection model where `daemon chroot` is applied process-wide at
-    /// startup, so per-peer DNS can fail post-chroot when the chroot lacks
-    /// NSS configuration. Treating an unresolved hostname as a potential
-    /// match for hostname-based deny patterns closes the bypass that the
-    /// upstream patch closes by guaranteeing a resolved name.
+    /// hostname-based, the deny check fails closed. Upstream relies on
+    /// reverse DNS being available at access-check time (it performs the
+    /// lookup before `daemon chroot` so the result is cached); oc-rsync
+    /// uses a thread-per-connection model where `daemon chroot` is applied
+    /// process-wide at startup, so per-peer DNS can fail post-chroot when
+    /// the chroot lacks NSS configuration. The guard sits on the deny
+    /// branch only - if the peer already matched a `hosts allow` rule we
+    /// admit them regardless of DNS state, matching upstream's "allow
+    /// short-circuits deny" semantics.
     ///
-    /// upstream: clientserver.c - `allow_access()` checks `hosts allow` and
-    /// `hosts deny` using `match_hostname()` and `match_address()`.
-    /// upstream: clientserver.c (3.4.3 commit c38f20c5) - reverse DNS before
-    /// chroot ensures `client_name()` returns a real hostname when ACLs are
-    /// evaluated.
+    /// upstream: access.c:264 `allow_access()` - "If we match an allow-list
+    /// item, we always allow access." Allow-list match returns 1
+    /// unconditionally; the deny list is consulted only when the allow
+    /// list either is absent or did not match.
+    /// upstream: clientserver.c (3.4.3 commit c38f20c5) - reverse DNS
+    /// before chroot ensures `client_name()` returns a real hostname when
+    /// ACLs are evaluated.
     pub(crate) fn permits(&self, addr: std::net::IpAddr, hostname: Option<&str>) -> bool {
-        if !self.hosts_allow.is_empty()
-            && !self
+        // upstream: access.c:277-283 - allow-list short-circuit. A peer
+        // matching any allow pattern is admitted before the deny list is
+        // consulted; a peer matching nothing in a non-empty allow list is
+        // refused only when there is no deny list to fall through to.
+        if !self.hosts_allow.is_empty() {
+            if self
                 .hosts_allow
                 .iter()
                 .any(|pattern| pattern.matches(addr, hostname))
-        {
-            return false;
+            {
+                return true;
+            }
+            if self.hosts_deny.is_empty() {
+                return false;
+            }
         }
 
         // GHSA-rjfm-3w2m-jf4f: fail closed when hostname resolution failed
         // and any deny rule is hostname-based. Without this guard, a peer
         // whose reverse DNS returns no name (e.g., because the daemon's
         // chroot lacks `/etc/resolv.conf` and the NSS shared objects)
-        // silently bypasses hostname-pattern deny rules.
+        // silently bypasses hostname-pattern deny rules. This guard only
+        // fires on the deny path - the allow short-circuit above lets a
+        // matched peer through without depending on hostname state.
         if hostname.is_none()
             && self
                 .hosts_deny

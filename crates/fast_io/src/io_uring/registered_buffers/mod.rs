@@ -68,10 +68,10 @@
 //!
 //! # Submodule layout
 //!
-//! - [`registry`] - the [`RegisteredBufferGroup`] coordinator, slot allocator,
+//! - `registry` - the [`RegisteredBufferGroup`] coordinator, slot allocator,
 //!   and [`RegisteredBufferSlot`] handle.
-//! - [`stats`] - re-exports the telemetry types from [`crate::io_uring_common`].
-//! - [`submit`] - `ReadFixed`/`WriteFixed` batch submission helpers and the
+//! - `stats` - re-exports the telemetry types from [`crate::io_uring_common`].
+//! - `submit` - `ReadFixed`/`WriteFixed` batch submission helpers and the
 //!   [`RegisteredBufferSlotInfo`] passed between callers and helpers.
 
 mod registry;
