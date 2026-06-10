@@ -10,7 +10,10 @@ fn module_definition_ipv4_allow_short_circuits_deny() {
     // In both the allowed and denied subnets - allow short-circuits the
     // deny rule, matching upstream.
     assert!(module.permits(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 50)), None));
-    // Outside the allowed subnet entirely - refused because the allow
-    // list is non-empty and the peer matches nothing.
-    assert!(!module.permits(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), None));
+    // Outside both the allowed and denied subnets - admitted because
+    // access.c:287 only refuses on a deny-list match; otherwise
+    // access.c:291 falls through to "Allow all other access". The
+    // allow-list non-match short-circuits to refuse only when the deny
+    // list is empty (access.c:281-282).
+    assert!(module.permits(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), None));
 }
