@@ -155,9 +155,7 @@ impl GeneratorContext {
         // delete_mode || force_delete || read_batch (no INFO_GTE(STATS, 2) gate).
         // Early and late paths share the same predicate; `late_delete` governs
         // *which* checkpoint emits the message, not whether to emit.
-        self.config.flags.delete
-            || self.config.flags.force_delete
-            || self.config.flags.read_batch
+        self.config.flags.delete || self.config.flags.force_delete || self.config.flags.read_batch
     }
 
     /// Reads the next NDX value, consuming any NDX_DEL_STATS messages.
