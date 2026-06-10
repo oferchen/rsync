@@ -296,6 +296,59 @@ fn engage_landlock_sandbox(
     }
 }
 
+/// Engages the LSM-SECCOMP BPF allowlist for the worker.
+///
+/// Layers above the Landlock LSM defense engaged immediately prior:
+/// Landlock denies path-based syscalls with `EACCES`; seccomp denies
+/// out-of-scope syscalls with `SIGSYS` before the kernel ever consults
+/// the LSM stack.
+///
+/// On builds without the `daemon-seccomp` feature the helper is a no-op
+/// that returns `Unavailable`; the wire-in is unconditional so the call
+/// site does not need `#[cfg]` branching. Construction or installation
+/// failure is logged as a warning and the connection continues - SEC-1
+/// `*at` helpers and Landlock remain the primary defenses. See
+/// `docs/design/lsm-seccomp-allowlist.md` for the allowlist rationale
+/// and the 14-day bake plan.
+fn engage_seccomp_sandbox(ctx: &mut ModuleRequestContext<'_>) -> io::Result<()> {
+    match apply_worker_seccomp_filter() {
+        SeccompOutcome::Installed => {
+            if let Some(log) = ctx.log_sink {
+                let text = format!(
+                    "module '{}': seccomp BPF filter engaged (KillProcess on unlisted syscalls)",
+                    ctx.request,
+                );
+                let message = rsync_info!(text).with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+        }
+        SeccompOutcome::Unavailable => {
+            // No-op build (non-Linux, daemon-seccomp feature off, or
+            // unsupported arch). Log at info so operators can confirm the
+            // layer status without having to grep the build flags.
+            if let Some(log) = ctx.log_sink {
+                let text = format!(
+                    "module '{}': seccomp BPF unavailable in this build; Landlock + SEC-1 *at* remain the defense",
+                    ctx.request,
+                );
+                let message = rsync_info!(text).with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+        }
+        SeccompOutcome::Error(err) => {
+            if let Some(log) = ctx.log_sink {
+                let text = format!(
+                    "module '{}': seccomp BPF setup failed: {err}; relying on Landlock + SEC-1 *at* defense",
+                    ctx.request,
+                );
+                let message = rsync_warning!(text).with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Transfer stream pair: separate read and write handles for the transfer engine.
 ///
 /// For TCP connections, both sides are cloned `TcpStream` handles pointing at
@@ -737,6 +790,14 @@ fn process_approved_module(
     if !engage_landlock_sandbox(ctx, module)? {
         return Ok(());
     }
+
+    // LSM-SECCOMP: layer the BPF syscall allowlist over Landlock. Same
+    // lifecycle phase as the LSM helper above: post-chroot, post-
+    // privilege-drop, post-filter-load, pre-client-data. The seccomp
+    // helper is a no-op on builds without the `daemon-seccomp` feature so
+    // the call is unconditional. Failures do not abort the connection -
+    // Landlock + SEC-1 `*at` remain the primary defenses.
+    engage_seccomp_sandbox(ctx)?;
 
     let mut streams = match setup_transfer_streams(ctx)? {
         Some(s) => s,
