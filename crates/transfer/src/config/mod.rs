@@ -453,6 +453,22 @@ pub struct ServerConfig {
     /// - `loadparm.c` - `outgoing chmod` module parameter
     /// - `flist.c:make_file()` - `daemon_chmod_modes` applied during flist build
     pub daemon_outgoing_chmod: Option<ChmodModifiers>,
+    /// When true, munge symlink targets with the `/rsyncd-munged/` prefix.
+    ///
+    /// Sourced from the daemon module's `munge symlinks` directive (or its
+    /// `!use_chroot` auto default). Mirrors upstream's `munge_symlinks`
+    /// global. Propagated into [`ParsedServerFlags::munge_symlinks`] when the
+    /// server config is consumed so the sender (strip on `readlink()`) and
+    /// receiver (prepend on `symlink()` write) apply the bidirectional
+    /// transform.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `clientserver.c:992-1004` - daemon sets `munge_symlinks` from
+    ///   `lp_munge_symlinks()`.
+    /// - `flist.c:222-226` - sender strips the prefix.
+    /// - `flist.c:1122-1126` - receiver prepends the prefix.
+    pub munge_symlinks: bool,
 }
 
 impl Default for ServerConfig {
@@ -484,6 +500,7 @@ impl Default for ServerConfig {
             fake_super: false,
             daemon_incoming_chmod: None,
             daemon_outgoing_chmod: None,
+            munge_symlinks: false,
         }
     }
 }

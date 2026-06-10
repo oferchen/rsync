@@ -89,6 +89,7 @@ pub struct ServerConfigBuilder {
     fake_super: bool,
     daemon_incoming_chmod: Option<ChmodModifiers>,
     daemon_outgoing_chmod: Option<ChmodModifiers>,
+    munge_symlinks: bool,
 }
 
 impl Default for ServerConfigBuilder {
@@ -128,6 +129,7 @@ impl ServerConfigBuilder {
             fake_super: false,
             daemon_incoming_chmod: None,
             daemon_outgoing_chmod: None,
+            munge_symlinks: false,
         }
     }
 
@@ -507,6 +509,24 @@ impl ServerConfigBuilder {
         self
     }
 
+    /// Enables or disables symlink munging.
+    ///
+    /// When enabled, the daemon prepends `/rsyncd-munged/` to incoming
+    /// symlink targets (receiver) and strips the prefix from outgoing
+    /// symlink targets (sender) so symlinks cannot resolve outside the
+    /// module root when followed.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `clientserver.c:992-1004` - daemon resolves `munge_symlinks` from
+    ///   `lp_munge_symlinks()` and the `use_chroot` auto default.
+    /// - `flist.c:222-226` - sender-side strip.
+    /// - `flist.c:1122-1126` - receiver-side prepend.
+    pub fn munge_symlinks(&mut self, enabled: bool) -> &mut Self {
+        self.munge_symlinks = enabled;
+        self
+    }
+
     /// Validates the builder configuration.
     fn validate(&self) -> Result<(), BuilderError> {
         // upstream: options.c:2934 - --inplace and --delay-updates are mutually exclusive
@@ -585,6 +605,7 @@ impl ServerConfigBuilder {
             fake_super: self.fake_super,
             daemon_incoming_chmod: self.daemon_incoming_chmod.clone(),
             daemon_outgoing_chmod: self.daemon_outgoing_chmod.clone(),
+            munge_symlinks: self.munge_symlinks,
         }
     }
 }

@@ -479,6 +479,13 @@ fn build_server_config(
                 }
             }
 
+            // upstream: clientserver.c:992-993 - `munge_symlinks = lp_munge_symlinks(i)`
+            // with `!use_chroot || module_dirlen` as the auto default. The bit is
+            // purely daemon-config-driven (no client-side override) and travels
+            // through the transfer layer so the sender strips `/rsyncd-munged/`
+            // on `readlink()` and the receiver prepends it on `symlink()` writes.
+            cfg.munge_symlinks = module.effective_munge_symlinks();
+
             Ok(Some(cfg))
         }
         Err(err) => {
