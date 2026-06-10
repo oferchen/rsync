@@ -181,6 +181,18 @@ source but `-X` is not enabled.
 Non-NTFS volumes (FAT32, exFAT) do not support ADS. Writes to those volumes
 fail with an I/O error.
 
+**Long-path (`>260` char) round-trips.** Win32 file APIs cap unprefixed paths
+at `MAX_PATH` (260 characters) and reject longer inputs with
+`ERROR_PATH_NOT_FOUND`. oc-rsync routes every ACL boundary
+(`GetNamedSecurityInfoW`, `SetNamedSecurityInfoW`) and ADS-backed xattr
+boundary (`FindFirstStreamW`, `CreateFileW`, `DeleteFileW`) through the
+`fast_io::to_extended_path` helper (added in PR #5575), which prepends the
+`\\?\` (or `\\?\UNC\`) extended-length prefix on absolute drive and UNC
+inputs. This keeps deeply nested directory trees - common with mirrored
+build artefacts or backup workloads - round-tripping byte-for-byte without
+requiring callers to opt in. Already-prefixed paths and non-Windows targets
+take the identity branch and pay no extra allocation cost.
+
 ---
 
 ## Known limitations and gaps
