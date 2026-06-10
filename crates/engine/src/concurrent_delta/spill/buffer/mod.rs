@@ -4,12 +4,12 @@
 //! live here. Method `impl` blocks are split across focused submodules so each
 //! file stays under the LoC cap:
 //!
-//! - [`lifecycle`] - constructors, builders, accessors.
-//! - [`insert`] - inbound insert paths and the spill-state eviction helper.
-//! - [`spill`] - spill-to-disk path: candidate selection, per-item and
+//! - `lifecycle` - constructors, builders, accessors.
+//! - `insert` - inbound insert paths and the spill-state eviction helper.
+//! - `spill` - spill-to-disk path: candidate selection, per-item and
 //!   whole-batch writers, RSS pressure trigger, compression wrapper, raw
 //!   record writer, and directory recreation.
-//! - [`reload`] - reload-from-disk path: in-order delivery, single-item and
+//! - `reload` - reload-from-disk path: in-order delivery, single-item and
 //!   batch reload, on-disk tag dispatch.
 //!
 //! The parent [`spill`](super) module re-exports [`SpillableReorderBuffer`]
