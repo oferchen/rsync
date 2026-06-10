@@ -758,8 +758,8 @@ fn parse_daemon_chmod_specs(
     ),
     String,
 > {
-    let incoming = parse_one_chmod_spec("incoming chmod", module.incoming_chmod())?;
-    let outgoing = parse_one_chmod_spec("outgoing chmod", module.outgoing_chmod())?;
+    let incoming = parse_one_chmod_spec("incoming chmod", module.incoming_chmod.as_deref())?;
+    let outgoing = parse_one_chmod_spec("outgoing chmod", module.outgoing_chmod.as_deref())?;
     Ok((incoming, outgoing))
 }
 
