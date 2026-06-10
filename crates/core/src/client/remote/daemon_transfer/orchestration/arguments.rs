@@ -328,6 +328,20 @@ pub(super) fn build_full_daemon_args(
         }
     }
 
+    // upstream: options.c:2894-2898 - --usermap / --groupmap are forwarded
+    // verbatim. With `protect_args` (always on for daemon mode), upstream
+    // `safe_arg()` returns the value unchanged (no shell escaping) because
+    // the args are shipped over the secluded-args byte stream rather than a
+    // shell command line. Wildcards like `*` must reach the receiver intact
+    // so `uidlist.c:parse_name_map()` recognises them and installs a
+    // `NFLAGS_WILD_NAME_MATCH` rule.
+    if let Some(mapping) = config.user_mapping() {
+        args.push(format!("--usermap={}", mapping.spec()));
+    }
+    if let Some(mapping) = config.group_mapping() {
+        args.push(format!("--groupmap={}", mapping.spec()));
+    }
+
     // upstream: options.c:2716-2723, options.c:2052-2054 - --iconv forwarding
     // to the remote daemon. When iconv_opt contains a comma, only the
     // post-comma half (daemon's local charset) is forwarded; otherwise the
