@@ -397,13 +397,24 @@ mod symlink_race_tests {
 
         let err = open_sandbox_for_dest_strict(&subdir, true)
             .expect_err("daemon receiver must refuse a symlink destination");
-        // ELOOP on Linux + openat2; ENOTDIR on macOS/BSD where O_DIRECTORY
-        // is evaluated before O_NOFOLLOW; both prove the symlink was
-        // refused.
-        let code = err.raw_os_error();
+        // The wrapped error preserves `ErrorKind` from the underlying
+        // `DirSandbox::open_root` call (ELOOP -> `FilesystemLoop` on Linux
+        // + openat2; ENOTDIR -> `NotADirectory` on macOS/BSD where
+        // O_DIRECTORY is evaluated before O_NOFOLLOW). Both prove the
+        // symlink was refused at the syscall layer. The wrapped Display
+        // also carries the security-context message so operators see why
+        // the transfer aborted.
+        let kind = err.kind();
         assert!(
-            code == Some(libc::ELOOP) || code == Some(libc::ENOTDIR),
-            "expected ELOOP or ENOTDIR for symlink dest, got: {err}"
+            matches!(
+                kind,
+                io::ErrorKind::FilesystemLoop | io::ErrorKind::NotADirectory
+            ),
+            "expected FilesystemLoop or NotADirectory ErrorKind, got: {kind:?} ({err})"
+        );
+        assert!(
+            err.to_string().contains("chdir-symlink-race"),
+            "expected chdir-symlink-race security context in message, got: {err}"
         );
     }
 

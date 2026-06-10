@@ -284,11 +284,14 @@ fn resolve_receiver_dest(
     if tail.is_empty() || tail == "." {
         return module_path.to_path_buf();
     }
+    // Defensive: a path arriving here that is absolute on the host OS
+    // (Unix `is_absolute()` or a leading `/` that Windows treats as
+    // drive-relative) cannot be allowed to escape the module root. Strip
+    // the leading separators and join the remainder so the destination is
+    // always under `module_path`. Tests cover both forms cross-platform.
     let rel = std::path::Path::new(tail);
-    if rel.is_absolute() {
-        // Defensive: an absolute path here cannot escape the module - join
-        // its components onto the module root by stripping the leading `/`.
-        let stripped = tail.trim_start_matches('/');
+    if rel.is_absolute() || tail.starts_with('/') || tail.starts_with('\\') {
+        let stripped = tail.trim_start_matches(|c| c == '/' || c == '\\');
         return module_path.join(stripped);
     }
     module_path.join(rel)
