@@ -29,10 +29,14 @@ impl GeneratorContext {
     /// `read_ndx_and_attrs()` which loops over NDX_DEL_STATS, reading 5 varints of
     /// deletion counts before continuing to expect NDX_DONE.
     ///
-    /// Deletion statistics are only sent when `--stats` is active (INFO_GTE(STATS, 2))
-    /// and follow upstream's early/late timing:
-    /// - **Early** (delete_during or delete_before): sent when `do_stats && delete_mode`.
-    /// - **Late** (delete_delay or delete_after): sent when `do_stats`.
+    /// Deletion statistics are sent whenever deletion is active, following
+    /// upstream 3.4.4's early/late timing (the `--stats`/`INFO_GTE(STATS, 2)`
+    /// requirement was removed in 3.4.4). Both paths share the predicate
+    /// `delete_mode || force_delete || read_batch`:
+    /// - **Early** (delete_during or delete_before): sent at the early-delete
+    ///   checkpoint just after the first phase NDX_DONE pair.
+    /// - **Late** (delete_delay or delete_after): sent at the late-delete
+    ///   checkpoint after delayed deletions complete.
     ///
     /// # Upstream Reference
     ///
@@ -41,8 +45,8 @@ impl GeneratorContext {
     /// - `main.c:885-886` - protocol >= 29 uses `read_ndx_and_attrs()`
     /// - `rsync.c:337-342` - NDX_DEL_STATS handling in `read_ndx_and_attrs()`
     /// - `main.c:225-238` - `write_del_stats()` format
-    /// - `generator.c:2376-2381` - early del_stats path
-    /// - `generator.c:2420-2425` - late del_stats path
+    /// - `generator.c:2393-2398` (3.4.4) - early del_stats path (no STATS gate)
+    /// - `generator.c:2437-2442` (3.4.4) - late del_stats path (no STATS gate)
     pub(in crate::generator) fn handle_goodbye<R: Read, W: Write>(
         &mut self,
         reader: &mut R,
@@ -78,12 +82,12 @@ impl GeneratorContext {
 
         // For protocol 31+: conditionally send del_stats, echo NDX_DONE, read final NDX_DONE.
         //
-        // Upstream gates del_stats sending on INFO_GTE(STATS, 2) (i.e. --stats was passed)
-        // and splits it into early vs late paths depending on deletion timing:
-        // - Early (generator.c:2376-2381): !(delete_during==2 || delete_after) =>
-        //   send del_stats only when (do_stats && (delete_mode || force_delete))
-        // - Late (generator.c:2420-2425): (delete_during==2 || delete_after) =>
-        //   send del_stats when do_stats
+        // Upstream 3.4.4 removed the INFO_GTE(STATS, 2) (--stats) gate. del_stats are now
+        // sent whenever deletion is active, split into early vs late paths by timing:
+        // - Early (generator.c:2393-2398 in 3.4.4): !(delete_during==2 || delete_after) =>
+        //   send del_stats when (delete_mode || force_delete || read_batch)
+        // - Late  (generator.c:2437-2442 in 3.4.4): (delete_during==2 || delete_after) =>
+        //   send del_stats when (delete_mode || force_delete || read_batch)
         if self.protocol.supports_extended_goodbye() {
             // Writes during goodbye may fail when the daemon has already closed
             // the connection (common in dry-run mode).
@@ -137,25 +141,26 @@ impl GeneratorContext {
 
     /// Determines whether del_stats should be sent during the goodbye phase.
     ///
-    /// Mirrors upstream's conditional logic for `write_del_stats()` in the
-    /// generator goodbye sequence. The conditions differ for early vs late
-    /// deletion timing:
+    /// Mirrors upstream 3.4.4's conditional logic for `write_del_stats()` in
+    /// the generator goodbye sequence. Upstream 3.4.4 removed the
+    /// `INFO_GTE(STATS, 2)` (`--stats`) gate; del_stats are now emitted
+    /// whenever deletion is active, with timing split by early vs late:
     ///
-    /// - **Early** (`!late_delete`): `do_stats && flags.delete`
-    ///   (upstream: generator.c:2377 - `INFO_GTE(STATS, 2) && (delete_mode || force_delete)`)
-    /// - **Late** (`late_delete`): `do_stats`
-    ///   (upstream: generator.c:2422 - `INFO_GTE(STATS, 2)`)
+    /// - **Early** (`!late_delete`): `delete_mode || force_delete || read_batch`
+    ///   (upstream: generator.c:2394 in 3.4.4)
+    /// - **Late** (`late_delete`): same condition
+    ///   (upstream: generator.c:2439 in 3.4.4)
+    ///
+    /// Note: oc-rsync does not currently track `force_delete` or `read_batch`
+    /// as distinct flags in the transfer config. `flags.delete` covers the
+    /// `delete_mode` case; the other two are out of scope for URV-6.a and
+    /// will be wired in once the corresponding config plumbing exists.
     pub(in crate::generator) fn should_send_del_stats(&self) -> bool {
-        if !self.config.do_stats {
-            return false;
-        }
-        if self.config.deletion.late_delete {
-            // upstream: generator.c:2422 - INFO_GTE(STATS, 2) (already checked above)
-            true
-        } else {
-            // upstream: generator.c:2377 - INFO_GTE(STATS, 2) && (delete_mode || force_delete)
-            self.config.flags.delete
-        }
+        // upstream: generator.c:2394 / 2439 in 3.4.4 -
+        // delete_mode || force_delete || read_batch (no INFO_GTE(STATS, 2) gate).
+        // Early and late paths share the same predicate; `late_delete` governs
+        // *which* checkpoint emits the message, not whether to emit.
+        self.config.flags.delete
     }
 
     /// Reads the next NDX value, consuming any NDX_DEL_STATS messages.
