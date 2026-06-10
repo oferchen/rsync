@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use logging::PhaseTimer;
 use protocol::flist::FileEntry;
+use protocol::stats::DeleteStats;
 
 use crate::pipeline::PipelineConfig;
 use crate::receiver::stats::TransferStats;
@@ -88,13 +89,23 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.create_symlinks(&setup.dest_dir, writer);
 
-        // upstream: generator.c:1348-1354 - missing_args == 2 && file->mode == 0
-        // deletes the destination path and skips any creation for the sentinel.
-        self.process_missing_args_sentinels(
-            &setup.dest_dir,
-            #[cfg(unix)]
-            setup.sandbox.as_deref(),
-        )?;
+        // Mirror `run_pipelined`: when `--delete` is in effect, sweep the
+        // destination for extraneous entries and capture per-type counters.
+        // Upstream accumulates these globally across all delete paths so they
+        // can be reported via stats and emitted as NDX_DEL_STATS.
+        // upstream: generator.c:do_delete_pass()
+        let mut delete_stats = DeleteStats::new();
+        let mut delete_limit_exceeded = false;
+        if self.config.flags.delete {
+            let (ds, exceeded) = self.delete_extraneous_files(
+                &setup.dest_dir,
+                #[cfg(unix)]
+                setup.sandbox.as_ref(),
+                writer,
+            )?;
+            delete_stats = ds;
+            delete_limit_exceeded = exceeded;
+        }
 
         let files_to_transfer = self.build_files_to_transfer(
             writer,
@@ -214,6 +225,8 @@ impl ReceiverContext {
             stats.io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
         }
         stats.metadata_errors = metadata_errors;
+        stats.delete_stats = delete_stats;
+        stats.delete_limit_exceeded = delete_limit_exceeded;
         stats.redo_count = redo_count;
 
         self.finalize_transfer(reader, writer)?;

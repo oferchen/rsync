@@ -266,7 +266,7 @@ version = "0.6.3"
 dependencies = [
  "memchr",
  "proptest",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
 ]
 
@@ -296,7 +296,7 @@ dependencies = [
  "metadata",
  "protocol",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -405,7 +405,7 @@ version = "0.6.3"
 dependencies = [
  "serde",
  "serde_json",
- "thiserror 2.0.18",
+ "thiserror",
  "toml",
 ]
 
@@ -449,25 +449,26 @@ dependencies = [
 
 [[package]]
 name = "cargo-platform"
-version = "0.1.9"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e35af189006b9c0f00a064685c727031e3ed2d8020f7ba284d78cc2671bd36ea"
+checksum = "87a0c0e6148f11f01f32650a2ea02d532b2ad4e81d8bd41e6e565b5adc5e6082"
 dependencies = [
  "serde",
+ "serde_core",
 ]
 
 [[package]]
 name = "cargo_metadata"
-version = "0.18.1"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d886547e41f740c616ae73108f6eb70afe6d940c7bc697cb30f13daec073037"
+checksum = "ef987d17b0a113becdd19d3d0022d04d7ef41f9efe4f3fb63ac44ba61df3ade9"
 dependencies = [
  "camino",
  "cargo-platform",
  "semver",
  "serde",
  "serde_json",
- "thiserror 1.0.69",
+ "thiserror",
 ]
 
 [[package]]
@@ -564,7 +565,7 @@ dependencies = [
  "sha1 0.10.6",
  "sha2 0.10.9",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
  "xxh3",
  "xxhash-rust",
 ]
@@ -735,7 +736,7 @@ version = "0.6.3"
 dependencies = [
  "flate2",
  "lz4_flex",
- "thiserror 2.0.18",
+ "thiserror",
  "zstd",
 ]
 
@@ -772,7 +773,7 @@ dependencies = [
  "socket2",
  "tempfile",
  "test-support",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1325,7 +1326,7 @@ dependencies = [
  "signature 0.6.3",
  "tempfile",
  "test-support",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "tracing",
  "windows-sys 0.61.2",
@@ -1409,7 +1410,7 @@ dependencies = [
  "rayon",
  "rustix",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
  "windows-sys 0.61.2",
 ]
@@ -1456,7 +1457,7 @@ dependencies = [
  "protocol",
  "tempfile",
  "test-support",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
 ]
 
@@ -1488,7 +1489,7 @@ dependencies = [
  "serde",
  "tempfile",
  "test-support",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -2125,7 +2126,7 @@ checksum = "635839550ae8b90d9fd2571460a6645dc0aec070225956ca7a2831ed31d2795d"
 dependencies = [
  "enumflags2",
  "libc",
- "thiserror 2.0.18",
+ "thiserror",
 ]
 
 [[package]]
@@ -2247,7 +2248,7 @@ dependencies = [
  "rustc-hash 2.1.2",
  "signature 0.6.3",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
 ]
 
@@ -2314,7 +2315,7 @@ dependencies = [
  "rustix",
  "tempfile",
  "test-support",
- "thiserror 2.0.18",
+ "thiserror",
  "windows",
  "xattr",
 ]
@@ -2595,7 +2596,7 @@ dependencies = [
  "log",
  "rand 0.10.1",
  "sha2 0.11.0",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "windows",
  "windows-strings",
@@ -2742,7 +2743,7 @@ dependencies = [
  "nix",
  "signal-hook",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
  "windows",
 ]
 
@@ -2953,7 +2954,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "tokio-util",
  "tracing",
@@ -3193,7 +3194,7 @@ dependencies = [
  "russh",
  "shell-words",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -3275,7 +3276,7 @@ dependencies = [
  "ssh-encoding",
  "ssh-key",
  "subtle",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "typenum",
  "universal-hash 0.6.1",
@@ -3688,7 +3689,7 @@ dependencies = [
  "protocol",
  "rayon",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror",
  "tracing",
 ]
 
@@ -3892,31 +3893,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
-dependencies = [
- "thiserror-impl 1.0.69",
-]
-
-[[package]]
-name = "thiserror"
 version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
 dependencies = [
- "thiserror-impl 2.0.18",
-]
-
-[[package]]
-name = "thiserror-impl"
-version = "1.0.69"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
+ "thiserror-impl",
 ]
 
 [[package]]
@@ -4192,7 +4173,7 @@ dependencies = [
  "signature 0.6.3",
  "tempfile",
  "test-support",
- "thiserror 2.0.18",
+ "thiserror",
  "tokio",
  "tokio-util",
  "tracing",

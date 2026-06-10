@@ -122,9 +122,20 @@ pub(super) fn dest_mtime_newer(dest_meta: &fs::Metadata, source_entry: &FileEntr
 ///
 /// Returns `true` if the entry was handled and should not be transferred.
 ///
+/// The basis-dir entry is stat'd with `lstat` by default to mirror upstream
+/// `link_stat(cmpbuf, &sxp->st, 0)` in `try_dests_reg`. When `copy_links` is
+/// true (`-L` / `--copy-links`), the entry is stat'd with `stat` so a basis-dir
+/// symlink to a regular file is accepted as a regular-file basis. This matches
+/// upstream `link_stat()` (`flist.c:234`) which dispatches to `x_stat` when
+/// `copy_links` is set and `x_lstat` otherwise. Without this distinction, a
+/// basis-dir symlink would be silently consumed under `--copy-dest`, diverging
+/// from upstream which skips it via `!S_ISREG(sxp->st.st_mode)` at line 953.
+///
 /// # Upstream Reference
 ///
 /// - `generator.c:942` - `try_dests_reg()` iterates `basis_dir[]`
+/// - `generator.c:953` - `link_stat(cmpbuf, &sxp->st, 0)` + `!S_ISREG` filter
+/// - `flist.c:234` - `link_stat()` uses `x_stat` if `copy_links`, else `x_lstat`
 /// - `generator.c:983` - match_level 3 with `COMPARE_DEST` returns -2 (skip)
 /// - `generator.c:991` - match_level 3 with `LINK_DEST` calls `hard_link_one()`
 /// - `generator.c:1021` - match_level >= 2 with `COPY_DEST` copies locally
@@ -136,6 +147,7 @@ pub(super) fn try_reference_dest(
     preserve_times: bool,
     size_only: bool,
     always_checksum: Option<protocol::ChecksumAlgorithm>,
+    copy_links: bool,
     metadata_opts: &MetadataOptions,
     metadata_errors: &mut Vec<(PathBuf, String)>,
     acl_cache: Option<&AclCache>,
@@ -147,8 +159,17 @@ pub(super) fn try_reference_dest(
     let relative_path = entry.path();
     for ref_dir in reference_directories {
         let ref_path = ref_dir.path.join(relative_path);
-        let ref_meta = match fs::metadata(&ref_path) {
-            Ok(m) if m.is_file() => m,
+        // upstream: generator.c:953 - `link_stat(cmpbuf, &sxp->st, 0)` then
+        // `!S_ISREG(sxp->st.st_mode)` filters out symlinks and other non-regular
+        // entries unless `copy_links` is set, in which case `link_stat()` falls
+        // through to `x_stat()` (flist.c:234) and follows the symlink.
+        let stat_result = if copy_links {
+            fs::metadata(&ref_path)
+        } else {
+            fs::symlink_metadata(&ref_path)
+        };
+        let ref_meta = match stat_result {
+            Ok(m) if m.file_type().is_file() => m,
             _ => continue,
         };
 
@@ -421,6 +442,7 @@ mod info_copy_emission_tests {
             false,
             true,
             None,
+            false,
             &metadata_opts,
             &mut metadata_errors,
             None,
@@ -479,6 +501,7 @@ mod info_copy_emission_tests {
             false,
             true,
             None,
+            false,
             &metadata_opts,
             &mut metadata_errors,
             None,
@@ -495,6 +518,176 @@ mod info_copy_emission_tests {
         assert!(
             copy_messages().is_empty(),
             "COPY notice must be gated at level 1"
+        );
+    }
+}
+
+/// Regression tests for symlink handling in basis-dir lookups under
+/// `--copy-dest` / `--link-dest` / `--compare-dest`.
+///
+/// upstream: `generator.c:953` — `link_stat(cmpbuf, &sxp->st, 0)` followed by
+/// `!S_ISREG(sxp->st.st_mode)` filters out a basis-dir entry that is itself a
+/// symlink (unless `copy_links` is set, in which case `link_stat()` falls
+/// through to `x_stat()` per `flist.c:234`). Without this gate the receiver
+/// would silently copy or hard-link from a symlink target it should not have
+/// consumed, diverging from upstream over remote-shell transports where the
+/// upstream `alt-dest.test` exercises the same scenario via `lsh.sh`.
+#[cfg(unix)]
+#[cfg(test)]
+mod symlink_basis_tests {
+    use std::fs;
+    use std::os::unix;
+    use std::path::PathBuf;
+
+    use metadata::MetadataOptions;
+    use protocol::flist::FileEntry;
+
+    use super::try_reference_dest;
+    use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
+
+    fn setup_symlink_basis() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let ref_dir = temp.path().join("basis");
+        fs::create_dir_all(&ref_dir).expect("create basis dir");
+
+        // Real regular file outside the basis-dir entry the receiver will probe.
+        let target = ref_dir.join("real-target");
+        fs::write(&target, b"basis payload").expect("write basis target");
+
+        // Basis-dir entry that matches the source name is itself a symlink to
+        // the regular file. Upstream's `link_stat()` lstats this and skips it
+        // because S_ISLNK != S_ISREG. oc-rsync must mirror that behaviour.
+        let basis_entry = ref_dir.join("payload.bin");
+        unix::fs::symlink("real-target", &basis_entry).expect("create basis symlink");
+
+        let dest_dir = temp.path().join("dest");
+        fs::create_dir_all(&dest_dir).expect("create dest dir");
+
+        (temp, ref_dir, dest_dir)
+    }
+
+    fn run(
+        kind: ReferenceDirectoryKind,
+        ref_dir: &std::path::Path,
+        dest_dir: &std::path::Path,
+        copy_links: bool,
+    ) -> bool {
+        let entry = FileEntry::new_file(
+            PathBuf::from("payload.bin"),
+            b"basis payload".len() as u64,
+            0o644,
+        );
+        let reference = ReferenceDirectory {
+            kind,
+            path: ref_dir.to_path_buf(),
+        };
+        let metadata_opts = MetadataOptions::default();
+        let mut metadata_errors = Vec::new();
+
+        try_reference_dest(
+            &entry,
+            dest_dir,
+            std::slice::from_ref(&reference),
+            false,
+            true,
+            None,
+            copy_links,
+            &metadata_opts,
+            &mut metadata_errors,
+            None,
+        )
+    }
+
+    /// Without `--copy-links`, a basis-dir symlink must NOT match. Upstream
+    /// returns `-1` from `try_dests_reg` so the receiver requests a transfer
+    /// from the sender. oc-rsync must mirror this to keep wire-byte parity
+    /// over remote-shell transports (upstream `alt-dest.test`).
+    #[test]
+    fn copy_dest_skips_symlink_basis_entry_without_copy_links() {
+        let (_tmp, ref_dir, dest_dir) = setup_symlink_basis();
+
+        let handled = run(ReferenceDirectoryKind::Copy, &ref_dir, &dest_dir, false);
+
+        assert!(
+            !handled,
+            "basis-dir symlink must be skipped without --copy-links"
+        );
+        assert!(
+            !dest_dir.join("payload.bin").exists(),
+            "destination must not be populated from a symlink basis"
+        );
+    }
+
+    /// `--link-dest` with a symlink basis must also be skipped: upstream's
+    /// `try_dests_reg` filters before reaching `hard_link_one()`.
+    #[test]
+    fn link_dest_skips_symlink_basis_entry_without_copy_links() {
+        let (_tmp, ref_dir, dest_dir) = setup_symlink_basis();
+
+        let handled = run(ReferenceDirectoryKind::Link, &ref_dir, &dest_dir, false);
+
+        assert!(
+            !handled,
+            "basis-dir symlink must be skipped without --copy-links"
+        );
+        assert!(
+            !dest_dir.join("payload.bin").exists(),
+            "destination must not be hard-linked from a symlink basis"
+        );
+    }
+
+    /// `--compare-dest` mirrors the same filter: a symlink basis cannot mark
+    /// the source entry as up-to-date.
+    #[test]
+    fn compare_dest_skips_symlink_basis_entry_without_copy_links() {
+        let (_tmp, ref_dir, dest_dir) = setup_symlink_basis();
+
+        let handled = run(ReferenceDirectoryKind::Compare, &ref_dir, &dest_dir, false);
+
+        assert!(
+            !handled,
+            "compare-dest must not treat symlink basis as up-to-date"
+        );
+    }
+
+    /// With `--copy-links` (`-L`), upstream's `link_stat()` dispatches to
+    /// `x_stat()` which follows the symlink. A basis-dir symlink pointing at
+    /// a matching regular file is accepted as a regular-file basis.
+    #[test]
+    fn copy_dest_follows_symlink_basis_entry_with_copy_links() {
+        let (_tmp, ref_dir, dest_dir) = setup_symlink_basis();
+
+        let handled = run(ReferenceDirectoryKind::Copy, &ref_dir, &dest_dir, true);
+
+        assert!(
+            handled,
+            "with --copy-links, the symlink basis must resolve to a regular file"
+        );
+        assert_eq!(
+            fs::read(dest_dir.join("payload.bin")).expect("dest file"),
+            b"basis payload"
+        );
+    }
+
+    /// Sanity check: a regular-file basis-dir entry still matches in the
+    /// default `copy_links=false` path. This guards against an over-eager fix
+    /// that lstats the entry but then fails to recognise a regular file.
+    #[test]
+    fn copy_dest_matches_regular_basis_entry_without_copy_links() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let ref_dir = temp.path().join("basis");
+        fs::create_dir_all(&ref_dir).expect("create basis dir");
+        fs::write(ref_dir.join("payload.bin"), b"basis payload").expect("write basis");
+
+        let dest_dir = temp.path().join("dest");
+        fs::create_dir_all(&dest_dir).expect("create dest dir");
+
+        let handled = run(ReferenceDirectoryKind::Copy, &ref_dir, &dest_dir, false);
+
+        assert!(handled, "regular-file basis must still be accepted");
+        assert_eq!(
+            fs::read(dest_dir.join("payload.bin")).expect("dest file"),
+            b"basis payload"
         );
     }
 }

@@ -4,7 +4,7 @@
 
 # oc-rsync
 
-`rsync` re-implemented in Rust. Wire-compatible with upstream rsync 3.4.3 (and back-compat with 3.4.2 / 3.4.1, protocol 32), works as a drop-in replacement.
+`rsync` re-implemented in Rust. Wire-compatible with upstream rsync 3.4.4 (and back-compat with 3.4.3 / 3.4.2 / 3.4.1, protocol 32), works as a drop-in replacement.
 
 Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict.
 
@@ -12,9 +12,9 @@ Binary name: **`oc-rsync`** - installs alongside system `rsync` without conflict
 
 ## Status
 
-**Release:** 0.6.3 - Wire-compatible drop-in replacement for rsync 3.4.3 (and 3.4.2 / 3.4.1, protocols 28-32).
+**Release:** 0.6.3 - Wire-compatible drop-in replacement for rsync 3.4.4 (and 3.4.3 / 3.4.2 / 3.4.1, protocols 28-32).
 
-All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop tested against upstream rsync 2.6.9, 3.0.9, 3.1.3, 3.4.1, 3.4.2, and 3.4.3. Upstream rsync's own `testsuite/*.test` corpus runs in CI against `oc-rsync` as `$RSYNC` - all tests now pass (known-failures roster is empty).
+All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation, incremental recursion, and compression are complete. Interop tested against upstream rsync 2.6.9, 3.0.9, 3.1.3, 3.4.1, 3.4.2, 3.4.3, and 3.4.4. Upstream rsync's own `testsuite/*.test` corpus runs in CI against `oc-rsync` as `$RSYNC` - all tests now pass (known-failures roster is empty).
 
 | Component | Status |
 |-----------|--------|
@@ -145,7 +145,7 @@ Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
 - SIMD vs scalar self-test added (cargo-fuzz target + unit test) cross-validating AVX2, SSE2, NEON, and scalar implementations at startup (3.4.2 parity)
 
 **Upstream interop**
-- Pinned upstream interop matrix bumped to rsync **3.4.3** (in addition to 2.6.9, 3.0.9, 3.1.3, 3.4.1, 3.4.2)
+- Pinned upstream interop matrix bumped to rsync **3.4.4** (in addition to 2.6.9, 3.0.9, 3.1.3, 3.4.1, 3.4.2, 3.4.3)
 - All upstream `testsuite/*.test` tests now pass - known-failures roster is empty
 - Wire differential fuzzing validates protocol-level byte equivalence against upstream
 - Scheduled GitHub Actions watcher for new upstream releases
@@ -168,7 +168,7 @@ Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
 
 ### Interop Testing
 
-Tested against upstream rsync **2.6.9**, **3.0.9**, **3.1.3**, **3.4.1**, **3.4.2**, and **3.4.3** in CI across protocols 28-32. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth. Wire differential fuzzing against upstream rsync validates protocol-level byte equivalence. See the [full interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for per-version, per-feature, and per-platform detail.
+Tested against upstream rsync **2.6.9**, **3.0.9**, **3.1.3**, **3.4.1**, **3.4.2**, **3.4.3**, and **3.4.4** in CI across protocols 28-32. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth. Wire differential fuzzing against upstream rsync validates protocol-level byte equivalence. See the [full interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for per-version, per-feature, and per-platform detail.
 
 ### Supported rsync protocol versions
 
@@ -196,6 +196,7 @@ Per-version dispatch is implemented as `protocol_version` gates in the wire code
 | 3.4.1                  | 32       | push, pull, daemon, SSH  | gating |
 | 3.4.2                  | 32       | push, pull, daemon       | gating |
 | 3.4.3                  | 32       | push, pull, daemon, SSH  | gating |
+| 3.4.4                  | 32       | push, pull, daemon, SSH  | gating |
 
 Wire format is verified byte-identical to upstream rsync via CI golden-byte tests for the listed versions. Wire differential fuzzing validates protocol-level byte equivalence against upstream. Other versions may work but are not regression-tested.
 
@@ -284,7 +285,7 @@ Three one-shot warnings may appear on stderr (sync path) or via `tracing` target
 
 ### Known Limitations / Architectural Trade-offs
 
-oc-rsync is wire-compatible with upstream rsync 3.4.3, but a few architectural choices and unfinished surfaces are worth calling out for operators planning a deployment:
+oc-rsync is wire-compatible with upstream rsync 3.4.4, but a few architectural choices and unfinished surfaces are worth calling out for operators planning a deployment:
 
 - **io_uring kernel requirement.** Provided buffer rings (PBUF_RING) require Linux **5.19+**; older 5.6-5.18 kernels fall back to standard buffered I/O via runtime probing.
 - **Fixed io_uring buffer pool.** The registered buffer pool is sized at compile time (1024 × 4 KiB = 4 MiB) and does not adapt under sustained I/O pressure. Workloads with very high concurrent file fan-out may see throughput plateau before saturating the device.

@@ -487,6 +487,21 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
         }
 
+        // upstream: options.c:2894-2898 - --usermap / --groupmap are
+        // forwarded as `--key=value` arguments. With `protect_args` the value
+        // is shipped verbatim; without `protect_args`, upstream wraps it in
+        // `safe_arg("--usermap", value)` which escapes shell + wildcard
+        // characters so a downstream `eval "$@"` does not glob-expand them.
+        // We rely on `protect_args` being the default for SSH transports
+        // (matching upstream's `old_style_args = -1` default at options.c:325),
+        // so the verbatim form is correct and the wildcard `*` survives.
+        if let Some(mapping) = self.config.user_mapping() {
+            args.push(OsString::from(format!("--usermap={}", mapping.spec())));
+        }
+        if let Some(mapping) = self.config.group_mapping() {
+            args.push(OsString::from(format!("--groupmap={}", mapping.spec())));
+        }
+
         // upstream: options.c:2716-2723 - --iconv forwarding. When iconv_opt
         // contains a comma, only the post-comma half (the remote charset) is
         // forwarded; otherwise the whole string is forwarded as-is.
