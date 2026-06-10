@@ -9,6 +9,61 @@
 // options.c:2737-2980 - `server_options()` emits the long-form options.
 // clientserver.c:1059-1073 - two-phase secluded-args reading.
 
+/// Reverses `safe_arg()`'s backslash escaping of an option arg, in place.
+///
+/// Walks the string from left to right collapsing every `\X` sequence into
+/// `X` (where `X` is any non-NUL character). A trailing lone backslash is
+/// preserved verbatim, matching upstream's `if (*f == '\\' && f[1])` guard.
+///
+/// This is the receive-side counterpart to upstream's `options.c:safe_arg()`
+/// client-side escaper. Under non-protect_args daemon mode, upstream rsync
+/// 3.4.4 began calling this on every option arg in `read_args()` so that
+/// shell metacharacters such as `*`, `?`, `;` round-trip through the wire
+/// regardless of remote-shell behaviour.
+///
+/// # Upstream Reference
+///
+/// - `io.c:1295-1306` - `unbackslash_arg(char *s)` in rsync 3.4.4.
+fn unbackslash_arg(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            i += 1;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    // upstream: `unbackslash_arg` operates on a C string in place; we walk
+    // the original UTF-8 bytes and only drop ASCII backslashes that precede
+    // another byte, so the result remains valid UTF-8 whenever the input was.
+    String::from_utf8(out).unwrap_or_else(|err| {
+        String::from_utf8_lossy(err.as_bytes()).into_owned()
+    })
+}
+
+/// Applies [`unbackslash_arg`] to every option arg that precedes the `.`
+/// CWD marker, mirroring upstream `io.c:1336-1359`'s split between option
+/// and file args. File args after the dot are left verbatim because upstream
+/// dispatches them through `glob_expand()` rather than `unbackslash_arg()`.
+fn unescape_phase1_option_args(args: Vec<String>) -> Vec<String> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut past_dot = false;
+    for arg in args {
+        if past_dot {
+            out.push(arg);
+        } else {
+            let is_dot = arg == ".";
+            out.push(unbackslash_arg(&arg));
+            if is_dot {
+                past_dot = true;
+            }
+        }
+    }
+    out
+}
+
 /// Reads client arguments sent after module approval.
 ///
 /// After the daemon sends "@RSYNCD: OK", the client sends its command-line
@@ -152,7 +207,12 @@ fn read_and_log_client_args(
             }
         }
     } else {
-        phase1_args
+        // upstream: clientserver.c:1073 - first `read_args()` call passes
+        // `unescape=1` so option args that the client escaped with
+        // `safe_arg()` are restored before parsing. File args after the `.`
+        // separator are NOT unescaped here because upstream funnels them
+        // through `glob_expand()` which handles shell metacharacters itself.
+        unescape_phase1_option_args(phase1_args)
     };
 
     if let Some(log) = ctx.log_sink {
