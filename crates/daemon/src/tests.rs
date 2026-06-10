@@ -231,6 +231,8 @@ include!("tests/chunks/daemon_munge_symlinks_pull.rs");
 include!("tests/chunks/daemon_compare_dest_push.rs");
 // Daemon relative receive end-to-end test
 include!("tests/chunks/daemon_relative_receive.rs");
+// Daemon sub-path pull resolution (UTS-3)
+include!("tests/chunks/daemon_pull_subpath.rs");
 // Daemon combined hardlinks + relative receive end-to-end test
 include!("tests/chunks/daemon_hardlinks_relative_receive.rs");
 // Daemon itemize end-to-end tests
