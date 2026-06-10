@@ -1053,6 +1053,7 @@ dependencies = [
  "libc",
  "logging-sink",
  "metadata",
+ "nix",
  "platform",
  "protocol",
  "rcgen",
