@@ -60,7 +60,22 @@ fn spawn_with_iocp_disabled() {
         iocp_policy: fast_io::IocpPolicy::Disabled,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+/// EDG-PANIC.5 regression: `spawn_disk_thread` returns `io::Result` so a
+/// `thread::Builder::spawn` failure (typically `EAGAIN`/`RLIMIT_NPROC`)
+/// propagates to the receiver instead of aborting the process. The OS does
+/// not let a unit test induce a spawn failure portably, so the test locks
+/// in the signature shape: the call returns a typed result and the success
+/// path yields a fully-formed handle.
+#[test]
+fn spawn_returns_io_result_handle() {
+    let config = DiskCommitConfig::default();
+    let result: std::io::Result<super::DiskThreadHandle> = spawn_disk_thread(config);
+    let h = result.expect("spawn must succeed on a healthy runtime");
     h.file_tx.send(FileMessage::Shutdown).unwrap();
     h.join_handle.join().unwrap();
 }
@@ -71,7 +86,7 @@ fn spawn_with_io_uring_disabled() {
         io_uring_policy: fast_io::IoUringPolicy::Disabled,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
     h.file_tx.send(FileMessage::Shutdown).unwrap();
     h.join_handle.join().unwrap();
 }
@@ -85,7 +100,7 @@ fn write_file_with_io_uring_auto_policy() {
         io_uring_policy: fast_io::IoUringPolicy::Auto,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -170,14 +185,14 @@ fn spawn_with_custom_capacity() {
         channel_capacity: 16,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
     h.file_tx.send(FileMessage::Shutdown).unwrap();
     h.join_handle.join().unwrap();
 }
 
 #[test]
 fn spawn_and_shutdown() {
-    let h = spawn_disk_thread(DiskCommitConfig::default());
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
     h.file_tx.send(FileMessage::Shutdown).unwrap();
     h.join_handle.join().unwrap();
 }
@@ -187,7 +202,7 @@ fn write_and_commit_file() {
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("output.dat");
 
-    let h = spawn_disk_thread(DiskCommitConfig::default());
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -223,7 +238,7 @@ fn abort_cleans_up_temp_file() {
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("aborted.dat");
 
-    let h = spawn_disk_thread(DiskCommitConfig::default());
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -259,7 +274,7 @@ fn abort_cleans_up_temp_file() {
 #[test]
 fn multiple_files_sequential() {
     let dir = test_support::create_tempdir();
-    let h = spawn_disk_thread(DiskCommitConfig::default());
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
 
     for i in 0..3 {
         let path = dir.path().join(format!("file{i}.dat"));
@@ -294,7 +309,7 @@ fn multiple_files_sequential() {
 
 #[test]
 fn channel_disconnect_stops_thread() {
-    let h = spawn_disk_thread(DiskCommitConfig::default());
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
     drop(h.file_tx);
 
     h.join_handle.join().unwrap();
@@ -310,7 +325,7 @@ fn multi_chunk_file() {
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("multi_chunk.dat");
 
-    let h = spawn_disk_thread(DiskCommitConfig::default());
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -343,7 +358,7 @@ fn buffer_recycling() {
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("recycle.dat");
 
-    let h = spawn_disk_thread(DiskCommitConfig::default());
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -384,7 +399,7 @@ fn whole_file_coalesced() {
     let dir = test_support::create_tempdir();
     let file_path = dir.path().join("whole.dat");
 
-    let h = spawn_disk_thread(DiskCommitConfig::default());
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
 
     h.file_tx
         .send(FileMessage::WholeFile {
@@ -429,7 +444,7 @@ fn commit_file_rename_via_io_uring_or_fallback() {
         io_uring_policy: fast_io::IoUringPolicy::Auto,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -471,7 +486,7 @@ fn commit_file_rename_replaces_existing_via_io_uring_or_fallback() {
         io_uring_policy: fast_io::IoUringPolicy::Auto,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -513,7 +528,7 @@ fn delay_updates_stages_to_partial_dir() {
         delay_updates: true,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -576,7 +591,7 @@ fn delay_updates_whole_file_stages_to_partial_dir() {
         delay_updates: true,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::WholeFile {
@@ -620,7 +635,7 @@ fn whole_file_commit_via_io_uring_or_fallback() {
         io_uring_policy: fast_io::IoUringPolicy::Auto,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::WholeFile {
@@ -663,7 +678,7 @@ fn partial_mode_partial_retains_file_on_shutdown() {
         partial_mode: PartialMode::Partial,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -708,7 +723,7 @@ fn partial_mode_none_deletes_file_on_shutdown() {
         partial_mode: PartialMode::None,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -751,7 +766,7 @@ fn partial_mode_partial_retains_file_on_abort() {
         partial_mode: PartialMode::Partial,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -799,7 +814,7 @@ fn partial_mode_partial_dir_retains_file_in_directory() {
         partial_mode: PartialMode::PartialDir(partial_dir.clone()),
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -849,7 +864,7 @@ fn partial_mode_no_retention_without_data() {
         partial_mode: PartialMode::Partial,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     // Begin but send no chunks - upstream's got_literal would be false.
     h.file_tx
@@ -890,7 +905,7 @@ fn partial_mode_channel_disconnect_retains_file() {
         partial_mode: PartialMode::Partial,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -934,7 +949,7 @@ fn partial_mode_relative_partial_dir() {
         partial_mode: PartialMode::PartialDir(std::path::PathBuf::from(".rsync-partial")),
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -985,7 +1000,7 @@ fn cleanup_manager_removes_orphaned_temp_files_on_simulated_signal() {
     let file_path = dir.path().join("orphan_cleanup.dat");
 
     let config = DiskCommitConfig::default();
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     // Send Begin (creates temp file and registers it with CleanupManager)
     // and a Chunk so that data is written.
@@ -1074,7 +1089,7 @@ fn cleanup_manager_unregisters_on_successful_commit() {
     let file_path = dir.path().join("committed_file.dat");
 
     let config = DiskCommitConfig::default();
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -1129,7 +1144,7 @@ fn cleanup_manager_mixed_committed_and_orphaned_files() {
     let orphan_path = dir.path().join("orphan.dat");
 
     let config = DiskCommitConfig::default();
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     // File 1: commit successfully.
     h.file_tx
@@ -1242,7 +1257,7 @@ fn cleanup_manager_whole_file_unregisters_on_commit() {
     let file_path = dir.path().join("whole_cleanup.dat");
 
     let config = DiskCommitConfig::default();
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::WholeFile {
@@ -1291,7 +1306,7 @@ fn cleanup_manager_inplace_skips_registration() {
     let file_path = dir.path().join("inplace.dat");
 
     let config = DiskCommitConfig::default();
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -1341,7 +1356,7 @@ fn partial_dir_abort_mid_stream_moves_to_partial_dir() {
         partial_mode: PartialMode::PartialDir(partial_dir.clone()),
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     // Begin a file that would be 300 bytes total.
     h.file_tx
@@ -1411,7 +1426,7 @@ fn partial_dir_channel_disconnect_moves_to_partial_dir() {
         partial_mode: PartialMode::PartialDir(partial_dir.clone()),
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -1462,7 +1477,7 @@ fn partial_dir_auto_created_on_interrupt() {
         partial_mode: PartialMode::PartialDir(partial_dir.clone()),
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -1522,7 +1537,7 @@ fn partial_dir_mid_stream_has_intermediate_size() {
         partial_mode: PartialMode::PartialDir(partial_dir.clone()),
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     let target_size: u64 = 1000;
     h.file_tx
@@ -1586,7 +1601,7 @@ fn partial_dir_whole_file_success_no_leftover_in_partial_dir() {
         partial_mode: PartialMode::PartialDir(partial_dir.clone()),
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::WholeFile {
@@ -1828,7 +1843,7 @@ fn delay_updates_disk_thread_e2e_single_file() {
     let final_path = dir.path().join("e2e.dat");
 
     // Step 1: Use the disk thread to write to the staging path.
-    let h = spawn_disk_thread(DiskCommitConfig::default());
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -1895,7 +1910,7 @@ fn delay_updates_disk_thread_e2e_multiple_files() {
     let staging_dir = dir.path().join(DELAY_UPDATES_PARTIAL_DIR);
     fs::create_dir(&staging_dir).unwrap();
 
-    let h = spawn_disk_thread(DiskCommitConfig::default());
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
 
     let mut outcomes = Vec::new();
     for i in 0..4 {
@@ -1981,7 +1996,7 @@ fn delay_updates_disk_thread_e2e_whole_file() {
     let staging_path = staging_dir.join("whole.dat");
     let final_path = dir.path().join("whole.dat");
 
-    let h = spawn_disk_thread(DiskCommitConfig::default());
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
 
     h.file_tx
         .send(FileMessage::WholeFile {
@@ -2032,7 +2047,7 @@ fn delay_updates_disk_thread_e2e_nested_dirs() {
     fs::create_dir(&staging_root).unwrap();
     fs::create_dir(&staging_sub).unwrap();
 
-    let h = spawn_disk_thread(DiskCommitConfig::default());
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
 
     // File at root level staging.
     let staging_root_file = staging_root.join("root.txt");
@@ -2199,7 +2214,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_shutdown() {
         partial_mode: PartialMode::Partial,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -2249,7 +2264,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_abort() {
         partial_mode: PartialMode::Partial,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -2302,7 +2317,7 @@ fn partial_mode_partial_dir_does_not_stamp_mtime_zero() {
         partial_mode: PartialMode::PartialDir(partial_dir.clone()),
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -2356,7 +2371,7 @@ fn partial_mode_partial_stamps_mtime_zero_on_disconnect() {
         partial_mode: PartialMode::Partial,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx
         .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -2411,7 +2426,7 @@ fn delay_updates_interrupt_leaves_committed_files_in_staging() {
         delay_updates: true,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     // Commit file 1 successfully - it should be staged in .~tmp~/.
     let file1_path = dir.path().join("file1.dat");
@@ -2502,7 +2517,7 @@ fn delay_updates_interrupt_mid_file_retains_prior_staged_files() {
         delay_updates: true,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     // Commit file 1 successfully.
     let file1_path = dir.path().join("committed.dat");
@@ -2581,7 +2596,7 @@ fn delay_updates_manual_sweep_after_commit_moves_to_final() {
         delay_updates: true,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     // Commit two files.
     let file1_path = dir.path().join("sweep1.dat");
@@ -2659,7 +2674,7 @@ fn delay_updates_channel_disconnect_preserves_staged_files() {
         delay_updates: true,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     // Commit a file successfully.
     let file_path = dir.path().join("disconnect.dat");

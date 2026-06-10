@@ -93,7 +93,7 @@ impl ReceiverContext {
         // For zstd the DCtx must persist across file boundaries (continuous
         // stream), so create the reader once and reuse it across the session.
         let compression = self.negotiated_algorithms.map(|n| n.compression);
-        let mut token_reader = TokenReader::new(compression);
+        let mut token_reader = TokenReader::new(compression)?;
 
         let deadline = crate::shared::TransferDeadline::from_system_time(self.config.stop_at);
 
