@@ -53,23 +53,6 @@ pub enum IoUringRestriction {
         /// Detected kernel minor version.
         minor: u32,
     },
-    /// `io_uring` itself is available, but `IORING_SETUP_SQPOLL` was rejected
-    /// by the kernel and the ring was rebuilt without the SQPOLL kthread.
-    ///
-    /// The `hint` is a human-readable sentence that distinguishes the common
-    /// causes (rootless container / missing `CAP_SYS_NICE` on `EPERM`, older
-    /// kernel on `ENOSYS`, otherwise a generic kernel rejection) and points
-    /// the operator at the remediation. It mirrors the message logged by
-    /// [`crate::io_uring::config::build_ring`] at the time of the fallback so
-    /// `--io-uring-status` and structured callers see the same wording.
-    ///
-    /// This variant does not block io_uring itself - all non-SQPOLL paths
-    /// remain functional. It exists so callers debugging "why is my daemon
-    /// slow?" can see the SQPOLL downgrade without parsing log output.
-    SqpollUnavailable {
-        /// Human-readable cause + remediation, suitable for log output.
-        hint: String,
-    },
     /// Could not determine the kernel version.
     KernelVersionUnknown,
 }
@@ -90,7 +73,6 @@ impl std::fmt::Display for IoUringRestriction {
                      (seccomp, container runtime, or cgroup restriction)"
                 )
             }
-            Self::SqpollUnavailable { hint } => write!(f, "{hint}"),
             Self::KernelVersionUnknown => write!(f, "could not detect kernel version"),
         }
     }
@@ -785,33 +767,6 @@ mod tests {
                 "restriction must not be None when io_uring is unavailable"
             );
         }
-    }
-
-    #[test]
-    fn sqpoll_unavailable_variant_constructs_and_displays() {
-        // The SqpollUnavailable variant is the typed entry point for
-        // SQP-LAND.4 wire-up. It must be constructible with an arbitrary
-        // hint string and render that hint verbatim through Display so
-        // callers can pass through messages composed by build_ring().
-        let hint = "io_uring SQPOLL setup failed with EPERM (missing CAP_SYS_NICE); \
-                    add the capability, run as root, or set OC_RSYNC_DISABLE_IOURING=1 \
-                    to bypass io_uring entirely";
-        let restriction = IoUringRestriction::SqpollUnavailable {
-            hint: hint.to_string(),
-        };
-        let display = format!("{restriction}");
-        assert_eq!(display, hint);
-        assert!(display.contains("EPERM"));
-        assert!(display.contains("CAP_SYS_NICE"));
-        assert!(display.contains("OC_RSYNC_DISABLE_IOURING"));
-    }
-
-    #[test]
-    fn sqpoll_unavailable_variant_is_distinct_from_none() {
-        let restriction = IoUringRestriction::SqpollUnavailable {
-            hint: "anything".to_string(),
-        };
-        assert_ne!(restriction, IoUringRestriction::None);
     }
 
     #[test]

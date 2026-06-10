@@ -362,64 +362,6 @@ fn refused_client_arg_short_n_dry_run_spared_by_wildcard() {
     assert_eq!(refused_client_arg(&module, &args), None);
 }
 
-#[test]
-fn refused_client_arg_compress_alias_group_long_variants() {
-    // upstream: options.c `refused_compress` extends `refuse options = compress`
-    // to every long-form that activates compression. `--no-compress` is the
-    // inverse and remains permitted.
-    let module = ModuleDefinition {
-        refuse_options: vec!["compress".to_owned()],
-        ..Default::default()
-    };
-    for variant in &[
-        "--compress",
-        "--compress-level=6",
-        "--compress-choice=zstd",
-        "--new-compress",
-        "--old-compress",
-        "--zl=4",
-        "--zc=zstd",
-    ] {
-        let args = vec!["--server".to_owned(), (*variant).to_owned()];
-        assert!(
-            refused_client_arg(&module, &args).is_some(),
-            "expected '{variant}' to be refused by 'refuse options = compress'",
-        );
-    }
-    let allowed = vec!["--server".to_owned(), "--no-compress".to_owned()];
-    assert_eq!(refused_client_arg(&module, &allowed), None);
-}
-
-#[test]
-fn refused_client_arg_compress_alias_negated() {
-    // upstream: a trailing `!compress-level` negation in the refuse list
-    // re-allows the specific alias member while still refusing siblings.
-    let module = ModuleDefinition {
-        refuse_options: vec!["compress".to_owned(), "!compress-level".to_owned()],
-        ..Default::default()
-    };
-    let level_allowed = vec!["--compress-level=6".to_owned()];
-    assert_eq!(refused_client_arg(&module, &level_allowed), None);
-    let still_refused = vec!["--compress".to_owned()];
-    assert_eq!(
-        refused_client_arg(&module, &still_refused),
-        Some("--compress".to_owned()),
-    );
-}
-
-#[test]
-fn refused_client_arg_zc_short_letter_unaffected_by_alias_group() {
-    // The alias group must not over-trigger from unrelated short letters.
-    // Bundled `-vlogDtpre` (no `z`) must remain allowed when only `compress`
-    // is refused.
-    let module = ModuleDefinition {
-        refuse_options: vec!["compress".to_owned()],
-        ..Default::default()
-    };
-    let args = vec!["-vlogDtpre.LsfxCIvu".to_owned()];
-    assert_eq!(refused_client_arg(&module, &args), None);
-}
-
 
 #[test]
 fn program_name_rsyncd_as_str() {

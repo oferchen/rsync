@@ -35,7 +35,7 @@ env:
   RUSTFLAGS: "-D warnings"
   RUST_BACKTRACE: "full"
   CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
-  UPSTREAM_RSYNC_VERSION: "3.4.4"
+  UPSTREAM_RSYNC_VERSION: "3.4.3"
 
 jobs:
   upstream-testsuite:
