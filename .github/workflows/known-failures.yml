@@ -52,10 +52,8 @@ jobs:
           path: |
             target/interop/upstream-src
             target/interop/upstream-install
-          key: upstream-rsync-3.4.4-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
+          key: upstream-rsync-3.4.2-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
           restore-keys: |
-            upstream-rsync-3.4.4-${{ runner.os }}-
-            upstream-rsync-3.4.3-${{ runner.os }}-
             upstream-rsync-3.4.2-${{ runner.os }}-
 
       - name: Build upstream rsync

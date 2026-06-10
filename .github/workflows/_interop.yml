@@ -10,7 +10,7 @@ on:
       upstream_rsync_version:
         description: 'Upstream rsync version for cache key'
         type: string
-        default: '3.4.4'
+        default: '3.4.3'
       rust_toolchain:
         description: 'Rust toolchain version'
         type: string
@@ -65,9 +65,6 @@ jobs:
           key: upstream-rsync-${{ inputs.upstream_rsync_version }}-${{ runner.os }}-${{ hashFiles('tools/ci/run_interop.sh') }}
           restore-keys: |
             upstream-rsync-${{ inputs.upstream_rsync_version }}-${{ runner.os }}-
-            upstream-rsync-3.4.4-${{ runner.os }}-
-            upstream-rsync-3.4.3-${{ runner.os }}-
-            upstream-rsync-3.4.2-${{ runner.os }}-
 
       - name: Build upstream rsync
         if: steps.cache-rsync.outputs.cache-hit != 'true'
