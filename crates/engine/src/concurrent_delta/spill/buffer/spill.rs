@@ -100,7 +100,12 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
         // Emit the one-shot warning after a successful spill that actually
         // wrote at least one record. Checking spill_count > prev_spill_count
         // avoids false positives when all candidates were in the hot zone.
+        // The per-call `spill_activations` counter is granularity-invariant
+        // (one increment per successful call) so adaptive ring sizing can
+        // measure pressure without compensating for PerItem vs WholeBatch
+        // record fan-out.
         if result.is_ok() && self.spill_count > prev_spill_count {
+            self.spill_activations += 1;
             self.spill_warned =
                 emit_spill_warning(self.spill_dir.as_deref(), self.threshold, self.spill_warned);
         }

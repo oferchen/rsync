@@ -117,7 +117,18 @@ pub struct SpillableReorderBuffer<T: SpillCodec> {
     /// one-record-per-item layout.
     granularity: SpillGranularity,
     /// Running count of spill-to-disk events (for diagnostics).
+    ///
+    /// One event is one on-disk record written; granularity-dependent.
     spill_count: u64,
+    /// Running count of `spill_excess` calls that produced at least one
+    /// on-disk record (for diagnostics).
+    ///
+    /// Granularity-invariant: a single call always increments this counter by
+    /// at most one, even when [`SpillGranularity::PerItem`] writes many
+    /// records. Surfaced through
+    /// [`SpillStats::spill_activations`](super::SpillStats::spill_activations)
+    /// to feed adaptive ring sizing (ROB-7) and bench rate audits (ROB-6).
+    spill_activations: u64,
     /// Running count of reload-from-disk events (for diagnostics).
     reload_count: u64,
     /// Running count of `create_dir_all` retries after the spill directory
@@ -154,6 +165,7 @@ impl<T: SpillCodec> std::fmt::Debug for SpillableReorderBuffer<T> {
             .field("buffered_count", &self.inner.buffered_count())
             .field("spilled_count", &self.spill_index.len())
             .field("spill_events", &self.spill_count)
+            .field("spill_activations", &self.spill_activations)
             .field("reload_events", &self.reload_count)
             .field("dir_recreate_count", &self.dir_recreate_count)
             .field("granularity", &self.granularity)
