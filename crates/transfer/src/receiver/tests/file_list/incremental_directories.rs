@@ -452,4 +452,76 @@ mod incremental_mode_tests {
         assert!(!dest.join("stale_b.txt").exists());
         assert!(dest.join("keep.txt").exists());
     }
+
+    /// EDG-SANDBOX.A regression: the parallel `read_dir` worker in
+    /// `delete_extraneous_files` must propagate a non-EACCES/non-NotFound
+    /// scan failure to the outer caller instead of silently coercing it to
+    /// `(DeleteStats::new(), Vec::new())`.
+    ///
+    /// Before this fix, planting a regular file where the receiver's
+    /// file list expected a directory caused the worker to discard the
+    /// `ENOTDIR` returned by `read_dir`, return empty stats, and exit
+    /// `rc=0` with the deletions in that subtree silently skipped. The
+    /// fix discriminates EACCES (upstream-parity non-fatal, matches
+    /// `generator.c:delete_in_dir`) from the ELOOP/EOPNOTSUPP/ENOTDIR
+    /// class which must fail loud.
+    ///
+    /// upstream: generator.c:delete_in_dir() - "opendir failed" classifies
+    /// EACCES as non-fatal (io_error bit only) and every other class as a
+    /// fatal scan failure.
+    #[cfg(unix)]
+    #[test]
+    fn delete_extraneous_files_surfaces_non_eacces_scan_error() {
+        use std::ffi::OsString;
+
+        use super::super::super::support::TestDeletionWriter;
+
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path();
+
+        // Plant a regular file at the path the sender's file list claims
+        // is a directory. `read_dir(dest/subdir)` returns `ENOTDIR`
+        // (mapped to `ErrorKind::NotADirectory` on Rust >= 1.83), which
+        // is the fail-loud class - not the upstream-parity EACCES branch.
+        std::fs::write(dest.join("subdir"), b"not a directory").unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.flags.delete = true;
+        config.args = vec![OsString::from(dest.to_str().unwrap())];
+        let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+        // Sender's flist references `subdir/child.txt`, so the worker
+        // map keys `subdir` as a scan target.
+        ctx.file_list
+            .push(FileEntry::new_directory(".".into(), 0o755));
+        ctx.file_list
+            .push(FileEntry::new_directory("subdir".into(), 0o755));
+        ctx.file_list
+            .push(FileEntry::new_file("subdir/child.txt".into(), 4, 0o644));
+
+        let mut writer = TestDeletionWriter;
+        let err = ctx
+            .delete_extraneous_files(
+                dest,
+                #[cfg(unix)]
+                None,
+                &mut writer,
+            )
+            .expect_err(
+                "non-EACCES scan error must propagate as Err, not be coerced to empty stats",
+            );
+
+        assert_ne!(
+            err.kind(),
+            std::io::ErrorKind::PermissionDenied,
+            "EACCES is the upstream-parity non-fatal branch; this scenario \
+             plants ENOTDIR to exercise the fail-loud branch",
+        );
+        assert_ne!(
+            err.kind(),
+            std::io::ErrorKind::NotFound,
+            "NotFound is the upstream-parity continue-on-vanished branch",
+        );
+    }
 }

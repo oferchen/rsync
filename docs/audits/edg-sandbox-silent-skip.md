@@ -21,9 +21,14 @@ This audit sweeps the rest of `crates/transfer/src/receiver/` and
 Each hit is classified against four buckets:
 
 - **FIXED by PR #5565** - the same site PR #5565 already targets.
+- **FIXED-IN-PR** - sibling defect now fixed by the EDG-SANDBOX
+  sibling-defect PR. Applies the same refined error-discrimination
+  pattern as PR #5565 (EACCES upstream-parity skip, ELOOP /
+  EOPNOTSUPP / ENOTDIR / EEXIST / EMLINK / EXDEV fail-loud).
 - **SIBLING DEFECT** - the same pattern, security-relevant. Listed as a
-  follow-up issue for a separate PR (this PR documents but does not fix
-  to avoid bundling unrelated changes).
+  follow-up issue for a separate PR (this audit doc was filed without
+  fixes to avoid bundling unrelated changes; the sibling-defect PR
+  ships the four FIXED-IN-PR sites below).
 - **LEGITIMATE SKIP** - upstream-parity continue-on-vanished,
   feature-detection fallback, parser end-of-stream, or a Result-typed
   no-op. No action needed.
@@ -46,6 +51,15 @@ Each hit is classified against four buckets:
    sites already route through `*_via_sandbox_or_fallback`.
 4. Classify each hit against the four buckets above.
 
+PR #5565's discrimination pattern is now applied at **five total
+sites**: the seed fix (`creation.rs:373-384`) and the four
+sibling-defect sites listed below. The shared rule is `EACCES /
+NotFound -> upstream-parity non-fatal (debug-log + continue, io_error
+bit drives the non-zero exit)`; every other class
+(`ELOOP / EOPNOTSUPP / ENOTDIR / EEXIST / EMLINK / EXDEV`) is a
+security boundary the receiver must surface as `Err` so the exit code
+reflects the failure instead of `rc=0` with the work silently skipped.
+
 ## Findings - Phase 1 (receiver + local_copy)
 
 | File:line | Pattern | Err class swallowed | Loop? | rc=0 risk? | Classification |
@@ -53,13 +67,13 @@ Each hit is classified against four buckets:
 | `transfer/receiver/directory/creation.rs:373-384` | `if let Err(e) = create_result { ... return Ok(None); }` | ALL classes (ELOOP, EOPNOTSUPP, EACCES, EEXIST, ENOTDIR) from `mkdirat_via_sandbox_or_fallback` | per-entry | YES (silent missing dir + rc=0) | **FIXED by PR #5565** |
 | `transfer/receiver/directory/creation.rs:142-159` | `if e.kind() == PermissionDenied { failed_dir_paths.insert; continue } return Err(e);` | EACCES only (rest propagate) | per-entry | NO (upstream parity) | LEGITIMATE SKIP |
 | `transfer/receiver/directory/creation.rs:286-296` | `if let Err(e) = fs::create_dir(&dir_path) { if !AlreadyExists { debug_log; break; } }` in `ensure_relative_parents` | ALL non-AlreadyExists classes | per-ancestor | downstream catches | STYLE (function returns `()`; subsequent file create surfaces the real error) |
-| `transfer/receiver/directory/deletion.rs:158` | `Err(_) => return (DeleteStats::new(), Vec::new())` after `read_dir_via_sandbox_or_fallback` | ALL classes (ELOOP, EOPNOTSUPP, EACCES) | per-dir worker | YES (deletes skipped, rc=0) | **SIBLING DEFECT** - tracked as follow-up |
-| `transfer/receiver/directory/deletion.rs:164` | `Err(_) => return (DeleteStats::new(), Vec::new())` after `std::fs::read_dir` | ALL classes | per-dir worker | YES (deletes skipped, rc=0) | **SIBLING DEFECT** - tracked as follow-up |
+| `transfer/receiver/directory/deletion.rs:158` | `Err(_) => return (DeleteStats::new(), Vec::new())` after `read_dir_via_sandbox_or_fallback` | ALL classes (ELOOP, EOPNOTSUPP, EACCES) | per-dir worker | YES (deletes skipped, rc=0) | **FIXED-IN-PR** (Site A: `classify_scan_error` + `Option<io::Error>` worker tuple) |
+| `transfer/receiver/directory/deletion.rs:164` | `Err(_) => return (DeleteStats::new(), Vec::new())` after `std::fs::read_dir` | ALL classes | per-dir worker | YES (deletes skipped, rc=0) | **FIXED-IN-PR** (Site A: same helper, non-Unix branch) |
 | `transfer/receiver/directory/deletion.rs:173,183` | `Err(_) => continue` on `read_dir` entry iteration | ALL classes (per-entry stat race) | per-entry | upstream parity | LEGITIMATE SKIP (matches upstream `generator.c:delete_in_dir`) |
-| `transfer/receiver/directory/deletion.rs:302-305` | `Err(e) => debug_log!(...)` after unlink/recursive_unlinkat | ALL non-NotFound classes | per-entry | YES (file persists, rc=0) | **SIBLING DEFECT** - tracked as follow-up |
-| `transfer/receiver/directory/links.rs:107,131,342,348` | `let _ = unlink_via_sandbox_or_fallback(...)` (obstacle removal) | ALL classes | per-symlink/hlink | downstream catches | LEGITIMATE SKIP (subsequent `symlinkat`/`linkat` fails with EEXIST and is debug-logged) |
-| `transfer/receiver/directory/links.rs:154-160` | `if let Err(e) = symlinkat_via_sandbox_or_fallback(...) { debug_log!(...) }` | ALL classes (incl. sandbox ELOOP) | per-symlink | YES (missing symlink, rc=0) | **SIBLING DEFECT** - tracked as follow-up; `create_symlinks` returns `()` |
-| `transfer/receiver/directory/links.rs:382-390` | `if let Err(e) = link_result { debug_log!(...) }` after `linkat_via_sandbox_or_fallback` | ALL classes | per-follower | YES (missing hardlink, rc=0) | **SIBLING DEFECT** - tracked as follow-up; `create_hardlinks` returns `()` |
+| `transfer/receiver/directory/deletion.rs:302-305` | `Err(e) => debug_log!(...)` after unlink/recursive_unlinkat | ALL non-NotFound classes | per-entry | YES (file persists, rc=0) | **FIXED-IN-PR** (Site B: `fail_loud_unlink_error` threads non-EACCES errors into the worker tuple) |
+| `transfer/receiver/directory/links.rs:107,131,342,348` | `let _ = unlink_via_sandbox_or_fallback(...)` (obstacle removal) | ALL classes | per-symlink/hlink | downstream catches | LEGITIMATE SKIP (subsequent `symlinkat`/`linkat` fails with EEXIST and now propagates via Sites C/D) |
+| `transfer/receiver/directory/links.rs:154-160` | `if let Err(e) = symlinkat_via_sandbox_or_fallback(...) { debug_log!(...) }` | ALL classes (incl. sandbox ELOOP) | per-symlink | YES (missing symlink, rc=0) | **FIXED-IN-PR** (Site C: `create_symlinks` signature changed to `io::Result<()>`, EACCES non-fatal, others propagate) |
+| `transfer/receiver/directory/links.rs:382-390` | `if let Err(e) = link_result { debug_log!(...) }` after `linkat_via_sandbox_or_fallback` | ALL classes | per-follower | YES (missing hardlink, rc=0) | **FIXED-IN-PR** (Site D: `create_hardlinks` signature changed to `io::Result<()>`, EACCES non-fatal, EMLINK/EXDEV/others propagate; tracker restored before Err) |
 | `transfer/receiver/file_list/incremental.rs:76` | `return Ok(None)` on `finished_reading` | n/a (stream end) | iterator | NO | LEGITIMATE SKIP (iterator end-of-stream contract) |
 | `transfer/receiver/transfer/setup.rs:299` | `Ok(None)` after `DirSandbox::open_root` failure in non-strict mode | ALL classes | once | NO (call site re-routes through path-based) | LEGITIMATE SKIP (`open_sandbox_for_dest_strict(strict=false)` documented soft-fallback; strict mode is the SEC-1 hardening) |
 | `transfer/receiver/transfer/sync.rs:321,361` | `renameat_via_sandbox_or_fallback(...)?` | n/a (propagates) | per-file | NO | LEGITIMATE SKIP (errors propagate via `?`) |
@@ -139,32 +153,42 @@ the `*_via_sandbox_or_fallback` helpers.
 
 ## Follow-up work
 
-Each sibling defect listed below is a separate PR. Bundling would
-mix unrelated security fixes and complicate review.
+Sites A through D below are now FIXED-IN-PR by the EDG-SANDBOX
+sibling-defect PR (the follow-up to PR #5578's audit). The fixes
+apply the same refined error-discrimination rule as PR #5565:
+`PermissionDenied` is the upstream-parity non-fatal branch, every
+other class propagates as `Err`. Site 5 remains a style-grade
+follow-up.
 
-1. **deletion.rs:158/164 read_dir swallow** - `delete_extraneous_files`
-   parallel worker drops the read_dir error and returns
-   `(DeleteStats::new(), Vec::new())`. A sandbox refusal on a
-   destination directory therefore looks like "no deletes needed".
-   Fix: thread the error out of the closure (return
-   `(DeleteStats, Vec<PathBuf>, Option<io::Error>)`), accumulate into
-   an io_error bit, and surface as `Err` from the outer
-   `delete_extraneous_files` when the policy demands fail-loud.
+1. **deletion.rs:158/164 read_dir swallow** - FIXED-IN-PR (Site A).
+   The parallel worker tuple is now
+   `(DeleteStats, Vec<PathBuf>, Option<io::Error>)`. A new helper
+   `classify_scan_error` routes EACCES/NotFound through the
+   upstream-parity non-fatal branch (`None`) and every other class
+   into `Some(e)`. The outer `delete_extraneous_files` collects the
+   first reported error and surfaces it as `Err`.
 
-2. **deletion.rs:302-305 unlink-failure swallow** - per-entry unlink
-   errors are debug-logged but never propagated. The receiver exits
-   `rc=0` even when the file the user asked to delete persists. Fix
-   by routing through the emitter's `record_nonfatal` policy so
-   `IOERR_GENERAL` is set.
+2. **deletion.rs:302-305 unlink-failure swallow** - FIXED-IN-PR
+   (Site B). The same `fail_loud_unlink_error` helper feeds the
+   inline per-entry match: EACCES/NotFound are debug-logged and
+   ignored, every other class is threaded back as the worker's
+   error slot. Mirrors upstream `delete.c:144-176 delete_item`
+   where EACCES is non-fatal and other classes flip the io_error
+   bit before the receiver's exit-code mapping picks up RERR_PARTIAL.
 
-3. **links.rs:154-160 symlinkat-failure swallow** - `create_symlinks`
-   debug-logs and discards the error. The function returns `()` so a
-   real fix requires changing the signature to `io::Result<()>` and
-   wiring the caller (`apply_directory_metadata`) to propagate.
+3. **links.rs:154-160 symlinkat-failure swallow** - FIXED-IN-PR
+   (Site C). `create_symlinks` signature changed to
+   `io::Result<()>`. Callers in `sync.rs`, `pipelined.rs`, and
+   `pipelined_incremental.rs` now propagate with `?`. EACCES
+   `continue`s through the loop (matches upstream `generator.c:1591
+   atomic_create -> do_symlink`); every other class returns `Err(e)`.
 
-4. **links.rs:382-390 linkat-failure swallow** - identical shape to
-   `create_symlinks`. Same signature change needed on
-   `create_hardlinks`.
+4. **links.rs:382-390 linkat-failure swallow** - FIXED-IN-PR
+   (Site D). Same signature change for `create_hardlinks`. EACCES
+   `continue`s; EMLINK / EXDEV / ELOOP / EOPNOTSUPP and every other
+   non-EACCES class returns `Err(e)`. The `hardlink_tracker` is
+   restored to `self` before propagation so incremental segments
+   preserve their leader-path state.
 
 5. **creation.rs:286-296 ensure_relative_parents break-on-error** -
    stops at the first non-AlreadyExists error but the function
