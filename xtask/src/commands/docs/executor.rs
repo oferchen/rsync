@@ -79,7 +79,11 @@ fn library_packages(workspace: &Path) -> TaskResult<Vec<String>> {
         .into_iter()
         .filter(|package| members.contains(&package.id))
         .filter(has_library_target)
-        .filter(|package| !DOCTEST_EXCLUDED_CRATES.iter().any(|name| package.name == *name))
+        .filter(|package| {
+            !DOCTEST_EXCLUDED_CRATES
+                .iter()
+                .any(|name| package.name == *name)
+        })
         .map(|package| package.name.to_string())
         .collect();
 
