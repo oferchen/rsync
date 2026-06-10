@@ -1710,3 +1710,97 @@ fn map_file_open_adaptive_buffered_is_buffered() {
     assert!(map.is_buffered());
     assert!(!map.is_mmap());
 }
+
+// EDG-PANIC.3 (#3893) - BufferedMap bounds negative tests.
+//
+// UTS-18 root-caused that a malformed delta stream can drive `BufferedMap`
+// (the basis "slice" / `map_ptr` accessor) into an out-of-range slice that
+// panics the process. These tests pin the contract: every out-of-bounds
+// pattern that an attacker can synthesize from the wire must surface a typed
+// `io::Result::Err`, never a bare-slice panic. The fail-loud guard upgrade
+// for the in-window slice and overlap copy lives in PR #5566; these tests
+// also exercise the pre-existing `offset.saturating_add(len) > self.size`
+// guard at the entry to `map_ptr`, ensuring it stays load-bearing.
+
+#[test]
+fn buffered_map_ptr_returns_err_on_offset_past_eof() {
+    // Offset past EOF must return Err, not panic. Mirrors the malformed
+    // basis stream that points a COPY token at an offset beyond the file
+    // size cached when the delta apply started.
+    let temp = create_test_file(4096);
+    let mut map = BufferedMap::open_with_window(temp.path(), 1024).unwrap();
+
+    let window_end = (map.window_start + map.window_len as u64).max(4096);
+    let beyond_window = window_end + 1;
+
+    let err = map
+        .map_ptr(beyond_window, 100)
+        .expect_err("offset past EOF must be Err");
+    assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+}
+
+#[test]
+fn buffered_map_ptr_returns_err_on_length_overflow() {
+    // Length that overflows `offset + len` past file size must return Err,
+    // not panic. `saturating_add` saturates at u64::MAX, so the bounds
+    // check at the entry of `map_ptr` catches this without ever indexing
+    // the buffer.
+    let temp = create_test_file(4096);
+    let mut map = BufferedMap::open_with_window(temp.path(), 1024).unwrap();
+
+    let err = map
+        .map_ptr(u64::MAX - 10, usize::MAX)
+        .expect_err("length overflow must be Err");
+    assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+
+    let err = map
+        .map_ptr(100, usize::MAX)
+        .expect_err("length overflow at non-zero offset must be Err");
+    assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+}
+
+#[test]
+fn buffered_map_ptr_returns_err_on_u64_max_offset() {
+    // u64::MAX offset is the canonical "untrusted input wrapped to a huge
+    // value" case. Must surface a typed Err rather than panic from the
+    // window-start subtraction or final slice.
+    let temp = create_test_file(4096);
+    let mut map = BufferedMap::open_with_window(temp.path(), 1024).unwrap();
+
+    let err = map
+        .map_ptr(u64::MAX, 1)
+        .expect_err("u64::MAX offset must be Err");
+    assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+}
+
+#[test]
+fn buffered_map_ptr_returns_err_on_offset_at_file_size() {
+    // Boundary case: `offset == size` with `len > 0` must Err. `offset ==
+    // size` with `len == 0` is legitimate and returns an empty slice.
+    let temp = create_test_file(4096);
+    let mut map = BufferedMap::open_with_window(temp.path(), 1024).unwrap();
+
+    let err = map
+        .map_ptr(4096, 1)
+        .expect_err("offset at size with non-zero len must be Err");
+    assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+
+    let empty = map
+        .map_ptr(4096, 0)
+        .expect("offset at size with zero len is legitimate");
+    assert!(empty.is_empty());
+}
+
+#[test]
+fn buffered_map_ptr_returns_err_on_straddling_eof() {
+    // A request that straddles the file end (starts in-bounds, ends past
+    // the file) must Err before any slice arithmetic runs. Matches the
+    // delta-COPY-near-EOF case that UTS-18.f flagged.
+    let temp = create_test_file(4096);
+    let mut map = BufferedMap::open_with_window(temp.path(), 1024).unwrap();
+
+    let err = map
+        .map_ptr(4000, 200)
+        .expect_err("range straddling EOF must be Err");
+    assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+}
