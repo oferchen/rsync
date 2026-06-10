@@ -8,8 +8,8 @@
 //! after idle periods.
 //!
 //! Configuration updates and daemon-module override logic live in
-//! [`change`], while sleep recording for deterministic tests lives in
-//! [`sleep`] and [`test_support`].
+//! `change`, while sleep recording for deterministic tests lives in
+//! `sleep` and `test_support`.
 
 use std::time::Duration;
 

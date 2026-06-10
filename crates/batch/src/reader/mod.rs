@@ -4,9 +4,9 @@
 //! created by `BatchWriter`. The reader is split into focused submodules:
 //!
 //! - Core struct, construction, raw I/O, and accessors (this file)
-//! - [`flist`] - file list deserialization (protocol and local formats)
-//! - [`delta`] - delta token and operation reading
-//! - [`stats`] - transfer statistics reading
+//! - `flist` - file list deserialization (protocol and local formats)
+//! - `delta` - delta token and operation reading
+//! - `stats` - transfer statistics reading
 
 mod delta;
 mod flist;
