@@ -14,7 +14,7 @@
 //! `crates/fast_io/src/dir_sandbox/at_syscalls.rs::single_component_leaf`).
 
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use logging::{debug_log, info_log};
 use protocol::stats::DeleteStats;
