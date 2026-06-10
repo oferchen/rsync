@@ -1136,10 +1136,7 @@ fn secluded_args_round_trip_merges_cmdline_and_stdin() {
 
     let (flag_string, positional) = parse_server_flag_string_and_args(&effective_args);
     assert_eq!(flag_string, "-slogDtpre.iLsfxCIvu");
-    assert_eq!(
-        positional,
-        vec![OsString::from("/home/ofer/reproA/from/")],
-    );
+    assert_eq!(positional, vec![OsString::from("/home/ofer/reproA/from/")],);
 }
 
 /// When `-s` is sent as a standalone short flag (rather than embedded in
