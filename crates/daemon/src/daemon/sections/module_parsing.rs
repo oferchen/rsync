@@ -385,6 +385,11 @@ fn parse_module_definition(
     // and rejecting Unix-style absolute paths (e.g. `/srv/docs`, which Windows
     // `Path::is_absolute()` treats as non-absolute because they lack a drive
     // letter) would block every cross-platform daemon config file.
+    //
+    // The bare root `/` is accepted intentionally: upstream rsync treats it as
+    // a legitimate module path under either `use chroot` setting (loadparm.c
+    // P_PATH preserves it; clientserver.c serves from it directly when chroot
+    // is off and chroot's into it as a no-op when on).
     #[cfg(unix)]
     if module.use_chroot && !module.path.is_absolute() {
         return Err(config_error(format!(

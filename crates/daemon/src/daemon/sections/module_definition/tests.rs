@@ -565,6 +565,40 @@ fn finish_allows_relative_path_without_chroot() {
     assert!(result.is_ok());
 }
 
+/// Root path `/` is a legitimate module root: upstream loadparm.c P_PATH
+/// preserves the bare slash (its trailing-slash strip only fires when
+/// `len > 1`), and clientserver.c chroot's into it as a no-op when
+/// `use chroot = yes`. The `is_absolute()` gate must pass for `/` so the
+/// daemon-path-root-read scenario is accepted under chroot.
+#[test]
+#[cfg(unix)]
+fn finish_allows_root_path_with_chroot() {
+    let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
+    builder.set_path(PathBuf::from("/"), &test_config_path(), 2).unwrap();
+    builder.set_use_chroot(true, &test_config_path(), 3).unwrap();
+    let defaults = GlobalModuleDefaults::default();
+    let result = builder.finish(&test_config_path(), None, None, None, None, &defaults);
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap().path, PathBuf::from("/"));
+}
+
+/// Companion to `finish_allows_root_path_with_chroot`: the upstream daemon
+/// also serves `path = /` when `use chroot = no`, exposing the absolute root
+/// without the chroot wrapper. The validator must accept this combination.
+#[test]
+#[cfg(unix)]
+fn finish_allows_root_path_without_chroot() {
+    let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
+    builder.set_path(PathBuf::from("/"), &test_config_path(), 2).unwrap();
+    builder.set_use_chroot(false, &test_config_path(), 3).unwrap();
+    let defaults = GlobalModuleDefaults::default();
+    let result = builder.finish(&test_config_path(), None, None, None, None, &defaults);
+    assert!(result.is_ok());
+    let def = result.unwrap();
+    assert_eq!(def.path, PathBuf::from("/"));
+    assert!(!def.use_chroot);
+}
+
 #[test]
 fn finish_applies_default_secrets_for_auth_users() {
     let mut builder = ModuleDefinitionBuilder::new("testmod".to_owned(), 1);
