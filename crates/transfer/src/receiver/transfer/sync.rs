@@ -78,6 +78,14 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.create_symlinks(&dest_dir, writer);
 
+        // upstream: generator.c:1348-1354 - missing_args == 2 && file->mode == 0
+        // deletes the destination path and skips any creation for the sentinel.
+        self.process_missing_args_sentinels(
+            &dest_dir,
+            #[cfg(unix)]
+            sandbox.as_deref(),
+        )?;
+
         let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
 

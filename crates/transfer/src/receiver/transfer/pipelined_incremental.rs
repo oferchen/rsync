@@ -88,6 +88,14 @@ impl ReceiverContext {
         #[cfg(not(unix))]
         self.create_symlinks(&setup.dest_dir, writer);
 
+        // upstream: generator.c:1348-1354 - missing_args == 2 && file->mode == 0
+        // deletes the destination path and skips any creation for the sentinel.
+        self.process_missing_args_sentinels(
+            &setup.dest_dir,
+            #[cfg(unix)]
+            setup.sandbox.as_deref(),
+        )?;
+
         let files_to_transfer = self.build_files_to_transfer(
             writer,
             &setup.dest_dir,
