@@ -1749,8 +1749,11 @@ fn see_token_drains_64kib_insert_with_pending_flush_output() {
     let mut block = vec![0u8; 0xFFFF];
     for (i, b) in block.iter_mut().enumerate() {
         // LCG-style fill - avoids pulling in a PRNG dependency.
-        *b = (((i as u64).wrapping_mul(2862933555777941757).wrapping_add(3037000493) >> 32) & 0xFF)
-            as u8;
+        *b = (((i as u64)
+            .wrapping_mul(2862933555777941757)
+            .wrapping_add(3037000493)
+            >> 32)
+            & 0xFF) as u8;
     }
 
     // Highly compressible literal that forces several sync flushes through
