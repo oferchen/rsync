@@ -14,7 +14,7 @@
 use std::ffi::OsString;
 use std::io::Cursor;
 
-use protocol::codec::{NDX_DEL_STATS, NdxCodec, create_ndx_codec};
+use protocol::codec::{NDX_DEL_STATS, NDX_DONE, NdxCodec, create_ndx_codec};
 use protocol::stats::DeleteStats;
 use protocol::{ProtocolVersion, read_varint};
 
@@ -24,7 +24,17 @@ use crate::flags::ParsedServerFlags;
 use crate::handshake::HandshakeResult;
 use crate::role::ServerRole;
 
-const NDX_DONE_LE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
+/// Encodes a single NDX_DONE via the protocol-version-appropriate codec.
+///
+/// Legacy (proto < 30) emits 4 little-endian bytes; modern (proto >= 30)
+/// emits a single `0x00`. Tests must drive both sides through the codec
+/// so they remain wire-accurate across protocol versions.
+fn encode_ndx_done(protocol_version: u8) -> Vec<u8> {
+    let mut codec = create_ndx_codec(protocol_version);
+    let mut buf = Vec::new();
+    codec.write_ndx_done(&mut buf).unwrap();
+    buf
+}
 
 fn handshake_for(protocol_version: u8) -> HandshakeResult {
     HandshakeResult {
@@ -81,10 +91,9 @@ fn handle_goodbye_proto31_emits_ndx_del_stats_then_done() {
     };
     ctx.set_pending_del_stats(stats);
 
-    // Sender's echo + final NDX_DONE
-    let mut sender_input = Vec::new();
-    sender_input.extend_from_slice(&NDX_DONE_LE);
-    sender_input.extend_from_slice(&NDX_DONE_LE);
+    // Sender's echo + final NDX_DONE, encoded via the modern codec.
+    let mut sender_input = encode_ndx_done(31);
+    sender_input.extend_from_slice(&encode_ndx_done(31));
 
     let mut reader = Cursor::new(sender_input);
     let mut output = Vec::new();
@@ -106,11 +115,11 @@ fn handle_goodbye_proto31_emits_ndx_del_stats_then_done() {
     assert_eq!(decoded, stats, "del stats round-trip mismatch");
 
     let second = codec.read_ndx(&mut cursor).unwrap();
-    assert_eq!(second, -1, "second frame must be NDX_DONE");
+    assert_eq!(second, NDX_DONE, "second frame must be NDX_DONE");
 
     let third = codec.read_ndx(&mut cursor).unwrap();
     assert_eq!(
-        third, -1,
+        third, NDX_DONE,
         "third frame must be the extended-goodbye NDX_DONE"
     );
 
@@ -145,9 +154,8 @@ fn handle_goodbye_proto31_skips_ndx_del_stats_without_do_stats() {
         ..DeleteStats::new()
     });
 
-    let mut sender_input = Vec::new();
-    sender_input.extend_from_slice(&NDX_DONE_LE);
-    sender_input.extend_from_slice(&NDX_DONE_LE);
+    let mut sender_input = encode_ndx_done(31);
+    sender_input.extend_from_slice(&encode_ndx_done(31));
 
     let mut reader = Cursor::new(sender_input);
     let mut output = Vec::new();
@@ -157,10 +165,13 @@ fn handle_goodbye_proto31_skips_ndx_del_stats_without_do_stats() {
     ctx.handle_goodbye(&mut reader, &mut output, &mut ndx_write, &mut ndx_read)
         .unwrap();
 
-    // Two NDX_DONEs only - no NDX_DEL_STATS.
-    assert_eq!(output.len(), 8);
-    assert_eq!(&output[..4], &NDX_DONE_LE);
-    assert_eq!(&output[4..], &NDX_DONE_LE);
+    // Output must contain exactly two modern NDX_DONE frames (one byte each).
+    let expected = {
+        let mut v = encode_ndx_done(31);
+        v.extend_from_slice(&encode_ndx_done(31));
+        v
+    };
+    assert_eq!(output, expected, "no NDX_DEL_STATS frame, two NDX_DONEs");
 }
 
 /// Late-delete timing (`--delete-delay` / `--delete-after`) must emit
@@ -191,9 +202,8 @@ fn handle_goodbye_proto31_late_delete_emits_on_do_stats_only() {
         specials: 5,
     });
 
-    let mut sender_input = Vec::new();
-    sender_input.extend_from_slice(&NDX_DONE_LE);
-    sender_input.extend_from_slice(&NDX_DONE_LE);
+    let mut sender_input = encode_ndx_done(31);
+    sender_input.extend_from_slice(&encode_ndx_done(31));
 
     let mut reader = Cursor::new(sender_input);
     let mut output = Vec::new();
@@ -212,8 +222,8 @@ fn handle_goodbye_proto31_late_delete_emits_on_do_stats_only() {
     assert_eq!(decoded.symlinks, 3);
     assert_eq!(decoded.devices, 4);
     assert_eq!(decoded.specials, 5);
-    assert_eq!(codec.read_ndx(&mut cursor).unwrap(), -1);
-    assert_eq!(codec.read_ndx(&mut cursor).unwrap(), -1);
+    assert_eq!(codec.read_ndx(&mut cursor).unwrap(), NDX_DONE);
+    assert_eq!(codec.read_ndx(&mut cursor).unwrap(), NDX_DONE);
 }
 
 /// Pre-protocol-31 transports must never emit `NDX_DEL_STATS` even with
@@ -249,8 +259,8 @@ fn handle_goodbye_proto30_never_emits_ndx_del_stats() {
     ctx.handle_goodbye(&mut reader, &mut output, &mut ndx_write, &mut ndx_read)
         .unwrap();
 
-    assert_eq!(output.len(), 4);
-    assert_eq!(&output[..], &NDX_DONE_LE);
+    // Protocol 30 closes with a single NDX_DONE and no extended exchange.
+    assert_eq!(output, encode_ndx_done(30));
 }
 
 /// Wire-format spot check: the five fields after `NDX_DEL_STATS` are
@@ -268,9 +278,8 @@ fn handle_goodbye_proto31_varint_field_order_matches_upstream() {
     };
     ctx.set_pending_del_stats(stats);
 
-    let mut sender_input = Vec::new();
-    sender_input.extend_from_slice(&NDX_DONE_LE);
-    sender_input.extend_from_slice(&NDX_DONE_LE);
+    let mut sender_input = encode_ndx_done(31);
+    sender_input.extend_from_slice(&encode_ndx_done(31));
 
     let mut reader = Cursor::new(sender_input);
     let mut output = Vec::new();
