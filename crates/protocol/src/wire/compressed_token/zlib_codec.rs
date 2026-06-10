@@ -28,6 +28,34 @@ use super::{
 /// upstream: token.c defence-in-depth - bound accumulated compressed data (3.4.3)
 pub(super) const MAX_ACCUMULATED_COMPRESSED_BYTES: usize = 64 * 1024 * 1024;
 
+/// Maximum input chunk fed into the compressor by `see_token` in one pass.
+///
+/// upstream: token.c:469 - `n1 = toklen > 0xffff ? 0xffff : toklen`. The cap
+/// matches upstream's stored-block size limit, which keeps see/send loops in
+/// lockstep across the wire.
+const SEE_TOKEN_CHUNK_MAX: usize = 0xFFFF;
+
+/// Worst-case `deflate()` output for an `avail_in_size` byte input, matching
+/// upstream's `AVAIL_OUT_SIZE` macro plus headroom for stored-block headers
+/// and the trailing sync marker emitted by `Z_SYNC_FLUSH`.
+///
+/// upstream: token.c:335 `#define AVAIL_OUT_SIZE(n) ((n)*1001/1000+16)`.
+/// Upstream issue rsync#951: `send_deflated_token` can overflow `obuf` when
+/// feeding a matched-block insert because the dictionary-sync path inherits
+/// pending output from a preceding `Z_SYNC_FLUSH`. Sizing the output buffer
+/// for the worst-case combined output keeps `compress()` from stalling with
+/// unconsumed input bytes that would silently corrupt the dictionary.
+const fn avail_out_size(avail_in_size: usize) -> usize {
+    avail_in_size * 1001 / 1000 + 16
+}
+
+/// Output buffer size for the dictionary-sync deflate path.
+///
+/// Sized for the worst-case single-pass output of a 64 KiB stored block plus
+/// a stored-block header (5 bytes) and the `Z_SYNC_FLUSH` trailer (4 bytes),
+/// rounded up to a multiple of 16 bytes for alignment.
+const SEE_TOKEN_OBUF_SIZE: usize = avail_out_size(SEE_TOKEN_CHUNK_MAX) + 16;
+
 /// Zlib encoder state for sending compressed tokens.
 ///
 /// Manages a persistent deflate stream for compressing literal data.
@@ -57,11 +85,17 @@ impl ZlibTokenEncoder {
             CompressionLevel::Best => Compression::best(),
             CompressionLevel::Precise(n) => Compression::new(u32::from(n.get())),
         };
+        // upstream rsync#951: obuf must accommodate the worst-case deflate()
+        // output for a 64 KiB stored-block insert plus any pending output
+        // carried over from a preceding Z_SYNC_FLUSH. Sizing for the larger
+        // of the literal-path and dictionary-sync paths keeps both loops
+        // overflow-free.
+        let obuf_size = (CHUNK_SIZE * 2).max(SEE_TOKEN_OBUF_SIZE);
         Self {
             literal_buf: Vec::new(),
             compressor: Compress::new(compression, false),
-            compress_buf: vec![0u8; CHUNK_SIZE * 2],
-            flush_buf: Vec::with_capacity(CHUNK_SIZE * 2),
+            compress_buf: vec![0u8; obuf_size],
+            flush_buf: Vec::with_capacity(obuf_size),
             last_token: -1,
             run_start: 0,
             last_run_end: 0,
@@ -123,7 +157,19 @@ impl ZlibTokenEncoder {
     /// Feeds block data into the compressor's dictionary.
     ///
     /// Only active in CPRES_ZLIB mode (noop for zlibx).
-    /// Reference: upstream token.c lines 463-484.
+    ///
+    /// upstream: token.c:463-484 `send_deflated_token()` runs the matched-block
+    /// data through `deflate(Z_INSERT_ONLY)` in 64 KiB stored-block chunks.
+    /// `flate2` does not expose `Z_INSERT_ONLY`, so we use `FlushCompress::Sync`
+    /// and discard the output - the dictionary side-effect is what keeps the
+    /// receiver in lockstep.
+    ///
+    /// upstream rsync#951: a single `deflate()` call may stop short of consuming
+    /// the input chunk when the output buffer fills (pending data from a prior
+    /// `Z_SYNC_FLUSH` plus the new stored block can exceed the precomputed
+    /// reserve). Upstream guards against this with `if (avail_in != 0) exit`;
+    /// we instead loop until the input is drained, growing the output buffer
+    /// if `compress()` ever consumes zero bytes while producing zero output.
     pub(super) fn see_token(&mut self, data: &[u8]) -> io::Result<()> {
         if self.is_zlibx {
             return Ok(());
@@ -132,16 +178,48 @@ impl ZlibTokenEncoder {
         let mut offset = 0usize;
 
         while toklen > 0 {
-            let chunk_len = toklen.min(0xFFFF);
-            let chunk = &data[offset..offset + chunk_len];
+            let chunk_len = toklen.min(SEE_TOKEN_CHUNK_MAX);
+            let chunk_end = offset + chunk_len;
+            let mut chunk_pos = offset;
+
+            // upstream rsync#951: drain the entire stored-block chunk through
+            // the compressor. `compress()` consumes at most enough input to
+            // fill `compress_buf`; under back-pressure from pending output we
+            // must re-enter with the unconsumed tail.
+            while chunk_pos < chunk_end {
+                let before_in = self.compressor.total_in();
+                let before_out = self.compressor.total_out();
+
+                self.compressor
+                    .compress(
+                        &data[chunk_pos..chunk_end],
+                        &mut self.compress_buf,
+                        FlushCompress::Sync,
+                    )
+                    .map_err(|e| io::Error::other(e.to_string()))?;
+
+                let consumed = (self.compressor.total_in() - before_in) as usize;
+                let produced = (self.compressor.total_out() - before_out) as usize;
+                chunk_pos += consumed;
+
+                // No forward progress: the output buffer is full and the
+                // compressor cannot drain pending bytes. Grow obuf to the
+                // worst-case size and retry. The arithmetic is bounded -
+                // `compress_buf` never exceeds `SEE_TOKEN_OBUF_SIZE`.
+                if consumed == 0 && produced == 0 {
+                    if self.compress_buf.len() >= SEE_TOKEN_OBUF_SIZE {
+                        return Err(io::Error::other(
+                            "zlib see_token stalled: deflate consumed no input \
+                             despite worst-case obuf reserve",
+                        ));
+                    }
+                    self.compress_buf.resize(SEE_TOKEN_OBUF_SIZE, 0);
+                }
+            }
+
             toklen -= chunk_len;
-
-            self.compressor
-                .compress(chunk, &mut self.compress_buf, FlushCompress::Sync)
-                .map_err(|e| io::Error::other(e.to_string()))?;
-
             if self.protocol_version >= 31 {
-                offset += chunk_len;
+                offset = chunk_end;
             }
         }
         Ok(())
