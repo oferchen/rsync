@@ -47,7 +47,10 @@ pub(crate) fn send_daemon_arguments<W: Write>(
         // `unbackslash_arg()` on its side. We mirror both halves here so a
         // value such as `--groupmap=*:1234;foo` round-trips through the
         // remote shell-like text protocol without losing its wildcards.
-        full_args.iter().map(|arg| safe_arg_for_daemon(arg)).collect()
+        full_args
+            .iter()
+            .map(|arg| safe_arg_for_daemon(arg))
+            .collect()
     };
 
     // upstream: clientserver.c:348-349 - DEBUG_GTE(CMD, 1) emits
@@ -398,9 +401,7 @@ fn safe_arg_for_daemon(arg: &str) -> String {
         }
     };
 
-    let needs_work = value
-        .chars()
-        .any(|c| c == '\\' || escapes.contains(c));
+    let needs_work = value.chars().any(|c| c == '\\' || escapes.contains(c));
     if !needs_work {
         return arg.to_owned();
     }
@@ -471,7 +472,10 @@ mod safe_arg_tests {
     // escaped even in filename args.
     #[test]
     fn filename_arg_escapes_shell_chars() {
-        assert_eq!(safe_arg_for_daemon("file with space"), "file\\ with\\ space");
+        assert_eq!(
+            safe_arg_for_daemon("file with space"),
+            "file\\ with\\ space"
+        );
         assert_eq!(
             safe_arg_for_daemon("dangerous;rm -rf /"),
             "dangerous\\;rm\\ -rf\\ /"
