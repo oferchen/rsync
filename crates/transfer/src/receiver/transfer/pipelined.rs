@@ -66,6 +66,9 @@ impl ReceiverContext {
             delete_stats = ds;
             delete_limit_exceeded = exceeded;
         }
+        // Stash for goodbye-phase NDX_DEL_STATS emission. Mirrors upstream's
+        // generator.c:2376-2381 (early) and 2420-2425 (late) write_del_stats().
+        self.set_pending_del_stats(delete_stats);
 
         let mut stats = TransferStats {
             files_listed: file_count,

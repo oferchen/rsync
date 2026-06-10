@@ -129,6 +129,12 @@ impl ReceiverContext {
     ///
     /// For protocol >= 31, sends NDX_DONE. For extended goodbye (protocol >= 32),
     /// additionally reads the echo and sends a final NDX_DONE.
+    ///
+    /// When the upstream conditions for emitting deletion statistics are met,
+    /// an `NDX_DEL_STATS` frame plus 5 varints is written immediately before
+    /// the final NDX_DONE. This mirrors `generator.c:2376-2381` (early path)
+    /// and `generator.c:2420-2425` (late path). The sender consumes both via
+    /// `read_ndx_and_attrs()` (`rsync.c:337-342`).
     pub(in crate::receiver) fn handle_goodbye<R: Read, W: Write + ?Sized>(
         &self,
         reader: &mut R,
@@ -138,6 +144,17 @@ impl ReceiverContext {
     ) -> io::Result<()> {
         if !self.protocol.supports_goodbye_exchange() {
             return Ok(());
+        }
+
+        if self.protocol.supports_extended_goodbye() && self.should_send_del_stats() {
+            ndx_write_codec.write_ndx(&mut *writer, NDX_DEL_STATS)?;
+            self.pending_del_stats.write_to(&mut *writer)?;
+            debug_log!(
+                Flist,
+                2,
+                "sent NDX_DEL_STATS during receiver goodbye: {} deletions",
+                self.pending_del_stats.total()
+            );
         }
 
         ndx_write_codec.write_ndx_done(&mut *writer)?;
@@ -171,6 +188,25 @@ impl ReceiverContext {
         }
 
         Ok(())
+    }
+
+    /// Determines whether `NDX_DEL_STATS` should be sent during the goodbye
+    /// phase. Mirrors the conditions used by the generator's identically
+    /// named helper.
+    ///
+    /// Upstream gates emission on `INFO_GTE(STATS, 2)` (i.e. `--stats`) and
+    /// splits early vs late delete:
+    /// - Early (`generator.c:2377`): `do_stats && (delete_mode || force_delete)`
+    /// - Late (`generator.c:2422`): `do_stats`
+    pub(in crate::receiver) fn should_send_del_stats(&self) -> bool {
+        if !self.config.do_stats {
+            return false;
+        }
+        if self.config.deletion.late_delete {
+            true
+        } else {
+            self.config.flags.delete
+        }
     }
 
     /// Receives transfer statistics from the sender.

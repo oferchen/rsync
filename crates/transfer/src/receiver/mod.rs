@@ -52,6 +52,7 @@ use protocol::acl::AclCache;
 use protocol::filters::FilterRuleWireFormat;
 use protocol::flist::{FileEntry, FileListReader};
 use protocol::idlist::IdList;
+use protocol::stats::DeleteStats;
 use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
 use engine::HardlinkApplyTracker;
@@ -256,6 +257,18 @@ pub struct ReceiverContext {
     /// This is wired by task DDP-B3 (#2257) and consumed by the emitter
     /// wiring in tasks DDP-E1-E5.
     delete_ctx: Option<Arc<DeleteContext>>,
+    /// Deletion statistics accumulated during the receiver's delete pass.
+    ///
+    /// Set by the receiver after `delete_extraneous_files()` completes and
+    /// emitted by `handle_goodbye()` as an `NDX_DEL_STATS` wire message when
+    /// upstream's conditions are met (`do_stats` plus delete-mode timing).
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:2376-2381` - early `write_del_stats()` path
+    /// - `generator.c:2420-2425` - late `write_del_stats()` path
+    /// - `main.c:225-238` - `write_del_stats()` wire format
+    pending_del_stats: DeleteStats,
     /// Transfer pipeline FSM tracking the current protocol phase.
     ///
     /// Enforces the linear phase progression through the transfer lifecycle.
@@ -317,6 +330,7 @@ impl ReceiverContext {
             flist_io_error: 0,
             parallel_thresholds: ParallelThresholds::default(),
             delete_ctx: None,
+            pending_del_stats: DeleteStats::new(),
             pipeline,
         }
     }
@@ -355,6 +369,20 @@ impl ReceiverContext {
     #[must_use]
     pub fn delete_context(&self) -> Option<Arc<DeleteContext>> {
         self.delete_ctx.as_ref().map(Arc::clone)
+    }
+
+    /// Records the deletion statistics that should be emitted as `NDX_DEL_STATS`
+    /// during the goodbye handshake.
+    ///
+    /// Called by the receiver after `delete_extraneous_files()` completes so the
+    /// stats are available when `handle_goodbye()` writes the final NDX frames.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:2376-2381` - early del-stats path
+    /// - `generator.c:2420-2425` - late del-stats path
+    pub(in crate::receiver) fn set_pending_del_stats(&mut self, stats: DeleteStats) {
+        self.pending_del_stats = stats;
     }
 
     /// Converts a wire NDX value to a flat file list array index.
