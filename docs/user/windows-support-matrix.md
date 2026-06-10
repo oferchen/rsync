@@ -86,6 +86,7 @@ flight are marked "Design only" or "Audit only" with a tracking link.
 | Windows service mode | Shipped | `crates/platform/src/windows_service.rs` |
 | SSH transport (russh) | Shipped | Compatible with OpenSSH for Windows, PuTTY (`plink`), any RFC 4253 server |
 | Signal handling (Ctrl+C, Ctrl+Break, console close) | Shipped | `crates/platform/src/signal.rs` (SetConsoleCtrlHandler) |
+| Bounded-RSS file reader (replaces `mmap_reader_stub` `Vec<u8>`-per-file) | Skeleton landed; call sites still on stub | `crates/fast_io/src/windows_chunked_reader.rs` (skeleton); call-site migration tracked under WIN-S.LAND.1.b.4. Chunk size tunable via `OC_RSYNC_WIN_CHUNK_BYTES` (default 4 MiB). |
 
 ## 5. Gaps explicitly tracked
 
