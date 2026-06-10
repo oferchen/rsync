@@ -486,6 +486,7 @@ write_rust_daemon_conf() {
 pid file = ${pid_file}
 port = ${port}
 use chroot = false
+munge symlinks = false
 
 [interop]
 path = ${dest}
