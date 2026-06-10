@@ -217,7 +217,9 @@ pub(crate) fn classify_from_buffer(buf: &[u8]) -> ReparseKind {
 fn classify_mount_point(buf: &[u8]) -> ReparseKind {
     let data_length = read_u16_le(buf, REPARSE_DATA_LENGTH_OFFSET) as usize;
     let payload_end = REPARSE_HEADER_SIZE + data_length;
-    if buf.len() < payload_end || data_length < (MOUNT_POINT_PATH_BUFFER_OFFSET - REPARSE_HEADER_SIZE) {
+    if buf.len() < payload_end
+        || data_length < (MOUNT_POINT_PATH_BUFFER_OFFSET - REPARSE_HEADER_SIZE)
+    {
         return ReparseKind::Junction;
     }
 
@@ -306,9 +308,7 @@ mod tests {
 
     /// Encode a UTF-16 little-endian byte sequence for a `&str`.
     fn utf16_le(s: &str) -> Vec<u8> {
-        s.encode_utf16()
-            .flat_map(|u| u.to_le_bytes())
-            .collect()
+        s.encode_utf16().flat_map(|u| u.to_le_bytes()).collect()
     }
 
     /// Build a synthetic `MOUNT_POINT_REPARSE_BUFFER` with the supplied
@@ -357,8 +357,7 @@ mod tests {
 
     #[test]
     fn classifies_mount_point_volume_prefix_as_mount_point() {
-        let buf =
-            build_mount_point_buffer("\\??\\Volume{12345678-1234-1234-1234-1234567890ab}\\");
+        let buf = build_mount_point_buffer("\\??\\Volume{12345678-1234-1234-1234-1234567890ab}\\");
         assert_eq!(classify_from_buffer(&buf), ReparseKind::MountPoint);
     }
 
