@@ -71,7 +71,10 @@ pub use buffer_ring::{
     bgid_peak_used, bgid_snapshot, pbuf_ring_supported,
 };
 pub use cancel::{CancelOutcome, cancel_all_by_fd, cancel_by_user_data};
-pub use config::{StubIoUringBackend, config_detail, is_io_uring_available, sqpoll_fell_back};
+pub use config::{
+    StubIoUringBackend, config_detail, is_io_uring_available, is_sqpoll_disabled_by_policy,
+    set_sqpoll_disabled_by_policy, sqpoll_fell_back,
+};
 pub use disk_batch::IoUringDiskBatch;
 pub use file_factory::{
     IoUringOrStdReader, IoUringOrStdWriter, IoUringReaderFactory, IoUringWriterFactory, read_file,

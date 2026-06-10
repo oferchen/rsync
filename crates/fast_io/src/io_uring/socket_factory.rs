@@ -69,7 +69,7 @@ pub fn socket_reader_from_fd(
     };
 
     match policy {
-        crate::IoUringPolicy::Auto => {
+        crate::IoUringPolicy::Auto | crate::IoUringPolicy::SqpollOff => {
             if is_io_uring_available() {
                 if let Ok(reader) = IoUringSocketReader::from_raw_fd(fd, &config) {
                     return Ok(IoUringOrStdSocketReader::IoUring(reader));
@@ -120,7 +120,7 @@ pub fn socket_writer_from_fd(
     };
 
     match policy {
-        crate::IoUringPolicy::Auto => {
+        crate::IoUringPolicy::Auto | crate::IoUringPolicy::SqpollOff => {
             if is_io_uring_available() {
                 if let Ok(writer) = IoUringSocketWriter::from_raw_fd(fd, &config) {
                     return Ok(IoUringOrStdSocketWriter::IoUring(writer));

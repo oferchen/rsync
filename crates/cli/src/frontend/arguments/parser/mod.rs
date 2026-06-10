@@ -457,6 +457,13 @@ where
         fast_io::IoUringPolicy::Enabled
     } else if matches.get_flag("no-io-uring") {
         fast_io::IoUringPolicy::Disabled
+    } else if matches.get_flag("no-io-uring-sqpoll") {
+        // Set the process-wide SQPOLL gate eagerly so that any io_uring
+        // ring built later in this process - including ones created from
+        // configs with `sqpoll: true` and the session pool's shared rings
+        // - honours the opt-out without re-reading the policy.
+        fast_io::set_sqpoll_disabled_by_policy();
+        fast_io::IoUringPolicy::SqpollOff
     } else {
         fast_io::IoUringPolicy::Auto
     };

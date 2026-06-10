@@ -34,6 +34,24 @@ pub fn sqpoll_fell_back() -> bool {
     false
 }
 
+/// Records the process-wide SQPOLL opt-out (no-op on this platform).
+///
+/// Linux exposes a real atomic gate via
+/// [`crate::io_uring::set_sqpoll_disabled_by_policy`]. On non-Linux
+/// targets there is no SQPOLL kthread to suppress, so the stub keeps the
+/// symbol available for cross-platform CLI wiring but does nothing.
+pub fn set_sqpoll_disabled_by_policy() {}
+
+/// Returns whether the SQPOLL opt-out has been set (always `false` on this platform).
+///
+/// Mirrors the Linux query so cross-platform callers can use the same
+/// import path. The stub always reports `false` because there is no
+/// SQPOLL kthread to begin with.
+#[must_use]
+pub fn is_sqpoll_disabled_by_policy() -> bool {
+    false
+}
+
 /// Public accessors for kernel version detection used by `--version` output.
 ///
 /// Mirrors the real Linux module so cross-platform callers can use the same
