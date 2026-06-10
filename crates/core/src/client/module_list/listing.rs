@@ -97,14 +97,13 @@ pub struct ModuleListEntry {
 
 impl ModuleListEntry {
     fn from_line(line: &str) -> Self {
+        // upstream: clientserver.c:1254 emits `%-15s\t%s\n`, so any line with a
+        // tab carries a comment field (possibly empty). Preserve the empty
+        // string so the renderer reproduces the tab byte-for-byte.
         match line.split_once('\t') {
             Some((name, comment)) => Self {
                 name: name.to_owned(),
-                comment: if comment.is_empty() {
-                    None
-                } else {
-                    Some(comment.to_owned())
-                },
+                comment: Some(comment.to_owned()),
             },
             None => Self {
                 name: line.to_owned(),
@@ -463,9 +462,12 @@ mod tests {
 
     #[test]
     fn module_list_entry_from_line_empty_comment() {
+        // upstream sends `%-15s\t%s\n` so a tab with no following comment must
+        // be preserved (Some("")) to round-trip the wire bytes through the
+        // client renderer.
         let entry = ModuleListEntry::from_line("data\t");
         assert_eq!(entry.name(), "data");
-        assert!(entry.comment().is_none());
+        assert_eq!(entry.comment(), Some(""));
     }
 
     #[test]
