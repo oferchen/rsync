@@ -2161,4 +2161,123 @@ mod module_access_tests {
         assert_eq!(flag, "--copy-dest");
         assert_eq!(raw_path, "\\\\?\\C:\\etc");
     }
+
+    // URV-5.b.1.f layered-defense edges (EDG-PathTraversal.3 / .4 / .5):
+    //
+    // Pin the contract surface where layer 1 (`find_outside_module_path`
+    // lexical pre-check) deliberately yields to layer 2 (`DirSandbox`
+    // open-time enforcement, URV-5.a) or accepts paths that are not escape
+    // attempts. The header above (URV-5.b.1 corpus extension) covers the
+    // two layers in detail; this block locks three specific edges that
+    // would otherwise drift into either false-positive (over-rejection of
+    // identity / missing paths) or silent-skip ambiguity (relative
+    // symlink chains).
+    //
+    //   .3: symlink-chain attack via a relative basis - layer 1 accepts
+    //       lexically (the path is relative), layer 2 must reject at
+    //       openat time when the symlink resolves outside the module.
+    //   .4: identity (`--copy-dest=.` and `--copy-dest=<module-root-abs>`)
+    //       must not be over-rejected.
+    //   .5: missing relative paths (basis directory that does not exist
+    //       yet) must not be lexically rejected - the receiver handles
+    //       ENOENT semantics separately.
+    //
+    // The .3 test does not drive layer 2 directly (that would require a
+    // full daemon stack); it documents the layered-defense WIRE that the
+    // URV-5.a / SEC-1.q regression suites exercise end-to-end.
+
+    #[test]
+    fn find_outside_module_path_symlink_chain_via_alt_basis_is_skipped_for_second_layer() {
+        // EDG-PathTraversal.3. Create an in-module symlink whose target
+        // resolves outside the module root. A client requesting
+        // `--copy-dest=safe_looking` passes a *relative* path, so the
+        // lexical layer (this helper) skips it - exactly as documented in
+        // the URV-5.b.1 corpus extension header. The runtime defense
+        // (DirSandbox / RESOLVE_BENEATH, URV-5.a) is what rejects the
+        // symlink chain at openat time when the receiver tries to open
+        // the basis handle.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+
+        // The symlink target only needs to exist as a path string; we
+        // never open it from this test. The lexical-skip contract holds
+        // regardless of whether the symlink is creatable: the helper does
+        // not stat or open relative paths.
+        #[cfg(unix)]
+        {
+            let symlink_path = module_root.join("safe_looking");
+            std::os::unix::fs::symlink("/etc/passwd", &symlink_path).unwrap();
+        }
+
+        let args = vec![
+            "--server".to_owned(),
+            "--copy-dest=safe_looking".to_owned(),
+            ".".to_owned(),
+        ];
+
+        // Layer 1: relative path, lexical skip. The helper returns None.
+        assert!(
+            find_outside_module_path(&args, &module_root).is_none(),
+            "lexical layer must accept relative paths; symlink-chain rejection \
+             is the DirSandbox open-time contract (URV-5.a / SEC-1.q)",
+        );
+    }
+
+    #[test]
+    fn find_outside_module_path_identity_alt_basis_is_accepted() {
+        // EDG-PathTraversal.4. Two identity spellings of "the basis is
+        // the module root itself" must both be accepted:
+        //
+        //   --copy-dest=.                 (relative dot)
+        //   --copy-dest=<module-root-abs> (absolute, canonicalises to
+        //                                  module_root - starts_with passes)
+        //
+        // Over-rejecting either form would break legitimate
+        // module-root-relative copy-dest setups.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+
+        // Relative dot. Lexical layer skips relative paths.
+        let dot_args = vec![
+            "--server".to_owned(),
+            "--copy-dest=.".to_owned(),
+            ".".to_owned(),
+        ];
+        assert!(
+            find_outside_module_path(&dot_args, &module_root).is_none(),
+            "--copy-dest=. must be accepted (identity, relative)",
+        );
+
+        // Absolute module root. Canonicalises to itself; starts_with passes.
+        let explicit_args = vec![
+            "--server".to_owned(),
+            format!("--copy-dest={}", module_root.display()),
+            ".".to_owned(),
+        ];
+        assert!(
+            find_outside_module_path(&explicit_args, &module_root).is_none(),
+            "--copy-dest=<module_root absolute> must be accepted (identity, in-module)",
+        );
+    }
+
+    #[test]
+    fn find_outside_module_path_missing_relative_alt_basis_is_not_rejected() {
+        // EDG-PathTraversal.5. A relative basis path that does not yet
+        // exist (e.g. the receiver will create it during the transfer)
+        // must not be lexically rejected. ENOENT is handled by the
+        // receiver further down the pipeline; the validator's job is
+        // containment, not existence.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+        let args = vec![
+            "--server".to_owned(),
+            "--copy-dest=nonexistent-dir".to_owned(),
+            ".".to_owned(),
+        ];
+        assert!(
+            find_outside_module_path(&args, &module_root).is_none(),
+            "missing relative path must NOT be lexically rejected; \
+             receiver handles ENOENT separately",
+        );
+    }
 }
