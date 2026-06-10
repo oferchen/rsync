@@ -48,6 +48,7 @@ use super::types::FileNdx;
 mod batch;
 mod decrement_guard;
 mod drain;
+mod shard_sizing;
 mod slot_barrier;
 
 use decrement_guard::DecrementGuard;
@@ -445,10 +446,22 @@ impl ParallelDeltaApplier {
     /// [`Arc`] so each rayon worker can clone the handle without re-boxing.
     ///
     /// `concurrency == 0` is treated as "use the ambient rayon pool".
+    ///
+    /// # DashMap shard sizing (DMC-CON.3, #3997)
+    ///
+    /// The internal `files: DashMap` is constructed with a shard count
+    /// adapted to the applier's actual `concurrency` rather than DashMap's
+    /// default `available_parallelism() * 4`. The heuristic
+    /// (`(concurrency * 4).next_power_of_two().clamp(4, 1024)`) trades the
+    /// default's CPU-relative sizing for one that tracks the applier's
+    /// worker fan-out. See [`shard_sizing`] and
+    /// `docs/design/dmc-con-adaptive-sharding.md` for the rationale, and
+    /// the `OC_RSYNC_DASHMAP_SHARDS` env override for tuning.
     #[must_use]
     pub fn with_strategy(concurrency: usize, strategy: Arc<dyn ChecksumStrategy>) -> Self {
+        let shard_count = shard_sizing::resolve_shard_count(concurrency);
         Self {
-            files: DashMap::new(),
+            files: DashMap::with_shard_amount(shard_count),
             per_file_reorder_capacity: Self::DEFAULT_PER_FILE_REORDER_CAPACITY,
             concurrency,
             strategy,
