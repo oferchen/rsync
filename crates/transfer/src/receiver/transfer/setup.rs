@@ -144,7 +144,14 @@ impl ReceiverContext {
             // daemon module forces fake-super metadata storage on the receiver
             // (ownership and special-file metadata go to user.rsync.%stat
             // xattrs instead of being applied to inodes).
-            .fake_super(self.config.fake_super);
+            .fake_super(self.config.fake_super)
+            // upstream: clientserver.c:rsync_module() + generator.c -
+            // `daemon_chmod_modes` rewrites the destination mode at finalize
+            // time. The parser ran at module-load and stored a parsed
+            // `ChmodModifiers`; we hand it to MetadataOptions so the existing
+            // chmod-application site in `apply_permissions_with_chmod`
+            // performs the rewrite without a separate code path.
+            .with_chmod(self.config.daemon_incoming_chmod.clone());
 
         let dest_dir = self
             .config
@@ -458,5 +465,90 @@ mod symlink_race_tests {
         let result = open_sandbox_for_dest_strict(&missing, true)
             .expect("ENOENT must be a soft failure - first-run push will mkdir later");
         assert!(result.is_none());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod daemon_incoming_chmod_tests {
+    //! Daemon `incoming chmod = SPEC` regression: the receiver must apply the
+    //! daemon module's chmod modifiers on top of the destination mode before
+    //! the on-disk permissions are finalized. Mirrors upstream
+    //! `clientserver.c:rsync_module()` arming `daemon_chmod_modes` and
+    //! `receiver.c` invoking it via `set_file_attrs()` at finalize time.
+
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    use ::metadata::{ChmodModifiers, MetadataOptions, apply_file_metadata_with_options};
+
+    /// Builds the same `MetadataOptions` chain the receiver-side
+    /// `setup_transfer` produces (perms + chmod modifiers + fake_super) for a
+    /// daemon-config-driven `incoming chmod`. This is the receiver's runtime
+    /// contract: the chmod modifiers must be installed via
+    /// `MetadataOptions::with_chmod` so the existing apply path rewrites the
+    /// destination mode at finalize time.
+    fn receiver_metadata_opts(chmod: Option<ChmodModifiers>) -> MetadataOptions {
+        MetadataOptions::new()
+            .preserve_permissions(true)
+            .preserve_times(false)
+            .with_chmod(chmod)
+    }
+
+    /// `incoming chmod = F600` forces every received regular file to land on
+    /// disk with mode 0o600 regardless of the source's mode bits, matching
+    /// upstream's `daemon_chmod_modes` semantics for push transfers.
+    #[test]
+    fn incoming_chmod_f600_rewrites_dest_to_0600() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = tmp.path().join("source.bin");
+        let dest = tmp.path().join("dest.bin");
+        fs::write(&source, b"payload").expect("write source");
+        fs::write(&dest, b"payload").expect("write dest");
+        // Source-side mode the sender would have advertised on the wire.
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o644)).expect("set source perms");
+        // Existing dest mode the receiver overwrites.
+        fs::set_permissions(&dest, fs::Permissions::from_mode(0o600)).expect("set dest perms");
+
+        let source_meta = fs::metadata(&source).expect("source metadata");
+        let modifiers = ChmodModifiers::parse("F600").expect("parse chmod spec");
+        let opts = receiver_metadata_opts(Some(modifiers));
+
+        apply_file_metadata_with_options(&dest, &source_meta, &opts)
+            .expect("apply daemon incoming chmod");
+
+        let mode = fs::metadata(&dest)
+            .expect("dest metadata")
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o7777,
+            0o600,
+            "incoming chmod = F600 must force destination mode to 0o600",
+        );
+    }
+
+    /// Without an `incoming chmod` directive the receiver preserves the
+    /// source mode exactly - no silent rewrite, no default fall-through.
+    #[test]
+    fn no_incoming_chmod_preserves_source_mode() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = tmp.path().join("source.bin");
+        let dest = tmp.path().join("dest.bin");
+        fs::write(&source, b"payload").expect("write source");
+        fs::write(&dest, b"payload").expect("write dest");
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o640)).expect("set source perms");
+        fs::set_permissions(&dest, fs::Permissions::from_mode(0o600)).expect("set dest perms");
+
+        let source_meta = fs::metadata(&source).expect("source metadata");
+        let opts = receiver_metadata_opts(None);
+
+        apply_file_metadata_with_options(&dest, &source_meta, &opts)
+            .expect("apply metadata without chmod");
+
+        let mode = fs::metadata(&dest)
+            .expect("dest metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o7777, 0o640);
     }
 }

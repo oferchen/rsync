@@ -244,6 +244,18 @@ impl GeneratorContext {
             }
         }
 
+        // upstream: clientserver.c:rsync_module() arms `daemon_chmod_modes`
+        // and flist.c:make_file() applies it as the file_struct is built so
+        // the wire-emitted mode reflects the daemon's `outgoing chmod = SPEC`
+        // directive. We mirror that ordering: rewrite the entry's mode after
+        // every other flist field has been populated but before the caller
+        // serialises it. The chmod parser preserves the file-type bits, so
+        // the entry's S_IFREG/S_IFDIR/etc. classification is untouched.
+        if let Some(modifiers) = self.config.daemon_outgoing_chmod.as_ref() {
+            let rewritten = modifiers.apply(entry.mode(), file_type);
+            entry.set_mode(rewritten);
+        }
+
         Ok(entry)
     }
 
@@ -635,5 +647,91 @@ mod fake_super_round_trip_tests {
             rdev: None,
         };
         assert_eq!(stat.encode(), "100644 0,0 1234:5678");
+    }
+}
+
+#[cfg(all(test, unix))]
+mod daemon_outgoing_chmod_tests {
+    //! Daemon `outgoing chmod = SPEC` regression: the sender must rewrite the
+    //! wire-emitted mode for each file list entry when the daemon module has
+    //! an `outgoing chmod` directive configured. Mirrors upstream
+    //! `clientserver.c:rsync_module()` arming `daemon_chmod_modes` and
+    //! `flist.c:make_file()` applying them as file_struct values are built.
+
+    use super::super::super::GeneratorContext;
+    use crate::config::ServerConfig;
+    use crate::handshake::HandshakeResult;
+    use crate::role::ServerRole;
+    use ::metadata::ChmodModifiers;
+    use protocol::ProtocolVersion;
+    use std::ffi::OsString;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    fn make_generator(outgoing_chmod: Option<ChmodModifiers>) -> GeneratorContext {
+        let handshake = HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let mut config = ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![OsString::from(".")],
+            daemon_outgoing_chmod: outgoing_chmod,
+            ..Default::default()
+        };
+        config.flags.numeric_ids = true;
+        GeneratorContext::new_for_test(&handshake, config)
+    }
+
+    /// `outgoing chmod = Fg-r` must clear the group-read bit on the wire-emitted
+    /// mode for every file entry the sender constructs. The on-disk source
+    /// retains its original permissions; only the file list entry is rewritten.
+    #[test]
+    fn outgoing_chmod_clears_group_read_bit_on_wire() {
+        let tmp = TempDir::new().expect("tempdir");
+        let path = tmp.path().join("source.txt");
+        std::fs::write(&path, b"payload").expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o664))
+            .expect("set source perms");
+
+        let modifiers = ChmodModifiers::parse("Fg-r").expect("parse chmod spec");
+        let ctx = make_generator(Some(modifiers));
+        let meta = std::fs::symlink_metadata(&path).expect("metadata");
+        let entry = ctx
+            .create_entry(&path, PathBuf::from("source.txt"), &meta)
+            .expect("create_entry");
+
+        // Group-read (0o040) must be cleared; other bits left intact.
+        let perms = entry.permissions() & 0o7777;
+        assert_eq!(perms & 0o040, 0, "group-read must be cleared on wire");
+        assert_eq!(perms, 0o624, "Fg-r rewrites 0o664 to 0o624");
+    }
+
+    /// When no `outgoing chmod` is configured, `create_entry` must emit the
+    /// on-disk mode verbatim - no rewrite, no silent default.
+    #[test]
+    fn no_outgoing_chmod_leaves_mode_untouched() {
+        let tmp = TempDir::new().expect("tempdir");
+        let path = tmp.path().join("source.txt");
+        std::fs::write(&path, b"payload").expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o664))
+            .expect("set source perms");
+
+        let ctx = make_generator(None);
+        let meta = std::fs::symlink_metadata(&path).expect("metadata");
+        let entry = ctx
+            .create_entry(&path, PathBuf::from("source.txt"), &meta)
+            .expect("create_entry");
+
+        assert_eq!(entry.permissions() & 0o7777, 0o664);
     }
 }
