@@ -127,6 +127,10 @@ where
     config.file_selection.existing_only = long_flags.existing_only;
     config.flags.numeric_ids = long_flags.numeric_ids;
     config.flags.delete = long_flags.delete;
+    // upstream: options.c:2046-2048 - do_stats sets info_levels[INFO_STATS] >= 2.
+    // The server-side flag must be set so the generator emits NDX_DEL_STATS
+    // during the goodbye phase (generator.c:2377,2422).
+    config.do_stats = long_flags.stats;
     config.reference_directories = long_flags.reference_directories;
 
     // upstream: options.c:2327-2338 - server parses --log-format to determine
