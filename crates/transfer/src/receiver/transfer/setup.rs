@@ -505,11 +505,9 @@ mod daemon_incoming_chmod_tests {
         fs::write(&source, b"payload").expect("write source");
         fs::write(&dest, b"payload").expect("write dest");
         // Source-side mode the sender would have advertised on the wire.
-        fs::set_permissions(&source, fs::Permissions::from_mode(0o644))
-            .expect("set source perms");
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o644)).expect("set source perms");
         // Existing dest mode the receiver overwrites.
-        fs::set_permissions(&dest, fs::Permissions::from_mode(0o600))
-            .expect("set dest perms");
+        fs::set_permissions(&dest, fs::Permissions::from_mode(0o600)).expect("set dest perms");
 
         let source_meta = fs::metadata(&source).expect("source metadata");
         let modifiers = ChmodModifiers::parse("F600").expect("parse chmod spec");
@@ -518,7 +516,10 @@ mod daemon_incoming_chmod_tests {
         apply_file_metadata_with_options(&dest, &source_meta, &opts)
             .expect("apply daemon incoming chmod");
 
-        let mode = fs::metadata(&dest).expect("dest metadata").permissions().mode();
+        let mode = fs::metadata(&dest)
+            .expect("dest metadata")
+            .permissions()
+            .mode();
         assert_eq!(
             mode & 0o7777,
             0o600,
@@ -535,10 +536,8 @@ mod daemon_incoming_chmod_tests {
         let dest = tmp.path().join("dest.bin");
         fs::write(&source, b"payload").expect("write source");
         fs::write(&dest, b"payload").expect("write dest");
-        fs::set_permissions(&source, fs::Permissions::from_mode(0o640))
-            .expect("set source perms");
-        fs::set_permissions(&dest, fs::Permissions::from_mode(0o600))
-            .expect("set dest perms");
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o640)).expect("set source perms");
+        fs::set_permissions(&dest, fs::Permissions::from_mode(0o600)).expect("set dest perms");
 
         let source_meta = fs::metadata(&source).expect("source metadata");
         let opts = receiver_metadata_opts(None);
@@ -546,7 +545,10 @@ mod daemon_incoming_chmod_tests {
         apply_file_metadata_with_options(&dest, &source_meta, &opts)
             .expect("apply metadata without chmod");
 
-        let mode = fs::metadata(&dest).expect("dest metadata").permissions().mode();
+        let mode = fs::metadata(&dest)
+            .expect("dest metadata")
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o7777, 0o640);
     }
 }
