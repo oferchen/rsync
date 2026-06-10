@@ -687,7 +687,7 @@ fn see_token_exact_chunk_boundary() {
 #[test]
 fn see_token_large_incompressible_insert_no_overflow() {
     // xorshift64 byte sequence: deterministic and resists deflate compression.
-    let mut state: u64 = 0xc05dc0de_a55a_5a5au64;
+    let mut state: u64 = 0xc05d_c0de_a55a_5a5a_u64;
     let mut block = Vec::with_capacity(0xFFFF);
     for _ in 0..0xFFFF {
         state ^= state << 13;
