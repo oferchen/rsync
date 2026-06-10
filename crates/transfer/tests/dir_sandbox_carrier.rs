@@ -178,3 +178,79 @@ fn root_arc_outlives_borrowed_cursor() {
     drop(arc);
     assert!(sandbox.current_dirfd().as_raw_fd() >= 0);
 }
+
+// ================================================================
+// Regression test for rsync 3.4.3 fix: -K / --copy-dirlinks + sandbox
+// ================================================================
+
+/// Regression: upstream rsync 3.4.3 fixed a bug where `-K` (copy-dirlinks)
+/// caused "failed verification -- update discarded" errors during delta
+/// transfers. The root cause was `secure_relative_open()` rejecting every
+/// symlink via per-component `O_NOFOLLOW` walk, even legitimate directory
+/// symlinks preserved by `-K`.
+///
+/// This test verifies that `DirSandbox::enter_follow_dirlinks()` allows
+/// descending through an in-tree directory symlink - the receiver-side
+/// operation that failed in rsync <= 3.4.2 when `-K` was active.
+///
+/// Scenario:
+/// 1. Destination has `subdir` as a symlink to `real_target` (both within
+///    the destination tree).
+/// 2. `enter()` rejects the symlink (correct default behavior).
+/// 3. `enter_follow_dirlinks()` permits it (the `-K` path).
+/// 4. After entering through the symlink, a file `stat` at the current
+///    dirfd resolves correctly to the real target's child.
+#[test]
+fn copy_dirlinks_descent_through_in_tree_directory_symlink() {
+    let (_keep, root) = canonical_tempdir();
+
+    // Build destination tree matching the -K pattern:
+    //   root/
+    //     real_target/
+    //       file.bin
+    //     subdir -> real_target   (directory symlink, relative target)
+    //
+    // The symlink target is expressed relative to the symlink's parent so
+    // openat2(RESOLVE_BENEATH) accepts it: an absolute target would be
+    // rejected with EXDEV even when it resolves in-tree, because the
+    // kernel cannot prove a re-resolution from / stays beneath the dirfd.
+    // Real -K flows preserve the source symlink target verbatim and those
+    // are typically relative.
+    let real_target = root.join("real_target");
+    std::fs::create_dir(&real_target).unwrap();
+    std::fs::write(real_target.join("file.bin"), b"delta-payload").unwrap();
+    symlink("real_target", root.join("subdir")).unwrap();
+
+    let mut sandbox = DirSandbox::open_root(&root).expect("open root");
+
+    // Default enter() must reject the symlink - this is the strict
+    // SEC-1 invariant and must NOT regress.
+    let err = sandbox
+        .enter(OsStr::new("subdir"))
+        .expect_err("default enter must reject directory symlink");
+    let code = err.raw_os_error().expect("must carry errno");
+    assert!(
+        code == libc::ELOOP || code == libc::ENOTDIR,
+        "expected ELOOP or ENOTDIR, got errno={code}"
+    );
+    assert_eq!(sandbox.depth(), 0, "failed enter must not push");
+
+    // enter_follow_dirlinks() must succeed - this is the -K fix.
+    sandbox
+        .enter_follow_dirlinks(OsStr::new("subdir"))
+        .expect("enter_follow_dirlinks must succeed for in-tree directory symlink");
+    assert_eq!(sandbox.depth(), 1);
+
+    // The current dirfd should resolve to the real target, allowing
+    // file operations through the symlink. Verify by statting the
+    // child file through the sandbox dirfd.
+    let meta = fast_io::fstatat_nofollow(sandbox.current_dirfd(), OsStr::new("file.bin"))
+        .expect("stat file.bin through symlinked directory");
+    assert!(
+        meta.is_file(),
+        "file.bin must be visible through the followed directory symlink"
+    );
+
+    sandbox.exit();
+    assert_eq!(sandbox.depth(), 0);
+}
