@@ -33,3 +33,6 @@ flate2 = { workspace = true }
 zstd = { workspace = true, optional = true }
 lz4_flex = { workspace = true, optional = true, features = ["frame", "safe-encode", "safe-decode"] }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
