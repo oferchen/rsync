@@ -76,6 +76,13 @@ pub(super) struct ServerLongFlags {
     pub(super) numeric_ids: bool,
     /// Delete extraneous files (upstream: `--delete-*` variants, long-form only).
     pub(super) delete: bool,
+    /// Whether `--stats` was forwarded by the client.
+    ///
+    /// upstream: options.c:2838-2839 - `server_options()` emits `--stats` whenever
+    /// the client requested detailed statistics. The server-side `do_stats` flag
+    /// gates emission of `NDX_DEL_STATS` during the goodbye phase, which the
+    /// client relies on for the "Number of deleted files" stats line.
+    pub(super) stats: bool,
     /// Skip updating files that exist at destination (upstream: `--ignore-existing`).
     pub(super) ignore_existing: bool,
     /// Skip creating files not present at destination (upstream: `--existing`).
@@ -153,6 +160,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         size_only: false,
         numeric_ids: false,
         delete: false,
+        stats: false,
         ignore_existing: false,
         existing_only: false,
         max_delete: None,
@@ -187,6 +195,10 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // upstream: --delete variants are long-form only (options.c:2818-2827)
             "--delete" | "--delete-before" | "--delete-during" | "--delete-after"
             | "--delete-delay" | "--delete-excluded" => flags.delete = true,
+            // upstream: options.c:2838-2839 - --stats forwarded by server_options()
+            // when do_stats was set. The server-side flag drives NDX_DEL_STATS
+            // emission in the goodbye phase (generator.c:2377,2422).
+            "--stats" => flags.stats = true,
             // upstream: options.c:2831 - --ignore-existing sent as long-form arg
             "--ignore-existing" => flags.ignore_existing = true,
             // upstream: options.c:2833 - --existing (--ignore-non-existing) sent as long-form arg
@@ -298,6 +310,7 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--delete-after"
             | "--delete-delay"
             | "--delete-excluded"
+            | "--stats"
             | "--ignore-existing"
             | "--existing"
             | "--ignore-non-existing"

@@ -112,6 +112,41 @@ fn parse_wildcard_source() {
 }
 
 #[test]
+fn spec_preserves_wildcard_for_daemon_round_trip() {
+    // Regression: --groupmap=*:1234 must reach the daemon receiver with `*`
+    // intact so `uidlist.c:parse_name_map()` recognises the wildcard matcher.
+    let mapping = NameMapping::parse(MappingKind::Group, "*:1234").expect("parse mapping");
+    assert_eq!(mapping.spec(), "*:1234");
+}
+
+#[test]
+fn spec_preserves_multi_rule_ordering() {
+    let spec = "100-200:1234,wheel:9999,*:0";
+    let mapping = NameMapping::parse(MappingKind::Group, spec).expect("parse mapping");
+    assert_eq!(mapping.spec(), spec);
+}
+
+#[test]
+fn spec_trims_surrounding_whitespace() {
+    let mapping = NameMapping::parse(MappingKind::User, "  *:0  ").expect("parse mapping");
+    assert_eq!(mapping.spec(), "*:0");
+}
+
+#[test]
+fn user_mapping_spec_accessor_round_trip() {
+    use super::UserMapping;
+    let mapping = UserMapping::parse("*:5678").expect("parse usermap");
+    assert_eq!(mapping.spec(), "*:5678");
+}
+
+#[test]
+fn group_mapping_spec_accessor_round_trip() {
+    use super::GroupMapping;
+    let mapping = GroupMapping::parse("*:1234").expect("parse groupmap");
+    assert_eq!(mapping.spec(), "*:1234");
+}
+
+#[test]
 fn parse_range_source() {
     let mapping = NameMapping::parse(MappingKind::User, "100-200:1000").expect("parse mapping");
     assert_eq!(mapping.len(), 1);

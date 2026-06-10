@@ -36,35 +36,15 @@ where
 
     let mut stdin = io::stdin().lock();
 
-    // When secluded-args is active, the client splits its argv: the
-    // server-options flag string and long flags travel on the command
-    // line, while the trailing positional args (the `.` separator and
-    // path arguments) are streamed over stdin as NUL-delimited bytes
-    // terminated by an empty string. Mirroring upstream, we keep the
-    // command-line args and substitute the stdin-supplied positional
-    // tail.
-    //
-    // upstream: rsync.c:283 send_protected_args() - sender writes a
-    // replacement arg0 ("rsync") followed by the args after the NULL
-    // split inserted by options.c:2745.
-    // upstream: io.c:1295 read_args() - server reads the NUL-delimited
-    // payload into a fresh argv before re-running parse_arguments(),
-    // which is what supplies the positional path tail.
+    // When secluded-args is active, read the full argument list from stdin
+    // before parsing server flags. The client sends arguments as
+    // null-separated strings terminated by an empty string.
+    // upstream: main.c - read_args() reads protected args from stdin.
     let effective_args: Vec<OsString>;
     let effective_slice: &[OsString] = if secluded_args {
         match protocol::secluded_args::recv_secluded_args(&mut stdin, None) {
             Ok(received_args) => {
-                // The wire payload starts with a synthetic arg0 ("rsync")
-                // that mirrors how upstream rebuilds argv. We discard it
-                // because the command-line argv already carries the real
-                // server-options head (--server / --sender / flag string
-                // / long flags).
-                let mut received_iter = received_args.into_iter();
-                let _arg0 = received_iter.next();
-                let cmdline_tail = args.iter().skip(1).cloned();
-                effective_args = cmdline_tail
-                    .chain(received_iter.map(OsString::from))
-                    .collect();
+                effective_args = received_args.into_iter().map(OsString::from).collect();
                 &effective_args
             }
             Err(e) => {
@@ -147,6 +127,10 @@ where
     config.file_selection.existing_only = long_flags.existing_only;
     config.flags.numeric_ids = long_flags.numeric_ids;
     config.flags.delete = long_flags.delete;
+    // upstream: options.c:2046-2048 - do_stats sets info_levels[INFO_STATS] >= 2.
+    // The server-side flag must be set so the generator emits NDX_DEL_STATS
+    // during the goodbye phase (generator.c:2377,2422).
+    config.do_stats = long_flags.stats;
     config.reference_directories = long_flags.reference_directories;
 
     // upstream: options.c:2327-2338 - server parses --log-format to determine

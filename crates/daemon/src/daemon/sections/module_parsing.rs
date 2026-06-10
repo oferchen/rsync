@@ -36,24 +36,6 @@ const VITAL_OPTIONS: &[&str] = &[
     "write-devices",
 ];
 
-/// Sibling options grouped with `--compress` for refuse-list matching.
-///
-/// upstream: options.c - when `set_refuse_options()` marks `'z'` as refused it
-/// captures the popt val into `refused_compress`. `parse_arguments()` then
-/// rejects any client that activates compression via `-z`, `--compress`,
-/// `--compress-level`, `--compress-choice`, `--old-compress`, or
-/// `--new-compress` (and their `--zl` / `--zc` short aliases). `--no-compress`
-/// is the inverse and remains allowed because it clears `do_compression`.
-const COMPRESS_ALIAS_GROUP: &[&str] = &[
-    "compress",
-    "compress-level",
-    "compress-choice",
-    "old-compress",
-    "new-compress",
-    "zl",
-    "zc",
-];
-
 /// Checks whether a client-requested option is refused by the module's refuse list.
 ///
 /// The refuse list supports:
@@ -232,7 +214,7 @@ fn is_option_refused(refuse_list: &[String], canonical: &str) -> bool {
         let matches = if is_glob {
             wildcard_match(&pattern, canonical)
         } else {
-            pattern == canonical || rule_alias_matches(&pattern, canonical)
+            pattern == canonical
         };
 
         if matches {
@@ -240,20 +222,6 @@ fn is_option_refused(refuse_list: &[String], canonical: &str) -> bool {
         }
     }
     refused
-}
-
-/// Resolves popt-style refuse aliases that share a single `val` field.
-///
-/// upstream: options.c `parse_arguments()` consults `refused_compress` (set by
-/// `set_refuse_options()` when `'z'` is refused) to reject any option that
-/// activates compression. We mirror that by treating `compress` as a group:
-/// the rule matches `--compress`, `--compress-level`, `--compress-choice`,
-/// `--old-compress`, `--new-compress`, and the `--zl` / `--zc` short aliases.
-fn rule_alias_matches(pattern: &str, canonical: &str) -> bool {
-    if pattern == "compress" || pattern == "z" {
-        return COMPRESS_ALIAS_GROUP.contains(&canonical);
-    }
-    false
 }
 
 /// Returns whether an option is in the vital set that is immune to wildcards.

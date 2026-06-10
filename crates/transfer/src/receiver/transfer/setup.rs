@@ -144,7 +144,14 @@ impl ReceiverContext {
             // daemon module forces fake-super metadata storage on the receiver
             // (ownership and special-file metadata go to user.rsync.%stat
             // xattrs instead of being applied to inodes).
-            .fake_super(self.config.fake_super);
+            .fake_super(self.config.fake_super)
+            // upstream: clientserver.c:rsync_module() + generator.c -
+            // `daemon_chmod_modes` rewrites the destination mode at finalize
+            // time. The parser ran at module-load and stored a parsed
+            // `ChmodModifiers`; we hand it to MetadataOptions so the existing
+            // chmod-application site in `apply_permissions_with_chmod`
+            // performs the rewrite without a separate code path.
+            .with_chmod(self.config.daemon_incoming_chmod.clone());
 
         let dest_dir = self
             .config
@@ -168,8 +175,22 @@ impl ReceiverContext {
         // migrated, so a failed open is non-fatal (a brand-new
         // destination root may not exist yet, and the existing
         // path-based fall-backs cover that case today).
+        //
+        // Daemon receivers without chroot tighten this: a leaf-symlink at
+        // the destination is the chdir-symlink-race attack window, so we
+        // refuse the transfer outright when DirSandbox open fails with
+        // ELOOP/ENOTDIR instead of falling through to path-based syscalls
+        // that would follow the symlink. ENOENT (first-run push that has
+        // not created the directory yet) and EACCES (real permission
+        // problems) keep the existing soft-fail behaviour.
+        // upstream: clientserver.c:1018 - `use_secure_symlinks = am_daemon
+        // && !am_chrooted` gates the do_*_at wrappers in syscall.c that
+        // implement the same refusal.
         #[cfg(unix)]
-        let sandbox = open_sandbox_for_dest(&dest_dir);
+        let sandbox = {
+            let strict = self.config.connection.is_daemon_connection;
+            open_sandbox_for_dest_strict(&dest_dir, strict)?
+        };
 
         // FSM: file list received and sanitized. Advance to DeltaTransfer.
         self.pipeline
@@ -204,6 +225,7 @@ impl ReceiverContext {
 /// first-run transfers where the destination is created later in
 /// `ensure_relative_parents` / `create_directories`.
 #[cfg(unix)]
+#[allow(dead_code)] // kept for tests; the strict variant is the active call site.
 fn open_sandbox_for_dest(dest_dir: &std::path::Path) -> Option<Arc<fast_io::DirSandbox>> {
     match fast_io::DirSandbox::open_root(dest_dir) {
         Ok(sandbox) => Some(Arc::new(sandbox)),
@@ -215,6 +237,66 @@ fn open_sandbox_for_dest(dest_dir: &std::path::Path) -> Option<Arc<fast_io::DirS
                 dest_dir.display()
             );
             None
+        }
+    }
+}
+
+/// Open the destination root as a [`fast_io::DirSandbox`] carrier and, when
+/// `strict` is set, propagate symlink-class refusals as a transfer error.
+///
+/// When `strict` is `false` this is identical to [`open_sandbox_for_dest`]:
+/// every failure falls back to path-based syscalls.
+///
+/// When `strict` is `true` the failure mode splits by errno:
+/// - `ELOOP` / `ENOTDIR`: the destination resolves through a symlink, which
+///   is the chdir-symlink-race attack window. Convert to `io::Error` so the
+///   transfer fails before any data lands on disk and no path-relative
+///   syscall ever resolves through the attacker-planted symlink.
+/// - `ENOENT`: the destination does not exist yet (first-run push). Return
+///   `Ok(None)` so the receiver creates it through the existing
+///   `ensure_relative_parents` / `create_directories` path.
+/// - Any other error: keep the soft-fall-back so legitimate permission or
+///   I/O problems surface at a more specific call site downstream.
+///
+/// # Upstream Reference
+///
+/// - `clientserver.c:1018` - `use_secure_symlinks = am_daemon &&
+///   !am_chrooted` gates the do_*_at wrappers in `syscall.c`.
+/// - `util1.c:1175-1216` - `change_dir()`'s
+///   `secure_relative_open()` + `fchdir()` branch refuses the symlink at the
+///   same level the chdir-symlink-race POC plants it.
+#[cfg(unix)]
+fn open_sandbox_for_dest_strict(
+    dest_dir: &std::path::Path,
+    strict: bool,
+) -> io::Result<Option<Arc<fast_io::DirSandbox>>> {
+    match fast_io::DirSandbox::open_root(dest_dir) {
+        Ok(sandbox) => Ok(Some(Arc::new(sandbox))),
+        Err(err) => {
+            let code = err.raw_os_error();
+            let is_symlink_refusal = matches!(
+                code,
+                Some(libc::ELOOP) | Some(libc::ENOTDIR) | Some(libc::EXDEV)
+            );
+            if strict && is_symlink_refusal {
+                return Err(io::Error::new(
+                    err.kind(),
+                    format!(
+                        "refusing to open destination '{}' via a symlink: \
+                         {err} (errno={}) (would expose the \
+                         chdir-symlink-race attack window)",
+                        dest_dir.display(),
+                        code.unwrap_or(0),
+                    ),
+                ));
+            }
+            logging::debug_log!(
+                Recv,
+                2,
+                "DirSandbox::open_root({}) failed: {err}; falling back to path-based syscalls",
+                dest_dir.display()
+            );
+            Ok(None)
         }
     }
 }
@@ -296,4 +378,177 @@ fn parse_wire_filters_for_receiver(
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("filter error: {e}")))?;
 
     Ok((filter_set, merge_configs))
+}
+
+// upstream: clientserver.c:1018 - use_secure_symlinks gating that the
+// chdir-symlink-race fix mirrors. Tests below verify the strict daemon
+// branch refuses a leaf-symlink at the destination while the legacy
+// non-daemon branch preserves the existing soft-fail behaviour.
+#[cfg(all(test, unix))]
+mod symlink_race_tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+    use tempfile::tempdir;
+
+    fn canonical_tempdir() -> (tempfile::TempDir, std::path::PathBuf) {
+        let dir = tempdir().expect("tempdir");
+        let canon = std::fs::canonicalize(dir.path()).expect("canonicalize tempdir");
+        (dir, canon)
+    }
+
+    #[test]
+    fn strict_mode_refuses_symlink_destination() {
+        let (_keep, root) = canonical_tempdir();
+        let outside = root.join("outside");
+        std::fs::create_dir(&outside).expect("create outside dir");
+        let subdir = root.join("subdir");
+        symlink(&outside, &subdir).expect("symlink subdir -> outside");
+
+        let err = open_sandbox_for_dest_strict(&subdir, true)
+            .expect_err("daemon receiver must refuse a symlink destination");
+        // The wrapped error embeds the underlying errno from
+        // `DirSandbox::open_root` (ELOOP on Linux + openat2; ENOTDIR on
+        // macOS/BSD where O_DIRECTORY is evaluated before O_NOFOLLOW).
+        // Both prove the symlink was refused at the syscall layer. The
+        // wrapped Display also carries the security-context message so
+        // operators see why the transfer aborted. Asserting on the embedded
+        // errno avoids the unstable `io::ErrorKind::FilesystemLoop` /
+        // `NotADirectory` variants (rust-lang/rust#86442).
+        let msg = err.to_string();
+        let expected_errno_a = format!("errno={}", libc::ELOOP);
+        let expected_errno_b = format!("errno={}", libc::ENOTDIR);
+        assert!(
+            msg.contains(&expected_errno_a) || msg.contains(&expected_errno_b),
+            "expected ELOOP or ENOTDIR errno embedded in message, got: {err}"
+        );
+        assert!(
+            msg.contains("chdir-symlink-race"),
+            "expected chdir-symlink-race security context in message, got: {err}"
+        );
+    }
+
+    #[test]
+    fn non_strict_mode_falls_back_for_symlink_destination() {
+        let (_keep, root) = canonical_tempdir();
+        let outside = root.join("outside");
+        std::fs::create_dir(&outside).expect("create outside dir");
+        let subdir = root.join("subdir");
+        symlink(&outside, &subdir).expect("symlink subdir -> outside");
+
+        let result = open_sandbox_for_dest_strict(&subdir, false)
+            .expect("non-daemon receiver keeps soft-fail behaviour");
+        // The sandbox open failed, but the receiver still gets None and
+        // falls through to the path-based syscall path (existing
+        // behaviour before the chdir-symlink-race fix).
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn strict_mode_accepts_real_directory_destination() {
+        let (_keep, root) = canonical_tempdir();
+        let real = root.join("realdir");
+        std::fs::create_dir(&real).expect("create real dir");
+
+        let result = open_sandbox_for_dest_strict(&real, true)
+            .expect("real directory must open under strict mode");
+        assert!(
+            result.is_some(),
+            "strict mode must hand back a sandbox when the dest is a real dir"
+        );
+    }
+
+    #[test]
+    fn strict_mode_soft_fails_when_destination_is_missing() {
+        let (_keep, root) = canonical_tempdir();
+        let missing = root.join("not-yet-created");
+
+        let result = open_sandbox_for_dest_strict(&missing, true)
+            .expect("ENOENT must be a soft failure - first-run push will mkdir later");
+        assert!(result.is_none());
+    }
+}
+
+#[cfg(all(test, unix))]
+mod daemon_incoming_chmod_tests {
+    //! Daemon `incoming chmod = SPEC` regression: the receiver must apply the
+    //! daemon module's chmod modifiers on top of the destination mode before
+    //! the on-disk permissions are finalized. Mirrors upstream
+    //! `clientserver.c:rsync_module()` arming `daemon_chmod_modes` and
+    //! `receiver.c` invoking it via `set_file_attrs()` at finalize time.
+
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    use ::metadata::{ChmodModifiers, MetadataOptions, apply_file_metadata_with_options};
+
+    /// Builds the same `MetadataOptions` chain the receiver-side
+    /// `setup_transfer` produces (perms + chmod modifiers + fake_super) for a
+    /// daemon-config-driven `incoming chmod`. This is the receiver's runtime
+    /// contract: the chmod modifiers must be installed via
+    /// `MetadataOptions::with_chmod` so the existing apply path rewrites the
+    /// destination mode at finalize time.
+    fn receiver_metadata_opts(chmod: Option<ChmodModifiers>) -> MetadataOptions {
+        MetadataOptions::new()
+            .preserve_permissions(true)
+            .preserve_times(false)
+            .with_chmod(chmod)
+    }
+
+    /// `incoming chmod = F600` forces every received regular file to land on
+    /// disk with mode 0o600 regardless of the source's mode bits, matching
+    /// upstream's `daemon_chmod_modes` semantics for push transfers.
+    #[test]
+    fn incoming_chmod_f600_rewrites_dest_to_0600() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = tmp.path().join("source.bin");
+        let dest = tmp.path().join("dest.bin");
+        fs::write(&source, b"payload").expect("write source");
+        fs::write(&dest, b"payload").expect("write dest");
+        // Source-side mode the sender would have advertised on the wire.
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o644)).expect("set source perms");
+        // Existing dest mode the receiver overwrites.
+        fs::set_permissions(&dest, fs::Permissions::from_mode(0o600)).expect("set dest perms");
+
+        let source_meta = fs::metadata(&source).expect("source metadata");
+        let modifiers = ChmodModifiers::parse("F600").expect("parse chmod spec");
+        let opts = receiver_metadata_opts(Some(modifiers));
+
+        apply_file_metadata_with_options(&dest, &source_meta, &opts)
+            .expect("apply daemon incoming chmod");
+
+        let mode = fs::metadata(&dest)
+            .expect("dest metadata")
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o7777,
+            0o600,
+            "incoming chmod = F600 must force destination mode to 0o600",
+        );
+    }
+
+    /// Without an `incoming chmod` directive the receiver preserves the
+    /// source mode exactly - no silent rewrite, no default fall-through.
+    #[test]
+    fn no_incoming_chmod_preserves_source_mode() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = tmp.path().join("source.bin");
+        let dest = tmp.path().join("dest.bin");
+        fs::write(&source, b"payload").expect("write source");
+        fs::write(&dest, b"payload").expect("write dest");
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o640)).expect("set source perms");
+        fs::set_permissions(&dest, fs::Permissions::from_mode(0o600)).expect("set dest perms");
+
+        let source_meta = fs::metadata(&source).expect("source metadata");
+        let opts = receiver_metadata_opts(None);
+
+        apply_file_metadata_with_options(&dest, &source_meta, &opts)
+            .expect("apply metadata without chmod");
+
+        let mode = fs::metadata(&dest)
+            .expect("dest metadata")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o7777, 0o640);
+    }
 }
