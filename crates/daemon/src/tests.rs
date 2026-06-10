@@ -380,6 +380,10 @@ include!("tests/chunks/daemon_checksum_push.rs");
 include!("tests/chunks/daemon_compress_push.rs");
 // Daemon delete push end-to-end test
 include!("tests/chunks/daemon_delete_push.rs");
+// Daemon delete push NDX_DEL_STATS regression (URV-6 upload-direction gap)
+include!("tests/chunks/daemon_delete_push_emits_stats.rs");
+// Daemon delete pull NDX_DEL_STATS regression (URV-6 pull-direction)
+include!("tests/chunks/daemon_delete_pull_emits_stats.rs");
 // Daemon inplace push end-to-end test
 include!("tests/chunks/daemon_inplace_push.rs");
 // Daemon push/pull lifecycle end-to-end tests
