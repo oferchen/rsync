@@ -800,6 +800,101 @@ mod module_access_tests {
         assert!(config.reference_directories.is_empty());
     }
 
+    // URV-5.a regression tests: the daemon's alt-basis relative path
+    // resolution (--copy-dest / --link-dest / --compare-dest) must
+    // confine the join beneath the module root, matching upstream
+    // 3.4.4 secure_relative_open() in syscall.c:1791-1896. Without
+    // confinement, --copy-dest=../../etc on a chroot-disabled module
+    // is accepted and points at arbitrary filesystem locations.
+
+    #[test]
+    fn confine_alt_basis_admits_clean_relative_sibling() {
+        let module_root = std::path::Path::new("/tmp/module");
+        let resolved =
+            confine_alt_basis_to_module_root(module_root, std::path::Path::new("sibling"))
+                .expect("clean sibling should resolve beneath module root");
+        assert_eq!(resolved, std::path::PathBuf::from("/tmp/module/sibling"));
+    }
+
+    #[test]
+    fn confine_alt_basis_admits_nested_relative_path() {
+        let module_root = std::path::Path::new("/tmp/module");
+        let resolved = confine_alt_basis_to_module_root(
+            module_root,
+            std::path::Path::new("snapshots/daily/01"),
+        )
+        .expect("nested path with no `..` should resolve beneath module root");
+        assert_eq!(
+            resolved,
+            std::path::PathBuf::from("/tmp/module/snapshots/daily/01")
+        );
+    }
+
+    #[test]
+    fn confine_alt_basis_rejects_bare_dotdot() {
+        let module_root = std::path::Path::new("/tmp/module");
+        let err = confine_alt_basis_to_module_root(module_root, std::path::Path::new(".."))
+            .expect_err("bare `..` must be rejected to match upstream secure_relative_open");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn confine_alt_basis_rejects_leading_dotdot() {
+        let module_root = std::path::Path::new("/tmp/module");
+        let err =
+            confine_alt_basis_to_module_root(module_root, std::path::Path::new("../sibling"))
+                .expect_err("`../sibling` must be rejected to prevent module-root escape");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn confine_alt_basis_rejects_path_traversal_to_etc() {
+        // The headline URV-5.a exploit: --copy-dest=../../etc on a
+        // chroot-disabled module must be refused.
+        let module_root = std::path::Path::new("/tmp/module");
+        let err = confine_alt_basis_to_module_root(module_root, std::path::Path::new("../../etc"))
+            .expect_err("`../../etc` must be rejected as a module-root escape");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn confine_alt_basis_rejects_embedded_dotdot() {
+        let module_root = std::path::Path::new("/tmp/module");
+        let err = confine_alt_basis_to_module_root(
+            module_root,
+            std::path::Path::new("subdir/../../escape"),
+        )
+        .expect_err("`subdir/../../escape` must be rejected even after partial descent");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn confine_alt_basis_rejects_trailing_dotdot() {
+        let module_root = std::path::Path::new("/tmp/module");
+        let err =
+            confine_alt_basis_to_module_root(module_root, std::path::Path::new("subdir/.."))
+                .expect_err("`subdir/..` must be rejected (matches upstream's portable fallback)");
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn path_has_dotdot_component_detects_all_forms() {
+        // Mirrors upstream syscall.c:1679 path_has_dotdot_component()
+        // coverage: bare "..", leading, trailing, embedded.
+        assert!(path_has_dotdot_component(std::path::Path::new("..")));
+        assert!(path_has_dotdot_component(std::path::Path::new("../foo")));
+        assert!(path_has_dotdot_component(std::path::Path::new("foo/..")));
+        assert!(path_has_dotdot_component(std::path::Path::new("foo/../bar")));
+        assert!(!path_has_dotdot_component(std::path::Path::new("foo")));
+        assert!(!path_has_dotdot_component(std::path::Path::new("foo/bar")));
+        // A single dot is `Component::CurDir`, not `ParentDir`, and
+        // poses no escape risk.
+        assert!(!path_has_dotdot_component(std::path::Path::new("./foo")));
+        // Strings that merely contain "..", such as "foo..bar", are not
+        // path components and must be admitted.
+        assert!(!path_has_dotdot_component(std::path::Path::new("foo..bar")));
+    }
+
     // upstream: options.c:2750-2761 - server_options() sends --log-format=%i
     // when the client uses -i/--itemize-changes. The daemon must parse this
     // to set info_flags.itemize so the receiver emits MSG_INFO itemize frames.
