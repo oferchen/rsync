@@ -92,26 +92,27 @@ pub(super) fn try_copy(
 
     let file_size = metadata.len();
 
-    let dispatched = match context
-        .options()
-        .platform_copy()
-        .copy_file(source, destination, file_size)
-    {
-        Ok(result) => match result.method {
-            CopyMethod::CopyFileEx | CopyMethod::ReFsReflink => true,
-            _ => {
-                // StandardCopy (std::fs::copy fallback) does not exercise the
-                // Windows-optimal kernel path; let the executor's normal write
-                // strategy own the bytes so behaviour matches non-Windows.
+    let dispatched =
+        match context
+            .options()
+            .platform_copy()
+            .copy_file(source, destination, file_size)
+        {
+            Ok(result) => match result.method {
+                CopyMethod::CopyFileEx | CopyMethod::ReFsReflink => true,
+                _ => {
+                    // StandardCopy (std::fs::copy fallback) does not exercise the
+                    // Windows-optimal kernel path; let the executor's normal write
+                    // strategy own the bytes so behaviour matches non-Windows.
+                    let _ = std::fs::remove_file(destination);
+                    false
+                }
+            },
+            Err(_) => {
                 let _ = std::fs::remove_file(destination);
                 false
             }
-        },
-        Err(_) => {
-            let _ = std::fs::remove_file(destination);
-            false
-        }
-    };
+        };
     if !dispatched {
         return Ok(false);
     }
@@ -243,7 +244,8 @@ mod tests {
         let temp = TempDir::new().expect("temp dir");
         let src = temp.path().join("src.bin");
         let dst = temp.path().join("dst.bin");
-        let payload = vec![0xCDu8; (crate::local_copy::win_copy::NO_BUFFERING_THRESHOLD + 1) as usize];
+        let payload =
+            vec![0xCDu8; (crate::local_copy::win_copy::NO_BUFFERING_THRESHOLD + 1) as usize];
         write_file(&src, &payload);
 
         let stub = StubPlatformCopy {
