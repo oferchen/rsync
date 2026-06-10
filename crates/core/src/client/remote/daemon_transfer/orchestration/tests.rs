@@ -304,6 +304,115 @@ mod protect_args_daemon_tests {
             "should not include --log-format without itemize: {args:?}"
         );
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn build_full_args_forwards_groupmap_wildcard_verbatim() {
+        // upstream: options.c:2894-2898 - --groupmap value is shipped verbatim
+        // through the daemon secluded-args byte stream. Wildcards like `*`
+        // must survive so the receiver's `uidlist.c:parse_name_map()` sees
+        // `strpbrk(cp, "*[?")` and installs a `NFLAGS_WILD_NAME_MATCH` rule.
+        let group_mapping = ::metadata::GroupMapping::parse("*:1234").expect("parse groupmap");
+        let config = ClientConfig::builder()
+            .group_mapping(Some(group_mapping))
+            .build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        assert!(
+            args.iter().any(|a| a == "--groupmap=*:1234"),
+            "expected --groupmap=*:1234 verbatim (no backslash escape): {args:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn build_full_args_forwards_usermap_wildcard_verbatim() {
+        let user_mapping = ::metadata::UserMapping::parse("*:5678").expect("parse usermap");
+        let config = ClientConfig::builder()
+            .user_mapping(Some(user_mapping))
+            .build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, true);
+
+        assert!(
+            args.iter().any(|a| a == "--usermap=*:5678"),
+            "expected --usermap=*:5678 verbatim: {args:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn build_full_args_forwards_groupmap_multi_rule_verbatim() {
+        // Multi-rule specs (comma-separated) must round-trip without rule
+        // reordering or whitespace mangling.
+        let group_mapping =
+            ::metadata::GroupMapping::parse("100-200:1234,wheel:9999,*:0").expect("parse groupmap");
+        let config = ClientConfig::builder()
+            .group_mapping(Some(group_mapping))
+            .build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        assert!(
+            args.iter()
+                .any(|a| a == "--groupmap=100-200:1234,wheel:9999,*:0"),
+            "expected multi-rule groupmap verbatim: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_full_args_omits_groupmap_when_unset() {
+        let config = ClientConfig::default();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        assert!(
+            !args.iter().any(|a| a.starts_with("--groupmap")),
+            "default config must not emit --groupmap: {args:?}"
+        );
+        assert!(
+            !args.iter().any(|a| a.starts_with("--usermap")),
+            "default config must not emit --usermap: {args:?}"
+        );
+    }
+
+    #[test]
+    fn secluded_args_round_trip_preserves_groupmap_wildcard() {
+        // Wire-byte regression: the secluded-args (protect-args) protocol must
+        // ship `--groupmap=*:1234` byte-for-byte from sender to receiver. This
+        // mirrors the wire path used when `protect_args` is active and the
+        // daemon reads phase-2 args via `recv_secluded_args()` -- the upstream
+        // `read_args()` equivalent in oc-rsync.
+        use protocol::secluded_args::{recv_secluded_args, send_secluded_args};
+        use std::io::Cursor;
+
+        let sent = vec![
+            "rsync",
+            "--server",
+            "--groupmap=*:1234",
+            "--usermap=*:5678",
+            ".",
+            "module/",
+        ];
+        let mut wire = Vec::new();
+        send_secluded_args(&mut wire, &sent, None).expect("send");
+
+        // Wildcard must appear unescaped on the wire.
+        assert!(
+            wire.windows(b"--groupmap=*:1234\0".len())
+                .any(|w| w == b"--groupmap=*:1234\0"),
+            "wildcard '*' must reach the wire unescaped"
+        );
+
+        let mut cursor = Cursor::new(wire);
+        let received = recv_secluded_args(&mut cursor, None).expect("recv");
+        assert_eq!(received, sent);
+    }
 }
 
 mod server_config_reference_dirs {
