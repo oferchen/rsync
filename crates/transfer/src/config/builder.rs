@@ -23,6 +23,7 @@ use std::time::SystemTime;
 
 use compress::zlib::CompressionLevel;
 use engine::SkipCompressList;
+use metadata::ChmodModifiers;
 use protocol::FilenameConverter;
 use protocol::ProtocolVersion;
 use protocol::filters::FilterRuleWireFormat;
@@ -86,6 +87,8 @@ pub struct ServerConfigBuilder {
     temp_dir: Option<PathBuf>,
     skip_compress: Option<SkipCompressList>,
     fake_super: bool,
+    daemon_incoming_chmod: Option<ChmodModifiers>,
+    daemon_outgoing_chmod: Option<ChmodModifiers>,
 }
 
 impl Default for ServerConfigBuilder {
@@ -123,6 +126,8 @@ impl ServerConfigBuilder {
             temp_dir: None,
             skip_compress: None,
             fake_super: false,
+            daemon_incoming_chmod: None,
+            daemon_outgoing_chmod: None,
         }
     }
 
@@ -470,6 +475,38 @@ impl ServerConfigBuilder {
         self
     }
 
+    /// Sets the parsed `incoming chmod = SPEC` modifiers from the daemon
+    /// module definition.
+    ///
+    /// Push transfers (client to daemon) consult this value during file
+    /// finalization to rewrite the destination mode according to the
+    /// chmod-spec clauses. Pull transfers ignore it.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `clientserver.c:rsync_module()` - `parse_chmod(lp_incoming_chmod(i), ...)`
+    /// - `loadparm.c` - `incoming chmod` module parameter
+    pub fn daemon_incoming_chmod(&mut self, modifiers: Option<ChmodModifiers>) -> &mut Self {
+        self.daemon_incoming_chmod = modifiers;
+        self
+    }
+
+    /// Sets the parsed `outgoing chmod = SPEC` modifiers from the daemon
+    /// module definition.
+    ///
+    /// Pull transfers (daemon to client) consult this value when building
+    /// the file list to rewrite the mode emitted on the wire. Push transfers
+    /// ignore it.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `clientserver.c:rsync_module()` - `parse_chmod(lp_outgoing_chmod(i), ...)`
+    /// - `loadparm.c` - `outgoing chmod` module parameter
+    pub fn daemon_outgoing_chmod(&mut self, modifiers: Option<ChmodModifiers>) -> &mut Self {
+        self.daemon_outgoing_chmod = modifiers;
+        self
+    }
+
     /// Validates the builder configuration.
     fn validate(&self) -> Result<(), BuilderError> {
         // upstream: options.c:2934 - --inplace and --delay-updates are mutually exclusive
@@ -546,6 +583,8 @@ impl ServerConfigBuilder {
             temp_dir: self.temp_dir.clone(),
             skip_compress: self.skip_compress.clone(),
             fake_super: self.fake_super,
+            daemon_incoming_chmod: self.daemon_incoming_chmod.clone(),
+            daemon_outgoing_chmod: self.daemon_outgoing_chmod.clone(),
         }
     }
 }
