@@ -395,6 +395,30 @@ fn build_server_config(
             // is demoted to --super on the wire and never reaches us.
             cfg.fake_super = module.fake_super;
 
+            // upstream: clientserver.c:rsync_module() - the `incoming chmod`
+            // and `outgoing chmod` directives feed `parse_chmod(...)` and the
+            // parsed clauses arm `daemon_chmod_modes`, applied at flist build
+            // time (sender) and at file finalize time (receiver). We delay
+            // parsing to module-use rather than module-load so the operator
+            // sees the @ERROR live; an invalid spec aborts the session with
+            // the same exit semantics as a bad client option.
+            match parse_daemon_chmod_specs(module) {
+                Ok((incoming, outgoing)) => {
+                    cfg.daemon_incoming_chmod = incoming;
+                    cfg.daemon_outgoing_chmod = outgoing;
+                }
+                Err(err) => {
+                    let payload = format!("@ERROR: {err}");
+                    send_error_and_exit(
+                        ctx.reader.get_mut(),
+                        ctx.limiter,
+                        ctx.messages,
+                        &payload,
+                    )?;
+                    return Ok(None);
+                }
+            }
+
             Ok(Some(cfg))
         }
         Err(err) => {
@@ -713,6 +737,77 @@ fn resolve_module_charset_converter(charset: Option<&str>) -> Option<FilenameCon
             );
             None
         }
+    }
+}
+
+/// Parses the module's `incoming chmod` / `outgoing chmod` directives into the
+/// typed [`metadata::ChmodModifiers`] used by the receiver and sender code
+/// paths. Returns a human-readable error message when a spec is malformed so
+/// the caller can wrap it in an `@ERROR` reply.
+///
+/// # Upstream Reference
+///
+/// - `options.c:parse_chmod()` - canonical chmod-spec grammar
+/// - `clientserver.c:rsync_module()` - daemon-side arming of `daemon_chmod_modes`
+fn parse_daemon_chmod_specs(
+    module: &ModuleRuntime,
+) -> Result<
+    (
+        Option<metadata::ChmodModifiers>,
+        Option<metadata::ChmodModifiers>,
+    ),
+    String,
+> {
+    let incoming = parse_one_chmod_spec("incoming chmod", module.incoming_chmod())?;
+    let outgoing = parse_one_chmod_spec("outgoing chmod", module.outgoing_chmod())?;
+    Ok((incoming, outgoing))
+}
+
+fn parse_one_chmod_spec(
+    directive: &'static str,
+    spec: Option<&str>,
+) -> Result<Option<metadata::ChmodModifiers>, String> {
+    match spec {
+        Some(text) => metadata::ChmodModifiers::parse(text)
+            .map(Some)
+            .map_err(|err| format!("invalid '{directive}' directive '{text}': {err}")),
+        None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod daemon_chmod_spec_tests {
+    use super::parse_one_chmod_spec;
+
+    #[test]
+    fn parse_one_chmod_spec_returns_none_for_unset_directive() {
+        let result = parse_one_chmod_spec("incoming chmod", None).expect("ok");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_one_chmod_spec_accepts_numeric_class_action_form() {
+        // upstream parse_chmod() accepts bare octal (`644`), prefix-letter
+        // (`F600`), class-action-perms (`u+x`), and combined forms.
+        for spec in ["644", "F600", "u+x", "Du+x,Fg-r,Fo-r"] {
+            let parsed = parse_one_chmod_spec("incoming chmod", Some(spec))
+                .unwrap_or_else(|err| panic!("spec '{spec}' must parse: {err}"));
+            assert!(parsed.is_some(), "spec '{spec}' produced no clauses");
+        }
+    }
+
+    #[test]
+    fn parse_one_chmod_spec_surfaces_directive_name_on_error() {
+        let err = parse_one_chmod_spec("outgoing chmod", Some("bogus"))
+            .expect_err("malformed spec must error");
+        assert!(
+            err.contains("outgoing chmod"),
+            "error '{err}' must name the offending directive",
+        );
+        assert!(
+            err.contains("bogus"),
+            "error '{err}' must include the offending spec text",
+        );
     }
 }
 
