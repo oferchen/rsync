@@ -102,6 +102,16 @@ flight are marked "Design only" or "Audit only" with a tracking link.
 
 ## 6. Build and packaging requirements
 
+> **Packaging note (platform-feature gates).** Every CLI-facing platform
+> feature (`--xattrs`, `--acls`) is gated at two layers: a Cargo feature in
+> `crates/core/Cargo.toml` that propagates to the backend crate, and a
+> preflight `#[cfg]` gate at the CLI boundary. Both layers must list every
+> platform that ships a backend, or the flag is silently rejected even with
+> the feature compiled in. The convention is documented in
+> `docs/contributing/ONBOARDING.md` ("Platform-feature gates in preflight")
+> and locked in by `crates/cli/tests/feature_propagation.rs`. WPC-3 (PR
+> #5564) was exactly this defect class on Windows `--xattrs`.
+
 - **Toolchain triple**: `x86_64-pc-windows-msvc`.
 - **Exception handling**: SEH (Structured Exception Handling). Panics
   reaching `extern "system"` frames abort rather than invoke undefined
