@@ -51,6 +51,10 @@ version = "0.10"
 default-features = false
 features = ["std"]
 
+[dependencies.transfer]
+path = "../crates/transfer"
+default-features = false
+
 [[bin]]
 name = "protocol_wire"
 path = "fuzz_targets/protocol_wire.rs"
@@ -222,6 +226,13 @@ bench = false
 [[bin]]
 name = "parallel_receive_delta_adversarial"
 path = "fuzz_targets/parallel_receive_delta_adversarial.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "buffered_map"
+path = "fuzz_targets/buffered_map.rs"
 test = false
 doc = false
 bench = false
