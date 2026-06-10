@@ -81,6 +81,8 @@
 
 /// Cached sorting using the Schwartzian transform.
 pub mod cached_sort;
+/// Rootless container / user-namespace detection for SQPOLL gating.
+pub mod container;
 /// Parent-dirfd carrier (`DirSandbox`) for the SEC-1 sandbox.
 ///
 /// Threads an in-tree dirfd stack plus a `DashMap<PathBuf, Arc<OwnedFd>>`
@@ -239,6 +241,7 @@ pub mod sqpoll_basis;
 mod status;
 
 pub use cached_sort::{CachedSortKey, cached_sort_by};
+pub use container::detect_rootless_container;
 pub use copy_basis_range::{
     COPY_BASIS_RANGE_MIN_BYTES, copy_basis_range, copy_file_range_supported,
 };

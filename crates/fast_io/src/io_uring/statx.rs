@@ -11,7 +11,7 @@
 //!   `is_io_uring_available()` and then asks the kernel via
 //!   `IORING_REGISTER_PROBE` whether opcode 21 (`IORING_OP_STATX`) is
 //!   reported as supported.
-//! - [`build_statx_sqe`] - constructs an [`squeue::Entry`] for a STATX
+//! - [`build_statx_sqe`] - constructs an `squeue::Entry` for a STATX
 //!   submission; returns [`io::ErrorKind::Unsupported`] when the probe is
 //!   `false`. Callers must keep the [`StatxArgs`] path and buffer alive until
 //!   the matching CQE has been reaped.
@@ -150,7 +150,7 @@ fn probe_statx_support() -> bool {
 /// opcode.
 ///
 /// Returns [`io::ErrorKind::Unsupported`] when [`statx_supported`] reports
-/// `false`. The returned [`squeue::Entry`] is unattached; callers are
+/// `false`. The returned `squeue::Entry` is unattached; callers are
 /// responsible for tagging it with `user_data` and pushing it onto a ring's
 /// submission queue under the `unsafe` contract documented by
 /// `io_uring::SubmissionQueue::push`.

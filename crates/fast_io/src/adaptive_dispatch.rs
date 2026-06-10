@@ -16,20 +16,20 @@
 //! # Algorithm
 //!
 //! For each completed basis read the caller invokes
-//! [`record_sample`] with the chosen backend, the byte count, and the
+//! [`crate::adaptive_dispatch::record_sample`] with the chosen backend, the byte count, and the
 //! wall-clock duration. The module maintains an exponentially-weighted
 //! moving average of bytes-per-second per backend with `alpha = 0.2`
 //! per sample (the new sample contributes 20%, the running estimate
-//! contributes 80%). [`pick`] then compares the two EWMAs and returns
+//! contributes 80%). [`crate::adaptive_dispatch::pick`] then compares the two EWMAs and returns
 //! the faster backend, or falls back to the static size-threshold
-//! heuristic from Option 2 ([`size_threshold_pick`]) when one or both
+//! heuristic from Option 2 ([`crate::adaptive_dispatch::size_threshold_pick`]) when one or both
 //! backends has no recorded history.
 //!
 //! # Operator opt-out
 //!
 //! Setting `OC_RSYNC_ADAPTIVE_BASIS_DISPATCH=0` (or `off`, `false`,
 //! `no`) in the environment disables the adaptive path at runtime even
-//! when the feature is compiled in. [`pick`] then always falls back to
+//! when the feature is compiled in. [`crate::adaptive_dispatch::pick`] then always falls back to
 //! the size-threshold path so the operator can revert to the static
 //! Option 2 behaviour without rebuilding.
 
@@ -177,7 +177,7 @@ static GLOBAL_TRACKER: OnceLock<ThroughputTracker> = OnceLock::new();
 
 /// Return the process-wide [`ThroughputTracker`], constructing it on
 /// first call. Callers wiring the adaptive path through
-/// [`pick`] and [`record_sample`] use this implicitly; tests that
+/// [`crate::adaptive_dispatch::pick`] and [`crate::adaptive_dispatch::record_sample`] use this implicitly; tests that
 /// want isolation should construct their own [`ThroughputTracker`]
 /// instead.
 #[must_use]
@@ -198,19 +198,19 @@ pub fn record_sample(backend: BasisReadBackend, bytes: u64, elapsed: Duration) {
 ///
 /// 1. If the adaptive path is disabled at runtime
 ///    (`OC_RSYNC_ADAPTIVE_BASIS_DISPATCH=0`), fall straight back to
-///    [`size_threshold_pick`] (Option 2 behaviour).
+///    [`crate::adaptive_dispatch::size_threshold_pick`] (Option 2 behaviour).
 /// 2. Filter out backends the caller declared unavailable. If only
 ///    one is available, return it.
 /// 3. If both backends have recorded samples, return whichever has
 ///    the higher EWMA throughput. Ties resolve in favour of mmap
 ///    (the historically stable choice).
-/// 4. Otherwise fall back to [`size_threshold_pick`].
+/// 4. Otherwise fall back to [`crate::adaptive_dispatch::size_threshold_pick`].
 #[must_use]
 pub fn pick(size: u64, mmap_available: bool, iouring_available: bool) -> BasisReadBackend {
     pick_with_tracker(global_tracker(), size, mmap_available, iouring_available)
 }
 
-/// [`pick`] against a caller-supplied tracker. Lets tests exercise the
+/// [`crate::adaptive_dispatch::pick`] against a caller-supplied tracker. Lets tests exercise the
 /// decision logic without contending on the process-wide singleton.
 #[must_use]
 pub fn pick_with_tracker(
