@@ -572,7 +572,11 @@ mod symlink_basis_tests {
         dest_dir: &std::path::Path,
         copy_links: bool,
     ) -> bool {
-        let entry = FileEntry::new_file(PathBuf::from("payload.bin"), b"basis payload".len() as u64, 0o644);
+        let entry = FileEntry::new_file(
+            PathBuf::from("payload.bin"),
+            b"basis payload".len() as u64,
+            0o644,
+        );
         let reference = ReferenceDirectory {
             kind,
             path: ref_dir.to_path_buf(),
