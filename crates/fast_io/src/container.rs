@@ -93,12 +93,14 @@ mod imp {
 
     /// Returns `true` when `/proc/self/uid_map` contains exactly the
     /// host-identity mapping `0 0 4294967295` (single line, whitespace
-    /// tolerated). Any other content - extra lines, non-identity inner
-    /// uid, narrowed range - indicates a user namespace.
+    /// tolerated) or is empty (no signal - treat as host so callers
+    /// fall through to the marker-file probes). Any other content -
+    /// extra lines, non-identity inner uid, narrowed range - indicates
+    /// a user namespace.
     fn is_identity_uid_map(contents: &str) -> bool {
         let mut lines = contents.lines().filter(|l| !l.trim().is_empty());
         let Some(first) = lines.next() else {
-            return false;
+            return true;
         };
         if lines.next().is_some() {
             return false;
