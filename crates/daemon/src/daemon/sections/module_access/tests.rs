@@ -142,6 +142,66 @@ mod module_access_tests {
         assert!(args.is_empty());
     }
 
+    // upstream: io.c:1295-1306 unbackslash_arg().
+    #[test]
+    fn unbackslash_arg_collapses_backslash_escapes() {
+        assert_eq!(unbackslash_arg("plain"), "plain");
+        assert_eq!(unbackslash_arg("\\*"), "*");
+        assert_eq!(unbackslash_arg("\\;\\&\\|"), ";&|");
+        assert_eq!(
+            unbackslash_arg("--groupmap=\\*:1234\\;dangerous"),
+            "--groupmap=*:1234;dangerous"
+        );
+        // A lone trailing backslash is preserved verbatim, matching upstream's
+        // `if (*f == '\\' && f[1])` guard.
+        assert_eq!(unbackslash_arg("trailing\\"), "trailing\\");
+        // Double backslash escapes to single, mirroring upstream.
+        assert_eq!(unbackslash_arg("\\\\"), "\\");
+    }
+
+    // upstream: io.c:1336-1359 - unescape applies only to args before the `.`
+    // CWD marker; file args after the dot pass through verbatim because the
+    // upstream loop dispatches them through glob_expand() instead.
+    #[test]
+    fn unescape_phase1_option_args_stops_at_dot_marker() {
+        let args = vec![
+            "--server".to_owned(),
+            "--groupmap=\\*:1234".to_owned(),
+            ".".to_owned(),
+            "module/file\\*".to_owned(),
+        ];
+        let out = unescape_phase1_option_args(args);
+        assert_eq!(
+            out,
+            vec![
+                "--server".to_owned(),
+                "--groupmap=*:1234".to_owned(),
+                ".".to_owned(),
+                "module/file\\*".to_owned(),
+            ]
+        );
+    }
+
+    // upstream: clientserver.c:1073 - first read_args() call passes
+    // `unescape=1` so a non-protect daemon receiver round-trips shell-escaped
+    // option values. Without this, --groupmap=*:1234 sent under non-protect
+    // arrives at the daemon as the literal "\*:1234".
+    #[test]
+    fn unescape_phase1_option_args_no_dot_marker_unescapes_all() {
+        let args = vec![
+            "--usermap=\\*:5678".to_owned(),
+            "--groupmap=\\*:1234\\;dangerous".to_owned(),
+        ];
+        let out = unescape_phase1_option_args(args);
+        assert_eq!(
+            out,
+            vec![
+                "--usermap=*:5678".to_owned(),
+                "--groupmap=*:1234;dangerous".to_owned(),
+            ]
+        );
+    }
+
     #[test]
     fn apply_module_bandwidth_limit_disables_when_module_configured_none() {
         let mut limiter = Some(BandwidthLimiter::new(NonZeroU64::new(1024).unwrap()));

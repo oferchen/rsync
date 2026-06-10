@@ -41,7 +41,13 @@ pub(crate) fn send_daemon_arguments<W: Write>(
     let phase1_args = if protect {
         build_minimal_daemon_args(is_sender)
     } else {
-        full_args.clone()
+        // upstream: options.c:2590-2997 server_options() wraps every emitted
+        // option-with-value through `safe_arg()` before it enters the wire
+        // path. Under non-protect_args the daemon (rsync 3.4.4) responds with
+        // `unbackslash_arg()` on its side. We mirror both halves here so a
+        // value such as `--groupmap=*:1234;foo` round-trips through the
+        // remote shell-like text protocol without losing its wildcards.
+        full_args.iter().map(|arg| safe_arg_for_daemon(arg)).collect()
     };
 
     // upstream: clientserver.c:348-349 - DEBUG_GTE(CMD, 1) emits
@@ -353,6 +359,89 @@ pub(super) fn build_full_daemon_args(
     args
 }
 
+/// Characters that the remote shell wrapper (or upstream `unbackslash_arg`)
+/// will interpret unless escaped. Mirrors upstream `options.c:2541`
+/// `SHELL_CHARS`. Backslash is included so a literal `\` round-trips intact.
+const SHELL_CHARS: &str = "!#$&;|<>(){}\"'` \t\\";
+
+/// Wildcard characters that the remote shell would expand. Mirrors upstream
+/// `options.c:2542` `WILD_CHARS`.
+const WILD_CHARS: &str = "*?[]";
+
+/// Mirrors upstream `options.c:safe_arg()` (rsync 3.4.4) for non-protect_args
+/// daemon transmission.
+///
+/// Each argument is split at the first `=` (the upstream `opt = "--foo"` /
+/// `arg = "value"` convention used throughout `server_options()`). The key
+/// portion (`--foo=`) passes through verbatim while the value portion is
+/// backslash-escaped: `WILD_CHARS` + `SHELL_CHARS` for option values, and
+/// only `SHELL_CHARS` for the trailing filename / module-path argument.
+///
+/// The daemon side (rsync 3.4.4 `io.c:1295-1306` `unbackslash_arg()`) collapses
+/// every `\X` sequence back into `X` before option parsing, so this
+/// transformation is a strict inverse of the server-side reader.
+///
+/// Option flag args that contain neither `=` nor any escapable character
+/// (e.g., `--server`, `--sender`, `--numeric-ids`) are returned verbatim
+/// to avoid allocation.
+fn safe_arg_for_daemon(arg: &str) -> String {
+    let (prefix, value, escapes, is_filename_arg) = match arg.find('=') {
+        Some(eq_pos) if arg.starts_with("--") => {
+            // upstream: safe_arg("--foo", value) -> "--foo=" + escaped value
+            // with WILD_CHARS+SHELL_CHARS escapes.
+            (&arg[..=eq_pos], &arg[eq_pos + 1..], OPTION_ESCAPES, false)
+        }
+        _ => {
+            // upstream: safe_arg(NULL, arg) - filename / module path arg uses
+            // only SHELL_CHARS so wildcards stay shell-expandable.
+            ("", arg, SHELL_CHARS, true)
+        }
+    };
+
+    let needs_work = value
+        .chars()
+        .any(|c| c == '\\' || escapes.contains(c));
+    if !needs_work {
+        return arg.to_owned();
+    }
+    escape_with(prefix, value, escapes, is_filename_arg)
+}
+
+/// Concatenation of `WILD_CHARS` + `SHELL_CHARS` used as the escape set for
+/// option values (upstream `options.c:2544` ternary `WILD_CHARS SHELL_CHARS`).
+const OPTION_ESCAPES: &str = "*?[]!#$&;|<>(){}\"'` \t\\";
+
+/// Builds `prefix + backslash_escaped(value)` using the given escape set.
+///
+/// Mirrors upstream `options.c:2583-2590`. For each input byte:
+///
+/// - `\` is doubled into `\\` so the receiver's `unbackslash_arg` recovers
+///   the literal backslash. The one exception is filename args, where an
+///   existing `\` before a wildcard is left as-is to preserve the user's
+///   intentional wildcard escape.
+/// - Any character in `escapes` is prefixed with `\`.
+/// - All other characters pass through verbatim.
+fn escape_with(prefix: &str, value: &str, escapes: &str, is_filename_arg: bool) -> String {
+    let mut out = String::with_capacity(prefix.len() + value.len() + 8);
+    out.push_str(prefix);
+    let bytes: Vec<char> = value.chars().collect();
+    for (i, &ch) in bytes.iter().enumerate() {
+        if ch == '\\' {
+            // upstream: options.c:2585 - filename args preserve `\<wildcard>`
+            // sequences verbatim so the user's deliberate wildcard escape
+            // survives. Option args always double the backslash.
+            let next = bytes.get(i + 1).copied().unwrap_or('\0');
+            if !(is_filename_arg && WILD_CHARS.contains(next)) {
+                out.push('\\');
+            }
+        } else if escapes.contains(ch) {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
 /// Converts a [`compress::zlib::CompressionLevel`] to its numeric zlib value.
 fn compression_level_numeric(level: compress::zlib::CompressionLevel) -> u32 {
     use compress::zlib::CompressionLevel;
@@ -362,5 +451,100 @@ fn compression_level_numeric(level: compress::zlib::CompressionLevel) -> u32 {
         CompressionLevel::Default => 6,
         CompressionLevel::Best => 9,
         CompressionLevel::Precise(n) => u32::from(n.get()),
+    }
+}
+
+#[cfg(test)]
+mod safe_arg_tests {
+    use super::*;
+
+    // upstream: options.c:2539 safe_arg(NULL, arg) - filename args (no opt)
+    // escape only SHELL_CHARS, leaving wildcards intact so the remote shell
+    // can still expand them when no remote-shell wrapper is involved.
+    #[test]
+    fn filename_arg_leaves_wildcards_alone() {
+        assert_eq!(safe_arg_for_daemon("file*name"), "file*name");
+        assert_eq!(safe_arg_for_daemon("question?path"), "question?path");
+    }
+
+    // upstream: options.c:2539 safe_arg(NULL, arg) - SHELL_CHARS get backslash
+    // escaped even in filename args.
+    #[test]
+    fn filename_arg_escapes_shell_chars() {
+        assert_eq!(safe_arg_for_daemon("file with space"), "file\\ with\\ space");
+        assert_eq!(
+            safe_arg_for_daemon("dangerous;rm -rf /"),
+            "dangerous\\;rm\\ -rf\\ /"
+        );
+    }
+
+    // upstream: options.c:2544 - option args escape WILD_CHARS + SHELL_CHARS
+    // because the daemon receiver `unbackslash_arg`s before option parsing.
+    #[test]
+    fn option_arg_escapes_wildcards_in_value() {
+        assert_eq!(
+            safe_arg_for_daemon("--groupmap=*:1234"),
+            "--groupmap=\\*:1234"
+        );
+        assert_eq!(
+            safe_arg_for_daemon("--usermap=alice:bob,*:1234"),
+            "--usermap=alice:bob,\\*:1234"
+        );
+    }
+
+    // The audit-cited regression: `--groupmap=*:1234;dangerous` must keep
+    // both the wildcard and the shell-meta `;` after daemon-side
+    // `unbackslash_arg()` reverses the escape.
+    #[test]
+    fn option_arg_round_trips_shell_meta_value() {
+        let arg = "--groupmap=*:1234;dangerous";
+        let escaped = safe_arg_for_daemon(arg);
+        assert_eq!(escaped, "--groupmap=\\*:1234\\;dangerous");
+
+        // Reverse the escape exactly the way the daemon's `unbackslash_arg`
+        // would, byte by byte.
+        let mut decoded = Vec::with_capacity(escaped.len());
+        let bytes = escaped.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                i += 1;
+            }
+            decoded.push(bytes[i]);
+            i += 1;
+        }
+        assert_eq!(String::from_utf8(decoded).unwrap(), arg);
+    }
+
+    // Plain option args with no escapable chars are returned verbatim
+    // (no allocation churn).
+    #[test]
+    fn plain_args_pass_through() {
+        assert_eq!(safe_arg_for_daemon("--server"), "--server");
+        assert_eq!(safe_arg_for_daemon("-logDtprz"), "-logDtprz");
+        assert_eq!(safe_arg_for_daemon("."), ".");
+        assert_eq!(safe_arg_for_daemon("module/path"), "module/path");
+    }
+
+    // upstream: options.c:2585 - filename args preserve `\<wildcard>` so the
+    // user's intentional wildcard escape passes through to the remote shell.
+    #[test]
+    fn filename_arg_preserves_escaped_wildcard() {
+        // Filename branch: \* (literal) is kept verbatim because the wildcard
+        // is already escaped by the caller.
+        assert_eq!(safe_arg_for_daemon("file\\*"), "file\\*");
+    }
+
+    // upstream: options.c:2583-2590 - option args always double an embedded
+    // backslash so the daemon's `unbackslash_arg` collapses both halves and
+    // recovers the original literal `\` plus the wildcard.
+    #[test]
+    fn option_arg_doubles_pre_escaped_wildcard() {
+        // A pre-escaped `\*` in an option value travels as `\\\*`. The
+        // daemon's unbackslash_arg turns `\\\*` into `\*` (the literal the
+        // user typed). This is the round-trip both halves of the patch are
+        // designed to preserve.
+        let escaped = safe_arg_for_daemon("--groupmap=\\*:1234");
+        assert_eq!(escaped, "--groupmap=\\\\\\*:1234");
     }
 }
