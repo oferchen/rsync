@@ -65,6 +65,14 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
         None
     };
 
+    // Inetd path serves one session in this process and exits, but the
+    // hardening is still cheap insurance: PR_SET_NO_NEW_PRIVS prevents
+    // any later setuid exec (e.g. a pre-xfer-exec hook configured on the
+    // requested module) from regaining privileges, and the LSM audit line
+    // makes the active kernel defenses visible to operators inspecting
+    // inetd-style logs.
+    apply_startup_hardening(log_sink.as_ref());
+
     let connection_limiter: Option<Arc<ConnectionLimiter>> = None;
     let modules: Vec<ModuleRuntime> = modules
         .into_iter()
