@@ -18,6 +18,11 @@ pub(crate) fn render_module_list<W: Write, E: Write>(
         }
     }
 
+    // upstream: clientserver.c:1254 emits `%-15s\t%s\n` for every listable
+    // module, even when the comment is empty. The client echoes the line
+    // verbatim, so we must emit the tab whenever the daemon supplied a
+    // comment field (i.e. the entry was parsed from a tab-separated line),
+    // including when that field is the empty string.
     for entry in list.entries() {
         let name = entry.name();
         if let Some(comment) = entry.comment() {
