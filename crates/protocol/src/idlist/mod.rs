@@ -31,6 +31,17 @@ pub use trace::{IdKind, trace_id_maps_to, trace_process_gids, trace_set_gid, tra
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 
+/// Defence-in-depth cap on the number of UID/GID mapping entries from the wire.
+///
+/// A typical system has fewer than a thousand unique users/groups. 65536 is well
+/// above any real-world usage while preventing a malicious peer from forcing
+/// unbounded allocations by sending millions of id-name pairs without ever
+/// sending the terminating zero.
+///
+/// upstream: uidlist.c `recv_id_list()` loops until id==0 with no explicit
+/// count cap; relies on the sender eventually terminating.
+const MAX_WIRE_ID_LIST_ENTRIES: usize = 65536;
+
 /// A mapping from a remote ID to its name and resolved local ID.
 #[derive(Debug, Clone)]
 struct IdEntry {
@@ -265,12 +276,24 @@ impl IdList {
         F: Fn(&[u8]) -> Option<u32>,
     {
         // Read (id, name) pairs until id=0
+        let mut count = 0usize;
         loop {
             // Use varint30 decoding (int for proto < 30, varint for proto >= 30)
             let id_signed = crate::read_varint30_int(reader, protocol_version)?;
             if id_signed == 0 {
                 break;
             }
+
+            // Defence-in-depth: reject unreasonably large ID lists to prevent
+            // a malicious peer from forcing unbounded allocations.
+            count += 1;
+            if count > MAX_WIRE_ID_LIST_ENTRIES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("ID list entry count exceeds maximum {MAX_WIRE_ID_LIST_ENTRIES}"),
+                ));
+            }
+
             // IDs are non-negative, convert from wire format
             let id = id_signed as u32;
 
@@ -627,5 +650,52 @@ mod tests {
             messages.is_empty(),
             "kind=None must suppress OWN trace, got {messages:?}"
         );
+    }
+
+    /// Defence-in-depth: ID list exceeding MAX_WIRE_ID_LIST_ENTRIES is rejected.
+    #[test]
+    fn read_rejects_oversized_id_list() {
+        // Build a wire stream with MAX_WIRE_ID_LIST_ENTRIES + 1 entries
+        // (each: varint id, len=1, name byte) followed by a terminator.
+        let mut data = Vec::new();
+        for i in 1..=(MAX_WIRE_ID_LIST_ENTRIES + 1) {
+            // Encode id as varint (protocol 30). Use i as id (all unique).
+            crate::write_varint(&mut data, i as i32).unwrap();
+            data.push(1); // name length
+            data.push(b'x'); // name byte
+        }
+        // Terminator (will never be reached if cap works)
+        crate::write_varint(&mut data, 0).unwrap();
+
+        let mut list = IdList::new();
+        let result = list.read(&mut data.as_slice(), false, 30, |_| None);
+        assert!(result.is_err(), "oversized ID list should be rejected");
+        let err = result.unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(
+            err.to_string().contains("exceeds maximum"),
+            "error should mention exceeds maximum, got: {err}"
+        );
+    }
+
+    /// ID list at exactly MAX_WIRE_ID_LIST_ENTRIES should be accepted.
+    #[test]
+    fn read_accepts_id_list_at_cap() {
+        let mut data = Vec::new();
+        for i in 1..=MAX_WIRE_ID_LIST_ENTRIES {
+            crate::write_varint(&mut data, i as i32).unwrap();
+            data.push(1);
+            data.push(b'x');
+        }
+        crate::write_varint(&mut data, 0).unwrap();
+
+        let mut list = IdList::new();
+        let result = list.read(&mut data.as_slice(), false, 30, |_| None);
+        assert!(
+            result.is_ok(),
+            "ID list at cap should be accepted, got: {result:?}"
+        );
+        // HashMap deduplicates, but we inserted unique IDs, so length should match.
+        assert_eq!(list.len(), MAX_WIRE_ID_LIST_ENTRIES);
     }
 }

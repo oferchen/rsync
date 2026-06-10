@@ -1278,6 +1278,59 @@ fn read_large_file_sizes_at_boundaries() {
     }
 }
 
+// MAXPATHLEN filename length validation tests
+// upstream: flist.c `l2 >= MAXPATHLEN - l1` - reject names exceeding MAXPATHLEN.
+
+#[test]
+fn read_entry_rejects_name_exceeding_maxpathlen() {
+    use crate::flist::flags::XMIT_LONG_NAME;
+    use crate::varint::encode_varint_to_vec;
+
+    let protocol = test_protocol();
+    let flags = CompatibilityFlags::VARINT_FLIST_FLAGS;
+
+    // Craft a wire entry with XMIT_LONG_NAME and suffix_len = 4096 (>= MAXPATHLEN).
+    let mut data = Vec::new();
+    let xmit_flags = 0x01u16 | u16::from(XMIT_LONG_NAME);
+    encode_varint_to_vec(xmit_flags as i32, &mut data);
+    // XMIT_LONG_NAME: suffix_len is read via codec (varint for proto 30+)
+    encode_varint_to_vec(4096, &mut data);
+    // We don't need actual bytes since the length check should reject first.
+    data.extend(std::iter::repeat_n(b'a', 4096));
+
+    let mut cursor = Cursor::new(&data[..]);
+    let mut reader = FileListReader::with_compat_flags(protocol, flags);
+
+    let result = reader.read_entry(&mut cursor);
+    assert!(result.is_err(), "name at MAXPATHLEN should be rejected");
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert!(
+        err.to_string().contains("exceeds maximum"),
+        "error should mention exceeds maximum, got: {err}"
+    );
+}
+
+#[test]
+fn read_entry_accepts_name_below_maxpathlen() {
+    use crate::flist::write::FileListWriter;
+
+    let protocol = test_protocol();
+    let mut data = Vec::new();
+    let mut writer = FileListWriter::new(protocol);
+
+    // A name of 255 bytes is well below MAXPATHLEN and should round-trip.
+    let long_name = "a".repeat(255);
+    let mut entry = FileEntry::new_file(long_name.into(), 42, 0o100644);
+    entry.set_mtime(1700000000, 0);
+    writer.write_entry(&mut data, &entry).unwrap();
+
+    let mut cursor = Cursor::new(&data[..]);
+    let mut reader = FileListReader::new(protocol);
+    let read_entry = reader.read_entry(&mut cursor).unwrap().unwrap();
+    assert_eq!(read_entry.name().len(), 255);
+}
+
 // Zero-length filename validation tests
 // upstream: flist.c:1873 - sender rejects empty names. These tests verify
 // that the receiver also rejects zero-length filenames as defense-in-depth.

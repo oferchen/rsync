@@ -141,12 +141,30 @@ fn log_transfer(format: &str, ctx: &LogFormatContext<'_>, log_sink: &SharedLogSi
     log_message(log_sink, &message);
 }
 
+/// Maximum epoch seconds accepted for timestamp formatting.
+///
+/// Corresponds to 9999-12-31 23:59:59 UTC - the last representable date in
+/// a 4-digit year `YYYY/MM/DD HH:MM:SS` format. Values beyond this would
+/// produce a 5+ digit year that breaks fixed-width log formats.
+///
+/// upstream: log.c `timestring()` returns "unknown" when `localtime_r()`
+/// returns NULL for out-of-range `time_t` values (3.4.3 defence-in-depth).
+const MAX_TIMESTAMP_EPOCH_SECS: u64 = 253_402_300_799;
+
 /// Formats a Unix epoch timestamp as `YYYY/MM/DD HH:MM:SS`.
+///
+/// Returns a fallback placeholder for out-of-range values, matching upstream
+/// rsync's `timestring()` NULL-check on `localtime_r()` (3.4.3).
 ///
 /// Upstream: `log.c` uses `strftime("%Y/%m/%d %H:%M:%S", ...)` via `timestring()`.
 /// This implementation performs the conversion manually to avoid external crate
 /// dependencies while matching the upstream output format.
 fn format_daemon_timestamp(epoch_secs: u64) -> String {
+    // upstream: log.c timestring() - NULL-check equivalent (3.4.3)
+    if epoch_secs > MAX_TIMESTAMP_EPOCH_SECS {
+        return "0000/00/00 00:00:00".to_owned();
+    }
+
     // Days from 1970-01-01 to the given epoch seconds.
     let total_days = epoch_secs / 86400;
     let day_seconds = (epoch_secs % 86400) as u32;
@@ -497,6 +515,26 @@ mod log_format_tests {
         assert_eq!(ts, "2024/02/29 12:00:00");
     }
 
+    /// upstream: log.c timestring() NULL-check equivalent (3.4.3)
+    #[test]
+    fn timestamp_out_of_range_returns_placeholder() {
+        // Values beyond year 9999 should return the fallback placeholder.
+        assert_eq!(
+            format_daemon_timestamp(MAX_TIMESTAMP_EPOCH_SECS + 1),
+            "0000/00/00 00:00:00"
+        );
+        assert_eq!(
+            format_daemon_timestamp(u64::MAX),
+            "0000/00/00 00:00:00"
+        );
+    }
+
+    /// The boundary value (9999-12-31 23:59:59) should format correctly.
+    #[test]
+    fn timestamp_at_max_boundary() {
+        let ts = format_daemon_timestamp(MAX_TIMESTAMP_EPOCH_SECS);
+        assert_eq!(ts, "9999/12/31 23:59:59");
+    }
 
     #[test]
     fn push_u64_zero() {
