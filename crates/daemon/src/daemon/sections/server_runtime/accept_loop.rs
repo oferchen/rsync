@@ -103,6 +103,23 @@ fn serve_connections(
     );
     let motd_lines = Arc::new(motd_lines);
 
+    // LSM-CAP.5: verify required Linux capabilities are present before binding
+    // the listener. A module configured with `uid = root` cannot honour
+    // ownership-changing transfers (`--chown`, `--owner`, `--group`) without
+    // CAP_CHOWN; exiting here with an explicit operator-facing message is
+    // better than failing per-transfer once the daemon is already serving.
+    // On non-Linux targets this is a no-op.
+    if let Err(reason) = preflight_required_capabilities(&modules) {
+        return Err(DaemonError::new(
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+            rsync_error!(
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+                format!("oc-rsyncd: error: {reason}")
+            )
+            .with_role(Role::Daemon),
+        ));
+    }
+
     // Determine bind addresses based on address_family and bind_address_overridden.
     // When no specific family or address is configured, bind to both IPv4 and IPv6
     // (dual-stack), matching upstream rsync behavior.
@@ -169,6 +186,12 @@ fn serve_connections(
             ));
         }
     }
+
+    // LSM-CAP.2: CAP_NET_BIND_SERVICE is no longer needed once the listener
+    // has bound. Drop it from effective, permitted, and bounding sets so a
+    // compromised worker cannot rebind another privileged port. No-op on
+    // non-Linux targets and on builds that never held the capability.
+    drop_cap_net_bind_service(log_sink.as_ref());
 
     // upstream: socket.c:set_socket_options() - apply socket options to each
     // listener socket before accepting connections, and to each accepted
