@@ -84,6 +84,7 @@ libc = { workspace = true }
 apple-fs = { path = "../apple-fs" }
 serial_test = "3.5"
 criterion = { workspace = true }
+toml = { workspace = true }
 
 [[bench]]
 name = "startup_benchmark"
