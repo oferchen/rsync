@@ -48,13 +48,13 @@ run_case() {
     fi
 }
 
-write_news "3.4.2"; write_cargo "3.4.2"
+write_news "3.4.4"; write_cargo "3.4.4"
 run_case "equal versions returns 0" 0 "${tmp}/NEWS"
 
-write_news "3.5.0"; write_cargo "3.4.2"
+write_news "3.5.0"; write_cargo "3.4.4"
 run_case "upstream ahead returns 1" 1 "${tmp}/NEWS"
 
-write_cargo "3.4.2"
+write_cargo "3.4.4"
 run_case "missing NEWS returns 2" 2 "${tmp}/missing-NEWS"
 
 if [[ "${failures}" -ne 0 ]]; then

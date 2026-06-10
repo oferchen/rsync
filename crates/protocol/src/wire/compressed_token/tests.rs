@@ -670,6 +670,54 @@ fn see_token_exact_chunk_boundary() {
     decoder.see_token(&boundary_data).unwrap();
 }
 
+/// Regression test for upstream issue #951: a single ~64 KiB incompressible
+/// matched-block insert overflowed the deflate output buffer in
+/// `send_deflated_token()` because the implementation only called
+/// `deflate(...Z_SYNC_FLUSH)` once per chunk instead of looping. When the
+/// stored-block + sync-marker output exceeds the buffer, residual output
+/// stays trapped inside the deflate state and corrupts the next literal
+/// chunk that follows.
+///
+/// The matched basis block must be incompressible so the deflate stored-block
+/// path is taken and the output >= the input size. We use an xorshift64
+/// sequence to generate deterministic, incompressible bytes without pulling
+/// in a rand dependency. `--block-size=65535` in the upstream
+/// `compress-zlib-insert` testsuite reproduces the abort with
+/// "deflate on token returned 0 (N bytes left)".
+#[test]
+fn see_token_large_incompressible_insert_no_overflow() {
+    // xorshift64 byte sequence: deterministic and resists deflate compression.
+    let mut state: u64 = 0xc05d_c0de_a55a_5a5a_u64;
+    let mut block = Vec::with_capacity(0xFFFF);
+    for _ in 0..0xFFFF {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        block.push((state & 0xFF) as u8);
+    }
+
+    let mut encoder = CompressedTokenEncoder::new(CompressionLevel::Default, 31);
+
+    // A single insert that would overflow the encoder's compress_buf
+    // (CHUNK_SIZE * 2 = 64 KiB). Without the overflow guard this aborts
+    // with an io::Error; with the loop it returns Ok and the dictionary
+    // is consistent for the next literal chunk.
+    encoder
+        .see_token(&block)
+        .expect("large insert must not overflow");
+
+    // A literal write after the insert must still produce valid deflate
+    // output. Before the fix the trapped Sync residue desynchronised the
+    // stream and the next literal pass either errored or wrote garbage
+    // to the wire.
+    let mut wire = Vec::new();
+    encoder
+        .send_literal(&mut wire, b"after-large-insert")
+        .expect("literal after insert must succeed");
+    encoder.finish(&mut wire).expect("finish must succeed");
+    assert!(!wire.is_empty());
+}
+
 #[test]
 fn compressed_token_enum_equality() {
     let lit1 = CompressedToken::Literal(vec![1, 2, 3]);

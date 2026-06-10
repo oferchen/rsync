@@ -2,7 +2,7 @@
 # Run upstream rsync client to oc-rsync daemon interoperability tests.
 #
 # This script runs the comprehensive test suite that verifies upstream rsync
-# clients (3.0.9, 3.1.3, 3.4.1, 3.4.2) can successfully connect to and transfer files
+# clients (3.0.9, 3.1.3, 3.4.1, 3.4.2, 3.4.3, 3.4.4) can successfully connect to and transfer files
 # with the oc-rsync daemon implementation.
 #
 # Prerequisites:
@@ -11,6 +11,8 @@
 #    - target/interop/upstream-install/3.1.3/bin/rsync
 #    - target/interop/upstream-install/3.4.1/bin/rsync
 #    - target/interop/upstream-install/3.4.2/bin/rsync
+#    - target/interop/upstream-install/3.4.3/bin/rsync
+#    - target/interop/upstream-install/3.4.4/bin/rsync
 #
 # 2. oc-rsync binary must be built at:
 #    - target/release/oc-rsync (preferred)
@@ -119,6 +121,8 @@ check_prerequisites() {
     check_binary "target/interop/upstream-install/3.1.3/bin/rsync" "upstream rsync 3.1.3" || all_found=false
     check_binary "target/interop/upstream-install/3.4.1/bin/rsync" "upstream rsync 3.4.1" || all_found=false
     check_binary "target/interop/upstream-install/3.4.2/bin/rsync" "upstream rsync 3.4.2" || all_found=false
+    check_binary "target/interop/upstream-install/3.4.3/bin/rsync" "upstream rsync 3.4.3" || all_found=false
+    check_binary "target/interop/upstream-install/3.4.4/bin/rsync" "upstream rsync 3.4.4" || all_found=false
 
     echo ""
 

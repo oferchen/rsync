@@ -199,7 +199,18 @@ impl ReceiverContext {
                     // upstream: generator.c:delete_in_dir() - is_excluded()
                     // check before deletion. allows_deletion() evaluates
                     // protect/risk rules from the global filter chain.
-                    let rel_for_filter = dir_relative.join(&name);
+                    //
+                    // Strip the implicit "." directory prefix when scanning
+                    // the deletion root so a glob like `?` does not see the
+                    // dot as a single-character directory component. Without
+                    // this, descendant matchers (e.g. `?/**`) would match
+                    // top-level deletion candidates as if they sat under a
+                    // single-char parent, suppressing legitimate deletes.
+                    let rel_for_filter = if dir_relative.as_os_str() == "." {
+                        PathBuf::from(&name)
+                    } else {
+                        dir_relative.join(&name)
+                    };
                     if !filter_chain.allows_deletion(&rel_for_filter, is_dir) {
                         continue;
                     }
@@ -266,8 +277,16 @@ impl ReceiverContext {
 
                     match result {
                         Ok(()) => {
-                            // Compute relative path for itemize output
-                            let rel = dir_relative.join(&name);
+                            // Compute relative path for itemize output.
+                            // upstream: delete.c:180 - log_delete(fbuf) emits the
+                            // filename relative to the deletion root. Top-level
+                            // entries are emitted as bare names ("delete.txt"),
+                            // not "./delete.txt", matching upstream output.
+                            let rel = if dir_relative.as_os_str() == "." {
+                                PathBuf::from(&name)
+                            } else {
+                                dir_relative.join(&name)
+                            };
                             if is_dir {
                                 info_log!(Del, 1, "deleting directory {}", path.display());
                                 stats.dirs += 1;

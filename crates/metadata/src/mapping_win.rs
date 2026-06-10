@@ -57,6 +57,17 @@ impl UserMapping {
     pub fn parse(_spec: &str) -> Result<Self, MappingParseError> {
         Err(MappingParseError)
     }
+
+    /// Returns an empty string on Windows.
+    ///
+    /// The Unix variant returns the original `--usermap` specification so
+    /// callers can forward it verbatim to a remote server. On Windows the
+    /// type cannot be constructed, so this method is provided only to keep
+    /// the cross-platform API surface uniform.
+    #[must_use]
+    pub fn spec(&self) -> &str {
+        ""
+    }
 }
 
 /// Group mapping placeholder for Windows.
@@ -71,6 +82,17 @@ impl GroupMapping {
     pub fn parse(_spec: &str) -> Result<Self, MappingParseError> {
         Err(MappingParseError)
     }
+
+    /// Returns an empty string on Windows.
+    ///
+    /// The Unix variant returns the original `--groupmap` specification so
+    /// callers can forward it verbatim to a remote server. On Windows the
+    /// type cannot be constructed, so this method is provided only to keep
+    /// the cross-platform API surface uniform.
+    #[must_use]
+    pub fn spec(&self) -> &str {
+        ""
+    }
 }
 
 /// Name mapping placeholder for Windows.
@@ -84,6 +106,15 @@ impl NameMapping {
     /// Always returns [`MappingParseError`].
     pub fn parse(_spec: &str) -> Result<Self, MappingParseError> {
         Err(MappingParseError)
+    }
+
+    /// Returns an empty string on Windows.
+    ///
+    /// Provided so the cross-platform API surface stays uniform; the Unix
+    /// variant exposes the original mapping specification string.
+    #[must_use]
+    pub fn spec(&self) -> &str {
+        ""
     }
 }
 
