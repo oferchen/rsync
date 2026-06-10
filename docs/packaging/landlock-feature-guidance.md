@@ -118,6 +118,20 @@ oc-rsync --daemon --no-detach --log-file=- --log-file-format=info 2>&1 | \
 
 The line reports either the achieved ABI level (1, 2, or 3) or `landlock unavailable on this kernel`. Use this to confirm the package was built with the feature enabled and the host kernel exposes the LSM.
 
+## Companion startup hardenings (always on, no operator action required)
+
+Two Linux-only defense-in-depth measures run automatically at daemon startup, regardless of whether the `landlock` feature is compiled in:
+
+1. **`PR_SET_NO_NEW_PRIVS`** is applied to the daemon process before the listener binds. The flag is a one-way bit that prevents any subsequent `execve()` from acquiring elevated privileges via setuid/setgid binaries, file capabilities, or LSM-mediated privilege grants. It also satisfies the precondition some kernels apply to Landlock engagement. The flag inherits across `fork()`, so every per-connection worker and every `pre-xfer-exec` / `post-xfer-exec` hook spawned by the daemon runs with it set.
+2. **Active LSM detection** reads `/sys/kernel/security/lsm` and emits a single info-level line listing the kernel-side defenses (for example `lockdown,capability,landlock,yama,bpf`). Operators can grep this line to confirm which LSMs cover the daemon process - in particular whether Landlock is loaded alongside the SEC-1 `*at` chain. When `/sys/kernel/security/lsm` is absent (minimal containers without securityfs mounted) the daemon logs the skip and continues; LSM detection is observability, not enforcement.
+
+Neither hardening requires configuration. Both short-circuit to a no-op on non-Linux targets. Verifying both at runtime:
+
+```sh
+oc-rsync --daemon --no-detach --log-file=- 2>&1 | \
+    grep -E "PR_SET_NO_NEW_PRIVS|Linux Security Modules"
+```
+
 ## Layered defense: seccomp BPF (`daemon-seccomp`)
 
 `daemon-seccomp` adds a kernel-enforced syscall allowlist on top of Landlock. Where Landlock denies a path-based syscall with `EACCES`, seccomp denies an unlisted syscall with `SIGSYS` before the kernel ever consults the LSM stack. The two layers compose: a regression that bypasses `*at` helpers still hits Landlock; one that skips Landlock still hits seccomp.
