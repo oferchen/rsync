@@ -9,6 +9,61 @@
 // options.c:2737-2980 - `server_options()` emits the long-form options.
 // clientserver.c:1059-1073 - two-phase secluded-args reading.
 
+/// Reverses `safe_arg()`'s backslash escaping of an option arg, in place.
+///
+/// Walks the string from left to right collapsing every `\X` sequence into
+/// `X` (where `X` is any non-NUL character). A trailing lone backslash is
+/// preserved verbatim, matching upstream's `if (*f == '\\' && f[1])` guard.
+///
+/// This is the receive-side counterpart to upstream's `options.c:safe_arg()`
+/// client-side escaper. Under non-protect_args daemon mode, upstream rsync
+/// 3.4.4 began calling this on every option arg in `read_args()` so that
+/// shell metacharacters such as `*`, `?`, `;` round-trip through the wire
+/// regardless of remote-shell behaviour.
+///
+/// # Upstream Reference
+///
+/// - `io.c:1295-1306` - `unbackslash_arg(char *s)` in rsync 3.4.4.
+fn unbackslash_arg(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            i += 1;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    // upstream: `unbackslash_arg` operates on a C string in place; we walk
+    // the original UTF-8 bytes and only drop ASCII backslashes that precede
+    // another byte, so the result remains valid UTF-8 whenever the input was.
+    String::from_utf8(out).unwrap_or_else(|err| {
+        String::from_utf8_lossy(err.as_bytes()).into_owned()
+    })
+}
+
+/// Applies [`unbackslash_arg`] to every option arg that precedes the `.`
+/// CWD marker, mirroring upstream `io.c:1336-1359`'s split between option
+/// and file args. File args after the dot are left verbatim because upstream
+/// dispatches them through `glob_expand()` rather than `unbackslash_arg()`.
+fn unescape_phase1_option_args(args: Vec<String>) -> Vec<String> {
+    let mut out = Vec::with_capacity(args.len());
+    let mut past_dot = false;
+    for arg in args {
+        if past_dot {
+            out.push(arg);
+        } else {
+            let is_dot = arg == ".";
+            out.push(unbackslash_arg(&arg));
+            if is_dot {
+                past_dot = true;
+            }
+        }
+    }
+    out
+}
+
 /// Reads client arguments sent after module approval.
 ///
 /// After the daemon sends "@RSYNCD: OK", the client sends its command-line
@@ -152,7 +207,12 @@ fn read_and_log_client_args(
             }
         }
     } else {
-        phase1_args
+        // upstream: clientserver.c:1073 - first `read_args()` call passes
+        // `unescape=1` so option args that the client escaped with
+        // `safe_arg()` are restored before parsing. File args after the `.`
+        // separator are NOT unescaped here because upstream funnels them
+        // through `glob_expand()` which handles shell metacharacters itself.
+        unescape_phase1_option_args(phase1_args)
     };
 
     if let Some(log) = ctx.log_sink {
@@ -210,6 +270,93 @@ fn clamp_verbose_flags(flag_string: &str, max_verbosity: i32) -> String {
         .collect()
 }
 
+/// Extracts the positional path arguments sent by the client after the `.`
+/// separator and strips the leading module-name component from each so the
+/// receiver can resolve them relative to the on-disk module path.
+///
+/// Mirrors upstream `read_args()` (io.c:1295) and `glob_expand_module()`
+/// (util1.c:804): everything before a standalone `.` in the wire arg list is
+/// options/flags; everything after is the client's positional paths. Each
+/// positional begins with the module name (e.g. `upload/realdir/` when the
+/// module is `upload`), which is the prefix `glob_expand_module()` strips
+/// before the path is handed to the server-side option parser.
+///
+/// Returns the stripped relative paths in original order. A path that does
+/// not start with the module name is returned as-is so the caller can still
+/// see it (this matches upstream's loose prefix match - it only strips when
+/// the prefix is present).
+fn extract_module_relative_paths(client_args: &[String], module_name: &str) -> Vec<String> {
+    let mut dot_seen = false;
+    let mut out = Vec::new();
+    for arg in client_args {
+        if !dot_seen {
+            if arg == "." {
+                dot_seen = true;
+            }
+            continue;
+        }
+        // upstream: util1.c:813-814 - `if (strncmp(arg, base, base_len) == 0)
+        // arg += base_len;` - strips the bare module name. The remainder may
+        // be empty (then represents the module root), start with `/`
+        // (subpath), or be the rest of a longer arg sharing the prefix.
+        let stripped = if let Some(rest) = arg.strip_prefix(module_name) {
+            // Only strip when the next char is `/` or end-of-string so we do
+            // not chop the prefix of a sibling module that merely shares a
+            // string prefix (e.g. `uploads/` vs module `upload`).
+            if rest.is_empty() || rest.starts_with('/') {
+                rest.trim_start_matches('/').to_owned()
+            } else {
+                arg.clone()
+            }
+        } else {
+            arg.clone()
+        };
+        out.push(stripped);
+    }
+    out
+}
+
+/// Resolves the receiver's on-disk destination directory from the client's
+/// positional path args.
+///
+/// Mirrors the post-`change_dir(module_chdir)` behaviour upstream relies on:
+/// after upstream's `glob_expand_module()` strips the module name, the
+/// receiver's `get_local_name()` (main.c:697) interprets the remaining path
+/// as relative to the module root on disk. Because oc-rsync does not chdir
+/// per connection, we resolve that join explicitly.
+///
+/// Returns the module path itself when no positional was supplied or when
+/// the stripped tail is empty (push directly into the module root).
+fn resolve_receiver_dest(
+    module_path: &std::path::Path,
+    client_args: &[String],
+    module_name: &str,
+) -> std::path::PathBuf {
+    let positionals = extract_module_relative_paths(client_args, module_name);
+    // upstream: main.c:1203-1204 - `local_name = get_local_name(flist, argv[0])`
+    // uses the FIRST remaining positional (after the `.` placeholder has been
+    // consumed by `do_server_recv` at line 1166). For a receiver that
+    // translates to the last wire positional - the destination.
+    let Some(last) = positionals.last() else {
+        return module_path.to_path_buf();
+    };
+    let tail = last.trim();
+    if tail.is_empty() || tail == "." {
+        return module_path.to_path_buf();
+    }
+    // Defensive: a path arriving here that is absolute on the host OS
+    // (Unix `is_absolute()` or a leading `/` that Windows treats as
+    // drive-relative) cannot be allowed to escape the module root. Strip
+    // the leading separators and join the remainder so the destination is
+    // always under `module_path`. Tests cover both forms cross-platform.
+    let rel = std::path::Path::new(tail);
+    if rel.is_absolute() || tail.starts_with('/') || tail.starts_with('\\') {
+        let stripped = tail.trim_start_matches(['/', '\\']);
+        return module_path.join(stripped);
+    }
+    module_path.join(rel)
+}
+
 /// Builds the server configuration from client arguments.
 ///
 /// Returns the configuration on success, or sends an error and returns `None`.
@@ -229,10 +376,21 @@ fn build_server_config(
     // upstream: clientserver.c - clamp verbose to lp_max_verbosity(i)
     let flag_string = clamp_verbose_flags(&flag_string, module.max_verbosity);
 
+    // upstream: main.c:1203-1204 + util1.c:804 (glob_expand_module) - receivers
+    // resolve their destination by joining the module path with the client's
+    // module-relative tail (e.g. `upload/realdir/` -> module + `realdir/`).
+    // The original argv[0] is always the module root; legacy tests that push
+    // straight into the module root keep that behaviour.
+    let receiver_dest = if role == ServerRole::Receiver {
+        resolve_receiver_dest(std::path::Path::new(&module.path), client_args, &module.name)
+    } else {
+        std::path::PathBuf::from(&module.path)
+    };
+
     match ServerConfig::from_flag_string_and_args(
         role,
         flag_string,
-        vec![OsString::from(&module.path)],
+        vec![OsString::from(receiver_dest.as_os_str())],
     ) {
         Ok(mut cfg) => {
             // Parse long-form arguments that upstream rsync sends via server_options()
@@ -282,12 +440,51 @@ fn build_server_config(
             // never apply it, leaving --iconv negotiation a silent no-op.
             cfg.connection.iconv = resolve_module_charset_converter(module.charset.as_deref());
 
+            // upstream: `use_secure_symlinks = am_daemon && !am_chrooted`
+            // (clientserver.c:1018). Mark the server-side daemon connection so
+            // the receiver's DirSandbox open enforces the symlink-refusal
+            // policy instead of silently falling back to path-based syscalls -
+            // that fall-back is what reopened the chdir-symlink-race attack
+            // window once the original CVE-2026-29518 fix landed.
+            cfg.connection.is_daemon_connection = true;
+
             // upstream: clientserver.c:1106-1107 - `fake super = yes` on the
             // daemon module demotes the receiver's am_root and forces fake-super
             // semantics regardless of whether the client requested --fake-super.
             // The directive is purely daemon-config-driven; client --fake-super
             // is demoted to --super on the wire and never reaches us.
             cfg.fake_super = module.fake_super;
+
+            // upstream: clientserver.c:rsync_module() - the `incoming chmod`
+            // and `outgoing chmod` directives feed `parse_chmod(...)` and the
+            // parsed clauses arm `daemon_chmod_modes`, applied at flist build
+            // time (sender) and at file finalize time (receiver). We delay
+            // parsing to module-use rather than module-load so the operator
+            // sees the @ERROR live; an invalid spec aborts the session with
+            // the same exit semantics as a bad client option.
+            match parse_daemon_chmod_specs(module) {
+                Ok((incoming, outgoing)) => {
+                    cfg.daemon_incoming_chmod = incoming;
+                    cfg.daemon_outgoing_chmod = outgoing;
+                }
+                Err(err) => {
+                    let payload = format!("@ERROR: {err}");
+                    send_error_and_exit(
+                        ctx.reader.get_mut(),
+                        ctx.limiter,
+                        ctx.messages,
+                        &payload,
+                    )?;
+                    return Ok(None);
+                }
+            }
+
+            // upstream: clientserver.c:992-993 - `munge_symlinks = lp_munge_symlinks(i)`
+            // with `!use_chroot || module_dirlen` as the auto default. The bit is
+            // purely daemon-config-driven (no client-side override) and travels
+            // through the transfer layer so the sender strips `/rsyncd-munged/`
+            // on `readlink()` and the receiver prepends it on `symlink()` writes.
+            cfg.munge_symlinks = module.effective_munge_symlinks();
 
             Ok(Some(cfg))
         }
@@ -328,6 +525,13 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
             }
             "--delete-excluded" => {
                 config.flags.delete = true;
+            }
+            // upstream: options.c:2838-2839 - --stats sets do_stats which causes
+            // INFO_STATS to level 2+. Without this flag, the generator does not
+            // emit NDX_DEL_STATS during the goodbye phase and the client sender's
+            // "Number of deleted files" line stays at zero on daemon uploads.
+            "--stats" => {
+                config.do_stats = true;
             }
             // upstream: options.c:2836-2837
             "--size-only" => {
@@ -519,7 +723,8 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
                 // alias for --out-format. The server parses it to set
                 // stdout_format_has_i (options.c:2327-2331) which drives itemize
                 // emission. We only need the %i presence, not the full format.
-                } else if let Some(fmt) = arg.strip_prefix("--log-format=")
+                } else if let Some(fmt) = arg
+                    .strip_prefix("--log-format=")
                     .or_else(|| arg.strip_prefix("--out-format="))
                 {
                     if fmt.contains("%i") {
@@ -602,6 +807,77 @@ fn resolve_module_charset_converter(charset: Option<&str>) -> Option<FilenameCon
     }
 }
 
+/// Parses the module's `incoming chmod` / `outgoing chmod` directives into the
+/// typed [`metadata::ChmodModifiers`] used by the receiver and sender code
+/// paths. Returns a human-readable error message when a spec is malformed so
+/// the caller can wrap it in an `@ERROR` reply.
+///
+/// # Upstream Reference
+///
+/// - `options.c:parse_chmod()` - canonical chmod-spec grammar
+/// - `clientserver.c:rsync_module()` - daemon-side arming of `daemon_chmod_modes`
+fn parse_daemon_chmod_specs(
+    module: &ModuleRuntime,
+) -> Result<
+    (
+        Option<metadata::ChmodModifiers>,
+        Option<metadata::ChmodModifiers>,
+    ),
+    String,
+> {
+    let incoming = parse_one_chmod_spec("incoming chmod", module.incoming_chmod.as_deref())?;
+    let outgoing = parse_one_chmod_spec("outgoing chmod", module.outgoing_chmod.as_deref())?;
+    Ok((incoming, outgoing))
+}
+
+fn parse_one_chmod_spec(
+    directive: &'static str,
+    spec: Option<&str>,
+) -> Result<Option<metadata::ChmodModifiers>, String> {
+    match spec {
+        Some(text) => metadata::ChmodModifiers::parse(text)
+            .map(Some)
+            .map_err(|err| format!("invalid '{directive}' directive '{text}': {err}")),
+        None => Ok(None),
+    }
+}
+
+#[cfg(test)]
+mod daemon_chmod_spec_tests {
+    use super::parse_one_chmod_spec;
+
+    #[test]
+    fn parse_one_chmod_spec_returns_none_for_unset_directive() {
+        let result = parse_one_chmod_spec("incoming chmod", None).expect("ok");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn parse_one_chmod_spec_accepts_numeric_class_action_form() {
+        // upstream parse_chmod() accepts bare octal (`644`), prefix-letter
+        // (`F600`), class-action-perms (`u+x`), and combined forms.
+        for spec in ["644", "F600", "u+x", "Du+x,Fg-r,Fo-r"] {
+            let parsed = parse_one_chmod_spec("incoming chmod", Some(spec))
+                .unwrap_or_else(|err| panic!("spec '{spec}' must parse: {err}"));
+            assert!(parsed.is_some(), "spec '{spec}' produced no clauses");
+        }
+    }
+
+    #[test]
+    fn parse_one_chmod_spec_surfaces_directive_name_on_error() {
+        let err = parse_one_chmod_spec("outgoing chmod", Some("bogus"))
+            .expect_err("malformed spec must error");
+        assert!(
+            err.contains("outgoing chmod"),
+            "error '{err}' must name the offending directive",
+        );
+        assert!(
+            err.contains("bogus"),
+            "error '{err}' must include the offending spec text",
+        );
+    }
+}
+
 #[cfg(test)]
 mod iconv_charset_converter_tests {
     use super::resolve_module_charset_converter;
@@ -619,8 +895,7 @@ mod iconv_charset_converter_tests {
 
     #[test]
     fn iconv_charset_dot_means_locale_default() {
-        let converter =
-            resolve_module_charset_converter(Some(".")).expect("dot should resolve");
+        let converter = resolve_module_charset_converter(Some(".")).expect("dot should resolve");
         assert!(converter.is_identity());
     }
 
@@ -628,8 +903,8 @@ mod iconv_charset_converter_tests {
     fn iconv_charset_comma_with_dot_resolves_to_identity() {
         // upstream: rsync.c:118-120 - server side honours the post-comma value.
         // upstream: rsync.c:125-126 - "." means "use locale default".
-        let converter = resolve_module_charset_converter(Some("UTF-8,."))
-            .expect("dot remote should resolve");
+        let converter =
+            resolve_module_charset_converter(Some("UTF-8,.")).expect("dot remote should resolve");
         assert!(converter.is_identity());
     }
 

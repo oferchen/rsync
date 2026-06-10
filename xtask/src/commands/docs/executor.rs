@@ -2,7 +2,7 @@ use super::cli::DocsOptions;
 use super::validation;
 use crate::error::{TaskError, TaskResult};
 use crate::util::run_cargo_tool;
-use cargo_metadata::{MetadataCommand, Package, Target};
+use cargo_metadata::{MetadataCommand, Package, Target, TargetKind};
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::path::Path;
@@ -79,8 +79,12 @@ fn library_packages(workspace: &Path) -> TaskResult<Vec<String>> {
         .into_iter()
         .filter(|package| members.contains(&package.id))
         .filter(has_library_target)
-        .filter(|package| !DOCTEST_EXCLUDED_CRATES.contains(&package.name.as_str()))
-        .map(|package| package.name)
+        .filter(|package| {
+            !DOCTEST_EXCLUDED_CRATES
+                .iter()
+                .any(|name| package.name == *name)
+        })
+        .map(|package| package.name.to_string())
         .collect();
 
     packages.sort();
@@ -94,26 +98,32 @@ fn has_library_target(package: &Package) -> bool {
 }
 
 fn target_has_library_kind(target: &Target) -> bool {
-    target.kind.iter().any(|kind| is_library_kind(kind))
+    target.kind.iter().any(is_library_kind)
 }
 
-fn is_library_kind(kind: &str) -> bool {
+fn is_library_kind(kind: &TargetKind) -> bool {
     matches!(
         kind,
-        "lib" | "proc-macro" | "rlib" | "dylib" | "cdylib" | "staticlib"
+        TargetKind::Lib
+            | TargetKind::ProcMacro
+            | TargetKind::RLib
+            | TargetKind::DyLib
+            | TargetKind::CDyLib
+            | TargetKind::StaticLib
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::is_library_kind;
+    use cargo_metadata::TargetKind;
 
     #[test]
     fn detects_library_kinds() {
-        assert!(is_library_kind("lib"));
-        assert!(is_library_kind("proc-macro"));
-        assert!(is_library_kind("staticlib"));
-        assert!(!is_library_kind("bin"));
-        assert!(!is_library_kind("example"));
+        assert!(is_library_kind(&TargetKind::Lib));
+        assert!(is_library_kind(&TargetKind::ProcMacro));
+        assert!(is_library_kind(&TargetKind::StaticLib));
+        assert!(!is_library_kind(&TargetKind::Bin));
+        assert!(!is_library_kind(&TargetKind::Example));
     }
 }

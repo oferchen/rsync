@@ -224,6 +224,48 @@ mod defaults {
             .expect("valid");
         assert!(!disabled.fake_super);
     }
+
+    /// Daemon-side `incoming chmod = SPEC` flows through the builder into
+    /// `ServerConfig.daemon_incoming_chmod` so the receiver-side setup can
+    /// install the chmod modifiers on the per-transfer `MetadataOptions`
+    /// before any on-disk mode is finalized (upstream: `clientserver.c:rsync_module()`
+    /// calls `parse_chmod(lp_incoming_chmod(i), &daemon_chmod_modes)`).
+    #[test]
+    fn daemon_incoming_chmod_round_trips_through_builder() {
+        let modifiers = metadata::ChmodModifiers::parse("F600").expect("parse");
+        let config = ServerConfigBuilder::new()
+            .daemon_incoming_chmod(Some(modifiers.clone()))
+            .build()
+            .expect("valid");
+        assert_eq!(config.daemon_incoming_chmod.as_ref(), Some(&modifiers));
+        assert!(config.daemon_outgoing_chmod.is_none());
+
+        let cleared = ServerConfigBuilder::new()
+            .daemon_incoming_chmod(None)
+            .build()
+            .expect("valid");
+        assert!(cleared.daemon_incoming_chmod.is_none());
+    }
+
+    /// Symmetric test for `outgoing chmod = SPEC`: the sender consults this
+    /// value when populating each `FileEntry` mode in `create_entry`, mirroring
+    /// upstream's `daemon_chmod_modes` application in `flist.c:make_file()`.
+    #[test]
+    fn daemon_outgoing_chmod_round_trips_through_builder() {
+        let modifiers = metadata::ChmodModifiers::parse("Fg-r,Fo-r").expect("parse");
+        let config = ServerConfigBuilder::new()
+            .daemon_outgoing_chmod(Some(modifiers.clone()))
+            .build()
+            .expect("valid");
+        assert_eq!(config.daemon_outgoing_chmod.as_ref(), Some(&modifiers));
+        assert!(config.daemon_incoming_chmod.is_none());
+
+        let cleared = ServerConfigBuilder::new()
+            .daemon_outgoing_chmod(None)
+            .build()
+            .expect("valid");
+        assert!(cleared.daemon_outgoing_chmod.is_none());
+    }
 }
 
 mod validation {

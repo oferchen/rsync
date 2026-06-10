@@ -142,6 +142,66 @@ mod module_access_tests {
         assert!(args.is_empty());
     }
 
+    // upstream: io.c:1295-1306 unbackslash_arg().
+    #[test]
+    fn unbackslash_arg_collapses_backslash_escapes() {
+        assert_eq!(unbackslash_arg("plain"), "plain");
+        assert_eq!(unbackslash_arg("\\*"), "*");
+        assert_eq!(unbackslash_arg("\\;\\&\\|"), ";&|");
+        assert_eq!(
+            unbackslash_arg("--groupmap=\\*:1234\\;dangerous"),
+            "--groupmap=*:1234;dangerous"
+        );
+        // A lone trailing backslash is preserved verbatim, matching upstream's
+        // `if (*f == '\\' && f[1])` guard.
+        assert_eq!(unbackslash_arg("trailing\\"), "trailing\\");
+        // Double backslash escapes to single, mirroring upstream.
+        assert_eq!(unbackslash_arg("\\\\"), "\\");
+    }
+
+    // upstream: io.c:1336-1359 - unescape applies only to args before the `.`
+    // CWD marker; file args after the dot pass through verbatim because the
+    // upstream loop dispatches them through glob_expand() instead.
+    #[test]
+    fn unescape_phase1_option_args_stops_at_dot_marker() {
+        let args = vec![
+            "--server".to_owned(),
+            "--groupmap=\\*:1234".to_owned(),
+            ".".to_owned(),
+            "module/file\\*".to_owned(),
+        ];
+        let out = unescape_phase1_option_args(args);
+        assert_eq!(
+            out,
+            vec![
+                "--server".to_owned(),
+                "--groupmap=*:1234".to_owned(),
+                ".".to_owned(),
+                "module/file\\*".to_owned(),
+            ]
+        );
+    }
+
+    // upstream: clientserver.c:1073 - first read_args() call passes
+    // `unescape=1` so a non-protect daemon receiver round-trips shell-escaped
+    // option values. Without this, --groupmap=*:1234 sent under non-protect
+    // arrives at the daemon as the literal "\*:1234".
+    #[test]
+    fn unescape_phase1_option_args_no_dot_marker_unescapes_all() {
+        let args = vec![
+            "--usermap=\\*:5678".to_owned(),
+            "--groupmap=\\*:1234\\;dangerous".to_owned(),
+        ];
+        let out = unescape_phase1_option_args(args);
+        assert_eq!(
+            out,
+            vec![
+                "--usermap=*:5678".to_owned(),
+                "--groupmap=*:1234;dangerous".to_owned(),
+            ]
+        );
+    }
+
     #[test]
     fn apply_module_bandwidth_limit_disables_when_module_configured_none() {
         let mut limiter = Some(BandwidthLimiter::new(NonZeroU64::new(1024).unwrap()));
@@ -1659,5 +1719,101 @@ mod module_access_tests {
         assert_eq!(rules[2].rule_type, protocol::filters::RuleType::Exclude);
         assert_eq!(rules[3].pattern, "*.tmp");
         assert_eq!(rules[3].rule_type, protocol::filters::RuleType::Exclude);
+    }
+
+    // upstream: util1.c:813-814 (glob_expand_module) - parity tests for the
+    // chdir-symlink-race fix that wires the client's positional dest through
+    // to the receiver, instead of silently routing every write into the
+    // module root.
+
+    #[test]
+    fn extract_module_relative_paths_strips_module_prefix() {
+        let args = vec![
+            "--server".to_owned(),
+            "-vve.LsfxCIvu".to_owned(),
+            ".".to_owned(),
+            "upload/realdir/".to_owned(),
+        ];
+        let paths = extract_module_relative_paths(&args, "upload");
+        assert_eq!(paths, vec!["realdir/".to_owned()]);
+    }
+
+    #[test]
+    fn extract_module_relative_paths_handles_bare_module_arg() {
+        let args = vec![
+            "--server".to_owned(),
+            "-vve.LsfxCIvu".to_owned(),
+            ".".to_owned(),
+            "upload/".to_owned(),
+        ];
+        let paths = extract_module_relative_paths(&args, "upload");
+        assert_eq!(paths, vec!["".to_owned()]);
+    }
+
+    #[test]
+    fn extract_module_relative_paths_returns_empty_without_dot() {
+        // No dot separator means nothing positional was sent (e.g. a probe
+        // request that exits before the file list).
+        let args = vec!["--server".to_owned(), "-vve.LsfxCIvu".to_owned()];
+        let paths = extract_module_relative_paths(&args, "upload");
+        assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn extract_module_relative_paths_does_not_chop_sibling_prefix() {
+        // The module is "upload"; an arg starting with "uploads/" must NOT
+        // be stripped - that arg belongs to a different module sharing a
+        // string prefix and stripping it would mis-route the request.
+        let args = vec![".".to_owned(), "uploads/x/".to_owned()];
+        let paths = extract_module_relative_paths(&args, "upload");
+        assert_eq!(paths, vec!["uploads/x/".to_owned()]);
+    }
+
+    #[test]
+    fn resolve_receiver_dest_joins_subpath_with_module_root() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/realdir/".to_owned()];
+        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        assert_eq!(dest, std::path::Path::new("/srv/upload/realdir/"));
+    }
+
+    #[test]
+    fn resolve_receiver_dest_falls_back_to_module_root_for_bare_module() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/".to_owned()];
+        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        assert_eq!(dest, std::path::Path::new("/srv/upload"));
+    }
+
+    #[test]
+    fn resolve_receiver_dest_falls_back_to_module_root_when_no_positional() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args: Vec<String> = vec![];
+        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        assert_eq!(dest, std::path::Path::new("/srv/upload"));
+    }
+
+    #[test]
+    fn resolve_receiver_dest_uses_last_positional_for_multi_arg_push() {
+        // The receiver's destination is the LAST positional - everything
+        // earlier is a source path the sender is reading from.
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![
+            ".".to_owned(),
+            "upload/srcA/".to_owned(),
+            "upload/srcB/".to_owned(),
+            "upload/destdir/".to_owned(),
+        ];
+        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        assert_eq!(dest, std::path::Path::new("/srv/upload/destdir/"));
+    }
+
+    #[test]
+    fn resolve_receiver_dest_rejoins_absolute_path_under_module_root() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "/etc/passwd".to_owned()];
+        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        // Absolute path is forced under the module root - no escape.
+        assert_eq!(dest, std::path::Path::new("/srv/upload/etc/passwd"));
     }
 }

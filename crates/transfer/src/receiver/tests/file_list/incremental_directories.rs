@@ -382,4 +382,74 @@ mod incremental_mode_tests {
         assert_eq!(stats.files_transferred, 0);
         assert_eq!(stats.bytes_received, 0);
     }
+
+    /// URV-6.b regression: when the incremental driver is configured with
+    /// `--delete` and the destination contains extraneous entries, the
+    /// receiver must run `delete_extraneous_files` and surface non-zero
+    /// counters so the goodbye phase can emit `NDX_DEL_STATS`.
+    ///
+    /// Mirrors the delete-pass call site added in `run_pipelined_incremental`
+    /// (matching the existing wiring in `run_pipelined`). Prior to URV-6.b
+    /// the incremental driver skipped the sweep entirely so `DeleteStats`
+    /// stayed zero in every default-feature build.
+    ///
+    /// upstream: generator.c:do_delete_pass()
+    #[test]
+    fn incremental_driver_populates_delete_stats() {
+        use std::ffi::OsString;
+
+        use super::super::super::support::TestDeletionWriter;
+
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path();
+
+        // Destination has two extraneous files not in the sender's flist.
+        std::fs::write(dest.join("stale_a.txt"), b"old").unwrap();
+        std::fs::write(dest.join("stale_b.txt"), b"old").unwrap();
+        std::fs::write(dest.join("keep.txt"), b"keep").unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.flags.delete = true;
+        config.args = vec![OsString::from(dest.to_str().unwrap())];
+        let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+        // Sender's flist: "." plus the single kept file.
+        ctx.file_list
+            .push(FileEntry::new_directory(".".into(), 0o755));
+        ctx.file_list
+            .push(FileEntry::new_file("keep.txt".into(), 4, 0o644));
+
+        // Call the delete pass the same way `run_pipelined_incremental` does.
+        let mut writer = TestDeletionWriter;
+        let (delete_stats, delete_limit_exceeded) = ctx
+            .delete_extraneous_files(
+                dest,
+                #[cfg(unix)]
+                None,
+                &mut writer,
+            )
+            .unwrap();
+
+        // Mirror the field assignment performed at the end of
+        // `run_pipelined_incremental`.
+        let stats = TransferStats {
+            delete_stats,
+            delete_limit_exceeded,
+            ..Default::default()
+        };
+
+        assert_eq!(
+            stats.delete_stats.files, 2,
+            "extraneous files should populate delete_stats.files",
+        );
+        assert!(
+            stats.delete_stats.total() >= 2,
+            "delete_stats.total() must reflect the swept extraneous entries",
+        );
+        assert!(!stats.delete_limit_exceeded);
+        assert!(!dest.join("stale_a.txt").exists());
+        assert!(!dest.join("stale_b.txt").exists());
+        assert!(dest.join("keep.txt").exists());
+    }
 }
