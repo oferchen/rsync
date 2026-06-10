@@ -355,7 +355,7 @@ impl IoUringConfig {
     /// refusal here remains the safety net: the ring is built without
     /// SQPOLL and `SQPOLL_FALLBACK` is set so callers see the degrade.
     pub(crate) fn build_ring(&self) -> io::Result<RawIoUring> {
-        let sqpoll_requested = self.sqpoll;
+        let sqpoll_requested = self.sqpoll && !rootless_container_disables_sqpoll(self.sqpoll);
         let mlock_basis_enabled = cfg!(feature = "sqpoll-mlock-basis");
         let sqpoll_safe = sqpoll_requested && (!self.mmap_basis_active || mlock_basis_enabled);
         if sqpoll_requested && !sqpoll_safe {
@@ -384,6 +384,66 @@ impl IoUringConfig {
         RawIoUring::new(self.sq_entries)
             .map_err(|e| io::Error::other(format!("io_uring init failed: {e}")))
     }
+}
+
+/// Returns `true` when SQPOLL must be skipped because the current process is
+/// running inside a rootless container or user namespace where
+/// `CAP_SYS_NICE` is structurally unavailable.
+///
+/// SQPOLL setup (`IORING_SETUP_SQPOLL`) requires `CAP_SYS_NICE`. Inside a
+/// rootless Podman / Docker container the capability is never present, so
+/// every `io_uring_setup` call wastes a guaranteed `EPERM`. The detection
+/// helper from [`crate::container::detect_rootless_container`] short-circuits
+/// the attempt and downgrades the ring to standard submission. The graceful
+/// fallback is logged at the `Io` debug flag so operators see why SQPOLL was
+/// declined; the global [`SQPOLL_FALLBACK`] flag is also set so `--version`
+/// and diagnostics surface the downgrade.
+///
+/// On non-Linux targets the helper compiles to a constant `false` because
+/// SQPOLL itself is Linux-only.
+///
+/// See `docs/audits/sqpoll-rootless-detection-status.md` (SQP-LAND.1) for
+/// the gap analysis that motivates this gate.
+#[cfg(target_os = "linux")]
+fn rootless_container_disables_sqpoll(sqpoll_requested: bool) -> bool {
+    rootless_container_disables_sqpoll_inner(
+        sqpoll_requested,
+        crate::container::detect_rootless_container,
+    )
+}
+
+#[cfg(not(target_os = "linux"))]
+fn rootless_container_disables_sqpoll(_sqpoll_requested: bool) -> bool {
+    false
+}
+
+/// Pure decision helper with an injectable detector, factored out for tests.
+///
+/// Returns `true` only when SQPOLL was requested *and* the detector reports
+/// a rootless container. When the gate trips, this also records the
+/// graceful fallback (`SQPOLL_FALLBACK`) and emits a context-rich diagnostic
+/// citing the detection signal.
+#[cfg(target_os = "linux")]
+fn rootless_container_disables_sqpoll_inner<F>(sqpoll_requested: bool, detect: F) -> bool
+where
+    F: FnOnce() -> bool,
+{
+    if !sqpoll_requested {
+        return false;
+    }
+    if !detect() {
+        return false;
+    }
+    logging::debug_log!(
+        Io,
+        1,
+        "io_uring: refusing SQPOLL because a rootless container / user namespace was \
+         detected via fast_io::container::detect_rootless_container (CAP_SYS_NICE is \
+         structurally unavailable here, io_uring_setup with IORING_SETUP_SQPOLL would \
+         always return EPERM); falling back to a regular ring"
+    );
+    SQPOLL_FALLBACK.store(true, Ordering::Relaxed);
+    true
 }
 
 #[cfg(test)]
@@ -840,5 +900,60 @@ mod tests {
             !sqpoll_fell_back(),
             "fallback flag must stay clear when SQPOLL was never requested"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rootless_container_gate_disables_sqpoll_when_detected() {
+        // Detector reports rootless: gate must trip, fallback flag must be
+        // set, and the caller's SQPOLL request must be neutralised.
+        SQPOLL_FALLBACK.store(false, Ordering::Relaxed);
+        let disabled = rootless_container_disables_sqpoll_inner(true, || true);
+        assert!(
+            disabled,
+            "rootless detector returning true must disable SQPOLL"
+        );
+        assert!(
+            sqpoll_fell_back(),
+            "rootless gate must record the fallback so --version surfaces it"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rootless_container_gate_preserves_sqpoll_on_host() {
+        // Detector reports a host (non-rootless) system: SQPOLL must be
+        // preserved exactly as the user requested. The fallback flag must
+        // stay clear because no downgrade happened on this path.
+        SQPOLL_FALLBACK.store(false, Ordering::Relaxed);
+        let disabled = rootless_container_disables_sqpoll_inner(true, || false);
+        assert!(
+            !disabled,
+            "host detector (false) must leave SQPOLL request intact"
+        );
+        assert!(
+            !sqpoll_fell_back(),
+            "host detector must not trip the SQPOLL fallback flag"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rootless_container_gate_short_circuits_when_sqpoll_not_requested() {
+        // Caller did not request SQPOLL: the detector must not even run,
+        // because there is nothing to disable. Probing /proc/self/uid_map
+        // when the result is moot is wasted work.
+        SQPOLL_FALLBACK.store(false, Ordering::Relaxed);
+        let mut detector_called = false;
+        let disabled = rootless_container_disables_sqpoll_inner(false, || {
+            detector_called = true;
+            true
+        });
+        assert!(!disabled, "no SQPOLL request means no disable decision");
+        assert!(
+            !detector_called,
+            "detector must not run when SQPOLL was not requested"
+        );
+        assert!(!sqpoll_fell_back());
     }
 }
