@@ -250,11 +250,31 @@ fn build_server_config(
 
             // upstream: after chroot + chdir, reference directory paths resolve
             // relative to the module root. We don't chdir, so resolve relative
-            // paths explicitly against the module path.
+            // paths explicitly against the module path. The relative path is
+            // wire-influenced via --copy-dest / --link-dest / --compare-dest
+            // (options.c:2915-2923), so we must confine the join beneath the
+            // module root - matching `secure_relative_open()` in upstream
+            // 3.4.4 syscall.c:1791-1896. Without this an attacker can submit
+            // `--copy-dest=../../etc` on a chroot-disabled module and escape
+            // to arbitrary filesystem locations.
             let module_path = std::path::Path::new(&module.path);
             for ref_dir in &mut cfg.reference_directories {
                 if ref_dir.path.is_relative() {
-                    ref_dir.path = module_path.join(&ref_dir.path);
+                    match confine_alt_basis_to_module_root(module_path, &ref_dir.path) {
+                        Ok(resolved) => ref_dir.path = resolved,
+                        Err(err) => {
+                            let payload = format!(
+                                "@ERROR: refusing alt-basis path that escapes module root: {err}"
+                            );
+                            send_error_and_exit(
+                                ctx.reader.get_mut(),
+                                ctx.limiter,
+                                ctx.messages,
+                                &payload,
+                            )?;
+                            return Ok(None);
+                        }
+                    }
                 }
             }
 
@@ -297,6 +317,70 @@ fn build_server_config(
             Ok(None)
         }
     }
+}
+
+/// Returns `true` if any normal component of `path` is exactly `..`.
+///
+/// Mirrors upstream rsync 3.4.4 `syscall.c:1679 path_has_dotdot_component()`,
+/// which scans `/`-separated segments for a bare `..`. Used by
+/// [`confine_alt_basis_to_module_root`] as the front-door rejection that
+/// upstream's `secure_relative_open()` applies before any kernel-side
+/// `RESOLVE_BENEATH` open (`syscall.c:1858-1866`, `syscall.c:1889-1896`).
+/// On Windows, `Component::ParentDir` covers both `..` and the rare back-
+/// slash form because `PathBuf` parses with platform-native separators.
+fn path_has_dotdot_component(path: &std::path::Path) -> bool {
+    path.components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+}
+
+/// Confines a daemon alt-basis relative path (`--copy-dest=REL`,
+/// `--link-dest=REL`, `--compare-dest=REL`) beneath `module_root`.
+///
+/// Mirrors `secure_relative_open()` in upstream rsync 3.4.4
+/// `syscall.c:1791-1896`. The relative path is wire-influenced by the
+/// client, so without this check `--copy-dest=../../etc` is accepted on a
+/// chroot-disabled module and lets the attacker target arbitrary inodes
+/// outside the module root. Confinement runs unconditionally because
+/// oc-rsync does not actually `chroot()` into the module path (see the
+/// comment in `build_server_config` above the call site).
+///
+/// Confinement strategy mirrors upstream's portable fallback
+/// (`syscall.c:1883-1896`):
+///
+/// 1. Front-door reject any `..` component in the relative path with
+///    `EINVAL`. This is the only safe behaviour without a kernel-enforced
+///    `RESOLVE_BENEATH`; per-component walking cannot adjudicate `..`
+///    against bind-mounts and symlinks racing in between checks.
+/// 2. Join the validated relative path onto `module_root` and return the
+///    resulting `PathBuf` to the caller. Because step 1 rejected every
+///    `..`, the join can only descend into the module root, matching
+///    `RESOLVE_BENEATH`'s confinement semantics.
+///
+/// Upstream's re-anchoring branch (`syscall.c:1817-1844`) handles the
+/// case where rsync has chdir'd into a transfer subdirectory of the
+/// module and wants to allow `--link-dest=../sibling` to reach a peer
+/// directory inside the module. oc-rsync never chdir's the daemon
+/// process into the module, so the relative path is always interpreted
+/// against the module root directly and the re-anchoring branch does
+/// not apply.
+///
+/// # Errors
+///
+/// Returns [`io::ErrorKind::InvalidInput`] when the relative path
+/// contains any `..` component. The caller maps this to an
+/// `@ERROR: refusing alt-basis path that escapes module root: ...`
+/// payload and tears down the session.
+fn confine_alt_basis_to_module_root(
+    module_root: &std::path::Path,
+    relative: &std::path::Path,
+) -> io::Result<std::path::PathBuf> {
+    if path_has_dotdot_component(relative) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("relative path {relative:?} contains a `..` component"),
+        ));
+    }
+    Ok(module_root.join(relative))
 }
 
 /// Applies long-form arguments from the client to the server configuration.
