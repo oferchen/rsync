@@ -34,6 +34,25 @@ pub fn sqpoll_fell_back() -> bool {
     false
 }
 
+/// Returns the latched SQPOLL unavailability hint (always `None` on this platform).
+///
+/// io_uring SQPOLL is a Linux kernel feature; on stub platforms there is no
+/// ring to build, so the fallback path is never exercised.
+#[must_use]
+pub fn sqpoll_unavailability_hint() -> Option<String> {
+    None
+}
+
+/// Composes a SQPOLL fallback hint from the captured errno.
+///
+/// Mirrors the Linux implementation so cross-platform callers can format
+/// the same wording without conditional compilation. On stub platforms the
+/// hint is informational only because the fallback path is unreachable.
+#[must_use]
+pub fn sqpoll_fallback_hint(_errno: Option<i32>) -> String {
+    "io_uring SQPOLL is unavailable on this platform (io_uring is Linux-only)".to_string()
+}
+
 /// Public accessors for kernel version detection used by `--version` output.
 ///
 /// Mirrors the real Linux module so cross-platform callers can use the same

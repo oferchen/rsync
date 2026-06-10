@@ -6,6 +6,7 @@
 
 use std::ffi::CStr;
 use std::io;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use io_uring::IoUring as RawIoUring;
@@ -67,6 +68,59 @@ static SQPOLL_FALLBACK: AtomicBool = AtomicBool::new(false);
 #[must_use]
 pub fn sqpoll_fell_back() -> bool {
     SQPOLL_FALLBACK.load(Ordering::Relaxed)
+}
+
+/// Latched human-readable hint explaining the SQPOLL fallback cause.
+///
+/// Populated the first time [`IoUringConfig::build_ring`] attempts SQPOLL and
+/// the kernel rejects it. The hint differentiates the common errnos:
+///
+/// - `EPERM` (1): rootless container or missing `CAP_SYS_NICE`
+/// - `ENOSYS` (38): kernel predates `IORING_SETUP_SQPOLL`
+/// - other: generic kernel rejection
+///
+/// Surface this via [`sqpoll_unavailability_hint`] so callers (CLI
+/// `--io-uring-status`, daemon log, structured error reporting) can show the
+/// operator how to either grant the capability or disable SQPOLL.
+static SQPOLL_UNAVAILABLE_HINT: OnceLock<String> = OnceLock::new();
+
+/// Returns the latched SQPOLL unavailability hint, if any.
+///
+/// Returns `Some(hint)` after the first failed SQPOLL setup attempt and
+/// `None` otherwise (SQPOLL not requested, or it succeeded). The hint is a
+/// human-readable sentence ending with the recommended remediation, e.g.
+/// "add `CAP_SYS_NICE` or run as root, or set `OC_RSYNC_DISABLE_IOURING=1`
+/// to bypass io_uring entirely".
+#[must_use]
+pub fn sqpoll_unavailability_hint() -> Option<String> {
+    SQPOLL_UNAVAILABLE_HINT.get().cloned()
+}
+
+/// Composes the SQPOLL fallback hint from the captured errno.
+///
+/// Public for [`crate::status`] so the same wording is reused in
+/// `IoUringRestriction::SqpollUnavailable` rendering. Callers outside this
+/// crate should prefer [`sqpoll_unavailability_hint`] which returns the
+/// latched value from the actual fallback event.
+#[must_use]
+pub fn sqpoll_fallback_hint(errno: Option<i32>) -> String {
+    match errno {
+        Some(libc::EPERM) => "io_uring SQPOLL setup failed with EPERM (missing CAP_SYS_NICE); \
+             add the capability, run as root, or set OC_RSYNC_DISABLE_IOURING=1 \
+             to bypass io_uring entirely"
+            .to_string(),
+        Some(libc::ENOSYS) => "io_uring SQPOLL setup failed with ENOSYS (kernel predates \
+             IORING_SETUP_SQPOLL); upgrade to Linux 5.13+ or set \
+             OC_RSYNC_DISABLE_IOURING=1 to bypass io_uring entirely"
+            .to_string(),
+        Some(e) => format!(
+            "io_uring SQPOLL setup failed with errno {e}; falling back to a \
+             regular ring (set OC_RSYNC_DISABLE_IOURING=1 to bypass io_uring entirely)"
+        ),
+        None => "io_uring SQPOLL setup failed (errno unavailable); falling back to a \
+             regular ring (set OC_RSYNC_DISABLE_IOURING=1 to bypass io_uring entirely)"
+            .to_string(),
+    }
 }
 
 /// Parses kernel version from uname release string (e.g., "5.15.0-generic").
@@ -374,10 +428,15 @@ impl IoUringConfig {
             builder.setup_sqpoll(self.sqpoll_idle_ms);
             match builder.build(self.sq_entries) {
                 Ok(ring) => return Ok(ring),
-                Err(_) => {
+                Err(err) => {
                     // SQPOLL requires CAP_SYS_NICE on most kernels. Record
-                    // the fallback so callers can surface it in diagnostics.
+                    // the fallback and latch a typed hint so callers can
+                    // surface why SQPOLL was downgraded (rootless container
+                    // vs older kernel vs generic kernel rejection).
                     SQPOLL_FALLBACK.store(true, Ordering::Relaxed);
+                    let hint = sqpoll_fallback_hint(err.raw_os_error());
+                    logging::debug_log!(Io, 1, "{hint}");
+                    let _ = SQPOLL_UNAVAILABLE_HINT.set(hint);
                 }
             }
         }
@@ -823,6 +882,72 @@ mod tests {
                  sqpoll-mlock-basis is off"
             );
         }
+    }
+
+    #[test]
+    fn sqpoll_fallback_hint_eperm_mentions_cap_sys_nice() {
+        let hint = sqpoll_fallback_hint(Some(libc::EPERM));
+        assert!(
+            hint.contains("EPERM"),
+            "EPERM hint must surface the errno name, got: {hint}"
+        );
+        assert!(
+            hint.contains("CAP_SYS_NICE"),
+            "EPERM hint must mention CAP_SYS_NICE remediation, got: {hint}"
+        );
+        assert!(
+            hint.contains("OC_RSYNC_DISABLE_IOURING"),
+            "EPERM hint must mention the bypass env var, got: {hint}"
+        );
+    }
+
+    #[test]
+    fn sqpoll_fallback_hint_enosys_mentions_kernel_upgrade() {
+        let hint = sqpoll_fallback_hint(Some(libc::ENOSYS));
+        assert!(
+            hint.contains("ENOSYS"),
+            "ENOSYS hint must surface the errno name, got: {hint}"
+        );
+        assert!(
+            hint.contains("5.13") || hint.contains("kernel"),
+            "ENOSYS hint must mention the kernel upgrade path, got: {hint}"
+        );
+    }
+
+    #[test]
+    fn sqpoll_fallback_hint_generic_errno_includes_number() {
+        // EINVAL is neither EPERM nor ENOSYS; the generic branch must
+        // include the numeric errno so unknown failures remain debuggable.
+        let hint = sqpoll_fallback_hint(Some(libc::EINVAL));
+        assert!(
+            hint.contains(&libc::EINVAL.to_string()),
+            "generic hint must include the numeric errno, got: {hint}"
+        );
+        assert!(
+            hint.contains("OC_RSYNC_DISABLE_IOURING"),
+            "generic hint must mention the bypass env var, got: {hint}"
+        );
+    }
+
+    #[test]
+    fn sqpoll_fallback_hint_missing_errno_is_still_actionable() {
+        let hint = sqpoll_fallback_hint(None);
+        assert!(
+            !hint.is_empty(),
+            "absent-errno hint must not be empty: {hint}"
+        );
+        assert!(
+            hint.contains("OC_RSYNC_DISABLE_IOURING"),
+            "absent-errno hint must still mention the bypass env var, got: {hint}"
+        );
+    }
+
+    #[test]
+    fn sqpoll_unavailability_hint_starts_unset() {
+        // The hint is latched the first time build_ring() observes an SQPOLL
+        // failure. Before any build_ring() call (or when SQPOLL succeeds on
+        // privileged hosts), the accessor must return None without panic.
+        let _ = sqpoll_unavailability_hint();
     }
 
     #[test]
