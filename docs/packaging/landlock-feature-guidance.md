@@ -155,3 +155,41 @@ oc-rsync LSM diagnostic:
 The diagnostic is process-local: it reports the security posture of the CLI process itself, which is **not** a daemon worker. Daemon-side hardening (seccomp filter, Landlock allowlist, capability drop) engages only inside the per-connection worker. Use the daemon startup log to inspect those layers; use `--lsm-status` to confirm that the binary's compile-time `landlock` feature is honoured by the running kernel.
 
 When a mandatory access control LSM (SELinux, AppArmor, Smack, Tomoyo) is present and the receiver path swallows a `Permission denied` while creating destination directories, the client emits a single info-level hint pointing at `ausearch -m AVC -ts recent` so operators can correlate the EACCES with an LSM AVC denial. The hint fires at most once per transfer to keep large file counts from flooding the log.
+
+## Layered defense: capability drop
+
+`oc-rsyncd` drops Linux process capabilities at two well-defined lifecycle points so that a compromised worker cannot regain privileges Landlock alone cannot revoke. The drop sequence composes with the startup hardenings above to form a three-layer kernel-enforced defense:
+
+1. `PR_SET_NO_NEW_PRIVS` + active-LSM detection (always on; see "Companion startup hardenings" above).
+2. **Capability drop** (this section).
+3. seccomp BPF syscall filter (opt-in; tracked separately).
+
+### Drop points
+
+| Lifecycle phase | Action | Rationale |
+|-----------------|--------|-----------|
+| Startup, before the listener binds | Pre-flight check: every module with `uid = root` requires `CAP_CHOWN`; missing the capability exits with an operator-facing error pointing at `setcap` / `AmbientCapabilities` / `--cap-add` | Failing loud at startup beats producing a `chown failed` mid-transfer once clients are connected. |
+| Immediately after `bind()` succeeds | `CAP_NET_BIND_SERVICE` dropped from effective, permitted, bounding sets | A worker compromised after bind cannot rebind 80, 443, or 22 to intercept traffic. |
+| Per-worker, at the same point Landlock engages | Every capability not in the per-module required set is dropped from all three sets | Workers run with the minimum capability surface needed; modules without `uid = root` end up with an empty capability set. |
+
+The full inventory of capabilities the daemon code path can request, together with the gating condition for each one, lives in `docs/design/lsm-cap-required-capabilities.md`. Distros packaging `oc-rsyncd` should consult that inventory when deciding which `AmbientCapabilities` line to ship in their default systemd unit.
+
+### Pre-flight diagnostic
+
+When a configured module needs a capability the daemon was not granted, the startup error follows this exact shape:
+
+```
+oc-rsyncd: error: rsyncd.conf module(s) uploads requires CAP_CHOWN but this capability is not granted.
+Grant via:
+  - systemd: AmbientCapabilities=CAP_CHOWN
+  - setcap:  setcap cap_chown=eip /usr/sbin/oc-rsyncd
+  - docker:  --cap-add=CHOWN
+```
+
+The diagnostic is emitted to the daemon log sink (or stderr when no log file is configured) and the daemon exits with the standard `FEATURE_UNAVAILABLE` exit code. No client connection is accepted, so packagers' pre-flight smoke tests (`systemctl start oc-rsyncd && systemctl is-active`) detect the misconfiguration without traffic in flight.
+
+### Cross-references
+
+- Per-capability inventory and rationale: `docs/design/lsm-cap-required-capabilities.md`.
+- Active-LSM detection and `PR_SET_NO_NEW_PRIVS` (companion startup hardenings): see PR #5581.
+- seccomp BPF filter (third layer): see PR #5589.

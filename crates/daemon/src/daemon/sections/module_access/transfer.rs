@@ -865,6 +865,14 @@ fn process_approved_module(
         }
     }
 
+    // LSM-CAP.3: drop every Linux capability not required by this module
+    // before Landlock engages. The worker process inherits the resulting
+    // capability set across the transfer pipeline; combined with Landlock
+    // (kernel-enforced filesystem allowlist) and seccomp (syscall surface
+    // narrowing) this is the third layer of the LSM defense-in-depth stack.
+    // Stub on non-Linux short-circuits to a no-op.
+    drop_worker_capabilities(module, ctx.log_sink);
+
     // SEC-1.p: engage the Landlock LSM allowlist now that chroot, the
     // uid/gid drop, and daemon-config filter-rule loading have completed.
     // Filter rules referencing files outside module.path (e.g.
