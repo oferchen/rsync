@@ -80,7 +80,7 @@ impl DeleteStats {
     /// # Errors
     ///
     /// Returns an error if writing to the stream fails.
-    pub fn write_to<W: Write>(&self, writer: &mut W) -> io::Result<()> {
+    pub fn write_to<W: Write + ?Sized>(&self, writer: &mut W) -> io::Result<()> {
         use crate::varint::write_varint;
 
         write_varint(writer, self.files as i32)?;
