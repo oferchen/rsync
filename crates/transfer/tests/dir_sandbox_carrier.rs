@@ -208,11 +208,18 @@ fn copy_dirlinks_descent_through_in_tree_directory_symlink() {
     //   root/
     //     real_target/
     //       file.bin
-    //     subdir -> real_target   (directory symlink)
+    //     subdir -> real_target   (directory symlink, relative target)
+    //
+    // The symlink target is expressed relative to the symlink's parent so
+    // openat2(RESOLVE_BENEATH) accepts it: an absolute target would be
+    // rejected with EXDEV even when it resolves in-tree, because the
+    // kernel cannot prove a re-resolution from / stays beneath the dirfd.
+    // Real -K flows preserve the source symlink target verbatim and those
+    // are typically relative.
     let real_target = root.join("real_target");
     std::fs::create_dir(&real_target).unwrap();
     std::fs::write(real_target.join("file.bin"), b"delta-payload").unwrap();
-    symlink(&real_target, root.join("subdir")).unwrap();
+    symlink("real_target", root.join("subdir")).unwrap();
 
     let mut sandbox = DirSandbox::open_root(&root).expect("open root");
 
