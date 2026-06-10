@@ -34,6 +34,15 @@ impl UserMapping {
     pub const fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    /// Returns the original `--usermap` specification (post-trim).
+    ///
+    /// Used by client-side argument builders to forward the value verbatim to
+    /// remote servers so wildcards like `*` survive the round trip.
+    #[must_use]
+    pub fn spec(&self) -> &str {
+        self.0.spec()
+    }
 }
 
 /// Parsed `--groupmap` rules.
@@ -57,6 +66,15 @@ impl GroupMapping {
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+
+    /// Returns the original `--groupmap` specification (post-trim).
+    ///
+    /// Used by client-side argument builders to forward the value verbatim to
+    /// remote servers so wildcards like `*` survive the round trip.
+    #[must_use]
+    pub fn spec(&self) -> &str {
+        self.0.spec()
     }
 }
 
