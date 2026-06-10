@@ -150,17 +150,14 @@ impl GeneratorContext {
     ///   (upstream: generator.c:2394 in 3.4.4)
     /// - **Late** (`late_delete`): same condition
     ///   (upstream: generator.c:2439 in 3.4.4)
-    ///
-    /// Note: oc-rsync does not currently track `force_delete` or `read_batch`
-    /// as distinct flags in the transfer config. `flags.delete` covers the
-    /// `delete_mode` case; the other two are out of scope for URV-6.a and
-    /// will be wired in once the corresponding config plumbing exists.
     pub(in crate::generator) fn should_send_del_stats(&self) -> bool {
         // upstream: generator.c:2394 / 2439 in 3.4.4 -
         // delete_mode || force_delete || read_batch (no INFO_GTE(STATS, 2) gate).
         // Early and late paths share the same predicate; `late_delete` governs
         // *which* checkpoint emits the message, not whether to emit.
         self.config.flags.delete
+            || self.config.flags.force_delete
+            || self.config.flags.read_batch
     }
 
     /// Reads the next NDX value, consuming any NDX_DEL_STATS messages.

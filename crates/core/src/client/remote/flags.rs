@@ -245,6 +245,14 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // upstream: options.c:2881-2885 - copy_unsafe_links and safe_links are long-form only
     server_config.flags.copy_unsafe_links = config.copy_unsafe_links();
     server_config.flags.safe_links = config.safe_links();
+    // upstream: options.c:722-723 - --force / --no-force toggles force_delete.
+    // Gates NDX_DEL_STATS emission alongside delete_mode (generator.c:2394/2439).
+    server_config.flags.force_delete = config.force_replacements();
+    // upstream: options.c:1663 - --read-batch sets read_batch=1.
+    // Gates NDX_DEL_STATS emission alongside delete_mode (generator.c:2394/2439).
+    server_config.flags.read_batch = config
+        .batch_config()
+        .is_some_and(engine::batch::BatchConfig::is_read_mode);
     // upstream: syscall.c do_open / do_open_nofollow propagate O_NOATIME when set.
     server_config.write.open_noatime = config.open_noatime();
     // upstream: options.c:2750-2762 - itemize_changes is forwarded to the remote
@@ -392,6 +400,62 @@ mod tests {
         let mut server_config = ServerConfig::default();
         apply_common_server_flags(&config, &mut server_config);
         assert_eq!(server_config.connection.compression_threads, None);
+    }
+
+    /// URV-6.c: --force must propagate into `flags.force_delete` so the
+    /// generator goodbye gate `delete_mode || force_delete || read_batch`
+    /// matches upstream 3.4.4 (generator.c:2394, 2439).
+    #[test]
+    fn apply_common_server_flags_propagates_force_delete() {
+        let config = ClientConfig::builder().force_replacements(true).build();
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert!(server_config.flags.force_delete);
+    }
+
+    #[test]
+    fn apply_common_server_flags_force_delete_default_false() {
+        let config = ClientConfig::default();
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert!(!server_config.flags.force_delete);
+    }
+
+    /// URV-6.c: --read-batch must propagate into `flags.read_batch` so the
+    /// generator goodbye gate matches upstream 3.4.4.
+    #[test]
+    fn apply_common_server_flags_propagates_read_batch() {
+        let batch = engine::batch::BatchConfig::new(
+            engine::batch::BatchMode::Read,
+            "testbatch".to_owned(),
+            32,
+        );
+        let config = ClientConfig::builder().batch_config(Some(batch)).build();
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert!(server_config.flags.read_batch);
+    }
+
+    /// Write-batch modes are not read_batch and must not set the flag.
+    #[test]
+    fn apply_common_server_flags_read_batch_false_for_write_mode() {
+        let batch = engine::batch::BatchConfig::new(
+            engine::batch::BatchMode::Write,
+            "testbatch".to_owned(),
+            32,
+        );
+        let config = ClientConfig::builder().batch_config(Some(batch)).build();
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert!(!server_config.flags.read_batch);
+    }
+
+    #[test]
+    fn apply_common_server_flags_read_batch_default_false() {
+        let config = ClientConfig::default();
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert!(!server_config.flags.read_batch);
     }
 
     #[test]

@@ -54,6 +54,18 @@ pub struct ParsedServerFlags {
     /// Not part of the compact flag string; set via long-form args or explicit
     /// propagation. In upstream, `'d'` means `--dirs`, not delete.
     pub delete: bool,
+    /// Force deletion of non-empty directories during update (long-form `--force`).
+    ///
+    /// Not part of the compact flag string; set via long-form args or explicit
+    /// propagation. Upstream tracks this as the global `force_delete` flag
+    /// (options.c:100, options.c:722-723).
+    pub force_delete: bool,
+    /// Replay a previously recorded batch file (long-form `--read-batch=FILE`).
+    ///
+    /// Not part of the compact flag string; set via long-form args or explicit
+    /// propagation. Upstream tracks this as the global `read_batch` flag
+    /// (options.c:167, options.c:1663).
+    pub read_batch: bool,
     /// Dry-run / no-transfer mode (`n` flag, upstream: `!do_xfers`).
     pub dry_run: bool,
     /// Transfer directories without recursion (`d` flag, `--dirs`).
@@ -435,6 +447,26 @@ mod tests {
     fn backup_not_set_by_default() {
         let flags = ParsedServerFlags::parse("-r").unwrap();
         assert!(!flags.backup);
+    }
+
+    /// URV-6.c: force_delete and read_batch are long-form-only flags (not part of
+    /// the compact flag string), so parsing any compact string leaves them at
+    /// their default `false` value. Callers populate them from `--force` and
+    /// `--read-batch` long-form args.
+    #[test]
+    fn force_delete_and_read_batch_default_to_false() {
+        let flags = ParsedServerFlags::parse("-r").unwrap();
+        assert!(!flags.force_delete);
+        assert!(!flags.read_batch);
+    }
+
+    /// URV-6.c: the compact flag-string parser does not interpret 'f' or any
+    /// other character as force_delete or read_batch - they are set externally.
+    #[test]
+    fn force_delete_and_read_batch_not_set_from_compact_string() {
+        let flags = ParsedServerFlags::parse("-logDtpre.iLsfxC").unwrap();
+        assert!(!flags.force_delete);
+        assert!(!flags.read_batch);
     }
 
     /// When neither ACLs nor xattrs are requested, clearing unsupported features

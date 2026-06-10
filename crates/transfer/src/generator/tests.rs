@@ -2062,6 +2062,79 @@ fn del_stats_late_not_sent_without_delete() {
 }
 
 #[test]
+fn del_stats_sent_with_force_delete_only() {
+    // URV-6.c: --force alone (without --delete) must emit NDX_DEL_STATS in 3.4.4.
+    // upstream: generator.c:2394 - gate is delete_mode || force_delete || read_batch.
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.flags.delete = false;
+    config.flags.force_delete = true;
+    config.flags.read_batch = false;
+    config.deletion.late_delete = false;
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
+    assert!(ctx.should_send_del_stats());
+}
+
+#[test]
+fn del_stats_sent_with_read_batch_only() {
+    // URV-6.c: --read-batch alone must emit NDX_DEL_STATS in 3.4.4.
+    // upstream: generator.c:2394 - read_batch satisfies the gate independently.
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.flags.delete = false;
+    config.flags.force_delete = false;
+    config.flags.read_batch = true;
+    config.deletion.late_delete = false;
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
+    assert!(ctx.should_send_del_stats());
+}
+
+#[test]
+fn del_stats_late_sent_with_force_delete_only() {
+    // URV-6.c: late path also gates on force_delete in 3.4.4.
+    // upstream: generator.c:2439 - same predicate as the early path.
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.flags.delete = false;
+    config.flags.force_delete = true;
+    config.flags.read_batch = false;
+    config.deletion.late_delete = true;
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
+    assert!(ctx.should_send_del_stats());
+}
+
+#[test]
+fn del_stats_late_sent_with_read_batch_only() {
+    // URV-6.c: late path also gates on read_batch in 3.4.4.
+    // upstream: generator.c:2439 - same predicate as the early path.
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.flags.delete = false;
+    config.flags.force_delete = false;
+    config.flags.read_batch = true;
+    config.deletion.late_delete = true;
+    let ctx = GeneratorContext::new_for_test(&handshake, config);
+    assert!(ctx.should_send_del_stats());
+}
+
+#[test]
+fn del_stats_not_sent_when_no_delete_force_or_batch() {
+    // URV-6.c: with all three flags off, neither path emits NDX_DEL_STATS.
+    // upstream: generator.c:2394 / 2439 - !(delete_mode||force_delete||read_batch).
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.flags.delete = false;
+    config.flags.force_delete = false;
+    config.flags.read_batch = false;
+    config.deletion.late_delete = false;
+    let early_ctx = GeneratorContext::new_for_test(&handshake, config.clone());
+    assert!(!early_ctx.should_send_del_stats());
+    config.deletion.late_delete = true;
+    let late_ctx = GeneratorContext::new_for_test(&handshake, config);
+    assert!(!late_ctx.should_send_del_stats());
+}
+
+#[test]
 fn record_io_error_not_found_sets_vanished() {
     let handshake = test_handshake();
     let mut ctx = GeneratorContext::new_for_test(&handshake, test_config());
