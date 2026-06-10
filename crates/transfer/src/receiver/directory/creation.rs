@@ -371,17 +371,30 @@ impl ReceiverContext {
             #[cfg(not(unix))]
             let create_result = fs::create_dir_all(&dir_path);
             if let Err(e) = create_result {
-                if self.config.flags.verbose && self.config.connection.client_mode {
-                    info_log!(
-                        Misc,
-                        1,
-                        "failed to create directory {}: {}",
-                        dir_path.display(),
-                        e
-                    );
+                if e.kind() == io::ErrorKind::PermissionDenied {
+                    // upstream: receiver.c:693-700 - permission denied on
+                    // mkdir is non-fatal: increment io_error and continue
+                    // with remaining entries. Matches the parallel
+                    // `create_directories` path above.
+                    if self.config.flags.verbose && self.config.connection.client_mode {
+                        info_log!(
+                            Misc,
+                            1,
+                            "failed to create directory {}: {}",
+                            dir_path.display(),
+                            e
+                        );
+                    }
+                    failed_dirs.mark_failed(entry.name());
+                    return Ok(None);
                 }
-                failed_dirs.mark_failed(entry.name());
-                return Ok(None);
+                // SEC-1.h fail-loud: ELOOP from a mid-syscall symlink
+                // swap, EOPNOTSUPP from a sandbox-anchored refusal, and
+                // every other non-EACCES error class are security
+                // boundaries. Propagate so the receiver surfaces the
+                // failure with a non-zero exit code instead of silently
+                // skipping the entry.
+                return Err(e);
             }
         }
 
