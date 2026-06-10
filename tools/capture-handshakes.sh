@@ -16,7 +16,7 @@ WORKSPACE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$WORKSPACE_ROOT"
 
 # Configuration
-UPSTREAM_VERSION="${UPSTREAM_VERSION:-3.4.2}"
+UPSTREAM_VERSION="${UPSTREAM_VERSION:-3.4.4}"
 UPSTREAM_BIN="target/interop/upstream-install/${UPSTREAM_VERSION}/bin/rsync"
 TEST_PORT=18873
 CAPTURE_IFACE="${CAPTURE_IFACE:-lo}"
