@@ -272,14 +272,22 @@ pub use linux_capabilities::openat2_supported;
 pub use refs_detect::{clear_refs_cache, is_refs_filesystem};
 #[cfg(unix)]
 pub use secure_dir::secure_open_dir;
+// Non-unix `send_file_to_fd_with_policy` stub silently routes bytes to
+// `io::sink` (data-loss footgun for any future caller). Gate the public
+// re-export on unix; the stub stays available in-crate for symbol parity.
+// See WIN-S.LAND.1.a audit (#5552) confirming zero external callers.
+#[cfg(unix)]
 pub use sendfile::send_file_to_fd_with_policy;
 pub use socket_options::set_socket_int_option;
 #[cfg(target_os = "linux")]
 pub use splice::DEFAULT_PIPE_CAPACITY;
 pub use splice::{
-    SplicePipe, is_splice_available, is_splice_enabled, recv_fd_to_file, try_splice_to_file,
-    try_vmsplice_to_file,
+    SplicePipe, is_splice_available, is_splice_enabled, try_splice_to_file, try_vmsplice_to_file,
 };
+// Non-unix `recv_fd_to_file` stub returns `Unsupported`; gate the public
+// re-export on unix to remove the dead surface area (see WIN-S.LAND.1.a).
+#[cfg(unix)]
+pub use splice::recv_fd_to_file;
 pub use vmsplice_writer::{VMSPLICE_MIN_CHUNK, VmspliceFileWriter};
 
 pub use macos_io::{
