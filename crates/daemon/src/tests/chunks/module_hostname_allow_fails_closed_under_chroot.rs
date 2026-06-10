@@ -68,7 +68,7 @@ fn module_hostname_allow_fails_closed_under_chroot() {
     let mut cache = None;
     let resolved = module_peer_hostname(&module, &mut cache, peer, true);
     assert_eq!(
-        resolved.as_deref(),
+        resolved,
         Some("test-host.example"),
         "override must surface the configured hostname for the positive case"
     );
