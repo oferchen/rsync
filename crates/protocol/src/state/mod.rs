@@ -26,11 +26,11 @@
 //! - `Negotiation -> FileList` requires both `protocol_version` and `checksum_seed`.
 //! - `FileList -> Transfer` requires `file_count`.
 //! - `Transfer -> Finalize` is always valid and consumes the transfer state.
-//! - `Finalize` is terminal: [`DynamicProtocolState::advance`] is a no-op once
+//! - `Finalize` is terminal: `DynamicProtocolState::advance` is a no-op once
 //!   reached, so callers may invoke it unconditionally.
-//! - [`ProtocolState`] enforces the above at compile time via the typestate
-//!   pattern; [`DynamicProtocolState`] enforces it at runtime via
-//!   [`TransitionError`].
+//! - `ProtocolState` enforces the above at compile time via the typestate
+//!   pattern; `DynamicProtocolState` enforces it at runtime via
+//!   `TransitionError`.
 //!
 //! # Submodules
 //!
