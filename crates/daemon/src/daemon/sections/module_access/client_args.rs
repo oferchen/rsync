@@ -417,10 +417,20 @@ fn resolve_sender_sources(
         // during `join`, so we re-append the byte after the join when present.
         let trailing = tail.ends_with('/') || tail.ends_with('\\');
         let joined = module_path.join(trimmed);
+        // Path::join collapses a trailing slash on Linux but preserves one
+        // on macOS, so re-append only when the joined path doesn't already
+        // end with the separator. Otherwise the macOS path emits a double
+        // slash that diverges from upstream's DOTDIR_NAME match in
+        // flist.c:2312-2322.
         let joined = if trailing {
-            let mut buf = joined.into_os_string();
-            buf.push("/");
-            std::path::PathBuf::from(buf)
+            let bytes = joined.as_os_str().as_encoded_bytes();
+            if bytes.last().is_some_and(|b| *b == b'/' || *b == b'\\') {
+                joined
+            } else {
+                let mut buf = joined.into_os_string();
+                buf.push("/");
+                std::path::PathBuf::from(buf)
+            }
         } else {
             joined
         };

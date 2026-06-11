@@ -408,7 +408,11 @@ fn strip_client_only_batch_flags(args: &mut Vec<String>) {
 
         if is_bare {
             args.remove(i);
-            if i < args.len() && !args[i].starts_with('-') {
+            // Drop the trailing batch FILE in the two-arg form, but never
+            // consume `.` / `..` - those are the server-role indicators
+            // (upstream main.c:1142 sets local_name = "." when --server is
+            // a sender) and must reach the daemon-bound argv intact.
+            if i < args.len() && !args[i].starts_with('-') && args[i] != "." && args[i] != ".." {
                 args.remove(i);
             }
             continue;

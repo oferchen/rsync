@@ -1,5 +1,16 @@
 #![cfg(target_os = "windows")]
 #![allow(unsafe_code)]
+// REPARSE_DATA_BUFFER offset/length constants, payload structs, and parsers
+// (parse_symlink_reparse, parse_junction_reparse, parse_mount_point_reparse,
+// etc.) are defined as documented crate-public surface for downstream
+// callers that round-trip native NTFS reparse data through the transfer
+// pipeline. Today only the in-module unit tests exercise them; the
+// dead_code allowance keeps the documented API surface compiling under
+// `-D warnings` until the receiver wires them in. upstream: Cygwin
+// rsync's reparse handling is the comparison point - we expose the
+// parsers the same way Cygwin's `lib/reparse.c` does for future
+// Windows-native fidelity work.
+#![allow(dead_code)]
 
 //! Windows NTFS reparse-point classification.
 //!
