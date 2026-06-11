@@ -27,7 +27,7 @@ use std::sync::Arc;
 
 use rayon::prelude::*;
 
-use super::{DeltaChunk, ParallelApplyError, ParallelDeltaApplier, VerifiedChunk};
+use super::{DeltaChunk, IngestError, ParallelApplyError, ParallelDeltaApplier, VerifiedChunk};
 
 impl ParallelDeltaApplier {
     /// Applies a batch of chunks, fanning the verify step across the rayon
@@ -102,7 +102,12 @@ impl ParallelDeltaApplier {
             // the guard was not dropped prematurely by a future refactor.
             #[cfg(debug_assertions)]
             let bytes_before = slot.bytes_written();
-            slot.ingest(v.chunk)?;
+            if let Err(err) = slot.ingest(v.chunk) {
+                if let IngestError::ReorderSaturated { chunk_sequence, .. } = &err {
+                    self.note_reorder_saturation(ndx, *chunk_sequence);
+                }
+                return Err(err.into());
+            }
             #[cfg(debug_assertions)]
             debug_assert!(
                 slot.bytes_written() >= bytes_before,
