@@ -8,11 +8,11 @@
 //!
 //! [`PageAlignedBuffer`] owns a heap allocation guaranteed to start on a
 //! page boundary. On Windows the backing store comes from
-//! [`VirtualAlloc`](windows_sys::Win32::System::Memory::VirtualAlloc) so the
+//! `VirtualAlloc` so the
 //! buffer can be handed directly to overlapped `WriteFile` / `ReadFile` calls
 //! issued against a handle opened with `FILE_FLAG_NO_BUFFERING`. On every
 //! other platform the buffer is allocated through [`std::alloc::alloc`] with
-//! an explicit page-aligned [`Layout`], matching the helper used by the
+//! an explicit page-aligned `Layout`, matching the helper used by the
 //! io_uring registered-buffer registry.
 //!
 //! Using a page-aligned buffer in the IOCP write path avoids the bounce
@@ -99,11 +99,11 @@ pub fn round_up_to_page(size: usize) -> usize {
 /// fewer bytes.
 ///
 /// On Windows the allocation comes from
-/// [`VirtualAlloc`](windows_sys::Win32::System::Memory::VirtualAlloc) so the
+/// `VirtualAlloc` so the
 /// memory can be handed straight to overlapped `WriteFile`/`ReadFile` on a
 /// handle opened with `FILE_FLAG_NO_BUFFERING`. On all other platforms the
 /// allocation is performed via [`std::alloc::alloc`] using a page-aligned
-/// [`Layout`]. In both cases the buffer is freed with the matching API in
+/// `Layout`. In both cases the buffer is freed with the matching API in
 /// the [`Drop`] impl, so callers do not need to manage lifetime explicitly.
 pub struct PageAlignedBuffer {
     ptr: *mut u8,
