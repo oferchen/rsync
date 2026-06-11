@@ -94,17 +94,17 @@ None are reachable from a single malformed wire frame, but each rewards
 conversion to a typed error to keep the daemon and long-running
 transfers fail-safe.
 
-| # | Site | Pattern | Source / Invariant | Recommended fix |
-|---|------|---------|--------------------|-----------------|
-| 1 | `crates/protocol/src/flist/flat/intern.rs:104-105` | `u32::try_from(self.spans.len()).expect("PathArena exceeded u32::MAX distinct interned strings")` | `spans.len() < u32::MAX` invariant; theoretical 4 GiB-class file list | Return `PathArenaError::IndexSpaceExhausted` |
-| 2 | `crates/protocol/src/flist/flat/intern.rs:112` | `u32::try_from(self.bytes.len()).expect("PathArena byte arena exceeded 4 GiB")` | `bytes.len() < u32::MAX` invariant | Return `PathArenaError::ByteArenaFull` |
-| 3 | `crates/protocol/src/flist/flat/intern.rs:113` | `u32::try_from(s.len()).expect("interned string exceeds u32::MAX bytes")` | `s.len() < u32::MAX`; reachable on malicious path component | Return `PathArenaError::StringTooLong` |
-| 4 | `crates/protocol/src/flist/flat/extras.rs:217` | `u32::try_from(self.blobs.len()).expect("ExtrasArena exceeded 4 GiB")` | `blobs.len() < u32::MAX` | Return `ExtrasArenaError::Full` |
-| 5 | `crates/protocol/src/flist/flat/extras.rs:224` | `extras.rdev_major.expect("EXTRA_RDEV requires rdev_major")` | Caller sets `EXTRA_RDEV` bit only when `rdev_major.is_some()`; type-system gap | Make `EXTRA_RDEV` carry the two `u32`s as a struct so the `Option` cannot diverge from the bit |
-| 6 | `crates/protocol/src/flist/flat/extras.rs:225` | `extras.rdev_minor.expect("EXTRA_RDEV requires rdev_minor")` | Same as #5 | Same as #5 |
-| 7 | `crates/transfer/src/token_reader.rs:103` | `CompressedTokenDecoder::new_zstd().expect("zstd decoder init")` | zstd init failure is OOM-class | Return `TokenReaderError::DecoderInit` and propagate from `new` |
-| 8 | `crates/transfer/src/disk_commit/thread.rs:56` | `thread::Builder::new().spawn(...).expect("failed to spawn disk-commit thread")` | Reachable when `EAGAIN`/`RLIMIT_NPROC` is hit | Return `DiskCommitError::ThreadSpawn(io::Error)` from `spawn_disk_thread` |
-| 9 | `crates/protocol/src/flist/read/mod.rs:532` | `(hardlink_idx.expect("abbreviated follower has hardlink_idx") as i32 - self.ndx_start) as usize` | `is_abbreviated_follower` returns `false` when `hardlink_idx` is `None`; coupled invariant | Pattern-match `Some(idx)` and return `FlistError::AbbreviatedWithoutHardlink` on `None` |
+| # | Site | Pattern | Source / Invariant | Recommended fix | Status |
+|---|------|---------|--------------------|-----------------|--------|
+| 1 | `crates/protocol/src/flist/flat/intern.rs:104-105` | `u32::try_from(self.spans.len()).expect("PathArena exceeded u32::MAX distinct interned strings")` | `spans.len() < u32::MAX` invariant; theoretical 4 GiB-class file list | Return `PathArenaError::IndexSpaceExhausted` | Open |
+| 2 | `crates/protocol/src/flist/flat/intern.rs:112` | `u32::try_from(self.bytes.len()).expect("PathArena byte arena exceeded 4 GiB")` | `bytes.len() < u32::MAX` invariant | Return `PathArenaError::ByteArenaFull` | Open |
+| 3 | `crates/protocol/src/flist/flat/intern.rs:113` | `u32::try_from(s.len()).expect("interned string exceeds u32::MAX bytes")` | `s.len() < u32::MAX`; reachable on malicious path component | Return `PathArenaError::StringTooLong` | Open |
+| 4 | `crates/protocol/src/flist/flat/extras.rs:217` | `u32::try_from(self.blobs.len()).expect("ExtrasArena exceeded 4 GiB")` | `blobs.len() < u32::MAX` | Return `ExtrasArenaError::Full` | Open |
+| 5 | `crates/protocol/src/flist/flat/extras.rs:224` | `extras.rdev_major.expect("EXTRA_RDEV requires rdev_major")` | Caller sets `EXTRA_RDEV` bit only when `rdev_major.is_some()`; type-system gap | Make `EXTRA_RDEV` carry the two `u32`s as a struct so the `Option` cannot diverge from the bit | FIXED-IN-PR (debug_assert + zero fallback; structural Option rewrite deferred) |
+| 6 | `crates/protocol/src/flist/flat/extras.rs:225` | `extras.rdev_minor.expect("EXTRA_RDEV requires rdev_minor")` | Same as #5 | Same as #5 | FIXED-IN-PR (same fix as #5) |
+| 7 | `crates/transfer/src/token_reader.rs:103` | `CompressedTokenDecoder::new_zstd().expect("zstd decoder init")` | zstd init failure is OOM-class | Return `TokenReaderError::DecoderInit` and propagate from `new` | FIXED-IN-PR (`TokenReader::new` now returns `io::Result`) |
+| 8 | `crates/transfer/src/disk_commit/thread.rs:56` | `thread::Builder::new().spawn(...).expect("failed to spawn disk-commit thread")` | Reachable when `EAGAIN`/`RLIMIT_NPROC` is hit | Return `DiskCommitError::ThreadSpawn(io::Error)` from `spawn_disk_thread` | FIXED-IN-PR (`spawn_disk_thread` now returns `io::Result`) |
+| 9 | `crates/protocol/src/flist/read/mod.rs:532` | `(hardlink_idx.expect("abbreviated follower has hardlink_idx") as i32 - self.ndx_start) as usize` | `is_abbreviated_follower` returns `false` when `hardlink_idx` is `None`; coupled invariant | Pattern-match `Some(idx)` and return `FlistError::AbbreviatedWithoutHardlink` on `None` | FIXED-IN-PR (debug_assert + typed `io::Error::InvalidData`) |
 | 10 | `crates/engine/src/concurrent_delta/parallel_apply/mod.rs:702-703` | `char::from_digit((b >> 4) as u32, 16).expect("hi nibble")` (and lo) | `(b >> 4) < 16` always | Use `b"0123456789abcdef"[(b >> 4) as usize] as char` and skip the `Option` |
 | 11 | `crates/transfer/src/disk_commit/process.rs:171` | `outcome.delayed_path.as_ref().unwrap()` after `is_some()` | Guarded by surrounding `if outcome.delayed_path.is_some()` | Pattern-match `if let Some(staged) = outcome.delayed_path.as_ref()` |
 | 12 | `crates/transfer/src/disk_commit/process.rs:310` | Same pattern as #11 | Same | Same |
@@ -156,7 +156,14 @@ examples.
 crate's wire-decoder discipline (typed errors, no slice unwraps) holds
 across the audited surface.
 
-**~10 MEDIUM RISK sites** identified, dominated by:
+**~10 MEDIUM RISK sites** identified, of which 5 (#5-#9 in the table) are
+now fixed: the disk-commit spawn, the token reader zstd init, the
+abbreviated-hardlink invariant, and the `EXTRA_RDEV` rdev-pair coupling.
+The remaining ~5 medium-risk sites (the `PathArena`/`ExtrasArena` capacity
+overflows and the `parallel_apply` post-guard `.expect()`s) stay on the
+follow-up list.
+
+The fixes are dominated by:
 
 1. The `FlatFileList` arena code (intern.rs, extras.rs), where capacity
    overflows and presence-mask invariants are enforced by `.expect()`
