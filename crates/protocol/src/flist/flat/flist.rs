@@ -157,7 +157,7 @@ impl FlatFileList {
     /// Appends a header to the list.
     ///
     /// The caller must have already interned the entry's name and dirname
-    /// strings into this list's [`PathArena`] (via [`paths_mut`]) and set
+    /// strings into this list's [`PathArena`] (via `paths_mut`) and set
     /// the resulting handles on the header before calling `push`. The
     /// header's [`ExtrasRef`](super::header::ExtrasRef) should already
     /// reference a tail in this list's [`ExtrasArena`] (via
@@ -234,8 +234,8 @@ impl FlatFileList {
     /// Records a [`Segment`] boundary at the current end of the header
     /// array, then pushes all `headers` in order. Path handles and extras
     /// refs carried by the headers must already reference this list's
-    /// [`PathArena`] and [`ExtrasArena`] (interned via [`paths_mut`] and
-    /// [`extras_mut`] or [`push_with_extras`] before calling this method).
+    /// [`PathArena`] and [`ExtrasArena`] (interned via `paths_mut` and
+    /// `extras_mut` or `push_with_extras` before calling this method).
     ///
     /// Existing `PathHandle` and `ExtrasRef` values from prior segments
     /// remain valid because all three backing stores are append-only and
