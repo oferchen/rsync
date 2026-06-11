@@ -26,9 +26,10 @@
 //! SQPOLL (and the entire io_uring SQPOLL safety story) is Linux-only.
 //!
 //! See `docs/audits/sqpoll-rootless-detection-status.md` (SQP-LAND.1) for
-//! the gap analysis that motivates this helper. The future SQP-LAND.4
-//! task wires the helper into [`crate::io_uring`] configuration; this
-//! module ships the pure helper only - no call-site changes here.
+//! the gap analysis that motivates this helper. SQP-LAND.4 wired the
+//! helper into [`crate::io_uring`] configuration; SQP-LAND.7 added the
+//! [`rootless_signal`] accessor so the SQPOLL fall-back site can log
+//! which marker triggered the decision.
 
 /// Returns `true` when the current process is running inside a rootless
 /// container or any user namespace where SQPOLL is structurally unable
@@ -40,7 +41,62 @@
 /// On non-Linux targets always returns `false`.
 #[must_use]
 pub fn detect_rootless_container() -> bool {
-    imp::detect_rootless_container()
+    rootless_signal().is_rootless()
+}
+
+/// Which detection signal triggered the rootless verdict.
+///
+/// Returned by [`rootless_signal`] so call sites (notably the SQPOLL
+/// fall-back logger introduced in SQP-LAND.7) can surface the precise
+/// reason a rootless container was detected. Operators in rootless
+/// Podman / Kubernetes can then map the signal back to their environment
+/// (a non-identity `/proc/self/uid_map`, a Podman `.containerenv`
+/// marker, or a Docker `.dockerenv` marker) without having to grep
+/// `/proc` by hand.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum RootlessSignal {
+    /// Not in a rootless container. SQPOLL should be attempted normally.
+    NotRootless,
+    /// `/proc/self/uid_map` showed a non-identity mapping - the most
+    /// reliable signal that the process is inside a user namespace.
+    NonIdentityUidMap,
+    /// `/run/.containerenv` is present (Podman convention).
+    PodmanContainerEnv,
+    /// `/.dockerenv` is present (Docker convention).
+    DockerEnv,
+}
+
+impl RootlessSignal {
+    /// Returns a short human-readable label suitable for log output.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::NotRootless => "not-rootless",
+            Self::NonIdentityUidMap => "non-identity-uid-map",
+            Self::PodmanContainerEnv => "podman-containerenv",
+            Self::DockerEnv => "docker-env",
+        }
+    }
+
+    /// Returns `true` when the signal indicates a rootless container.
+    #[must_use]
+    pub fn is_rootless(self) -> bool {
+        !matches!(self, Self::NotRootless)
+    }
+}
+
+/// Returns the specific detection signal that triggered (or did not
+/// trigger) the rootless verdict for this process.
+///
+/// Used by SQP-LAND.7 logging at the SQPOLL fall-back site so deployers
+/// can see exactly which marker fired. On non-Linux targets always
+/// returns [`RootlessSignal::NotRootless`].
+///
+/// Like [`detect_rootless_container`], this is cached after the first
+/// invocation.
+#[must_use]
+pub fn rootless_signal() -> RootlessSignal {
+    imp::rootless_signal()
 }
 
 #[cfg(target_os = "linux")]
@@ -48,9 +104,11 @@ mod imp {
     use std::path::Path;
     use std::sync::OnceLock;
 
-    static CACHED: OnceLock<bool> = OnceLock::new();
+    use super::RootlessSignal;
 
-    pub(super) fn detect_rootless_container() -> bool {
+    static CACHED: OnceLock<RootlessSignal> = OnceLock::new();
+
+    pub(super) fn rootless_signal() -> RootlessSignal {
         if let Some(cached) = CACHED.get().copied() {
             return cached;
         }
@@ -71,8 +129,10 @@ mod imp {
     ///
     /// `read_uid_map` returns `Some(contents)` if `/proc/self/uid_map` is
     /// readable, `None` otherwise. `path_exists` checks the well-known
-    /// container marker paths.
-    fn probe_with_reader<F, G>(read_uid_map: F, path_exists: G) -> bool
+    /// container marker paths. The returned [`RootlessSignal`] names the
+    /// first matching marker (or [`RootlessSignal::NotRootless`] when
+    /// nothing triggered) so callers can log a precise reason.
+    fn probe_with_reader<F, G>(read_uid_map: F, path_exists: G) -> RootlessSignal
     where
         F: FnOnce() -> Option<String>,
         G: Fn(&str) -> bool,
@@ -80,15 +140,15 @@ mod imp {
         if let Some(contents) = read_uid_map()
             && !is_identity_uid_map(&contents)
         {
-            return true;
+            return RootlessSignal::NonIdentityUidMap;
         }
         if path_exists("/run/.containerenv") {
-            return true;
+            return RootlessSignal::PodmanContainerEnv;
         }
         if path_exists("/.dockerenv") {
-            return true;
+            return RootlessSignal::DockerEnv;
         }
-        false
+        RootlessSignal::NotRootless
     }
 
     /// Returns `true` when `/proc/self/uid_map` contains exactly the
@@ -119,20 +179,24 @@ mod imp {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use crate::container::detect_rootless_container;
         use std::sync::atomic::{AtomicUsize, Ordering};
 
         #[test]
         fn host_identity_uid_map_is_not_container() {
             let read = || Some(String::from("         0          0 4294967295\n"));
             let exists = |_p: &str| false;
-            assert!(!probe_with_reader(read, exists));
+            assert_eq!(probe_with_reader(read, exists), RootlessSignal::NotRootless);
         }
 
         #[test]
         fn rootless_uid_map_detected() {
             let read = || Some(String::from("         0       1000          1\n"));
             let exists = |_p: &str| false;
-            assert!(probe_with_reader(read, exists));
+            assert_eq!(
+                probe_with_reader(read, exists),
+                RootlessSignal::NonIdentityUidMap
+            );
         }
 
         #[test]
@@ -143,49 +207,61 @@ mod imp {
                 ))
             };
             let exists = |_p: &str| false;
-            assert!(probe_with_reader(read, exists));
+            assert_eq!(
+                probe_with_reader(read, exists),
+                RootlessSignal::NonIdentityUidMap
+            );
         }
 
         #[test]
         fn truncated_range_detected() {
             let read = || Some(String::from("0 0 65536\n"));
             let exists = |_p: &str| false;
-            assert!(probe_with_reader(read, exists));
+            assert_eq!(
+                probe_with_reader(read, exists),
+                RootlessSignal::NonIdentityUidMap
+            );
         }
 
         #[test]
         fn missing_uid_map_falls_through_to_dockerenv() {
             let read = || None;
             let exists = |p: &str| p == "/.dockerenv";
-            assert!(probe_with_reader(read, exists));
+            assert_eq!(probe_with_reader(read, exists), RootlessSignal::DockerEnv);
         }
 
         #[test]
         fn missing_uid_map_falls_through_to_containerenv() {
             let read = || None;
             let exists = |p: &str| p == "/run/.containerenv";
-            assert!(probe_with_reader(read, exists));
+            assert_eq!(
+                probe_with_reader(read, exists),
+                RootlessSignal::PodmanContainerEnv
+            );
         }
 
         #[test]
         fn no_signals_returns_false() {
             let read = || Some(String::from("         0          0 4294967295\n"));
             let exists = |_p: &str| false;
-            assert!(!probe_with_reader(read, exists));
+            assert_eq!(probe_with_reader(read, exists), RootlessSignal::NotRootless);
         }
 
         #[test]
         fn empty_uid_map_falls_through() {
             let read = || Some(String::new());
             let exists = |_p: &str| false;
-            assert!(!probe_with_reader(read, exists));
+            assert_eq!(probe_with_reader(read, exists), RootlessSignal::NotRootless);
         }
 
         #[test]
         fn uid_map_takes_priority_over_markers() {
             let read = || Some(String::from("0 1000 1\n"));
             let exists = |_p: &str| panic!("path probes must not run when uid_map signals");
-            assert!(probe_with_reader(read, exists));
+            assert_eq!(
+                probe_with_reader(read, exists),
+                RootlessSignal::NonIdentityUidMap
+            );
         }
 
         #[test]
@@ -198,6 +274,16 @@ mod imp {
             let exists = |_p: &str| false;
             let _ = probe_with_reader(read, exists);
             assert_eq!(count.load(Ordering::SeqCst), 1);
+        }
+
+        #[test]
+        fn containerenv_marker_takes_priority_over_dockerenv() {
+            let read = || None;
+            let exists = |_p: &str| true;
+            assert_eq!(
+                probe_with_reader(read, exists),
+                RootlessSignal::PodmanContainerEnv
+            );
         }
 
         #[test]
@@ -227,17 +313,46 @@ mod imp {
 
 #[cfg(not(target_os = "linux"))]
 mod imp {
-    pub(super) fn detect_rootless_container() -> bool {
-        false
+    use super::RootlessSignal;
+
+    pub(super) fn rootless_signal() -> RootlessSignal {
+        RootlessSignal::NotRootless
     }
 
     #[cfg(test)]
     mod tests {
-        use super::*;
+        use crate::container::detect_rootless_container;
 
         #[test]
         fn non_linux_always_returns_false() {
             assert!(!detect_rootless_container());
         }
+    }
+}
+
+#[cfg(test)]
+mod signal_tests {
+    use super::*;
+
+    #[test]
+    fn label_is_short_and_human_readable() {
+        assert_eq!(RootlessSignal::NotRootless.label(), "not-rootless");
+        assert_eq!(
+            RootlessSignal::NonIdentityUidMap.label(),
+            "non-identity-uid-map"
+        );
+        assert_eq!(
+            RootlessSignal::PodmanContainerEnv.label(),
+            "podman-containerenv"
+        );
+        assert_eq!(RootlessSignal::DockerEnv.label(), "docker-env");
+    }
+
+    #[test]
+    fn is_rootless_classifies_signals_correctly() {
+        assert!(!RootlessSignal::NotRootless.is_rootless());
+        assert!(RootlessSignal::NonIdentityUidMap.is_rootless());
+        assert!(RootlessSignal::PodmanContainerEnv.is_rootless());
+        assert!(RootlessSignal::DockerEnv.is_rootless());
     }
 }
