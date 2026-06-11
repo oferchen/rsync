@@ -134,22 +134,27 @@ impl GeneratorContext {
         Ok(count)
     }
 
-    /// Builds a file list from `--files-from` entries using a shared base directory.
+    /// Builds a file list from `--files-from` entries.
     ///
-    /// Unlike [`build_file_list`](Self::build_file_list), which treats each path as
-    /// its own base for `walk_path`, this method uses a single `base_dir` for all
-    /// file paths. Each entry's relative name is computed by stripping `base_dir`,
-    /// matching upstream rsync's behaviour of `chdir(argv[0])` before reading
-    /// filenames from the `--files-from` source.
+    /// Unlike [`build_file_list`](Self::build_file_list), which treats each
+    /// positional argument as its own base for `walk_path`, this method honors
+    /// the per-entry base produced by
+    /// [`split_files_from_entry`](super::super::filters::split_files_from_entry).
+    /// Each entry's wire-side relative name is computed by stripping its own
+    /// `base`, matching upstream rsync's `chdir(dir)` + transmit-`fn` split
+    /// (`flist.c:2316-2330`). The `base_dir` argument is the source argument
+    /// shared by entries without a `/./` anchor and is used to emit the
+    /// transfer-root `.` entry.
     ///
     /// # Upstream Reference
     ///
     /// - `flist.c:2240-2264` - `change_dir(argv[0])` then read relative filenames
-    /// - `flist.c:2262` - `read_line(filesfrom_fd, ...)` reads one name at a time
+    /// - `flist.c:2316-2330` - per-entry `/./` anchor split
+    /// - `flist.c:2287` - `send_file_name(".", ...)` for the transfer-root entry
     pub fn build_file_list_with_base(
         &mut self,
         base_dir: &Path,
-        file_paths: &[PathBuf],
+        entries: &[super::filters::FilesFromEntry],
     ) -> io::Result<usize> {
         self.timing.flist_build_start = Some(Instant::now());
 
@@ -162,30 +167,38 @@ impl GeneratorContext {
 
         // upstream: flist.c:2287 - emit "." with XMIT_TOP_DIR for the root
         // transfer directory so --delete works correctly on the receiver side.
-        if let Ok(meta) = std::fs::symlink_metadata(base_dir) {
-            if meta.is_dir() {
-                let mut dot_entry = self.create_entry(base_dir, PathBuf::from("."), &meta)?;
-                dot_entry.set_top_dir(true);
-                self.push_file_item(dot_entry, base_dir.to_path_buf());
+        // Skip when any entry's effective walk will already emit a `.` (i.e.
+        // an entry whose `/./` anchor produced `path == base`). Otherwise a
+        // duplicate `.` would race the entry's `.` on the wire and could
+        // overwrite the transfer-root permissions with the per-entry root's
+        // permissions when the upstream receiver dedupes by name.
+        let entry_emits_root_dot = entries.iter().any(|e| e.path == e.base);
+        if !entry_emits_root_dot {
+            if let Ok(meta) = std::fs::symlink_metadata(base_dir) {
+                if meta.is_dir() {
+                    let mut dot_entry = self.create_entry(base_dir, PathBuf::from("."), &meta)?;
+                    dot_entry.set_top_dir(true);
+                    self.push_file_item(dot_entry, base_dir.to_path_buf());
+                }
             }
         }
 
         // Pre-populate the explicit-directory set with every --files-from
         // entry that is itself a directory. The implied-parent loop below
         // skips emission for entries already in this set so the explicit
-        // top-level walk owns their emission, and the set is later used to
-        // distinguish "explicit dir, walk normally" from
-        // "implied-only dir, already emitted, skip the duplicate top-level
-        // walk that upstream's `implied_filter_list` check rejects".
-        let mut explicit_dirs: HashSet<PathBuf> = HashSet::new();
-        for path in file_paths {
-            if let Ok(rel) = path.strip_prefix(base_dir) {
+        // top-level walk owns their emission. Keys are the (base, wire-relative)
+        // pair so two entries that resolve to the same filesystem path but
+        // through different `/./` anchors do not collide on the wire-side
+        // dedup map.
+        let mut explicit_dirs: HashSet<(PathBuf, PathBuf)> = HashSet::new();
+        for entry in entries {
+            if let Ok(rel) = entry.path.strip_prefix(&entry.base) {
                 if rel.as_os_str().is_empty() {
                     continue;
                 }
-                if let Ok(meta) = std::fs::symlink_metadata(path) {
+                if let Ok(meta) = std::fs::symlink_metadata(&entry.path) {
                     if meta.is_dir() {
-                        explicit_dirs.insert(rel.to_path_buf());
+                        explicit_dirs.insert((entry.base.clone(), rel.to_path_buf()));
                     }
                 }
             }
@@ -204,26 +217,29 @@ impl GeneratorContext {
         // `implied_only_dirs` is later consulted by
         // `try_walk_source_entry_dedup` to suppress the duplicate top-level
         // walk that would re-emit an implied parent.
-        let mut emitted_dirs: HashSet<PathBuf> = explicit_dirs.clone();
-        for path in file_paths {
-            if let Ok(rel) = path.strip_prefix(base_dir) {
+        let mut emitted_dirs: HashSet<(PathBuf, PathBuf)> = explicit_dirs.clone();
+        for entry in entries {
+            if let Ok(rel) = entry.path.strip_prefix(&entry.base) {
                 // Walk each ancestor of the relative path and emit a
                 // directory entry when we haven't seen it yet.
                 let mut ancestor = PathBuf::new();
                 for component in rel.parent().into_iter().flat_map(Path::components) {
                     ancestor.push(component);
-                    if emitted_dirs.contains(&ancestor) {
+                    let key = (entry.base.clone(), ancestor.clone());
+                    if emitted_dirs.contains(&key) {
                         continue;
                     }
-                    let full = base_dir.join(&ancestor);
+                    let full = entry.base.join(&ancestor);
                     if let Ok(meta) = std::fs::symlink_metadata(&full) {
                         if meta.is_dir() {
-                            if let Ok(entry) = self.create_entry(&full, ancestor.clone(), &meta) {
-                                self.push_file_item(entry, full);
+                            if let Ok(file_entry) =
+                                self.create_entry(&full, ancestor.clone(), &meta)
+                            {
+                                self.push_file_item(file_entry, full);
                             }
                         }
                     }
-                    emitted_dirs.insert(ancestor.clone());
+                    emitted_dirs.insert(key);
                 }
             }
         }
@@ -234,19 +250,40 @@ impl GeneratorContext {
         // that upstream's `implied_filter_list` check (flist.c:998) would
         // reject as "unrequested". Explicit --files-from dirs remain walkable
         // so their recursive contents continue to flow normally.
-        let implied_only_dirs: HashSet<PathBuf> =
+        let implied_only_dirs: HashSet<(PathBuf, PathBuf)> =
             emitted_dirs.difference(&explicit_dirs).cloned().collect();
 
-        // Walk each listed file using the shared base directory so that
-        // relative paths are computed correctly (e.g., "hello.txt" instead
-        // of an empty string).
-        for path in file_paths {
+        // Walk each listed file using its own per-entry base so that the
+        // wire-side relative name reflects the `/./` anchor split (e.g.
+        // `from/./dir/subdir` transmits as `dir/subdir`, not
+        // `from/dir/subdir`).
+        for entry in entries {
             // upstream: flist.c:2254-2272 - pre-stat each --files-from entry
             // and apply missing_args handling before walk_path. This separates
             // "source never existed" (ENOENT at flist time) from "source vanished
             // during recursive walk" (ENOENT during child traversal).
-            if !self.try_walk_source_entry_dedup(base_dir, path, Some(&implied_only_dirs))? {
+            let scoped: HashSet<PathBuf> = implied_only_dirs
+                .iter()
+                .filter_map(|(b, rel)| (b == &entry.base).then(|| rel.clone()))
+                .collect();
+            if !self.try_walk_source_entry_dedup(&entry.base, &entry.path, Some(&scoped))? {
                 continue;
+            }
+
+            // upstream: flist.c:2329 - SLASH_ENDING_NAME / DOTDIR_NAME entries
+            // recurse into their children even when global `-r` is off. Plain
+            // `try_walk_source_entry_dedup` honours the global `recursive` flag
+            // so the trailing-slash directories would otherwise stop at the
+            // entry itself. Re-scan the directory here so the receiver sees
+            // the listed dir's contents (`from/./dir/subdir/subsubdir2/` must
+            // emit `bin-lt-list`, etc.). The `entry.path == entry.base` case
+            // is already covered by the DOTDIR scan in `walk_path_with_metadata`.
+            if entry.recurse && entry.path != entry.base {
+                if let Ok(meta) = std::fs::symlink_metadata(&entry.path) {
+                    if meta.is_dir() {
+                        self.scan_files_from_marker_dir(&entry.base, &entry.path)?;
+                    }
+                }
             }
         }
 

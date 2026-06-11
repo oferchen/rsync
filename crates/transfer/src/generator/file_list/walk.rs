@@ -329,6 +329,42 @@ impl GeneratorContext {
         Ok(())
     }
 
+    /// Scans the children of a `--files-from` SLASH_ENDING_NAME directory.
+    ///
+    /// Used by `build_file_list_with_base` to honour the upstream
+    /// `flist.c:2329` rule that trailing-slash `--files-from` entries recurse
+    /// into their named directory's children even when global `-r` is off
+    /// (`options.c:2189` clears `recurse` whenever `--files-from` is active).
+    /// The walk-loop already pushed the directory entry itself via
+    /// `try_walk_source_entry_dedup`; this helper just adds the children at
+    /// the same level a global `-r` would have produced.
+    ///
+    /// Wraps `scan_directory_batched` in the per-directory filter scope
+    /// (`enter_directory` / `leave_directory`) so per-dir merge files are
+    /// honoured for the recursion the way they are during a normal walk.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:send_directory()` - reads directory and stats each child
+    /// - `flist.c:2329` - `SLASH_ENDING_NAME` flag for trailing-slash entries
+    pub(in crate::generator) fn scan_files_from_marker_dir(
+        &mut self,
+        base: &Path,
+        dir_path: &Path,
+    ) -> io::Result<()> {
+        let guard = self.filter_chain.enter_directory(dir_path).map_err(|e| {
+            io::Error::other(format!(
+                "filter chain error in \"{}\": {e} {}{}",
+                dir_path.display(),
+                error_location!(),
+                crate::role_trailer::sender()
+            ))
+        })?;
+        let result = self.scan_directory_batched(base, dir_path);
+        self.filter_chain.leave_directory(guard);
+        result
+    }
+
     /// Reads a directory and batch-stats its children before recursive processing.
     ///
     /// Collects all `DirEntry` paths from `read_dir()`, resolves their metadata
