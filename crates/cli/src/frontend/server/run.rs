@@ -36,15 +36,32 @@ where
 
     let mut stdin = io::stdin().lock();
 
-    // When secluded-args is active, read the full argument list from stdin
-    // before parsing server flags. The client sends arguments as
-    // null-separated strings terminated by an empty string.
-    // upstream: main.c - read_args() reads protected args from stdin.
+    // When secluded-args is active, the client splits its argv: the
+    // server-options head (--server, --sender, packed flag string, and
+    // value-bearing long flags) travels on the command line, while the
+    // trailing positional args (the `.` separator and path arguments)
+    // stream over stdin as NUL-delimited bytes terminated by an empty
+    // string. Keep the command-line argv tail and append the stdin
+    // payload, skipping the synthetic "rsync" arg0 the wire prepends.
+    //
+    // upstream: main.c::read_args() merges cmdline args with stdin args
+    // under --protect-args / secluded-args. rsync.c:283
+    // send_protected_args() rewrites args[i] to "rsync" at the NULL
+    // split inserted by options.c:2745; io.c:1308 read_args() then
+    // re-runs parse_arguments() on the server side.
     let effective_args: Vec<OsString>;
     let effective_slice: &[OsString] = if secluded_args {
         match protocol::secluded_args::recv_secluded_args(&mut stdin, None) {
             Ok(received_args) => {
-                effective_args = received_args.into_iter().map(OsString::from).collect();
+                // Discard the synthetic "rsync" arg0 from the wire and
+                // prepend the command-line tail so the server-options
+                // head (flag string + long flags) is in effective_args.
+                let mut received_iter = received_args.into_iter();
+                let _arg0 = received_iter.next();
+                let cmdline_tail = args.iter().skip(1).cloned();
+                effective_args = cmdline_tail
+                    .chain(received_iter.map(OsString::from))
+                    .collect();
                 &effective_args
             }
             Err(e) => {

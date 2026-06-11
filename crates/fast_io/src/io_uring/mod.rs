@@ -80,7 +80,7 @@
 //! - **Provided-buffer rings (PBUF_RING)**: Linux 5.19+ ring-mapped supplied
 //!   buffers (`IORING_REGISTER_PBUF_RING`, opcode 22) -> classic provide-buffers
 //!   path on 5.6+ -> standard `read`/`write` -> non-Linux io_uring stub. The
-//!   probe is cached process-wide via [`buffer_ring::pbuf_ring_supported`] and
+//!   probe is cached process-wide via [`crate::io_uring::buffer_ring::pbuf_ring_supported`] and
 //!   surfaced on [`IoUringKernelInfo::pbuf_ring_supported`]. See
 //!   `docs/audits/iouring-pbuf-ring.md` for the full call-site survey.
 

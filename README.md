@@ -37,6 +37,14 @@ All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation,
 
 ### Platform Support
 
+| Platform | Tier | Notes |
+|---|---|---|
+| Linux x86_64 / aarch64 | **Tier 1** | Full `io_uring` + `splice` + `vmsplice` + Landlock + seccomp. Every required CI cell runs the full nextest workspace. Production deployment target. |
+| macOS x86_64 / aarch64 | **Tier 1** | `kqueue` + `sendfile` + `clonefile`. Every required CI cell runs the full nextest workspace. Full metadata, ACL, and xattr parity including AppleDouble (`._foo`) resource-fork preservation. |
+| Windows x86_64 | **Tier 2** | IOCP file I/O, `TransmitFile`, ReFS reflink, `CopyFileExW`, `FILE_FLAG_DELETE_ON_CLOSE`. `splice` / `vmsplice` / `io_uring` are Linux-only and intentionally not implemented; the receiver uses IOCP-batched `WriteFile`, which is faster than the upstream Cygwin `read`/`write` fallback. NTFS DACL preservation, xattrs via NTFS Alternate Data Streams, and IOCP socket I/O (`WSARecv` / `WSASend`) are shipped; POSIX symlinks (without elevation) and POSIX device nodes / FIFOs remain stubbed in line with NTFS limits. Required CI cells test the `core`, `engine`, and `cli` crates. See [Windows support matrix](docs/user/windows-support-matrix.md) and the [Windows Tier 2 stub inventory](docs/audits/win-tier2-stub-inventory.md). |
+
+Tier definitions: **Tier 1** means every required CI cell runs the full nextest workspace and the platform is a primary production target. **Tier 2** means the platform builds and runs core transfer modes, required CI cells run a crate-scoped subset of the workspace, and some upstream-testsuite tests may be expected to fail under Cygwin-equivalent feature gaps. Tier 2 is a deliberate choice, not a defect: see `docs/audits/win-tier2-stub-inventory.md` for the structural rationale and the path to Tier 1 promotion.
+
 The primary platform is Linux. macOS is well-supported with parity for all metadata, ACL, and xattr features, including AppleDouble (`._foo`) resource-fork preservation. Windows builds and runs core transfer modes with NTFS DACL preservation (via `windows-rs` `GetNamedSecurityInfoW`/`SetNamedSecurityInfoW`, currently Tier 1C partial - see `docs/platform-notes.md` for the Windows ACL behavior summary, the **--acls** entry in `docs/oc-rsync.1.md`, and `docs/design/windows-ntfs-acl-support.md` for the documented lossy cases), xattrs (via NTFS Alternate Data Streams), and IOCP socket I/O (`WSARecv`/`WSASend`); symlinks and POSIX device nodes remain stubbed.
 
 | Feature | Linux | macOS | Windows | Notes |
