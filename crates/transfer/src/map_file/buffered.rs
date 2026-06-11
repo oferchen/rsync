@@ -189,7 +189,17 @@ impl BufferedMap {
         }
 
         self.window_start = aligned_start;
-        self.window_len = window_size;
+        // UTS-18.g: root-cause clamp. `window_size` already takes the min of
+        // `max_window` and `remaining`, but record `window_len` against
+        // `file_size - window_start` so the invariant is locally provable at
+        // the single assignment site. Future callers and any state-fabrication
+        // path (tests, recovery, partial loads) cannot leave `window_len`
+        // claiming more bytes than the file actually has at `window_start`.
+        let remaining_from_start = self
+            .size
+            .saturating_sub(self.window_start)
+            .min(usize::MAX as u64) as usize;
+        self.window_len = window_size.min(remaining_from_start);
 
         Ok(())
     }
@@ -216,9 +226,7 @@ impl MapStrategy for BufferedMap {
         let end = start.checked_add(len).ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!(
-                    "buffered map_file range overflowed: start={start} len={len}"
-                ),
+                format!("buffered map_file range overflowed: start={start} len={len}"),
             )
         })?;
         self.buffer.get(start..end).ok_or_else(|| {
@@ -319,5 +327,57 @@ mod tests {
             err.to_string().contains("exceeds buffer length"),
             "error message missing bounds detail: {err}"
         );
+    }
+
+    /// UTS-18.g positive root-cause regression: a legitimate transfer of a
+    /// file smaller than `MAX_MAP_SIZE` must complete successfully. Mirrors
+    /// the production crash math (file=48128 bytes, `MAX_MAP_SIZE=262144`):
+    /// `window_len` must clamp to the file's remaining bytes (48128), not
+    /// inherit the requested `max_window` (262144). A subsequent full-file
+    /// `map_ptr` must return `Ok` with all 48128 bytes - never the
+    /// "exceeds buffer length" Err that PR #5566's guards surface when state
+    /// is inconsistent.
+    #[test]
+    fn load_window_clamps_window_len_to_remaining_file_bytes() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        const FILE_SIZE: usize = 48128;
+
+        let payload: Vec<u8> = (0..FILE_SIZE).map(|i| (i & 0xff) as u8).collect();
+        let mut tmp = NamedTempFile::new().unwrap();
+        tmp.write_all(&payload).unwrap();
+        tmp.flush().unwrap();
+
+        let mut map = BufferedMap::open_with_window(tmp.path(), MAX_MAP_SIZE).unwrap();
+
+        // Trigger a window load over the entire file. `load_window` is
+        // private; drive it through the public `map_ptr` entry that all four
+        // untrusted callers use (token_loop.rs, response.rs, sync.rs,
+        // applicator.rs).
+        let slice = MapStrategy::map_ptr(&mut map, 0, FILE_SIZE)
+            .expect("legitimate full-file map_ptr must return Ok, not 'exceeds buffer length' Err");
+        assert_eq!(slice.len(), FILE_SIZE);
+        assert_eq!(slice, &payload[..]);
+
+        // The clamp invariant: window_len reflects the file's remaining
+        // bytes (48128), never the requested max_window (262144).
+        assert_eq!(
+            map.window_len, FILE_SIZE,
+            "window_len must clamp to remaining file bytes ({FILE_SIZE}), got {actual}",
+            actual = map.window_len,
+        );
+        assert!(
+            map.window_len <= map.buffer.len(),
+            "window_len ({wl}) must not exceed buffer length ({bl})",
+            wl = map.window_len,
+            bl = map.buffer.len(),
+        );
+
+        // A repeat full-file slice must hit the cached window and return
+        // the same bytes - the path PR #5566's guard would reject if
+        // `window_len` lied about buffer extent.
+        let again = MapStrategy::map_ptr(&mut map, 0, FILE_SIZE).expect("cached map_ptr must Ok");
+        assert_eq!(again, &payload[..]);
     }
 }
