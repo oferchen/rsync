@@ -1,7 +1,7 @@
-//! Stub provided-buffer ring mirroring [`crate::io_uring::buffer_ring`].
+//! Stub provided-buffer ring mirroring `io_uring::buffer_ring`.
 //!
 //! Re-exports the shared [`BufferRingConfig`] and [`BufferRingError`] from
-//! [`crate::io_uring_common`] and supplies the opaque [`BufferRing`] /
+//! `io_uring_common` and supplies the opaque [`BufferRing`] /
 //! [`BgidAllocator`] handles that only exist as compile-time placeholders
 //! here.
 

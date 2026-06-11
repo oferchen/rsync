@@ -56,7 +56,7 @@ static SQPOLL_FALLBACK: AtomicBool = AtomicBool::new(false);
 ///
 /// Set by [`set_sqpoll_disabled_by_policy`] when the CLI parser sees
 /// `--no-io-uring-sqpoll`. Every ring construction site
-/// ([`IoUringConfig::build_ring`] and the session-pool ring builder in
+/// (`IoUringConfig::build_ring` and the session-pool ring builder in
 /// `session_pool.rs`) consults this flag before calling
 /// `io_uring::IoUring::builder().setup_sqpoll(...)`. When set, the SQPOLL
 /// kthread is never requested, even if a particular `IoUringConfig` has
@@ -213,7 +213,7 @@ pub mod config_detail {
 /// 1. Running on Linux
 /// 2. Kernel version is 5.6 or later (parsed from `uname().release`)
 /// 3. `io_uring_setup(2)` succeeds - not blocked by seccomp or container runtime
-/// 4. The [`DISABLE_ENV`] environment variable is unset (or not truthy)
+/// 4. The `DISABLE_ENV` (`OC_RSYNC_DISABLE_IOURING`) environment variable is unset (or not truthy)
 ///
 /// The kernel probe result is cached after the first call. The environment
 /// variable is consulted on every call so tests and operators can force the
@@ -357,7 +357,7 @@ pub use crate::io_uring_common::IoUringConfig;
 
 /// Linux-only ring-construction methods for the shared [`IoUringConfig`].
 ///
-/// The plain-data struct lives in [`crate::io_uring_common`] so the
+/// The plain-data struct lives in `io_uring_common` so the
 /// non-Linux stub can expose the identical field layout without duplicating
 /// the definition. The `build_ring` method below is the only platform-gated
 /// behaviour: it requires the `io_uring` crate which is Linux-only.

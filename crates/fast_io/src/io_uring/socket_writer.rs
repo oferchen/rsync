@@ -105,7 +105,7 @@ impl IoUringSocketWriter {
     }
 
     /// Returns `true` when this writer will attempt `IORING_OP_SEND_ZC` for
-    /// payloads at or above [`SEND_ZC_MIN_BYTES`]. Exposed for diagnostics
+    /// payloads at or above `SEND_ZC_MIN_BYTES`. Exposed for diagnostics
     /// and tests; the production hot path consults the field directly.
     #[must_use]
     pub fn send_zc_active(&self) -> bool {

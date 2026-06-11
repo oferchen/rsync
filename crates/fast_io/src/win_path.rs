@@ -25,7 +25,7 @@
 //! where a short path that happens to grow at runtime (e.g. via appending a
 //! filename) silently loses long-path support. The owned-path cost is paid
 //! only on paths that actually need conversion; already-prefixed paths and
-//! all non-Windows inputs return a [`Cow::Borrowed`].
+//! all non-Windows inputs return a [`std::borrow::Cow::Borrowed`].
 
 use std::borrow::Cow;
 use std::path::Path;
