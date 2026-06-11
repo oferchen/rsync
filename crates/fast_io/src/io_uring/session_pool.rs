@@ -18,7 +18,7 @@
 //!   [`IoUringConfig`].
 //! - [`acquire`](SessionRingPool::acquire) returns a [`RingLease`] that
 //!   dereferences to the underlying `IoUring`. Selection is round-robin via a
-//!   single relaxed [`AtomicUsize`] - the contention point at high concurrency
+//!   single relaxed `AtomicUsize` - the contention point at high concurrency
 //!   is the per-ring mutex, not the selector.
 //!
 //! Two pool primitives live in this module:
@@ -274,7 +274,16 @@ fn build_ring(config: &SessionPoolConfig) -> std::io::Result<RawIoUring> {
     if config.flags & IORING_SETUP_IOPOLL != 0 {
         builder.setup_iopoll();
     }
-    if config.flags & IORING_SETUP_SQPOLL != 0 {
+    let sqpoll_gated_off =
+        config.flags & IORING_SETUP_SQPOLL != 0 && super::config::is_sqpoll_disabled_by_policy();
+    if sqpoll_gated_off {
+        logging::debug_log!(
+            Io,
+            1,
+            "io_uring session pool: SQPOLL suppressed by --no-io-uring-sqpoll; \
+             building a regular ring"
+        );
+    } else if config.flags & IORING_SETUP_SQPOLL != 0 {
         builder.setup_sqpoll(config.sqpoll_idle_ms);
     }
     builder

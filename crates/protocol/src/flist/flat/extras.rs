@@ -221,8 +221,19 @@ impl ExtrasArena {
             self.put_bytes_u16(target);
         }
         if mask & EXTRA_RDEV != 0 {
-            self.put_u32(extras.rdev_major.expect("EXTRA_RDEV requires rdev_major"));
-            self.put_u32(extras.rdev_minor.expect("EXTRA_RDEV requires rdev_minor"));
+            // The mask bit is set only when `presence_mask` saw both halves of
+            // the pair as `Some`, but treat divergent state as a soft failure
+            // instead of a panic: emit zeros and debug_assert so a future
+            // refactor that decouples the mask from the fields cannot crash a
+            // long-running daemon. upstream: rsync.h:786-792 `union file_extras`
+            // ties the two halves together by layout, which the type system
+            // here does not yet enforce.
+            debug_assert!(
+                extras.rdev_major.is_some() && extras.rdev_minor.is_some(),
+                "EXTRA_RDEV mask set without rdev_major/rdev_minor",
+            );
+            self.put_u32(extras.rdev_major.unwrap_or(0));
+            self.put_u32(extras.rdev_minor.unwrap_or(0));
         }
         if let Some(idx) = extras.hardlink_idx {
             self.put_u32(idx);
@@ -531,6 +542,37 @@ mod tests {
         // Lop off the trailing bytes so the promised rdev pair is incomplete.
         arena.blobs.truncate(arena.blobs.len() - 3);
         assert_eq!(arena.decode(reference), Err(ExtrasError::Truncated));
+    }
+
+    /// EDG-PANIC.5 regression: the `EXTRA_RDEV` mask is set only by
+    /// `presence_mask` when both halves are `Some`, so the inner write must
+    /// never see a divergent state in normal flow. The encode path now
+    /// debug-asserts the invariant and falls back to zeros instead of
+    /// panicking, so a future refactor that decouples the mask from the
+    /// fields downgrades to a soft failure under release builds.
+    #[test]
+    fn rdev_mask_implies_both_halves_present() {
+        let mut extras = FlatExtras::default();
+        // Setting only one half must leave the mask bit cleared so the
+        // unwrap/expect path in `append` is never reached.
+        extras.rdev_major = Some(8);
+        assert_eq!(extras.presence_mask() & EXTRA_RDEV, 0);
+
+        extras.rdev_major = None;
+        extras.rdev_minor = Some(17);
+        assert_eq!(extras.presence_mask() & EXTRA_RDEV, 0);
+
+        extras.rdev_major = Some(8);
+        extras.rdev_minor = Some(17);
+        assert_ne!(extras.presence_mask() & EXTRA_RDEV, 0);
+
+        // Round-trip the well-formed pair to confirm the happy path still
+        // produces the expected encoded bytes after the defensive change.
+        let mut arena = ExtrasArena::new();
+        let reference = arena.append(&extras);
+        let decoded = arena.decode(reference).unwrap().unwrap();
+        assert_eq!(decoded.rdev_major, Some(8));
+        assert_eq!(decoded.rdev_minor, Some(17));
     }
 
     #[test]

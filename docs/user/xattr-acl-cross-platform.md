@@ -211,6 +211,17 @@ source but `-X` is not enabled.
 Non-NTFS volumes (FAT32, exFAT) do not support ADS. Writes to those volumes
 fail with an I/O error.
 
+The ADS round-trip through `--xattrs` is exercised end-to-end (not just by
+unit tests over the FFI primitives) in
+`crates/metadata/tests/windows_ads_xattrs_roundtrip.rs`. The harness spawns a
+real `oc-rsync --xattrs --archive` subprocess against a temp source tree
+carrying `Zone.Identifier` and a custom stream, then reads the destination
+back through the public `read_xattrs_for_wire` API so the receiver's
+`FindFirstStreamW` + `FindNextStreamW` enumeration is part of the assertion.
+Tests skip cleanly on non-Windows hosts, builds without the `xattr` feature,
+non-NTFS scratch volumes, and runners where the `oc-rsync` binary cannot be
+located.
+
 ---
 
 ## Known limitations and gaps

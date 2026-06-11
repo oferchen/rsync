@@ -35,9 +35,9 @@ impl ReceiverContext {
         dest_dir: &Path,
         sandbox: Option<&fast_io::DirSandbox>,
         writer: &mut W,
-    ) {
+    ) -> std::io::Result<()> {
         if !self.config.flags.links || self.config.flags.dry_run {
-            return;
+            return Ok(());
         }
 
         for entry in &self.file_list {
@@ -166,13 +166,27 @@ impl ReceiverContext {
                     target.display(),
                     e
                 );
-            } else {
-                // upstream: generator.c:1594 - itemize new symlink after creation
-                let iflags =
-                    ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
-                let _ = self.emit_itemize(writer, &iflags, entry);
+                // EDG-SANDBOX.C: discriminate by error class. EACCES is
+                // the upstream-parity non-fatal class (matches
+                // `generator.c:atomic_create -> do_symlink` where a
+                // permission failure leaves the link missing and the
+                // io_error bit drives the non-zero exit). ELOOP from a
+                // TOCTOU swap on a mid-path component, EOPNOTSUPP from
+                // a sandbox-anchored refusal, and EEXIST on a planted
+                // non-symlink leaf are security boundaries: propagate
+                // so the receiver surfaces a non-zero exit instead of
+                // silently skipping the symlink.
+                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    continue;
+                }
+                return Err(e);
             }
+            // upstream: generator.c:1594 - itemize new symlink after creation
+            let iflags =
+                ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
+            let _ = self.emit_itemize(writer, &iflags, entry);
         }
+        Ok(())
     }
 
     /// No-op on non-Unix platforms where symlinks are not supported.
@@ -181,7 +195,8 @@ impl ReceiverContext {
         &self,
         _dest_dir: &Path,
         _writer: &mut W,
-    ) {
+    ) -> std::io::Result<()> {
+        Ok(())
     }
 
     /// Creates hard links for hardlink follower entries after the leader has been transferred.
@@ -212,9 +227,9 @@ impl ReceiverContext {
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
         writer: &mut W,
-    ) {
+    ) -> std::io::Result<()> {
         if !self.config.flags.hard_links || self.config.flags.dry_run {
-            return;
+            return Ok(());
         }
 
         // Protocol 30+: use HardlinkApplyTracker for leader/follower resolution.
@@ -388,24 +403,41 @@ impl ReceiverContext {
                         leader_path.display(),
                         e
                     );
-                } else {
-                    // upstream: hlink.c:finish_hard_link() - itemize new hardlink
-                    let iflags = ItemFlags::from_raw(
-                        ItemFlags::ITEM_LOCAL_CHANGE
-                            | ItemFlags::ITEM_XNAME_FOLLOWS
-                            | ItemFlags::ITEM_IS_NEW,
-                    );
-                    let _ = self.emit_itemize(writer, &iflags, entry);
-                    // upstream: hlink.c:236 - "%s => %s" at INFO_GTE(NAME, 1)
-                    // when a hardlink follower is linked to its leader.
-                    info_log!(
-                        Name,
-                        1,
-                        "{} => {}",
-                        relative_path.display(),
-                        leader_path.display()
-                    );
+                    // EDG-SANDBOX.D: discriminate by error class. EACCES
+                    // is the upstream-parity non-fatal class (matches
+                    // `hlink.c:maybe_hard_link -> atomic_create` where a
+                    // permission failure leaves the follower missing and
+                    // the io_error bit drives the non-zero exit).
+                    // EMLINK (link-count exhaustion) and EXDEV
+                    // (cross-device link) are not transient: failing loud
+                    // surfaces the configuration error instead of leaving
+                    // the follower silently missing. ELOOP / EOPNOTSUPP
+                    // from sandbox-anchored refusals are also fail-loud.
+                    if e.kind() == std::io::ErrorKind::PermissionDenied {
+                        continue;
+                    }
+                    // Restore the tracker before propagating so the
+                    // receiver's invariant (`hardlink_tracker` always
+                    // populated when `hard_links` is set) is preserved.
+                    self.hardlink_tracker = Some(tracker);
+                    return Err(e);
                 }
+                // upstream: hlink.c:finish_hard_link() - itemize new hardlink
+                let iflags = ItemFlags::from_raw(
+                    ItemFlags::ITEM_LOCAL_CHANGE
+                        | ItemFlags::ITEM_XNAME_FOLLOWS
+                        | ItemFlags::ITEM_IS_NEW,
+                );
+                let _ = self.emit_itemize(writer, &iflags, entry);
+                // upstream: hlink.c:236 - "%s => %s" at INFO_GTE(NAME, 1)
+                // when a hardlink follower is linked to its leader.
+                info_log!(
+                    Name,
+                    1,
+                    "{} => {}",
+                    relative_path.display(),
+                    leader_path.display()
+                );
             }
 
             // Resolve any remaining deferred followers from incremental commits.
@@ -430,6 +462,7 @@ impl ReceiverContext {
         // Protocol 28-29 hardlinks are normalized to hardlink_idx/hlink_first
         // during file list reception (normalize_pre30_hardlinks), so the
         // protocol 30+ path above handles both versions uniformly.
+        Ok(())
     }
 }
 

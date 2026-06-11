@@ -7,7 +7,7 @@
 //! highest ABI the running kernel exposes.
 //!
 //! The helper is a one-shot per-thread restriction: once
-//! [`restrict_to_module_paths`] succeeds, the calling thread (and every
+//! [`crate::landlock::restrict_to_module_paths`] succeeds, the calling thread (and every
 //! process inherited from it - notably the daemon's name converter and
 //! pre/post-xfer-exec hooks) cannot reach paths outside the supplied roots
 //! through any filesystem syscall, regardless of how the path was resolved.
@@ -23,7 +23,7 @@ use landlock::{
     RulesetCreatedAttr, RulesetStatus,
 };
 
-/// Outcome of a [`restrict_to_module_paths`] call.
+/// Outcome of a [`crate::landlock::restrict_to_module_paths`] call.
 ///
 /// Carries enough detail for the daemon to log the actual enforcement level
 /// without leaking the `landlock` crate's types into the public API.
@@ -50,11 +50,11 @@ pub enum LandlockOutcome {
 /// Returns `true` on Linux 5.13+ with the LSM enabled at boot, `false`
 /// otherwise. The probe issues `landlock_create_ruleset(2)` via
 /// [`Ruleset::create`] and immediately drops the returned fd; **it must
-/// never call [`RulesetCreated::restrict_self`]** because Landlock
+/// never call `RulesetCreated::restrict_self`** because Landlock
 /// intersects every successive `restrict_self` on the calling thread.
 /// Probing with an empty allowlist would therefore deny every subsequent
 /// filesystem write for the rest of the thread's life and the real
-/// [`restrict_to_module_paths`] call could only narrow that intersection,
+/// [`crate::landlock::restrict_to_module_paths`] call could only narrow that intersection,
 /// never relax it. Cheap but not memoised - cache the result if you call
 /// repeatedly.
 #[must_use]
@@ -227,6 +227,76 @@ mod tests {
         })
         .expect("outside-write scenario");
         drop(allowed);
+        drop(outside);
+    }
+
+    #[test]
+    fn allows_writes_under_every_root_in_multi_root_allowlist() {
+        // URV-5.b.REOPEN regression: the daemon engages Landlock with the
+        // module root *plus* any client-supplied in-module alt-basis /
+        // temp-dir / partial-dir / backup-dir paths. A widened allowlist
+        // must accept writes beneath every listed root, not just the
+        // first one.
+        if !is_supported() {
+            return;
+        }
+        let module = TempDir::new().expect("module tempdir");
+        let extra = TempDir::new().expect("extra tempdir");
+        let module_path = module.path().to_path_buf();
+        let extra_path = extra.path().to_path_buf();
+        run_isolated(move || {
+            let outcome =
+                restrict_to_module_paths(&[module_path.as_path(), extra_path.as_path()]);
+            match outcome {
+                LandlockOutcome::Enforced(RulesetStatus::NotEnforced) => return Ok(()),
+                LandlockOutcome::Enforced(_) => {}
+                LandlockOutcome::Unavailable => return Ok(()),
+                LandlockOutcome::Error(err) => return Err(format!("setup: {err}")),
+            }
+            fs::write(module_path.join("module.txt"), b"x")
+                .map_err(|e| format!("write inside module failed: {e}"))?;
+            fs::write(extra_path.join("extra.txt"), b"x")
+                .map_err(|e| format!("write inside extra root failed: {e}"))?;
+            Ok(())
+        })
+        .expect("multi-root scenario");
+        drop(module);
+        drop(extra);
+    }
+
+    #[test]
+    fn multi_root_allowlist_still_blocks_paths_outside_every_root() {
+        // The widening only relaxes confinement for *enumerated* roots.
+        // Anything outside the union must remain blocked - this is the
+        // trust boundary URV-5.c.5 will lean on when Landlock flips
+        // default-on.
+        if !is_supported() {
+            return;
+        }
+        let module = TempDir::new().expect("module tempdir");
+        let extra = TempDir::new().expect("extra tempdir");
+        let outside = TempDir::new().expect("outside tempdir");
+        let module_path = module.path().to_path_buf();
+        let extra_path = extra.path().to_path_buf();
+        let outside_path = outside.path().to_path_buf();
+        run_isolated(move || {
+            let outcome =
+                restrict_to_module_paths(&[module_path.as_path(), extra_path.as_path()]);
+            match outcome {
+                LandlockOutcome::Enforced(RulesetStatus::NotEnforced) => return Ok(()),
+                LandlockOutcome::Enforced(_) => {}
+                LandlockOutcome::Unavailable => return Ok(()),
+                LandlockOutcome::Error(err) => return Err(format!("setup: {err}")),
+            }
+            match fs::write(outside_path.join("outside.txt"), b"x") {
+                Ok(()) => Err("write outside every allowlist root succeeded".to_owned()),
+                Err(err) if err.kind() == ErrorKind::PermissionDenied => Ok(()),
+                Err(err) => Err(format!("unexpected error {:?}: {err}", err.kind())),
+            }
+        })
+        .expect("multi-root outside scenario");
+        drop(module);
+        drop(extra);
         drop(outside);
     }
 

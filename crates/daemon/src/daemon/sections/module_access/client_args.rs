@@ -396,7 +396,29 @@ fn build_server_config(
             // Parse long-form arguments that upstream rsync sends via server_options()
             // (options.c:2737-2980). The compact flag string only covers single-char
             // flags; these long-form options must be parsed separately.
-            apply_long_form_args(client_args, &mut cfg);
+            //
+            // Rule 12 fail-loud: when a client-only batch flag slips past the
+            // client-side sanitiser, surface an explicit `@ERROR` here rather
+            // than silently dropping the option and continuing into a wire
+            // path that closes mid file-list framing.
+            //
+            // upstream: options.c:1444-1449 - daemon-mode unknown option
+            // emits `rsync: <BAD>: <err> (in daemon mode)` and exits
+            // `RERR_SYNTAX` via `daemon_error:` (options.c:1464-1466).
+            if let Some(offender) = apply_long_form_args(client_args, &mut cfg) {
+                if let Some(log) = ctx.log_sink {
+                    let text = format!(
+                        "module '{}': refusing client-only flag '{offender}' in daemon mode",
+                        ctx.request,
+                    );
+                    let message = rsync_warning!(text).with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+                let payload =
+                    format!("@ERROR: {offender}: unrecognized option (in daemon mode)");
+                send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+                return Ok(None);
+            }
 
             // upstream: options.c:2737-2740 - when -z is in the compact flag string
             // but no explicit --compress-level=N was sent, default to level 6 (the
@@ -502,18 +524,36 @@ fn build_server_config(
 /// as long-form arguments that are not encoded in the compact flag string.
 /// The daemon must parse these to correctly configure the transfer.
 ///
+/// Returns `Some(offender)` when a client-only flag (write/read-batch family)
+/// reaches the daemon. The caller surfaces that as an `@ERROR` and exits
+/// instead of letting the unrecognised option drive a silent connection
+/// close mid file-list framing. Upstream mirrors this at
+/// `options.c:1444-1449` with `rsync: <BAD>: <err> (in daemon mode)` then
+/// `daemon_error:` (`options.c:1464-1466`) exiting `RERR_SYNTAX`.
+///
 /// # Upstream Reference
 ///
+/// - `options.c:1444-1449` - daemon-mode unknown option error path
 /// - `options.c:2818-2829` - delete mode variants
 /// - `options.c:2836-2837` - `--size-only`
 /// - `options.c:2878-2879` - `--ignore-errors`
 /// - `options.c:2888` - `--numeric-ids`
 /// - `options.c:2891` - `--use-qsort`
 /// - `options.c:2737-2740` - `--compress-level=N`
-fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
+fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Option<String> {
+    // Positional path args follow the standalone `.` separator. Upstream
+    // `glob_expand_module()` consumes them through a different code path, so
+    // the daemon's option parser only validates the option region.
+    let dot_position = client_args.iter().position(|a| a == ".");
+
+    let mut unknown: Option<String> = None;
     let mut i = 0;
     while i < client_args.len() {
         let arg = &client_args[i];
+        if dot_position.is_some_and(|dot| i >= dot) {
+            i += 1;
+            continue;
+        }
         match arg.as_str() {
             // upstream: options.c:2818-2829 - delete mode variants
             "--delete" | "--delete-before" | "--delete-during" => {
@@ -730,11 +770,50 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) {
                     if fmt.contains("%i") {
                         config.flags.info_flags.itemize = true;
                     }
+                } else if unknown.is_none() && is_client_only_flag_reaching_daemon(arg) {
+                    // upstream: options.c:1444-1449 - the daemon's popt loop
+                    // emits `rsync: <BAD>: <err> (in daemon mode)` on the
+                    // first unrecognised option and jumps to `daemon_error:`
+                    // (options.c:1464-1466), exiting `RERR_SYNTAX`. We mirror
+                    // that fail-loud surface for batch-family flags that the
+                    // client-side sanitiser should have stripped. Catching
+                    // them here converts the previously silent connection
+                    // close at protocol byte ~2241725 into an explicit
+                    // `@ERROR` frame plus non-zero exit.
+                    unknown = Some(arg.clone());
                 }
             }
         }
         i += 1;
     }
+
+    unknown
+}
+
+/// Reports whether `arg` is a client-only flag that should never reach the
+/// daemon.
+///
+/// `--write-batch`, `--only-write-batch`, and `--read-batch` set up local
+/// batch-file recording or replay on the CLIENT side only. Upstream
+/// `options.c:server_options()` deliberately omits them from the argv sent
+/// to the server; the only related token upstream emits is the literal
+/// `--only-write-batch=X` placeholder at `options.c:2832-2833`, which
+/// carries no real path. Encountering one here means the client-side
+/// sanitiser failed - the previous behaviour was a silent connection close
+/// in the middle of file-list framing. Surface this as a Rule-12 fail-loud
+/// `@ERROR` instead.
+///
+/// Both bare-flag (`--write-batch`) and key=value (`--write-batch=PATH`)
+/// forms are detected.
+///
+/// # Upstream Reference
+///
+/// - `options.c:784-786` - `read-batch`, `write-batch`, `only-write-batch`
+///   popt entries (client-only)
+/// - `options.c:1444-1449` - daemon-mode unknown option error path
+fn is_client_only_flag_reaching_daemon(arg: &str) -> bool {
+    let bare = arg.split('=').next().unwrap_or(arg);
+    matches!(bare, "--write-batch" | "--only-write-batch" | "--read-batch")
 }
 
 /// Resolves the daemon module's `charset =` directive into a

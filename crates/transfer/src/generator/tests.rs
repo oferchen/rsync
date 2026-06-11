@@ -2272,6 +2272,84 @@ mod legacy_goodbye_tests {
         let max_phase: i32 = if ctx.protocol.supports_iflags() { 2 } else { 1 };
         assert_eq!(max_phase, 2);
     }
+
+    // UTS-15.c: protocol 31+ extended goodbye must flush NDX_DONE into the
+    // wire buffer before the read loop blocks on the receiver's reply. The
+    // `FlushTrackingWriter` records every `flush()` invocation; we then
+    // assert the final wire bytes match the NDX_DONE marker and that at
+    // least one flush happened after the write.
+    //
+    // Without the flush after `write_ndx_done`, a buffered writer can hold
+    // the four marker bytes in user-space while the receiver is already
+    // shutting down the socket - the symptom upstream's batch-mode interop
+    // surfaced as a silent close at byte ~2241725. Mirroring
+    // `main.c:875-906 read_final_goodbye()` requires the flush to happen
+    // before close on every protocol-31+ goodbye.
+    #[test]
+    fn handle_goodbye_proto31_flushes_ndx_done_before_close() {
+        let handshake = test_handshake_with_protocol(31);
+        let mut config = test_config();
+        config.protocol = ProtocolVersion::try_from(31u8).unwrap();
+        // Skip del_stats so the wire payload is just one echo NDX_DONE.
+        config.do_stats = false;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        // Receiver wire: NDX_DONE + final NDX_DONE.
+        let receiver_input = [NDX_DONE_LE.as_slice(), NDX_DONE_LE.as_slice()].concat();
+        let mut reader = Cursor::new(receiver_input);
+
+        let mut output = FlushTrackingWriter::default();
+        let mut ndx_read = create_ndx_codec(31);
+        let mut ndx_write = MonotonicNdxWriter::new(31);
+
+        ctx.handle_goodbye(&mut reader, &mut output, &mut ndx_read, &mut ndx_write)
+            .expect("goodbye completes");
+
+        // The wire payload must end with the NDX_DONE marker bytes.
+        assert!(
+            output.buffer.ends_with(&NDX_DONE_LE),
+            "wire output must end with NDX_DONE: {:?}",
+            output.buffer
+        );
+        // And at least one flush must have happened to push it out.
+        assert!(
+            output.flushes >= 1,
+            "writer must flush at least once before goodbye returns; got {}",
+            output.flushes
+        );
+        // Defense-in-depth: the last write recorded must be a flush, not a
+        // partial-write. Without flush-before-close, the final NDX_DONE can
+        // sit in a user-space buffer when the FIN goes out.
+        assert!(
+            output.last_op_was_flush,
+            "the final operation before return must be a flush, not a write"
+        );
+    }
+
+    /// Writer that records every `write` and `flush` so tests can assert
+    /// upstream's `io_flush(FULL_FLUSH)` contract is honoured before the
+    /// goodbye handshake returns. Mirrors the `main.c:912` flush-before-
+    /// return pattern.
+    #[derive(Default)]
+    struct FlushTrackingWriter {
+        buffer: Vec<u8>,
+        flushes: usize,
+        last_op_was_flush: bool,
+    }
+
+    impl std::io::Write for FlushTrackingWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.buffer.extend_from_slice(buf);
+            self.last_op_was_flush = false;
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.flushes += 1;
+            self.last_op_was_flush = true;
+            Ok(())
+        }
+    }
 }
 
 mod files_from {

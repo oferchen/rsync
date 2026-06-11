@@ -145,6 +145,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --fsync    Fsync updated files after writing completes.\n",
             "      --io-uring   Force io_uring for file I/O (policy=enabled); error if unavailable. Default policy is auto: probe kernel and fall back to standard I/O.\n",
             "      --no-io-uring  Disable io_uring (policy=disabled); always use standard buffered I/O even when the kernel supports io_uring.\n",
+            "      --no-io-uring-sqpoll  Keep io_uring on but suppress IORING_SETUP_SQPOLL (policy=sqpoll-off). For rootless containers and K8s pods that cannot grant CAP_SYS_NICE.\n",
             "      --io-uring-depth=N  Override io_uring submission queue depth (default 64); must be a power of two between 1 and 32768.\n",
             "      --io-uring-status  Print the io_uring capability matrix and exit.\n",
             "      --simd=LEVEL Force the SIMD level used by checksum dispatch (auto, avx512, avx2, sse4, neon, none).\n",

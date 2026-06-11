@@ -254,6 +254,141 @@ mod create_directory_incremental_tests {
         assert!(!dest.join("failed_parent/child").exists());
         assert_eq!(failed.count(), 2); // Parent + child marked as failed
     }
+
+    /// UTS-16.b regression: a non-EACCES error from
+    /// `mkdirat_via_sandbox_or_fallback` must propagate to the caller
+    /// instead of being silently coerced to `Ok(None)`.
+    ///
+    /// Before the fix, a symlink-swap attack on a subdir leaf would
+    /// surface as an arbitrary errno (EEXIST for a dangling symlink at
+    /// the leaf, ELOOP/ENOTDIR/EOPNOTSUPP for sandbox refusals). The
+    /// receiver dropped those errors on the floor and returned rc=0
+    /// with the directory missing - exactly the silent-skip pattern
+    /// Rule 12 (fail loud) forbids.
+    ///
+    /// This test shapes a dangling-symlink leaf so the underlying
+    /// `mkdirat`/`fs::create_dir` returns `AlreadyExists` (EEXIST), a
+    /// non-EACCES error class. The fix must surface it as `Err`, not
+    /// `Ok(None)`.
+    #[cfg(unix)]
+    #[test]
+    fn surfaces_non_permission_error_from_mkdir() {
+        use std::os::unix::fs::symlink;
+
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path();
+
+        // Plant a dangling symlink at the leaf the receiver intends to
+        // create. `Path::exists` follows the symlink and reports
+        // false (target missing), so the `is_new` guard inside
+        // `create_directory_incremental` will fall through to the
+        // mkdir attempt. `mkdir`/`mkdirat` on an existing symlink
+        // leaf returns EEXIST regardless of whether the target
+        // exists.
+        let leaf = dest.join("victim");
+        symlink(dest.join("does-not-exist"), &leaf).expect("plant dangling symlink");
+
+        let entry = FileEntry::new_directory("victim".into(), 0o755);
+        let opts = metadata::MetadataOptions::default();
+        let mut failed = FailedDirectories::new();
+
+        let handshake = test_handshake();
+        let config = test_config();
+        let ctx = ReceiverContext::new_for_test(&handshake, config);
+
+        let result = ctx.create_directory_incremental(
+            dest,
+            &entry,
+            &opts,
+            &mut failed,
+            None,
+            #[cfg(unix)]
+            None,
+        );
+
+        // Fail loud: the underlying EEXIST must propagate. The
+        // pre-fix behaviour was `Ok(None)` with `mark_failed`, which
+        // hid the failure from the caller's exit-code path.
+        let err = result.expect_err(
+            "non-EACCES mkdir failure must propagate as Err, not be coerced to Ok(None)",
+        );
+        // Accept any non-PermissionDenied class. EEXIST is
+        // `AlreadyExists`; on some kernels with sandbox routing the
+        // error class may differ but must never be `PermissionDenied`
+        // (that path is the upstream-parity non-fatal branch).
+        assert_ne!(
+            err.kind(),
+            std::io::ErrorKind::PermissionDenied,
+            "EACCES must take the non-fatal branch; this scenario is shaped to avoid it"
+        );
+    }
+
+    /// Upstream-parity guard for `receiver.c:693-700`: a
+    /// `PermissionDenied` error on mkdir is non-fatal. The receiver
+    /// must mark the directory as failed and return `Ok(None)` so the
+    /// rest of the transfer can proceed (mirrors upstream's
+    /// `io_error |= IOERR_GENERAL` accumulator).
+    #[cfg(unix)]
+    #[test]
+    fn treats_permission_denied_as_non_fatal_skip() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path();
+
+        // Strip write permission from the destination so the kernel
+        // rejects mkdir with EACCES. Root bypasses DAC so the mkdir
+        // would succeed; detect that case by re-checking the error
+        // class after the call and skipping the assertion when the
+        // environment is not amenable.
+        let mut perms = std::fs::metadata(dest).unwrap().permissions();
+        let original_mode = perms.mode();
+        perms.set_mode(0o500);
+        std::fs::set_permissions(dest, perms).expect("chmod 0500 dest");
+
+        let entry = FileEntry::new_directory("subdir".into(), 0o755);
+        let opts = metadata::MetadataOptions::default();
+        let mut failed = FailedDirectories::new();
+
+        let handshake = test_handshake();
+        let config = test_config();
+        let ctx = ReceiverContext::new_for_test(&handshake, config);
+
+        let result = ctx.create_directory_incremental(
+            dest,
+            &entry,
+            &opts,
+            &mut failed,
+            None,
+            #[cfg(unix)]
+            None,
+        );
+
+        // Restore permissions before assertions so TempDir cleanup
+        // works regardless of the outcome.
+        let mut perms = std::fs::metadata(dest).unwrap().permissions();
+        perms.set_mode(original_mode);
+        std::fs::set_permissions(dest, perms).expect("restore dest perms");
+
+        // Root (or a non-DAC-respecting filesystem) bypasses chmod so
+        // mkdir succeeds. Only enforce the upstream-parity branch when
+        // the kernel actually produced EACCES.
+        let succeeded_under_root = matches!(&result, Ok(Some(true)));
+        if succeeded_under_root {
+            return;
+        }
+
+        let value = result.expect("EACCES must remain non-fatal per upstream receiver.c:693-700");
+        assert_eq!(
+            value, None,
+            "EACCES must produce Ok(None) so the receiver continues with the rest of the transfer"
+        );
+        assert_eq!(
+            failed.count(),
+            1,
+            "the failed directory must be recorded so descendants are skipped"
+        );
+    }
 }
 
 #[cfg(feature = "incremental-flist")]
@@ -451,5 +586,77 @@ mod incremental_mode_tests {
         assert!(!dest.join("stale_a.txt").exists());
         assert!(!dest.join("stale_b.txt").exists());
         assert!(dest.join("keep.txt").exists());
+    }
+
+    /// EDG-SANDBOX.A regression: the parallel `read_dir` worker in
+    /// `delete_extraneous_files` must propagate a non-EACCES/non-NotFound
+    /// scan failure to the outer caller instead of silently coercing it to
+    /// `(DeleteStats::new(), Vec::new())`.
+    ///
+    /// Before this fix, planting a regular file where the receiver's
+    /// file list expected a directory caused the worker to discard the
+    /// `ENOTDIR` returned by `read_dir`, return empty stats, and exit
+    /// `rc=0` with the deletions in that subtree silently skipped. The
+    /// fix discriminates EACCES (upstream-parity non-fatal, matches
+    /// `generator.c:delete_in_dir`) from the ELOOP/EOPNOTSUPP/ENOTDIR
+    /// class which must fail loud.
+    ///
+    /// upstream: generator.c:delete_in_dir() - "opendir failed" classifies
+    /// EACCES as non-fatal (io_error bit only) and every other class as a
+    /// fatal scan failure.
+    #[cfg(unix)]
+    #[test]
+    fn delete_extraneous_files_surfaces_non_eacces_scan_error() {
+        use std::ffi::OsString;
+
+        use super::super::super::support::TestDeletionWriter;
+
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path();
+
+        // Plant a regular file at the path the sender's file list claims
+        // is a directory. `read_dir(dest/subdir)` returns `ENOTDIR`
+        // (mapped to `ErrorKind::NotADirectory` on Rust >= 1.83), which
+        // is the fail-loud class - not the upstream-parity EACCES branch.
+        std::fs::write(dest.join("subdir"), b"not a directory").unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.flags.delete = true;
+        config.args = vec![OsString::from(dest.to_str().unwrap())];
+        let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+        // Sender's flist references `subdir/child.txt`, so the worker
+        // map keys `subdir` as a scan target.
+        ctx.file_list
+            .push(FileEntry::new_directory(".".into(), 0o755));
+        ctx.file_list
+            .push(FileEntry::new_directory("subdir".into(), 0o755));
+        ctx.file_list
+            .push(FileEntry::new_file("subdir/child.txt".into(), 4, 0o644));
+
+        let mut writer = TestDeletionWriter;
+        let err = ctx
+            .delete_extraneous_files(
+                dest,
+                #[cfg(unix)]
+                None,
+                &mut writer,
+            )
+            .expect_err(
+                "non-EACCES scan error must propagate as Err, not be coerced to empty stats",
+            );
+
+        assert_ne!(
+            err.kind(),
+            std::io::ErrorKind::PermissionDenied,
+            "EACCES is the upstream-parity non-fatal branch; this scenario \
+             plants ENOTDIR to exercise the fail-loud branch",
+        );
+        assert_ne!(
+            err.kind(),
+            std::io::ErrorKind::NotFound,
+            "NotFound is the upstream-parity continue-on-vanished branch",
+        );
     }
 }
