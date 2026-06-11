@@ -131,8 +131,6 @@ impl ReceiverContext {
             &mut metadata_errors,
             &mut stats,
             setup.acl_cache.as_deref(),
-            #[cfg(unix)]
-            setup.sandbox.as_deref(),
         );
 
         let mut files_transferred: usize = 0;
