@@ -42,8 +42,10 @@ mod transfer;
 mod wire;
 
 use std::collections::HashMap;
+use std::ffi::OsStr;
+use std::io;
 use std::num::NonZeroU8;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -130,6 +132,72 @@ pub fn ndx_convert_totals() -> (u64, u64) {
         NDX_CONVERT_CALLS.load(Ordering::Relaxed),
         NDX_CONVERT_CMPS.load(Ordering::Relaxed),
     )
+}
+
+/// Reports whether a destination operand was written with a trailing path
+/// separator.
+///
+/// Upstream rsync inspects the raw `dest_path` argument (`main.c:724-725`)
+/// after a final `strrchr('/')` to decide whether the operand ends with a
+/// directory marker. The detection is byte-level on Unix and matches either
+/// `'/'` or `'\\'` on Windows so paths produced by either separator convention
+/// are honored.
+pub(in crate::receiver) fn dest_arg_has_trailing_slash(arg: &OsStr) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        arg.as_bytes().last() == Some(&b'/')
+    }
+    #[cfg(windows)]
+    {
+        let bytes = arg.as_encoded_bytes();
+        matches!(bytes.last(), Some(b'/') | Some(b'\\'))
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        arg.to_string_lossy().ends_with('/')
+    }
+}
+
+/// Creates the destination root directory when the transfer needs one.
+///
+/// Mirrors upstream `main.c:778-792` (`get_local_name()`): when the receiver
+/// is about to write more than one file, or the destination operand carries a
+/// trailing slash, the root must exist as a directory before per-entry mkdir
+/// dispatch. The local-mode receiver gets this for free via the file-list-
+/// driven implicit mkdir, but the `--server` path never created the root, so
+/// the alt-dest upstream interop test that runs over remote-shell failed when
+/// the destination did not already exist.
+///
+/// Returns `Ok(true)` when a new directory was created, `Ok(false)` when the
+/// pre-flight was a no-op (already exists, single-file transfer without
+/// trailing slash, or `dry_run`).
+///
+/// # Upstream Reference
+///
+/// - `main.c:778-792` - `get_local_name()` pre-flight `do_mkdir(dest_path, ACCESSPERMS)`
+/// - `main.c:794-796` - sets `FLAG_DIR_CREATED` on the first flist entry when
+///   its basename is `.` (deferred follow-up; oc-rsync's delete path does
+///   not currently consume that flag).
+pub fn ensure_dest_root_exists(
+    dest_root: &Path,
+    file_total: usize,
+    trailing_slash: bool,
+    dry_run: bool,
+) -> io::Result<bool> {
+    if dry_run {
+        return Ok(false);
+    }
+    if file_total <= 1 && !trailing_slash {
+        return Ok(false);
+    }
+    match dest_root.metadata() {
+        Ok(_) => Ok(false),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            std::fs::create_dir_all(dest_root).map(|()| true)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 /// Context for the receiver role during a transfer.
