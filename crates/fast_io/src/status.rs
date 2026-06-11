@@ -11,7 +11,7 @@
 //! Container runtimes (Docker pre-20.10.2, gVisor), seccomp profiles, and
 //! cgroup v2 device controllers can silently block `io_uring_setup(2)`.
 //! This module detects these restrictions once at startup via the cached
-//! probe in [`crate::io_uring::config`] and provides user-visible messages.
+//! probe in `io_uring::config` and provides user-visible messages.
 
 use crate::io_uring;
 #[cfg(target_os = "linux")]
@@ -26,7 +26,7 @@ use crate::splice::is_splice_available;
 /// Reason io_uring is restricted or unavailable on this system.
 ///
 /// Returned by [`detect_io_uring_restriction`]. The variants map onto the
-/// five outcomes of the startup probe in [`crate::io_uring::config`] but
+/// five outcomes of the startup probe in `io_uring::config` but
 /// are exposed as a public enum so callers (CLI `--io-uring-status`,
 /// daemon log) can act on them without parsing strings.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,7 +80,7 @@ impl std::fmt::Display for IoUringRestriction {
 
 /// Detects whether io_uring is restricted and why.
 ///
-/// Uses the cached probe result from [`crate::io_uring::config`] (which
+/// Uses the cached probe result from `io_uring::config` (which
 /// runs once per process), so this function is cheap to call repeatedly.
 /// On non-Linux platforms or without the `io_uring` feature, returns a
 /// compile-time-known restriction without any runtime cost.

@@ -1,4 +1,4 @@
-//! Stub config / availability detection mirroring [`crate::io_uring::config`].
+//! Stub config / availability detection mirroring `io_uring::config`.
 //!
 //! Every entry point reports the backend as unavailable on this platform.
 

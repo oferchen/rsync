@@ -293,14 +293,14 @@ impl BgidAllocator {
     /// Allocates up to `count` bgids in a single free-list lock acquisition.
     ///
     /// The hot per-thread bgid-lease path (IUR-3.e) batches allocation so the
-    /// process-wide [`bgid_free_list`] mutex is acquired once per slice
+    /// process-wide `bgid_free_list` mutex is acquired once per slice
     /// instead of once per id. The returned vector contains as many ids as
     /// were available: it is shorter than `count` only when the namespace
     /// drains mid-batch, in which case the caller can either fall back to
     /// the plain `recv`/`read` path or retry once leased ids are returned.
     ///
-    /// Each returned id participates in [`PEAK_USED`] and
-    /// [`maybe_warn_namespace_pressure`] exactly as if it had been issued
+    /// Each returned id participates in `PEAK_USED` and
+    /// `maybe_warn_namespace_pressure` exactly as if it had been issued
     /// through [`allocate`](Self::allocate), so operator-facing metrics
     /// remain consistent.
     ///
@@ -373,7 +373,7 @@ impl BgidAllocator {
     ///
     /// Mirror image of [`allocate_batch`](Self::allocate_batch): used by
     /// [`super::super::bgid_lease::BgidLease`]'s `Drop` to return every id
-    /// it owned without paying the [`bgid_free_list`] mutex per id. Each
+    /// it owned without paying the `bgid_free_list` mutex per id. Each
     /// duplicate id present in the input or already in the free-list is
     /// dropped silently to preserve the no-duplicates invariant documented
     /// on [`deallocate`](Self::deallocate).

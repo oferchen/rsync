@@ -101,7 +101,7 @@ impl DeleteStats {
     /// # Errors
     ///
     /// Returns an error if reading from the stream fails or if any field
-    /// exceeds [`MAX_WIRE_DEL_STAT`].
+    /// exceeds `MAX_WIRE_DEL_STAT`.
     pub fn read_from<R: Read + ?Sized>(reader: &mut R) -> io::Result<Self> {
         use crate::varint::read_varint;
 

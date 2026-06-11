@@ -2,7 +2,7 @@
 //!
 //! This module compiles on every target and hosts the plain-data definitions
 //! shared by both the Linux io_uring backend (`crate::io_uring`) and the
-//! portable fallback ([`crate::io_uring_stub`]). Centralising these
+//! portable fallback (`io_uring_stub`). Centralising these
 //! definitions removes the mechanical duplication that previously forced the
 //! stub to redeclare every config struct, every UAPI constant, and every
 //! enum variant just so cross-platform callers compiled without `cfg`-gating.
@@ -529,8 +529,8 @@ impl RegisteredBufferStatus {
 
 /// Cross-platform contract for an io_uring-style I/O backend.
 ///
-/// Implemented by the real Linux backend ([`crate::io_uring`]) and the no-op
-/// stub ([`crate::io_uring_stub`]). The trait captures the small set of
+/// Implemented by the real Linux backend (`io_uring`) and the no-op
+/// stub (`io_uring_stub`). The trait captures the small set of
 /// runtime queries that callers need without binding them to a specific
 /// platform's concrete reader/writer types - those types still live in their
 /// respective modules and are surfaced through the existing crate-level

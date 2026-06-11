@@ -3,7 +3,7 @@
 //! # Why
 //!
 //! Today each disk-batch, file-writer, and file-reader builds its own ring via
-//! [`IoUringConfig::build_ring`]. Per-construction the cost is small, but at
+//! `IoUringConfig::build_ring`. Per-construction the cost is small, but at
 //! the daemon-session level it stacks: bursty connections pay
 //! `io_uring_setup(2)` plus optional `IORING_REGISTER_*` calls on every
 //! short-lived consumer. The session ring pool amortises that cost by holding
@@ -81,7 +81,7 @@ pub struct SessionPoolConfig {
     /// `IORING_SETUP_SQPOLL` enables [`setup_sqpoll`] with
     /// [`SessionPoolConfig::sqpoll_idle_ms`]. Unrecognised bits are ignored;
     /// callers that need exotic flags should construct the ring directly via
-    /// [`IoUringConfig::build_ring`](crate::io_uring::IoUringConfig::build_ring).
+    /// `IoUringConfig::build_ring`.
     ///
     /// [`setup_iopoll`]: io_uring::Builder::setup_iopoll
     /// [`setup_sqpoll`]: io_uring::Builder::setup_sqpoll

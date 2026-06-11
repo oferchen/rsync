@@ -1,5 +1,5 @@
 //! Stub registered-buffer module mirroring
-//! [`crate::io_uring::registered_buffers`]. Not available on this platform.
+//! `io_uring::registered_buffers`. Not available on this platform.
 
 pub use crate::io_uring_common::{RegisteredBufferStats, RegisteredBufferStatus};
 use std::io;
