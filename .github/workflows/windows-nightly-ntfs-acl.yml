@@ -1,0 +1,145 @@
+# Windows nightly NTFS ACL round-trip test cell (WCI-5 #3699).
+#
+# The required `Windows ACL/xattr` cell in ci.yml does compile the
+# metadata crate under `--features acl,xattr`, but its workspace step
+# filters with `-E 'test(acl) | test(xattr) | test(ads) | test(stream)'`
+# which skips Windows-only tests whose names do not start with one of
+# those substrings. WCI-1
+# (`docs/audits/wci-1-windows-nextest-coverage-gap.md`) section 4.1
+# enumerates eight such metadata tests:
+#
+#   crates/metadata/src/apply_batch.rs:551
+#     windows_readonly_attribute
+#   crates/metadata/src/copy_as.rs:548
+#     windows_switch_returns_descriptive_error
+#   crates/metadata/src/copy_as.rs:576
+#     windows_switch_without_group_returns_error
+#   crates/metadata/src/copy_as.rs:587
+#     windows_privilege_probe_does_not_panic
+#   crates/metadata/src/stat_cache.rs:660
+#     windows_readonly_metadata
+#   crates/metadata/src/acl_windows/tests/dacl.rs:96
+#     read_dacl_on_temp_file_returns_dacl
+#   crates/metadata/src/acl_windows/tests/sddl.rs:71
+#     read_dacl_sddl_returns_non_empty_for_temp_file
+#   crates/metadata/src/acl_windows/tests/sddl.rs:84
+#     write_dacl_sddl_round_trips_known_descriptor
+#
+# These execute today only under the unfiltered per-crate metadata
+# step in the same job. This workflow re-runs the metadata crate
+# without an `-E` filter to guarantee NTFS DACL/SDDL/owner+group
+# round-trip coverage and to catch regressions in the read-only
+# attribute and `--copy-as` Windows privilege-probe paths.
+#
+# The cell also adds `-p platform` to Windows nightly, which is the
+# WCI-1 gap-list entry for the SID/RID resolver (section 4.2):
+#
+#   crates/platform/src/name_resolution.rs:286
+#     administrator_resolves_to_rid_500
+#   crates/platform/src/name_resolution.rs:295
+#     rid_500_resolves_to_administrator
+#   crates/platform/src/name_resolution.rs:303
+#     lookup_account_info_user_returns_non_group
+#   crates/platform/src/name_resolution.rs:312
+#     lookup_account_info_group_returns_is_group
+#   crates/platform/src/group.rs:240
+#     windows_administrators_group_returns_some
+#   crates/platform/src/group.rs:252
+#     windows_nonexistent_group_returns_none
+#
+# Every `--owner` / `--group` push from a Windows receiver routes
+# through these resolvers; the required Windows cell never links
+# `-p platform`, so this nightly is the first Windows CI cell to
+# exercise the resolver at all.
+#
+# Status: non-required (informational). Do not add to branch protection.
+# Promotion to required-on-PR is gated on a 14-day green bake window
+# per WCI-11 #3705.
+name: Windows nightly NTFS ACL
+
+on:
+  schedule:
+    # Nightly at 08:00 UTC. Offset one hour after WCI-7 long-path
+    # (07:00 UTC) and three hours after WCI-2 IOCP (05:00 UTC) /
+    # WCI-3 daemon (06:00 UTC) to keep the Windows runner pool
+    # uncontended.
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: windows-nightly-ntfs-acl-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: "full"
+
+jobs:
+  windows-ntfs-acl:
+    name: Windows NTFS ACL round-trip
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-windows-ntfs-acl-cargo-v1-${{ hashFiles('**/Cargo.lock') }}
+          key: windows-nightly-ntfs-acl
+
+      - name: Install cargo-nextest (Windows direct download)
+        shell: pwsh
+        run: |
+          # Workaround for actions/partner-runner-images#169 on Windows.
+          $ErrorActionPreference = 'Stop'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
+          & "$cargoBin\cargo-nextest.exe" --version
+
+      # Run the platform crate unfiltered. This activates the six
+      # WCI-1 SID/RID resolver tests that no Windows CI cell links
+      # today (`administrator_resolves_to_rid_500`,
+      # `rid_500_resolves_to_administrator`,
+      # `lookup_account_info_user_returns_non_group`,
+      # `lookup_account_info_group_returns_is_group`,
+      # `windows_administrators_group_returns_some`,
+      # `windows_nonexistent_group_returns_none`).
+      - name: Run platform-crate Windows tests
+        run: cargo nextest run --locked -p platform --no-fail-fast
+
+      # Run the full metadata crate test set on Windows under
+      # `--features acl` so the eight WCI-1 metadata tests whose
+      # names don't match the workspace `-E 'test(acl) | test(xattr)
+      # | test(ads) | test(stream)'` filter execute end-to-end. This
+      # covers DACL read, SDDL read/write, the read-only NTFS
+      # attribute path, the `--copy-as` privilege probe, and the
+      # stat-cache read-only metadata branch.
+      - name: Run metadata-crate Windows ACL tests
+        run: cargo nextest run --locked -p metadata --features acl --no-fail-fast
+
+      - name: Upload nextest logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-nightly-ntfs-acl-logs
+          path: |
+            target/nextest/**/*.log
+            target/nextest/**/*.xml
+          if-no-files-found: ignore
+          retention-days: 14
