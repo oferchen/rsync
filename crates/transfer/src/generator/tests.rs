@@ -150,6 +150,19 @@ fn build_file_list_for(ctx: &mut GeneratorContext, base_path: &Path) -> usize {
     ctx.build_file_list(&paths).unwrap()
 }
 
+/// Wraps a vector of full paths as `FilesFromEntry`s sharing one base, for
+/// tests that only exercise plain (no `/./` anchor) `--files-from` entries.
+fn files_from_entries(base: &Path, paths: Vec<PathBuf>) -> Vec<super::filters::FilesFromEntry> {
+    paths
+        .into_iter()
+        .map(|path| super::filters::FilesFromEntry {
+            base: base.to_path_buf(),
+            path,
+            recurse: false,
+        })
+        .collect()
+}
+
 /// Creates a clear rule for filter tests.
 fn clear_rule() -> FilterRuleWireFormat {
     use protocol::filters::RuleType;
@@ -2388,8 +2401,10 @@ mod files_from {
 
         let result = ctx.resolve_files_from_paths(&paths, &mut reader).unwrap();
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0], PathBuf::from("/src/file1.txt"));
-        assert_eq!(result[1], PathBuf::from("/src/subdir/file2.txt"));
+        assert_eq!(result[0].path, PathBuf::from("/src/file1.txt"));
+        assert_eq!(result[0].base, PathBuf::from("/src"));
+        assert_eq!(result[1].path, PathBuf::from("/src/subdir/file2.txt"));
+        assert_eq!(result[1].base, PathBuf::from("/src"));
     }
 
     #[test]
@@ -2405,7 +2420,8 @@ mod files_from {
 
         let result = ctx.resolve_files_from_paths(&paths, &mut reader).unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], PathBuf::from("./file.txt"));
+        assert_eq!(result[0].path, PathBuf::from("./file.txt"));
+        assert_eq!(result[0].base, PathBuf::from("."));
     }
 
     #[test]
@@ -2422,7 +2438,8 @@ mod files_from {
 
         let result = ctx.resolve_files_from_paths(&paths, &mut reader).unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0], PathBuf::from("/base/only.txt"));
+        assert_eq!(result[0].path, PathBuf::from("/base/only.txt"));
+        assert_eq!(result[0].base, PathBuf::from("/base"));
     }
 
     #[test]
@@ -2441,9 +2458,9 @@ mod files_from {
 
         let result = ctx.resolve_files_from_paths(&paths, &mut reader).unwrap();
         assert_eq!(result.len(), 3);
-        assert_eq!(result[0], PathBuf::from("/data/alpha.txt"));
-        assert_eq!(result[1], PathBuf::from("/data/beta.txt"));
-        assert_eq!(result[2], PathBuf::from("/data/gamma.txt"));
+        assert_eq!(result[0].path, PathBuf::from("/data/alpha.txt"));
+        assert_eq!(result[1].path, PathBuf::from("/data/beta.txt"));
+        assert_eq!(result[2].path, PathBuf::from("/data/gamma.txt"));
     }
 
     #[test]
@@ -2463,8 +2480,8 @@ mod files_from {
 
         let result = ctx.resolve_files_from_paths(&paths, &mut reader).unwrap();
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0], PathBuf::from("/root/one.txt"));
-        assert_eq!(result[1], PathBuf::from("/root/two.txt"));
+        assert_eq!(result[0].path, PathBuf::from("/root/one.txt"));
+        assert_eq!(result[1].path, PathBuf::from("/root/two.txt"));
     }
 
     #[test]
@@ -2487,8 +2504,8 @@ mod files_from {
 
         let result = ctx.resolve_files_from_paths(&paths, &mut reader).unwrap();
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0], PathBuf::from("/dir/file1.txt"));
-        assert_eq!(result[1], PathBuf::from("/dir/file2.txt"));
+        assert_eq!(result[0].path, PathBuf::from("/dir/file1.txt"));
+        assert_eq!(result[1].path, PathBuf::from("/dir/file2.txt"));
     }
 
     #[test]
@@ -2505,7 +2522,9 @@ mod files_from {
         let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
         let file_paths = vec![src.join("hello.txt"), src.join("subdir/file.txt")];
-        let count = ctx.build_file_list_with_base(&src, &file_paths).unwrap();
+        let count = ctx
+            .build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
+            .unwrap();
 
         // Dot entry + 2 files + 1 parent dir "subdir"
         assert!(count >= 3, "expected at least 3 entries, got {count}");
@@ -2552,7 +2571,8 @@ mod files_from {
         let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
         let file_paths = vec![nested.clone(), nested.join("child.txt")];
-        ctx.build_file_list_with_base(&src, &file_paths).unwrap();
+        ctx.build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
+            .unwrap();
 
         // Count occurrences of every distinct relative name. The subdir
         // must appear exactly once; duplicates would re-trigger the
@@ -2722,7 +2742,9 @@ mod files_from {
         let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
         let file_paths = vec![src.join("exists.txt"), src.join("missing.txt")];
-        let count = ctx.build_file_list_with_base(&src, &file_paths).unwrap();
+        let count = ctx
+            .build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
+            .unwrap();
 
         // Dot entry + exists.txt; missing.txt is skipped with io_error.
         assert_eq!(count, 2, "dot + exists.txt");
@@ -2759,7 +2781,9 @@ mod files_from {
         let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
         let file_paths = vec![src.join("exists.txt"), src.join("missing.txt")];
-        let count = ctx.build_file_list_with_base(&src, &file_paths).unwrap();
+        let count = ctx
+            .build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
+            .unwrap();
 
         // Dot entry + exists.txt; missing.txt silently skipped.
         assert_eq!(count, 2, "dot + exists.txt");
@@ -2790,7 +2814,9 @@ mod files_from {
         let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
         let file_paths = vec![src.join("exists.txt"), src.join("missing.txt")];
-        let count = ctx.build_file_list_with_base(&src, &file_paths).unwrap();
+        let count = ctx
+            .build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
+            .unwrap();
 
         // Dot entry + exists.txt + mode-0 sentinel for missing.txt
         assert_eq!(count, 3, "dot + exists.txt + sentinel for missing.txt");
@@ -2833,7 +2859,9 @@ mod files_from {
         let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
         let file_paths = vec![src.join("missing.txt")];
-        let count = ctx.build_file_list_with_base(&src, &file_paths).unwrap();
+        let count = ctx
+            .build_file_list_with_base(&src, &files_from_entries(&src, file_paths))
+            .unwrap();
 
         // Dot entry + mode-0 sentinel (delete takes precedence over ignore).
         assert_eq!(count, 2, "dot + sentinel for missing.txt");
