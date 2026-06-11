@@ -113,11 +113,11 @@ mod defaults;
 pub mod dry_run;
 mod filter_rules;
 mod help;
-mod lsm_status;
 /// Info output flags controlling informational message display.
 pub mod info_output;
 /// Upstream rsync `--itemize-changes` (`-i`) output format.
 pub mod itemize;
+mod lsm_status;
 mod out_format;
 pub(crate) mod password;
 /// Progress and verbose output helpers extracted from the CLI front-end.

@@ -203,10 +203,7 @@ pub mod tls;
 /// [`worker_seccomp_allowlist`]: seccomp_test_support::worker_seccomp_allowlist
 /// [`SeccompOutcome`]: seccomp_test_support::SeccompOutcome
 #[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
-#[cfg_attr(
-    docsrs,
-    doc(cfg(all(target_os = "linux", feature = "daemon-seccomp")))
-)]
+#[cfg_attr(docsrs, doc(cfg(all(target_os = "linux", feature = "daemon-seccomp"))))]
 pub mod seccomp_test_support {
     pub use crate::daemon::{
         SeccompOutcome, apply_worker_seccomp_filter, worker_seccomp_allowlist,
