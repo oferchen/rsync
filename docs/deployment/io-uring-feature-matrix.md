@@ -179,7 +179,12 @@ Key constraints:
 3. **SQPOLL**: Only beneficial for sustained high-IOPS workloads (many small
    files). Requires `CAP_SYS_NICE` which is often unavailable in containers.
    The syscall savings from SQPOLL are marginal compared to the batch
-   submission model that regular io_uring already provides.
+   submission model that regular io_uring already provides. Operators in
+   rootless containers and Kubernetes Pods that cannot grant `CAP_SYS_NICE`
+   should pass `--no-io-uring-sqpoll` for a deterministic opt-out (keeps
+   io_uring on, suppresses only `IORING_SETUP_SQPOLL`). See
+   [container-io-uring.md](container-io-uring.md) and
+   [kubernetes.md](kubernetes.md) for the deployment recipes.
 
 4. **Verify before deploying**: Always run `oc-rsync --io-uring-status` on the
    target system to confirm which features are actually available after
