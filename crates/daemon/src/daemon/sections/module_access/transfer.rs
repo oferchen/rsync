@@ -1023,16 +1023,53 @@ fn process_approved_module(
         module,
     );
 
-    // Ensure clean TCP shutdown: send FIN before dropping streams.
-    // Without explicit shutdown, close() on cloned TcpStreams with unread
-    // receive buffer data causes the kernel to send RST, which the client
-    // interprets as "connection unexpectedly closed" (exit code 12).
-    // upstream: daemon child exits via exit_cleanup() which lets the kernel
-    // perform clean socket shutdown with proper FIN/ACK sequence.
+    // Ensure clean TCP shutdown: send FIN before dropping streams, then
+    // drain the receive buffer so close() does not send RST instead.
+    //
+    // Without this drain, close() on a TCP socket with unread RX bytes
+    // causes the kernel to send RST (`tcp(7)`). The peer then aborts any
+    // in-flight TX bytes that have not yet reached userspace, producing
+    // "connection unexpectedly closed (N bytes received so far)" on the
+    // client even when the daemon has finished writing every byte of the
+    // transfer. Under `-zz` daemon download the loss window is widened by
+    // the extra trailing MSG_INFO itemize frames the daemon emits before
+    // the stats / NDX_DONE goodbye sequence, and the receiver was failing
+    // at the stats varlongs (612K-byte mark) rather than at the actual
+    // last byte of file data.
+    //
+    // upstream: `cleanup.c:close_all` issues `shutdown(fd, 2)` per socket
+    // before `close(fd)` to avoid the same abortive RST on Winsock; on
+    // Linux the equivalent guard is to half-close write and drain read
+    // until the peer signals FIN before relinquishing the descriptor.
     // For stdio streams (remote-shell daemon mode), TCP shutdown is not
     // applicable - the pipe/fd closes naturally when dropped.
     if supports_tcp_shutdown {
-        let _ = ctx.reader.get_mut().shutdown(std::net::Shutdown::Write);
+        let stream = ctx.reader.get_mut();
+        let _ = stream.shutdown(std::net::Shutdown::Write);
+        // Cap the drain so a stalled peer cannot wedge the daemon forever.
+        // Five seconds matches the worst-case stats + goodbye round trip
+        // and is well under any reasonable IO timeout.
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+        let mut sink = [0u8; 4096];
+        loop {
+            match stream.read(&mut sink) {
+                Ok(0) => break,
+                Ok(_) => continue,
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        io::ErrorKind::TimedOut
+                            | io::ErrorKind::WouldBlock
+                            | io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    // Timed out waiting for peer FIN; close is the best we can do.
+                    break;
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = stream.set_read_timeout(None);
     }
 
     // upstream: clientserver.c - post_exec() runs after the transfer, regardless of outcome
