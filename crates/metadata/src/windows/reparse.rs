@@ -1067,7 +1067,6 @@ mod integration_tests {
 
     use super::{FILE_READ_ATTRIBUTES, *};
     use std::fs;
-    use std::os::windows::ffi::OsStrExt as _;
     use std::path::Path;
     use std::process::Command;
 
