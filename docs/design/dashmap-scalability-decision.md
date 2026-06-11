@@ -357,6 +357,19 @@ improvement at 32+ threads:
 4. Add a bench regression gate: if future DMB nightly runs show the tuned
    count regressing, revert to default.
 
+**Status (2026-06-10):** Implemented via DMC-CON.2/.3/.5
+(`docs/design/dmc-con-adaptive-sharding.md`). The applier's
+`with_strategy` constructor now picks `shard_count = (concurrency * 4)
+.next_power_of_two().clamp(4, 1024)`, with the heuristic input changed
+from "host CPUs" to "applier worker count" so the shard table tracks the
+actual fan-out rather than physical hardware. Operator override:
+`OC_RSYNC_DASHMAP_SHARDS=<n>` (clamped, rounded to power of two on input,
+falls back to the heuristic on parse failure or unset). The constructor
+parameter sketched in step 1 above was rejected in favour of the env
+override: a parameter would fork every call site between callers that
+know `worker_count` and callers that do not, while the env override is
+opt-in and process-wide.
+
 ## 9. Implementation plan: if decision is "keep"
 
 ### 9.1 ParallelDeltaApplier (already on DashMap)
