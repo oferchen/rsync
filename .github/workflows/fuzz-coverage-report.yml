@@ -75,6 +75,8 @@ jobs:
           - workspace: fuzz
             target: decompressor_zlib
           - workspace: fuzz
+            target: zlib_token_decode
+          - workspace: fuzz
             target: acl_xattr_wire
           - workspace: fuzz
             target: differential_multiplex

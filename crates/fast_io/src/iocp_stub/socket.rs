@@ -3,7 +3,7 @@
 //! Mirrors the public surface of [`crate::iocp::socket`] on Windows so code
 //! that names `IocpSocketReader` / `IocpSocketWriter` behind a runtime check
 //! against [`super::is_iocp_available`] still compiles on Linux and macOS.
-//! All constructors and methods return [`io::ErrorKind::Unsupported`].
+//! All constructors and methods return [`std::io::ErrorKind::Unsupported`].
 
 use std::io;
 use std::sync::Arc;
@@ -15,7 +15,7 @@ use super::CompletionPump;
 pub type SharedPump = Arc<CompletionPump>;
 
 /// Stub IOCP socket reader. Construction always fails with
-/// [`io::ErrorKind::Unsupported`].
+/// [`std::io::ErrorKind::Unsupported`].
 pub struct IocpSocketReader {
     _private: (),
 }
@@ -59,7 +59,7 @@ impl IocpSocketReader {
 }
 
 /// Stub IOCP socket writer. Construction always fails with
-/// [`io::ErrorKind::Unsupported`].
+/// [`std::io::ErrorKind::Unsupported`].
 pub struct IocpSocketWriter {
     _private: (),
 }
