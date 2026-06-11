@@ -1,0 +1,126 @@
+# Windows nightly case-insensitive collision detection test cell (WCI-9 #3703).
+#
+# The required `Windows (stable)` cell in ci.yml does not link the
+# `platform` crate at all on Windows. WCI-1 (PR #5639, see
+# docs/audits/wci-1-windows-nextest-coverage-gap.md section 4.2)
+# inventoried six Windows-only platform tests that no Windows CI cell
+# ever exercises:
+#
+#   - administrator_resolves_to_rid_500
+#   - rid_500_resolves_to_administrator
+#   - lookup_account_info_user_returns_non_group
+#   - lookup_account_info_group_returns_is_group
+#   - windows_administrators_group_returns_some
+#   - windows_nonexistent_group_returns_none
+#
+# These tests exercise the NTFS-side SID/RID resolver
+# (`LookupAccountNameW` / `LookupAccountSidW`) that backs every
+# `--owner` and `--group` transfer when the receiver runs on Windows.
+# Case-insensitive collisions in NTFS user and group lookups (e.g.
+# `Administrator` vs `ADMINISTRATOR`) flow through the same Win32
+# call surface, so this cell pulls the entire `-p platform` crate into
+# a Windows test-binary link to cover the SID/RID resolver under NTFS
+# semantics.
+#
+# This workflow also runs the flist walker's Windows-only
+# `absolutize_returns_absolute_path_unchanged_windows` test in
+# `crates/flist/src/file_list_walker.rs`. The flist `absolutize`
+# helper is the entry point for every drive-letter and UNC path
+# enumerated under a Windows source root, so a case-folding
+# regression here would corrupt the path-name encoding used to
+# compare source and destination entries on a case-insensitive
+# destination volume. The required `Windows (stable)` cell does not
+# link `flist`, so this test does not run on Windows today.
+#
+# Status: non-required (informational). Do not add to branch protection.
+# Promotion to required-on-PR is gated on a 14-day green bake window
+# per WCI-11 #3705.
+name: Windows nightly case-insensitive
+
+on:
+  schedule:
+    # Nightly at 09:00 UTC. Offset from WCI-2 Windows IOCP (05:00 UTC),
+    # WCI-7 long-path (07:00 UTC), and the daemon/reparse cells to
+    # spread nightly Windows wall-time across the runner schedule.
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: windows-nightly-case-insensitive-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: "full"
+
+jobs:
+  windows-case-insensitive:
+    name: Windows case-insensitive collision detection
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-windows-case-insensitive-cargo-v1-${{ hashFiles('**/Cargo.lock') }}
+          key: windows-nightly-case-insensitive
+
+      - name: Install cargo-nextest (Windows direct download)
+        shell: pwsh
+        run: |
+          # Workaround for actions/partner-runner-images#169 on Windows.
+          $ErrorActionPreference = 'Stop'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
+          & "$cargoBin\cargo-nextest.exe" --version
+
+      # Run the full `-p platform` crate test set on Windows. The
+      # crate is small (~6 Windows-only tests plus a handful of shared
+      # ones) and not exercised by any existing Windows CI cell, so a
+      # `--no-fail-fast` unfiltered run catches the six WCI-1 audit
+      # targets plus any neighbouring SID/RID lookup regressions
+      # introduced into shared code. Running with default features
+      # mirrors how the per-PR Windows cell would link the crate after
+      # WCI-11 promotion, surfacing any gating drift early.
+      - name: Run platform crate tests
+        run: cargo nextest run --locked -p platform --no-fail-fast
+
+      # Filter targets the flist walker's Windows-only
+      # `absolutize_returns_absolute_path_unchanged_windows` test in
+      # `crates/flist/src/file_list_walker.rs`. The `absolutize_` and
+      # `case_` prefixes scope the run to the path-absolutization helper
+      # plus any case-folding tests the flist crate gains in future, and
+      # exclude unrelated flist tests already covered elsewhere. The
+      # `flist` crate is otherwise never linked by a Windows CI cell on
+      # default features, so this is the only Windows test binary that
+      # exercises the walker's drive-letter and UNC path branches.
+      - name: Run flist Windows absolutize + case tests
+        run: cargo nextest run --locked -p flist --no-fail-fast -E 'test(absolutize_) or test(case_)'
+
+      - name: Upload nextest logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-nightly-case-insensitive-logs
+          path: |
+            target/nextest/**/*.log
+            target/nextest/**/*.xml
+          if-no-files-found: ignore
+          retention-days: 14
