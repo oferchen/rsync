@@ -159,6 +159,30 @@ fn extract_digest_list_from_greeting(greeting: &str) -> Option<&str> {
     }
 }
 
+/// Echoes a daemon `@ERROR` line to stderr and constructs the matching
+/// client error.
+///
+/// Mirrors upstream `clientserver.c:382` - `rprintf(FERROR, "%s\n", line)` -
+/// which prints the raw `@ERROR` line verbatim to stderr before returning
+/// the fatal error to the caller. External tools (and the upstream
+/// testsuite/daemon-chroot-acl_test.py GHSA-rjfm-3w2m-jf4f regression
+/// among them) match on the `@ERROR` prefix in the client's stderr to
+/// confirm the daemon's deny path fired; suppressing the verbatim echo
+/// makes those checks fail-OPEN even though the daemon correctly denied
+/// the connection.
+///
+/// The payload is also threaded into a structured `ClientError` so the
+/// existing diagnostic envelope (exit code, role, source location) is
+/// preserved.
+#[cold]
+fn handle_daemon_at_error(line: &str) -> ClientError {
+    eprintln!("{line}");
+    daemon_error(
+        line.strip_prefix("@ERROR: ").unwrap_or(line),
+        CLIENT_SERVER_PROTOCOL_EXIT_CODE,
+    )
+}
+
 /// Performs the rsync daemon handshake protocol.
 ///
 /// Follows upstream `clientserver.c:start_inband_exchange()`:
@@ -328,10 +352,7 @@ pub(crate) fn perform_daemon_handshake<R: std::io::Read, W: Write>(
         }
 
         if trimmed.starts_with("@ERROR") {
-            return Err(daemon_error(
-                trimmed.strip_prefix("@ERROR: ").unwrap_or(trimmed),
-                CLIENT_SERVER_PROTOCOL_EXIT_CODE,
-            ));
+            return Err(handle_daemon_at_error(trimmed));
         }
 
         // upstream: rprintf(FINFO, "%s\n", line) - MOTD output.
