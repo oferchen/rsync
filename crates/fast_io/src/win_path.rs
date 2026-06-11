@@ -77,10 +77,7 @@ fn to_extended_path_windows(p: &Path) -> Cow<'_, Path> {
     // in unprefixed paths and our callers may receive paths in either form
     // from cross-platform sources. The `\\?\UNC\` prefix itself disables
     // kernel slash conversion, so the suffix must be normalised here.
-    if let Some(rest) = raw
-        .strip_prefix(r"\\")
-        .or_else(|| raw.strip_prefix("//"))
-    {
+    if let Some(rest) = raw.strip_prefix(r"\\").or_else(|| raw.strip_prefix("//")) {
         // UNC path: \\server\share\... -> \\?\UNC\server\share\...
         let normalised: String = rest
             .chars()
