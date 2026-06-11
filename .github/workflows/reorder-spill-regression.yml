@@ -1,0 +1,143 @@
+# ROB-13 - CI bench cell for ReorderBuffer spill-activation regression
+# detection. Catches regressions in the
+# `crates/engine/src/concurrent_delta/spill/**` reorder-buffer path that
+# would silently start spilling under non-adversarial workloads.
+#
+# Telemetry source: the ROB-2 `spill_activations` counter exposed via
+# `SpillStats`. Two existing regression tests assert the counter behaves
+# correctly under controlled pressure events:
+#   - `spill_activations_counter_increments_on_each_spill` (ROB-2)
+#   - `spill_warning_fires_once_per_transfer`              (ROB-3)
+#
+# Both run via nextest in this cell. When the ROB-5 / ROB-6 non-adversarial
+# bench harness lands, extend this cell to invoke it and assert the
+# observed activation count stays at the expected baseline. Tracked in
+# #3672 (ROB-5) and #3673 (ROB-6).
+#
+# Template: mirrors .github/workflows/bench-drain-throughput.yml (DPC-8,
+# PR #4923) and .github/workflows/bench-daemon-coldstart.yml (DIS-8.a,
+# PR #4905). Same trigger style, artifact pattern, and advisory posture.
+#
+# Status: non-required. Promotion to a required check is tracked as
+# ROB-13.b (not yet filed); do not gate PRs on this workflow yet.
+name: Reorder spill regression
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Nightly at 04:00 UTC. Offset from the other bench cells (cold-start
+    # 03:17, daemon-concurrency 04:37, drain-throughput 05:47) so this
+    # cell does not contend with them on a single runner pool slot.
+    - cron: '0 4 * * *'
+  pull_request:
+    paths:
+      - 'crates/engine/src/concurrent_delta/spill/**'
+      - 'crates/engine/src/concurrent_delta/consumer/**'
+      - 'crates/transfer/src/reorder_buffer/**'
+      - '.github/workflows/reorder-spill-regression.yml'
+
+concurrency:
+  group: reorder-spill-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  reorder-spill-check:
+    name: Reorder spill regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # Non-required: ROB-13.b will promote this check after a bake-in
+    # period on master. Do not add to branch protection here.
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: "1.88.0"
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@0631aa6515c7d545823c67cfae7ef4fc7f490154 # v2
+        with:
+          tool: cargo-nextest
+
+      - name: Cache cargo builds
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: reorder-spill-regression
+
+      - name: Prepare results directory
+        id: prep
+        run: |
+          set -euo pipefail
+          WORK="${{ github.workspace }}/reorder-spill-regression"
+          mkdir -p "$WORK/results"
+          echo "WORK=$WORK" >> "$GITHUB_OUTPUT"
+
+      - name: Run reorder-buffer spill regression tests
+        env:
+          WORK: ${{ steps.prep.outputs.WORK }}
+        run: |
+          set -euo pipefail
+          OUT="$WORK/results/reorder-spill.nextest.txt"
+          : > "$OUT"
+
+          # The ROB-2 / ROB-3 regression tests live as inline `#[test]`
+          # items in crates/engine/src/concurrent_delta/spill/buffer/
+          # tests/basic.rs. Nextest filter expression catches both by
+          # exact name and also any future tests prefixed `spill_` or
+          # `reorder_spill_` that document the same telemetry contract.
+          cargo nextest run \
+            --locked \
+            -p engine \
+            --no-fail-fast \
+            -E 'test(=spill_activations_counter_increments_on_each_spill) + test(=spill_warning_fires_once_per_transfer) + test(/^reorder_spill_/)' \
+            2>&1 | tee "$OUT"
+
+          # TODO(ROB-5/ROB-6): When the non-adversarial bench harness
+          # (#3672, #3673) ships, invoke it here with criterion and
+          # assert spill_activations stays at the expected baseline for
+          # 100 / 1K / 10K / 100K file scales. Pattern:
+          #   cargo bench -p engine --bench reorder_spill -- --quick
+          # then parse the bench output and fail this step if
+          # spill_activations exceeds the documented per-workload-class
+          # ceiling from docs/user/spill-to-disk.md.
+
+      - name: Publish regression summary
+        if: always()
+        env:
+          WORK: ${{ steps.prep.outputs.WORK }}
+        run: |
+          set -euo pipefail
+          OUT="$WORK/results/reorder-spill.nextest.txt"
+
+          {
+            echo "### Reorder spill regression (ROB-13)"
+            echo ""
+            echo "Source: ROB-2 \`spill_activations\` counter +"
+            echo "ROB-3 one-shot \`log::warn\` on first spill."
+            echo ""
+            echo '```'
+            # nextest output is line-oriented; cap to keep the summary
+            # readable while preserving the full log in the artifact.
+            head -n 200 "$OUT" || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload regression artifacts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: reorder-spill-regression
+          retention-days: 30
+          path: |
+            ${{ steps.prep.outputs.WORK }}/results/reorder-spill.nextest.txt
