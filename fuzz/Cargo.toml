@@ -108,6 +108,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "zlib_token_decode"
+path = "fuzz_targets/zlib_token_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "filter_list_wire"
 path = "fuzz_targets/filter_list_wire.rs"
 test = false
