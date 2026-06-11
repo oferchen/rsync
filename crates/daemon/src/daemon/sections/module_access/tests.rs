@@ -1816,4 +1816,80 @@ mod module_access_tests {
         // Absolute path is forced under the module root - no escape.
         assert_eq!(dest, std::path::Path::new("/srv/upload/etc/passwd"));
     }
+
+    // URV-5.b.REOPEN: classify_client_path_against_module is the pure helper
+    // that decides whether a raw client-supplied path goes into the Landlock
+    // allowlist (Ok(Some(canonical))), is silently accepted as relative
+    // (Ok(None)), or is rejected (Err(())). These tests pin the trust
+    // boundary so widening the allowlist cannot accidentally admit
+    // out-of-module paths.
+
+    #[test]
+    fn classify_client_path_relative_path_returns_none() {
+        let module_root = std::path::Path::new("/srv/module");
+        let result = classify_client_path_against_module(".rsync-tmp", module_root);
+        // Relative paths resolve under the module root or chroot cwd; they
+        // never need an explicit allowlist entry.
+        assert!(matches!(result, Ok(None)));
+    }
+
+    #[test]
+    fn classify_client_path_in_module_absolute_is_admitted() {
+        // Use the OS tempdir so the canonicalisation actually succeeds on
+        // the platform running the test, then probe a sub-path that we
+        // construct beneath it (which need not exist).
+        let module = tempfile::TempDir::new().expect("module tempdir");
+        let module_root = module.path().canonicalize().expect("canonicalise module");
+        let in_module = module_root.join("alt-basis");
+        let raw = in_module.to_string_lossy().into_owned();
+        let result = classify_client_path_against_module(&raw, &module_root);
+        match result {
+            Ok(Some(p)) => assert!(
+                p.starts_with(&module_root),
+                "admitted path '{}' must start with module root '{}'",
+                p.display(),
+                module_root.display(),
+            ),
+            other => panic!("expected admitted in-module path, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_client_path_out_of_module_absolute_is_rejected() {
+        let module = tempfile::TempDir::new().expect("module tempdir");
+        let outside = tempfile::TempDir::new().expect("outside tempdir");
+        let module_root = module.path().canonicalize().expect("canonicalise module");
+        let outside_root = outside.path().canonicalize().expect("canonicalise outside");
+        let raw = outside_root.to_string_lossy().into_owned();
+        let result = classify_client_path_against_module(&raw, &module_root);
+        // The whole point of SEC-1.p: an attacker-supplied prefix that
+        // escapes the module root must be rejected, never admitted.
+        assert!(matches!(result, Err(())));
+    }
+
+    #[test]
+    fn classify_client_path_existing_dotdot_escape_is_rejected() {
+        // `..` traversal against an *existing* path canonicalises to the
+        // resolved target; if the target is outside the module root, the
+        // helper rejects it. (URV-5.a / #3617 separately covers the
+        // non-existent `..` escape via `RESOLVE_BENEATH`; this test pins
+        // the existing-path branch the widening relies on.)
+        let module = tempfile::TempDir::new().expect("module tempdir");
+        let outside = tempfile::TempDir::new().expect("outside tempdir");
+        let module_root = module.path().canonicalize().expect("canonicalise module");
+        let outside_root = outside.path().canonicalize().expect("canonicalise outside");
+        // Build a traversal that canonicalises out of the module tree by
+        // walking up to the shared tempdir parent and back down into the
+        // sibling temp directory.
+        let escape = format!(
+            "{}/../{}",
+            module_root.display(),
+            outside_root
+                .file_name()
+                .expect("outside basename")
+                .to_string_lossy(),
+        );
+        let result = classify_client_path_against_module(&escape, &module_root);
+        assert!(matches!(result, Err(())));
+    }
 }
