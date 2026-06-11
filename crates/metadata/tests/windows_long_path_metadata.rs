@@ -4,8 +4,8 @@
 //! The Win32 file APIs reject plain paths above `MAX_PATH` (260 characters)
 //! with `ERROR_PATH_NOT_FOUND` unless the caller opts in to the
 //! extended-length syntax (`\\?\C:\...`). The metadata crate routes every
-//! ACL / xattr boundary through `fast_io::to_extended_path` so deeply
-//! nested trees keep working.
+//! ACL / xattr / reparse-point boundary through `fast_io::to_extended_path`
+//! so deeply nested trees keep working.
 //!
 //! These tests build a 30-segment / 25-char-per-segment directory tree
 //! (~750 absolute characters) and exercise:
@@ -19,6 +19,9 @@
 //!   `metadata::apply_xattrs_from_list`) which fans into the
 //!   `xattr_windows::path_to_wide` / `stream_path_wide` boundaries feeding
 //!   `FindFirstStreamW` and `CreateFileW`.
+//! - The Windows reparse-point classifier (`metadata::windows::classify_path`)
+//!   which routes through `open_reparse_handle` feeding `CreateFileW` with
+//!   `FILE_FLAG_OPEN_REPARSE_POINT`.
 //!
 //! Long-path support is filesystem-dependent: NTFS supports it, FAT32
 //! does not, and SMB / network mounts may reject creation regardless of
@@ -31,6 +34,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use metadata::windows::classify_path;
 use metadata::{apply_xattrs_from_list, read_dacl_sddl, read_xattrs_for_wire, write_dacl_sddl};
 use protocol::xattr::{XattrEntry, XattrList};
 use tempfile::tempdir;
@@ -199,4 +203,31 @@ fn long_path_ads_round_trip() {
         stream_value.as_slice(),
         "ADS payload must round-trip byte-for-byte",
     );
+}
+
+#[test]
+fn long_path_reparse_classifier_acquires_handle() {
+    // The reparse-point classifier opens its target via `CreateFileW` with
+    // `FILE_FLAG_OPEN_REPARSE_POINT`; the path is routed through
+    // `to_extended_path` so deeply nested files do not trip `MAX_PATH`.
+    const TARGET_CHARS: usize = 600;
+
+    let dir = tempdir().expect("create temp dir");
+    let Some(leaf) = try_create_long_tree(dir.path(), TARGET_CHARS) else {
+        return;
+    };
+
+    let file = leaf.join("plain.txt");
+    fs::write(&file, b"payload").expect("seed file in long path");
+    assert!(
+        file.as_os_str().len() >= TARGET_CHARS,
+        "absolute file path must exceed MAX_PATH: got {} chars",
+        file.as_os_str().len(),
+    );
+
+    // Plain regular files have no reparse data; the classifier must
+    // succeed in acquiring the underlying handle through
+    // `to_extended_path` and return without an io::Error. A short-path
+    // `CreateFileW` would surface `ERROR_PATH_NOT_FOUND` at >260 chars.
+    classify_path(&file).expect("classify reparse on long path must succeed");
 }
