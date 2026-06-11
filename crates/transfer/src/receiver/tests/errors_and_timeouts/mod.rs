@@ -7,6 +7,8 @@
 //! the 650-line cap:
 //!
 //! - [`legacy_goodbye_tests`] - protocol 28/29 NDX_DONE goodbye exchange.
+//! - [`goodbye_partial_cutoff`] - EDG-GOODBYE.4 receiver-side EOF /
+//!   garbage / hung-sender handling for the goodbye phase.
 //! - [`input_multiplex_tests`] - client/server input multiplex activation
 //!   per protocol version.
 //! - [`sanitize_file_list`] - trust gating that strips absolute / `..`
@@ -15,6 +17,7 @@
 //!   from `daemon_filter_rules`.
 
 mod daemon_filter_tests;
+mod goodbye_partial_cutoff;
 mod input_multiplex_tests;
 mod legacy_goodbye_tests;
 mod sanitize_file_list;
