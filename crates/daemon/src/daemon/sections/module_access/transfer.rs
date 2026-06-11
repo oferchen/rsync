@@ -754,8 +754,15 @@ fn process_approved_module(
     // post-OK `read_args()` round-trip. The earlier check at the OPTION-line
     // pre-handshake stage only sees client-supplied dparam overrides, never
     // the real transfer flags (e.g. `-z` packed into `-vlogDtprez.iLsfxCIvu`).
+    //
+    // Because `@RSYNCD: OK` has already been emitted, the client has switched
+    // to multiplexed input. The error must travel as `MSG_ERROR_XFER` +
+    // `MSG_ERROR_EXIT` frames; raw `@ERROR:` text would surface on the
+    // receiver as `unexpected tag 77` (the 'T' from "The server ..." minus
+    // `MPLEX_BASE = 7`). upstream: clientserver.c:1146 io_start_multiplex_out
+    // immediately followed by `rwrite(FERROR, ...)`.
     if let Some(refused) = refused_client_arg(module, &client_args) {
-        return handle_refused_option(ctx, &refused);
+        return handle_refused_option_post_handshake(ctx, &refused);
     }
 
     // Enforce read-only / write-only access restrictions.

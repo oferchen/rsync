@@ -48,6 +48,13 @@ impl<'a> ModuleRequestContext<'a> {
 }
 
 /// Sends an error message and exit marker to the client.
+///
+/// This is the pre-handshake form: the daemon has not yet emitted
+/// `@RSYNCD: OK` so the client still reads raw `@RSYNCD:`-style text.
+/// After OK is sent the client switches its input to the multiplex stream
+/// and any further raw bytes are mis-parsed as multiplex frame headers
+/// (e.g. the 'T' of "The server..." surfaces as `unexpected tag 77`).
+/// Use [`send_multiplexed_error_and_exit`] once OK has been written.
 fn send_error_and_exit(
     stream: &mut DaemonStream,
     limiter: &mut Option<BandwidthLimiter>,
@@ -57,6 +64,35 @@ fn send_error_and_exit(
     write_limited(stream, limiter, payload.as_bytes())?;
     write_limited(stream, limiter, b"\n")?;
     messages.write_exit(stream, limiter)?;
+    stream.flush()
+}
+
+/// Sends a fatal error to the client through the multiplex stream and
+/// terminates the session.
+///
+/// upstream: clientserver.c:1175-1186 - once `io_start_multiplex_out()`
+/// has run (which happens around the `@RSYNCD: OK` exchange) the daemon
+/// emits errors via `rwrite(FERROR, ...)`, encoded as a `MSG_ERROR_XFER`
+/// frame, followed by `MSG_ERROR_EXIT` to synchronize the error exit.
+/// Raw `@ERROR: ...\n` text written here would be decoded by the client's
+/// `read_a_msg()` as a multiplex frame header and surface as
+/// "unexpected tag 77" (the byte 'T' from "The server is configured ..."
+/// minus `MPLEX_BASE = 7`).
+fn send_multiplexed_error_and_exit(
+    stream: &mut DaemonStream,
+    limiter: &mut Option<BandwidthLimiter>,
+    payload: &str,
+    exit_code: i32,
+) -> io::Result<()> {
+    let mut frame_bytes = payload.as_bytes().to_vec();
+    frame_bytes.push(b'\n');
+    let mut buffer = Vec::new();
+    MessageFrame::new(MessageCode::ErrorXfer, frame_bytes)?
+        .encode_into_writer(&mut buffer)?;
+    // upstream: io.c:1060 send_msg_int() - little-endian 4-byte exit code.
+    MessageFrame::new(MessageCode::ErrorExit, exit_code.to_le_bytes().to_vec())?
+        .encode_into_writer(&mut buffer)?;
+    write_limited(stream, limiter, &buffer)?;
     stream.flush()
 }
 
@@ -148,12 +184,42 @@ fn handle_lock_error(ctx: &mut ModuleRequestContext<'_>, error: &io::Error) -> i
     Ok(())
 }
 
-/// Handles refused options for a module.
+/// Handles refused options for a module (pre-handshake path).
 ///
 /// Sends an error message indicating the option is refused and logs the event.
+/// Used when refused-options are detected from `OPTION` directives sent before
+/// `@RSYNCD: OK`; at this point the client still reads raw text.
 fn handle_refused_option(ctx: &mut ModuleRequestContext<'_>, refused: &str) -> io::Result<()> {
     let payload = format!("@ERROR: The server is configured to refuse {refused}");
     send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+    if let Some(log) = ctx.log_sink {
+        log_module_refused_option(log, ctx.effective_host(), ctx.peer_ip, ctx.request, refused);
+    }
+    Ok(())
+}
+
+/// Handles refused options for a module after `@RSYNCD: OK` has been emitted.
+///
+/// upstream: clientserver.c:1175-1186 - once the daemon has acknowledged the
+/// module the client switches its input to the multiplexed stream
+/// (`io_start_multiplex_in()` at the OK boundary). Errors detected after that
+/// point - including refused options matched against the real argv in
+/// `parse_arguments()` - must travel as `MSG_ERROR_XFER` followed by
+/// `MSG_ERROR_EXIT`. Raw `@ERROR: ...\n` text would be decoded as a multiplex
+/// frame header and surface as "unexpected tag 77" on the receiver because the
+/// upper byte of the header would be the literal 'T' from "The server ..."
+/// (84 = 77 + `MPLEX_BASE`).
+fn handle_refused_option_post_handshake(
+    ctx: &mut ModuleRequestContext<'_>,
+    refused: &str,
+) -> io::Result<()> {
+    let payload = format!("@ERROR: The server is configured to refuse {refused}");
+    send_multiplexed_error_and_exit(
+        ctx.reader.get_mut(),
+        ctx.limiter,
+        &payload,
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+    )?;
     if let Some(log) = ctx.log_sink {
         log_module_refused_option(log, ctx.effective_host(), ctx.peer_ip, ctx.request, refused);
     }
