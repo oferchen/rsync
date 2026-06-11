@@ -1,0 +1,96 @@
+# Weekly Cargo.lock Maintenance
+#
+# Why this exists
+#   The committed Cargo.lock drifts over time as dependency releases land. The
+#   interop, parallel-determinism, and MSRV workflows all build with --locked,
+#   so once drift accumulates a single PR ends up bundling a large lockfile
+#   bump alongside its own changes. A weekly cron PR keeps the lockfile fresh
+#   so individual PRs stay focused on their own diff.
+#
+# When humans should review the cron PR
+#   - Patch / minor bumps with no transitive churn: usually safe to merge once
+#     CI is green.
+#   - Major bumps, yanked-crate replacements, or churn in security-sensitive
+#     crates (russh, rustls, hyper, openssl-sys, etc.): review the diff
+#     against upstream changelogs before merging.
+#   - If the cron PR fails CI: investigate the failing crate before merging.
+#     A dependency bump is the most likely culprit and needs a follow-up fix
+#     in the same PR.
+
+name: Weekly Cargo.lock Refresh
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: cargo-lockfile-weekly
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-lockfile:
+    name: Refresh Cargo.lock
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - name: Run cargo update
+        id: cargo-update
+        run: |
+          set -euo pipefail
+          cargo update --workspace 2>&1 | tee cargo-update.log
+          {
+            echo 'update_output<<CARGO_UPDATE_EOF'
+            cat cargo-update.log
+            echo 'CARGO_UPDATE_EOF'
+          } >>"$GITHUB_OUTPUT"
+
+      - name: Detect changes
+        id: diff
+        run: |
+          if git diff --quiet -- Cargo.lock; then
+            echo "changed=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Open pull request
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: chore/cargo-lockfile-weekly-${{ github.run_id }}
+          delete-branch: true
+          commit-message: 'chore(deps): weekly Cargo.lock refresh'
+          title: 'chore(deps): weekly Cargo.lock refresh'
+          author: 'github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>'
+          committer: 'github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>'
+          body: |
+            Automated weekly refresh of `Cargo.lock` via `cargo update --workspace`.
+
+            ## Why
+            Several CI workflows (interop, parallel-determinism, MSRV) build with
+            `--locked`, so dependency drift accumulates between active PRs. This
+            cron PR keeps the committed lockfile fresh.
+
+            ## Review guidance
+            - Patch / minor bumps with no transitive churn: merge once CI is green.
+            - Major bumps or churn in security-sensitive crates: cross-check upstream
+              changelogs before merging.
+            - If CI fails: investigate the offending crate; a dependency bump is the
+              most likely culprit and needs a follow-up fix in the same PR.
+
+            ## `cargo update --workspace` output
+            ```
+            ${{ steps.cargo-update.outputs.update_output }}
+            ```
