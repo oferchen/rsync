@@ -286,8 +286,13 @@ pub(super) fn apply_permissions_with_chmod_fd(
 /// Determines the base mode before chmod modifiers are applied.
 ///
 /// When `--perms` is active, returns the source mode directly. Otherwise
-/// reads the destination's current mode and optionally merges executability
-/// bits from the source.
+/// mirrors upstream `rsync.c:447-472 dest_mode()`: the chmod tweak (CLI
+/// `--chmod` or daemon `incoming chmod = ...`) runs on top of the
+/// source mode collapsed via `dest_mode()`, not on top of whatever the
+/// destination tempfile happens to carry. Without this, a freshly-renamed
+/// `O_TMPFILE` 0o600 leaks through as the chmod baseline and a daemon
+/// upload with `--no-perms` lands a file at 0o600 instead of the
+/// umask-default the testsuite `chmod-option` test pins.
 #[cfg(unix)]
 fn base_mode_for_permissions(
     destination: &Path,
@@ -301,19 +306,20 @@ fn base_mode_for_permissions(
         return Ok(metadata.permissions().mode());
     }
 
+    // upstream: rsync.c:455-470 - existing files keep destination's perm
+    // bits with the type bits from the source mode; new files mask the
+    // source mode by `dflt_perms = ACCESSPERMS & ~orig_umask`. The
+    // destination tempfile mode is never the baseline.
+    let source_mode = metadata.permissions().mode();
     let mut destination_permissions = if let Some(existing) = existing {
-        existing.permissions().mode()
+        (source_mode & !0o7777) | (existing.permissions().mode() & 0o7777)
     } else {
-        fs::metadata(destination)
-            .map_err(|error| {
-                MetadataError::new("inspect destination permissions", destination, error)
-            })?
-            .permissions()
-            .mode()
+        let dflt_perms = 0o777 & !cached_umask();
+        source_mode & (!0o7777 | dflt_perms)
     };
 
     if options.executability() && metadata.is_file() {
-        let source_exec = metadata.permissions().mode() & 0o111;
+        let source_exec = source_mode & 0o111;
         if source_exec == 0 {
             destination_permissions &= !0o111;
         } else {
@@ -321,6 +327,10 @@ fn base_mode_for_permissions(
         }
     }
 
+    // `destination` is unused on the new-file path now that the base mode
+    // is derived from the source rather than from a destination stat.
+    // Keep the parameter for API parity with the fd-based sibling.
+    let _ = destination;
     Ok(destination_permissions)
 }
 
@@ -424,10 +434,16 @@ pub(super) fn apply_permissions_from_entry(
         }
 
         if let Some(chmod) = options.chmod() {
-            // upstream: rsync.c:set_file_attrs() - read current mode before
-            // applying chmod modifiers. When -p changed permissions above we
-            // must re-stat; when -p matched (no change) we reuse cached_meta
-            // to avoid a redundant stat syscall on the no-change path.
+            // upstream: rsync.c:495+518 - `new_mode = file->mode` then
+            // `new_mode = tweak_mode(new_mode, daemon_chmod_modes)`. The
+            // chmod baseline is the source file's mode (already collapsed
+            // through `dest_mode()` in the generator at generator.c:1455 +
+            // :1535 when `!preserve_perms`), NEVER the destination's
+            // tempfile mode. Reading the destination would feed back the
+            // `O_TMPFILE` 0o600 default for fresh transfers and produce
+            // 0o600 under e.g. `Fo-x` instead of the expected umask
+            // default (UTS-17.REOPEN: testsuite/chmod-option daemon
+            // upload).
             let fresh_meta;
             let current_meta = if options.permissions() && perms_changed {
                 fresh_meta = fs::metadata(destination)
@@ -442,7 +458,26 @@ pub(super) fn apply_permissions_from_entry(
             };
             let current_mode = current_meta.permissions().mode();
 
-            let new_mode = chmod.apply(current_mode, current_meta.file_type());
+            let base_mode = if options.permissions() {
+                // -p: the immediately preceding branch chmod'd to the
+                // source mode, so current_mode IS the source mode.
+                current_mode
+            } else {
+                // --no-perms: mirror upstream `dest_mode()`. For a fresh
+                // transfer (`cached_meta.is_none()`), use the new-file
+                // branch (`flist_mode & (~CHMOD_BITS | dflt_perms)`); for
+                // a quick-check skip on an existing dest, use the
+                // existing-file branch (keep destination's perm bits).
+                let source_mode = entry.permissions();
+                if cached_meta.is_none() {
+                    let dflt_perms = 0o777 & !cached_umask();
+                    source_mode & (!0o7777 | dflt_perms)
+                } else {
+                    (source_mode & !0o7777) | (current_mode & 0o7777)
+                }
+            };
+
+            let new_mode = chmod.apply(base_mode, current_meta.file_type());
             if new_mode != current_mode {
                 let new_permissions = PermissionsExt::from_mode(new_mode);
                 fs::set_permissions(destination, new_permissions)
