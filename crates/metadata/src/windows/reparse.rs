@@ -49,6 +49,7 @@ use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::io::AsRawHandle;
 use std::path::Path;
 
+use fast_io::to_extended_path;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_READ,
@@ -292,8 +293,14 @@ impl Drop for ReparseHandle {
 /// call. Read access is limited to `FILE_READ_ATTRIBUTES`; sharing is left
 /// permissive (`FILE_SHARE_READ | FILE_SHARE_WRITE`) so we never block a
 /// concurrent enumerator.
+///
+/// The path is first routed through [`fast_io::to_extended_path`] so absolute
+/// drive and UNC inputs gain the `\\?\` extended-length prefix. Without the
+/// prefix, `CreateFileW` rejects paths exceeding the 260-character `MAX_PATH`
+/// cap with `ERROR_PATH_NOT_FOUND`, which would silently break reparse-point
+/// classification on deeply nested trees.
 fn open_reparse_handle(path: &Path) -> io::Result<ReparseHandle> {
-    let wide: Vec<u16> = path
+    let wide: Vec<u16> = to_extended_path(path)
         .as_os_str()
         .encode_wide()
         .chain(std::iter::once(0))
