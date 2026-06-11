@@ -440,4 +440,60 @@ mod tests {
             .expect("trailing byte must remain in the stream");
         assert_eq!(leftover, [b'@']);
     }
+
+    // Multi-byte-trailer drain tests for UTS-1.d.followup.
+    //
+    // The single-trailing-byte test above proves the terminator is consumed
+    // exactly. These tests strengthen the boundary check with a multi-byte
+    // trailer: if recv_secluded_args left any portion of the terminator NUL
+    // unread, the leftover read would see a stray `\0` instead of the
+    // expected bytes. Reading the entire trailer back via read_to_end and
+    // asserting byte-equality locks the drain invariant against off-by-one
+    // regressions that a single-byte sentinel cannot detect (e.g. consuming
+    // the first byte of the trailer instead of the terminator).
+
+    #[test]
+    fn recv_secluded_args_consumes_terminator_nul() {
+        // Wire format: 4 server-mode args, terminator NUL, then a multi-byte
+        // sentinel that simulates the protocol greeting bytes the next
+        // reader would consume. If the terminator NUL is not fully drained,
+        // the leftover slice would carry a stray leading `\0`.
+        let wire: &[u8] = b"--server\0-vlogDtpre.iLsfxCIvu\0.\0src/\0\0EXTRA";
+        let mut cursor = io::Cursor::new(wire);
+
+        let args = recv_secluded_args(&mut cursor, None).expect("recv should succeed");
+
+        assert_eq!(args, vec!["--server", "-vlogDtpre.iLsfxCIvu", ".", "src/"]);
+
+        let mut leftover = Vec::new();
+        cursor
+            .read_to_end(&mut leftover)
+            .expect("trailing bytes must remain readable");
+        assert_eq!(
+            leftover, b"EXTRA",
+            "recv_secluded_args must consume the terminator NUL exactly; any \
+             residual byte leaks into the next protocol phase as a stray NUL"
+        );
+    }
+
+    #[test]
+    fn recv_secluded_args_empty_arg_list() {
+        // Wire format: an empty arg list is a single terminator NUL. The
+        // trailing sentinel bytes must remain readable verbatim - the
+        // terminator must be drained without swallowing any of the trailer.
+        let wire: &[u8] = b"\0NEXT";
+        let mut cursor = io::Cursor::new(wire);
+
+        let args = recv_secluded_args(&mut cursor, None).expect("recv should succeed");
+        assert!(args.is_empty());
+
+        let mut leftover = Vec::new();
+        cursor
+            .read_to_end(&mut leftover)
+            .expect("trailing bytes must remain readable");
+        assert_eq!(
+            leftover, b"NEXT",
+            "empty arg list must consume only the terminator NUL"
+        );
+    }
 }
