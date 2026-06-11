@@ -56,3 +56,6 @@ acl = ["dep:exacl"]
 [dev-dependencies]
 tempfile = { workspace = true }
 test-support = { path = "../test-support" }
+
+[target.'cfg(unix)'.dev-dependencies]
+xattr = { workspace = true }
