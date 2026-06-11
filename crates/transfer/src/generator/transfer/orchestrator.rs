@@ -127,6 +127,24 @@ impl GeneratorContext {
         let mut ndx_write_codec = transfer_result.ndx_write_codec;
         self.handle_goodbye(reader, writer, &mut ndx_read_codec, &mut ndx_write_codec)?;
 
+        // upstream: main.c:968 do_server_sender() and main.c:912 client_run()
+        // both call io_flush(FULL_FLUSH) immediately before returning so the
+        // kernel ships the final NDX_DONE (and any trailing multiplexed
+        // MSG_INFO frames) before the transport FIN. We mirror that contract
+        // here as defense-in-depth: even though `handle_goodbye` already
+        // flushes after its NDX_DONE write, any diagnostic frame queued
+        // later in `run()` would otherwise race the connection close.
+        //
+        // Rule 12 (fail-loud): surface the flush error unless the peer has
+        // already shut down. Early close during goodbye-shutdown is rare and
+        // the transfer is over, so any other error is treated as a real
+        // failure rather than swallowed.
+        if let Err(e) = writer.flush() {
+            if !super::super::is_early_close_error(&e) {
+                return Err(e);
+            }
+        }
+
         // Calculate timing stats for return value
         let flist_buildtime =
             calculate_duration_ms(self.timing.flist_build_start, self.timing.flist_build_end);

@@ -169,6 +169,14 @@ pub mod mmap_reader;
 #[path = "mmap_reader_stub.rs"]
 pub mod mmap_reader;
 
+/// Bounded-RSS chunked file reader for Windows. Production replacement for
+/// `mmap_reader_stub`'s `Vec<u8>`-per-file allocation, capping peak RSS at the
+/// configured chunk size rather than the file size. See the module-level
+/// documentation for the call-site migration path and the
+/// `OC_RSYNC_WIN_CHUNK_BYTES` tuning override.
+#[cfg(windows)]
+pub mod windows_chunked_reader;
+
 /// io_uring-based async file and socket I/O for Linux 5.6+.
 ///
 /// This module provides high-performance I/O using Linux's io_uring interface
@@ -322,10 +330,10 @@ pub use io_uring::{
     bgid_exhausted_count, bgid_inflight, bgid_peak_used, bgid_snapshot, buffer_id_from_cqe_flags,
     build_linkat_sqe, build_linkat_sqe_unchecked, build_renameat2_sqe,
     build_renameat2_sqe_unchecked, build_statx_sqe, build_statx_sqe_unchecked,
-    is_io_uring_available, linkat_supported, pbuf_ring_supported, reader_from_path,
-    reader_from_path_with_depth, renameat2_blocking, renameat2_supported, sqpoll_fell_back,
-    statx_supported, submit_linkat_blocking, submit_statx_batch, submit_statx_blocking,
-    writer_from_file, writer_from_file_with_depth,
+    is_io_uring_available, is_sqpoll_disabled_by_policy, linkat_supported, pbuf_ring_supported,
+    reader_from_path, reader_from_path_with_depth, renameat2_blocking, renameat2_supported,
+    set_sqpoll_disabled_by_policy, sqpoll_fell_back, statx_supported, submit_linkat_blocking,
+    submit_statx_batch, submit_statx_blocking, writer_from_file, writer_from_file_with_depth,
 };
 
 #[cfg(all(target_os = "linux", feature = "iouring-data-reads"))]

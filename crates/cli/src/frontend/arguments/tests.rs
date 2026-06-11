@@ -1237,6 +1237,54 @@ mod option_values {
         assert!(err.to_string().contains("--io-uring-depth"));
     }
 
+    /// The `--no-io-uring-sqpoll` flag must parse to the dedicated
+    /// `IoUringPolicy::SqpollOff` variant and leave io_uring active. This
+    /// is the explicit opt-out for rootless containers and Kubernetes pods
+    /// that cannot grant `CAP_SYS_NICE`; the test pins the parse mapping
+    /// so future refactors cannot silently fold it into `Auto` or
+    /// `Disabled`.
+    #[test]
+    fn no_io_uring_sqpoll_parses_to_sqpoll_off_variant() {
+        let parsed =
+            parse_test_args(["--no-io-uring-sqpoll", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.io_uring_policy, fast_io::IoUringPolicy::SqpollOff);
+        assert!(
+            parsed.io_uring_policy.is_io_uring_active(),
+            "SqpollOff must keep io_uring active for file and socket I/O"
+        );
+        assert!(
+            parsed.io_uring_policy.forbids_sqpoll(),
+            "SqpollOff must mark SQPOLL as forbidden so ring builders honour the gate"
+        );
+    }
+
+    /// `--no-io-uring-sqpoll` must take precedence over a preceding
+    /// `--no-io-uring` (the last io_uring policy flag wins, mirroring how
+    /// `--io-uring`/`--no-io-uring` already override each other). This
+    /// matters for operators who set `--no-io-uring` in shared wrapper
+    /// scripts and want to selectively re-enable io_uring (minus SQPOLL)
+    /// on a single invocation without rewriting the wrapper.
+    #[test]
+    fn no_io_uring_sqpoll_overrides_no_io_uring() {
+        let parsed = parse_test_args([
+            "--no-io-uring",
+            "--no-io-uring-sqpoll",
+            "src/",
+            "dst/",
+        ])
+        .expect("parse");
+        assert_eq!(parsed.io_uring_policy, fast_io::IoUringPolicy::SqpollOff);
+    }
+
+    /// The default policy is `Auto`. Pin it so removing the new variant or
+    /// reordering the parser branches cannot accidentally make `SqpollOff`
+    /// the default.
+    #[test]
+    fn io_uring_policy_defaults_to_auto() {
+        let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.io_uring_policy, fast_io::IoUringPolicy::Auto);
+    }
+
     #[test]
     fn modify_window_with_equals() {
         let parsed = parse_test_args(["--modify-window=2", "src/", "dst/"]).expect("parse");

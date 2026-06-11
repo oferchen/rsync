@@ -220,3 +220,69 @@ fn root_arc_clones_share_owner() {
     assert!(Arc::ptr_eq(&arc1, &arc2));
     assert_eq!(arc1.as_raw_fd(), sandbox.root_dirfd().as_raw_fd());
 }
+
+/// EDG-SANDBOX.2 contract test - chdir-symlink-race trap.
+///
+/// Locks the documented error-class contract that the
+/// receiver's silent-skip audit (`docs/audits/edg-sandbox-silent-skip.md`)
+/// and the PR #5565 refined error discrimination both rely on:
+/// `DirSandbox::enter` MUST refuse to traverse a symlink at the leaf,
+/// even when the symlink's target points outside the sandbox root (the
+/// classic chdir-symlink-race shape where an attacker drops
+/// `subdir -> ../outside` between the receiver's `mkdir` and its first
+/// per-entry syscall).
+///
+/// The kernel rejects with `ELOOP` on Linux + `openat2(RESOLVE_NO_SYMLINKS)`
+/// and on plain `openat(O_NOFOLLOW)`; macOS/BSD evaluates `O_DIRECTORY`
+/// before `O_NOFOLLOW` and returns `ENOTDIR` for a symlink-to-directory.
+/// On Linux + `openat2(RESOLVE_BENEATH)` a `..` segment that escapes the
+/// root surfaces as `EXDEV`. All three are valid refusal classes; the
+/// invariant is that `enter` never silently succeeds and the stack stays
+/// untouched.
+#[test]
+fn enter_through_symlink_to_outside_refuses() {
+    let (_keep_root, root) = canonical_tempdir();
+    // The "outside" target lives in a sibling tempdir so the symlink
+    // genuinely points outside the sandbox root. The chdir-symlink-race
+    // POC drops a similar shape mid-transfer to redirect per-entry
+    // syscalls to an attacker-chosen parent.
+    let (_keep_outside, outside) = canonical_tempdir();
+    symlink(&outside, root.join("subdir")).expect("plant trap symlink");
+
+    let mut sandbox = DirSandbox::open_root(&root).expect("open root");
+    let err = sandbox
+        .enter(std::ffi::OsStr::new("subdir"))
+        .expect_err("symlink trap must be refused");
+    let code = err.raw_os_error();
+    assert!(
+        code == Some(libc::ELOOP)
+            || code == Some(libc::ENOTDIR)
+            || code == Some(libc::EXDEV),
+        "expected ELOOP, ENOTDIR, or EXDEV for symlink-to-outside trap, got: {err}"
+    );
+    // The descent stack must stay empty so the receiver's subsequent
+    // `current_dirfd()` call still anchors on the sandbox root, not on
+    // an attacker-controlled descriptor.
+    assert_eq!(sandbox.depth(), 0);
+}
+
+/// EDG-SANDBOX.2 positive contract test.
+///
+/// Sibling of [`enter_through_symlink_to_outside_refuses`]: confirms that a
+/// real on-tree subdirectory is accepted so the audit's "refine error
+/// discrimination" rule (PR #5565) does not regress the happy path. A
+/// receiver that fails closed on every error class must still let
+/// legitimate descents through.
+#[test]
+fn enter_to_legitimate_subdir_returns_ok() {
+    let (_keep, root) = canonical_tempdir();
+    std::fs::create_dir(root.join("subdir")).expect("mkdir subdir");
+
+    let mut sandbox = DirSandbox::open_root(&root).expect("open root");
+    sandbox
+        .enter(std::ffi::OsStr::new("subdir"))
+        .expect("legitimate subdir must succeed");
+    assert_eq!(sandbox.depth(), 1);
+    sandbox.exit();
+    assert_eq!(sandbox.depth(), 0);
+}

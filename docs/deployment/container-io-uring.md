@@ -100,6 +100,13 @@ the `io_uring_*` syscall family.
 
 ## Kubernetes Configuration
 
+For the full Kubernetes deployment guide - Job manifests, daemon-as-Pod
+deployment, Pod Security Admission profile interactions, and the
+quantitative tradeoff table for `--no-io-uring-sqpoll` - see
+[kubernetes.md](kubernetes.md). The brief recipes below cover the most
+common Pod spec snippets; refer to the dedicated guide for the full
+context.
+
 ### Pod securityContext for SQPOLL
 
 ```yaml
@@ -134,12 +141,47 @@ spec:
       # and standard I/O fallback engages if io_uring is blocked.
 ```
 
+### Explicit SQPOLL opt-out for rootless Pods
+
+Rootless Kubernetes Pods (most production clusters) cannot grant
+`CAP_SYS_NICE` because Pod Security Admission rejects
+`capabilities.add: ["SYS_NICE"]` under `restricted` and stricter
+profiles. The default `Auto` policy still works - SQPOLL is attempted
+and falls back transparently on `EPERM` - but operators who want a
+deterministic guarantee that the SQPOLL kthread is never requested can
+pass `--no-io-uring-sqpoll`:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: oc-rsync-rootless
+spec:
+  containers:
+    - name: rsync
+      image: myregistry/oc-rsync:latest
+      command:
+        - "oc-rsync"
+        - "--no-io-uring-sqpoll"
+        - "src/"
+        - "dst/"
+      # io_uring stays active for file and socket I/O; only
+      # IORING_SETUP_SQPOLL is suppressed. BGID, registered buffers,
+      # file registration and SEND_ZC remain available where supported.
+```
+
+The flag is also useful in non-K8s test environments that want to
+reproduce production rootless behaviour exactly: the kernel never sees
+a SQPOLL setup request, so the codepath under test matches the
+audit-restricted production deployment.
+
 ### Kubernetes Security Policies
 
 If your cluster uses PodSecurityStandards or PodSecurityPolicies:
 
 - **Restricted profile**: Blocks `SYS_NICE`. SQPOLL is unavailable; basic
-  io_uring may still work depending on the seccomp profile.
+  io_uring may still work depending on the seccomp profile. Use
+  `--no-io-uring-sqpoll` to suppress the SQPOLL request at the source.
 - **Baseline profile**: Does not add `SYS_NICE` by default but does not block
   it if explicitly requested in the pod spec.
 - **Privileged profile**: All capabilities available.
@@ -207,6 +249,16 @@ measurable only at high submission rates (thousands of SQEs per second). For
 typical rsync workloads transferring moderate numbers of files, non-SQPOLL
 io_uring already provides most of the benefit over standard I/O.
 
+## CLI Flags
+
+| Flag | Effect |
+|------|--------|
+| `--io-uring` | Force io_uring on; error if the kernel does not support it. Policy = `Enabled`. |
+| `--no-io-uring` | Disable io_uring entirely; always use standard buffered I/O. Policy = `Disabled`. |
+| `--no-io-uring-sqpoll` | Keep io_uring on but suppress `IORING_SETUP_SQPOLL`. Policy = `SqpollOff`. Recommended for rootless containers and Kubernetes Pods without `CAP_SYS_NICE`. |
+| `--io-uring-depth=N` | Override submission queue depth (default 64). |
+| `--io-uring-status` | Print the capability matrix and exit. |
+
 ## Environment Variables
 
 | Variable | Effect |
@@ -224,6 +276,10 @@ io_uring already provides most of the benefit over standard I/O.
 
 3. **Rootless containers**: SQPOLL is unavailable. Basic io_uring still works
    unless blocked by seccomp. No action required - the fallback is automatic.
+   Operators who want a deterministic opt-out (no SQPOLL request at all)
+   should pass `--no-io-uring-sqpoll`; this matches the production behaviour
+   under Pod Security Admission `restricted` profiles exactly. See
+   [kubernetes.md](kubernetes.md) for the full Kubernetes deployment guide.
 
 4. **Troubleshooting**: Run `oc-rsync --io-uring-status` inside the container
    to see the full capability matrix and identify which tier is active.

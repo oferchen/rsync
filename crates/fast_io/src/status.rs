@@ -192,6 +192,14 @@ pub fn io_uring_capability_matrix() -> String {
                 "no"
             }
         ));
+        lines.push(format!(
+            "  sqpoll opt-out:     {}",
+            if crate::is_sqpoll_disabled_by_policy() {
+                "yes (--no-io-uring-sqpoll)"
+            } else {
+                "no"
+            }
+        ));
     }
 
     // Feature gates

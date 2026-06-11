@@ -1,0 +1,15 @@
+## <summary>oc-rsyncd daemon - file synchronization service.</summary>
+##
+## <desc>
+##   <p>
+##     This interface file is intentionally minimal. The oc_rsyncd
+##     policy module defines its own domain (oc_rsyncd_t) and does not
+##     currently export interfaces for other domains to call.
+##   </p>
+##   <p>
+##     Distributions or site operators that need to grant other domains
+##     access to oc-rsyncd resources should add interface stanzas here
+##     (e.g. oc_rsyncd_read_config, oc_rsyncd_admin) following the
+##     conventions in /usr/share/selinux/devel/include/.
+##   </p>
+## </desc>

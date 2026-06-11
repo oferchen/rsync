@@ -31,7 +31,7 @@ where
 
 #[cfg(any(
     not(all(any(unix, windows), feature = "acl")),
-    not(all(unix, feature = "xattr"))
+    not(all(any(unix, windows), feature = "xattr"))
 ))]
 /// Emits an error message with a caller-supplied fallback string and returns the exit code.
 pub(super) fn fail_with_custom_fallback<Err>(

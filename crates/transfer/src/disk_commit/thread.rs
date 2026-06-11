@@ -44,7 +44,14 @@ pub struct DiskThreadHandle {
 /// which uses a single static buffer that is never freed. Here, the disk thread
 /// sends used `Vec<u8>` buffers back through `buf_return_rx` for reuse by the
 /// network thread, eliminating per-chunk malloc/free overhead.
-pub fn spawn_disk_thread(config: DiskCommitConfig) -> DiskThreadHandle {
+///
+/// # Errors
+///
+/// Returns the underlying `io::Error` when `thread::Builder::spawn` fails
+/// (typically `EAGAIN`/`RLIMIT_NPROC` under resource pressure). Surfacing the
+/// failure as a typed error lets the receiver translate it into a transfer
+/// abort instead of taking down the process.
+pub fn spawn_disk_thread(config: DiskCommitConfig) -> io::Result<DiskThreadHandle> {
     let capacity = config.effective_channel_capacity();
     let (file_tx, file_rx) = spsc::channel::<FileMessage>(capacity);
     let (result_tx, result_rx) = spsc::channel::<io::Result<CommitResult>>(capacity * 2);
@@ -52,22 +59,23 @@ pub fn spawn_disk_thread(config: DiskCommitConfig) -> DiskThreadHandle {
 
     let join_handle = thread::Builder::new()
         .name("disk-commit".into())
-        .spawn(move || disk_thread_main(file_rx, result_tx, buf_return_tx, config))
-        .expect("failed to spawn disk-commit thread");
+        .spawn(move || disk_thread_main(file_rx, result_tx, buf_return_tx, config))?;
 
-    DiskThreadHandle {
+    Ok(DiskThreadHandle {
         file_tx,
         result_rx,
         buf_return_rx,
         join_handle,
-    }
+    })
 }
 
 /// Attempts to create an io_uring batch writer based on the configured policy.
 ///
 /// Returns `Some` on Linux 5.6+ when the `io_uring` feature is enabled and
-/// the policy is `Auto` or `Enabled`. Returns `None` when io_uring is
-/// unavailable or the policy is `Disabled`.
+/// the policy is `Auto`, `Enabled`, or `SqpollOff`. Returns `None` when
+/// io_uring is unavailable or the policy is `Disabled`. `SqpollOff` keeps
+/// io_uring active but suppresses `IORING_SETUP_SQPOLL` via the process-wide
+/// gate set by the CLI parser.
 ///
 /// The optional `depth` overrides [`fast_io::IoUringConfig::sq_entries`] when
 /// provided, mirroring the `--io-uring-depth=N` CLI tunable.
@@ -81,7 +89,9 @@ fn try_create_disk_batch(
     }
     match policy {
         fast_io::IoUringPolicy::Disabled => None,
-        fast_io::IoUringPolicy::Auto => fast_io::IoUringDiskBatch::try_new(&config),
+        fast_io::IoUringPolicy::Auto | fast_io::IoUringPolicy::SqpollOff => {
+            fast_io::IoUringDiskBatch::try_new(&config)
+        }
         fast_io::IoUringPolicy::Enabled => {
             // Enabled policy: try to create, but log and proceed if it fails.
             // The caller explicitly requested io_uring, so we attempt it but
@@ -119,6 +129,24 @@ fn log_io_uring_status(policy: fast_io::IoUringPolicy, batch_created: bool) {
                 1,
                 "io_uring disabled by --no-io-uring, using standard I/O"
             );
+        }
+        fast_io::IoUringPolicy::SqpollOff => {
+            if batch_created {
+                debug_log!(
+                    Io,
+                    1,
+                    "disk I/O: {} (SQPOLL suppressed by --no-io-uring-sqpoll)",
+                    fast_io::io_uring_availability_reason()
+                );
+            } else {
+                debug_log!(
+                    Io,
+                    1,
+                    "disk I/O: {} (SQPOLL suppressed by --no-io-uring-sqpoll), \
+                     using standard I/O fallback",
+                    fast_io::io_uring_availability_reason()
+                );
+            }
         }
         fast_io::IoUringPolicy::Auto | fast_io::IoUringPolicy::Enabled => {
             if batch_created {
