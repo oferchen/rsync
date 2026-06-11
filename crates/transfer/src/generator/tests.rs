@@ -2159,8 +2159,14 @@ mod legacy_goodbye_tests {
     use super::*;
     use protocol::codec::{MonotonicNdxWriter, create_ndx_codec};
 
-    /// NDX_DONE as 4-byte little-endian (-1 = 0xFFFFFFFF).
+    /// NDX_DONE as 4-byte little-endian (-1 = 0xFFFFFFFF), used by the legacy
+    /// codec for protocol < 30.
     const NDX_DONE_LE: [u8; 4] = [0xFF, 0xFF, 0xFF, 0xFF];
+
+    /// NDX_DONE as encoded by the modern (protocol >= 30) codec.
+    ///
+    /// upstream io.c:2259-2262 - single 0x00 byte with no side effects.
+    const NDX_DONE_MODERN: [u8; 1] = [0x00];
 
     /// Creates a `GeneratorContext` for a specific protocol version.
     fn generator_for(protocol_version: u8) -> GeneratorContext {
@@ -2294,8 +2300,11 @@ mod legacy_goodbye_tests {
         config.do_stats = false;
         let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
-        // Receiver wire: NDX_DONE + final NDX_DONE.
-        let receiver_input = [NDX_DONE_LE.as_slice(), NDX_DONE_LE.as_slice()].concat();
+        // Receiver wire: NDX_DONE + final NDX_DONE in modern (proto >= 30)
+        // single-byte encoding. The legacy 4-byte LE form is only valid for
+        // protocol < 30; using it here would decode as -256 instead of -1.
+        let receiver_input =
+            [NDX_DONE_MODERN.as_slice(), NDX_DONE_MODERN.as_slice()].concat();
         let mut reader = Cursor::new(receiver_input);
 
         let mut output = FlushTrackingWriter::default();
@@ -2305,9 +2314,9 @@ mod legacy_goodbye_tests {
         ctx.handle_goodbye(&mut reader, &mut output, &mut ndx_read, &mut ndx_write)
             .expect("goodbye completes");
 
-        // The wire payload must end with the NDX_DONE marker bytes.
+        // The wire payload must end with the NDX_DONE marker byte.
         assert!(
-            output.buffer.ends_with(&NDX_DONE_LE),
+            output.buffer.ends_with(&NDX_DONE_MODERN),
             "wire output must end with NDX_DONE: {:?}",
             output.buffer
         );
