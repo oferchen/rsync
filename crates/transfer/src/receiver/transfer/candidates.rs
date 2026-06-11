@@ -48,7 +48,6 @@ impl ReceiverContext {
         metadata_errors: &mut Vec<(PathBuf, String)>,
         stats: &mut TransferStats,
         acl_cache: Option<&protocol::acl::AclCache>,
-        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
     ) -> Vec<(usize, &'a FileEntry, PathBuf)> {
         // upstream: generator.c:1234-1235 - "recv_generator(%s,%d)" emitted at
         // the top of recv_generator() for every file the generator considers
@@ -206,10 +205,6 @@ impl ReceiverContext {
                         has_acls,
                         has_xattrs,
                         needs_metadata_apply,
-                        #[cfg(unix)]
-                        sandbox,
-                        #[cfg(unix)]
-                        dest_dir,
                     );
                     continue;
                 }
@@ -263,8 +258,6 @@ impl ReceiverContext {
         has_acls: bool,
         has_xattrs: bool,
         needs_metadata_apply: bool,
-        #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
-        #[cfg(unix)] dest_dir: &Path,
     ) {
         // upstream: generator.c:1816 - itemize() with iflags=0 for up-to-date
         // files. iflags=0 has no significant flags, so emit_itemize will suppress
@@ -272,30 +265,6 @@ impl ReceiverContext {
         if emit_itemize {
             let iflags = crate::generator::ItemFlags::from_raw(0);
             let _ = self.emit_itemize(writer, &iflags, entry);
-        }
-
-        // UTS-16 chdir-symlink-race defence: on a daemon receiver without
-        // chroot, an in-module parent directory can be replaced with a
-        // symlink-to-outside between the quick-check `stat` and the
-        // chmod/chown/utimes about to land via `apply_metadata_*`. The
-        // path-based setattr syscalls follow symlinks at every parent
-        // component, so a planted `subdir -> /outside` would chmod the
-        // attacker-chosen inode. Walking the parents through the sandbox
-        // dirfd refuses the substitution with ELOOP (Linux), ENOTDIR
-        // (BSD/macOS), or EXDEV (`openat2` with `..` escape).
-        //
-        // upstream: syscall.c:do_chmod_at() opens the parent under
-        // `secure_relative_open()` and uses `fchmodat(dfd, bname, mode, 0)`
-        // so the kernel either resolves the link within the tree
-        // (legitimate dir-symlinks still work) or rejects the escape.
-        #[cfg(unix)]
-        if let Some(sandbox) = sandbox {
-            if let Ok(rel) = file_path.strip_prefix(dest_dir) {
-                if let Err(e) = sandbox.validate_relative_parents(rel) {
-                    metadata_errors.push((file_path.to_path_buf(), e.to_string()));
-                    return;
-                }
-            }
         }
 
         // upstream: generator.c:461 unchanged_attrs() - fast-path check avoids
