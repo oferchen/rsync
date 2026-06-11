@@ -23,7 +23,7 @@ use std::time::SystemTime;
 
 use compress::zlib::CompressionLevel;
 use engine::SkipCompressList;
-use metadata::ChmodModifiers;
+use metadata::{ChmodModifiers, GroupMapping, UserMapping};
 use protocol::FilenameConverter;
 use protocol::ProtocolVersion;
 use protocol::filters::FilterRuleWireFormat;
@@ -89,6 +89,8 @@ pub struct ServerConfigBuilder {
     fake_super: bool,
     daemon_incoming_chmod: Option<ChmodModifiers>,
     daemon_outgoing_chmod: Option<ChmodModifiers>,
+    user_mapping: Option<UserMapping>,
+    group_mapping: Option<GroupMapping>,
     munge_symlinks: bool,
 }
 
@@ -129,6 +131,8 @@ impl ServerConfigBuilder {
             fake_super: false,
             daemon_incoming_chmod: None,
             daemon_outgoing_chmod: None,
+            user_mapping: None,
+            group_mapping: None,
             munge_symlinks: false,
         }
     }
@@ -605,6 +609,8 @@ impl ServerConfigBuilder {
             fake_super: self.fake_super,
             daemon_incoming_chmod: self.daemon_incoming_chmod.clone(),
             daemon_outgoing_chmod: self.daemon_outgoing_chmod.clone(),
+            user_mapping: self.user_mapping.clone(),
+            group_mapping: self.group_mapping.clone(),
             munge_symlinks: self.munge_symlinks,
         }
     }

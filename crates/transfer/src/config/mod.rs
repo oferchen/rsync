@@ -11,7 +11,7 @@ use std::time::SystemTime;
 
 use compress::zlib::CompressionLevel;
 use engine::SkipCompressList;
-use metadata::ChmodModifiers;
+use metadata::{ChmodModifiers, GroupMapping, UserMapping};
 use protocol::FilenameConverter;
 use protocol::ProtocolVersion;
 use protocol::filters::FilterRuleWireFormat;
@@ -453,6 +453,32 @@ pub struct ServerConfig {
     /// - `loadparm.c` - `outgoing chmod` module parameter
     /// - `flist.c:make_file()` - `daemon_chmod_modes` applied during flist build
     pub daemon_outgoing_chmod: Option<ChmodModifiers>,
+    /// Parsed `--usermap=SPEC` rules forwarded by the client.
+    ///
+    /// Receiver-side: applied at metadata-apply time to remap each entry's UID
+    /// before it is written to disk. The client encodes the spec as a single
+    /// `--usermap=VAL` arg in `server_options()` and the daemon's option
+    /// parser (`apply_long_form_args`) restores it here.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2904` - `args[ac++] = safe_arg("--usermap", usermap)`
+    /// - `uidlist.c:parse_name_map()` - parses the spec into the recv-side map
+    /// - `uidlist.c:recv_id_list()` - applies the map per file-list entry
+    pub user_mapping: Option<UserMapping>,
+    /// Parsed `--groupmap=SPEC` rules forwarded by the client.
+    ///
+    /// Receiver-side: applied at metadata-apply time to remap each entry's GID
+    /// before it is written to disk. The client encodes the spec as a single
+    /// `--groupmap=VAL` arg in `server_options()` and the daemon's option
+    /// parser (`apply_long_form_args`) restores it here.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2907` - `args[ac++] = safe_arg("--groupmap", groupmap)`
+    /// - `uidlist.c:parse_name_map()` - parses the spec into the recv-side map
+    /// - `uidlist.c:recv_id_list()` - applies the map per file-list entry
+    pub group_mapping: Option<GroupMapping>,
     /// When true, munge symlink targets with the `/rsyncd-munged/` prefix.
     ///
     /// Sourced from the daemon module's `munge symlinks` directive (or its
@@ -500,6 +526,8 @@ impl Default for ServerConfig {
             fake_super: false,
             daemon_incoming_chmod: None,
             daemon_outgoing_chmod: None,
+            user_mapping: None,
+            group_mapping: None,
             munge_symlinks: false,
         }
     }
