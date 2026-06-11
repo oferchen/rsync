@@ -270,6 +270,32 @@ fn is_abbreviated_follower_helper() {
     assert!(!reader.is_abbreviated_follower(flags_follower, None));
 }
 
+/// EDG-PANIC.5 regression: the coupled invariant between
+/// `is_abbreviated_follower` and the `hardlink_idx` `Option` is enforced
+/// here so a future refactor that breaks the coupling cannot reach the
+/// `read_entry_with_flist` panic site. The helper returns `false` for
+/// `None` under every flag combination, so `read_entry_with_flist` only
+/// pattern-matches `Some(idx)` when the helper has already proven the
+/// option is populated; the `else` branch returns a typed
+/// `io::Error::InvalidData` as defense-in-depth.
+#[test]
+fn is_abbreviated_follower_rejects_missing_idx_under_all_flag_combinations() {
+    use crate::flist::flags::{FileFlags, XMIT_HLINK_FIRST, XMIT_HLINKED};
+
+    let mut reader = FileListReader::new(test_protocol()).with_preserve_hard_links(true);
+    reader.set_ndx_start(100);
+
+    // Every combination of HLINKED / HLINK_FIRST: with `hardlink_idx = None`,
+    // the helper must report `false` so the panic path stays unreachable.
+    for base in [0u8, XMIT_HLINKED, XMIT_HLINKED | XMIT_HLINK_FIRST] {
+        let flags = FileFlags::new(0, base);
+        assert!(
+            !reader.is_abbreviated_follower(flags, None),
+            "is_abbreviated_follower returned true for None under flags 0x{base:x}",
+        );
+    }
+}
+
 #[test]
 fn read_write_round_trip_with_atime() {
     use crate::flist::write::FileListWriter;

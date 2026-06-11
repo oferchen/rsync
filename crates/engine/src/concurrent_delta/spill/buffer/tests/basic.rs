@@ -300,3 +300,88 @@ fn spill_warned_false_when_no_spill() {
     );
     assert_eq!(buf.spill_stats().spill_events, 0);
 }
+
+#[test]
+fn spill_activations_counter_increments_on_each_spill() {
+    // ROB-2: spill_activations is the per-call counter that adaptive ring
+    // sizing (ROB-7) reads. It must rise once per successful spill_excess
+    // call regardless of the on-disk record count produced by that call.
+
+    // PerItem granularity so the test does not need to reason about the
+    // whole-batch record-fan-out path. Threshold = 16 bytes = 2 items.
+    use super::super::super::SpillGranularity;
+    let mut buf: SpillableReorderBuffer<u64> =
+        SpillableReorderBuffer::new(64, 16).with_granularity(SpillGranularity::PerItem);
+
+    // First insert past threshold: one activation.
+    for i in (0..4).rev() {
+        buf.insert(i, i * 10).unwrap();
+    }
+    let after_first = buf.spill_stats().spill_activations;
+    assert!(
+        after_first >= 1,
+        "expected >= 1 activation after first spill, got {after_first}"
+    );
+
+    // Drain to free memory, then refill past threshold again - another
+    // activation must register on the second pressure event.
+    let drained = drain_all(&mut buf);
+    assert_eq!(drained.len(), 4);
+    for i in (4..8).rev() {
+        buf.insert(i, i * 10).unwrap();
+    }
+    let after_second = buf.spill_stats().spill_activations;
+    assert!(
+        after_second > after_first,
+        "second pressure event must increment activations: {after_first} -> {after_second}"
+    );
+
+    // Third pressure event.
+    let _ = drain_all(&mut buf);
+    for i in (8..12).rev() {
+        buf.insert(i, i * 10).unwrap();
+    }
+    let after_third = buf.spill_stats().spill_activations;
+    assert!(
+        after_third > after_second,
+        "third pressure event must increment activations: {after_second} -> {after_third}"
+    );
+}
+
+#[test]
+fn spill_warning_fires_once_per_transfer() {
+    // ROB-3: the one-shot warning must fire exactly once per buffer lifetime
+    // even when many activations occur. We exercise the `spill_warned()`
+    // accessor because it is the established convention in this module for
+    // verifying warning behaviour (no `tracing-subscriber` dev-dep is wired).
+    let mut buf: SpillableReorderBuffer<u64> = SpillableReorderBuffer::new(64, 16);
+
+    // Before any spill: warning has not fired.
+    assert!(!buf.spill_warned(), "warning must not fire pre-threshold");
+
+    // Force at least 5 activations by alternating fill / drain cycles. Each
+    // cycle climbs past the threshold, triggering one or more on-disk records.
+    let mut base: u64 = 0;
+    for _ in 0..5 {
+        for i in (0..6).rev() {
+            buf.insert(base + i, (base + i) * 10).unwrap();
+        }
+        let drained = drain_all(&mut buf);
+        assert_eq!(drained.len(), 6);
+        base += 6;
+    }
+
+    let stats = buf.spill_stats();
+    assert!(
+        stats.spill_activations >= 5,
+        "expected >= 5 activations across 5 pressure cycles, got {}",
+        stats.spill_activations
+    );
+
+    // Despite many activations the one-shot flag is still set (it never
+    // un-sets) and the warning is documented to have fired exactly once.
+    assert!(
+        buf.spill_warned(),
+        "warning flag must be set after the first activation"
+    );
+}

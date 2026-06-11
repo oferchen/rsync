@@ -37,6 +37,14 @@ All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation,
 
 ### Platform Support
 
+| Platform | Tier | Notes |
+|---|---|---|
+| Linux x86_64 / aarch64 | **Tier 1** | Full `io_uring` + `splice` + `vmsplice` + Landlock + seccomp. Every required CI cell runs the full nextest workspace. Production deployment target. |
+| macOS x86_64 / aarch64 | **Tier 1** | `kqueue` + `sendfile` + `clonefile`. Every required CI cell runs the full nextest workspace. Full metadata, ACL, and xattr parity including AppleDouble (`._foo`) resource-fork preservation. |
+| Windows x86_64 | **Tier 2** | IOCP file I/O, `TransmitFile`, ReFS reflink, `CopyFileExW`, `FILE_FLAG_DELETE_ON_CLOSE`. `splice` / `vmsplice` / `io_uring` are Linux-only and intentionally not implemented; the receiver uses IOCP-batched `WriteFile`, which is faster than the upstream Cygwin `read`/`write` fallback. NTFS DACL preservation, xattrs via NTFS Alternate Data Streams, and IOCP socket I/O (`WSARecv` / `WSASend`) are shipped; POSIX symlinks (without elevation) and POSIX device nodes / FIFOs remain stubbed in line with NTFS limits. Required CI cells test the `core`, `engine`, and `cli` crates. See [Windows support matrix](docs/user/windows-support-matrix.md) and the [Windows Tier 2 stub inventory](docs/audits/win-tier2-stub-inventory.md). |
+
+Tier definitions: **Tier 1** means every required CI cell runs the full nextest workspace and the platform is a primary production target. **Tier 2** means the platform builds and runs core transfer modes, required CI cells run a crate-scoped subset of the workspace, and some upstream-testsuite tests may be expected to fail under Cygwin-equivalent feature gaps. Tier 2 is a deliberate choice, not a defect: see `docs/audits/win-tier2-stub-inventory.md` for the structural rationale and the path to Tier 1 promotion.
+
 The primary platform is Linux. macOS is well-supported with parity for all metadata, ACL, and xattr features, including AppleDouble (`._foo`) resource-fork preservation. Windows builds and runs core transfer modes with NTFS DACL preservation (via `windows-rs` `GetNamedSecurityInfoW`/`SetNamedSecurityInfoW`, currently Tier 1C partial - see `docs/platform-notes.md` for the Windows ACL behavior summary, the **--acls** entry in `docs/oc-rsync.1.md`, and `docs/design/windows-ntfs-acl-support.md` for the documented lossy cases), xattrs (via NTFS Alternate Data Streams), and IOCP socket I/O (`WSARecv`/`WSASend`); symlinks and POSIX device nodes remain stubbed.
 
 | Feature | Linux | macOS | Windows | Notes |
@@ -145,7 +153,7 @@ Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
 - SIMD vs scalar self-test added (cargo-fuzz target + unit test) cross-validating AVX2, SSE2, NEON, and scalar implementations at startup (3.4.2 parity)
 
 **Upstream interop**
-- Pinned upstream interop matrix bumped to rsync **3.4.4** (in addition to 2.6.9, 3.0.9, 3.1.3, 3.4.1, 3.4.2, 3.4.3)
+- Pinned upstream interop matrix simplified to rsync **3.4.4** as the sole 3.4.x cell (alongside 2.6.9, 3.0.9, 3.1.3); 3.4.1/3.4.2/3.4.3 share the same wire protocol and are superseded by 3.4.4
 - All upstream `testsuite/*.test` tests now pass - known-failures roster is empty
 - Wire differential fuzzing validates protocol-level byte equivalence against upstream
 - Scheduled GitHub Actions watcher for new upstream releases
@@ -168,7 +176,7 @@ Legend: ✓ supported, ⚠ partial or not yet wired, ✗ not implemented.
 
 ### Interop Testing
 
-Tested against upstream rsync **2.6.9**, **3.0.9**, **3.1.3**, **3.4.1**, **3.4.2**, **3.4.3**, and **3.4.4** in CI across protocols 28-32. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth. Wire differential fuzzing against upstream rsync validates protocol-level byte equivalence. See the [full interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for per-version, per-feature, and per-platform detail.
+Tested against upstream rsync **2.6.9**, **3.0.9**, **3.1.3**, and **3.4.4** in CI across protocols 28-32. The 3.4.x series shares protocol 32 and is represented in the matrix by 3.4.4, the latest conservative regression-fix release; 3.4.1/3.4.2/3.4.3 cells are subsumed because they run identical wire scenarios. Both push and pull directions verified for 30+ scenarios covering transfer modes, deletion, compression, metadata, reference dirs, file selection, batch roundtrip, path handling, device nodes, and daemon auth. Wire differential fuzzing against upstream rsync validates protocol-level byte equivalence. See the [full interop compatibility matrix](./docs/user/interop-compatibility-matrix.md) for per-version, per-feature, and per-platform detail.
 
 ### Supported rsync protocol versions
 
@@ -193,9 +201,6 @@ Per-version dispatch is implemented as `protocol_version` gates in the wire code
 | 2.6.9                  | 29       | pull (daemon)            | non-blocking (RP28.d) |
 | 3.0.9                  | 30       | push, pull, daemon       | gating |
 | 3.1.3                  | 31       | push, pull, daemon       | gating |
-| 3.4.1                  | 32       | push, pull, daemon, SSH  | gating |
-| 3.4.2                  | 32       | push, pull, daemon       | gating |
-| 3.4.3                  | 32       | push, pull, daemon, SSH  | gating |
 | 3.4.4                  | 32       | push, pull, daemon, SSH  | gating |
 
 Wire format is verified byte-identical to upstream rsync via CI golden-byte tests for the listed versions. Wire differential fuzzing validates protocol-level byte equivalence against upstream. Other versions may work but are not regression-tested.

@@ -5,9 +5,6 @@
 #     2.6.9  -> always source-built (legacy, predates per-arch .deb coverage we care about)
 #     3.0.9  -> old-releases.ubuntu.com
 #     3.1.3  -> archive.ubuntu.com
-#     3.4.1  -> deb.debian.org (3.4.1+ds1-6)
-#     3.4.2  -> deb.debian.org (3.4.2+ds1-1, fallback to source if missing)
-#     3.4.3  -> source-built (security release, no .deb yet)
 #     3.4.4  -> source-built (latest release, no .deb yet)
 # - Falls back to source build if the exact .deb for this arch is missing
 # - Starts oc-rsync --daemon on a non-privileged port by passing --port on the CLI
@@ -54,7 +51,12 @@ upstream_install_root="${workspace_root}/target/interop/upstream-install"
 interop_log_dir="${workspace_root}/target/interop/logs"
 
 # Versions we run interop scenarios against.
-versions=(3.0.9 3.1.3 3.4.1 3.4.2 3.4.3 3.4.4)
+#
+# 3.4.4 supersedes 3.4.1/3.4.2/3.4.3 as a conservative regression-fix release on
+# the same wire protocol (proto 32). Testing the intermediate 3.4.x point
+# releases is redundant once 3.4.4 is green. 3.0.9 (proto 30) and 3.1.3
+# (proto 31, xattrs/ACL wire baseline) remain as protocol-level anchors.
+versions=(3.0.9 3.1.3 3.4.4)
 # Versions we only build and cache (no scenarios wired up yet). 2.6.9 is the
 # protocol-28 cutoff peer (advertises protocol 29, accepts down to 28); the
 # binary is needed so follow-up tasks can wire push/pull cells against it.
@@ -125,16 +127,6 @@ build_version_url() {
       ;;
     3.1.3)
       echo "${UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.1.3-8ubuntu0.9_${arch}.deb"
-      ;;
-    3.4.1)
-      echo "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.1+ds1-6_${arch}.deb"
-      ;;
-    3.4.2)
-      echo "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.2+ds1-1_${arch}.deb"
-      ;;
-    3.4.3)
-      # 3.4.3 is a recent security release; no .deb available yet, force source build.
-      echo ""
       ;;
     3.4.4)
       # 3.4.4 is the latest upstream release; no .deb available yet, force source build.
@@ -221,22 +213,6 @@ try_fetch_deb_generic() {
       candidates+=(
         "${UBUNTU_MIRROR}/pool/main/r/rsync/rsync_3.1.3-8ubuntu0.8_${arch}.deb"
       )
-      ;;
-    3.4.1)
-      candidates+=(
-        "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.1+ds1-5_${arch}.deb"
-      )
-      ;;
-    3.4.2)
-      candidates+=(
-        "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.2+ds1-2_${arch}.deb"
-        "${DEBIAN_MIRROR}/pool/main/r/rsync/rsync_3.4.2-1_${arch}.deb"
-      )
-      ;;
-    3.4.3)
-      # Recent security release; no .deb available yet, skip straight to source build.
-      rm -f "$tmp_deb"
-      return 1
       ;;
     3.4.4)
       # Latest upstream release; no .deb available yet, skip straight to source build.
@@ -11026,7 +11002,7 @@ run_comprehensive_interop_case() {
   write_upstream_conf "$ucf" "$upf" "$upstream_port" "$ud" "c-${tag}" "$up_identity"
 
   # Core scenarios run against all versions. Extended scenarios only run
-  # against 3.4.1+ (protocol 32) to keep CI within time limits (~45 scenarios
+  # against 3.4.x (protocol 32) to keep CI within time limits (~45 scenarios
   # x 3 versions x 2 directions = 270 transfers at ~10s each = 45 min for
   # native alone).
   local -a scenarios=(
@@ -11051,11 +11027,11 @@ run_comprehensive_interop_case() {
     # returns to default features.
   )
 
-  # Extended scenarios only for the newest upstream versions (3.4.1+).
+  # Extended scenarios only for the newest upstream versions (3.4.x).
   # xattrs requires protocol >= 30 (upstream compat.c), so it only works
-  # against 3.4.1/3.4.2/3.4.3/3.4.4 (protocol 32), not 3.0.9 (protocol 28) or
-  # 3.1.3 (protocol 31 but may lack --enable-xattr-support).
-  if [[ "${version}" == "3.4.1" || "${version}" == "3.4.2" || "${version}" == "3.4.3" || "${version}" == "3.4.4" ]]; then
+  # against 3.4.4 (protocol 32), not 3.0.9 (protocol 28) or 3.1.3 (protocol 31
+  # but may lack --enable-xattr-support).
+  if [[ "${version}" == "3.4.4" ]]; then
     scenarios+=(
       "xattrs|-avX|xattrs"
       "one-file-system|-avx|basic"
@@ -11363,18 +11339,15 @@ echo "=== Parallel version tests complete ==="
 
 # =====================================================================
 # Protocol version forcing tests: all 5 protocols via the newest
-# available upstream binary (3.4.4, falling back to 3.4.3/3.4.2/3.4.1).
+# available upstream binary (3.4.4).
 # Run sequentially to avoid port contention under CI load.
 # =====================================================================
 newest_label=""
 newest_binary=""
-for nv in 3.4.4 3.4.3 3.4.2 3.4.1; do
-  if [[ -x "${upstream_install_root}/${nv}/bin/rsync" ]]; then
-    newest_label="$nv"
-    newest_binary="${upstream_install_root}/${nv}/bin/rsync"
-    break
-  fi
-done
+if [[ -x "${upstream_install_root}/3.4.4/bin/rsync" ]]; then
+  newest_label="3.4.4"
+  newest_binary="${upstream_install_root}/3.4.4/bin/rsync"
+fi
 if [[ -n "$newest_binary" ]]; then
   protos=(28 29 30 31 32)
   fp_warnings=()
@@ -11413,12 +11386,9 @@ echo "=== Standalone Interop Tests ==="
 
 # Use the newest available upstream binary for standalone tests
 standalone_binary=""
-for nv in 3.4.4 3.4.3 3.4.2 3.4.1; do
-  if [[ -x "${upstream_install_root}/${nv}/bin/rsync" ]]; then
-    standalone_binary="${upstream_install_root}/${nv}/bin/rsync"
-    break
-  fi
-done
+if [[ -x "${upstream_install_root}/3.4.4/bin/rsync" ]]; then
+  standalone_binary="${upstream_install_root}/3.4.4/bin/rsync"
+fi
 if [[ -z "$standalone_binary" ]]; then
   # Fall back to any available version
   for v in "${versions[@]}"; do

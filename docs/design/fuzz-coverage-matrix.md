@@ -49,6 +49,7 @@ The matrix below tracks per-target coverage metrics. Columns:
 | `decompressor_zlib`       | codec    | -     | -        | -      | 0      | -        |
 | `decompressor_zstd`       | codec    | -     | -        | -      | 0      | -        |
 | `simd_checksum_parity`    | codec    | -     | -        | -      | 0      | -        |
+| `zlib_token_decode`       | codec    | -     | -        | -      | 0      | -        |
 
 ### 1.4 Differential targets (threshold: >80% edge coverage)
 

@@ -459,6 +459,8 @@ include!("daemon/sections/greeting.rs");
 
 include!("daemon/sections/privilege.rs");
 
+include!("daemon/sections/seccomp.rs");
+
 include!("daemon/sections/log_format.rs");
 
 include!("daemon/sections/variable_expansion.rs");

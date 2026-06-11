@@ -87,24 +87,36 @@ impl TokenReader {
     /// # Arguments
     ///
     /// * `compression` - The negotiated compression algorithm, if any
-    #[must_use]
-    pub fn new(compression: Option<CompressionAlgorithm>) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns an `io::Error` when the underlying compressed-token decoder
+    /// fails to initialize. The zstd decoder constructor only fails on
+    /// OOM-class conditions; surfacing it as a typed error lets the receiver
+    /// abort the transfer instead of taking down the process.
+    pub fn new(compression: Option<CompressionAlgorithm>) -> io::Result<Self> {
         match compression {
             Some(CompressionAlgorithm::Zlib | CompressionAlgorithm::ZlibX) => {
                 let mut decoder = CompressedTokenDecoder::new();
                 if matches!(compression, Some(CompressionAlgorithm::ZlibX)) {
                     decoder.set_zlibx(true);
                 }
-                Self::Compressed(decoder)
+                Ok(Self::Compressed(decoder))
             }
             #[cfg(feature = "zstd")]
             Some(CompressionAlgorithm::Zstd) => {
-                // unwrap: zstd decoder creation only fails on OOM-level conditions
-                Self::Compressed(CompressedTokenDecoder::new_zstd().expect("zstd decoder init"))
+                // upstream: token.c:recv_zstd_token() - zstd DCtx construction
+                // only fails on OOM-class conditions. Propagate the typed
+                // io::Error so the receiver aborts the transfer instead of
+                // taking down the process.
+                let decoder = CompressedTokenDecoder::new_zstd()?;
+                Ok(Self::Compressed(decoder))
             }
             #[cfg(feature = "lz4")]
-            Some(CompressionAlgorithm::LZ4) => Self::Compressed(CompressedTokenDecoder::new_lz4()),
-            _ => Self::Plain,
+            Some(CompressionAlgorithm::LZ4) => {
+                Ok(Self::Compressed(CompressedTokenDecoder::new_lz4()))
+            }
+            _ => Ok(Self::Plain),
         }
     }
 
@@ -207,7 +219,7 @@ mod tests {
 
     #[test]
     fn plain_reader_literal_token() {
-        let mut reader = TokenReader::new(None);
+        let mut reader = TokenReader::new(None).unwrap();
         // token = 5 means 5 bytes of literal data follow
         let data = 5_i32.to_le_bytes();
         let mut cursor = Cursor::new(data.to_vec());
@@ -220,7 +232,7 @@ mod tests {
 
     #[test]
     fn plain_reader_block_ref_token() {
-        let mut reader = TokenReader::new(None);
+        let mut reader = TokenReader::new(None).unwrap();
         // token = -1 means block ref at index 0 (-((-1)+1) = 0)
         let data = (-1_i32).to_le_bytes();
         let mut cursor = Cursor::new(data.to_vec());
@@ -233,7 +245,7 @@ mod tests {
 
     #[test]
     fn plain_reader_end_token() {
-        let mut reader = TokenReader::new(None);
+        let mut reader = TokenReader::new(None).unwrap();
         let data = 0_i32.to_le_bytes();
         let mut cursor = Cursor::new(data.to_vec());
 
@@ -245,7 +257,7 @@ mod tests {
 
     #[test]
     fn plain_reader_block_ref_index_mapping() {
-        let mut reader = TokenReader::new(None);
+        let mut reader = TokenReader::new(None).unwrap();
         // token = -6 means block index 5 (-((-6)+1) = 5)
         let data = (-6_i32).to_le_bytes();
         let mut cursor = Cursor::new(data.to_vec());
@@ -266,7 +278,7 @@ mod tests {
         encoder.finish(&mut encoded).unwrap();
 
         // Decode with TokenReader
-        let mut reader = TokenReader::new(Some(CompressionAlgorithm::Zlib));
+        let mut reader = TokenReader::new(Some(CompressionAlgorithm::Zlib)).unwrap();
         let mut cursor = Cursor::new(encoded);
         let mut decoded = Vec::new();
 
@@ -290,7 +302,7 @@ mod tests {
         encoder.send_block_match(&mut encoded, 3).unwrap();
         encoder.finish(&mut encoded).unwrap();
 
-        let mut reader = TokenReader::new(Some(CompressionAlgorithm::Zlib));
+        let mut reader = TokenReader::new(Some(CompressionAlgorithm::Zlib)).unwrap();
         let mut cursor = Cursor::new(encoded);
         let mut blocks = Vec::new();
 
@@ -317,7 +329,7 @@ mod tests {
         encoder.send_literal(&mut encoded, literal2).unwrap();
         encoder.finish(&mut encoded).unwrap();
 
-        let mut reader = TokenReader::new(Some(CompressionAlgorithm::ZlibX));
+        let mut reader = TokenReader::new(Some(CompressionAlgorithm::ZlibX)).unwrap();
         let mut cursor = Cursor::new(encoded);
         let mut literals = Vec::new();
         let mut blocks = Vec::new();
@@ -340,50 +352,50 @@ mod tests {
 
     #[test]
     fn new_returns_plain_for_none() {
-        let reader = TokenReader::new(None);
+        let reader = TokenReader::new(None).unwrap();
         assert!(!reader.is_compressed());
     }
 
     #[test]
     fn new_returns_plain_for_compression_none() {
-        let reader = TokenReader::new(Some(CompressionAlgorithm::None));
+        let reader = TokenReader::new(Some(CompressionAlgorithm::None)).unwrap();
         assert!(!reader.is_compressed());
     }
 
     #[test]
     fn new_returns_compressed_for_zlib() {
-        let reader = TokenReader::new(Some(CompressionAlgorithm::Zlib));
+        let reader = TokenReader::new(Some(CompressionAlgorithm::Zlib)).unwrap();
         assert!(reader.is_compressed());
     }
 
     #[test]
     fn new_returns_compressed_for_zlibx() {
-        let reader = TokenReader::new(Some(CompressionAlgorithm::ZlibX));
+        let reader = TokenReader::new(Some(CompressionAlgorithm::ZlibX)).unwrap();
         assert!(reader.is_compressed());
     }
 
     #[test]
     fn see_token_noop_for_plain() {
-        let mut reader = TokenReader::new(None);
+        let mut reader = TokenReader::new(None).unwrap();
         reader.see_token(b"block data").unwrap();
     }
 
     #[test]
     fn reset_noop_for_plain() {
-        let mut reader = TokenReader::new(None);
+        let mut reader = TokenReader::new(None).unwrap();
         reader.reset();
     }
 
     #[test]
     fn reset_clears_compressed_state() {
-        let mut reader = TokenReader::new(Some(CompressionAlgorithm::Zlib));
+        let mut reader = TokenReader::new(Some(CompressionAlgorithm::Zlib)).unwrap();
         reader.reset();
         assert!(reader.is_compressed());
     }
 
     #[test]
     fn plain_reader_eof_returns_error() {
-        let mut reader = TokenReader::new(None);
+        let mut reader = TokenReader::new(None).unwrap();
         let mut cursor = Cursor::new(Vec::<u8>::new());
         let result = reader.read_token(&mut cursor);
         assert!(result.is_err());
@@ -392,14 +404,28 @@ mod tests {
     #[cfg(feature = "zstd")]
     #[test]
     fn new_returns_compressed_for_zstd() {
-        let reader = TokenReader::new(Some(CompressionAlgorithm::Zstd));
+        let reader = TokenReader::new(Some(CompressionAlgorithm::Zstd)).unwrap();
         assert!(reader.is_compressed());
     }
 
     #[cfg(feature = "lz4")]
     #[test]
     fn new_returns_compressed_for_lz4() {
-        let reader = TokenReader::new(Some(CompressionAlgorithm::LZ4));
+        let reader = TokenReader::new(Some(CompressionAlgorithm::LZ4)).unwrap();
         assert!(reader.is_compressed());
+    }
+
+    /// EDG-PANIC.5 regression: `TokenReader::new` must return a typed
+    /// `io::Result` so decoder initialization failures propagate to the
+    /// transfer instead of panicking. Exercising the happy path is enough
+    /// to lock in the signature shape - the only failure mode is the
+    /// zstd OOM-class branch, which is not reachable from a unit test.
+    #[test]
+    fn new_returns_io_result() {
+        let result: io::Result<TokenReader> = TokenReader::new(None);
+        assert!(result.is_ok());
+        let result: io::Result<TokenReader> =
+            TokenReader::new(Some(CompressionAlgorithm::Zlib));
+        assert!(result.is_ok());
     }
 }

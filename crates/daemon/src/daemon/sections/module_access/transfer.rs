@@ -119,26 +119,81 @@ fn validate_module_path(
     Ok(false)
 }
 
+/// Outcome of [`validate_client_paths_in_module`].
+///
+/// `Rejected` is the daemon-error path: an `@ERROR` reply was already sent.
+/// `Accepted` carries the absolute, canonicalised, in-module paths the
+/// client requested via `--temp-dir` / `--partial-dir` / `--backup-dir` /
+/// `--compare-dest` / `--copy-dest` / `--link-dest`. These paths are
+/// guaranteed to start with the module root (SEC-1.p invariant) and are
+/// fed straight into [`engage_landlock_sandbox`] so the kernel allowlist
+/// covers every writable / readable surface the receiver will touch.
+#[derive(Debug, Default)]
+struct ValidatedClientPaths {
+    /// Canonicalised, in-module paths suitable for `Landlock` allowlisting.
+    landlock_roots: Vec<std::path::PathBuf>,
+}
+
+/// Classifies one client-supplied path against the canonical module root.
+///
+/// Pure helper extracted from [`validate_client_paths_in_module`] so the
+/// containment + allowlist-widening logic is unit-testable without spinning
+/// up a full [`ModuleRequestContext`]. Returns:
+///
+/// - `Ok(Some(canonical))` when `raw_path` is absolute and (after
+///   canonicalisation, with a lexical fallback) starts with `module_root` -
+///   the caller adds the result to the Landlock allowlist.
+/// - `Ok(None)` when the path is relative; relative paths resolve under
+///   the module root, so they cannot escape and need no explicit entry.
+/// - `Err(())` when the path is absolute and escapes the module root -
+///   the caller sends an `@ERROR` reply.
+fn classify_client_path_against_module(
+    raw_path: &str,
+    module_root: &Path,
+) -> Result<Option<std::path::PathBuf>, ()> {
+    let path = Path::new(raw_path);
+    if path.is_relative() {
+        return Ok(None);
+    }
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if canonical.starts_with(module_root) {
+        Ok(Some(canonical))
+    } else {
+        Err(())
+    }
+}
+
 /// Rejects client-supplied `--temp-dir` / `--partial-dir` / `--backup-dir`
-/// paths that resolve outside the module root.
+/// / `--compare-dest` / `--copy-dest` / `--link-dest` paths that resolve
+/// outside the module root, and collects the accepted absolute paths so the
+/// SEC-1.p Landlock allowlist can be widened to cover them.
 ///
 /// The audit (SEC-1.p, section 10) recommends REJECT over widening the
-/// Landlock allowlist: rsync's own chroot mode behaves the same way, and
-/// expanding the writable surface to honour an attacker-supplied prefix
-/// undermines the whole point of the sandbox. Returns `Ok(true)` when every
-/// requested path is in-tree (or absent); returns `Ok(false)` after
-/// emitting an `@ERROR` reply when a path escapes the module root.
+/// Landlock allowlist for *out-of-module* paths: rsync's own chroot mode
+/// behaves the same way, and expanding the writable surface to honour an
+/// attacker-supplied prefix undermines the whole point of the sandbox.
+/// For *in-module* absolute paths the reverse holds: the operator's
+/// configuration permits them, so they must reach the Landlock allowlist
+/// or a default-on flip would EACCES legitimate writes (URV-5.b.REOPEN).
+///
+/// Returns `Ok(Some(ValidatedClientPaths))` when every requested path is
+/// in-tree (or absent); returns `Ok(None)` after emitting an `@ERROR`
+/// reply when any path escapes the module root.
 fn validate_client_paths_in_module(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
     client_args: &[String],
-) -> io::Result<bool> {
+) -> io::Result<Option<ValidatedClientPaths>> {
     let Ok(module_root) = module.path.canonicalize() else {
         // Module path failed to canonicalize - the existence check above
         // already succeeded, so this is a race or a permission problem; let
         // the transfer continue and fail with a more precise error later.
-        return Ok(true);
+        return Ok(Some(ValidatedClientPaths::default()));
     };
+
+    // De-duplicate inside this single connection so a client sending the
+    // same `--link-dest=/abs/snap` twice does not bloat the allowlist.
+    let mut accepted: Vec<std::path::PathBuf> = Vec::new();
 
     let mut iter = client_args.iter().peekable();
     while let Some(arg) = iter.next() {
@@ -148,9 +203,20 @@ fn validate_client_paths_in_module(
             Some(("--partial-dir", rest.to_owned()))
         } else if let Some(rest) = arg.strip_prefix("--backup-dir=") {
             Some(("--backup-dir", rest.to_owned()))
+        } else if let Some(rest) = arg.strip_prefix("--compare-dest=") {
+            Some(("--compare-dest", rest.to_owned()))
+        } else if let Some(rest) = arg.strip_prefix("--copy-dest=") {
+            Some(("--copy-dest", rest.to_owned()))
+        } else if let Some(rest) = arg.strip_prefix("--link-dest=") {
+            Some(("--link-dest", rest.to_owned()))
         } else if matches!(
             arg.as_str(),
-            "--temp-dir" | "--partial-dir" | "--backup-dir"
+            "--temp-dir"
+                | "--partial-dir"
+                | "--backup-dir"
+                | "--compare-dest"
+                | "--copy-dest"
+                | "--link-dest"
         ) {
             iter.next().map(|v| (arg.as_str(), v.clone()))
         } else {
@@ -161,16 +227,15 @@ fn validate_client_paths_in_module(
             continue;
         };
 
-        // Relative paths resolve under the module root (or under the
-        // current cwd inside chroot), so they cannot escape - skip them.
-        let path = Path::new(&raw_path);
-        if path.is_relative() {
-            continue;
-        }
-
-        let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-        if canonical.starts_with(&module_root) {
-            continue;
+        match classify_client_path_against_module(&raw_path, &module_root) {
+            Ok(None) => continue,
+            Ok(Some(canonical)) => {
+                if !accepted.iter().any(|p| p == &canonical) {
+                    accepted.push(canonical);
+                }
+                continue;
+            }
+            Err(()) => {}
         }
 
         let payload = format!("@ERROR: {flag} path '{raw_path}' is outside module root");
@@ -186,10 +251,12 @@ fn validate_client_paths_in_module(
             let message = rsync_error!(1, text).with_role(Role::Daemon);
             log_message(log, &message);
         }
-        return Ok(false);
+        return Ok(None);
     }
 
-    Ok(true)
+    Ok(Some(ValidatedClientPaths {
+        landlock_roots: accepted,
+    }))
 }
 
 /// Engages the SEC-1.p Landlock LSM allowlist for the receiver path.
@@ -199,6 +266,14 @@ fn validate_client_paths_in_module(
 /// writable surface the remainder of the connection needs. The stub on
 /// non-Linux targets short-circuits to `Unavailable` so the wire-in does
 /// not need `#[cfg]` branching.
+///
+/// `extra_allowed_paths` carries absolute, in-module paths that
+/// `validate_client_paths_in_module` admitted from the client args
+/// (`--temp-dir` / `--partial-dir` / `--backup-dir` / `--compare-dest` /
+/// `--copy-dest` / `--link-dest`). The caller is responsible for the
+/// containment check; this helper only forwards the slice to the kernel.
+/// Closing URV-5.b.REOPEN: without the widening, a default-on Landlock
+/// flip would EACCES the very paths the operator's configuration permits.
 ///
 /// Returns `Ok(true)` on every non-fatal outcome (engaged, downgraded,
 /// unavailable, or skipped because a pre/post-xfer-exec hook is configured).
@@ -217,6 +292,7 @@ fn validate_client_paths_in_module(
 fn engage_landlock_sandbox(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
+    extra_allowed_paths: &[&Path],
 ) -> io::Result<bool> {
     use fast_io::landlock::{LandlockOutcome, is_supported, restrict_to_module_paths};
 
@@ -244,13 +320,18 @@ fn engage_landlock_sandbox(
         return Ok(true);
     }
 
-    // Roots: the module path is the only writable per-module surface the
-    // daemon connection touches once chroot has applied. ModuleDefinition
-    // does not expose a lock-file accessor (the limiter is daemon-internal
-    // and writes to the lock file before the connection-handling thread
-    // reaches this point); client-supplied out-of-module paths are
-    // rejected upfront by `validate_client_paths_in_module`.
-    let roots: Vec<&Path> = vec![module.path.as_path()];
+    // Roots: the module path is the always-present writable surface plus
+    // any client-supplied alt-basis (`--compare-dest` / `--copy-dest` /
+    // `--link-dest`) or relocation (`--temp-dir` / `--partial-dir` /
+    // `--backup-dir`) paths that `validate_client_paths_in_module` has
+    // already confirmed to resolve beneath `module.path` (URV-5.b.1).
+    // Widening the allowlist to those paths is safe because the containment
+    // check already proved they cannot escape the module tree; without the
+    // widening, a default-on Landlock flip (URV-5.c.5) would EACCES
+    // legitimate writes the operator's configuration permits.
+    let mut roots: Vec<&Path> = Vec::with_capacity(1 + extra_allowed_paths.len());
+    roots.push(module.path.as_path());
+    roots.extend_from_slice(extra_allowed_paths);
 
     match restrict_to_module_paths(&roots) {
         LandlockOutcome::Enforced(status) => {
@@ -294,6 +375,59 @@ fn engage_landlock_sandbox(
             Ok(true)
         }
     }
+}
+
+/// Engages the LSM-SECCOMP BPF allowlist for the worker.
+///
+/// Layers above the Landlock LSM defense engaged immediately prior:
+/// Landlock denies path-based syscalls with `EACCES`; seccomp denies
+/// out-of-scope syscalls with `SIGSYS` before the kernel ever consults
+/// the LSM stack.
+///
+/// On builds without the `daemon-seccomp` feature the helper is a no-op
+/// that returns `Unavailable`; the wire-in is unconditional so the call
+/// site does not need `#[cfg]` branching. Construction or installation
+/// failure is logged as a warning and the connection continues - SEC-1
+/// `*at` helpers and Landlock remain the primary defenses. See
+/// `docs/design/lsm-seccomp-allowlist.md` for the allowlist rationale
+/// and the 14-day bake plan.
+fn engage_seccomp_sandbox(ctx: &mut ModuleRequestContext<'_>) -> io::Result<()> {
+    match apply_worker_seccomp_filter() {
+        SeccompOutcome::Installed => {
+            if let Some(log) = ctx.log_sink {
+                let text = format!(
+                    "module '{}': seccomp BPF filter engaged (KillProcess on unlisted syscalls)",
+                    ctx.request,
+                );
+                let message = rsync_info!(text).with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+        }
+        SeccompOutcome::Unavailable => {
+            // No-op build (non-Linux, daemon-seccomp feature off, or
+            // unsupported arch). Log at info so operators can confirm the
+            // layer status without having to grep the build flags.
+            if let Some(log) = ctx.log_sink {
+                let text = format!(
+                    "module '{}': seccomp BPF unavailable in this build; Landlock + SEC-1 *at* remain the defense",
+                    ctx.request,
+                );
+                let message = rsync_info!(text).with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+        }
+        SeccompOutcome::Error(err) => {
+            if let Some(log) = ctx.log_sink {
+                let text = format!(
+                    "module '{}': seccomp BPF setup failed: {err}; relying on Landlock + SEC-1 *at* defense",
+                    ctx.request,
+                );
+                let message = rsync_warning!(text).with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Transfer stream pair: separate read and write handles for the transfer engine.
@@ -652,13 +786,18 @@ fn process_approved_module(
     }
 
     // SEC-1.p: reject client-supplied --temp-dir / --partial-dir /
-    // --backup-dir paths that resolve outside the module root. Done before
-    // chroot so we can report a precise error message; the Landlock
-    // allowlist that follows would otherwise block the writes anyway with
-    // a less descriptive EACCES from the kernel.
-    if !validate_client_paths_in_module(ctx, module, &client_args)? {
+    // --backup-dir / --compare-dest / --copy-dest / --link-dest paths that
+    // resolve outside the module root. Done before chroot so we can report
+    // a precise error message; the Landlock allowlist that follows would
+    // otherwise block the writes anyway with a less descriptive EACCES
+    // from the kernel. The accepted in-module paths are carried forward
+    // and fed to `engage_landlock_sandbox` so the kernel allowlist matches
+    // the full set the receiver will actually touch (URV-5.b.REOPEN).
+    let Some(validated_client_paths) =
+        validate_client_paths_in_module(ctx, module, &client_args)?
+    else {
         return Ok(());
-    }
+    };
 
     // Apply chroot and privilege restrictions before building server config.
     // After chroot the effective module path becomes "/" since the process root
@@ -733,10 +872,26 @@ fn process_approved_module(
     // Landlock engages, those external paths become unreadable. Stub on
     // non-Linux short-circuits to `Unavailable`. Failure to engage is
     // logged but does not abort the connection: SEC-1 *at* helpers still
-    // provide the primary defense.
-    if !engage_landlock_sandbox(ctx, module)? {
+    // provide the primary defense. The validated client-supplied paths
+    // collected above are admitted to the allowlist alongside the module
+    // root (URV-5.b.REOPEN): they are guaranteed in-tree and would
+    // otherwise EACCES under a default-on flip.
+    let extra_allowed: Vec<&Path> = validated_client_paths
+        .landlock_roots
+        .iter()
+        .map(|p| p.as_path())
+        .collect();
+    if !engage_landlock_sandbox(ctx, module, &extra_allowed)? {
         return Ok(());
     }
+
+    // LSM-SECCOMP: layer the BPF syscall allowlist over Landlock. Same
+    // lifecycle phase as the LSM helper above: post-chroot, post-
+    // privilege-drop, post-filter-load, pre-client-data. The seccomp
+    // helper is a no-op on builds without the `daemon-seccomp` feature so
+    // the call is unconditional. Failures do not abort the connection -
+    // Landlock + SEC-1 `*at` remain the primary defenses.
+    engage_seccomp_sandbox(ctx)?;
 
     let mut streams = match setup_transfer_streams(ctx)? {
         Some(s) => s,
