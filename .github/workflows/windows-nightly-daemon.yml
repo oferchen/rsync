@@ -1,0 +1,107 @@
+# Windows nightly daemon-crate test cell (WCI-3 #3697).
+#
+# The required `Windows` cell in ci.yml links `core`, `engine`, and
+# `cli` test binaries but does not link the daemon crate, so the
+# `#[cfg(windows)]` daemon tests are never compiled or executed on
+# Windows. WCI-1 (docs/audits/wci-1-windows-nextest-coverage-gap.md)
+# identified two such tests:
+#
+#   crates/daemon/src/daemon/sections/xfer_exec.rs:348
+#     build_xfer_command_uses_cmd_on_windows - verifies the pre/post
+#     xfer-exec command-line builder dispatches through cmd.exe /C
+#     rather than /bin/sh -c on Windows.
+#
+#   crates/daemon/src/daemon/runtime_options/tests.rs:335
+#     last_detach_flag_wins - confirms --detach= precedence parsing
+#     for the daemon's Windows-service runtime-options path.
+#
+# Cross-OS feature rows in _test-features.yml (async, tracing,
+# concurrent-sessions, daemon-tls, iconv) compile -p daemon on
+# windows-latest but execute only the subset of tests enabled by the
+# named feature flag. The two default-features `#[cfg(windows)]` tests
+# above do not run under any required cell.
+#
+# This workflow runs the full daemon crate on windows-latest nightly so
+# those tests execute at least once per day.
+#
+# Status: non-required (informational). Do not add to branch protection.
+# Promotion to required-on-PR is gated on a 14-day green bake window
+# per WCI-11 #3705.
+name: Windows nightly daemon
+
+on:
+  schedule:
+    # Nightly at 06:00 UTC. Offset one hour after the Windows nightly
+    # IOCP cell (05:00 UTC, WCI-2) to spread runner-pool load.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: windows-nightly-daemon-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: "full"
+
+jobs:
+  windows-daemon:
+    name: Windows daemon-crate tests
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-windows-daemon-cargo-v1-${{ hashFiles('**/Cargo.lock') }}
+          key: windows-nightly-daemon
+
+      - name: Install cargo-nextest (Windows direct download)
+        shell: pwsh
+        run: |
+          # Workaround for actions/partner-runner-images#169 on Windows.
+          $ErrorActionPreference = 'Stop'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
+          & "$cargoBin\cargo-nextest.exe" --version
+
+      # Build the daemon crate first so the nextest step links against
+      # an already-warm build artifact. Default features only; cross-OS
+      # feature rows in _test-features.yml already cover async,
+      # tracing, concurrent-sessions, daemon-tls, and iconv variants.
+      - name: Build daemon crate
+        run: cargo build --locked -p daemon
+
+      # Run all daemon-crate tests on Windows. This covers the two
+      # WCI-1 gap tests plus the broader daemon test suite that the
+      # required `Windows` cell skips entirely.
+      - name: Run daemon-crate tests
+        run: cargo nextest run --locked -p daemon --no-fail-fast
+
+      - name: Upload nextest logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-nightly-daemon-logs
+          path: |
+            target/nextest/**/*.log
+            target/nextest/**/*.xml
+          if-no-files-found: ignore
+          retention-days: 14
