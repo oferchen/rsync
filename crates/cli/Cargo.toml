@@ -53,7 +53,6 @@ protocol = { path = "../protocol" }
 compress = { path = "../compress", default-features = false }
 metadata = { path = "../metadata", default-features = false }
 rsync_io = { path = "../rsync_io", package = "rsync_io" }
-fast_io = { path = "../fast_io", default-features = false }
 rayon = { workspace = true }
 time = { version = "0.3", default-features = false, features = ["formatting", "macros", "local-offset", "std"] }
 tempfile = { workspace = true }
@@ -64,6 +63,17 @@ tracing-subscriber = { workspace = true }
 uzers = "0.12"
 xattr = { workspace = true }
 daemon = { path = "../daemon" }
+
+# fast_io's `landlock` feature carries the rust-landlock dispatch used by
+# the `--server` receiver sandbox in `frontend/server/run.rs`. Linux gets the
+# real LSM backend; on every other target the stub module compiles with the
+# same public surface and every call short-circuits to `Unavailable`, so
+# the wire-in does not need `#[cfg]` branching at the call site.
+[target.'cfg(target_os = "linux")'.dependencies]
+fast_io = { path = "../fast_io", default-features = false, features = ["landlock"] }
+
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+fast_io = { path = "../fast_io", default-features = false }
 
 [target.'cfg(not(windows))'.dependencies]
 checksums = { path = "../checksums" }

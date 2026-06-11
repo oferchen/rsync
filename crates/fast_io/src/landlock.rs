@@ -70,12 +70,13 @@ pub fn is_supported() -> bool {
 /// Restricts the current thread to read+write access only under
 /// `allowed_roots`.
 ///
-/// The helper requests `AccessFs::from_all(ABI::V3)` (read / write / create /
-/// delete / rename / symlink / refer / truncate) with best-effort downgrade
-/// enabled, so a kernel that understands only v1 or v2 accepts the subset it
-/// supports and silently drops the rest. The returned [`LandlockOutcome`]
-/// carries the [`RulesetStatus`] so callers can log the actual enforcement
-/// level.
+/// The helper requests `AccessFs::from_all(ABI::V5)` (read / write / create /
+/// delete / rename / symlink / refer / truncate / ioctl-dev) with best-effort
+/// downgrade enabled, so a kernel that understands only v1-v4 accepts the
+/// subset it supports and silently drops the rest. ABI::V5 lands on Linux
+/// 6.7+ and adds the IPC scoping surface; older kernels degrade to V4/V3
+/// without surfacing as an error. The returned [`LandlockOutcome`] carries
+/// the [`RulesetStatus`] so callers can log the actual enforcement level.
 ///
 /// Call exactly once per daemon connection, after privilege drop and any
 /// chroot have completed, before any user-controlled file operation begins.
@@ -94,9 +95,13 @@ pub fn is_supported() -> bool {
 pub fn restrict_to_module_paths(allowed_roots: &[&Path]) -> LandlockOutcome {
     // Request the highest ABI we support; BestEffort lets the crate silently
     // drop rights the running kernel cannot honour (REFER on 5.13-5.18,
-    // TRUNCATE on 5.13-6.1). The final enforcement tier surfaces in the
-    // RulesetStatus returned by restrict_self below.
-    let access = AccessFs::from_all(ABI::V3);
+    // TRUNCATE on 5.13-6.1, IoctlDev on 5.13-6.6, network scopes on 5.13-6.6,
+    // signal scopes on 5.13-6.6). ABI::V5 (Linux 6.7+) adds the IPC scoping
+    // surface; on the target test host (kernel 7.0) it engages fully, and on
+    // older kernels BestEffort downgrade preserves the V3 rights we relied on
+    // historically. The final enforcement tier surfaces in the RulesetStatus
+    // returned by restrict_self below.
+    let access = AccessFs::from_all(ABI::V5);
 
     let ruleset = match Ruleset::default()
         .set_compatibility(CompatLevel::BestEffort)
