@@ -463,9 +463,8 @@ mod handle_at_error_tests {
 
     #[test]
     fn payload_strips_at_error_prefix() {
-        let err = handle_daemon_at_error(
-            "@ERROR: access denied to chrootmod from 127.0.0.1 (127.0.0.1)",
-        );
+        let err =
+            handle_daemon_at_error("@ERROR: access denied to chrootmod from 127.0.0.1 (127.0.0.1)");
 
         let rendered = err.to_string();
         assert!(
