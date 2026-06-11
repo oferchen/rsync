@@ -269,11 +269,7 @@ fn requires_multiplex_output(
 /// upstream: compat.c:161-179 set_allow_inc_recurse,
 /// sender.c:228-232 (send_extra_file_list throttle),
 /// io.c:1740-1760 (receiver's inline sub-list dispatch oc-rsync does not implement).
-pub(crate) fn compute_allow_inc_recurse(
-    recursive: bool,
-    qsort: bool,
-    role: ServerRole,
-) -> bool {
+pub(crate) fn compute_allow_inc_recurse(recursive: bool, qsort: bool, role: ServerRole) -> bool {
     recursive && !qsort && role == ServerRole::Generator
 }
 

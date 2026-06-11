@@ -49,11 +49,7 @@ fn receiver_never_advertises_inc_recurse() {
         false,
         ServerRole::Receiver
     ));
-    assert!(!compute_allow_inc_recurse(
-        true,
-        true,
-        ServerRole::Receiver
-    ));
+    assert!(!compute_allow_inc_recurse(true, true, ServerRole::Receiver));
     assert!(!compute_allow_inc_recurse(
         false,
         false,
