@@ -1,0 +1,44 @@
+# AppArmor profile for oc-rsyncd daemon
+# Install: cp this file to /etc/apparmor.d/usr.sbin.oc-rsyncd
+#         then run: sudo apparmor_parser -r /etc/apparmor.d/usr.sbin.oc-rsyncd
+# Verify: sudo aa-status | grep oc-rsyncd
+
+#include <tunables/global>
+
+/usr/sbin/oc-rsyncd {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+
+  # Bind to the configured rsync port (default 873)
+  capability net_bind_service,
+
+  # Read configuration
+  /etc/rsyncd.conf r,
+  /etc/oc-rsyncd.conf r,
+  /etc/oc-rsyncd.secrets r,
+  /etc/oc-rsyncd.d/** r,
+
+  # PID file
+  /run/oc-rsyncd.pid rwk,
+  /var/run/oc-rsyncd.pid rwk,
+
+  # Log files
+  /var/log/oc-rsyncd.log w,
+  /var/log/rsyncd.log w,
+
+  # Network socket
+  network inet stream,
+  network inet6 stream,
+
+  # Module roots - operators add their own here, e.g.:
+  # /srv/backups/** rw,
+  # /var/lib/oc-rsync-modules/** rw,
+  # /tmp/oc-rsync-stage/** rw,
+
+  # Standard tmpdir for partial files
+  /tmp/** rw,
+
+  # Self-introspection (for --lsm-status if shipped)
+  /sys/kernel/security/lsm r,
+  /proc/self/status r,
+}

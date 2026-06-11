@@ -34,7 +34,7 @@ use logging::debug_log;
 /// `"bind() failed: %s (address-family %d)\n"`. `address_family` carries
 /// the raw integer from `resp->ai_family` (typically `AF_INET = 2` or
 /// `AF_INET6 = 10` on Linux). The error string mirrors what upstream
-/// produces via `strerror(errno)`; we use [`io::Error::to_string`] which
+/// produces via `strerror(errno)`; we use `io::Error::to_string` which
 /// resolves to the same OS message text on Unix targets.
 ///
 /// The helper is gated internally on `DebugFlag::Bind` level 1, so
