@@ -31,9 +31,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use metadata::{
-    apply_xattrs_from_list, read_dacl_sddl, read_xattrs_for_wire, write_dacl_sddl,
-};
+use metadata::{apply_xattrs_from_list, read_dacl_sddl, read_xattrs_for_wire, write_dacl_sddl};
 use protocol::xattr::{XattrEntry, XattrList};
 use tempfile::tempdir;
 

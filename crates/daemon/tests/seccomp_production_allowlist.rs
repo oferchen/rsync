@@ -137,14 +137,7 @@ fn production_allowlist_covers_a_clean_transfer_slice() {
 fn getrandom_via_libc(buf: &mut [u8]) -> std::io::Result<()> {
     // SAFETY: getrandom(2) takes a buffer pointer, length, and flags.
     #[allow(unsafe_code)]
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_getrandom,
-            buf.as_mut_ptr(),
-            buf.len(),
-            0,
-        )
-    };
+    let rc = unsafe { libc::syscall(libc::SYS_getrandom, buf.as_mut_ptr(), buf.len(), 0) };
     if rc < 0 {
         Err(std::io::Error::last_os_error())
     } else {

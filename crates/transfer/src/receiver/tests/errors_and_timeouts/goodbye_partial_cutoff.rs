@@ -197,8 +197,7 @@ fn handle_goodbye_proto32_rejects_garbage_in_place_of_ndx_done() {
     let mut codec = create_ndx_codec(32);
     codec.write_ndx(&mut bytes, 5).unwrap();
 
-    let err = drive_handle_goodbye(&ctx, bytes)
-        .expect_err("non-NDX_DONE value must be rejected");
+    let err = drive_handle_goodbye(&ctx, bytes).expect_err("non-NDX_DONE value must be rejected");
     assert_eq!(
         err.kind(),
         io::ErrorKind::InvalidData,

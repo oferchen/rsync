@@ -424,8 +424,7 @@ mod tests {
     fn new_returns_io_result() {
         let result: io::Result<TokenReader> = TokenReader::new(None);
         assert!(result.is_ok());
-        let result: io::Result<TokenReader> =
-            TokenReader::new(Some(CompressionAlgorithm::Zlib));
+        let result: io::Result<TokenReader> = TokenReader::new(Some(CompressionAlgorithm::Zlib));
         assert!(result.is_ok());
     }
 }

@@ -720,9 +720,7 @@ fn decode_utf16_name(
     if name_end > payload_end {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!(
-                "{label} runs past payload (name_end {name_end}, payload_end {payload_end})"
-            ),
+            format!("{label} runs past payload (name_end {name_end}, payload_end {payload_end})"),
         ));
     }
     let wide: Vec<u16> = buf[name_start..name_end]

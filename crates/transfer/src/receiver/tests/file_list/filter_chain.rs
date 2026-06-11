@@ -360,7 +360,11 @@ fn delete_symlinked_subdir_surfaces_ioerr_general() {
     // belongs to the explicit per-entry deletion path, which the
     // refusal short-circuited.
     assert!(
-        attack_link.symlink_metadata().unwrap().file_type().is_symlink(),
+        attack_link
+            .symlink_metadata()
+            .unwrap()
+            .file_type()
+            .is_symlink(),
         "the planted symlink must remain in place (scan refusal closes the window without unlinking)"
     );
 }
