@@ -413,28 +413,30 @@ fn resolve_sender_sources(
         }
         // Preserve the trailing slash so the sender can detect a dotdir-style
         // source (upstream flist.c:2312-2322 appends `.` and sets DOTDIR_NAME
-        // for any `fbuf[len-1] == '/'`). PathBuf collapses trailing slashes
-        // during `join`, so we re-append the byte after the join when present.
+        // for any `fbuf[len-1] == '/'`). Upstream rsync joins module-relative
+        // paths with a literal `/` regardless of host OS (util1.c pathjoin()),
+        // so build the result the same way instead of going through
+        // PathBuf::join, which on Windows inserts `\` and on macOS leaves
+        // a trailing `/` that doubles when we re-append.
         let trailing = tail.ends_with('/') || tail.ends_with('\\');
-        let joined = module_path.join(trimmed);
-        // Path::join collapses a trailing slash on Linux but preserves one
-        // on macOS, so re-append only when the joined path doesn't already
-        // end with the separator. Otherwise the macOS path emits a double
-        // slash that diverges from upstream's DOTDIR_NAME match in
-        // flist.c:2312-2322.
-        let joined = if trailing {
-            let bytes = joined.as_os_str().as_encoded_bytes();
-            if bytes.last().is_some_and(|b| *b == b'/' || *b == b'\\') {
-                joined
-            } else {
-                let mut buf = joined.into_os_string();
-                buf.push("/");
-                std::path::PathBuf::from(buf)
-            }
-        } else {
-            joined
-        };
-        sources.push(joined);
+        let mut buf = module_path.as_os_str().to_owned();
+        let needs_leading_sep = !buf
+            .as_encoded_bytes()
+            .last()
+            .is_some_and(|b| *b == b'/' || *b == b'\\');
+        if needs_leading_sep {
+            buf.push("/");
+        }
+        buf.push(trimmed);
+        if trailing
+            && !buf
+                .as_encoded_bytes()
+                .last()
+                .is_some_and(|b| *b == b'/' || *b == b'\\')
+        {
+            buf.push("/");
+        }
+        sources.push(std::path::PathBuf::from(buf));
     }
     if all_empty {
         Some(vec![module_path.to_path_buf()])
