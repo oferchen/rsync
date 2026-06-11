@@ -8,13 +8,13 @@
 //! - The `io_uring` cargo feature is not enabled
 //!
 //! All cross-platform plain-data types (configs, kernel UAPI constants, error
-//! enums, telemetry structs) live in [`crate::io_uring_common`] so they
+//! enums, telemetry structs) live in `io_uring_common` so they
 //! compile identically on every target. This module hosts only the
 //! opaque-handle types and "always Unsupported" entry points that are unique
 //! to the stub backend - which is the only thing the Linux backend cannot
 //! share with us.
 //!
-//! Submodule layout mirrors [`crate::io_uring`] so cross-platform call sites
+//! Submodule layout mirrors `io_uring` so cross-platform call sites
 //! can import the same paths regardless of which backend is compiled.
 
 #![allow(dead_code)]

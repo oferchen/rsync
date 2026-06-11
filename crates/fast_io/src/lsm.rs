@@ -107,7 +107,7 @@ pub fn has_mandatory_lsm() -> bool {
 }
 
 /// Returns `true` iff `lsms` contains at least one name in
-/// [`MANDATORY_LSM_NAMES`]. Pure function exposed for testing.
+/// `MANDATORY_LSM_NAMES`. Pure function exposed for testing.
 #[must_use]
 pub fn classify_mandatory(lsms: Option<&[String]>) -> bool {
     let Some(lsms) = lsms else {

@@ -68,7 +68,7 @@ static SEND_ZC_SUPPORTED: AtomicI8 = AtomicI8::new(0);
 /// Returns `true` when the running kernel advertises `IORING_OP_SEND_ZC`.
 ///
 /// Uses `IORING_REGISTER_PROBE` on a throwaway 4-entry ring, mirroring the
-/// `count_supported_ops` cache in [`super::config`]. Distros backport features
+/// `count_supported_ops` cache in `super::config`. Distros backport features
 /// and container runtimes lie about kernel versions, so the opcode probe is
 /// preferred over a `uname()` floor check.
 ///

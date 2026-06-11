@@ -100,7 +100,7 @@ struct IoUringBuf {
 
 /// Validates a [`BufferRingConfig`] for use with the Linux backend.
 ///
-/// The plain-data [`BufferRingConfig`] lives in [`crate::io_uring_common`]
+/// The plain-data [`BufferRingConfig`] lives in `io_uring_common`
 /// so the non-Linux stub can expose the identical field layout; this
 /// validator is the only Linux-only behaviour and stays here next to the
 /// rest of the ring construction code.
