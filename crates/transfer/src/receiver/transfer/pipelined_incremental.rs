@@ -97,7 +97,7 @@ impl ReceiverContext {
         let mut delete_stats = DeleteStats::new();
         let mut delete_limit_exceeded = false;
         if self.config.flags.delete {
-            let (ds, exceeded) = self.delete_extraneous_files(
+            let (ds, exceeded, io_bits) = self.delete_extraneous_files(
                 &setup.dest_dir,
                 #[cfg(unix)]
                 setup.sandbox.as_ref(),
@@ -105,6 +105,10 @@ impl ReceiverContext {
             )?;
             delete_stats = ds;
             delete_limit_exceeded = exceeded;
+            // UTS-16.b: sandbox-rejected delete scan surfaces here so the
+            // chdir-symlink-race refusal becomes a non-zero exit instead of a
+            // silent skip.
+            stats.io_error |= io_bits;
         }
 
         let files_to_transfer = self.build_files_to_transfer(
