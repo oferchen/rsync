@@ -440,3 +440,78 @@ mod early_input_roundtrip_tests {
         assert_eq!(received, content);
     }
 }
+
+/// Pins the daemon `@ERROR` -> client mapping.
+///
+/// Regression coverage for the UTS-22.b port of upstream's
+/// `testsuite/daemon-chroot-acl_test.py`. The python test greps the
+/// client's combined output for `@ERROR` to confirm the GHSA-rjfm-3w2m-jf4f
+/// hostname-deny path fired; if the client renders only its envelope
+/// (`oc-rsync error: access denied ... (code 5)`) without echoing the
+/// raw `@ERROR:` line, the regression check silently fails-OPEN even
+/// though the daemon correctly denied the connection.
+///
+/// The daemon-side GHSA hardening lives in
+/// `crates/daemon/src/daemon/module_state/definition.rs::permits` and is
+/// covered by `tests/chunks/module_hostname_deny_fails_closed_when_dns_unresolved.rs`;
+/// this test pins the matching client-side rendering so the two halves
+/// can never drift out of sync.
+#[cfg(test)]
+mod handle_at_error_tests {
+    use super::*;
+    use crate::client::error::CLIENT_SERVER_PROTOCOL_EXIT_CODE;
+
+    #[test]
+    fn payload_strips_at_error_prefix() {
+        let err = handle_daemon_at_error(
+            "@ERROR: access denied to chrootmod from 127.0.0.1 (127.0.0.1)",
+        );
+
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("access denied to chrootmod"),
+            "expected payload in rendered error, got: {rendered}"
+        );
+        assert!(
+            !rendered.contains("@ERROR: "),
+            "structured envelope should not duplicate the @ERROR prefix, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn payload_falls_through_when_prefix_format_differs() {
+        // upstream sometimes emits "@ERROR foo" (no colon) when the C
+        // path uses io_printf with concatenated tokens; the strip must
+        // not return None, the whole line is kept verbatim.
+        let err = handle_daemon_at_error("@ERROR no colon variant");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("@ERROR no colon variant"),
+            "fall-through path must preserve the whole line, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn maps_to_client_server_protocol_exit_code() {
+        // upstream: main.c:1879 - @ERROR client-server handshake failures
+        // exit with RERR_PROTOCOL (code 5).
+        let err = handle_daemon_at_error("@ERROR: auth failed on module foo");
+        assert_eq!(err.exit_code(), CLIENT_SERVER_PROTOCOL_EXIT_CODE);
+    }
+
+    #[test]
+    fn ghsa_rjfm_3w2m_jf4f_payload_renders_intact() {
+        // The exact wire string the daemon emits for the GHSA-rjfm-3w2m-jf4f
+        // hostname-deny ACL path. upstream: clientserver.c:733 -
+        // `@ERROR: access denied to %s from %s (%s)\n`.
+        let wire = "@ERROR: access denied to chrootmod from 127.0.0.1 (127.0.0.1)";
+        let err = handle_daemon_at_error(wire);
+
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("access denied to chrootmod from 127.0.0.1 (127.0.0.1)"),
+            "GHSA hostname-deny payload must round-trip into client error, got: {rendered}"
+        );
+        assert_eq!(err.exit_code(), CLIENT_SERVER_PROTOCOL_EXIT_CODE);
+    }
+}
