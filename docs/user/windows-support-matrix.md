@@ -88,7 +88,7 @@ Maturity legend:
 | Signal handling (Ctrl+C, Ctrl+Break, console close) | Full | Production | `SetConsoleCtrlHandler` maps CTRL_C / CTRL_CLOSE to shutdown and CTRL_BREAK to graceful exit. SIGHUP-equivalent config reload via named events is not wired. |
 | EH ABI (`windows-gnu-eh`) | Full | Resolved | Zero-cost no-op on MSVC release binaries. Exists only for `x86_64-pc-windows-gnu` cross-compilation via `cargo-zigbuild`. See `docs/audit/win-gc-gnu-eh-abi-status.md` and `docs/audit/win-gd-gnu-eh-release-implications.md`. |
 | Long paths (`\\?\` prefix) | Full | Audited | `\\?\` prefix applied by the path builder for paths exceeding `MAX_PATH`. Audited under WPC-5/WPC-6; see `docs/audit/windows-long-path-support.md`. |
-| Reparse points (junctions, mount points) | Partial | Audited | Non-symlink reparse points classified by tag. Junctions followed like directory symlinks. OneDrive/Cloud Files API placeholders detected but not transparently hydrated. See `docs/audit/windows-reparse-point-classification.md` (WPC-8/WPC-9). |
+| Reparse points (junctions, mount points) | Partial | Shipped, end-to-end wired | Reparse-point classification (WPC-8/WPC-9) is consumed by the transfer-side flist generator: every `FILE_ATTRIBUTE_REPARSE_POINT` entry routes through `metadata::windows::classify_path` and serialises as a SYMLINK-class `FileEntry` for Cygwin parity. Junctions and symbolic links carry their on-disk target; OneDrive / Cloud Files placeholders, WSL `AF_UNIX` sockets, and opaque vendor tags emit an empty target stub. Transparent OneDrive hydration is still out of scope. See `docs/audit/windows-reparse-point-classification.md` (WPC-8/WPC-9). |
 | Case-insensitive FS conflict detection | Full | Audited | Receiver detects source-side name collisions (e.g., `a.txt` vs `A.txt`) before applying the second write. Regression test per WPC-11; see `docs/audit/windows-case-insensitive-conflict-detection.md`. |
 
 ## 3. Known limitations
@@ -218,9 +218,13 @@ into `.github/RELEASE_TEMPLATE.md` under the appropriate heading.
   warning emitted when ADS detected without `-X`.
 - **Long paths (`\\?\`)**: implemented per WPC-5/WPC-6. Paths
   exceeding `MAX_PATH` are prefixed automatically.
-- **Reparse points**: classified by tag per WPC-8/WPC-9. Junctions
-  followed like directory symlinks. Cloud Files placeholders
-  detected but not hydrated.
+- **Reparse points**: classified by tag per WPC-8/WPC-9 and wired
+  end-to-end into transfer-side flist generation. Junctions and
+  symbolic links serialise as SYMLINK-class entries carrying their
+  on-disk target; OneDrive/Cloud Files placeholders, WSL `AF_UNIX`
+  sockets, and opaque vendor tags emit empty-target SYMLINK stubs
+  rather than slipping through as regular files. Transparent
+  on-demand hydration is still out of scope.
 - **EH ABI**: resolved per WIN-G.c/WIN-G.d. The `windows-gnu-eh`
   crate is a zero-cost no-op on MSVC release binaries.
 - **Case-insensitive FS**: collision detection implemented per
