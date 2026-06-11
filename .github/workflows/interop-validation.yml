@@ -396,6 +396,8 @@ jobs:
           find target/interop/upstream-install -type f -name rsync -exec chmod +x {} +
 
       - name: Run INC_RECURSE interop tests
+        env:
+          UPSTREAM_VERSION: ${{ env.UPSTREAM_RSYNC_VERSION }}
         run: bash tests/inc_recurse_interop_test.sh
 
       - name: Create summary
