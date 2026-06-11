@@ -1,0 +1,120 @@
+# Windows nightly xattr-via-ADS test cell (WCI-6 #3700).
+#
+# The required `Windows ACL/xattr` cell in ci.yml builds the metadata
+# crate with `--features acl,xattr` and runs the workspace-scoped
+# filter `-E 'test(acl) | test(xattr) | test(ads) | test(stream)'`.
+# The audit at docs/audits/wci-1-windows-nextest-coverage-gap.md
+# (WCI-1, PR #5639, section 4.2) flagged the gap WCI-6 closes:
+#
+#   - The integration tests in
+#     `crates/metadata/tests/windows_ads_xattrs_roundtrip.rs`
+#     (`ads_zone_identifier_round_trips_through_xattrs`,
+#     `ads_multi_stream_round_trips`) are the only end-to-end
+#     coverage of the FindFirstStreamW / FindNextStreamW NTFS
+#     enumeration path and the `path:streamname:$DATA` CreateFileW
+#     write path through oc-rsync's xattr wire surface.
+#   - The CLI preflight test
+#     `xattrs_preflight_accepts_on_windows_with_feature` in
+#     `crates/cli/src/frontend/tests/xattrs.rs` is the wiring smoke
+#     test for WPC-3.wire.1/.2 (CLI -> metadata feature propagation).
+#     Until those refactors land it is the only signal that the
+#     `--xattrs` flag reaches the Windows ADS backend cleanly.
+#
+# Running these on every PR is unnecessary - the metadata cell already
+# links them - but a dedicated nightly that isolates the xattr feature
+# without `acl` catches drift in the CLI preflight cfg gates and in the
+# `xattr_windows.rs` FindFirstStreamW backend that the combined cell
+# might mask under feature-union compilation.
+#
+# Status: non-required (informational). Do not add to branch protection.
+# Promotion to required-on-PR is gated on a 14-day green bake window
+# per WCI-11 #3705.
+name: Windows nightly xattr ADS
+
+on:
+  schedule:
+    # Nightly at 10:00 UTC. Offset from WCI-2 IOCP (05:00 UTC) and
+    # WCI-7 long-path (07:00 UTC) to keep the Windows runner pool
+    # uncontended and to spread nightly Windows wall-time across the
+    # schedule.
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: windows-nightly-xattr-ads-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: "full"
+
+jobs:
+  windows-xattr-ads:
+    name: Windows xattr ADS round-trip
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-windows-xattr-ads-cargo-v1-${{ hashFiles('**/Cargo.lock') }}
+          key: windows-nightly-xattr-ads
+
+      - name: Install cargo-nextest (Windows direct download)
+        shell: pwsh
+        run: |
+          # Workaround for actions/partner-runner-images#169 on Windows.
+          $ErrorActionPreference = 'Stop'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
+          & "$cargoBin\cargo-nextest.exe" --version
+
+      # Filter targets the metadata-crate ADS coverage. The test names
+      # `ads_zone_identifier_round_trips_through_xattrs` and
+      # `ads_multi_stream_round_trips` in
+      # `crates/metadata/tests/windows_ads_xattrs_roundtrip.rs` exercise
+      # FindFirstStreamW + FindNextStreamW enumeration and CreateFileW
+      # writes against `path:streamname:$DATA`. Pairing them with the
+      # `xattr` (no `acl`) feature set isolates the ADS code path from
+      # the DACL/SACL surfaces that the combined `Windows ACL/xattr`
+      # cell exercises, so a regression in xattr_windows.rs surfaces
+      # here even if acl_windows.rs masks it under feature union.
+      - name: Run metadata ADS round-trip tests
+        run: cargo nextest run --locked -p metadata --features xattr --no-fail-fast -E 'test(xattr) or test(ads) or test(stream)'
+
+      # The WPC-3.wire.4 end-to-end wiring test lives in the CLI crate
+      # (`crates/cli/src/frontend/tests/xattrs.rs`) because it covers
+      # the cli-preflight -> metadata-backend handoff that WPC-3.wire.1/.2
+      # are refactoring. Running it in the same cell ensures the
+      # propagation contract stays green even if WPC-3.wire.1/.2 land
+      # mid-bake-window.
+      - name: Run CLI xattrs preflight smoke
+        run: cargo nextest run --locked -p cli --features xattr --no-fail-fast -E 'test(xattrs_preflight_accepts_on_windows_with_feature)'
+
+      - name: Upload nextest logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-nightly-xattr-ads-logs
+          path: |
+            target/nextest/**/*.log
+            target/nextest/**/*.xml
+          if-no-files-found: ignore
+          retention-days: 14
