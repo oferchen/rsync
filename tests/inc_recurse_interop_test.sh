@@ -10,7 +10,7 @@
 #   OC_RSYNC              - path to oc-rsync binary
 #   UPSTREAM_RSYNC        - path to upstream rsync binary
 #   UPSTREAM_INSTALL_ROOT - root of upstream installs (expects {version}/bin/rsync)
-#   UPSTREAM_VERSION      - upstream version to test (default: 3.4.2)
+#   UPSTREAM_VERSION      - upstream version to test (default: 3.4.4)
 
 set -euo pipefail
 
@@ -20,7 +20,7 @@ WORKSPACE_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Paths (overridable via environment)
 OC_RSYNC="${OC_RSYNC:-${WORKSPACE_ROOT}/target/release/oc-rsync}"
-UPSTREAM_VERSION="${UPSTREAM_VERSION:-3.4.2}"
+UPSTREAM_VERSION="${UPSTREAM_VERSION:-3.4.4}"
 UPSTREAM_INSTALL_ROOT="${UPSTREAM_INSTALL_ROOT:-${WORKSPACE_ROOT}/target/interop/upstream-install}"
 UPSTREAM_RSYNC="${UPSTREAM_RSYNC:-${UPSTREAM_INSTALL_ROOT}/${UPSTREAM_VERSION}/bin/rsync}"
 
