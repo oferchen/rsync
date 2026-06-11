@@ -191,7 +191,7 @@ fn apply_global_directive(
             // global-defaults handling for directory inclusion; we apply file
             // contents uniformly because oc-rsync does not yet track Vars push/
             // pop semantics for directory globbing.
-            apply_include_directive(state, value, path, line_number, canonical, stack)?;
+            apply_include_directive(state, key, value, path, line_number, canonical, stack)?;
         }
         "motd file" => {
             let trimmed = value.trim();
