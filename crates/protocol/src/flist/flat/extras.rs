@@ -552,10 +552,12 @@ mod tests {
     /// fields downgrades to a soft failure under release builds.
     #[test]
     fn rdev_mask_implies_both_halves_present() {
-        let mut extras = FlatExtras::default();
         // Setting only one half must leave the mask bit cleared so the
         // unwrap/expect path in `append` is never reached.
-        extras.rdev_major = Some(8);
+        let mut extras = FlatExtras {
+            rdev_major: Some(8),
+            ..FlatExtras::default()
+        };
         assert_eq!(extras.presence_mask() & EXTRA_RDEV, 0);
 
         extras.rdev_major = None;
