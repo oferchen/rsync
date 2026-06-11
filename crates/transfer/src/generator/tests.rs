@@ -2557,8 +2557,7 @@ mod files_from {
         // Count occurrences of every distinct relative name. The subdir
         // must appear exactly once; duplicates would re-trigger the
         // upstream rejection.
-        let mut counts: std::collections::HashMap<String, usize> =
-            std::collections::HashMap::new();
+        let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
         for entry in ctx.file_list().iter() {
             *counts.entry(entry.name().to_string()).or_insert(0) += 1;
         }
