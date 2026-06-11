@@ -6,8 +6,12 @@
 
 /// Processes a global `include` directive, recursively parsing the target file
 /// and merging its results into the current parse state.
+///
+/// `directive` is the literal directive name (`include`, `&include`, or
+/// `&merge`) so any error message names the syntax the user actually wrote.
 fn apply_include_directive(
     state: &mut GlobalParseState,
+    directive: &str,
     value: &str,
     path: &Path,
     line_number: usize,
@@ -19,12 +23,23 @@ fn apply_include_directive(
         return Err(config_parse_error(
             path,
             line_number,
-            "'include' directive must not be empty",
+            format!("'{directive}' directive must not be empty"),
         ));
     }
 
     let include_path = resolve_config_relative_path(canonical, trimmed);
-    let included = parse_config_modules_inner(&include_path, stack)?;
+    let included = parse_config_modules_inner(&include_path, stack).map_err(|error| {
+        // Wrap inner failures so the user sees both the directive site that
+        // triggered the include and the underlying parse error from the
+        // included file. Missing-file and recursive-include errors already
+        // name the offending path; this wrap adds the parent line context.
+        let display = include_path.display();
+        config_parse_error(
+            path,
+            line_number,
+            format!("failed to process '{directive} {display}': {error}"),
+        )
+    })?;
 
     if !included.modules.is_empty() {
         state.modules.extend(included.modules);

@@ -10,7 +10,7 @@
 //!   `is_io_uring_available()` and then asks the kernel via
 //!   `IORING_REGISTER_PROBE` whether opcode 39 (`IORING_OP_LINKAT`) is
 //!   reported as supported.
-//! - [`build_linkat_sqe`] - constructs an [`squeue::Entry`] for a real LINKAT
+//! - [`build_linkat_sqe`] - constructs an `squeue::Entry` for a real LINKAT
 //!   submission; returns [`io::ErrorKind::Unsupported`] when the probe is
 //!   `false`. Callers must keep the [`LinkAtArgs`] paths alive until the
 //!   matching CQE has been reaped.
@@ -125,7 +125,7 @@ fn probe_linkat_support() -> bool {
 /// opcode.
 ///
 /// Returns [`io::ErrorKind::Unsupported`] when [`linkat_supported`] reports
-/// `false`. The returned [`squeue::Entry`] is unattached; callers are
+/// `false`. The returned `squeue::Entry` is unattached; callers are
 /// responsible for tagging it with `user_data` and pushing it onto a ring's
 /// submission queue under the `unsafe` contract documented by
 /// `io_uring::SubmissionQueue::push`.
