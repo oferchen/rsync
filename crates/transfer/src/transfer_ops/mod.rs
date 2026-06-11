@@ -161,7 +161,12 @@ impl RequestConfig<'_> {
     ///
     /// - `token.c:271` - `recv_token()` selects plain or compressed based on `-z`
     /// - `token.c:807-810` - zstd `r_init` only resets `rx_token`, not the DCtx
-    pub fn create_token_reader(&self) -> TokenReader {
+    ///
+    /// # Errors
+    ///
+    /// Propagates the `io::Error` from [`TokenReader::new`] when the
+    /// underlying compressed-token decoder fails to initialize.
+    pub fn create_token_reader(&self) -> std::io::Result<TokenReader> {
         let compression = self.negotiated_algorithms.map(|n| n.compression);
         TokenReader::new(compression)
     }

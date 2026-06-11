@@ -529,9 +529,20 @@ impl FileListReader {
                 // (mode, modtime, uid, gid, atime) were already updated from the
                 // leader's data before `goto the_end`, so the receiver must mirror
                 // this by updating its compression state from the leader too.
-                let leader_local_idx = (hardlink_idx.expect("abbreviated follower has hardlink_idx")
-                    as i32
-                    - self.ndx_start) as usize;
+                //
+                // `is_abbreviated_follower` returns `false` when `hardlink_idx`
+                // is `None`, so reaching this branch with `None` is an internal
+                // invariant violation. Pattern-match and return a typed error
+                // instead of panicking so a corrupt wire stream cannot abort
+                // the process.
+                let Some(idx) = hardlink_idx else {
+                    debug_assert!(false, "abbreviated follower without hardlink_idx");
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "abbreviated hardlink follower missing hardlink_idx",
+                    ));
+                };
+                let leader_local_idx = (idx as i32 - self.ndx_start) as usize;
 
                 if let Some(leader) = segment_entries.get(leader_local_idx) {
                     // upstream: flist.c:795-810 - copy fields from leader

@@ -101,7 +101,7 @@ impl ReceiverContext {
         // upstream: token.c uses a single compression context across all files.
         // For zstd the DCtx must persist across file boundaries (continuous
         // stream), so the reader is built once and reused for the session.
-        let mut token_reader = request_config.create_token_reader();
+        let mut token_reader = request_config.create_token_reader()?;
 
         let mut pipeline = PipelineState::new(pipeline_config);
         let mut file_iter = files_to_transfer.into_iter();
@@ -153,7 +153,7 @@ impl ReceiverContext {
             delay_updates: self.config.write.delay_updates,
             ..DiskCommitConfig::default()
         };
-        let mut pipelined_receiver = PipelinedReceiver::new(disk_config);
+        let mut pipelined_receiver = PipelinedReceiver::new(disk_config)?;
         if is_redo_pass {
             let _ = pipelined_receiver.take_redo_indices();
         }
