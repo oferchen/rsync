@@ -191,6 +191,28 @@ mod systemd;
 #[cfg_attr(docsrs, doc(cfg(feature = "daemon-tls")))]
 pub mod tls;
 
+/// Test-only accessors for the LSM-SECCOMP worker filter.
+///
+/// Exposes [`apply_worker_seccomp_filter`], [`worker_seccomp_allowlist`],
+/// and [`SeccompOutcome`] so the daemon integration tests can install the
+/// production filter inside a forked child without duplicating its
+/// rule set. Public, but gated on `daemon-seccomp`; not part of the
+/// crate's stable surface.
+///
+/// [`apply_worker_seccomp_filter`]: seccomp_test_support::apply_worker_seccomp_filter
+/// [`worker_seccomp_allowlist`]: seccomp_test_support::worker_seccomp_allowlist
+/// [`SeccompOutcome`]: seccomp_test_support::SeccompOutcome
+#[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
+#[cfg_attr(
+    docsrs,
+    doc(cfg(all(target_os = "linux", feature = "daemon-seccomp")))
+)]
+pub mod seccomp_test_support {
+    pub use crate::daemon::{
+        SeccompOutcome, apply_worker_seccomp_filter, worker_seccomp_allowlist,
+    };
+}
+
 #[cfg(test)]
 mod test_env;
 

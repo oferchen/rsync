@@ -117,3 +117,19 @@ oc-rsync --daemon --no-detach --log-file=- --log-file-format=info 2>&1 | \
 ```
 
 The line reports either the achieved ABI level (1, 2, or 3) or `landlock unavailable on this kernel`. Use this to confirm the package was built with the feature enabled and the host kernel exposes the LSM.
+
+## Layered defense: seccomp BPF (`daemon-seccomp`)
+
+`daemon-seccomp` adds a kernel-enforced syscall allowlist on top of Landlock. Where Landlock denies a path-based syscall with `EACCES`, seccomp denies an unlisted syscall with `SIGSYS` before the kernel ever consults the LSM stack. The two layers compose: a regression that bypasses `*at` helpers still hits Landlock; one that skips Landlock still hits seccomp.
+
+```sh
+cargo build --release --bin oc-rsync \
+    --features "landlock,daemon-seccomp" --locked
+```
+
+- Opt-in only until the 14-day bake window in `docs/design/lsm-seccomp-allowlist.md` completes. Default builds remain seccomp-free; distros that want the extra layer enable both flags.
+- Default action is `KILL_PROCESS`: an unlisted syscall delivers `SIGSYS` synchronously and terminates the worker. The parent `accept(2)` loop survives, so the daemon keeps serving other clients.
+- Per-architecture: `x86_64` and `aarch64` are supported. On other architectures the helper logs `seccomp BPF unavailable in this build` and Landlock remains the sole layer.
+- Stackable with chroot, mount namespaces, AppArmor, SELinux, and Landlock. No extra system dependencies; `seccompiler` is a pure-Rust crate that talks to `seccomp(2)` directly.
+
+The 14-day bake window starts at merge of the opt-in feature. After zero missing-syscall reports, a follow-up PR flips the feature on by default for Linux release builds; operators who need to opt out get `--no-default-features` or a build-time exclude.
