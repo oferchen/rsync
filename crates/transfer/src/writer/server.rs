@@ -245,6 +245,53 @@ impl<W: Write> ServerWriter<W> {
         }
     }
 
+    /// Finalises an active compression stream so the inner codec emits any
+    /// trailing bytes (zlib Z_FINISH end-of-stream marker, lz4 frame footer,
+    /// zstd end-of-frame epilogue) before the connection is closed.
+    ///
+    /// In Plain or Multiplex mode this is a plain [`flush`](Self::flush). In
+    /// Compressed mode it consumes the [`CompressedWriter`], calls its
+    /// `finish()` to emit the end-of-stream trailer, and downgrades the
+    /// `ServerWriter` back to [`Self::Multiplex`]. After this the underlying
+    /// multiplex stream is fully drained and any subsequent writes go through
+    /// the plain multiplex path.
+    ///
+    /// upstream: `token.c:send_deflated_token()` issues `Z_FINISH` via
+    /// `deflateEnd()` when the sender tears down its compression context at
+    /// end of transfer. Without this finalisation, the receiver's
+    /// [`CompressedReader`](crate::compressed_reader::CompressedReader) may be
+    /// waiting on the closing block of the deflate stream while the daemon
+    /// has already shut down the socket, producing the "connection
+    /// unexpectedly closed (N bytes received so far)" error mid-goodbye.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the codec or the underlying writer report one
+    /// while emitting trailer bytes. Early-close errors are surfaced to the
+    /// caller; callers that tolerate dry-run / daemon-killed scenarios should
+    /// inspect them via `is_early_close_error`.
+    pub fn finalize_compression(&mut self) -> io::Result<()> {
+        let old_self = std::mem::replace(self, Self::Taken);
+
+        match old_self {
+            Self::Compressed(compressed) => match compressed.finish() {
+                Ok(mut mux) => {
+                    mux.flush()?;
+                    *self = Self::Multiplex(mux);
+                    Ok(())
+                }
+                Err(e) => {
+                    *self = Self::Taken;
+                    Err(e)
+                }
+            },
+            other => {
+                *self = other;
+                self.flush()
+            }
+        }
+    }
+
     /// Writes raw bytes directly to the underlying stream, bypassing multiplexing.
     ///
     /// Used for protocol exchanges like the final goodbye handshake where

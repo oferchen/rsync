@@ -135,11 +135,22 @@ impl GeneratorContext {
         // flushes after its NDX_DONE write, any diagnostic frame queued
         // later in `run()` would otherwise race the connection close.
         //
+        // When wire compression is active (-zz daemon pull), an inner-codec
+        // Z_SYNC_FLUSH alone is not enough: the receiver's
+        // `CompressedReader` keeps the deflate stream open and may block on
+        // the closing block. Finalise the compressor so it emits its
+        // end-of-stream trailer before the socket closes - upstream
+        // `token.c:send_deflated_token()` issues `deflateEnd()` at the same
+        // point, which is the only thing that frees the receiver from its
+        // pending decompress wait. `finalize_compression` downgrades the
+        // writer back to multiplex mode and flushes the inner stream so any
+        // trailing diagnostic frame still rides out before FIN.
+        //
         // Rule 12 (fail-loud): surface the flush error unless the peer has
         // already shut down. Early close during goodbye-shutdown is rare and
         // the transfer is over, so any other error is treated as a real
         // failure rather than swallowed.
-        if let Err(e) = writer.flush() {
+        if let Err(e) = writer.finalize_compression() {
             if !super::super::is_early_close_error(&e) {
                 return Err(e);
             }
