@@ -25,9 +25,11 @@ fn call_create_hardlinks<W: crate::writer::MsgInfoSender + ?Sized>(
     writer: &mut W,
 ) {
     #[cfg(unix)]
-    ctx.create_hardlinks(dest, None, writer);
+    ctx.create_hardlinks(dest, None, writer)
+        .expect("create_hardlinks must succeed in fixture-controlled tempdirs");
     #[cfg(not(unix))]
-    ctx.create_hardlinks(dest, writer);
+    ctx.create_hardlinks(dest, writer)
+        .expect("create_hardlinks must succeed in fixture-controlled tempdirs");
 }
 
 #[test]
@@ -442,4 +444,83 @@ fn create_hardlinks_multiple_followers_same_group() {
         .unwrap()
         .nlink();
     assert_eq!(nlink, 4, "link count should be 4");
+}
+
+/// EDG-SANDBOX.D regression: `create_hardlinks` now returns
+/// `io::Result<()>` and must surface a non-EACCES `linkat` failure as
+/// `Err` instead of debug-logging and continuing with the void pre-fix
+/// signature.
+///
+/// Before this fix, `create_hardlinks` returned `()` and the
+/// `Err(e) => debug_log!(...)` branch dropped every error class. An
+/// EMLINK (link-count exhaustion), EXDEV (cross-device link),
+/// or EEXIST on a planted obstacle all silently skipped the follower
+/// while the receiver exited `rc=0` with the hardlink missing.
+///
+/// This test plants a directory at the follower's destination path so
+/// the underlying `linkat`/`hard_link` syscall returns
+/// `AlreadyExists` (EEXIST), a non-EACCES class. The fix must surface
+/// it as `Err`. EACCES is covered by the discrimination test in the
+/// deletion module - one fail-loud regression per site is enough
+/// because all sites share the same upstream-parity rule
+/// (`PermissionDenied` is the only non-fatal class).
+///
+/// upstream: hlink.c:maybe_hard_link -> atomic_create - EACCES is
+/// non-fatal (increment io_error and continue); every other class is
+/// a security boundary the receiver must surface.
+#[cfg(unix)]
+#[test]
+fn create_hardlinks_surfaces_non_eacces_error() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    // Leader file exists at `leader.txt`. Plant a directory at
+    // `follower` so the obstacle-removal logic (`unlink` with
+    // `UnlinkFlags::File`) returns EISDIR (swallowed by the
+    // pre-existing `let _ = ...` contract), the
+    // `lstat`/`metadata` check sees a directory, and the inode
+    // comparison fails so the flow reaches the `linkat`. `linkat`
+    // refuses to overwrite an existing directory and surfaces
+    // AlreadyExists/EEXIST.
+    std::fs::write(dest.join("leader.txt"), "shared content").unwrap();
+    std::fs::create_dir(dest.join("follower")).expect("plant directory obstacle");
+
+    let entries = vec![
+        make_hlink_leader("leader.txt", 14, 42),
+        make_hlink_follower("follower", 14, 42),
+    ];
+
+    let mut ctx = receiver_with_hardlinks(entries);
+    let mut writer = TestDeletionWriter;
+
+    #[cfg(unix)]
+    let result = ctx.create_hardlinks(dest, None, &mut writer);
+    #[cfg(not(unix))]
+    let result = ctx.create_hardlinks(dest, &mut writer);
+
+    let err = result.expect_err(
+        "non-EACCES linkat failure must propagate as Err, not be coerced to ()",
+    );
+    assert_ne!(
+        err.kind(),
+        std::io::ErrorKind::PermissionDenied,
+        "EACCES is the upstream-parity non-fatal branch; this scenario \
+         plants a directory at the follower path to exercise the fail-loud \
+         branch via AlreadyExists/EEXIST",
+    );
+    // The planted obstacle must persist - the receiver must not silently
+    // replace it while reporting the hardlink failure as `()`.
+    assert!(
+        dest.join("follower").is_dir(),
+        "the planted directory must persist - the receiver must not silently \
+         delete or replace it",
+    );
+    // The receiver-side invariant: tracker must be restored after the
+    // error propagates so subsequent incremental segments can still
+    // see the recorded leaders.
+    assert!(
+        ctx.hardlink_tracker.is_some(),
+        "the hardlink tracker must be restored before propagating Err so \
+         incremental segments preserve their leader-path state",
+    );
 }

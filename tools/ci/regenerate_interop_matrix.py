@@ -36,7 +36,10 @@ WORKSPACE_ROOT = Path(__file__).resolve().parent.parent.parent
 OUTPUT_PATH = WORKSPACE_ROOT / "docs" / "user" / "interop-compatibility-matrix.md"
 
 # Upstream versions tested in the interop suite, ordered by protocol age.
-UPSTREAM_VERSIONS = ["2.6.9", "3.0.9", "3.1.3", "3.4.1", "3.4.2", "3.4.3"]
+# 3.4.4 supersedes 3.4.1/3.4.2/3.4.3 as a conservative regression-fix release
+# on the same wire protocol (proto 32); only the latest 3.4.x point release is
+# tracked in the matrix.
+UPSTREAM_VERSIONS = ["2.6.9", "3.0.9", "3.1.3", "3.4.4"]
 
 # Protocol metadata (version -> (introduced_in, default_checksum, compat_flags,
 # inc_recurse)).
@@ -53,9 +56,7 @@ VERSION_PROTO: dict[str, str] = {
     "2.6.9": "28-29",
     "3.0.9": "30",
     "3.1.3": "31",
-    "3.4.1": "32",
-    "3.4.2": "32",
-    "3.4.3": "32",
+    "3.4.4": "32",
 }
 
 # Version CI status (blocking vs non-blocking).
@@ -63,9 +64,7 @@ VERSION_CI_STATUS: dict[str, str] = {
     "2.6.9": "Non-blocking",
     "3.0.9": "Required CI",
     "3.1.3": "Required CI",
-    "3.4.1": "Required CI",
-    "3.4.2": "Required CI",
-    "3.4.3": "Required CI",
+    "3.4.4": "Required CI",
 }
 
 # Scenario name -> (display label, flags) for the feature matrices.
@@ -234,7 +233,7 @@ class TestResult:
     """Parsed result of a single interop test."""
 
     direction: str  # "up", "oc", "standalone", "ssh"
-    version: str  # e.g. "3.4.1" or "" for standalone
+    version: str  # e.g. "3.4.4" or "" for standalone
     scenario: str  # e.g. "archive", "write-batch-read-batch"
     status: str  # "Pass", "Known limitation", "Fail"
     forced_proto: str = ""  # e.g. "28" if protocol was forced
@@ -262,7 +261,7 @@ class InteropResults:
 
 
 # Log line patterns.
-# Comprehensive test lines: "  [upstream 3.4.1->oc] archive" or "  [oc->upstream 3.4.1] archive"
+# Comprehensive test lines: "  [upstream 3.4.4->oc] archive" or "  [oc->upstream 3.4.4] archive"
 RE_COMP_UP = re.compile(
     r"\[upstream\s+([\d.]+)\s*(?:→|->)\s*oc\]\s+(.+?)(?:\s+\(--protocol=(\d+)\))?\s*$"
 )
@@ -288,7 +287,7 @@ RE_269_PULL_PASS = re.compile(
 RE_PROTO_HEADER = re.compile(
     r"===\s+Protocol\s+(\d+)\s+\(forced via --protocol=(\d+)\)"
 )
-# Version header: "=== Comprehensive: upstream 3.4.1 (native protocol) ==="
+# Version header: "=== Comprehensive: upstream 3.4.4 (native protocol) ==="
 RE_VERSION_HEADER = re.compile(
     r"===\s+Comprehensive:\s+upstream\s+([\d.]+)\s+\(native protocol\)"
 )
@@ -483,7 +482,7 @@ def generate_matrix(results: InteropResults) -> str:
     version_groups = [
         ("3.0.9", ["3.0.9"]),
         ("3.1.3", ["3.1.3"]),
-        ("3.4.x", ["3.4.1", "3.4.2", "3.4.3"]),
+        ("3.4.x", ["3.4.4"]),
     ]
 
     lines.append("# Interoperability Compatibility Matrix")
@@ -525,7 +524,7 @@ def generate_matrix(results: InteropResults) -> str:
 
         # SSH status: only 3.4.x versions have SSH interop tested.
         ssh = "-"
-        if v in ("3.4.1", "3.4.2", "3.4.3"):
+        if v == "3.4.4":
             ssh_status = _get_version_status(results, v, ["ssh-transfer"])
             if ssh_status:
                 ssh = ssh_status
@@ -580,7 +579,7 @@ def generate_matrix(results: InteropResults) -> str:
     lines.append(
         "CI forces each protocol version (28-32) against the newest upstream binary"
     )
-    lines.append("(3.4.3 or 3.4.2) to verify backward compatibility. Results:")
+    lines.append("(3.4.4) to verify backward compatibility. Results:")
     lines.append("")
     lines.append(
         "| Forced Protocol | Transfer | Delete | Compress | Hardlinks | Filters | Status |"
@@ -656,12 +655,12 @@ def generate_matrix(results: InteropResults) -> str:
         "Each feature below is tested bidirectionally: upstream client pushing to"
     )
     lines.append(
-        "oc-rsync daemon, and oc-rsync client pushing to upstream daemon. Rsync 3.4.2"
+        "oc-rsync daemon, and oc-rsync client pushing to upstream daemon. The 3.4.x"
     )
     lines.append(
-        "and 3.4.3 use the same protocol (32) as 3.4.1 and pass the identical test"
+        "series shares protocol 32; 3.4.4 supersedes 3.4.1/3.4.2/3.4.3 as the only"
     )
-    lines.append("matrix.")
+    lines.append("tracked 3.4.x cell.")
     lines.append("")
 
     _emit_feature_table(lines, "### Transfer Modes", TRANSFER_SCENARIOS, version_groups, results)
@@ -885,7 +884,7 @@ def _emit_platform_coverage(lines: list[str]) -> None:
     lines.append("| Platform | Workflow | Interop Scope | Status |")
     lines.append("|----------|----------|---------------|--------|")
     lines.append(
-        "| Linux x86_64 (Ubuntu) | `ci.yml`, `_interop.yml` | Full multi-version (2.6.9, 3.0.9, 3.1.3, 3.4.1, 3.4.2, 3.4.3), SSH, daemon, standalone | Required |"
+        "| Linux x86_64 (Ubuntu) | `ci.yml`, `_interop.yml` | Full multi-version (2.6.9, 3.0.9, 3.1.3, 3.4.4), SSH, daemon, standalone | Required |"
     )
     lines.append(
         "| Linux x86_64 (Ubuntu) | `interop-validation.yml` | Exit codes, messages, behavior, batch, filters, compression, INC_RECURSE | Required |"
@@ -1033,7 +1032,7 @@ def _emit_ci_workflows(lines: list[str]) -> None:
     lines.append("| Workflow | File | Scope |")
     lines.append("|----------|------|-------|")
     lines.append(
-        "| CI (interop job) | `ci.yml` + `_interop.yml` | Full bidirectional daemon interop (3.0.9, 3.1.3, 3.4.1, 3.4.2, 3.4.3), SSH push/pull, protocol forcing (28-32), standalone tests, 2.6.9 push/pull cells, upstream testsuite |"
+        "| CI (interop job) | `ci.yml` + `_interop.yml` | Full bidirectional daemon interop (3.0.9, 3.1.3, 3.4.4), SSH push/pull, protocol forcing (28-32), standalone tests, 2.6.9 push/pull cells, upstream testsuite |"
     )
     lines.append(
         "| Interop Validation | `interop-validation.yml` | Exit code validation, message format validation, behavior comparison, batch mode, filter rules, compression codecs, INC_RECURSE. Runs on push, PR, and nightly schedule |"

@@ -488,6 +488,47 @@ fn window_slide_forward_reuses_overlap() {
     assert_eq!(data, &expected[..]);
 }
 
+/// Reload that requests a smaller window than the buffer's current length
+/// must not drop bytes the overlap branch is about to relocate.
+///
+/// Reproduces the data-loss path flagged during PR #5569 review: upstream
+/// `fileio.c:236` `realloc_array` only grows; mirroring that, `Vec::resize`
+/// must never shrink the buffer while `copy_within` is about to shift a
+/// suffix of the old window to the head of the new window.
+#[test]
+fn load_window_overlap_shrink_preserves_data() {
+    // File size > window cap forces a real overlap-shrink near EOF.
+    let size = 5000;
+    let temp = create_test_file(size);
+    let mut map = BufferedMap::open_with_window(temp.path(), 4096).unwrap();
+
+    // Load 1: aligned_start=0, window_size=min(4096, 5000)=4096.
+    // buffer.len() and window_len both end at 4096.
+    let _ = map.map_ptr(0, 100).unwrap();
+    assert_eq!(map.window_start, 0);
+    assert_eq!(map.window_len, 4096);
+
+    // Load 2: aligned_start=2048 (align_down(3000)), remaining=2952,
+    // window_size=min(4096, 2952)=2952. The overlap branch fires because
+    // [2048, 5000) overlaps [0, 4096) and extends past old_end. With the
+    // never-shrink invariant in place, copy_within(2048..4096, 0) shifts
+    // the tail of the old window in place; the trailing bytes are read
+    // from disk into buffer[2048..2952]; window_len clamps to 2952.
+    let data = map.map_ptr(3000, 1000).unwrap();
+    let expected: Vec<u8> = (3000..4000).map(|i| (i % 256) as u8).collect();
+    assert_eq!(data, &expected[..]);
+    assert_eq!(map.window_start, 2048);
+    assert_eq!(map.window_len, 2952);
+
+    // Every byte of the new window must reflect the file, including the
+    // bytes that landed at offsets near the buffer's old upper bound -
+    // exactly the region that would be silently truncated if the buffer
+    // had been shrunk before copy_within ran.
+    let full = map.map_ptr(2048, 2952).unwrap();
+    let expected_full: Vec<u8> = (2048..5000).map(|i| (i % 256) as u8).collect();
+    assert_eq!(full, &expected_full[..]);
+}
+
 #[test]
 fn window_can_slide_backward() {
     let size = MAX_MAP_SIZE * 2;
@@ -1709,4 +1750,98 @@ fn map_file_open_adaptive_buffered_is_buffered() {
     let map = MapFile::open_adaptive_buffered(temp.path()).unwrap();
     assert!(map.is_buffered());
     assert!(!map.is_mmap());
+}
+
+// EDG-PANIC.3 (#3893) - BufferedMap bounds negative tests.
+//
+// UTS-18 root-caused that a malformed delta stream can drive `BufferedMap`
+// (the basis "slice" / `map_ptr` accessor) into an out-of-range slice that
+// panics the process. These tests pin the contract: every out-of-bounds
+// pattern that an attacker can synthesize from the wire must surface a typed
+// `io::Result::Err`, never a bare-slice panic. The fail-loud guard upgrade
+// for the in-window slice and overlap copy lives in PR #5566; these tests
+// also exercise the pre-existing `offset.saturating_add(len) > self.size`
+// guard at the entry to `map_ptr`, ensuring it stays load-bearing.
+
+#[test]
+fn buffered_map_ptr_returns_err_on_offset_past_eof() {
+    // Offset past EOF must return Err, not panic. Mirrors the malformed
+    // basis stream that points a COPY token at an offset beyond the file
+    // size cached when the delta apply started.
+    let temp = create_test_file(4096);
+    let mut map = BufferedMap::open_with_window(temp.path(), 1024).unwrap();
+
+    let window_end = (map.window_start + map.window_len as u64).max(4096);
+    let beyond_window = window_end + 1;
+
+    let err = map
+        .map_ptr(beyond_window, 100)
+        .expect_err("offset past EOF must be Err");
+    assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+}
+
+#[test]
+fn buffered_map_ptr_returns_err_on_length_overflow() {
+    // Length that overflows `offset + len` past file size must return Err,
+    // not panic. `saturating_add` saturates at u64::MAX, so the bounds
+    // check at the entry of `map_ptr` catches this without ever indexing
+    // the buffer.
+    let temp = create_test_file(4096);
+    let mut map = BufferedMap::open_with_window(temp.path(), 1024).unwrap();
+
+    let err = map
+        .map_ptr(u64::MAX - 10, usize::MAX)
+        .expect_err("length overflow must be Err");
+    assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+
+    let err = map
+        .map_ptr(100, usize::MAX)
+        .expect_err("length overflow at non-zero offset must be Err");
+    assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+}
+
+#[test]
+fn buffered_map_ptr_returns_err_on_u64_max_offset() {
+    // u64::MAX offset is the canonical "untrusted input wrapped to a huge
+    // value" case. Must surface a typed Err rather than panic from the
+    // window-start subtraction or final slice.
+    let temp = create_test_file(4096);
+    let mut map = BufferedMap::open_with_window(temp.path(), 1024).unwrap();
+
+    let err = map
+        .map_ptr(u64::MAX, 1)
+        .expect_err("u64::MAX offset must be Err");
+    assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+}
+
+#[test]
+fn buffered_map_ptr_returns_err_on_offset_at_file_size() {
+    // Boundary case: `offset == size` with `len > 0` must Err. `offset ==
+    // size` with `len == 0` is legitimate and returns an empty slice.
+    let temp = create_test_file(4096);
+    let mut map = BufferedMap::open_with_window(temp.path(), 1024).unwrap();
+
+    let err = map
+        .map_ptr(4096, 1)
+        .expect_err("offset at size with non-zero len must be Err");
+    assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
+
+    let empty = map
+        .map_ptr(4096, 0)
+        .expect("offset at size with zero len is legitimate");
+    assert!(empty.is_empty());
+}
+
+#[test]
+fn buffered_map_ptr_returns_err_on_straddling_eof() {
+    // A request that straddles the file end (starts in-bounds, ends past
+    // the file) must Err before any slice arithmetic runs. Matches the
+    // delta-COPY-near-EOF case that UTS-18.f flagged.
+    let temp = create_test_file(4096);
+    let mut map = BufferedMap::open_with_window(temp.path(), 1024).unwrap();
+
+    let err = map
+        .map_ptr(4000, 200)
+        .expect_err("range straddling EOF must be Err");
+    assert_eq!(err.kind(), std::io::ErrorKind::UnexpectedEof);
 }

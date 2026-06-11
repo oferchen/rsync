@@ -91,6 +91,22 @@ cargo build --release --bin oc-rsync --no-default-features \
 
 Adjust the explicit feature list to whatever else the distro normally enables. The SEC-1 `*at` syscall chain remains the sole defense in that case; the daemon is still hardened against the CVE-2026-29518 / CVE-2026-43619 TOCTOU symlink race class, just without the kernel-enforced second layer.
 
+## AppArmor + SELinux templates
+
+Landlock is stackable with classic LSMs. For distros where AppArmor (Ubuntu LTS, openSUSE, Debian) or SELinux (RHEL, Fedora, CentOS Stream) is the primary mandatory access control layer, ship the templates from `contrib/security/` alongside the binary:
+
+| Template | Path | Audience |
+|----------|------|----------|
+| AppArmor profile | [`contrib/security/usr.sbin.oc-rsyncd.apparmor`](../../contrib/security/usr.sbin.oc-rsyncd.apparmor) | AppArmor-first distros |
+| SELinux type enforcement | [`contrib/security/oc_rsyncd.te`](../../contrib/security/oc_rsyncd.te) | SELinux-enforcing distros |
+| SELinux file contexts | [`contrib/security/oc_rsyncd.fc`](../../contrib/security/oc_rsyncd.fc) | SELinux-enforcing distros |
+| SELinux interfaces | [`contrib/security/oc_rsyncd.if`](../../contrib/security/oc_rsyncd.if) | SELinux-enforcing distros |
+| Install + verify guide | [`contrib/security/README.md`](../../contrib/security/README.md) | Packagers + ops |
+
+These are templates, not strict requirements. Operators MUST customize the module-root stanzas to match the `path =` entries in their `oc-rsyncd.conf`. The templates leave the module roots commented out by default so a fresh install enforces only the configuration, log, and PID-file paths.
+
+The SELinux template reuses the `rsync_data_t` label shipped by the base `selinux-policy` package, so it composes with any pre-labelled module trees the host already exposes to upstream `rsync`.
+
 ## Verifying the engaged ABI on a built binary
 
 Run the daemon at info-level logging against a throwaway module and grep for the Landlock startup line:
@@ -101,3 +117,19 @@ oc-rsync --daemon --no-detach --log-file=- --log-file-format=info 2>&1 | \
 ```
 
 The line reports either the achieved ABI level (1, 2, or 3) or `landlock unavailable on this kernel`. Use this to confirm the package was built with the feature enabled and the host kernel exposes the LSM.
+
+## Layered defense: seccomp BPF (`daemon-seccomp`)
+
+`daemon-seccomp` adds a kernel-enforced syscall allowlist on top of Landlock. Where Landlock denies a path-based syscall with `EACCES`, seccomp denies an unlisted syscall with `SIGSYS` before the kernel ever consults the LSM stack. The two layers compose: a regression that bypasses `*at` helpers still hits Landlock; one that skips Landlock still hits seccomp.
+
+```sh
+cargo build --release --bin oc-rsync \
+    --features "landlock,daemon-seccomp" --locked
+```
+
+- Opt-in only until the 14-day bake window in `docs/design/lsm-seccomp-allowlist.md` completes. Default builds remain seccomp-free; distros that want the extra layer enable both flags.
+- Default action is `KILL_PROCESS`: an unlisted syscall delivers `SIGSYS` synchronously and terminates the worker. The parent `accept(2)` loop survives, so the daemon keeps serving other clients.
+- Per-architecture: `x86_64` and `aarch64` are supported. On other architectures the helper logs `seccomp BPF unavailable in this build` and Landlock remains the sole layer.
+- Stackable with chroot, mount namespaces, AppArmor, SELinux, and Landlock. No extra system dependencies; `seccompiler` is a pure-Rust crate that talks to `seccomp(2)` directly.
+
+The 14-day bake window starts at merge of the opt-in feature. After zero missing-syscall reports, a follow-up PR flips the feature on by default for Linux release builds; operators who need to opt out get `--no-default-features` or a build-time exclude.

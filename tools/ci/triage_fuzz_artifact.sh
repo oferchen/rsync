@@ -109,8 +109,7 @@ fi
 upstream="${OC_RSYNC_UPSTREAM_BIN:-}"
 if [[ -z "${upstream}" ]]; then
     for candidate in \
-        "${workspace_root}/target/interop/upstream-install/3.4.2/bin/rsync" \
-        "${workspace_root}/target/interop/upstream-install/3.4.1/bin/rsync" \
+        "${workspace_root}/target/interop/upstream-install/3.4.4/bin/rsync" \
         /opt/homebrew/bin/rsync \
         /usr/local/bin/rsync \
         /usr/bin/rsync; do

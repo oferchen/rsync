@@ -13,7 +13,7 @@
 //! # Architecture
 //!
 //! ```text
-//!  spawn_blocking thread          tokio runtime (current_thread)
+//!  dedicated OS thread            tokio runtime (current_thread)
 //!  ─────────────────────          ──────────────────────────────
 //!  SyncWriter ──┐                                         ┌── AsyncSshTransport
 //!               │  std::sync::mpsc  ChannelReader (Async) │
@@ -25,13 +25,15 @@
 //! ```
 //!
 //! Two `std::sync::mpsc` channels carry byte chunks between the sync
-//! server thread (running under `tokio::task::spawn_blocking`) and the
-//! async pump tasks. Each pump task uses the `ChannelReader` /
-//! `ChannelWriter` adapters from PR #4271 to interoperate with the
-//! `AsyncRead` / `AsyncWrite` halves exposed by
-//! [`AsyncSshTransport::split`]. The synchronous handshake and
-//! server-side framing layer is reused unchanged from the system SSH
-//! path.
+//! server thread and the async pump tasks. The server thread is a
+//! dedicated `std::thread::Builder::spawn` worker (RUSSH-ASY.3): the
+//! join is async-native via `tokio::sync::oneshot`, so the long-lived
+//! per-session slot no longer lives on tokio's blocking pool. Each pump
+//! task uses the `ChannelReader` / `ChannelWriter` adapters from PR
+//! #4271 to interoperate with the `AsyncRead` / `AsyncWrite` halves
+//! exposed by [`AsyncSshTransport::split`]. The synchronous handshake
+//! and server-side framing layer is reused unchanged from the system
+//! SSH path.
 //!
 //! # Feature gate
 //!
@@ -77,6 +79,14 @@ const CHANNEL_CAPACITY: usize = 32;
 /// `AsyncRead`/`AsyncWrite` and the in-process channels. Matches the
 /// upstream-compatible 32 KiB chunk used by the sync transport.
 const PUMP_BUF: usize = 32 * 1024;
+
+/// Thread name applied to the dedicated OS thread that runs the
+/// blocking server pipeline.
+///
+/// Surfacing the name in `ps`, `top`, audit logs, and panic backtraces
+/// makes it easy to identify which threads belong to async-SSH sessions
+/// when triaging blocking-pool contention or thread-count regressions.
+const SERVER_THREAD_NAME: &str = "oc-rsync-ssh-server";
 
 /// Environment variable that opts the client into the async SSH
 /// transport.
@@ -233,9 +243,11 @@ fn build_push_server_config(
 /// [`AsyncSshTransport::execute_remote_rsync`], wires the read/write
 /// halves through `ChannelReader` / `ChannelWriter` bridges to a pair of
 /// sync `std::sync::mpsc` channels, runs the existing sync server
-/// transfer loop on a `spawn_blocking` worker, then joins the pumps
-/// before returning. The sync transfer result is mapped through the
-/// same error model the system SSH path uses.
+/// transfer loop on a dedicated [`std::thread`] (joined via
+/// `tokio::sync::oneshot` so the long-lived per-session slot stays off
+/// tokio's blocking pool), then joins the pumps before returning. The
+/// sync transfer result is mapped through the same error model the
+/// system SSH path uses.
 fn run_async_session(
     client_config: &ClientConfig,
     plan: AsyncSpawnPlan,
@@ -358,20 +370,40 @@ fn run_async_session(
         let sync_writer = SyncWriter::new(sync_writer_tx);
 
         let batch_ctx_for_blocking = batch_ctx;
-        let server_handle = tokio::task::spawn_blocking(move || {
-            let start = Instant::now();
-            run_blocking_server(
-                server_config,
-                sync_reader,
-                sync_writer,
-                batch_ctx_for_blocking,
-                start,
-            )
-        });
+        // RUSSH-ASY.3: dispatch the blocking server pipeline onto a dedicated
+        // OS thread rather than tokio's blocking pool. The blocking pool slot
+        // was held for the full session lifetime, capping concurrent async-SSH
+        // sessions at `tokio::runtime::Builder::max_blocking_threads` (default
+        // 512). A `std::thread::spawn` + `tokio::sync::oneshot` join is the
+        // mechanical replacement that preserves the threaded pipeline
+        // (`project_no_async_threaded_only`) while freeing the blocking pool.
+        // See `docs/design/russh-async-native-migration-plan.md` section 4.
+        let (server_tx, server_rx) = tokio::sync::oneshot::channel();
+        std::thread::Builder::new()
+            .name(SERVER_THREAD_NAME.to_string())
+            .spawn(move || {
+                let start = Instant::now();
+                let result = run_blocking_server(
+                    server_config,
+                    sync_reader,
+                    sync_writer,
+                    batch_ctx_for_blocking,
+                    start,
+                );
+                // Receiver may be dropped if the caller future was cancelled;
+                // that is a normal teardown path, not an error.
+                let _ = server_tx.send(result);
+            })
+            .map_err(|e| {
+                invalid_argument_error(
+                    &format!("failed to spawn async SSH server thread: {e}"),
+                    ExitCode::WaitChild.as_i32(),
+                )
+            })?;
 
-        let server_outcome = server_handle.await.map_err(|e| {
+        let server_outcome = server_rx.await.map_err(|_| {
             invalid_argument_error(
-                &format!("async SSH server task panicked: {e}"),
+                "async SSH server thread closed without reporting outcome",
                 ExitCode::WaitChild.as_i32(),
             )
         })?;
@@ -634,5 +666,79 @@ mod tests {
     fn encode_secluded_args_empty_only_terminator() {
         let payload = encode_secluded_args(&[], None);
         assert_eq!(payload, vec![0u8]);
+    }
+
+    #[test]
+    fn server_thread_name_constant_is_stable() {
+        // Lock the public identifier so `ps`, audit logs, and panic
+        // backtraces keep showing the same string across releases.
+        // Operators grep for this name when diagnosing async-SSH
+        // blocking-pool / thread-count regressions.
+        assert_eq!(SERVER_THREAD_NAME, "oc-rsync-ssh-server");
+    }
+
+    #[test]
+    fn server_thread_name_is_observable_inside_spawn() {
+        // RUSSH-ASY.3 dispatches the blocking server pipeline onto a
+        // named OS thread via `std::thread::Builder`. This test pins
+        // the contract that the name is set BEFORE the closure runs,
+        // so log messages emitted from inside `run_blocking_server`
+        // (and panic backtraces) carry the expected identifier.
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name(SERVER_THREAD_NAME.to_string())
+            .spawn(move || {
+                let observed = std::thread::current().name().map(str::to_owned);
+                let _ = tx.send(observed);
+            })
+            .expect("spawn named thread")
+            .join()
+            .expect("join named thread");
+        let observed = rx.recv().expect("thread reported its name");
+        assert_eq!(observed.as_deref(), Some(SERVER_THREAD_NAME));
+    }
+
+    #[test]
+    fn oneshot_join_resolves_under_current_thread_runtime() {
+        // The RUSSH-ASY.3 contract: the join of the blocking server
+        // thread is an async-native `tokio::sync::oneshot::Receiver`,
+        // not a `tokio::task::JoinHandle` from `spawn_blocking`. This
+        // test pins the wiring: a current-thread runtime (no worker
+        // threads) successfully awaits the oneshot signalled by a
+        // separately-spawned OS thread, exercising the exact pattern
+        // used by `run_async_session` without consulting tokio's
+        // blocking pool.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build current-thread runtime");
+        let observed = rt.block_on(async {
+            let (tx, rx) = tokio::sync::oneshot::channel::<&'static str>();
+            std::thread::Builder::new()
+                .name(SERVER_THREAD_NAME.to_string())
+                .spawn(move || {
+                    let _ = tx.send("done");
+                })
+                .expect("spawn dedicated server thread");
+            rx.await.expect("oneshot resolves")
+        });
+        assert_eq!(observed, "done");
+    }
+
+    #[test]
+    fn dropped_oneshot_receiver_does_not_panic_sender() {
+        // The sender side in `run_async_session` ignores send errors
+        // via `let _ = server_tx.send(result);`. Pin that behaviour:
+        // if the caller future is cancelled (receiver dropped) the
+        // sender thread completes cleanly rather than panicking.
+        let (tx, rx) = tokio::sync::oneshot::channel::<u32>();
+        drop(rx);
+        let handle = std::thread::Builder::new()
+            .name(SERVER_THREAD_NAME.to_string())
+            .spawn(move || {
+                let _ = tx.send(42);
+            })
+            .expect("spawn thread");
+        handle.join().expect("thread should not panic on dropped rx");
     }
 }

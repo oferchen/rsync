@@ -5,7 +5,7 @@
 //! `RENAME_NOREPLACE`, `RENAME_EXCHANGE`, and `RENAME_WHITEOUT` flags. This
 //! module wraps `io_uring::opcode::RenameAt` with an availability probe that
 //! mirrors the patterns already used for `IORING_OP_POLL_ADD`
-//! (see [`super::shared_ring`]) and the splice syscall
+//! (see `super::shared_ring`) and the splice syscall
 //! (see [`crate::splice::is_splice_available`]).
 //!
 //! # Probe semantics
@@ -61,7 +61,7 @@ static RENAMEAT2_SUPPORTED: OnceLock<bool> = OnceLock::new();
 /// Returns `false` immediately when the base io_uring subsystem is
 /// unavailable, when probe registration fails, or when the probe explicitly
 /// reports the opcode as unsupported. On non-Linux platforms the stub in
-/// [`crate::io_uring_stub`] always returns `false`.
+/// `crate::io_uring_stub` always returns `false`.
 #[must_use]
 pub fn renameat2_supported() -> bool {
     *RENAMEAT2_SUPPORTED.get_or_init(probe_renameat2_support)

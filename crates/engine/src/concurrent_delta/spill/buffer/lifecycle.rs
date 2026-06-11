@@ -38,6 +38,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             spill_write_pos: 0,
             granularity: SpillGranularity::default(),
             spill_count: 0,
+            spill_activations: 0,
             reload_count: 0,
             dir_recreate_count: 0,
             compression: SpillCompression::None,
@@ -80,6 +81,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             spill_write_pos: 0,
             granularity: SpillGranularity::default(),
             spill_count: 0,
+            spill_activations: 0,
             reload_count: 0,
             dir_recreate_count: 0,
             compression: SpillCompression::None,
@@ -233,6 +235,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
         SpillStats {
             spilled_items: self.spill_index.len(),
             spill_events: self.spill_count,
+            spill_activations: self.spill_activations,
             reload_events: self.reload_count,
             memory_used: self.memory_used,
             threshold: self.threshold,

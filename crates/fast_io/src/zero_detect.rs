@@ -17,8 +17,8 @@
 //!
 //! # Public API
 //!
-//! - [`find_first_nonzero`] - Returns index of the first non-zero byte
-//! - [`is_all_zeros`] - Fast check whether an entire buffer is zero
+//! - [`crate::zero_detect::find_first_nonzero`] - Returns index of the first non-zero byte
+//! - [`crate::zero_detect::is_all_zeros`] - Fast check whether an entire buffer is zero
 //!
 //! # Safety
 //!

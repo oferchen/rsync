@@ -448,7 +448,10 @@ pub struct ParsedArgs {
     /// `--fsync` - sync files to disk after writing.
     pub fsync: Option<bool>,
 
-    /// `--io-uring` / `--no-io-uring` - io_uring policy for file I/O.
+    /// `--io-uring` / `--no-io-uring` / `--no-io-uring-sqpoll` - io_uring
+    /// policy for file I/O. `--no-io-uring-sqpoll` keeps io_uring on but
+    /// suppresses `IORING_SETUP_SQPOLL` for rootless-container deployments
+    /// that cannot grant `CAP_SYS_NICE`.
     pub io_uring_policy: fast_io::IoUringPolicy,
 
     /// `--io-uring-depth=N` - override io_uring submission queue depth.
