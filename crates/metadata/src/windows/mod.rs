@@ -13,10 +13,13 @@
 //! - [`reparse`] classifies NTFS reparse points into their concrete kinds
 //!   (symlink, junction, mount-point, OneDrive/cloud placeholder, AF_UNIX
 //!   socket, or an opaque tag value) so higher layers can decide how to
-//!   transfer each kind without losing information.
+//!   transfer each kind without losing information. Re-exports
+//!   [`reparse::classify_path`] for callers (transfer-side flist
+//!   generation, audit tools) that hold a `Path` rather than a raw
+//!   `FILE_FLAG_OPEN_REPARSE_POINT` handle.
 
 /// NTFS reparse-point classifier (symlink, junction, mount-point,
 /// cloud placeholder, WSL `AF_UNIX` socket, opaque tag).
 pub mod reparse;
 
-pub use reparse::{ReparseKind, classify_reparse_point};
+pub use reparse::{ReparseKind, classify_path, classify_reparse_point};
