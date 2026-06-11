@@ -170,12 +170,41 @@ impl GeneratorContext {
             }
         }
 
+        // Pre-populate the explicit-directory set with every --files-from
+        // entry that is itself a directory. The implied-parent loop below
+        // skips emission for entries already in this set so the explicit
+        // top-level walk owns their emission, and the set is later used to
+        // distinguish "explicit dir, walk normally" from
+        // "implied-only dir, already emitted, skip the duplicate top-level
+        // walk that upstream's `implied_filter_list` check rejects".
+        let mut explicit_dirs: HashSet<PathBuf> = HashSet::new();
+        for path in file_paths {
+            if let Ok(rel) = path.strip_prefix(base_dir) {
+                if rel.as_os_str().is_empty() {
+                    continue;
+                }
+                if let Ok(meta) = std::fs::symlink_metadata(path) {
+                    if meta.is_dir() {
+                        explicit_dirs.insert(rel.to_path_buf());
+                    }
+                }
+            }
+        }
+
         // Emit implied parent directory entries for files-from paths that
         // contain subdirectories. Without these entries the receiver cannot
         // create the parent directories needed for nested files.
         // upstream: flist.c:send_implied_dirs() - creates directory entries
         // for every intermediate path component of a --files-from entry.
-        let mut emitted_dirs: HashSet<PathBuf> = HashSet::new();
+        //
+        // `emitted_dirs` starts with the explicit-dir pre-population so a
+        // parent that is ALSO an explicit --files-from entry is not emitted
+        // here (the top-level walk below owns its emission). The loop adds
+        // every purely implied ancestor it pushes; the difference set
+        // `implied_only_dirs` is later consulted by
+        // `try_walk_source_entry_dedup` to suppress the duplicate top-level
+        // walk that would re-emit an implied parent.
+        let mut emitted_dirs: HashSet<PathBuf> = explicit_dirs.clone();
         for path in file_paths {
             if let Ok(rel) = path.strip_prefix(base_dir) {
                 // Walk each ancestor of the relative path and emit a
@@ -199,6 +228,15 @@ impl GeneratorContext {
             }
         }
 
+        // Directories emitted purely as implied parents of some other entry
+        // (i.e. not also listed explicitly in --files-from). The top-level
+        // walk skips these so we do not produce a duplicate file-list entry
+        // that upstream's `implied_filter_list` check (flist.c:998) would
+        // reject as "unrequested". Explicit --files-from dirs remain walkable
+        // so their recursive contents continue to flow normally.
+        let implied_only_dirs: HashSet<PathBuf> =
+            emitted_dirs.difference(&explicit_dirs).cloned().collect();
+
         // Walk each listed file using the shared base directory so that
         // relative paths are computed correctly (e.g., "hello.txt" instead
         // of an empty string).
@@ -207,7 +245,7 @@ impl GeneratorContext {
             // and apply missing_args handling before walk_path. This separates
             // "source never existed" (ENOENT at flist time) from "source vanished
             // during recursive walk" (ENOENT during child traversal).
-            if !self.try_walk_source_entry(base_dir, path)? {
+            if !self.try_walk_source_entry_dedup(base_dir, path, Some(&implied_only_dirs))? {
                 continue;
             }
         }
