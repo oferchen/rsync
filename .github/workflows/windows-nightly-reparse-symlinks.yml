@@ -1,0 +1,154 @@
+# Windows nightly reparse-point + symlink test cell (WCI-8 #3702).
+#
+# The required `Windows` cell in ci.yml runs nextest against `core`,
+# `engine`, and `cli`, and the `Windows ACL/xattr` cell runs
+# `-p metadata --features acl,xattr` plus a workspace-scoped filter
+# for `acl`/`xattr`/`ads`/`stream` tests. Neither cell links the
+# `flist` crate (`absolutize_returns_absolute_path_unchanged_windows`)
+# nor exercises the reparse-point classifier and `mklink` fixture
+# tests under their natural `reparse_`/`symlink_`/`junction_`/
+# `mount_point_` test names.
+#
+# WPC-8'.13 + WPC-9'.4-.6 (PRs that landed under the WPC-VERIFY
+# series) are the tests this cell promotes from "compiled-only on
+# Windows-GNU cross-check" to "executed nightly on windows-latest".
+# Their source lives in:
+#
+#   crates/metadata/src/windows/reparse.rs (unit tests on synthetic
+#   REPARSE_DATA_BUFFER blobs)
+#   crates/metadata/tests/windows_reparse_classify_path.rs
+#   (regular_file_returns_not_a_reparse_point_error,
+#    junction_classifies_as_junction,
+#    directory_symlink_classifies_as_symlink)
+#   crates/metadata/tests/windows_reparse_fixtures.rs
+#   (classify_returns_symlink_for_dir_symlink,
+#    classify_returns_junction_for_mklink_j,
+#    classify_returns_mount_point_for_setvolumemountpoint)
+#   crates/metadata/tests/windows_symlink_junction_transfer.rs
+#   (dir_symlink_push_preserves_link,
+#    junction_push_preserves_junction)
+#   crates/flist/src/file_list_walker.rs
+#   (absolutize_returns_absolute_path_unchanged_windows)
+#
+# The reparse classifier guards every push or pull from a Windows
+# source that crosses a directory symlink, junction, or volume mount
+# point. A regression silently corrupts symlink target wire bytes
+# and degrades NTFS junctions into broken directory entries on the
+# destination, so the cost of a missing test cell is disproportionate
+# to its compile cost.
+#
+# Note on `mklink`/`DefineDosDevice` fixtures: the
+# `windows_reparse_fixtures.rs` and `windows_symlink_junction_transfer.rs`
+# tests rely on `mklink /d` / `mklink /j` / `SetVolumeMountPointW` to
+# build their fixtures. Those system calls require either Windows
+# Developer Mode (`SeCreateSymbolicLinkPrivilege`) or running as
+# Administrator. GitHub-hosted `windows-latest` runners ship with
+# Developer Mode disabled by default and run jobs in an unprivileged
+# context, so the affected tests will fail at fixture-setup with
+# `ERROR_PRIVILEGE_NOT_HELD`. This workflow deliberately does NOT add
+# a `setup` step to elevate or enable Developer Mode: per WCI-8 task
+# spec, fail-loud is acceptable for nightly. The classify-from-synthetic-
+# buffer unit tests in `reparse.rs` and the
+# `windows_reparse_classify_path.rs` integration tests do not need
+# elevation and will execute successfully.
+#
+# Status: non-required (informational). Do not add to branch protection.
+# Promotion to required-on-PR is gated on a 14-day green bake window
+# per WCI-11 #3705.
+name: Windows nightly reparse + symlinks
+
+on:
+  schedule:
+    # Nightly at 11:00 UTC. Offset from WCI-2 (05:00 UTC), WCI-3
+    # (06:00 UTC), and WCI-7 (07:00 UTC) to keep the Windows runner
+    # pool uncontended and spread nightly Windows wall-time across the
+    # runner schedule.
+    - cron: '0 11 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: windows-nightly-reparse-symlinks-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: "full"
+
+jobs:
+  windows-reparse-symlinks:
+    name: Windows reparse-point + symlink round-trip
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-windows-reparse-symlinks-cargo-v1-${{ hashFiles('**/Cargo.lock') }}
+          key: windows-nightly-reparse-symlinks
+
+      - name: Install cargo-nextest (Windows direct download)
+        shell: pwsh
+        run: |
+          # Workaround for actions/partner-runner-images#169 on Windows.
+          $ErrorActionPreference = 'Stop'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
+          & "$cargoBin\cargo-nextest.exe" --version
+
+      # Filter activates the reparse-point classifier unit tests in
+      # `crates/metadata/src/windows/reparse.rs` plus the three
+      # integration test files under `crates/metadata/tests/`. The
+      # `reparse`/`symlink`/`junction`/`mount_point` substrings cover:
+      #
+      #   - reparse.rs unit tests (parse_symlink_reparse_*,
+      #     parse_junction_reparse_*, parse_mount_point_reparse_*,
+      #     read_reparse_data_*, classify_reparse_point_*)
+      #   - windows_reparse_classify_path.rs (3 integration tests)
+      #   - windows_reparse_fixtures.rs (3 mklink-dependent tests)
+      #   - windows_symlink_junction_transfer.rs (2 transfer tests)
+      #
+      # The mklink-dependent fixtures may fail-loud under
+      # `ERROR_PRIVILEGE_NOT_HELD` when Developer Mode is off and the
+      # job is not elevated; that is the documented failure mode for
+      # this nightly cell. The synthetic-buffer unit tests still run
+      # successfully and surface any regression in the reparse parser
+      # logic, which is the load-bearing classifier.
+      - name: Run metadata reparse + symlink Windows tests
+        run: cargo nextest run --locked -p metadata --no-fail-fast -E 'test(reparse) or test(symlink) or test(junction) or test(mount_point)'
+
+      # Filter targets `absolutize_returns_absolute_path_unchanged_windows`
+      # in `crates/flist/src/file_list_walker.rs:297`. The other
+      # `absolutize_*` tests in the same module are cross-platform and
+      # already run in the required Linux nextest cell; running them
+      # again here is cheap and surfaces any Windows-specific PathBuf
+      # canonicalisation drift.
+      - name: Run flist absolutize Windows tests
+        run: cargo nextest run --locked -p flist --no-fail-fast -E 'test(absolutize)'
+
+      - name: Upload nextest logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-nightly-reparse-symlinks-logs
+          path: |
+            target/nextest/**/*.log
+            target/nextest/**/*.xml
+          if-no-files-found: ignore
+          retention-days: 14
