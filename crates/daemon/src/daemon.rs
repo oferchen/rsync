@@ -288,6 +288,12 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
         None
     };
 
+    // Apply Linux-only defense-in-depth startup hardenings before serving
+    // the remote-shell daemon session. Mirrors the standalone and inetd
+    // paths so PR_SET_NO_NEW_PRIVS and the LSM audit line apply uniformly
+    // regardless of which entry point launched the daemon.
+    apply_startup_hardening(log_sink.as_ref());
+
     let connection_limiter: Option<Arc<ConnectionLimiter>> = None;
     let modules: Vec<ModuleRuntime> = modules
         .into_iter()
@@ -477,6 +483,8 @@ include!("daemon/sections/privilege.rs");
 include!("daemon/sections/seccomp.rs");
 
 include!("daemon/sections/capabilities.rs");
+
+include!("daemon/sections/hardening.rs");
 
 include!("daemon/sections/log_format.rs");
 

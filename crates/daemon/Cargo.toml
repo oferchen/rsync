@@ -89,6 +89,8 @@ seccompiler = { version = "0.5", optional = true }
 # Audit-clean per the unsafe-code policy: the crate's public API contains no
 # unsafe blocks the daemon needs to opt into.
 caps = "0.5"
+# `process` enables nix::sys::prctl for PR_SET_NO_NEW_PRIVS startup hardening.
+nix = { workspace = true, features = ["process"] }
 
 [target.'cfg(windows)'.dependencies]
 checksums = { path = "../checksums", default-features = false }

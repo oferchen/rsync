@@ -67,6 +67,13 @@ fn serve_connections(
         None
     };
 
+    // Apply Linux-only defense-in-depth startup hardenings before the
+    // listener binds or any pre-xfer-exec hook is spawned. PR_SET_NO_NEW_PRIVS
+    // is a one-way bit and must run before bind/fork so it propagates to
+    // every per-connection worker; the LSM-detection log is a one-shot
+    // audit line tied to the same startup transition.
+    apply_startup_hardening(log_sink.as_ref());
+
     // Open syslog connection when no log file is configured (matching upstream
     // rsync's behaviour: log.c routes to syslog when logfile_name is NULL).
     // The guard is held for the daemon's lifetime; dropping it calls closelog(3).
