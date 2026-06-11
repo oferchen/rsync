@@ -17,7 +17,7 @@ use crate::traits::{FileReader, FileReaderFactory, FileWriter, FileWriterFactory
 ///
 /// On each `open()` call, checks [`is_io_uring_available`] (cached atomic) and
 /// `force_fallback`. If io_uring is eligible, attempts to open an
-/// [`IoUringReader`]; on any failure, returns a [`StdFileReader`] instead.
+/// [`IoUringReader`]; on any failure, returns a [`crate::traits::StdFileReader`] instead.
 #[derive(Debug, Clone, Default)]
 pub struct IoUringReaderFactory {
     config: IoUringConfig,
@@ -138,7 +138,7 @@ impl FileReaderFactory for IoUringReaderFactory {
 ///
 /// On each `create()` call, checks [`is_io_uring_available`] (cached atomic) and
 /// `force_fallback`. If io_uring is eligible, attempts to create an
-/// [`IoUringWriter`]; on any failure, returns a [`StdFileWriter`] instead.
+/// [`IoUringWriter`]; on any failure, returns a [`crate::traits::StdFileWriter`] instead.
 #[derive(Debug, Clone, Default)]
 pub struct IoUringWriterFactory {
     config: IoUringConfig,
