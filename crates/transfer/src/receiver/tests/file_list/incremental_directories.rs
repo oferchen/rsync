@@ -557,7 +557,7 @@ mod incremental_mode_tests {
 
         // Call the delete pass the same way `run_pipelined_incremental` does.
         let mut writer = TestDeletionWriter;
-        let (delete_stats, delete_limit_exceeded) = ctx
+        let (delete_stats, delete_limit_exceeded, _io_error_bits) = ctx
             .delete_extraneous_files(
                 dest,
                 #[cfg(unix)]
