@@ -57,6 +57,26 @@ impl FileEntry {
         self.dirname = extract_dirname(&self.name);
     }
 
+    /// Replaces the relative path name of the entry.
+    ///
+    /// Used by the receiver's single-file rename path (upstream
+    /// `main.c:805-832 get_local_name()`): when the daemon resolves a
+    /// `module/tail` destination to a non-directory leaf, the receiver
+    /// rewrites the lone flist entry's basename to match the requested
+    /// destination basename so that `dest_dir.join(entry.path())` lands
+    /// on the operand-named file instead of `dest/legit.txt/legit.txt`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:805-832` - `get_local_name()` returns `cp + 1` (the
+    ///   basename of `dest_path`) as `local_name`; receiver.c then uses
+    ///   `local_name ? local_name : f_name(file)` to compute the on-disk
+    ///   path.
+    pub fn set_name(&mut self, name: PathBuf) {
+        self.name = name;
+        self.dirname = extract_dirname(&self.name);
+    }
+
     /// Replaces the dirname with an interned `Arc<Path>`.
     ///
     /// Called by [`super::super::read::FileListReader`] after constructing the

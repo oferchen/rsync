@@ -170,6 +170,26 @@ impl ReceiverContext {
         let trailing_slash = dest_arg.is_some_and(|arg| dest_arg_has_trailing_slash(arg));
         let dest_dir = dest_arg.map_or_else(|| PathBuf::from("."), PathBuf::from);
 
+        // upstream: main.c:805-832 get_local_name() - single-file rename
+        // semantics. When the transfer is exactly one non-directory entry,
+        // the operand carries no trailing slash, and the destination path
+        // does not name an existing directory, upstream's get_local_name()
+        // returns `cp + 1` (the basename of `dest_path`) as `local_name`.
+        // The receiver's recv_files() then writes the single payload to
+        // `local_name` under `change_dir(parent)` instead of treating the
+        // operand as a directory and joining the flist entry's name.
+        //
+        // Without this remap the daemon receiver treats the operand as a
+        // directory: a `rsync -t legit.txt rsync://h/upload/legit.txt`
+        // push lands at `mod/legit.txt/legit.txt` because dest_dir is the
+        // operand and the per-entry mkdir then creates `legit.txt/` under
+        // it. Mirror upstream by rewriting the lone flist entry's name to
+        // the operand basename and pointing dest_dir at the parent. The
+        // sandbox open below still anchors at the parent directory, so
+        // SEC-1.{e..s} symlink-race defences continue to apply at the
+        // same dirfd they always did.
+        let dest_dir = self.apply_single_file_rename(dest_dir, file_count, trailing_slash);
+
         // upstream: main.c:778-792 get_local_name() - pre-flight mkdir of the
         // destination root when the transfer is multi-file or the operand
         // carries a trailing slash. The local-mode receiver creates the root
@@ -305,6 +325,98 @@ impl ReceiverContext {
                 sandbox,
             },
         ))
+    }
+
+    /// Applies upstream's `get_local_name()` single-file rename semantics.
+    ///
+    /// When the transfer carries exactly one non-directory flist entry, the
+    /// operand has no trailing slash, and the destination does not already
+    /// name a directory, upstream's `get_local_name()` returns the operand
+    /// basename as the receiver's `local_name`. `recv_files()` then writes
+    /// the lone payload to that basename under `change_dir(parent)`,
+    /// instead of treating the operand as a destination directory and
+    /// joining the flist entry's name.
+    ///
+    /// oc-rsync does not chdir per connection; instead this helper rewrites
+    /// the single flist entry's name in place to match the operand
+    /// basename and points `dest_dir` at the operand's parent. Every
+    /// downstream `dest_dir.join(entry.path())` then resolves to the
+    /// operand path the client requested. Behaviour is unchanged when:
+    ///
+    /// - `file_count != 1` (multi-file transfer goes into a directory).
+    /// - `trailing_slash` (caller asked for directory semantics).
+    /// - The lone entry is a directory.
+    /// - The operand already exists as a directory (treat as directory).
+    /// - The operand has no parent component (`legit.txt`, dest stays `.`).
+    ///
+    /// # Security
+    ///
+    /// Pointing `dest_dir` at the parent of a daemon module-resolved
+    /// operand keeps every SEC-1.{e..s} guard intact: the sandbox open
+    /// below anchors at the new `dest_dir` (which is still under the
+    /// module path), per-entry `openat2` opens still refuse symlinks at
+    /// the leaf, and the operand basename is a single path component so
+    /// it cannot traverse out of the sandbox. The bare-do-open symlink-
+    /// race attack scenarios continue to be rejected because they target
+    /// path operations against an attacker-planted parent symlink
+    /// (`cd -> /outside`): that symlink lives under the module root and
+    /// the sandbox open of the new `dest_dir` still resolves through it
+    /// under `RESOLVE_NO_SYMLINKS`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:805-832` - `get_local_name()` rename branch
+    /// - `receiver.c:594` - `fname = local_name ? local_name : f_name(...)`
+    fn apply_single_file_rename(
+        &mut self,
+        dest_dir: PathBuf,
+        file_count: usize,
+        trailing_slash: bool,
+    ) -> PathBuf {
+        use std::path::Path;
+
+        if file_count != 1 || trailing_slash {
+            return dest_dir;
+        }
+        if self.config.flags.dry_run {
+            // Dry-run never touches disk, so the directory-vs-file ambiguity
+            // does not change observable output. Keep behaviour stable.
+            return dest_dir;
+        }
+        // An existing directory at the operand keeps the directory branch
+        // (mirrors upstream's `S_ISDIR(st.st_mode)` path in
+        // `get_local_name()`). `metadata()` follows symlinks, matching
+        // upstream's `do_stat()`.
+        if dest_dir.metadata().is_ok_and(|m| m.is_dir()) {
+            return dest_dir;
+        }
+        let entry_is_dir = self.file_list.first().is_some_and(|e| e.is_dir());
+        if entry_is_dir {
+            return dest_dir;
+        }
+        let Some(target_basename) = dest_dir.file_name().map(std::ffi::OsString::from) else {
+            return dest_dir;
+        };
+        // Skip the rewrite when the dest operand is just a bare name with
+        // no parent component (e.g. dest = "legit.txt" relative to cwd).
+        // `Path::parent()` returns `Some("")` for that shape, which the
+        // join chain treats as `cwd`.
+        let parent = match dest_dir.parent() {
+            Some(p) if !p.as_os_str().is_empty() => Some(p.to_path_buf()),
+            _ => None,
+        };
+        // Belt-and-suspenders: never let the rewritten basename escape its
+        // parent. `file_name()` already strips separators, but a defensive
+        // single-component check makes the invariant explicit alongside
+        // the SEC-1 sandbox guard.
+        let basename_path = Path::new(&target_basename);
+        if basename_path.components().count() != 1 {
+            return dest_dir;
+        }
+        if let Some(entry) = self.file_list.first_mut() {
+            entry.set_name(PathBuf::from(&target_basename));
+        }
+        parent.unwrap_or_else(|| PathBuf::from("."))
     }
 }
 
