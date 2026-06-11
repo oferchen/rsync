@@ -9,6 +9,11 @@
 //! - [`legacy_goodbye_tests`] - protocol 28/29 NDX_DONE goodbye exchange.
 //! - [`goodbye_partial_cutoff`] - EDG-GOODBYE.4 receiver-side EOF /
 //!   garbage / hung-sender handling for the goodbye phase.
+//! - [`goodbye_timeout_tests`] - EDG-GOODBYE.4 receiver-side timeout +
+//!   disconnect surface for the goodbye phase. Simulates socket
+//!   `set_read_timeout` firing mid-frame and asserts the receiver
+//!   surfaces a typed `TimedOut` / `UnexpectedEof` within the
+//!   configured window instead of blocking or silently succeeding.
 //! - [`finalize_flush_tests`] - UTS-REVDD post-goodbye flush in
 //!   `finalize_transfer` guarding against the upstream
 //!   `reverse-daemon-delta` hang.
@@ -22,6 +27,7 @@
 mod daemon_filter_tests;
 mod finalize_flush_tests;
 mod goodbye_partial_cutoff;
+mod goodbye_timeout_tests;
 mod input_multiplex_tests;
 mod legacy_goodbye_tests;
 mod sanitize_file_list;
