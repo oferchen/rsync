@@ -174,6 +174,22 @@ pub(in crate::receiver) fn dest_arg_has_trailing_slash(arg: &OsStr) -> bool {
 /// pre-flight was a no-op (already exists, single-file transfer without
 /// trailing slash, or `dry_run`).
 ///
+/// # Symlink refusal
+///
+/// The existence check uses `symlink_metadata()` (lstat) rather than
+/// `metadata()` (stat) so a symlink at `dest_root` is detected directly
+/// instead of being silently resolved. When `dest_root` is itself a symlink -
+/// broken or otherwise - the helper refuses with `InvalidInput` instead of
+/// proceeding. A broken symlink would fall through the stat-based check
+/// (NotFound at the target) and let `create_dir_all` resolve through the
+/// symlink, materializing the directory outside the intended location; a
+/// dangling-link-class containment bypass analogous to the SEC-1 TOCTOU
+/// family. An existing-symlink dest is equally suspect because every
+/// per-entry write would land at the symlink target, sidestepping the
+/// daemon's `module.path` containment. Operators that genuinely need to
+/// receive into a symlinked location must materialize the real directory
+/// themselves; oc-rsync never auto-creates through a symlink.
+///
 /// # Upstream Reference
 ///
 /// - `main.c:778-792` - `get_local_name()` pre-flight `do_mkdir(dest_path, ACCESSPERMS)`
@@ -192,7 +208,24 @@ pub fn ensure_dest_root_exists(
     if file_total <= 1 && !trailing_slash {
         return Ok(false);
     }
-    match dest_root.metadata() {
+    // lstat instead of stat so a symlink at `dest_root` is observed directly.
+    // Upstream `main.c:778-792` does not pre-flight a symlinked dest_path
+    // (`do_stat` follows the link and either reports the target dir or
+    // returns ENOENT, after which `do_mkdir` resolves through the symlink).
+    // We refuse instead: auto-creating through an attacker-planted symlink
+    // would resolve to whatever the link points at, defeating the
+    // module-root containment that the SEC-1 `*at` chain enforces for every
+    // subsequent per-entry write.
+    match dest_root.symlink_metadata() {
+        Ok(meta) if meta.file_type().is_symlink() => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "refusing to create destination root '{}' through a symlink: \
+                 auto-creating at the symlink target would bypass module \
+                 containment (UTS-2 follow-up to PR #5567)",
+                dest_root.display(),
+            ),
+        )),
         Ok(_) => Ok(false),
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
             std::fs::create_dir_all(dest_root).map(|()| true)
