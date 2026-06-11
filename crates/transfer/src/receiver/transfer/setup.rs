@@ -16,7 +16,10 @@ use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 
 use filters::{DirMergeConfig, FilterChain, FilterSet};
 
-use crate::receiver::{PHASE1_CHECKSUM_LENGTH, PipelineSetup, ReceiverContext};
+use crate::receiver::{
+    PHASE1_CHECKSUM_LENGTH, PipelineSetup, ReceiverContext, dest_arg_has_trailing_slash,
+    ensure_dest_root_exists,
+};
 use crate::shared::ChecksumFactory;
 use crate::transfer_state::TransferPhase;
 
@@ -153,11 +156,41 @@ impl ReceiverContext {
             // performs the rewrite without a separate code path.
             .with_chmod(self.config.daemon_incoming_chmod.clone());
 
-        let dest_dir = self
-            .config
-            .args
-            .first()
-            .map_or_else(|| PathBuf::from("."), PathBuf::from);
+        let dest_arg = self.config.args.first();
+        let trailing_slash = dest_arg.is_some_and(|arg| dest_arg_has_trailing_slash(arg));
+        let dest_dir = dest_arg.map_or_else(|| PathBuf::from("."), PathBuf::from);
+
+        // upstream: main.c:778-792 get_local_name() - pre-flight mkdir of the
+        // destination root when the transfer is multi-file or the operand
+        // carries a trailing slash. The local-mode receiver creates the root
+        // implicitly via the file-list-driven mkdir, but `--server` mode
+        // never did, breaking the alt-dest interop test that uses a
+        // non-existent destination over remote shell.
+        let created_dest_root = ensure_dest_root_exists(
+            &dest_dir,
+            file_count,
+            trailing_slash,
+            self.config.flags.dry_run,
+        )
+        .map_err(|e| {
+            io::Error::new(
+                e.kind(),
+                format!(
+                    "failed to create destination root {}: {e} {}{}",
+                    dest_dir.display(),
+                    crate::role_trailer::error_location!(),
+                    crate::role_trailer::receiver()
+                ),
+            )
+        })?;
+        if created_dest_root {
+            debug_log!(
+                Recv,
+                1,
+                "created destination root {}",
+                dest_dir.display()
+            );
+        }
 
         let acl_cache = if self.config.flags.acls {
             self.flist_reader_cache
