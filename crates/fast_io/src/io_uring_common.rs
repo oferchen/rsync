@@ -197,7 +197,7 @@ pub struct SharedRingConfig {
 
 /// Structured kernel information for io_uring availability reporting.
 ///
-/// Returned by [`crate::io_uring::config::config_detail::io_uring_kernel_info`]
+/// Returned by [`crate::io_uring_kernel_info`]
 /// on Linux and by the equivalent stub on every other platform.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IoUringKernelInfo {
