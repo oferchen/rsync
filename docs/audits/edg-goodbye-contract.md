@@ -111,6 +111,72 @@ Three `proptest!` cases:
   30 (or below) is caught by `pre_proto31_never_emits_del_stats` and
   `golden_proto30_delete_does_not_emit_del_stats`.
 
+## Timeout + partial-cutoff (EDG-GOODBYE.4)
+
+`crates/transfer/src/receiver/tests/errors_and_timeouts/goodbye_partial_cutoff.rs`
+locks in the *receiver*-side counterpart of this contract. While
+`crates/protocol/tests/goodbye_contract.rs` pins what the sender must
+emit, EDG-GOODBYE.4 pins what the receiver must do when the sender
+misbehaves. None of the cases below are permitted to panic; every
+adverse stream shape must surface a typed `io::Error`.
+
+Protocol coverage note: `handle_goodbye` only *reads* a goodbye echo on
+protocols >= 31 (the extended-goodbye gate). On protocol 28/29 the
+read-side counterpart is `read_expected_ndx_done`, which
+`exchange_phase_done` invokes for each per-phase, per-segment, and final
+NDX_DONE. The protocol-29 tests therefore drive
+`read_expected_ndx_done` directly; the protocol-32 tests drive
+`handle_goodbye` directly.
+
+Eight receiver-side cases are covered:
+
+- `read_expected_ndx_done_proto29_eof_mid_legacy_ndx_done` -- legacy
+  codec short-reads the 4-byte NDX_DONE; `UnexpectedEof` must propagate
+  from `read_exact`.
+- `handle_goodbye_proto32_eof_mid_modern_negative_prefix` -- modern
+  codec reads the `0xFF` prefix and then EOFs on the follow-up byte;
+  `UnexpectedEof` must propagate.
+- `handle_goodbye_proto32_immediate_eof` /
+  `read_expected_ndx_done_proto29_immediate_eof` -- sender closes
+  before emitting any goodbye byte. `UnexpectedEof` must propagate; the
+  receiver must not declare success.
+- `handle_goodbye_proto32_rejects_garbage_in_place_of_ndx_done` --
+  sender emits a well-framed positive NDX (5) instead of `NDX_DONE`;
+  receiver must surface `io::ErrorKind::InvalidData` with a message
+  that references `NDX_DONE` and the role trailer. Upstream equivalent:
+  `main.c:919-923` exits with `RERR_PROTOCOL`.
+- `read_expected_ndx_done_proto29_rejects_garbage` -- same shape on the
+  legacy protocol, exercising the `read_expected_ndx_done` helper that
+  the phase-transition exchange calls.
+- `handle_goodbye_does_not_silently_complete_on_hung_sender` --
+  receiver is driven against a reader that parks forever (mimicking a
+  sender that hangs without emitting goodbye). The test bounds its own
+  wall-clock with `mpsc::recv_timeout(2s)`. A regression that lets
+  `handle_goodbye` return `Ok(())` on zero input fails the test loudly.
+  If a future change wires an internal read deadline, the surfaced
+  error must still be `TimedOut` or `UnexpectedEof` -- the test accepts
+  either kind so it does not over-specify the implementation.
+- `handle_goodbye_proto32_eof_inside_del_stats_payload` -- sender emits
+  `NDX_DEL_STATS` and then cuts the socket inside the five-varint
+  payload; `UnexpectedEof` must propagate from
+  `DeleteStats::read_from`.
+
+A happy-path sanity check
+(`handle_goodbye_proto32_accepts_well_formed_ndx_done`) ensures the
+error-path validators do not regress the well-formed case.
+
+### What this guards against
+
+- A future refactor of `read_expected_ndx_done` that converts the
+  `InvalidData` branch into a `debug_assert!` or a panic.
+- A future refactor of `handle_goodbye` that consumes the `NDX_DEL_STATS`
+  branch without propagating short-read errors from
+  `DeleteStats::read_from`.
+- A regression that lets the receiver silently declare goodbye complete
+  on a hung or socket-closed sender -- the upstream behaviour is to
+  block until bytes arrive, EOF arrives, or the user-configured
+  `--timeout` fires; never to fabricate success.
+
 ## Upstream references
 
 - `main.c:875-906` -- `read_final_goodbye()`.
