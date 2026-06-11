@@ -231,6 +231,8 @@ include!("tests/chunks/daemon_munge_symlinks_pull.rs");
 include!("tests/chunks/daemon_compare_dest_push.rs");
 // Daemon relative receive end-to-end test
 include!("tests/chunks/daemon_relative_receive.rs");
+// Daemon sub-path pull resolution (UTS-3)
+include!("tests/chunks/daemon_pull_subpath.rs");
 // Daemon combined hardlinks + relative receive end-to-end test
 include!("tests/chunks/daemon_hardlinks_relative_receive.rs");
 // Daemon itemize end-to-end tests
@@ -380,6 +382,10 @@ include!("tests/chunks/daemon_checksum_push.rs");
 include!("tests/chunks/daemon_compress_push.rs");
 // Daemon delete push end-to-end test
 include!("tests/chunks/daemon_delete_push.rs");
+// Daemon delete push NDX_DEL_STATS regression (URV-6 upload-direction gap)
+include!("tests/chunks/daemon_delete_push_emits_stats.rs");
+// Daemon delete pull NDX_DEL_STATS regression (URV-6 pull-direction)
+include!("tests/chunks/daemon_delete_pull_emits_stats.rs");
 // Daemon inplace push end-to-end test
 include!("tests/chunks/daemon_inplace_push.rs");
 // Daemon push/pull lifecycle end-to-end tests

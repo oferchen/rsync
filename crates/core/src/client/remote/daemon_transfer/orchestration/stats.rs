@@ -22,6 +22,8 @@ pub(super) fn convert_server_stats_to_summary(
 
     let (local_summary, io_error, error_count) = match stats {
         ServerStats::Receiver(ref transfer_stats) => {
+            // Daemon-pull: local side ran the receiver and its `--delete`
+            // sweep. The per-type counters live on `delete_stats`.
             let s = LocalCopySummary::from_receiver_stats(
                 transfer_stats.files_listed,
                 transfer_stats.files_transferred,
@@ -31,15 +33,21 @@ pub(super) fn convert_server_stats_to_summary(
                 elapsed,
                 transfer_stats.literal_data,
                 transfer_stats.matched_data,
+                u64::from(transfer_stats.delete_stats.total()),
             );
             (s, transfer_stats.io_error, transfer_stats.error_count)
         }
         ServerStats::Generator(ref generator_stats) => {
+            // Daemon-upload: local side ran the sender/generator. The remote
+            // receiver ran the `--delete` sweep and reported the per-type
+            // counters via `NDX_DEL_STATS` during the goodbye phase
+            // (see `GeneratorContext::handle_goodbye`).
             let s = LocalCopySummary::from_generator_stats(
                 generator_stats.files_listed,
                 generator_stats.files_transferred,
                 generator_stats.bytes_sent,
                 elapsed,
+                u64::from(generator_stats.delete_stats.total()),
             );
             (s, generator_stats.io_error, 0u32)
         }

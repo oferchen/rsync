@@ -127,8 +127,21 @@ impl ReceiverContext {
 
     /// Handles the goodbye handshake at end of transfer.
     ///
-    /// For protocol >= 31, sends NDX_DONE. For extended goodbye (protocol >= 32),
-    /// additionally reads the echo and sends a final NDX_DONE.
+    /// For protocol >= 31, sends `NDX_DEL_STATS` (when `--delete` ran) followed
+    /// by `NDX_DONE`. For extended goodbye (protocol >= 32), additionally reads
+    /// the echo and sends a final `NDX_DONE`.
+    ///
+    /// `NDX_DEL_STATS` emission mirrors upstream's daemon-recv parent process
+    /// (the generator running alongside the receiver child). Our receiver
+    /// performs the delete pass inline rather than forking, so it carries the
+    /// counters in `self.pending_del_stats` and emits them here to keep wire
+    /// parity with upstream.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:1107-1132` - daemon-recv parent process runs `generate_files`
+    /// - `generator.c:2393-2398` - early `write_del_stats(f_out)` emission
+    /// - `main.c:225-238` - `write_del_stats()` wire format
     pub(in crate::receiver) fn handle_goodbye<R: Read, W: Write + ?Sized>(
         &self,
         reader: &mut R,
@@ -138,6 +151,21 @@ impl ReceiverContext {
     ) -> io::Result<()> {
         if !self.protocol.supports_goodbye_exchange() {
             return Ok(());
+        }
+
+        // upstream: generator.c:2393-2394 -
+        //   `if (protocol_version >= 31 && EARLY_DELETE_DONE_MSG()) {
+        //       if (delete_mode || force_delete || read_batch)
+        //           write_del_stats(f_out);
+        //   }`
+        // Runs in the daemon-recv parent's `generate_files()`. We always
+        // sweep before the transfer (EARLY case), so the early-emission gate
+        // applies whenever deletion was requested. `force_delete` and
+        // `read_batch` are not yet wired into `ParsedServerFlags`; `flags.delete`
+        // is the only term we evaluate today.
+        if self.protocol.supports_extended_goodbye() && self.config.flags.delete {
+            ndx_write_codec.write_ndx(&mut *writer, NDX_DEL_STATS)?;
+            self.pending_del_stats.write_to(&mut *writer)?;
         }
 
         ndx_write_codec.write_ndx_done(&mut *writer)?;

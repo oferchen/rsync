@@ -233,6 +233,7 @@ impl LocalCopySummary {
     /// It maps the available receiver statistics (files listed, files transferred, bytes received,
     /// bytes sent, total source bytes) to the corresponding LocalCopySummary fields.
     #[must_use]
+    #[allow(clippy::too_many_arguments)] // REASON: maps a wire-stats struct field-by-field
     pub fn from_receiver_stats(
         files_listed: usize,
         files_transferred: usize,
@@ -242,6 +243,7 @@ impl LocalCopySummary {
         elapsed: Duration,
         literal_data: u64,
         matched_data: u64,
+        items_deleted: u64,
     ) -> Self {
         Self {
             regular_files_total: files_listed as u64,
@@ -251,6 +253,7 @@ impl LocalCopySummary {
             bytes_copied: literal_data,
             matched_bytes: matched_data,
             total_source_bytes,
+            items_deleted,
             total_elapsed: elapsed,
             ..Default::default()
         }
@@ -267,11 +270,13 @@ impl LocalCopySummary {
         files_transferred: usize,
         bytes_sent: u64,
         elapsed: Duration,
+        items_deleted: u64,
     ) -> Self {
         Self {
             regular_files_total: files_listed as u64,
             files_copied: files_transferred as u64,
             bytes_sent,
+            items_deleted,
             total_elapsed: elapsed,
             ..Default::default()
         }
@@ -449,6 +454,7 @@ mod tests {
             Duration::from_secs(5),
             0,
             0,
+            0,
         );
         assert_eq!(summary.regular_files_total(), 100);
         assert_eq!(summary.files_copied(), 50);
@@ -469,6 +475,7 @@ mod tests {
             Duration::from_secs(2),
             800,
             1200,
+            0,
         );
         assert_eq!(summary.bytes_copied(), 800);
         assert_eq!(summary.matched_bytes(), 1200);
@@ -476,9 +483,40 @@ mod tests {
         assert_eq!(summary.bytes_received(), 2048);
     }
 
+    /// Mirrors the daemon-upload + `--delete` path: the daemon receiver
+    /// sweeps the destination and sends `NDX_DEL_STATS` back to the client
+    /// sender. The client's `LocalCopySummary` must surface the count so
+    /// `--stats` renders "Number of deleted files: N" instead of zero.
+    #[test]
+    fn from_generator_stats_records_items_deleted() {
+        let summary =
+            LocalCopySummary::from_generator_stats(10, 5, 2048, Duration::from_secs(1), 7);
+        assert_eq!(summary.items_deleted(), 7);
+    }
+
+    /// Mirrors the daemon-pull + `--delete` path: the local receiver
+    /// performs the delete sweep and records the count locally; the
+    /// summary must surface the same counter.
+    #[test]
+    fn from_receiver_stats_records_items_deleted() {
+        let summary = LocalCopySummary::from_receiver_stats(
+            10,
+            5,
+            2048,
+            512,
+            4096,
+            Duration::from_secs(2),
+            0,
+            0,
+            3,
+        );
+        assert_eq!(summary.items_deleted(), 3);
+    }
+
     #[test]
     fn from_generator_stats_sets_fields() {
-        let summary = LocalCopySummary::from_generator_stats(200, 75, 2048, Duration::from_secs(3));
+        let summary =
+            LocalCopySummary::from_generator_stats(200, 75, 2048, Duration::from_secs(3), 0);
         assert_eq!(summary.regular_files_total(), 200);
         assert_eq!(summary.files_copied(), 75);
         assert_eq!(summary.bytes_sent(), 2048);

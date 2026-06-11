@@ -357,6 +357,82 @@ fn resolve_receiver_dest(
     module_path.join(rel)
 }
 
+/// Resolves the sender's on-disk source paths from the client's positional
+/// path args for a pull request (Generator role).
+///
+/// Mirrors upstream's `glob_expand_module()` + `chdir(module_chdir)` ordering:
+/// once the module name has been stripped, upstream's daemon-mode sender sees
+/// argv positionals as paths relative to the module root, and the sender's
+/// per-arg `dir/fn` split (flist.c:2338-2349) chops the last `/` so the wire
+/// emits `fn` as the file-list name. We don't chdir, so each positional is
+/// resolved by joining the stripped tail with `module_path`. The trailing
+/// slash (if any) is preserved so the sender's existing dotdir branch can
+/// trigger when the client wrote `module/sub/` instead of `module/sub`.
+///
+/// Returns `[module_path]` when no positional was supplied or when every
+/// stripped tail is empty, matching the pre-existing "pull from module root"
+/// behaviour exactly.
+///
+/// Sub-paths that contain `..` segments or that resolve to a host-absolute
+/// path are rejected (returns `None`) so a malicious client cannot enumerate
+/// files outside the module root via a crafted `rsync://host/mod/../etc/...`
+/// URL. This is defense-in-depth on top of the chroot / Landlock sandbox.
+///
+/// # Upstream Reference
+///
+/// - `util1.c:804 glob_expand_module()` - strips the module name from each arg
+/// - `clientserver.c:992 change_dir(module_chdir, CD_NORMAL)` - relativises args
+/// - `flist.c:2338-2349 send_file_list()` - `dir/fn` split per positional
+fn resolve_sender_sources(
+    module_path: &std::path::Path,
+    client_args: &[String],
+    module_name: &str,
+) -> Option<Vec<std::path::PathBuf>> {
+    let positionals = extract_module_relative_paths(client_args, module_name);
+    if positionals.is_empty() {
+        return Some(vec![module_path.to_path_buf()]);
+    }
+    let mut sources = Vec::with_capacity(positionals.len());
+    let mut all_empty = true;
+    for raw in &positionals {
+        let tail = raw.trim();
+        if tail.is_empty() || tail == "." {
+            sources.push(module_path.to_path_buf());
+            continue;
+        }
+        all_empty = false;
+        // Reject `..` traversal segments so the joined path cannot escape the
+        // module root. Upstream rsync's sender-side `sanitize_path()` and the
+        // chroot wall it lives behind cover this; oc-rsync mirrors the check
+        // explicitly because the daemon does not always chroot.
+        let trimmed = tail.trim_start_matches(['/', '\\']);
+        for component in std::path::Path::new(trimmed).components() {
+            if matches!(component, std::path::Component::ParentDir) {
+                return None;
+            }
+        }
+        // Preserve the trailing slash so the sender can detect a dotdir-style
+        // source (upstream flist.c:2312-2322 appends `.` and sets DOTDIR_NAME
+        // for any `fbuf[len-1] == '/'`). PathBuf collapses trailing slashes
+        // during `join`, so we re-append the byte after the join when present.
+        let trailing = tail.ends_with('/') || tail.ends_with('\\');
+        let joined = module_path.join(trimmed);
+        let joined = if trailing {
+            let mut buf = joined.into_os_string();
+            buf.push("/");
+            std::path::PathBuf::from(buf)
+        } else {
+            joined
+        };
+        sources.push(joined);
+    }
+    if all_empty {
+        Some(vec![module_path.to_path_buf()])
+    } else {
+        Some(sources)
+    }
+}
+
 /// Builds the server configuration from client arguments.
 ///
 /// Returns the configuration on success, or sends an error and returns `None`.
@@ -379,18 +455,33 @@ fn build_server_config(
     // upstream: main.c:1203-1204 + util1.c:804 (glob_expand_module) - receivers
     // resolve their destination by joining the module path with the client's
     // module-relative tail (e.g. `upload/realdir/` -> module + `realdir/`).
-    // The original argv[0] is always the module root; legacy tests that push
-    // straight into the module root keep that behaviour.
-    let receiver_dest = if role == ServerRole::Receiver {
-        resolve_receiver_dest(std::path::Path::new(&module.path), client_args, &module.name)
+    // Senders (pull requests) split each positional the same way so the
+    // sender's per-source `dir/fn` (flist.c:2338-2349) walks the requested
+    // sub-tree instead of the entire module root. The original argv[0] is
+    // always the module root; legacy tests that push straight into the module
+    // root keep that behaviour.
+    let positional_args: Vec<OsString> = if role == ServerRole::Receiver {
+        let dest = resolve_receiver_dest(std::path::Path::new(&module.path), client_args, &module.name);
+        vec![OsString::from(dest.as_os_str())]
     } else {
-        std::path::PathBuf::from(&module.path)
+        match resolve_sender_sources(std::path::Path::new(&module.path), client_args, &module.name) {
+            Some(sources) => sources
+                .into_iter()
+                .map(|p| OsString::from(p.as_os_str()))
+                .collect(),
+            None => {
+                let payload =
+                    "@ERROR: requested path resolves outside module root".to_owned();
+                send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+                return Ok(None);
+            }
+        }
     };
 
     match ServerConfig::from_flag_string_and_args(
         role,
         flag_string,
-        vec![OsString::from(receiver_dest.as_os_str())],
+        positional_args,
     ) {
         Ok(mut cfg) => {
             // Parse long-form arguments that upstream rsync sends via server_options()

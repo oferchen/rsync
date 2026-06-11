@@ -312,9 +312,15 @@ impl Drop for IocpReader {
 unsafe impl Send for IocpReader {}
 
 /// Converts a Path to a wide (UTF-16) null-terminated string for Win32 APIs.
+///
+/// The input is first routed through [`crate::to_extended_path`] so absolute
+/// paths longer than `MAX_PATH` (260 chars) are accepted by `CreateFileW`.
+/// The extended-prefix form is idempotent and a no-op for relative paths or
+/// paths that already carry the `\\?\` / `\\.\` prefix.
 pub(crate) fn to_wide_path(path: &Path) -> io::Result<Vec<u16>> {
     use std::os::windows::ffi::OsStrExt;
-    let wide: Vec<u16> = path
+    let prefixed = crate::to_extended_path(path);
+    let wide: Vec<u16> = prefixed
         .as_os_str()
         .encode_wide()
         .chain(std::iter::once(0))

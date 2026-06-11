@@ -161,6 +161,11 @@ pub use nfsv4_acl_stub as nfsv4_acl;
 /// Fake super-user mode for preserving privileged metadata without root.
 pub mod fake_super;
 
+/// Windows-specific NTFS metadata helpers (reparse-point classification,
+/// future native primitives). Empty on non-Windows targets.
+#[cfg(target_os = "windows")]
+pub mod windows;
+
 #[cfg(all(
     feature = "acl",
     any(target_os = "linux", target_os = "macos", target_os = "freebsd")
