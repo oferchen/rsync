@@ -399,6 +399,87 @@ mod config_parsing_tests {
     }
 
     #[test]
+    fn parse_amp_include_inherits_parent_globals_for_included_module() {
+        // Regression: modules declared inside an `&include` target must
+        // inherit the parent file's P_LOCAL defaults (use chroot, hosts
+        // allow, read only, ...). Upstream's `loadparm.c::do_section`
+        // shares the `Vars` block across the `]push`/`]pop` boundary so
+        // the included file's sections finalize against the parent's
+        // current globals. Without this inheritance the upstream
+        // `daemon-config` testsuite case fails: `inc-mod` lands with
+        // `use_chroot=true` (the rsync default) even though the parent
+        // declared `use chroot = no`, which makes the daemon attempt
+        // `chroot()` and corrupt the wire stream for non-root listens.
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let included = format!(
+            "[inc-mod]\npath = {}\nread only = yes\ncomment = via-include\n",
+            path.display(),
+        );
+        let include_file = write_config(&included);
+
+        let main_config = format!(
+            "use chroot = no\nhosts allow = localhost 127.0.0.0/8\n&include {}\n",
+            include_file.path().display(),
+        );
+        let main_file = write_config(&main_config);
+
+        let result = parse_config_modules(main_file.path()).expect("parse succeeds");
+        let included_mod = result
+            .modules
+            .iter()
+            .find(|m| m.name == "inc-mod")
+            .expect("inc-mod present");
+        assert!(
+            !included_mod.use_chroot,
+            "use chroot from parent must be inherited by included module",
+        );
+        assert_eq!(
+            included_mod.hosts_allow.len(),
+            2,
+            "global hosts allow must propagate into included module",
+        );
+        assert!(included_mod.read_only, "module's own read only must be honoured");
+    }
+
+    #[test]
+    fn parse_amp_include_module_overrides_inherited_default() {
+        // Regression: per-module directives inside an `&include` target
+        // must still win over the parent's inherited defaults so the
+        // include is purely additive, never coercive. Mirrors upstream's
+        // shared-Vars semantics where per-section settings shadow the
+        // active defaults until the next `]pop` restores the snapshot.
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let included = format!(
+            "[override-mod]\npath = {}\nuse chroot = yes\n",
+            path.display(),
+        );
+        let include_file = write_config(&included);
+
+        let main_config = format!(
+            "use chroot = no\n&include {}\n",
+            include_file.path().display(),
+        );
+        let main_file = write_config(&main_config);
+
+        let result = parse_config_modules(main_file.path()).expect("parse succeeds");
+        let module = result
+            .modules
+            .iter()
+            .find(|m| m.name == "override-mod")
+            .expect("override-mod present");
+        assert!(
+            module.use_chroot,
+            "per-module use chroot must override inherited parent default",
+        );
+    }
+
+    #[test]
     fn parse_amp_merge_directive_with_equals() {
         // upstream: params.c - `&merge` is the bare-include variant; the
         // optional '=' separator must also be accepted.

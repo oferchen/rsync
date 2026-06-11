@@ -290,10 +290,14 @@ fn handle_legacy_session(
 
     let request = request.unwrap_or_default();
 
-    if request == "#list" {
-        // upstream: clientserver.c - the #list handler does NOT send
-        // @RSYNCD: CAP before the module listing. Capabilities are only
-        // sent after module selection during the transfer handshake.
+    if request.is_empty() || request == "#list" {
+        // upstream: clientserver.c:1420 - `if (!*line || strcmp(line,
+        // "#list") == 0) { send_listing(); }` - both an empty module
+        // name (the client connected with `rsync rsync://host/`) and an
+        // explicit `#list` request fall through to the module listing.
+        // The #list handler does NOT send @RSYNCD: CAP before the
+        // listing; capabilities are only sent after module selection
+        // during the transfer handshake.
         if let Some(log) = log_sink.as_ref() {
             log_list_request(log, peer_host.as_deref(), peer_addr);
         }
@@ -307,19 +311,6 @@ fn handle_legacy_session(
             messages,
         )?;
         // FSM: -> Closing after sending the module list and EXIT.
-        _ = conn_state
-            .transition(ConnectionState::Closing)
-            .map_err(transition_error)?;
-    } else if request.is_empty() {
-        write_limited(
-            reader.get_mut(),
-            &mut limiter,
-            HANDSHAKE_ERROR_PAYLOAD.as_bytes(),
-        )?;
-        write_limited(reader.get_mut(), &mut limiter, b"\n")?;
-        messages.write_exit(reader.get_mut(), &mut limiter)?;
-        reader.get_mut().flush()?;
-        // FSM: -> Closing after sending error and EXIT for empty request.
         _ = conn_state
             .transition(ConnectionState::Closing)
             .map_err(transition_error)?;

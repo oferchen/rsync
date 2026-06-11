@@ -28,18 +28,24 @@ fn apply_include_directive(
     }
 
     let include_path = resolve_config_relative_path(canonical, trimmed);
-    let included = parse_config_modules_inner(&include_path, stack).map_err(|error| {
-        // Wrap inner failures so the user sees both the directive site that
-        // triggered the include and the underlying parse error from the
-        // included file. Missing-file and recursive-include errors already
-        // name the offending path; this wrap adds the parent line context.
-        let display = include_path.display();
-        config_parse_error(
-            path,
-            line_number,
-            format!("failed to process '{directive} {display}': {error}"),
-        )
-    })?;
+    // upstream: loadparm.c::lp_load() &include handling - pass the parent
+    // state's globals into the recursive parse so modules declared in the
+    // included file inherit the parent's P_LOCAL defaults (use chroot,
+    // hosts allow, secrets file, etc.), matching upstream's shared `Vars`
+    // semantics across the `]push`/`]pop` boundary.
+    let included =
+        parse_config_modules_inner(&include_path, stack, Some(state)).map_err(|error| {
+            // Wrap inner failures so the user sees both the directive site that
+            // triggered the include and the underlying parse error from the
+            // included file. Missing-file and recursive-include errors already
+            // name the offending path; this wrap adds the parent line context.
+            let display = include_path.display();
+            config_parse_error(
+                path,
+                line_number,
+                format!("failed to process '{directive} {display}': {error}"),
+            )
+        })?;
 
     if !included.modules.is_empty() {
         state.modules.extend(included.modules);
