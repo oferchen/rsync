@@ -169,6 +169,14 @@ pub mod mmap_reader;
 #[path = "mmap_reader_stub.rs"]
 pub mod mmap_reader;
 
+/// Bounded-RSS chunked file reader for Windows. Production replacement for
+/// `mmap_reader_stub`'s `Vec<u8>`-per-file allocation, capping peak RSS at the
+/// configured chunk size rather than the file size. See the module-level
+/// documentation for the call-site migration path and the
+/// `OC_RSYNC_WIN_CHUNK_BYTES` tuning override.
+#[cfg(windows)]
+pub mod windows_chunked_reader;
+
 /// io_uring-based async file and socket I/O for Linux 5.6+.
 ///
 /// This module provides high-performance I/O using Linux's io_uring interface
