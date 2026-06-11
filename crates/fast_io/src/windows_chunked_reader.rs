@@ -182,7 +182,8 @@ impl Read for WindowsChunkedReader {
         let chunk_end = if self.chunk_offset == NO_CHUNK_LOADED {
             0
         } else {
-            self.chunk_offset.saturating_add(self.chunk_cache.len() as u64)
+            self.chunk_offset
+                .saturating_add(self.chunk_cache.len() as u64)
         };
         if self.chunk_offset == NO_CHUNK_LOADED
             || self.position < self.chunk_offset
@@ -418,8 +419,7 @@ mod tests {
             let mut byte = [0u8; 1];
             r.read_exact(&mut byte).unwrap();
             assert_eq!(
-                byte[0],
-                payload[offset as usize],
+                byte[0], payload[offset as usize],
                 "wrong byte at offset {offset}"
             );
         }

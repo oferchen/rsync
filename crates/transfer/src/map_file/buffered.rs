@@ -363,7 +363,8 @@ mod tests {
         // The clamp invariant: window_len reflects the file's remaining
         // bytes (48128), never the requested max_window (262144).
         assert_eq!(
-            map.window_len, FILE_SIZE,
+            map.window_len,
+            FILE_SIZE,
             "window_len must clamp to remaining file bytes ({FILE_SIZE}), got {actual}",
             actual = map.window_len,
         );

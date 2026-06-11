@@ -141,7 +141,9 @@ fn golden_push_delete_proto32_emits_del_stats_then_ndx_done() {
     // varint values that span multiple bytes.
     let mut expected = Vec::new();
     let mut expect_codec = create_ndx_codec(32);
-    expect_codec.write_ndx(&mut expected, NDX_DEL_STATS).unwrap();
+    expect_codec
+        .write_ndx(&mut expected, NDX_DEL_STATS)
+        .unwrap();
     stats.write_to(&mut expected).unwrap();
     expect_codec.write_ndx_done(&mut expected).unwrap();
 
@@ -292,9 +294,7 @@ fn sequential_daemon_transfers_dont_drop_goodbye() {
 
         if last_ndx != Some(NDX_DONE) {
             drops += 1;
-            eprintln!(
-                "iter {iter}: scenario {scenario:?} produced last_ndx = {last_ndx:?}"
-            );
+            eprintln!("iter {iter}: scenario {scenario:?} produced last_ndx = {last_ndx:?}");
         }
 
         // Stream must be fully consumed - no trailing garbage past NDX_DONE.
@@ -317,15 +317,20 @@ fn sequential_daemon_transfers_dont_drop_goodbye() {
 
 /// Strategy: any DeleteStats with reasonable counts (no overflow risk).
 fn arb_delete_stats() -> impl Strategy<Value = DeleteStats> {
-    (0u32..1_000_000, 0u32..100_000, 0u32..10_000, 0u32..100, 0u32..100).prop_map(
-        |(files, dirs, symlinks, devices, specials)| DeleteStats {
+    (
+        0u32..1_000_000,
+        0u32..100_000,
+        0u32..10_000,
+        0u32..100,
+        0u32..100,
+    )
+        .prop_map(|(files, dirs, symlinks, devices, specials)| DeleteStats {
             files,
             dirs,
             symlinks,
             devices,
             specials,
-        },
-    )
+        })
 }
 
 /// Strategy: any supported protocol version (28-32).

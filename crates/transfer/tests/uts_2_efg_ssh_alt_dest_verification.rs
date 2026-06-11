@@ -133,7 +133,10 @@ fn uts_2_f_ssh_alt_dest_auto_creates_missing_dest_root() {
     fs::write(copy_dest_basis.join("seed.txt"), b"basis").expect("seed basis file");
 
     assert!(!dest_root.exists(), "dest root must start missing");
-    assert!(copy_dest_basis.is_dir(), "alt-dest basis must exist before transfer");
+    assert!(
+        copy_dest_basis.is_dir(),
+        "alt-dest basis must exist before transfer"
+    );
 
     // Multi-file transfer (file_total > 1) tripping the pre-flight, no
     // trailing slash, not dry-run. This is the alt-dest interop argv shape.

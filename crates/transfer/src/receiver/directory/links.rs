@@ -182,8 +182,7 @@ impl ReceiverContext {
                 return Err(e);
             }
             // upstream: generator.c:1594 - itemize new symlink after creation
-            let iflags =
-                ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
+            let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
             let _ = self.emit_itemize(writer, &iflags, entry);
         }
         Ok(())
