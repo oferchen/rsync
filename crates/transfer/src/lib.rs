@@ -268,6 +268,21 @@ fn requires_multiplex_output(
     }
 }
 
+/// Decides whether the local side may advertise INC_RECURSE in its compat
+/// flags response. Mirrors upstream `compat.c:161-179 set_allow_inc_recurse`
+/// with one local restriction: the receiver role never advertises INC_RECURSE
+/// because `receive_extra_file_lists` drains the entire sub-list stream
+/// upfront, which deadlocks against upstream's
+/// `MIN_FILECNT_LOOKAHEAD`-throttled `send_extra_file_list` (sender.c:228-232)
+/// on source trees larger than the lookahead window.
+///
+/// upstream: compat.c:161-179 set_allow_inc_recurse,
+/// sender.c:228-232 (send_extra_file_list throttle),
+/// io.c:1740-1760 (receiver's inline sub-list dispatch oc-rsync does not implement).
+pub(crate) fn compute_allow_inc_recurse(recursive: bool, qsort: bool, role: ServerRole) -> bool {
+    recursive && !qsort && role == ServerRole::Generator
+}
+
 /// Executes the native server entry point over standard I/O.
 ///
 /// The implementation performs the protocol handshake before dispatching to the
@@ -414,13 +429,10 @@ pub fn run_server_with_handshake<W: Write>(
             )
         })?;
 
-    // Compute allow_inc_recurse matching upstream compat.c:161-179.
-    // Requires recursive mode and not qsort. For receivers, also disallows
-    // delete and prune_empty_dirs (which need the complete file list upfront).
-    let allow_inc_recurse = config.flags.recursive
-        && !config.qsort
-        && (config.role == ServerRole::Generator
-            || (!config.flags.delete && !config.flags.prune_empty_dirs));
+    // Compute allow_inc_recurse matching upstream compat.c:161-179 with the
+    // receiver-side restriction documented on `compute_allow_inc_recurse`.
+    let allow_inc_recurse =
+        compute_allow_inc_recurse(config.flags.recursive, config.qsort, config.role);
 
     // In SSH server mode (client_args is None), pass the compact flag string
     // so setup_protocol can extract the `-e.xxx` capability string from it.
