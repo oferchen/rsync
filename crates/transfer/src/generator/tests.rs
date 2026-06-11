@@ -2303,8 +2303,7 @@ mod legacy_goodbye_tests {
         // Receiver wire: NDX_DONE + final NDX_DONE in modern (proto >= 30)
         // single-byte encoding. The legacy 4-byte LE form is only valid for
         // protocol < 30; using it here would decode as -256 instead of -1.
-        let receiver_input =
-            [NDX_DONE_MODERN.as_slice(), NDX_DONE_MODERN.as_slice()].concat();
+        let receiver_input = [NDX_DONE_MODERN.as_slice(), NDX_DONE_MODERN.as_slice()].concat();
         let mut reader = Cursor::new(receiver_input);
 
         let mut output = FlushTrackingWriter::default();
