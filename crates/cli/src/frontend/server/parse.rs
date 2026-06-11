@@ -15,27 +15,42 @@ pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, V
     let mut positional_args = Vec::new();
     let mut found_flags = false;
 
-    for arg in args {
+    let mut idx = 0;
+    while idx < args.len() {
+        let arg = &args[idx];
         let arg_str = arg.to_string_lossy();
 
         if is_known_server_long_flag(&arg_str) {
+            // upstream: options.c:2886-2890 - `--partial-dir` is emitted as
+            // TWO separate argv entries by server_options(), so the value
+            // that immediately follows must also be skipped here. Without
+            // this, the partial-dir VALUE leaks into the positional list and
+            // becomes a destination-path argument.
+            if arg_str == "--partial-dir" {
+                idx += 2;
+                continue;
+            }
+            idx += 1;
             continue;
         }
 
         if !found_flags && arg_str.starts_with('-') {
             flag_string = arg_str.into_owned();
             found_flags = true;
+            idx += 1;
             continue;
         }
 
         // upstream uses "." as a placeholder separator between flags and paths
         if found_flags && arg_str == "." {
+            idx += 1;
             continue;
         }
 
         if found_flags {
             positional_args.push(arg.clone());
         }
+        idx += 1;
     }
 
     (flag_string, positional_args)
