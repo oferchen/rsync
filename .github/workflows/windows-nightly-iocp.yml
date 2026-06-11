@@ -1,0 +1,103 @@
+# Windows nightly IOCP high-IOPS test cell (WCI-2 #3696).
+#
+# The required `Windows IOCP` cell in ci.yml builds `fast_io` with
+# `--features iocp` and runs the default nextest set against the crate.
+# It does NOT exercise the `iocp_high_concurrency_stress` integration
+# tests, which are opt-in via the `OC_RSYNC_IOCP_STRESS=1` environment
+# gate (see crates/fast_io/tests/iocp_high_concurrency_stress.rs). Those
+# tests fan 10,000 distinct files through `IocpDiskBatch` and a
+# long-lived `IocpWriter`, which is the closest production-shaped
+# coverage available for the WPG-1 IOCP profile and the WPG-3 auto-sized
+# completion queue.
+#
+# Running the stress tests on every PR would inflate Windows CI by
+# several minutes. This workflow runs them nightly so regressions in
+# the IOCP fast path under high-IOPS workloads are caught within one
+# day without slowing the required PR matrix.
+#
+# Status: non-required (informational). Do not add to branch protection.
+# Promotion to required-on-PR is gated on a 14-day green bake window
+# per WCI-11 #3705.
+name: Windows nightly IOCP high-IOPS
+
+on:
+  schedule:
+    # Nightly at 05:00 UTC. Sits in a quiet window between the
+    # Differential Fuzzer (03:00) / Coverage Report (03:30) and the
+    # benchmark workflows, so the Windows runner pool is not contended.
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: windows-nightly-iocp-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: "full"
+  # Opt in to the heavy 10,000-file IOCP stress runs. Without this gate
+  # the tests print a skip notice and return immediately.
+  OC_RSYNC_IOCP_STRESS: "1"
+
+jobs:
+  windows-iocp-stress:
+    name: Windows IOCP stress (high-IOPS)
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-windows-iocp-cargo-v1-${{ hashFiles('**/Cargo.lock') }}
+          key: windows-nightly-iocp
+
+      - name: Install cargo-nextest (Windows direct download)
+        shell: pwsh
+        run: |
+          # Workaround for actions/partner-runner-images#169 on Windows.
+          $ErrorActionPreference = 'Stop'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
+          & "$cargoBin\cargo-nextest.exe" --version
+
+      # Build fast_io with iocp explicitly enabled. Pinning the feature
+      # protects against future default changes silently dropping iocp
+      # coverage from this cell.
+      - name: Build fast_io (--features iocp)
+        run: cargo build --locked -p fast_io --features iocp
+
+      # Filter targets the `iocp_high_concurrency_stress` integration
+      # binary, which carries both `stress_10k_small_writes_distinct_files`
+      # and `stress_10k_alternating_files_via_iocp_writer`. Both are
+      # cfg-gated to `windows + iocp` and gated again at runtime by
+      # OC_RSYNC_IOCP_STRESS=1 (set in the workflow env above).
+      - name: Run IOCP high-IOPS stress tests
+        run: cargo nextest run --locked -p fast_io --features iocp --no-fail-fast -E 'test(stress_10k)'
+
+      - name: Upload nextest logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-nightly-iocp-logs
+          path: |
+            target/nextest/**/*.log
+            target/nextest/**/*.xml
+          if-no-files-found: ignore
+          retention-days: 14
