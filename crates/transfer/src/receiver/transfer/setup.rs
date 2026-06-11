@@ -196,6 +196,54 @@ impl ReceiverContext {
             debug_log!(Recv, 1, "created destination root {}", dest_dir.display());
         }
 
+        // UTS-SLDB: when the dest root is a symlink that resolved to a real
+        // directory via the stat path in ensure_dest_root_exists, lock the
+        // canonical target in here so every downstream open (DirSandbox,
+        // per-entry `*at` syscalls) operates on the resolved directory.
+        // Upstream `main.c:748` reaches the same state by calling
+        // `change_dir(dest_path, CD_NORMAL)` after `S_ISDIR` succeeds: the
+        // kernel resolves the link once and every subsequent syscall is
+        // relative to the resolved cwd. We mirror that by canonicalizing
+        // here instead of relying on chdir.
+        //
+        // Skipped under daemon connections: the daemon strict path in
+        // `open_sandbox_for_dest_strict` refuses a symlinked dest outright
+        // (chdir-symlink-race defense), and the module loader has already
+        // restricted `module.path`. Canonicalizing here would mask the
+        // symlink and let strict mode silently succeed against the resolved
+        // target. Local-mode and non-daemon SSH transfers are the
+        // upstream-parity case (issue #715 `symlink-dirlink-basis`).
+        let dest_dir = if !self.config.flags.dry_run
+            && !self.config.connection.is_daemon_connection
+            && dest_dir
+                .symlink_metadata()
+                .is_ok_and(|m| m.file_type().is_symlink())
+        {
+            match std::fs::canonicalize(&dest_dir) {
+                Ok(resolved) => {
+                    debug_log!(
+                        Recv,
+                        2,
+                        "resolved symlinked destination root {} -> {}",
+                        dest_dir.display(),
+                        resolved.display()
+                    );
+                    resolved
+                }
+                Err(err) => {
+                    debug_log!(
+                        Recv,
+                        1,
+                        "canonicalize({}) failed: {err}; keeping link path",
+                        dest_dir.display()
+                    );
+                    dest_dir
+                }
+            }
+        } else {
+            dest_dir
+        };
+
         let acl_cache = if self.config.flags.acls {
             self.flist_reader_cache
                 .as_ref()
