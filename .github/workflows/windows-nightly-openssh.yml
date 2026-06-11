@@ -1,0 +1,109 @@
+# Windows nightly OpenSSH / rsync_io test cell (WCI-4 #3698).
+#
+# The required `Windows (stable)` cell in ci.yml links `core`, `engine`,
+# and `cli` test binaries but never links the `rsync_io` crate, so the
+# `#[cfg(windows)]` ssh_config parser test never executes on Windows.
+# WCI-1 (docs/audits/wci-1-windows-nextest-coverage-gap.md section 4.2)
+# inventoried one such test:
+#
+#   crates/rsync_io/src/ssh/config_lookup.rs:1026
+#     user_pattern_case_insensitive_on_windows - verifies that
+#     `~/.ssh/config` `User` pattern matching is case-insensitive on
+#     Windows, mirroring OpenSSH for Windows behaviour.
+#
+# `rsync_io` carries the SSH push transport's russh bridge and the
+# hand-rolled ssh_config parser used by has_ssh_compression() and
+# Match/Host condition evaluation (SSC-3 through SSC-5). A regression
+# in case-insensitive User-pattern handling on Windows silently changes
+# which Host block applies to an SSH push from a Windows client, with
+# downstream effects on compression negotiation and bind-address
+# selection.
+#
+# This workflow runs the full rsync_io crate on windows-latest nightly
+# so the parser test plus the rest of the SSH transport test surface
+# execute at least once per day on Windows OpenSSH.
+#
+# Status: non-required (informational). Do not add to branch protection.
+# Promotion to required-on-PR is gated on a 14-day green bake window
+# per WCI-11 #3705.
+name: Windows nightly OpenSSH
+
+on:
+  schedule:
+    # Nightly at 08:00 UTC. Offset two hours after WCI-2 IOCP (05:00),
+    # one hour after WCI-3 daemon (06:00), and one hour after WCI-7
+    # long-path (07:00) to spread runner-pool load across the nightly
+    # Windows schedule.
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: windows-nightly-openssh-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: "full"
+
+jobs:
+  windows-openssh-push:
+    name: Windows rsync_io / OpenSSH tests
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-windows-openssh-cargo-v1-${{ hashFiles('**/Cargo.lock') }}
+          key: windows-nightly-openssh
+
+      - name: Install cargo-nextest (Windows direct download)
+        shell: pwsh
+        run: |
+          # Workaround for actions/partner-runner-images#169 on Windows.
+          $ErrorActionPreference = 'Stop'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
+          & "$cargoBin\cargo-nextest.exe" --version
+
+      # Build the rsync_io crate first so the nextest step links
+      # against an already-warm build artifact. Default features only;
+      # the SSH transport surface this cell covers is built into the
+      # default `russh` path and does not require feature flags.
+      - name: Build rsync_io crate
+        run: cargo build --locked -p rsync_io
+
+      # Run all rsync_io tests on Windows. This covers the WCI-1 gap
+      # test (`user_pattern_case_insensitive_on_windows`) plus the
+      # broader SSH transport / ssh_config parser test suite that no
+      # required Windows cell currently links.
+      - name: Run rsync_io tests
+        run: cargo nextest run --locked -p rsync_io --no-fail-fast
+
+      - name: Upload nextest logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-nightly-openssh-logs
+          path: |
+            target/nextest/**/*.log
+            target/nextest/**/*.xml
+          if-no-files-found: ignore
+          retention-days: 14
