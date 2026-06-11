@@ -393,6 +393,7 @@ fn engage_landlock_sandbox(
 /// and the 14-day bake plan.
 fn engage_seccomp_sandbox(ctx: &mut ModuleRequestContext<'_>) -> io::Result<()> {
     match apply_worker_seccomp_filter() {
+        #[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
         SeccompOutcome::Installed => {
             if let Some(log) = ctx.log_sink {
                 let text = format!(
@@ -416,6 +417,7 @@ fn engage_seccomp_sandbox(ctx: &mut ModuleRequestContext<'_>) -> io::Result<()> 
                 log_message(log, &message);
             }
         }
+        #[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
         SeccompOutcome::Error(err) => {
             if let Some(log) = ctx.log_sink {
                 let text = format!(
