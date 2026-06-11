@@ -3,13 +3,21 @@
 use std::ffi::{OsStr, OsString};
 use std::time::SystemTime;
 
-use super::flags::is_known_server_long_flag;
+use super::flags::{is_known_server_long_flag, is_two_arg_server_long_flag};
 
 /// Parses the flag string and positional arguments from server-mode argument list.
 ///
 /// Extracts the compact flag string (first arg starting with `-` that is not
 /// a known long flag) and positional arguments (everything after the flag string
 /// and optional `.` separator).
+///
+/// Upstream `options.c::server_options()` emits a few path-bearing long flags
+/// (`--copy-dest`, `--link-dest`, `--compare-dest`, `--files-from`,
+/// `--backup-dir`, `--partial-dir`, `--temp-dir`) as two argv slots via
+/// `safe_arg("", value)`. This parser recognises the bare flag and skips the
+/// following value slot so the path never lands in `positional_args` as a
+/// stray destination. See [`is_two_arg_server_long_flag`] for the upstream
+/// emission sites.
 pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, Vec<OsString>) {
     let mut flag_string = String::new();
     let mut positional_args = Vec::new();
@@ -31,6 +39,21 @@ pub(super) fn parse_server_flag_string_and_args(args: &[OsString]) -> (String, V
                 continue;
             }
             idx += 1;
+            continue;
+        }
+
+        // upstream: options.c::server_options() emits path-bearing long
+        // flags (`--copy-dest`, `--link-dest`, `--compare-dest`,
+        // `--files-from`, `--backup-dir`, `--temp-dir`) as `--flag VALUE`
+        // (two argv slots). The `--flag=value` joined form is handled by
+        // `is_known_server_long_flag` above; the split form is consumed
+        // here so the value does not surface as a positional destination
+        // path. Without this, `--copy-dest /alt . dest/` lands `/alt` in
+        // positional_args[0] and `dest/` in positional_args[1], so the
+        // receiver mkdir's the alt-dest basis (already exists) instead of
+        // the actual destination root.
+        if is_two_arg_server_long_flag(&arg_str) {
+            idx += 2;
             continue;
         }
 
