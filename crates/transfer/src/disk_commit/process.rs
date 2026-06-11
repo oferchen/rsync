@@ -47,6 +47,25 @@ pub(super) fn process_file(
     disk_batch: Option<&mut fast_io::IoUringDiskBatch>,
     iocp_batch: Option<&mut fast_io::IocpDiskBatch>,
 ) -> io::Result<CommitResult> {
+    // UTS-16 chdir-symlink-race defence: refuse the open when any parent
+    // component of the destination is a symlink. The path-based
+    // OpenOptions / chmod / chown syscalls in the rest of this function
+    // would otherwise follow an attacker-planted in-module symlink and
+    // write/setattr outside the daemon module root. Walking the parents
+    // through the sandbox dirfd yields ELOOP / ENOTDIR / EXDEV when the
+    // attacker has substituted a symlink, surfacing the rejection up to
+    // the receiver instead of silently committing the escape.
+    //
+    // upstream: syscall.c:do_chmod_at() / do_unlink_at() open the parent
+    // under `secure_relative_open()` precisely to close this window on
+    // daemons running `use chroot = no`.
+    #[cfg(unix)]
+    if let (Some(sandbox), Some(dest_dir)) = (config.sandbox.as_ref(), config.dest_dir.as_deref()) {
+        if let Ok(rel) = begin.file_path.strip_prefix(dest_dir) {
+            sandbox.validate_relative_parents(rel)?;
+        }
+    }
+
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
     if needs_rename {
         CleanupManager::global().register_temp_file(cleanup_guard.path().to_path_buf());
