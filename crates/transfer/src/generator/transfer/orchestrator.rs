@@ -69,7 +69,7 @@ impl GeneratorContext {
         self.receive_filter_list_if_server(&mut reader)?;
 
         // upstream: flist.c:2240-2264 - resolve --files-from paths if configured
-        let files_from_paths = self.resolve_files_from_paths(paths, &mut reader)?;
+        let files_from_entries = self.resolve_files_from_paths(paths, &mut reader)?;
 
         // FSM: filter exchange complete. Advance to FileListTransfer.
         self.pipeline
@@ -81,12 +81,12 @@ impl GeneratorContext {
         // upstream: flist.c:2192 - send_file_list()
         let file_count = {
             let _t = PhaseTimer::new("file-list-build-send");
-            if files_from_paths.is_empty() {
+            if files_from_entries.is_empty() {
                 self.build_file_list(paths)?;
             } else {
                 // upstream: flist.c:2240-2244 - argv[0] is the base for --files-from
                 let base_dir = paths.first().cloned().unwrap_or_else(|| PathBuf::from("."));
-                self.build_file_list_with_base(&base_dir, &files_from_paths)?;
+                self.build_file_list_with_base(&base_dir, &files_from_entries)?;
             }
             self.partition_file_list_for_inc_recurse();
             self.send_file_list(writer)?
