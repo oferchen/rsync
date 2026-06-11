@@ -143,8 +143,8 @@ fn delta_consumer_stats_exposes_spill_activations() {
     // long enough to overflow the byte budget and force repeated spills.
     let producer = std::thread::spawn(move || {
         for seq in 1..COUNT {
-            let work = DeltaWork::whole_file(seq, PathBuf::from("/dst"), 64)
-                .with_sequence(u64::from(seq));
+            let work =
+                DeltaWork::whole_file(seq, PathBuf::from("/dst"), 64).with_sequence(u64::from(seq));
             tx.send(work).expect("send out-of-order item");
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
