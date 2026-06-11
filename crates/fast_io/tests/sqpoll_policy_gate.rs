@@ -7,6 +7,14 @@
 //! set. The gate exists so rootless Kubernetes pods and other
 //! `CAP_SYS_NICE`-less environments get a deterministic opt-out instead
 //! of relying on the transparent `EPERM` fallback.
+//!
+//! SQPOLL is a Linux io_uring kernel feature; non-Linux targets expose
+//! the same symbols only as no-op stubs so cross-platform CLI wiring
+//! compiles. The stub setter is intentionally a no-op and the stub
+//! query always reports `false`, so the flip-to-true assertion below
+//! only holds on Linux. This whole file is therefore Linux-only.
+
+#![cfg(target_os = "linux")]
 
 use fast_io::{is_sqpoll_disabled_by_policy, set_sqpoll_disabled_by_policy};
 
@@ -61,7 +69,7 @@ fn sqpoll_gate_is_off_until_explicitly_set_and_then_stays_on() {
 /// `build_ring_with_sqpoll_falls_back_gracefully` unit test in
 /// `config.rs` already proves the fallback succeeds; this test confirms
 /// the gate-driven path stays compatible with that contract.
-#[cfg(all(target_os = "linux", feature = "io_uring"))]
+#[cfg(feature = "io_uring")]
 #[test]
 fn sqpoll_gate_keeps_ring_construction_compatible_with_sqpoll_off_policy() {
     if !fast_io::is_io_uring_available() {
