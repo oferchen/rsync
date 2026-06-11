@@ -231,6 +231,76 @@ mod tests {
     }
 
     #[test]
+    fn allows_writes_under_every_root_in_multi_root_allowlist() {
+        // URV-5.b.REOPEN regression: the daemon engages Landlock with the
+        // module root *plus* any client-supplied in-module alt-basis /
+        // temp-dir / partial-dir / backup-dir paths. A widened allowlist
+        // must accept writes beneath every listed root, not just the
+        // first one.
+        if !is_supported() {
+            return;
+        }
+        let module = TempDir::new().expect("module tempdir");
+        let extra = TempDir::new().expect("extra tempdir");
+        let module_path = module.path().to_path_buf();
+        let extra_path = extra.path().to_path_buf();
+        run_isolated(move || {
+            let outcome =
+                restrict_to_module_paths(&[module_path.as_path(), extra_path.as_path()]);
+            match outcome {
+                LandlockOutcome::Enforced(RulesetStatus::NotEnforced) => return Ok(()),
+                LandlockOutcome::Enforced(_) => {}
+                LandlockOutcome::Unavailable => return Ok(()),
+                LandlockOutcome::Error(err) => return Err(format!("setup: {err}")),
+            }
+            fs::write(module_path.join("module.txt"), b"x")
+                .map_err(|e| format!("write inside module failed: {e}"))?;
+            fs::write(extra_path.join("extra.txt"), b"x")
+                .map_err(|e| format!("write inside extra root failed: {e}"))?;
+            Ok(())
+        })
+        .expect("multi-root scenario");
+        drop(module);
+        drop(extra);
+    }
+
+    #[test]
+    fn multi_root_allowlist_still_blocks_paths_outside_every_root() {
+        // The widening only relaxes confinement for *enumerated* roots.
+        // Anything outside the union must remain blocked - this is the
+        // trust boundary URV-5.c.5 will lean on when Landlock flips
+        // default-on.
+        if !is_supported() {
+            return;
+        }
+        let module = TempDir::new().expect("module tempdir");
+        let extra = TempDir::new().expect("extra tempdir");
+        let outside = TempDir::new().expect("outside tempdir");
+        let module_path = module.path().to_path_buf();
+        let extra_path = extra.path().to_path_buf();
+        let outside_path = outside.path().to_path_buf();
+        run_isolated(move || {
+            let outcome =
+                restrict_to_module_paths(&[module_path.as_path(), extra_path.as_path()]);
+            match outcome {
+                LandlockOutcome::Enforced(RulesetStatus::NotEnforced) => return Ok(()),
+                LandlockOutcome::Enforced(_) => {}
+                LandlockOutcome::Unavailable => return Ok(()),
+                LandlockOutcome::Error(err) => return Err(format!("setup: {err}")),
+            }
+            match fs::write(outside_path.join("outside.txt"), b"x") {
+                Ok(()) => Err("write outside every allowlist root succeeded".to_owned()),
+                Err(err) if err.kind() == ErrorKind::PermissionDenied => Ok(()),
+                Err(err) => Err(format!("unexpected error {:?}: {err}", err.kind())),
+            }
+        })
+        .expect("multi-root outside scenario");
+        drop(module);
+        drop(extra);
+        drop(outside);
+    }
+
+    #[test]
     fn empty_allowlist_denies_all_writes() {
         if !is_supported() {
             return;
