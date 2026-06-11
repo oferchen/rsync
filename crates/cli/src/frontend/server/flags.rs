@@ -128,6 +128,24 @@ pub(super) struct ServerLongFlags {
     /// string - it only inspects it for `%i` / `%o` tokens to set
     /// `stdout_format_has_i` and `stdout_format_has_o_or_i`.
     pub(super) log_format: Option<String>,
+    /// Partial-directory path forwarded by the client (`--partial-dir=DIR`).
+    ///
+    /// upstream: options.c:2886-2890 - `server_options()` emits the option
+    /// as TWO separate argv entries (`--partial-dir`, then the value) via
+    /// `safe_arg("", partial_dir)`, NOT the `--partial-dir=VALUE` form.
+    /// Without recognising the split form, the value lands in
+    /// `parse_server_flag_string_and_args` and gets parsed as a positional
+    /// destination path - the receiver then creates a directory literally
+    /// named `--partial-dir` at the transfer root and never honours the
+    /// partial-dir semantics. Issue #715 regression test
+    /// (`symlink-dirlink-basis_test.py` test 7) drives this path with
+    /// `--protocol=28 --partial-dir=.rsync-partial`.
+    pub(super) partial_dir: Option<OsString>,
+    /// Whether `--delay-updates` was forwarded by the client.
+    ///
+    /// upstream: options.c:2891-2892 - `server_options()` emits
+    /// `--delay-updates` alongside `--partial-dir` when both are active.
+    pub(super) delay_updates: bool,
 }
 
 /// Parses all long-form flags from the server argument list.
@@ -170,9 +188,13 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         info: Vec::new(),
         compress_choice: None,
         log_format: None,
+        partial_dir: None,
+        delay_updates: false,
     };
 
-    for arg in args {
+    let mut idx = 0;
+    while idx < args.len() {
+        let arg = &args[idx];
         let s = arg.to_string_lossy();
 
         match s.as_ref() {
@@ -209,10 +231,31 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // CompressionAlgorithm in `transfer::run_server_with_handshake`.
             "--new-compress" => flags.compress_choice = Some("zlibx".to_owned()),
             "--old-compress" => flags.compress_choice = Some("zlib".to_owned()),
+            // upstream: options.c:2886-2890 - server_options() emits
+            // `--partial-dir` and its value as TWO separate argv entries.
+            // Consume the next arg verbatim as the directory path.
+            "--partial-dir" => {
+                if let Some(next) = args.get(idx + 1) {
+                    flags.partial_dir = Some(next.clone());
+                    idx += 1;
+                }
+            }
+            // upstream: options.c:2891-2892 - emitted alongside --partial-dir.
+            "--delay-updates" => flags.delay_updates = true,
             _ => {
-                parse_value_bearing_flag(&s, &mut flags);
+                // Accept the joined `--partial-dir=VALUE` form too, even
+                // though upstream's server_options() does not emit it - the
+                // CLI parser accepts both forms for client-side use, and a
+                // forwarder built on a non-upstream client might still send
+                // the joined form.
+                if let Some(value) = s.strip_prefix("--partial-dir=") {
+                    flags.partial_dir = Some(OsString::from(value));
+                } else {
+                    parse_value_bearing_flag(&s, &mut flags);
+                }
             }
         }
+        idx += 1;
     }
 
     flags
@@ -314,6 +357,8 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--ignore-existing"
             | "--existing"
             | "--ignore-non-existing"
+            | "--delay-updates"
+            | "--partial-dir"
     ) || arg == "-s"
         || arg == "--new-compress"
         || arg == "--old-compress"
@@ -336,4 +381,5 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--io-uring-depth=")
         || arg.starts_with("--log-format=")
         || arg.starts_with("--info=")
+        || arg.starts_with("--partial-dir=")
 }

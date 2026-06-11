@@ -149,6 +149,24 @@ where
     // during the goodbye phase (generator.c:2377,2422).
     config.do_stats = long_flags.stats;
     config.reference_directories = long_flags.reference_directories;
+    // upstream: options.c:2886-2890 - `--partial-dir DIR` forwarded by the
+    // sender. The server-side receiver moves interrupted temp files into this
+    // directory and looks for resume basis files there. Without applying this
+    // value, transfers that pin `--protocol=28` (where the client cannot
+    // forward `partial_dir` in the compat flag string) leave the receiver
+    // with no partial-dir at all - in that case the receiver's normal commit
+    // path runs, which is what the regression test
+    // `symlink-dirlink-basis_test.py` exercises through `lsh.sh`.
+    if let Some(dir) = &long_flags.partial_dir {
+        let path = std::path::PathBuf::from(dir);
+        config.partial_dir = Some(path);
+        config.has_partial_dir = true;
+    }
+    // upstream: options.c:2891-2892 - `--delay-updates` rides alongside
+    // `--partial-dir` whenever both are active.
+    if long_flags.delay_updates {
+        config.write.delay_updates = true;
+    }
 
     // upstream: options.c:2327-2338 - server parses --log-format to determine
     // whether itemize data is needed. %i or %I in the format sets
