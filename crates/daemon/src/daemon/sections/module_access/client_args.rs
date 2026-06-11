@@ -929,6 +929,28 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                     config.temp_dir = Some(std::path::PathBuf::from(dir));
                 } else if let Some(path) = arg.strip_prefix("--files-from=") {
                     config.file_selection.files_from_path = Some(path.to_owned());
+                // upstream: options.c:2904 / 2907 - --usermap=SPEC / --groupmap=SPEC.
+                // After unbackslash_arg / secluded-args delivery the spec arrives
+                // verbatim (`*:1234` wildcards intact) so we hand it directly to
+                // the metadata parser. Without this step the daemon-mode receiver
+                // would silently discard `--groupmap` / `--usermap` and the
+                // wildcard would never take effect on the destination - the
+                // regression captured by upstream's daemon-groupmap-wild test
+                // (issue #829).
+                //
+                // upstream: uidlist.c:parse_name_map() parses the spec.
+                // A malformed spec leaves the field unset rather than aborting
+                // the session because upstream's daemon path falls through to
+                // its default id-mapping when parsing fails and the receiver
+                // still completes the transfer with unmapped ids.
+                } else if let Some(spec) = arg.strip_prefix("--usermap=") {
+                    if let Ok(mapping) = ::metadata::UserMapping::parse(spec) {
+                        config.user_mapping = Some(mapping);
+                    }
+                } else if let Some(spec) = arg.strip_prefix("--groupmap=") {
+                    if let Ok(mapping) = ::metadata::GroupMapping::parse(spec) {
+                        config.group_mapping = Some(mapping);
+                    }
                 } else if arg == "--from0" {
                     // upstream: options.c:940 - --from0 sets NUL-delimited mode
                     // for --files-from content read from the protocol stream.
