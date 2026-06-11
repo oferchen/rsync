@@ -71,6 +71,21 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
         .map(|definition| ModuleRuntime::new(definition, connection_limiter.clone()))
         .collect();
 
+    // LSM-CAP.5: verify required Linux capabilities are present before serving
+    // the inetd session. Mirrors the standalone path so per-module
+    // `uid = root` modules fail loud at startup instead of producing a
+    // confusing per-file `chown failed` mid-transfer. No-op on non-Linux.
+    if let Err(reason) = preflight_required_capabilities(&modules) {
+        return Err(DaemonError::new(
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+            rsync_error!(
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+                format!("oc-rsyncd: error: {reason}")
+            )
+            .with_role(Role::Daemon),
+        ));
+    }
+
     // Build a DaemonStream::Stdio from process stdin/stdout.
     // upstream: clientserver.c:1509 - start_daemon(STDIN_FILENO, STDIN_FILENO)
     // passes the same fd for both read and write. We use separate stdin/stdout

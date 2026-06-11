@@ -294,6 +294,21 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
         .map(|definition| ModuleRuntime::new(definition, connection_limiter.clone()))
         .collect();
 
+    // LSM-CAP.5: verify required Linux capabilities are present before serving
+    // the remote-shell daemon session. Same pre-flight as the standalone and
+    // inetd paths so capability misconfiguration fails loud and uniformly.
+    // No-op on non-Linux targets.
+    if let Err(reason) = preflight_required_capabilities(&modules) {
+        return Err(DaemonError::new(
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+            rsync_error!(
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+                format!("oc-rsyncd: error: {reason}")
+            )
+            .with_role(Role::Daemon),
+        ));
+    }
+
     // Build a DaemonStream::Stdio from process stdin/stdout.
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -460,6 +475,8 @@ include!("daemon/sections/greeting.rs");
 include!("daemon/sections/privilege.rs");
 
 include!("daemon/sections/seccomp.rs");
+
+include!("daemon/sections/capabilities.rs");
 
 include!("daemon/sections/log_format.rs");
 
