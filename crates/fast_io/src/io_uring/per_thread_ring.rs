@@ -3,7 +3,7 @@
 //! Foundational lifecycle primitive for the hybrid per-thread topology chosen
 //! by IUR-2 (see `docs/design/iur-2-per-thread-rings.md`). Each calling thread
 //! gets its own `io_uring::IoUring` instance, lazily constructed on first
-//! [`with_ring`] call and dropped when the thread exits.
+//! `with_ring` call and dropped when the thread exits.
 //!
 //! # Why per-thread
 //!
@@ -32,7 +32,7 @@
 //!   and pinned to the disk-commit thread for the life of the session. No
 //!   second thread submits to it.
 //! - **Re-entrant submit/reap on the same thread.** This primitive enforces
-//!   single-borrow via `RefCell`; nested [`with_ring`] calls return
+//!   single-borrow via `RefCell`; nested `with_ring` calls return
 //!   `io::ErrorKind::WouldBlock` rather than deadlocking or aliasing the SQ
 //!   cursor.
 //!
@@ -58,7 +58,7 @@
 //!   prevent).
 //!
 //! This matches the storage shape used by the shipped
-//! [`super::session_pool::ThreadLocalRingPool`] and the rationale in IUR-2
+//! `super::session_pool::ThreadLocalRingPool` and the rationale in IUR-2
 //! design doc section 2.1.
 
 use std::cell::RefCell;

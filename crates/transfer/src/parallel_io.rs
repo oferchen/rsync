@@ -162,10 +162,10 @@ impl ParallelThresholds {
 /// than `min_parallel`, falls back to sequential `Iterator::map` to
 /// avoid dispatch overhead.
 ///
-/// Unlike the previous tokio `spawn_blocking` implementation, rayon's
-/// approach avoids per-item task creation, semaphore management, and
-/// runtime construction overhead. For 10K stat() calls, this eliminates
-/// ~10K task spawns and semaphore acquire/release cycles.
+/// Rayon's work-stealing scheduler avoids per-item task creation, semaphore
+/// management, and runtime construction overhead. For 10K stat() calls, this
+/// keeps dispatch bounded to the rayon pool size rather than spawning one
+/// task per item.
 pub(crate) fn map_blocking<T, R, F>(items: Vec<T>, min_parallel: usize, f: F) -> Vec<R>
 where
     T: Send + 'static,
