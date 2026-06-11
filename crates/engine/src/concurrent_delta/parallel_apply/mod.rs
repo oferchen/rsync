@@ -48,6 +48,7 @@ use super::types::FileNdx;
 mod batch;
 mod decrement_guard;
 mod drain;
+mod ring_cap_env;
 mod shard_sizing;
 mod slot_barrier;
 
@@ -420,6 +421,11 @@ impl ParallelDeltaApplier {
     /// Default per-file reorder buffer capacity. Sized to hold a handful of
     /// rayon workers' worth of in-flight chunks per file without forcing
     /// the producer to block.
+    ///
+    /// Operators can override this default (and any future adaptive sizing)
+    /// by exporting `OC_RSYNC_REORDER_RING_CAP` to a positive integer; see
+    /// [`ring_cap_env`] for the parser contract and ROB-11 (#3678) for the
+    /// rationale.
     pub const DEFAULT_PER_FILE_REORDER_CAPACITY: usize = 64;
 
     /// Builds a new applier with the supplied concurrency limit.
@@ -457,12 +463,26 @@ impl ParallelDeltaApplier {
     /// worker fan-out. See [`shard_sizing`] and
     /// `docs/design/dmc-con-adaptive-sharding.md` for the rationale, and
     /// the `OC_RSYNC_DASHMAP_SHARDS` env override for tuning.
+    ///
+    /// # Per-file ring capacity (ROB-11, #3678)
+    ///
+    /// The per-file reorder-ring capacity defaults to
+    /// [`Self::DEFAULT_PER_FILE_REORDER_CAPACITY`] but is overridden when
+    /// `OC_RSYNC_REORDER_RING_CAP` is set to a positive integer. The env
+    /// var is read once per process via [`ring_cap_env`] and applies to
+    /// every applier constructed afterwards, including ones built via
+    /// [`Self::new`]. Callers that need a per-instance override should
+    /// chain [`Self::with_per_file_reorder_capacity`] after construction
+    /// (the explicit builder method takes precedence over both the env
+    /// var and the default).
     #[must_use]
     pub fn with_strategy(concurrency: usize, strategy: Arc<dyn ChecksumStrategy>) -> Self {
         let shard_count = shard_sizing::resolve_shard_count(concurrency);
+        let per_file_reorder_capacity =
+            ring_cap_env::resolve_ring_capacity(Self::DEFAULT_PER_FILE_REORDER_CAPACITY);
         Self {
             files: DashMap::with_shard_amount(shard_count),
-            per_file_reorder_capacity: Self::DEFAULT_PER_FILE_REORDER_CAPACITY,
+            per_file_reorder_capacity,
             concurrency,
             strategy,
         }
@@ -493,6 +513,19 @@ impl ParallelDeltaApplier {
     #[must_use]
     pub fn concurrency(&self) -> usize {
         self.concurrency
+    }
+
+    /// Returns the per-file reorder-ring capacity in effect for this applier.
+    ///
+    /// Reflects (in precedence order) the most recent
+    /// [`Self::with_per_file_reorder_capacity`] override, the
+    /// `OC_RSYNC_REORDER_RING_CAP` env var captured at first applier
+    /// construction in this process, or
+    /// [`Self::DEFAULT_PER_FILE_REORDER_CAPACITY`] (64) when neither is set.
+    /// Exposed primarily for diagnostics and the ROB-11 regression test.
+    #[must_use]
+    pub fn per_file_reorder_capacity(&self) -> usize {
+        self.per_file_reorder_capacity
     }
 
     /// Registers a destination writer for `ndx`.
