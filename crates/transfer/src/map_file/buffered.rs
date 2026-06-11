@@ -381,4 +381,114 @@ mod tests {
         let again = MapStrategy::map_ptr(&mut map, 0, FILE_SIZE).expect("cached map_ptr must Ok");
         assert_eq!(again, &payload[..]);
     }
+
+    /// EDG-PANIC.3 regression coverage for the `map_ptr` (BufferedMap slice)
+    /// negative-bounds edge cases. UTS-18.f replaced the bare `&buffer[..]`
+    /// indexing with checked range + `Err` propagation, and UTS-18.g.2 clamped
+    /// `window_len`. The tests below pin every documented out-of-range input
+    /// shape against the contract: each MUST return `Err`, never panic. A
+    /// future refactor that re-introduces a bare slice index will trip at
+    /// least one of these tests.
+    mod negative_bounds {
+        use super::*;
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        /// Builds a temp file of `size` bytes and returns a `BufferedMap`
+        /// wrapping it. Window size is `size` so a single `map_ptr` covers
+        /// the entire file without sliding-window state coming into play.
+        fn make_map(size: usize) -> BufferedMap {
+            let payload = vec![0u8; size];
+            let mut tmp = NamedTempFile::new().unwrap();
+            tmp.write_all(&payload).unwrap();
+            tmp.flush().unwrap();
+            BufferedMap::open_with_window(tmp.path(), size.max(1)).unwrap()
+        }
+
+        /// offset == file length, length == 1: zero-length read past end. The
+        /// `offset + len > size` guard must fail-loud rather than indexing
+        /// the buffer at `[len..len+1]`.
+        #[test]
+        fn buffered_map_slice_rejects_offset_at_end() {
+            const SIZE: usize = 64;
+            let mut map = make_map(SIZE);
+            let err = MapStrategy::map_ptr(&mut map, SIZE as u64, 1)
+                .expect_err("offset == file size + len > 0 must return Err");
+            assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        }
+
+        /// offset strictly past end of file. Same guard rejects.
+        #[test]
+        fn buffered_map_slice_rejects_offset_past_end() {
+            const SIZE: usize = 64;
+            let mut map = make_map(SIZE);
+            let err = MapStrategy::map_ptr(&mut map, (SIZE as u64) + 16, 1)
+                .expect_err("offset > file size must return Err");
+            assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        }
+
+        /// offset + length would overflow `u64`. The `saturating_add` at the
+        /// entry guard saturates to `u64::MAX` which still exceeds the file
+        /// size, so the guard returns `UnexpectedEof` instead of wrapping
+        /// around into a small in-range index that would then panic in the
+        /// final buffer slice. Documents the saturation contract explicitly.
+        #[test]
+        fn buffered_map_slice_rejects_overflow() {
+            const SIZE: usize = 64;
+            let mut map = make_map(SIZE);
+            let err = MapStrategy::map_ptr(&mut map, u64::MAX - 1, 10)
+                .expect_err("offset + len overflow must return Err, not panic on wraparound");
+            assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        }
+
+        /// offset and length are individually in-range but their sum walks
+        /// past the file end. Mirrors the upstream `compress-zlib-insert`
+        /// failure shape (offset 262144, len 64, file 262200 bytes).
+        #[test]
+        fn buffered_map_slice_rejects_extending_past_end() {
+            const SIZE: usize = 128;
+            let mut map = make_map(SIZE);
+            // offset=100 < 128 and len=64 < 128, but 100 + 64 = 164 > 128.
+            let err = MapStrategy::map_ptr(&mut map, 100, 64)
+                .expect_err("offset + len > file size must return Err");
+            assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        }
+
+        /// Positive control: a zero-length request at any in-range offset
+        /// must short-circuit to an empty slice, never reach the buffer
+        /// index. Confirms the `len == 0` early-return covers all valid
+        /// offsets (including offset == file size, the canonical EOF probe).
+        #[test]
+        fn buffered_map_slice_allows_zero_length() {
+            const SIZE: usize = 64;
+            let mut map = make_map(SIZE);
+            for offset in [0u64, 1, 32, SIZE as u64] {
+                let slice = MapStrategy::map_ptr(&mut map, offset, 0)
+                    .unwrap_or_else(|e| panic!("len=0 at offset={offset} must Ok: {e}"));
+                assert!(
+                    slice.is_empty(),
+                    "len=0 at offset={offset} must return empty slice, got {} bytes",
+                    slice.len(),
+                );
+            }
+        }
+
+        /// Positive control: reading exactly `file_size` bytes at offset 0
+        /// must succeed. Pins the boundary so a future refactor that
+        /// tightens the guard to `>=` instead of `>` would trip here.
+        #[test]
+        fn buffered_map_slice_allows_full_length_read() {
+            const SIZE: usize = 64;
+            let payload: Vec<u8> = (0..SIZE).map(|i| (i & 0xff) as u8).collect();
+            let mut tmp = NamedTempFile::new().unwrap();
+            tmp.write_all(&payload).unwrap();
+            tmp.flush().unwrap();
+            let mut map = BufferedMap::open_with_window(tmp.path(), SIZE).unwrap();
+
+            let slice = MapStrategy::map_ptr(&mut map, 0, SIZE)
+                .expect("full-file read at offset 0 must Ok");
+            assert_eq!(slice.len(), SIZE);
+            assert_eq!(slice, &payload[..]);
+        }
+    }
 }
