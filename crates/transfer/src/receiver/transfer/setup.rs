@@ -166,6 +166,15 @@ impl ReceiverContext {
         // implicitly via the file-list-driven mkdir, but `--server` mode
         // never did, breaking the alt-dest interop test that uses a
         // non-existent destination over remote shell.
+        //
+        // This site is reachable from every `--server` receiver entry:
+        // `run_sync`, `run_pipelined`, and `run_pipelined_incremental` all
+        // route through `setup_transfer` before per-entry dispatch, so the
+        // pre-flight runs uniformly under `--copy-dest`, `--link-dest`, and
+        // `--compare-dest` over remote shell. The mkdir is receiver-local;
+        // no `MSG_*` frame is emitted on the wire, matching upstream's
+        // `get_local_name()` which calls `do_mkdir()` directly against the
+        // local filesystem.
         let created_dest_root = ensure_dest_root_exists(
             &dest_dir,
             file_count,
