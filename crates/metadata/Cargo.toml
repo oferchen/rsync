@@ -39,6 +39,7 @@ apple-fs = { path = "../apple-fs" }
 # Win32_System_Threading is required for OpenProcessToken/GetCurrentProcess
 # used by the --copy-as privilege probe in copy_as.rs.
 [target.'cfg(windows)'.dependencies]
+fast_io = { path = "../fast_io", default-features = false }
 windows = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_Security",
