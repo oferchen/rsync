@@ -82,6 +82,8 @@ jobs:
             target: differential_multiplex
           - workspace: fuzz
             target: differential_flist
+          - workspace: fuzz
+            target: buffered_map
           - workspace: crates/protocol/fuzz
             target: fuzz_varint
           - workspace: crates/protocol/fuzz
