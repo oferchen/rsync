@@ -8,7 +8,7 @@ Sources: `target/interop/upstream-src/rsync-3.4.4/` + GitHub issues #951, #829, 
 
 | URV | UTS PR | Upstream issue | Verdict | Follow-ups |
 |---|---|---|---|---|
-| URV-1 | #5535 (UTS-18) | #951 zlib obuf overflow | DIVERGENT-SAFE | - |
+| URV-1 | #5535 (UTS-18) | #951 zlib obuf overflow | DIVERGENT-SAFE (scope corrected, UTS-18.j) | #5566, #5569, #5588, #5590, #5627 |
 | URV-2 | #5531 (UTS-8) | #829 daemon arg backslash | DIVERGENT-SAFE | #3615 |
 | URV-3 | #5523 (UTS-19) | #910 mode-0 sentinel | PARITY | - |
 | URV-4 | #5522 + #5532 (UTS-12) | #897 path=/ sender | DIVERGENT-SAFE | #3620 |
@@ -20,6 +20,65 @@ Two PARITY/SAFE, three DIVERGENT-SAFE, two DIVERGENT-RISK. The two -RISK verdict
 ## URV-1: zlib obuf drain (PR #5535 vs #951)
 
 `avail_out_size` formula matches upstream `n*1001/1000+16` exactly (`token.c:344` <-> `zlib_codec.rs:~55`). oc-rsync allocates `SEE_TOKEN_OBUF_SIZE + 16` slack vs upstream `AVAIL_OUT_SIZE(CHUNK_SIZE)` - strictly larger reserve. Drain semantics equivalent through `flate2` state carryover (oc-rsync's input-driven loop vs upstream's `avail_in != 0 || avail_out == 0`). `Z_SYNC_FLUSH` carryover handled identically; `Z_INSERT_ONLY` defaults to `Z_SYNC_FLUSH` in both. No wire impact.
+
+### URV-1 update: scope correction and UTS-18 panic chain (UTS-18.j)
+
+The original URV-1 verdict (DIVERGENT-SAFE) reflected only the codec-layer
+obuf overflow that upstream #951 closed in `token.c::send_deflated_token`.
+It did not cover the basis-window layer that feeds the decoder, and the
+upstream-testsuite `compress-zlib-insert` run subsequently surfaced a
+chain of receiver-side panics that URV-1's scope had silently excluded:
+
+1. **`window_len` overstatement.** `BufferedMap::load_window` computed
+   `window_len = MAX_MAP_SIZE` (262144) without clamping against
+   `file_size - window_start`. A 48128-byte basis paired with the default
+   `MAX_MAP_SIZE` produced a window descriptor that overran the file. The
+   subsequent `copy_within` and `&buffer[start..end]` operations relied on
+   that descriptor for bounds. Fixed in PR #5569 by clamping
+   `window_len = min(MAX_MAP_SIZE, file_size - aligned_start)` at the
+   single derivation site.
+
+2. **`buffer.resize` overlap-shrink data loss.** `load_window` shrank
+   `self.buffer` to the new `window_size` before relocating overlap bytes
+   with `copy_within`. When the new `window_size` was smaller than the
+   prior allocation but the overlap source offset sat inside the
+   to-be-truncated tail, `resize` dropped the very bytes the relocation
+   was about to read. Fixed in PR #5588 by switching to
+   `target_len = window_size.max(buffer.len())` so the backing buffer
+   only grows, mirroring upstream `fileio.c:236::realloc_array`.
+
+3. **Bare slice index on misaligned chunk requests.** `BufferedMap::map_ptr`
+   bare-indexed `&buffer[start..start + len]` when a COPY token requested
+   bytes past EOF or past the clamped window. Even with the clamp in (1)
+   in place, a sender that asks for `offset + len > file_size` could
+   trigger the panic. Fixed in PR #5566 by returning
+   `io::ErrorKind::UnexpectedEof` from `map_ptr` before any slice
+   indexing, using saturating arithmetic to keep the bounds check itself
+   wrap-safe. Regression coverage added in PR #5590 (libfuzzer corpus +
+   adversarial seeds) and locked in `docs/design/zlib-codec-invariants.md`
+   (PR #5627).
+
+**Why the original URV-1 audit missed these.** URV-1 was scoped to the
+encoder-side `send_deflated_token` formula against upstream #951 and
+verified codec-layer obuf safety in `zlib_codec.rs`. The audit did not
+inspect the basis-window mapper in `crates/transfer/src/map_file/buffered.rs`,
+which is where the panics actually surfaced. Upstream #951's fix path
+(`token.c::send_deflated_token` flush loop) and oc-rsync's affected path
+(`BufferedMap::load_window` window-clamp + buffer-resize + slice-index)
+sit on opposite sides of the receiver's COPY-token dispatch boundary,
+which is why a codec-only re-validation cleared the file while a
+basis-window-driven workload still tripped panics.
+
+**Revised verdict.** URV-1 remains DIVERGENT-SAFE at the codec layer.
+The basis-window layer is now also covered: fail-loud bounds (#5566),
+window clamp at the source (#5569), monotonic buffer (#5588), regression
+fuzz corpus (#5590), and load-bearing invariant doc (#5627). The
+`compress-zlib-insert` upstream-testsuite entry stays out of
+`tools/ci/upstream_testsuite_known_failures.conf` and the
+`.github/workflows/upstream-testsuite.yml` cell exercises it on every
+push/PR matching the workflow's path filter, providing continuous
+regression coverage against the original URV-1 surface and the UTS-18
+panic chain together.
 
 ## URV-2: daemon arg backslash (PR #5531 vs #829)
 
