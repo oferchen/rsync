@@ -11,9 +11,16 @@ use super::super::{SpillCodec, SpillCompression, SpillError, SpillGranularity, r
 use super::SPILL_TAG_ZSTD;
 use super::{HOT_ZONE, SPILL_TAG_RAW, SpillableReorderBuffer};
 
-/// Emits a one-shot `tracing::warn!` the first time the reorder buffer
-/// spills to disk. Subsequent calls with `already_warned = true` are no-ops.
-#[cfg(feature = "tracing")]
+/// Emits the one-shot spill-activation warning the first time the reorder
+/// buffer spills to disk. Subsequent calls with `already_warned = true` are
+/// no-ops so the operator sees the diagnostic exactly once per transfer.
+///
+/// The message goes to stderr via [`eprintln!`] so default builds always
+/// surface it, matching the workspace convention for unconditional operator
+/// warnings (see `metadata::acl_stub`,
+/// `core::client::remote::ssh_transfer`). When the optional `tracing`
+/// feature is enabled the same warning is mirrored to the structured log
+/// at the `warn` level.
 fn emit_spill_warning(
     spill_dir: Option<&std::path::Path>,
     threshold: usize,
@@ -25,23 +32,21 @@ fn emit_spill_warning(
     let dir_display = spill_dir
         .map(|p| p.display().to_string())
         .unwrap_or_else(|| "<system tempdir>".to_string());
+    eprintln!(
+        "warning: reorder buffer spilled to disk during transfer; \
+         this indicates either an adversarial chunk ordering or undersized \
+         ring capacity. spilled to {dir_display} (threshold={threshold} bytes). \
+         Use OC_RSYNC_SPILL_DIR / OC_RSYNC_SPILL_THRESHOLD_BYTES to tune. \
+         (one-time warning per transfer)"
+    );
+    #[cfg(feature = "tracing")]
     tracing::warn!(
         spill_dir = %dir_display,
         threshold_bytes = threshold,
-        "reorder buffer exceeded memory threshold - spilling to disk; \
-         use --spill-dir to control the spill location or \
-         OC_RSYNC_SPILL_DIR / OC_RSYNC_SPILL_THRESHOLD_BYTES to tune via environment"
+        "reorder buffer spilled to disk during transfer; \
+         use OC_RSYNC_SPILL_DIR / OC_RSYNC_SPILL_THRESHOLD_BYTES to tune \
+         (one-time warning per transfer)"
     );
-    true
-}
-
-/// No-op stub when the `tracing` feature is disabled.
-#[cfg(not(feature = "tracing"))]
-fn emit_spill_warning(
-    _spill_dir: Option<&std::path::Path>,
-    _threshold: usize,
-    _already_warned: bool,
-) -> bool {
     true
 }
 
