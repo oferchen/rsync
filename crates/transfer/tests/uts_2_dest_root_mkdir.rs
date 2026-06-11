@@ -135,7 +135,10 @@ fn rejects_broken_symlink_dest_root() {
     let dest = tmp.path().join("dest_root");
     symlink(&outside_target, &dest).expect("create broken symlink");
     assert!(
-        dest.symlink_metadata().expect("lstat dest").file_type().is_symlink(),
+        dest.symlink_metadata()
+            .expect("lstat dest")
+            .file_type()
+            .is_symlink(),
         "fixture must place a symlink at dest"
     );
     assert!(!outside_target.exists(), "target must remain dangling");
@@ -172,8 +175,8 @@ fn accepts_symlink_to_existing_directory() {
     let dest = tmp.path().join("dest_root");
     symlink(&real_dir, &dest).expect("symlink dest -> real_dir");
 
-    let created =
-        ensure_dest_root_exists(&dest, 5, false, false).expect("symlink-to-dir dest must be accepted");
+    let created = ensure_dest_root_exists(&dest, 5, false, false)
+        .expect("symlink-to-dir dest must be accepted");
 
     assert!(
         !created,
@@ -254,5 +257,8 @@ fn rejects_chained_dangling_symlink_dest_root() {
     let err = ensure_dest_root_exists(&dangling_link, 3, false, false)
         .expect_err("dangling-chain symlink dest must error");
     assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
-    assert!(!intermediate.exists(), "no auto-create through the dangling chain");
+    assert!(
+        !intermediate.exists(),
+        "no auto-create through the dangling chain"
+    );
 }

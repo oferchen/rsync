@@ -248,7 +248,10 @@ pub fn ensure_dest_root_exists(
             // missing and create_dir_all would resolve the link and
             // materialize a directory at the target. Refuse that footgun
             // by surfacing the original stat error.
-            if dest_root.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
+            if dest_root
+                .symlink_metadata()
+                .is_ok_and(|m| m.file_type().is_symlink())
+            {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
                     format!(
