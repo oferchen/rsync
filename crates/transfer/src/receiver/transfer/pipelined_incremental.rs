@@ -97,7 +97,7 @@ impl ReceiverContext {
         let mut delete_stats = DeleteStats::new();
         let mut delete_limit_exceeded = false;
         if self.config.flags.delete {
-            let (ds, exceeded, io_bits) = self.delete_extraneous_files(
+            let (ds, exceeded) = self.delete_extraneous_files(
                 &setup.dest_dir,
                 #[cfg(unix)]
                 setup.sandbox.as_ref(),
@@ -105,10 +105,6 @@ impl ReceiverContext {
             )?;
             delete_stats = ds;
             delete_limit_exceeded = exceeded;
-            // UTS-16.b: sandbox-rejected delete scan surfaces here so the
-            // chdir-symlink-race refusal becomes a non-zero exit instead of a
-            // silent skip.
-            stats.io_error |= io_bits;
             // Carry the counters into the receiver context so the goodbye
             // handshake can emit NDX_DEL_STATS to the peer sender. URV-6.b
             // landed the on-disk deletion but the counters were never
