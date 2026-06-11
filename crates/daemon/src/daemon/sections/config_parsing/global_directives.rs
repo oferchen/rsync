@@ -9,7 +9,7 @@
 /// upstream: loadparm.c - when a P_LOCAL parameter appears in the global
 /// section, it sets the default value (`def_ptr`) that all subsequently
 /// parsed modules inherit via `init_section()` / `copy_section()`.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct GlobalModuleDefaults {
     exclude: Vec<String>,
     include: Vec<String>,
@@ -77,6 +77,16 @@ struct GlobalParseState {
     /// upstream: loadparm.c - P_LOCAL parameters in the global section set
     /// defaults inherited by all modules that don't override them.
     module_defaults: GlobalModuleDefaults,
+    /// Snapshot of the parent file's globals when this state is the body
+    /// of an `&include`/`&merge` target. Modules declared in the included
+    /// file use these as fallbacks when no value is set in this file, so
+    /// they inherit the parent's defaults the same way upstream's shared
+    /// `Vars` block carries the parent state across the `]push`/`]pop`
+    /// boundary in `params.c::Parse`.
+    inherited_use_chroot: Option<bool>,
+    inherited_secrets_file: Option<PathBuf>,
+    inherited_incoming_chmod: Option<String>,
+    inherited_outgoing_chmod: Option<String>,
 }
 
 impl GlobalParseState {
@@ -105,7 +115,52 @@ impl GlobalParseState {
             daemon_chroot: None,
             modules: Vec::new(),
             module_defaults: GlobalModuleDefaults::default(),
+            inherited_use_chroot: None,
+            inherited_secrets_file: None,
+            inherited_incoming_chmod: None,
+            inherited_outgoing_chmod: None,
         }
+    }
+
+    /// Builds a fresh parse state seeded with the parent file's global
+    /// defaults so modules declared inside an `&include`/`&merge` target
+    /// inherit the same P_LOCAL defaults the parent file already
+    /// established.
+    ///
+    /// upstream: params.c:Parse / loadparm.c::do_section - `&include`
+    /// wraps the recursive parse in `]push`/`]pop` calls that snapshot
+    /// the shared `Vars` block; modules added by the included file
+    /// finalize against the live `Vars` state, which still carries the
+    /// parent file's defaults until the matching `]pop` restores the
+    /// snapshot. Mirror that by stashing the inheritable defaults into
+    /// dedicated fallback slots, leaving the duplicate-detection state
+    /// for explicit per-file directives untouched so the include can
+    /// still redeclare a global without colliding with the parent's
+    /// origin.
+    fn inherited_from(parent: &Self) -> Self {
+        let mut state = Self::new();
+        state.inherited_use_chroot = parent
+            .global_use_chroot
+            .as_ref()
+            .map(|(value, _)| *value)
+            .or(parent.inherited_use_chroot);
+        state.inherited_secrets_file = parent
+            .global_secrets_file
+            .as_ref()
+            .map(|(value, _)| value.clone())
+            .or_else(|| parent.inherited_secrets_file.clone());
+        state.inherited_incoming_chmod = parent
+            .global_incoming_chmod
+            .as_ref()
+            .map(|(value, _)| value.clone())
+            .or_else(|| parent.inherited_incoming_chmod.clone());
+        state.inherited_outgoing_chmod = parent
+            .global_outgoing_chmod
+            .as_ref()
+            .map(|(value, _)| value.clone())
+            .or_else(|| parent.inherited_outgoing_chmod.clone());
+        state.module_defaults = parent.module_defaults.clone();
+        state
     }
 
     /// Converts the accumulated global state into the final parsed result.
