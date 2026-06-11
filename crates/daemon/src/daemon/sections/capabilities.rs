@@ -120,6 +120,18 @@ fn module_requires_chown(module: &ModuleRuntime) -> bool {
     matches!(module.uid, Some(0))
 }
 
+/// Returns whether the calling process currently has an effective uid of 0.
+///
+/// Used to detect "module has no explicit `uid` directive and the daemon
+/// process is running as root" - the case where the per-module privilege
+/// drop leaves the worker inheriting root from the daemon. Calling
+/// `nix::unistd::geteuid` here avoids racing with any partial setuid the
+/// privilege-drop path may have just performed.
+#[cfg(target_os = "linux")]
+fn current_euid_is_zero() -> bool {
+    nix::unistd::geteuid().is_root()
+}
+
 /// Drops `CAP_NET_BIND_SERVICE` from the daemon's effective and permitted
 /// capability sets.
 ///
@@ -195,6 +207,37 @@ fn drop_worker_capabilities(
 ) {
     use caps::{CapSet, Capability};
 
+    // Skip the per-worker drop whenever the worker is still running as
+    // root - either because the module is configured with `uid = 0`, or
+    // because no per-module `uid` was set and the daemon-wide identity
+    // (which the worker inherits when the per-module drop is skipped) is
+    // root. The kernel grants root all capabilities implicitly; dropping
+    // them here would strip CAP_DAC_OVERRIDE / CAP_DAC_READ_SEARCH /
+    // CAP_FOWNER / CAP_FSETID and leave a root worker EACCES-ing module
+    // trees that live under unprivileged user homedirs (the runtests.py
+    // scratch under `/home/<user>/...` with mode 750 was the smoke gun).
+    // Upstream rsync does not drop capabilities from a root daemon, so
+    // skipping the drop here preserves behavioural parity. LSM-CAP is a
+    // defense-in-depth layer for the unprivileged-uid case; for uid=0
+    // the operator has explicitly chosen the root identity and the
+    // capability surface that comes with it.
+    let worker_is_root = match module.uid {
+        Some(0) => true,
+        None => current_euid_is_zero(),
+        Some(_) => false,
+    };
+    if worker_is_root {
+        if let Some(log) = log_sink {
+            let text = format!(
+                "module '{}': skipping worker capability drop (root worker keeps the kernel's implicit capability set)",
+                module.name,
+            );
+            let message = rsync_info!(text).with_role(Role::Daemon);
+            log_message(log, &message);
+        }
+        return;
+    }
+
     let required = required_capabilities_for_module(module);
 
     // Iterate all known capabilities and drop the ones not in the required
@@ -255,9 +298,22 @@ fn drop_worker_capabilities(
 ///
 /// The inventory is intentionally minimal: workers run inside the post-chroot
 /// post-setuid environment where most operations need no capability at all.
-/// The only case requiring a non-empty set is a module configured with
-/// `uid = 0` that must honour client-supplied `--owner`/`--group`/`--chown`,
-/// which traps to `fchown(2)` and requires `CAP_CHOWN`.
+/// When the module is configured with `uid = 0` the worker continues as root,
+/// so the file-system bypass set the kernel grants root implicitly must be
+/// retained here too: dropping CAP_DAC_OVERRIDE / CAP_DAC_READ_SEARCH would
+/// leave a root worker unable to read or write into directories owned by
+/// unprivileged users (the common runtests.py scratch under
+/// `/home/<user>/...` was the smoke gun: every push into a 750-mode user
+/// homedir returned EACCES even though the worker UID was 0). Upstream rsync
+/// does not drop these capabilities for a root daemon, so retaining them
+/// keeps LSM-CAP a defense-in-depth layer rather than a behavioural break.
+///
+/// `CAP_FOWNER` covers `chmod` / `utime` against files the worker did not
+/// create (mirroring upstream's metadata-restore path), and `CAP_FSETID` is
+/// needed to preserve setuid/setgid bits across the chmod that follows a
+/// fresh open. Together with `CAP_CHOWN` for `--owner`/`--group`/`--chown`,
+/// this matches the implicit capability set a root daemon would have if no
+/// drop happened at all.
 #[cfg(target_os = "linux")]
 fn required_capabilities_for_module(
     module: &ModuleRuntime,
@@ -268,6 +324,10 @@ fn required_capabilities_for_module(
     let mut required = HashSet::new();
     if module_requires_chown(module) {
         required.insert(Capability::CAP_CHOWN);
+        required.insert(Capability::CAP_DAC_OVERRIDE);
+        required.insert(Capability::CAP_DAC_READ_SEARCH);
+        required.insert(Capability::CAP_FOWNER);
+        required.insert(Capability::CAP_FSETID);
     }
     required
 }
@@ -322,6 +382,23 @@ mod capabilities_tests {
         let module = module_with("uploads", Some(0));
         let required = required_capabilities_for_module(&module);
         assert!(required.contains(&Capability::CAP_CHOWN));
+    }
+
+    /// A root-mode module must retain the kernel's implicit DAC bypass set so
+    /// the worker can read and write into module trees that live under
+    /// directories owned by unprivileged users. Without DAC_OVERRIDE the
+    /// runtests.py scratch under `/home/<user>/...` (homedir mode 750) returns
+    /// EACCES on the first `openat(O_PATH)`; the same scenario hits any
+    /// daemon module configured with `path = /var/.../user/...`.
+    #[test]
+    fn required_capabilities_include_dac_bypass_for_root_module() {
+        use caps::Capability;
+        let module = module_with("uploads", Some(0));
+        let required = required_capabilities_for_module(&module);
+        assert!(required.contains(&Capability::CAP_DAC_OVERRIDE));
+        assert!(required.contains(&Capability::CAP_DAC_READ_SEARCH));
+        assert!(required.contains(&Capability::CAP_FOWNER));
+        assert!(required.contains(&Capability::CAP_FSETID));
     }
 
     /// The `drop_cap_net_bind_service` helper must be safe to call even when
