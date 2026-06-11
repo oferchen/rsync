@@ -10,6 +10,7 @@
 //! - `flist.c:send_file_list()` - recursive directory scanning
 //! - `flist.c:readlink_stat()` - symlink resolution modes
 
+use std::collections::HashSet;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -42,11 +43,58 @@ impl GeneratorContext {
         base: &Path,
         path: &Path,
     ) -> io::Result<bool> {
+        self.try_walk_source_entry_dedup(base, path, None)
+    }
+
+    /// Like [`try_walk_source_entry`], but consults `emitted_dirs` to skip
+    /// re-emitting a directory entry that was already pushed by an earlier
+    /// pass (e.g. the implied-parent loop in `build_file_list_with_base`).
+    ///
+    /// When the source path is a directory whose relative name is already in
+    /// `emitted_dirs`, the function returns `Ok(true)` without re-emitting or
+    /// recursing. Subsequent `--files-from` entries that explicitly name
+    /// children of the same directory still reach the receiver via their own
+    /// top-level walks, and re-walking here would produce a duplicate parent
+    /// entry that upstream's `implied_filter_list` check rejects with
+    /// "rejecting unrequested file-list name" (flist.c:998).
+    ///
+    /// `emitted_dirs` is `Some` only from `build_file_list_with_base`, which
+    /// passes the set of directories already emitted by its implied-parent
+    /// loop. All other callers (single-source `build_file_list`) pass `None`
+    /// and retain the original walk-everything behaviour.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `flist.c:998` - `check_filter(&implied_filter_list, ...)` rejects
+    ///   second occurrences as "unrequested file-list name".
+    /// - `flist.c:1901` - `send_implied_dirs()` is upstream's equivalent
+    ///   single emission point for the same logical directory.
+    pub(in crate::generator) fn try_walk_source_entry_dedup(
+        &mut self,
+        base: &Path,
+        path: &Path,
+        emitted_dirs: Option<&HashSet<PathBuf>>,
+    ) -> io::Result<bool> {
         // upstream: flist.c:2390 - link_stat() once, then pass &st to
         // send_file_name(). Reuse the metadata to avoid a redundant stat
         // inside walk_path_with_metadata.
         match self.resolve_symlink_metadata(path, base) {
             Ok(metadata) => {
+                // If a prior pass already emitted this directory (e.g. the
+                // implied-parent loop in build_file_list_with_base), skip the
+                // top-level walk so we do not produce a duplicate file-list
+                // entry. The directory's contents will be reached by the
+                // explicit child entries from --files-from. Files are never
+                // deduped through this path; only directories at the top
+                // level can collide with the implied-parent loop's output.
+                if metadata.is_dir() {
+                    if let Some(seen) = emitted_dirs {
+                        let relative = path.strip_prefix(base).unwrap_or(path);
+                        if !relative.as_os_str().is_empty() && seen.contains(relative) {
+                            return Ok(true);
+                        }
+                    }
+                }
                 // Path exists - pass pre-resolved metadata directly.
                 self.walk_path_with_metadata(base, path.to_path_buf(), metadata, true)?;
                 Ok(true)
