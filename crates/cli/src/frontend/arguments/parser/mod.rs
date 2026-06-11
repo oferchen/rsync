@@ -52,6 +52,7 @@ where
     let show_help = matches.get_flag("help");
     let show_version = matches.get_count("version");
     let show_io_uring_status = matches.get_flag("io-uring-status");
+    let show_lsm_status = matches.get_flag("lsm-status");
 
     // Handle human-readable: bare flags (-h, --human-readable) count occurrences
     // while explicit values (--human-readable=2) set the level directly.
@@ -717,6 +718,7 @@ where
         show_help,
         show_version,
         show_io_uring_status,
+        show_lsm_status,
         human_readable,
         dry_run,
         list_only,

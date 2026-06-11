@@ -50,6 +50,7 @@ where
         show_help,
         show_version,
         show_io_uring_status,
+        show_lsm_status,
         human_readable,
         dry_run,
         list_only,
@@ -322,6 +323,7 @@ where
         show_help,
         show_version,
         show_io_uring_status,
+        show_lsm_status,
         program_name,
         stdout,
     ) {

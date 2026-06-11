@@ -113,6 +113,7 @@ mod defaults;
 pub mod dry_run;
 mod filter_rules;
 mod help;
+mod lsm_status;
 /// Info output flags controlling informational message display.
 pub mod info_output;
 /// Upstream rsync `--itemize-changes` (`-i`) output format.
@@ -148,6 +149,7 @@ pub(crate) use filter_rules::{
     collect_filter_arguments, merge_directive_options, parse_filter_directive,
 };
 use help::help_text;
+use lsm_status::render_lsm_status;
 pub(crate) use out_format::{OutFormat, OutFormatContext, emit_out_format, parse_out_format};
 pub(crate) use progress::*;
 #[cfg(test)]
@@ -196,6 +198,16 @@ const MAX_EXIT_CODE: i32 = u8::MAX as i32;
 
 fn render_help(program_name: ProgramName) -> String {
     help_text(program_name)
+}
+
+/// Renders the `--lsm-status` diagnostic text for the invoked program.
+///
+/// Returns a newline-terminated multi-line summary describing the active
+/// LSMs, Landlock support, seccomp state, and io_uring SQPOLL policy of
+/// the current process. The leading banner uses `program_name`'s string
+/// form so wrappers symlinked as `rsync` render the matching label.
+fn render_lsm_status_text(program_name: ProgramName) -> String {
+    render_lsm_status(program_name.as_str())
 }
 
 fn write_message<W: Write>(message: &Message, sink: &mut MessageSink<W>) -> io::Result<()> {
