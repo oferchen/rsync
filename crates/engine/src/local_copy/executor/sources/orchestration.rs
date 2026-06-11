@@ -123,6 +123,24 @@ pub(crate) fn copy_sources(
             // Stats are written by core::client::run::batch::finalize_batch()
             // after the engine returns, using actual transfer byte counts.
 
+            // upstream: main.c:1839-1840 - `if (write_batch < 0) dry_run = 1`
+            // forces dry_run when `--only-write-batch` is set, so the receiver
+            // never reaches do_recv() / finish_transfer(). Mirror that by
+            // returning before flushing deferred destination updates: in
+            // OnlyWrite mode the batch file is the sole output and no
+            // destination-side writes should be performed.
+            //
+            // The combination `DryRun + batch_writer present` distinguishes
+            // `--only-write-batch` (this branch) from plain `--dry-run`
+            // (no batch writer; falls through to the deferred-ops flush so
+            // empty queues drain cleanly without side effects).
+            if context.mode().is_dry_run() && context.options().get_batch_writer().is_some() {
+                if let Some(error) = first_io_error {
+                    return Err(error);
+                }
+                return Ok(());
+            }
+
             flush_deferred_operations(context)?;
 
             if let Some(error) = first_io_error {
