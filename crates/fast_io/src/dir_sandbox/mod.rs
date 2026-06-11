@@ -19,7 +19,7 @@
 //!    ([`secondary`](DirSandbox::secondary)) covers the four
 //!    cross-directory operands (`--backup-dir`, `--temp-dir`,
 //!    `--link-dest`, `--copy-dest`, `--compare-dest`). The cache is a
-//!    [`DashMap`] so the read-mostly lookup path stays lock-free; entries
+//!    `DashMap` so the read-mostly lookup path stays lock-free; entries
 //!    are inserted at receiver setup and never evicted.
 //!
 //! The module is `#[cfg(unix)]`. Windows uses NTFS handle-based ops per
@@ -36,7 +36,7 @@
 //! anchoring dirfd, and any magic-link resolution. Pairing
 //! `RESOLVE_BENEATH` with a real anchoring dirfd is the supported
 //! configuration (unlike the `AT_FDCWD` bootstrap in
-//! [`secure_open_dir`](crate::secure_open_dir), which intentionally drops
+//! [`secure_open_dir`](crate::secure_dir::secure_open_dir), which intentionally drops
 //! `RESOLVE_BENEATH` because the cwd anchor is the wrong scope for
 //! absolute paths).
 //!
@@ -51,14 +51,14 @@
 //! through [`current_dirfd`](DirSandbox::current_dirfd) hand out
 //! `BorrowedFd<'_>` values whose lifetime is bound to `&self`; rayon
 //! workers capturing the borrow do so by copy because `BorrowedFd<'_>`
-//! is `Copy + Send + Sync`. The side cache is a [`DashMap`] and supports
+//! is `Copy + Send + Sync`. The side cache is a `DashMap` and supports
 //! concurrent registration plus concurrent reads.
 //!
 //! # `unsafe` budget
 //!
 //! The only `unsafe` block in this module is the `openat2(2)` syscall
 //! invocation, which mirrors the safety argument in
-//! [`secure_open_dir`](crate::secure_open_dir::secure_open_dir). The
+//! [`secure_open_dir`](crate::secure_dir::secure_open_dir). The
 //! `openat(2)` fallback goes through `rustix`, which exposes a safe
 //! interface; no `unsafe` is needed there.
 
@@ -242,7 +242,7 @@ impl DirSandbox {
     ///
     /// On first call for a given `path` the helper opens the directory
     /// through [`secure_open_dir`] and stores the resulting `OwnedFd`
-    /// in the [`DashMap`] keyed by `path`. Subsequent calls return the
+    /// in the `DashMap` keyed by `path`. Subsequent calls return the
     /// cached [`Arc`] without issuing a syscall. The clone is cheap and
     /// hands the caller a shared owner whose [`BorrowedFd`] can be
     /// passed to two-dirfd syscalls (`renameat`, `linkat`) alongside
