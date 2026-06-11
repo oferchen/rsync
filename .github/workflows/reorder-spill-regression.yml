@@ -100,7 +100,7 @@ jobs:
             --locked \
             -p engine \
             --no-fail-fast \
-            -E 'test(=spill_activations_counter_increments_on_each_spill) + test(=spill_warning_fires_once_per_transfer) + test(/^reorder_spill_/)' \
+            -E 'test(spill_activations_counter_increments_on_each_spill) + test(spill_warning_fires_once_per_transfer) + test(/reorder_spill_/)' \
             2>&1 | tee "$OUT"
 
           # TODO(ROB-5/ROB-6): When the non-adversarial bench harness

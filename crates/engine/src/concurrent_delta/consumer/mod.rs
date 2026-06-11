@@ -84,6 +84,15 @@ pub struct DeltaConsumerStats {
     ///
     /// Always zero when the consumer was spawned without a spill threshold.
     pub spill_events: u64,
+    /// Cumulative count of `spill_excess` calls that wrote at least one
+    /// record. Granularity-invariant: a single call increments this counter
+    /// by exactly one even when [`SpillGranularity::PerItem`](super::spill::SpillGranularity::PerItem)
+    /// produces many on-disk records. Always zero when the consumer was
+    /// spawned without a spill threshold. ROB-2 (#3667) surfaces this
+    /// through the consumer-side stats so operators can observe normal-
+    /// operation spill rate without instrumenting the spillable buffer
+    /// directly.
+    pub spill_activations: u64,
     /// Cumulative count of ordering-fallback inserts performed by the
     /// underlying [`ReorderBuffer`](super::reorder::ReorderBuffer) when the
     /// ring saturated while `next_expected` was still missing.
@@ -151,6 +160,13 @@ pub struct DeltaConsumer {
     /// Shared counter incremented by the reorder thread on each spill-to-disk
     /// event. Exposed via [`DeltaConsumer::stats`].
     pub(super) spill_events: Arc<AtomicU64>,
+    /// Shared counter incremented by the reorder thread on each
+    /// `spill_excess` call that wrote at least one record. ROB-2 (#3667)
+    /// surfaces this granularity-invariant counter through
+    /// [`DeltaConsumer::stats`] so operators see normal-operation spill
+    /// pressure without compensating for `PerItem` vs `WholeBatch`
+    /// record fan-out.
+    pub(super) spill_activations: Arc<AtomicU64>,
     /// Shared handle aliasing the underlying [`ReorderBuffer`](super::reorder::ReorderBuffer)
     /// `force_insert` counter. The reorder buffer updates this atomic
     /// directly, so [`DeltaConsumer::stats`] reflects the latest value
@@ -242,6 +258,7 @@ impl DeltaConsumer {
     pub fn stats(&self) -> DeltaConsumerStats {
         DeltaConsumerStats {
             spill_events: self.spill_events.load(Ordering::Relaxed),
+            spill_activations: self.spill_activations.load(Ordering::Relaxed),
             force_inserts: self.force_inserts.load(Ordering::Relaxed),
         }
     }

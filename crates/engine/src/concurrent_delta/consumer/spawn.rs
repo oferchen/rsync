@@ -71,6 +71,7 @@ impl ReorderMode {
 pub(super) fn spawn_inner(rx: WorkQueueReceiver, mode: ReorderMode) -> DeltaConsumer {
     let (result_tx, result_rx) = mpsc::channel();
     let spill_events = Arc::new(AtomicU64::new(0));
+    let spill_activations = Arc::new(AtomicU64::new(0));
 
     // Bounded channel between drain and reorder threads. Capacity matches
     // reorder buffer so workers can stay ahead without unbounded buffering.
@@ -107,6 +108,7 @@ pub(super) fn spawn_inner(rx: WorkQueueReceiver, mode: ReorderMode) -> DeltaCons
     // Thread 2: receives streamed results, reorders (or passes through),
     // and forwards to the consumer channel.
     let spill_events_thread = Arc::clone(&spill_events);
+    let spill_activations_thread = Arc::clone(&spill_activations);
     let handle = thread::Builder::new()
         .name("delta-reorder".to_string())
         .spawn(move || {
@@ -115,7 +117,13 @@ pub(super) fn spawn_inner(rx: WorkQueueReceiver, mode: ReorderMode) -> DeltaCons
                     run_bare_loop(stream_rx, &result_tx, *buf, &metrics_thread);
                 }
                 ReorderBackend::Spillable(buf) => {
-                    run_spillable_loop(stream_rx, &result_tx, *buf, &spill_events_thread);
+                    run_spillable_loop(
+                        stream_rx,
+                        &result_tx,
+                        *buf,
+                        &spill_events_thread,
+                        &spill_activations_thread,
+                    );
                 }
                 ReorderBackend::Failed(err) => {
                     let _ = result_tx.send(DeltaResult::failed(
@@ -135,6 +143,7 @@ pub(super) fn spawn_inner(rx: WorkQueueReceiver, mode: ReorderMode) -> DeltaCons
         handle: Some(handle),
         metrics,
         spill_events,
+        spill_activations,
         force_inserts,
     }
 }
