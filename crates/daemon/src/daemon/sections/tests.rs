@@ -575,3 +575,136 @@ fn apply_daemon_param_overrides_empty_params() {
     apply_daemon_param_overrides(&[], &mut module).expect("empty params should succeed");
     assert_eq!(module, original);
 }
+
+// UTS-13 + UTS-14: refused-option wire-frame regression tests.
+//
+// Background: when the daemon rejects a client-sent option (e.g. `--delete`,
+// `--compress`) after the `@RSYNCD: OK` handshake, the client has already
+// switched its input to the multiplex stream. Raw `@ERROR: ...\n` text written
+// at that point is decoded by `read_a_msg()` as a multiplex frame header and
+// surfaces as `unexpected tag 77 [Receiver]` because the upper byte of the
+// header is the literal `T` from "The server ..." (84 - MPLEX_BASE = 77).
+// The fix routes post-OK refusals through MSG_ERROR_XFER + MSG_ERROR_EXIT.
+fn build_stdio_stream_with_capture() -> (DaemonStream, std::sync::Arc<std::sync::Mutex<Vec<u8>>>) {
+    let capture: std::sync::Arc<std::sync::Mutex<Vec<u8>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+
+    struct CaptureWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl io::Write for CaptureWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let reader: Box<dyn io::Read + Send> = Box::new(io::Cursor::new(Vec::new()));
+    let writer: Box<dyn io::Write + Send> = Box::new(CaptureWriter(capture.clone()));
+    let pair = crate::daemon_stream::StdioPair::new(reader, writer);
+    (DaemonStream::stdio(pair), capture)
+}
+
+#[test]
+fn refuse_emits_at_error_raw_pre_handshake() {
+    // Pre-handshake path: client has not yet seen `@RSYNCD: OK`, so multiplex
+    // IN has not started. The raw `@ERROR: ...\n` text is the correct wire
+    // encoding here.
+    let (mut stream, capture) = build_stdio_stream_with_capture();
+    let mut limiter: Option<BandwidthLimiter> = None;
+    let messages = LegacyMessageCache::shared();
+    send_error_and_exit(
+        &mut stream,
+        &mut limiter,
+        messages,
+        "@ERROR: The server is configured to refuse --delete",
+    )
+    .expect("send pre-handshake error");
+
+    let bytes = capture.lock().unwrap().clone();
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(
+        text.starts_with("@ERROR: The server is configured to refuse --delete\n"),
+        "pre-handshake refusal must be raw @ERROR text, got: {text:?}"
+    );
+    assert!(
+        text.contains("@RSYNCD: EXIT"),
+        "pre-handshake refusal must end with @RSYNCD: EXIT, got: {text:?}"
+    );
+}
+
+#[test]
+fn refuse_emits_msg_error_xfer_post_handshake() {
+    // Post-handshake path: client has switched its input to the multiplexed
+    // stream after `@RSYNCD: OK`. The daemon must wrap the error in a
+    // MSG_ERROR_XFER frame followed by a MSG_ERROR_EXIT frame. Raw text would
+    // be decoded as a multiplex header (the "unexpected tag 77" bug).
+    //
+    // upstream: clientserver.c:1175-1186 - io_start_multiplex_out() runs at
+    // OK, then rwrite(FERROR, ...) emits a MSG_ERROR_XFER frame.
+    let (mut stream, capture) = build_stdio_stream_with_capture();
+    let mut limiter: Option<BandwidthLimiter> = None;
+    send_multiplexed_error_and_exit(
+        &mut stream,
+        &mut limiter,
+        "@ERROR: The server is configured to refuse --compress",
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+    )
+    .expect("send multiplexed error");
+
+    let bytes = capture.lock().unwrap().clone();
+    assert!(
+        bytes.len() >= 8,
+        "must contain at least two 4-byte multiplex headers, got {} bytes",
+        bytes.len()
+    );
+
+    // Build the expected MSG_ERROR_XFER frame and assert that the capture
+    // starts with it. encode_into_writer writes the 4-byte little-endian
+    // (length | code<<24) header followed by the payload bytes.
+    let mut payload = b"@ERROR: The server is configured to refuse --compress".to_vec();
+    payload.push(b'\n');
+    let mut expected_xfer = Vec::new();
+    MessageFrame::new(MessageCode::ErrorXfer, payload)
+        .expect("frame")
+        .encode_into_writer(&mut expected_xfer)
+        .expect("encode");
+    assert!(
+        bytes.starts_with(&expected_xfer),
+        "post-handshake refusal must begin with a MSG_ERROR_XFER frame; got {bytes:?}"
+    );
+
+    // The remaining bytes must be a MSG_ERROR_EXIT frame carrying the exit
+    // code in little-endian form (upstream io.c:1060 send_msg_int).
+    let mut expected_exit = Vec::new();
+    MessageFrame::new(
+        MessageCode::ErrorExit,
+        FEATURE_UNAVAILABLE_EXIT_CODE.to_le_bytes().to_vec(),
+    )
+    .expect("frame")
+    .encode_into_writer(&mut expected_exit)
+    .expect("encode");
+    assert!(
+        bytes.ends_with(&expected_exit),
+        "post-handshake refusal must end with a MSG_ERROR_EXIT frame; got {bytes:?}"
+    );
+}
+
+#[test]
+fn refuse_compress_message_mentions_compress() {
+    // UTS-14 directly: the matcher already exists, but the refused-name
+    // surfaces in the error string so the user sees `--compress` literally.
+    let module = ModuleDefinition {
+        refuse_options: vec!["compress".to_owned()],
+        ..Default::default()
+    };
+    let options = vec!["--compress".to_owned()];
+    let refused =
+        refused_option(&module, &options).expect("compress must be matched as a refused option");
+    let payload = format!("@ERROR: The server is configured to refuse {refused}");
+    assert!(
+        payload.contains("--compress"),
+        "refusal payload must name the refused option literally, got: {payload}"
+    );
+}
