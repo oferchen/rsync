@@ -42,6 +42,19 @@ path = "../crates/metadata"
 path = "../crates/bandwidth"
 default-features = false
 
+[dependencies.engine]
+path = "../crates/engine"
+default-features = false
+
+[dependencies.sha2]
+version = "0.10"
+default-features = false
+features = ["std"]
+
+[dependencies.transfer]
+path = "../crates/transfer"
+default-features = false
+
 [[bin]]
 name = "protocol_wire"
 path = "fuzz_targets/protocol_wire.rs"
@@ -94,6 +107,13 @@ bench = false
 [[bin]]
 name = "decompressor_zlib"
 path = "fuzz_targets/decompressor_zlib.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "zlib_token_decode"
+path = "fuzz_targets/zlib_token_decode.rs"
 test = false
 doc = false
 bench = false
@@ -206,6 +226,20 @@ bench = false
 [[bin]]
 name = "differential_flist"
 path = "fuzz_targets/differential_flist.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parallel_receive_delta_adversarial"
+path = "fuzz_targets/parallel_receive_delta_adversarial.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "buffered_map"
+path = "fuzz_targets/buffered_map.rs"
 test = false
 doc = false
 bench = false

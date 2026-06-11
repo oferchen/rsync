@@ -477,7 +477,7 @@ jobs:
           {
             printf 'pkgname = oc-rsync\n'
             printf 'pkgver = %s\n' "${PKGVER}"
-            printf 'pkgdesc = Pure-Rust implementation of rsync, wire-compatible with upstream 3.4.2\n'
+            printf 'pkgdesc = Pure-Rust implementation of rsync, wire-compatible with upstream 3.4.4\n'
             printf 'url = https://github.com/oferchen/rsync\n'
             printf 'builddate = %s\n' "$(date +%s)"
             printf 'packager = oc-rsync CI <ci@github.com>\n'

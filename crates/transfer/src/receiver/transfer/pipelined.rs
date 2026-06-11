@@ -50,9 +50,9 @@ impl ReceiverContext {
             setup.sandbox.as_deref(),
         )?;
         #[cfg(unix)]
-        self.create_symlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer);
+        self.create_symlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer)?;
         #[cfg(not(unix))]
-        self.create_symlinks(&setup.dest_dir, writer);
+        self.create_symlinks(&setup.dest_dir, writer)?;
 
         let mut delete_stats = DeleteStats::new();
         let mut delete_limit_exceeded = false;
@@ -175,9 +175,9 @@ impl ReceiverContext {
         }
 
         #[cfg(unix)]
-        self.create_hardlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer);
+        self.create_hardlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer)?;
         #[cfg(not(unix))]
-        self.create_hardlinks(&setup.dest_dir, writer);
+        self.create_hardlinks(&setup.dest_dir, writer)?;
 
         // upstream: receiver.c:584-585 - handle_delayed_updates() at phase 2
         if !all_delayed_updates.is_empty() {

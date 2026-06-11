@@ -35,7 +35,7 @@
 //!
 //! [`with_thread_lease`] keeps one `BgidLease` per OS thread, lazy-built
 //! on first use, alongside the per-thread io_uring ring established by
-//! [`super::per_thread_ring`]. Both live in `thread_local!` storage and
+//! `super::per_thread_ring`. Both live in `thread_local!` storage and
 //! reach their destructors on normal thread exit, so the lease's bgids
 //! flow back to the central pool without explicit teardown by callers.
 //!
@@ -109,7 +109,7 @@ impl BgidLease {
     /// - [`io::ErrorKind::OutOfMemory`] when the central pool has zero
     ///   ids available (free-list empty and counter at the namespace
     ///   limit). The error is the lossless conversion of
-    ///   [`BgidAllocError::Exhausted`] documented on
+    ///   [`super::buffer_ring::BgidAllocError::Exhausted`] documented on
     ///   [`super::buffer_ring::BgidAllocator::allocate_batch`].
     pub fn new(batch_size: usize) -> io::Result<Self> {
         if batch_size == 0 {

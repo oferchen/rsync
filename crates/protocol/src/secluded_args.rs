@@ -338,4 +338,71 @@ mod tests {
         assert_eq!(with, without);
         assert_eq!(with, vec!["alpha", "beta", "gamma"]);
     }
+
+    // Drain-invariant tests for the secluded-args terminator.
+    //
+    // Upstream `io.c:1308-1367` `read_args()` consumes the input stream one
+    // line at a time via `read_line()`; the loop terminates when an empty
+    // line (the lone `\0` terminator) is read. After termination, the input
+    // file descriptor is positioned immediately after the terminator NUL, so
+    // the next read - the protocol greeting handshake - sees a clean stream.
+    //
+    // These tests lock the same invariant in `recv_secluded_args`: every byte
+    // of the wire payload up to and including the terminator NUL must be
+    // consumed. If even one residual byte leaks, it corrupts the subsequent
+    // `@RSYNCD:` greeting exchange and surfaces as a confusing handshake
+    // failure rather than a clear argument-protocol error.
+
+    #[test]
+    fn recv_secluded_args_consumes_terminator_completely() {
+        // Wire format: 5 args followed by the empty-arg terminator.
+        let wire: &[u8] = b"--server\0--sender\0-logDtpr\0.\0/path\0\0";
+        let mut cursor = io::Cursor::new(wire);
+
+        let args = recv_secluded_args(&mut cursor, None).expect("recv should succeed");
+
+        assert_eq!(args.len(), 5);
+        assert_eq!(args[0], "--server");
+        assert_eq!(args[1], "--sender");
+        assert_eq!(args[2], "-logDtpr");
+        assert_eq!(args[3], ".");
+        assert_eq!(args[4], "/path");
+
+        // Critical invariant: the cursor must be positioned past the
+        // terminator NUL. Any residual byte would leak into the next reader
+        // (the protocol greeting), corrupting the handshake.
+        assert_eq!(
+            cursor.position(),
+            wire.len() as u64,
+            "recv_secluded_args must consume the terminator NUL; otherwise residual bytes leak \
+             into the protocol greeting stream"
+        );
+    }
+
+    #[test]
+    fn recv_secluded_args_handles_empty_arg_list() {
+        // Wire format: terminator only - an empty arg list still drains 1 byte.
+        let wire: &[u8] = b"\0";
+        let mut cursor = io::Cursor::new(wire);
+
+        let args = recv_secluded_args(&mut cursor, None).expect("recv should succeed");
+
+        assert!(args.is_empty());
+        assert_eq!(
+            cursor.position(),
+            1,
+            "empty arg list still consumes the terminator NUL"
+        );
+    }
+
+    #[test]
+    fn recv_secluded_args_unexpected_eof_before_terminator() {
+        // Wire format: trailing `\0\0` terminator missing - premature EOF.
+        let wire: &[u8] = b"arg1\0arg2";
+        let mut cursor = io::Cursor::new(wire);
+
+        let err = recv_secluded_args(&mut cursor, None)
+            .expect_err("recv should fail when terminator is missing");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
 }

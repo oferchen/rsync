@@ -698,7 +698,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(
             config.temp_dir.as_deref(),
             Some(std::path::Path::new("/tmp/rsync-temp"))
@@ -713,7 +713,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(
             config.temp_dir.as_deref(),
             Some(std::path::Path::new("/staging/area"))
@@ -724,7 +724,7 @@ mod module_access_tests {
     fn apply_long_form_args_temp_dir_defaults_to_none() {
         let args = vec!["--server".to_owned(), ".".to_owned()];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert!(config.temp_dir.is_none());
     }
 
@@ -737,7 +737,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.reference_directories.len(), 1);
         assert_eq!(
             config.reference_directories[0].kind(),
@@ -758,7 +758,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.reference_directories.len(), 1);
         assert_eq!(
             config.reference_directories[0].kind(),
@@ -778,7 +778,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.reference_directories.len(), 1);
         assert_eq!(
             config.reference_directories[0].kind(),
@@ -799,7 +799,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.reference_directories.len(), 1);
         assert_eq!(
             config.reference_directories[0].kind(),
@@ -819,7 +819,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.reference_directories.len(), 1);
         assert_eq!(
             config.reference_directories[0].kind(),
@@ -840,7 +840,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.reference_directories.len(), 2);
         assert_eq!(
             config.reference_directories[0].path(),
@@ -856,7 +856,7 @@ mod module_access_tests {
     fn apply_long_form_args_reference_dirs_default_empty() {
         let args = vec!["--server".to_owned(), ".".to_owned()];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert!(config.reference_directories.is_empty());
     }
 
@@ -868,7 +868,7 @@ mod module_access_tests {
     fn apply_long_form_args_parses_log_format_with_itemize() {
         let args = vec!["--server".to_owned(), "--log-format=%i".to_owned(), ".".to_owned()];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert!(config.flags.info_flags.itemize);
     }
 
@@ -876,7 +876,7 @@ mod module_access_tests {
     fn apply_long_form_args_parses_log_format_with_itemize_and_upper_i() {
         let args = vec!["--server".to_owned(), "--log-format=%i%I".to_owned(), ".".to_owned()];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert!(config.flags.info_flags.itemize);
     }
 
@@ -884,7 +884,7 @@ mod module_access_tests {
     fn apply_long_form_args_parses_out_format_with_itemize() {
         let args = vec!["--server".to_owned(), "--out-format=%i".to_owned(), ".".to_owned()];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert!(config.flags.info_flags.itemize);
     }
 
@@ -892,7 +892,7 @@ mod module_access_tests {
     fn apply_long_form_args_log_format_without_itemize() {
         let args = vec!["--server".to_owned(), "--log-format=%o".to_owned(), ".".to_owned()];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert!(!config.flags.info_flags.itemize);
     }
 
@@ -900,7 +900,7 @@ mod module_access_tests {
     fn apply_long_form_args_log_format_x_no_itemize() {
         let args = vec!["--server".to_owned(), "--log-format=X".to_owned(), ".".to_owned()];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert!(!config.flags.info_flags.itemize);
     }
 
@@ -912,7 +912,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert!(config.write.delay_updates);
     }
 
@@ -920,8 +920,88 @@ mod module_access_tests {
     fn apply_long_form_args_delay_updates_defaults_to_false() {
         let args = vec!["--server".to_owned(), ".".to_owned()];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert!(!config.write.delay_updates);
+    }
+
+    // UTS-15.g: the daemon arg parser must fail loud on a client-only batch
+    // flag instead of silently dropping it. Upstream rsync at
+    // `options.c:1444-1449` emits `rsync: <BAD>: <err> (in daemon mode)` and
+    // exits `RERR_SYNTAX` via `daemon_error:` (options.c:1464-1466). We
+    // mirror that surface: the parser returns the offending arg so the
+    // caller can write an `@ERROR` frame and reject the connection.
+    #[test]
+    fn apply_long_form_args_reports_write_batch_kv_as_unknown() {
+        let args = vec![
+            "--server".to_owned(),
+            "--write-batch=/tmp/bad.batch".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        let offender = apply_long_form_args(&args, &mut config);
+        assert_eq!(offender.as_deref(), Some("--write-batch=/tmp/bad.batch"));
+    }
+
+    #[test]
+    fn apply_long_form_args_reports_read_batch_kv_as_unknown() {
+        let args = vec![
+            "--server".to_owned(),
+            "--read-batch=/tmp/in.batch".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        let offender = apply_long_form_args(&args, &mut config);
+        assert_eq!(offender.as_deref(), Some("--read-batch=/tmp/in.batch"));
+    }
+
+    #[test]
+    fn apply_long_form_args_reports_only_write_batch_kv_as_unknown() {
+        let args = vec![
+            "--server".to_owned(),
+            "--only-write-batch=/tmp/dry.batch".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        let offender = apply_long_form_args(&args, &mut config);
+        assert_eq!(offender.as_deref(), Some("--only-write-batch=/tmp/dry.batch"));
+    }
+
+    // Recognised client args do NOT produce the unknown-arg signal. This
+    // guards against regressions that would mis-classify everyday daemon
+    // argv such as `--delete`, `--temp-dir=`, and reference-directory
+    // values as unknown.
+    #[test]
+    fn apply_long_form_args_recognised_args_do_not_report_unknown() {
+        let args = vec![
+            "--server".to_owned(),
+            "--sender".to_owned(),
+            "-logDtprz".to_owned(),
+            "--delete-before".to_owned(),
+            "--max-delete=10".to_owned(),
+            "--temp-dir=/staging".to_owned(),
+            "--link-dest=/prev".to_owned(),
+            ".".to_owned(),
+            "module/sub".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        let offender = apply_long_form_args(&args, &mut config);
+        assert!(offender.is_none(), "no unknown should be reported: {offender:?}");
+    }
+
+    // Positional path arguments past the `.` separator must not be
+    // mis-classified as unknown options - they are dispatched through
+    // upstream's `glob_expand_module()` (util1.c:804), not popt.
+    #[test]
+    fn apply_long_form_args_positional_paths_are_not_classified() {
+        let args = vec![
+            "--server".to_owned(),
+            "-logDtpr".to_owned(),
+            ".".to_owned(),
+            "module/--write-batch=foo.bin".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        let offender = apply_long_form_args(&args, &mut config);
+        assert!(offender.is_none(), "positional paths must not flag: {offender:?}");
     }
 
     #[test]
@@ -1560,7 +1640,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.backup_dir.as_deref(), Some(".backups"));
         assert!(config.flags.backup);
     }
@@ -1573,7 +1653,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.backup_dir.as_deref(), Some(".backups"));
         assert!(config.flags.backup);
     }
@@ -1589,7 +1669,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.effective_backup_suffix(), "");
     }
 
@@ -1604,7 +1684,7 @@ mod module_access_tests {
             ".".to_owned(),
         ];
         let mut config = ServerConfig::default();
-        apply_long_form_args(&args, &mut config);
+        let _ = apply_long_form_args(&args, &mut config);
         assert_eq!(config.backup_dir.as_deref(), Some(".backups"));
         assert_eq!(config.effective_backup_suffix(), ".old");
     }
@@ -1815,5 +1895,81 @@ mod module_access_tests {
         let dest = resolve_receiver_dest(module_path, &args, "upload");
         // Absolute path is forced under the module root - no escape.
         assert_eq!(dest, std::path::Path::new("/srv/upload/etc/passwd"));
+    }
+
+    // URV-5.b.REOPEN: classify_client_path_against_module is the pure helper
+    // that decides whether a raw client-supplied path goes into the Landlock
+    // allowlist (Ok(Some(canonical))), is silently accepted as relative
+    // (Ok(None)), or is rejected (Err(())). These tests pin the trust
+    // boundary so widening the allowlist cannot accidentally admit
+    // out-of-module paths.
+
+    #[test]
+    fn classify_client_path_relative_path_returns_none() {
+        let module_root = std::path::Path::new("/srv/module");
+        let result = classify_client_path_against_module(".rsync-tmp", module_root);
+        // Relative paths resolve under the module root or chroot cwd; they
+        // never need an explicit allowlist entry.
+        assert!(matches!(result, Ok(None)));
+    }
+
+    #[test]
+    fn classify_client_path_in_module_absolute_is_admitted() {
+        // Use the OS tempdir so the canonicalisation actually succeeds on
+        // the platform running the test, then probe a sub-path that we
+        // construct beneath it (which need not exist).
+        let module = tempfile::TempDir::new().expect("module tempdir");
+        let module_root = module.path().canonicalize().expect("canonicalise module");
+        let in_module = module_root.join("alt-basis");
+        let raw = in_module.to_string_lossy().into_owned();
+        let result = classify_client_path_against_module(&raw, &module_root);
+        match result {
+            Ok(Some(p)) => assert!(
+                p.starts_with(&module_root),
+                "admitted path '{}' must start with module root '{}'",
+                p.display(),
+                module_root.display(),
+            ),
+            other => panic!("expected admitted in-module path, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn classify_client_path_out_of_module_absolute_is_rejected() {
+        let module = tempfile::TempDir::new().expect("module tempdir");
+        let outside = tempfile::TempDir::new().expect("outside tempdir");
+        let module_root = module.path().canonicalize().expect("canonicalise module");
+        let outside_root = outside.path().canonicalize().expect("canonicalise outside");
+        let raw = outside_root.to_string_lossy().into_owned();
+        let result = classify_client_path_against_module(&raw, &module_root);
+        // The whole point of SEC-1.p: an attacker-supplied prefix that
+        // escapes the module root must be rejected, never admitted.
+        assert!(matches!(result, Err(())));
+    }
+
+    #[test]
+    fn classify_client_path_existing_dotdot_escape_is_rejected() {
+        // `..` traversal against an *existing* path canonicalises to the
+        // resolved target; if the target is outside the module root, the
+        // helper rejects it. (URV-5.a / #3617 separately covers the
+        // non-existent `..` escape via `RESOLVE_BENEATH`; this test pins
+        // the existing-path branch the widening relies on.)
+        let module = tempfile::TempDir::new().expect("module tempdir");
+        let outside = tempfile::TempDir::new().expect("outside tempdir");
+        let module_root = module.path().canonicalize().expect("canonicalise module");
+        let outside_root = outside.path().canonicalize().expect("canonicalise outside");
+        // Build a traversal that canonicalises out of the module tree by
+        // walking up to the shared tempdir parent and back down into the
+        // sibling temp directory.
+        let escape = format!(
+            "{}/../{}",
+            module_root.display(),
+            outside_root
+                .file_name()
+                .expect("outside basename")
+                .to_string_lossy(),
+        );
+        let result = classify_client_path_against_module(&escape, &module_root);
+        assert!(matches!(result, Err(())));
     }
 }
