@@ -29,8 +29,9 @@ impl ReceiverContext {
     /// scans for entries not present in the source list and removes them. Directories
     /// are removed recursively (depth-first).
     ///
-    /// Uses tokio `spawn_blocking` + semaphore for parallel directory scanning when
-    /// directory count exceeds threshold. When `max_delete` is set, an atomic counter
+    /// Uses `crate::parallel_io::map_blocking` (rayon's work-stealing pool) for
+    /// parallel directory scanning when the directory count exceeds the
+    /// `ParallelOp::Deletion` threshold. When `max_delete` is set, an atomic counter
     /// enforces the deletion limit across all parallel workers. Protect/risk filter
     /// rules are evaluated via `FilterChain::allows_deletion()` before each deletion.
     ///

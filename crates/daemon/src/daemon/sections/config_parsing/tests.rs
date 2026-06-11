@@ -2204,4 +2204,126 @@ mod config_parsing_tests {
         assert_eq!(result.modules[0].path, PathBuf::from("/"));
         assert!(result.modules[0].use_chroot);
     }
+
+    /// `&include` of a missing file must name the unresolved path. The error
+    /// surfaces the include site (parent file + line) and the underlying I/O
+    /// failure rather than the generic `expected 'key = value'` rejection.
+    #[test]
+    fn parse_amp_include_missing_file_reports_path() {
+        let dir = TempDir::new().expect("create temp dir");
+        let missing = dir.path().join("does_not_exist.conf");
+
+        let main_config = format!("&include {}\n", missing.display());
+        let main_file = write_config(&main_config);
+
+        let err = parse_config_modules(main_file.path()).expect_err("should fail");
+        let message = err.to_string();
+        assert!(
+            message.contains(&missing.display().to_string()),
+            "error must name the missing include path: {message}"
+        );
+        assert!(
+            message.contains("&include"),
+            "error must name the &include directive: {message}"
+        );
+        assert!(
+            !message.contains("expected 'key = value'"),
+            "error must not fall back to the generic key=value rejection: {message}"
+        );
+    }
+
+    /// Circular includes spelled with the upstream `&include` syntax must be
+    /// detected and the offending file path must appear in the error.
+    #[test]
+    fn parse_amp_include_circular_detected() {
+        let dir = TempDir::new().expect("create temp dir");
+        let parent_path = dir.path().join("parent.conf");
+        let child_path = dir.path().join("child.conf");
+
+        let parent_content = format!("&include {}\n", child_path.display());
+        let child_content = format!("&include {}\n", parent_path.display());
+        fs::write(&parent_path, &parent_content).expect("write parent");
+        fs::write(&child_path, &child_content).expect("write child");
+
+        let err = parse_config_modules(&parent_path).expect_err("should fail");
+        let message = err.to_string();
+        assert!(
+            message.contains("recursive include"),
+            "error must flag the recursive include: {message}"
+        );
+        assert!(
+            message.contains(&parent_path.display().to_string())
+                || message.contains(
+                    &parent_path
+                        .canonicalize()
+                        .unwrap_or_else(|_| parent_path.clone())
+                        .display()
+                        .to_string(),
+                ),
+            "error must name the offending file: {message}"
+        );
+    }
+
+    /// An `&include` directive placed after a module section is opened must
+    /// preserve declaration order: the parent module appears first, then any
+    /// modules pulled in by the included file.
+    #[test]
+    fn parse_amp_include_preserves_module_order() {
+        let dir = TempDir::new().expect("create temp dir");
+        let parent_path = dir.path().join("parent");
+        let child_path = dir.path().join("child");
+        let inc_path = dir.path().join("inc.conf");
+        fs::create_dir(&parent_path).expect("create parent dir");
+        fs::create_dir(&child_path).expect("create child dir");
+
+        let included = format!("[child_mod]\npath = {}\n", child_path.display());
+        fs::write(&inc_path, &included).expect("write included");
+
+        let main_config = format!(
+            "[parent_mod]\npath = {}\n&include {}\n",
+            parent_path.display(),
+            inc_path.display(),
+        );
+        let main_file = write_config(&main_config);
+
+        let result = parse_config_modules(main_file.path()).expect("parse succeeds");
+        assert_eq!(result.modules.len(), 2);
+        assert_eq!(result.modules[0].name, "parent_mod");
+        assert_eq!(result.modules[1].name, "child_mod");
+    }
+
+    /// `&merge` shares the inclusion path with `&include`; missing-file errors
+    /// must name both the `&merge` directive and the unresolved path.
+    #[test]
+    fn parse_amp_merge_missing_file_reports_path() {
+        let dir = TempDir::new().expect("create temp dir");
+        let missing = dir.path().join("absent.inc");
+
+        let main_config = format!("&merge {}\n", missing.display());
+        let main_file = write_config(&main_config);
+
+        let err = parse_config_modules(main_file.path()).expect_err("should fail");
+        let message = err.to_string();
+        assert!(
+            message.contains(&missing.display().to_string()),
+            "error must name the missing merge path: {message}"
+        );
+        assert!(
+            message.contains("&merge"),
+            "error must name the &merge directive: {message}"
+        );
+    }
+
+    /// An empty `&include` value reports the directive the user wrote so
+    /// `&include\n` does not masquerade as a legacy `include =` failure.
+    #[test]
+    fn parse_amp_include_empty_value_names_directive() {
+        let file = write_config("&include =\n");
+        let err = parse_config_modules(file.path()).expect_err("should fail");
+        let message = err.to_string();
+        assert!(
+            message.contains("'&include'") && message.contains("must not be empty"),
+            "error must name the &include directive: {message}"
+        );
+    }
 }

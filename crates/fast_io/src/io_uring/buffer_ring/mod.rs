@@ -50,7 +50,7 @@
 //! 2. **Classic provide-buffers** (Linux 5.6+, `IORING_OP_PROVIDE_BUFFERS`
 //!    opcode 31, or `IORING_REGISTER_BUFFERS` opcode 0) - pre-registered
 //!    buffer pool with per-SQE selection. See
-//!    [`super::registered_buffers::RegisteredBufferGroup`].
+//!    [`crate::io_uring::registered_buffers::RegisteredBufferGroup`].
 //! 3. **Standard `read(2)` / `write(2)`** (any kernel) - the
 //!    `traits::StdFileReader` / `traits::StdFileWriter` fallback used when
 //!    io_uring is unavailable entirely.
