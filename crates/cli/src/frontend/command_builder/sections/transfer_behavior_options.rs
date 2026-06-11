@@ -167,7 +167,23 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                          supports io_uring.",
                     )
                     .action(ArgAction::SetTrue)
-                    .overrides_with("io-uring"),
+                    .overrides_with("io-uring")
+                    .overrides_with("no-io-uring-sqpoll"),
+            )
+            .arg(
+                Arg::new("no-io-uring-sqpoll")
+                    .long("no-io-uring-sqpoll")
+                    .help(
+                        "Keep io_uring on but suppress IORING_SETUP_SQPOLL \
+                         (policy=sqpoll-off). All other io_uring features \
+                         remain active. Use in rootless containers and \
+                         Kubernetes pods that cannot grant CAP_SYS_NICE: \
+                         guarantees the SQPOLL kthread is never requested \
+                         instead of relying on the EPERM fallback.",
+                    )
+                    .action(ArgAction::SetTrue)
+                    .overrides_with("io-uring")
+                    .overrides_with("no-io-uring"),
             )
             .arg(
                 Arg::new("io-uring-depth")

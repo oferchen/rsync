@@ -66,8 +66,10 @@ pub fn spawn_disk_thread(config: DiskCommitConfig) -> DiskThreadHandle {
 /// Attempts to create an io_uring batch writer based on the configured policy.
 ///
 /// Returns `Some` on Linux 5.6+ when the `io_uring` feature is enabled and
-/// the policy is `Auto` or `Enabled`. Returns `None` when io_uring is
-/// unavailable or the policy is `Disabled`.
+/// the policy is `Auto`, `Enabled`, or `SqpollOff`. Returns `None` when
+/// io_uring is unavailable or the policy is `Disabled`. `SqpollOff` keeps
+/// io_uring active but suppresses `IORING_SETUP_SQPOLL` via the process-wide
+/// gate set by the CLI parser.
 ///
 /// The optional `depth` overrides [`fast_io::IoUringConfig::sq_entries`] when
 /// provided, mirroring the `--io-uring-depth=N` CLI tunable.
@@ -81,7 +83,9 @@ fn try_create_disk_batch(
     }
     match policy {
         fast_io::IoUringPolicy::Disabled => None,
-        fast_io::IoUringPolicy::Auto => fast_io::IoUringDiskBatch::try_new(&config),
+        fast_io::IoUringPolicy::Auto | fast_io::IoUringPolicy::SqpollOff => {
+            fast_io::IoUringDiskBatch::try_new(&config)
+        }
         fast_io::IoUringPolicy::Enabled => {
             // Enabled policy: try to create, but log and proceed if it fails.
             // The caller explicitly requested io_uring, so we attempt it but
@@ -119,6 +123,24 @@ fn log_io_uring_status(policy: fast_io::IoUringPolicy, batch_created: bool) {
                 1,
                 "io_uring disabled by --no-io-uring, using standard I/O"
             );
+        }
+        fast_io::IoUringPolicy::SqpollOff => {
+            if batch_created {
+                debug_log!(
+                    Io,
+                    1,
+                    "disk I/O: {} (SQPOLL suppressed by --no-io-uring-sqpoll)",
+                    fast_io::io_uring_availability_reason()
+                );
+            } else {
+                debug_log!(
+                    Io,
+                    1,
+                    "disk I/O: {} (SQPOLL suppressed by --no-io-uring-sqpoll), \
+                     using standard I/O fallback",
+                    fast_io::io_uring_availability_reason()
+                );
+            }
         }
         fast_io::IoUringPolicy::Auto | fast_io::IoUringPolicy::Enabled => {
             if batch_created {
