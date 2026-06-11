@@ -18,7 +18,7 @@
 //!   [`IoUringConfig`].
 //! - [`acquire`](SessionRingPool::acquire) returns a [`RingLease`] that
 //!   dereferences to the underlying `IoUring`. Selection is round-robin via a
-//!   single relaxed [`AtomicUsize`] - the contention point at high concurrency
+//!   single relaxed `AtomicUsize` - the contention point at high concurrency
 //!   is the per-ring mutex, not the selector.
 //!
 //! Two pool primitives live in this module:
