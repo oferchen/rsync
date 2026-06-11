@@ -168,17 +168,17 @@ fn finish_module_builder(
         .global_secrets_file
         .as_ref()
         .map(|(p, _)| p.as_path())
-        .or_else(|| state.inherited_secrets_file.as_deref());
+        .or(state.inherited_secrets_file.as_deref());
     let default_incoming = state
         .global_incoming_chmod
         .as_ref()
         .map(|(value, _)| value.as_str())
-        .or_else(|| state.inherited_incoming_chmod.as_deref());
+        .or(state.inherited_incoming_chmod.as_deref());
     let default_outgoing = state
         .global_outgoing_chmod
         .as_ref()
         .map(|(value, _)| value.as_str())
-        .or_else(|| state.inherited_outgoing_chmod.as_deref());
+        .or(state.inherited_outgoing_chmod.as_deref());
     let default_use_chroot = state
         .global_use_chroot
         .as_ref()
