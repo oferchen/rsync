@@ -443,6 +443,7 @@ pub(super) fn convert_server_stats_to_summary(
 
     let (local_summary, io_error, error_count) = match stats {
         ServerStats::Receiver(ref transfer_stats) => {
+            // SSH-pull: local side ran the receiver and its `--delete` sweep.
             let s = LocalCopySummary::from_receiver_stats(
                 transfer_stats.files_listed,
                 transfer_stats.files_transferred,
@@ -452,15 +453,19 @@ pub(super) fn convert_server_stats_to_summary(
                 elapsed,
                 transfer_stats.literal_data,
                 transfer_stats.matched_data,
+                u64::from(transfer_stats.delete_stats.total()),
             );
             (s, transfer_stats.io_error, transfer_stats.error_count)
         }
         ServerStats::Generator(ref generator_stats) => {
+            // SSH-push: local side ran the sender/generator; the remote
+            // receiver reported its delete counters via `NDX_DEL_STATS`.
             let s = LocalCopySummary::from_generator_stats(
                 generator_stats.files_listed,
                 generator_stats.files_transferred,
                 generator_stats.bytes_sent,
                 elapsed,
+                u64::from(generator_stats.delete_stats.total()),
             );
             (s, generator_stats.io_error, 0u32)
         }

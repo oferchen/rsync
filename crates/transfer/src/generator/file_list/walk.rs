@@ -126,6 +126,23 @@ impl GeneratorContext {
     ) -> io::Result<()> {
         let relative = path.strip_prefix(base).unwrap_or(&path).to_path_buf();
 
+        // upstream: flist.c:2338-2349 - non-relative single-file sources split
+        // on the last `/` so the wire-side relative name is just the basename
+        // (`fn` in upstream's terminology). When base == path for a regular
+        // file, our `strip_prefix` would otherwise leave `relative` empty and
+        // the receiver would write the bytes into the destination directory's
+        // own name slot, producing an empty / corrupt entry. Restoring the
+        // basename here matches upstream's daemon-mode `chdir(dir); link_stat(fn)`
+        // ordering for the sub-path pull case (e.g. `rsync rsync://h/m/a/b/f`).
+        let relative = if relative.as_os_str().is_empty() && !metadata.is_dir() {
+            match path.file_name() {
+                Some(name) => PathBuf::from(name),
+                None => relative,
+            }
+        } else {
+            relative
+        };
+
         // upstream: flist.c:2287 - always emit "." with XMIT_TOP_DIR for the
         // root transfer directory. Enables delete_in_dir() when --delete is active.
         if relative.as_os_str().is_empty() && metadata.is_dir() {
