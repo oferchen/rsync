@@ -1825,6 +1825,12 @@ mod module_access_tests {
     // (URV-5.a): a malicious client must never get as far as causing the
     // receiver to attempt an open() on `../../etc`.
 
+    // The `/etc`-shaped fixtures below are inherently Unix-absolute. On
+    // Windows `/etc` is a relative path, so the lexical helper skips it
+    // (DirSandbox is the authoritative gate there). Gate these cases to
+    // Unix; portable shapes (relative paths, Windows drive-letter forms,
+    // UNC extended-length prefixes) are covered separately below.
+    #[cfg(unix)]
     #[test]
     fn find_outside_module_path_rejects_alt_basis_absolute_escape() {
         let module_dir = tempfile::tempdir().unwrap();
@@ -1858,6 +1864,7 @@ mod module_access_tests {
         assert!(find_outside_module_path(&args, &module_root).is_none());
     }
 
+    #[cfg(unix)]
     #[test]
     fn find_outside_module_path_rejects_alt_basis_long_form_spelling() {
         // upstream sends `--compare-destination` / `--copy-destination` /
@@ -1882,6 +1889,7 @@ mod module_access_tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn find_outside_module_path_separate_arg_form_is_recognised() {
         // Both `--copy-dest=/etc` and `--copy-dest /etc` must be caught -
@@ -1898,5 +1906,386 @@ mod module_access_tests {
             .expect("expected --link-dest /etc to be rejected");
         assert_eq!(flag, "--link-dest");
         assert_eq!(raw_path, "/etc");
+    }
+
+    // URV-5.b.1 corpus extension (EDG-PathTraversal):
+    //
+    // Each case below models an attacker trying to slip a path-traversal
+    // payload past the `find_outside_module_path` lexical pre-check on the
+    // way to an out-of-module basis directory (`--copy-dest`, `--link-dest`,
+    // `--compare-dest`, plus their `--*-destination` long-form spellings).
+    //
+    // Two-layer defense intent (URV-5.b.1.f):
+    //
+    //   1. Lexical pre-check (this helper). Catches absolute paths that
+    //      canonicalize outside the module root before the daemon ever
+    //      opens a basis handle. Cheap, descriptive `@ERROR` reply.
+    //
+    //   2. `DirSandbox` open-time enforcement (URV-5.a). Catches anything
+    //      the lexical layer can't statically prove escapes - notably
+    //      relative paths, which are skipped here on purpose because they
+    //      either resolve under the module root or (post-chroot) under the
+    //      current working directory and so cannot lexically escape. The
+    //      kernel-level openat-time check is the authoritative gate for
+    //      those cases.
+    //
+    // The relative-escape group below therefore asserts `None` (lexical
+    // layer correctly skips) and documents that the second layer is the
+    // authoritative defense. The absolute / canonicalising groups assert
+    // `Some` (lexical layer rejects directly).
+
+    #[test]
+    fn find_outside_module_path_relative_escape_dotdot_is_skipped_for_second_layer() {
+        // `../etc` is a relative path. The lexical helper skips it on
+        // purpose - it cannot statically prove escape, and inside the
+        // daemon's chroot the path resolves relative to the module CWD.
+        // The DirSandbox open-time check (URV-5.a) is the authoritative
+        // gate for this class.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+        let args = vec![
+            "--server".to_owned(),
+            "--copy-dest=../etc".to_owned(),
+            ".".to_owned(),
+        ];
+        assert!(find_outside_module_path(&args, &module_root).is_none());
+    }
+
+    #[test]
+    fn find_outside_module_path_relative_escape_dot_dotdot_is_skipped_for_second_layer() {
+        // `./../etc` - same shape as `../etc` after one no-op `./` prefix.
+        // Relative, skipped lexically, caught by DirSandbox.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+        let args = vec![
+            "--server".to_owned(),
+            "--copy-dest=./../etc".to_owned(),
+            ".".to_owned(),
+        ];
+        assert!(find_outside_module_path(&args, &module_root).is_none());
+    }
+
+    #[test]
+    fn find_outside_module_path_relative_escape_subdir_dotdot_chain_is_skipped() {
+        // `subdir/../../etc` - net effect after lexical reduction is
+        // `../etc`, but the helper does not reduce relative paths. It
+        // skips them and lets DirSandbox enforce containment at open-time.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+        let args = vec![
+            "--server".to_owned(),
+            "--copy-dest=subdir/../../etc".to_owned(),
+            ".".to_owned(),
+        ];
+        assert!(find_outside_module_path(&args, &module_root).is_none());
+    }
+
+    #[test]
+    fn find_outside_module_path_relative_zigzag_dotdot_chain_is_skipped() {
+        // `subdir/../subdir/../etc` - zig-zag that lexically reduces to
+        // `etc` (in-module). Even without that reduction, the helper
+        // skips relative paths. Two-layer defense applies.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+        let args = vec![
+            "--server".to_owned(),
+            "--copy-dest=subdir/../subdir/../etc".to_owned(),
+            ".".to_owned(),
+        ];
+        assert!(find_outside_module_path(&args, &module_root).is_none());
+    }
+
+    #[test]
+    fn find_outside_module_path_deeply_chained_dotdot_is_skipped() {
+        // `./.././.././etc` - deeply chained back-traversal with
+        // interleaved no-op `./` segments. Still relative, still skipped
+        // lexically, still caught by DirSandbox at open-time.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+        let args = vec![
+            "--server".to_owned(),
+            "--copy-dest=./.././.././etc".to_owned(),
+            ".".to_owned(),
+        ];
+        assert!(find_outside_module_path(&args, &module_root).is_none());
+    }
+
+    #[test]
+    fn find_outside_module_path_relative_inmodule_subdir_is_accepted() {
+        // Sanity check the second-layer contract: a relative path that
+        // genuinely resolves inside the module (`subdir/intra`) is
+        // accepted lexically. DirSandbox would also accept it at
+        // open-time because it stays under the module root.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+        let args = vec![
+            "--server".to_owned(),
+            "--copy-dest=subdir/intra-module-dir".to_owned(),
+            ".".to_owned(),
+        ];
+        assert!(find_outside_module_path(&args, &module_root).is_none());
+    }
+
+    #[test]
+    fn find_outside_module_path_invalid_utf8_prefix_does_not_panic() {
+        // Defense-in-depth: a client that smuggles a raw-byte prefix in
+        // front of `..` must not be able to crash the daemon. The helper
+        // takes `&[String]`, so byte sequences arrive after a lossy
+        // round-trip through `String::from_utf8_lossy` (rsync arg parsing
+        // is UTF-8 on the wire). We model the worst case here - the
+        // helper must run to completion without panicking on the
+        // canonicalize path. The actual containment of the resolved
+        // path is enforced by the DirSandbox at open-time.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+        let weird = String::from_utf8_lossy(b"\xff\xfe..").into_owned();
+        let args = vec![
+            "--server".to_owned(),
+            format!("--copy-dest={weird}/etc"),
+            ".".to_owned(),
+        ];
+        // We only require no panic. The resulting path is relative
+        // (no leading `/`), so the lexical layer skips it; DirSandbox
+        // is the authoritative gate.
+        let _ = find_outside_module_path(&args, &module_root);
+    }
+
+    #[test]
+    fn find_outside_module_path_double_slash_absolute_is_rejected() {
+        // `//etc` is absolute on Unix (POSIX permits implementation-
+        // defined handling of a leading `//`, but `Path::is_relative()`
+        // returns false). Canonicalizes to `/etc`, outside the module.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+        let args = vec![
+            "--server".to_owned(),
+            "--copy-dest=//etc".to_owned(),
+            ".".to_owned(),
+        ];
+        #[cfg(unix)]
+        {
+            let (flag, raw_path) = find_outside_module_path(&args, &module_root)
+                .expect("expected --copy-dest=//etc to be rejected");
+            assert_eq!(flag, "--copy-dest");
+            assert_eq!(raw_path, "//etc");
+        }
+        #[cfg(not(unix))]
+        {
+            // On Windows `//etc` is a UNC-style fragment; behaviour is
+            // platform-specific. Just require no panic.
+            let _ = find_outside_module_path(&args, &module_root);
+        }
+    }
+
+    #[test]
+    fn find_outside_module_path_trailing_slash_absolute_is_rejected() {
+        // `/etc/` differs from `/etc` only by a trailing separator. Must
+        // still be rejected - the trailing slash is cosmetic and does
+        // not change containment.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+        let args = vec![
+            "--server".to_owned(),
+            "--copy-dest=/etc/".to_owned(),
+            ".".to_owned(),
+        ];
+        #[cfg(unix)]
+        {
+            let (flag, raw_path) = find_outside_module_path(&args, &module_root)
+                .expect("expected --copy-dest=/etc/ to be rejected");
+            assert_eq!(flag, "--copy-dest");
+            assert_eq!(raw_path, "/etc/");
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = find_outside_module_path(&args, &module_root);
+        }
+    }
+
+    #[test]
+    fn find_outside_module_path_relative_with_embedded_double_slash_is_skipped() {
+        // `./etc//../etc` - relative path with cosmetic double separator
+        // and an embedded `..`. Lexically still relative, so the helper
+        // skips it. DirSandbox enforces containment at open-time.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+        let args = vec![
+            "--server".to_owned(),
+            "--copy-dest=./etc//../etc".to_owned(),
+            ".".to_owned(),
+        ];
+        assert!(find_outside_module_path(&args, &module_root).is_none());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn find_outside_module_path_windows_drive_forward_slash_is_rejected() {
+        // `C:/etc` - drive-letter absolute with forward slashes. Must
+        // be rejected on Windows.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+        let args = vec![
+            "--server".to_owned(),
+            "--copy-dest=C:/etc".to_owned(),
+            ".".to_owned(),
+        ];
+        let (flag, raw_path) = find_outside_module_path(&args, &module_root)
+            .expect("expected --copy-dest=C:/etc to be rejected");
+        assert_eq!(flag, "--copy-dest");
+        assert_eq!(raw_path, "C:/etc");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn find_outside_module_path_windows_drive_backslash_is_rejected() {
+        // `C:\etc` - drive-letter absolute with native backslashes.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+        let args = vec![
+            "--server".to_owned(),
+            "--copy-dest=C:\\etc".to_owned(),
+            ".".to_owned(),
+        ];
+        let (flag, raw_path) = find_outside_module_path(&args, &module_root)
+            .expect("expected --copy-dest=C:\\etc to be rejected");
+        assert_eq!(flag, "--copy-dest");
+        assert_eq!(raw_path, "C:\\etc");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn find_outside_module_path_windows_extended_path_prefix_is_rejected() {
+        // `\\?\C:\etc` - extended-length path prefix that bypasses
+        // MAX_PATH normalisation. Must still be caught.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+        let args = vec![
+            "--server".to_owned(),
+            "--copy-dest=\\\\?\\C:\\etc".to_owned(),
+            ".".to_owned(),
+        ];
+        let (flag, raw_path) = find_outside_module_path(&args, &module_root)
+            .expect("expected --copy-dest=\\\\?\\C:\\etc to be rejected");
+        assert_eq!(flag, "--copy-dest");
+        assert_eq!(raw_path, "\\\\?\\C:\\etc");
+    }
+
+    // URV-5.b.1.f layered-defense edges (EDG-PathTraversal.3 / .4 / .5):
+    //
+    // Pin the contract surface where layer 1 (`find_outside_module_path`
+    // lexical pre-check) deliberately yields to layer 2 (`DirSandbox`
+    // open-time enforcement, URV-5.a) or accepts paths that are not escape
+    // attempts. The header above (URV-5.b.1 corpus extension) covers the
+    // two layers in detail; this block locks three specific edges that
+    // would otherwise drift into either false-positive (over-rejection of
+    // identity / missing paths) or silent-skip ambiguity (relative
+    // symlink chains).
+    //
+    //   .3: symlink-chain attack via a relative basis - layer 1 accepts
+    //       lexically (the path is relative), layer 2 must reject at
+    //       openat time when the symlink resolves outside the module.
+    //   .4: identity (`--copy-dest=.` and `--copy-dest=<module-root-abs>`)
+    //       must not be over-rejected.
+    //   .5: missing relative paths (basis directory that does not exist
+    //       yet) must not be lexically rejected - the receiver handles
+    //       ENOENT semantics separately.
+    //
+    // The .3 test does not drive layer 2 directly (that would require a
+    // full daemon stack); it documents the layered-defense WIRE that the
+    // URV-5.a / SEC-1.q regression suites exercise end-to-end.
+
+    #[test]
+    fn find_outside_module_path_symlink_chain_via_alt_basis_is_skipped_for_second_layer() {
+        // EDG-PathTraversal.3. Create an in-module symlink whose target
+        // resolves outside the module root. A client requesting
+        // `--copy-dest=safe_looking` passes a *relative* path, so the
+        // lexical layer (this helper) skips it - exactly as documented in
+        // the URV-5.b.1 corpus extension header. The runtime defense
+        // (DirSandbox / RESOLVE_BENEATH, URV-5.a) is what rejects the
+        // symlink chain at openat time when the receiver tries to open
+        // the basis handle.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+
+        // The symlink target only needs to exist as a path string; we
+        // never open it from this test. The lexical-skip contract holds
+        // regardless of whether the symlink is creatable: the helper does
+        // not stat or open relative paths.
+        #[cfg(unix)]
+        {
+            let symlink_path = module_root.join("safe_looking");
+            std::os::unix::fs::symlink("/etc/passwd", &symlink_path).unwrap();
+        }
+
+        let args = vec![
+            "--server".to_owned(),
+            "--copy-dest=safe_looking".to_owned(),
+            ".".to_owned(),
+        ];
+
+        // Layer 1: relative path, lexical skip. The helper returns None.
+        assert!(
+            find_outside_module_path(&args, &module_root).is_none(),
+            "lexical layer must accept relative paths; symlink-chain rejection \
+             is the DirSandbox open-time contract (URV-5.a / SEC-1.q)",
+        );
+    }
+
+    #[test]
+    fn find_outside_module_path_identity_alt_basis_is_accepted() {
+        // EDG-PathTraversal.4. Two identity spellings of "the basis is
+        // the module root itself" must both be accepted:
+        //
+        //   --copy-dest=.                 (relative dot)
+        //   --copy-dest=<module-root-abs> (absolute, canonicalises to
+        //                                  module_root - starts_with passes)
+        //
+        // Over-rejecting either form would break legitimate
+        // module-root-relative copy-dest setups.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+
+        // Relative dot. Lexical layer skips relative paths.
+        let dot_args = vec![
+            "--server".to_owned(),
+            "--copy-dest=.".to_owned(),
+            ".".to_owned(),
+        ];
+        assert!(
+            find_outside_module_path(&dot_args, &module_root).is_none(),
+            "--copy-dest=. must be accepted (identity, relative)",
+        );
+
+        // Absolute module root. Canonicalises to itself; starts_with passes.
+        let explicit_args = vec![
+            "--server".to_owned(),
+            format!("--copy-dest={}", module_root.display()),
+            ".".to_owned(),
+        ];
+        assert!(
+            find_outside_module_path(&explicit_args, &module_root).is_none(),
+            "--copy-dest=<module_root absolute> must be accepted (identity, in-module)",
+        );
+    }
+
+    #[test]
+    fn find_outside_module_path_missing_relative_alt_basis_is_not_rejected() {
+        // EDG-PathTraversal.5. A relative basis path that does not yet
+        // exist (e.g. the receiver will create it during the transfer)
+        // must not be lexically rejected. ENOENT is handled by the
+        // receiver further down the pipeline; the validator's job is
+        // containment, not existence.
+        let module_dir = tempfile::tempdir().unwrap();
+        let module_root = module_dir.path().canonicalize().unwrap();
+        let args = vec![
+            "--server".to_owned(),
+            "--copy-dest=nonexistent-dir".to_owned(),
+            ".".to_owned(),
+        ];
+        assert!(
+            find_outside_module_path(&args, &module_root).is_none(),
+            "missing relative path must NOT be lexically rejected; \
+             receiver handles ENOENT separately",
+        );
     }
 }
