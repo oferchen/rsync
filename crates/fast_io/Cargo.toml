@@ -337,3 +337,16 @@ required-features = ["io_uring"]
 [[bench]]
 name = "copy_basis_range_delta"
 harness = false
+
+# Linux-only bench: URV-5.c.4 - per-connection Landlock setup overhead
+# measured at the `is_supported` probe + `restrict_to_module_paths` setup
+# layer (1 / 2 / 4 allowlist roots). Compiles to a no-op stub on non-Linux
+# hosts and when the `landlock` feature is off, so the bench list stays
+# cross-platform. Gates the URV-5.c.5 default-on flip; pair with the
+# macro-bench in `scripts/landlock_overhead_macro.sh` for the 100K-file
+# daemon receive comparison. See
+# docs/design/sec-1-p-landlock-defense-in-depth-2026-05-22.md for the
+# defense-in-depth rationale and PR #5601 for the allowlist widening.
+[[bench]]
+name = "landlock_overhead"
+harness = false
