@@ -1052,3 +1052,127 @@ fn server_writer_write_raw_clears_dirty() {
         "write_raw must clear dirty; subsequent flush must be a no-op"
     );
 }
+
+// UTS-9.REOPEN: under -zz daemon pull the receiver hangs waiting for the
+// compressor's closing block when the daemon-sender's goodbye sequence
+// flushes the multiplex layer with Z_SYNC_FLUSH alone. The fix is to drive
+// CompressedWriter::finish() before close so the zlib end-of-stream trailer
+// reaches the receiver. The receiver must be able to decompress the entire
+// payload via the standard CompressedReader path AND see a clean
+// end-of-stream so read_to_end returns the full payload without truncation.
+//
+// upstream: token.c:send_deflated_token() runs deflateEnd() at end of
+// session to emit the Z_FINISH-terminated stream.
+#[test]
+fn server_writer_finalize_compression_emits_zlib_eos_for_receiver() {
+    use crate::compressed_reader::CompressedReader;
+    use crate::reader::ServerReader;
+    use std::io::{Cursor, Read};
+
+    let payload = b"daemon-sender goodbye payload that exercises the zlib eos path";
+
+    let mut wire = Vec::new();
+    {
+        let mut writer = ServerWriter::new_plain(&mut wire)
+            .activate_multiplex()
+            .unwrap()
+            .activate_compression(CompressionAlgorithm::Zlib, CompressionLevel::Default)
+            .unwrap();
+        writer.write_all(payload).unwrap();
+        // Production parity: Z_SYNC_FLUSH at the goodbye site.
+        writer.flush().unwrap();
+        // The new code path: finish the codec before the socket closes.
+        writer.finalize_compression().unwrap();
+        // After finalisation the writer must be downgraded to Multiplex.
+        assert!(
+            matches!(writer, ServerWriter::Multiplex(_)),
+            "finalize_compression must downgrade Compressed to Multiplex so \
+             trailing diagnostic frames ride out before FIN"
+        );
+    }
+
+    assert!(!wire.is_empty(), "finalise must emit wire bytes");
+
+    let reader = ServerReader::new_plain(Cursor::new(wire));
+    let mut compressed_reader = CompressedReader::new(
+        reader.activate_multiplex().unwrap(),
+        CompressionAlgorithm::Zlib,
+    )
+    .unwrap();
+
+    // read_to_end mirrors the receiver's behaviour when the daemon-sender
+    // closes the socket: it must observe a clean zlib end-of-stream rather
+    // than spinning on an unfinished deflate block, which is what the
+    // 612411-byte cutoff symptom looks like in production.
+    let mut decompressed = Vec::new();
+    compressed_reader.read_to_end(&mut decompressed).unwrap();
+    assert_eq!(
+        &decompressed[..],
+        &payload[..],
+        "receiver-side CompressedReader must decode the full payload through \
+         the daemon-sender's finalised zlib stream"
+    );
+}
+
+#[test]
+fn server_writer_finalize_compression_is_idempotent_for_plain_and_multiplex() {
+    // finalize_compression on non-Compressed variants must reduce to a flush;
+    // the writer mode must be preserved so callers can always invoke it as a
+    // pre-close defense in depth.
+    let mut buf = Vec::new();
+    let mut plain = ServerWriter::new_plain(&mut buf);
+    plain.write_all(b"plain bytes").unwrap();
+    plain.finalize_compression().unwrap();
+    assert!(matches!(plain, ServerWriter::Plain(_)));
+    drop(plain);
+    assert_eq!(&buf, b"plain bytes");
+
+    let mut mux_buf = Vec::new();
+    {
+        let mut mux = ServerWriter::new_plain(&mut mux_buf)
+            .activate_multiplex()
+            .unwrap();
+        mux.write_all(b"mux bytes").unwrap();
+        mux.finalize_compression().unwrap();
+        assert!(matches!(mux, ServerWriter::Multiplex(_)));
+    }
+    assert!(
+        !mux_buf.is_empty(),
+        "finalise must drive the multiplex flush to the underlying stream"
+    );
+}
+
+#[test]
+fn server_writer_finalize_compression_round_trips_with_subsequent_raw_write() {
+    // After finalisation the writer is back in Multiplex mode and any
+    // diagnostic frame queued after goodbye still rides out before FIN.
+    use crate::compressed_reader::CompressedReader;
+    use crate::reader::ServerReader;
+    use std::io::{Cursor, Read};
+
+    let payload = b"payload that ends mid-goodbye";
+    let mut wire = Vec::new();
+    {
+        let mut writer = ServerWriter::new_plain(&mut wire)
+            .activate_multiplex()
+            .unwrap()
+            .activate_compression(CompressionAlgorithm::Zlib, CompressionLevel::Default)
+            .unwrap();
+        writer.write_all(payload).unwrap();
+        writer.flush().unwrap();
+        writer.finalize_compression().unwrap();
+        // Simulate a trailing un-compressed frame after the codec is done.
+        writer.flush().unwrap();
+    }
+
+    let reader = ServerReader::new_plain(Cursor::new(wire));
+    let mut compressed_reader = CompressedReader::new(
+        reader.activate_multiplex().unwrap(),
+        CompressionAlgorithm::Zlib,
+    )
+    .unwrap();
+
+    let mut decompressed = vec![0u8; payload.len()];
+    compressed_reader.read_exact(&mut decompressed).unwrap();
+    assert_eq!(&decompressed, payload);
+}
