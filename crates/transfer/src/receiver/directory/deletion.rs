@@ -119,7 +119,17 @@ impl ReceiverContext {
         // Collect deleted relative paths for post-parallel itemize emission.
         // The writer is not Send, so MSG_INFO frames are emitted sequentially
         // after parallel deletion completes.
-        let per_dir_results: Vec<(DeleteStats, Vec<PathBuf>)> = crate::parallel_io::map_blocking(
+        //
+        // EDG-SANDBOX.A: each worker also threads back an `Option<io::Error>`
+        // so a sandbox-class failure on `read_dir` is propagated to the
+        // outer caller instead of being silently coerced to empty stats.
+        // EACCES is the upstream-parity non-fatal class (matches
+        // `generator.c:delete_in_dir` where a permission failure leaves the
+        // directory alone and the io_error bit drives a non-zero exit);
+        // every other class (ELOOP from a chdir-symlink swap,
+        // EOPNOTSUPP/Unsupported from a sandbox-anchored refusal,
+        // ENOTDIR from a planted file on the scan target) is fail-loud.
+        let per_dir_results: Vec<(DeleteStats, Vec<PathBuf>, Option<io::Error>)> = crate::parallel_io::map_blocking(
             dirs_to_scan,
             self.parallel_thresholds
                 .for_op(crate::parallel_io::ParallelOp::Deletion),
@@ -132,7 +142,7 @@ impl ReceiverContext {
 
                 let keep = match dir_children.get(&dir_relative) {
                     Some(set) => set,
-                    None => return (DeleteStats::new(), Vec::new()),
+                    None => return (DeleteStats::new(), Vec::new(), None),
                 };
 
                 #[cfg(unix)]
@@ -156,13 +166,13 @@ impl ReceiverContext {
                         &dest_path,
                     ) {
                         Ok(iter) => iter,
-                        Err(_) => return (DeleteStats::new(), Vec::new()),
+                        Err(e) => return classify_scan_error(e),
                     }
                 };
                 #[cfg(not(unix))]
                 let read_dir_iter = match std::fs::read_dir(&dest_path) {
                     Ok(iter) => iter,
-                    Err(_) => return (DeleteStats::new(), Vec::new()),
+                    Err(e) => return classify_scan_error(e),
                 };
 
                 let mut stats = DeleteStats::new();
@@ -300,18 +310,28 @@ impl ReceiverContext {
                             }
                             deleted_paths.push(rel);
                         }
-                        Err(e) if e.kind() == io::ErrorKind::NotFound => {}
                         Err(e) => {
                             debug_log!(Del, 1, "failed to delete {}: {}", path.display(), e);
+                            // EDG-SANDBOX.B: same discriminator as the
+                            // scan-error helper. EACCES / NotFound are
+                            // upstream-parity non-fatal classes; every
+                            // other class (ELOOP/EOPNOTSUPP/ENOTDIR/EPERM)
+                            // is a security boundary the worker must
+                            // surface so the outer caller's `Err`
+                            // propagation produces a non-zero exit.
+                            if let Some(err) = fail_loud_unlink_error(e) {
+                                return (stats, deleted_paths, Some(err));
+                            }
                         }
                     }
                 }
-                (stats, deleted_paths)
+                (stats, deleted_paths, None)
             },
         );
 
         let mut combined = DeleteStats::new();
-        for (s, deleted_paths) in &per_dir_results {
+        let mut first_err: Option<io::Error> = None;
+        for (s, deleted_paths, worker_err) in &per_dir_results {
             combined.files = combined.files.saturating_add(s.files);
             combined.dirs = combined.dirs.saturating_add(s.dirs);
             combined.symlinks = combined.symlinks.saturating_add(s.symlinks);
@@ -325,6 +345,20 @@ impl ReceiverContext {
                     let _ = writer.send_msg_info(line.as_bytes());
                 }
             }
+
+            // EDG-SANDBOX.A/B: capture the first worker-reported error so it
+            // can be propagated after the parallel collection completes.
+            // Subsequent workers' errors are dropped because the caller only
+            // exits with one rc; the io_error bit is what surfaces the rest.
+            if first_err.is_none()
+                && let Some(e) = worker_err
+            {
+                first_err = Some(io::Error::new(e.kind(), e.to_string()));
+            }
+        }
+
+        if let Some(e) = first_err {
+            return Err(e);
         }
 
         // Limit is exceeded when we had candidates beyond the allowed count.
@@ -336,5 +370,140 @@ impl ReceiverContext {
         let limit_exceeded = max_delete.is_some_and(|limit| total_deletions >= limit);
 
         Ok((combined, limit_exceeded))
+    }
+}
+
+/// Classifies a `read_dir` failure inside the parallel deletion worker.
+///
+/// Returns the worker tuple with the error threaded into the third slot
+/// only when the error is fail-loud: ELOOP from a chdir-symlink swap,
+/// EOPNOTSUPP from a sandbox-anchored refusal, ENOTDIR from a planted
+/// file on the scan target, and every other non-EACCES/NotFound class.
+/// EACCES is the upstream-parity non-fatal class (matches
+/// `generator.c:delete_in_dir` where a permission failure leaves the
+/// directory alone and the io_error bit drives the non-zero exit).
+/// NotFound mirrors upstream's continue-on-vanished semantics: a
+/// directory that disappeared between the file-list snapshot and the
+/// scan is benign and must not stop the rest of the sweep.
+///
+/// # Upstream Reference
+///
+/// - `generator.c:delete_in_dir()` - "delete_in_dir: opendir failed"
+///   path classifies EACCES as non-fatal (io_error bit only) and every
+///   other class as a fatal scan failure.
+fn classify_scan_error(e: io::Error) -> (DeleteStats, Vec<std::path::PathBuf>, Option<io::Error>) {
+    match fail_loud_unlink_error(e) {
+        Some(err) => (DeleteStats::new(), Vec::new(), Some(err)),
+        None => (DeleteStats::new(), Vec::new(), None),
+    }
+}
+
+/// Classifies an unlink/scan failure as fail-loud or upstream-parity.
+///
+/// Returns `Some(e)` when the error class is a security boundary the
+/// receiver must surface as a non-zero exit (ELOOP from a TOCTOU swap,
+/// EOPNOTSUPP / `Unsupported` from a sandbox-anchored refusal, ENOTDIR
+/// from a planted file on the scan target, EPERM from a chattr-immutable
+/// target). Returns `None` for the upstream-parity non-fatal classes:
+/// EACCES (matches `delete.c:144-176 delete_item` where a permission
+/// failure increments the io_error bit and continues) and NotFound
+/// (matches the continue-on-vanished semantics).
+///
+/// # Upstream Reference
+///
+/// - `delete.c:144-176 delete_item` - EACCES is non-fatal; every other
+///   class is rsyserr+set_io_error()+continue, which drives a non-zero
+///   `g_exit_code = RERR_PARTIAL` via the io_error bit.
+fn fail_loud_unlink_error(e: io::Error) -> Option<io::Error> {
+    if e.kind() == io::ErrorKind::PermissionDenied || e.kind() == io::ErrorKind::NotFound {
+        None
+    } else {
+        Some(e)
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// EDG-SANDBOX.A/B contract test: discrimination between the
+    /// upstream-parity non-fatal classes (EACCES, NotFound) and the
+    /// fail-loud security boundaries (everything else).
+    ///
+    /// The pre-fix `Err(_) => debug_log!` and `Err(_) => return empty
+    /// stats` patterns dropped every class without distinction. The fix
+    /// routes EACCES/NotFound through the upstream-parity branch and
+    /// surfaces every other class as `Some(e)` so the outer collector
+    /// produces a non-zero `io::Result`.
+    #[test]
+    fn fail_loud_unlink_error_discriminates_by_class() {
+        // EACCES is the upstream-parity non-fatal branch.
+        // upstream: delete.c:144-176 delete_item - permission denied is
+        // non-fatal; the io_error bit drives the non-zero exit.
+        let eacces = io::Error::from(io::ErrorKind::PermissionDenied);
+        assert!(
+            fail_loud_unlink_error(eacces).is_none(),
+            "EACCES must take the upstream-parity non-fatal branch",
+        );
+
+        // NotFound matches upstream's continue-on-vanished semantics.
+        let enoent = io::Error::from(io::ErrorKind::NotFound);
+        assert!(
+            fail_loud_unlink_error(enoent).is_none(),
+            "NotFound must take the continue-on-vanished branch",
+        );
+
+        // ELOOP is the canonical fail-loud sandbox-class error: a
+        // mid-syscall symlink swap on the leaf surfaces as ELOOP under
+        // `openat2(RESOLVE_NO_SYMLINKS)` (Linux) and `openat(O_NOFOLLOW)`
+        // on the path-based fallback.
+        let eloop = io::Error::from_raw_os_error(libc::ELOOP);
+        let propagated = fail_loud_unlink_error(eloop)
+            .expect("ELOOP must surface as Err so the receiver exits non-zero");
+        assert_ne!(propagated.kind(), io::ErrorKind::PermissionDenied);
+        assert_ne!(propagated.kind(), io::ErrorKind::NotFound);
+
+        // ENOTDIR is the macOS/BSD fail-loud class produced when the
+        // sandbox finds a non-directory at the resolved path (a planted
+        // file at the scan target).
+        let enotdir = io::Error::from_raw_os_error(libc::ENOTDIR);
+        assert!(
+            fail_loud_unlink_error(enotdir).is_some(),
+            "ENOTDIR must surface as Err (planted-file-where-dir trap)",
+        );
+
+        // EOPNOTSUPP / `Unsupported` is the sandbox-anchored refusal
+        // class. The fix must propagate it instead of pretending the
+        // unlink succeeded.
+        let eopnotsupp = io::Error::from_raw_os_error(libc::EOPNOTSUPP);
+        assert!(
+            fail_loud_unlink_error(eopnotsupp).is_some(),
+            "EOPNOTSUPP must surface as Err (sandbox-anchored refusal)",
+        );
+    }
+
+    /// EDG-SANDBOX.A: the parallel worker's tuple-shape contract -
+    /// `classify_scan_error` reuses the same discrimination so a `read_dir`
+    /// failure routes through identical fail-loud / non-fatal logic as the
+    /// unlink path.
+    #[test]
+    fn classify_scan_error_threads_fail_loud_class() {
+        let eloop = io::Error::from_raw_os_error(libc::ELOOP);
+        let (stats, paths, worker_err) = classify_scan_error(eloop);
+        assert_eq!(stats.total(), 0);
+        assert!(paths.is_empty());
+        let err = worker_err.expect(
+            "ELOOP on read_dir must propagate as Err so the outer caller exits non-zero",
+        );
+        assert_ne!(err.kind(), io::ErrorKind::PermissionDenied);
+
+        // EACCES on the scan is the upstream-parity non-fatal branch -
+        // matches `generator.c:delete_in_dir` "opendir failed" path.
+        let eacces = io::Error::from(io::ErrorKind::PermissionDenied);
+        let (_stats, _paths, worker_err) = classify_scan_error(eacces);
+        assert!(
+            worker_err.is_none(),
+            "EACCES on scan must take the upstream-parity non-fatal branch",
+        );
     }
 }

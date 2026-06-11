@@ -85,9 +85,9 @@ impl ReceiverContext {
         }
 
         #[cfg(unix)]
-        self.create_symlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer);
+        self.create_symlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer)?;
         #[cfg(not(unix))]
-        self.create_symlinks(&setup.dest_dir, writer);
+        self.create_symlinks(&setup.dest_dir, writer)?;
 
         // Mirror `run_pipelined`: when `--delete` is in effect, sweep the
         // destination for extraneous entries and capture per-type counters.
@@ -194,9 +194,9 @@ impl ReceiverContext {
         }
 
         #[cfg(unix)]
-        self.create_hardlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer);
+        self.create_hardlinks(&setup.dest_dir, setup.sandbox.as_deref(), writer)?;
         #[cfg(not(unix))]
-        self.create_hardlinks(&setup.dest_dir, writer);
+        self.create_hardlinks(&setup.dest_dir, writer)?;
 
         // upstream: receiver.c:584-585 - handle_delayed_updates() at phase 2
         if !all_delayed_updates.is_empty() {
