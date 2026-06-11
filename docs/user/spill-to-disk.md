@@ -190,6 +190,97 @@ the result for 100 ms to avoid syscall overhead on the hot path. On macOS
 the probe is stubbed (returns zero), and on Windows it returns an error -
 both fall back to the byte-budget knob silently.
 
+## Expected spill rate per workload class
+
+Operators who enable spilling and see the one-shot spill warning (the
+ROB-3 "spill-to-disk activated" log line) need to know whether activation
+is expected for their workload or whether it points at a configuration
+problem. The table below sets the expectation per workload class. Numbers
+are spill activations (transitions from in-memory to disk) per transfer
+when spilling is enabled - not per file and not per chunk.
+
+| Workload | Expected spill (per transfer) | Notes |
+|----------|-------------------------------|-------|
+| Single small file | 0 | Well within the in-memory ring. Spill should never activate. |
+| 100 to 1K-file local transfer | 0 | Well within the ring. Spill should never activate. |
+| 100K-file local transfer, no parallel-receive-delta | 0 to 1 | Sequential path. Adversarial chunk ordering can produce a single spill burst; sustained spilling is not expected. |
+| 100K-file transfer with parallel-receive-delta | 0 to N | Depends on worker count and chunk arrival ordering. Each adversarial reorder window can trigger one activation. N scales with worker count, not file count. |
+| 1M-file transfer with INC_RECURSE | 0 to N | Natural pressure source. Multi-segment flists arriving while earlier segments are mid-transfer produce reorder pressure proportional to segment overlap. |
+| Adversarial workload (testsuite, fuzz, fault injection) | Many | Expected test condition. The reorder-buffer property tests deliberately exercise spill paths. |
+
+Rules of thumb:
+
+- **Expected 0**: if your workload is in this row and you see a spill warning,
+  this is a bug or a misconfiguration. File a report.
+- **Expected 0 to 1**: a single activation per transfer is acceptable. If
+  `spill_events` (see counters below) climbs above 1 for the transfer, treat
+  it like the "many" row.
+- **Expected 0 to N**: track `spill_events` over the transfer. If activations
+  increase faster than worker count or flist segment count, the byte
+  threshold is likely too low for the workload's reorder window.
+- **Many**: only adversarial workloads should land here. Production transfers
+  should not.
+
+The ring-cap formulas that drive this matrix are documented in the
+ROB-1 audit (`docs/audits/rob-1-reorder-ring-cap-audit.md`). The
+adaptive-ring rollout that will narrow the "0 to N" rows over time is
+specified in ROB-7 (`docs/design/rob-7-adaptive-reorder-ring.md`).
+
+## What to do if you see the spill warning
+
+The one-shot warning ("spill-to-disk activated") fires once per
+`SpillableReorderBuffer` instance on the first transition from in-memory to
+disk. It is informational, not an error - the transfer continues and
+completes correctly. Use this checklist to decide whether action is needed:
+
+1. **Is this workload in the "expected 0" class?** If yes, do not tune knobs.
+   File a bug with the transfer's command line, file count, worker count, and
+   the value of `spill_events` from the counters table. The warning indicates
+   a missed sizing assumption in the buffer or an unexpected reorder pattern,
+   not a runtime fault.
+
+2. **Is this workload in the "expected 0 to 1 / 0 to N" class?** Check the
+   `spill_events` counter (see "Diagnostic counters" below). If the counter
+   reads `1` for the transfer, the workload's reorder window briefly exceeded
+   the threshold once and spill did its job - no action needed. If the
+   counter climbs above 1 per worker, tune the knobs in step 3.
+
+3. **Is the workload in the "many" / adversarial class, or did step 2 produce
+   sustained activations?** Tune the configuration:
+
+   - Raise `--spill-threshold-bytes` / `OC_RSYNC_SPILL_THRESHOLD_BYTES` to
+     widen the in-memory budget before disk engages. Doubling the threshold
+     is a reasonable first step.
+   - Override `OC_RSYNC_REORDER_RING_CAP` (added in ROB-11) to grow the ring
+     itself, which delays threshold pressure. Use this when the reorder
+     window is wide (deep parallel pipelines, dense delta on a single large
+     file).
+   - Point `--spill-dir` / `OC_RSYNC_SPILL_DIR` at fast local storage
+     (NVMe, ramdisk). The default tempfile location is fine for occasional
+     spills but becomes the transfer bottleneck under sustained activation.
+   - For memory-constrained hosts that cannot raise the threshold, accept
+     the spill activations and confirm via the counters that `reload_events`
+     stays low (frequent reloads mean the hot-zone heuristic is losing,
+     not the threshold).
+
+4. **Confirm spill ran cleanly.** Check `spilled_items` is 0 at end of
+   transfer (all evictions reloaded successfully) and that the exit code is 0
+   or matches the upstream-rsync expectation for the operation. Spill never
+   silently changes wire output - a spill warning with a clean exit is by
+   design.
+
+## Cross-references
+
+- ROB-2 - spill-activations counter API (`SpillStats::spill_events`,
+  surfaced via `DeltaConsumerStats`).
+- ROB-3 - one-shot spill warning (the log line this section documents).
+- ROB-7 - adaptive reorder-ring sizing design that targets the "0 to N"
+  rows in the matrix above (`docs/design/rob-7-adaptive-reorder-ring.md`).
+- ROB-13 - CI bench cell that asserts spill activations stay at zero for
+  the "expected 0" workload classes.
+- ROB-1 - ring-cap formula audit that the workload-class matrix derives
+  from (`docs/audits/rob-1-reorder-ring-cap-audit.md`).
+
 ## Diagnostic counters
 
 When spilling is active, the buffer tracks the following counters (available
