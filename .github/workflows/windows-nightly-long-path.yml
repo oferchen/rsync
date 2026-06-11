@@ -1,0 +1,120 @@
+# Windows nightly long-path (\\?\) test cell (WCI-7 #3701).
+#
+# The required `Windows (stable)` cell in ci.yml does not link the
+# `protocol` crate's Windows-only `wire_path.rs` tests, even though
+# their `#[cfg(windows)]` gates were authored precisely to make them
+# run on Windows. WCI-1 (PR #5639, see
+# docs/audits/wci-1-windows-nextest-coverage-gap.md section 4.2)
+# inventoried four such tests:
+#
+#   - windows_backslash_is_translated_to_forward_slash
+#   - windows_deep_path_is_translated
+#   - windows_already_forward_slash_borrows
+#   - windows_mixed_separators_are_normalized
+#
+# These guard the wire-byte path-separator encoder used by every
+# `FileEntry` name emitted by an oc-rsync push from Windows. A
+# regression in this encoder silently corrupts every wire byte
+# carrying a path component, so the cost of a missing test cell is
+# disproportionate to the test's compile cost.
+#
+# This workflow also runs the WPC-5'.10 long-path metadata round-trip
+# integration tests (`long_path_acl_round_trip`,
+# `long_path_ads_round_trip` in `crates/metadata/tests/windows_long_path_metadata.rs`)
+# which fan a 600+ character path tree through ACL and ADS write/read
+# paths via `fast_io::to_extended_path`. The required Windows cell
+# does not exercise these because the `acl,xattr` feature combination
+# they require is not the default-features set that the per-PR
+# Windows matrix builds.
+#
+# Status: non-required (informational). Do not add to branch protection.
+# Promotion to required-on-PR is gated on a 14-day green bake window
+# per WCI-11 #3705.
+name: Windows nightly long-path
+
+on:
+  schedule:
+    # Nightly at 07:00 UTC. Offset from WCI-2 Windows IOCP (05:00 UTC)
+    # to keep the Windows runner pool uncontended and to spread
+    # nightly Windows wall-time across the runner schedule.
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: windows-nightly-long-path-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  RUST_BACKTRACE: "full"
+
+jobs:
+  windows-long-path:
+    name: Windows long-path (\\?\) round-trip
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-windows-long-path-cargo-v1-${{ hashFiles('**/Cargo.lock') }}
+          key: windows-nightly-long-path
+
+      - name: Install cargo-nextest (Windows direct download)
+        shell: pwsh
+        run: |
+          # Workaround for actions/partner-runner-images#169 on Windows.
+          $ErrorActionPreference = 'Stop'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
+          & "$cargoBin\cargo-nextest.exe" --version
+
+      # Filter targets the four WCI-1 audit-identified protocol-crate
+      # Windows tests in `crates/protocol/src/flist/wire_path.rs`. All
+      # four function names share the `windows_` prefix, so the
+      # `windows_` substring is the narrowest filter that activates
+      # exactly the set the audit flagged without pulling in unrelated
+      # Windows tests from other modules. Running with default features
+      # mirrors how the per-PR Windows cell would link the crate after
+      # WCI-11 promotion, surfacing any gating drift early.
+      - name: Run protocol wire_path Windows tests
+        run: cargo nextest run --locked -p protocol --no-fail-fast -E 'test(windows_)'
+
+      # Filter targets the WPC-5'.10 round-trip integration tests in
+      # `crates/metadata/tests/windows_long_path_metadata.rs`. The
+      # `long_path_` prefix scopes the run to the 600+ char fixtures
+      # (`long_path_acl_round_trip`, `long_path_ads_round_trip`) and
+      # excludes the unrelated long-path tests in `fast_io`, which are
+      # already covered by the WCI-2 IOCP cell. Both ACL and ADS
+      # surfaces require the corresponding feature flags to be active
+      # at compile time.
+      - name: Run metadata long-path round-trip tests
+        run: cargo nextest run --locked -p metadata --features acl,xattr --no-fail-fast -E 'test(long_path_)'
+
+      - name: Upload nextest logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-nightly-long-path-logs
+          path: |
+            target/nextest/**/*.log
+            target/nextest/**/*.xml
+          if-no-files-found: ignore
+          retention-days: 14
