@@ -154,7 +154,17 @@ impl ReceiverContext {
             // `ChmodModifiers`; we hand it to MetadataOptions so the existing
             // chmod-application site in `apply_permissions_with_chmod`
             // performs the rewrite without a separate code path.
-            .with_chmod(self.config.daemon_incoming_chmod.clone());
+            .with_chmod(self.config.daemon_incoming_chmod.clone())
+            // upstream: uidlist.c:recv_id_list() applies parsed --usermap /
+            // --groupmap rules at file-list receive time on the receiver.
+            // The daemon parsed the wire arg in `apply_long_form_args` and
+            // stashed the typed mapping on `ServerConfig`; hand it to
+            // `MetadataOptions` so `metadata::apply::ownership` consults it
+            // when remapping uid/gid before chown. Without this the wildcard
+            // spec `--groupmap=*:GID` from the client is silently dropped on
+            // daemon uploads (upstream regression #829 / daemon-groupmap-wild).
+            .with_user_mapping(self.config.user_mapping.clone())
+            .with_group_mapping(self.config.group_mapping.clone());
 
         let dest_arg = self.config.args.first();
         let trailing_slash = dest_arg.is_some_and(|arg| dest_arg_has_trailing_slash(arg));
