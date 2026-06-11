@@ -10,12 +10,15 @@
 //! - `skip` - quick-check skip detection and metadata-only reuse recording
 //! - `clonefile` - macOS APFS clonefile fast path (whole-file CoW)
 //! - `iouring` - Linux io_uring registered-buffer data-write fast path
+//! - `wincopy` - Windows `CopyFileExW` / ReFS reflink fast path
 
 #[cfg(target_os = "macos")]
 mod clonefile;
 #[cfg(all(target_os = "linux", feature = "iouring-data-writes"))]
 mod iouring;
 mod skip;
+#[cfg(target_os = "windows")]
+mod wincopy;
 
 use std::fs;
 use std::io::{Seek, SeekFrom};
@@ -172,6 +175,34 @@ pub(in crate::local_copy) fn execute_transfer(
         flags,
         copy_source_override.is_some(),
     ) && clonefile::try_clone(
+        context,
+        source,
+        destination,
+        metadata,
+        metadata_options.clone(),
+        record_path,
+        existing_metadata,
+        destination_previously_existed,
+        file_type,
+        relative,
+        mode,
+        flags,
+    )? {
+        return Ok(());
+    }
+
+    // Fast path: Windows CopyFileExW / ReFS reflink for new whole-file copies.
+    // Without this branch the executor falls into the generic read/write loop
+    // which on Windows degenerates into a synchronous 256 KiB ReadFile/WriteFile
+    // copy. The dispatcher hands large files COPY_FILE_NO_BUFFERING and
+    // attempts FSCTL_DUPLICATE_EXTENTS_TO_FILE on ReFS volumes first.
+    #[cfg(target_os = "windows")]
+    if wincopy::eligible(
+        context,
+        existing_metadata,
+        flags,
+        copy_source_override.is_some(),
+    ) && wincopy::try_copy(
         context,
         source,
         destination,
