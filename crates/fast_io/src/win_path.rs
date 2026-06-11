@@ -74,7 +74,10 @@ fn to_extended_path_windows(p: &Path) -> Cow<'_, Path> {
 
     if let Some(rest) = raw.strip_prefix(r"\\") {
         // UNC path: \\server\share\... -> \\?\UNC\server\share\...
-        let normalised: String = rest.chars().map(|c| if c == '/' { '\\' } else { c }).collect();
+        let normalised: String = rest
+            .chars()
+            .map(|c| if c == '/' { '\\' } else { c })
+            .collect();
         let mut buf = String::with_capacity(normalised.len() + 8);
         buf.push_str(r"\\?\UNC\");
         buf.push_str(&normalised);
@@ -82,7 +85,10 @@ fn to_extended_path_windows(p: &Path) -> Cow<'_, Path> {
     }
 
     if is_drive_letter_absolute(raw) {
-        let normalised: String = raw.chars().map(|c| if c == '/' { '\\' } else { c }).collect();
+        let normalised: String = raw
+            .chars()
+            .map(|c| if c == '/' { '\\' } else { c })
+            .collect();
         let mut buf = String::with_capacity(normalised.len() + 4);
         buf.push_str(r"\\?\");
         buf.push_str(&normalised);

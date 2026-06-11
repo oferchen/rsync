@@ -1270,8 +1270,7 @@ mod option_values {
     /// `Disabled`.
     #[test]
     fn no_io_uring_sqpoll_parses_to_sqpoll_off_variant() {
-        let parsed =
-            parse_test_args(["--no-io-uring-sqpoll", "src/", "dst/"]).expect("parse");
+        let parsed = parse_test_args(["--no-io-uring-sqpoll", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.io_uring_policy, fast_io::IoUringPolicy::SqpollOff);
         assert!(
             parsed.io_uring_policy.is_io_uring_active(),
@@ -1291,13 +1290,8 @@ mod option_values {
     /// on a single invocation without rewriting the wrapper.
     #[test]
     fn no_io_uring_sqpoll_overrides_no_io_uring() {
-        let parsed = parse_test_args([
-            "--no-io-uring",
-            "--no-io-uring-sqpoll",
-            "src/",
-            "dst/",
-        ])
-        .expect("parse");
+        let parsed = parse_test_args(["--no-io-uring", "--no-io-uring-sqpoll", "src/", "dst/"])
+            .expect("parse");
         assert_eq!(parsed.io_uring_policy, fast_io::IoUringPolicy::SqpollOff);
     }
 

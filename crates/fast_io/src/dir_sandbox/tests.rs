@@ -255,9 +255,7 @@ fn enter_through_symlink_to_outside_refuses() {
         .expect_err("symlink trap must be refused");
     let code = err.raw_os_error();
     assert!(
-        code == Some(libc::ELOOP)
-            || code == Some(libc::ENOTDIR)
-            || code == Some(libc::EXDEV),
+        code == Some(libc::ELOOP) || code == Some(libc::ENOTDIR) || code == Some(libc::EXDEV),
         "expected ELOOP, ENOTDIR, or EXDEV for symlink-to-outside trap, got: {err}"
     );
     // The descent stack must stay empty so the receiver's subsequent

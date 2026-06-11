@@ -785,7 +785,8 @@ mod tests {
         let mut pr = PipelinedReceiver::new(DiskCommitConfig {
             delay_updates: true,
             ..DiskCommitConfig::default()
-        }).unwrap();
+        })
+        .unwrap();
 
         pr.file_sender()
             .send(FileMessage::WholeFile {
@@ -846,7 +847,8 @@ mod tests {
         let mut pr = PipelinedReceiver::new(DiskCommitConfig {
             delay_updates: true,
             ..DiskCommitConfig::default()
-        }).unwrap();
+        })
+        .unwrap();
 
         pr.file_sender()
             .send(FileMessage::WholeFile {
@@ -897,7 +899,8 @@ mod tests {
         let mut pr = PipelinedReceiver::new(DiskCommitConfig {
             delay_updates: true,
             ..DiskCommitConfig::default()
-        }).unwrap();
+        })
+        .unwrap();
 
         pr.file_sender()
             .send(FileMessage::WholeFile {

@@ -76,7 +76,7 @@ fn install_filter(allowlist: &[i64]) -> io::Result<()> {
     )
     .map_err(|e| io::Error::other(e.to_string()))?;
     let prog: BpfProgram = TryInto::try_into(filter)
-        .map_err(|e: seccompiler::Error| io::Error::other(e.to_string()))?;
+        .map_err(|e: seccompiler::BackendError| io::Error::other(e.to_string()))?;
     apply_filter(&prog).map_err(|e| io::Error::other(e.to_string()))
 }
 

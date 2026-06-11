@@ -739,6 +739,8 @@ mod tests {
                 let _ = tx.send(42);
             })
             .expect("spawn thread");
-        handle.join().expect("thread should not panic on dropped rx");
+        handle
+            .join()
+            .expect("thread should not panic on dropped rx");
     }
 }

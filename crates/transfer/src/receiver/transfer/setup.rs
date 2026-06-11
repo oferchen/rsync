@@ -193,12 +193,7 @@ impl ReceiverContext {
             )
         })?;
         if created_dest_root {
-            debug_log!(
-                Recv,
-                1,
-                "created destination root {}",
-                dest_dir.display()
-            );
+            debug_log!(Recv, 1, "created destination root {}", dest_dir.display());
         }
 
         let acl_cache = if self.config.flags.acls {

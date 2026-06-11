@@ -205,8 +205,11 @@ fn ads_zone_identifier_round_trips_through_xattrs() {
         return;
     }
 
-    fs::write(ads_path(&src_file, ZONE_IDENTIFIER), ZONE_IDENTIFIER_PAYLOAD)
-        .expect("seed Zone.Identifier on source");
+    fs::write(
+        ads_path(&src_file, ZONE_IDENTIFIER),
+        ZONE_IDENTIFIER_PAYLOAD,
+    )
+    .expect("seed Zone.Identifier on source");
 
     let oc_rsync = match locate_oc_rsync() {
         Some(p) => p,
@@ -241,8 +244,8 @@ fn ads_zone_identifier_round_trips_through_xattrs() {
         "primary data stream diverged after transfer",
     );
 
-    let dst_ads = read_stream_bytes(&dst_file, ZONE_IDENTIFIER)
-        .expect("read dest Zone.Identifier stream");
+    let dst_ads =
+        read_stream_bytes(&dst_file, ZONE_IDENTIFIER).expect("read dest Zone.Identifier stream");
     assert_eq!(
         dst_ads, ZONE_IDENTIFIER_PAYLOAD,
         "Zone.Identifier ADS content diverged after transfer",
@@ -271,8 +274,11 @@ fn ads_multi_stream_round_trips() {
         return;
     }
 
-    fs::write(ads_path(&src_file, ZONE_IDENTIFIER), ZONE_IDENTIFIER_PAYLOAD)
-        .expect("seed Zone.Identifier on source");
+    fs::write(
+        ads_path(&src_file, ZONE_IDENTIFIER),
+        ZONE_IDENTIFIER_PAYLOAD,
+    )
+    .expect("seed Zone.Identifier on source");
     fs::write(ads_path(&src_file, CUSTOM_STREAM), CUSTOM_STREAM_PAYLOAD)
         .expect("seed custom stream on source");
 
@@ -335,8 +341,7 @@ fn ads_multi_stream_round_trips() {
         "Zone.Identifier ADS content diverged after transfer",
     );
 
-    let dst_custom =
-        read_stream_bytes(&dst_file, CUSTOM_STREAM).expect("read dest custom stream");
+    let dst_custom = read_stream_bytes(&dst_file, CUSTOM_STREAM).expect("read dest custom stream");
     assert_eq!(
         dst_custom, CUSTOM_STREAM_PAYLOAD,
         "custom ADS content diverged after transfer",

@@ -6,14 +6,12 @@
 //! fixtures so individual test cases can request a specific NTFS reparse
 //! shape and have it cleaned up automatically on drop:
 //!
-//! - [`DirSymlinkFixture`]    -> `mklink /d <link> <target>`
-//!                               (`IO_REPARSE_TAG_SYMLINK`)
-//! - [`JunctionFixture`]      -> `mklink /j <link> <target>`
-//!                               (`IO_REPARSE_TAG_MOUNT_POINT`, non-volume
-//!                               substitute-name)
-//! - [`MountPointFixture`]    -> `mountvol <link> <volume_guid>`
-//!                               (`IO_REPARSE_TAG_MOUNT_POINT`, volume
-//!                               substitute-name)
+//! - [`DirSymlinkFixture`] -> `mklink /d <link> <target>`
+//!   (`IO_REPARSE_TAG_SYMLINK`)
+//! - [`JunctionFixture`] -> `mklink /j <link> <target>`
+//!   (`IO_REPARSE_TAG_MOUNT_POINT`, non-volume substitute-name)
+//! - [`MountPointFixture`] -> `mountvol <link> <volume_guid>`
+//!   (`IO_REPARSE_TAG_MOUNT_POINT`, volume substitute-name)
 //!
 //! `mklink /d` and `mountvol` require either administrator privileges or
 //! Windows 10 developer mode; the fixtures surface the privilege failure as
