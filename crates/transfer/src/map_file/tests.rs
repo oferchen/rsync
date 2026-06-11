@@ -509,13 +509,15 @@ fn load_window_overlap_shrink_preserves_data() {
     assert_eq!(map.window_len, 4096);
 
     // Load 2: aligned_start=2048 (align_down(3000)), remaining=2952,
-    // window_size=min(4096, 2952)=2952. The overlap branch fires because
+    // window_size=min(4096, 2952)=2952. The requested range [3000, 4500)
+    // crosses the old window's end (4096), so `is_in_window` returns false
+    // and `load_window` is entered. The overlap branch fires because
     // [2048, 5000) overlaps [0, 4096) and extends past old_end. With the
     // never-shrink invariant in place, copy_within(2048..4096, 0) shifts
     // the tail of the old window in place; the trailing bytes are read
     // from disk into buffer[2048..2952]; window_len clamps to 2952.
-    let data = map.map_ptr(3000, 1000).unwrap();
-    let expected: Vec<u8> = (3000..4000).map(|i| (i % 256) as u8).collect();
+    let data = map.map_ptr(3000, 1500).unwrap();
+    let expected: Vec<u8> = (3000..4500).map(|i| (i % 256) as u8).collect();
     assert_eq!(data, &expected[..]);
     assert_eq!(map.window_start, 2048);
     assert_eq!(map.window_len, 2952);
