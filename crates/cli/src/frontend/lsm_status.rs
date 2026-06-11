@@ -114,9 +114,7 @@ fn seccomp_state() -> String {
         if let Some(rest) = line.strip_prefix("Seccomp:") {
             let value = rest.trim();
             return match value {
-                "0" => {
-                    "NOT applied (current process is the CLI, not a daemon worker)".to_owned()
-                }
+                "0" => "NOT applied (current process is the CLI, not a daemon worker)".to_owned(),
                 "1" => "strict mode (read/write/exit/sigreturn only)".to_owned(),
                 "2" => "filter mode (BPF allowlist installed)".to_owned(),
                 other => format!("kernel reports unrecognised mode '{other}'"),
