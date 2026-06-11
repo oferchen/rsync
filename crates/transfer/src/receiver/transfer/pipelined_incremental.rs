@@ -96,7 +96,6 @@ impl ReceiverContext {
         // upstream: generator.c:do_delete_pass()
         let mut delete_stats = DeleteStats::new();
         let mut delete_limit_exceeded = false;
-        let mut delete_io_error: i32 = 0;
         if self.config.flags.delete {
             let (ds, exceeded, io_bits) = self.delete_extraneous_files(
                 &setup.dest_dir,
@@ -106,8 +105,7 @@ impl ReceiverContext {
             )?;
             delete_stats = ds;
             delete_limit_exceeded = exceeded;
-            delete_io_error = io_bits;
-            stats.io_error |= delete_io_error;
+            stats.io_error |= io_bits;
             // Carry the counters into the receiver context so the goodbye
             // handshake can emit NDX_DEL_STATS to the peer sender. URV-6.b
             // landed the on-disk deletion but the counters were never
