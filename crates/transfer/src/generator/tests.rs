@@ -2524,6 +2524,66 @@ mod files_from {
         assert!(names.contains(&"."), "expected dot entry in {names:?}");
     }
 
+    #[test]
+    fn build_file_list_with_base_deduplicates_explicit_dir_and_child_file() {
+        // UTS-21 regression: when --files-from contains both an explicit
+        // directory (e.g. `dir/subdir`) and a file inside it (e.g.
+        // `dir/subdir/child.txt`), the directory must appear in the wire
+        // file list exactly ONCE. Upstream's `implied_filter_list` check
+        // (flist.c:998) rejects the second occurrence as
+        // "rejecting unrequested file-list name: dir/subdir", which broke
+        // upstream's `files-from.test` interop suite in the pull direction.
+        //
+        // The implied-parent loop previously emitted `dir/subdir` because it
+        // is the parent of `child.txt`, and the top-level walk emitted it
+        // again because it is also an explicit --files-from entry. The fix
+        // pre-populates the explicit-dir set so the implied-parent loop
+        // skips it, leaving the top-level walk as the single emission site.
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        let nested = src.join("dir").join("subdir");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("child.txt"), b"payload").unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.args = vec![OsString::from(&src)];
+        config.flags.recursive = true;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        let file_paths = vec![nested.clone(), nested.join("child.txt")];
+        ctx.build_file_list_with_base(&src, &file_paths).unwrap();
+
+        // Count occurrences of every distinct relative name. The subdir
+        // must appear exactly once; duplicates would re-trigger the
+        // upstream rejection.
+        let mut counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for entry in ctx.file_list().iter() {
+            *counts.entry(entry.name().to_string()).or_insert(0) += 1;
+        }
+
+        let subdir_name = nested.strip_prefix(&src).unwrap().to_string_lossy();
+        let subdir_count = counts.get(subdir_name.as_ref()).copied().unwrap_or(0);
+        assert_eq!(
+            subdir_count, 1,
+            "explicit dir + child must emit subdir exactly once, got {subdir_count} \
+             across entries {counts:?}"
+        );
+
+        // The child file must still be present so the receiver can transfer it.
+        let child_name = nested
+            .join("child.txt")
+            .strip_prefix(&src)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        assert!(
+            counts.contains_key(&child_name),
+            "child.txt must remain in the file list, got {counts:?}"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn relative_absolute_source_preserves_full_prefix() {
