@@ -91,6 +91,22 @@ cargo build --release --bin oc-rsync --no-default-features \
 
 Adjust the explicit feature list to whatever else the distro normally enables. The SEC-1 `*at` syscall chain remains the sole defense in that case; the daemon is still hardened against the CVE-2026-29518 / CVE-2026-43619 TOCTOU symlink race class, just without the kernel-enforced second layer.
 
+## AppArmor + SELinux templates
+
+Landlock is stackable with classic LSMs. For distros where AppArmor (Ubuntu LTS, openSUSE, Debian) or SELinux (RHEL, Fedora, CentOS Stream) is the primary mandatory access control layer, ship the templates from `contrib/security/` alongside the binary:
+
+| Template | Path | Audience |
+|----------|------|----------|
+| AppArmor profile | [`contrib/security/usr.sbin.oc-rsyncd.apparmor`](../../contrib/security/usr.sbin.oc-rsyncd.apparmor) | AppArmor-first distros |
+| SELinux type enforcement | [`contrib/security/oc_rsyncd.te`](../../contrib/security/oc_rsyncd.te) | SELinux-enforcing distros |
+| SELinux file contexts | [`contrib/security/oc_rsyncd.fc`](../../contrib/security/oc_rsyncd.fc) | SELinux-enforcing distros |
+| SELinux interfaces | [`contrib/security/oc_rsyncd.if`](../../contrib/security/oc_rsyncd.if) | SELinux-enforcing distros |
+| Install + verify guide | [`contrib/security/README.md`](../../contrib/security/README.md) | Packagers + ops |
+
+These are templates, not strict requirements. Operators MUST customize the module-root stanzas to match the `path =` entries in their `oc-rsyncd.conf`. The templates leave the module roots commented out by default so a fresh install enforces only the configuration, log, and PID-file paths.
+
+The SELinux template reuses the `rsync_data_t` label shipped by the base `selinux-policy` package, so it composes with any pre-labelled module trees the host already exposes to upstream `rsync`.
+
 ## Verifying the engaged ABI on a built binary
 
 Run the daemon at info-level logging against a throwaway module and grep for the Landlock startup line:

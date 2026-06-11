@@ -1,7 +1,7 @@
 //! Single io_uring ring shared by a reader fd and a writer fd in one session.
 //!
-//! Background: the per-channel design in [`super::file_reader::IoUringReader`]
-//! and [`super::socket_writer::IoUringSocketWriter`] gives every endpoint its
+//! Background: the per-channel design in [`super::IoUringReader`]
+//! and [`super::IoUringSocketWriter`] gives every endpoint its
 //! own SQ/CQ. Co-locating them on one ring halves the per-op syscall cost
 //! (one `io_uring_enter` services both directions) and lets the kernel amortise
 //! SQE submission across read and write traffic. This module implements that

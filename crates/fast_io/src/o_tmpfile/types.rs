@@ -81,7 +81,7 @@ impl AnonymousTempFile {
     /// Atomically materializes the anonymous file at `dest` using `linkat(2)`.
     ///
     /// The destination path must not already exist. To replace an existing
-    /// file, remove it first (see [`remove_existing_destination`] in the
+    /// file, remove it first (see `remove_existing_destination` in the
     /// engine crate).
     ///
     /// This method consumes `self` because the anonymous fd is no longer
