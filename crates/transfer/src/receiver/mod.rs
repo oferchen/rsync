@@ -174,24 +174,45 @@ pub(in crate::receiver) fn dest_arg_has_trailing_slash(arg: &OsStr) -> bool {
 /// pre-flight was a no-op (already exists, single-file transfer without
 /// trailing slash, or `dry_run`).
 ///
-/// # Symlink refusal
+/// # Symlink resolution
 ///
-/// The existence check uses `symlink_metadata()` (lstat) rather than
-/// `metadata()` (stat) so a symlink at `dest_root` is detected directly
-/// instead of being silently resolved. When `dest_root` is itself a symlink -
-/// broken or otherwise - the helper refuses with `InvalidInput` instead of
-/// proceeding. A broken symlink would fall through the stat-based check
-/// (NotFound at the target) and let `create_dir_all` resolve through the
-/// symlink, materializing the directory outside the intended location; a
-/// dangling-link-class containment bypass analogous to the SEC-1 TOCTOU
-/// family. An existing-symlink dest is equally suspect because every
-/// per-entry write would land at the symlink target, sidestepping the
-/// daemon's `module.path` containment. Operators that genuinely need to
-/// receive into a symlinked location must materialize the real directory
-/// themselves; oc-rsync never auto-creates through a symlink.
+/// The existence check uses `metadata()` (stat) rather than
+/// `symlink_metadata()` (lstat) so a symlink at `dest_root` pointing at a
+/// real directory is accepted, matching upstream `main.c:745-754`
+/// `get_local_name()` which calls `do_stat()` (follows symlinks) and
+/// proceeds when `S_ISDIR(st.st_mode)` is true. A symlinked dest root is
+/// the upstream `symlink-dirlink-basis` interop scenario (issue #715).
+///
+/// A dangling symlink resolves to `ENOENT`, and the helper would then call
+/// `create_dir_all`, which would materialize the directory at the symlink
+/// target. To avoid that footgun we lstat first when the stat reports
+/// `NotFound`: if the path is actually a dangling symlink we propagate the
+/// stat-side `NotFound` instead of auto-creating through the link.
+///
+/// # Security model
+///
+/// Accepting a symlinked dest is safe because per-entry writes are sandboxed
+/// downstream of this helper:
+///
+/// - SEC-1.e/.f-.j: every per-entry open routes through a [`DirSandbox`]
+///   anchored at the resolved canonical path (see `transfer::setup`), and
+///   each path-component open uses `openat2(RESOLVE_BENEATH |
+///   RESOLVE_NO_SYMLINKS)` on Linux 5.6+ or `openat(O_NOFOLLOW |
+///   O_DIRECTORY)` elsewhere. A malicious symlink at `dest_root` resolves
+///   once here, then the sandbox locks every subsequent open below that
+///   resolved fd.
+/// - The daemon module-containment check is performed by the daemon module
+///   loader, not by this helper. A symlinked dest cannot escape the module
+///   root because the daemon already chroots / restricts `module.path` at
+///   the module-config layer.
+///
+/// [`DirSandbox`]: fast_io::DirSandbox
 ///
 /// # Upstream Reference
 ///
+/// - `main.c:745-754` - `get_local_name()` `S_ISDIR(st.st_mode)` branch:
+///   `do_stat()` follows symlinks, `change_dir()` resolves the link and
+///   enters the target.
 /// - `main.c:778-792` - `get_local_name()` pre-flight `do_mkdir(dest_path, ACCESSPERMS)`
 /// - `main.c:794-796` - sets `FLAG_DIR_CREATED` on the first flist entry when
 ///   its basename is `.` (deferred follow-up; oc-rsync's delete path does
@@ -208,26 +229,34 @@ pub fn ensure_dest_root_exists(
     if file_total <= 1 && !trailing_slash {
         return Ok(false);
     }
-    // lstat instead of stat so a symlink at `dest_root` is observed directly.
-    // Upstream `main.c:778-792` does not pre-flight a symlinked dest_path
-    // (`do_stat` follows the link and either reports the target dir or
-    // returns ENOENT, after which `do_mkdir` resolves through the symlink).
-    // We refuse instead: auto-creating through an attacker-planted symlink
-    // would resolve to whatever the link points at, defeating the
-    // module-root containment that the SEC-1 `*at` chain enforces for every
-    // subsequent per-entry write.
-    match dest_root.symlink_metadata() {
-        Ok(meta) if meta.file_type().is_symlink() => Err(io::Error::new(
+    // stat (follows symlinks) so a symlinked dest pointing at a real
+    // directory is accepted, matching upstream main.c:745-754 do_stat() +
+    // S_ISDIR + change_dir() flow. A non-directory target (regular file,
+    // broken symlink, etc.) is still rejected at the call site below.
+    match dest_root.metadata() {
+        Ok(meta) if meta.is_dir() => Ok(false),
+        Ok(_) => Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!(
-                "refusing to create destination root '{}' through a symlink: \
-                 auto-creating at the symlink target would bypass module \
-                 containment (UTS-2 follow-up to PR #5567)",
+                "destination root '{}' exists but is not a directory",
                 dest_root.display(),
             ),
         )),
-        Ok(_) => Ok(false),
         Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            // Distinguish "path absent" from "dangling symlink": if lstat
+            // shows a symlink while stat says NotFound, the link target is
+            // missing and create_dir_all would resolve the link and
+            // materialize a directory at the target. Refuse that footgun
+            // by surfacing the original stat error.
+            if dest_root.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()) {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!(
+                        "destination root '{}' is a dangling symlink",
+                        dest_root.display(),
+                    ),
+                ));
+            }
             std::fs::create_dir_all(dest_root).map(|()| true)
         }
         Err(err) => Err(err),

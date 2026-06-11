@@ -111,34 +111,22 @@ fn creates_nested_dest_root() {
     assert!(dest.is_dir());
 }
 
-/// Surfacing an existing-non-directory dest is upstream's "destination path
-/// is not a directory" error at `main.c:782-784`. The helper itself returns
-/// `Ok(false)` because metadata succeeds; the per-entry mkdir downstream is
-/// what reports the conflict. Lock that behaviour so future refactors do not
-/// silently elevate the helper into a destructive replacer.
-#[test]
-fn existing_non_directory_path_is_noop_for_helper() {
-    let tmp = tempdir().expect("tempdir");
-    let dest = tmp.path().join("existing_file");
-    fs::write(&dest, b"x").expect("seed file");
-
-    let created = ensure_dest_root_exists(&dest, 5, true, false).expect("metadata-only check");
-
-    assert!(!created, "helper must not destroy an existing file");
-    assert!(dest.is_file(), "the file stays intact");
-}
-
-/// Broken symlink pointing OUTSIDE the would-be containment must be refused.
+/// Broken (dangling) symlink at the dest root must error rather than
+/// auto-create a directory at the missing link target.
 ///
-/// The pre-PR-5567 helper called `dest_root.metadata()`, which follows the
-/// symlink. For a dangling link the stat returns ENOENT, the helper then
-/// calls `create_dir_all(dest_root)`, and the std machinery resolves the
-/// symlink to materialize a directory at the link target - a containment
-/// bypass analogous to the SEC-1 TOCTOU family. The lstat-based check now
-/// observes the symlink directly and refuses.
+/// Upstream `main.c:745-754` accepts a symlinked dest only when
+/// `do_stat()` resolves to a directory. A dangling link returns `ENOENT`
+/// from `do_stat`, falling through to `do_mkdir(dest_path, ACCESSPERMS)`
+/// which would resolve the link and materialize a directory at the
+/// outside-the-module target. oc-rsync diverges intentionally on this
+/// edge: the helper combines the stat `NotFound` result with an lstat
+/// follow-up; if the path is actually a dangling symlink we propagate
+/// `NotFound` instead of calling `create_dir_all`. This keeps the
+/// auto-create path safe without the strict refusal that broke the
+/// `symlink-dirlink-basis` interop scenario (UTS-SLDB).
 #[cfg(unix)]
 #[test]
-fn refuses_broken_symlink_to_outside_module() {
+fn rejects_broken_symlink_dest_root() {
     use std::os::unix::fs::symlink;
 
     let tmp = tempdir().expect("tempdir");
@@ -147,61 +135,35 @@ fn refuses_broken_symlink_to_outside_module() {
     let dest = tmp.path().join("dest_root");
     symlink(&outside_target, &dest).expect("create broken symlink");
     assert!(
-        dest.symlink_metadata()
-            .expect("lstat dest")
-            .file_type()
-            .is_symlink(),
+        dest.symlink_metadata().expect("lstat dest").file_type().is_symlink(),
         "fixture must place a symlink at dest"
     );
     assert!(!outside_target.exists(), "target must remain dangling");
 
     let err = ensure_dest_root_exists(&dest, 3, false, false)
-        .expect_err("symlinked dest_root must be refused");
+        .expect_err("dangling-symlink dest root must surface NotFound");
 
-    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
-    assert!(
-        err.to_string().contains("symlink"),
-        "error must name the symlink condition, got: {err}"
-    );
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
     assert!(
         !outside_target.exists(),
         "helper must not materialize the symlink target"
     );
 }
 
-/// Broken symlink pointing inside the eventual module path is still suspect.
+/// Symlink to an existing directory at the dest root must be accepted -
+/// upstream `main.c:745-754` follows the symlink via `do_stat` + `S_ISDIR`
+/// and enters the resolved directory. This is the UTS-SLDB interop scenario
+/// (issue #715): `$HOME/dir -> $HOME/real-dir` with `-K` so every write
+/// lands inside the real directory.
 ///
-/// Even if the target happens to land inside the module root, accepting a
-/// symlink-as-dest leaves the per-entry writes resolving through a link the
-/// receiver did not create - the dest may be re-pointed later or shared with
-/// an attacker-writable location. Refusing is the safe-default.
+/// Per-entry writes are still sandboxed by the SEC-1 `*at` chain (see
+/// `transfer::receiver::transfer::setup` for the `DirSandbox::open_root`
+/// call site). The setup site canonicalizes a symlinked dest_dir before
+/// opening the sandbox, so a malicious post-helper swap of the link is
+/// closed by the kernel resolving the link target once into a dirfd.
 #[cfg(unix)]
 #[test]
-fn refuses_broken_symlink_to_intra_module_target() {
-    use std::os::unix::fs::symlink;
-
-    let tmp = tempdir().expect("tempdir");
-    let inside_target = tmp.path().join("would-be-safe/leaf");
-    let dest = tmp.path().join("dest_root");
-    symlink(&inside_target, &dest).expect("create broken intra-module symlink");
-
-    let err = ensure_dest_root_exists(&dest, 4, true, false)
-        .expect_err("intra-module symlinked dest is still refused");
-
-    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
-    assert!(
-        !inside_target.exists(),
-        "helper must not auto-create at the symlink target even when intra-module"
-    );
-}
-
-/// Symlink to an existing directory inside the eventual module is refused
-/// too: the helper has no protocol-level signal that the link was placed by
-/// the operator rather than by an attacker, and a permissive helper here
-/// would break the SEC-1 containment that downstream `*at` calls rely on.
-#[cfg(unix)]
-#[test]
-fn refuses_symlink_to_existing_intra_module_directory() {
+fn accepts_symlink_to_existing_directory() {
     use std::os::unix::fs::symlink;
 
     let tmp = tempdir().expect("tempdir");
@@ -210,13 +172,14 @@ fn refuses_symlink_to_existing_intra_module_directory() {
     let dest = tmp.path().join("dest_root");
     symlink(&real_dir, &dest).expect("symlink dest -> real_dir");
 
-    let err = ensure_dest_root_exists(&dest, 5, false, false)
-        .expect_err("symlinked dest_root is refused even when target exists");
+    let created =
+        ensure_dest_root_exists(&dest, 5, false, false).expect("symlink-to-dir dest must be accepted");
 
-    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
-    // The real directory must remain untouched - no per-entry writes ever
-    // resolved through the link because the helper aborted first.
-    assert!(real_dir.is_dir());
+    assert!(
+        !created,
+        "no creation when dest resolves to an existing directory"
+    );
+    assert!(real_dir.is_dir(), "real directory must remain intact");
     assert!(
         dest.symlink_metadata()
             .expect("lstat dest")
@@ -226,12 +189,20 @@ fn refuses_symlink_to_existing_intra_module_directory() {
     );
 }
 
-/// Symlink pointing to an existing directory outside the module must be
-/// refused on containment grounds. A permissive helper here would let every
-/// subsequent per-entry write land at the outside-the-module target.
+/// Symlink to an existing directory outside the dest's lexical parent is
+/// also accepted at this layer. Containment is enforced downstream:
+///
+/// - The per-entry SEC-1 `*at` chain anchors every open at the resolved
+///   dest dirfd, so writes cannot escape that fd.
+/// - Daemon-mode `module.path` containment is enforced by the daemon
+///   module loader, not by this pre-flight.
+///
+/// This test pins the new behavior so a future regression that re-adds
+/// the strict refusal would fail loud here instead of silently breaking
+/// the `symlink-dirlink-basis` interop test.
 #[cfg(unix)]
 #[test]
-fn refuses_symlink_to_existing_directory_outside_module() {
+fn accepts_symlink_to_existing_directory_outside_parent() {
     use std::os::unix::fs::symlink;
 
     let module_root = tempdir().expect("module tempdir");
@@ -241,16 +212,47 @@ fn refuses_symlink_to_existing_directory_outside_module() {
     let dest = module_root.path().join("dest_root");
     symlink(&outside_dir, &dest).expect("dest -> outside dir");
 
-    let err = ensure_dest_root_exists(&dest, 8, true, false)
-        .expect_err("outside-the-module symlinked dest must be refused");
+    let created = ensure_dest_root_exists(&dest, 8, true, false)
+        .expect("symlink-to-dir-outside-parent dest must be accepted");
+
+    assert!(!created, "no creation when dest resolves to existing dir");
+    assert!(outside_dir.is_dir(), "outside directory must remain intact");
+}
+
+/// A regular file at the dest root must still be rejected: stat succeeds
+/// but `is_dir()` is false. Upstream `main.c:756-761` errors out with
+/// "destination must be a directory when copying more than 1 file".
+#[test]
+fn rejects_existing_non_directory_at_dest_root() {
+    let tmp = tempdir().expect("tempdir");
+    let dest = tmp.path().join("existing_file");
+    fs::write(&dest, b"x").expect("seed file");
+
+    let err = ensure_dest_root_exists(&dest, 5, true, false)
+        .expect_err("non-directory dest root must error");
 
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
-    assert!(
-        outside_dir
-            .read_dir()
-            .expect("read outside dir")
-            .next()
-            .is_none(),
-        "outside directory must remain untouched - no writes leaked through the symlink"
-    );
+    assert!(dest.is_file(), "the file stays intact");
+}
+
+/// UTS-SLDB: a symlink-to-dangling-link-target (one link points at
+/// another link that points at nothing) must be refused via the lstat
+/// fallback. We probe the immediate link with `symlink_metadata`; if it
+/// is a symlink and stat fails, we treat it as dangling regardless of
+/// chain length. This pins the safe-default for the auto-create path.
+#[cfg(unix)]
+#[test]
+fn rejects_chained_dangling_symlink_dest_root() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = tempdir().expect("tempdir");
+    let dangling_link = tmp.path().join("link_a");
+    let intermediate = tmp.path().join("link_b");
+    // link_a -> link_b (which does not exist)
+    symlink(&intermediate, &dangling_link).expect("symlink link_a -> link_b");
+
+    let err = ensure_dest_root_exists(&dangling_link, 3, false, false)
+        .expect_err("dangling-chain symlink dest must error");
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    assert!(!intermediate.exists(), "no auto-create through the dangling chain");
 }
