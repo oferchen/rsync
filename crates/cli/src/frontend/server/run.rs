@@ -219,6 +219,51 @@ where
         }
     }
 
+    // SEC-1.p extension: engage the Landlock allowlist on the receiver-side
+    // `--server` path before any token-loop work. The lsh.sh-style invocation
+    // exercises upstream `chdir-symlink-race` and `bare-do-open-symlink-race`
+    // tests that swap a destination subdir for a symlink pointing outside the
+    // requested root; without a kernel-enforced ruleset the receiver follows
+    // the symlink and chmod's a file outside the destination tree. We confine
+    // the calling thread to the (already-canonicalised, pre-flight-mkdir'd)
+    // destination root so any subsequent path-based syscall that escapes the
+    // tree gets EACCES from the kernel.
+    //
+    // Apply only when the receiver actually has a destination root to confine
+    // to: the sender role and stat-only invocations have no write target, and
+    // engaging an empty allowlist would deny their reads. Sandbox failures
+    // surface as Unavailable on pre-5.13 kernels (SEC-1 *at* helpers remain
+    // the sole defense) and Error on a kernel that advertised support but
+    // returned an unexpected status; the latter is treated as a hard refusal
+    // because the intended sandbox did not engage.
+    if role == ServerRole::Receiver {
+        if let Some(dest) = config.args.last() {
+            let dest_path = std::path::PathBuf::from(dest);
+            if let Some(root) = dest_path
+                .canonicalize()
+                .ok()
+                .or_else(|| dest_path.parent().and_then(|p| p.canonicalize().ok()))
+            {
+                use fast_io::landlock::{
+                    LandlockOutcome, is_supported, restrict_to_module_paths,
+                };
+                if is_supported() {
+                    match restrict_to_module_paths(&[root.as_path()]) {
+                        LandlockOutcome::Enforced(_) | LandlockOutcome::Unavailable => {}
+                        LandlockOutcome::Error(e) => {
+                            write_server_error(
+                                stderr,
+                                program_brand,
+                                format!("landlock sandbox engage failed: {e}"),
+                            );
+                            return 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     match run_server_stdio(config, &mut stdin, stdout, None) {
         Ok(_stats) => 0,
         Err(e) => {
