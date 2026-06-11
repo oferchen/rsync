@@ -256,6 +256,28 @@ impl ReceiverContext {
 
         self.handle_goodbye(reader, writer, &mut ndx_write_codec, &mut ndx_read_codec)?;
 
+        // upstream: main.c:1067 do_recv() child path and main.c:1117/1123
+        // do_recv() parent path both call io_flush(FULL_FLUSH) immediately
+        // after the final NDX_DONE write so the kernel ships the goodbye
+        // frame (and any trailing multiplexed MSG_INFO frames) before the
+        // transport FIN. Mirrors the symmetric flush in
+        // `generator::transfer::orchestrator::run` (UTS-15.c) at the bottom
+        // of the generator role. Without this flush the upstream-rsync
+        // reverse-daemon-delta interop scenario (oc-rsync client pushing to
+        // an upstream daemon receiver) hangs at the test timeout because the
+        // peer awaits a final NDX_DONE echo that is still sitting in the
+        // userspace writer buffer.
+        //
+        // Rule 12 (fail-loud): surface the flush error unless the peer has
+        // already shut down. Early close during goodbye-shutdown is rare and
+        // the transfer is over, so any other error is treated as a real
+        // failure rather than swallowed.
+        if let Err(e) = writer.flush() {
+            if !crate::is_early_close_error(&e) {
+                return Err(e);
+            }
+        }
+
         // upstream: generator.c:2436-2437 - "generate_files finished" emitted at
         // the bottom of generate_files() after the final goodbye handshake.
         debug_log!(Genr, 1, "generate_files finished");

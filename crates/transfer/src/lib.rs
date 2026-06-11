@@ -110,6 +110,16 @@ pub(crate) fn fsm_error(err: transfer_state::InvalidTransition) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, err.to_string())
 }
 
+/// Classifies a peer-disconnect error so post-goodbye flushes can tolerate it.
+///
+/// Re-exported from the generator role so the receiver role can share the
+/// same predicate when flushing buffered NDX_DONE frames after the goodbye
+/// handshake. Mirrors upstream's tolerant treatment of socket teardown after
+/// the final exchange.
+pub(crate) fn is_early_close_error(e: &io::Error) -> bool {
+    generator::is_early_close_error(e)
+}
+
 mod compressed_reader;
 mod compressed_writer;
 pub mod config;
