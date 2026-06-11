@@ -197,3 +197,150 @@ where
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    //! Parameterized regression suite for platform-feature preflight gating.
+    //!
+    //! Each test asserts the gate behaves correctly for a specific
+    //! (platform, feature, flag) triple. Extends the inline Windows xattr
+    //! regression added by the WPC-3.wire.1 series in
+    //! `xattrs_preflight_accepts_on_windows_with_feature` to cover every
+    //! (platform, feature) pair the cfg gates in [`validate_feature_support`]
+    //! currently support, plus the inverse: negative cases asserting that
+    //! builds without the corresponding feature still emit the
+    //! `*-not-supported-on-this-client` rejection.
+    //!
+    //! Scope is limited to the two flags `validate_feature_support` actually
+    //! gates: `preserve_acls` and `xattrs`. Other feature-flag pairs (e.g.
+    //! crtimes, atimes, hard-links) are gated elsewhere and out of scope.
+
+    use super::validate_feature_support;
+    use logging_sink::MessageSink;
+
+    const ACL_REJECTION: &str = "POSIX ACLs are not supported on this client";
+    const XATTR_REJECTION: &str = "extended attributes are not supported on this client";
+
+    fn assert_accepted(preserve_acls: bool, xattrs: Option<bool>, context: &str) {
+        let mut sink = MessageSink::new(Vec::<u8>::new());
+        let result = validate_feature_support(preserve_acls, xattrs, &mut sink);
+        assert!(
+            result.is_ok(),
+            "preflight should accept {context}: result={result:?}"
+        );
+        let stderr = String::from_utf8_lossy(sink.writer());
+        assert!(
+            !stderr.contains(ACL_REJECTION) && !stderr.contains(XATTR_REJECTION),
+            "preflight should not emit feature-rejection for {context}: {stderr}"
+        );
+    }
+
+    #[allow(dead_code)]
+    fn assert_rejected_with(
+        preserve_acls: bool,
+        xattrs: Option<bool>,
+        expected: &str,
+        context: &str,
+    ) {
+        let mut sink = MessageSink::new(Vec::<u8>::new());
+        let result = validate_feature_support(preserve_acls, xattrs, &mut sink);
+        assert!(
+            result.is_err(),
+            "preflight should reject {context}: result={result:?}"
+        );
+        let stderr = String::from_utf8_lossy(sink.writer());
+        assert!(
+            stderr.contains(expected),
+            "preflight should emit {expected:?} for {context}: {stderr}"
+        );
+    }
+
+    // --- Positive cases: feature compiled in, gate must accept ---
+
+    /// Linux + `xattr` feature: `--xattrs` accepted, no rejection emitted.
+    #[cfg(all(target_os = "linux", feature = "xattr"))]
+    #[test]
+    fn xattrs_accepted_on_linux_with_feature() {
+        assert_accepted(false, Some(true), "Linux + xattr feature");
+    }
+
+    /// Linux + `acl` feature: `--acls` accepted, no rejection emitted.
+    #[cfg(all(target_os = "linux", feature = "acl"))]
+    #[test]
+    fn acls_accepted_on_linux_with_feature() {
+        assert_accepted(true, None, "Linux + acl feature");
+    }
+
+    /// macOS + `xattr` feature: `--xattrs` accepted, no rejection emitted.
+    #[cfg(all(target_os = "macos", feature = "xattr"))]
+    #[test]
+    fn xattrs_accepted_on_macos_with_feature() {
+        assert_accepted(false, Some(true), "macOS + xattr feature");
+    }
+
+    /// macOS + `acl` feature: `--acls` accepted, no rejection emitted.
+    #[cfg(all(target_os = "macos", feature = "acl"))]
+    #[test]
+    fn acls_accepted_on_macos_with_feature() {
+        assert_accepted(true, None, "macOS + acl feature");
+    }
+
+    /// Windows + `xattr` feature: `--xattrs` accepted. Locks in the
+    /// WPC-3.wire.1 widening so the preflight does not reject `--xattrs`
+    /// before `metadata::xattr_windows`'s FindFirstStreamW ADS impl runs.
+    #[cfg(all(target_os = "windows", feature = "xattr"))]
+    #[test]
+    fn xattrs_accepted_on_windows_with_feature() {
+        assert_accepted(false, Some(true), "Windows + xattr feature");
+    }
+
+    /// Windows + `acl` feature: `--acls` accepted, no rejection emitted.
+    #[cfg(all(target_os = "windows", feature = "acl"))]
+    #[test]
+    fn acls_accepted_on_windows_with_feature() {
+        assert_accepted(true, None, "Windows + acl feature");
+    }
+
+    // --- Flag-off cases: gate never fires regardless of feature/platform ---
+
+    /// `preserve_acls=false` and `xattrs=None` must always pass, even on
+    /// builds without either feature. Asserts the gate only triggers on
+    /// explicit opt-in.
+    #[test]
+    fn neither_flag_set_always_accepted() {
+        assert_accepted(false, None, "neither flag set");
+        assert_accepted(false, Some(false), "xattrs=Some(false)");
+    }
+
+    // --- Negative cases: feature absent, gate must reject ---
+
+    /// Build without `acl` feature: `--acls` rejected with the
+    /// `POSIX ACLs are not supported on this client` message.
+    /// Prevents the inverse regression of silently accepting `--acls`
+    /// in default builds that lack the feature.
+    #[cfg(not(all(any(unix, windows), feature = "acl")))]
+    #[test]
+    fn acls_rejected_without_feature() {
+        assert_rejected_with(
+            true,
+            None,
+            ACL_REJECTION,
+            "preserve_acls=true without acl feature",
+        );
+    }
+
+    /// Build without `xattr` feature: `--xattrs` rejected with the
+    /// `extended attributes are not supported on this client` message.
+    /// Prevents the inverse regression of silently accepting `--xattrs`
+    /// in default builds that lack the feature.
+    #[cfg(not(all(any(unix, windows), feature = "xattr")))]
+    #[test]
+    fn xattrs_rejected_without_feature() {
+        assert_rejected_with(
+            false,
+            Some(true),
+            XATTR_REJECTION,
+            "xattrs=Some(true) without xattr feature",
+        );
+    }
+}
