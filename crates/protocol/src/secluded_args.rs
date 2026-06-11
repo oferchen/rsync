@@ -405,4 +405,39 @@ mod tests {
             .expect_err("recv should fail when terminator is missing");
         assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
     }
+
+    #[test]
+    fn recv_secluded_args_stops_exactly_after_terminator_byte() {
+        // Wire format: args, terminator NUL, then a trailing greeting byte
+        // that belongs to the next protocol phase. recv_secluded_args must
+        // consume exactly through the terminator NUL and leave the trailing
+        // byte intact for the next reader.
+        //
+        // This locks the boundary more strictly than the buffer-end check:
+        // a function that read one byte too few would leave the cursor
+        // before the terminator; a function that read one byte too many
+        // would swallow the greeting byte. Only consuming exactly through
+        // the terminator NUL passes.
+        let wire: &[u8] = b"--server\0--sender\0.\0/path\0\0@";
+        let terminator_end = wire.len() - 1;
+        let mut cursor = io::Cursor::new(wire);
+
+        let args = recv_secluded_args(&mut cursor, None).expect("recv should succeed");
+
+        assert_eq!(args, vec!["--server", "--sender", ".", "/path"]);
+        assert_eq!(
+            cursor.position(),
+            terminator_end as u64,
+            "cursor must rest on the trailing byte after the terminator NUL"
+        );
+
+        // The trailing byte must still be readable verbatim from the cursor;
+        // otherwise the subsequent protocol greeting reader sees corrupted
+        // input and the handshake fails with a confusing error.
+        let mut leftover = [0u8; 1];
+        cursor
+            .read_exact(&mut leftover)
+            .expect("trailing byte must remain in the stream");
+        assert_eq!(leftover, [b'@']);
+    }
 }
