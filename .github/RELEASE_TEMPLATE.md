@@ -67,6 +67,16 @@ See `SECURITY.md` for the canonical mitigation roster and `docs/design/sec-1-com
 
 **Defense-in-depth.** This release ships the SEC-1 `*at` syscall chain (`fstatat`, `unlinkat`, `mkdirat`, `symlinkat`, `linkat`, `fchmodat`, `fchownat`, `utimensat`, `renameat`) routed through a per-transfer `DirSandbox` carrier with `openat2(RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS)` runtime detection. The optional `landlock` Cargo feature (Linux 5.13+) layers kernel-enforced `PathBeneath` allowlisting on top; daemons on older kernels run with the `*at` chain as the sole TOCTOU defense, which is itself sufficient against CVE-2026-29518 / CVE-2026-43619.
 
+### Platform support tiers
+
+| Platform | Tier | Notes |
+|---|---|---|
+| Linux x86_64 / aarch64 | **Tier 1** | Full `io_uring` + `splice` + `vmsplice` + Landlock + seccomp. Every required CI cell runs the full nextest workspace. |
+| macOS x86_64 / aarch64 | **Tier 1** | `kqueue` + `sendfile` + `clonefile`. Every required CI cell runs the full nextest workspace. |
+| Windows x86_64 | **Tier 2** | IOCP file and socket I/O, `TransmitFile`, ReFS reflink, `CopyFileExW`. `splice` / `vmsplice` / `io_uring` are Linux-only and intentionally not implemented; the IOCP receive path is faster than the upstream Cygwin `read`/`write` fallback. Required CI cells test the `core`, `engine`, and `cli` crates. See [Windows support matrix](https://github.com/oferchen/rsync/blob/master/docs/user/windows-support-matrix.md) and the [Windows Tier 2 stub inventory](https://github.com/oferchen/rsync/blob/master/docs/audits/win-tier2-stub-inventory.md). |
+
+Tier 2 is a deliberate choice (no Win32 equivalent for `splice` / `vmsplice` / `io_uring`), not a defect. The IOCP backend matches or beats the upstream Cygwin baseline on the same workload.
+
 ### Kernel / platform compatibility
 
 | Layer | Minimum | Notes |
