@@ -32,6 +32,7 @@ mod iconv_wire_order;
 mod id_lists;
 mod incremental_directories;
 mod incremental_receiver;
+mod missing_args_sentinel;
 mod ndx_convert;
 mod proto_io_error;
 mod wire_attrs;
