@@ -10,7 +10,7 @@
 //! - **Individual path**: Processes operations one at a time using standard library calls
 //! - **Batched path**: Groups operations by type and processes them together
 //!
-//! Runtime selection uses [`BATCH_THRESHOLD`]: below this, use individual path;
+//! Runtime selection uses [`crate::syscall_batch::BATCH_THRESHOLD`]: below this, use individual path;
 //! at or above, use batched path.
 //!
 //! # Platform Support

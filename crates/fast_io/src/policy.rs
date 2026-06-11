@@ -4,13 +4,14 @@
 //! mechanisms (io_uring, IOCP, kernel zero-copy, copy-on-write reflink)
 //! and map onto the corresponding CLI flags.
 //!
-//! Three subsystem opt-in/opt-out enums share the same `Auto / Enabled /
-//! Disabled` shape: [`IoUringPolicy`], [`IocpPolicy`], and [`ZeroCopyPolicy`].
-//! They are type aliases of the canonical [`BackendPolicy`] enum to avoid
-//! duplicated rustdoc, `Default`, and pattern-matching boilerplate while
-//! preserving each name at the API surface. [`CowPolicy`] keeps a separate
-//! two-variant definition because reflink is best-effort and has no
-//! `Enabled` semantics.
+//! [`IocpPolicy`] and [`ZeroCopyPolicy`] share the `Auto / Enabled /
+//! Disabled` shape and are type aliases of the canonical [`BackendPolicy`]
+//! enum, avoiding duplicated rustdoc, `Default`, and pattern-matching
+//! boilerplate while preserving each name at the API surface.
+//! [`IoUringPolicy`] is structurally similar but adds a fourth `SqpollOff`
+//! arm for the rootless-container opt-out path, so it is defined as its own
+//! enum rather than an alias. [`CowPolicy`] keeps a separate two-variant
+//! definition because reflink is best-effort and has no `Enabled` semantics.
 
 #[allow(unused_imports)]
 use crate::platform_copy;
@@ -21,9 +22,10 @@ use crate::platform_copy;
 /// `Enabled` forces the subsystem and errors out if it is unavailable;
 /// `Disabled` always routes through the portable buffered fallback.
 ///
-/// This is the canonical type used by [`IoUringPolicy`], [`IocpPolicy`], and
-/// [`ZeroCopyPolicy`]. Each alias preserves the original name for source
-/// compatibility and CLI-flag wiring.
+/// This is the canonical type used by [`IocpPolicy`] and [`ZeroCopyPolicy`].
+/// Each alias preserves the original name for source compatibility and
+/// CLI-flag wiring. [`IoUringPolicy`] is a distinct enum so it can expose a
+/// fourth `SqpollOff` variant without polluting the shared shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BackendPolicy {
     /// Auto-detect availability at runtime (default).
@@ -47,13 +49,21 @@ pub enum BackendPolicy {
 
 /// Policy controlling io_uring usage for file and socket I/O.
 ///
-/// Alias of [`BackendPolicy`]. Steered by the CLI flags `--io-uring` and
-/// `--no-io-uring`.
+/// Steered by the CLI flags `--io-uring`, `--no-io-uring`, and
+/// `--no-io-uring-sqpoll`. Mirrors [`BackendPolicy`] but adds a fourth
+/// [`SqpollOff`](IoUringPolicy::SqpollOff) variant which keeps io_uring
+/// active for file and socket I/O while suppressing the
+/// `IORING_SETUP_SQPOLL` kernel-thread request. This is the explicit
+/// opt-out for environments where SQPOLL cannot be granted
+/// `CAP_SYS_NICE` (most notably rootless Kubernetes pods); operators
+/// pick it to match production behaviour in non-K8s test environments
+/// without disabling io_uring entirely.
 ///
 /// # Runtime detection
 ///
-/// When set to `Auto`, the runtime check ([`crate::io_uring::is_io_uring_available`])
-/// performs three validations, caching the result in a process-wide atomic for
+/// When set to `Auto` or `SqpollOff`, the runtime check
+/// ([`crate::io_uring::is_io_uring_available`]) performs three
+/// validations, caching the result in a process-wide atomic for
 /// subsequent fast-path lookups:
 ///
 /// 1. **Kernel version** - Parses `uname().release` and requires >= 5.6.
@@ -62,7 +72,8 @@ pub enum BackendPolicy {
 ///    `io_uring_setup(2)`.
 /// 3. **Ring construction** - On first actual I/O, `IoUringConfig::build_ring`
 ///    creates the real ring. If SQPOLL is requested but the process lacks
-///    `CAP_SYS_NICE`, it falls back to a normal ring silently.
+///    `CAP_SYS_NICE`, it falls back to a normal ring silently. With
+///    `SqpollOff`, the SQPOLL request is skipped entirely.
 ///
 /// If any step fails, the factory transparently returns a standard buffered
 /// I/O reader or writer with no error.
@@ -75,7 +86,70 @@ pub enum BackendPolicy {
 /// | `IORING_REGISTER_FILES` | 5.6 | Fixed-file descriptors, ~50ns/SQE savings |
 /// | `IORING_SETUP_SQPOLL` | 5.6 | Kernel-side SQ polling, needs `CAP_SYS_NICE` |
 /// | `IORING_OP_SEND` (socket I/O) | 5.6 | Used for socket writer batching |
-pub type IoUringPolicy = BackendPolicy;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum IoUringPolicy {
+    /// Auto-detect availability at runtime (default).
+    ///
+    /// Equivalent to [`BackendPolicy::Auto`]: probe the kernel, use
+    /// io_uring when available, fall back to standard buffered I/O
+    /// otherwise. SQPOLL is attempted when configured and transparently
+    /// downgraded if `CAP_SYS_NICE` is missing.
+    #[default]
+    Auto,
+    /// Force io_uring on. Returns an error if the kernel does not support it.
+    ///
+    /// Equivalent to [`BackendPolicy::Enabled`].
+    Enabled,
+    /// Disable io_uring entirely; always use standard buffered I/O.
+    ///
+    /// Equivalent to [`BackendPolicy::Disabled`].
+    Disabled,
+    /// Keep io_uring on but forbid `IORING_SETUP_SQPOLL`.
+    ///
+    /// io_uring still initialises and BGID, registered buffers, file
+    /// registration, and every other feature remain active. Only the
+    /// SQPOLL kernel-thread request is suppressed. Selected via
+    /// `--no-io-uring-sqpoll`. The CLI parser also calls
+    /// [`crate::io_uring::set_sqpoll_disabled_by_policy`] so that ring
+    /// construction sites that internally request SQPOLL (e.g.
+    /// dedicated session pools) honour the opt-out without each call
+    /// site re-reading the policy.
+    ///
+    /// Use this in rootless containers and Kubernetes pods that
+    /// cannot grant `CAP_SYS_NICE`: it gives operators an explicit
+    /// guarantee that the SQPOLL kthread is never requested, instead
+    /// of relying on the transparent `EPERM` fallback path. The
+    /// difference is observable in `--io-uring-status` (no
+    /// `sqpoll fell back: yes` line) and matters when audit policy
+    /// disallows even unsuccessful SQPOLL setup attempts.
+    SqpollOff,
+}
+
+impl IoUringPolicy {
+    /// Returns `true` when io_uring should be active for file and socket I/O.
+    ///
+    /// This is `true` for [`Auto`](Self::Auto), [`Enabled`](Self::Enabled),
+    /// and [`SqpollOff`](Self::SqpollOff); only [`Disabled`](Self::Disabled)
+    /// routes through the portable buffered fallback. Used by dispatch sites
+    /// that previously distinguished `Auto`/`Enabled` from `Disabled` and now
+    /// also need to treat `SqpollOff` as an io_uring-active mode.
+    #[must_use]
+    pub fn is_io_uring_active(self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+
+    /// Returns `true` when SQPOLL must be suppressed regardless of any other
+    /// configuration that would otherwise request it.
+    ///
+    /// Only [`SqpollOff`](Self::SqpollOff) returns `true`. Wired into the CLI
+    /// path so that ring construction sites can short-circuit SQPOLL via the
+    /// process-global gate set by
+    /// [`crate::io_uring::set_sqpoll_disabled_by_policy`].
+    #[must_use]
+    pub fn forbids_sqpoll(self) -> bool {
+        matches!(self, Self::SqpollOff)
+    }
+}
 
 /// Policy controlling copy-on-write reflink usage for whole-file copies.
 ///
@@ -309,12 +383,46 @@ mod tests {
 
     #[test]
     fn aliases_resolve_to_backend_policy() {
-        let a: IoUringPolicy = IoUringPolicy::Auto;
         let b: IocpPolicy = IocpPolicy::Auto;
         let c: ZeroCopyPolicy = ZeroCopyPolicy::Auto;
-        assert_eq!(a, b);
         assert_eq!(b, c);
         assert_eq!(c, BackendPolicy::Auto);
+    }
+
+    #[test]
+    fn io_uring_policy_default_is_auto() {
+        assert_eq!(IoUringPolicy::default(), IoUringPolicy::Auto);
+    }
+
+    #[test]
+    fn io_uring_policy_four_variants_are_distinct() {
+        let variants = [
+            IoUringPolicy::Auto,
+            IoUringPolicy::Enabled,
+            IoUringPolicy::Disabled,
+            IoUringPolicy::SqpollOff,
+        ];
+        for (i, a) in variants.iter().enumerate() {
+            for b in &variants[i + 1..] {
+                assert_ne!(a, b, "{a:?} must differ from {b:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn io_uring_policy_sqpoll_off_keeps_io_uring_active() {
+        assert!(IoUringPolicy::SqpollOff.is_io_uring_active());
+        assert!(IoUringPolicy::Auto.is_io_uring_active());
+        assert!(IoUringPolicy::Enabled.is_io_uring_active());
+        assert!(!IoUringPolicy::Disabled.is_io_uring_active());
+    }
+
+    #[test]
+    fn io_uring_policy_only_sqpoll_off_forbids_sqpoll() {
+        assert!(IoUringPolicy::SqpollOff.forbids_sqpoll());
+        assert!(!IoUringPolicy::Auto.forbids_sqpoll());
+        assert!(!IoUringPolicy::Enabled.forbids_sqpoll());
+        assert!(!IoUringPolicy::Disabled.forbids_sqpoll());
     }
 
     #[test]

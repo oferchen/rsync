@@ -58,7 +58,7 @@ fn parity_none_shutdown_deletes_temp() {
     let dir = test_support::create_tempdir();
     let dest = dir.path().join("none_shutdown.dat");
 
-    let h = spawn_disk_thread(DiskCommitConfig::default());
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
     h.file_tx.send(begin_msg(dest.clone(), 1024)).unwrap();
     h.file_tx.send(FileMessage::Chunk(test_data(100))).unwrap();
     h.file_tx.send(FileMessage::Shutdown).unwrap();
@@ -80,7 +80,7 @@ fn parity_none_abort_deletes_temp() {
     let dir = test_support::create_tempdir();
     let dest = dir.path().join("none_abort.dat");
 
-    let h = spawn_disk_thread(DiskCommitConfig::default());
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
     h.file_tx.send(begin_msg(dest.clone(), 1024)).unwrap();
     h.file_tx.send(FileMessage::Chunk(test_data(100))).unwrap();
     h.file_tx
@@ -106,7 +106,7 @@ fn parity_none_disconnect_deletes_temp() {
     let dir = test_support::create_tempdir();
     let dest = dir.path().join("none_disconnect.dat");
 
-    let h = spawn_disk_thread(DiskCommitConfig::default());
+    let h = spawn_disk_thread(DiskCommitConfig::default()).unwrap();
     h.file_tx.send(begin_msg(dest.clone(), 1024)).unwrap();
     h.file_tx.send(FileMessage::Chunk(test_data(100))).unwrap();
 
@@ -142,7 +142,7 @@ fn run_partial_interrupt(
         partial_mode: PartialMode::Partial,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx.send(begin_msg(dest.clone(), 1024)).unwrap();
     let data = test_data(data_size);
@@ -239,7 +239,7 @@ fn parity_partial_content_is_valid_prefix() {
         partial_mode: PartialMode::Partial,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx.send(begin_msg(dest.clone(), 1024)).unwrap();
     // Send 200 of 500 bytes, then interrupt.
@@ -283,7 +283,7 @@ fn run_partial_dir_interrupt(
         partial_mode: PartialMode::PartialDir(partial_dir.clone()),
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx.send(begin_msg(dest.clone(), 1024)).unwrap();
     let data = test_data(data_size);
@@ -407,7 +407,7 @@ fn parity_zero_bytes_suppresses_partial_retention() {
         partial_mode: PartialMode::Partial,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     // Begin but send no chunks before shutdown.
     h.file_tx.send(begin_msg(dest.clone(), 100)).unwrap();
@@ -436,7 +436,7 @@ fn parity_zero_bytes_suppresses_partial_dir_retention() {
         partial_mode: PartialMode::PartialDir(partial_dir.clone()),
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx.send(begin_msg(dest.clone(), 100)).unwrap();
     h.file_tx.send(FileMessage::Shutdown).unwrap();
@@ -478,7 +478,7 @@ fn parity_partial_retention_unregisters_from_cleanup_manager() {
         partial_mode: PartialMode::Partial,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx.send(begin_msg(dest.clone(), 1024)).unwrap();
     h.file_tx.send(FileMessage::Chunk(test_data(100))).unwrap();
@@ -525,7 +525,7 @@ fn parity_partial_dir_retention_unregisters_from_cleanup_manager() {
         partial_mode: PartialMode::PartialDir(partial_dir.clone()),
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx.send(begin_msg(dest.clone(), 1024)).unwrap();
     h.file_tx.send(FileMessage::Chunk(test_data(100))).unwrap();
@@ -575,7 +575,7 @@ fn parity_multi_chunk_partial_captures_all_data() {
         partial_mode: PartialMode::Partial,
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx.send(begin_msg(dest.clone(), 1024)).unwrap();
 
@@ -621,7 +621,7 @@ fn parity_multi_chunk_partial_dir_captures_all_data() {
         partial_mode: PartialMode::PartialDir(partial_dir.clone()),
         ..DiskCommitConfig::default()
     };
-    let h = spawn_disk_thread(config);
+    let h = spawn_disk_thread(config).unwrap();
 
     h.file_tx.send(begin_msg(dest.clone(), 1024)).unwrap();
 

@@ -52,6 +52,45 @@ fn disable_via_env() -> bool {
 /// can query this via [`sqpoll_fell_back`] for diagnostics or `--version` output.
 static SQPOLL_FALLBACK: AtomicBool = AtomicBool::new(false);
 
+/// Process-wide gate that suppresses every `IORING_SETUP_SQPOLL` request.
+///
+/// Set by [`set_sqpoll_disabled_by_policy`] when the CLI parser sees
+/// `--no-io-uring-sqpoll`. Every ring construction site
+/// ([`IoUringConfig::build_ring`] and the session-pool ring builder in
+/// `session_pool.rs`) consults this flag before calling
+/// `io_uring::IoUring::builder().setup_sqpoll(...)`. When set, the SQPOLL
+/// kthread is never requested, even if a particular `IoUringConfig` has
+/// `sqpoll: true`. The opt-out is one-way per process - there is no
+/// matching unset, since toggling SQPOLL on for an in-flight transfer
+/// would race the ring builder.
+static SQPOLL_DISABLED_BY_POLICY: AtomicBool = AtomicBool::new(false);
+
+/// Returns `true` when [`set_sqpoll_disabled_by_policy`] has been called for
+/// this process.
+///
+/// Ring-construction sites use this to short-circuit SQPOLL requests
+/// regardless of any per-config `sqpoll: true` setting. Kept `pub` so
+/// callers outside the `io_uring::config` module (the session pool builder
+/// in `session_pool.rs` and the `--io-uring-status` reporter in
+/// `status.rs`) can read the gate without re-exporting the atomic.
+#[must_use]
+pub fn is_sqpoll_disabled_by_policy() -> bool {
+    SQPOLL_DISABLED_BY_POLICY.load(Ordering::Relaxed)
+}
+
+/// Records the process-wide opt-out from SQPOLL.
+///
+/// Once called, every subsequent `build_ring()` call (and every
+/// session-pool ring builder) honours
+/// [`is_sqpoll_disabled_by_policy`] and skips the
+/// `IORING_SETUP_SQPOLL` flag. The CLI parser invokes this when the user
+/// passes `--no-io-uring-sqpoll`. The function is idempotent and one-way
+/// per process to keep the gate race-free against ring construction on
+/// other threads.
+pub fn set_sqpoll_disabled_by_policy() {
+    SQPOLL_DISABLED_BY_POLICY.store(true, Ordering::Relaxed);
+}
+
 /// Returns `true` if SQPOLL was requested but setup failed.
 ///
 /// When `IoUringConfig::sqpoll` is `true` but the kernel rejects the request
@@ -355,7 +394,15 @@ impl IoUringConfig {
     /// refusal here remains the safety net: the ring is built without
     /// SQPOLL and `SQPOLL_FALLBACK` is set so callers see the degrade.
     pub(crate) fn build_ring(&self) -> io::Result<RawIoUring> {
-        let sqpoll_requested = self.sqpoll;
+        let sqpoll_requested = self.sqpoll && !is_sqpoll_disabled_by_policy();
+        if self.sqpoll && !sqpoll_requested {
+            logging::debug_log!(
+                Io,
+                1,
+                "io_uring: SQPOLL suppressed by --no-io-uring-sqpoll; \
+                 building a regular ring (BGID and other features remain active)"
+            );
+        }
         let mlock_basis_enabled = cfg!(feature = "sqpoll-mlock-basis");
         let sqpoll_safe = sqpoll_requested && (!self.mmap_basis_active || mlock_basis_enabled);
         if sqpoll_requested && !sqpoll_safe {

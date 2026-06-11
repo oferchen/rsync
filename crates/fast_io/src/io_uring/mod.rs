@@ -80,7 +80,7 @@
 //! - **Provided-buffer rings (PBUF_RING)**: Linux 5.19+ ring-mapped supplied
 //!   buffers (`IORING_REGISTER_PBUF_RING`, opcode 22) -> classic provide-buffers
 //!   path on 5.6+ -> standard `read`/`write` -> non-Linux io_uring stub. The
-//!   probe is cached process-wide via [`buffer_ring::pbuf_ring_supported`] and
+//!   probe is cached process-wide via [`crate::io_uring::buffer_ring::pbuf_ring_supported`] and
 //!   surfaced on [`IoUringKernelInfo::pbuf_ring_supported`]. See
 //!   `docs/audits/iouring-pbuf-ring.md` for the full call-site survey.
 
@@ -145,7 +145,8 @@ pub use cancel::{
     cancel_all_by_fd, cancel_by_user_data,
 };
 pub use config::{
-    IoUringConfig, IoUringKernelInfo, config_detail, is_io_uring_available, sqpoll_fell_back,
+    IoUringConfig, IoUringKernelInfo, config_detail, is_io_uring_available,
+    is_sqpoll_disabled_by_policy, set_sqpoll_disabled_by_policy, sqpoll_fell_back,
 };
 #[cfg(feature = "iouring-data-reads")]
 pub use data_reader::IoUringFileReader;
@@ -270,7 +271,7 @@ pub fn writer_from_file_with_depth(
     }
 
     match policy {
-        crate::IoUringPolicy::Auto => {
+        crate::IoUringPolicy::Auto | crate::IoUringPolicy::SqpollOff => {
             if is_io_uring_available() {
                 // Probe the per-thread ring; on setup failure `file` is still
                 // ours and we fall back to standard I/O.
@@ -356,7 +357,7 @@ pub fn reader_from_path_with_depth<P: AsRef<std::path::Path>>(
     }
 
     match policy {
-        crate::IoUringPolicy::Auto => {
+        crate::IoUringPolicy::Auto | crate::IoUringPolicy::SqpollOff => {
             if is_io_uring_available() {
                 match IoUringReader::open(path.as_ref(), &config) {
                     Ok(r) => return Ok(IoUringOrStdReader::IoUring(r)),

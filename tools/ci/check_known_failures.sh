@@ -127,12 +127,6 @@ run_daemon_test() {
 
   local upstream_binary
   upstream_binary=$(find_upstream_binary "$version") || upstream_binary=""
-  if [[ -z "$upstream_binary" && "$version" == "3.4.4" ]]; then
-    upstream_binary=$(find_upstream_binary "3.4.3") \
-      || upstream_binary=$(find_upstream_binary "3.4.2") \
-      || upstream_binary=$(find_upstream_binary "3.4.1") \
-      || upstream_binary=""
-  fi
   if [[ -z "$upstream_binary" ]]; then
     echo "SKIP:no-binary"
     return 2
@@ -201,9 +195,6 @@ run_standalone_test_by_name() {
   local name=$1
   local upstream_binary
   upstream_binary=$(find_upstream_binary "3.4.4") \
-    || upstream_binary=$(find_upstream_binary "3.4.3") \
-    || upstream_binary=$(find_upstream_binary "3.4.2") \
-    || upstream_binary=$(find_upstream_binary "3.4.1") \
     || {
     echo "SKIP:no-binary"
     return 2

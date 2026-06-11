@@ -144,7 +144,7 @@ def make_option_identifier(entry: Entry) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate rsync option parity matrix.")
-    parser.add_argument("options", type=Path, help="Path to rsync 3.4.1 options.c")
+    parser.add_argument("options", type=Path, help="Path to rsync 3.4.4 options.c")
     parser.add_argument("oc_help", type=Path, help="Path to oc-rsync --help output")
     parser.add_argument("--format", choices=["json", "yaml"], default="yaml")
     args = parser.parse_args()

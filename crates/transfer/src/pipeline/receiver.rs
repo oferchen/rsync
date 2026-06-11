@@ -84,9 +84,14 @@ pub struct PipelinedReceiver {
 
 impl PipelinedReceiver {
     /// Spawns the disk commit thread and returns a new mediator.
-    pub fn new(config: DiskCommitConfig) -> Self {
-        let h = spawn_disk_thread(config);
-        Self {
+    ///
+    /// # Errors
+    ///
+    /// Propagates the `io::Error` from [`spawn_disk_thread`] when the disk
+    /// commit thread cannot be spawned (typically `EAGAIN`/`RLIMIT_NPROC`).
+    pub fn new(config: DiskCommitConfig) -> io::Result<Self> {
+        let h = spawn_disk_thread(config)?;
+        Ok(Self {
             file_tx: h.file_tx,
             result_rx: h.result_rx,
             buf_return_rx: h.buf_return_rx,
@@ -98,7 +103,7 @@ impl PipelinedReceiver {
             permission_error_count: 0,
             warnings: Vec::new(),
             delayed_updates: Vec::new(),
-        }
+        })
     }
 
     /// Returns a reference to the channel sender for `FileMessage` items.
@@ -430,7 +435,7 @@ mod tests {
 
     #[test]
     fn spawn_and_shutdown() {
-        let pr = PipelinedReceiver::new(DiskCommitConfig::default());
+        let pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
         let (bytes, errors) = pr.shutdown().unwrap();
         assert_eq!(bytes, 0);
         assert!(errors.is_empty());
@@ -441,7 +446,7 @@ mod tests {
         let dir = test_support::create_tempdir();
         let file_path = dir.path().join("test.dat");
 
-        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default());
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
 
         pr.file_sender()
             .send(FileMessage::Begin(Box::new(BeginMessage {
@@ -480,7 +485,7 @@ mod tests {
 
     #[test]
     fn drain_ready_returns_empty_when_nothing_pending() {
-        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default());
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
         let (bytes, errors) = pr.drain_ready_results().unwrap();
         assert_eq!(bytes, 0);
         assert!(errors.is_empty());
@@ -489,20 +494,20 @@ mod tests {
 
     #[test]
     fn drop_cleans_up_thread() {
-        let pr = PipelinedReceiver::new(DiskCommitConfig::default());
+        let pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
         drop(pr); // Should not hang or panic.
     }
 
     #[test]
     fn redo_initially_empty() {
-        let pr = PipelinedReceiver::new(DiskCommitConfig::default());
+        let pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
         assert_eq!(pr.redo_count(), 0);
         drop(pr);
     }
 
     #[test]
     fn take_redo_indices_disables_redo() {
-        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default());
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
         assert!(pr.redo_enabled);
         let indices = pr.take_redo_indices();
         assert!(indices.is_empty());
@@ -514,7 +519,7 @@ mod tests {
     fn checksum_mismatch_queues_redo_in_phase1() {
         use crate::pipeline::messages::ComputedChecksum;
 
-        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default());
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
 
         // Simulate a committed file with a mismatching checksum.
         let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
@@ -560,7 +565,7 @@ mod tests {
     fn checksum_mismatch_logs_error_in_phase2() {
         use crate::pipeline::messages::ComputedChecksum;
 
-        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default());
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
 
         // Move to phase 2.
         let _ = pr.take_redo_indices();
@@ -602,7 +607,7 @@ mod tests {
     fn checksum_match_does_not_queue_redo() {
         use crate::pipeline::messages::ComputedChecksum;
 
-        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default());
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
 
         let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
         expected[0] = 0xAA;
@@ -651,7 +656,7 @@ mod tests {
         std::fs::set_permissions(&readonly_dir, PermissionsExt::from_mode(0o555)).unwrap();
 
         let file_path = readonly_dir.join("test.dat");
-        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default());
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
 
         // Send a file destined for the read-only directory
         pr.file_sender()
@@ -690,7 +695,7 @@ mod tests {
 
     #[test]
     fn permission_error_count_starts_at_zero() {
-        let pr = PipelinedReceiver::new(DiskCommitConfig::default());
+        let pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
         assert_eq!(pr.permission_error_count(), 0);
         drop(pr);
     }
@@ -728,7 +733,7 @@ mod tests {
     /// the pending checksum queue.
     #[test]
     fn collect_delayed_update_tracks_staging_and_final_path() {
-        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default());
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
 
         // Simulate a pending checksum entry (which carries the final path).
         pr.expected_checksums.push_back(PendingChecksum {
@@ -760,7 +765,7 @@ mod tests {
     /// were staged.
     #[test]
     fn take_delayed_updates_empty_when_no_delays() {
-        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default());
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
         assert!(pr.take_delayed_updates().is_empty());
         drop(pr);
     }
@@ -780,7 +785,7 @@ mod tests {
         let mut pr = PipelinedReceiver::new(DiskCommitConfig {
             delay_updates: true,
             ..DiskCommitConfig::default()
-        });
+        }).unwrap();
 
         pr.file_sender()
             .send(FileMessage::WholeFile {
@@ -841,7 +846,7 @@ mod tests {
         let mut pr = PipelinedReceiver::new(DiskCommitConfig {
             delay_updates: true,
             ..DiskCommitConfig::default()
-        });
+        }).unwrap();
 
         pr.file_sender()
             .send(FileMessage::WholeFile {
@@ -892,7 +897,7 @@ mod tests {
         let mut pr = PipelinedReceiver::new(DiskCommitConfig {
             delay_updates: true,
             ..DiskCommitConfig::default()
-        });
+        }).unwrap();
 
         pr.file_sender()
             .send(FileMessage::WholeFile {

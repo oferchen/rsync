@@ -18,7 +18,7 @@ use super::super::super::{
 };
 #[cfg(any(
     not(all(any(unix, windows), feature = "acl")),
-    not(all(unix, feature = "xattr"))
+    not(all(any(unix, windows), feature = "xattr"))
 ))]
 use super::super::messages::fail_with_custom_fallback;
 use super::super::messages::fail_with_message;
@@ -173,7 +173,7 @@ where
     #[cfg(all(any(unix, windows), feature = "acl"))]
     let _ = preserve_acls;
 
-    #[cfg(not(all(unix, feature = "xattr")))]
+    #[cfg(not(all(any(unix, windows), feature = "xattr")))]
     if xattrs.unwrap_or(false) {
         let message = rsync_error!(1, "extended attributes are not supported on this client")
             .with_role(Role::Client);
@@ -181,10 +181,10 @@ where
         return Err(fail_with_custom_fallback(message, fallback, stderr));
     }
 
-    #[cfg(all(unix, feature = "xattr"))]
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
     let _ = xattrs;
 
-    #[cfg(all(unix, feature = "acl", feature = "xattr"))]
+    #[cfg(all(any(unix, windows), feature = "acl", feature = "xattr"))]
     let _ = stderr;
 
     Ok(())

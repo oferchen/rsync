@@ -78,8 +78,8 @@ zlib-ng = ["compress/zlib-ng", "engine/zlib-ng", "transfer/zlib-ng", "protocol/z
 # ============================================================================
 # Metadata Features
 # ============================================================================
-# xattr in core is a no-op on Windows; on Unix the target deps above add the real bits
-xattr = ["transfer/xattr"]
+# xattr on Windows uses metadata/xattr_windows (FindFirstStreamW ADS); on Unix the target deps above add the real bits
+xattr = ["metadata/xattr", "transfer/xattr"]
 acl = ["metadata/acl", "engine/acl", "transfer/acl"]
 
 # Character encoding conversion for filenames (iconv)
