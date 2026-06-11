@@ -8,6 +8,7 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 use std::sync::Once;
 
+use fast_io::to_extended_path;
 use windows::Win32::Foundation::{ERROR_NOT_SUPPORTED, HLOCAL, LocalFree, WIN32_ERROR};
 use windows::Win32::Security::PSECURITY_DESCRIPTOR;
 use windows::Win32::Storage::FileSystem::{
@@ -39,8 +40,16 @@ pub(super) fn warn_partial_apply() {
 
 /// Converts a Rust [`Path`] to a NUL-terminated UTF-16 buffer suitable for
 /// [`windows::core::PCWSTR`] arguments.
+///
+/// Absolute drive and UNC paths are first routed through
+/// [`fast_io::to_extended_path`] so the resulting wide string carries the
+/// `\\?\` extended-length prefix. Without it, `GetNamedSecurityInfoW` /
+/// `SetNamedSecurityInfoW` reject inputs longer than the 260-character
+/// `MAX_PATH` cap with `ERROR_PATH_NOT_FOUND`, silently breaking ACL
+/// round-trips on deeply nested trees.
 pub(super) fn to_wide(path: &Path) -> Vec<u16> {
-    path.as_os_str()
+    to_extended_path(path)
+        .as_os_str()
         .encode_wide()
         .chain(std::iter::once(0))
         .collect()

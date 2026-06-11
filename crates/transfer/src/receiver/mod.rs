@@ -54,6 +54,7 @@ use protocol::acl::AclCache;
 use protocol::filters::FilterRuleWireFormat;
 use protocol::flist::{FileEntry, FileListReader};
 use protocol::idlist::IdList;
+use protocol::stats::DeleteStats;
 use protocol::{CompatibilityFlags, NegotiationResult, ProtocolVersion};
 
 use engine::HardlinkApplyTracker;
@@ -324,6 +325,19 @@ pub struct ReceiverContext {
     /// This is wired by task DDP-B3 (#2257) and consumed by the emitter
     /// wiring in tasks DDP-E1-E5.
     delete_ctx: Option<Arc<DeleteContext>>,
+    /// Deletion stats produced by the receiver's pre-transfer `--delete` sweep.
+    ///
+    /// Populated by `delete_extraneous_files` from both `run_pipelined` and
+    /// `run_pipelined_incremental`, then consumed by `handle_goodbye` to
+    /// emit `NDX_DEL_STATS` during the goodbye phase. Mirrors upstream's
+    /// daemon-recv fork where the generator (which performs the delete pass)
+    /// is also the side that emits `write_del_stats(f_out)`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:2393-2398` - early `write_del_stats` when `delete_mode || force_delete || read_batch`
+    /// - `main.c:225-238` - `write_del_stats()` wire format
+    pending_del_stats: DeleteStats,
     /// Transfer pipeline FSM tracking the current protocol phase.
     ///
     /// Enforces the linear phase progression through the transfer lifecycle.
@@ -385,6 +399,7 @@ impl ReceiverContext {
             flist_io_error: 0,
             parallel_thresholds: ParallelThresholds::default(),
             delete_ctx: None,
+            pending_del_stats: DeleteStats::new(),
             pipeline,
         }
     }

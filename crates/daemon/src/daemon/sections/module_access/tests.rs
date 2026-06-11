@@ -1972,4 +1972,89 @@ mod module_access_tests {
         let result = classify_client_path_against_module(&escape, &module_root);
         assert!(matches!(result, Err(())));
     }
+
+    #[test]
+    fn resolve_sender_sources_returns_module_root_without_positional() {
+        // upstream: clientserver.c:1073 - bare module request (no sub-path)
+        // means the sender walks the module root directly. Pre-fix behaviour
+        // must be preserved exactly to avoid regressing the existing pull
+        // tests that target `rsync://h/module/`.
+        let module_path = std::path::Path::new("/srv/upload");
+        let args: Vec<String> = vec![];
+        let sources = resolve_sender_sources(module_path, &args, "upload")
+            .expect("bare module request must resolve");
+        assert_eq!(sources, vec![std::path::PathBuf::from("/srv/upload")]);
+    }
+
+    #[test]
+    fn resolve_sender_sources_returns_module_root_for_empty_subpath() {
+        // upstream: util1.c:813-814 - `module/` strips to "" after
+        // glob_expand_module; the daemon sender should still walk the module
+        // root and emit "." with FLAG_TOP_DIR.
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "upload")
+            .expect("empty sub-path must resolve");
+        assert_eq!(sources, vec![std::path::PathBuf::from("/srv/upload")]);
+    }
+
+    #[test]
+    fn resolve_sender_sources_joins_single_file_subpath_with_module_root() {
+        // upstream: flist.c:2338-2349 - a single-file sub-path positional is
+        // joined with module_path so the sender walks exactly that one path
+        // and the per-positional dir/fn split emits the basename.
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/d1/d2/f2".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "upload")
+            .expect("file sub-path must resolve");
+        assert_eq!(
+            sources,
+            vec![std::path::PathBuf::from("/srv/upload/d1/d2/f2")]
+        );
+    }
+
+    #[test]
+    fn resolve_sender_sources_preserves_trailing_slash_on_subdir() {
+        // upstream: flist.c:2312-2322 - a trailing slash promotes the source
+        // to DOTDIR_NAME; we must keep the slash intact so the sender's walk
+        // emits "." with FLAG_TOP_DIR for the sub-directory's contents.
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/d1/d2/".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "upload")
+            .expect("sub-dir trailing-slash path must resolve");
+        let lossy: Vec<String> = sources
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(lossy, vec!["/srv/upload/d1/d2/".to_owned()]);
+    }
+
+    #[test]
+    fn resolve_sender_sources_rejects_parent_dir_traversal() {
+        // SEC-1.q defense-in-depth: a `..` segment escaping the module root
+        // must be rejected at argv-resolution time so chroot-less daemons
+        // cannot leak files via sub-path requests like `module/../etc/...`.
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/../etc/passwd".to_owned()];
+        assert!(resolve_sender_sources(module_path, &args, "upload").is_none());
+    }
+
+    #[test]
+    fn resolve_sender_sources_rejects_mid_path_parent_dir() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/d1/../../secret".to_owned()];
+        assert!(resolve_sender_sources(module_path, &args, "upload").is_none());
+    }
+
+    #[test]
+    fn resolve_sender_sources_strips_leading_slash_before_join() {
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload//d1/d2/f2".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "upload")
+            .expect("leading-slash sub-path must resolve");
+        assert_eq!(
+            sources,
+            vec![std::path::PathBuf::from("/srv/upload/d1/d2/f2")]
+        );
+    }
 }

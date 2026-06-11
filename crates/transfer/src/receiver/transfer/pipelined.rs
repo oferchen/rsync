@@ -70,6 +70,10 @@ impl ReceiverContext {
             delete_stats = ds;
             delete_limit_exceeded = exceeded;
             delete_io_error = io_bits;
+            // Carry the per-type counters into the receiver context so the
+            // goodbye handshake can emit NDX_DEL_STATS to the peer sender.
+            // upstream: generator.c:2393-2398 - early write_del_stats() emission.
+            self.pending_del_stats = delete_stats;
         }
 
         let mut stats = TransferStats {

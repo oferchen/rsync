@@ -47,6 +47,7 @@ use std::os::windows::ffi::{OsStrExt, OsStringExt};
 use std::os::windows::io::FromRawHandle;
 use std::path::Path;
 
+use fast_io::to_extended_path;
 use windows::Win32::Foundation::{
     ERROR_FILE_NOT_FOUND, ERROR_HANDLE_EOF, ERROR_NO_MORE_FILES, ERROR_PATH_NOT_FOUND,
     GetLastError, HANDLE, INVALID_HANDLE_VALUE,
@@ -74,8 +75,14 @@ pub fn os_name_to_bytes(name: &std::ffi::OsStr) -> Vec<u8> {
 }
 
 /// Encodes a path as a NUL-terminated UTF-16 buffer for `*W` Win32 calls.
+///
+/// The path is first routed through [`fast_io::to_extended_path`] so absolute
+/// drive and UNC inputs gain the `\\?\` extended-length prefix. Without the
+/// prefix, `CreateFileW` / `FindFirstStreamW` reject paths exceeding the
+/// 260-character `MAX_PATH` cap with `ERROR_PATH_NOT_FOUND`.
 fn path_to_wide(path: &Path) -> Vec<u16> {
-    path.as_os_str()
+    to_extended_path(path)
+        .as_os_str()
         .encode_wide()
         .chain(std::iter::once(0))
         .collect()
@@ -102,7 +109,10 @@ fn stream_path_wide(path: &Path, name: &[u8]) -> io::Result<Vec<u16>> {
             "xattr stream name must not contain ':' or NUL",
         ));
     }
-    let mut buf: Vec<u16> = path.as_os_str().encode_wide().collect();
+    // Prefix the base path with `\\?\` so the assembled stream path retains
+    // long-path support when handed to `CreateFileW` / `DeleteFileW`.
+    let extended = to_extended_path(path);
+    let mut buf: Vec<u16> = extended.as_os_str().encode_wide().collect();
     buf.push(b':' as u16);
     buf.extend(name_str.encode_utf16());
     buf.extend(STREAM_SUFFIX.encode_utf16());
