@@ -339,6 +339,81 @@ fn parse_server_args_skips_value_bearing_long_flags() {
     assert_eq!(pos_args, vec![OsString::from("dest/")]);
 }
 
+/// Regression for UTS-SLDB.REOPEN (`symlink-dirlink-basis_test.py` test 7):
+/// upstream `server_options()` (options.c:2886-2890) emits `--partial-dir`
+/// and its value as TWO separate argv entries. Both `--partial-dir` itself
+/// and the value that follows must be stripped from the positional list,
+/// otherwise the value (`.rsync-partial`) shows up as a destination path
+/// and the receiver creates a directory literally named `--partial-dir`.
+#[test]
+fn parse_server_args_skips_split_partial_dir_flag() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-vlKtpR"),
+        OsString::from("--partial-dir"),
+        OsString::from(".rsync-partial"),
+        OsString::from("."),
+        OsString::from("."),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-vlKtpR");
+    assert!(
+        pos_args.is_empty(),
+        "split --partial-dir and value must not leak into positional args: {:?}",
+        pos_args,
+    );
+}
+
+/// Companion to the split-form test above: `--partial-dir=VALUE` is the
+/// joined form used by the client-side CLI parser. The server parser must
+/// also recognise it so non-upstream clients that emit the joined form do
+/// not corrupt the positional list.
+#[test]
+fn parse_server_args_skips_joined_partial_dir_flag() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-vlKtpR"),
+        OsString::from("--partial-dir=.rsync-partial"),
+        OsString::from("."),
+        OsString::from("dest"),
+    ];
+    let (flags, pos_args) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flags, "-vlKtpR");
+    assert_eq!(pos_args, vec![OsString::from("dest")]);
+}
+
+/// `parse_server_long_flags` must capture both split and joined
+/// `--partial-dir` forms into `ServerLongFlags::partial_dir`.
+#[test]
+fn long_flags_captures_split_partial_dir() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--partial-dir"),
+        OsString::from(".rsync-partial"),
+        OsString::from("--delay-updates"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(
+        flags.partial_dir.as_deref(),
+        Some(std::ffi::OsStr::new(".rsync-partial")),
+    );
+    assert!(flags.delay_updates);
+}
+
+#[test]
+fn long_flags_captures_joined_partial_dir() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--partial-dir=.rsync-partial"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(
+        flags.partial_dir.as_deref(),
+        Some(std::ffi::OsStr::new(".rsync-partial")),
+    );
+    assert!(!flags.delay_updates);
+}
+
 #[test]
 fn long_flags_defaults() {
     let args: Vec<OsString> = vec![OsString::from("--server")];
