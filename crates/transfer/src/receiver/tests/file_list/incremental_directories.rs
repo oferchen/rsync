@@ -589,17 +589,21 @@ mod incremental_mode_tests {
     }
 
     /// EDG-SANDBOX.A regression: the parallel `read_dir` worker in
-    /// `delete_extraneous_files` must propagate a non-EACCES/non-NotFound
-    /// scan failure to the outer caller instead of silently coercing it to
-    /// `(DeleteStats::new(), Vec::new())`.
+    /// `delete_extraneous_files` must surface a non-EACCES/non-NotFound
+    /// scan failure through the `io_err_bits` slot of the return tuple
+    /// so the receiver's overall `io_error` field drives a non-zero
+    /// `RERR_PARTIAL=23` exit instead of silently skipping the subtree.
     ///
-    /// Before this fix, planting a regular file where the receiver's
+    /// Before the fix, planting a regular file where the receiver's
     /// file list expected a directory caused the worker to discard the
     /// `ENOTDIR` returned by `read_dir`, return empty stats, and exit
-    /// `rc=0` with the deletions in that subtree silently skipped. The
-    /// fix discriminates EACCES (upstream-parity non-fatal, matches
+    /// `rc=0` with the deletions in that subtree silently skipped.
+    /// The fix discriminates EACCES (upstream-parity non-fatal, matches
     /// `generator.c:delete_in_dir`) from the ELOOP/EOPNOTSUPP/ENOTDIR
-    /// class which must fail loud.
+    /// class, which must OR `IOERR_GENERAL` into the third tuple slot
+    /// so the caller's `stats.io_error |= io_bits` accumulation in
+    /// `pipelined.rs` / `pipelined_incremental.rs` produces the
+    /// upstream-parity non-zero exit.
     ///
     /// upstream: generator.c:delete_in_dir() - "opendir failed" classifies
     /// EACCES as non-fatal (io_error bit only) and every other class as a
@@ -610,6 +614,7 @@ mod incremental_mode_tests {
         use std::ffi::OsString;
 
         use super::super::super::support::TestDeletionWriter;
+        use crate::generator::io_error_flags::IOERR_GENERAL;
 
         let temp = TempDir::new().unwrap();
         let dest = temp.path();
@@ -636,27 +641,23 @@ mod incremental_mode_tests {
             .push(FileEntry::new_file("subdir/child.txt".into(), 4, 0o644));
 
         let mut writer = TestDeletionWriter;
-        let err = ctx
+        let (_stats, _limit_exceeded, io_bits) = ctx
             .delete_extraneous_files(
                 dest,
                 #[cfg(unix)]
                 None,
                 &mut writer,
             )
-            .expect_err(
-                "non-EACCES scan error must propagate as Err, not be coerced to empty stats",
+            .expect(
+                "delete_extraneous_files must return Ok and surface fail-loud \
+                 scan errors via the io_err_bits tuple slot",
             );
 
         assert_ne!(
-            err.kind(),
-            std::io::ErrorKind::PermissionDenied,
-            "EACCES is the upstream-parity non-fatal branch; this scenario \
-             plants ENOTDIR to exercise the fail-loud branch",
-        );
-        assert_ne!(
-            err.kind(),
-            std::io::ErrorKind::NotFound,
-            "NotFound is the upstream-parity continue-on-vanished branch",
+            io_bits & IOERR_GENERAL,
+            0,
+            "non-EACCES scan error must set IOERR_GENERAL in io_err_bits so \
+             the receiver's stats.io_error drives a non-zero exit",
         );
     }
 }
