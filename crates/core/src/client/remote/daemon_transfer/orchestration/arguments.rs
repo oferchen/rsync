@@ -401,7 +401,7 @@ fn strip_client_only_batch_flags(args: &mut Vec<String>) {
     let mut i = 0;
     while i < args.len() {
         let arg = args[i].as_str();
-        let is_bare = CLIENT_ONLY.iter().any(|flag| arg == *flag);
+        let is_bare = CLIENT_ONLY.contains(&arg);
         let is_kv = CLIENT_ONLY
             .iter()
             .any(|flag| arg.starts_with(flag) && arg.as_bytes().get(flag.len()) == Some(&b'='));
