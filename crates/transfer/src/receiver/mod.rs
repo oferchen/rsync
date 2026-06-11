@@ -451,6 +451,22 @@ impl ReceiverContext {
         Self::new(handshake, config, pipeline)
     }
 
+    /// Advances the pipeline FSM to `DeltaTransfer` for tests that need to
+    /// exercise [`finalize_transfer`](Self::finalize_transfer) directly.
+    ///
+    /// Walks the FSM through `FileListTransfer -> DeltaTransfer` so the
+    /// caller can drop straight into the post-transfer finalization sequence
+    /// without having to run a real file-list or delta exchange.
+    #[cfg(test)]
+    pub(in crate::receiver) fn advance_pipeline_to_delta_transfer_for_test(&mut self) {
+        self.pipeline
+            .advance_to(crate::transfer_state::TransferPhase::FileListTransfer)
+            .expect("test pipeline advance to FileListTransfer");
+        self.pipeline
+            .advance_to(crate::transfer_state::TransferPhase::DeltaTransfer)
+            .expect("test pipeline advance to DeltaTransfer");
+    }
+
     /// Attaches a [`DeleteContext`] to the receiver.
     ///
     /// When set, the receiver's per-segment hook publishes one
