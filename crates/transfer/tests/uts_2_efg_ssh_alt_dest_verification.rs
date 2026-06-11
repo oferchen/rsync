@@ -192,7 +192,7 @@ fn uts_2_g_wire_byte_parity_mkdir_is_receiver_local() {
     // duration of the call to make the absence of a writer argument
     // load-bearing - any refactor that adds a writer would fail to type-
     // check against this fixture.
-    let mut wire_capture: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+    let wire_capture: Cursor<Vec<u8>> = Cursor::new(Vec::new());
     let captured_len_before = wire_capture.get_ref().len();
 
     let created = ensure_dest_root_exists(&dest_root, 4, false, false)

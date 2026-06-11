@@ -135,7 +135,7 @@ fn read_and_log_lsms_from(path: &Path, log_sink: Option<&SharedLogSink>) {
 #[cfg(all(test, target_os = "linux"))]
 mod hardening_tests {
     use super::*;
-    use std::io::{Read as _, Seek as _, SeekFrom, Write as _};
+    use std::io::{Seek as _, SeekFrom};
 
     /// Builds a [`SharedLogSink`] backed by a fresh tempfile and returns
     /// the sink alongside a clone of the underlying file. The clone is

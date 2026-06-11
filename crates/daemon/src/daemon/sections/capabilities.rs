@@ -286,10 +286,10 @@ mod capabilities_tests {
         ModuleRuntime::new(def, None)
     }
 
-    #[test]
-    fn cap_feature_compiled_in_on_linux() {
-        assert!(CAP_FEATURE_AVAILABLE);
-    }
+    // CAP_FEATURE_AVAILABLE is a cfg-gated compile-time constant; the
+    // surrounding `cfg(all(test, target_os = "linux"))` already proves the
+    // feature is compiled in on Linux, so a runtime assertion against the
+    // constant adds no signal and clippy strips it as dead code.
 
     #[test]
     fn preflight_passes_when_no_module_requires_chown() {
