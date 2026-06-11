@@ -105,9 +105,6 @@ impl ReceiverContext {
             )?;
             delete_stats = ds;
             delete_limit_exceeded = exceeded;
-            // UTS-16.b: sandbox-rejected delete scan surfaces here so the
-            // chdir-symlink-race refusal becomes a non-zero exit instead of a
-            // silent skip.
             stats.io_error |= io_bits;
             // Carry the counters into the receiver context so the goodbye
             // handshake can emit NDX_DEL_STATS to the peer sender. URV-6.b

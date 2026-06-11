@@ -56,9 +56,6 @@ impl ReceiverContext {
 
         let mut delete_stats = DeleteStats::new();
         let mut delete_limit_exceeded = false;
-        // UTS-16.b: sandbox-rejected scans surface IOERR_GENERAL here so the
-        // chdir-symlink-race refusal becomes a non-zero exit instead of a
-        // silent skip.
         let mut delete_io_error: i32 = 0;
         if self.config.flags.delete {
             let (ds, exceeded, io_bits) = self.delete_extraneous_files(

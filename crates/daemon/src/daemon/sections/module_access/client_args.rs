@@ -445,6 +445,43 @@ fn resolve_sender_sources(
     }
 }
 
+/// Collapses `.` and `..` segments lexically without touching the filesystem.
+///
+/// Used to fold a relative basis path like `mod/00/../01` into `mod/01` before
+/// the module-root containment check runs. Pure path arithmetic: no syscalls,
+/// no canonicalisation, so the result is well-defined even when the resolved
+/// directory does not exist yet (a `--link-dest` basis is allowed to be
+/// missing without aborting the transfer).
+///
+/// `..` at the head of an otherwise relative path is preserved verbatim so a
+/// climb that escapes the join base survives into the caller's `starts_with`
+/// check, which then rejects the basis as out-of-module.
+fn lexically_normalize(path: &std::path::Path) -> std::path::PathBuf {
+    use std::path::{Component, PathBuf};
+
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                out.push(component.as_os_str());
+            }
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let popped = out.pop();
+                if !popped {
+                    // Nothing to pop; preserve the `..` so the caller's
+                    // `starts_with(module_root)` check rejects the escape.
+                    out.push("..");
+                }
+            }
+        }
+    }
+    if out.as_os_str().is_empty() {
+        out.push(".");
+    }
+    out
+}
+
 /// Builds the server configuration from client arguments.
 ///
 /// Returns the configuration on success, or sends an error and returns `None`.
@@ -531,15 +568,49 @@ fn build_server_config(
                 cfg.connection.compression_level = Some(compress::zlib::CompressionLevel::Default);
             }
 
-            // upstream: after chroot + chdir, reference directory paths resolve
-            // relative to the module root. We don't chdir, so resolve relative
-            // paths explicitly against the module path.
-            let module_path = std::path::Path::new(&module.path);
-            for ref_dir in &mut cfg.reference_directories {
+            // upstream: main.c:1199-1206 calls `check_alt_basis_dirs()` after
+            // `get_local_name(flist, argv[0])` chdir's into the dest directory,
+            // so relative basis paths like `--link-dest=../01` resolve against
+            // the receiver's destination (a sibling of `dest/00/`), not against
+            // the module root. We do not chdir, so resolve relative ref_dirs
+            // explicitly against the receiver's dest directory (the positional
+            // arg). For sender role positionals are source paths, not a dest;
+            // keep the module-root fallback so the legacy compare-dest lookup
+            // path stays unchanged.
+            //
+            // The resolved path is then confined inside the module root: if
+            // the lexical climb (`..`) escapes the module tree the ref_dir is
+            // silently dropped so the basis lookup falls through to a normal
+            // transfer instead of leaking files from outside the module
+            // (link-dest-module-escape security pin).
+            let module_root_canonical = std::path::Path::new(&module.path)
+                .canonicalize()
+                .unwrap_or_else(|_| std::path::PathBuf::from(&module.path));
+            let resolve_base: std::path::PathBuf = if role == ServerRole::Receiver {
+                cfg.args
+                    .first()
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| std::path::PathBuf::from(&module.path))
+            } else {
+                std::path::PathBuf::from(&module.path)
+            };
+            cfg.reference_directories.retain_mut(|ref_dir| {
                 if ref_dir.path.is_relative() {
-                    ref_dir.path = module_path.join(&ref_dir.path);
+                    let joined = resolve_base.join(&ref_dir.path);
+                    let resolved = lexically_normalize(&joined);
+                    let resolved_canonical = resolved
+                        .canonicalize()
+                        .unwrap_or_else(|_| resolved.clone());
+                    if !resolved_canonical.starts_with(&module_root_canonical) {
+                        // Lexical or canonical climb escapes the module root;
+                        // drop the basis so the receiver re-transfers instead
+                        // of hard-linking to an out-of-module target.
+                        return false;
+                    }
+                    ref_dir.path = resolved;
                 }
-            }
+                true
+            });
 
             // upstream: loadparm.c - `temp dir` module parameter provides a
             // default temp directory. The client's --temp-dir takes precedence
