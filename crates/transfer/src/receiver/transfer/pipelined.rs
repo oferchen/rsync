@@ -56,9 +56,9 @@ impl ReceiverContext {
 
         let mut delete_stats = DeleteStats::new();
         let mut delete_limit_exceeded = false;
-        let delete_io_error: i32 = 0;
+        let mut delete_io_error: i32 = 0;
         if self.config.flags.delete {
-            let (ds, exceeded) = self.delete_extraneous_files(
+            let (ds, exceeded, io_bits) = self.delete_extraneous_files(
                 &setup.dest_dir,
                 #[cfg(unix)]
                 setup.sandbox.as_ref(),
@@ -66,6 +66,7 @@ impl ReceiverContext {
             )?;
             delete_stats = ds;
             delete_limit_exceeded = exceeded;
+            delete_io_error = io_bits;
             // Carry the per-type counters into the receiver context so the
             // goodbye handshake can emit NDX_DEL_STATS to the peer sender.
             // upstream: generator.c:2393-2398 - early write_del_stats() emission.
