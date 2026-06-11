@@ -9,6 +9,9 @@
 //! - [`legacy_goodbye_tests`] - protocol 28/29 NDX_DONE goodbye exchange.
 //! - [`goodbye_partial_cutoff`] - EDG-GOODBYE.4 receiver-side EOF /
 //!   garbage / hung-sender handling for the goodbye phase.
+//! - [`finalize_flush_tests`] - UTS-REVDD post-goodbye flush in
+//!   `finalize_transfer` guarding against the upstream
+//!   `reverse-daemon-delta` hang.
 //! - [`input_multiplex_tests`] - client/server input multiplex activation
 //!   per protocol version.
 //! - [`sanitize_file_list`] - trust gating that strips absolute / `..`
@@ -17,6 +20,7 @@
 //!   from `daemon_filter_rules`.
 
 mod daemon_filter_tests;
+mod finalize_flush_tests;
 mod goodbye_partial_cutoff;
 mod input_multiplex_tests;
 mod legacy_goodbye_tests;
