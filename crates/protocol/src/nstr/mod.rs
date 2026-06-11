@@ -4,7 +4,7 @@
 //! emission sites in a single helper module so callers across the
 //! workspace share one byte-for-byte definition of each emission shape.
 //!
-//! See [`trace`] for the producer helpers and upstream-reference notes.
+//! See `trace` for the producer helpers and upstream-reference notes.
 
 pub mod trace;
 
