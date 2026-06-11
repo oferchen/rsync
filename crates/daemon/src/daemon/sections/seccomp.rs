@@ -44,6 +44,17 @@ pub enum SeccompOutcome {
 /// [`SeccompOutcome::Unavailable`] without touching kernel state.
 #[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
 pub fn apply_worker_seccomp_filter() -> SeccompOutcome {
+    // Runtime escape hatch: set `OC_RSYNC_NO_SECCOMP=1` to skip filter
+    // installation. The intent is operator opt-out when an allowlist gap
+    // is killing real transfers (SIGSYS = "Bad system call (core dumped)"
+    // from the kernel default action). Landlock + SEC-1 `*at` syscalls
+    // remain the primary defenses, so this is degradation of depth, not
+    // collapse. Empty / "0" / "false" leave the filter engaged so a stray
+    // unset-but-defined env from a CI runner does not silently disable
+    // the sandbox.
+    if seccomp_runtime_disabled() {
+        return SeccompOutcome::Unavailable;
+    }
     use seccompiler::{
         apply_filter, BpfProgram, SeccompAction, SeccompFilter, SeccompRule, TargetArch,
     };
@@ -171,6 +182,13 @@ pub fn worker_seccomp_allowlist() -> Vec<i64> {
 
     // Bucket B - network and IPC for the wire protocol.
     s.extend([
+        libc::SYS_socket,
+        libc::SYS_socketpair,
+        libc::SYS_bind,
+        libc::SYS_listen,
+        libc::SYS_accept,
+        libc::SYS_accept4,
+        libc::SYS_connect,
         libc::SYS_recvfrom,
         libc::SYS_recvmsg,
         libc::SYS_recvmmsg,
@@ -188,6 +206,18 @@ pub fn worker_seccomp_allowlist() -> Vec<i64> {
 
     // Bucket C - process / scheduling / runtime.
     s.extend([
+        libc::SYS_clone,
+        libc::SYS_clone3,
+        libc::SYS_sched_getaffinity,
+        libc::SYS_sched_setaffinity,
+        libc::SYS_sched_yield,
+        libc::SYS_membarrier,
+        libc::SYS_rt_sigtimedwait,
+        libc::SYS_rt_sigsuspend,
+        libc::SYS_uname,
+        libc::SYS_sysinfo,
+        libc::SYS_fchdir,
+        libc::SYS_chdir,
         libc::SYS_futex,
         libc::SYS_clock_gettime,
         libc::SYS_clock_nanosleep,
@@ -225,6 +255,8 @@ pub fn worker_seccomp_allowlist() -> Vec<i64> {
         libc::SYS_epoll_pwait,
         libc::SYS_eventfd2,
     ]);
+    #[cfg(target_arch = "x86_64")]
+    s.push(libc::SYS_arch_prctl);
 
     // glibc 2.35+ initialises restartable sequences per thread. `SYS_rseq`
     // is missing from older libc bindings; fall back to the documented
@@ -243,6 +275,20 @@ pub fn worker_seccomp_allowlist() -> Vec<i64> {
     s.sort_unstable();
     s.dedup();
     s
+}
+
+/// Operator-driven runtime opt-out for the worker seccomp filter.
+///
+/// Empty, `0`, and `false` all leave the filter engaged. Any other value
+/// disables it. The intent is emergency relief when allowlist drift kills
+/// real transfers - `OC_RSYNC_NO_SECCOMP=1` lets the operator unblock
+/// production while the missing syscall is audited and added.
+#[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
+fn seccomp_runtime_disabled() -> bool {
+    match std::env::var("OC_RSYNC_NO_SECCOMP") {
+        Ok(v) => !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"),
+        Err(_) => false,
+    }
 }
 
 /// `rseq(2)` syscall number for the current target.
