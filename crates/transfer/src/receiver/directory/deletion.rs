@@ -55,7 +55,7 @@ impl ReceiverContext {
         dest_dir: &Path,
         #[cfg(unix)] sandbox: Option<&std::sync::Arc<fast_io::DirSandbox>>,
         writer: &mut W,
-    ) -> io::Result<(DeleteStats, bool)> {
+    ) -> io::Result<(DeleteStats, bool, i32)> {
         use std::collections::{HashMap, HashSet};
         use std::path::PathBuf;
         use std::sync::Arc;
@@ -331,7 +331,12 @@ impl ReceiverContext {
             );
 
         let mut combined = DeleteStats::new();
-        let mut first_err: Option<io::Error> = None;
+        // UTS-16.b: any worker that hit a fail-loud sandbox class (ELOOP /
+        // EOPNOTSUPP / ENOTDIR / EPERM) surfaces IOERR_GENERAL here so the
+        // receiver's overall io_error bit drives a non-zero exit (RERR_PARTIAL=23)
+        // instead of either silently skipping or aborting the whole receiver
+        // pass.
+        let mut io_err_bits: i32 = 0;
         for (s, deleted_paths, worker_err) in &per_dir_results {
             combined.files = combined.files.saturating_add(s.files);
             combined.dirs = combined.dirs.saturating_add(s.dirs);
@@ -347,19 +352,9 @@ impl ReceiverContext {
                 }
             }
 
-            // EDG-SANDBOX.A/B: capture the first worker-reported error so it
-            // can be propagated after the parallel collection completes.
-            // Subsequent workers' errors are dropped because the caller only
-            // exits with one rc; the io_error bit is what surfaces the rest.
-            if first_err.is_none()
-                && let Some(e) = worker_err
-            {
-                first_err = Some(io::Error::new(e.kind(), e.to_string()));
+            if worker_err.is_some() {
+                io_err_bits |= crate::generator::io_error_flags::IOERR_GENERAL;
             }
-        }
-
-        if let Some(e) = first_err {
-            return Err(e);
         }
 
         // Limit is exceeded when we had candidates beyond the allowed count.
@@ -370,7 +365,7 @@ impl ReceiverContext {
             + u64::from(combined.specials);
         let limit_exceeded = max_delete.is_some_and(|limit| total_deletions >= limit);
 
-        Ok((combined, limit_exceeded))
+        Ok((combined, limit_exceeded, io_err_bits))
     }
 }
 
