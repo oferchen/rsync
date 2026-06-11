@@ -36,7 +36,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
   CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
-  UPSTREAM_RSYNC_VERSION: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.4.3' }}
+  UPSTREAM_RSYNC_VERSION: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.4.4' }}
 
 jobs:
   build:

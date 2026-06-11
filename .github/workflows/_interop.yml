@@ -10,7 +10,7 @@ on:
       upstream_rsync_version:
         description: 'Upstream rsync version for cache key'
         type: string
-        default: '3.4.3'
+        default: '3.4.4'
       rust_toolchain:
         description: 'Rust toolchain version'
         type: string
@@ -84,7 +84,7 @@ jobs:
 
       - name: Install upstream rsync to PATH
         run: |
-          UPSTREAM="target/interop/upstream-src/rsync-3.4.1/rsync"
+          UPSTREAM="target/interop/upstream-src/rsync-3.4.4/rsync"
           if [ -f "$UPSTREAM" ]; then
             sudo cp "$UPSTREAM" /usr/local/bin/rsync
           fi
