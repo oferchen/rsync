@@ -45,7 +45,7 @@ pub enum SeccompOutcome {
 #[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
 pub fn apply_worker_seccomp_filter() -> SeccompOutcome {
     use seccompiler::{
-        BpfProgram, SeccompAction, SeccompFilter, SeccompRule, TargetArch, apply_filter,
+        apply_filter, BpfProgram, SeccompAction, SeccompFilter, SeccompRule, TargetArch,
     };
     use std::collections::BTreeMap;
 
@@ -150,11 +150,11 @@ pub fn worker_seccomp_allowlist() -> Vec<i64> {
         libc::SYS_readlinkat,
         libc::SYS_getdents64,
         libc::SYS_copy_file_range,
-        libc::SYS_sendfile,
+        seccomp_syscall_sendfile(),
         libc::SYS_splice,
         libc::SYS_tee,
         libc::SYS_vmsplice,
-        libc::SYS_fadvise64,
+        seccomp_syscall_fadvise64(),
         libc::SYS_fgetxattr,
         libc::SYS_fsetxattr,
         libc::SYS_flistxattr,
@@ -265,6 +265,50 @@ const fn seccomp_syscall_rseq() -> i64 {
     }
 }
 
+/// `sendfile(2)` syscall number for the current target.
+///
+/// `libc::SYS_sendfile` is exposed on x86_64 but missing from the
+/// aarch64 binding in older libc releases; pinning the documented
+/// `arch/*/include/uapi/asm/unistd*.h` number keeps the allowlist build
+/// portable across both architectures.
+#[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
+const fn seccomp_syscall_sendfile() -> i64 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        40
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        71
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        -1
+    }
+}
+
+/// `fadvise64(2)` syscall number for the current target.
+///
+/// Same rationale as `seccomp_syscall_sendfile`: the aarch64 libc
+/// binding does not expose `SYS_fadvise64`, so fall back to the
+/// generic syscall number defined in
+/// `include/uapi/asm-generic/unistd.h`.
+#[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
+const fn seccomp_syscall_fadvise64() -> i64 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        221
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        223
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    {
+        -1
+    }
+}
+
 #[cfg(all(target_os = "linux", feature = "daemon-seccomp", test))]
 mod seccomp_tests {
     use super::*;
@@ -329,9 +373,7 @@ mod seccomp_tests {
             arch,
         )
         .expect("filter construction must succeed");
-        let _prog: BpfProgram = filter
-            .try_into()
-            .expect("BPF compilation must succeed");
+        let _prog: BpfProgram = filter.try_into().expect("BPF compilation must succeed");
     }
 
     // The kernel-side install + SIGSYS assertion lives in
