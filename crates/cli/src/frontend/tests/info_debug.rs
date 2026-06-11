@@ -295,7 +295,11 @@ fn info_name0_suppresses_verbose_output() {
 
     assert_eq!(code, 0);
     #[cfg(unix)]
-    assert!(stderr.is_empty(), "unexpected stderr: {}", String::from_utf8_lossy(&stderr));
+    assert!(
+        stderr.is_empty(),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&stderr)
+    );
     let rendered = String::from_utf8(stdout).expect("stdout utf8");
     assert!(!rendered.contains("quiet.txt"));
     assert!(rendered.contains("sent"));
@@ -318,7 +322,11 @@ fn info_name2_reports_unchanged_entries() {
     assert_eq!(initial.0, 0);
     assert!(initial.1.is_empty());
     #[cfg(unix)]
-    assert!(initial.2.is_empty(), "unexpected stderr from initial copy: {}", String::from_utf8_lossy(&initial.2));
+    assert!(
+        initial.2.is_empty(),
+        "unexpected stderr from initial copy: {}",
+        String::from_utf8_lossy(&initial.2)
+    );
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
@@ -329,7 +337,11 @@ fn info_name2_reports_unchanged_entries() {
 
     assert_eq!(code, 0);
     #[cfg(unix)]
-    assert!(stderr.is_empty(), "unexpected stderr: {}", String::from_utf8_lossy(&stderr));
+    assert!(
+        stderr.is_empty(),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&stderr)
+    );
     let rendered = String::from_utf8(stdout).expect("stdout utf8");
     assert!(rendered.contains("unchanged.txt"));
 }
