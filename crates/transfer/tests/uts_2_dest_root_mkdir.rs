@@ -127,3 +127,123 @@ fn existing_non_directory_path_is_noop_for_helper() {
     assert!(!created, "helper must not destroy an existing file");
     assert!(dest.is_file(), "the file stays intact");
 }
+
+/// Broken symlink pointing OUTSIDE the would-be containment must be refused.
+///
+/// The pre-PR-5567 helper called `dest_root.metadata()`, which follows the
+/// symlink. For a dangling link the stat returns ENOENT, the helper then
+/// calls `create_dir_all(dest_root)`, and the std machinery resolves the
+/// symlink to materialize a directory at the link target - a containment
+/// bypass analogous to the SEC-1 TOCTOU family. The lstat-based check now
+/// observes the symlink directly and refuses.
+#[cfg(unix)]
+#[test]
+fn refuses_broken_symlink_to_outside_module() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = tempdir().expect("tempdir");
+    let outside_root = tempdir().expect("outside tempdir");
+    let outside_target = outside_root.path().join("nonexistent/target");
+    let dest = tmp.path().join("dest_root");
+    symlink(&outside_target, &dest).expect("create broken symlink");
+    assert!(
+        dest.symlink_metadata().expect("lstat dest").file_type().is_symlink(),
+        "fixture must place a symlink at dest"
+    );
+    assert!(!outside_target.exists(), "target must remain dangling");
+
+    let err = ensure_dest_root_exists(&dest, 3, false, false)
+        .expect_err("symlinked dest_root must be refused");
+
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(
+        err.to_string().contains("symlink"),
+        "error must name the symlink condition, got: {err}"
+    );
+    assert!(
+        !outside_target.exists(),
+        "helper must not materialize the symlink target"
+    );
+}
+
+/// Broken symlink pointing inside the eventual module path is still suspect.
+///
+/// Even if the target happens to land inside the module root, accepting a
+/// symlink-as-dest leaves the per-entry writes resolving through a link the
+/// receiver did not create - the dest may be re-pointed later or shared with
+/// an attacker-writable location. Refusing is the safe-default.
+#[cfg(unix)]
+#[test]
+fn refuses_broken_symlink_to_intra_module_target() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = tempdir().expect("tempdir");
+    let inside_target = tmp.path().join("would-be-safe/leaf");
+    let dest = tmp.path().join("dest_root");
+    symlink(&inside_target, &dest).expect("create broken intra-module symlink");
+
+    let err = ensure_dest_root_exists(&dest, 4, true, false)
+        .expect_err("intra-module symlinked dest is still refused");
+
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(
+        !inside_target.exists(),
+        "helper must not auto-create at the symlink target even when intra-module"
+    );
+}
+
+/// Symlink to an existing directory inside the eventual module is refused
+/// too: the helper has no protocol-level signal that the link was placed by
+/// the operator rather than by an attacker, and a permissive helper here
+/// would break the SEC-1 containment that downstream `*at` calls rely on.
+#[cfg(unix)]
+#[test]
+fn refuses_symlink_to_existing_intra_module_directory() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = tempdir().expect("tempdir");
+    let real_dir = tmp.path().join("real_subdir");
+    fs::create_dir(&real_dir).expect("create real intra-module dir");
+    let dest = tmp.path().join("dest_root");
+    symlink(&real_dir, &dest).expect("symlink dest -> real_dir");
+
+    let err = ensure_dest_root_exists(&dest, 5, false, false)
+        .expect_err("symlinked dest_root is refused even when target exists");
+
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    // The real directory must remain untouched - no per-entry writes ever
+    // resolved through the link because the helper aborted first.
+    assert!(real_dir.is_dir());
+    assert!(
+        dest.symlink_metadata()
+            .expect("lstat dest")
+            .file_type()
+            .is_symlink(),
+        "symlink itself is preserved; helper must not unlink it"
+    );
+}
+
+/// Symlink pointing to an existing directory outside the module must be
+/// refused on containment grounds. A permissive helper here would let every
+/// subsequent per-entry write land at the outside-the-module target.
+#[cfg(unix)]
+#[test]
+fn refuses_symlink_to_existing_directory_outside_module() {
+    use std::os::unix::fs::symlink;
+
+    let module_root = tempdir().expect("module tempdir");
+    let outside_root = tempdir().expect("outside tempdir");
+    let outside_dir = outside_root.path().join("outside_target");
+    fs::create_dir(&outside_dir).expect("create outside dir");
+    let dest = module_root.path().join("dest_root");
+    symlink(&outside_dir, &dest).expect("dest -> outside dir");
+
+    let err = ensure_dest_root_exists(&dest, 8, true, false)
+        .expect_err("outside-the-module symlinked dest must be refused");
+
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(
+        outside_dir.read_dir().expect("read outside dir").next().is_none(),
+        "outside directory must remain untouched - no writes leaked through the symlink"
+    );
+}
