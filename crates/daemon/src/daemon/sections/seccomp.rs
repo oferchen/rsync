@@ -18,6 +18,7 @@
 pub enum SeccompOutcome {
     /// Filter installed; the calling thread now traps unlisted syscalls
     /// with `SIGSYS` (default action `KILL_PROCESS`).
+    #[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
     Installed,
     /// Build target is not one of the supported architectures, or the
     /// running kernel rejected the filter. Daemon should log and continue
@@ -26,6 +27,7 @@ pub enum SeccompOutcome {
     /// Filter construction or installation failed even though the build
     /// supports seccomp. The daemon must treat this as a fatal worker
     /// error - the intended sandbox did not engage.
+    #[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
     Error(io::Error),
 }
 
