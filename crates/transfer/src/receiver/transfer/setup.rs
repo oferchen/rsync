@@ -826,4 +826,138 @@ mod daemon_incoming_chmod_tests {
             dir_mode & 0o7777,
         );
     }
+
+    /// Builds `MetadataOptions` matching the daemon-upload receiver path
+    /// when the client invoked `rsync -avv --no-perms`: permissions are NOT
+    /// preserved but the module's `incoming chmod` directive must still
+    /// rewrite the destination mode at finalize time. This mirrors upstream
+    /// rsync where `--no-perms` only suppresses source-mode propagation
+    /// and never overrides the daemon's `daemon_chmod_modes` arming.
+    fn receiver_metadata_opts_no_perms(chmod: Option<ChmodModifiers>) -> MetadataOptions {
+        MetadataOptions::new()
+            .preserve_permissions(false)
+            .preserve_times(false)
+            .with_chmod(chmod)
+    }
+
+    /// UTS-17.REOPEN: daemon-upload with client `--no-perms` must still
+    /// apply the daemon module's `incoming chmod` directive. Upstream
+    /// rsync's `daemon_chmod_modes` arms at module-load and fires from
+    /// the receiver's `set_file_attrs()` regardless of whether `-p` was
+    /// negotiated. Regression-guards the chmod-option upstream-testsuite
+    /// scenario where the spec `ug-s,a+rX,D+w` must coerce uploaded
+    /// files to land with world+group read bits set.
+    // upstream: clientserver.c:rsync_module() arms daemon_chmod_modes,
+    //           receiver.c:set_file_attrs() applies it independently of -p.
+    #[test]
+    fn no_perms_does_not_suppress_daemon_incoming_chmod() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = tmp.path().join("bar");
+        let dest = tmp.path().join("bar.dest");
+        fs::write(&source, b"payload").expect("write source");
+        fs::write(&dest, b"payload").expect("write dest");
+        // Source mode is whatever the sender advertised; with `--no-perms`
+        // the receiver ignores it. The daemon's `incoming chmod` must still
+        // run against the destination's current mode.
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o664)).expect("set source perms");
+        // Newly-renamed temp file lands at a tight 0o600 (the O_TMPFILE
+        // default). The chmod-apply path must lift it to the spec result.
+        fs::set_permissions(&dest, fs::Permissions::from_mode(0o600)).expect("set dest perms");
+
+        let source_meta = fs::metadata(&source).expect("source metadata");
+        // `a+rX` is the chmod-option upstream-testsuite incoming-chmod
+        // clause that must add read for all (and conditional X, which is
+        // a no-op on a non-executable file).
+        let modifiers = ChmodModifiers::parse("ug-s,a+rX,D+w").expect("parse chmod spec");
+        let opts = receiver_metadata_opts_no_perms(Some(modifiers));
+
+        apply_file_metadata_with_options(&dest, &source_meta, &opts)
+            .expect("apply daemon incoming chmod under --no-perms");
+
+        let mode = fs::metadata(&dest)
+            .expect("dest metadata")
+            .permissions()
+            .mode();
+        // Starting from 0o600 the spec resolves to 0o644 (add read for all,
+        // no exec bits to retain on a non-executable file).
+        assert_eq!(
+            mode & 0o7777,
+            0o644,
+            "incoming chmod = ug-s,a+rX,D+w applied to 0o600 destination under --no-perms \
+             must lift to 0o644 (mode was {:o})",
+            mode & 0o7777,
+        );
+    }
+
+    /// Hardens the contract: a daemon module with `incoming chmod = F600`
+    /// must clamp every uploaded regular file to 0o600 even when the
+    /// client passed `--no-perms`. This guards against a future
+    /// regression where `--no-perms` short-circuits the chmod-apply
+    /// branch.
+    // upstream: parity with `incoming chmod = F600` daemon-config tests.
+    #[test]
+    fn no_perms_with_incoming_chmod_f600_clamps_to_0600() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = tmp.path().join("secret");
+        let dest = tmp.path().join("secret.dest");
+        fs::write(&source, b"payload").expect("write source");
+        fs::write(&dest, b"payload").expect("write dest");
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o644)).expect("set source perms");
+        // Existing dest mode is generous; chmod must clamp it down.
+        fs::set_permissions(&dest, fs::Permissions::from_mode(0o664)).expect("set dest perms");
+
+        let source_meta = fs::metadata(&source).expect("source metadata");
+        let modifiers = ChmodModifiers::parse("F600").expect("parse chmod spec");
+        let opts = receiver_metadata_opts_no_perms(Some(modifiers));
+
+        apply_file_metadata_with_options(&dest, &source_meta, &opts)
+            .expect("apply daemon incoming chmod under --no-perms");
+
+        let mode = fs::metadata(&dest)
+            .expect("dest metadata")
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o7777,
+            0o600,
+            "incoming chmod = F600 under --no-perms must force destination to 0o600 \
+             (mode was {:o})",
+            mode & 0o7777,
+        );
+    }
+
+    /// Directories receive the `D+w` clause exclusively: a file-only spec
+    /// (`Fo-x`) leaves directory modes untouched under `--no-perms`,
+    /// matching upstream `chmod.c:tweak_mode()` clause targeting.
+    // upstream: chmod.c:tweak_mode() - F-prefix file-only / D-prefix dir-only.
+    #[test]
+    fn no_perms_directory_chmod_applies_only_d_clause() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let source = tmp.path().join("source_dir");
+        let dest = tmp.path().join("dest_dir");
+        fs::create_dir(&source).expect("mkdir source");
+        fs::create_dir(&dest).expect("mkdir dest");
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o750)).expect("set source perms");
+        fs::set_permissions(&dest, fs::Permissions::from_mode(0o750)).expect("set dest perms");
+
+        let source_meta = fs::metadata(&source).expect("source metadata");
+        // The `Fo-x` clause is file-only and must NOT touch dir modes.
+        let modifiers = ChmodModifiers::parse("Fo-x").expect("parse chmod spec");
+        let opts = receiver_metadata_opts_no_perms(Some(modifiers));
+
+        apply_file_metadata_with_options(&dest, &source_meta, &opts)
+            .expect("apply chmod to dir under --no-perms");
+
+        let mode = fs::metadata(&dest)
+            .expect("dest metadata")
+            .permissions()
+            .mode();
+        assert_eq!(
+            mode & 0o7777,
+            0o750,
+            "file-only chmod clause `Fo-x` must not touch directory modes \
+             (mode was {:o})",
+            mode & 0o7777,
+        );
+    }
 }
