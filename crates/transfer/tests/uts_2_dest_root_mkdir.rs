@@ -147,7 +147,10 @@ fn refuses_broken_symlink_to_outside_module() {
     let dest = tmp.path().join("dest_root");
     symlink(&outside_target, &dest).expect("create broken symlink");
     assert!(
-        dest.symlink_metadata().expect("lstat dest").file_type().is_symlink(),
+        dest.symlink_metadata()
+            .expect("lstat dest")
+            .file_type()
+            .is_symlink(),
         "fixture must place a symlink at dest"
     );
     assert!(!outside_target.exists(), "target must remain dangling");
@@ -243,7 +246,11 @@ fn refuses_symlink_to_existing_directory_outside_module() {
 
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     assert!(
-        outside_dir.read_dir().expect("read outside dir").next().is_none(),
+        outside_dir
+            .read_dir()
+            .expect("read outside dir")
+            .next()
+            .is_none(),
         "outside directory must remain untouched - no writes leaked through the symlink"
     );
 }

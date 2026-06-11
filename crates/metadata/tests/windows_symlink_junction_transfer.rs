@@ -244,8 +244,7 @@ fn dir_symlink_push_preserves_link() {
     run_oc_rsync_push(&oc, &src, &dst);
 
     let dst_link = dst.join("link_to_real");
-    let metadata =
-        fs::symlink_metadata(&dst_link).expect("symlink_metadata on transferred link");
+    let metadata = fs::symlink_metadata(&dst_link).expect("symlink_metadata on transferred link");
     assert!(
         metadata.file_type().is_symlink(),
         "expected symlink at {dst_link:?}, got file_type={:?}",

@@ -245,8 +245,7 @@ mod tests {
         let module_path = module.path().to_path_buf();
         let extra_path = extra.path().to_path_buf();
         run_isolated(move || {
-            let outcome =
-                restrict_to_module_paths(&[module_path.as_path(), extra_path.as_path()]);
+            let outcome = restrict_to_module_paths(&[module_path.as_path(), extra_path.as_path()]);
             match outcome {
                 LandlockOutcome::Enforced(RulesetStatus::NotEnforced) => return Ok(()),
                 LandlockOutcome::Enforced(_) => {}
@@ -280,8 +279,7 @@ mod tests {
         let extra_path = extra.path().to_path_buf();
         let outside_path = outside.path().to_path_buf();
         run_isolated(move || {
-            let outcome =
-                restrict_to_module_paths(&[module_path.as_path(), extra_path.as_path()]);
+            let outcome = restrict_to_module_paths(&[module_path.as_path(), extra_path.as_path()]);
             match outcome {
                 LandlockOutcome::Enforced(RulesetStatus::NotEnforced) => return Ok(()),
                 LandlockOutcome::Enforced(_) => {}

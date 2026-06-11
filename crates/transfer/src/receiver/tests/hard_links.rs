@@ -498,9 +498,8 @@ fn create_hardlinks_surfaces_non_eacces_error() {
     #[cfg(not(unix))]
     let result = ctx.create_hardlinks(dest, &mut writer);
 
-    let err = result.expect_err(
-        "non-EACCES linkat failure must propagate as Err, not be coerced to ()",
-    );
+    let err =
+        result.expect_err("non-EACCES linkat failure must propagate as Err, not be coerced to ()");
     assert_ne!(
         err.kind(),
         std::io::ErrorKind::PermissionDenied,

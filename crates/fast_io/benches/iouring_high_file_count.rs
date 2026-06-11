@@ -86,9 +86,9 @@
 
 use std::env;
 use std::fs;
-use std::path::PathBuf;
 #[cfg(all(target_os = "linux", feature = "io_uring"))]
 use std::path::Path;
+use std::path::PathBuf;
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use tempfile::TempDir;
