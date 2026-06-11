@@ -225,6 +225,32 @@ Rsync skips files with matching size + mtime. Tests that create source and desti
 - Variables mutated only inside `#[cfg(unix)]` blocks cause `unused_mut` on Windows - use `#[allow(unused_mut)]` or restructure.
 - Provide no-op stubs for unsupported platforms: `#[cfg(not(target_os = "linux"))]` blocks returning `Ok(None)` or `Ok(())`.
 
+### Platform-feature gates in preflight
+
+Per the WPC-3 defect (PR #5564): a preflight `#[cfg]` gate that limits a feature to `unix` only, when the metadata or transfer backend actually exists for `windows`, silently disables shipped functionality at the CLI boundary. The flag is rejected before the wired backend can run.
+
+**Rule**: preflight gates for platform features must list every platform that has a working backend, AND the Cargo feature must propagate to the backend crate.
+
+```rust
+// Correct - matches every platform with a backend:
+#[cfg(not(all(any(unix, windows), feature = "xattr")))]
+fn reject_xattrs(...) { ... }
+
+// Wrong - silently disables --xattrs on Windows even though
+// crates/metadata/src/xattr_windows.rs ships the FindFirstStreamW backend:
+#[cfg(not(all(unix, feature = "xattr")))]
+fn reject_xattrs(...) { ... }
+```
+
+**Checklist before adding or editing a platform-feature gate**:
+
+1. Confirm the backend exists in `crates/metadata/` (or wherever) for every platform you want to allow.
+2. Update the preflight `#[cfg]` gate to list each supported platform.
+3. Verify `crates/core/Cargo.toml` propagates the feature to the backend crate - e.g., `xattr = ["metadata/xattr", "transfer/xattr"]`, not just `xattr = ["transfer/xattr"]`. The propagation invariant is locked in by `crates/cli/tests/feature_propagation.rs`.
+4. Add a parameterized preflight test per PR #5576's pattern (one `#[cfg]`-gated arm per `(platform, feature)` pair, both positive accept and negative reject).
+
+Reference PRs: #5564 (WPC-3 xattrs reality fix), #5576 (parameterized preflight regression matrix), #5585 (metadata long-path wiring).
+
 ### Buffer pool test serialization
 
 `BufferPool` uses a global `OnceLock`. Tests that modify pool capacity need `EnvGuard` for isolation. Run pool-related tests with targeted patterns, not as part of the full suite.
