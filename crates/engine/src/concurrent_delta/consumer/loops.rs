@@ -84,8 +84,10 @@ pub(super) fn run_spillable_loop(
     result_tx: &mpsc::Sender<DeltaResult>,
     mut reorder: SpillableReorderBuffer<DeltaResult>,
     spill_events: &Arc<AtomicU64>,
+    spill_activations: &Arc<AtomicU64>,
 ) {
     let mut prev_spill = reorder.spill_stats().spill_events;
+    let mut prev_activations = reorder.spill_stats().spill_activations;
 
     for result in stream_rx {
         let ndx = result.ndx();
@@ -124,6 +126,11 @@ pub(super) fn run_spillable_loop(
                             return;
                         }
                         publish_spill_events(&reorder, spill_events, &mut prev_spill);
+                        publish_spill_activations(
+                            &reorder,
+                            spill_activations,
+                            &mut prev_activations,
+                        );
                         break;
                     }
                 }
@@ -155,6 +162,7 @@ pub(super) fn run_spillable_loop(
             }
         }
         publish_spill_events(&reorder, spill_events, &mut prev_spill);
+        publish_spill_activations(&reorder, spill_activations, &mut prev_activations);
 
         match reorder.drain_ready() {
             Ok(items) => {
@@ -195,6 +203,7 @@ pub(super) fn run_spillable_loop(
         }
     }
     publish_spill_events(&reorder, spill_events, &mut prev_spill);
+    publish_spill_activations(&reorder, spill_activations, &mut prev_activations);
 }
 
 /// Republishes the cumulative spill-to-disk event counter so callers can
@@ -207,6 +216,25 @@ fn publish_spill_events(
     let current = reorder.spill_stats().spill_events;
     if current != *prev {
         spill_events.store(current, Ordering::Relaxed);
+        *prev = current;
+    }
+}
+
+/// Republishes the cumulative `spill_excess` activation counter so callers
+/// can observe normal-operation spill pressure via
+/// [`crate::concurrent_delta::consumer::DeltaConsumer::stats`] (ROB-2).
+///
+/// `spill_activations` is granularity-invariant: one increment per
+/// `spill_excess` call that wrote at least one record, regardless of
+/// whether the buffer is configured for `PerItem` or `WholeBatch`.
+fn publish_spill_activations(
+    reorder: &SpillableReorderBuffer<DeltaResult>,
+    spill_activations: &Arc<AtomicU64>,
+    prev: &mut u64,
+) {
+    let current = reorder.spill_stats().spill_activations;
+    if current != *prev {
+        spill_activations.store(current, Ordering::Relaxed);
         *prev = current;
     }
 }

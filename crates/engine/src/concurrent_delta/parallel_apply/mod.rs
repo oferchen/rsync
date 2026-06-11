@@ -33,6 +33,7 @@
 //! `DeltaConsumer` pattern already covers that case).
 
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, MutexGuard};
 
 use checksums::strong::strategy::{
@@ -227,6 +228,41 @@ impl DeltaChunk {
     }
 }
 
+/// Error outcomes for [`FileSlot::ingest`].
+///
+/// Distinguishes the per-file reorder-ring saturation case from generic
+/// writer I/O failures so [`ParallelDeltaApplier`] can update its ROB-3
+/// telemetry without parsing error strings. Both variants convert into a
+/// plain [`io::Error`] for the existing `io::Result`-shaped public API.
+#[derive(Debug)]
+pub(in crate::concurrent_delta::parallel_apply) enum IngestError {
+    /// The per-file reorder buffer rejected the chunk because its offset
+    /// from `next_expected` exceeded the configured ring capacity. The
+    /// chunk is not committed and the writer remains untouched.
+    ReorderSaturated {
+        /// Per-file chunk sequence that overflowed the ring.
+        chunk_sequence: u64,
+        /// Underlying [`ReorderBuffer`] capacity bound that was hit.
+        capacity: usize,
+    },
+    /// Writer-side I/O failure while draining ready chunks.
+    Io(io::Error),
+}
+
+impl From<IngestError> for io::Error {
+    fn from(value: IngestError) -> Self {
+        match value {
+            IngestError::ReorderSaturated {
+                chunk_sequence,
+                capacity,
+            } => io::Error::other(format!(
+                "parallel apply reorder full: chunk_sequence={chunk_sequence} exceeds per-file ring capacity={capacity}"
+            )),
+            IngestError::Io(e) => e,
+        }
+    }
+}
+
 /// Per-file destination writer plus the reorder buffer that re-establishes
 /// submission order after the rayon verify step completes out of order.
 struct FileSlot {
@@ -250,14 +286,23 @@ impl FileSlot {
     /// The reorder buffer is the single source of truth for per-file
     /// sequencing; the writer only sees chunks once they have arrived in
     /// strict `chunk_sequence` order.
-    fn ingest(&mut self, chunk: DeltaChunk) -> io::Result<()> {
+    ///
+    /// Returns [`IngestError::ReorderSaturated`] when the per-file ring is
+    /// full; the applier's [`ParallelDeltaApplier::note_reorder_saturation`]
+    /// reads this to update the ROB-3 telemetry counter and emit the
+    /// one-shot warning before mapping back to [`io::Error`] for the caller.
+    fn ingest(&mut self, chunk: DeltaChunk) -> Result<(), IngestError> {
         let seq = chunk.chunk_sequence;
+        let capacity = self.reorder.capacity();
         self.reorder
             .insert(seq, chunk)
-            .map_err(|e| io::Error::other(format!("parallel apply reorder full: {e}")))?;
+            .map_err(|_| IngestError::ReorderSaturated {
+                chunk_sequence: seq,
+                capacity,
+            })?;
         let ready: Vec<DeltaChunk> = self.reorder.drain_ready().collect();
         for chunk in ready {
-            self.write_chunk(chunk)?;
+            self.write_chunk(chunk).map_err(IngestError::Io)?;
         }
         Ok(())
     }
@@ -404,6 +449,30 @@ pub struct ParallelDeltaApplier {
     /// (#2498) plumbs the field; BR-3i.c (#2499) replaces the
     /// length-only verify stub with `strategy.compute(&chunk.data)`.
     strategy: Arc<dyn ChecksumStrategy>,
+    /// Cumulative count of per-file reorder-ring saturation events
+    /// observed since the applier was constructed (ROB-2, #3667).
+    ///
+    /// Incremented exactly once per [`IngestError::ReorderSaturated`]
+    /// returned by [`FileSlot::ingest`]. The per-file applier has no
+    /// spill backend today, so saturation events surface as
+    /// [`io::Error::other`] back to the caller; this counter lets
+    /// operators observe the rate without parsing error strings.
+    ///
+    /// Exposed via [`Self::reorder_saturations`]. Pairs with
+    /// [`reorder_saturated_warned`](Self::reorder_saturated_warned) so the
+    /// first event also emits the ROB-3 one-shot warning.
+    reorder_saturations: AtomicU64,
+    /// One-shot guard ensuring the per-file ring-saturation warning fires
+    /// at most once for the lifetime of this applier (ROB-3, #3667).
+    ///
+    /// The first [`IngestError::ReorderSaturated`] swaps this from `false`
+    /// to `true` and emits a `tracing::warn!` (mirrored to stderr) that
+    /// names the saturated file, the in-effect ring capacity, the
+    /// `OC_RSYNC_REORDER_RING_CAP` env knob, and the registered file
+    /// count. Subsequent saturations only bump
+    /// [`reorder_saturations`](Self::reorder_saturations); the operator
+    /// sees one warning per transfer rather than one per file.
+    reorder_saturated_warned: AtomicBool,
 }
 
 impl std::fmt::Debug for ParallelDeltaApplier {
@@ -485,6 +554,8 @@ impl ParallelDeltaApplier {
             per_file_reorder_capacity,
             concurrency,
             strategy,
+            reorder_saturations: AtomicU64::new(0),
+            reorder_saturated_warned: AtomicBool::new(false),
         }
     }
 
@@ -526,6 +597,64 @@ impl ParallelDeltaApplier {
     #[must_use]
     pub fn per_file_reorder_capacity(&self) -> usize {
         self.per_file_reorder_capacity
+    }
+
+    /// Returns the cumulative number of per-file reorder-ring saturation
+    /// events observed since the applier was constructed (ROB-2, #3667).
+    ///
+    /// Granularity-invariant: one increment per
+    /// [`IngestError::ReorderSaturated`] regardless of which file
+    /// produced it. Pairs with the ROB-3 one-shot warning emitted by
+    /// [`Self::note_reorder_saturation`].
+    #[must_use]
+    pub fn reorder_saturations(&self) -> u64 {
+        self.reorder_saturations.load(Ordering::Relaxed)
+    }
+
+    /// Records a per-file reorder-ring saturation event and, on the first
+    /// observation per applier instance, emits the ROB-3 one-shot warning.
+    ///
+    /// Increments [`Self::reorder_saturations`] unconditionally and uses an
+    /// [`AtomicBool::compare_exchange`] guard so the warning fires exactly
+    /// once even when several files saturate concurrently from rayon
+    /// workers. The warning text includes the file index, the in-effect
+    /// per-file ring capacity, the offending `chunk_sequence`, the
+    /// registered file count at the time of saturation, and a pointer to
+    /// the `OC_RSYNC_REORDER_RING_CAP` env knob (ROB-11) so operators
+    /// have an actionable next step.
+    ///
+    /// The warning goes through `tracing::warn!` (visible at `--info=ALL`
+    /// minimum) and is mirrored to stderr via [`eprintln!`] so default
+    /// builds without the `tracing` feature still surface it. Mirrors the
+    /// SRO-6 pattern used by [`SpillableReorderBuffer`].
+    pub(crate) fn note_reorder_saturation(&self, ndx: FileNdx, chunk_sequence: u64) {
+        self.reorder_saturations.fetch_add(1, Ordering::Relaxed);
+        if self
+            .reorder_saturated_warned
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+        {
+            let capacity = self.per_file_reorder_capacity;
+            let file_count = self.files.len();
+            eprintln!(
+                "warning: per-file reorder ring saturated during transfer \
+                 (ndx={ndx}, chunk_sequence={chunk_sequence}, ring_capacity={capacity}, \
+                 registered_files={file_count}); this indicates either an adversarial \
+                 chunk ordering or undersized ring capacity. \
+                 Set OC_RSYNC_REORDER_RING_CAP to a larger positive integer to widen the \
+                 per-file ring. (one-time warning per applier)"
+            );
+            #[cfg(feature = "tracing")]
+            tracing::warn!(
+                ndx = %ndx,
+                chunk_sequence,
+                ring_capacity = capacity,
+                registered_files = file_count,
+                "per-file reorder ring saturated during transfer; \
+                 set OC_RSYNC_REORDER_RING_CAP to widen the per-file ring \
+                 (one-time warning per applier)"
+            );
+        }
     }
 
     /// Registers a destination writer for `ndx`.
@@ -608,7 +737,15 @@ impl ParallelDeltaApplier {
 
         let mut slot = handle.lock_slot(ndx, "apply_one_chunk")?;
         let _ = verified.digest; // reserved for future stats wiring
-        slot.ingest(verified.chunk)
+        match slot.ingest(verified.chunk) {
+            Ok(()) => Ok(()),
+            Err(err) => {
+                if let IngestError::ReorderSaturated { chunk_sequence, .. } = &err {
+                    self.note_reorder_saturation(ndx, *chunk_sequence);
+                }
+                Err(err.into())
+            }
+        }
     }
 
     /// Returns the total bytes written to `ndx` so far.
