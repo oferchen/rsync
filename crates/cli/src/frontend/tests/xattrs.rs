@@ -26,6 +26,34 @@ fn xattrs_option_reports_unsupported_when_feature_disabled() {
     assert_contains_client_trailer(&rendered);
 }
 
+/// Windows builds with the `xattr` feature must accept `--xattrs` and not
+/// emit the "extended attributes are not supported on this client" preflight
+/// rejection. The CLI gate must mirror Unix so `metadata::xattr_windows`
+/// (FindFirstStreamW ADS impl) can run.
+#[cfg(all(windows, feature = "xattr"))]
+#[test]
+fn xattrs_preflight_accepts_on_windows_with_feature() {
+    use tempfile::tempdir;
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+    std::fs::write(&source, b"data").expect("write source");
+
+    let (_code, _stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--xattrs"),
+        source.into_os_string(),
+        destination.into_os_string(),
+    ]);
+
+    let rendered = String::from_utf8(stderr).expect("UTF-8 error");
+    assert!(
+        !rendered.contains("extended attributes are not supported on this client"),
+        "preflight must not reject --xattrs on Windows with feature = xattr: {rendered}"
+    );
+}
+
 #[cfg(all(unix, feature = "xattr"))]
 #[test]
 fn xattrs_option_preserves_attributes() {
