@@ -6,9 +6,12 @@
 
 use std::ffi::CStr;
 use std::io;
+use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use io_uring::IoUring as RawIoUring;
+
+use crate::container::rootless_signal;
 
 /// Minimum kernel version required for io_uring.
 ///
@@ -89,6 +92,74 @@ pub fn is_sqpoll_disabled_by_policy() -> bool {
 /// other threads.
 pub fn set_sqpoll_disabled_by_policy() {
     SQPOLL_DISABLED_BY_POLICY.store(true, Ordering::Relaxed);
+}
+
+/// One-shot guard so the rootless-fallback log emits once per process.
+///
+/// SQP-LAND.7 wires [`rootless_signal`] into ring construction so we can
+/// skip a doomed SQPOLL setup syscall in rootless containers. The log
+/// itself is informational (configuration decision, not an error), but
+/// daemon workloads build many rings per process and we do not want to
+/// flood operator logs - hence the [`Once`] gate.
+static ROOTLESS_SQPOLL_LOG_ONCE: Once = Once::new();
+
+/// Skip SQPOLL when the process is inside a rootless container.
+///
+/// `CAP_SYS_NICE` is structurally unavailable inside a user namespace
+/// (rootless Podman, Docker with `--userns=...`, Kubernetes with a
+/// `runAsNonRoot` securityContext), so requesting
+/// `IORING_SETUP_SQPOLL` is guaranteed to fail with `EPERM` and leaves
+/// the operator wondering why io_uring performance is degraded. We
+/// short-circuit here and emit one structured info-level log per
+/// process so deployers can map the verdict back to their environment.
+///
+/// Returns `true` when SQPOLL must be suppressed for this build. The
+/// caller stays on the plain-ring path.
+///
+/// See SQP-LAND series (SQP-LAND.3 helper, SQP-LAND.4 wiring,
+/// SQP-LAND.7 observability) and [`crate::container`] for the
+/// detection logic.
+fn should_skip_sqpoll_due_to_rootless() -> bool {
+    rootless_skip_decision(
+        rootless_signal(),
+        &ROOTLESS_SQPOLL_LOG_ONCE,
+        log_rootless_skip,
+    )
+}
+
+/// Pure decision helper for SQP-LAND.7: takes a signal + a one-shot
+/// guard + a log-emitter and returns whether SQPOLL must be skipped.
+///
+/// Split out from [`should_skip_sqpoll_due_to_rootless`] so unit tests
+/// can drive every code path (not-rootless / once-fires /
+/// already-fired) without depending on the process-cached
+/// [`rootless_signal`].
+fn rootless_skip_decision<L>(signal: crate::container::RootlessSignal, once: &Once, log: L) -> bool
+where
+    L: FnOnce(crate::container::RootlessSignal),
+{
+    if !signal.is_rootless() {
+        return false;
+    }
+    once.call_once(|| log(signal));
+    true
+}
+
+/// Default log emitter for the rootless-fallback decision.
+///
+/// Mirrors the IKV-F.1 fallback-log convention (Io target, level 1) so
+/// operators see this alongside the other io_uring decisions under
+/// `--debug=io1`. Kept as a free function so [`rootless_skip_decision`]
+/// can drive it from unit tests via a substitute closure.
+fn log_rootless_skip(signal: crate::container::RootlessSignal) {
+    // SQP-LAND.7: deployer-facing rationale for the SQPOLL skip.
+    logging::debug_log!(
+        Io,
+        1,
+        "io_uring SQPOLL disabled: rootless container detected (signal={}, no CAP_SYS_NICE \
+         available in this user namespace); falling back to standard polling",
+        signal.label()
+    );
 }
 
 /// Returns `true` if SQPOLL was requested but setup failed.
@@ -394,14 +465,22 @@ impl IoUringConfig {
     /// refusal here remains the safety net: the ring is built without
     /// SQPOLL and `SQPOLL_FALLBACK` is set so callers see the degrade.
     pub(crate) fn build_ring(&self) -> io::Result<RawIoUring> {
-        let sqpoll_requested = self.sqpoll && !is_sqpoll_disabled_by_policy();
-        if self.sqpoll && !sqpoll_requested {
+        let policy_disabled = is_sqpoll_disabled_by_policy();
+        let rootless_skip = self.sqpoll && !policy_disabled && should_skip_sqpoll_due_to_rootless();
+        let sqpoll_requested = self.sqpoll && !policy_disabled && !rootless_skip;
+        if self.sqpoll && policy_disabled {
             logging::debug_log!(
                 Io,
                 1,
                 "io_uring: SQPOLL suppressed by --no-io-uring-sqpoll; \
                  building a regular ring (BGID and other features remain active)"
             );
+        }
+        if rootless_skip {
+            // SQP-LAND.7: record the structural skip so callers querying
+            // sqpoll_fell_back() see the same "ran without SQPOLL" verdict
+            // they would observe after a kernel EPERM.
+            SQPOLL_FALLBACK.store(true, Ordering::Relaxed);
         }
         let mlock_basis_enabled = cfg!(feature = "sqpoll-mlock-basis");
         let sqpoll_safe = sqpoll_requested && (!self.mmap_basis_active || mlock_basis_enabled);
@@ -870,6 +949,72 @@ mod tests {
                  sqpoll-mlock-basis is off"
             );
         }
+    }
+
+    #[test]
+    fn sqpoll_fallback_logs_rootless_reason() {
+        // SQP-LAND.7: when the rootless detector trips, the decision
+        // helper must short-circuit SQPOLL, invoke the log emitter
+        // exactly once, and report the precise signal that fired.
+        use crate::container::RootlessSignal;
+        use std::sync::atomic::{AtomicU32, AtomicUsize};
+
+        let once = Once::new();
+        let invocations = AtomicUsize::new(0);
+        let captured = AtomicU32::new(0);
+        let log = |signal: RootlessSignal| {
+            invocations.fetch_add(1, Ordering::SeqCst);
+            captured.store(signal as u32, Ordering::SeqCst);
+        };
+
+        let skipped = rootless_skip_decision(RootlessSignal::NonIdentityUidMap, &once, log);
+
+        assert!(skipped, "rootless verdict must skip SQPOLL");
+        assert_eq!(
+            invocations.load(Ordering::SeqCst),
+            1,
+            "log emitter must fire exactly once on the first rootless decision"
+        );
+        assert_eq!(
+            captured.load(Ordering::SeqCst),
+            RootlessSignal::NonIdentityUidMap as u32,
+            "captured signal must match the precise marker that triggered the verdict"
+        );
+
+        // A second invocation through the same Once must not re-fire the
+        // log emitter - this guards against daemon-log flooding.
+        let log_again = |_signal: RootlessSignal| {
+            panic!("log emitter must fire at most once per process");
+        };
+        let skipped_again =
+            rootless_skip_decision(RootlessSignal::PodmanContainerEnv, &once, log_again);
+        assert!(
+            skipped_again,
+            "every rootless verdict must still skip SQPOLL"
+        );
+    }
+
+    #[test]
+    fn sqpoll_fallback_skips_log_when_not_rootless() {
+        // The non-rootless path is the hot path on bare-metal hosts: it
+        // must not emit any log or even consume the Once guard, so a
+        // later rootless verdict on the same process can still log.
+        use crate::container::RootlessSignal;
+
+        let once = Once::new();
+        let log = |_signal: RootlessSignal| {
+            panic!("log emitter must not fire when signal=NotRootless");
+        };
+        let skipped = rootless_skip_decision(RootlessSignal::NotRootless, &once, log);
+
+        assert!(
+            !skipped,
+            "non-rootless verdict must keep SQPOLL on its normal kernel path"
+        );
+        assert!(
+            !once.is_completed(),
+            "Once guard must stay armed so a later rootless verdict can still log once"
+        );
     }
 
     #[test]
