@@ -425,8 +425,12 @@ pub(super) fn apply_permissions_from_entry(
             };
 
             if needs_chmod {
-                let permissions = PermissionsExt::from_mode(mode);
-                fs::set_permissions(destination, permissions).map_err(|error| {
+                // upstream: syscall.c:do_chmod_at() - chmod the leaf through a
+                // dirfd opened with RESOLVE_BENEATH/RESOLVE_NO_SYMLINKS so a
+                // symlink swapped into any parent component cannot redirect
+                // the chmod outside the receiver's confinement (testsuite
+                // chdir-symlink-race).
+                fast_io::secure_chmod_at(destination, mode, true).map_err(|error| {
                     MetadataError::new("preserve permissions", destination, error)
                 })?;
                 perms_changed = true;
@@ -479,8 +483,8 @@ pub(super) fn apply_permissions_from_entry(
 
             let new_mode = chmod.apply(base_mode, current_meta.file_type());
             if new_mode != current_mode {
-                let new_permissions = PermissionsExt::from_mode(new_mode);
-                fs::set_permissions(destination, new_permissions)
+                // upstream: syscall.c:do_chmod_at() symlink-race-safe variant
+                fast_io::secure_chmod_at(destination, new_mode, true)
                     .map_err(|error| MetadataError::new("apply chmod", destination, error))?;
             }
         }

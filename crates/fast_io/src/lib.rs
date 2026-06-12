@@ -280,8 +280,9 @@ pub use dir_sandbox::{
     mkdirat, mkdirat_via_sandbox_or_fallback, openat, openat_via_sandbox_or_fallback,
     read_dir_via_sandbox_or_fallback, readlinkat, readlinkat_via_sandbox_or_fallback,
     recursive_unlinkat, recursive_unlinkat_via_sandbox_or_fallback, renameat,
-    renameat_via_sandbox_or_fallback, symlinkat, symlinkat_via_sandbox_or_fallback,
-    unlink_via_sandbox_or_fallback, unlinkat, utimensat, utimensat_via_sandbox_or_fallback,
+    renameat_via_sandbox_or_fallback, secure_chmod_at, symlinkat,
+    symlinkat_via_sandbox_or_fallback, unlink_via_sandbox_or_fallback, unlinkat, utimensat,
+    utimensat_via_sandbox_or_fallback,
 };
 pub use kernel_version::{
     IO_URING_MIN_KERNEL, IoUringRequirement, KernelVersion, LinkatRequirement, PbufRingRequirement,
