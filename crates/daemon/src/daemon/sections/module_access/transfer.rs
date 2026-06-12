@@ -1029,10 +1029,12 @@ fn process_approved_module(
     // before the stats / NDX_DONE goodbye sequence.
     //
     // The standard graceful-close pattern (RFC 793 TIME-WAIT) is:
-    //   1. shutdown(Write) - sends FIN, tells the peer no more data
-    //   2. read() in a loop until EOF - drains peer's final bytes and
+    //   1. Flush and drop transfer-engine stream clones so the DaemonStream
+    //      in ctx.reader holds the sole fd reference
+    //   2. shutdown(Write) - sends FIN, tells the peer no more data
+    //   3. read() in a loop until EOF - drains peer's final bytes and
     //      lets the kernel complete the FIN handshake
-    //   3. close() the socket - now safe, no unread data to trigger RST
+    //   4. close() the socket - now safe, no unread data to trigger RST
     //
     // This is deterministic and has no timing sensitivity, unlike a
     // sleep-before-shutdown approach. It mirrors what the OS does at
@@ -1047,10 +1049,18 @@ fn process_approved_module(
     //
     // For stdio streams (remote-shell daemon mode), TCP shutdown is not
     // applicable - the pipe/fd closes naturally when dropped.
+
+    // Drop transfer-engine stream clones before the shutdown sequence.
+    // The transfer engine wrote goodbye bytes through streams.write (a
+    // cloned TcpStream). Dropping both clones ensures the DaemonStream
+    // in ctx.reader is the sole fd owner, so shutdown(Write) and the
+    // subsequent close operate on a single-reference socket - matching
+    // the semantics of upstream's fork model where the child holds the
+    // only fd reference.
+    drop(streams);
+
     if supports_tcp_shutdown {
         let stream = ctx.reader.get_mut();
-        // Flush any buffered writes before half-closing.
-        let _ = stream.flush();
         // Half-close the write side: sends FIN to the peer, signalling
         // that no more data will be sent from our end.
         let _ = stream.shutdown(std::net::Shutdown::Write);
