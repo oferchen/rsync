@@ -2,16 +2,16 @@
 //!
 //! This module provides two LZ4 compression formats:
 //!
-//! - [`frame`]: Standard LZ4 frame format with magic bytes, checksums, and
+//! - `frame`: Standard LZ4 frame format with magic bytes, checksums, and
 //!   streaming support. Suitable for file compression and storage.
 //!
-//! - [`raw`]: Raw LZ4 blocks with rsync-specific 2-byte framing. Required for
+//! - `raw`: Raw LZ4 blocks with rsync-specific 2-byte framing. Required for
 //!   wire protocol compatibility with upstream rsync 3.4.1.
 //!
 //! # Wire Protocol Compatibility
 //!
 //! Upstream rsync uses raw LZ4 blocks (not frame format) with a custom 2-byte
-//! header encoding the compressed size. Use the [`raw`] module for any code
+//! header encoding the compressed size. Use the `raw` module for any code
 //! that needs to interoperate with upstream rsync's compression.
 //!
 //! # Example

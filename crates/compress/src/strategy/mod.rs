@@ -55,7 +55,7 @@
 //!
 //! # Protocol Version Defaults
 //!
-//! Single source of truth: [`profile::ProtocolCompressionProfile`].
+//! Single source of truth: `ProtocolCompressionProfile`.
 //!
 //! | Protocol | Default Algorithm                          |
 //! |----------|--------------------------------------------|

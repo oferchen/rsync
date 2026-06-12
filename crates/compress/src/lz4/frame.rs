@@ -7,7 +7,7 @@
 //! streaming across multiple blocks.
 //!
 //! **Note**: This format is NOT compatible with upstream rsync's wire protocol.
-//! For wire protocol compatibility, use the [`super::raw`] module instead.
+//! For wire protocol compatibility, use the `raw` module instead.
 
 use std::io::{self, BufReader, IoSliceMut, Read, Write};
 

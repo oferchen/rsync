@@ -4,7 +4,7 @@
 //! whether vstring negotiation is supported, and the algorithm advertisement
 //! list) into a single data-driven table. Replaces scattered
 //! `if protocol_version >= N` ladders previously duplicated across
-//! [`super::kind`], [`super::negotiator`], and the `protocol` crate's
+//! `kind`, `negotiator`, and the `protocol` crate's
 //! capability layer.
 //!
 //! # Upstream Reference

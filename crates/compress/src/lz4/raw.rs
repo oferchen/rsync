@@ -18,7 +18,7 @@
 //!
 //! # Differences from Frame Format
 //!
-//! Unlike the [`super::frame`] module which uses LZ4 frame format with magic
+//! Unlike the `frame` module which uses LZ4 frame format with magic
 //! bytes, block checksums, and content checksums, this module produces raw
 //! compressed blocks suitable for the rsync wire protocol.
 
