@@ -87,8 +87,7 @@ fn send_multiplexed_error_and_exit(
     let mut frame_bytes = payload.as_bytes().to_vec();
     frame_bytes.push(b'\n');
     let mut buffer = Vec::new();
-    MessageFrame::new(MessageCode::ErrorXfer, frame_bytes)?
-        .encode_into_writer(&mut buffer)?;
+    MessageFrame::new(MessageCode::ErrorXfer, frame_bytes)?.encode_into_writer(&mut buffer)?;
     // upstream: io.c:1060 send_msg_int() - little-endian 4-byte exit code.
     MessageFrame::new(MessageCode::ErrorExit, exit_code.to_le_bytes().to_vec())?
         .encode_into_writer(&mut buffer)?;
@@ -200,19 +199,32 @@ fn handle_refused_option(ctx: &mut ModuleRequestContext<'_>, refused: &str) -> i
 
 /// Handles refused options for a module after `@RSYNCD: OK` has been emitted.
 ///
-/// upstream: clientserver.c:1175-1186 - once the daemon has acknowledged the
-/// module the client switches its input to the multiplexed stream
-/// (`io_start_multiplex_in()` at the OK boundary). Errors detected after that
-/// point - including refused options matched against the real argv in
-/// `parse_arguments()` - must travel as `MSG_ERROR_XFER` followed by
-/// `MSG_ERROR_EXIT`. Raw `@ERROR: ...\n` text would be decoded as a multiplex
-/// frame header and surface as "unexpected tag 77" on the receiver because the
-/// upper byte of the header would be the literal 'T' from "The server ..."
-/// (84 = 77 + `MPLEX_BASE`).
+/// upstream: clientserver.c:1146-1186 - once the daemon has acknowledged the
+/// module, errors detected after `read_args()` (including refused options
+/// matched against the real argv in `parse_arguments()`) must be delivered
+/// through the multiplexed stream. Upstream funnels them through the very
+/// same code path that wraps any other post-OK error: `setup_protocol()`
+/// finishes the protocol negotiation that the client also runs, then
+/// `io_start_multiplex_out()` flips the writer to framed mode, and finally
+/// `rwrite(FERROR, ...)` emits the message as a `MSG_ERROR_XFER` frame
+/// followed by `MSG_ERROR_EXIT`.
+///
+/// Skipping the post-OK protocol-setup writes left the client reading the
+/// raw error-frame bytes as the unidirectional compat-flags varint and the
+/// checksum seed. The framing then resynchronised partway into our
+/// `MSG_ERROR_XFER` payload, decoding the first body byte as a fresh
+/// multiplex tag. With `@ERROR: ...` payloads that lands on the letter `A`
+/// (ASCII 65) once the header bytes have been consumed, surfacing as
+/// `unexpected tag 72` (65 + `MPLEX_BASE`) on the receiver. Raw
+/// `@ERROR: ...\n` text would similarly produce `unexpected tag 77` (the
+/// byte `T` from "The server ..." minus `MPLEX_BASE = 7`).
 fn handle_refused_option_post_handshake(
     ctx: &mut ModuleRequestContext<'_>,
     refused: &str,
+    protocol_version: Option<ProtocolVersion>,
+    client_args: &[String],
 ) -> io::Result<()> {
+    finalize_post_ok_protocol_for_error(ctx, protocol_version, client_args)?;
     let payload = format!("@ERROR: The server is configured to refuse {refused}");
     send_multiplexed_error_and_exit(
         ctx.reader.get_mut(),
@@ -224,6 +236,143 @@ fn handle_refused_option_post_handshake(
         log_module_refused_option(log, ctx.effective_host(), ctx.peer_ip, ctx.request, refused);
     }
     Ok(())
+}
+
+/// Mirrors the prefix of upstream's `setup_protocol(f_out, f_in)` that the
+/// daemon writes before turning on `io_start_multiplex_out()` for an error
+/// it needs to deliver after `@RSYNCD: OK`.
+///
+/// upstream: clientserver.c:1146-1170 - when `read_args()` succeeds but
+/// `parse_arguments()` rejects an option (or any other post-OK fatal path),
+/// the daemon still has to finish the protocol setup that the client also
+/// runs unconditionally. Without it the client decodes the daemon's first
+/// error-frame bytes as the compat-flags varint and the checksum seed,
+/// then resynchronises somewhere inside the error payload and rejects
+/// whatever ASCII byte landed at the tag position.
+///
+/// In the daemon flow the post-`OK` protocol setup at protocol >= 30 is
+/// effectively unidirectional: the server writes compat flags and the
+/// checksum seed, and the client reads them silently before activating
+/// `io_start_multiplex_in()`. The bidirectional capability-string
+/// negotiation that lives at `compat.c:535-565` only fires when the
+/// negotiator decides to advertise variable-strings; for the refused-
+/// options abort path we never reach the transfer so we mirror upstream's
+/// shortest viable prefix - compat flags plus the checksum seed - and
+/// leave the negotiated-string exchange off the wire. That matches what
+/// the client expects from `setup_protocol` before it switches to
+/// multiplex input, keeping the framing aligned with upstream rsync.
+fn finalize_post_ok_protocol_for_error(
+    ctx: &mut ModuleRequestContext<'_>,
+    protocol_version: Option<ProtocolVersion>,
+    client_args: &[String],
+) -> io::Result<()> {
+    let protocol = match protocol_version {
+        Some(p) => p,
+        None => return Ok(()),
+    };
+    let stream = ctx.reader.get_mut();
+    if protocol.uses_binary_negotiation() {
+        // upstream: compat.c:711-744 - server writes compat_flags as a
+        // varint (or as a single byte when the client advertised the
+        // pre-release `V` capability). Parse the client's `-e` capability
+        // string out of the post-OK argv so the advertised flags match the
+        // peer's capability bits exactly.
+        let client_info = parse_client_capability_info(client_args);
+        let compat_flags = build_default_post_ok_compat_flags(&client_info);
+        if has_pre_release_capability(&client_info, 'V') {
+            // upstream: compat.c:737-740 - pre-release 'V' clients encode
+            // the compat-flags byte directly rather than as a varint.
+            // The flags we advertise here intentionally omit
+            // `VARINT_FLIST_FLAGS`, even though upstream would have OR'd
+            // it in, so the client's `do_negotiated_strings` stays clear
+            // and skips the bidirectional vstring exchange we have no
+            // peer for on the abort path.
+            write_limited(stream, ctx.limiter, &[compat_flags.bits() as u8])?;
+        } else {
+            let mut buf = Vec::with_capacity(2);
+            protocol::write_varint(&mut buf, compat_flags.bits() as i32)?;
+            write_limited(stream, ctx.limiter, &buf)?;
+        }
+    }
+    // upstream: compat.c:811-814 - server writes a 4-byte little-endian
+    // checksum seed regardless of protocol version. The value is unused
+    // because we abort before any transfer, but the slot has to be filled
+    // so the client's matching `read_int()` consumes the same bytes
+    // upstream would have written.
+    let mut seed_buf = Vec::with_capacity(4);
+    protocol::write_int(&mut seed_buf, 0)?;
+    write_limited(stream, ctx.limiter, &seed_buf)?;
+    stream.flush()
+}
+
+/// Extracts the `-e<info>` capability string the client emitted in its
+/// post-OK argv, matching upstream `compat.c:163-179`'s `client_info`.
+///
+/// The capability characters live after the literal `.` separator in
+/// arguments such as `-vlogDtprez.iLsfxCIvu` or `-e.LsfxCIvu`. When the
+/// client sent no `-e` payload, return an empty string so the compat
+/// builder falls back to the defaults.
+fn parse_client_capability_info(client_args: &[String]) -> String {
+    for arg in client_args {
+        if let Some(rest) = arg.strip_prefix('-') {
+            if rest.starts_with('-') {
+                continue;
+            }
+            if let Some(dot_pos) = rest.find('.') {
+                let before_dot = &rest[..dot_pos];
+                if before_dot.ends_with('e') || before_dot.is_empty() {
+                    return rest[dot_pos + 1..].to_owned();
+                }
+            }
+        }
+    }
+    String::new()
+}
+
+/// Reports whether the client's capability string contains the pre-release
+/// `V` letter that upstream uses to gate the single-byte compat-flags
+/// encoding.
+///
+/// Matches upstream `compat.c:734` - `strchr(client_info, 'V') != NULL`.
+fn has_pre_release_capability(client_info: &str, letter: char) -> bool {
+    client_info.contains(letter)
+}
+
+/// Builds the compat flags the daemon advertises when aborting a post-`OK`
+/// session, restricted to the subset that does *not* trigger upstream's
+/// variable-string negotiation step.
+///
+/// upstream: compat.c:535-565 - `negotiate_the_strings()` is gated on
+/// `do_negotiated_strings`, which the client only sets when the server's
+/// compat flags carry `CF_VARINT_FLIST_FLAGS`. Refused-options aborts
+/// never reach the file-list phase, so we deliberately *do not* advertise
+/// `VARINT_FLIST_FLAGS` here even when the client's capability string
+/// would otherwise enable it. Skipping the flag keeps the client out of
+/// `recv_negotiate_str()` / `read_vstring()` reads that our writer would
+/// never satisfy.
+///
+/// The remaining flags are the platform-default subset upstream picks up
+/// from `compat.c:712-732` for any session that completes `setup_protocol()`
+/// without engaging in vstring negotiation: safe flist handling, the
+/// xattr-optimisation guard, the inplace partial-dir hint, ID-0 names,
+/// the corrected checksum-seed ordering, and incremental recursion only
+/// when the client advertised `i`. Anything beyond this prefix is
+/// unobservable because the connection terminates before file-list
+/// exchange begins.
+fn build_default_post_ok_compat_flags(client_info: &str) -> protocol::CompatibilityFlags {
+    let mut flags = protocol::CompatibilityFlags::CHECKSUM_SEED_FIX
+        | protocol::CompatibilityFlags::SAFE_FILE_LIST
+        | protocol::CompatibilityFlags::AVOID_XATTR_OPTIMIZATION
+        | protocol::CompatibilityFlags::INPLACE_PARTIAL_DIR
+        | protocol::CompatibilityFlags::ID0_NAMES;
+    #[cfg(unix)]
+    {
+        flags |= protocol::CompatibilityFlags::SYMLINK_TIMES;
+    }
+    if client_info.contains('i') {
+        flags |= protocol::CompatibilityFlags::INC_RECURSE;
+    }
+    flags
 }
 
 /// Handles module authentication flow with FSM transition enforcement.
