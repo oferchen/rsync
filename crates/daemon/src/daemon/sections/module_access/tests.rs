@@ -2057,4 +2057,109 @@ mod module_access_tests {
             vec![std::path::PathBuf::from("/srv/upload/d1/d2/f2")]
         );
     }
+
+    // Ground-truth `safe_arg` reference port of upstream
+    // `options.c:2539-2594` (rsync 3.4.4), option-arg branch only:
+    //
+    //   opt != NULL  =>  is_filename_arg = 0
+    //   escapes = WILD_CHARS SHELL_CHARS
+    //   WILD_CHARS  = "*?[]"
+    //   SHELL_CHARS = "!#$&;|<>(){}\"'` \t\\"
+    //
+    // Used by the round-trip parity tests below to assert that the daemon's
+    // `unbackslash_arg` reverses every character upstream's client-side
+    // `safe_arg` is allowed to emit. Independent of the oc-rsync
+    // `safe_arg_for_daemon` implementation so the contract is locked
+    // against upstream wire output rather than against our own escape code.
+    fn upstream_safe_arg_option(opt: &str, value: &str) -> String {
+        const SHELL_CHARS: &[u8] = b"!#$&;|<>(){}\"'` \t\\";
+        const WILD_CHARS: &[u8] = b"*?[]";
+        let mut out = String::with_capacity(opt.len() + value.len() + 8);
+        out.push_str(opt);
+        if !opt.is_empty() {
+            out.push('=');
+        }
+        for &byte in value.as_bytes() {
+            if byte == b'\\' {
+                // upstream options.c:2584-2586 - option args
+                // (is_filename_arg=0) always double a literal backslash.
+                out.push('\\');
+            } else if WILD_CHARS.contains(&byte) || SHELL_CHARS.contains(&byte) {
+                out.push('\\');
+            }
+            out.push(byte as char);
+        }
+        out
+    }
+
+    // UTS-8.REOPEN: lock the contract that the daemon's `unbackslash_arg`
+    // reverses every escape upstream's `safe_arg` can emit for an option
+    // arg. The asymmetric case is `--groupmap=*:GID` (upstream issue #829):
+    // a 3.4.3+ non-protect_args client wraps the value with
+    // `safe_arg("--groupmap", ...)`, which backslash-escapes `*` (a
+    // `WILD_CHARS` member). The daemon must reverse the escape before
+    // option parsing, or `--groupmap=\*:GID` reaches `parse_name_map()`
+    // and the wildcard silently mismatches.
+    //
+    // upstream: options.c:2539-2594 safe_arg() (client-side escape)
+    // upstream: io.c:1295-1306 unbackslash_arg() (daemon-side un-escape)
+    #[test]
+    fn unbackslash_arg_reverses_upstream_safe_arg_groupmap_wildcard() {
+        let original = "--groupmap=*:42";
+        let escaped = upstream_safe_arg_option("--groupmap", "*:42");
+        assert_eq!(escaped, "--groupmap=\\*:42");
+        assert_eq!(unbackslash_arg(&escaped), original);
+    }
+
+    // upstream: options.c:2541-2544 - `escapes = WILD_CHARS SHELL_CHARS`
+    // for option args. The daemon's `unbackslash_arg` must reverse every
+    // member of that set: `*?[]` (wildcards) plus `!#$&;|<>(){}\"'` \t\\`
+    // (shell). A regression that drops any character from the un-escape
+    // set would resurface upstream #829 for that character.
+    #[test]
+    fn unbackslash_arg_reverses_every_safe_arg_escape_character() {
+        let escape_chars = [
+            '*', '?', '[', ']', '!', '#', '$', '&', ';', '|', '<', '>', '(', ')', '{', '}', '"',
+            '\'', '`', ' ', '\t', '\\',
+        ];
+        for &ch in &escape_chars {
+            let value = format!("prefix{ch}suffix");
+            let escaped = upstream_safe_arg_option("--groupmap", &value);
+            // Every escape char must appear backslash-prefixed in the
+            // upstream escape output so the round-trip below exercises
+            // that specific char.
+            assert!(
+                escaped.contains(&format!("\\{ch}")),
+                "upstream safe_arg should backslash-escape {ch:?}; got {escaped:?}",
+            );
+            let round_trip = unbackslash_arg(&escaped);
+            assert_eq!(
+                round_trip,
+                format!("--groupmap={value}"),
+                "unbackslash_arg must reverse safe_arg escape for {ch:?}",
+            );
+        }
+    }
+
+    // Round-trip parity for the wildcard family across `--usermap` and
+    // `--groupmap` together. Mirrors upstream `options.c:2912-2916` which
+    // routes both options through `safe_arg("--usermap"|"--groupmap", ...)`.
+    #[test]
+    fn unbackslash_arg_round_trips_usermap_groupmap_wildcards() {
+        for (opt, value) in [
+            ("--usermap", "*:1234"),
+            ("--groupmap", "*:1234"),
+            ("--usermap", "alice:bob,*:1234"),
+            ("--groupmap", "wheel:0,*:1234"),
+            ("--groupmap", "*:1234;dangerous"),
+        ] {
+            let original = format!("{opt}={value}");
+            let escaped = upstream_safe_arg_option(opt, value);
+            assert_eq!(
+                unbackslash_arg(&escaped),
+                original,
+                "round-trip failed for {original:?} (escaped to {escaped:?})",
+            );
+        }
+    }
 }

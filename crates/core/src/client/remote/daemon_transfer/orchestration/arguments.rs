@@ -614,6 +614,72 @@ mod safe_arg_tests {
         let escaped = safe_arg_for_daemon("--groupmap=\\*:1234");
         assert_eq!(escaped, "--groupmap=\\\\\\*:1234");
     }
+
+    // UTS-8.REOPEN: pin the client-side `--groupmap=*:GID` wire format.
+    // Mirrors upstream `options.c:2912-2916` which calls
+    // `safe_arg("--groupmap", value)` for the option-arg branch
+    // (`is_filename_arg=false`, escape set = `WILD_CHARS + SHELL_CHARS`).
+    // The escaped output must be reversible by the daemon's
+    // `unbackslash_arg` (mirrored from upstream `io.c:1295-1306`); any drift
+    // here would resurface upstream #829 for the wildcard.
+    #[test]
+    fn groupmap_wildcard_matches_upstream_safe_arg_byte_for_byte() {
+        // upstream's safe_arg("--groupmap", "*:42") yields "--groupmap=\*:42":
+        //   "--groupmap" + "=" + escape("*") + ":" + "4" + "2"
+        // where escape(*) = `\*` because `*` is in WILD_CHARS.
+        assert_eq!(safe_arg_for_daemon("--groupmap=*:42"), "--groupmap=\\*:42");
+
+        // Reversing the escape with the daemon-side algorithm
+        // (`\X -> X` for any X) must recover the original. This is the
+        // round-trip parity asserted on both sides of the wire.
+        let original = "--groupmap=*:42";
+        let escaped = safe_arg_for_daemon(original);
+        let bytes = escaped.as_bytes();
+        let mut decoded = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                i += 1;
+            }
+            decoded.push(bytes[i]);
+            i += 1;
+        }
+        assert_eq!(String::from_utf8(decoded).unwrap(), original);
+    }
+
+    // UTS-8.REOPEN: verify every escape character upstream `safe_arg`
+    // emits for an option arg (`WILD_CHARS + SHELL_CHARS`) survives the
+    // `safe_arg_for_daemon` -> daemon-side `unbackslash_arg` round trip.
+    // Drift in either escape set would resurface upstream #829 for the
+    // dropped character. Mirrors upstream `options.c:2541-2544`.
+    #[test]
+    fn every_safe_arg_escape_char_round_trips_through_unbackslash() {
+        let escape_chars = [
+            '*', '?', '[', ']', '!', '#', '$', '&', ';', '|', '<', '>', '(', ')', '{', '}', '"',
+            '\'', '`', ' ', '\t', '\\',
+        ];
+        for &ch in &escape_chars {
+            let original = format!("--groupmap=prefix{ch}suffix");
+            let escaped = safe_arg_for_daemon(&original);
+            // Reverse with the same algorithm the daemon's `unbackslash_arg`
+            // uses (`\X -> X` for any X).
+            let bytes = escaped.as_bytes();
+            let mut decoded = Vec::with_capacity(bytes.len());
+            let mut i = 0;
+            while i < bytes.len() {
+                if bytes[i] == b'\\' && i + 1 < bytes.len() {
+                    i += 1;
+                }
+                decoded.push(bytes[i]);
+                i += 1;
+            }
+            let round_trip = String::from_utf8(decoded).unwrap();
+            assert_eq!(
+                round_trip, original,
+                "round-trip failed for {ch:?} (escaped to {escaped:?})",
+            );
+        }
+    }
 }
 
 #[cfg(test)]
