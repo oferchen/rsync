@@ -17,12 +17,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::{
-    FilterAction, FilterError, FilterRule, MergeFileError,
     apple_double::default_patterns as apple_double_default_patterns,
-    compiled::{CompiledRule, apply_clear_rule},
+    compiled::{apply_clear_rule, CompiledRule},
     cvs::default_patterns as cvs_default_patterns,
     decision::{DecisionContext, FilterSetInner},
     merge::read_rules_recursive,
+    FilterAction, FilterError, FilterRule, MergeFileError,
 };
 
 /// Compiled, immutable collection of filter rules for fast path matching.
@@ -649,5 +649,28 @@ mod tests {
         let set = FilterSet::from_rules_with_apple_double(rules, false).unwrap();
         assert!(set.allows(Path::new("._keep"), false));
         assert!(!set.allows(Path::new("._other"), false));
+    }
+
+    /// upstream: exclude.c:936-937 - `- new/lose/***` excludes the directory
+    /// itself and everything inside. `- new/keep/**` excludes only contents.
+    /// Regression test for exclude-lsh upstream testsuite failure.
+    #[test]
+    fn wild3_suffix_vs_double_star_in_filter_set() {
+        let rules = vec![
+            FilterRule::exclude("new/keep/**"),
+            FilterRule::exclude("new/lose/***"),
+        ];
+        let set = FilterSet::from_rules(rules).unwrap();
+
+        // `/**` excludes contents but NOT the directory itself.
+        assert!(set.allows(Path::new("new/keep"), true));
+        assert!(!set.allows(Path::new("new/keep/this"), false));
+        assert!(!set.allows(Path::new("new/keep/this"), true));
+
+        // `/***` excludes both the directory and its contents.
+        assert!(!set.allows(Path::new("new/lose"), true));
+        assert!(!set.allows(Path::new("new/lose/this"), false));
+        // A file named "new/lose" is still allowed (directory-only match).
+        assert!(set.allows(Path::new("new/lose"), false));
     }
 }

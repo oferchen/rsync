@@ -38,24 +38,39 @@ pub(crate) fn compile_patterns(
 /// - It starts with `/`, OR
 /// - It contains `/` anywhere in the pattern (besides trailing `/`)
 ///
+/// A trailing `/***` suffix is treated as directory-only on the stem.
+/// upstream: `exclude.c:936-937` - `FILTRULE_WILD3_SUFFIX` appends `/` to
+/// directory names during matching, allowing `dir/***` to match both the
+/// directory itself and all its contents. We normalize `dir/***` to `dir/`
+/// (directory-only) so the standard descendant-matcher expansion produces
+/// the correct `dir/**` content matchers.
+///
 /// This mirrors upstream rsync's pattern normalization in
 /// `exclude.c:parse_filter_str()` where leading and trailing slashes are
 /// stripped and used to set `FILTRULE_ABS_PATH` and `FILTRULE_DIRECTORY`
 /// flags respectively.
 pub(super) fn normalise_pattern(pattern: &str) -> (bool, bool, Cow<'_, str>) {
     let starts_with_slash = pattern.starts_with('/');
-    let directory_only = pattern.ends_with('/');
 
-    let core_pattern = if directory_only && pattern.len() > 1 {
-        &pattern[..pattern.len() - 1]
+    // upstream: exclude.c:243-248 - a trailing `/***` (SLASH_WILD3_SUFFIX)
+    // means "match both the directory and everything inside it". Normalize
+    // by stripping `/***` and treating the result as directory-only.
+    let (stripped, directory_only) = if pattern.ends_with("/***") && pattern.len() > 4 {
+        // `/***` fully consumed - the stem has no trailing `/`.
+        (&pattern[..pattern.len() - 4], true)
+    } else if pattern.ends_with('/') && pattern.len() > 1 {
+        (&pattern[..pattern.len() - 1], true)
+    } else if pattern == "/" {
+        (pattern, true)
     } else {
-        pattern
+        (pattern, false)
     };
 
-    let core_pattern_no_leading = if starts_with_slash && core_pattern.len() > 1 {
-        &core_pattern[1..]
+    // Strip the leading `/` if present.
+    let core_pattern = if starts_with_slash {
+        stripped.strip_prefix('/').unwrap_or(stripped)
     } else {
-        core_pattern
+        stripped
     };
 
     // upstream: exclude.c:rule_matches() - FILTRULE_ABS_PATH is only set
@@ -68,23 +83,13 @@ pub(super) fn normalise_pattern(pattern: &str) -> (bool, bool, Cow<'_, str>) {
     let anchored = starts_with_slash;
 
     if !starts_with_slash && !directory_only {
-        return (anchored, false, Cow::Borrowed(pattern));
-    }
-
-    let start = if starts_with_slash { 1 } else { 0 };
-    let end = if directory_only && pattern.len() > start {
-        pattern.len() - 1
-    } else {
-        pattern.len()
-    };
-
-    if start == 0 && end == pattern.len() {
-        (anchored, directory_only, Cow::Borrowed(pattern))
+        // Nothing was stripped - borrow the original.
+        (anchored, false, Cow::Borrowed(pattern))
     } else {
         (
             anchored,
             directory_only,
-            Cow::Owned(pattern[start..end].to_string()),
+            Cow::Owned(core_pattern.to_string()),
         )
     }
 }
@@ -168,5 +173,46 @@ mod tests {
         assert!(dir_only);
         // Core is empty but we don't strip further because it would be empty
         assert_eq!(core, "");
+    }
+
+    /// upstream: exclude.c:936-937 - FILTRULE_WILD3_SUFFIX appends `/` to
+    /// directory names during matching. `dir/***` matches both the directory
+    /// itself (when is_dir) and everything inside it.
+    #[test]
+    fn normalise_pattern_wild3_suffix() {
+        let (anchored, dir_only, core) = normalise_pattern("new/lose/***");
+        assert!(!anchored);
+        assert!(dir_only);
+        assert_eq!(core, "new/lose");
+    }
+
+    #[test]
+    fn normalise_pattern_anchored_wild3_suffix() {
+        let (anchored, dir_only, core) = normalise_pattern("/new/lose/***");
+        assert!(anchored);
+        assert!(dir_only);
+        assert_eq!(core, "new/lose");
+    }
+
+    /// Bare `/***` (no directory stem) should be treated as directory-only
+    /// on the empty path, matching upstream behavior.
+    #[test]
+    fn normalise_pattern_bare_wild3_suffix() {
+        // Pattern "/***" has len 4, not > 4, so the `/***` branch does NOT
+        // fire. This is by design: bare `***` is just a wildcard pattern.
+        let (anchored, dir_only, core) = normalise_pattern("/***");
+        assert!(anchored);
+        assert!(!dir_only);
+        assert_eq!(core, "***");
+    }
+
+    /// Pattern ending with `***` but without a preceding `/` is a regular
+    /// wildcard, not the WILD3_SUFFIX semantic.
+    #[test]
+    fn normalise_pattern_trailing_triple_star_no_slash() {
+        let (anchored, dir_only, core) = normalise_pattern("foo***");
+        assert!(!anchored);
+        assert!(!dir_only);
+        assert_eq!(core, "foo***");
     }
 }
