@@ -24,6 +24,7 @@ libc = { workspace = true }
 thiserror = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
+fast_io = { path = "../fast_io", default-features = false }
 xattr = { workspace = true, optional = true }
 
 # Cross-platform ACL support (Linux, macOS, FreeBSD)
