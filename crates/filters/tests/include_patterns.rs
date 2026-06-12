@@ -344,19 +344,20 @@ fn include_anchored_with_wildcard() {
     assert!(!set.allows(Path::new("config/app.yaml"), false));
 }
 
-/// Verifies unanchored pattern with slash is matched at any depth.
+/// Verifies unanchored pattern with slash tail-matches at any depth.
+///
+/// upstream: exclude.c:rule_matches() - patterns with internal slashes
+/// but no leading `/` match the last N+1 path components (tail-match).
 #[test]
 fn include_unanchored_with_slash() {
-    // Pattern with internal slash is anchored (rsync semantics)
     let rules = [FilterRule::include("src/main.rs"), FilterRule::exclude("*")];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Should match at root
+    // Matches at root.
     assert!(set.allows(Path::new("src/main.rs"), false));
 
-    // Pattern with internal slash is anchored, so only matches at root
-    // To match at any depth, use **/src/main.rs
-    assert!(!set.allows(Path::new("project/src/main.rs"), false));
+    // Also matches at depth via tail-matching.
+    assert!(set.allows(Path::new("project/src/main.rs"), false));
 }
 
 /// Verifies anchor_to_root method.
