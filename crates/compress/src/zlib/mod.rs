@@ -5,11 +5,11 @@
 //! Raw deflate compression helpers for rsync wire protocol compatibility.
 //!
 //! This module uses raw deflate format (no zlib header/trailer) to match
-//! upstream rsync's compression wire format. [`CountingZlibEncoder`] accepts
+//! upstream rsync's compression wire format. `CountingZlibEncoder` accepts
 //! incremental input while tracking the number of bytes produced by the
 //! compressor so higher layers can report accurate compressed sizes without
 //! buffering the resulting payload in memory. The complementary
-//! [`CountingZlibDecoder`] wraps a reader that produces decompressed bytes
+//! `CountingZlibDecoder` wraps a reader that produces decompressed bytes
 //! while recording how much output has been yielded so far, keeping the
 //! counter accurate for both scalar and vectored reads so downstream bandwidth
 //! accounting mirrors upstream behaviour.
@@ -35,7 +35,7 @@
 //! ```
 //!
 //! Obtain a compressed buffer, stream it through
-//! [`CountingZlibDecoder`], and collect the decompressed output:
+//! `CountingZlibDecoder`, and collect the decompressed output:
 //!
 //! ```
 //! use compress::zlib::{
