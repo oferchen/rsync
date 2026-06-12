@@ -58,8 +58,14 @@ pub(super) fn normalise_pattern(pattern: &str) -> (bool, bool, Cow<'_, str>) {
         core_pattern
     };
 
-    let has_internal_slash = core_pattern_no_leading.contains('/');
-    let anchored = starts_with_slash || has_internal_slash;
+    // upstream: exclude.c:rule_matches() - FILTRULE_ABS_PATH is only set
+    // for patterns that start with `/` (or when XFLG_ABS_IF_SLASH is in
+    // effect, which is restricted to daemon module configs). A pattern
+    // with internal slashes but no leading `/` is NOT anchored; instead
+    // upstream tail-matches it against the last N+1 path components (line
+    // 947-951). The glob equivalent is `**/pattern`, which our caller
+    // adds for unanchored patterns.
+    let anchored = starts_with_slash;
 
     if !starts_with_slash && !directory_only {
         return (anchored, false, Cow::Borrowed(pattern));
@@ -138,7 +144,17 @@ mod tests {
     #[test]
     fn normalise_pattern_nested_path() {
         let (anchored, dir_only, core) = normalise_pattern("src/lib/");
-        // Pattern contains internal slash, so it should be anchored
+        // upstream: internal slashes without a leading `/` are NOT anchored;
+        // they use tail-matching (match last N+1 path components via `**/pattern`).
+        assert!(!anchored);
+        assert!(dir_only);
+        assert_eq!(core, "src/lib");
+    }
+
+    #[test]
+    fn normalise_pattern_anchored_nested_path() {
+        // Leading `/` anchors even with internal slashes.
+        let (anchored, dir_only, core) = normalise_pattern("/src/lib/");
         assert!(anchored);
         assert!(dir_only);
         assert_eq!(core, "src/lib");

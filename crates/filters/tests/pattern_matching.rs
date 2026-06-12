@@ -228,20 +228,21 @@ fn unanchored_pattern_matches_at_any_depth() {
     assert!(!set.allows(Path::new("a/b/c/temp.dat"), false));
 }
 
-/// Verifies patterns with internal slashes become anchored.
+/// Verifies patterns with internal slashes use tail-matching.
 ///
-/// From rsync man page: "if the pattern contains a / (not counting a
-/// trailing /) then it is anchored to the root of the transfer."
+/// upstream: exclude.c:rule_matches() - a pattern with internal slashes
+/// but no leading `/` matches the last N+1 path components (tail-match),
+/// rather than being anchored to the root.
 #[test]
-fn pattern_with_slash_is_implicitly_anchored() {
+fn pattern_with_slash_tail_matches() {
     let set = FilterSet::from_rules([FilterRule::exclude("src/temp")]).unwrap();
 
-    // Pattern with internal / is anchored, matches only at root
+    // Pattern with internal / matches at root.
     assert!(!set.allows(Path::new("src/temp"), false));
-    // Not matched in nested paths (pattern is anchored)
-    assert!(set.allows(Path::new("project/src/temp"), false));
+    // Also matches at deeper paths via tail-matching.
+    assert!(!set.allows(Path::new("project/src/temp"), false));
 
-    // Different path doesn't match
+    // Different tail doesn't match.
     assert!(set.allows(Path::new("lib/temp"), false));
 }
 

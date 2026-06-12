@@ -323,16 +323,19 @@ fn anchored_include_before_unanchored_exclude() {
     assert!(!chain.allows(Path::new("sub/keep"), false));
 }
 
-/// Patterns containing internal slashes are implicitly anchored.
+/// Patterns containing internal slashes use tail-matching, not anchoring.
+///
+/// upstream: exclude.c:rule_matches() lines 947-951 - a pattern with internal
+/// slashes but no leading `/` matches the last N+1 path components.
 #[test]
-fn internal_slash_implicit_anchor() {
+fn internal_slash_tail_matches() {
     let global = FilterSet::from_rules([FilterRule::exclude("src/gen")]).unwrap();
     let chain = FilterChain::new(global);
 
-    // Implicitly anchored - matches at root.
+    // Matches at root.
     assert!(!chain.allows(Path::new("src/gen"), false));
-    // Does not match at arbitrary depth.
-    assert!(chain.allows(Path::new("lib/src/gen"), false));
+    // Also matches at depth via tail-matching.
+    assert!(!chain.allows(Path::new("lib/src/gen"), false));
 }
 
 /// Scoped exclude overrides global include for the same anchored path.

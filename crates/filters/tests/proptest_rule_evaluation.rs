@@ -565,16 +565,17 @@ proptest! {
 }
 
 // ---------------------------------------------------------------------------
-// Property: Internal slash implies anchoring
+// Property: Internal slash uses tail-matching (NOT anchored)
 // ---------------------------------------------------------------------------
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(500))]
 
-    /// A pattern containing an internal `/` (e.g., `dir/file`) is implicitly
-    /// anchored - it matches from the transfer root, not at any depth.
+    /// upstream: exclude.c:rule_matches() lines 947-951 - a pattern with
+    /// internal slashes but no leading `/` tail-matches against the last
+    /// N+1 path components. Both the direct path and the nested path match.
     #[test]
-    fn internal_slash_implies_anchored(
+    fn internal_slash_tail_matches(
         dir in path_segment(),
         file in path_segment(),
         outer in path_segment(),
@@ -584,17 +585,17 @@ proptest! {
         let pattern = format!("{dir}/{file}");
         let set = FilterSet::from_rules([FilterRule::exclude(&pattern)]).unwrap();
 
-        // Direct path should be excluded (matches from root).
+        // Direct path should be excluded.
         prop_assert!(
             !set.allows(Path::new(&pattern), false),
             "{} should exclude {} at root", pattern, pattern
         );
 
-        // Nested under a different parent should be allowed (anchored).
+        // Nested path also matches via tail-matching.
         let nested = format!("{outer}/{dir}/{file}");
         prop_assert!(
-            set.allows(Path::new(&nested), false),
-            "{} (internal slash) should NOT exclude {}", pattern, nested
+            !set.allows(Path::new(&nested), false),
+            "{} (tail-match) should exclude {}", pattern, nested
         );
     }
 }
