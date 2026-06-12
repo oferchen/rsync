@@ -26,7 +26,7 @@ const VITAL_OPTIONS: &[&str] = &[
     "sender",
     "dry-run",
     "n",
-    "seclude-args",
+    "secluded-args",
     "s",
     "from0",
     "0",
@@ -55,7 +55,8 @@ fn refused_option<'a>(module: &ModuleDefinition, options: &'a [String]) -> Optio
 
     options.iter().find_map(|candidate| {
         let canonical = canonical_option(candidate);
-        if is_option_refused(&module.refuse_options, &canonical) {
+        let short = long_option_short_letter(&canonical);
+        if is_option_refused(&module.refuse_options, &canonical, short) {
             Some(candidate.as_str())
         } else {
             None
@@ -125,6 +126,66 @@ fn short_option_long_name(letter: char) -> &'static str {
     }
 }
 
+/// Maps a canonical long-option name to its single-letter short form, when one
+/// exists in upstream's `long_options[]` table.
+///
+/// Inverse of `short_option_long_name` for the subset of options that have a
+/// short-letter alias. Used by the refuse-list matcher so rules can reference
+/// either the long or short form (`!verbose` and `!v` are equivalent).
+///
+/// upstream: options.c:594-... - the `shortName` column on each `long_options[]`
+/// entry; upstream's `parse_one_refuse_match` calls `wildmatch(ref, shortName)`
+/// as a fallback when the long-name comparison fails.
+fn long_option_short_letter(long_name: &str) -> Option<char> {
+    match long_name {
+        "verbose" => Some('v'),
+        "quiet" => Some('q'),
+        "human-readable" => Some('h'),
+        "dry-run" => Some('n'),
+        "archive" => Some('a'),
+        "recursive" => Some('r'),
+        "dirs" => Some('d'),
+        "perms" => Some('p'),
+        "executability" => Some('E'),
+        "acls" => Some('A'),
+        "xattrs" => Some('X'),
+        "times" => Some('t'),
+        "atimes" => Some('U'),
+        "crtimes" => Some('N'),
+        "omit-dir-times" => Some('O'),
+        "omit-link-times" => Some('J'),
+        "owner" => Some('o'),
+        "group" => Some('g'),
+        "devices" => Some('D'),
+        "links" => Some('l'),
+        "copy-links" => Some('L'),
+        "copy-dirlinks" => Some('k'),
+        "keep-dirlinks" => Some('K'),
+        "hard-links" => Some('H'),
+        "relative" => Some('R'),
+        "ignore-times" => Some('I'),
+        "one-file-system" => Some('x'),
+        "update" => Some('u'),
+        "sparse" => Some('S'),
+        "cvs-exclude" => Some('C'),
+        "whole-file" => Some('W'),
+        "checksum" => Some('c'),
+        "fuzzy" => Some('y'),
+        "compress" => Some('z'),
+        "partial" => Some('P'),
+        "prune-empty-dirs" => Some('m'),
+        "itemize-changes" => Some('i'),
+        "backup" => Some('b'),
+        "secluded-args" => Some('s'),
+        "version" => Some('V'),
+        "block-size" => Some('B'),
+        "temp-dir" => Some('T'),
+        "remote-option" => Some('M'),
+        "filter" => Some('f'),
+        _ => None,
+    }
+}
+
 /// Checks whether any client argument is refused by the module's refuse list.
 ///
 /// Expands bundled short options (e.g. `-vlogDtprez.iLsfxCIvu`) into their
@@ -151,7 +212,8 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
             if canonical.is_empty() {
                 continue;
             }
-            if is_option_refused(&module.refuse_options, &canonical) {
+            let short = long_option_short_letter(&canonical);
+            if is_option_refused(&module.refuse_options, &canonical, short) {
                 return Some(format!("--{canonical}"));
             }
             continue;
@@ -165,12 +227,13 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
                     break;
                 }
                 let long = short_option_long_name(letter);
-                let candidate = if long.is_empty() {
+                let long_canonical = if long.is_empty() {
                     letter.to_ascii_lowercase().to_string()
                 } else {
                     long.to_owned()
                 };
-                if is_option_refused(&module.refuse_options, &candidate) {
+                let short_letter = if long.is_empty() { None } else { Some(letter) };
+                if is_option_refused(&module.refuse_options, &long_canonical, short_letter) {
                     return Some(if long.is_empty() {
                         format!("-{letter}")
                     } else {
@@ -183,38 +246,73 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
     None
 }
 
-/// Evaluates a canonical option name against an ordered refuse list.
+/// Evaluates a canonical option (long name + optional short letter) against an
+/// ordered refuse list.
 ///
-/// Processes rules left-to-right. A rule starting with `!` negates a previous
-/// match, keeping the option allowed. A plain rule (possibly with globs) marks
-/// the option as refused. The last matching rule wins.
+/// Mirrors upstream `set_refuse_options` / `parse_one_refuse_match`
+/// (options.c:895): each rule is compared against BOTH the option's `longName`
+/// and its `shortName`, and rules are applied in the order they appear so the
+/// last match wins. A rule starting with `!` un-refuses a previously matched
+/// option, enabling allow-list configurations like
+/// `refuse options = * !verbose !archive` or pure `refuse options = !verbose`
+/// inverses to function the same way `rsyncd.conf(5)` documents.
 ///
-/// When a pattern contains glob metacharacters (`*`, `?`, `[`), vital options
-/// are exempt from matching.
+/// `a` and `archive` are special-cased to expand to the wildcard
+/// `[ardlptgoD]` so they refuse every short letter implied by upstream's
+/// `OPT_a` POPT alias, matching the `parse_one_refuse_match` rewrite at
+/// options.c:904.
 ///
-/// upstream: clientserver.c - refuse list is evaluated with fnmatch(3) semantics;
-/// vital options are skipped during wildcard expansion.
-fn is_option_refused(refuse_list: &[String], canonical: &str) -> bool {
+/// When a rule is a wildcard (`*`, `?`, `[`), it cannot affect vital options
+/// (`--server`, `--sender`, `--dry-run`, `-e`, `-s`, ...). Non-wild rules
+/// can refuse or un-refuse vital options when named explicitly.
+fn is_option_refused(refuse_list: &[String], long_name: &str, short_letter: Option<char>) -> bool {
+    let vital = is_option_vital(long_name, short_letter);
     let mut refused = false;
+    let short_lower = short_letter.map(|c| c.to_ascii_lowercase().to_string());
+
     for rule in refuse_list {
         let (negated, pattern_raw) = if let Some(rest) = rule.strip_prefix('!') {
             (true, rest)
         } else {
             (false, rule.as_str())
         };
-        let pattern = canonical_option(pattern_raw);
-
-        let is_glob = pattern.contains('*') || pattern.contains('?') || pattern.contains('[');
-
-        // upstream: clientserver.c - vital options are immune to wildcard patterns
-        if is_glob && is_vital_option(canonical) {
+        let mut pattern = canonical_option(pattern_raw);
+        if pattern.is_empty() {
             continue;
         }
 
+        // upstream: options.c:904 - `a` / `archive` rules expand to the
+        // character class containing every short letter implied by `-a`.
+        let mut is_glob = pattern.contains('*') || pattern.contains('?') || pattern.contains('[');
+        if pattern == "a" || pattern == "archive" {
+            pattern = "[ardlptgoD]".to_owned();
+            is_glob = true;
+        }
+
+        // upstream: options.c:953-968 - vital options carry `descrip = "a="`
+        // and `parse_one_refuse_match` only updates them when the rule is
+        // exact, never wild. Mirror that here so administrators cannot wreck
+        // the handshake with `refuse options = *`.
+        if is_glob && vital {
+            continue;
+        }
+
+        // upstream: options.c:909-921 - the rule is tried against both
+        // `op->longName` and `op->shortName` so `!verbose` and `!v` refer to
+        // the same option. Glob patterns additionally need the original-case
+        // short letter (so `[ardlptgoD]` matches `-D` via the upper-case `D`).
         let matches = if is_glob {
-            wildcard_match(&pattern, canonical)
+            refuse_glob_match(&pattern, long_name)
+                || short_lower
+                    .as_deref()
+                    .is_some_and(|s| refuse_glob_match(&pattern, s))
+                || short_letter.is_some_and(|c| {
+                    let mut buf = [0u8; 4];
+                    let original = c.encode_utf8(&mut buf);
+                    refuse_glob_match(&pattern, original)
+                })
         } else {
-            pattern == canonical
+            pattern == long_name || short_lower.as_deref() == Some(pattern.as_str())
         };
 
         if matches {
@@ -224,9 +322,102 @@ fn is_option_refused(refuse_list: &[String], canonical: &str) -> bool {
     refused
 }
 
+/// Returns true when either the long-form name or the short-letter form is in
+/// the vital list, mirroring upstream's check of both `op->longName` and
+/// `op->shortName` at options.c:953-965.
+fn is_option_vital(long_name: &str, short_letter: Option<char>) -> bool {
+    if is_vital_option(long_name) {
+        return true;
+    }
+    if let Some(letter) = short_letter {
+        let mut buf = [0u8; 4];
+        let as_str = letter.encode_utf8(&mut buf);
+        if is_vital_option(as_str) {
+            return true;
+        }
+        let lower = letter.to_ascii_lowercase();
+        if lower != letter {
+            let lower_str = lower.encode_utf8(&mut buf);
+            if is_vital_option(lower_str) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Returns whether an option is in the vital set that is immune to wildcards.
 fn is_vital_option(canonical: &str) -> bool {
     VITAL_OPTIONS.contains(&canonical)
+}
+
+/// Matches a refuse-list glob pattern against a candidate option name.
+///
+/// Supports `*` (zero or more chars), `?` (one char), and `[...]` character
+/// classes (case-sensitive, no negation `[!...]` since upstream's
+/// `[ardlptgoD]` expansion never uses one). Falls back to the daemon's shared
+/// `wildcard_match` when no character class is present so non-class globs keep
+/// going through a single, well-tested matcher.
+fn refuse_glob_match(pattern: &str, text: &str) -> bool {
+    if !pattern.contains('[') {
+        return wildcard_match(pattern, text);
+    }
+
+    let pat = pattern.as_bytes();
+    let txt = text.as_bytes();
+    let mut p = 0usize;
+    let mut t = 0usize;
+    let mut star_p: Option<usize> = None;
+    let mut star_t = 0usize;
+
+    while t < txt.len() {
+        if p < pat.len() {
+            match pat[p] {
+                b'?' => {
+                    p += 1;
+                    t += 1;
+                    continue;
+                }
+                b'*' => {
+                    star_p = Some(p);
+                    star_t = t;
+                    p += 1;
+                    continue;
+                }
+                b'[' => {
+                    let class_end = pat[p + 1..].iter().position(|&b| b == b']');
+                    if let Some(end) = class_end {
+                        let class = &pat[p + 1..p + 1 + end];
+                        if class.contains(&txt[t]) {
+                            p += end + 2;
+                            t += 1;
+                            continue;
+                        }
+                    }
+                    // Unterminated or non-matching class: fall through to backtrack.
+                }
+                ch if ch == txt[t] => {
+                    p += 1;
+                    t += 1;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+
+        if let Some(sp) = star_p {
+            p = sp + 1;
+            star_t += 1;
+            t = star_t;
+        } else {
+            return false;
+        }
+    }
+
+    while p < pat.len() && pat[p] == b'*' {
+        p += 1;
+    }
+    p == pat.len()
 }
 
 /// Extracts the canonical form of an option name for refuse-list matching.
@@ -399,9 +590,10 @@ fn parse_module_definition(
 
     if module.auth_users.is_empty() {
         if module.secrets_file.is_none()
-            && let Some(path) = default_secrets {
-                module.secrets_file = Some(path.to_path_buf());
-            }
+            && let Some(path) = default_secrets
+        {
+            module.secrets_file = Some(path.to_path_buf());
+        }
         if module.incoming_chmod.is_none() {
             module.incoming_chmod = default_incoming_chmod.map(str::to_string);
         }
@@ -699,17 +891,13 @@ fn apply_daemon_param_overrides(
             }
             "numeric ids" | "numeric-ids" => {
                 let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                    config_error(format!(
-                        "invalid boolean value '{value}' for 'numeric ids'"
-                    ))
+                    config_error(format!("invalid boolean value '{value}' for 'numeric ids'"))
                 })?;
                 module.numeric_ids = parsed;
             }
             "use chroot" | "use-chroot" => {
                 let parsed = parse_boolean_directive(value).ok_or_else(|| {
-                    config_error(format!(
-                        "invalid boolean value '{value}' for 'use chroot'"
-                    ))
+                    config_error(format!("invalid boolean value '{value}' for 'use chroot'"))
                 })?;
                 module.use_chroot = parsed;
             }
