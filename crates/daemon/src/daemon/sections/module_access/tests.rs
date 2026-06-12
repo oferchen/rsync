@@ -202,6 +202,90 @@ mod module_access_tests {
         );
     }
 
+    // upstream: clientserver.c:1073,1083 - the daemon parses BOTH phase 1
+    // (cmdline) and phase 2 (stdin / secluded-args) and the union of their
+    // options drives the transfer. The compact flag string (`-slogDtprIzxe...`)
+    // and the role marker `--sender` live in phase 1; long-form options such
+    // as `--groupmap=*:GID` live in phase 2. Dropping phase 1 (the prior
+    // oc-rsync behaviour) silently removed `-l`, `-r`, `-z`, `--sender`, ...
+    // and broke `daemon-groupmap-wild` under secluded-args mode because
+    // compression negotiation diverged before the transfer could start.
+    #[test]
+    fn merge_secluded_args_prepends_phase1_and_skips_rsync_arg0() {
+        let phase1 = vec![
+            "--server".to_owned(),
+            "--sender".to_owned(),
+            "-slogDtprIze.LsfxCIvu".to_owned(),
+            "--iconv=UTF-8".to_owned(),
+        ];
+        let phase2 = vec![
+            "rsync".to_owned(),
+            "--log-format=%i".to_owned(),
+            "--groupmap=*:1000".to_owned(),
+            ".".to_owned(),
+            "upload/".to_owned(),
+        ];
+        let merged = merge_secluded_args(phase1, phase2);
+        assert_eq!(
+            merged,
+            vec![
+                "--server".to_owned(),
+                "--sender".to_owned(),
+                "-slogDtprIze.LsfxCIvu".to_owned(),
+                "--iconv=UTF-8".to_owned(),
+                "--log-format=%i".to_owned(),
+                "--groupmap=*:1000".to_owned(),
+                ".".to_owned(),
+                "upload/".to_owned(),
+            ],
+        );
+    }
+
+    // Phase 2 wire output drops the "rsync" arg0 only when it really is at
+    // index 0 (upstream `rsync.c:295` `args[i] = "rsync"`). A legitimate
+    // user-visible arg literally equal to "rsync" never appears at index 0
+    // of phase 2 because upstream emits it only as the synthetic arg0; the
+    // first arg the client supplies is `--server`, so the heuristic is safe.
+    #[test]
+    fn merge_secluded_args_passes_phase2_through_when_no_synthetic_arg0() {
+        let phase1 = vec!["--server".to_owned(), "-logDtpr".to_owned()];
+        let phase2 = vec![".".to_owned(), "mod/".to_owned()];
+        let merged = merge_secluded_args(phase1, phase2);
+        assert_eq!(
+            merged,
+            vec![
+                "--server".to_owned(),
+                "-logDtpr".to_owned(),
+                ".".to_owned(),
+                "mod/".to_owned(),
+            ],
+        );
+    }
+
+    // upstream issue #829: under secluded-args mode the client emits
+    // `--groupmap=*:GID` literally on the phase 2 wire (`safe_arg()` skips
+    // the WILD_CHARS escape when `protect_args` is set, `options.c:2551`).
+    // After `merge_secluded_args` the daemon's `apply_long_form_args` sees
+    // the wildcard intact and `GroupMapping::parse` consumes it without
+    // rejecting the `*` matcher.
+    #[test]
+    fn merge_secluded_args_preserves_groupmap_wildcard_through_apply_long_form() {
+        let phase1 = vec!["--server".to_owned(), "-logDtpr".to_owned()];
+        let phase2 = vec![
+            "rsync".to_owned(),
+            "--groupmap=*:1234".to_owned(),
+            ".".to_owned(),
+            "upload/".to_owned(),
+        ];
+        let merged = merge_secluded_args(phase1, phase2);
+
+        let mut config = ServerConfig::default();
+        let unknown = apply_long_form_args(&merged, &mut config);
+        assert!(unknown.is_none());
+        let mapping = config.group_mapping.expect("groupmap should be parsed");
+        assert_eq!(mapping.spec(), "*:1234");
+    }
+
     #[test]
     fn apply_module_bandwidth_limit_disables_when_module_configured_none() {
         let mut limiter = Some(BandwidthLimiter::new(NonZeroU64::new(1024).unwrap()));
