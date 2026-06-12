@@ -264,7 +264,7 @@ impl GeneratorContext {
             // during recursive walk" (ENOENT during child traversal).
             let scoped: HashSet<PathBuf> = implied_only_dirs
                 .iter()
-                .filter(|(b, _)| *b == &entry.base)
+                .filter(|(b, _)| b == &entry.base)
                 .map(|(_, rel)| rel.clone())
                 .collect();
             if !self.try_walk_source_entry_dedup(&entry.base, &entry.path, Some(&scoped))? {
