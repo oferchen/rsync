@@ -51,12 +51,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
             } else {
                 CHROOT_FAILED_PAYLOAD
             };
-            send_error_and_exit(
-                ctx.reader.get_mut(),
-                ctx.limiter,
-                ctx.messages,
-                payload,
-            )?;
+            send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, payload)?;
             return Ok(false);
         }
     }
@@ -73,12 +68,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
             } else {
                 SETGID_FAILED_PAYLOAD
             };
-            send_error_and_exit(
-                ctx.reader.get_mut(),
-                ctx.limiter,
-                ctx.messages,
-                payload,
-            )?;
+            send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, payload)?;
             return Ok(false);
         }
     }
@@ -762,7 +752,12 @@ fn process_approved_module(
     // `MPLEX_BASE = 7`). upstream: clientserver.c:1146 io_start_multiplex_out
     // immediately followed by `rwrite(FERROR, ...)`.
     if let Some(refused) = refused_client_arg(module, &client_args) {
-        return handle_refused_option_post_handshake(ctx, &refused);
+        return handle_refused_option_post_handshake(
+            ctx,
+            &refused,
+            negotiated_protocol,
+            &client_args,
+        );
     }
 
     // Enforce read-only / write-only access restrictions.
@@ -802,8 +797,7 @@ fn process_approved_module(
     // from the kernel. The accepted in-module paths are carried forward
     // and fed to `engage_landlock_sandbox` so the kernel allowlist matches
     // the full set the receiver will actually touch (URV-5.b.REOPEN).
-    let Some(validated_client_paths) =
-        validate_client_paths_in_module(ctx, module, &client_args)?
+    let Some(validated_client_paths) = validate_client_paths_in_module(ctx, module, &client_args)?
     else {
         return Ok(());
     };
