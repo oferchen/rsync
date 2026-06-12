@@ -125,31 +125,48 @@ impl GeneratorContext {
 
         let mut ndx_read_codec = transfer_result.ndx_read_codec;
         let mut ndx_write_codec = transfer_result.ndx_write_codec;
-        self.handle_goodbye(reader, writer, &mut ndx_read_codec, &mut ndx_write_codec)?;
 
-        // upstream: main.c:968 do_server_sender() and main.c:912 client_run()
-        // both call io_flush(FULL_FLUSH) immediately before returning so the
-        // kernel ships the final NDX_DONE (and any trailing multiplexed
-        // MSG_INFO frames) before the transport FIN. We mirror that contract
-        // here as defense-in-depth: even though `handle_goodbye` already
-        // flushes after its NDX_DONE write, any diagnostic frame queued
-        // later in `run()` would otherwise race the connection close.
+        // UTS-9.REOPEN (daemon-gzip-download): under `-zz` daemon pull the
+        // receiver decodes the goodbye NDX_DONE through `CompressedReader`,
+        // so the deflate stream must be closed before we block on its
+        // reply. Run `finalize_compression()` BETWEEN our goodbye write and
+        // the receiver's goodbye read; finalising AFTER `handle_goodbye`
+        // returns would never happen because the read would deadlock on
+        // the unterminated deflate block.
         //
-        // When wire compression is active (-zz daemon pull), an inner-codec
-        // Z_SYNC_FLUSH alone is not enough: the receiver's
-        // `CompressedReader` keeps the deflate stream open and may block on
-        // the closing block. Finalise the compressor so it emits its
-        // end-of-stream trailer before the socket closes - upstream
-        // `token.c:send_deflated_token()` issues `deflateEnd()` at the same
-        // point, which is the only thing that frees the receiver from its
-        // pending decompress wait. `finalize_compression` downgrades the
-        // writer back to multiplex mode and flushes the inner stream so any
-        // trailing diagnostic frame still rides out before FIN.
+        // upstream: `main.c:979-983 do_server_sender()` brackets
+        // `read_final_goodbye()` with `io_flush(FULL_FLUSH)`. Upstream's
+        // goodbye NDX_DONE rides through `write_buf()` (`io.c:2255`) which
+        // bypasses the deflate stream entirely. Our writer-graph routes
+        // it through `CompressedWriter`, so we additionally need to drive
+        // `CompressedWriter::finish()` here (matching
+        // `token.c:367 send_deflated_token()`'s end-of-transfer
+        // `deflateEnd()` contract). `finalize_compression` downgrades the
+        // writer back to multiplex mode so any trailing diagnostic frame
+        // still rides out before FIN.
         //
         // Rule 12 (fail-loud): surface the flush error unless the peer has
-        // already shut down. Early close during goodbye-shutdown is rare and
-        // the transfer is over, so any other error is treated as a real
-        // failure rather than swallowed.
+        // already shut down. Early close during goodbye-shutdown is rare
+        // and the transfer is over, so any other error is treated as a
+        // real failure rather than swallowed.
+        self.handle_goodbye_with_finalizer(
+            reader,
+            writer,
+            &mut ndx_read_codec,
+            &mut ndx_write_codec,
+            |w| match w.finalize_compression() {
+                Ok(()) => Ok(()),
+                Err(e) if super::super::is_early_close_error(&e) => Ok(()),
+                Err(e) => Err(e),
+            },
+        )?;
+
+        // upstream: main.c:983 io_flush(FULL_FLUSH) is also called AFTER
+        // read_final_goodbye(), so any MSG_INFO diagnostic frame queued
+        // later in `run()` still ships before the transport FIN.
+        // `finalize_compression()` is idempotent on a Multiplex writer
+        // (degrades to a plain flush) so it is safe to call again here as
+        // defense-in-depth.
         if let Err(e) = writer.finalize_compression() {
             if !super::super::is_early_close_error(&e) {
                 return Err(e);
