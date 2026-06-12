@@ -468,6 +468,32 @@ fn setup_transfer_streams(
     let tcp = stream
         .tcp_stream()
         .expect("non-stdio stream has tcp_stream");
+
+    // SO_LINGER (5s) on the shared TCP socket so close() on any of the
+    // cloned fds (`ctx.reader`, `streams.read`, `streams.write`) drains
+    // the kernel TX queue before the FIN is sent. Without it, when the
+    // connection thread exits and the kernel decides between a clean FIN
+    // and an abortive RST, any RX bytes the thread did not drain push the
+    // kernel toward RST. RST aborts in-flight TX bytes too, so the
+    // receiver loses the goodbye NDX_DONE sequence and reports
+    // "connection unexpectedly closed (N bytes received so far)".
+    //
+    // The race is timing-sensitive and surfaces most reliably under
+    // daemon-side `exclude` / `include` rules (which shift the per-thread
+    // RX queue depth at goodbye time by changing flist segment timing)
+    // and under `-zz` (where the token-level deflate framing bunches the
+    // receiver's writes into the goodbye window). UTS-9.REOPEN
+    // (daemon-gzip-download) ships the deterministic test for the -zz
+    // variant; SO_LINGER closes the wider `fix(daemon): drain TCP rx
+    // buffer before close` (PR #5718) race for the cloned-fd model.
+    //
+    // upstream: cleanup.c:close_all() relies on the default kernel
+    // FIN-on-close path for upstream's fork-based per-connection child,
+    // which holds the only fd reference. Our threaded daemon shares the
+    // socket across multiple owners, so we must give the kernel an
+    // explicit linger budget to serialise their drop ordering.
+    let _ = socket2::SockRef::from(tcp).set_linger(Some(Duration::from_secs(5)));
+
     let read_stream = match tcp.try_clone() {
         Ok(s) => s,
         Err(err) => {
