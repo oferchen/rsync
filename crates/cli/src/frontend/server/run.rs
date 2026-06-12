@@ -30,6 +30,21 @@ where
     let program_brand =
         super::super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
 
+    // Force inherited stdio to blocking mode before any read/write hits the
+    // multiplex-frame writer. Pipes from a parent rsync process are nominally
+    // blocking, but a parent that left `O_NONBLOCK` set would surface as
+    // `Resource temporarily unavailable (os error 11)` from `write_all_retry`
+    // and abort the transfer with no recovery path. Best-effort: log on
+    // failure but continue, mirroring upstream's tolerance for fcntl edge
+    // cases. upstream: io.c::writefd_unbuffered relies on blocking stdio.
+    if let Err(e) = fast_io::force_blocking_stdio() {
+        write_server_error(
+            stderr,
+            program_brand,
+            format!("failed to set stdio blocking mode: {e}"),
+        );
+    }
+
     // Detect secluded-args mode: `-s` flag appears as a standalone argument
     // after --server. upstream: options.c - protect_args in server mode.
     let secluded_args = detect_secluded_args_flag(args);
