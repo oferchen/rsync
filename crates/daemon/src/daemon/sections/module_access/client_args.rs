@@ -43,6 +43,48 @@ fn unbackslash_arg(s: &str) -> String {
     })
 }
 
+/// Merges secluded-args phase 1 (cmdline) and phase 2 (stdin) arg lists.
+///
+/// In secluded-args mode upstream rsync splits the daemon argv at the
+/// `NULL` it injects at `options.c:2745`. Phase 1 (read from the cmdline,
+/// `clientserver.c:395-407`) carries the args that precede that NULL:
+/// `--server`, `--sender`, the compact flag string built by `argstr`
+/// (`options.c:2620-2731`), and `--iconv=...` if any. Phase 2 (read from
+/// stdin via `send_protected_args`, `rsync.c:283-320`) carries every arg
+/// that follows, beginning with the synthetic `"rsync"` arg0
+/// (`rsync.c:295`) and ending with the `.` separator plus the positional
+/// paths.
+///
+/// Upstream feeds each phase through `parse_arguments()` in turn
+/// (`clientserver.c:1079, 1085`) so the popt globals carry the union
+/// forward. We do not maintain popt globals, so the equivalent is to
+/// concatenate the two phases and re-run our single-pass option parser
+/// on the result. Without the prepend, the daemon never sees the compact
+/// flag string or `--sender` from phase 1, and the wildcard `--groupmap`
+/// value never reaches the receiver alongside `-z` / `-r` / `-l`,
+/// breaking the `daemon-groupmap-wild` test under secluded-args mode
+/// (upstream issue #829).
+///
+/// The synthetic `"rsync"` arg0 from phase 2 is dropped before the merge
+/// so the daemon's parser does not treat it as a positional path.
+///
+/// # Upstream Reference
+///
+/// - `clientserver.c:1059-1086` - two-phase `read_args()` + `parse_arguments()`
+/// - `options.c:2614-2745` - `server_options()` placement of `--server`,
+///   `--sender`, `argstr`, and the secluded-args NULL split point
+/// - `rsync.c:283-320` - `send_protected_args()` rewrites the NULL slot
+///   with `"rsync"` and streams the rest as NUL-separated bytes
+fn merge_secluded_args(phase1: Vec<String>, mut phase2: Vec<String>) -> Vec<String> {
+    if phase2.first().is_some_and(|a| a == "rsync") {
+        phase2.remove(0);
+    }
+    let mut merged = Vec::with_capacity(phase1.len() + phase2.len());
+    merged.extend(phase1);
+    merged.extend(phase2);
+    merged
+}
+
 /// Applies [`unbackslash_arg`] to every option arg that precedes the `.`
 /// CWD marker, mirroring upstream `io.c:1336-1359`'s split between option
 /// and file args. File args after the dot are left verbatim because upstream
@@ -189,17 +231,32 @@ fn read_and_log_client_args(
 
     let client_args = if has_secluded {
         // Phase 2: read the real args via secluded-args wire format.
-        // upstream: clientserver.c:1068-1071 - read_args with rl_nulls=1
+        // upstream: clientserver.c:1068-1071 - read_args with rl_nulls=1.
+        //
+        // The two phases carry disjoint slices of the original argv:
+        // - Phase 1 (cmdline): `--server`, `--sender`, the compact flag
+        //   string (`-slogDtprIzxe.iLsfxCIvu`), and `--iconv=...` if any.
+        //   These appear before the `NULL` upstream inserts at
+        //   `options.c:2745` and must reach the daemon's option parser
+        //   or the negotiated compact flags (`-r`, `-l`, `-z`, ...) and
+        //   the role marker `--sender` are silently dropped.
+        // - Phase 2 (stdin): every long-form option emitted after that
+        //   NULL (`--list-only`, `--log-format`, `--usermap`, `--groupmap`,
+        //   ...), the `.` separator, and the positional paths.
+        //
+        // Upstream feeds each phase through `parse_arguments()` in turn
+        // (`clientserver.c:1079, 1085`) so the popt globals carry the
+        // union forward. We mirror that by concatenating phase 1 ahead
+        // of phase 2 so a single pass over the merged list sees both the
+        // compact flag string and the long options that fix the
+        // `daemon-groupmap-wild` test (`--groupmap=*:GID`).
+        //
+        // Phase 2 args are emitted verbatim by upstream `safe_arg()` -
+        // the `if (!protect_args ...)` guard at `options.c:2551` skips
+        // the WILD_CHARS escape when `protect_args` is set - so no
+        // `unbackslash_arg()` pass is needed on either phase.
         match protocol::secluded_args::recv_secluded_args(ctx.reader, None) {
-            Ok(full_args) => {
-                // First element is "rsync" (set by upstream send_protected_args),
-                // skip it to get the actual server arguments.
-                if full_args.first().is_some_and(|a| a == "rsync") {
-                    full_args.into_iter().skip(1).collect()
-                } else {
-                    full_args
-                }
-            }
+            Ok(full_args) => merge_secluded_args(phase1_args, full_args),
             Err(err) => {
                 let payload = format!("@ERROR: failed to read secluded args: {err}");
                 send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
