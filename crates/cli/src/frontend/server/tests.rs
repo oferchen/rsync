@@ -1248,3 +1248,193 @@ fn server_mode_merges_cmdline_and_stdin_standalone_s_flag() {
     assert_eq!(flag_string, "-logDtpr");
     assert_eq!(positional, vec![OsString::from("/srv/data/")]);
 }
+
+/// UTS-12.REOPEN: upstream `options.c::server_options()` emits
+/// `--copy-dest <path>` as two adjacent argv slots (via
+/// `safe_arg("", basis_dir[i])` on line 2940). The positional parser must
+/// recognise the bare flag and skip its value so the path never lands in
+/// `positional_args` as a stray destination. Before the fix, `--copy-dest`
+/// was treated as an unknown long flag, the alt-dest path followed it as
+/// the first positional, and the actual dest `/tmp/ad/to/` was discarded -
+/// the receiver pre-flight mkdir then ran against the already-existing
+/// alt-dest basis and never created the destination root, so the
+/// alt-dest interop test failed with `FileNotFoundError` when ls-lR'ing
+/// the never-materialised dest.
+///
+/// Mirrors the exact wire from the upstream alt-dest test running over
+/// lsh.sh: `--server -vlogDtpre.iLsfxCIvu --copy-dest /tmp/ad/alt3 . /tmp/ad/to/`.
+// upstream: options.c:2939-2940 `alt_dest_opt(0)` + `safe_arg("", basis_dir[i])`
+#[test]
+fn parse_server_args_handles_split_copy_dest_form() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-vlogDtpre.iLsfxCIvu"),
+        OsString::from("--copy-dest"),
+        OsString::from("/tmp/ad/alt3"),
+        OsString::from("."),
+        OsString::from("/tmp/ad/to/"),
+    ];
+    let (flag_string, positional) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flag_string, "-vlogDtpre.iLsfxCIvu");
+    assert_eq!(
+        positional,
+        vec![OsString::from("/tmp/ad/to/")],
+        "split-form --copy-dest must not leak the basis path into positionals; \
+         the actual dest root must be the sole positional argument so the \
+         receiver pre-flight mkdir runs against `/tmp/ad/to/`"
+    );
+}
+
+/// `--link-dest` and `--compare-dest` share the same `alt_dest_opt(0)`
+/// emission path in upstream, so their split form must also be skipped.
+// upstream: options.c:2939-2940
+#[test]
+fn parse_server_args_handles_split_link_dest_and_compare_dest_forms() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtpr"),
+        OsString::from("--link-dest"),
+        OsString::from("/tmp/link"),
+        OsString::from("--compare-dest"),
+        OsString::from("/tmp/cmp"),
+        OsString::from("."),
+        OsString::from("dest/"),
+    ];
+    let (flag_string, positional) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flag_string, "-logDtpr");
+    assert_eq!(positional, vec![OsString::from("dest/")]);
+}
+
+/// Upstream also splits `--files-from`, `--backup-dir`, and `--temp-dir`
+/// into two argv slots. Recognising each one drains the value slot so it
+/// cannot masquerade as a positional destination.
+// upstream: options.c:2807-2808 (--backup-dir), 2926-2927 (--temp-dir),
+//           2964-2965 (--files-from)
+#[test]
+fn parse_server_args_handles_remaining_split_path_flags() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtpr"),
+        OsString::from("--files-from"),
+        OsString::from("/tmp/files.lst"),
+        OsString::from("--backup-dir"),
+        OsString::from("/tmp/bak"),
+        OsString::from("--temp-dir"),
+        OsString::from("/tmp/scratch"),
+        OsString::from("."),
+        OsString::from("final/"),
+    ];
+    let (flag_string, positional) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flag_string, "-logDtpr");
+    assert_eq!(positional, vec![OsString::from("final/")]);
+}
+
+/// `--copy-dest=PATH` (joined form) must still resolve to a single
+/// `is_known_server_long_flag` hit and not consume the following positional.
+/// This is the regression direction: the joined form was already correct
+/// before the split-form fix, and the split-form handling must not break it.
+#[test]
+fn parse_server_args_joined_copy_dest_does_not_eat_positional() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtpr"),
+        OsString::from("--copy-dest=/tmp/alt3"),
+        OsString::from("."),
+        OsString::from("dest/"),
+    ];
+    let (flag_string, positional) = parse_server_flag_string_and_args(&args);
+    assert_eq!(flag_string, "-logDtpr");
+    assert_eq!(positional, vec![OsString::from("dest/")]);
+}
+
+/// `parse_server_long_flags` must capture the split-form `--copy-dest /path`
+/// value into `reference_directories` so the receiver gets the alt-dest
+/// path even when upstream emits it as two argv slots. Without this, the
+/// alt-dest behaviour (basis-file copy-from instead of delta-from-empty)
+/// is lost: the receiver would fall back to whole-file transfer.
+// upstream: options.c:2939-2940
+#[test]
+fn long_flags_captures_split_copy_dest_value() {
+    use engine::ReferenceDirectoryKind;
+    use std::path::PathBuf;
+
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtpr"),
+        OsString::from("--copy-dest"),
+        OsString::from("/tmp/alt3"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.reference_directories.len(), 1);
+    assert_eq!(
+        flags.reference_directories[0].kind(),
+        ReferenceDirectoryKind::Copy,
+    );
+    assert_eq!(
+        flags.reference_directories[0].path(),
+        PathBuf::from("/tmp/alt3").as_path(),
+    );
+}
+
+/// Multiple stacked `--copy-dest` and `--compare-dest` flags in split
+/// form must all be captured in argv order. Upstream loops over
+/// `basis_dir_cnt` (options.c:2938-2941) so the server can see a sequence
+/// like `--copy-dest /a --copy-dest /b --compare-dest /c`.
+#[test]
+fn long_flags_captures_multiple_split_alt_dest_values() {
+    use engine::ReferenceDirectoryKind;
+    use std::path::PathBuf;
+
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtpr"),
+        OsString::from("--copy-dest"),
+        OsString::from("/a"),
+        OsString::from("--copy-dest"),
+        OsString::from("/b"),
+        OsString::from("--compare-dest"),
+        OsString::from("/c"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.reference_directories.len(), 3);
+    assert_eq!(
+        flags.reference_directories[0].kind(),
+        ReferenceDirectoryKind::Copy,
+    );
+    assert_eq!(
+        flags.reference_directories[0].path(),
+        PathBuf::from("/a").as_path(),
+    );
+    assert_eq!(
+        flags.reference_directories[1].kind(),
+        ReferenceDirectoryKind::Copy,
+    );
+    assert_eq!(
+        flags.reference_directories[1].path(),
+        PathBuf::from("/b").as_path(),
+    );
+    assert_eq!(
+        flags.reference_directories[2].kind(),
+        ReferenceDirectoryKind::Compare,
+    );
+    assert_eq!(
+        flags.reference_directories[2].path(),
+        PathBuf::from("/c").as_path(),
+    );
+}
+
+/// `parse_server_long_flags` must capture the split-form `--files-from`
+/// value so `--files-from /list` keeps working when upstream emits it
+/// as two argv slots.
+// upstream: options.c:2964-2965 `--files-from`
+#[test]
+fn long_flags_captures_split_files_from_value() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("-logDtpr"),
+        OsString::from("--files-from"),
+        OsString::from("/tmp/list"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert_eq!(flags.files_from.as_deref(), Some("/tmp/list"));
+}
