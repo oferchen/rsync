@@ -1050,15 +1050,6 @@ fn process_approved_module(
     // For stdio streams (remote-shell daemon mode), TCP shutdown is not
     // applicable - the pipe/fd closes naturally when dropped.
 
-    // Drop transfer-engine stream clones before the shutdown sequence.
-    // The transfer engine wrote goodbye bytes through streams.write (a
-    // cloned TcpStream). Dropping both clones ensures the DaemonStream
-    // in ctx.reader is the sole fd owner, so shutdown(Write) and the
-    // subsequent close operate on a single-reference socket - matching
-    // the semantics of upstream's fork model where the child holds the
-    // only fd reference.
-    drop(streams);
-
     if supports_tcp_shutdown {
         let stream = ctx.reader.get_mut();
         // Half-close the write side: sends FIN to the peer, signalling
@@ -1092,6 +1083,13 @@ fn process_approved_module(
         }
         let _ = stream.set_read_timeout(None);
     }
+
+    // Drop transfer-engine stream clones after the shutdown+drain
+    // sequence completes. These cloned TcpStream handles share the
+    // same kernel socket as the DaemonStream; keeping them alive during
+    // shutdown(Write) and drain-read preserves the fd refcount that was
+    // present during the transfer, matching the original lifecycle.
+    drop(streams);
 
     // upstream: clientserver.c - post_exec() runs after the transfer, regardless of outcome
     if let Some(command) = module
