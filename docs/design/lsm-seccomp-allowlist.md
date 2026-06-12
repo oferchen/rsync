@@ -20,7 +20,12 @@ syscall with `SIGSYS` before the kernel ever consults the LSM stack.
   silently. The worker dies; the parent `accept(2)` loop survives.
 - Per-architecture (`x86_64`, `aarch64`) syscall number resolution via
   `libc::SYS_*` and `seccompiler::TargetArch::native()`.
-- Opt-in only (`--features daemon-seccomp`) until the 14-day bake completes.
+- Enabled by default when `--features daemon-seccomp` is compiled in.
+  Opt out at runtime with `OC_RSYNC_NO_SECCOMP=1`.
+- **Stdio sessions are skipped.** When the daemon runs as `--server
+  --daemon` over stdin/stdout (remote-shell daemon mode), the process IS
+  the worker - there is no parent accept loop to survive a `KillProcess`.
+  The filter only applies to TCP daemon worker threads.
 
 ## Worker steady-state allowlist
 
@@ -105,10 +110,15 @@ clean run.
 
 ## Startup-only syscalls (parent / pre-fork)
 
-These are *not* in the worker allowlist because the worker is forked from
-the parent after `accept4(2)` returns. The parent does not have the
-seccomp filter installed - it must continue accepting connections. The
-filter only constrains the post-fork worker.
+These are *not* in the worker allowlist because the worker runs on a
+thread spawned from the parent after `accept4(2)` returns. The parent
+thread does not have the seccomp filter installed - it must continue
+accepting connections. The filter only constrains the per-connection
+worker thread.
+
+Stdio daemon sessions (`--server --daemon` via remote shell) are exempt
+from seccomp entirely because the process IS the worker - applying
+`KillProcess` would leave no supervisor to recover from a filter miss.
 
 For reference, the parent uses: `socket`, `bind`, `listen`, `accept4`,
 `setsockopt`, `setuid`, `setgid`, `setgroups`, `chroot`, `chdir`,
@@ -136,16 +146,15 @@ Alternatives considered and rejected:
 
 ## Bake plan
 
-1. Phase 5 lands the feature behind `--features daemon-seccomp` opt-in,
-   defaulted **off**. Operators with high-risk deployments can flip it.
-2. 14-day bake window from merge: monitor distro builds, CI runs, and
-   external bug reports for `SIGSYS` artifacts. The kill-process default
-   makes regressions trivially visible.
-3. After the bake completes with zero missing-syscall reports, a follow-up
-   PR flips the feature on by default for Linux release builds. Operators
-   who need to opt out get `--no-default-features` or a build-time env to
-   suppress.
-4. The companion `landlock-feature-guidance.md` documents the layered
+1. Phase 5 landed the feature behind `--features daemon-seccomp`.
+2. 14-day bake completed with zero missing-syscall reports.
+3. The filter is now **default-ON** when the feature is compiled in.
+   Operators opt out with `OC_RSYNC_NO_SECCOMP=1` or
+   `OC_RSYNC_DAEMON_SECCOMP=0`.
+4. Stdio daemon sessions (remote-shell mode via `lsh.sh` / SSH) are
+   excluded - the filter only applies to TCP worker threads where the
+   parent accept loop survives a `KillProcess`.
+5. The companion `landlock-feature-guidance.md` documents the layered
    defense story for distro packagers.
 
 ## Allowlist completeness criterion
