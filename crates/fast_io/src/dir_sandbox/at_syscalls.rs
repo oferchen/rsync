@@ -29,7 +29,7 @@
 use std::ffi::{CString, OsStr};
 use std::fs::File;
 use std::io;
-use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, FromRawFd};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
@@ -932,6 +932,49 @@ pub fn fchmodat_via_sandbox_or_fallback(
     }
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(link_path, std::fs::Permissions::from_mode(mode))
+}
+
+/// Chmod `path` after walking its parent through [`secure_open_dir`].
+///
+/// Symlink-race-safe variant of [`std::fs::set_permissions`] that
+/// mirrors upstream `syscall.c:do_chmod_at()` (rsync 3.4.3+). The parent
+/// directory of `path` is opened with `openat2(RESOLVE_BENEATH |
+/// RESOLVE_NO_SYMLINKS)` on Linux 5.6+ or `open(O_NOFOLLOW | O_DIRECTORY
+/// | O_CLOEXEC)` elsewhere, then `fchmodat` is anchored on that dirfd
+/// against the leaf basename. A symlink inserted into any parent
+/// component of `path` causes the open to fail with `ELOOP` (or `EXDEV`
+/// for `..` escapes under `openat2`), so a TOCTOU swap cannot redirect
+/// the chmod to an attacker-chosen inode outside the carrier directory.
+///
+/// `follow_symlinks` controls only the leaf: when `false` the helper
+/// passes `AT_SYMLINK_NOFOLLOW` so a swap-to-symlink at the leaf is not
+/// chased into a different inode either.
+///
+/// Falls back to [`std::fs::set_permissions`] when `path` has no parent
+/// component (root, single-component) - there is nothing to walk in that
+/// case.
+///
+/// [`secure_open_dir`]: crate::secure_open_dir
+///
+/// # Errors
+///
+/// Surfaces either the [`secure_open_dir`](crate::secure_open_dir) error
+/// or the [`fchmodat`] error verbatim. The notable security cases are
+/// `ELOOP` (parent symlink), `EXDEV` (parent `..` escape under
+/// `openat2`), and `ENOTDIR` (parent component is not a directory).
+pub fn secure_chmod_at(path: &Path, mode: u32, follow_symlinks: bool) -> io::Result<()> {
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => {
+            use std::os::unix::fs::PermissionsExt;
+            return std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+        }
+    };
+    let leaf = path
+        .file_name()
+        .ok_or_else(|| io::Error::from_raw_os_error(libc::EINVAL))?;
+    let dirfd = crate::secure_open_dir(parent)?;
+    fchmodat(dirfd.as_fd(), leaf, mode, follow_symlinks)
 }
 
 /// Issue `fchownat` against `link_path` when the `sandbox` root is the
@@ -2585,6 +2628,67 @@ mod tests {
         assert_eq!(
             std::fs::metadata(&path).expect("stat").permissions().mode() & 0o777,
             0o644
+        );
+    }
+
+    #[test]
+    fn secure_chmod_at_changes_mode_on_clean_path() {
+        let (_keep, root) = canonical_tempdir();
+        let path = root.join("file");
+        std::fs::write(&path, b"x").expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .expect("seed perms");
+
+        super::secure_chmod_at(&path, 0o640, true).expect("secure chmod");
+        assert_eq!(
+            std::fs::metadata(&path).expect("stat").permissions().mode() & 0o777,
+            0o640
+        );
+    }
+
+    #[test]
+    fn secure_chmod_at_refuses_symlinked_parent_leaf() {
+        // chdir-symlink-race regression: a symlink swapped into the
+        // immediate parent component of `path` must reject the chmod
+        // rather than chase the link to an outside target. `O_NOFOLLOW`
+        // on the parent `secure_open_dir` is enough to surface ELOOP on
+        // every Unix target (Linux 5.6+ additionally rejects any
+        // symlink anywhere in the parent path via openat2).
+        let (_keep, root) = canonical_tempdir();
+        let outside = root.join("outside");
+        let module = root.join("module");
+        std::fs::create_dir(&outside).expect("mkdir outside");
+        std::fs::create_dir(&module).expect("mkdir module");
+        let outside_target = outside.join("target");
+        std::fs::write(&outside_target, b"OUTSIDE").expect("write outside");
+        std::fs::set_permissions(&outside_target, std::fs::Permissions::from_mode(0o600))
+            .expect("seed outside");
+        // module/subdir -> outside (parent-component symlink trap).
+        symlink(&outside, module.join("subdir")).expect("plant symlink");
+
+        let dest = module.join("subdir").join("target");
+        let err = super::secure_chmod_at(&dest, 0o666, true)
+            .expect_err("chmod through symlinked parent must error");
+        // Platform-dependent: Linux + openat2 surfaces ELOOP or EXDEV;
+        // O_NOFOLLOW | O_DIRECTORY on a symlinked leaf surfaces ELOOP on
+        // Linux without openat2 and ENOTDIR on macOS. All three confirm
+        // the parent open was refused before any chmod issued.
+        let raw = err.raw_os_error();
+        assert!(
+            matches!(
+                raw,
+                Some(libc::ELOOP) | Some(libc::EXDEV) | Some(libc::ENOTDIR)
+            ),
+            "expected ELOOP/EXDEV/ENOTDIR, got {raw:?}"
+        );
+        let outside_mode = std::fs::metadata(&outside_target)
+            .expect("stat")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            outside_mode, 0o600,
+            "outside file must keep 0o600 after refused chmod escape"
         );
     }
 

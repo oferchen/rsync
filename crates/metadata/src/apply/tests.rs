@@ -1399,3 +1399,60 @@ fn metadata_unchanged_returns_true_when_group_override_matches() {
         "should return true when group override matches current gid"
     );
 }
+
+/// UTS-16.b: applying permissions through a destination path whose parent
+/// component is a symlink to an outside directory must NOT chmod the
+/// outside target. Upstream `syscall.c:do_chmod_at()` (rsync 3.4.3+)
+/// opens the parent under `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` so a
+/// symlink swapped into any parent component is rejected.
+///
+/// Regression coverage for the testsuite `chdir-symlink-race` failure on
+/// the `-r --size-only into upload/ root` flavour: the symlinked
+/// `subdir` was being chased by the path-based chmod, flipping the
+/// outside sentinel from 0o600 to 0o666.
+#[cfg(unix)]
+#[test]
+fn apply_permissions_from_entry_refuses_parent_symlink_escape() {
+    use protocol::flist::FileEntry;
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let module = temp.path().join("module");
+    let outside = temp.path().join("outside");
+    fs::create_dir(&module).expect("create module");
+    fs::create_dir(&outside).expect("create outside");
+
+    // Outside-the-module sentinel the attacker is trying to chmod via
+    // the symlink-traversed path.
+    let outside_target = outside.join("target.txt");
+    fs::write(&outside_target, b"OUTSIDE_SECRET_DATA").expect("write outside");
+    fs::set_permissions(&outside_target, PermissionsExt::from_mode(0o600))
+        .expect("set outside mode");
+
+    // Attacker plants a symlink at module/subdir -> outside, then the
+    // receiver tries to chmod module/subdir/target.txt (which resolves
+    // to outside/target.txt via the symlink).
+    std::os::unix::fs::symlink(&outside, module.join("subdir")).expect("plant symlink");
+
+    let dest = module.join("subdir").join("target.txt");
+    let entry = FileEntry::new_file("target.txt".into(), 19, 0o666);
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(false);
+
+    let result = apply_metadata_from_file_entry(&dest, &entry, &opts);
+    assert!(
+        result.is_err(),
+        "chmod through a symlinked parent must fail, not silently succeed"
+    );
+
+    let outside_mode = fs::metadata(&outside_target)
+        .expect("stat outside")
+        .permissions()
+        .mode()
+        & 0o7777;
+    assert_eq!(
+        outside_mode, 0o600,
+        "outside file mode must remain 0o600 after refused chmod escape (got {outside_mode:o})"
+    );
+}
