@@ -36,30 +36,19 @@ pub(crate) fn compile_patterns(
 ///
 /// A pattern is anchored if:
 /// - It starts with `/`, OR
-/// - It contains `/` anywhere in the pattern (besides trailing `/`)
+/// - It contains any `/` character (including trailing `/`)
 ///
-/// This mirrors upstream rsync's pattern normalization in
-/// `exclude.c:parse_filter_str()` where leading and trailing slashes are
-/// stripped and used to set `FILTRULE_ABS_PATH` and `FILTRULE_DIRECTORY`
-/// flags respectively.
+/// upstream: exclude.c:195-209 counts slashes in the raw pattern BEFORE
+/// stripping leading/trailing slashes. A pattern like `new/` has
+/// slash_cnt=1, which triggers FILTRULE_ABS_PATH under XFLG_ABS_IF_SLASH.
 pub(super) fn normalise_pattern(pattern: &str) -> (bool, bool, Cow<'_, str>) {
     let starts_with_slash = pattern.starts_with('/');
     let directory_only = pattern.ends_with('/');
 
-    let core_pattern = if directory_only && pattern.len() > 1 {
-        &pattern[..pattern.len() - 1]
-    } else {
-        pattern
-    };
-
-    let core_pattern_no_leading = if starts_with_slash && core_pattern.len() > 1 {
-        &core_pattern[1..]
-    } else {
-        core_pattern
-    };
-
-    let has_internal_slash = core_pattern_no_leading.contains('/');
-    let anchored = starts_with_slash || has_internal_slash;
+    // upstream: exclude.c:195-198 - count slashes in the RAW pattern before
+    // any stripping. This determines anchoring.
+    let slash_count = pattern.chars().filter(|&c| c == '/').count();
+    let anchored = slash_count > 0;
 
     if !starts_with_slash && !directory_only {
         return (anchored, false, Cow::Borrowed(pattern));
@@ -105,8 +94,10 @@ mod tests {
 
     #[test]
     fn normalise_pattern_directory_only() {
+        // upstream: exclude.c:195-198 counts the trailing `/` as a slash,
+        // so `foo/` has slash_cnt=1 and is anchored under XFLG_ABS_IF_SLASH.
         let (anchored, dir_only, core) = normalise_pattern("foo/");
-        assert!(!anchored);
+        assert!(anchored);
         assert!(dir_only);
         assert_eq!(core, "foo");
     }

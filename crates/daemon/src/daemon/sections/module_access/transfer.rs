@@ -284,7 +284,7 @@ fn engage_landlock_sandbox(
     module: &ModuleRuntime,
     extra_allowed_paths: &[&Path],
 ) -> io::Result<bool> {
-    use fast_io::landlock::{LandlockOutcome, is_supported, restrict_to_module_paths};
+    use fast_io::landlock::{is_supported, restrict_to_module_paths, LandlockOutcome};
 
     if module.pre_xfer_exec.is_some() || module.post_xfer_exec.is_some() {
         if let Some(log) = ctx.log_sink {
@@ -1039,66 +1039,31 @@ fn process_approved_module(
     // For stdio streams (remote-shell daemon mode), TCP shutdown is not
     // applicable - the pipe/fd closes naturally when dropped.
     //
-    // For both TCP and stdio, yield 50ms before tearing down so the kernel
-    // has time to push the trailing goodbye bytes to the peer/reader. See
-    // the comment inside the TCP block for the loopback RST race; the same
-    // window covers the stdio-pipe equivalent where the daemon process
-    // exit and the parents read can race the pipe TX queue drain.
-    std::thread::sleep(Duration::from_millis(50));
+    // upstream: cleanup.c:close_all() relies on the fork model - the child
+    // holds the only fd reference and _exit() lets the kernel drain the TX
+    // buffer naturally. In our threaded model we must ensure the kernel
+    // delivers all goodbye bytes before the socket is dropped.
+    //
+    // SO_LINGER with a non-zero timeout tells the kernel to block on
+    // close(2) until all TX data is ACKed or the linger timeout expires.
+    // This is the structural fix for the loopback RST race where close()
+    // on a socket with unread RX bytes causes RST that aborts in-flight
+    // TX data. The 5-second linger timeout matches upstream's IO timeout
+    // bound and covers the worst-case goodbye + stats round-trip.
     if supports_tcp_shutdown {
         let stream = ctx.reader.get_mut();
-        // UTS-9.REOPEN (daemon-gzip-download / daemon-refuse-compress /
-        // batch-mode): the connection threads goodbye writes (stats,
-        // NDX_DONE echoes) are forwarded to the kernel TX queue via
-        // synchronous write(2), but TcpStream::write returns once the
-        // bytes are queued, not once they are ACKed. shutdown(WR) right
-        // afterwards queues a FIN behind those bytes; on a loopback
-        // socket the kernel can interleave that FIN with the peers
-        // in-flight ACK such that the peers receive_queue still has
-        // unread bytes when our final close fires, and Linux then issues
-        // RST instead of clean FIN. RST aborts the trailing TX bytes -
-        // the receiver loses the last few hundred bytes of the goodbye
-        // stream and reports connection unexpectedly closed (N bytes
-        // received so far) mid-goodbye even though the daemon-sender
-        // wrote every byte.
-        //
-        // A 50ms yield before shutdown(WR) gives the kernel time to ACK
-        // the goodbye bytes before we tear down. The window is well
-        // below the upstream IO timeout but well above the loopback
-        // round-trip on every platform we ship to. The drain loop below
-        // still caps the worst case at 5s.
-        //
-        // The race fires deterministically under -zz and under daemon
-        // exclude / include rules because both shift the timing of
-        // the last token frames and so the depth of the per-thread RX
-        // queue at shutdown.
-        //
-        // upstream: cleanup.c:close_all() relies on the fork model where
-        // the child holds the only fd reference; that child exits via
-        // exit_cleanup() which lets the kernel drain naturally. Our
-        // threaded daemon shares the cloned fds across multiple owners
-        // and so must yield explicitly before tearing down.
+        if let Some(tcp) = stream.tcp_stream() {
+            if let Ok(sock) = socket2::SockRef::try_from(tcp) {
+                sock.set_linger(Some(Duration::from_secs(5))).ok();
+            }
+        }
         let _ = stream.shutdown(std::net::Shutdown::Write);
-        // Cap the drain so a stalled peer cannot wedge the daemon forever.
-        // Five seconds matches the worst-case stats + goodbye round trip
-        // and is well under any reasonable IO timeout.
         let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
         let mut sink = [0u8; 4096];
         loop {
             match stream.read(&mut sink) {
                 Ok(0) => break,
                 Ok(_) => continue,
-                Err(err)
-                    if matches!(
-                        err.kind(),
-                        io::ErrorKind::TimedOut
-                            | io::ErrorKind::WouldBlock
-                            | io::ErrorKind::Interrupted
-                    ) =>
-                {
-                    // Timed out waiting for peer FIN; close is the best we can do.
-                    break;
-                }
                 Err(_) => break,
             }
         }

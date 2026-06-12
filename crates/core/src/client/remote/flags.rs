@@ -93,9 +93,11 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if effective_dirs && !effective_recursive {
         flags.push('d');
     }
-    // upstream: options.c:2622 - whole_file, but not when --append is active
-    // (append requires delta transfer to append only new data)
-    if config.whole_file() && !config.append() {
+    // upstream: options.c:2622,2644 - `whole_file > 0` sends 'W', but the
+    // default is `-1` (unset). Only explicit `--whole-file` sets it to 1.
+    // `whole_file()` defaults to `true` for local-copy convenience but
+    // that must not leak into server args - use `whole_file_raw()`.
+    if config.whole_file_raw() == Some(true) && !config.append() {
         flags.push('W');
     }
     if config.sparse() {
