@@ -1038,6 +1038,13 @@ fn process_approved_module(
     // until the peer signals FIN before relinquishing the descriptor.
     // For stdio streams (remote-shell daemon mode), TCP shutdown is not
     // applicable - the pipe/fd closes naturally when dropped.
+    //
+    // For both TCP and stdio, yield 50ms before tearing down so the kernel
+    // has time to push the trailing goodbye bytes to the peer/reader. See
+    // the comment inside the TCP block for the loopback RST race; the same
+    // window covers the stdio-pipe equivalent where the daemon process
+    // exit and the parents read can race the pipe TX queue drain.
+    std::thread::sleep(Duration::from_millis(50));
     if supports_tcp_shutdown {
         let stream = ctx.reader.get_mut();
         // UTS-9.REOPEN (daemon-gzip-download / daemon-refuse-compress /
@@ -1071,7 +1078,6 @@ fn process_approved_module(
         // exit_cleanup() which lets the kernel drain naturally. Our
         // threaded daemon shares the cloned fds across multiple owners
         // and so must yield explicitly before tearing down.
-        std::thread::sleep(Duration::from_millis(50));
         let _ = stream.shutdown(std::net::Shutdown::Write);
         // Cap the drain so a stalled peer cannot wedge the daemon forever.
         // Five seconds matches the worst-case stats + goodbye round trip
