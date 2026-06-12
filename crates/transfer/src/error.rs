@@ -186,10 +186,13 @@ pub fn read_exact_retry<R: Read>(reader: &mut R, buf: &mut [u8]) -> io::Result<(
     Ok(())
 }
 
-/// Writes all bytes, retrying on EINTR (interrupted system call).
+/// Writes all bytes, retrying on `EINTR` (interrupted system call) and
+/// `EAGAIN`/`EWOULDBLOCK` (transient back-pressure).
 ///
-/// This matches upstream rsync's behavior in `fileio.c:60-65` where writes are
-/// retried immediately when interrupted by a signal.
+/// This matches upstream rsync's behavior in `fileio.c:60-65` (EINTR) and
+/// `io.c::writefd_unbuffered` (EAGAIN via `select()`/`poll()`). When the
+/// kernel reports a pipe buffer is temporarily full, yield the current thread
+/// and retry instead of aborting the transfer.
 ///
 /// # Upstream Reference
 ///
@@ -210,6 +213,13 @@ pub fn write_all_retry<W: Write>(writer: &mut W, buf: &[u8]) -> io::Result<()> {
             }
             Ok(n) => total_written += n,
             Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+            // EAGAIN/EWOULDBLOCK indicates a transient back-pressure
+            // situation (kernel pipe buffer full). Yield and retry to match
+            // upstream io.c::writefd_unbuffered's select/poll behaviour.
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                std::thread::yield_now();
+                continue;
+            }
             Err(e) => return Err(e),
         }
     }
@@ -430,6 +440,39 @@ mod tests {
         let mut buf = Vec::new();
         write_all_retry(&mut buf, b"hello world").unwrap();
         assert_eq!(&buf, b"hello world");
+    }
+
+    #[test]
+    fn write_all_retry_handles_wouldblock() {
+        // Mirrors the upstream io.c::writefd_unbuffered behaviour: a single
+        // EAGAIN must not abort the transfer. The writer reports WouldBlock
+        // on the first call, then accepts all bytes on the second.
+        struct FlakyWriter {
+            inner: Vec<u8>,
+            blocked: bool,
+        }
+
+        impl Write for FlakyWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                if !self.blocked {
+                    self.blocked = true;
+                    return Err(io::Error::from(io::ErrorKind::WouldBlock));
+                }
+                self.inner.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut writer = FlakyWriter {
+            inner: Vec::new(),
+            blocked: false,
+        };
+        write_all_retry(&mut writer, b"hello world").expect("retry survives WouldBlock");
+        assert_eq!(&writer.inner, b"hello world");
     }
 
     #[test]
