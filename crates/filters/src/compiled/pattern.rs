@@ -36,19 +36,27 @@ pub(crate) fn compile_patterns(
 ///
 /// A pattern is anchored if:
 /// - It starts with `/`, OR
-/// - It contains any `/` character (including trailing `/`)
+/// - It contains `/` in the interior (after stripping leading and trailing `/`)
 ///
-/// upstream: exclude.c:195-209 counts slashes in the raw pattern BEFORE
-/// stripping leading/trailing slashes. A pattern like `new/` has
-/// slash_cnt=1, which triggers FILTRULE_ABS_PATH under XFLG_ABS_IF_SLASH.
+/// upstream: exclude.c:200-209 - XFLG_ABS_IF_SLASH anchors when
+/// slash_cnt > 0, but the slash count is computed on the raw pattern
+/// which includes trailing `/`. However, the matching algorithm in
+/// check_filter() strips the trailing `/` before comparing against the
+/// path, so a pattern like `foo/` effectively matches as unanchored
+/// `foo` (directory-only). Only patterns with slashes in the interior
+/// after stripping (like `foo/too/`) are truly anchored.
 pub(super) fn normalise_pattern(pattern: &str) -> (bool, bool, Cow<'_, str>) {
     let starts_with_slash = pattern.starts_with('/');
     let directory_only = pattern.ends_with('/');
 
-    // upstream: exclude.c:195-198 - count slashes in the RAW pattern before
-    // any stripping. This determines anchoring.
-    let slash_count = pattern.chars().filter(|&c| c == '/').count();
-    let anchored = slash_count > 0;
+    let core = match (starts_with_slash, directory_only) {
+        (true, true) if pattern.len() > 2 => &pattern[1..pattern.len() - 1],
+        (true, false) if pattern.len() > 1 => &pattern[1..],
+        (false, true) if pattern.len() > 1 => &pattern[..pattern.len() - 1],
+        _ => pattern,
+    };
+    let has_internal_slash = core.contains('/');
+    let anchored = starts_with_slash || has_internal_slash;
 
     if !starts_with_slash && !directory_only {
         return (anchored, false, Cow::Borrowed(pattern));
@@ -94,10 +102,10 @@ mod tests {
 
     #[test]
     fn normalise_pattern_directory_only() {
-        // upstream: exclude.c:195-198 counts the trailing `/` as a slash,
-        // so `foo/` has slash_cnt=1 and is anchored under XFLG_ABS_IF_SLASH.
+        // upstream: `foo/` after stripping trailing `/` becomes `foo` with
+        // no internal slashes - unanchored, matches any dir named `foo`.
         let (anchored, dir_only, core) = normalise_pattern("foo/");
-        assert!(anchored);
+        assert!(!anchored);
         assert!(dir_only);
         assert_eq!(core, "foo");
     }
