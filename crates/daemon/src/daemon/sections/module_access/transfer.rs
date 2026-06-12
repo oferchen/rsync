@@ -1065,7 +1065,8 @@ fn process_approved_module(
         // for orphaned sockets. Our threaded daemon has multiple cloned
         // fds and explicit close() calls, which bypass the implicit linger.
         if let Some(tcp) = stream.tcp_stream() {
-            let _ = tcp.set_linger(Some(Duration::from_secs(5)));
+            let sock = socket2::SockRef::from(tcp);
+            let _ = sock.set_linger(Some(Duration::from_secs(5)));
         }
 
         // Half-close the write side: sends FIN to the peer, signalling
