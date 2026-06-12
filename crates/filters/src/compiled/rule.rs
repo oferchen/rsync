@@ -449,4 +449,58 @@ mod tests {
         assert!(!compiled.matches(Path::new("keep.txt"), false));
         assert!(!compiled.matches(Path::new("subdir/delete.txt"), false));
     }
+
+    /// upstream: exclude.c:936-937 - `FILTRULE_WILD3_SUFFIX` causes `dir/***`
+    /// to match both the directory itself (when `is_dir=true`) and everything
+    /// inside it. `dir/**` (double star) only matches contents, not the
+    /// directory entry itself.
+    #[test]
+    fn wild3_suffix_matches_dir_and_contents() {
+        let rule = FilterRule {
+            action: FilterAction::Exclude,
+            pattern: "new/lose/***".to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: false,
+            exclude_only: false,
+            no_inherit: false,
+        };
+        let compiled = CompiledRule::new(rule).unwrap();
+
+        // The directory itself is excluded (directory-only match on stem).
+        assert!(compiled.matches(Path::new("new/lose"), true));
+        // Contents are excluded via descendant matchers.
+        assert!(compiled.matches(Path::new("new/lose/this"), false));
+        assert!(compiled.matches(Path::new("new/lose/this"), true));
+        // A file named "new/lose" is NOT excluded (directory-only).
+        assert!(!compiled.matches(Path::new("new/lose"), false));
+        // Sibling entries are not affected.
+        assert!(!compiled.matches(Path::new("new/keep"), true));
+    }
+
+    /// `dir/**` (double star without trailing `*`) should exclude contents
+    /// but NOT the directory itself - contrast with `dir/***`.
+    #[test]
+    fn double_star_suffix_does_not_match_dir_itself() {
+        let rule = FilterRule {
+            action: FilterAction::Exclude,
+            pattern: "new/keep/**".to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: false,
+            exclude_only: false,
+            no_inherit: false,
+        };
+        let compiled = CompiledRule::new(rule).unwrap();
+
+        // The directory entry itself is NOT excluded.
+        assert!(!compiled.matches(Path::new("new/keep"), true));
+        // Contents are excluded.
+        assert!(compiled.matches(Path::new("new/keep/this"), false));
+        assert!(compiled.matches(Path::new("new/keep/this"), true));
+    }
 }
