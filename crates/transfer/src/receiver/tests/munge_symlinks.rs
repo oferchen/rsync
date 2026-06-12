@@ -171,6 +171,72 @@ fn create_symlinks_surfaces_non_eacces_error() {
     );
 }
 
+/// UTS-12 regression: the receiver's `create_symlinks` must apply the
+/// sender-supplied mtime to the on-disk symlink via
+/// `utimensat(AT_SYMLINK_NOFOLLOW)`. Without this step every receiver-created
+/// symlink wears the wall-clock time from `symlinkat(2)`, which makes upstream
+/// `testsuite/alt-dest.test` fail over SSH because the `--copy-dest` checkit
+/// diff catches the 1-2 second drift on `nolf-symlink`.
+///
+/// The local-copy path already preserves the source link's mtime via
+/// `apply_symlink_metadata_with_options`. This test pins the same invariant on
+/// the network receiver path (`create_symlinks`) by:
+///
+/// 1. Constructing a `FileEntry::new_symlink` with an explicit backdated mtime
+///    well before the test run started (mirrors upstream's `nolf-symlink`
+///    fixture being older than the `to/` directory is fresh).
+/// 2. Driving `create_symlinks` directly so the test exercises the SSH-server
+///    code path (the same call site that fires under `oc-rsync` invoked via
+///    `lsh.sh`) without spinning up an SSH transport.
+/// 3. Asserting `lstat` on the destination link returns the entry's mtime to
+///    the exact second. Upstream's diff drops nanoseconds; matching seconds is
+///    the load-bearing invariant.
+///
+/// upstream: generator.c:1592 `set_file_attrs(fname, file, NULL, NULL, 0)`
+/// upstream: rsync.c:set_times() uses `lutimes`/`utimensat(AT_SYMLINK_NOFOLLOW)`
+#[cfg(unix)]
+#[test]
+fn receiver_preserves_symlink_mtime_on_creation() {
+    use std::os::unix::fs::MetadataExt;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dest = tmp.path();
+
+    let handshake = test_handshake();
+    let mut config = plain_receiver_config();
+    // Mirrors what the SSH-server-side receiver sees when the client passes
+    // `-ave .../lsh.sh ...`: archive mode implies `-tlogD` so `times`, `owner`,
+    // and `group` are all enabled on `ParsedServerFlags`. The bug only
+    // surfaces when `times` is true (without it, upstream emits no utimensat
+    // syscall either).
+    config.flags.times = true;
+    config.flags.owner = true;
+    config.flags.group = true;
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+    // Backdated mtime: epoch + 2 hours. Pinned constants so the assertion is
+    // exact and the test never races against the wall clock the way the
+    // pre-fix receiver did.
+    const SOURCE_MTIME_SECS: i64 = 7_200;
+    let mut entry = FileEntry::new_symlink("nolf-symlink".into(), "nolf".into());
+    entry.set_mtime(SOURCE_MTIME_SECS, 0);
+    ctx.file_list = vec![entry];
+
+    let mut writer = CapturingMsgInfoWriter;
+    ctx.create_symlinks(dest, None, &mut writer)
+        .expect("create_symlinks must succeed on a writable tempdir");
+
+    let on_disk = std::fs::symlink_metadata(dest.join("nolf-symlink"))
+        .expect("symlink_metadata must read the link itself, not its target");
+    assert_eq!(
+        on_disk.mtime(),
+        SOURCE_MTIME_SECS,
+        "receiver must propagate the entry's mtime to the on-disk symlink \
+         (upstream rsync.c set_times -> utimensat(AT_SYMLINK_NOFOLLOW)); \
+         without it `testsuite/alt-dest.test` diff trips on `nolf-symlink`",
+    );
+}
+
 #[test]
 fn receiver_writes_unmunged_target_when_disabled() {
     // Negative control: the same flist with `munge_symlinks=false` must

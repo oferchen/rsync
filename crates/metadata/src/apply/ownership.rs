@@ -355,6 +355,96 @@ pub(super) fn apply_ownership_from_entry(
     Ok(())
 }
 
+/// Applies ownership from a protocol `FileEntry` to a symbolic link on Unix
+/// without following the link target.
+///
+/// Mirrors [`apply_ownership_from_entry`] but uses `AT_SYMLINK_NOFOLLOW` so the
+/// `chownat` syscall targets the link itself, matching upstream's
+/// `do_lchown(fname, uid, gid)` path in `set_file_attrs()`. Fake-super xattr
+/// storage is skipped because `lsetxattr` on symlinks is not portable; upstream
+/// rsync also takes the skip path for symlinks under `am_root < 0`.
+// upstream: rsync.c:set_file_attrs() - do_lchown for symlinks
+#[cfg(unix)]
+pub(super) fn apply_symlink_ownership_from_entry(
+    destination: &Path,
+    entry: &protocol::flist::FileEntry,
+    options: &MetadataOptions,
+    cached_meta: Option<&fs::Metadata>,
+) -> Result<(), MetadataError> {
+    use rustix::fs::chownat;
+
+    if !options.owner()
+        && !options.group()
+        && options.owner_override().is_none()
+        && options.group_override().is_none()
+    {
+        return Ok(());
+    }
+
+    // upstream: rsync.c:set_file_attrs() - fake-super skips lsetxattr on symlinks
+    if options.fake_super_enabled() {
+        return Ok(());
+    }
+
+    let owner = if let Some(uid_override) = options.owner_override() {
+        Some(ownership::uid_from_raw(uid_override as RawUid))
+    } else if options.owner() {
+        entry.uid().and_then(|uid| {
+            let mut mapped_uid = uid as RawUid;
+            if let Some(mapping) = options.user_mapping()
+                && let Ok(Some(mapped)) = mapping.map_uid(mapped_uid)
+            {
+                mapped_uid = mapped;
+            }
+            map_uid(mapped_uid, options.numeric_ids_enabled())
+        })
+    } else {
+        None
+    };
+
+    let group = if let Some(gid_override) = options.group_override() {
+        Some(ownership::gid_from_raw(gid_override as RawGid))
+    } else if options.group() {
+        entry.gid().and_then(|gid| {
+            let mut mapped_gid = gid as RawGid;
+            if let Some(mapping) = options.group_mapping()
+                && let Ok(Some(mapped)) = mapping.map_gid(mapped_gid)
+            {
+                mapped_gid = mapped;
+            }
+            map_gid(mapped_gid, options.numeric_ids_enabled())
+        })
+    } else {
+        None
+    };
+
+    if owner.is_none() && group.is_none() {
+        return Ok(());
+    }
+
+    // upstream: rsync.c:set_file_attrs() - skips chown when uid/gid already match
+    let needs_chown = match cached_meta {
+        Some(meta) => {
+            let current_uid = meta.uid();
+            let current_gid = meta.gid();
+            let desired_uid = owner.map(|o| o.as_raw()).unwrap_or(current_uid);
+            let desired_gid = group.map(|g| g.as_raw()).unwrap_or(current_gid);
+            current_uid != desired_uid || current_gid != desired_gid
+        }
+        None => true,
+    };
+
+    if needs_chown {
+        trace_chown_change(destination, owner, group, cached_meta);
+
+        chownat(CWD, destination, owner, group, AtFlags::SYMLINK_NOFOLLOW).map_err(|error| {
+            MetadataError::new("preserve ownership", destination, io::Error::from(error))
+        })?;
+    }
+
+    Ok(())
+}
+
 /// Stores ownership metadata via fake-super xattr instead of applying directly.
 ///
 /// Used when `--fake-super` is enabled, allowing non-root users to

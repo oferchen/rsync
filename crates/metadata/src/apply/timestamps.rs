@@ -242,6 +242,54 @@ pub(super) fn apply_timestamps_from_entry(
     Ok(())
 }
 
+/// Applies mtime (and atime when `--atimes`) from a protocol `FileEntry`
+/// to a symbolic link without following the link target.
+///
+/// Mirrors [`apply_timestamps_from_entry`] but uses `lutimes` /
+/// `utimensat(AT_SYMLINK_NOFOLLOW)` via [`set_symlink_file_times`] so the
+/// symlink's own mtime is updated instead of the link target's. The
+/// receiver invokes this after `do_symlink` so the on-disk link mtime
+/// matches the source-side value.
+// upstream: rsync.c:set_file_attrs() + set_times() - symlink path uses lutimes
+pub(super) fn apply_symlink_timestamps_from_entry(
+    destination: &Path,
+    entry: &protocol::flist::FileEntry,
+    options: &MetadataOptions,
+    cached_meta: Option<&fs::Metadata>,
+) -> Result<(), MetadataError> {
+    let mtime = FileTime::from_unix_time(entry.mtime(), entry.mtime_nsec());
+
+    // upstream: rsync.c:600-603 - preserves source atime with --atimes, else mtime for both
+    let atime = if options.atimes() && entry.atime() != 0 {
+        FileTime::from_unix_time(entry.atime(), 0)
+    } else {
+        mtime
+    };
+
+    // upstream: rsync.c:set_file_attrs() - skips utimensat when timestamps match
+    let needs_utime = match cached_meta {
+        Some(meta) => {
+            let current_mtime = FileTime::from_last_modification_time(meta);
+            if current_mtime != mtime {
+                true
+            } else if options.atimes() {
+                let current_atime = FileTime::from_last_access_time(meta);
+                current_atime != atime
+            } else {
+                false
+            }
+        }
+        None => true,
+    };
+
+    if needs_utime {
+        set_symlink_file_times(destination, atime, mtime)
+            .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?;
+    }
+
+    Ok(())
+}
+
 /// Applies only the access time from a `FileEntry`, preserving the
 /// destination's existing mtime.
 ///
