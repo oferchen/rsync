@@ -81,8 +81,13 @@ jobs:
       # Regenerate Cargo.lock against Cargo.toml at job start so workspace
       # metadata bumps that didn't refresh the lockfile don't block CI.
       # Runs in --offline mode so no network fetch is required.
+      # continue-on-error: cold rust-cache leaves the registry index
+      # unavailable, which causes --offline regen to fail with "no matching
+      # package" even when the lockfile is already in sync; the subsequent
+      # --locked cargo commands surface any real lockfile mismatch loudly.
       - name: Regenerate Cargo.lock
         run: cargo update --workspace --offline
+        continue-on-error: true
 
       - name: Format check
         run: cargo fmt --all -- --check
@@ -178,8 +183,10 @@ jobs:
         with:
           tool: cargo-nextest
 
+      # See lint job comment above re: continue-on-error on cold rust-cache.
       - name: Regenerate Cargo.lock
         run: cargo update --workspace --offline
+        continue-on-error: true
 
       - name: Run tests
         run: cargo nextest run --locked --profile ci --workspace --all-features
