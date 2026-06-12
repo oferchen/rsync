@@ -347,6 +347,60 @@ pub fn apply_symlink_metadata_with_options(
     Ok(())
 }
 
+/// Applies metadata from a protocol `FileEntry` to a destination symbolic link
+/// without following the link target.
+///
+/// Mirrors [`apply_metadata_from_file_entry`] but uses `lstat` for the cached
+/// stat and `lutimes` / `utimensat(AT_SYMLINK_NOFOLLOW)` for timestamps so the
+/// link's own mtime is updated instead of the target's. Permissions are not
+/// preserved for symlinks because most systems ignore symlink permission bits;
+/// ownership (when applicable) is applied with `AT_SYMLINK_NOFOLLOW`.
+///
+/// This is the receiver-side counterpart to [`apply_symlink_metadata`] that
+/// works directly with `FileEntry` metadata from the wire protocol, so the
+/// network receiver does not need to construct an [`fs::Metadata`] instance
+/// before calling it.
+///
+/// # Upstream Reference
+///
+/// - `rsync.c:set_file_attrs()` - skips chmod for symlinks
+/// - `rsync.c:set_times()` - uses `lutimes` when the target is a symlink
+/// - `generator.c:1592` - `set_file_attrs(fname, file, NULL, NULL, 0)` runs
+///   after `atomic_create` -> `do_symlink` so the new symlink's mtime matches
+///   the sender's `F_MOD_NSEC_or_0(file)`.
+pub fn apply_symlink_metadata_from_entry(
+    destination: &Path,
+    entry: &protocol::flist::FileEntry,
+    options: &MetadataOptions,
+) -> Result<(), MetadataError> {
+    let cached_meta = fs::symlink_metadata(destination).ok();
+
+    #[cfg(unix)]
+    ownership::apply_symlink_ownership_from_entry(
+        destination,
+        entry,
+        options,
+        cached_meta.as_ref(),
+    )?;
+    #[cfg(not(unix))]
+    {
+        let _ = entry;
+        let _ = options;
+        let _ = cached_meta.as_ref();
+    }
+
+    if options.times() {
+        timestamps::apply_symlink_timestamps_from_entry(
+            destination,
+            entry,
+            options,
+            cached_meta.as_ref(),
+        )?;
+    }
+
+    Ok(())
+}
+
 /// Applies metadata from a protocol `FileEntry` to the destination file.
 ///
 /// This is the receiver-side counterpart to [`apply_file_metadata`] that works
