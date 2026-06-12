@@ -1052,13 +1052,30 @@ fn process_approved_module(
 
     if supports_tcp_shutdown {
         let stream = ctx.reader.get_mut();
+
+        // SO_LINGER with a non-zero timeout ensures that when close() is
+        // called (via drop), the kernel blocks until all data in the send
+        // buffer has been acknowledged by the peer - or until the timeout
+        // expires. Without this, close() on a dup'd socket with pending
+        // TX data can return immediately while the kernel races to deliver
+        // the trailing goodbye bytes.
+        //
+        // upstream: the fork model avoids this because _exit() triggers
+        // implicit close on the only fd, and the kernel lingers by default
+        // for orphaned sockets. Our threaded daemon has multiple cloned
+        // fds and explicit close() calls, which bypass the implicit linger.
+        if let Some(tcp) = stream.tcp_stream() {
+            let _ = tcp.set_linger(Some(Duration::from_secs(5)));
+        }
+
         // Half-close the write side: sends FIN to the peer, signalling
         // that no more data will be sent from our end.
         let _ = stream.shutdown(std::net::Shutdown::Write);
+
         // Drain the read side until the peer sends FIN (EOF) or the
         // timeout expires. This ensures all peer goodbye bytes are
         // consumed and the kernel completes the FIN handshake before
-        // close() is called, preventing RST.
+        // close() is called, preventing RST from unread RX data.
         //
         // Two seconds is generous for the goodbye round-trip (stats +
         // NDX_DONE) and prevents a stalled peer from wedging the daemon.
