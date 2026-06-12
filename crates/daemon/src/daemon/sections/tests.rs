@@ -3,7 +3,10 @@ use super::*;
 #[test]
 fn parse_daemon_option_extracts_option_payload() {
     assert_eq!(parse_daemon_option("OPTION --list"), Some("--list"));
-    assert_eq!(parse_daemon_option("option --max-verbosity"), Some("--max-verbosity"));
+    assert_eq!(
+        parse_daemon_option("option --max-verbosity"),
+        Some("--max-verbosity")
+    );
 }
 
 #[test]
@@ -18,7 +21,6 @@ fn canonical_option_trims_prefix_and_normalises_case() {
     assert_eq!(canonical_option(" -P --info"), "p");
     assert_eq!(canonical_option("   CHECKSUM=md5"), "checksum");
 }
-
 
 #[test]
 fn refused_option_exact_match() {
@@ -66,7 +68,12 @@ fn refused_option_glob_star_matches_multiple_variants() {
         refuse_options: vec!["delete*".to_owned()],
         ..Default::default()
     };
-    for variant in &["--delete", "--delete-before", "--delete-after", "--delete-during"] {
+    for variant in &[
+        "--delete",
+        "--delete-before",
+        "--delete-after",
+        "--delete-during",
+    ] {
         let options = vec![variant.to_string()];
         assert_eq!(
             refused_option(&module, &options),
@@ -187,10 +194,7 @@ fn refused_option_wildcard_all_with_negation_allowlist() {
     assert_eq!(refused_option(&module, &options_allowed), None);
 
     let options_refused = vec!["--delete".to_owned()];
-    assert_eq!(
-        refused_option(&module, &options_refused),
-        Some("--delete")
-    );
+    assert_eq!(refused_option(&module, &options_refused), Some("--delete"));
 }
 
 #[test]
@@ -246,11 +250,8 @@ fn refused_option_returns_first_refused() {
 
 #[test]
 fn is_option_refused_last_rule_wins() {
-    let refuse = vec![
-        "delete".to_owned(),
-        "!delete".to_owned(),
-    ];
-    assert!(!is_option_refused(&refuse, "delete"));
+    let refuse = vec!["delete".to_owned(), "!delete".to_owned()];
+    assert!(!is_option_refused(&refuse, "delete", None));
 }
 
 #[test]
@@ -260,16 +261,49 @@ fn is_option_refused_re_refuse_after_negation() {
         "!delete-during".to_owned(),
         "delete-during".to_owned(),
     ];
-    assert!(is_option_refused(&refuse, "delete-during"));
+    assert!(is_option_refused(&refuse, "delete-during", None));
+}
+
+#[test]
+fn is_option_refused_short_letter_rule_matches_long_option() {
+    // upstream: options.c:909-921 `parse_one_refuse_match` compares each rule
+    // against BOTH `op->longName` and `op->shortName`. A `!v` rule must
+    // un-refuse the same option that `!verbose` would, so allow-list
+    // configurations that use short-letter shorthands behave the same as
+    // long-name shorthands.
+    let allow_list = vec!["*".to_owned(), "!v".to_owned(), "!a".to_owned()];
+    assert!(!is_option_refused(&allow_list, "verbose", Some('v')));
+    assert!(!is_option_refused(&allow_list, "archive", Some('a')));
+}
+
+#[test]
+fn is_option_refused_archive_rule_expands_to_short_letter_set() {
+    // upstream: options.c:904-906 - the `archive` (and `a`) rules expand to
+    // the character class `[ardlptgoD]` and so refuse every short letter that
+    // `-a` implies, not just the `--archive` long name.
+    let refuse = vec!["archive".to_owned()];
+    assert!(is_option_refused(&refuse, "recursive", Some('r')));
+    assert!(is_option_refused(&refuse, "links", Some('l')));
+    assert!(is_option_refused(&refuse, "devices", Some('D')));
+    assert!(!is_option_refused(&refuse, "compress", Some('z')));
+}
+
+#[test]
+fn is_option_refused_pure_allowlist_does_not_refuse_anything() {
+    // upstream: options.c:947-968 - every option starts marked as accepted
+    // (`a*` or `a=`). A refuse list of only negations therefore touches
+    // nothing - no option flips to refused. Sanity-check the obvious cases.
+    let allow_list = vec!["!verbose".to_owned(), "!archive".to_owned()];
+    assert!(!is_option_refused(&allow_list, "verbose", Some('v')));
+    assert!(!is_option_refused(&allow_list, "archive", Some('a')));
+    assert!(!is_option_refused(&allow_list, "compress", Some('z')));
+    assert!(!is_option_refused(&allow_list, "delete", None));
 }
 
 #[test]
 fn is_vital_option_recognises_all_vitals() {
     for &vital in VITAL_OPTIONS {
-        assert!(
-            is_vital_option(vital),
-            "expected '{vital}' to be vital"
-        );
+        assert!(is_vital_option(vital), "expected '{vital}' to be vital");
     }
 }
 
@@ -362,6 +396,85 @@ fn refused_client_arg_short_n_dry_run_spared_by_wildcard() {
     assert_eq!(refused_client_arg(&module, &args), None);
 }
 
+#[test]
+fn refused_client_arg_allowlist_module_passes_bundled_av() {
+    // Regression for the upstream `daemon-refuse` testsuite scenario where a
+    // module exposes an allow-list `refuse options = * !verbose !archive ...`
+    // and the client sends `-av`. Both `-a` and `-v` must survive the
+    // refuse-list matcher; upstream rsync flips each option's `descrip` back
+    // to "accepted" once the explicit `!verbose` / `!archive` rule lands.
+    //
+    // upstream: options.c:977-991 - rules are processed in order and the last
+    // match wins; the negated rule after the catch-all wildcard un-refuses
+    // both the long-form name and its short-letter alias.
+    let module = ModuleDefinition {
+        refuse_options: vec![
+            "*".to_owned(),
+            "!verbose".to_owned(),
+            "!archive".to_owned(),
+            "!iconv".to_owned(),
+            "!no-iconv".to_owned(),
+        ],
+        ..Default::default()
+    };
+    let args = vec!["-av".to_owned()];
+    assert_eq!(refused_client_arg(&module, &args), None);
+}
+
+#[test]
+fn refused_client_arg_allowlist_short_letter_negation_passes_av() {
+    // upstream: options.c:909-921 - `parse_one_refuse_match` matches each
+    // rule against both `op->longName` and `op->shortName`. A short-letter
+    // allow-list `!v !a` therefore un-refuses the same options that
+    // `!verbose !archive` would. Pinning this behaviour prevents a relapse of
+    // the over-refusal bug where short-letter negations were silently
+    // ignored against long-name option canonicals.
+    let module = ModuleDefinition {
+        refuse_options: vec!["*".to_owned(), "!v".to_owned(), "!a".to_owned()],
+        ..Default::default()
+    };
+    let args = vec!["-av".to_owned()];
+    assert_eq!(refused_client_arg(&module, &args), None);
+}
+
+#[test]
+fn refused_client_arg_pure_negation_allowlist_passes_av() {
+    // A pure-negation refuse list never marks anything as refused (nothing
+    // was refused to begin with), so an `-av` transfer must succeed.
+    // upstream: options.c:947-968 - every option starts as `a*`/`a=`
+    // (accepted); only explicit non-negated rules flip the descrip to
+    // `r*`/`r=`.
+    let module = ModuleDefinition {
+        refuse_options: vec!["!verbose".to_owned(), "!archive".to_owned()],
+        ..Default::default()
+    };
+    let args = vec!["-av".to_owned()];
+    assert_eq!(refused_client_arg(&module, &args), None);
+}
+
+#[test]
+fn refused_client_arg_archive_rule_refuses_implied_short_letters() {
+    // upstream: options.c:904-906 - the `archive` rule rewrites itself to the
+    // character class `[ardlptgoD]`. A module configured with
+    // `refuse options = archive` must therefore reject `-r`, `-l`, `-D`, etc.
+    // (and not just `--archive` itself).
+    let module = ModuleDefinition {
+        refuse_options: vec!["archive".to_owned()],
+        ..Default::default()
+    };
+    assert_eq!(
+        refused_client_arg(&module, &["-r".to_owned()]),
+        Some("--recursive".to_owned()),
+    );
+    assert_eq!(
+        refused_client_arg(&module, &["-l".to_owned()]),
+        Some("--links".to_owned()),
+    );
+    assert_eq!(
+        refused_client_arg(&module, &["-D".to_owned()]),
+        Some("--devices".to_owned()),
+    );
+}
 
 #[test]
 fn program_name_rsyncd_as_str() {
@@ -407,7 +520,6 @@ fn program_name_debug() {
     let debug = format!("{name:?}");
     assert!(debug.contains("OcRsyncd"));
 }
-
 
 #[test]
 fn parse_args_empty_defaults_to_program_name() {
@@ -495,7 +607,6 @@ fn parse_args_hyphenated_values_in_remainder() {
     assert!(parsed.remainder.iter().any(|a| a == "--no-detach"));
 }
 
-
 #[test]
 fn clap_command_creates_command() {
     let cmd = clap_command("test-program");
@@ -516,7 +627,6 @@ fn clap_command_has_version_arg() {
     assert!(args.iter().any(|a| a.get_id() == "version"));
 }
 
-
 #[test]
 fn render_help_rsyncd_contains_program_name() {
     let help = render_help(ProgramName::Rsyncd);
@@ -528,7 +638,6 @@ fn render_help_oc_rsyncd_contains_program_name() {
     let help = render_help(ProgramName::OcRsyncd);
     assert!(!help.is_empty());
 }
-
 
 #[test]
 fn apply_daemon_param_overrides_sets_read_only() {
