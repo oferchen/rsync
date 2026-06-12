@@ -9,6 +9,8 @@ use std::fs;
 use std::path::Path;
 
 use logging::{debug_log, info_log};
+#[cfg(unix)]
+use metadata::{MetadataOptions, apply_symlink_metadata_from_entry};
 use protocol::flist::{trace_leader_is, trace_looking_for_leader, trace_virtual_first};
 
 use crate::generator::ItemFlags;
@@ -90,6 +92,27 @@ impl ReceiverContext {
             // upstream: generator.c:1561 - quick_check_ok(FT_SYMLINK, ...)
             if let Ok(existing_target) = std::fs::read_link(&link_path) {
                 if existing_target == *target {
+                    // upstream: generator.c:1563 - even on the up-to-date branch
+                    // `set_file_attrs(fname, file, &sx, NULL, maybe_ATTRS_REPORT)`
+                    // still runs so a stale on-disk mtime is corrected.
+                    let symlink_options = MetadataOptions::new()
+                        .preserve_owner(self.config.flags.owner)
+                        .preserve_group(self.config.flags.group)
+                        .preserve_times(self.config.flags.times)
+                        .preserve_atimes(self.config.flags.atimes)
+                        .numeric_ids(self.config.flags.numeric_ids)
+                        .fake_super(self.config.fake_super);
+                    if let Err(error) =
+                        apply_symlink_metadata_from_entry(&link_path, entry, &symlink_options)
+                    {
+                        debug_log!(
+                            Recv,
+                            1,
+                            "failed to refresh symlink metadata for {}: {}",
+                            link_path.display(),
+                            error
+                        );
+                    }
                     // upstream: generator.c:1565 - symlink up-to-date, metadata only
                     let iflags = ItemFlags::from_raw(0);
                     let _ = self.emit_itemize(writer, &iflags, entry);
@@ -180,6 +203,30 @@ impl ReceiverContext {
                     continue;
                 }
                 return Err(e);
+            }
+            // upstream: generator.c:1592 - `set_file_attrs(fname, file, NULL, NULL, 0)`
+            // runs immediately after `atomic_create` -> `do_symlink` so the new
+            // symlink's mtime matches the sender-supplied value. Without this
+            // step the receiver-created symlink wears the wall-clock time from
+            // `symlinkat(2)`, breaking the `--copy-dest` parity that
+            // `testsuite/alt-dest.test` enforces over SSH.
+            let symlink_options = MetadataOptions::new()
+                .preserve_owner(self.config.flags.owner)
+                .preserve_group(self.config.flags.group)
+                .preserve_times(self.config.flags.times)
+                .preserve_atimes(self.config.flags.atimes)
+                .numeric_ids(self.config.flags.numeric_ids)
+                .fake_super(self.config.fake_super);
+            if let Err(error) =
+                apply_symlink_metadata_from_entry(&link_path, entry, &symlink_options)
+            {
+                debug_log!(
+                    Recv,
+                    1,
+                    "failed to apply symlink metadata for {}: {}",
+                    link_path.display(),
+                    error
+                );
             }
             // upstream: generator.c:1594 - itemize new symlink after creation
             let iflags = ItemFlags::from_raw(ItemFlags::ITEM_LOCAL_CHANGE | ItemFlags::ITEM_IS_NEW);
