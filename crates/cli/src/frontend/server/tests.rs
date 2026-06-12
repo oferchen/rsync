@@ -359,8 +359,7 @@ fn parse_server_args_skips_split_partial_dir_flag() {
     assert_eq!(flags, "-vlKtpR");
     assert!(
         pos_args.is_empty(),
-        "split --partial-dir and value must not leak into positional args: {:?}",
-        pos_args,
+        "split --partial-dir and value must not leak into positional args: {pos_args:?}",
     );
 }
 
