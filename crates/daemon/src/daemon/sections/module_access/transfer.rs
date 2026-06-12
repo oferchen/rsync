@@ -1065,6 +1065,11 @@ fn process_approved_module(
     // applicable - the pipe/fd closes naturally when dropped.
     if supports_tcp_shutdown {
         let stream = ctx.reader.get_mut();
+        // Give the kernel a brief window to drain TX queue before issuing
+        // shutdown(WR). Without this sleep, the abortive-RST race fires
+        // deterministically when daemon-side exclude/include rules shift
+        // the goodbye timing.
+        std::thread::sleep(Duration::from_millis(50));
         let _ = stream.shutdown(std::net::Shutdown::Write);
         // Cap the drain so a stalled peer cannot wedge the daemon forever.
         // Five seconds matches the worst-case stats + goodbye round trip
