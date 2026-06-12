@@ -3,7 +3,8 @@
 //! In rsync filter rules:
 //! - Anchored patterns start with `/` and match from the root of the transfer
 //! - Unanchored patterns can match at any level in the directory tree
-//! - Patterns containing `/` (other than leading) are anchored by default
+//! - Patterns with internal `/` but no leading `/` use tail-matching (match
+//!   the last N+1 path components at any depth)
 
 use filters::{FilterRule, FilterSet};
 use std::path::Path;
@@ -56,17 +57,18 @@ fn wildcard_unanchored() {
 }
 
 #[test]
-fn pattern_with_internal_slash_is_anchored() {
+fn pattern_with_internal_slash_tail_matches() {
     let rules = [
         FilterRule::exclude("src/test.txt"),
         FilterRule::include("**"),
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Pattern with / is anchored to root
+    // upstream: exclude.c:rule_matches() - a pattern with internal slashes
+    // but no leading `/` tail-matches against the last N+1 path components.
     assert!(!set.allows(Path::new("src/test.txt"), false));
-    // Does not match in nested paths
-    assert!(set.allows(Path::new("project/src/test.txt"), false));
+    // Also matches at deeper paths where the tail matches.
+    assert!(!set.allows(Path::new("project/src/test.txt"), false));
 }
 
 #[test]
@@ -271,13 +273,13 @@ fn trailing_slash_does_not_anchor() {
 }
 
 #[test]
-fn multiple_slashes_in_pattern() {
+fn multiple_slashes_in_pattern_tail_matches() {
     let rules = [FilterRule::exclude("a/b/c/"), FilterRule::include("**")];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Pattern with / is anchored
+    // upstream: tail-matching - matches last 3 components.
     assert!(!set.allows(Path::new("a/b/c"), true));
-    assert!(set.allows(Path::new("x/a/b/c"), true));
+    assert!(!set.allows(Path::new("x/a/b/c"), true));
 }
 
 #[test]
@@ -368,4 +370,41 @@ fn monorepo_structure() {
     // Package configs included (unanchored pattern matched first due to ordering)
     assert!(set.allows(Path::new("packages/foo/package.json"), false));
     assert!(set.allows(Path::new("packages/bar/tsconfig.json"), false));
+}
+
+/// Mirrors the upstream `exclude-lsh` testsuite scenario.
+///
+/// Upstream command: `rsync -av -f -_foo/too/ -f -_foo/down/ -f -_foo/and/ -f -_new/ lh:from/ chk/`
+///
+/// The `-_` prefix is an exclude (`-`) with `_` as the pattern separator.
+/// Patterns `foo/too/`, `foo/down/`, `foo/and/` have internal slashes
+/// (and trailing `/` for directory-only) but no leading `/`, so they use
+/// tail-matching and exclude matching directories at any depth.
+///
+/// upstream: exclude.c:rule_matches() lines 947-951
+#[test]
+fn exclude_lsh_scenario_tail_matching() {
+    let rules = [
+        FilterRule::exclude("foo/too/"),
+        FilterRule::exclude("foo/down/"),
+        FilterRule::exclude("foo/and/"),
+        FilterRule::exclude("new/"),
+    ];
+    let set = FilterSet::from_rules(rules).unwrap();
+
+    // Direct matches at root.
+    assert!(!set.allows(Path::new("foo/too"), true));
+    assert!(!set.allows(Path::new("foo/down"), true));
+    assert!(!set.allows(Path::new("new"), true));
+
+    // Tail-matching: `bar/down/to/foo/too` ends in `foo/too`, so excluded.
+    assert!(!set.allows(Path::new("bar/down/to/foo/too"), true));
+
+    // Tail-matching: `mid/for/foo/and` ends in `foo/and`, so excluded.
+    assert!(!set.allows(Path::new("mid/for/foo/and"), true));
+
+    // Non-matching paths allowed.
+    assert!(set.allows(Path::new("bar/down/to/bar/baz"), true));
+    assert!(set.allows(Path::new("foo/sub"), true));
+    assert!(set.allows(Path::new("bar/down/to/foo/file1"), false));
 }
