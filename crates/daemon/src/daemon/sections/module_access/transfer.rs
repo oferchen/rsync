@@ -1018,7 +1018,7 @@ fn process_approved_module(
         module,
     );
 
-    // Graceful TCP shutdown: half-close write, drain read until EOF.
+    // Graceful TCP shutdown: linger + half-close + drain.
     //
     // Without this pattern, close() on a TCP socket with unread RX bytes
     // causes the kernel to send RST instead of FIN (`tcp(7)`). RST aborts
@@ -1028,24 +1028,24 @@ fn process_approved_module(
     // the loss window is widened by trailing MSG_INFO itemize frames
     // before the stats / NDX_DONE goodbye sequence.
     //
-    // The standard graceful-close pattern (RFC 793 TIME-WAIT) is:
-    //   1. Flush and drop transfer-engine stream clones so the DaemonStream
-    //      in ctx.reader holds the sole fd reference
+    // The structural pattern is:
+    //   1. SO_LINGER(5s) - ensures close() blocks until TX data is ACKed
     //   2. shutdown(Write) - sends FIN, tells the peer no more data
-    //   3. read() in a loop until EOF - drains peer's final bytes and
-    //      lets the kernel complete the FIN handshake
-    //   4. close() the socket - now safe, no unread data to trigger RST
+    //   3. read() in a loop until EOF - drains peer's final goodbye bytes
+    //      and lets the kernel complete the FIN handshake
+    //   4. close() the socket - safe because linger ensures TX delivery
+    //      and drain cleared any unread RX data
     //
-    // This is deterministic and has no timing sensitivity, unlike a
-    // sleep-before-shutdown approach. It mirrors what the OS does at
-    // process exit for upstream rsync's fork model: the child calls
-    // close_all() then _exit(), and the kernel guarantees all queued
-    // data is sent before the FIN when a process exits.
+    // SO_LINGER is the key structural element. Without it, close() on a
+    // socket with multiple dup'd fd references (our cloned TcpStreams)
+    // can return immediately with unACKed TX data, and the kernel races
+    // to deliver the trailing goodbye bytes before the peer times out.
+    // With SO_LINGER, close() blocks until the kernel confirms delivery.
     //
     // upstream: cleanup.c:close_all() relies on the fork model where the
     // child holds the only fd reference; _exit() lets the kernel drain
     // naturally. Our threaded daemon shares cloned fds across multiple
-    // owners and must half-close + drain explicitly.
+    // owners and needs SO_LINGER + half-close + drain explicitly.
     //
     // For stdio streams (remote-shell daemon mode), TCP shutdown is not
     // applicable - the pipe/fd closes naturally when dropped.
