@@ -149,10 +149,10 @@ pub mod sendfile;
 pub mod signal;
 /// Safe wrappers around platform `setsockopt` for integer-valued options.
 pub mod socket_options;
-/// Force inherited stdin/stdout to blocking mode for server-side stdio.
-pub mod stdio_blocking;
 /// Zero-copy socket-to-disk transfer using `splice`/`vmsplice` syscalls.
 pub mod splice;
+/// Force inherited stdin/stdout to blocking mode for server-side stdio.
+pub mod stdio_blocking;
 /// Batched metadata syscall operations with dual-path runtime selection.
 pub mod syscall_batch;
 /// Zero-copy file writer that pushes literal chunks via `vmsplice` + `splice`.
@@ -303,12 +303,12 @@ pub use secure_dir::secure_open_dir;
 #[cfg(unix)]
 pub use sendfile::send_file_to_fd_with_policy;
 pub use socket_options::set_socket_int_option;
-pub use stdio_blocking::force_blocking_stdio;
 #[cfg(target_os = "linux")]
 pub use splice::DEFAULT_PIPE_CAPACITY;
 pub use splice::{
     SplicePipe, is_splice_available, is_splice_enabled, try_splice_to_file, try_vmsplice_to_file,
 };
+pub use stdio_blocking::force_blocking_stdio;
 // Non-unix `recv_fd_to_file` stub returns `Unsupported`; gate the public
 // re-export on unix to remove the dead surface area (see WIN-S.LAND.1.a).
 #[cfg(unix)]
