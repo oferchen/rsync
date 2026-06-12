@@ -17,12 +17,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::{
+    FilterAction, FilterError, FilterRule, MergeFileError,
     apple_double::default_patterns as apple_double_default_patterns,
-    compiled::{apply_clear_rule, CompiledRule},
+    compiled::{CompiledRule, apply_clear_rule},
     cvs::default_patterns as cvs_default_patterns,
     decision::{DecisionContext, FilterSetInner},
     merge::read_rules_recursive,
-    FilterAction, FilterError, FilterRule, MergeFileError,
 };
 
 /// Compiled, immutable collection of filter rules for fast path matching.
