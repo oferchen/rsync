@@ -243,6 +243,23 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // upstream: options.c:2891-2892 - emitted alongside --partial-dir.
             "--delay-updates" => flags.delay_updates = true,
             _ => {
+                // upstream: options.c::server_options() emits a handful of
+                // path-bearing long flags (`--copy-dest`, `--link-dest`,
+                // `--compare-dest`, `--files-from`, `--backup-dir`,
+                // `--temp-dir`) as two adjacent argv slots via
+                // `safe_arg("", value)`. Consume the following slot here so
+                // the value lands in the structured field instead of leaking
+                // through `parse_value_bearing_flag` and being misclassified
+                // as a positional destination path further down.
+                if is_two_arg_server_long_flag(s.as_ref()) {
+                    let value = args
+                        .get(idx + 1)
+                        .map(|v| v.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    apply_two_arg_long_flag(s.as_ref(), &value, &mut flags);
+                    idx += 2;
+                    continue;
+                }
                 // Accept the joined `--partial-dir=VALUE` form too, even
                 // though upstream's server_options() does not emit it - the
                 // CLI parser accepts both forms for client-side use, and a
@@ -259,6 +276,45 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
     }
 
     flags
+}
+
+/// Stores the value of a two-arg long flag (`--flag VALUE`) into the
+/// matching field of [`ServerLongFlags`].
+///
+/// `--backup-dir` and `--temp-dir` are recognised so the value slot does
+/// not leak into the positional argument list, but the corresponding
+/// fields are not currently consumed by `ServerLongFlags`. Recognising
+/// them here is the smallest defence that keeps the alt-dest interop
+/// scenario (`--copy-dest /path . dest/`) from mis-mapping the value to
+/// the destination root.
+///
+/// # Upstream Reference
+///
+/// - `options.c:2807-2808` - `--backup-dir`
+/// - `options.c:2926-2927` - `--temp-dir`
+/// - `options.c:2939-2940` - `--copy-dest` / `--link-dest` / `--compare-dest`
+///   via `alt_dest_opt(0)` + `safe_arg("", basis_dir[i])`
+/// - `options.c:2964-2965` - `--files-from`
+fn apply_two_arg_long_flag(flag: &str, value: &str, flags: &mut ServerLongFlags) {
+    match flag {
+        "--compare-dest" => flags.reference_directories.push(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Compare,
+            PathBuf::from(value),
+        )),
+        "--copy-dest" => flags.reference_directories.push(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Copy,
+            PathBuf::from(value),
+        )),
+        "--link-dest" => flags.reference_directories.push(ReferenceDirectory::new(
+            ReferenceDirectoryKind::Link,
+            PathBuf::from(value),
+        )),
+        "--files-from" => flags.files_from = Some(value.to_owned()),
+        // Values are drained but not currently consumed; recognising the
+        // flag here keeps the value out of the positional list.
+        "--backup-dir" | "--temp-dir" => {}
+        _ => {}
+    }
 }
 
 /// Parses value-bearing `--flag=value` arguments into `ServerLongFlags`.
@@ -382,4 +438,39 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--log-format=")
         || arg.starts_with("--info=")
         || arg.starts_with("--partial-dir=")
+}
+
+/// Returns `true` when the argument is a bare server-mode long flag whose
+/// value is supplied as the next positional argument.
+///
+/// Upstream `options.c::server_options()` emits a handful of path-bearing
+/// long flags as two argv slots: the flag name and the value, joined later
+/// by `safe_arg("", value)`. The split form is used unconditionally for
+/// these flags, independent of `protect_args`. Without this awareness the
+/// flag name is treated as the first positional path and the value as the
+/// second, so the alt-dest interop test (`--copy-dest /path/alt3 . /path/to/`)
+/// lands the source files under `$HOME/--copy-dest/` instead of creating
+/// the dest root at `/path/to/`.
+///
+/// `--partial-dir` is handled separately in `parse_server_long_flags`
+/// because it predates this helper and keeps its own `idx += 1` branch.
+/// All other split-form path flags route through this predicate.
+///
+/// # Upstream Reference
+///
+/// - `options.c:2807-2808` - `--backup-dir`
+/// - `options.c:2926-2927` - `--temp-dir`
+/// - `options.c:2939-2940` - `--copy-dest` / `--link-dest` / `--compare-dest`
+///   (via `alt_dest_opt(0)`)
+/// - `options.c:2964-2965` - `--files-from`
+pub(super) fn is_two_arg_server_long_flag(arg: &str) -> bool {
+    matches!(
+        arg,
+        "--compare-dest"
+            | "--copy-dest"
+            | "--link-dest"
+            | "--backup-dir"
+            | "--temp-dir"
+            | "--files-from"
+    )
 }
