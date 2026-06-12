@@ -2347,6 +2347,136 @@ mod legacy_goodbye_tests {
         );
     }
 
+    // UTS-9.REOPEN (daemon-gzip-download): the daemon-sender's `-zz` goodbye
+    // path deadlocked because the codec finalize step happened only AFTER
+    // `handle_goodbye` returned, but `handle_goodbye` could never return
+    // since it was blocked reading the receiver's final NDX_DONE while the
+    // receiver was simultaneously blocked decompressing an unterminated
+    // deflate block. The fix introduces `handle_goodbye_with_finalizer`,
+    // which runs a caller-supplied hook BETWEEN the goodbye write+flush and
+    // the goodbye read. This test asserts that ordering invariant: the hook
+    // must observe the goodbye write already in the wire buffer, AND must
+    // run before any further reader byte is consumed.
+    //
+    // upstream: token.c:367 send_deflated_token() emits the Z_FINISH-
+    // terminated stream at end of transfer; main.c:979-983
+    // do_server_sender() brackets read_final_goodbye() with
+    // io_flush(FULL_FLUSH).
+    #[test]
+    fn handle_goodbye_with_finalizer_runs_between_write_and_read() {
+        use std::cell::Cell;
+
+        let handshake = test_handshake_with_protocol(31);
+        let mut config = test_config();
+        config.protocol = ProtocolVersion::try_from(31u8).unwrap();
+        config.do_stats = false;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        // Receiver wire: first NDX_DONE (consumed BEFORE the finalizer)
+        // followed by the final NDX_DONE (consumed AFTER). The thread-local
+        // byte counter lets the finalizer assert which side of that boundary
+        // it ran on.
+        let receiver_input = [NDX_DONE_MODERN.as_slice(), NDX_DONE_MODERN.as_slice()].concat();
+        let mut reader = TrackingReader::new(receiver_input);
+
+        let mut output = FlushTrackingWriter::default();
+        let mut ndx_read = create_ndx_codec(31);
+        let mut ndx_write = MonotonicNdxWriter::new(31);
+
+        let finalizer_called = Cell::new(false);
+        let bytes_written_when_finalizer_ran = Cell::new(0usize);
+        let bytes_read_when_finalizer_ran = Cell::new(0usize);
+
+        ctx.handle_goodbye_with_finalizer(
+            &mut reader,
+            &mut output,
+            &mut ndx_read,
+            &mut ndx_write,
+            |w: &mut FlushTrackingWriter| {
+                finalizer_called.set(true);
+                bytes_written_when_finalizer_ran.set(w.buffer.len());
+                bytes_read_when_finalizer_ran.set(reader_bytes_consumed());
+                w.flush()
+            },
+        )
+        .expect("goodbye completes");
+
+        assert!(
+            finalizer_called.get(),
+            "the finalizer must run on the proto-31+ goodbye path"
+        );
+
+        // Ordering invariant: when the finalizer runs the sender's
+        // goodbye NDX_DONE must already be in the wire buffer (this is
+        // the "after write" half).
+        assert!(
+            bytes_written_when_finalizer_ran.get() >= NDX_DONE_MODERN.len(),
+            "finalizer ran before the goodbye NDX_DONE was written: \
+             buffer had {} bytes (need >= {})",
+            bytes_written_when_finalizer_ran.get(),
+            NDX_DONE_MODERN.len(),
+        );
+
+        // Ordering invariant: when the finalizer runs the receiver's
+        // FIRST NDX_DONE must already be consumed, but the FINAL
+        // NDX_DONE must NOT yet be consumed (this is the "before read"
+        // half - the deflate stream must be closed before the receiver
+        // is asked to advance another byte).
+        assert_eq!(
+            bytes_read_when_finalizer_ran.get(),
+            NDX_DONE_MODERN.len(),
+            "finalizer must run after the first NDX_DONE is read but \
+             before the final NDX_DONE is read"
+        );
+
+        // The wire payload must still end with the NDX_DONE marker
+        // byte even with the finalizer hooked in.
+        assert!(
+            output.buffer.ends_with(&NDX_DONE_MODERN),
+            "wire output must end with NDX_DONE even after finalizer: {:?}",
+            output.buffer
+        );
+    }
+
+    /// Module-level byte counter used by the ordering test above. We expose
+    /// it via a thread-local because the test's `Read` impl needs to record
+    /// how much was consumed before the finalizer ran, and the finalizer
+    /// closure cannot borrow `reader` mutably (it already borrows `writer`).
+    fn reader_bytes_consumed() -> usize {
+        READER_BYTES_CONSUMED.with(|c| c.get())
+    }
+
+    thread_local! {
+        static READER_BYTES_CONSUMED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// `Read` implementation that tracks how many bytes have been consumed
+    /// in a thread-local so the `handle_goodbye_with_finalizer` ordering
+    /// test can detect whether the finalizer ran before or after the final
+    /// receiver NDX_DONE was read.
+    struct TrackingReader {
+        data: Vec<u8>,
+        pos: usize,
+    }
+
+    impl TrackingReader {
+        fn new(data: Vec<u8>) -> Self {
+            READER_BYTES_CONSUMED.with(|c| c.set(0));
+            Self { data, pos: 0 }
+        }
+    }
+
+    impl std::io::Read for TrackingReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let remaining = self.data.len().saturating_sub(self.pos);
+            let n = remaining.min(buf.len());
+            buf[..n].copy_from_slice(&self.data[self.pos..self.pos + n]);
+            self.pos += n;
+            READER_BYTES_CONSUMED.with(|c| c.set(self.pos));
+            Ok(n)
+        }
+    }
+
     /// Writer that records every `write` and `flush` so tests can assert
     /// upstream's `io_flush(FULL_FLUSH)` contract is honoured before the
     /// goodbye handshake returns. Mirrors the `main.c:912` flush-before-
