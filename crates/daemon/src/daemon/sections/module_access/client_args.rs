@@ -75,8 +75,7 @@ fn unbackslash_arg(s: &str) -> String {
 ///   `--sender`, `argstr`, and the secluded-args NULL split point
 /// - `rsync.c:283-320` - `send_protected_args()` rewrites the NULL slot
 ///   with `"rsync"` and streams the rest as NUL-separated bytes
-fn merge_secluded_args(phase1: Vec<String>, phase2: Vec<String>) -> Vec<String> {
-    let mut phase2 = phase2;
+fn merge_secluded_args(phase1: Vec<String>, mut phase2: Vec<String>) -> Vec<String> {
     if phase2.first().is_some_and(|a| a == "rsync") {
         phase2.remove(0);
     }
