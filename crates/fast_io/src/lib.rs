@@ -149,6 +149,8 @@ pub mod sendfile;
 pub mod signal;
 /// Safe wrappers around platform `setsockopt` for integer-valued options.
 pub mod socket_options;
+/// Force inherited stdin/stdout to blocking mode for server-side stdio.
+pub mod stdio_blocking;
 /// Zero-copy socket-to-disk transfer using `splice`/`vmsplice` syscalls.
 pub mod splice;
 /// Batched metadata syscall operations with dual-path runtime selection.
@@ -301,6 +303,7 @@ pub use secure_dir::secure_open_dir;
 #[cfg(unix)]
 pub use sendfile::send_file_to_fd_with_policy;
 pub use socket_options::set_socket_int_option;
+pub use stdio_blocking::force_blocking_stdio;
 #[cfg(target_os = "linux")]
 pub use splice::DEFAULT_PIPE_CAPACITY;
 pub use splice::{
