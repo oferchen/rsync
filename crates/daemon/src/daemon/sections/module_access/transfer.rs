@@ -1018,71 +1018,50 @@ fn process_approved_module(
         module,
     );
 
-    // Ensure clean TCP shutdown: send FIN before dropping streams, then
-    // drain the receive buffer so close() does not send RST instead.
+    // Graceful TCP shutdown: half-close write, drain read until EOF.
     //
-    // Without this drain, close() on a TCP socket with unread RX bytes
-    // causes the kernel to send RST (`tcp(7)`). The peer then aborts any
-    // in-flight TX bytes that have not yet reached userspace, producing
-    // "connection unexpectedly closed (N bytes received so far)" on the
-    // client even when the daemon has finished writing every byte of the
-    // transfer. Under `-zz` daemon download the loss window is widened by
-    // the extra trailing MSG_INFO itemize frames the daemon emits before
-    // the stats / NDX_DONE goodbye sequence, and the receiver was failing
-    // at the stats varlongs (612K-byte mark) rather than at the actual
-    // last byte of file data.
+    // Without this pattern, close() on a TCP socket with unread RX bytes
+    // causes the kernel to send RST instead of FIN (`tcp(7)`). RST aborts
+    // any in-flight TX bytes that have not yet reached userspace, so the
+    // peer reports "connection unexpectedly closed (N bytes received so
+    // far)" even though the daemon wrote every goodbye byte. Under `-zz`
+    // the loss window is widened by trailing MSG_INFO itemize frames
+    // before the stats / NDX_DONE goodbye sequence.
     //
-    // upstream: `cleanup.c:close_all` issues `shutdown(fd, 2)` per socket
-    // before `close(fd)` to avoid the same abortive RST on Winsock; on
-    // Linux the equivalent guard is to half-close write and drain read
-    // until the peer signals FIN before relinquishing the descriptor.
+    // The standard graceful-close pattern (RFC 793 TIME-WAIT) is:
+    //   1. shutdown(Write) - sends FIN, tells the peer no more data
+    //   2. read() in a loop until EOF - drains peer's final bytes and
+    //      lets the kernel complete the FIN handshake
+    //   3. close() the socket - now safe, no unread data to trigger RST
+    //
+    // This is deterministic and has no timing sensitivity, unlike a
+    // sleep-before-shutdown approach. It mirrors what the OS does at
+    // process exit for upstream rsync's fork model: the child calls
+    // close_all() then _exit(), and the kernel guarantees all queued
+    // data is sent before the FIN when a process exits.
+    //
+    // upstream: cleanup.c:close_all() relies on the fork model where the
+    // child holds the only fd reference; _exit() lets the kernel drain
+    // naturally. Our threaded daemon shares cloned fds across multiple
+    // owners and must half-close + drain explicitly.
+    //
     // For stdio streams (remote-shell daemon mode), TCP shutdown is not
     // applicable - the pipe/fd closes naturally when dropped.
-    //
-    // For both TCP and stdio, yield 50ms before tearing down so the kernel
-    // has time to push the trailing goodbye bytes to the peer/reader. See
-    // the comment inside the TCP block for the loopback RST race; the same
-    // window covers the stdio-pipe equivalent where the daemon process
-    // exit and the parents read can race the pipe TX queue drain.
-    std::thread::sleep(Duration::from_millis(50));
     if supports_tcp_shutdown {
         let stream = ctx.reader.get_mut();
-        // UTS-9.REOPEN (daemon-gzip-download / daemon-refuse-compress /
-        // batch-mode): the connection threads goodbye writes (stats,
-        // NDX_DONE echoes) are forwarded to the kernel TX queue via
-        // synchronous write(2), but TcpStream::write returns once the
-        // bytes are queued, not once they are ACKed. shutdown(WR) right
-        // afterwards queues a FIN behind those bytes; on a loopback
-        // socket the kernel can interleave that FIN with the peers
-        // in-flight ACK such that the peers receive_queue still has
-        // unread bytes when our final close fires, and Linux then issues
-        // RST instead of clean FIN. RST aborts the trailing TX bytes -
-        // the receiver loses the last few hundred bytes of the goodbye
-        // stream and reports connection unexpectedly closed (N bytes
-        // received so far) mid-goodbye even though the daemon-sender
-        // wrote every byte.
-        //
-        // A 50ms yield before shutdown(WR) gives the kernel time to ACK
-        // the goodbye bytes before we tear down. The window is well
-        // below the upstream IO timeout but well above the loopback
-        // round-trip on every platform we ship to. The drain loop below
-        // still caps the worst case at 5s.
-        //
-        // The race fires deterministically under -zz and under daemon
-        // exclude / include rules because both shift the timing of
-        // the last token frames and so the depth of the per-thread RX
-        // queue at shutdown.
-        //
-        // upstream: cleanup.c:close_all() relies on the fork model where
-        // the child holds the only fd reference; that child exits via
-        // exit_cleanup() which lets the kernel drain naturally. Our
-        // threaded daemon shares the cloned fds across multiple owners
-        // and so must yield explicitly before tearing down.
+        // Flush any buffered writes before half-closing.
+        let _ = stream.flush();
+        // Half-close the write side: sends FIN to the peer, signalling
+        // that no more data will be sent from our end.
         let _ = stream.shutdown(std::net::Shutdown::Write);
-        // Cap the drain so a stalled peer cannot wedge the daemon forever.
-        // Five seconds matches the worst-case stats + goodbye round trip
-        // and is well under any reasonable IO timeout.
-        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+        // Drain the read side until the peer sends FIN (EOF) or the
+        // timeout expires. This ensures all peer goodbye bytes are
+        // consumed and the kernel completes the FIN handshake before
+        // close() is called, preventing RST.
+        //
+        // Two seconds is generous for the goodbye round-trip (stats +
+        // NDX_DONE) and prevents a stalled peer from wedging the daemon.
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
         let mut sink = [0u8; 4096];
         loop {
             match stream.read(&mut sink) {
@@ -1096,7 +1075,6 @@ fn process_approved_module(
                             | io::ErrorKind::Interrupted
                     ) =>
                 {
-                    // Timed out waiting for peer FIN; close is the best we can do.
                     break;
                 }
                 Err(_) => break,
