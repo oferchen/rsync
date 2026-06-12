@@ -93,9 +93,13 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if effective_dirs && !effective_recursive {
         flags.push('d');
     }
-    // upstream: options.c:2622 - whole_file, but not when --append is active
-    // (append requires delta transfer to append only new data)
-    if config.whole_file() && !config.append() {
+    // upstream: options.c:2644-2648 - only send 'W' when explicitly set
+    // (whole_file > 0). The default for remote transfers is no-whole-file
+    // (delta mode); upstream never sends --no-whole-file because it is the
+    // default. Sending 'W' unconditionally when the tri-state defaults to
+    // true forces the remote generator to skip basis-file checksums, so the
+    // sender falls back to whole-file even when a basis exists.
+    if config.whole_file_raw() == Some(true) && !config.append() {
         flags.push('W');
     }
     if config.sparse() {
@@ -625,6 +629,40 @@ mod tests {
         assert!(
             !flags.contains('d'),
             "should not add 'd' without files-from: {flags}"
+        );
+    }
+
+    // upstream: options.c:2644-2648 - 'W' is only sent when whole_file > 0
+    // (explicitly forced). The default for remote transfers is auto (-1),
+    // which does NOT send 'W'. Sending 'W' unconditionally causes the
+    // remote generator to skip basis-file checksums, defeating delta.
+    #[test]
+    fn server_flag_string_omits_w_when_whole_file_not_set() {
+        let config = ClientConfig::builder().build();
+        let flags = build_server_flag_string(&config);
+        assert!(
+            !flags.contains('W'),
+            "default config must not include 'W' (whole-file): {flags}"
+        );
+    }
+
+    #[test]
+    fn server_flag_string_includes_w_when_whole_file_explicit() {
+        let config = ClientConfig::builder().whole_file(true).build();
+        let flags = build_server_flag_string(&config);
+        assert!(
+            flags.contains('W'),
+            "explicit whole_file(true) must include 'W': {flags}"
+        );
+    }
+
+    #[test]
+    fn server_flag_string_omits_w_when_whole_file_false() {
+        let config = ClientConfig::builder().whole_file(false).build();
+        let flags = build_server_flag_string(&config);
+        assert!(
+            !flags.contains('W'),
+            "explicit whole_file(false) must not include 'W': {flags}"
         );
     }
 }
