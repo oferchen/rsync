@@ -244,9 +244,7 @@ where
                 .ok()
                 .or_else(|| dest_path.parent().and_then(|p| p.canonicalize().ok()))
             {
-                use fast_io::landlock::{
-                    LandlockOutcome, is_supported, restrict_to_module_paths,
-                };
+                use fast_io::landlock::{LandlockOutcome, is_supported, restrict_to_module_paths};
                 if is_supported() {
                     match restrict_to_module_paths(&[root.as_path()]) {
                         LandlockOutcome::Enforced(_) | LandlockOutcome::Unavailable => {}

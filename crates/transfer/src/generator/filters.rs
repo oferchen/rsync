@@ -589,8 +589,7 @@ mod tests {
         // the named directory even though `--files-from` clears the global
         // `-r` flag.
         let base = PathBuf::from("/src");
-        let split =
-            split_files_from_entry(&base, "from/./dir/subdir/subsubdir2", true);
+        let split = split_files_from_entry(&base, "from/./dir/subdir/subsubdir2", true);
         assert_eq!(split.base, PathBuf::from("/src/from"));
         assert_eq!(split.path, PathBuf::from("/src/from/dir/subdir/subsubdir2"));
         assert!(split.recurse);
