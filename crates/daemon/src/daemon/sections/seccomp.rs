@@ -8,10 +8,17 @@
 // degradation.
 //
 // See `docs/design/lsm-seccomp-allowlist.md` for the per-syscall
-// justification and the 14-day bake plan. Opt-in via
-// `--features daemon-seccomp`; default builds compile the no-op stub
-// below so the wire-in at `module_access/transfer.rs` does not need
-// `#[cfg]` branching at the call site.
+// justification. Enabled by default when the `daemon-seccomp` feature
+// is compiled in; opt out with `OC_RSYNC_NO_SECCOMP=1`. Default
+// builds (without the feature) compile the no-op stub below so the
+// wire-in at `module_access/transfer.rs` does not need `#[cfg]`
+// branching at the call site.
+//
+// Scope: the filter is only installed on TCP daemon worker threads.
+// Stdio daemon sessions (`--server --daemon` spawned by lsh.sh / SSH)
+// are the entire process, so a process-scoped filter would restrict
+// post-transfer cleanup and the exit path. The wire-in at
+// `engage_seccomp_sandbox` skips stdio sessions.
 
 /// Outcome of [`apply_worker_seccomp_filter`].
 #[derive(Debug)]
@@ -42,18 +49,20 @@ pub enum SeccompOutcome {
 /// [`SeccompOutcome::Installed`] on success. On other architectures and
 /// on builds where the `daemon-seccomp` feature is off the call returns
 /// [`SeccompOutcome::Unavailable`] without touching kernel state.
+///
+/// **Scope restriction:** only call this on TCP daemon worker threads,
+/// never on stdio daemon sessions. Stdio sessions run as the entire
+/// process (spawned by `lsh.sh` / SSH with `--server --daemon`), so a
+/// process-scoped seccomp filter would restrict post-transfer cleanup
+/// and the exit path. The caller (`engage_seccomp_sandbox`) enforces
+/// this by checking `DaemonStream::is_stdio()` before calling here.
 #[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
 pub fn apply_worker_seccomp_filter() -> SeccompOutcome {
-    // Default to OFF: the allowlist has not yet baked against the full
-    // upstream interop matrix, and a missing entry kills the worker with
-    // SIGSYS ("Bad system call") instead of returning a typed error.
-    // Landlock + SEC-1 `*at` syscalls remain the primary daemon defenses,
-    // so leaving seccomp opt-in matches upstream rsync behavior without
-    // regressing depth. Operators turn it on with
-    // `OC_RSYNC_DAEMON_SECCOMP=1` once their workload is validated; the
-    // legacy `OC_RSYNC_NO_SECCOMP=1` still overrides to off so existing
-    // operator runbooks continue to work.
-    if !seccomp_runtime_enabled() || seccomp_runtime_disabled() {
+    // Default ON when the daemon-seccomp feature is compiled in.
+    // Operators can opt out with `OC_RSYNC_NO_SECCOMP=1` if a workload
+    // triggers a missing syscall (diagnosed via the SIGSYS crash with
+    // `si_syscall` populated in the kernel log).
+    if seccomp_runtime_disabled() {
         return SeccompOutcome::Unavailable;
     }
     use seccompiler::{
@@ -280,29 +289,29 @@ pub fn worker_seccomp_allowlist() -> Vec<i64> {
 
 /// Operator-driven runtime opt-out for the worker seccomp filter.
 ///
-/// Empty, `0`, and `false` all leave the filter engaged. Any other value
-/// disables it. Retained for backward compatibility with runbooks that
-/// shipped while seccomp was default-on; `OC_RSYNC_DAEMON_SECCOMP` is now
-/// the primary control.
+/// The filter is ON by default when the `daemon-seccomp` feature is
+/// compiled in. Setting `OC_RSYNC_NO_SECCOMP=1` (or any truthy value)
+/// disables it. Empty, `0`, and `false` leave the filter engaged.
+///
+/// `OC_RSYNC_DAEMON_SECCOMP=0` is also accepted as an opt-out alias so
+/// operators who previously used `OC_RSYNC_DAEMON_SECCOMP=1` to opt in
+/// can flip the same variable to `0` instead of learning a new name.
 #[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
 fn seccomp_runtime_disabled() -> bool {
-    match std::env::var("OC_RSYNC_NO_SECCOMP") {
-        Ok(v) => !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"),
-        Err(_) => false,
+    // OC_RSYNC_NO_SECCOMP=1 disables.
+    if let Ok(v) = std::env::var("OC_RSYNC_NO_SECCOMP") {
+        if !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false") {
+            return true;
+        }
     }
-}
-
-/// Operator-driven runtime opt-in for the worker seccomp filter.
-///
-/// Default is OFF (allowlist not fully baked, missing entries SIGSYS the
-/// worker). Setting `OC_RSYNC_DAEMON_SECCOMP=1` (or any non-empty / non-
-/// `0` / non-`false` value) installs the filter at worker fork.
-#[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
-fn seccomp_runtime_enabled() -> bool {
-    match std::env::var("OC_RSYNC_DAEMON_SECCOMP") {
-        Ok(v) => !v.is_empty() && v != "0" && !v.eq_ignore_ascii_case("false"),
-        Err(_) => false,
+    // OC_RSYNC_DAEMON_SECCOMP=0 / false also disables (inverse of old
+    // opt-in semantics).
+    if let Ok(v) = std::env::var("OC_RSYNC_DAEMON_SECCOMP") {
+        if v == "0" || v.eq_ignore_ascii_case("false") {
+            return true;
+        }
     }
+    false
 }
 
 /// `rseq(2)` syscall number for the current target.

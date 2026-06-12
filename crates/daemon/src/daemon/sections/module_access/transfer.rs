@@ -284,7 +284,7 @@ fn engage_landlock_sandbox(
     module: &ModuleRuntime,
     extra_allowed_paths: &[&Path],
 ) -> io::Result<bool> {
-    use fast_io::landlock::{LandlockOutcome, is_supported, restrict_to_module_paths};
+    use fast_io::landlock::{is_supported, restrict_to_module_paths, LandlockOutcome};
 
     if module.pre_xfer_exec.is_some() || module.post_xfer_exec.is_some() {
         if let Some(log) = ctx.log_sink {
@@ -378,10 +378,34 @@ fn engage_landlock_sandbox(
 /// that returns `Unavailable`; the wire-in is unconditional so the call
 /// site does not need `#[cfg]` branching. Construction or installation
 /// failure is logged as a warning and the connection continues - SEC-1
-/// `*at` helpers and Landlock remain the primary defenses. See
-/// `docs/design/lsm-seccomp-allowlist.md` for the allowlist rationale
-/// and the 14-day bake plan.
+/// `*at` helpers and Landlock remain the primary defenses.
+///
+/// **Stdio sessions are skipped.** When the daemon runs as `--server
+/// --daemon` over stdin/stdout (remote-shell daemon mode via `lsh.sh` /
+/// SSH), the process IS the worker - there is no parent accept loop to
+/// survive a `KillProcess`. The seccomp filter would also restrict
+/// post-transfer cleanup, process exit, and any syscalls the Python test
+/// harness or shell wrapper needs after the transfer completes. TCP
+/// daemon workers are disposable threads inside a long-lived process, so
+/// the filter dies with the thread and does not affect the daemon or any
+/// other connection.
 fn engage_seccomp_sandbox(ctx: &mut ModuleRequestContext<'_>) -> io::Result<()> {
+    // Stdio sessions: the process IS the worker. Applying seccomp here
+    // would restrict the entire process (including post-transfer cleanup,
+    // exit handlers, and the parent shell). Skip - Landlock + SEC-1 *at*
+    // remain the defense for remote-shell daemon mode.
+    if ctx.reader.get_ref().is_stdio() {
+        if let Some(log) = ctx.log_sink {
+            let text = format!(
+                "module '{}': seccomp BPF skipped (stdio session - filter would restrict entire process)",
+                ctx.request,
+            );
+            let message = rsync_info!(text).with_role(Role::Daemon);
+            log_message(log, &message);
+        }
+        return Ok(());
+    }
+
     match apply_worker_seccomp_filter() {
         #[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
         SeccompOutcome::Installed => {
@@ -395,9 +419,8 @@ fn engage_seccomp_sandbox(ctx: &mut ModuleRequestContext<'_>) -> io::Result<()> 
             }
         }
         SeccompOutcome::Unavailable => {
-            // No-op build (non-Linux, daemon-seccomp feature off, or
-            // unsupported arch). Log at info so operators can confirm the
-            // layer status without having to grep the build flags.
+            // No-op build (non-Linux, daemon-seccomp feature off,
+            // unsupported arch, or operator opt-out via env var).
             if let Some(log) = ctx.log_sink {
                 let text = format!(
                     "module '{}': seccomp BPF unavailable in this build; Landlock + SEC-1 *at* remain the defense",
@@ -901,8 +924,10 @@ fn process_approved_module(
     // lifecycle phase as the LSM helper above: post-chroot, post-
     // privilege-drop, post-filter-load, pre-client-data. The seccomp
     // helper is a no-op on builds without the `daemon-seccomp` feature so
-    // the call is unconditional. Failures do not abort the connection -
-    // Landlock + SEC-1 `*at` remain the primary defenses.
+    // the call is unconditional. Stdio sessions are skipped because the
+    // process IS the worker (no parent to survive KillProcess). Failures
+    // do not abort the connection - Landlock + SEC-1 `*at` remain the
+    // primary defenses.
     engage_seccomp_sandbox(ctx)?;
 
     let mut streams = match setup_transfer_streams(ctx)? {
