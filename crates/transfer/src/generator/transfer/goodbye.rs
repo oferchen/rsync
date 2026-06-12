@@ -43,6 +43,7 @@ impl GeneratorContext {
     /// - `main.c:225-238` - `write_del_stats()` format
     /// - `generator.c:2376-2381` - early del_stats path
     /// - `generator.c:2420-2425` - late del_stats path
+    #[cfg(test)]
     pub(in crate::generator) fn handle_goodbye<R: Read, W: Write>(
         &mut self,
         reader: &mut R,
