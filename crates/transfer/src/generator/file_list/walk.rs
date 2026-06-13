@@ -518,6 +518,22 @@ impl GeneratorContext {
         path: &Path,
         base: &Path,
     ) -> io::Result<std::fs::Metadata> {
+        // upstream: flist.c:readlink_stat() operates on paths without trailing
+        // separators. On Linux, lstat("path/") follows symlinks because the
+        // kernel resolves the trailing slash, making a symlink appear as its
+        // target directory. Strip trailing separators via Path::components()
+        // so symlink_metadata correctly returns symlink metadata.
+        let normalized: PathBuf;
+        let path = {
+            let bytes = path.as_os_str().as_encoded_bytes();
+            if bytes.len() > 1 && bytes.ends_with(b"/") {
+                normalized = path.components().collect();
+                normalized.as_path()
+            } else {
+                path
+            }
+        };
+
         if self.config.flags.copy_links {
             return std::fs::metadata(path);
         }

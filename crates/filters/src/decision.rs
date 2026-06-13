@@ -32,6 +32,13 @@ impl FilterSetInner {
     ) -> FilterDecision {
         let mut decision = FilterDecision::default();
 
+        // upstream: exclude.c:rule_matches() has NO descendant matching.
+        // Sender-side (Transfer) skips descendants - the walk implicitly
+        // handles them by not descending into excluded directories.
+        // Receiver-side (Deletion) needs descendants because it evaluates
+        // paths individually without traversal context.
+        let check_descendants = matches!(context, DecisionContext::Deletion);
+
         let transfer_rule = match context {
             DecisionContext::Transfer => first_matching_rule(
                 &self.include_exclude,
@@ -39,6 +46,7 @@ impl FilterSetInner {
                 is_dir,
                 |rule| rule.applies_to_sender,
                 true,
+                check_descendants,
             ),
             DecisionContext::Deletion => first_matching_rule(
                 &self.include_exclude,
@@ -46,6 +54,7 @@ impl FilterSetInner {
                 is_dir,
                 |rule| rule.applies_to_receiver,
                 false,
+                check_descendants,
             ),
         };
 
@@ -56,6 +65,7 @@ impl FilterSetInner {
                 is_dir,
                 |rule| rule.applies_to_receiver,
                 true,
+                check_descendants,
             )
         {
             decision.excluded_for_delete_excluded = matches!(rule.action, FilterAction::Exclude);
@@ -79,6 +89,7 @@ impl FilterSetInner {
                 is_dir,
                 |rule| rule.applies_to_sender,
                 true,
+                check_descendants,
             ),
             DecisionContext::Deletion => first_matching_rule(
                 &self.protect_risk,
@@ -86,6 +97,7 @@ impl FilterSetInner {
                 is_dir,
                 |rule| rule.applies_to_receiver,
                 false,
+                check_descendants,
             ),
         };
 
@@ -120,6 +132,7 @@ impl FilterSetInner {
             true,
             |rule| rule.applies_to_sender,
             true,
+            false,
         ) {
             matches!(rule.action, FilterAction::Exclude) && !rule.is_directory_only()
         } else {
@@ -153,12 +166,15 @@ fn first_matching_rule<'a, F>(
     is_dir: bool,
     mut applies: F,
     include_perishable: bool,
+    check_descendants: bool,
 ) -> Option<&'a CompiledRule>
 where
     F: FnMut(&CompiledRule) -> bool,
 {
     rules.iter().find(|rule| {
-        (include_perishable || !rule.perishable) && applies(rule) && rule.matches(path, is_dir)
+        (include_perishable || !rule.perishable)
+            && applies(rule)
+            && rule.matches(path, is_dir, check_descendants)
     })
 }
 
