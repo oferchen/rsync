@@ -18,9 +18,9 @@ use logging::info_log;
 
 use crate::role_trailer::error_location;
 
-use super::super::GeneratorContext;
 use super::super::io_error_flags;
-use super::batch_stat::{StatResult, batch_stat_dir_entries};
+use super::super::GeneratorContext;
+use super::batch_stat::{batch_stat_dir_entries, StatResult};
 
 impl GeneratorContext {
     /// Pre-checks a top-level source entry and walks it if it exists.
@@ -624,7 +624,7 @@ mod symsafe_emission_tests {
     //! when `--copy-unsafe-links` triggers a dereference. The exact line
     //! emitted (per `rprintf(FINFO, ...)`) is matched byte-for-byte so
     //! interop harnesses that grep for the literal continue to find it.
-    use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, info_log, init};
+    use logging::{drain_events, info_log, init, DiagnosticEvent, InfoFlag, VerbosityConfig};
 
     fn init_symsafe_level1() {
         let mut cfg = VerbosityConfig::default();
