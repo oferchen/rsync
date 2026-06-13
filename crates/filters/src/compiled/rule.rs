@@ -35,8 +35,16 @@ impl CompiledRule {
     /// When `negate` is true, the match result is inverted: returns true when
     /// the pattern does NOT match. This mirrors upstream rsync's `!` modifier
     /// behavior from `exclude.c` line 906.
-    pub(crate) fn matches(&self, path: &Path, is_dir: bool) -> bool {
-        let pattern_matched = self.pattern_matches_impl(path, is_dir);
+    /// Tests whether a path matches this rule's pattern.
+    ///
+    /// When `check_descendants` is false, only direct matchers are evaluated -
+    /// descendant matchers are skipped. This matches upstream rsync's
+    /// `rule_matches()` in exclude.c which has NO descendant matching at all;
+    /// descendant exclusion is a side-effect of the sender walk not descending
+    /// into excluded directories. The receiver deletion path needs descendants
+    /// because it evaluates paths individually without traversal context.
+    pub(crate) fn matches(&self, path: &Path, is_dir: bool, check_descendants: bool) -> bool {
+        let pattern_matched = self.pattern_matches_impl(path, is_dir, check_descendants);
 
         // upstream: exclude.c:906 - ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1
         if self.negate {
@@ -54,7 +62,7 @@ impl CompiledRule {
     }
 
     /// Internal pattern matching without negate logic.
-    fn pattern_matches_impl(&self, path: &Path, is_dir: bool) -> bool {
+    fn pattern_matches_impl(&self, path: &Path, is_dir: bool, check_descendants: bool) -> bool {
         for matcher in &self.direct_matchers {
             if matcher.is_match(path) && (!self.directory_only || is_dir) {
                 debug_log!(Filter, 2, "direct pattern matched: {:?}", path);
@@ -62,7 +70,12 @@ impl CompiledRule {
             }
         }
 
-        if !self.descendant_matchers.is_empty() {
+        // upstream: exclude.c:rule_matches() has no descendant matching.
+        // Sender-side (Transfer context) skips descendants because the walk
+        // implicitly handles them by not descending into excluded directories.
+        // Receiver-side (Deletion context) needs descendants because it
+        // evaluates paths individually without traversal.
+        if check_descendants && !self.descendant_matchers.is_empty() {
             for matcher in &self.descendant_matchers {
                 if matcher.is_match(path) {
                     debug_log!(Filter, 2, "descendant pattern matched: {:?}", path);
@@ -128,9 +141,9 @@ mod tests {
             no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
-        assert!(compiled.matches(Path::new("file.bak"), false));
-        assert!(compiled.matches(Path::new("dir/file.bak"), false));
-        assert!(!compiled.matches(Path::new("file.txt"), false));
+        assert!(compiled.matches(Path::new("file.bak"), false, true));
+        assert!(compiled.matches(Path::new("dir/file.bak"), false, true));
+        assert!(!compiled.matches(Path::new("file.txt"), false, true));
     }
 
     #[test]
@@ -147,8 +160,8 @@ mod tests {
             no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
-        assert!(compiled.matches(Path::new("build"), false));
-        assert!(!compiled.matches(Path::new("src/build"), false));
+        assert!(compiled.matches(Path::new("build"), false, true));
+        assert!(!compiled.matches(Path::new("src/build"), false, true));
     }
 
     #[test]
@@ -165,8 +178,8 @@ mod tests {
             no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
-        assert!(compiled.matches(Path::new("node_modules"), true));
-        assert!(!compiled.matches(Path::new("node_modules"), false));
+        assert!(compiled.matches(Path::new("node_modules"), true, true));
+        assert!(!compiled.matches(Path::new("node_modules"), false, true));
     }
 
     #[test]
@@ -183,9 +196,9 @@ mod tests {
             no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
-        assert!(compiled.matches(Path::new("build"), true));
-        assert!(compiled.matches(Path::new("build/output.o"), false));
-        assert!(compiled.matches(Path::new("build/subdir/file.txt"), false));
+        assert!(compiled.matches(Path::new("build"), true, true));
+        assert!(compiled.matches(Path::new("build/output.o"), false, true));
+        assert!(compiled.matches(Path::new("build/subdir/file.txt"), false, true));
     }
 
     #[test]
@@ -203,7 +216,7 @@ mod tests {
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Protect);
-        assert!(compiled.matches(Path::new("important.dat"), false));
+        assert!(compiled.matches(Path::new("important.dat"), false, true));
     }
 
     #[test]
@@ -238,7 +251,7 @@ mod tests {
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Include);
-        assert!(compiled.matches(Path::new("readme.txt"), false));
+        assert!(compiled.matches(Path::new("readme.txt"), false, true));
     }
 
     #[test]
@@ -255,8 +268,8 @@ mod tests {
             no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
-        assert!(compiled.matches(Path::new("build/main.o"), false));
-        assert!(compiled.matches(Path::new("src/lib/util.o"), false));
+        assert!(compiled.matches(Path::new("build/main.o"), false, true));
+        assert!(compiled.matches(Path::new("src/lib/util.o"), false, true));
     }
 
     /// Verifies `--exclude='/*'` matches root-level items but NOT nested paths.
@@ -281,13 +294,13 @@ mod tests {
         let compiled = CompiledRule::new(rule).unwrap();
 
         // Root-level items match the anchored `*` pattern.
-        assert!(compiled.matches(Path::new("file.txt"), false));
-        assert!(compiled.matches(Path::new("down"), true));
+        assert!(compiled.matches(Path::new("file.txt"), false, true));
+        assert!(compiled.matches(Path::new("down"), true, true));
 
         // Nested paths must NOT match - this was the bug in #5421 where
         // descendant matchers (`*/**`) incorrectly matched any nested path.
-        assert!(!compiled.matches(Path::new("down/file.txt"), false));
-        assert!(!compiled.matches(Path::new("down/sub/deep.txt"), false));
+        assert!(!compiled.matches(Path::new("down/file.txt"), false, true));
+        assert!(!compiled.matches(Path::new("down/sub/deep.txt"), false, true));
     }
 
     /// Verifies `--exclude=/build` matches the directory and its descendants.
@@ -310,9 +323,9 @@ mod tests {
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
-        assert!(compiled.matches(Path::new("build"), false));
-        assert!(compiled.matches(Path::new("build/output.o"), false));
-        assert!(!compiled.matches(Path::new("src/build"), false));
+        assert!(compiled.matches(Path::new("build"), false, true));
+        assert!(compiled.matches(Path::new("build/output.o"), false, true));
+        assert!(!compiled.matches(Path::new("src/build"), false, true));
     }
 
     #[test]
@@ -329,8 +342,8 @@ mod tests {
             no_inherit: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
-        assert!(compiled.matches(Path::new("file.txt"), false));
-        assert!(!compiled.matches(Path::new("file.log"), false));
+        assert!(compiled.matches(Path::new("file.txt"), false, true));
+        assert!(!compiled.matches(Path::new("file.log"), false, true));
 
         let rule_negated = FilterRule {
             action: FilterAction::Exclude,
@@ -344,8 +357,8 @@ mod tests {
             no_inherit: false,
         };
         let compiled_negated = CompiledRule::new(rule_negated).unwrap();
-        assert!(!compiled_negated.matches(Path::new("file.txt"), false));
-        assert!(compiled_negated.matches(Path::new("file.log"), false));
+        assert!(!compiled_negated.matches(Path::new("file.txt"), false, true));
+        assert!(compiled_negated.matches(Path::new("file.log"), false, true));
     }
 
     #[test]
@@ -363,11 +376,11 @@ mod tests {
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
-        assert!(!compiled.matches(Path::new("cache"), true));
-        assert!(compiled.matches(Path::new("build"), true));
+        assert!(!compiled.matches(Path::new("cache"), true, true));
+        assert!(compiled.matches(Path::new("build"), true, true));
         // directory_only means a file named "cache" never matches the pattern,
         // so the negated rule returns true for it.
-        assert!(compiled.matches(Path::new("cache"), false));
+        assert!(compiled.matches(Path::new("cache"), false, true));
     }
 
     #[test]
@@ -385,10 +398,10 @@ mod tests {
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
-        assert!(!compiled.matches(Path::new("important"), false));
-        assert!(compiled.matches(Path::new("other"), false));
+        assert!(!compiled.matches(Path::new("important"), false, true));
+        assert!(compiled.matches(Path::new("other"), false, true));
         // Anchored pattern does not match a nested path, so negation gives true.
-        assert!(compiled.matches(Path::new("dir/important"), false));
+        assert!(compiled.matches(Path::new("dir/important"), false, true));
     }
 
     /// Verifies `--include '*/'` matches directories but NOT files inside them.
@@ -410,14 +423,14 @@ mod tests {
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
-        assert!(compiled.matches(Path::new("subdir"), true));
-        assert!(compiled.matches(Path::new("deep/nested"), true));
+        assert!(compiled.matches(Path::new("subdir"), true, true));
+        assert!(compiled.matches(Path::new("deep/nested"), true, true));
 
         // Files inside matched directories still need their own rules to match;
         // an include of `*/` alone does not pull file descendants in.
-        assert!(!compiled.matches(Path::new("file.txt"), false));
-        assert!(!compiled.matches(Path::new("subdir/debug.log"), false));
-        assert!(!compiled.matches(Path::new("subdir/report.csv"), false));
+        assert!(!compiled.matches(Path::new("file.txt"), false, true));
+        assert!(!compiled.matches(Path::new("subdir/debug.log"), false, true));
+        assert!(!compiled.matches(Path::new("subdir/report.csv"), false, true));
     }
 
     /// Verifies that an `exclude = ?` daemon-config rule does not block
@@ -443,11 +456,11 @@ mod tests {
         let compiled = CompiledRule::new(rule).unwrap();
 
         // The bare ? glob matches single-character names only.
-        assert!(compiled.matches(Path::new("a"), false));
+        assert!(compiled.matches(Path::new("a"), false, true));
         // Multi-character names must not match either at the root or at depth.
-        assert!(!compiled.matches(Path::new("delete.txt"), false));
-        assert!(!compiled.matches(Path::new("keep.txt"), false));
-        assert!(!compiled.matches(Path::new("subdir/delete.txt"), false));
+        assert!(!compiled.matches(Path::new("delete.txt"), false, true));
+        assert!(!compiled.matches(Path::new("keep.txt"), false, true));
+        assert!(!compiled.matches(Path::new("subdir/delete.txt"), false, true));
     }
 
     /// upstream: exclude.c:936-937 - `FILTRULE_WILD3_SUFFIX` causes `dir/***`
@@ -470,14 +483,49 @@ mod tests {
         let compiled = CompiledRule::new(rule).unwrap();
 
         // The directory itself is excluded (directory-only match on stem).
-        assert!(compiled.matches(Path::new("new/lose"), true));
+        assert!(compiled.matches(Path::new("new/lose"), true, true));
         // Contents are excluded via descendant matchers.
-        assert!(compiled.matches(Path::new("new/lose/this"), false));
-        assert!(compiled.matches(Path::new("new/lose/this"), true));
+        assert!(compiled.matches(Path::new("new/lose/this"), false, true));
+        assert!(compiled.matches(Path::new("new/lose/this"), true, true));
         // A file named "new/lose" is NOT excluded (directory-only).
-        assert!(!compiled.matches(Path::new("new/lose"), false));
+        assert!(!compiled.matches(Path::new("new/lose"), false, true));
         // Sibling entries are not affected.
-        assert!(!compiled.matches(Path::new("new/keep"), true));
+        assert!(!compiled.matches(Path::new("new/keep"), true, true));
+    }
+
+    /// Anchored literal exclude `/bar` generates descendant pattern `bar/**`.
+    /// With `check_descendants = false` (Transfer/sender context), children
+    /// like `bar/.filt` must NOT match - matching upstream rsync's
+    /// `rule_matches()` in exclude.c which has no descendant matching.
+    /// With `check_descendants = true` (Deletion/receiver context), children
+    /// do match via the descendant pattern.
+    #[test]
+    fn check_descendants_false_skips_descendant_matchers() {
+        let rule = FilterRule {
+            action: FilterAction::Exclude,
+            pattern: "/bar".to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: false,
+            exclude_only: false,
+            no_inherit: false,
+        };
+        let compiled = CompiledRule::new(rule).unwrap();
+
+        // The directory itself matches via direct matcher in both contexts.
+        assert!(compiled.matches(Path::new("bar"), true, true));
+        assert!(compiled.matches(Path::new("bar"), true, false));
+
+        // Descendant `bar/.filt` matches only when check_descendants = true
+        // (Deletion/receiver context).
+        assert!(compiled.matches(Path::new("bar/.filt"), false, true));
+
+        // With check_descendants = false (Transfer/sender context), the
+        // descendant pattern `bar/**` is skipped - upstream parity.
+        assert!(!compiled.matches(Path::new("bar/.filt"), false, false));
+        assert!(!compiled.matches(Path::new("bar/subdir/file"), false, false));
     }
 
     /// `dir/**` (double star without trailing `*`) should exclude contents
@@ -498,9 +546,9 @@ mod tests {
         let compiled = CompiledRule::new(rule).unwrap();
 
         // The directory entry itself is NOT excluded.
-        assert!(!compiled.matches(Path::new("new/keep"), true));
+        assert!(!compiled.matches(Path::new("new/keep"), true, true));
         // Contents are excluded.
-        assert!(compiled.matches(Path::new("new/keep/this"), false));
-        assert!(compiled.matches(Path::new("new/keep/this"), true));
+        assert!(compiled.matches(Path::new("new/keep/this"), false, true));
+        assert!(compiled.matches(Path::new("new/keep/this"), true, true));
     }
 }
