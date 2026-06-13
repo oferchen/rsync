@@ -123,16 +123,10 @@ struct PreXferOutput {
 }
 
 /// Error from a failed pre-xfer exec invocation.
-///
-/// Carries both the error message (for the `@ERROR` response) and any captured
-/// stdout (to relay to the client before the error).
 #[derive(Debug)]
 struct PreXferError {
     /// Human-readable error description including exit code and module name.
     message: String,
-    /// Captured stdout from the script, trimmed. Sent to the client before the
-    /// `@ERROR` line, matching upstream behaviour.
-    stdout: String,
 }
 
 /// Runs the pre-xfer exec command for a daemon module.
@@ -204,7 +198,7 @@ fn run_pre_xfer_exec(
             )
         };
 
-        Ok(Err(PreXferError { message, stdout }))
+        Ok(Err(PreXferError { message }))
     }
 }
 
@@ -604,12 +598,11 @@ mod xfer_exec_tests {
 
     #[cfg(unix)]
     #[test]
-    fn run_pre_xfer_exec_captures_stdout_on_failure() {
+    fn run_pre_xfer_exec_captures_message_on_failure() {
         let ctx = test_context();
         let result = run_pre_xfer_exec("echo 'pre-xfer info'; exit 1", &ctx, None)
             .expect("command should run");
         let err = result.unwrap_err();
-        assert_eq!(err.stdout, "pre-xfer info");
         assert!(err.message.contains("pre-xfer exec returned"));
     }
 

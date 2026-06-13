@@ -22,6 +22,8 @@
 fn apply_privilege_restrictions_with_upstream_errors(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
+    negotiated_protocol: Option<ProtocolVersion>,
+    client_args: &[String],
 ) -> io::Result<bool> {
     let needs_chroot = module.use_chroot;
     let needs_privdrop = module.uid.is_some() || module.gid.is_some();
@@ -51,15 +53,13 @@ fn apply_privilege_restrictions_with_upstream_errors(
             } else {
                 CHROOT_FAILED_PAYLOAD
             };
-            send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, payload)?;
+            handle_post_ok_error(ctx, payload, negotiated_protocol, client_args)?;
             return Ok(false);
         }
     }
 
     if needs_privdrop {
         if let Err(err) = drop_privileges(module.uid, module.gid, log_sink) {
-            // Distinguish upstream error messages based on the error text.
-            // upstream: clientserver.c:1010/1017/1039
             let text = err.to_string();
             let payload = if text.contains("setgroups") {
                 SETGROUPS_FAILED_PAYLOAD
@@ -68,7 +68,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
             } else {
                 SETGID_FAILED_PAYLOAD
             };
-            send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, payload)?;
+            handle_post_ok_error(ctx, payload, negotiated_protocol, client_args)?;
             return Ok(false);
         }
     }
@@ -82,6 +82,8 @@ fn apply_privilege_restrictions_with_upstream_errors(
 fn validate_module_path(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
+    negotiated_protocol: Option<ProtocolVersion>,
+    client_args: &[String],
 ) -> io::Result<bool> {
     if Path::new(&module.path).exists() {
         return Ok(true);
@@ -92,7 +94,7 @@ fn validate_module_path(
         sanitize_module_identifier(ctx.request),
         module.path.display()
     );
-    send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+    handle_post_ok_error(ctx, &payload, negotiated_protocol, client_args)?;
 
     if let Some(log) = ctx.log_sink {
         let text = format!(
@@ -173,6 +175,7 @@ fn validate_client_paths_in_module(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
     client_args: &[String],
+    negotiated_protocol: Option<ProtocolVersion>,
 ) -> io::Result<Option<ValidatedClientPaths>> {
     let Ok(module_root) = module.path.canonicalize() else {
         // Module path failed to canonicalize - the existence check above
@@ -229,7 +232,7 @@ fn validate_client_paths_in_module(
         }
 
         let payload = format!("@ERROR: {flag} path '{raw_path}' is outside module root");
-        send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+        handle_post_ok_error(ctx, &payload, negotiated_protocol, client_args)?;
         if let Some(log) = ctx.log_sink {
             let text = format!(
                 "module '{}': rejected {flag}='{raw_path}' from {} ({}) - outside module root '{}'",
@@ -785,31 +788,31 @@ fn process_approved_module(
     }
 
     // Enforce read-only / write-only access restrictions.
-    // upstream: clientserver.c:rsync_module() - after reading args, check
-    // am_sender against lp_read_only(i) and lp_write_only(i).
-    // When --sender is absent the client is pushing (server = Receiver).
-    // A read-only module must reject pushes; a write-only module must reject pulls.
+    // upstream: main.c:1148-1151 - the read-only check runs inside
+    // server_recv() which is reached AFTER setup_protocol() and
+    // io_start_multiplex_out(). Errors therefore travel as MSG_ERROR_XFER
+    // frames, not raw @ERROR text. We must mirror that here because
+    // @RSYNCD: OK has already been sent and the client has switched its
+    // input to the multiplex stream.
     let role = determine_server_role(&client_args);
     if module.read_only && matches!(role, ServerRole::Receiver) {
-        send_error_and_exit(
-            ctx.reader.get_mut(),
-            ctx.limiter,
-            ctx.messages,
+        return handle_post_ok_error(
+            ctx,
             MODULE_READ_ONLY_PAYLOAD,
-        )?;
-        return Ok(());
+            negotiated_protocol,
+            &client_args,
+        );
     }
     if module.write_only && matches!(role, ServerRole::Generator) {
-        send_error_and_exit(
-            ctx.reader.get_mut(),
-            ctx.limiter,
-            ctx.messages,
+        return handle_post_ok_error(
+            ctx,
             MODULE_WRITE_ONLY_PAYLOAD,
-        )?;
-        return Ok(());
+            negotiated_protocol,
+            &client_args,
+        );
     }
 
-    if !validate_module_path(ctx, module)? {
+    if !validate_module_path(ctx, module, negotiated_protocol, &client_args)? {
         return Ok(());
     }
 
@@ -821,7 +824,8 @@ fn process_approved_module(
     // from the kernel. The accepted in-module paths are carried forward
     // and fed to `engage_landlock_sandbox` so the kernel allowlist matches
     // the full set the receiver will actually touch (URV-5.b.REOPEN).
-    let Some(validated_client_paths) = validate_client_paths_in_module(ctx, module, &client_args)?
+    let Some(validated_client_paths) =
+        validate_client_paths_in_module(ctx, module, &client_args, negotiated_protocol)?
     else {
         return Ok(());
     };
@@ -833,7 +837,12 @@ fn process_approved_module(
     // after auth and arg reading but before the transfer starts.
     // Split into separate steps so each failure sends the correct upstream
     // error message: `@ERROR: chroot failed` vs `@ERROR: setuid failed` etc.
-    if !apply_privilege_restrictions_with_upstream_errors(ctx, module)? {
+    if !apply_privilege_restrictions_with_upstream_errors(
+        ctx,
+        module,
+        negotiated_protocol,
+        &client_args,
+    )? {
         return Ok(());
     }
 
@@ -854,8 +863,12 @@ fn process_approved_module(
             Ok(nc) => Some(install_name_converter(nc)),
             Err(err) => {
                 let payload = format!("@ERROR: name-converter exec failed: {err}");
-                send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
-                return Ok(());
+                return handle_post_ok_error(
+                    ctx,
+                    &payload,
+                    negotiated_protocol,
+                    &client_args,
+                );
             }
         }
     } else {
@@ -887,8 +900,12 @@ fn process_approved_module(
         Ok(rules) => config.daemon_filter_rules = rules,
         Err(err) => {
             let payload = format!("@ERROR: failed to load module filter rules: {err}");
-            send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
-            return Ok(());
+            return handle_post_ok_error(
+                ctx,
+                &payload,
+                negotiated_protocol,
+                &client_args,
+            );
         }
     }
 
@@ -990,19 +1007,17 @@ fn process_approved_module(
                 }
             }
             Ok(Err(err)) => {
-                // upstream: clientserver.c - stdout from the script is sent to the
-                // client before the @ERROR line.
-                if !err.stdout.is_empty() {
-                    write_limited(ctx.reader.get_mut(), ctx.limiter, err.stdout.as_bytes())?;
-                    write_limited(ctx.reader.get_mut(), ctx.limiter, b"\n")?;
-                }
                 let payload = format!("@ERROR: {}", err.message);
-                send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
                 if let Some(log) = ctx.log_sink {
                     let message = rsync_error!(1, err.message).with_role(Role::Daemon);
                     log_message(log, &message);
                 }
-                return Ok(());
+                return handle_post_ok_error(
+                    ctx,
+                    &payload,
+                    negotiated_protocol,
+                    &client_args,
+                );
             }
             Err(io_err) => {
                 let error_msg = format!(
@@ -1010,12 +1025,16 @@ fn process_approved_module(
                     ctx.request
                 );
                 let payload = format!("@ERROR: {error_msg}");
-                send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
                 if let Some(log) = ctx.log_sink {
                     let message = rsync_error!(1, error_msg).with_role(Role::Daemon);
                     log_message(log, &message);
                 }
-                return Ok(());
+                return handle_post_ok_error(
+                    ctx,
+                    &payload,
+                    negotiated_protocol,
+                    &client_args,
+                );
             }
         }
     }

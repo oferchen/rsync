@@ -238,6 +238,35 @@ fn handle_refused_option_post_handshake(
     Ok(())
 }
 
+/// Delivers a fatal error to the client after `@RSYNCD: OK` and client args
+/// have been exchanged, using the multiplexed wire format.
+///
+/// After `@RSYNCD: OK` the client switches its input to the multiplex stream,
+/// so any error must be preceded by the post-OK protocol setup (compat-flags
+/// varint + checksum seed) and then framed as `MSG_ERROR_XFER` +
+/// `MSG_ERROR_EXIT`. Sending raw `@ERROR:` text here surfaces as
+/// `unexpected tag 72` on the receiver (see `handle_refused_option_post_handshake`
+/// for the detailed explanation).
+///
+/// upstream: clientserver.c:1130-1156 - ALL post-OK errors (refused options,
+/// read-only violations, pre-xfer exec failures, chroot errors) go through
+/// the same `setup_protocol() + io_start_multiplex_out() + rwrite(FERROR)`
+/// pipeline. Individual error paths must not bypass this with raw writes.
+fn handle_post_ok_error(
+    ctx: &mut ModuleRequestContext<'_>,
+    payload: &str,
+    protocol_version: Option<ProtocolVersion>,
+    client_args: &[String],
+) -> io::Result<()> {
+    finalize_post_ok_protocol_for_error(ctx, protocol_version, client_args)?;
+    send_multiplexed_error_and_exit(
+        ctx.reader.get_mut(),
+        ctx.limiter,
+        payload,
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+    )
+}
+
 /// Mirrors the prefix of upstream's `setup_protocol(f_out, f_in)` that the
 /// daemon writes before turning on `io_start_multiplex_out()` for an error
 /// it needs to deliver after `@RSYNCD: OK`.
