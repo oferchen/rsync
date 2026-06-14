@@ -15,7 +15,12 @@ use crate::client::config::{ClientConfig, IconvSetting, TransferTimeout};
 fn builds_receiver_invocation_with_sender_flag() {
     // Pull: local is receiver -> remote needs --sender (upstream options.c:2598).
     // upstream: options.c:2710 - capability string is embedded in the compact
-    // flag string, producing one argument like `-re.iLsfxCIvu`.
+    // flag string, producing one argument like `-re.LsfxCIvu`.
+    // The local Receiver does not advertise 'i' because oc-rsync's receiver
+    // path strips CF_INC_RECURSE from compat_flags (lib.rs::compute_allow_inc_recurse).
+    // Advertising 'i' would cause the remote sender to emit NDX_FLIST_EOF that
+    // the receiver never consumes, leaving 0xFF bytes that trip read_varint
+    // overflow on the next decode.
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
     let args = builder.build("/remote/path");
@@ -25,7 +30,7 @@ fn builds_receiver_invocation_with_sender_flag() {
     assert_eq!(args[2], "--sender");
     let flags = args[3].to_string_lossy();
     assert!(flags.starts_with('-'), "flags should start with -: {flags}");
-    let expected_suffix = build_capability_string_suffix(true);
+    let expected_suffix = build_capability_string_suffix(false);
     assert!(
         flags.contains(&expected_suffix),
         "capability suffix '{expected_suffix}' must be embedded in flag string: {flags}"
@@ -102,10 +107,16 @@ fn ssh_sender_omits_inc_recurse_when_no_inc_recursive_set() {
 }
 
 #[test]
-fn ssh_receiver_includes_inc_recurse_capability_by_default() {
-    // ISI.h: sender-side INC_RECURSE is default-on, matching upstream rsync
-    // 3.4.x. Pull transfers also include the 'i' capability bit by default.
-    // upstream: capability string is embedded in the compact flag string.
+fn ssh_receiver_omits_inc_recurse_capability_by_default() {
+    // The local Receiver never advertises 'i' because its receive path
+    // strips CF_INC_RECURSE from compat_flags (lib.rs::compute_allow_inc_recurse).
+    // Advertising it would cause the remote sender to write the file list
+    // in INC_RECURSE format (trailing NDX_FLIST_EOF), the receiver would
+    // skip `receive_extra_file_lists`, and the leftover 0xFF byte would
+    // trip read_varint overflow on the next decode.
+    //
+    // upstream: compat.c:162-181 set_allow_inc_recurse() ties 'i' to the
+    // local side's actual ability to honor CF_INC_RECURSE.
     let config = ClientConfig::builder().build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
     let args = builder.build("/remote/path");
@@ -118,8 +129,8 @@ fn ssh_receiver_includes_inc_recurse_capability_by_default() {
     );
     let caps_portion = flag_str.split("e.").nth(1).expect("e. separator");
     assert!(
-        caps_portion.contains('i'),
-        "default receiver capability string must include 'i': {flag_str}"
+        !caps_portion.contains('i'),
+        "receiver capability string must omit 'i' to avoid INC_RECURSE wire desync: {flag_str}"
     );
 }
 
@@ -1766,9 +1777,12 @@ fn capability_string_embedded_in_sender_flag_string() {
 fn capability_string_embedded_in_receiver_flag_string() {
     // upstream: options.c:2710 - capability suffix is embedded in the compact
     // flag string, not sent as a separate argument.
+    // The local Receiver omits 'i' from its advertised capability because
+    // its receive path strips CF_INC_RECURSE from compat_flags. See
+    // builds_receiver_invocation_with_sender_flag for the rationale.
     let config = ClientConfig::builder().build();
     let args = build_receiver_args(&config);
-    let expected_suffix = build_capability_string_suffix(true);
+    let expected_suffix = build_capability_string_suffix(false);
     let flag_str = find_flag_string(&args);
     assert!(
         flag_str.ends_with(&expected_suffix),

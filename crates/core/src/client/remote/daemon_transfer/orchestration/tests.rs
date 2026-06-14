@@ -153,10 +153,20 @@ mod protect_args_daemon_tests {
     }
 
     #[test]
-    fn build_full_args_pull_includes_inc_recurse_capability_by_default() {
-        // ISI.h: sender-side INC_RECURSE is default-on, matching upstream
-        // rsync 3.4.x. The daemon pull capability includes 'i' by default.
-        // upstream: capability string is embedded in the compact flag string.
+    fn build_full_args_pull_omits_inc_recurse_capability_to_match_receiver_role() {
+        // Pull means the daemon is sender; the local client side is the
+        // receiver. oc-rsync's receiver path strips CF_INC_RECURSE from
+        // compat_flags (lib.rs::compute_allow_inc_recurse) but does not
+        // tell the peer. Advertising 'i' would cause the remote sender to
+        // write the file list in INC_RECURSE format (trailing NDX_FLIST_EOF),
+        // the receiver would skip `receive_extra_file_lists`, and the
+        // leftover 0xFF byte would trip read_varint overflow on the next
+        // decode.
+        //
+        // upstream: compat.c:162-181 set_allow_inc_recurse(),
+        // options.c:3036 maybe_add_e_option() - 'i' is gated on
+        // allow_inc_recurse which reflects the local side's actual ability
+        // to honor CF_INC_RECURSE.
         let protocol = ProtocolVersion::try_from(32u8).unwrap();
         let request = test_daemon_request();
 
@@ -168,8 +178,8 @@ mod protect_args_daemon_tests {
             .nth(1)
             .expect("capability suffix present");
         assert!(
-            caps_default.contains('i'),
-            "default pull capability must include 'i': {flags_default}"
+            !caps_default.contains('i'),
+            "pull (daemon-is-sender) must omit 'i' to avoid INC_RECURSE wire desync: {flags_default}"
         );
 
         let config_off = ClientConfig::builder().inc_recursive_send(false).build();
