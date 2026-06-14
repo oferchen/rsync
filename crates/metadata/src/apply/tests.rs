@@ -143,9 +143,45 @@ fn file_executability_can_be_preserved_without_other_bits() {
     )
     .expect("apply metadata");
 
+    // upstream: rsync.c:457-465 - source has exec bits and dest has none,
+    // so dest gets exec granted to whoever can already read: 0o620 has
+    // owner-read so owner-exec is added, group has only write, other has
+    // nothing. Result is 0o720, not 0o731 / 0o751.
     let mode = current_mode(&dest) & 0o777;
-    assert_eq!(mode & 0o111, 0o751 & 0o111);
-    assert_eq!(mode & 0o666, 0o620);
+    assert_eq!(mode, 0o720);
+}
+
+#[cfg(unix)]
+#[test]
+fn file_executability_matches_upstream_dest_mode_fixture() {
+    // upstream testsuite/executability.test (rsync 3.4.4) check_perms 3:
+    // source mode 0o601, dest mode 0o604, expected 0o705 after `-E`.
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source-2");
+    let dest = temp.path().join("dest-2");
+
+    fs::write(&source, b"#!/bin/sh\necho Program Two!\n").expect("write source");
+    fs::write(&dest, b"#!/bin/sh\necho Program Two!\n").expect("write dest");
+
+    fs::set_permissions(&source, PermissionsExt::from_mode(0o601)).expect("set source perms");
+    fs::set_permissions(&dest, PermissionsExt::from_mode(0o604)).expect("set dest perms");
+
+    let metadata = fs::metadata(&source).expect("metadata");
+
+    apply_file_metadata_with_options(
+        &dest,
+        &metadata,
+        &MetadataOptions::new()
+            .preserve_permissions(false)
+            .preserve_executability(true)
+            .preserve_times(false),
+    )
+    .expect("apply metadata");
+
+    let mode = current_mode(&dest) & 0o777;
+    assert_eq!(mode, 0o705, "expected 0o705 per upstream rsync.c:457-465");
 }
 
 #[test]
