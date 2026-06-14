@@ -173,6 +173,46 @@ impl DualFileList {
         self.legacy
     }
 
+    /// Sort the file list using upstream `f_name_cmp` ordering and apply the
+    /// resulting permutation to `parallel` in lockstep so caller-owned arrays
+    /// (e.g. the generator's `full_paths`) stay aligned with the sorted list.
+    ///
+    /// `use_qsort` selects the unstable sort matching upstream `--qsort`. When
+    /// `false`, the stable sort matches upstream's default behaviour. Both
+    /// invariants are preserved from the prior external sort site that called
+    /// [`apply_permutation_in_place`](super::sort::apply_permutation_in_place)
+    /// directly on the legacy Vec.
+    ///
+    /// Sorts only the legacy [`Vec<FileEntry>`]; the shadow [`FlatFileList`]
+    /// stays unsorted because no production read path consumes it yet. Once
+    /// consumers migrate to the flat representation, this method will also
+    /// reorder the flat headers in lockstep.
+    ///
+    /// # Panics
+    ///
+    /// Panics in debug builds when `parallel.len() != self.len()`.
+    ///
+    /// upstream: flist.c:f_name_cmp() with indirect permutation
+    pub fn sort_with_parallel<P>(&mut self, parallel: &mut [P], use_qsort: bool) {
+        let n = self.legacy.len();
+        if n == 0 {
+            return;
+        }
+        debug_assert_eq!(parallel.len(), n);
+
+        let mut indices: Vec<usize> = (0..n).collect();
+        let cmp = |&a: &usize, &b: &usize| {
+            super::sort::compare_file_entries(&self.legacy[a], &self.legacy[b])
+        };
+        if use_qsort {
+            indices.sort_unstable_by(cmp);
+        } else {
+            indices.sort_by(cmp);
+        }
+
+        super::sort::apply_permutation_in_place(&mut self.legacy, parallel, indices);
+    }
+
     /// Reclaims heap data from entries in the range `[start..end)`.
     ///
     /// Calls [`FileEntry::reclaim_heap_data`] on each entry in the range,
