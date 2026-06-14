@@ -55,7 +55,7 @@ ensure_oc_rsync() {
         return
     fi
     echo "==> Building oc-rsync (release)..." >&2
-    (cd "$workspace_root" && cargo build --release --bin oc-rsync)
+    (cd "$workspace_root" && cargo build --locked --release --bin oc-rsync)
 }
 
 ensure_upstream_src() {
