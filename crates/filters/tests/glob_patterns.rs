@@ -370,17 +370,25 @@ fn anchored_matches_only_root() {
     assert!(set.allows(Path::new("a/target"), false)); // Not at root
 }
 
-/// Verifies pattern with internal slash matches path segment.
+/// Verifies pattern with internal slash but no leading `/` is unanchored
+/// and tail-matches the last N+1 path components.
+///
+/// upstream: exclude.c:rule_matches() lines 947-951 - "A non-anchored
+/// match with an infix slash and no `**` needs to match the last
+/// slash_cnt+1 name elements." So `build/output` matches both root-level
+/// `build/output` AND any nested path whose last two components are
+/// `build, output`.
 #[test]
 fn internal_slash_matches_segment() {
     let set = FilterSet::from_rules([FilterRule::exclude("build/output")]).unwrap();
 
-    // Pattern with internal / is anchored, so matches only at root
+    // Root match: matches both at root...
     assert!(!set.allows(Path::new("build/output"), false));
-    // Not matched in nested paths (anchored pattern)
-    assert!(set.allows(Path::new("project/build/output"), false));
+    // ...and nested via tail-match on the trailing `build/output` suffix.
+    assert!(!set.allows(Path::new("project/build/output"), false));
 
-    // Does not match different path
+    // A different leading component still matches because tail-match
+    // pivots on the trailing two components, not the parent path.
     assert!(set.allows(Path::new("src/output"), false));
 }
 
