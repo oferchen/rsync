@@ -2136,26 +2136,31 @@ mod module_access_tests {
     #[test]
     fn resolve_sender_sources_returns_module_root_without_positional() {
         // upstream: clientserver.c:1073 - bare module request (no sub-path)
-        // means the sender walks the module root directly. Pre-fix behaviour
-        // must be preserved exactly to avoid regressing the existing pull
-        // tests that target `rsync://h/module/`.
+        // means the sender walks the module root directly. The trailing `/`
+        // signals "transfer the module contents" so the engine's
+        // non_relative_walk_base keeps base == path and the walk emits a
+        // `.` entry with FLAG_TOP_DIR (upstream `flist.c:2312-2322`
+        // `DOTDIR_NAME` branch). Without the trailing slash, the engine
+        // would split on the last `/` and emit `upload`/`upload/...`
+        // instead of `./...`.
         let module_path = std::path::Path::new("/srv/upload");
         let args: Vec<String> = vec![];
         let sources = resolve_sender_sources(module_path, &args, "upload")
             .expect("bare module request must resolve");
-        assert_eq!(sources, vec![std::path::PathBuf::from("/srv/upload")]);
+        assert_eq!(sources, vec![std::path::PathBuf::from("/srv/upload/")]);
     }
 
     #[test]
     fn resolve_sender_sources_returns_module_root_for_empty_subpath() {
         // upstream: util1.c:813-814 - `module/` strips to "" after
         // glob_expand_module; the daemon sender should still walk the module
-        // root and emit "." with FLAG_TOP_DIR.
+        // root and emit "." with FLAG_TOP_DIR. The trailing slash is the
+        // engine-side `DOTDIR_NAME` signal (see the bare-module test).
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/".to_owned()];
         let sources = resolve_sender_sources(module_path, &args, "upload")
             .expect("empty sub-path must resolve");
-        assert_eq!(sources, vec![std::path::PathBuf::from("/srv/upload")]);
+        assert_eq!(sources, vec![std::path::PathBuf::from("/srv/upload/")]);
     }
 
     #[test]
@@ -2216,6 +2221,105 @@ mod module_access_tests {
             sources,
             vec![std::path::PathBuf::from("/srv/upload/d1/d2/f2")]
         );
+    }
+
+    // Glob expansion - upstream util1.c:804 glob_expand_module + util1.c:755
+    // glob_expand. These tests cover the regression that surfaced as the
+    // upstream `daemon` testsuite hanging on subtest 4 (`test-from/f*`):
+    // without glob expansion the daemon walked a literal `<mod>/f*` that
+    // did not exist, shipped an empty file list, and wire-deadlocked.
+
+    #[test]
+    fn resolve_sender_sources_glob_expands_module_relative_pattern() {
+        // Recreate the upstream `daemon` testsuite layout: a module dir
+        // with `foo/` and `bar/` subdirs. `test-from/f*` must expand to
+        // `<mod>/foo` and leave `bar` alone, matching upstream's
+        // glob_expand_module() behaviour.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let module_path = tmp.path();
+        std::fs::create_dir(module_path.join("foo")).expect("foo dir");
+        std::fs::create_dir(module_path.join("bar")).expect("bar dir");
+        std::fs::write(module_path.join("foo").join("one"), b"one\n").expect("foo/one");
+
+        let args = vec![".".to_owned(), "mod/f*".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "mod")
+            .expect("glob pattern must resolve");
+        assert_eq!(sources, vec![module_path.join("foo")]);
+    }
+
+    #[test]
+    fn resolve_sender_sources_glob_keeps_literal_when_no_match() {
+        // upstream: util1.c:786 - `glob.argc == save_argc` branch preserves
+        // the literal arg when nothing matches so the sender surfaces a
+        // normal link_stat failure (exit 23) instead of dropping silently.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let module_path = tmp.path();
+        std::fs::create_dir(module_path.join("bar")).expect("bar dir");
+
+        let args = vec![".".to_owned(), "mod/z*".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "mod")
+            .expect("non-matching glob must resolve to literal");
+        assert_eq!(sources, vec![module_path.join("z*")]);
+    }
+
+    #[test]
+    fn resolve_sender_sources_glob_handles_question_mark() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let module_path = tmp.path();
+        std::fs::write(module_path.join("a"), b"a").expect("a");
+        std::fs::write(module_path.join("ab"), b"ab").expect("ab");
+        std::fs::write(module_path.join("b"), b"b").expect("b");
+
+        // `?` matches exactly one character; `?b` must match only `ab`.
+        let args = vec![".".to_owned(), "mod/?b".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "mod")
+            .expect("? glob must resolve");
+        assert_eq!(sources, vec![module_path.join("ab")]);
+    }
+
+    #[test]
+    fn resolve_sender_sources_glob_handles_char_class() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let module_path = tmp.path();
+        std::fs::write(module_path.join("a"), b"a").expect("a");
+        std::fs::write(module_path.join("b"), b"b").expect("b");
+        std::fs::write(module_path.join("c"), b"c").expect("c");
+
+        // `[ab]` matches `a` or `b` but not `c`.
+        let args = vec![".".to_owned(), "mod/[ab]".to_owned()];
+        let mut sources = resolve_sender_sources(module_path, &args, "mod")
+            .expect("[class] glob must resolve");
+        sources.sort();
+        assert_eq!(sources, vec![module_path.join("a"), module_path.join("b")]);
+    }
+
+    #[test]
+    fn resolve_sender_sources_glob_skips_dotfiles_by_default() {
+        // POSIX glob default: a leading `.` is only matched when the pattern
+        // itself starts with `.`. `*` must not match `.hidden`.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let module_path = tmp.path();
+        std::fs::write(module_path.join(".hidden"), b"hidden").expect(".hidden");
+        std::fs::write(module_path.join("visible"), b"visible").expect("visible");
+
+        let args = vec![".".to_owned(), "mod/*".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "mod")
+            .expect("* glob must resolve");
+        assert_eq!(sources, vec![module_path.join("visible")]);
+    }
+
+    #[test]
+    fn resolve_sender_sources_non_glob_paths_bypass_expansion() {
+        // Plain paths without glob metachars must fall through unchanged,
+        // even when the file does not exist on disk - upstream defers the
+        // existence check to the sender's link_stat.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let module_path = tmp.path();
+
+        let args = vec![".".to_owned(), "mod/missing/file".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "mod")
+            .expect("plain path must resolve");
+        assert_eq!(sources, vec![module_path.join("missing/file")]);
     }
 
     // UTS-3.b.5 - cross-platform parity for daemon sub-path resolution.

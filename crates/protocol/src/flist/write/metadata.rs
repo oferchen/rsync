@@ -92,8 +92,15 @@ impl FileListWriter {
 
     /// Writes atime field if preserving and different (non-directories only).
     ///
-    /// For protocol >= 32, also writes atime nanoseconds as a varint
-    /// after the atime seconds value.
+    /// upstream: `flist.c:607-608` - atime is encoded as a single
+    /// `write_varlong(f, atime, 4)` regardless of protocol version. There
+    /// is NO atime nsec field in the wire format - unlike mtime which has
+    /// `XMIT_MOD_NSEC` (bit 14 in the extended byte) gating an optional
+    /// varint nsec for protocol >= 31. Writing an extra varint here
+    /// desynchronises the receiver's parser one byte into the next entry,
+    /// surfacing as `File-list index N not in 0 - K (read_ndx_and_attrs)`
+    /// or `Invalid packet at end of run` once the receiver tries to read
+    /// the goodbye.
     #[inline]
     fn write_atime<W: Write + ?Sized>(
         &mut self,
@@ -106,9 +113,6 @@ impl FileListWriter {
             && (xflags & ((XMIT_SAME_ATIME as u32) << 8)) == 0
         {
             crate::write_varlong(writer, entry.atime(), 4)?;
-            if self.protocol.as_u8() >= 32 {
-                write_varint(writer, entry.atime_nsec() as i32)?;
-            }
             self.state.update_atime(entry.atime());
         }
         Ok(())

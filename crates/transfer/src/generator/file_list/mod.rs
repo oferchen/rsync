@@ -68,14 +68,21 @@ impl GeneratorContext {
         // emitted ancestors across sources to avoid duplicate entries.
         let mut implied_ancestors: HashSet<PathBuf> = HashSet::new();
         for base_path in base_paths {
-            // upstream: flist.c:2316 - --relative splits on "/./" so the dir
-            // before the anchor is the base and everything after is the
-            // transmitted relative name. Without an anchor the entire path is
-            // the relative name (with the leading "/" stripped post-sort).
+            // upstream: flist.c:2338-2349 - non-relative mode splits each
+            // positional on the LAST `/`: `dir = strrchr(fbuf, '/')` becomes
+            // the parent and `fn` becomes the basename, then `chdir(dir)`
+            // walks `fn`. This makes the wire-side relative names carry the
+            // source basename (e.g. `foo` and `foo/one` for source
+            // `<mod>/foo`) instead of the post-strip-prefix names (which
+            // would be empty for the source dir and `one` for its child,
+            // mismatching upstream's wire output and tripping the
+            // receiver's `rejecting unrequested file-list name` check).
+            // upstream: flist.c:2316 - --relative additionally honours the
+            // `/./` anchor and emits implied parent directories.
             let (base, path) = if relative_paths {
                 relative_walk_base(base_path)
             } else {
-                (base_path.clone(), base_path.clone())
+                non_relative_walk_base(base_path)
             };
             // upstream: flist.c:2254-2272 - pre-stat each top-level source and
             // apply missing_args handling. Separates "source never existed" from
@@ -442,6 +449,49 @@ fn relative_walk_base(path: &Path) -> (PathBuf, PathBuf) {
 fn find_dot_dir_anchor(path: &Path) -> Option<usize> {
     let s = path.as_os_str().to_str()?;
     s.find("/./")
+}
+
+/// Picks the `(base, path)` pair for a non-`--relative` positional, matching
+/// upstream `flist.c:2338-2349`: split the path on its LAST `/`, take the
+/// prefix as the base directory and the suffix as the file name. The full
+/// path is preserved so callers can pass it to `link_stat`, but `base` is
+/// what `walk_path_with_metadata` strips to compute the wire-side relative
+/// name. For a path with no `/` separator (i.e. a bare basename), the base
+/// is `.` so `strip_prefix` is a no-op and the entry surfaces under its
+/// own name.
+///
+/// Examples:
+///   * `/srv/mod/foo`  -> base=`/srv/mod`,  path=`/srv/mod/foo`
+///   * `/srv/mod/foo/` -> base=`/srv/mod`,  path=`/srv/mod/foo/`
+///   * `/srv/mod/`     -> base=`/srv/mod/`, path=`/srv/mod/`     (dotdir)
+///   * `/`             -> base=`/`,         path=`/`             (dotdir)
+///   * `foo`           -> base=`.`,         path=`foo`
+fn non_relative_walk_base(path: &Path) -> (PathBuf, PathBuf) {
+    // Upstream's DOTDIR_NAME branch (flist.c:2312-2322) preserves a
+    // trailing slash to signal "transfer the contents only". Preserve
+    // base == path so `walk_path_with_metadata`'s `relative.is_empty()`
+    // branch still emits `.` for the source root.
+    let s = path.as_os_str();
+    let bytes = s.as_encoded_bytes();
+    if bytes.last() == Some(&b'/') {
+        return (path.to_path_buf(), path.to_path_buf());
+    }
+    // `Path::parent()` returns the parent directory or `None` for a path
+    // whose final component is the root or a bare basename. The bare-name
+    // case is normalised to `.` so `strip_prefix` becomes a no-op and the
+    // entry surfaces under its own name, matching upstream's
+    // `fn = fbuf; dir = NULL -> chdir(NULL)` no-op.
+    let parent = path.parent().map(|p| {
+        if p.as_os_str().is_empty() {
+            PathBuf::from(".")
+        } else {
+            p.to_path_buf()
+        }
+    });
+    match parent {
+        Some(base) => (base, path.to_path_buf()),
+        None => (path.to_path_buf(), path.to_path_buf()),
+    }
 }
 
 /// Applies a source-based permutation to two parallel slices in-place.

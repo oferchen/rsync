@@ -111,19 +111,17 @@ impl FileListReader {
         // Determine if this is a directory (needed for atime and content_dir)
         let is_dir = (mode & 0o170000) == 0o040000;
 
-        // 5. Read atime if preserving atimes (AFTER mode, non-directories only)
+        // 5. Read atime if preserving atimes (AFTER mode, non-directories only).
+        // upstream: flist.c:894-895 - atime is a single `read_varlong(f, 4)`;
+        // there is no atime nsec field on the wire regardless of protocol
+        // version (unlike mtime nsec which is gated by XMIT_MOD_NSEC).
         let (atime, atime_nsec) = if self.preserve_atimes && !is_dir {
             if flags.same_atime() {
                 (Some(self.state.prev_atime()), 0)
             } else {
                 let atime = crate::read_varlong(reader, 4)?;
-                let nsec = if self.protocol.as_u8() >= 32 {
-                    crate::read_varint(reader)? as u32
-                } else {
-                    0
-                };
                 self.state.update_atime(atime);
-                (Some(atime), nsec)
+                (Some(atime), 0)
             }
         } else {
             (None, 0)

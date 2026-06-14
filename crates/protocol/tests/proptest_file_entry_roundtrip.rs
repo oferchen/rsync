@@ -713,9 +713,18 @@ proptest! {
         assert_eq!(decoded.atime(), atime, "atime mismatch");
     }
 
-    /// Atime nanoseconds are preserved on protocol 32 when preserve_atimes is enabled.
+    /// Atime nanoseconds are NOT transmitted on the wire at any protocol
+    /// version. upstream `flist.c:607-608` (sender) and `flist.c:894-895`
+    /// (receiver) encode atime as a single \`varlong(atime, 4)\` and never
+    /// emit an nsec component; mtime is the only timestamp whose nsec is
+    /// gated by a transmission flag (\`XMIT_MOD_NSEC\`). Encode-only nsec
+    /// state on the sender's in-memory \`FileEntry\` must be ignored across
+    /// the wire so a round-trip yields \`atime_nsec == 0\`. Test pinned at
+    /// protocol 32 so a future bump to nsec-carrying atimes - which would
+    /// require a wire protocol revision and matching upstream change -
+    /// updates this test deliberately.
     #[test]
-    fn atime_nsec_roundtrip_proto32(
+    fn atime_nsec_dropped_on_wire_proto32(
         name in basename_strategy(),
         size in file_size_strategy(),
         perms in permissions_strategy(),
@@ -737,7 +746,7 @@ proptest! {
         let decoded = roundtrip(&mut writer, &mut reader, &entry);
         assert_core_fields_match(&entry, &decoded);
         assert_eq!(decoded.atime(), atime, "atime mismatch");
-        assert_eq!(decoded.atime_nsec(), atime_nsec, "atime nsec mismatch");
+        assert_eq!(decoded.atime_nsec(), 0, "atime nsec must be dropped on the wire");
     }
 
     /// Directories do not carry atime even when preserve_atimes is enabled.

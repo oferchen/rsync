@@ -2834,10 +2834,15 @@ mod files_from {
     }
 
     #[test]
-    fn non_relative_mode_uses_basename() {
-        // Without --relative, a directory source still collapses to "." with
-        // children named by basename only. Guards against the relative-mode
-        // fix accidentally changing default behaviour.
+    fn non_relative_mode_emits_source_basename() {
+        // upstream: flist.c:2338-2349 - non-relative mode splits each
+        // positional on its last `/`: `dir` becomes the chdir target,
+        // `fn` is link_stat'd. For source `<tmp>/payload`, dir = <tmp>
+        // and fn = payload, so the wire entries carry the basename
+        // (`payload`, `payload/file.txt`) - matching upstream rsync's
+        // behaviour for `rsync -r payload dst/`. A trailing slash
+        // (DOTDIR_NAME branch) still collapses to `.` + children; that
+        // path is covered by the trailing-slash test below.
         let temp_dir = TempDir::new().unwrap();
         let src_dir = temp_dir.path().join("payload");
         std::fs::create_dir_all(&src_dir).unwrap();
@@ -2851,10 +2856,50 @@ mod files_from {
         ctx.build_file_list(&[src_dir]).unwrap();
 
         let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+        assert!(
+            names.contains(&"payload"),
+            "expected 'payload' entry in {names:?}"
+        );
+        assert!(
+            names.contains(&"payload/file.txt"),
+            "expected 'payload/file.txt' in {names:?}"
+        );
+        assert!(
+            !names.contains(&"."),
+            "expected no `.` entry for sub-path source in {names:?}"
+        );
+    }
+
+    #[test]
+    fn non_relative_mode_trailing_slash_collapses_to_dot() {
+        // upstream: flist.c:2312-2322 DOTDIR_NAME branch - a trailing
+        // slash makes the engine emit `.` for the source root and
+        // children without the basename prefix, mirroring upstream's
+        // "transfer the contents only" semantic.
+        let temp_dir = TempDir::new().unwrap();
+        let src_dir = temp_dir.path().join("payload");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(src_dir.join("file.txt"), b"x").unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.flags.relative = false;
+        config.flags.recursive = true;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+        let mut with_slash = src_dir.as_os_str().to_owned();
+        with_slash.push("/");
+        ctx.build_file_list(&[std::path::PathBuf::from(with_slash)])
+            .unwrap();
+
+        let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
         assert!(names.contains(&"."), "expected '.' entry in {names:?}");
         assert!(
             names.contains(&"file.txt"),
             "expected 'file.txt' in {names:?}"
+        );
+        assert!(
+            !names.contains(&"payload"),
+            "expected no `payload` entry for trailing-slash source in {names:?}"
         );
     }
 

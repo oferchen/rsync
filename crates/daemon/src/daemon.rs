@@ -269,8 +269,33 @@ pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
 /// encounters an I/O error.
 pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
     let brand = config.brand();
-    let options =
-        RuntimeOptions::parse_with_brand(config.arguments(), brand, config.load_default_paths())?;
+    // upstream: clientserver.c:1275-1283 `load_config()` - when invoked as
+    // `--server --daemon` (rsh-spawned, am_daemon < 0) without an explicit
+    // `--config`, upstream picks `RSYNCD_USERCONF` (`./rsyncd.conf` - relative
+    // to CWD) before falling back to `/etc/rsyncd.conf`. The test harness
+    // (`testsuite/daemon_test.py`) drops a `rsyncd.conf` symlink in the
+    // scratch dir and invokes `rsync -e lsh.sh --rsync-path=oc-rsync host::`
+    // - lsh.sh stays in CWD via `--no-cd`, so the CWD lookup is what makes
+    // the per-test config visible. Without this branch, the daemon parses
+    // an empty config, serves an empty module listing, and the upstream
+    // `daemon` test fails with "module list did not contain the expected
+    // modules". Inject `--config=rsyncd.conf` ahead of parse when a usable
+    // CWD config exists and the caller did not supply one; the absolute
+    // brand paths take over otherwise via `parse_with_brand`.
+    let arguments: Vec<OsString> = if config.load_default_paths()
+        && !config_argument_present(config.arguments())
+        && PathBuf::from("rsyncd.conf").is_file()
+    {
+        let mut augmented = Vec::with_capacity(config.arguments().len() + 1);
+        let mut config_flag = OsString::from("--config=");
+        config_flag.push("rsyncd.conf");
+        augmented.push(config_flag);
+        augmented.extend(config.arguments().iter().cloned());
+        augmented
+    } else {
+        config.arguments().to_vec()
+    };
+    let options = RuntimeOptions::parse_with_brand(&arguments, brand, config.load_default_paths())?;
 
     let RuntimeOptions {
         modules,
