@@ -18,8 +18,10 @@ use crate::client::remote::flags;
 ///
 /// When `--protect-args` / `-s` is active, uses a two-phase protocol
 /// matching upstream `clientserver.c:393-408`:
-/// - Phase 1: minimal args (`--server [-s] .`) so the daemon knows to
-///   expect protected args
+/// - Phase 1: role markers + `--secluded-args` so the daemon knows to
+///   expect protected args (see [`build_minimal_daemon_args`] for why
+///   the long-form alias is used in place of a bare `-s` and why no
+///   standalone `.` is emitted)
 /// - Phase 2: full argument list via `send_secluded_args()` wire format
 ///
 /// Without protect-args, sends all arguments in a single phase.
@@ -37,7 +39,7 @@ pub(crate) fn send_daemon_arguments<W: Write>(
 
     // upstream: clientserver.c:393-405 - phase 1 sends args over the daemon text
     // protocol; with protect-args, only the minimal set is sent so the daemon
-    // detects `-s` and stops at the NULL marker, expecting phase-2 secluded args.
+    // detects the secluded-args marker and expects phase-2 secluded args.
     let phase1_args = if protect {
         build_minimal_daemon_args(is_sender)
     } else {
@@ -120,17 +122,47 @@ pub(crate) fn send_daemon_arguments<W: Write>(
 
 /// Builds the minimal phase-1 argument list for protect-args daemon mode.
 ///
-/// The daemon only needs `--server [--sender] -s .` to know that
-/// secluded args follow in phase 2.
+/// Upstream's phase 1 wire (`clientserver.c:395-402`) emits each `sargs[]`
+/// entry up to the `NULL` marker that `server_options()` inserts at
+/// `options.c:2745`. That marker sits AFTER the compact flag string and
+/// `--iconv=...` but BEFORE every post-NULL long-form option and the
+/// trailing `.` / module path which `do_cmd` appends at `clientserver.c:303`.
+/// As a result upstream's phase 1 wire never contains a standalone `.` or
+/// a bare `-s`: the `s` for `--secluded-args` is embedded inside the
+/// compact flag string (`argstr[x++] = 's'`, `options.c:2622-2623`).
 ///
-/// upstream: clientserver.c:393-405 - sargs has a NULL marker after `-s .`
+/// We emit only the role markers plus `--secluded-args` here so that:
+///
+/// 1. The daemon's `has_secluded_args_flag` check still trips and reads
+///    phase 2 via `recv_secluded_args` (`--secluded-args` is in the same
+///    detection set as `-s`).
+/// 2. The merged arg list never carries a spurious standalone `.` from
+///    phase 1 - the only `.` is the one phase 2 supplies as the positional
+///    separator, so `apply_long_form_args`'s first-`.` dot_position lookup
+///    correctly bounds the option region. A stray phase-1 `.` was dropping
+///    every long-form option emitted after the merge boundary, including
+///    `--groupmap=*:GID` (upstream issue #829 / daemon-groupmap-wild).
+/// 3. The merged arg list never carries a bare `-s` short-form arg that
+///    would shadow the real compact flag string in `build_server_config`'s
+///    first-short-form-arg picker. The real flag string arrives in phase 2
+///    via `build_full_daemon_args`.
+///
+/// Upstream daemons accept `--secluded-args` as the long-form alias of `-s`
+/// (`options.c:804`), so this remains wire-compatible with upstream rsync.
+///
+/// # Upstream Reference
+///
+/// - `clientserver.c:303` - `sargs[sargc++] = "."` AFTER `server_options()`
+/// - `clientserver.c:395-402` - phase 1 wire writes args until `!sargs[i]`
+/// - `options.c:2622-2623` - `argstr[x++] = 's'` when `protect_args`
+/// - `options.c:2744-2745` - NULL marker between phase 1 / phase 2 args
+/// - `options.c:804` - `--secluded-args` long-form alias for `-s`
 pub(super) fn build_minimal_daemon_args(is_sender: bool) -> Vec<String> {
     let mut args = vec!["--server".to_owned()];
     if is_sender {
         args.push("--sender".to_owned());
     }
-    args.push("-s".to_owned());
-    args.push(".".to_owned());
+    args.push("--secluded-args".to_owned());
     args
 }
 
