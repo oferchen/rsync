@@ -43,7 +43,7 @@ use tokio::runtime::Builder;
 
 /// Sync per-connection worker invoked on the blocking pool.
 ///
-/// The worker owns the converted blocking [`TcpStream`] for the lifetime of
+/// The worker owns the converted blocking `TcpStream` for the lifetime of
 /// the connection. Returning an `io::Result` lets the caller surface
 /// transport errors without panicking; panics in the worker are caught by
 /// the tokio join handle and logged by the dispatcher.

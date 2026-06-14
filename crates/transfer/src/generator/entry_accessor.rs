@@ -28,10 +28,10 @@ use super::itemize::ItemizeContext;
 
 /// Formats the 11-character itemize string from raw item flags and any entry type.
 ///
-/// Generic counterpart of [`super::itemize::format_iflags`] that accepts any
+/// Generic counterpart of `super::itemize::format_iflags` that accepts any
 /// `FileEntryAccessor` implementor instead of a concrete `FileEntry`.
 ///
-/// Produces the upstream `YXcstpoguax` string. See [`super::itemize::format_iflags`]
+/// Produces the upstream `YXcstpoguax` string. See `super::itemize::format_iflags`
 /// for full documentation of each position.
 ///
 /// # Upstream Reference
@@ -225,7 +225,7 @@ pub fn format_itemize_line_generic<T: FileEntryAccessor>(
 
 /// Pure-function quick-check over any `FileEntryAccessor`.
 ///
-/// Generic counterpart of [`super::super::receiver::quick_check::quick_check_matches`].
+/// Generic counterpart of `super::super::receiver::quick_check::quick_check_matches`.
 /// Returns `true` when the destination file matches the source entry (skip transfer).
 ///
 /// Follows upstream `generator.c:617 quick_check_ok()` evaluation order:

@@ -1,7 +1,7 @@
 //! Wire-token to [`DeltaChunk`] adapter for the parallel receive-delta path.
 //!
 //! Closes the receiver-side verify gap left open by BR-3i.c (#4640): the
-//! [`ParallelDeltaApplier`] grew a real `verify_chunk` that compares the
+//! `ParallelDeltaApplier` grew a real `verify_chunk` that compares the
 //! computed strong digest of `chunk.data` against the chunk's
 //! `expected_strong` field, but the receiver had no way to populate that
 //! field for COPY tokens. Without a populated `expected_strong`, the verify
@@ -25,7 +25,7 @@
 //! Literal tokens leave `expected_strong = None`: the sender does not
 //! embed per-literal digests, so there is nothing to verify against. The
 //! applier still computes the digest for parity with the verified path
-//! (see [`ParallelDeltaApplier::verify_chunk`] in
+//! (see `ParallelDeltaApplier::verify_chunk` in
 //! `crates/engine/src/concurrent_delta/parallel_apply.rs`) but skips the
 //! comparison, exactly as BR-3i.c documents.
 //!
@@ -43,8 +43,8 @@
 //! function from `(FileSignature, DeltaToken, basis-bytes, sequence)` to
 //! `Option<DeltaChunk>`, which keeps the per-chunk verify decision local
 //! to the receiver-side staging structure and leaves the live token loop
-//! in [`crate::transfer_ops::token_loop`] untouched until the production
-//! pipeline migrates onto [`ParallelDeltaApplier`].
+//! in `crate::transfer_ops::token_loop` untouched until the production
+//! pipeline migrates onto `ParallelDeltaApplier`.
 
 use checksums::strong::strategy::ChecksumDigest;
 use engine::concurrent_delta::{DeltaChunk, FileNdx};
@@ -92,7 +92,7 @@ pub enum ChunkBuilderError {
 /// One builder lives for the duration of a single file's delta apply. The
 /// caller bumps the sequence counter once per produced chunk, mirroring the
 /// per-file `chunk_sequence` invariant that
-/// [`ParallelDeltaApplier::apply_one_chunk`] documents.
+/// `ParallelDeltaApplier::apply_one_chunk` documents.
 ///
 /// # Per-file lifetime
 ///
@@ -105,7 +105,7 @@ pub enum ChunkBuilderError {
 /// # File-boundary drain contract (PIP-9.b.4)
 ///
 /// After the last chunk for a file has been submitted to the applier, the
-/// receiver must call [`ParallelDeltaApplier::finish_file`] before moving
+/// receiver must call `ParallelDeltaApplier::finish_file` before moving
 /// to the next file. `finish_file` bakes in a [`flush_workers`] barrier
 /// that waits for all in-flight chunks to drain, so callers never need to
 /// call `flush_workers` separately. This ensures that the per-file writer
@@ -123,7 +123,7 @@ pub struct ChunkBuilder<'a> {
 impl<'a> ChunkBuilder<'a> {
     /// Creates a builder for a single file's delta apply.
     ///
-    /// `ndx` is the [`FileNdx`] the [`ParallelDeltaApplier`] uses to route
+    /// `ndx` is the [`FileNdx`] the `ParallelDeltaApplier` uses to route
     /// chunks to the per-file writer; the receiver pipeline derives this
     /// from the wire NDX it assigns when it opens the destination temp
     /// file.

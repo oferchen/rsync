@@ -9,11 +9,11 @@
 //!
 //! The module exposes two operations:
 //!
-//! 1. **[`build_tls_acceptor`]** - loads PEM certificates and a private key
-//!    from disk and constructs a rustls [`TlsAcceptor`] configured with safe
+//! 1. **`build_tls_acceptor`** - loads PEM certificates and a private key
+//!    from disk and constructs a rustls `TlsAcceptor` configured with safe
 //!    defaults (TLS 1.2+, ring crypto provider).
-//! 2. **[`wrap_stream`]** - performs the TLS handshake on an accepted
-//!    [`TcpStream`], returning a [`rustls::StreamOwned`] that implements
+//! 2. **`wrap_stream`** - performs the TLS handshake on an accepted
+//!    `TcpStream`, returning a [`rustls::StreamOwned`] that implements
 //!    `Read + Write` and can be handed to the synchronous per-connection
 //!    worker unchanged.
 //!
@@ -23,7 +23,7 @@
 //!
 //! # Certificate loading
 //!
-//! [`TlsConfig`] accepts filesystem paths for the certificate chain
+//! `TlsConfig` accepts filesystem paths for the certificate chain
 //! (fullchain PEM), the private key (PKCS#8 or RSA PEM), and an optional
 //! client CA bundle for mutual TLS. Certificate rotation requires a daemon
 //! restart; live reload is a future enhancement.
@@ -35,7 +35,7 @@
 //! - The ring crypto provider is used by default, providing FIPS-grade
 //!   primitives without linking to OpenSSL.
 //! - Client certificate verification is opt-in via the `client_ca_path`
-//!   field on [`TlsConfig`].
+//!   field on `TlsConfig`.
 
 use std::fs;
 use std::io;
@@ -73,7 +73,7 @@ pub struct TlsConfig {
     pub client_ca_path: Option<PathBuf>,
 }
 
-/// Loads certificates and private key, then builds a [`TlsAcceptor`].
+/// Loads certificates and private key, then builds a `TlsAcceptor`.
 ///
 /// The acceptor is configured with the ring crypto provider and supports
 /// TLS 1.2 and TLS 1.3. When `config.client_ca_path` is set, client

@@ -139,7 +139,7 @@ impl GeneratorContext {
     /// Unlike [`build_file_list`](Self::build_file_list), which treats each
     /// positional argument as its own base for `walk_path`, this method honors
     /// the per-entry base produced by
-    /// [`split_files_from_entry`](super::super::filters::split_files_from_entry).
+    /// `split_files_from_entry`.
     /// Each entry's wire-side relative name is computed by stripping its own
     /// `base`, matching upstream rsync's `chdir(dir)` + transmit-`fn` split
     /// (`flist.c:2316-2330`). The `base_dir` argument is the source argument

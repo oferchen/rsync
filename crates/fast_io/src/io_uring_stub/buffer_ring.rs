@@ -87,7 +87,7 @@ pub fn is_supported() -> bool {
 
 /// Returns `false` on non-Linux platforms.
 ///
-/// Cross-platform alias for [`is_supported`] matching the
+/// Cross-platform alias for `is_supported` matching the
 /// [`crate::pbuf_ring_supported`] re-export.
 #[must_use]
 pub fn pbuf_ring_supported() -> bool {

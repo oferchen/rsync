@@ -1,6 +1,6 @@
 //! Centralized exit code definitions matching upstream rsync.
 //!
-//! This module provides a unified [`ExitCode`] enum that mirrors the exit codes
+//! This module provides a unified `ExitCode` enum that mirrors the exit codes
 //! defined in upstream rsync's `errcode.h`. All error types across the workspace
 //! should use these codes to ensure consistent behavior with upstream rsync.
 //!

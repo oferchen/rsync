@@ -13,11 +13,11 @@
 //! The module exposes [`ExitCodeMessage`], a light-weight descriptor capturing
 //! the severity, numeric exit code, and upstream text. Callers obtain instances
 //! through [`exit_code_message`] and can immediately convert them into a
-//! [`Message`] via [`ExitCodeMessage::to_message`] or the blanket
+//! `Message` via [`ExitCodeMessage::to_message`] or the blanket
 //! [`From<ExitCodeMessage>`](ExitCodeMessage#impl-From%3CExitCodeMessage%3E-for-Message)
 //! implementation. When only the severity is required, use
 //! [`exit_code_severity`] to query the table without materialising a full
-//! [`Message`]. This mirrors the behaviour of upstream rsync where exit code 24
+//! `Message`. This mirrors the behaviour of upstream rsync where exit code 24
 //! emits a warning while all other entries are treated as errors.
 //!
 //! # Invariants
@@ -28,7 +28,7 @@
 //!
 //! # Errors
 //!
-//! The helpers themselves never fail. Converting a template into a [`Message`]
+//! The helpers themselves never fail. Converting a template into a `Message`
 //! only allocates when the caller subsequently renders the message into an
 //! owned [`String`].
 //!
@@ -53,7 +53,7 @@
 //! )));
 //! ```
 //!
-//! Convert a template directly into a [`Message`] without calling
+//! Convert a template directly into a `Message` without calling
 //! [`ExitCodeMessage::to_message`].
 //!
 //! ```
@@ -168,7 +168,7 @@ impl ExitCodeMessage {
         self.text
     }
 
-    /// Converts the template into a [`Message`] that mirrors upstream output.
+    /// Converts the template into a `Message` that mirrors upstream output.
     #[must_use = "the constructed Message should be rendered so the exit-code diagnostic reaches the user"]
     pub fn to_message(self) -> Message {
         message_from_template(self)

@@ -18,7 +18,7 @@ where
 
     /// Writes a single message using the sink's current [`LineMode`].
     ///
-    /// Accepts borrowed or owned [`Message`] values via [`Borrow<Message>`] so
+    /// Accepts borrowed or owned `Message` values via [`Borrow<Message>`] so
     /// call sites can forward diagnostics without cloning.
     pub fn write<M>(&mut self, message: M) -> io::Result<()>
     where
@@ -43,7 +43,7 @@ where
 
     /// Streams pre-rendered [`MessageSegments`] into the underlying writer.
     ///
-    /// The helper allows callers that already rendered a [`Message`] into
+    /// The helper allows callers that already rendered a `Message` into
     /// vectored slices (for example, to inspect or buffer them) to forward the
     /// segments without requesting another render. The sink honours its
     /// configured [`LineMode`] when deciding whether to append a trailing
@@ -85,7 +85,7 @@ where
 
     /// Writes each message from the iterator to the underlying writer.
     ///
-    /// Items may be borrowed or owned [`Message`] values via
+    /// Items may be borrowed or owned `Message` values via
     /// [`Borrow<Message>`], so callers can pass collections such as
     /// [`Vec<Message>`] or arrays directly.
     pub fn write_all<I, M>(&mut self, messages: I) -> io::Result<()>

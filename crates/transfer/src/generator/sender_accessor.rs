@@ -27,7 +27,7 @@ use super::itemize::ItemizeContext;
 
 /// Formats the 11-character itemize string from raw item flags and a generic entry.
 ///
-/// Trait-generic version of [`super::itemize::format_iflags`]. Accepts any type
+/// Trait-generic version of `super::itemize::format_iflags`. Accepts any type
 /// implementing [`FileEntryAccessor`] instead of concrete `&FileEntry`.
 ///
 /// Produces the upstream `YXcstpoguax` string where:

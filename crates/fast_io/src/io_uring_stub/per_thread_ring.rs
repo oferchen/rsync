@@ -1,8 +1,8 @@
 //! Stub per-thread io_uring ring mirroring [`crate::io_uring::per_thread_ring`].
 //!
 //! The Linux backend lazily constructs an `io_uring::IoUring` per thread on
-//! first call to [`with_ring`]. On every other platform the primitive is
-//! inert: [`with_ring`] always returns [`std::io::ErrorKind::Unsupported`]
+//! first call to `with_ring`. On every other platform the primitive is
+//! inert: `with_ring` always returns [`std::io::ErrorKind::Unsupported`]
 //! without invoking the closure so callers can compile cross-platform
 //! against a single surface and dispatch on the returned error.
 //!
@@ -15,7 +15,7 @@ use std::io;
 ///
 /// The Linux backend uses this value when lazily constructing the
 /// per-thread ring. On non-Linux targets the constant is retained so
-/// callers can compile against the same surface; the stub [`with_ring`]
+/// callers can compile against the same surface; the stub `with_ring`
 /// always returns [`io::ErrorKind::Unsupported`].
 pub const DEFAULT_RING_DEPTH: u32 = 64;
 

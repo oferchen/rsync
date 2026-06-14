@@ -4,12 +4,12 @@
 //! guard from platform-specific temp file mechanisms. Implementations select
 //! the best available mechanism at runtime:
 //!
-//! - **Linux**: [`AnonymousTempFileStrategy`] uses `O_TMPFILE` + `linkat(2)`
+//! - **Linux**: `AnonymousTempFileStrategy` uses `O_TMPFILE` + `linkat(2)`
 //!   for zero-cleanup atomic writes. No directory entry exists until commit.
 //! - **Windows**: `WindowsTempFileStrategy` uses `FILE_FLAG_DELETE_ON_CLOSE`
 //!   for auto-cleanup temp files. The kernel deletes the file when the last
 //!   handle closes, providing crash-safe cleanup analogous to `O_TMPFILE`.
-//! - **All platforms**: [`NamedTempFileStrategy`] uses a uniquely-named temp
+//! - **All platforms**: `NamedTempFileStrategy` uses a uniquely-named temp
 //!   file + `rename(2)` for atomic commit, with cross-device fallback.
 //!
 //! The [`DefaultTempFileStrategy`] automatically selects the best available
@@ -327,10 +327,10 @@ impl TempFileStrategy for NamedTempFileStrategy {
 /// mechanism at runtime.
 ///
 /// - **Linux**: probes `O_TMPFILE` on the destination filesystem. If available,
-///   uses anonymous temp files via [`AnonymousTempFileStrategy`].
+///   uses anonymous temp files via `AnonymousTempFileStrategy`.
 /// - **Windows**: probes `FILE_FLAG_DELETE_ON_CLOSE`. If available, uses
 ///   delete-on-close temp files via `WindowsTempFileStrategy`.
-/// - **All platforms**: falls back to named temp files via [`NamedTempFileStrategy`].
+/// - **All platforms**: falls back to named temp files via `NamedTempFileStrategy`.
 pub struct DefaultTempFileStrategy {
     named: NamedTempFileStrategy,
 }

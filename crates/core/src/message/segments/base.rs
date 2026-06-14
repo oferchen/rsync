@@ -4,7 +4,7 @@ use std::slice;
 
 use super::super::MAX_MESSAGE_SEGMENTS;
 
-/// Collection of slices that jointly render a [`Message`](crate::message::Message).
+/// Collection of slices that jointly render a `Message`.
 ///
 /// The segments reference the message payload together with optional exit codes, source
 /// locations, and role trailers. Callers obtain the structure through

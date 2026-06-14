@@ -1,6 +1,6 @@
 //! Typed daemon connection lifecycle management.
 //!
-//! Provides [`ConnectionState`] and transition validation for the daemon
+//! Provides `ConnectionState` and transition validation for the daemon
 //! connection lifecycle: `Greeting -> ModuleSelect -> Authenticating ->
 //! Transferring -> Closing`. Every state can also transition directly to
 //! `Closing`.
