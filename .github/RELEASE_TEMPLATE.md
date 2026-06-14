@@ -1,6 +1,6 @@
 ## oc-rsync {{VERSION}}
 
-Wire-compatible with upstream rsync 3.4.3 (protocol 32).
+Wire-compatible with upstream rsync 3.4.4 (protocol 32).
 
 ### Install
 
