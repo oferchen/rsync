@@ -261,7 +261,33 @@ where
             {
                 use fast_io::landlock::{LandlockOutcome, is_supported, restrict_to_module_paths};
                 if is_supported() {
-                    match restrict_to_module_paths(&[root.as_path()]) {
+                    let mut allowed = vec![root];
+
+                    // UTS-V3-D: a remote files-from path (upstream
+                    // `options.c:2944` -> server gets `--files-from <path>`)
+                    // sits outside the destination tree. The receiver
+                    // opens it in `forward_files_from_to_sender` to push
+                    // filenames back to the sender; the landlock allowlist
+                    // must include the file's parent or the open fails
+                    // with EACCES (observed as the
+                    // "Permission denied (os error 13)" branch when the
+                    // receiver reached the new forwarder).
+                    if let Some(path) = config.file_selection.files_from_path.as_deref() {
+                        if path != "-" {
+                            let p = std::path::PathBuf::from(path);
+                            if let Some(canon) = p
+                                .canonicalize()
+                                .ok()
+                                .or_else(|| p.parent().and_then(|d| d.canonicalize().ok()))
+                            {
+                                allowed.push(canon);
+                            }
+                        }
+                    }
+
+                    let allowed_refs: Vec<&std::path::Path> =
+                        allowed.iter().map(|p| p.as_path()).collect();
+                    match restrict_to_module_paths(&allowed_refs) {
                         LandlockOutcome::Enforced(_) | LandlockOutcome::Unavailable => {}
                         LandlockOutcome::Error(e) => {
                             write_server_error(

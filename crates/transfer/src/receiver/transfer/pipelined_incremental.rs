@@ -35,7 +35,7 @@ impl ReceiverContext {
         mut progress: Option<&mut dyn crate::TransferProgressCallback>,
     ) -> io::Result<TransferStats> {
         let _t = PhaseTimer::new("receiver-transfer-incremental");
-        let (mut reader, file_count, mut setup) = self.setup_transfer(reader)?;
+        let (mut reader, file_count, mut setup) = self.setup_transfer(reader, writer)?;
         let reader = &mut reader;
 
         let mut stats = TransferStats {

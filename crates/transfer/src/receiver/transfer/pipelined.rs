@@ -37,7 +37,7 @@ impl ReceiverContext {
         pipeline_config: PipelineConfig,
     ) -> io::Result<TransferStats> {
         let _t = PhaseTimer::new("receiver-transfer-pipelined");
-        let (mut reader, file_count, mut setup) = self.setup_transfer(reader)?;
+        let (mut reader, file_count, mut setup) = self.setup_transfer(reader, writer)?;
         let reader = &mut reader;
 
         // upstream: generator.c:1317-1326 - make_path() for relative_paths

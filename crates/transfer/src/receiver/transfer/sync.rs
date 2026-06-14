@@ -47,7 +47,7 @@ impl ReceiverContext {
         writer: &mut W,
     ) -> io::Result<TransferStats> {
         let _t = PhaseTimer::new("receiver-transfer");
-        let (mut reader, file_count, setup) = self.setup_transfer(reader)?;
+        let (mut reader, file_count, setup) = self.setup_transfer(reader, writer)?;
         let reader = &mut reader;
 
         let PipelineSetup {
