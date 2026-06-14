@@ -1,22 +1,22 @@
 //! In-process channel adapters that bridge `tokio::sync::mpsc` to
-//! [`AsyncRead`]/[`AsyncWrite`].
+//! `AsyncRead`/`AsyncWrite`.
 //!
 //! These adapters let an async transport (for example, the embedded SSH
 //! transport) expose its stdio over an in-process duplex channel while still
-//! satisfying APIs that require raw [`tokio::io::AsyncRead`] and
-//! [`tokio::io::AsyncWrite`] implementations.
+//! satisfying APIs that require raw `tokio::io::AsyncRead` and
+//! `tokio::io::AsyncWrite` implementations.
 //!
 //! # Overview
 //!
-//! - [`ChannelReader`] consumes byte chunks from an `mpsc::Receiver<Vec<u8>>`
-//!   and presents them through [`AsyncRead`]. Oversized chunks that do not fit
-//!   in the caller-provided [`ReadBuf`] are buffered internally and drained on
+//! - `ChannelReader` consumes byte chunks from an `mpsc::Receiver<Vec<u8>>`
+//!   and presents them through `AsyncRead`. Oversized chunks that do not fit
+//!   in the caller-provided `ReadBuf` are buffered internally and drained on
 //!   subsequent reads.
-//! - [`ChannelWriter`] forwards each [`AsyncWrite::poll_write`] call to an
+//! - `ChannelWriter` forwards each `AsyncWrite::poll_write` call to an
 //!   `mpsc::Sender<Vec<u8>>`. When the channel is full, the writer registers
-//!   the task waker and returns [`Poll::Pending`]; the writer wakes when
+//!   the task waker and returns `Poll::Pending`; the writer wakes when
 //!   capacity becomes available.
-//! - [`pair`] returns two cross-connected `(ChannelReader, ChannelWriter)`
+//! - `pair` returns two cross-connected `(ChannelReader, ChannelWriter)`
 //!   halves so a single duplex channel can be split between two peers.
 //!
 //! # Invariants
@@ -40,7 +40,7 @@ use tokio::sync::mpsc;
 /// Asynchronous reader that drains byte chunks delivered through an
 /// `mpsc::Receiver<Vec<u8>>`.
 ///
-/// Each received chunk is copied into the caller's [`ReadBuf`]. When a chunk
+/// Each received chunk is copied into the caller's `ReadBuf`. When a chunk
 /// exceeds the buffer's remaining capacity, the unread tail is retained and
 /// served on subsequent calls before another chunk is pulled from the channel.
 pub struct ChannelReader {
@@ -50,7 +50,7 @@ pub struct ChannelReader {
 }
 
 impl ChannelReader {
-    /// Wraps the supplied receiver in an [`AsyncRead`] adapter.
+    /// Wraps the supplied receiver in an `AsyncRead` adapter.
     pub fn new(rx: mpsc::Receiver<Vec<u8>>) -> Self {
         Self {
             rx,
@@ -108,7 +108,7 @@ impl AsyncRead for ChannelReader {
     }
 }
 
-/// Boxed reservation future used by [`ChannelWriter`] to preserve the
+/// Boxed reservation future used by `ChannelWriter` to preserve the
 /// channel's wait-queue registration across `poll_write` invocations.
 type ReservationFuture = Pin<
     Box<dyn Future<Output = Result<mpsc::OwnedPermit<Vec<u8>>, mpsc::error::SendError<()>>> + Send>,
@@ -118,7 +118,7 @@ type ReservationFuture = Pin<
 /// `mpsc::Sender<Vec<u8>>`.
 ///
 /// Backpressure is honored: when the channel is full, `poll_write` parks the
-/// current task and returns [`Poll::Pending`] until capacity is available. A
+/// current task and returns `Poll::Pending` until capacity is available. A
 /// closed channel surfaces as [`io::ErrorKind::BrokenPipe`]. `poll_shutdown`
 /// drops the internal sender, signalling EOF to the reader half.
 pub struct ChannelWriter {
@@ -129,7 +129,7 @@ pub struct ChannelWriter {
 }
 
 impl ChannelWriter {
-    /// Wraps the supplied sender in an [`AsyncWrite`] adapter.
+    /// Wraps the supplied sender in an `AsyncWrite` adapter.
     pub fn new(tx: mpsc::Sender<Vec<u8>>) -> Self {
         Self {
             tx: Some(tx),
@@ -226,8 +226,8 @@ impl AsyncWrite for ChannelWriter {
 /// duplex `mpsc` channel pair of the requested capacity.
 ///
 /// The first half reads what the second writes, and vice versa, providing a
-/// fully in-memory duplex stream that can stand in for any [`AsyncRead`] +
-/// [`AsyncWrite`] transport.
+/// fully in-memory duplex stream that can stand in for any `AsyncRead` +
+/// `AsyncWrite` transport.
 #[must_use]
 pub fn pair(
     capacity: usize,
