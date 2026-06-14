@@ -1751,7 +1751,12 @@ fn walk_skips_fifo_when_preserve_specials_is_false() {
     config.flags.recursive = true;
     let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
-    let count = build_file_list_for(&mut ctx, base_path);
+    // Trailing-slash source enters upstream's DOTDIR_NAME branch
+    // (flist.c:2312-2322) so the file list contains `.` + the base
+    // directory's children, matching `rsync <dir>/ dst/`. Without it the
+    // non-relative walk-base split (flist.c:2338-2349) would emit only
+    // the source basename instead of `.` plus its children.
+    let count = build_file_list_for_contents(&mut ctx, base_path);
 
     // FIFO should be skipped, "." root dir + regular file included
     assert_eq!(count, 2);
@@ -1772,7 +1777,10 @@ fn walk_includes_fifo_when_preserve_specials_is_true() {
     config.flags.recursive = true;
     let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
-    let count = build_file_list_for(&mut ctx, base_path);
+    // Trailing-slash source enters upstream's DOTDIR_NAME branch
+    // (flist.c:2312-2322) so the wire-side names are `.`, `regular.txt`,
+    // and `test.fifo` instead of `<basename>/regular.txt` etc.
+    let count = build_file_list_for_contents(&mut ctx, base_path);
 
     // "." root dir + regular file + FIFO should be included
     assert_eq!(count, 3);
@@ -1794,7 +1802,9 @@ fn walk_includes_fifo_as_special_entry_type() {
     config.flags.specials = true;
     let mut ctx = GeneratorContext::new_for_test(&handshake, config);
 
-    build_file_list_for(&mut ctx, base_path);
+    // Trailing-slash source enters upstream's DOTDIR_NAME branch
+    // (flist.c:2312-2322) so the file list is `.` + the FIFO child.
+    build_file_list_for_contents(&mut ctx, base_path);
 
     // "." root dir + FIFO
     assert_eq!(ctx.file_list().len(), 2);
