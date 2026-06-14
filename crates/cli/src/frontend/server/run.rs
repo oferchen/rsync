@@ -342,7 +342,30 @@ where
     // upstream: io.c:943-963 `noop_io_until_death()`; main.c:1075
     // receiver-child loop on `read_final_goodbye()`; cleanup.c:254
     // `noop_io_until_death()` call in `_exit_cleanup`.
+    //
+    // The sequence below makes EOF deterministic instead of waiting on
+    // a wall-clock heuristic:
+    //
+    //   1. `stdout.flush()` pushes any bytes buffered in the outer
+    //      writer down to the kernel so the peer's
+    //      `read_final_goodbye()` actually sees our NDX_DONE.
+    //   2. `shutdown_stdio_write()` issues `shutdown(STDOUT_FILENO,
+    //      SHUT_WR)`. On the SSH / lsh.sh transport stdout is a stream
+    //      socket; the half-close sends FIN to the peer, which unblocks
+    //      its read_final_goodbye loop and lets its `exit_cleanup` run.
+    //      Once the peer exits it closes its own write end of our stdin
+    //      socket, which is what step 3 waits on.
+    //   3. The drain loop reads stdin to EOF. Because step 2 already
+    //      told the peer we are done writing, the peer's FIN arrives
+    //      promptly - no timer, no race. If stdout was not a socket
+    //      (regular pipe), `shutdown_stdio_write()` returns ENOTSOCK
+    //      and process exit propagates EOF through the normal close
+    //      path; the drain still terminates as soon as the peer closes
+    //      its end.
     if role == ServerRole::Receiver {
+        let _ = stdout.flush();
+        let _ = fast_io::shutdown_stdio_write();
+
         let mut sink = [0u8; 4096];
         loop {
             match stdin.read(&mut sink) {
