@@ -352,19 +352,24 @@ where
     //   1. `stdout.flush()` pushes any bytes buffered in the outer
     //      writer down to the kernel so the peer's
     //      `read_final_goodbye()` actually sees our NDX_DONE.
-    //   2. `shutdown_stdio_write()` issues `shutdown(STDOUT_FILENO,
-    //      SHUT_WR)`. On the SSH / lsh.sh transport stdout is a stream
-    //      socket; the half-close sends FIN to the peer, which unblocks
-    //      its read_final_goodbye loop and lets its `exit_cleanup` run.
-    //      Once the peer exits it closes its own write end of our stdin
-    //      socket, which is what step 3 waits on.
+    //   2. `shutdown_stdio_write()` closes the write side of FD 1.
+    //      On the SSH / lsh.sh transport stdout is a stream socket;
+    //      the helper issues `shutdown(SHUT_WR)`, sending FIN to the
+    //      peer while leaving the read side open. On the
+    //      `--rsh=fake_rsh --rsync-path=oc-rsync` interop transport
+    //      (test_iconv_local_ssh_interop / test_compress_ssh_interop
+    //      in `tools/ci/run_interop.sh`) stdout is a pipe; the
+    //      helper's `shutdown` returns ENOTSOCK and it falls back to
+    //      `dup2(/dev/null, STDOUT_FILENO)` so the peer reading our
+    //      pipe still sees EOF deterministically. Either way the
+    //      peer's `read_final_goodbye` unblocks and its
+    //      `exit_cleanup` runs, which is what step 3 waits on.
     //   3. The drain loop reads stdin to EOF. Because step 2 already
-    //      told the peer we are done writing, the peer's FIN arrives
-    //      promptly - no timer, no race. If stdout was not a socket
-    //      (regular pipe), `shutdown_stdio_write()` returns ENOTSOCK
-    //      and process exit propagates EOF through the normal close
-    //      path; the drain still terminates as soon as the peer closes
-    //      its end.
+    //      told the peer we are done writing - regardless of the
+    //      transport's FD type - the peer's FIN arrives promptly. No
+    //      timer, no race. The pipe (ENOTSOCK) case is handled by
+    //      `stdio_shutdown.rs` falling back to `dup2(/dev/null, FD 1)`
+    //      so the peer reading our pipe still observes EOF.
     let _ = stdout.flush();
     let _ = fast_io::shutdown_stdio_write();
 
