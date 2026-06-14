@@ -140,6 +140,15 @@ pub(super) fn try_copy(
         .record_file(file_size, file_size, None);
     context.summary_mut().record_elapsed(start.elapsed());
 
+    // Normalize copied metadata to match what open()-created files have.
+    // `CopyFileExW` preserves the source's mtime verbatim. Without this,
+    // finalize_guard_and_metadata skips corrections when preservation is
+    // disabled (e.g. --no-times), leaving the source mtime instead of the
+    // current-time default a newly created file would have.
+    // upstream: rsync creates files via open() then applies metadata -
+    // CopyFileExW must produce identical results.
+    normalize_copied_metadata(destination, &metadata_options)?;
+
     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
     let total_bytes = Some(metadata_snapshot.len());
     let change_set = LocalCopyChangeSet::for_file(
@@ -186,6 +195,26 @@ pub(super) fn try_copy(
     )?;
 
     Ok(true)
+}
+
+/// Normalizes a `CopyFileExW`-copied destination to match open()-created defaults.
+///
+/// `CopyFileExW` preserves the source's exact mtime. When the user has not
+/// requested timestamp preservation (e.g. `--no-times`),
+/// `finalize_guard_and_metadata` will skip mtime corrections because it
+/// assumes the file already has process-default metadata. This function
+/// bridges that gap by resetting mtime to the current time so the finalize
+/// step works identically to the standard copy path.
+fn normalize_copied_metadata(
+    destination: &Path,
+    options: &::metadata::MetadataOptions,
+) -> Result<(), LocalCopyError> {
+    if !options.times() {
+        let now = filetime::FileTime::now();
+        filetime::set_file_mtime(destination, now)
+            .map_err(|e| LocalCopyError::io("normalize copied mtime", destination, e))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
