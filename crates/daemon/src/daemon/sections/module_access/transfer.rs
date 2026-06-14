@@ -153,24 +153,32 @@ fn classify_client_path_against_module(
     }
 }
 
-/// Rejects client-supplied `--temp-dir` / `--partial-dir` / `--backup-dir`
+/// Collects client-supplied `--temp-dir` / `--partial-dir` / `--backup-dir`
 /// / `--compare-dest` / `--copy-dest` / `--link-dest` paths that resolve
-/// outside the module root, and collects the accepted absolute paths so the
-/// SEC-1.p Landlock allowlist can be widened to cover them.
+/// inside the module root so the SEC-1.p Landlock allowlist can be widened
+/// to cover them. Out-of-module paths are silently dropped instead of
+/// rejected: upstream rsync's daemon `sanitize_path` rewrites such paths
+/// under `module_dir` (with `..` segments collapsed in place), turning
+/// alt-basis lookups into no-ops and `--temp-dir` / `--partial-dir` /
+/// `--backup-dir` into module-internal paths. Aborting the connection with
+/// `@ERROR` would diverge from that behaviour and break upstream interop
+/// tests (`standalone:link-dest` / `standalone:copy-dest`) which legitimately
+/// reference siblings of the module path.
 ///
-/// The audit (SEC-1.p, section 10) recommends REJECT over widening the
-/// Landlock allowlist for *out-of-module* paths: rsync's own chroot mode
-/// behaves the same way, and expanding the writable surface to honour an
-/// attacker-supplied prefix undermines the whole point of the sandbox.
-/// For *in-module* absolute paths the reverse holds: the operator's
-/// configuration permits them, so they must reach the Landlock allowlist
-/// or a default-on flip would EACCES legitimate writes (URV-5.b.REOPEN).
+/// For *in-module* absolute paths the operator's configuration permits the
+/// access, so they must reach the Landlock allowlist or a default-on flip
+/// would EACCES legitimate writes (URV-5.b.REOPEN).
 ///
-/// Returns `Ok(Some(ValidatedClientPaths))` when every requested path is
-/// in-tree (or absent); returns `Ok(None)` after emitting an `@ERROR`
-/// reply when any path escapes the module root.
+/// upstream: util1.c:1035 `sanitize_path` collapses `..` against the
+/// module root depth; main.c:841 `check_alt_basis_dirs` warns but does not
+/// abort when the sanitised basis is missing or out-of-tree.
+///
+/// Returns `Ok(Some(ValidatedClientPaths))` carrying only the in-module
+/// absolute paths. The function never emits `@ERROR`, so it never returns
+/// `Ok(None)` today; the `Option` is preserved so a future hard-reject
+/// policy can be reintroduced without rippling through every caller.
 fn validate_client_paths_in_module(
-    ctx: &mut ModuleRequestContext<'_>,
+    _ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
     client_args: &[String],
 ) -> io::Result<Option<ValidatedClientPaths>> {
@@ -187,18 +195,18 @@ fn validate_client_paths_in_module(
 
     let mut iter = client_args.iter().peekable();
     while let Some(arg) = iter.next() {
-        let candidate = if let Some(rest) = arg.strip_prefix("--temp-dir=") {
-            Some(("--temp-dir", rest.to_owned()))
+        let raw_path = if let Some(rest) = arg.strip_prefix("--temp-dir=") {
+            Some(rest.to_owned())
         } else if let Some(rest) = arg.strip_prefix("--partial-dir=") {
-            Some(("--partial-dir", rest.to_owned()))
+            Some(rest.to_owned())
         } else if let Some(rest) = arg.strip_prefix("--backup-dir=") {
-            Some(("--backup-dir", rest.to_owned()))
+            Some(rest.to_owned())
         } else if let Some(rest) = arg.strip_prefix("--compare-dest=") {
-            Some(("--compare-dest", rest.to_owned()))
+            Some(rest.to_owned())
         } else if let Some(rest) = arg.strip_prefix("--copy-dest=") {
-            Some(("--copy-dest", rest.to_owned()))
+            Some(rest.to_owned())
         } else if let Some(rest) = arg.strip_prefix("--link-dest=") {
-            Some(("--link-dest", rest.to_owned()))
+            Some(rest.to_owned())
         } else if matches!(
             arg.as_str(),
             "--temp-dir"
@@ -208,40 +216,26 @@ fn validate_client_paths_in_module(
                 | "--copy-dest"
                 | "--link-dest"
         ) {
-            iter.next().map(|v| (arg.as_str(), v.clone()))
+            iter.next().cloned()
         } else {
             None
         };
 
-        let Some((flag, raw_path)) = candidate else {
+        let Some(raw_path) = raw_path else {
             continue;
         };
 
-        match classify_client_path_against_module(&raw_path, &module_root) {
-            Ok(None) => continue,
-            Ok(Some(canonical)) => {
-                if !accepted.iter().any(|p| p == &canonical) {
-                    accepted.push(canonical);
-                }
-                continue;
-            }
-            Err(()) => {}
+        // In-module absolute paths feed the Landlock allowlist. Relative
+        // paths (`Ok(None)`) resolve under the module root and need no
+        // explicit entry. Out-of-module absolute paths (`Err(())`) are
+        // silently dropped here; `build_server_config`'s `retain_mut` block
+        // then strips the matching `cfg.reference_directories` entry so the
+        // receiver re-transfers instead of hard-linking outside the tree.
+        if let Ok(Some(canonical)) = classify_client_path_against_module(&raw_path, &module_root)
+            && !accepted.iter().any(|p| p == &canonical)
+        {
+            accepted.push(canonical);
         }
-
-        let payload = format!("@ERROR: {flag} path '{raw_path}' is outside module root");
-        send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
-        if let Some(log) = ctx.log_sink {
-            let text = format!(
-                "module '{}': rejected {flag}='{raw_path}' from {} ({}) - outside module root '{}'",
-                ctx.request,
-                ctx.effective_host().unwrap_or("unknown"),
-                ctx.peer_ip,
-                module_root.display(),
-            );
-            let message = rsync_error!(1, text).with_role(Role::Daemon);
-            log_message(log, &message);
-        }
-        return Ok(None);
     }
 
     Ok(Some(ValidatedClientPaths {
@@ -813,14 +807,14 @@ fn process_approved_module(
         return Ok(());
     }
 
-    // SEC-1.p: reject client-supplied --temp-dir / --partial-dir /
-    // --backup-dir / --compare-dest / --copy-dest / --link-dest paths that
-    // resolve outside the module root. Done before chroot so we can report
-    // a precise error message; the Landlock allowlist that follows would
-    // otherwise block the writes anyway with a less descriptive EACCES
-    // from the kernel. The accepted in-module paths are carried forward
-    // and fed to `engage_landlock_sandbox` so the kernel allowlist matches
-    // the full set the receiver will actually touch (URV-5.b.REOPEN).
+    // SEC-1.p: harvest the in-module --temp-dir / --partial-dir /
+    // --backup-dir / --compare-dest / --copy-dest / --link-dest paths the
+    // operator's configuration permits, so the Landlock allowlist below can
+    // be widened to cover them (URV-5.b.REOPEN). Out-of-module paths are
+    // silently dropped here and again in `build_server_config`'s ref_dir
+    // retain block - upstream `main.c:841 check_alt_basis_dirs` warns on
+    // a missing/out-of-tree basis but never aborts, and the standalone
+    // link-dest / copy-dest interop fixtures rely on that contract.
     let Some(validated_client_paths) = validate_client_paths_in_module(ctx, module, &client_args)?
     else {
         return Ok(());
