@@ -23,16 +23,38 @@ mod protect_args_daemon_tests {
         }
     }
 
+    // upstream: clientserver.c:395-402 - phase 1 wire emits sargs[0..NULL].
+    // Upstream's phase 1 NEVER contains a standalone `.` (which only enters
+    // sargs after server_options() returns, AFTER the NULL marker at
+    // options.c:2745). Upstream's phase 1 also never contains a bare `-s`:
+    // the `s` is embedded in the compact flag string `argstr` at
+    // options.c:2622-2623. We mirror that shape by emitting only the role
+    // markers + `--secluded-args` (the long-form alias of `-s` per
+    // options.c:804) so the merged daemon arg list does not carry a stray
+    // `.` that would short-circuit `apply_long_form_args`' dot_position
+    // bound, nor a bare `-s` that would shadow phase 2's real compact flag
+    // string in the daemon's first-short-form-arg picker.
     #[test]
-    fn build_minimal_args_receiver() {
+    fn build_minimal_args_receiver_excludes_dot_and_bare_short_flag() {
         let args = build_minimal_daemon_args(false);
-        assert_eq!(args, vec!["--server", "-s", "."]);
+        assert_eq!(args, vec!["--server", "--secluded-args"]);
+        assert!(
+            !args.iter().any(|a| a == "."),
+            "phase 1 must not emit a standalone `.` - upstream's wire never does",
+        );
+        assert!(
+            !args.iter().any(|a| a == "-s"),
+            "phase 1 must not emit a bare `-s` - the daemon's flag-string \
+             picker would shadow the real compact flag string from phase 2",
+        );
     }
 
     #[test]
-    fn build_minimal_args_sender() {
+    fn build_minimal_args_sender_excludes_dot_and_bare_short_flag() {
         let args = build_minimal_daemon_args(true);
-        assert_eq!(args, vec!["--server", "--sender", "-s", "."]);
+        assert_eq!(args, vec!["--server", "--sender", "--secluded-args"]);
+        assert!(!args.iter().any(|a| a == "."));
+        assert!(!args.iter().any(|a| a == "-s"));
     }
 
     #[test]

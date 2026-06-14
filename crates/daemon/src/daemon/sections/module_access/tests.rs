@@ -286,6 +286,82 @@ mod module_access_tests {
         assert_eq!(mapping.spec(), "*:1234");
     }
 
+    // UTS-8.REOPEN regression: the client's actual phase-1 wire for
+    // secluded-args daemon push is `[--server, --sender, --secluded-args]`
+    // (no standalone `.` or bare `-s`), and phase 2 carries the real
+    // compact flag string plus `--groupmap=*:GID`. The previous client
+    // emitted a stray `.` in phase 1 which made `apply_long_form_args`'
+    // first-`.` dot_position lookup short-circuit the option region, so
+    // `--groupmap` was silently dropped before reaching
+    // `GroupMapping::parse`. The previous client also emitted a bare `-s`
+    // in phase 1 which shadowed phase 2's real compact flag string in
+    // `build_server_config`'s first-short-form-arg picker, breaking
+    // compression / recursion negotiation. The merged arg list emitted
+    // by the fixed client must round-trip `--groupmap=*:GID` intact AND
+    // expose phase 2's real compact flag string as the first short-form
+    // arg so the daemon's option region parser sees both correctly.
+    //
+    // upstream: clientserver.c:395-402 phase 1 wire layout
+    // upstream: clientserver.c:303 `.` and module path land in phase 2
+    // upstream: options.c:2744-2745 NULL marker between phase 1 and phase 2
+    // upstream: options.c:804 `--secluded-args` long-form alias of `-s`
+    #[test]
+    fn merge_secluded_args_oc_rsync_client_wire_preserves_groupmap_wildcard() {
+        // Phase 1 mirrors the fixed `build_minimal_daemon_args` output
+        // for a daemon-push (client is sender, daemon is receiver).
+        let phase1 = vec![
+            "--server".to_owned(),
+            "--sender".to_owned(),
+            "--secluded-args".to_owned(),
+        ];
+        // Phase 2 mirrors `build_full_daemon_args` output: leading
+        // synthetic "rsync" arg0, then `--server`, `--sender`, the real
+        // compact flag string, the long-form options including the
+        // wildcard `--groupmap`, the `.` separator, and the positional
+        // module path. The leading `--server` / `--sender` are duplicated
+        // because oc-rsync builds the full arg list once and ships it in
+        // phase 2 (vs upstream which splits server_options() output at
+        // the NULL marker). The duplication is harmless: `apply_long_form_args`
+        // ignores `--server` / `--sender` (role determination uses a
+        // separate scan).
+        let phase2 = vec![
+            "rsync".to_owned(),
+            "--server".to_owned(),
+            "--sender".to_owned(),
+            "-logDtprIze.LsfxCIvu".to_owned(),
+            "--log-format=%i".to_owned(),
+            "--groupmap=*:4242".to_owned(),
+            ".".to_owned(),
+            "upload/".to_owned(),
+        ];
+        let merged = merge_secluded_args(phase1, phase2);
+
+        // `apply_long_form_args` finds the first standalone `.` at the
+        // expected position (after `--groupmap`), so the wildcard option
+        // is parsed instead of being treated as a positional file arg.
+        let mut config = ServerConfig::default();
+        let unknown = apply_long_form_args(&merged, &mut config);
+        assert!(
+            unknown.is_none(),
+            "no client-only batch flag should reach the daemon",
+        );
+        let mapping = config
+            .group_mapping
+            .expect("groupmap=*:4242 must reach GroupMapping::parse intact");
+        assert_eq!(mapping.spec(), "*:4242");
+
+        // The real compact flag string is the first short-form arg in the
+        // merged list (the daemon's `build_server_config` picks the first
+        // arg matching `starts_with('-') && !starts_with("--")`). A bare
+        // `-s` in phase 1 would have shadowed it; `--secluded-args` is
+        // long-form and so does not.
+        let first_short = merged
+            .iter()
+            .find(|a| a.starts_with('-') && !a.starts_with("--"))
+            .expect("merged args must include a short-form compact flag string");
+        assert_eq!(first_short, "-logDtprIze.LsfxCIvu");
+    }
+
     #[test]
     fn apply_module_bandwidth_limit_disables_when_module_configured_none() {
         let mut limiter = Some(BandwidthLimiter::new(NonZeroU64::new(1024).unwrap()));
