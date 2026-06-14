@@ -10,7 +10,7 @@
 //!
 //! # Exit Code Integration
 //!
-//! `DaemonError` uses the centralized [`ExitCode`] enum from the `core` crate
+//! `DaemonError` uses the centralized `ExitCode` enum from the `core` crate
 //! internally, ensuring consistent exit code handling across the workspace.
 //! The i32 interface is preserved for backward compatibility.
 //!
@@ -26,7 +26,7 @@ use core::message::Message;
 
 /// Error returned when daemon orchestration fails.
 ///
-/// Uses the centralized [`ExitCode`] enum internally for type-safe exit code
+/// Uses the centralized `ExitCode` enum internally for type-safe exit code
 /// handling while maintaining backward compatibility with i32 interfaces.
 #[derive(Clone, Debug)]
 pub struct DaemonError {

@@ -7,11 +7,11 @@
 //!
 //! # Submodules
 //!
-//! - [`daemon_transfer`] - Daemon protocol (rsync://) connection, handshake, and transfer
-//! - [`ssh_transfer`] - SSH-based remote transfers via `--rsh`/`-e`
-//! - [`invocation`] - Remote rsync `--server` argument construction and role detection
+//! - `daemon_transfer` - Daemon protocol (rsync://) connection, handshake, and transfer
+//! - `ssh_transfer` - SSH-based remote transfers via `--rsh`/`-e`
+//! - `invocation` - Remote rsync `--server` argument construction and role detection
 //! - `flags` - Shared flag builder functions for compact server option strings
-//! - [`remote_to_remote`] - Two-host proxy relay via local machine
+//! - `remote_to_remote` - Two-host proxy relay via local machine
 //!
 //! # Upstream Reference
 //!

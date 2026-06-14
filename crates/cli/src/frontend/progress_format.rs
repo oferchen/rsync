@@ -7,8 +7,8 @@
 //! # Overview
 //!
 //! The module provides two main types:
-//! - [`PerFileProgress`]: Displays per-file transfer progress
-//! - [`OverallProgress`]: Displays overall transfer progress (--info=progress2)
+//! - `PerFileProgress`: Displays per-file transfer progress
+//! - `OverallProgress`: Displays overall transfer progress (--info=progress2)
 //!
 //! # Example
 //!

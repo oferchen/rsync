@@ -33,7 +33,7 @@ pub mod linkat;
 /// Stub linked-SQE chain API mirroring the Linux backend.
 pub mod linked_chain;
 /// Stub per-thread io_uring ring primitive mirroring the Linux backend
-/// (IUR-3.a). [`with_ring`] always returns
+/// (IUR-3.a). `with_ring` always returns
 /// [`std::io::ErrorKind::Unsupported`] on this platform.
 pub mod per_thread_ring;
 /// Stub registered-buffer API mirroring the Linux backend.

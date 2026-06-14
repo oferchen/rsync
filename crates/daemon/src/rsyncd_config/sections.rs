@@ -179,12 +179,12 @@ impl GlobalConfig {
         self.ssl_ca.as_deref()
     }
 
-    /// Builds a [`TlsConfig`](crate::tls::TlsConfig) from the parsed global
+    /// Builds a `TlsConfig` from the parsed global
     /// TLS directives, if both `ssl cert` and `ssl key` are configured.
     ///
     /// Returns `None` when TLS is not configured (neither directive is set).
     /// The caller receives a ready-to-use `TlsConfig` that can be passed
-    /// directly to [`build_tls_acceptor`](crate::tls::build_tls_acceptor).
+    /// directly to `build_tls_acceptor`.
     #[cfg(feature = "daemon-tls")]
     #[cfg_attr(docsrs, doc(cfg(feature = "daemon-tls")))]
     pub fn tls_config(&self) -> Option<crate::tls::TlsConfig> {

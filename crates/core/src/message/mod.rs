@@ -1,6 +1,6 @@
 //! Diagnostic message formatting utilities.
 //!
-//! This module provides the [`Message`] type and supporting infrastructure for
+//! This module provides the `Message` type and supporting infrastructure for
 //! constructing formatted error and informational messages that match upstream
 //! rsync's output conventions. Messages carry a severity level, optional role
 //! trailer (e.g. `[sender]`, `[receiver]`), and source location metadata.

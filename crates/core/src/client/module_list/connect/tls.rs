@@ -1,6 +1,6 @@
 //! TLS connector for client-side rsync:// connections.
 //!
-//! Wraps a [`TcpStream`] in a rustls TLS session, performing the client
+//! Wraps a `TcpStream` in a rustls TLS session, performing the client
 //! handshake and returning a stream that implements `Read + Write` over
 //! the encrypted channel. This eliminates the need for an external stunnel
 //! wrapper when connecting to TLS-enabled rsync daemons.

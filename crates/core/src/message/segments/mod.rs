@@ -1,4 +1,4 @@
-//! Helpers for rendering [`Message`](crate::message::Message) values as vectored slices.
+//! Helpers for rendering `Message` values as vectored slices.
 //!
 //! The [`MessageSegments`] type exposes the low-level representation that the
 //! logging subsystem streams into stdout/stderr. This submodule keeps the

@@ -5,7 +5,7 @@
 //!
 //! # Overview
 //!
-//! The module provides a [`StatsFormatter`] that takes a [`StatsData`] struct
+//! The module provides a `StatsFormatter` that takes a `StatsData` struct
 //! containing all the transfer statistics and produces a formatted multi-line
 //! string matching upstream rsync's exact output format.
 //!

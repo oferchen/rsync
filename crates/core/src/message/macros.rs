@@ -91,7 +91,7 @@ macro_rules! tracked_message_source {
     () => {{ $crate::message_source_from!(::std::panic::Location::caller()) }};
 }
 
-/// Constructs an error [`Message`](crate::message::Message) with the provided
+/// Constructs an error `Message` with the provided
 /// exit code and payload.
 ///
 /// The macro mirrors upstream diagnostics by automatically attaching the
@@ -100,7 +100,7 @@ macro_rules! tracked_message_source {
 /// accepts either a
 /// string literal/`Cow<'static, str>` payload or a [`format!`] style template.
 /// Callers can further customise the returned
-/// [`Message`](crate::message::Message) by chaining helpers such as
+/// `Message` by chaining helpers such as
 /// [`Message::with_role`](crate::message::Message::with_role).
 ///
 /// # Examples
@@ -141,7 +141,7 @@ macro_rules! rsync_error {
     }};
 }
 
-/// Constructs a warning [`Message`](crate::message::Message) from the provided
+/// Constructs a warning `Message` from the provided
 /// payload.
 ///
 /// Like [`macro@rsync_error`], the macro records the call-site source location so
@@ -175,7 +175,7 @@ macro_rules! rsync_warning {
     }};
 }
 
-/// Constructs an informational [`Message`](crate::message::Message) from the
+/// Constructs an informational `Message` from the
 /// provided payload.
 ///
 /// The macro is a convenience wrapper around
@@ -208,7 +208,7 @@ macro_rules! rsync_info {
     }};
 }
 
-/// Constructs a [`Message`](crate::message::Message) using the canonical
+/// Constructs a `Message` using the canonical
 /// wording for a known exit code.
 ///
 /// The macro delegates to

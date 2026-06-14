@@ -32,7 +32,7 @@ pub const REMOTE_COMMAND_NOT_FOUND_EXIT_CODE: i32 = ExitCode::CommandNotFound.as
 
 /// Error returned when the client orchestration fails.
 ///
-/// Uses the centralized [`ExitCode`] enum to ensure exit codes match
+/// Uses the centralized `ExitCode` enum to ensure exit codes match
 /// upstream rsync behavior. Exit codes are defined in upstream `errcode.h`
 /// and mapped to string names in `log.c`.
 #[derive(Clone, Debug, Error)]
@@ -50,7 +50,7 @@ impl ClientError {
 
     /// Creates a new [`ClientError`] from an i32 exit code and message.
     ///
-    /// If the exit code doesn't map to a known [`ExitCode`] variant,
+    /// If the exit code doesn't map to a known `ExitCode` variant,
     /// [`ExitCode::PartialTransfer`] is used as a fallback.
     ///
     /// This is the primary constructor for backward compatibility with
@@ -168,7 +168,7 @@ pub(crate) fn missing_operands_error() -> ClientError {
 
 /// Creates an invalid argument error from an i32 exit code.
 ///
-/// If the exit code doesn't map to a known [`ExitCode`] variant,
+/// If the exit code doesn't map to a known `ExitCode` variant,
 /// [`ExitCode::PartialTransfer`] is used as a fallback.
 #[cold]
 pub(crate) fn invalid_argument_error(text: &str, exit_code: i32) -> ClientError {
@@ -301,7 +301,7 @@ pub fn connection_unexpectedly_closed_error(bytes_received: u64, role: Role) -> 
 
 /// Creates a daemon error from an i32 exit code.
 ///
-/// If the exit code doesn't map to a known [`ExitCode`] variant,
+/// If the exit code doesn't map to a known `ExitCode` variant,
 /// [`ExitCode::PartialTransfer`] is used as a fallback.
 #[cold]
 pub(crate) fn daemon_error(text: impl Into<String>, exit_code: i32) -> ClientError {

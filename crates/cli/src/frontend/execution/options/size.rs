@@ -82,7 +82,7 @@ pub(crate) const MAX_ALLOC_CEILING: u64 = u64::MAX / 4;
 ///
 /// # Errors
 ///
-/// Returns a [`Message`] with role [`Role::Client`] and exit code 1 on any
+/// Returns a `Message` with role [`Role::Client`] and exit code 1 on any
 /// rejection, matching upstream's diagnostic style.
 pub(crate) fn parse_max_alloc_argument(value: &OsStr) -> Result<u64, Message> {
     let text = value.to_string_lossy();
