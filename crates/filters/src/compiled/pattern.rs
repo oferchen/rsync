@@ -10,11 +10,33 @@ use crate::FilterError;
 /// Patterns are sorted for deterministic evaluation order. Each pattern is
 /// built with `literal_separator(true)` so that `*` does not match `/`,
 /// matching upstream rsync's wildcard semantics.
+///
+/// Bare interior `**` sequences carry the upstream wildmatch semantic
+/// "match anything including `/`". globset's `literal_separator(true)`
+/// only treats `**` as recursive when it is bounded by `/`, so the input
+/// pattern is expanded into TWO variants: the original (covers the
+/// in-segment case where `**` behaves like a single-segment `*`) and a
+/// slash-bounded rewrite (covers the cross-segment case). Both are added
+/// to the matcher set so either form can satisfy upstream parity.
+///
+/// upstream: `lib/wildmatch.c:dowild()` - `**` always matches across `/`.
 pub(crate) fn compile_patterns(
     patterns: HashSet<String>,
     original: &str,
 ) -> Result<Vec<GlobMatcher>, FilterError> {
-    let mut unique: Vec<_> = patterns.into_iter().collect();
+    let mut expanded: HashSet<String> = HashSet::with_capacity(patterns.len() * 2);
+    for pattern in patterns {
+        let rewritten = match normalise_recursive_wildcards(&pattern) {
+            Cow::Borrowed(_) => None,
+            Cow::Owned(s) => Some(s),
+        };
+        if let Some(s) = rewritten {
+            expanded.insert(s);
+        }
+        expanded.insert(pattern);
+    }
+
+    let mut unique: Vec<_> = expanded.into_iter().collect();
     unique.sort();
 
     let mut matchers = Vec::with_capacity(unique.len());
@@ -27,6 +49,98 @@ pub(crate) fn compile_patterns(
         matchers.push(glob.compile_matcher());
     }
     Ok(matchers)
+}
+
+/// Rewrites bare interior `**` sequences into slash-delimited `/**/` so
+/// globset treats them as recursive wildcards.
+///
+/// upstream: `lib/wildmatch.c:dowild()` - when `**` is encountered, the
+/// `special` flag is set, and the wildcard matches across `/` boundaries
+/// regardless of surrounding characters. globset only treats `**` as
+/// recursive when it is bounded by `/` (or string boundaries), so a pattern
+/// like `foo**too` must be rewritten to `foo/**/too` to match
+/// `bar/down/to/foo/too`.
+///
+/// Runs of three or more `*` characters are collapsed to `**` first, since
+/// upstream's `dowild()` skips all consecutive `*` after seeing `**`
+/// (`while (*++p == '*') {}`).
+///
+/// Boundary handling:
+/// - `**` at the very start of the pattern keeps its prefix free
+///   (`**foo` -> `**/foo`, `**/foo` unchanged).
+/// - `**` at the very end keeps its suffix free
+///   (`foo**` -> `foo/**`, `foo/**` unchanged).
+/// - `**` already bounded by `/` on both sides is unchanged.
+/// - `**` adjacent to non-`/` is padded with the missing slash.
+///
+/// `*` and `?` outside `**` runs are left intact. Backslash-escaped
+/// characters (`\*`) are passed through verbatim - the escape is consumed
+/// with its escapee so neither participates in `**` detection.
+fn normalise_recursive_wildcards(pattern: &str) -> Cow<'_, str> {
+    if !pattern.contains("**") {
+        return Cow::Borrowed(pattern);
+    }
+
+    // `*`, `\`, and `/` are all single-byte ASCII so byte-indexed scanning
+    // is safe within a UTF-8 string. Multi-byte UTF-8 sequences are copied
+    // verbatim via str slicing between cut points to preserve encoding.
+    let bytes = pattern.as_bytes();
+    let mut out = String::with_capacity(bytes.len() + 4);
+    let mut cut = 0;
+    let mut i = 0;
+    let mut changed = false;
+
+    while i < bytes.len() {
+        let b = bytes[i];
+        if b == b'\\' && i + 1 < bytes.len() {
+            // Skip the escape pair so neither byte participates in `**` detection.
+            i += 2;
+            continue;
+        }
+        if b == b'*' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+            // Found `**`. Consume the entire run of `*` (collapses `***+` to `**`).
+            let run_start = i;
+            let mut j = i + 2;
+            while j < bytes.len() && bytes[j] == b'*' {
+                j += 1;
+            }
+
+            // Flush any pending verbatim slice before the `**` run.
+            out.push_str(&pattern[cut..run_start]);
+
+            if j - run_start > 2 {
+                changed = true;
+            }
+            let at_start = run_start == 0;
+            let at_end = j == bytes.len();
+            let prev_is_slash = run_start > 0 && bytes[run_start - 1] == b'/';
+            let next_is_slash = j < bytes.len() && bytes[j] == b'/';
+
+            let need_leading_slash = !at_start && !prev_is_slash;
+            let need_trailing_slash = !at_end && !next_is_slash;
+
+            if need_leading_slash {
+                out.push('/');
+                changed = true;
+            }
+            out.push_str("**");
+            if need_trailing_slash {
+                out.push('/');
+                changed = true;
+            }
+            i = j;
+            cut = j;
+            continue;
+        }
+        i += 1;
+    }
+
+    if !changed {
+        return Cow::Borrowed(pattern);
+    }
+
+    out.push_str(&pattern[cut..]);
+    Cow::Owned(out)
 }
 
 /// Normalizes a pattern by stripping leading `/` (anchored) and trailing `/` (directory-only).
@@ -214,5 +328,74 @@ mod tests {
         assert!(!anchored);
         assert!(!dir_only);
         assert_eq!(core, "foo***");
+    }
+
+    /// `**` between non-slash characters must be rewritten to `/**/` so
+    /// globset treats it as a recursive wildcard.
+    ///
+    /// upstream: `lib/wildmatch.c:dowild()` - `**` always matches across `/`.
+    #[test]
+    fn normalise_recursive_wildcards_interior_rewrites() {
+        assert_eq!(normalise_recursive_wildcards("foo**too"), "foo/**/too");
+        assert_eq!(normalise_recursive_wildcards("a**b**c"), "a/**/b/**/c");
+    }
+
+    /// `**` already adjacent to `/` on at least one side gets the missing
+    /// slash on the other side.
+    #[test]
+    fn normalise_recursive_wildcards_one_sided_slash() {
+        assert_eq!(normalise_recursive_wildcards("foo/**bar"), "foo/**/bar");
+        assert_eq!(normalise_recursive_wildcards("bar**/foo"), "bar/**/foo");
+    }
+
+    /// `**` already fully slash-bounded must not be touched.
+    #[test]
+    fn normalise_recursive_wildcards_already_bounded() {
+        for p in &["**/bar", "bar/**", "foo/**/bar", "**", "**/foo/**"] {
+            assert_eq!(normalise_recursive_wildcards(p), *p, "pattern {p:?}");
+        }
+    }
+
+    /// `**` at string start/end is treated as bounded by the implicit
+    /// edges, not as needing a slash inserted there.
+    #[test]
+    fn normalise_recursive_wildcards_edges() {
+        assert_eq!(normalise_recursive_wildcards("**foo"), "**/foo");
+        assert_eq!(normalise_recursive_wildcards("foo**"), "foo/**");
+    }
+
+    /// Three or more consecutive `*` characters collapse to `**` then get
+    /// boundary-normalised. This mirrors upstream's
+    /// `while (*++p == '*') {}` consumption.
+    #[test]
+    fn normalise_recursive_wildcards_collapse_runs() {
+        assert_eq!(normalise_recursive_wildcards("foo***too"), "foo/**/too");
+        assert_eq!(normalise_recursive_wildcards("foo****"), "foo/**");
+    }
+
+    /// Single `*` and `?` wildcards are left intact - they retain their
+    /// "match anything except `/`" semantics in globset.
+    #[test]
+    fn normalise_recursive_wildcards_leaves_single_wildcards() {
+        for p in &["*.txt", "foo?bar", "src/*.rs", "?", "*"] {
+            assert_eq!(normalise_recursive_wildcards(p), *p, "pattern {p:?}");
+        }
+    }
+
+    /// Patterns without `**` are returned borrowed without allocation.
+    #[test]
+    fn normalise_recursive_wildcards_no_double_star_is_borrowed() {
+        let p = "foo/bar/baz";
+        assert!(matches!(normalise_recursive_wildcards(p), Cow::Borrowed(_)));
+    }
+
+    /// Escaped `\*` sequences must not be treated as wildcards. The escape
+    /// pair is preserved verbatim and skipped during `**` detection, so a
+    /// pattern like `foo\**bar` decomposes into `foo` + literal `*` +
+    /// single `*` + `bar`, which is NOT a `**` recursive wildcard.
+    #[test]
+    fn normalise_recursive_wildcards_respects_backslash_escape() {
+        assert_eq!(normalise_recursive_wildcards("foo\\**bar"), "foo\\**bar");
+        assert_eq!(normalise_recursive_wildcards("\\*\\*foo"), "\\*\\*foo");
     }
 }

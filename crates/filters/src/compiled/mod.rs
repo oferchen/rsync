@@ -282,6 +282,89 @@ mod tests {
         }
     }
 
+    /// `foo**too` must match `bar/down/to/foo/too` as a directory.
+    ///
+    /// upstream: `lib/wildmatch.c:dowild()` - `**` always matches across
+    /// `/` boundaries regardless of surrounding characters. Without
+    /// normalisation, globset's `literal_separator(true)` would treat the
+    /// bare `**` as two single `*` wildcards (neither of which crosses
+    /// `/`), so `foo**too` would only match `fooXYZtoo` within a single
+    /// path segment. Regression test for the UTS-20 `exclude-lsh` followup.
+    #[test]
+    fn double_star_interior_matches_across_path_segments() {
+        let rule = FilterRule {
+            action: FilterAction::Include,
+            pattern: "foo**too".to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: false,
+            exclude_only: false,
+            no_inherit: false,
+        };
+        let compiled = CompiledRule::new(rule).unwrap();
+
+        // Cross-segment match: `bar/down/to/foo/too` ends in `foo/too` and
+        // the `**` chews the intervening path.
+        use std::path::Path;
+        assert!(compiled.matches(Path::new("bar/down/to/foo/too"), true, true));
+        // Basename-style: `foo/too` is the minimal cross-segment match.
+        assert!(compiled.matches(Path::new("foo/too"), true, true));
+        // In-segment form must still match - upstream `**` consumes zero
+        // or more characters including `/`, so `fooxytoo` matches via the
+        // empty-slice expansion.
+        assert!(compiled.matches(Path::new("fooxytoo"), false, true));
+        // Non-matching tail.
+        assert!(!compiled.matches(Path::new("foo/bar"), false, true));
+    }
+
+    /// `**/bar` continues to match `bar` and `a/b/bar` after normalisation.
+    /// Regression guard: leading `**/` must NOT be over-normalised.
+    #[test]
+    fn double_star_prefix_regression_guard() {
+        let rule = FilterRule {
+            action: FilterAction::Include,
+            pattern: "**/bar".to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: false,
+            exclude_only: false,
+            no_inherit: false,
+        };
+        let compiled = CompiledRule::new(rule).unwrap();
+        use std::path::Path;
+        assert!(compiled.matches(Path::new("bar"), false, true));
+        assert!(compiled.matches(Path::new("a/b/bar"), false, true));
+        assert!(!compiled.matches(Path::new("baz"), false, true));
+    }
+
+    /// `bar/**` continues to match `bar/x/y` after normalisation.
+    /// Regression guard: trailing `/**` must NOT be over-normalised.
+    #[test]
+    fn double_star_suffix_regression_guard() {
+        let rule = FilterRule {
+            action: FilterAction::Exclude,
+            pattern: "bar/**".to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: false,
+            exclude_only: false,
+            no_inherit: false,
+        };
+        let compiled = CompiledRule::new(rule).unwrap();
+        use std::path::Path;
+        assert!(compiled.matches(Path::new("bar/x"), false, true));
+        assert!(compiled.matches(Path::new("bar/x/y"), false, true));
+        // `bar` alone does NOT match `bar/**` - the `/` after `bar` is
+        // mandatory in the pattern.
+        assert!(!compiled.matches(Path::new("bar"), true, true));
+    }
+
     #[test]
     fn compiled_rule_negate_flag_preserved() {
         let rule = FilterRule {
