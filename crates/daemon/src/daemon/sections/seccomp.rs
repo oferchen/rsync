@@ -418,6 +418,12 @@ mod seccomp_tests {
             libc::SYS_exit_group,
             libc::SYS_recvfrom,
             libc::SYS_sendto,
+            // SYS_fcntl is pinned as a regression for the upstream
+            // `daemon` testsuite: subtests 3-5 (test-hidden listing,
+            // test-from glob, test-from glob -U) all triggered SIGSYS
+            // on aarch64 when fcntl was missing. Sender file open and
+            // socket non-blocking toggling both require it.
+            libc::SYS_fcntl,
         ] {
             assert!(
                 list.binary_search(&required).is_ok(),
