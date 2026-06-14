@@ -2892,7 +2892,7 @@ mod files_from {
             "expected 'payload' entry in {names:?}"
         );
         assert!(
-            names.iter().any(|n| *n == expected_child.as_str()),
+            names.contains(&expected_child.as_str()),
             "expected {expected_child:?} in {names:?}"
         );
         assert!(
