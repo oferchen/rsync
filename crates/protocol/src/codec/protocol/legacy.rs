@@ -80,6 +80,13 @@ impl ProtocolCodec for LegacyProtocolCodec {
     fn read_long_name_len<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<usize> {
         let mut buf = [0u8; 4];
         reader.read_exact(&mut buf)?;
-        Ok(i32::from_le_bytes(buf) as usize)
+        let value = i32::from_le_bytes(buf);
+        if value < 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("negative long-name length on wire: {value}"),
+            ));
+        }
+        Ok(value as usize)
     }
 }

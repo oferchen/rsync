@@ -63,6 +63,13 @@ impl ProtocolCodec for ModernProtocolCodec {
     }
 
     fn read_long_name_len<R: Read + ?Sized>(&self, reader: &mut R) -> io::Result<usize> {
-        read_varint(reader).map(|v| v as usize)
+        let value = read_varint(reader)?;
+        if value < 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("negative long-name length on wire: {value}"),
+            ));
+        }
+        Ok(value as usize)
     }
 }
