@@ -45,7 +45,7 @@ macro_rules! info_log {
 ///
 /// Debug flags are activated starting at `-vv` (verbose level 2). Higher
 /// verbose levels increase individual flag levels, enabling progressively
-/// more detailed output. See [`VerbosityConfig::from_verbose_level`] for
+/// more detailed output. See [`VerbosityConfig::from_verbose_level`](crate::VerbosityConfig::from_verbose_level) for
 /// the full mapping.
 ///
 /// # Arguments

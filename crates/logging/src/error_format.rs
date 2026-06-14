@@ -10,7 +10,7 @@
 //!
 //! Reference: upstream `log.c:rwrite()`, `errcode.h` (rsync 3.4.1).
 //!
-//! The [`rsync_error_fmt!`] and [`rsync_warning_fmt!`] macros produce strings
+//! The `rsync_error_fmt!` and `rsync_warning_fmt!` macros produce strings
 //! in this format. They capture `file!()` and `line!()` at the call site,
 //! reduce the path to its basename (matching upstream's `at io.c(234)` style),
 //! and embed the caller's `CARGO_PKG_VERSION` as the version.
@@ -73,7 +73,7 @@ pub fn file_basename(path: &str) -> &str {
 
 /// Formats an upstream-compatible rsync error string.
 ///
-/// This is the function backing [`rsync_error_fmt!`]. Prefer the macro, which
+/// This is the function backing `rsync_error_fmt!`. Prefer the macro, which
 /// captures `file!()` and `line!()` automatically.
 ///
 /// # Format
@@ -97,7 +97,7 @@ pub fn format_rsync_error(
 
 /// Formats an upstream-compatible rsync warning string.
 ///
-/// This is the function backing [`rsync_warning_fmt!`]. Prefer the macro, which
+/// This is the function backing `rsync_warning_fmt!`. Prefer the macro, which
 /// captures `file!()` and `line!()` automatically.
 ///
 /// # Format
@@ -176,7 +176,7 @@ macro_rules! rsync_error_fmt {
 
 /// Produces an upstream-compatible rsync warning string.
 ///
-/// Behaves identically to [`rsync_error_fmt!`] but uses the `rsync warning:`
+/// Behaves identically to `rsync_error_fmt!` but uses the `rsync warning:`
 /// prefix instead of `rsync error:`.
 ///
 /// # Format
