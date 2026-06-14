@@ -150,6 +150,20 @@ fn build_file_list_for(ctx: &mut GeneratorContext, base_path: &Path) -> usize {
     ctx.build_file_list(&paths).unwrap()
 }
 
+/// Builds a file list for the *contents* of `base_path`.
+///
+/// Appends a trailing `/` so `build_file_list` enters the upstream
+/// `DOTDIR_NAME` branch (flist.c:2312-2322) and emits `.` plus the
+/// directory's children, matching `rsync <dir>/ dst/` semantics. Used by
+/// tests that pre-populate a flat set of files and want to assert against
+/// the dot-entry-plus-children layout independent of the source basename.
+fn build_file_list_for_contents(ctx: &mut GeneratorContext, base_path: &Path) -> usize {
+    let mut with_slash = base_path.as_os_str().to_owned();
+    with_slash.push("/");
+    let paths = vec![PathBuf::from(with_slash)];
+    ctx.build_file_list(&paths).unwrap()
+}
+
 /// Wraps a vector of full paths as `FilesFromEntry`s sharing one base, for
 /// tests that only exercise plain (no `/./` anchor) `--files-from` entries.
 fn files_from_entries(base: &Path, paths: Vec<PathBuf>) -> Vec<super::filters::FilesFromEntry> {
@@ -605,7 +619,10 @@ fn filter_application_excludes_files() {
         vec![FilterRuleWireFormat::exclude("*.log".to_owned())],
     );
 
-    let count = build_file_list_for(&mut ctx, base_path);
+    // Trailing-slash source exercises upstream's DOTDIR_NAME branch
+    // (flist.c:2312-2322) so the file list is `.` + the directory's
+    // children, matching `rsync <dir>/ dst/`.
+    let count = build_file_list_for_contents(&mut ctx, base_path);
 
     // Should have 3 entries: "." root dir + 2 .txt files (not the .log file)
     assert_eq!(count, 3);
@@ -635,7 +652,10 @@ fn filter_application_includes_only_matching() {
         ],
     );
 
-    let count = build_file_list_for(&mut ctx, base_path);
+    // Trailing-slash source exercises upstream's DOTDIR_NAME branch
+    // (flist.c:2312-2322) so the file list is `.` + the directory's
+    // children, matching `rsync <dir>/ dst/`.
+    let count = build_file_list_for_contents(&mut ctx, base_path);
 
     // Should have 2 entries: "." root dir + data.txt (other files excluded by "exclude *")
     assert_eq!(count, 2);
@@ -681,7 +701,10 @@ fn filter_application_no_filters_includes_all() {
 
     let (_handshake, mut ctx) = test_generator_for_path(base_path, false);
 
-    let count = build_file_list_for(&mut ctx, base_path);
+    // Trailing-slash source exercises upstream's DOTDIR_NAME branch
+    // (flist.c:2312-2322) so the file list is `.` + the directory's
+    // children, matching `rsync <dir>/ dst/`.
+    let count = build_file_list_for_contents(&mut ctx, base_path);
 
     // "." root dir + 3 files when no filters are present.
     assert_eq!(count, 4);
@@ -2855,14 +2878,22 @@ mod files_from {
         let mut ctx = GeneratorContext::new_for_test(&handshake, config);
         ctx.build_file_list(&[src_dir]).unwrap();
 
+        // The stored `name()` uses native OS separators; compare against
+        // a platform-appropriate join so Windows backslashes do not trip
+        // the assertion. The on-wire form is normalised to `/` by
+        // `name_bytes()`, but `name()` returns the raw `PathBuf`.
         let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+        let expected_child = std::path::PathBuf::from("payload")
+            .join("file.txt")
+            .to_string_lossy()
+            .into_owned();
         assert!(
             names.contains(&"payload"),
             "expected 'payload' entry in {names:?}"
         );
         assert!(
-            names.contains(&"payload/file.txt"),
-            "expected 'payload/file.txt' in {names:?}"
+            names.contains(&expected_child.as_str()),
+            "expected {expected_child:?} in {names:?}"
         );
         assert!(
             !names.contains(&"."),
@@ -3321,7 +3352,10 @@ fn generator_merge_filter_exclude_self() {
     ctx.filter_chain
         .add_merge_config(::filters::DirMergeConfig::new(".rsync-filter").with_exclude_self(true));
 
-    let _count = build_file_list_for(&mut ctx, base);
+    // Trailing-slash source enters upstream's DOTDIR_NAME branch
+    // (flist.c:2312-2322) so the file list contains `.` + the base
+    // directory's children at the top level, matching `rsync <dir>/ dst/`.
+    let _count = build_file_list_for_contents(&mut ctx, base);
     let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
 
     // .rsync-filter itself should be excluded
