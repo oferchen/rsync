@@ -412,7 +412,7 @@ mod tests {
     }
 
     /// Compile-time check that the [`AsyncSshTransport::split`] halves
-    /// implement the documented [`AsyncRead`] / [`AsyncWrite`] traits.
+    /// implement the documented `AsyncRead` / `AsyncWrite` traits.
     /// The body is never executed; it exists purely so a type mismatch
     /// surfaces as a compile error during normal test builds rather than
     /// a runtime test failure that requires the `ssh` binary.

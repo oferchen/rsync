@@ -14,10 +14,10 @@
 //!   `std::io::Read + std::io::Write` by driving an internal current-thread
 //!   tokio runtime via [`tokio::runtime::Runtime::block_on`] on every call.
 //! - [`into_sync_halves`] takes ownership of a [`russh::Channel`] and returns
-//!   ([`SyncReader`], [`SyncWriter`]) halves backed by a background tokio task
+//!   (`SyncReader`, `SyncWriter`) halves backed by a background tokio task
 //!   that pumps channel data into bounded `std::sync::mpsc` /
 //!   `tokio::sync::mpsc` queues. This is the bridge variant used by
-//!   [`connect_and_exec`](super::connect::connect_and_exec); it is re-exposed
+//!   `connect_and_exec`; it is re-exposed
 //!   here so other call-sites can construct the same wiring around channels
 //!   they own.
 //!
@@ -51,7 +51,7 @@ use tokio::sync::mpsc as tokio_mpsc;
 
 /// Default capacity for the in-process queues used by [`into_sync_halves`].
 ///
-/// Matches the queue depth used by [`super::connect::connect_and_exec`] so
+/// Matches the queue depth used by `super::connect::connect_and_exec` so
 /// the two paths behave identically under load.
 pub const DEFAULT_CHANNEL_CAPACITY: usize = 64;
 
@@ -189,7 +189,7 @@ impl io::Read for SyncReader {
     }
 }
 
-/// Internal write buffer capacity for [`SyncWriter`].
+/// Internal write buffer capacity for `SyncWriter`.
 ///
 /// Small writes (4-byte multiplex headers, NDX values, etc.) are coalesced
 /// into this staging buffer instead of allocating a `Vec` per write and
@@ -286,7 +286,7 @@ impl Drop for SyncWriter {
 /// Spawns a background task on the current tokio runtime to pump channel
 /// data into bounded queues that the returned halves drain synchronously.
 /// This is the channel-based bridge variant used by
-/// [`super::connect::connect_and_exec`]; it is exposed here for callers who
+/// `super::connect::connect_and_exec`; it is exposed here for callers who
 /// already own a channel and need the same wiring (for example, after
 /// opening a session channel for a custom subsystem).
 ///
