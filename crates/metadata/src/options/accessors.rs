@@ -97,6 +97,19 @@ impl MetadataOptions {
         self.destination_is_new
     }
 
+    /// Reports whether `--keep-dirlinks` is active.
+    ///
+    /// When this returns `true`, callers that would otherwise refuse to walk
+    /// through symlinked parents (e.g. the dirfd-anchored TOCTOU sandbox in
+    /// `fast_io::secure_chmod_at`) must bypass that guard, because the user
+    /// has explicitly opted into following dest-side symlinks-to-dirs.
+    ///
+    /// upstream: generator.c:1344 - `link_stat(fname, &sx.st, keep_dirlinks && is_dir)`.
+    #[must_use]
+    pub const fn keep_dirlinks(&self) -> bool {
+        self.keep_dirlinks
+    }
+
     /// Returns `true` when at least one metadata preservation flag is active.
     ///
     /// When this returns `false`, `apply_metadata_with_cached_stat` is a no-op

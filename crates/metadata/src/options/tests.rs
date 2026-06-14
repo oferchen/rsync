@@ -218,6 +218,18 @@ fn destination_is_new_defaults_to_false_and_can_be_set() {
 }
 
 #[test]
+fn keep_dirlinks_defaults_to_false_and_can_be_set() {
+    let options = MetadataOptions::new();
+    assert!(!options.keep_dirlinks());
+
+    let options = options.with_keep_dirlinks(true);
+    assert!(options.keep_dirlinks());
+
+    let options = options.with_keep_dirlinks(false);
+    assert!(!options.keep_dirlinks());
+}
+
+#[test]
 fn fake_super_can_be_enabled() {
     let options = MetadataOptions::new().fake_super(true);
     assert!(options.fake_super_enabled());
