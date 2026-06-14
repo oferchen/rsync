@@ -335,8 +335,12 @@ impl ProxyCredentials {
 }
 
 /// Maximum size of a single CONNECT response line, matching upstream rsync's
-/// 1024-byte stack buffer in `establish_proxy_connection()` (socket.c:53).
-const MAX_PROXY_LINE_BYTES: usize = 1024;
+/// `PROXY_BUF_SIZE - 1` loop bound in `establish_proxy_connection()`
+/// (socket.c:86). Upstream's stack buffer is 1024 bytes, but its read loop
+/// (`cp < &buffer[PROXY_BUF_SIZE - 1]`) writes at most positions 0..=1022,
+/// then rejects when the post-loop cursor lands at `&buffer[1023]`. The
+/// effective cap is therefore 1023 non-newline bytes.
+const MAX_PROXY_LINE_BYTES: usize = 1023;
 
 fn read_proxy_line(
     stream: &mut TcpStream,
@@ -361,7 +365,7 @@ fn read_proxy_line(
                     }
                     break;
                 }
-                if buffer.len() > MAX_PROXY_LINE_BYTES {
+                if buffer.len() >= MAX_PROXY_LINE_BYTES {
                     return Err(proxy_response_error(format!(
                         "proxy response line too long (exceeded {MAX_PROXY_LINE_BYTES} bytes)"
                     )));
@@ -702,9 +706,11 @@ mod tests {
         use std::net::TcpListener;
         use std::thread;
 
-        // Upstream `establish_proxy_connection()` uses a 1024-byte stack
-        // buffer; a 1025-byte newline-free response must be refused.
-        assert_eq!(MAX_PROXY_LINE_BYTES, 1024);
+        // Upstream `establish_proxy_connection()` exits its read loop and
+        // rejects "too long" once the cursor reaches `&buffer[PROXY_BUF_SIZE -
+        // 1]` (socket.c:86-98), i.e. after 1023 non-newline bytes. A
+        // 1024-byte newline-free response must therefore be refused.
+        assert_eq!(MAX_PROXY_LINE_BYTES, 1023);
         let payload = vec![b'A'; MAX_PROXY_LINE_BYTES + 1];
 
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
@@ -735,8 +741,54 @@ mod tests {
             "unexpected error message: {rendered}"
         );
         assert!(
-            rendered.contains("1024"),
-            "error message should cite the 1024-byte cap: {rendered}"
+            rendered.contains("1023"),
+            "error message should cite the 1023-byte cap: {rendered}"
+        );
+
+        handle.join().expect("server thread");
+    }
+
+    #[test]
+    fn read_proxy_line_rejects_exactly_cap_bytes_then_close() {
+        use std::net::TcpListener;
+        use std::thread;
+
+        // Upstream test `proxy-response-line-too-long`: a malicious proxy
+        // sends exactly 1023 bytes (PROXY_BUF_SIZE - 1) without a newline,
+        // then closes. Upstream's loop bound `cp < &buffer[PROXY_BUF_SIZE -
+        // 1]` exits after writing positions 0..=1022, and the post-loop
+        // check rejects with "proxy response line too long" before the EOF
+        // is observed. oc-rsync must mirror that semantics rather than
+        // surfacing the subsequent EOF as "proxy closed the connection".
+        let payload = vec![b'X'; MAX_PROXY_LINE_BYTES];
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback listener");
+        let addr = listener.local_addr().expect("listener address");
+
+        let server_payload = payload.clone();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            stream
+                .write_all(&server_payload)
+                .expect("write cap-sized response");
+            stream.flush().expect("flush cap-sized response");
+            // Drop closes the stream, producing EOF on the client side.
+        });
+
+        let mut stream = TcpStream::connect(addr).expect("connect to listener");
+        let mut buffer = Vec::with_capacity(MAX_PROXY_LINE_BYTES + 2);
+        let display = SocketAddrDisplay {
+            host: "proxy.test",
+            port: addr.port(),
+        };
+        let error = read_proxy_line(&mut stream, &mut buffer, display)
+            .expect_err("cap-sized newline-free proxy line must be rejected");
+
+        assert_eq!(error.exit_code(), SOCKET_IO_EXIT_CODE);
+        let rendered = error.message().to_string();
+        assert!(
+            rendered.contains("proxy response line too long"),
+            "must report too-long, not EOF: {rendered}"
         );
 
         handle.join().expect("server thread");
