@@ -138,16 +138,19 @@ fn include_rule_for_directory_restores_descendants() {
 
 #[test]
 fn relative_path_conversion_handles_dot_components() {
-    // Internal slash anchors the pattern to the transfer root. globset does
-    // not normalise `foo/../foo/bar`, so the anchored pattern misses it; use
-    // `**/foo/bar` to match at any depth.
+    // upstream: exclude.c:rule_matches() lines 947-951 - a pattern with an
+    // internal slash but no leading `/` tail-matches against the last N+1
+    // path components. So `- foo/bar` excludes both `foo/bar` and any path
+    // whose last two components are `foo, bar`, including
+    // `foo/../foo/bar`. The glob equivalent is the `**/foo/bar` direct
+    // matcher generated for unanchored patterns with internal slashes.
     let set = FilterSet::from_rules([FilterRule::exclude("foo/bar")]).expect("compiled");
 
     let mut path = PathBuf::from("foo");
     path.push("..");
     path.push("foo");
     path.push("bar");
-    assert!(set.allows(&path, false));
+    assert!(!set.allows(&path, false));
 
     assert!(!set.allows(Path::new("foo/bar"), false));
 }

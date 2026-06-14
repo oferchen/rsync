@@ -32,12 +32,15 @@ impl FilterSetInner {
     ) -> FilterDecision {
         let mut decision = FilterDecision::default();
 
-        // upstream: exclude.c:rule_matches() has NO descendant matching.
-        // Sender-side (Transfer) skips descendants - the walk implicitly
-        // handles them by not descending into excluded directories.
-        // Receiver-side (Deletion) needs descendants because it evaluates
-        // paths individually without traversal context.
-        let check_descendants = matches!(context, DecisionContext::Deletion);
+        // FilterSet callers query the filter chain WITHOUT a traversal-control
+        // context, so they expect descendants of an excluded directory to also
+        // be reported as excluded (e.g. `set.allows("build/output.bin")` after
+        // `- build/`). Descendant matchers are kept active for both contexts.
+        // The traversal-driven local-copy path uses the parallel
+        // engine::local_copy::filter_program implementation which mirrors
+        // upstream `exclude.c:rule_matches()` literal semantics; that path
+        // disables descendants where children would over-match (UTS-V3-B).
+        let check_descendants = true;
 
         let transfer_rule = match context {
             DecisionContext::Transfer => first_matching_rule(

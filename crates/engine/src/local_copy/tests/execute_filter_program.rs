@@ -1,4 +1,3 @@
-
 // Filter program engine tests
 //
 // Exercises the filter evaluation engine (FilterOutcome, FilterSegment,
@@ -106,10 +105,7 @@ fn filter_segment_include_glob_pattern() {
     );
     // An include rule that doesn't match leaves the outcome unchanged (still
     // at default = allowed).
-    assert!(
-        outcome2.allows_transfer(),
-        "*.rs must not affect readme.md"
-    );
+    assert!(outcome2.allows_transfer(), "*.rs must not affect readme.md");
 }
 
 #[test]
@@ -355,10 +351,7 @@ fn filter_program_multiple_segments_compose() {
         None,
         FilterContext::Transfer,
     );
-    assert!(
-        !outcome2.allows_transfer(),
-        "random.tmp must be blocked"
-    );
+    assert!(!outcome2.allows_transfer(), "random.tmp must be blocked");
 
     // readme.txt is not matched by either rule, stays allowed.
     let outcome3 = program.evaluate(
@@ -368,10 +361,7 @@ fn filter_program_multiple_segments_compose() {
         None,
         FilterContext::Transfer,
     );
-    assert!(
-        outcome3.allows_transfer(),
-        "readme.txt must remain allowed"
-    );
+    assert!(outcome3.allows_transfer(), "readme.txt must remain allowed");
 }
 
 #[test]
@@ -467,14 +457,30 @@ fn filter_segment_directory_only_pattern_matches_dirs() {
 }
 
 #[test]
-fn filter_segment_directory_only_excludes_descendants() {
+fn filter_segment_directory_only_excludes_via_traversal_pruning() {
     let mut segment = FilterSegment::default();
     segment
         .push_rule(FilterRule::exclude("build/"))
         .expect("exclude build/");
 
-    // A file inside the build directory should be excluded because the
-    // descendant matcher "build/**" (and "**/build/**") catches it.
+    // upstream: exclude.c:rule_matches() has no descendant matching. The
+    // directory entry itself matches and the sender's traversal pruning
+    // prevents the children from ever reaching the filter check. The
+    // per-entry filter path mirrors that and does NOT match descendants
+    // by default, so callers that bypass traversal pruning see the
+    // children pass through.
+    let mut dir_outcome = FilterOutcome::default();
+    segment.apply(
+        Path::new("build"),
+        true,
+        &mut dir_outcome,
+        FilterContext::Transfer,
+    );
+    assert!(
+        !dir_outcome.allows_transfer(),
+        "the dir `build/` itself must match the directory-only exclude"
+    );
+
     let mut outcome = FilterOutcome::default();
     segment.apply(
         Path::new("build/output.o"),
@@ -483,8 +489,8 @@ fn filter_segment_directory_only_excludes_descendants() {
         FilterContext::Transfer,
     );
     assert!(
-        !outcome.allows_transfer(),
-        "files inside an excluded directory must be blocked"
+        outcome.allows_transfer(),
+        "files reached without traversal pruning fall through; the directory exclude is honoured by skipping the walk into `build/`"
     );
 }
 
@@ -659,13 +665,8 @@ fn filter_program_empty_allows_everything() {
         ("dir/nested/file.rs", false),
         ("somedir", true),
     ] {
-        let outcome = program.evaluate(
-            Path::new(path),
-            *is_dir,
-            &[],
-            None,
-            FilterContext::Transfer,
-        );
+        let outcome =
+            program.evaluate(Path::new(path), *is_dir, &[], None, FilterContext::Transfer);
         assert!(
             outcome.allows_transfer(),
             "empty program must allow '{path}'"
@@ -838,8 +839,7 @@ fn filter_segment_delete_excluded_protected_path() {
     );
 
     assert!(
-        !outcome.allows_deletion_when_excluded_removed()
-            || !outcome.allows_deletion(),
+        !outcome.allows_deletion_when_excluded_removed() || !outcome.allows_deletion(),
         "protected excluded path must not be deletable even with delete_excluded"
     );
 }
@@ -1047,10 +1047,7 @@ fn filter_program_clear_entry_resets_all_rules() {
         None,
         FilterContext::Transfer,
     );
-    assert!(
-        outcome_txt.allows_transfer(),
-        "*.txt rule must be cleared"
-    );
+    assert!(outcome_txt.allows_transfer(), "*.txt rule must be cleared");
 
     // The *.log exclude added after clear should still be active.
     let outcome_log = program.evaluate(
@@ -1080,9 +1077,7 @@ fn filter_program_exclude_if_present_with_marker() {
     .expect("compile program");
 
     assert!(
-        program
-            .should_exclude_directory(dir)
-            .expect("marker check"),
+        program.should_exclude_directory(dir).expect("marker check"),
         "directory with .nobackup marker must be excluded"
     );
 }
@@ -1125,26 +1120,14 @@ fn filter_program_upstream_typical_pattern() {
     ];
 
     for &(path, expected_transfer, expected_deletion) in cases {
-        let transfer = program.evaluate(
-            Path::new(path),
-            false,
-            &[],
-            None,
-            FilterContext::Transfer,
-        );
+        let transfer = program.evaluate(Path::new(path), false, &[], None, FilterContext::Transfer);
         assert_eq!(
             transfer.allows_transfer(),
             expected_transfer,
             "transfer for '{path}': expected={expected_transfer}"
         );
 
-        let deletion = program.evaluate(
-            Path::new(path),
-            false,
-            &[],
-            None,
-            FilterContext::Deletion,
-        );
+        let deletion = program.evaluate(Path::new(path), false, &[], None, FilterContext::Deletion);
         assert_eq!(
             deletion.allows_deletion(),
             expected_deletion,
@@ -1176,13 +1159,7 @@ fn filter_program_include_only_specific_extensions() {
     ];
 
     for &(path, expected_allowed) in cases {
-        let outcome = program.evaluate(
-            Path::new(path),
-            false,
-            &[],
-            None,
-            FilterContext::Transfer,
-        );
+        let outcome = program.evaluate(Path::new(path), false, &[], None, FilterContext::Transfer);
         assert_eq!(
             outcome.allows_transfer(),
             expected_allowed,
@@ -1193,9 +1170,7 @@ fn filter_program_include_only_specific_extensions() {
 
 #[test]
 fn filter_program_invalid_pattern_returns_error() {
-    let result = FilterProgram::new([FilterProgramEntry::Rule(FilterRule::exclude(
-        "bad[pattern",
-    ))]);
+    let result = FilterProgram::new([FilterProgramEntry::Rule(FilterRule::exclude("bad[pattern"))]);
     assert!(
         result.is_err(),
         "invalid glob pattern must produce an error"
@@ -1254,9 +1229,8 @@ fn filter_program_is_empty_true_for_empty_iter() {
 
 #[test]
 fn filter_program_is_empty_false_with_exclude() {
-    let program =
-        FilterProgram::new([FilterProgramEntry::Rule(FilterRule::exclude("*.tmp"))])
-            .expect("program with exclude");
+    let program = FilterProgram::new([FilterProgramEntry::Rule(FilterRule::exclude("*.tmp"))])
+        .expect("program with exclude");
     assert!(!program.is_empty());
 }
 
