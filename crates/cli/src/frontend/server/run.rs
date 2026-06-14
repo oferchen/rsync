@@ -343,8 +343,25 @@ where
     // receiver-child loop on `read_final_goodbye()`; cleanup.c:254
     // `noop_io_until_death()` call in `_exit_cleanup`.
     if role == ServerRole::Receiver {
+        // Flush our final goodbye out of any outer BufWriter before draining
+        // the peer's trailing writes. Without this the upstream sender is
+        // stuck in `read_final_goodbye()` waiting on our NDX_DONE that is
+        // still in our stdout buffer, and we are stuck in the drain waiting
+        // on the sender's EOF that only arrives after its exit_cleanup runs.
+        // The deadlock surfaces as a runner-side timeout on alt-dest /
+        // 00-hello / ssh-basic / symlink-dirlink-basis / hardlinks under
+        // lsh.sh - the SSH leg of UTS-V3 cluster A.
+        let _ = stdout.flush();
+
+        // Bound the drain to a short deadline so we never hang waiting on
+        // EOF that the kernel will not deliver. Sender's exit_cleanup
+        // completes within a few ms once it has read our flushed goodbye;
+        // 200ms is comfortably above the loopback round trip but far below
+        // a runner-side per-test timeout.
+        use std::time::{Duration, Instant};
+        let deadline = Instant::now() + Duration::from_millis(200);
         let mut sink = [0u8; 4096];
-        loop {
+        while Instant::now() < deadline {
             match stdin.read(&mut sink) {
                 Ok(0) => break,
                 Ok(_) => continue,
