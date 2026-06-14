@@ -53,7 +53,7 @@
 //!
 //! # Drain policy
 //!
-//! Drains are capped at [`DRAIN_BATCH_CAP`] = 8 sealed cohorts per
+//! Drains are capped at `DRAIN_BATCH_CAP` = 8 sealed cohorts per
 //! call, matching DEL-1.c section 3.2's `CONSUMER_DRAIN_BATCH_CAP`.
 //! Unsealed cohorts are skipped: an unsealed cohort with the lowest
 //! pending rank stops the drain (preserving the strict rank-order
@@ -276,7 +276,7 @@ pub enum ReorderBufferError {
 ///
 /// - The buffer holds at most [`MAX_BUFFERED_COHORTS`] cohorts.
 /// - [`Self::try_drain_ready`] surfaces at most
-///   [`DRAIN_BATCH_CAP`] cohorts per call.
+///   `DRAIN_BATCH_CAP` cohorts per call.
 /// - Surfaced cohorts have strictly increasing rank within a single
 ///   [`Self::try_drain_ready`] call **and** across consecutive calls
 ///   (the buffer tracks the last-drained rank for the cross-call
@@ -446,7 +446,7 @@ impl ReorderBuffer {
         Ok(())
     }
 
-    /// Drains up to [`DRAIN_BATCH_CAP`] contiguous-by-rank sealed
+    /// Drains up to `DRAIN_BATCH_CAP` contiguous-by-rank sealed
     /// cohorts from the head of the buffer.
     ///
     /// Returns one [`Vec<DeleteOperation>`] per drained cohort, in
@@ -507,7 +507,7 @@ impl ReorderBuffer {
         drained
     }
 
-    /// Drains up to [`DRAIN_BATCH_CAP`] contiguous-by-rank sealed
+    /// Drains up to `DRAIN_BATCH_CAP` contiguous-by-rank sealed
     /// cohorts and returns each one's `(key, rank, ops)` tuple.
     ///
     /// Mirrors [`Self::try_drain_ready`]'s semantics with the cohort
