@@ -1,6 +1,6 @@
 //! Single-threaded emitter for the parallel-deterministic delete pipeline.
 //!
-//! Hosts [`DeleteEmitter`], the drain task that consumes [`DeletePlan`]s
+//! Hosts `DeleteEmitter`, the drain task that consumes [`DeletePlan`]s
 //! from a [`DeletePlanMap`] in the order dictated by [`DirTraversalCursor`]
 //! (upstream depth-first traversal) and issues one filesystem operation
 //! per planned entry through a [`DeleteFs`] trait.
