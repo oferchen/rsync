@@ -3229,7 +3229,11 @@ fn generator_skips_files_matching_per_directory_merge_rules() {
     ctx.filter_chain
         .add_merge_config(::filters::DirMergeConfig::new(".rsync-filter"));
 
-    let count = build_file_list_for(&mut ctx, base);
+    // Trailing-slash source exercises upstream's DOTDIR_NAME branch
+    // (flist.c:2312-2322) so the file list is `.` + the directory's
+    // children, matching `rsync <dir>/ dst/`. Without it, the non-relative
+    // walk-base split (flist.c:2338-2349) emits only the source basename.
+    let count = build_file_list_for_contents(&mut ctx, base);
 
     // Should have "." + "keep.txt" + ".rsync-filter" but not "skip.log"
     let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
@@ -3265,7 +3269,12 @@ fn generator_nested_directories_cascading_merge_rules() {
     ctx.filter_chain
         .add_merge_config(::filters::DirMergeConfig::new(".rsync-filter"));
 
-    let _count = build_file_list_for(&mut ctx, base);
+    // Trailing-slash source exercises upstream's DOTDIR_NAME branch
+    // (flist.c:2312-2322) so the file list is `.` + the directory's
+    // children, matching `rsync <dir>/ dst/`. Without it, the non-relative
+    // walk-base split (flist.c:2338-2349) prefixes every name with the
+    // source basename.
+    let _count = build_file_list_for_contents(&mut ctx, base);
     let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
 
     // root.bak excluded by root .rsync-filter
@@ -3320,7 +3329,12 @@ fn generator_merge_filters_properly_scoped() {
     ctx.filter_chain
         .add_merge_config(::filters::DirMergeConfig::new(".rsync-filter"));
 
-    let _count = build_file_list_for(&mut ctx, base);
+    // Trailing-slash source exercises upstream's DOTDIR_NAME branch
+    // (flist.c:2312-2322) so the file list is `.` + the directory's
+    // children, matching `rsync <dir>/ dst/`. Without it, the non-relative
+    // walk-base split (flist.c:2338-2349) prefixes every name with the
+    // source basename and the exact-equality assertions below would miss.
+    let _count = build_file_list_for_contents(&mut ctx, base);
     let names: Vec<String> = ctx
         .file_list()
         .iter()
@@ -3380,7 +3394,11 @@ fn generator_no_merge_configs_unchanged_behavior() {
     let (_handshake, mut ctx) = test_generator_for_path(base, false);
     // No merge configs added - filter_chain is empty
 
-    let count = build_file_list_for(&mut ctx, base);
+    // Trailing-slash source exercises upstream's DOTDIR_NAME branch
+    // (flist.c:2312-2322) so the file list is `.` + the directory's
+    // children, matching `rsync <dir>/ dst/`. Without it, the non-relative
+    // walk-base split (flist.c:2338-2349) emits only the source basename.
+    let count = build_file_list_for_contents(&mut ctx, base);
 
     // Should have "." + 2 files = 3 entries
     assert_eq!(count, 3);
