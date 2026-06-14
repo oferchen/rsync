@@ -146,6 +146,25 @@ impl FilterSet {
             .allows_transfer()
     }
 
+    /// Like [`Self::allows`] but tailored for a tree traversal that already
+    /// prunes excluded subtrees.
+    ///
+    /// During a directory walk the sender never descends into an excluded
+    /// directory, so it does not need the synthetic descendant matchers
+    /// that `- /bar` produces for the `bar/**` case. Suppressing them
+    /// matches upstream `exclude.c:rule_matches()` which has no descendant
+    /// matching at all - the traversal handles descendants implicitly.
+    ///
+    /// Use this from sender code that walks the source tree. Single-path
+    /// API consumers without a traversal should keep calling
+    /// [`Self::allows`].
+    #[must_use]
+    pub fn allows_during_traversal(&self, path: &Path, is_dir: bool) -> bool {
+        self.inner
+            .decision_with_traversal(path, is_dir, DecisionContext::Transfer, true)
+            .allows_transfer()
+    }
+
     /// Returns `true` when a directory is excluded by a non-directory-specific rule.
     ///
     /// This is used by `--prune-empty-dirs` to decide whether to still descend

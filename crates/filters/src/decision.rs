@@ -30,17 +30,40 @@ impl FilterSetInner {
         is_dir: bool,
         context: DecisionContext,
     ) -> FilterDecision {
+        self.decision_with_traversal(path, is_dir, context, false)
+    }
+
+    /// Like [`Self::decision`] but lets callers signal that the query comes
+    /// from a tree traversal that already prunes excluded subtrees.
+    ///
+    /// When `traversal` is `true`, synthetic descendant matchers (the
+    /// `pattern/**` matcher pre-compiled for anchored excludes like
+    /// `- /bar`) are skipped because the traversal itself handles descendant
+    /// exclusion - this mirrors upstream's `exclude.c:rule_matches()` which
+    /// has NO descendant matching at all. When `false`, descendants stay
+    /// active so single-path API callers (e.g. `set.allows("build/x.bin")`
+    /// after `- build/`) still see the expected exclusion without walking
+    /// the tree.
+    pub(crate) fn decision_with_traversal(
+        &self,
+        path: &Path,
+        is_dir: bool,
+        context: DecisionContext,
+        traversal: bool,
+    ) -> FilterDecision {
         let mut decision = FilterDecision::default();
 
-        // FilterSet callers query the filter chain WITHOUT a traversal-control
-        // context, so they expect descendants of an excluded directory to also
-        // be reported as excluded (e.g. `set.allows("build/output.bin")` after
-        // `- build/`). Descendant matchers are kept active for both contexts.
-        // The traversal-driven local-copy path uses the parallel
-        // engine::local_copy::filter_program implementation which mirrors
-        // upstream `exclude.c:rule_matches()` literal semantics; that path
-        // disables descendants where children would over-match (UTS-V3-B).
-        let check_descendants = true;
+        // upstream: exclude.c:rule_matches() has NO descendant matching.
+        // Sender-side (Transfer) during a directory walk skips the synthetic
+        // `pattern/**` descendant matchers because the traversal itself
+        // implicitly handles them by not descending into excluded directories.
+        // Single-path API queries (no traversal context) keep descendants
+        // active so callers can still see "build/output.bin" as excluded
+        // by a `- build/` rule without walking the tree themselves.
+        // The receiver (Deletion) keeps descendants active for the same
+        // reason as the no-traversal API: it evaluates paths individually
+        // and depends on the descendant matchers to see deep excludes.
+        let check_descendants = !(traversal && matches!(context, DecisionContext::Transfer));
 
         let transfer_rule = match context {
             DecisionContext::Transfer => first_matching_rule(

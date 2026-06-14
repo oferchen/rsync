@@ -370,15 +370,31 @@ fn directory_only_exclude_does_not_match_file() {
     assert!(chain.allows(Path::new("cache"), false));
 }
 
-/// A directory-only exclude also excludes contents of matching directories.
+/// A directory-only exclude prunes the directory itself; the sender walk
+/// then handles descendants implicitly by not descending into it.
+///
+/// `FilterChain::allows` mirrors upstream `exclude.c:rule_matches()` which
+/// has no descendant matching - the per-entry queries for descendants of a
+/// pruned directory never happen in production because the walk stops at
+/// the directory entry. Single-path API consumers without a traversal
+/// (e.g. `FilterSet::allows` direct) keep their historical descendant
+/// semantics for the no-traversal use case.
 #[test]
 fn directory_only_exclude_covers_contents() {
     let global = FilterSet::from_rules([FilterRule::exclude("output/")]).unwrap();
-    let chain = FilterChain::new(global);
+    let chain = FilterChain::new(global.clone());
 
+    // Directory entry is excluded under the traversal contract.
     assert!(!chain.allows(Path::new("output"), true));
-    assert!(!chain.allows(Path::new("output/result.bin"), false));
-    assert!(!chain.allows(Path::new("output/sub/deep.txt"), false));
+    // Descendant queries on the chain do NOT trigger synthetic matchers
+    // because the walk would never descend; this matches upstream.
+    assert!(chain.allows(Path::new("output/result.bin"), false));
+
+    // The no-traversal FilterSet API keeps the legacy contract so
+    // existing single-path consumers see descendants as excluded.
+    assert!(!global.allows(Path::new("output"), true));
+    assert!(!global.allows(Path::new("output/result.bin"), false));
+    assert!(!global.allows(Path::new("output/sub/deep.txt"), false));
 }
 
 /// A non-directory-only exclude matches both files and directories.

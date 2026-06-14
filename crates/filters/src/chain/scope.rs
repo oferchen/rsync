@@ -28,11 +28,17 @@ pub(super) struct DirScope {
 /// This is used to distinguish "no rules matched" (fall through to next scope)
 /// from "a rule matched and said include" (stop evaluation).
 ///
-/// We detect a match by checking both allows and allows_deletion: if the path
-/// is excluded by allow check OR if it differs from default behavior, a rule
-/// matched.
+/// We detect a match by checking allows under traversal semantics and
+/// allows_deletion: if the path is excluded by either, a rule matched.
+/// Using traversal semantics (descendants disabled) for the transfer check
+/// mirrors upstream `exclude.c:rule_matches()` which has no descendant
+/// matching - the sender walk handles descendant exclusion by not
+/// descending into excluded directories. Without this, a `- /bar` rule
+/// in an outer scope would synthesize a `bar/**` descendant matcher that
+/// makes the scope appear to match every path under `bar/` and short-
+/// circuits inner-scope evaluation incorrectly.
 pub(super) fn has_matching_rule(filter_set: &FilterSet, path: &Path, is_dir: bool) -> bool {
-    if !filter_set.allows(path, is_dir) {
+    if !filter_set.allows_during_traversal(path, is_dir) {
         return true;
     }
 
