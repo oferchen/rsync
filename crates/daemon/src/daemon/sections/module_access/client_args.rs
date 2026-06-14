@@ -756,6 +756,47 @@ fn lexically_normalize(path: &std::path::Path) -> std::path::PathBuf {
     out
 }
 
+/// Resolves a client-supplied alt-basis path (`--link-dest` / `--copy-dest` /
+/// `--compare-dest`) against the receiver's resolve base and confines the
+/// result inside the module root.
+///
+/// Returns `Some(resolved)` when the lexically-normalised path stays inside
+/// `module_root_canonical`, and `None` when the path escapes (in which case
+/// the caller silently drops the basis so the receiver re-transfers instead
+/// of hard-linking outside the module tree).
+///
+/// Relative paths join under `resolve_base`; absolute paths are normalised
+/// in place. Both branches then run the same canonicalise-with-lexical-
+/// fallback containment check. The fallback is essential because a basis
+/// directory is allowed to be missing on disk - upstream `main.c:841
+/// check_alt_basis_dirs` only warns, never aborts - and we must still apply
+/// the containment policy in that case.
+///
+/// upstream: util1.c:1035 `sanitize_path` collapses `..` against the
+/// module root depth; main.c:1199-1206 `check_alt_basis_dirs` warns on
+/// out-of-tree basis. We mirror the silent-drop side of that contract
+/// instead of upstream's path-rewrite because our daemon does not chdir
+/// per connection.
+fn confine_basis_under_module(
+    ref_path: &std::path::Path,
+    resolve_base: &std::path::Path,
+    module_root_canonical: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let joined = if ref_path.is_relative() {
+        resolve_base.join(ref_path)
+    } else {
+        ref_path.to_path_buf()
+    };
+    let resolved = lexically_normalize(&joined);
+    let resolved_canonical = resolved
+        .canonicalize()
+        .unwrap_or_else(|_| resolved.clone());
+    if !resolved_canonical.starts_with(module_root_canonical) {
+        return None;
+    }
+    Some(resolved)
+}
+
 /// Builds the server configuration from client arguments.
 ///
 /// Returns the configuration on success, or sends an error and returns `None`.
@@ -869,21 +910,17 @@ fn build_server_config(
                 std::path::PathBuf::from(&module.path)
             };
             cfg.reference_directories.retain_mut(|ref_dir| {
-                if ref_dir.path.is_relative() {
-                    let joined = resolve_base.join(&ref_dir.path);
-                    let resolved = lexically_normalize(&joined);
-                    let resolved_canonical = resolved
-                        .canonicalize()
-                        .unwrap_or_else(|_| resolved.clone());
-                    if !resolved_canonical.starts_with(&module_root_canonical) {
-                        // Lexical or canonical climb escapes the module root;
-                        // drop the basis so the receiver re-transfers instead
-                        // of hard-linking to an out-of-module target.
-                        return false;
+                match confine_basis_under_module(
+                    &ref_dir.path,
+                    &resolve_base,
+                    &module_root_canonical,
+                ) {
+                    Some(resolved) => {
+                        ref_dir.path = resolved;
+                        true
                     }
-                    ref_dir.path = resolved;
+                    None => false,
                 }
-                true
             });
 
             // upstream: loadparm.c - `temp dir` module parameter provides a

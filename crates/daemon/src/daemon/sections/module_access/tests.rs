@@ -2108,6 +2108,87 @@ mod module_access_tests {
     }
 
     #[test]
+    fn confine_basis_drops_absolute_out_of_module() {
+        // CI-MASTER-INTEROP regression pin (standalone:link-dest /
+        // standalone:copy-dest): the upstream interop harness sends an
+        // absolute `--link-dest` that canonicalises *outside* the module
+        // root (a sibling path `<module>/../linkdest-ref-daemon`). The
+        // daemon must silently drop the basis so the receiver re-transfers
+        // instead of aborting with `@ERROR` - aborting broke the standalone
+        // suite on master. upstream `main.c:841 check_alt_basis_dirs` warns
+        // on a missing/out-of-tree basis but never aborts.
+        let module = tempfile::TempDir::new().expect("module tempdir");
+        let outside = tempfile::TempDir::new().expect("outside tempdir");
+        let module_root = module.path().canonicalize().expect("canonicalise module");
+        let outside_root = outside.path().canonicalize().expect("canonicalise outside");
+
+        assert!(
+            confine_basis_under_module(&outside_root, &module_root, &module_root).is_none(),
+            "absolute out-of-module basis must be dropped",
+        );
+    }
+
+    #[test]
+    fn confine_basis_accepts_absolute_in_module() {
+        // Companion to the drop-out-of-module pin: an absolute path that
+        // canonicalises *inside* the module root must survive so legitimate
+        // operator-permitted snapshots (e.g. `<module>/snap/01`) still
+        // hard-link instead of re-transferring.
+        let module = tempfile::TempDir::new().expect("module tempdir");
+        let module_root = module.path().canonicalize().expect("canonicalise module");
+        let in_module = module_root.join("snap");
+        std::fs::create_dir(&in_module).expect("create in-module snap dir");
+
+        let resolved = confine_basis_under_module(&in_module, &module_root, &module_root)
+            .expect("in-module basis must be accepted");
+        assert_eq!(resolved, in_module);
+    }
+
+    #[test]
+    fn confine_basis_drops_absolute_dotdot_escape_to_sibling() {
+        // The exact failure shape from the CI standalone:link-dest fixture:
+        // the client sends `--link-dest=<module>/../linkdest-ref-daemon`,
+        // which canonicalises to a sibling of the module root. Must be
+        // silently dropped.
+        let parent = tempfile::TempDir::new().expect("parent tempdir");
+        let module_root = parent.path().join("linkdest-dest");
+        std::fs::create_dir(&module_root).expect("create module root");
+        let sibling = parent.path().join("linkdest-ref-daemon");
+        std::fs::create_dir(&sibling).expect("create sibling");
+        let module_root = module_root.canonicalize().expect("canonicalise module");
+
+        // Lexical escape via `..` that resolves to a real sibling on disk.
+        let escape = module_root.join("..").join("linkdest-ref-daemon");
+        assert!(
+            confine_basis_under_module(&escape, &module_root, &module_root).is_none(),
+            "absolute `..` escape to sibling must be dropped (was @ERROR pre-fix)",
+        );
+    }
+
+    #[test]
+    fn confine_basis_joins_relative_under_resolve_base() {
+        // Relative basis paths still resolve under the receiver's dest dir
+        // (the `resolve_base`), matching upstream `main.c:1199-1206`
+        // post-`get_local_name` chdir behaviour. This pins the legacy
+        // relative branch so the absolute-path extension doesn't regress it.
+        let module = tempfile::TempDir::new().expect("module tempdir");
+        let module_root = module.path().canonicalize().expect("canonicalise module");
+        let dest = module_root.join("00");
+        std::fs::create_dir(&dest).expect("create dest 00");
+        let sibling = module_root.join("01");
+        std::fs::create_dir(&sibling).expect("create sibling 01");
+
+        let resolved = confine_basis_under_module(
+            std::path::Path::new("../01"),
+            &dest,
+            &module_root,
+        )
+        .expect("relative climb to in-module sibling must be accepted");
+        // Lexically normalised: dest/../01 -> module_root/01.
+        assert_eq!(resolved, module_root.join("01"));
+    }
+
+    #[test]
     fn classify_client_path_existing_dotdot_escape_is_rejected() {
         // `..` traversal against an *existing* path canonicalises to the
         // resolved target; if the target is outside the module root, the
