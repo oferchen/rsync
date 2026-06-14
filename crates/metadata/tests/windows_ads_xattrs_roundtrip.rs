@@ -63,16 +63,19 @@ const ZONE_IDENTIFIER_PAYLOAD: &[u8] = b"[ZoneTransfer]\r\nZoneId=3\r\n";
 
 /// Wire-format name for the Zone.Identifier xattr observed by
 /// `read_xattrs_for_wire`. The Windows backend in `xattr_windows.rs`
-/// does not insert a `user.` prefix; stream names cross the wire
-/// verbatim.
-const ZONE_IDENTIFIER_WIRE: &[u8] = b"Zone.Identifier";
+/// returns bare stream names; the wire encoder
+/// (`protocol::xattr::local_to_wire`) prefixes them with `user.` on
+/// non-Linux peers so the bytes match what a Linux peer would emit.
+/// upstream: xattrs.c:518-530.
+const ZONE_IDENTIFIER_WIRE: &[u8] = b"user.Zone.Identifier";
 
 /// Custom non-MOTW stream name used by the multi-stream scenario to
 /// force `FindNextStreamW` iteration beyond the first stream.
 const CUSTOM_STREAM: &str = "oc_rsync_test_stream";
 
-/// Wire-format counterpart of `CUSTOM_STREAM`.
-const CUSTOM_STREAM_WIRE: &[u8] = b"oc_rsync_test_stream";
+/// Wire-format counterpart of `CUSTOM_STREAM`. The non-Linux sender
+/// path prepends `user.` per upstream xattrs.c:518-530.
+const CUSTOM_STREAM_WIRE: &[u8] = b"user.oc_rsync_test_stream";
 
 /// Custom stream payload, distinct from the MOTW payload so the
 /// assertions can tell the two streams apart on the destination.
@@ -284,19 +287,21 @@ fn ads_multi_stream_round_trips() {
 
     // Sanity check the enumeration sees both streams on the source so a
     // failure on the destination side can be attributed to the transfer
-    // rather than the seeding step.
+    // rather than the seeding step. Both names round-trip through
+    // `local_to_wire`, which prepends `user.` on non-Linux peers per
+    // upstream xattrs.c:518-530.
     let src_wire = read_xattrs_for_wire(&src_file, false, true, 0).expect("list source streams");
     let src_names: Vec<String> = src_wire
         .iter()
         .map(|e| String::from_utf8_lossy(e.name()).into_owned())
         .collect();
     assert!(
-        src_names.iter().any(|n| n == "Zone.Identifier"),
-        "source missing Zone.Identifier: {src_names:?}",
+        src_names.iter().any(|n| n == "user.Zone.Identifier"),
+        "source missing user.Zone.Identifier: {src_names:?}",
     );
     assert!(
-        src_names.iter().any(|n| n == "oc_rsync_test_stream"),
-        "source missing oc_rsync_test_stream: {src_names:?}",
+        src_names.iter().any(|n| n == "user.oc_rsync_test_stream"),
+        "source missing user.oc_rsync_test_stream: {src_names:?}",
     );
 
     let oc_rsync = match locate_oc_rsync() {

@@ -225,9 +225,18 @@ fn long_path_reparse_classifier_acquires_handle() {
         file.as_os_str().len(),
     );
 
-    // Plain regular files have no reparse data; the classifier must
-    // succeed in acquiring the underlying handle through
-    // `to_extended_path` and return without an io::Error. A short-path
-    // `CreateFileW` would surface `ERROR_PATH_NOT_FOUND` at >260 chars.
-    classify_path(&file).expect("classify reparse on long path must succeed");
+    // Plain regular files have no reparse data, so the downstream
+    // `FSCTL_GET_REPARSE_POINT` call inside `classify_path` surfaces
+    // `ERROR_NOT_A_REPARSE_POINT` (4390). The point of this test is to
+    // prove the long path was opened successfully: a short-path
+    // `CreateFileW` would surface `ERROR_PATH_NOT_FOUND` (3) at >260
+    // chars before the FSCTL ever runs. Matches the pattern used by
+    // `regular_file_returns_not_a_reparse_point_error` in
+    // `windows_reparse_classify_path.rs`.
+    let err = classify_path(&file).expect_err("plain file must surface FSCTL error");
+    let raw = err.raw_os_error().unwrap_or(0);
+    assert!(
+        raw == 4390 || raw == 0,
+        "expected ERROR_NOT_A_REPARSE_POINT (4390) on long path; got {raw} ({err})",
+    );
 }
