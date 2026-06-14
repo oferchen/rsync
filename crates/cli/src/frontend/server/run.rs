@@ -329,14 +329,17 @@ where
     // runs, at which point our read returns 0 and we unblock. Errors are
     // tolerated: the goodbye has already completed.
     //
-    // Gated to the receiver role: the generator (sender) side does not face
-    // this race because its peer (the remote receiver) closes its read end
-    // first as soon as it has flushed its own goodbye. Draining there would
-    // only delay exit without preventing any failure.
+    // Both server roles need the half-close. The receiver case is the one
+    // the comment above documents (post-goodbye drain). The generator case
+    // is the symmetric leg: under the lsh.sh pipe transport the upstream
+    // peer running as a server-receiver child also parks in
+    // `noop_io_until_death()` waiting for EOF, and the upstream
+    // `runtests.py` cluster of 00-hello, alt-dest, ssh-basic, files-from,
+    // symlink-dirlink-basis, and hardlinks all time out without it.
     //
     // Daemon mode never reaches this site (the daemon dispatches into
     // `run_server_with_handshake` directly and runs its own TCP drain in
-    // `process_approved_module`), so this drain only fires on the SSH /
+    // `process_approved_module`), so this code only fires on the SSH /
     // remote-shell path that produced cluster A's alt-dest regression.
     //
     // upstream: io.c:943-963 `noop_io_until_death()`; main.c:1075
@@ -362,10 +365,12 @@ where
     //      and process exit propagates EOF through the normal close
     //      path; the drain still terminates as soon as the peer closes
     //      its end.
-    if role == ServerRole::Receiver {
-        let _ = stdout.flush();
-        let _ = fast_io::shutdown_stdio_write();
+    let _ = stdout.flush();
+    let _ = fast_io::shutdown_stdio_write();
 
+    // The drain loop stays receiver-only: the generator never expects
+    // post-goodbye stdin bytes, so reading there would just delay exit.
+    if role == ServerRole::Receiver {
         let mut sink = [0u8; 4096];
         loop {
             match stdin.read(&mut sink) {
