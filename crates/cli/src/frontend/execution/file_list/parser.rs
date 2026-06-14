@@ -10,7 +10,10 @@ use std::path::PathBuf;
 ///
 /// The resolution mirrors upstream rsync's `options.c:2447-2490`:
 /// - `"-"` means stdin
-/// - `:path` (colon prefix) means a remote file opened by the server
+/// - `:path` (bare colon prefix) means a remote file opened by the server
+///   using the host taken from the transfer operand
+/// - `host:path` (hostspec form) means a remote file opened by the named
+///   host (must match the transfer host, validated in `main.c:1420`)
 /// - Otherwise, a local file read by the client
 ///
 /// Only the last `--files-from` argument takes effect, matching upstream
@@ -18,8 +21,10 @@ use std::path::PathBuf;
 ///
 /// # Upstream Reference
 ///
-/// - `options.c:2458` - `check_for_hostspec()` detects `:path` prefix
+/// - `options.c:2458` - `check_for_hostspec()` detects `host:path` prefix
+/// - `options.c:2464-2465` - `files_from = p; filesfrom_host = h;`
 /// - `options.c:2466-2469` - `:-` (remote stdin) is rejected
+/// - `options.c:3112-3138` - `check_for_hostspec()` parses `host:path`
 pub(crate) fn resolve_files_from_source(files_from: &[OsString]) -> core::client::FilesFromSource {
     use core::client::FilesFromSource;
 
@@ -34,12 +39,64 @@ pub(crate) fn resolve_files_from_source(files_from: &[OsString]) -> core::client
         return FilesFromSource::Stdin;
     }
 
-    // Detect remote file: colon prefix `:path` (upstream check_for_hostspec).
+    // Detect remote file: bare colon prefix `:path` (host taken from operand).
     if let Some(remote_path) = text.strip_prefix(':') {
         return FilesFromSource::RemoteFile(remote_path.to_owned());
     }
 
+    // Detect remote file: `host:path` (upstream check_for_hostspec).
+    // Reject Windows drive specs (`C:\...`), URLs (`rsync://`), and daemon
+    // module specs (`host::module`). The latter is for daemon transfers,
+    // which we do not currently support for files-from.
+    if let Some((host, path)) = split_hostspec(&text) {
+        let _ = host; // host validation happens at transfer-arg level
+        return FilesFromSource::RemoteFile(path.to_owned());
+    }
+
     FilesFromSource::LocalFile(PathBuf::from(last))
+}
+
+/// Splits a `host:path` argument into `(host, path)` if `text` is a remote
+/// hostspec. Returns `None` for local paths, Windows drive letters, daemon
+/// module specs (`::`), and URL forms.
+///
+/// Mirrors `options.c:3112-3138 check_for_hostspec()`:
+/// - Reject URL forms (`rsync://`); those are daemon URLs, handled elsewhere
+/// - Reject `host::module` (daemon module spec)
+/// - Reject paths beginning with `/` (no host part)
+/// - Reject Windows drive letters (`C:\foo`, `C:/foo`)
+fn split_hostspec(text: &str) -> Option<(&str, &str)> {
+    if text.starts_with('/') {
+        return None;
+    }
+    if text.starts_with("rsync://") {
+        return None;
+    }
+
+    let colon = text.find(':')?;
+    let host = &text[..colon];
+    let rest = &text[colon + 1..];
+
+    // Reject daemon module spec `host::module`.
+    if rest.starts_with(':') {
+        return None;
+    }
+
+    // Reject Windows drive letter `C:\` / `C:/`.
+    if host.len() == 1 && host.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+
+    if host.is_empty() {
+        return None;
+    }
+
+    // Reject `host:-` (upstream options.c:2466-2469 rejects remote stdin).
+    if rest == "-" {
+        return None;
+    }
+
+    Some((host, rest))
 }
 
 /// Determines whether the transfer involves any remote operands.

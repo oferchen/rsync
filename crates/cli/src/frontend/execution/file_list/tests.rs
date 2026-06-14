@@ -460,6 +460,65 @@ fn resolve_files_from_remote_colon_prefix() {
 }
 
 #[test]
+fn resolve_files_from_host_colon_prefix() {
+    // UTS-V3-D regression: upstream's `testsuite/files-from.test` 4th
+    // invocation passes `--files-from=localhost:scratch/filelist`. The
+    // parser must recognise the hostspec form (upstream
+    // `options.c:3112-3138 check_for_hostspec`) and emit RemoteFile
+    // with the host stripped. Without this fix the loader hit
+    // `loader.rs:54` immediately with "No such file or directory".
+    let files = vec![OsString::from("localhost:/remote/path.txt")];
+    let source = resolve_files_from_source(&files);
+    assert_eq!(
+        source,
+        core::client::FilesFromSource::RemoteFile("/remote/path.txt".to_owned())
+    );
+}
+
+#[test]
+fn resolve_files_from_windows_drive_letter_is_local() {
+    // upstream check_for_hostspec rejects single-letter "host" because
+    // parse_hostspec demands a real hostname. The DOS drive-letter form
+    // must continue to resolve as a local path on Windows.
+    let files = vec![OsString::from("C:/tmp/list.txt")];
+    let source = resolve_files_from_source(&files);
+    match source {
+        core::client::FilesFromSource::LocalFile(p) => {
+            assert_eq!(p.to_string_lossy(), "C:/tmp/list.txt");
+        }
+        other => panic!("expected LocalFile for drive-letter, got {other:?}"),
+    }
+}
+
+#[test]
+fn resolve_files_from_daemon_module_spec_is_local() {
+    // `host::module` is the daemon module access form, handled by a
+    // separate transport path. The files-from parser must defer to
+    // LocalFile so the daemon path produces its own error.
+    let files = vec![OsString::from("host::mod/list")];
+    let source = resolve_files_from_source(&files);
+    match source {
+        core::client::FilesFromSource::LocalFile(p) => {
+            assert_eq!(p.to_string_lossy(), "host::mod/list");
+        }
+        other => panic!("expected LocalFile for daemon spec, got {other:?}"),
+    }
+}
+
+#[test]
+fn resolve_files_from_remote_stdin_marker_falls_through() {
+    // upstream `options.c:2466-2469` aborts on `host:-`; we route through
+    // LocalFile so the downstream loader returns a clear error rather
+    // than silently routing the literal `-` to the remote side.
+    let files = vec![OsString::from("host:-")];
+    let source = resolve_files_from_source(&files);
+    match source {
+        core::client::FilesFromSource::LocalFile(_) => {}
+        other => panic!("expected LocalFile fall-through for host:-, got {other:?}"),
+    }
+}
+
+#[test]
 fn resolve_files_from_uses_last_value() {
     let files = vec![OsString::from("/first.txt"), OsString::from("/last.txt")];
     let source = resolve_files_from_source(&files);

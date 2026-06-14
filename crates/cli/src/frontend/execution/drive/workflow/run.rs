@@ -438,9 +438,17 @@ where
         .as_ref()
         .and_then(|value: &ParsedChown| value.group());
 
-    let mut file_list_operands = match load_file_list_operands(&files_from, from0) {
-        Ok(operands) => operands,
-        Err(message) => return fail_with_message(message, stderr),
+    // upstream: options.c:2483 - only open files_from locally when the spec
+    // is NOT a hostspec. Remote files-from (`:path` or `host:path`) are read
+    // by the server, so the client never opens them.
+    let files_from_resolved = resolve_files_from_source(&files_from);
+    let mut file_list_operands = if files_from_resolved.is_remote() {
+        Vec::new()
+    } else {
+        match load_file_list_operands(&files_from, from0) {
+            Ok(operands) => operands,
+            Err(message) => return fail_with_message(message, stderr),
+        }
     };
 
     let files_from_active = !files_from.is_empty();
@@ -848,7 +856,7 @@ where
             .into_iter()
             .map(|s| s.to_string_lossy().into_owned())
             .collect(),
-        files_from: resolve_files_from_source(&files_from),
+        files_from: files_from_resolved.clone(),
         from0,
         spill_dir,
         spill_threshold_bytes,
