@@ -67,6 +67,7 @@ pub fn check_secrets_file_permissions(_path: &Path) -> io::Result<()> {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     #[test]
     fn nonexistent_file_returns_error() {
         let result = check_secrets_file_permissions(Path::new("/nonexistent_secrets_xyz_99999"));

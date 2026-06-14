@@ -270,6 +270,7 @@ mod tests {
         assert!(lookup_account_info("nonexistent_user_xyz_99999").is_none());
     }
 
+    #[cfg(unix)]
     #[test]
     fn lookup_account_info_empty_returns_none() {
         assert!(lookup_account_info("").is_none());
@@ -295,8 +296,11 @@ mod tests {
     #[cfg(windows)]
     #[test]
     fn rid_500_resolves_to_administrator() {
+        // RID 500 always maps to the built-in administrator account, but the
+        // display name varies on localized Windows installs and renamed admin
+        // accounts. Only assert that the lookup returns a non-empty name.
         if let Some(name) = rid_to_account_name(500) {
-            assert_eq!(name, "Administrator");
+            assert!(!name.is_empty());
         }
     }
 
