@@ -284,7 +284,7 @@ fn engage_landlock_sandbox(
     module: &ModuleRuntime,
     extra_allowed_paths: &[&Path],
 ) -> io::Result<bool> {
-    use fast_io::landlock::{is_supported, restrict_to_module_paths, LandlockOutcome};
+    use fast_io::landlock::{LandlockOutcome, is_supported, restrict_to_module_paths};
 
     if module.pre_xfer_exec.is_some() || module.post_xfer_exec.is_some() {
         if let Some(log) = ctx.log_sink {
@@ -1043,34 +1043,61 @@ fn process_approved_module(
         module,
     );
 
-    // Graceful TCP shutdown: linger + half-close + drain.
+    // Graceful TCP shutdown: drain peer's goodbye, then linger + close.
     //
-    // Without this pattern, close() on a TCP socket with unread RX bytes
-    // causes the kernel to send RST instead of FIN (`tcp(7)`). RST aborts
-    // any in-flight TX bytes that have not yet reached userspace, so the
-    // peer reports "connection unexpectedly closed (N bytes received so
-    // far)" even though the daemon wrote every goodbye byte. Under `-zz`
-    // the loss window is widened by trailing MSG_INFO itemize frames
-    // before the stats / NDX_DONE goodbye sequence.
+    // Background:
     //
-    // The structural pattern is:
-    //   1. SO_LINGER(5s) - ensures close() blocks until TX data is ACKed
-    //   2. shutdown(Write) - sends FIN, tells the peer no more data
-    //   3. read() in a loop until EOF - drains peer's final goodbye bytes
-    //      and lets the kernel complete the FIN handshake
-    //   4. close() the socket - safe because linger ensures TX delivery
-    //      and drain cleared any unread RX data
+    // Upstream rsync forks a child process per connection; the child holds
+    // the sole fd reference and exits via `exit_cleanup` which calls
+    // `_exit()`. The kernel closes the orphaned fd, the TCP stack delivers
+    // any pending TX bytes, and FIN is queued AFTER the kernel finishes
+    // processing the receive buffer. In particular, the sender's
+    // `read_final_goodbye()` returns AFTER reading the receiver's final
+    // NDX_DONE, but the kernel still has room to receive whatever the
+    // receiver writes immediately afterward (its MSG_STATS / extra
+    // NDX_DONE pair) before the process exit triggers FIN.
     //
-    // SO_LINGER is the key structural element. Without it, close() on a
-    // socket with multiple dup'd fd references (our cloned TcpStreams)
-    // can return immediately with unACKed TX data, and the kernel races
-    // to deliver the trailing goodbye bytes before the peer times out.
-    // With SO_LINGER, close() blocks until the kernel confirms delivery.
+    // Our daemon uses threads, not fork. The connection thread holds
+    // multiple cloned `TcpStream` handles (a read clone, a write clone,
+    // and the original `DaemonStream`) for the same kernel socket. When
+    // the thread function returns, those drop and the kernel closes the
+    // last fd. The structural challenge is that calling
+    // `shutdown(SHUT_WR)` BEFORE the receiver has finished writing its
+    // goodbye causes the receiver to see FIN immediately, abort its
+    // pending writes (which our `read_final_goodbye()` equivalent has not
+    // yet drained), and report
+    // "connection unexpectedly closed (N bytes received so far)".
     //
-    // upstream: cleanup.c:close_all() relies on the fork model where the
-    // child holds the only fd reference; _exit() lets the kernel drain
-    // naturally. Our threaded daemon shares cloned fds across multiple
-    // owners and needs SO_LINGER + half-close + drain explicitly.
+    // The failure cluster (batch-mode, alt-dest, daemon-gzip-download,
+    // daemon-refuse-compress) all hit this race: the engine's
+    // `handle_goodbye_with_finalizer` reads the receiver's first NDX_DONE,
+    // writes the daemon's NDX_DONE, and reads the receiver's second
+    // NDX_DONE; but upstream's receiver then writes MSG_STATS + a final
+    // NDX_DONE on its side, relayed through the generator-to-sender pipe.
+    // Closing the socket immediately after our `handle_goodbye` returns
+    // races those trailing bytes.
+    //
+    // The structural fix mirrors upstream's
+    // `noop_io_until_death()` semantics for the sender side: keep reading
+    // from the peer until it sends FIN (EOF). The peer FINs once its own
+    // `exit_cleanup` runs, which only happens after it has flushed its
+    // goodbye. Bounded by a generous timeout (5 seconds) so a wedged
+    // peer cannot block the daemon thread indefinitely.
+    //
+    // Sequence:
+    //   1. SO_LINGER(5s) - kernel blocks close() until TX data is ACKed
+    //      or the linger window expires, so the final goodbye bytes our
+    //      engine wrote reach the peer even after we drop the socket.
+    //   2. Drain read until EOF - waits for the peer to finish its own
+    //      goodbye and FIN. We do NOT call `shutdown(Write)` first;
+    //      sending FIN early would tell the peer "I'm done" before the
+    //      peer has written its trailing goodbye, which is the race.
+    //   3. close() - the linger window guarantees in-flight TX bytes are
+    //      delivered before the close completes.
+    //
+    // upstream: io.c:943-963 noop_io_until_death() loops on read() until
+    // the peer sends FIN; cleanup.c:265 then calls close_all(). Our
+    // sequence collapses that pattern to fit the threaded daemon model.
     //
     // For stdio streams (remote-shell daemon mode), TCP shutdown is not
     // applicable - the pipe/fd closes naturally when dropped.
@@ -1078,34 +1105,24 @@ fn process_approved_module(
     if supports_tcp_shutdown {
         let stream = ctx.reader.get_mut();
 
-        // SO_LINGER with a non-zero timeout ensures that when close() is
-        // called (via drop), the kernel blocks until all data in the send
-        // buffer has been acknowledged by the peer - or until the timeout
-        // expires. Without this, close() on a dup'd socket with pending
-        // TX data can return immediately while the kernel races to deliver
-        // the trailing goodbye bytes.
-        //
-        // upstream: the fork model avoids this because _exit() triggers
-        // implicit close on the only fd, and the kernel lingers by default
-        // for orphaned sockets. Our threaded daemon has multiple cloned
-        // fds and explicit close() calls, which bypass the implicit linger.
+        // SO_LINGER ensures the final goodbye TX bytes the engine wrote
+        // are delivered before the kernel reclaims the socket. The 5s
+        // window matches upstream's expected goodbye round-trip latency.
         if let Some(tcp) = stream.tcp_stream() {
             let sock = socket2::SockRef::from(tcp);
             let _ = sock.set_linger(Some(Duration::from_secs(5)));
         }
 
-        // Half-close the write side: sends FIN to the peer, signalling
-        // that no more data will be sent from our end.
-        let _ = stream.shutdown(std::net::Shutdown::Write);
-
-        // Drain the read side until the peer sends FIN (EOF) or the
-        // timeout expires. This ensures all peer goodbye bytes are
-        // consumed and the kernel completes the FIN handshake before
-        // close() is called, preventing RST from unread RX data.
+        // Drain the read side until the peer sends FIN (EOF). We do NOT
+        // shutdown(Write) first: that would tell the peer "I'm done"
+        // before it has written its trailing MSG_STATS / NDX_DONE, which
+        // the peer abandons on receipt of FIN. Mirrors upstream's
+        // `noop_io_until_death()` for the sender side: read until peer
+        // FINs (which it does on its own `exit_cleanup`), then close.
         //
-        // Two seconds is generous for the goodbye round-trip (stats +
-        // NDX_DONE) and prevents a stalled peer from wedging the daemon.
-        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+        // Cap at 5s so a wedged peer cannot pin the daemon thread; the
+        // window is generous enough for any reasonable goodbye exchange.
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
         let mut sink = [0u8; 4096];
         loop {
             match stream.read(&mut sink) {
@@ -1127,11 +1144,12 @@ fn process_approved_module(
         let _ = stream.set_read_timeout(None);
     }
 
-    // Drop transfer-engine stream clones after the shutdown+drain
-    // sequence completes. These cloned TcpStream handles share the
-    // same kernel socket as the DaemonStream; keeping them alive during
-    // shutdown(Write) and drain-read preserves the fd refcount that was
-    // present during the transfer, matching the original lifecycle.
+    // Drop transfer-engine stream clones after the drain completes.
+    // These cloned TcpStream handles share the same kernel socket as the
+    // DaemonStream; keeping them alive during the drain preserves the fd
+    // refcount that was present during the transfer. Dropping now lets
+    // the kernel queue FIN + close once the SO_LINGER window completes
+    // delivery of any in-flight TX bytes.
     drop(streams);
 
     // upstream: clientserver.c - post_exec() runs after the transfer, regardless of outcome
