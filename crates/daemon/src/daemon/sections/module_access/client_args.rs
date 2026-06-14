@@ -447,14 +447,14 @@ fn resolve_sender_sources(
 ) -> Option<Vec<std::path::PathBuf>> {
     let positionals = extract_module_relative_paths(client_args, module_name);
     if positionals.is_empty() {
-        return Some(vec![module_path.to_path_buf()]);
+        return Some(vec![module_root_dotdir(module_path)]);
     }
     let mut sources = Vec::with_capacity(positionals.len());
     let mut all_empty = true;
     for raw in &positionals {
         let tail = raw.trim();
         if tail.is_empty() || tail == "." {
-            sources.push(module_path.to_path_buf());
+            sources.push(module_root_dotdir(module_path));
             continue;
         }
         all_empty = false;
@@ -496,7 +496,7 @@ fn resolve_sender_sources(
         sources.push(std::path::PathBuf::from(buf));
     }
     if all_empty {
-        return Some(vec![module_path.to_path_buf()]);
+        return Some(vec![module_root_dotdir(module_path)]);
     }
     // upstream: util1.c:804 `glob_expand_module()` runs each module-relative
     // positional through `glob_expand()` (util1.c:755) which in turn calls
@@ -523,6 +523,32 @@ fn resolve_sender_sources(
     //     `..` rejection above the loop runs before this, so a pattern
     //     containing `..` is already rejected.
     Some(expand_sender_source_globs(module_path, sources))
+}
+
+/// Returns the module root path with a trailing `/` appended (idempotent).
+///
+/// The trailing slash signals "transfer contents" through
+/// `non_relative_walk_base` in the engine - it keeps `base == path` so the
+/// walk emits a `.` entry for the root and child names without the module
+/// basename prefix. A sub-path positional (e.g. `<mod>/foo`) is left
+/// without a trailing slash so the engine's last-`/` split assigns the
+/// parent as the base, giving wire-side entries `foo` and `foo/one`
+/// instead of the post-strip-prefix `.` and `one` that would otherwise
+/// trip the receiver's "rejecting unrequested file-list name" check.
+///
+/// upstream: `flist.c:2312-2322` - `fbuf[len-1] == '/'` enters the
+/// `DOTDIR_NAME` branch, which is how the daemon distinguishes
+/// "transfer module contents" from "transfer a named sub-path".
+fn module_root_dotdir(module_path: &std::path::Path) -> std::path::PathBuf {
+    let mut buf = module_path.as_os_str().to_owned();
+    if !buf
+        .as_encoded_bytes()
+        .last()
+        .is_some_and(|b| *b == b'/' || *b == b'\\')
+    {
+        buf.push("/");
+    }
+    std::path::PathBuf::from(buf)
 }
 
 /// Returns `true` if `name` contains a shell glob metacharacter recognised
