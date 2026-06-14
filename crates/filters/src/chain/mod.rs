@@ -121,16 +121,23 @@ impl FilterChain {
     /// global rules. First matching rule wins. Paths that match no rule
     /// are included by default.
     ///
+    /// This is the traversal-driven sender entry point: synthetic
+    /// `pattern/**` descendant matchers (produced for anchored excludes
+    /// like `- /bar`) are skipped because the walk itself handles
+    /// descendant exclusion by not descending into excluded directories.
+    /// Mirrors upstream `exclude.c:rule_matches()` which has no descendant
+    /// matching at all.
+    ///
     /// `is_dir` should be `true` when the path refers to a directory.
     #[must_use]
     pub fn allows(&self, path: &Path, is_dir: bool) -> bool {
         for scope in self.scopes.iter().rev() {
             if !scope.filter_set.is_empty() && has_matching_rule(&scope.filter_set, path, is_dir) {
-                return scope.filter_set.allows(path, is_dir);
+                return scope.filter_set.allows_during_traversal(path, is_dir);
             }
         }
 
-        self.global.allows(path, is_dir)
+        self.global.allows_during_traversal(path, is_dir)
     }
 
     /// Returns `true` if deleting the path on the receiver is permitted.
