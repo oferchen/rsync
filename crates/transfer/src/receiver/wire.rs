@@ -9,7 +9,7 @@ use std::io::{self, Read, Write};
 use engine::signature::FileSignature;
 use protocol::codec::NdxCodec;
 use protocol::read_varint;
-use protocol::xattr::XattrList;
+use protocol::xattr::{MAX_WIRE_XATTR_VALUE_LEN, XattrList};
 
 /// Signature header for delta transfer.
 ///
@@ -453,12 +453,39 @@ fn read_xattr_abbreviation_data<R: Read>(reader: &mut R) -> io::Result<Vec<(i32,
         if rel_pos == 0 {
             break;
         }
-        // upstream: num += rel_pos (delta-encoded 1-based entry numbers)
-        let num = prior_req + rel_pos;
+        // upstream: xattrs.c:700-705 - reject signed overflow before
+        // num += rel_pos to stop a hostile peer wrapping num to an arbitrary
+        // value.
+        let num = prior_req.checked_add(rel_pos).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "xattr rel_pos accumulation overflow {}{}",
+                    crate::role_trailer::error_location!(),
+                    crate::role_trailer::receiver()
+                ),
+            )
+        })?;
         prior_req = num;
 
-        // upstream: rxa->datum_len = read_varint(f_in); read_buf(f_in, rxa->datum, rxa->datum_len)
-        let datum_len = read_varint(reader)? as usize;
+        // upstream: xattrs.c:752 -
+        //   rxa->datum_len = read_varint_size(f_in, MAX_WIRE_XATTR_DATALEN, ...)
+        // We use the stricter oc-rsync ceiling (`MAX_WIRE_XATTR_VALUE_LEN`,
+        // 64 MiB) so a corrupt or hostile frame at this offset surfaces as a
+        // typed error instead of an unbounded allocation or a varint overflow
+        // panic.
+        let raw_len = read_varint(reader)?;
+        if raw_len < 0 || raw_len as usize > MAX_WIRE_XATTR_VALUE_LEN {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "xattr datum_len {raw_len} exceeds maximum {MAX_WIRE_XATTR_VALUE_LEN} {}{}",
+                    crate::role_trailer::error_location!(),
+                    crate::role_trailer::receiver()
+                ),
+            ));
+        }
+        let datum_len = raw_len as usize;
         let mut value = vec![0u8; datum_len];
         reader.read_exact(&mut value)?;
 
@@ -542,5 +569,101 @@ pub fn apply_xattr_abbreviation_values(xattr_list: &mut XattrList, values: &[(i3
         {
             entry.set_full_value(value.clone());
         }
+    }
+}
+
+#[cfg(test)]
+mod xattr_abbrev_guard_tests {
+    //! Defensive-bounds regression tests for `read_xattr_abbreviation_data`.
+    //!
+    //! These cover the upstream hardening at `xattrs.c:700-705` (signed
+    //! rel_pos overflow) and `xattrs.c:752` (bounded `datum_len`). When the
+    //! sender wire is misaligned or an attacker injects a hostile frame at
+    //! the xattr-abbreviation offset, we want a typed `InvalidData` error
+    //! instead of an unbounded allocation or a varint overflow panic.
+    use std::io::Write;
+    use std::io::{Cursor, ErrorKind};
+
+    use protocol::write_varint;
+
+    use super::read_xattr_abbreviation_data;
+
+    fn encode_varint(value: i32) -> Vec<u8> {
+        let mut buf = Vec::new();
+        write_varint(&mut buf, value).expect("write_varint");
+        buf
+    }
+
+    #[test]
+    fn rel_pos_overflow_returns_typed_error() {
+        // First rel_pos lifts num to near i32::MAX with a zero-length value,
+        // then the second rel_pos would overflow the signed accumulator.
+        // Mirrors upstream xattrs.c:700-705.
+        let mut bytes = Vec::new();
+        bytes.extend(encode_varint(i32::MAX - 1));
+        bytes.extend(encode_varint(0));
+        bytes.extend(encode_varint(2));
+
+        let mut reader = Cursor::new(bytes);
+        let err = read_xattr_abbreviation_data(&mut reader).expect_err("must error");
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        assert!(err.to_string().contains("accumulation overflow"));
+    }
+
+    #[test]
+    fn datum_len_exceeding_cap_returns_typed_error() {
+        // datum_len just above the 64 MiB receiver-side ceiling must be
+        // rejected with InvalidData rather than triggering a giant `vec!`
+        // allocation. Mirrors upstream xattrs.c:752 bounded read.
+        let mut bytes = Vec::new();
+        bytes.extend(encode_varint(1));
+        bytes.extend(encode_varint((64 * 1024 * 1024) + 1));
+
+        let mut reader = Cursor::new(bytes);
+        let err = read_xattr_abbreviation_data(&mut reader).expect_err("must error");
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        assert!(err.to_string().contains("datum_len"));
+    }
+
+    #[test]
+    fn negative_datum_len_returns_typed_error() {
+        // A negative varint at the datum_len slot would historically widen
+        // into a giant `usize` via `as usize`. Now it returns InvalidData.
+        let mut bytes = Vec::new();
+        bytes.extend(encode_varint(1));
+        bytes.extend(encode_varint(-1));
+
+        let mut reader = Cursor::new(bytes);
+        let err = read_xattr_abbreviation_data(&mut reader).expect_err("must error");
+        assert_eq!(err.kind(), ErrorKind::InvalidData);
+        assert!(err.to_string().contains("datum_len"));
+    }
+
+    #[test]
+    fn empty_list_terminator_succeeds() {
+        // Positive control: a lone zero terminator yields an empty Vec.
+        let mut bytes = Vec::new();
+        bytes.extend(encode_varint(0));
+
+        let mut reader = Cursor::new(bytes);
+        let values = read_xattr_abbreviation_data(&mut reader).expect("ok");
+        assert!(values.is_empty());
+    }
+
+    #[test]
+    fn single_legal_entry_round_trips() {
+        // Positive control: one (num, value) pair with a small datum_len
+        // succeeds and parses correctly.
+        let mut bytes = Vec::new();
+        bytes.extend(encode_varint(3));
+        bytes.extend(encode_varint(4));
+        bytes.write_all(b"abcd").unwrap();
+        bytes.extend(encode_varint(0));
+
+        let mut reader = Cursor::new(bytes);
+        let values = read_xattr_abbreviation_data(&mut reader).expect("ok");
+        assert_eq!(values.len(), 1);
+        assert_eq!(values[0].0, 3);
+        assert_eq!(values[0].1, b"abcd");
     }
 }
