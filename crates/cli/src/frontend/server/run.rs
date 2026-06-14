@@ -373,9 +373,16 @@ where
     let _ = stdout.flush();
     let _ = fast_io::shutdown_stdio_write();
 
-    // The drain loop stays receiver-only: the generator never expects
-    // post-goodbye stdin bytes, so reading there would just delay exit.
-    if role == ServerRole::Receiver {
+    // Both roles drain stdin to EOF. The generator case is not vacuous:
+    // under lsh.sh the upstream peer (server-receiver child) parks in
+    // noop_io_until_death() waiting for our FIN. Without this drain the
+    // process exits, closing stdin before the peer has finished its own
+    // goodbye sequence, causing "connection unexpectedly closed" on the
+    // upstream side and a 300 s TIMEOUT in runtests.py.
+    //
+    // upstream: io.c:943 noop_io_until_death() called from cleanup.c:254
+    // _exit_cleanup() for both sender and receiver server roles.
+    {
         let mut sink = [0u8; 4096];
         loop {
             match stdin.read(&mut sink) {
