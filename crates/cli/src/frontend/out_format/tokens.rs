@@ -157,6 +157,21 @@ pub(crate) struct OutFormatContext {
     pub(super) is_sender: bool,
 }
 
+impl OutFormatContext {
+    /// Builds a context with the supplied sender flag, leaving other fields default.
+    ///
+    /// Used by the transfer driver to thread the sender role from the parsed
+    /// `ClientConfig` through to the itemize renderer so the direction arrow
+    /// matches upstream `log.c:701-704`.
+    #[must_use]
+    pub(crate) fn with_is_sender(is_sender: bool) -> Self {
+        Self {
+            is_sender,
+            ..Self::default()
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::assertions_on_constants)]
 mod tests {
