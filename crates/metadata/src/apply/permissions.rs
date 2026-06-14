@@ -103,8 +103,11 @@ pub(super) fn set_permissions_like(
         use std::os::unix::fs::PermissionsExt;
 
         let mode = metadata.permissions().mode();
-        let permissions = PermissionsExt::from_mode(mode);
-        fs::set_permissions(destination, permissions)
+        // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant
+        // anchored on the parent dirfd. Mirrors the receiver chmod-apply
+        // path through `apply_permissions_from_entry` so chmod-symlink-race
+        // cannot redirect this syscall outside the receiver confinement.
+        fast_io::secure_chmod_at(destination, mode, true)
             .map_err(|error| MetadataError::new("preserve permissions", destination, error))?
     }
 
@@ -147,8 +150,6 @@ pub(super) fn apply_permissions_with_chmod(
 ) -> Result<(), MetadataError> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-
         if let Some(modifiers) = options.chmod() {
             let mut mode = base_mode_for_permissions(destination, metadata, options, existing)?;
             mode = modifiers.apply(mode, metadata.file_type());
@@ -159,8 +160,9 @@ pub(super) fn apply_permissions_with_chmod(
                 }
             }
 
-            let permissions = PermissionsExt::from_mode(mode);
-            fs::set_permissions(destination, permissions)
+            // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant
+            // anchored on the parent dirfd.
+            fast_io::secure_chmod_at(destination, mode, true)
                 .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
             return Ok(());
         }
@@ -182,8 +184,8 @@ pub(super) fn apply_permissions_with_chmod(
         if let Some(new_mode) =
             compute_dest_mode(source_mode, options.destination_is_new(), existing)
         {
-            let permissions = PermissionsExt::from_mode(new_mode);
-            fs::set_permissions(destination, permissions)
+            // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant.
+            fast_io::secure_chmod_at(destination, new_mode, true)
                 .map_err(|error| MetadataError::new("apply dest_mode", destination, error))?;
         }
     }
@@ -226,8 +228,8 @@ pub(super) fn apply_permissions_with_chmod_fd(
                 MetadataError::new("preserve permissions", destination, io::Error::from(error))
             })?;
         } else {
-            let permissions = PermissionsExt::from_mode(mode);
-            fs::set_permissions(destination, permissions)
+            // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant.
+            fast_io::secure_chmod_at(destination, mode, true)
                 .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
         }
         return Ok(());
@@ -274,8 +276,8 @@ pub(super) fn apply_permissions_with_chmod_fd(
                 MetadataError::new("apply dest_mode", destination, io::Error::from(error))
             })?;
         } else {
-            let permissions = PermissionsExt::from_mode(new_mode);
-            fs::set_permissions(destination, permissions)
+            // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant.
+            fast_io::secure_chmod_at(destination, new_mode, true)
                 .map_err(|error| MetadataError::new("apply dest_mode", destination, error))?;
         }
     }
@@ -383,8 +385,8 @@ fn apply_permissions_without_chmod(
                 }
             }
 
-            let permissions = PermissionsExt::from_mode(destination_permissions);
-            fs::set_permissions(destination, permissions)
+            // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant.
+            fast_io::secure_chmod_at(destination, destination_permissions, true)
                 .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
         }
     }
