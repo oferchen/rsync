@@ -2,7 +2,7 @@
 
 use std::ffi::OsString;
 use std::fmt;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 
 use core::branding::Brand;
 use core::message::Role;
@@ -303,13 +303,65 @@ where
         }
     }
 
-    match run_server_stdio(config, &mut stdin, stdout, None) {
+    let exit_code = match run_server_stdio(config, &mut stdin, stdout, None) {
         Ok(_stats) => 0,
         Err(e) => {
             write_server_error(stderr, program_brand, format!("server error: {e}"));
             1
         }
+    };
+
+    // UTS-v3 Cluster A (SSH leg): the upstream sender keeps writing trailing
+    // bytes (MSG_STATS / NDX_DONE / MSG_ERROR_EXIT) onto the SSH stdio pipe
+    // after our final NDX_DONE. Returning from `run_server_stdio` here lets
+    // the process exit immediately, dropping the stdin pipe end. The peer
+    // then sees EOF on its parallel read before the bytes it is still
+    // streaming reach us, and reports "connection unexpectedly closed (N
+    // bytes received so far) [receiver]" - the SSH-leg mirror of the
+    // daemon-as-sender cluster A failures already fixed for TCP in
+    // `daemon::sections::module_access::transfer` (PR 5765).
+    //
+    // Mirror upstream's receiver child: after writing its final goodbye it
+    // enters `noop_io_until_death()` (io.c:943) and loops on
+    // `read_buf(iobuf.in_fd, ...)` until the parent reaps it. We collapse
+    // both sides into one process, so drain stdin to EOF here instead. The
+    // upstream sender FINs its end of the pipe when its own `exit_cleanup`
+    // runs, at which point our read returns 0 and we unblock. Errors are
+    // tolerated: the goodbye has already completed.
+    //
+    // Gated to the receiver role: the generator (sender) side does not face
+    // this race because its peer (the remote receiver) closes its read end
+    // first as soon as it has flushed its own goodbye. Draining there would
+    // only delay exit without preventing any failure.
+    //
+    // Daemon mode never reaches this site (the daemon dispatches into
+    // `run_server_with_handshake` directly and runs its own TCP drain in
+    // `process_approved_module`), so this drain only fires on the SSH /
+    // remote-shell path that produced cluster A's alt-dest regression.
+    //
+    // upstream: io.c:943-963 `noop_io_until_death()`; main.c:1075
+    // receiver-child loop on `read_final_goodbye()`; cleanup.c:254
+    // `noop_io_until_death()` call in `_exit_cleanup`.
+    if role == ServerRole::Receiver {
+        let mut sink = [0u8; 4096];
+        loop {
+            match stdin.read(&mut sink) {
+                Ok(0) => break,
+                Ok(_) => continue,
+                Err(err)
+                    if matches!(
+                        err.kind(),
+                        io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
+                    ) =>
+                {
+                    continue;
+                }
+                Err(_) => break,
+            }
+        }
     }
+
+    exit_code
 }
 
 /// Applies value-bearing flags to the server config, returning early on parse errors.
