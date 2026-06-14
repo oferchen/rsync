@@ -460,4 +460,5 @@ fn non_relative_walk_base(path: &Path) -> (PathBuf, PathBuf) {
     }
 }
 
+#[cfg(test)]
 pub(super) use protocol::flist::apply_permutation_in_place;
