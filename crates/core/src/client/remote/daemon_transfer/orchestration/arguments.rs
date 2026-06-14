@@ -199,9 +199,19 @@ pub(super) fn build_full_daemon_args(
     // like `-logDtpre.iLsfxCIvu`. We follow the same format for interop.
     let mut flag_string = flags::build_server_flag_string(config);
     if protocol.as_u8() >= 30 {
-        // upstream: compat.c:177-178 daemon 'i' check, compat.c:720
-        // set_allow_inc_recurse() - capability flags for protocol 30+.
-        let capability_suffix = build_capability_string_suffix(config.inc_recursive_send());
+        // upstream: compat.c:162-181 set_allow_inc_recurse() and
+        // options.c:3036 maybe_add_e_option() - 'i' is only advertised when
+        // the local side actually honors INC_RECURSE on its receive path.
+        // For daemon pull (`is_sender=true` means daemon is sender; we are
+        // receiver) the receiver clears CF_INC_RECURSE in compat.rs after
+        // reading it. If we still advertise 'i' the daemon writes the file
+        // list in INC_RECURSE format (trailing NDX_FLIST_EOF), the receiver
+        // skips `receive_extra_file_lists`, and the leftover 0xFF marker
+        // trips `read_varint` overflow on the next decode.
+        // upstream: io.c:1816 read_varint - rejects encodings with extra > 4.
+        let we_are_receiver = is_sender;
+        let advertise_inc_recurse = config.inc_recursive_send() && !we_are_receiver;
+        let capability_suffix = build_capability_string_suffix(advertise_inc_recurse);
         flag_string.push_str(&capability_suffix);
     }
     if !flag_string.is_empty() {

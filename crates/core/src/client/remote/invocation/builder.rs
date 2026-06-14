@@ -186,9 +186,17 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // single argument like `-logDtpre.iLsfxCIvu`. Emitting it as a separate
         // `-e.xxx` argument would confuse the server-side parser which treats
         // only the first short-flag argument as the compact flag string.
-        // upstream: compat.c:720 set_allow_inc_recurse() - capability gate.
-        // upstream: options.c:3003-3050 maybe_add_e_option() - capability string.
-        let capability_suffix = build_capability_string_suffix(self.config.inc_recursive_send());
+        // upstream: compat.c:162-181 set_allow_inc_recurse(),
+        // options.c:3036 maybe_add_e_option() - 'i' is only advertised when
+        // the local side honors INC_RECURSE on its receive path. The local
+        // Receiver role strips CF_INC_RECURSE from compat_flags after reading
+        // (compat.c:723) but receive_extra_file_lists then skips the
+        // NDX_FLIST_EOF the remote still emits, leaving its trailing bytes
+        // to trip read_varint overflow on the next decode.
+        // upstream: io.c:1816 read_varint - rejects encodings with extra > 4.
+        let advertise_inc_recurse =
+            self.config.inc_recursive_send() && self.role != RemoteRole::Receiver;
+        let capability_suffix = build_capability_string_suffix(advertise_inc_recurse);
         flags.push_str(&capability_suffix);
 
         if !flags.is_empty() {
