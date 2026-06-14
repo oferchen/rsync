@@ -59,6 +59,64 @@ Use `cargo-nextest` rather than `cargo test`; configuration lives in
 
 ---
 
+## Cargo.lock maintenance
+
+`Cargo.lock` is committed to the repository and every CI workflow (interop,
+parallel-determinism, MSRV, release-cross, nightly platform jobs) builds with
+`--locked`. The same flag is now required on `tools/ci/*.sh` helpers that
+invoke cargo. The discipline exists so that:
+
+- **Builds are reproducible.** A given commit always resolves to the exact
+  same dependency graph, locally and in CI.
+- **Dep drift is caught early.** A workflow that builds without `--locked`
+  can silently absorb a transitive bump and mask a real regression.
+- **PR diffs stay focused.** Lockfile churn lives in its own commit, not
+  spread across unrelated PRs.
+
+### When to update Cargo.lock
+
+Update the lockfile only via an intentional `cargo update --workspace`.
+Never let it drift sideways through a missing `--locked` flag - that path
+re-resolves the graph implicitly and is the bug class this discipline
+prevents.
+
+### How CI enforces it
+
+- `tools/ci/check_locked_flags.sh` (gating job, see CIM-LOCKFILE-5) scans
+  every workflow and helper script for cargo invocations missing `--locked`
+  and fails the PR if any unexpected call slips through.
+- A small allowlist of cargo calls is intentionally exempt - the weekly
+  refresh and PR auto-sync workflows below, which must run *without*
+  `--locked` to do their job. The allowlist lives inside
+  `tools/ci/check_locked_flags.sh`; add to it only with reviewer signoff.
+
+### Weekly auto-sync
+
+`.github/workflows/cargo-lockfile-weekly.yml` runs every Monday and opens a
+`chore(deps): weekly Cargo.lock refresh` PR with the output of
+`cargo update --workspace`. Contributors do not need to bump the lockfile
+manually for routine drift - just review and merge the cron PR when CI is
+green. `.github/workflows/cargo-lockfile-sync.yml` additionally pushes a
+refreshed `Cargo.lock` back to any first-party PR that edits a workspace
+`Cargo.toml`, so adding a dependency does not require a separate lockfile
+commit.
+
+### What to do if CI fails on Cargo.lock
+
+If the gating job or a `--locked` workflow rejects your PR with a lockfile
+mismatch, regenerate locally and commit the result:
+
+```sh
+cargo update --workspace
+git add Cargo.lock
+git commit -m "chore: sync Cargo.lock"
+```
+
+This is the same command the weekly cron and PR auto-sync workflows run; a
+manual run from your branch is equivalent.
+
+---
+
 ## Opening a pull request
 
 - **Branch naming.** Use `<category>/<short-description>[-<task-id>]`, for
