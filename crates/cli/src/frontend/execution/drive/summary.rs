@@ -92,6 +92,11 @@ where
         })
     });
 
+    // Capture the sender role before `config` is consumed by the client driver.
+    // Threaded into `OutFormatContext` so the itemize renderer picks the correct
+    // direction arrow (upstream: log.c:701-704 - `<` for sender, `>` otherwise).
+    let is_sender = config.is_local_sender();
+
     let result = {
         let observer = live_progress
             .as_mut()
@@ -113,7 +118,7 @@ where
                 });
             }
 
-            let out_format_context = OutFormatContext::default();
+            let out_format_context = OutFormatContext::with_is_sender(is_sender);
             if let Err(error) = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
                 emit_transfer_summary(
                     &summary,
@@ -150,6 +155,7 @@ where
                     name_level,
                     name_overridden,
                     human_readable_mode,
+                    is_sender,
                 })
             {
                 let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
@@ -188,6 +194,9 @@ struct EmitLogOutputParams<'a> {
     name_level: NameOutputLevel,
     name_overridden: bool,
     human_readable_mode: HumanReadableMode,
+    /// Whether the local client is the sender. Threaded through so the
+    /// itemize direction arrow matches upstream `log.c:701-704`.
+    is_sender: bool,
 }
 
 /// Writes the transfer summary to the configured log file.
@@ -201,8 +210,9 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         name_level,
         name_overridden,
         human_readable_mode,
+        is_sender,
     } = params;
-    let context = OutFormatContext::default();
+    let context = OutFormatContext::with_is_sender(is_sender);
     emit_transfer_summary(
         summary,
         verbosity,
