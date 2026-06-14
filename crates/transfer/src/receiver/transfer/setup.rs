@@ -34,9 +34,10 @@ impl ReceiverContext {
     ///
     /// - `main.c:1342-1343` - client receiver activates multiplex at protocol >= 23
     /// - `main.c:1167-1168` - server receiver activates multiplex at protocol >= 30
-    pub(in crate::receiver) fn setup_transfer<R: Read>(
+    pub(in crate::receiver) fn setup_transfer<R: Read, W: io::Write + ?Sized>(
         &mut self,
         reader: crate::reader::ServerReader<R>,
+        writer: &mut W,
     ) -> io::Result<(crate::reader::ServerReader<R>, usize, PipelineSetup)> {
         // upstream: generator.c:2260-2261 - emitted at the top of generate_files,
         // just before the per-segment dispatch loop. The receiver-side transfer
@@ -113,6 +114,15 @@ impl ReceiverContext {
         self.pipeline
             .advance_to(TransferPhase::FileListTransfer)
             .map_err(crate::fsm_error)?;
+
+        // upstream: main.c:1173-1180 - server-receiver opened a local
+        // `--files-from` file (filesfrom_fd) and now forwards its contents
+        // to the sender (the client) over f_out so the sender can build the
+        // file list. Upstream interleaves this with `recv_file_list` via the
+        // I/O scheduler; we write the whole file out as a single push before
+        // entering the flist read because oc-rsync's reader/writer streams
+        // are decoupled (no select() loop fanning across them).
+        self.forward_files_from_to_sender(writer)?;
 
         if self.config.flags.verbose && self.config.connection.client_mode {
             info_log!(Flist, 1, "receiving incremental file list");
@@ -417,6 +427,79 @@ impl ReceiverContext {
             entry.set_name(PathBuf::from(&target_basename));
         }
         parent.unwrap_or_else(|| PathBuf::from("."))
+    }
+
+    /// Forwards a server-receiver-side `--files-from=<localpath>` file to the
+    /// sender (peer) over the protocol writer.
+    ///
+    /// Upstream's `main.c:1173-1180` server-receiver opens `filesfrom_fd`
+    /// locally and registers it with `start_filesfrom_forwarding`. The I/O
+    /// scheduler then interleaves writes to `f_out` (toward the sender) with
+    /// reads from `f_in` (the incoming flist). The sender's `send_file_list`
+    /// reads its `filesfrom_fd = f_in` to discover filenames.
+    ///
+    /// This is only triggered when:
+    /// - we are server-side (`!client_mode`), and
+    /// - `files_from_path` is set to a real local path (not `-`, which means
+    ///   the *client* is forwarding stdin into us).
+    ///
+    /// Without this push the upstream client (sender) blocks forever on
+    /// `recv_files_from`, causing the upstream testsuite `files-from` 4th
+    /// invocation to hang at "building file list ...".
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `main.c:1173-1180` - `start_filesfrom_forwarding(filesfrom_fd)`
+    /// - `io.c:370-381` - `forward_filesfrom_data()` core loop
+    /// - `options.c:2944-2956` - server-side `--files-from <path>` arg form
+    fn forward_files_from_to_sender<W: io::Write + ?Sized>(
+        &self,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        if self.config.connection.client_mode {
+            return Ok(());
+        }
+        let path = match &self.config.file_selection.files_from_path {
+            Some(path) if path != "-" => path,
+            _ => return Ok(()),
+        };
+
+        // upstream: options.c:2483 open(files_from, O_RDONLY|O_BINARY).
+        let file = std::fs::File::open(path).map_err(|err| {
+            io::Error::new(
+                err.kind(),
+                format!(
+                    "failed to open files-from file '{path}': {err} {}{}",
+                    crate::role_trailer::error_location!(),
+                    crate::role_trailer::receiver()
+                ),
+            )
+        })?;
+        let mut reader = io::BufReader::new(file);
+
+        // upstream: io.c:370 forward_filesfrom_data() preserves --from0
+        // semantics for already-NUL-delimited inputs. Use the same gating
+        // here so a `--from0 --files-from /path` push round-trips cleanly.
+        //
+        // Stage into an in-memory buffer first because `writer: &mut W` is
+        // unsized when W is `?Sized` and `protocol::forward_files_from`
+        // requires a sized writer. The buffered approach also matches
+        // upstream's `iobuf.out` enqueue model: the receiver hands the
+        // whole filesfrom payload to the outgoing socket buffer, and the
+        // kernel drains it while `recv_file_list` reads back from f_in.
+        let from0 = self.config.file_selection.from0;
+        let mut staged = Vec::with_capacity(4096);
+        protocol::forward_files_from(&mut reader, &mut staged, from0, None)?;
+        writer.write_all(&staged)?;
+        writer.flush()?;
+
+        debug_log!(
+            Flist,
+            1,
+            "forwarded local --files-from '{path}' to peer sender"
+        );
+
+        Ok(())
     }
 }
 
