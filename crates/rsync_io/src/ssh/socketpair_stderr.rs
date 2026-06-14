@@ -24,7 +24,7 @@
 //!   (workspace `#![deny(unsafe_code)]` policy). SSE-5 (#2374) lands
 //!   the Windows shim in coordination with `fast_io`; until then the
 //!   Windows implementation here returns
-//!   [`io::ErrorKind::Unsupported`] so the caller falls back to
+//!   `io::ErrorKind::Unsupported` so the caller falls back to
 //!   `Stdio::piped()` exactly like the Unix FD-exhaustion path does
 //!   in `aux_channel.rs::configure_stderr_channel`.
 //!
@@ -66,7 +66,7 @@ use std::os::unix::net::UnixStream;
 ///
 /// On Unix the result is the parent/child halves of a
 /// `socketpair(AF_UNIX, SOCK_STREAM, 0)`. On Windows the call returns
-/// [`io::ErrorKind::Unsupported`] until SSE-5 lands the loopback shim
+/// `io::ErrorKind::Unsupported` until SSE-5 lands the loopback shim
 /// alongside the safe handle wrapper in `fast_io`.
 ///
 /// Returning [`File`] on both halves lets the caller store the handles
@@ -76,7 +76,7 @@ use std::os::unix::net::UnixStream;
 ///
 /// Returns the underlying [`io::Error`] when the kernel refuses to
 /// create the pair. On Windows always returns
-/// [`io::ErrorKind::Unsupported`].
+/// `io::ErrorKind::Unsupported`.
 pub fn make_stderr_socketpair() -> io::Result<(File, File)> {
     make_stderr_socketpair_impl()
 }

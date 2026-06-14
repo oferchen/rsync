@@ -234,7 +234,7 @@ impl SshConfig {
         self
     }
 
-    /// Variant of [`apply_ssh_config`] that reads from a caller-supplied
+    /// Variant of [`Self::apply_ssh_config`] that reads from a caller-supplied
     /// path. Exposed for testing and for callers that ship a non-default
     /// config location.
     pub fn apply_ssh_config_from(&mut self, path: &Path, host_alias: &str) -> &mut Self {
