@@ -494,6 +494,12 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
                     DeltaOp::Literal(data) => {
                         verifier.update(data);
                         write_token_literal(writer, data)?;
+                        // Advance source cursor past the literal so subsequent
+                        // Copy tokens read source bytes from the correct offset
+                        // for inline checksum computation. upstream:
+                        // match.c:matched() interleaves literal and block-match
+                        // tokens against a single advancing file cursor.
+                        source_offset += data.len() as u64;
                     }
                     DeltaOp::Copy {
                         block_index,
@@ -571,5 +577,88 @@ mod tests {
         let encoder = create_token_encoder(CompressionAlgorithm::LZ4, workers)
             .expect("lz4 encoder should succeed even with workers");
         assert!(encoder.is_some(), "lz4 should produce an encoder");
+    }
+
+    /// Reverse-daemon-delta regression: with a delta script that interleaves
+    /// Copy and Literal tokens, the uncompressed inline-checksum path must
+    /// read source bytes for each Copy from the correct file offset. The bug
+    /// fixed alongside this test left `source_offset` un-incremented after a
+    /// Literal, so any Copy that followed a Literal hashed source data from a
+    /// stale (earlier) offset and the final whole-file checksum disagreed with
+    /// the receiver's reconstructed-file checksum, causing
+    /// "failed verification -- update discarded" on a push that produced a
+    /// byte-correct reconstructed file.
+    ///
+    /// upstream: match.c:matched() advances a single file cursor through both
+    /// literal and block-match tokens; the inline-checksum sender must mirror
+    /// that invariant.
+    #[test]
+    fn write_delta_inline_checksum_advances_source_offset_past_literals() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // Construct a source file with three distinct regions of known
+        // content. A delta script that emits Copy(0), Literal(B), Copy(C)
+        // forces the bug: after writing Literal B, the next Copy must read
+        // source[B+block_a..] not source[block_a..].
+        let block_a: Vec<u8> = (0..16u8).cycle().take(64).collect();
+        let lit_b: Vec<u8> = (32..96u8).collect(); // 64 bytes, distinct
+        let block_c: Vec<u8> = (128..192u8).collect(); // 64 bytes, distinct
+        let mut source = Vec::new();
+        source.extend_from_slice(&block_a);
+        source.extend_from_slice(&lit_b);
+        source.extend_from_slice(&block_c);
+
+        let mut temp = NamedTempFile::new().expect("temp file");
+        temp.write_all(&source).expect("write source");
+        temp.flush().expect("flush");
+        let source_path = temp.path().to_path_buf();
+
+        // Build the wire-op sequence by hand. The block_index values are
+        // wire token indices only; the Copy reads the LOCAL source file for
+        // checksum purposes, which is what this regression exercises.
+        let ops = vec![
+            DeltaOp::Copy {
+                block_index: 0,
+                length: block_a.len() as u32,
+            },
+            DeltaOp::Literal(lit_b.clone()),
+            DeltaOp::Copy {
+                block_index: 1,
+                length: block_c.len() as u32,
+            },
+        ];
+
+        let mut wire = Vec::new();
+        let result = write_delta_with_inline_checksum(
+            &mut wire,
+            &ops,
+            None,
+            false,
+            &source_path,
+            false,
+            ChecksumAlgorithm::MD5,
+        )
+        .expect("write_delta_with_inline_checksum");
+
+        // Compare against the checksum of the actual source bytes - which is
+        // what the receiver computes over the reconstructed file. Pre-fix
+        // these diverged because the second Copy hashed source[block_a.len()..]
+        // (lit_b bytes) instead of source[block_a.len()+lit_b.len()..]
+        // (block_c bytes).
+        let mut expected = ChecksumVerifier::for_algorithm(ChecksumAlgorithm::MD5);
+        expected.update(&source);
+        let mut expected_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        let expected_len = expected.finalize_into(&mut expected_buf);
+
+        assert_eq!(
+            result.checksum_len, expected_len,
+            "checksum length mismatch"
+        );
+        assert_eq!(
+            &result.checksum_buf[..result.checksum_len],
+            &expected_buf[..expected_len],
+            "inline checksum must equal checksum of source bytes covered by the script",
+        );
     }
 }
