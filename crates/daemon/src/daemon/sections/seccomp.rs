@@ -153,6 +153,15 @@ pub fn worker_seccomp_allowlist() -> Vec<i64> {
         libc::SYS_newfstatat,
         libc::SYS_statx,
         libc::SYS_lseek,
+        // SYS_fcntl is required by std::fs::File operations and socket I/O:
+        // F_GETFL/F_SETFL toggle non-blocking, F_DUPFD clones descriptors, and
+        // F_GETFD/F_SETFD manage CLOEXEC. Without it, the worker dies with
+        // SIGSYS the moment a transfer issues its first fcntl - any recursive
+        // module listing crashes immediately because the sender's open+read
+        // path probes F_GETFL on the source fd. Verified via aarch64
+        // audit type=1326 syscall=25 (`__NR3264_fcntl`) on a
+        // `rsync rsync://host/module` recursive listing.
+        libc::SYS_fcntl,
         libc::SYS_ftruncate,
         libc::SYS_fsync,
         libc::SYS_fdatasync,
@@ -409,6 +418,12 @@ mod seccomp_tests {
             libc::SYS_exit_group,
             libc::SYS_recvfrom,
             libc::SYS_sendto,
+            // SYS_fcntl is pinned as a regression for the upstream
+            // `daemon` testsuite: subtests 3-5 (test-hidden listing,
+            // test-from glob, test-from glob -U) all triggered SIGSYS
+            // on aarch64 when fcntl was missing. Sender file open and
+            // socket non-blocking toggling both require it.
+            libc::SYS_fcntl,
         ] {
             assert!(
                 list.binary_search(&required).is_ok(),

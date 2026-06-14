@@ -447,14 +447,14 @@ fn resolve_sender_sources(
 ) -> Option<Vec<std::path::PathBuf>> {
     let positionals = extract_module_relative_paths(client_args, module_name);
     if positionals.is_empty() {
-        return Some(vec![module_path.to_path_buf()]);
+        return Some(vec![module_root_dotdir(module_path)]);
     }
     let mut sources = Vec::with_capacity(positionals.len());
     let mut all_empty = true;
     for raw in &positionals {
         let tail = raw.trim();
         if tail.is_empty() || tail == "." {
-            sources.push(module_path.to_path_buf());
+            sources.push(module_root_dotdir(module_path));
             continue;
         }
         all_empty = false;
@@ -496,10 +496,227 @@ fn resolve_sender_sources(
         sources.push(std::path::PathBuf::from(buf));
     }
     if all_empty {
-        Some(vec![module_path.to_path_buf()])
-    } else {
-        Some(sources)
+        return Some(vec![module_root_dotdir(module_path)]);
     }
+    // upstream: util1.c:804 `glob_expand_module()` runs each module-relative
+    // positional through `glob_expand()` (util1.c:755) which in turn calls
+    // POSIX `glob(3)` to expand shell metacharacters (`*`, `?`, `[...]`)
+    // against the on-disk module tree. Without this expansion, a request
+    // like `rsync rsync://host/mod/f*` walks a literal path `<module>/f*`
+    // that does not exist, the sender returns 0 entries, and the server
+    // sits in `recv_filter_list -> read_int(0)` waiting for the receiver's
+    // phase-transition NDX while the receiver is still waiting for the
+    // file list - a wire-level deadlock that surfaces as the upstream
+    // `daemon` testsuite timing out on subtest 4 (test-from/f*) and
+    // subtest 5 (test-from/f* with -U).
+    //
+    // Upstream behaviour, mirrored here:
+    //   * Only positionals containing a glob metacharacter are expanded.
+    //     Plain paths fall straight through.
+    //   * A pattern that matches nothing is preserved verbatim, matching
+    //     `glob_expand()`'s `glob.argc == save_argc` branch at util1.c:786
+    //     (the literal arg surfaces downstream as a normal `link_stat`
+    //     failure instead of a silent drop).
+    //   * Expansion is rooted at the module path so the resulting absolute
+    //     paths land inside the module's tree, the same containment
+    //     guarantee that the chroot / Landlock allowlist enforces. The
+    //     `..` rejection above the loop runs before this, so a pattern
+    //     containing `..` is already rejected.
+    Some(expand_sender_source_globs(module_path, sources))
+}
+
+/// Returns the module root path with a trailing `/` appended (idempotent).
+///
+/// The trailing slash signals "transfer contents" through
+/// `non_relative_walk_base` in the engine - it keeps `base == path` so the
+/// walk emits a `.` entry for the root and child names without the module
+/// basename prefix. A sub-path positional (e.g. `<mod>/foo`) is left
+/// without a trailing slash so the engine's last-`/` split assigns the
+/// parent as the base, giving wire-side entries `foo` and `foo/one`
+/// instead of the post-strip-prefix `.` and `one` that would otherwise
+/// trip the receiver's "rejecting unrequested file-list name" check.
+///
+/// upstream: `flist.c:2312-2322` - `fbuf[len-1] == '/'` enters the
+/// `DOTDIR_NAME` branch, which is how the daemon distinguishes
+/// "transfer module contents" from "transfer a named sub-path".
+fn module_root_dotdir(module_path: &std::path::Path) -> std::path::PathBuf {
+    let mut buf = module_path.as_os_str().to_owned();
+    if !buf
+        .as_encoded_bytes()
+        .last()
+        .is_some_and(|b| *b == b'/' || *b == b'\\')
+    {
+        buf.push("/");
+    }
+    std::path::PathBuf::from(buf)
+}
+
+/// Returns `true` if `name` contains a shell glob metacharacter recognised
+/// by `glob(3)`.
+///
+/// upstream: util1.c:743 - `wildcard_chars[] = "*?["` is the metaset.
+fn path_has_glob_metachar(name: &std::ffi::OsStr) -> bool {
+    name.as_encoded_bytes()
+        .iter()
+        .any(|&b| matches!(b, b'*' | b'?' | b'['))
+}
+
+/// Expands each source path under `module_path` that contains a glob
+/// metacharacter via a single-component walk. Mirrors upstream's
+/// `glob_expand()` (util1.c:755) with the simpler subset rsync's daemon
+/// path actually receives: each positional is a relative path joined to
+/// the module root, so we expand component-by-component. A pattern that
+/// matches nothing is left in place so the sender surfaces the normal
+/// link_stat error instead of silently dropping the arg.
+fn expand_sender_source_globs(
+    module_path: &std::path::Path,
+    sources: Vec<std::path::PathBuf>,
+) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::with_capacity(sources.len());
+    for path in sources {
+        match path.strip_prefix(module_path) {
+            Ok(rel) if rel.components().any(|c| {
+                matches!(c, std::path::Component::Normal(s) if path_has_glob_metachar(s))
+            }) =>
+            {
+                let matches = expand_relative_glob(module_path, rel);
+                if matches.is_empty() {
+                    out.push(path);
+                } else {
+                    out.extend(matches);
+                }
+            }
+            _ => out.push(path),
+        }
+    }
+    out
+}
+
+/// Expands a relative path that may contain glob metacharacters in any
+/// component, rooted at `base`. Returns the matching absolute paths.
+fn expand_relative_glob(base: &std::path::Path, rel: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut current = vec![base.to_path_buf()];
+    for component in rel.components() {
+        let segment = match component {
+            std::path::Component::Normal(s) => s,
+            // RootDir / Prefix should not appear in a stripped relative path,
+            // and ParentDir is rejected upstream. CurDir is a no-op.
+            std::path::Component::CurDir => continue,
+            _ => return Vec::new(),
+        };
+        let mut next = Vec::new();
+        if path_has_glob_metachar(segment) {
+            let pattern = match segment.to_str() {
+                Some(s) => s,
+                None => return Vec::new(),
+            };
+            for dir in &current {
+                let entries = match std::fs::read_dir(dir) {
+                    Ok(it) => it,
+                    Err(_) => continue,
+                };
+                for entry in entries.flatten() {
+                    let name = entry.file_name();
+                    if let Some(name_str) = name.to_str() {
+                        // Skip dotfiles unless the pattern starts with `.`,
+                        // matching POSIX glob default behaviour.
+                        if name_str.starts_with('.') && !pattern.starts_with('.') {
+                            continue;
+                        }
+                        if glob_match_segment(pattern, name_str) {
+                            next.push(dir.join(&name));
+                        }
+                    }
+                }
+            }
+            next.sort();
+        } else {
+            for dir in &current {
+                next.push(dir.join(segment));
+            }
+        }
+        if next.is_empty() {
+            return Vec::new();
+        }
+        current = next;
+    }
+    current
+}
+
+/// Single-segment glob matcher: `*` matches any run, `?` matches one byte,
+/// `[abc]` / `[!abc]` matches a character class. Mirrors `glob(3)` for the
+/// subset of patterns rsync emits.
+fn glob_match_segment(pattern: &str, name: &str) -> bool {
+    let pat = pattern.as_bytes();
+    let s = name.as_bytes();
+    fn go(p: &[u8], s: &[u8]) -> bool {
+        let mut pi = 0;
+        let mut si = 0;
+        let mut star: Option<(usize, usize)> = None;
+        while si < s.len() {
+            if pi < p.len() {
+                match p[pi] {
+                    b'?' => {
+                        pi += 1;
+                        si += 1;
+                        continue;
+                    }
+                    b'*' => {
+                        star = Some((pi + 1, si));
+                        pi += 1;
+                        continue;
+                    }
+                    b'[' => {
+                        // Find matching `]`.
+                        let mut end = pi + 1;
+                        let negate = end < p.len() && p[end] == b'!';
+                        if negate {
+                            end += 1;
+                        }
+                        let class_start = end;
+                        while end < p.len() && p[end] != b']' {
+                            end += 1;
+                        }
+                        if end >= p.len() {
+                            // Malformed class - treat `[` as literal.
+                            if p[pi] == s[si] {
+                                pi += 1;
+                                si += 1;
+                                continue;
+                            }
+                        } else {
+                            let class = &p[class_start..end];
+                            let matched = class.contains(&s[si]);
+                            if matched != negate {
+                                pi = end + 1;
+                                si += 1;
+                                continue;
+                            }
+                        }
+                    }
+                    c => {
+                        if c == s[si] {
+                            pi += 1;
+                            si += 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+            if let Some((ps, ss)) = star {
+                pi = ps;
+                si = ss + 1;
+                star = Some((ps, ss + 1));
+            } else {
+                return false;
+            }
+        }
+        while pi < p.len() && p[pi] == b'*' {
+            pi += 1;
+        }
+        pi == p.len()
+    }
+    go(pat, s)
 }
 
 /// Collapses `.` and `..` segments lexically without touching the filesystem.
