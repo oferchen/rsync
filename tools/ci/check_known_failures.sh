@@ -11,7 +11,7 @@ interop_script="${workspace_root}/tools/ci/run_interop.sh"
 # Build oc-rsync if not already built
 if [[ ! -x "$oc_bin" ]]; then
   echo "Building oc-rsync..."
-  cargo build --release --manifest-path "${workspace_root}/Cargo.toml"
+  cargo build --locked --release --manifest-path "${workspace_root}/Cargo.toml"
   mkdir -p "$(dirname "$oc_bin")"
   cp "${workspace_root}/target/release/oc-rsync" "$oc_bin"
 fi
