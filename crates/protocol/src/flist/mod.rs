@@ -81,7 +81,8 @@ pub use intern::PathInterner;
 pub use name_cmp::{f_name_cmp, f_name_cmp_components, name_cmp_eq};
 pub use read::{FileListReader, read_file_entry};
 pub use sort::{
-    CleanResult, compare_file_entries, flist_clean, sort_and_clean_file_list, sort_file_list,
+    CleanResult, apply_permutation_in_place, compare_file_entries, flist_clean,
+    sort_and_clean_file_list, sort_file_list,
 };
 #[cfg(feature = "flat-flist")]
 pub use sort::{compare_entries_generic, sort_entries_generic};
