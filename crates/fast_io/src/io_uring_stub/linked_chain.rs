@@ -1,6 +1,6 @@
 //! Stub linked-chain primitive mirroring [`crate::io_uring::linked_chain`].
 //!
-//! The chain cannot be constructed because the stub [`super::session_pool::RingLease`]
+//! The chain cannot be constructed because the stub `super::session_pool::RingLease`
 //! cannot exist on this platform.
 
 use super::session_pool::RingLease;

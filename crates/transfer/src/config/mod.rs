@@ -483,7 +483,7 @@ pub struct ServerConfig {
     ///
     /// Sourced from the daemon module's `munge symlinks` directive (or its
     /// `!use_chroot` auto default). Mirrors upstream's `munge_symlinks`
-    /// global. Propagated into [`ParsedServerFlags::munge_symlinks`] when the
+    /// global. Propagated into `ParsedServerFlags::munge_symlinks` when the
     /// server config is consumed so the sender (strip on `readlink()`) and
     /// receiver (prepend on `symlink()` write) apply the bidirectional
     /// transform.

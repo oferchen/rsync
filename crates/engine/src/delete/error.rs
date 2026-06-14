@@ -1,7 +1,7 @@
 //! Typed error variants for the [`super::DeleteContext`] shutdown path.
 //!
 //! The phase-2 drain (`emit_one` / `emit_all`) hands the shared
-//! [`DeletePlanMap`] off to a freshly-built [`DeleteEmitter`] via
+//! `DeletePlanMap` off to a freshly-built `DeleteEmitter` via
 //! [`Arc::try_unwrap`]. When the receiver still holds a clone of the
 //! plan-map handle, or the cursor receiver channel has already been
 //! taken by a prior drain attempt, the drain cannot proceed.
@@ -21,8 +21,6 @@
 //! context value.
 //!
 //! [`Arc::strong_count`]: std::sync::Arc::strong_count
-//! [`DeletePlanMap`]: super::DeletePlanMap
-//! [`DeleteEmitter`]: super::DeleteEmitter
 
 use std::io;
 

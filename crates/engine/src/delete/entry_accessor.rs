@@ -12,8 +12,8 @@
 //! | `extras::segment_basenames` | [`segment_basenames_generic`] |
 //! | `extras::compute_extras` | [`compute_extras_generic`] |
 //! | `extras::compute_extras_with_cohorts` | [`compute_extras_with_cohorts_generic`] |
-//! | `traversal::DirTraversalCursor::observe_segment` | [`observe_segment_generic`] |
-//! | `traversal::DirTraversalCursor::observe_segment` | [`collect_child_dirs_generic`] |
+//! | `traversal::DirTraversalCursor::observe_segment` | `observe_segment_generic` |
+//! | `traversal::DirTraversalCursor::observe_segment` | `collect_child_dirs_generic` |
 //! | `cohort_index::CohortIndex::build_from_flist_segment` | [`GenericCohortIndex::build_from_entries`] |
 //!
 //! # Feature gate
@@ -47,7 +47,7 @@ use super::traversal::DirTraversalCursor;
 /// Collects the leaf basenames from a slice of accessor-backed entries into
 /// a hash set keyed by [`OsString`].
 ///
-/// Mirrors [`super::extras::segment_basenames`] but works with any
+/// Mirrors `super::extras::segment_basenames` but works with any
 /// `T: FileEntryAccessor`. The accessor's [`FileEntryAccessor::name`]
 /// returns the full relative path string; we extract the leaf component
 /// the same way the concrete version uses `entry.path().file_name()`.

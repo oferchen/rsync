@@ -155,7 +155,7 @@ fn first_line(bytes: &[u8]) -> Vec<u8> {
 /// Reads a password from `path` while enforcing upstream rsync's permission rules.
 ///
 /// The function accepts either an on-disk file or `-` to read from standard
-/// input. Errors are wrapped in [`Message`] so the caller can preserve the
+/// input. Errors are wrapped in `Message` so the caller can preserve the
 /// workspace's branded diagnostics.
 pub(crate) fn load_password_file(path: &Path) -> Result<Vec<u8>, Message> {
     if path == Path::new("-") {

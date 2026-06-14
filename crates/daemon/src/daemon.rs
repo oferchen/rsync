@@ -454,7 +454,7 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
 
 include!("daemon/sections/cli_args.rs");
 
-/// Writes a [`Message`] to the given [`MessageSink`].
+/// Writes a `Message` to the given [`MessageSink`].
 ///
 /// Delegates to `sink.write(message)`, providing a uniform call site for
 /// diagnostic output across daemon entry points.

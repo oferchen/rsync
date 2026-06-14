@@ -8,7 +8,7 @@
 //!
 //! # Architecture
 //!
-//! Transfers use the [`SshConnection::split`] method to obtain separate read/write
+//! Transfers use the `SshConnection::split` method to obtain separate read/write
 //! halves, which are then passed to the server infrastructure for protocol handling.
 //!
 //! # Upstream Reference
@@ -540,7 +540,7 @@ use super::batch_support::{BatchContext, build_batch_context, build_batch_record
 
 /// Runs server over an SSH connection using split read/write halves.
 ///
-/// This uses [`SshConnection::split`] to obtain separate reader and writer handles,
+/// This uses `SshConnection::split` to obtain separate reader and writer handles,
 /// avoiding the need for unsafe aliased mutable references.
 ///
 /// When `batch_writer` is provided, the handshake is performed first, then the

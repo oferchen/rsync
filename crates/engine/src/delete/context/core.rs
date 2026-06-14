@@ -1,6 +1,6 @@
 //! [`DeleteContext`] - per-transfer wiring that ties the flist segment
 //! consumer to the parallel-deterministic-delete pipeline and drives the
-//! [`DeleteEmitter`] for every `--delete-*` timing mode.
+//! `DeleteEmitter` for every `--delete-*` timing mode.
 //!
 //! See the parent module documentation for the wiring tables and
 //! channel-based cursor handoff design.
@@ -75,7 +75,7 @@ pub struct DeleteContext {
     /// segment-extras set before [`compute_extras`] runs (see section 5
     /// of the design).
     pub delete_excluded: bool,
-    /// Policy used to instantiate the [`DeleteEmitter`] when the drain
+    /// Policy used to instantiate the `DeleteEmitter` when the drain
     /// runs.
     pub policy: EmitterErrorPolicy,
     /// Names of entries the segment knows about for the current directory
@@ -369,7 +369,7 @@ impl DeleteContext {
     /// DEL-2.d routes the drain through `ParallelDeleteEmitter` so cohort
     /// dispatch runs on rayon while preserving the DEL-1.a cross-cohort
     /// wire-ordering invariant. The sequential
-    /// [`DeleteEmitter`] remains the default.
+    /// `DeleteEmitter` remains the default.
     ///
     /// # Errors
     ///

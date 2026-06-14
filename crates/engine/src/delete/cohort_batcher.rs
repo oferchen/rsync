@@ -5,7 +5,7 @@
 //! DEL-2.a [`super::ReorderBuffer`] primitive. It is the DEL-2.b
 //! deliverable: a synchronous consumer-side adapter that surfaces
 //! sealed cohorts in strict wire-ordering rank order, capped at
-//! [`super::DRAIN_BATCH_CAP`] per batch, with the panic-isolation rules
+//! `DRAIN_BATCH_CAP` per batch, with the panic-isolation rules
 //! from DEL-1.c section 6 layered in. The parallel consumer flag flip
 //! and `Condvar`-driven scope wiring are DEL-2.c.
 //!
@@ -102,7 +102,7 @@ impl CohortBatchEntry {
 /// A contiguous-by-rank group of sealed cohorts the consumer drains in
 /// one wake-up.
 ///
-/// The vector is bounded by [`DRAIN_BATCH_CAP`] entries (DEL-1.c section
+/// The vector is bounded by `DRAIN_BATCH_CAP` entries (DEL-1.c section
 /// 3.2's `CONSUMER_DRAIN_BATCH_CAP = 8`). Entries are in strictly
 /// increasing rank order; an empty batch means no cohort at the head
 /// is sealed and the consumer should park for a producer wake-up.
@@ -158,7 +158,7 @@ impl CohortBatch {
 /// - Every [`Self::enqueue_cohort`] call records exactly one cohort:
 ///   one insert per op (or one [`ReorderBuffer::register_empty`] for the
 ///   zero-op case) followed by one seal.
-/// - [`Self::drain_batch`] surfaces at most [`DRAIN_BATCH_CAP`] cohorts
+/// - [`Self::drain_batch`] surfaces at most `DRAIN_BATCH_CAP` cohorts
 ///   per call in strictly increasing rank order, mirroring DEL-1.c
 ///   section 3.2.
 /// - A producer-side panic recorded via [`Self::record_panic`] is
@@ -262,7 +262,7 @@ impl CohortBatcher {
         self.buffer.seal(&key)
     }
 
-    /// Drains up to [`DRAIN_BATCH_CAP`] contiguous-by-rank sealed
+    /// Drains up to `DRAIN_BATCH_CAP` contiguous-by-rank sealed
     /// cohorts into a [`CohortBatch`].
     ///
     /// Returns an empty batch when the head cohort is unsealed; the
@@ -393,7 +393,7 @@ mod tests {
     }
 
     /// DEL-1.c section 3.2: drain cap caps the batch at
-    /// [`DRAIN_BATCH_CAP`] and the next drain picks up the remaining
+    /// `DRAIN_BATCH_CAP` and the next drain picks up the remaining
     /// cohorts in strict rank order. A still-unsealed cohort at the
     /// head blocks the drain entirely - the contiguous-only rule from
     /// DEL-1.b section 2.3 carries through batching unchanged.
