@@ -128,10 +128,18 @@ impl FilterChain {
     /// Mirrors upstream `exclude.c:rule_matches()` which has no descendant
     /// matching at all.
     ///
+    /// Scopes pushed by non-inheriting merge configs (`FILTRULE_NO_INHERIT`,
+    /// e.g. `:C`) are consulted only at the depth they were pushed at, so
+    /// rules from a parent directory's `.cvsignore` do not leak into a
+    /// deeper child walk.
+    ///
     /// `is_dir` should be `true` when the path refers to a directory.
     #[must_use]
     pub fn allows(&self, path: &Path, is_dir: bool) -> bool {
         for scope in self.scopes.iter().rev() {
+            if !self.scope_applies_here(scope) {
+                continue;
+            }
             if !scope.filter_set.is_empty() && has_matching_rule(&scope.filter_set, path, is_dir) {
                 return scope.filter_set.allows_during_traversal(path, is_dir);
             }
@@ -145,15 +153,33 @@ impl FilterChain {
     /// Evaluates per-directory scopes from innermost to outermost, then
     /// global rules. A path may be deleted when it is included by
     /// receiver-side rules and no protect rule matches.
+    ///
+    /// Non-inheriting scopes follow the same depth-restricted lookup as
+    /// [`allows`](Self::allows).
     #[must_use]
     pub fn allows_deletion(&self, path: &Path, is_dir: bool) -> bool {
         for scope in self.scopes.iter().rev() {
+            if !self.scope_applies_here(scope) {
+                continue;
+            }
             if !scope.filter_set.is_empty() && has_matching_rule(&scope.filter_set, path, is_dir) {
                 return scope.filter_set.allows_deletion(path, is_dir);
             }
         }
 
         self.global.allows_deletion(path, is_dir)
+    }
+
+    /// Returns `true` if the given scope is in effect at the chain's
+    /// current depth.
+    ///
+    /// Inheriting scopes always apply. Non-inheriting scopes only apply
+    /// at the depth they were pushed at; deeper directories must look
+    /// past them. Mirrors upstream `exclude.c:push_local_filters()` which
+    /// substitutes the inherited list with `lp->head = NULL` for
+    /// `FILTRULE_NO_INHERIT` rules before descending.
+    fn scope_applies_here(&self, scope: &DirScope) -> bool {
+        scope.inherits || scope.depth == self.current_depth
     }
 
     /// Enters a directory, reading any per-directory merge files and pushing
@@ -204,15 +230,24 @@ impl FilterChain {
                 }
             };
 
-            let rules = match parse_rules(&content, &merge_path) {
-                Ok(rules) => rules,
-                Err(e) => {
-                    self.pop_scopes_at_depth(depth);
-                    self.current_depth -= 1;
-                    return Err(FilterChainError::Parse {
-                        path: merge_path,
-                        message: e.to_string(),
-                    });
+            // upstream: exclude.c:1252-1254 - dir-merge files registered as
+            // `:C` (FILTRULE_CVS_IGNORE) parse their content as whitespace
+            // separated tokens with every token implicitly an exclude.
+            // Standard parse_rules would reject names like `one-in-one-out`
+            // as "unrecognized filter rule", aborting the walk.
+            let rules = if config.cvs_mode() {
+                parse_cvs_ignore_tokens(&content)
+            } else {
+                match parse_rules(&content, &merge_path) {
+                    Ok(rules) => rules,
+                    Err(e) => {
+                        self.pop_scopes_at_depth(depth);
+                        self.current_depth -= 1;
+                        return Err(FilterChainError::Parse {
+                            path: merge_path,
+                            message: e.to_string(),
+                        });
+                    }
                 }
             };
 
@@ -242,7 +277,11 @@ impl FilterChain {
             };
 
             if !filter_set.is_empty() {
-                self.scopes.push(DirScope { depth, filter_set });
+                self.scopes.push(DirScope {
+                    depth,
+                    filter_set,
+                    inherits: config.inherits(),
+                });
                 pushed_count += 1;
             }
         }
@@ -305,11 +344,29 @@ impl FilterChain {
         let depth = self.current_depth;
         let is_empty = filter_set.is_empty();
         if !is_empty {
-            self.scopes.push(DirScope { depth, filter_set });
+            self.scopes.push(DirScope {
+                depth,
+                filter_set,
+                inherits: true,
+            });
         }
         DirFilterGuard {
             depth,
             pushed_count: if is_empty { 0 } else { 1 },
         }
     }
+}
+
+/// Parses a CVS-style ignore file into exclude rules.
+///
+/// Splits the content on whitespace and treats each token as an exclude
+/// pattern (no `+`/`-` filter prefixes honoured). Blank input produces no
+/// rules. This mirrors upstream rsync's CVS-mode merge parsing for
+/// `.cvsignore` files registered via `:C` (`exclude.c:1250-1254`).
+fn parse_cvs_ignore_tokens(content: &str) -> Vec<FilterRule> {
+    content
+        .split_whitespace()
+        .filter(|token| !token.is_empty())
+        .map(FilterRule::exclude)
+        .collect()
 }
