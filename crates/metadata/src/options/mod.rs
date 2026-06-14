@@ -38,6 +38,17 @@ pub struct MetadataOptions {
     /// upstream: rsync.c:dest_mode() uses `exists` parameter to distinguish
     /// between new and existing files for permission computation.
     pub(crate) destination_is_new: bool,
+    /// When true, `--keep-dirlinks` is active: dest-side symlinks pointing to
+    /// real directories are followed instead of being replaced.
+    ///
+    /// upstream: generator.c:1344 - `link_stat(fname, &sx.st, keep_dirlinks && is_dir)`
+    /// resolves symlinked dest dirs at stat time, so subsequent chmod/chown
+    /// operations land on the canonical real path. We mirror that by bypassing
+    /// the dirfd-anchored sandbox in `secure_chmod_at` when this flag is set:
+    /// the user has explicitly opted into following dest-side symlinks, which
+    /// is incompatible with `secure_open_dir`'s ELOOP/ENOTDIR rejection of
+    /// symlinked parents.
+    pub(crate) keep_dirlinks: bool,
 }
 
 impl MetadataOptions {
@@ -63,6 +74,7 @@ impl MetadataOptions {
             user_mapping: None,
             group_mapping: None,
             destination_is_new: false,
+            keep_dirlinks: false,
         }
     }
 }

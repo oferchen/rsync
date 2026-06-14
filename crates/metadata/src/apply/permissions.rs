@@ -162,8 +162,7 @@ pub(super) fn apply_permissions_with_chmod(
 
             // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant
             // anchored on the parent dirfd.
-            fast_io::secure_chmod_at(destination, mode, true)
-                .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
+            chmod_path_honoring_keep_dirlinks(destination, mode, options, "preserve permissions")?;
             return Ok(());
         }
     }
@@ -185,8 +184,7 @@ pub(super) fn apply_permissions_with_chmod(
             compute_dest_mode(source_mode, options.destination_is_new(), existing)
         {
             // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant.
-            fast_io::secure_chmod_at(destination, new_mode, true)
-                .map_err(|error| MetadataError::new("apply dest_mode", destination, error))?;
+            chmod_path_honoring_keep_dirlinks(destination, new_mode, options, "apply dest_mode")?;
         }
     }
 
@@ -229,8 +227,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
             })?;
         } else {
             // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant.
-            fast_io::secure_chmod_at(destination, mode, true)
-                .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
+            chmod_path_honoring_keep_dirlinks(destination, mode, options, "preserve permissions")?;
         }
         return Ok(());
     }
@@ -277,11 +274,43 @@ pub(super) fn apply_permissions_with_chmod_fd(
             })?;
         } else {
             // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant.
-            fast_io::secure_chmod_at(destination, new_mode, true)
-                .map_err(|error| MetadataError::new("apply dest_mode", destination, error))?;
+            chmod_path_honoring_keep_dirlinks(destination, new_mode, options, "apply dest_mode")?;
         }
     }
 
+    Ok(())
+}
+
+/// Issues a path-based chmod that honors `--keep-dirlinks`.
+///
+/// When `--keep-dirlinks` is inactive, dispatches to `fast_io::secure_chmod_at`,
+/// which anchors on the parent dirfd opened through `secure_open_dir` and
+/// rejects symlinked parents (`ELOOP`/`ENOTDIR`) to defeat chmod-symlink-race
+/// attacks against the receiver confinement.
+///
+/// When `--keep-dirlinks` is active, the user has explicitly opted into
+/// following dest-side symlinks-to-dirs, so the sandbox refusal is wrong: the
+/// parent in our test path is a symlink to a real directory and the chmod must
+/// land on the canonical file. Falls back to `std::fs::set_permissions`, which
+/// resolves symlinks through the OS path walk like upstream
+/// `generator.c:1344`'s `link_stat(fname, &sx.st, keep_dirlinks && is_dir)`.
+///
+/// upstream: rsync.c:set_file_attrs() / generator.c:1344 link_stat
+#[cfg(unix)]
+fn chmod_path_honoring_keep_dirlinks(
+    destination: &Path,
+    mode: u32,
+    options: &MetadataOptions,
+    action: &'static str,
+) -> Result<(), MetadataError> {
+    if options.keep_dirlinks() {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(destination, fs::Permissions::from_mode(mode))
+            .map_err(|error| MetadataError::new(action, destination, error))?;
+    } else {
+        fast_io::secure_chmod_at(destination, mode, true)
+            .map_err(|error| MetadataError::new(action, destination, error))?;
+    }
     Ok(())
 }
 

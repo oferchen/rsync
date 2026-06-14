@@ -1492,3 +1492,69 @@ fn apply_permissions_from_entry_refuses_parent_symlink_escape() {
         "outside file mode must remain 0o600 after refused chmod escape (got {outside_mode:o})"
     );
 }
+
+/// KDL.8: with `--keep-dirlinks` active, a path-based chmod through a
+/// destination whose parent is a symlink-to-a-real-dir must succeed by
+/// resolving the symlink, instead of being refused by the dirfd-anchored
+/// `secure_chmod_at` sandbox. Mirrors upstream `generator.c:1344`'s
+/// `link_stat(fname, &sx.st, keep_dirlinks && is_dir)` which follows the
+/// symlinked parent at stat time.
+///
+/// Regression coverage for the macOS panic in
+/// `engine::local_copy::tests::execute_keep_dirlinks_multiple_symlink_subdirs_all_preserved`
+/// where the `apply dest_mode` chmod hit `ENOTDIR` because `secure_open_dir`
+/// rejects symlinked parents.
+#[cfg(unix)]
+#[test]
+fn keep_dirlinks_bypasses_secure_chmod_sandbox() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let real_alpha = temp.path().join("real_alpha");
+    fs::create_dir(&real_alpha).expect("create real_alpha");
+
+    let dest_root = temp.path().join("dest");
+    fs::create_dir(&dest_root).expect("create dest");
+    // dest/alpha is a symlink to real_alpha/.
+    std::os::unix::fs::symlink(&real_alpha, dest_root.join("alpha")).expect("symlink alpha");
+
+    let source = temp.path().join("a.txt");
+    fs::write(&source, b"alpha").expect("write source");
+    fs::set_permissions(&source, PermissionsExt::from_mode(0o644)).expect("source mode");
+
+    let dest_file = dest_root.join("alpha").join("a.txt");
+    fs::write(&dest_file, b"alpha").expect("write dest through symlink");
+    fs::set_permissions(&dest_file, PermissionsExt::from_mode(0o600)).expect("dest mode");
+
+    let source_meta = fs::metadata(&source).expect("stat source");
+
+    // Without keep_dirlinks the path-based sandbox refuses the chmod
+    // because dest_root/alpha is a symlink. This is the bug symptom.
+    let strict_opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(false);
+    let strict_result = apply_file_metadata_with_options(&dest_file, &source_meta, &strict_opts);
+    assert!(
+        strict_result.is_err(),
+        "without keep_dirlinks the dirfd sandbox must reject symlinked parents",
+    );
+
+    // With keep_dirlinks the bypass uses std::fs::set_permissions which
+    // follows the symlink, so the chmod lands on real_alpha/a.txt.
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(false)
+        .with_keep_dirlinks(true);
+    apply_file_metadata_with_options(&dest_file, &source_meta, &opts)
+        .expect("chmod must succeed through symlinked parent under --keep-dirlinks");
+
+    let landed_mode = fs::metadata(real_alpha.join("a.txt"))
+        .expect("stat real_alpha/a.txt")
+        .permissions()
+        .mode()
+        & 0o7777;
+    assert_eq!(
+        landed_mode, 0o644,
+        "chmod must follow the symlink and land on real_alpha/a.txt (got {landed_mode:o})",
+    );
+}

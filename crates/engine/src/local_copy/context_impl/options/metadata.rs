@@ -16,6 +16,7 @@ impl<'a> CopyContext<'a> {
             .with_chmod(self.options.chmod().cloned())
             .with_user_mapping(self.options.user_mapping().cloned())
             .with_group_mapping(self.options.group_mapping().cloned())
+            .with_keep_dirlinks(self.options.keep_dirlinks_enabled())
     }
 
     /// Reports whether ACL preservation is enabled.
