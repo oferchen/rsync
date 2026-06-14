@@ -30,7 +30,7 @@ use std::fs;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::PathBuf;
 
-use metadata::{MetadataOptions, apply_file_metadata};
+use metadata::{MetadataOptions, apply_file_metadata_with_options};
 use tempfile::TempDir;
 
 /// `tempdir()` may sit under a symlink prefix on macOS / some CI
@@ -66,7 +66,8 @@ fn receiver_chmod_succeeds_on_clean_path() {
     let source_meta = fs::metadata(&source).expect("source meta");
     let options = MetadataOptions::default().preserve_permissions(true);
 
-    apply_file_metadata(&destination, &source_meta, &options).expect("chmod clean path");
+    apply_file_metadata_with_options(&destination, &source_meta, &options)
+        .expect("chmod clean path");
 
     assert_eq!(
         mode_of(&destination),
@@ -106,7 +107,7 @@ fn receiver_chmod_refuses_symlinked_parent_component() {
 
     let options = MetadataOptions::default().preserve_permissions(true);
 
-    let err = apply_file_metadata(&attack_dest, &source_meta, &options)
+    let err = apply_file_metadata_with_options(&attack_dest, &source_meta, &options)
         .expect_err("chmod through symlinked parent must error");
     let raw = err
         .source()
