@@ -15,7 +15,7 @@ Tests are layered by scope and purpose:
 6. **SIMD parity tests** - ensure scalar and SIMD implementations produce identical output.
 
 Every change must include tests. The project targets greater than 95% line coverage
-(`cargo llvm-cov`). The CI coverage workflow enforces a floor that ratchets upward.
+(`cargo llvm-cov`), measured locally.
 
 ## Per-Crate Expectations
 
@@ -139,7 +139,6 @@ only the crates you changed.
 | interop | Linux | Upstream rsync daemon/SSH scenarios | Yes |
 | interop (macOS) | macOS | Homebrew rsync smoke | Yes |
 | interop (Windows) | Windows | MSYS2 rsync smoke | No (best-effort) |
-| coverage | Linux | llvm-cov line coverage | No (informational) |
 
 Branch protection requires: fmt+clippy, nextest (stable), Windows (stable),
 macOS (stable), Linux musl (stable).
