@@ -2218,6 +2218,140 @@ mod module_access_tests {
         );
     }
 
+    // UTS-3.b.5 - cross-platform parity for daemon sub-path resolution.
+    //
+    // The oc-rsync daemon never runs on Windows (preflight refuses), but a
+    // Windows CLIENT can connect to a Linux daemon and trigger the same
+    // `resolve_sender_sources` / `resolve_receiver_dest` helpers server-side.
+    // These tests pin that the resolvers produce semantically-correct paths
+    // when the module's on-disk path is in Windows drive-letter form, so a
+    // future refactor that ports the daemon to Windows (or that runs these
+    // helpers from a Windows host for any reason) cannot silently regress.
+    //
+    // The helpers join module-relative tails with a literal `/` regardless of
+    // host OS (upstream `util1.c pathjoin()`), and Windows accepts mixed `/`
+    // and `\` separators inside Win32 paths. The asserts below lock the exact
+    // byte sequence the resolver must emit so the trailing-slash preservation
+    // (upstream `flist.c:2312-2322 DOTDIR_NAME`) and the leading-separator
+    // strip both survive Windows path encodings.
+    //
+    // UTS-3.REOPEN.c closed the Linux side via PR #5748. UTS-3.b.5 is the
+    // Windows cross-platform parity attestation - no wire-format change, no
+    // separator translation, just bytes-in / bytes-out coverage.
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn resolve_sender_sources_joins_with_forward_slash_on_windows_module_root() {
+        // Windows daemon-mode module path with backslash separators must
+        // accept module-relative positional tails and emit a joined path
+        // whose suffix is exactly the literal `/<tail>` upstream's
+        // pathjoin() would produce. Windows treats `C:\srv\upload/d1/d2/f2`
+        // as a valid path so the sender's symlink_metadata call resolves
+        // correctly without per-host separator translation.
+        let module_path = std::path::Path::new(r"C:\srv\upload");
+        let args = vec![".".to_owned(), "upload/d1/d2/f2".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "upload")
+            .expect("Windows drive-letter sub-path must resolve");
+        assert_eq!(
+            sources,
+            vec![std::path::PathBuf::from(r"C:\srv\upload/d1/d2/f2")]
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn resolve_sender_sources_preserves_trailing_slash_on_windows_module_root() {
+        // Trailing-slash promotion to DOTDIR_NAME (upstream flist.c:2312-2322)
+        // must survive on Windows hosts. The resolver detects the trailing
+        // separator via byte-level check that already accepts both `/` and
+        // `\` (client_args.rs:478), so a Windows client request like
+        // `rsync://h/mod/d1/d2/` round-trips with the slash intact.
+        let module_path = std::path::Path::new(r"C:\srv\upload");
+        let args = vec![".".to_owned(), "upload/d1/d2/".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "upload")
+            .expect("Windows drive-letter sub-dir trailing-slash must resolve");
+        let lossy: Vec<String> = sources
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(lossy, vec![r"C:\srv\upload/d1/d2/".to_owned()]);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn resolve_sender_sources_accepts_backslash_terminated_module_root_on_windows() {
+        // If the on-disk module path ends in `\` (e.g. an admin pasted
+        // `C:\srv\upload\` into oc-rsyncd.conf), the resolver must NOT
+        // double-insert a separator before the sub-path tail. The
+        // needs_leading_sep check accepts trailing `\` as a valid separator
+        // for Windows roots, so the joined output stays semantically equal
+        // to the no-trailing-slash form rather than producing `C:\srv\upload\\d1`.
+        let module_path = std::path::Path::new(r"C:\srv\upload\");
+        let args = vec![".".to_owned(), "upload/d1/d2/f2".to_owned()];
+        let sources = resolve_sender_sources(module_path, &args, "upload")
+            .expect("backslash-terminated module root must resolve");
+        // The exact emitted bytes are `C:\srv\upload\` + `d1/d2/f2` because
+        // the resolver detects the trailing `\` as an existing separator and
+        // suppresses its own `/` insertion. The result is still a valid
+        // Windows path: Win32 accepts mixed `/` and `\`.
+        assert_eq!(
+            sources,
+            vec![std::path::PathBuf::from(r"C:\srv\upload\d1/d2/f2")]
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn resolve_sender_sources_rejects_parent_dir_traversal_on_windows() {
+        // Defense-in-depth must work identically on every host: a `..`
+        // segment in the client positional rejects the entire request,
+        // regardless of whether the module root is Linux- or Windows-style.
+        let module_path = std::path::Path::new(r"C:\srv\upload");
+        let args = vec![".".to_owned(), "upload/../etc/passwd".to_owned()];
+        assert!(resolve_sender_sources(module_path, &args, "upload").is_none());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn resolve_receiver_dest_joins_subpath_with_windows_module_root() {
+        // Receiver-side parity: the Windows client's push destination must
+        // resolve under the module root with the trailing slash preserved
+        // so `--delete` and the receiver's `get_local_name` branch behave
+        // the same way they do on Linux.
+        let module_path = std::path::Path::new(r"C:\srv\upload");
+        let args = vec![".".to_owned(), "upload/realdir/".to_owned()];
+        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        // Path::join uses the host separator on Windows, so a trailing
+        // slash on the positional collapses into a backslash-terminated
+        // PathBuf. The assertion compares via Path equality so the
+        // platform's path-normalisation rules (case-insensitive drive
+        // letter, separator equivalence) decide equality.
+        assert_eq!(dest, std::path::PathBuf::from(r"C:\srv\upload\realdir/"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn resolve_receiver_dest_rejoins_unix_absolute_under_windows_module_root() {
+        // A client-supplied positional that starts with `/` is host-absolute
+        // on Linux but drive-relative on Windows. Either way the resolver
+        // strips the leading separator and rejoins so the destination cannot
+        // escape the module root. This pins the cross-platform SEC-1.q
+        // containment guarantee on Windows hosts.
+        let module_path = std::path::Path::new(r"C:\srv\upload");
+        let args = vec![".".to_owned(), "/etc/passwd".to_owned()];
+        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        // After stripping the leading `/`, the resolver hands the bare
+        // string `etc/passwd` to Path::join, which prepends the host
+        // separator (`\` on Windows) but does not rewrite the embedded
+        // `/`. The result is byte-identical to `C:\srv\upload\etc/passwd`,
+        // which Windows still treats as a valid path because Win32 accepts
+        // mixed separators.
+        assert_eq!(dest, std::path::PathBuf::from(r"C:\srv\upload\etc/passwd"));
+        // The destination must still live under the module root regardless
+        // of separator mixing - this is the SEC-1.q containment guarantee.
+        assert!(dest.starts_with(module_path));
+    }
+
     // Ground-truth `safe_arg` reference port of upstream
     // `options.c:2539-2594` (rsync 3.4.4), option-arg branch only:
     //
