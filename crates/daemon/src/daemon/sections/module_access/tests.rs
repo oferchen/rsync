@@ -268,6 +268,12 @@ mod module_access_tests {
     // After `merge_secluded_args` the daemon's `apply_long_form_args` sees
     // the wildcard intact and `GroupMapping::parse` consumes it without
     // rejecting the `*` matcher.
+    //
+    // Windows lacks POSIX user/group concepts so the metadata crate ships a
+    // `GroupMapping::parse` stub that always returns `Err` (see
+    // `metadata/src/mapping_win.rs`). The assertion that `config.group_mapping`
+    // is populated therefore only applies on Unix targets.
+    #[cfg(unix)]
     #[test]
     fn merge_secluded_args_preserves_groupmap_wildcard_through_apply_long_form() {
         let phase1 = vec!["--server".to_owned(), "-logDtpr".to_owned()];
@@ -305,6 +311,12 @@ mod module_access_tests {
     // upstream: clientserver.c:303 `.` and module path land in phase 2
     // upstream: options.c:2744-2745 NULL marker between phase 1 and phase 2
     // upstream: options.c:804 `--secluded-args` long-form alias of `-s`
+    //
+    // Windows lacks POSIX user/group concepts so the metadata crate ships a
+    // `GroupMapping::parse` stub that always returns `Err` (see
+    // `metadata/src/mapping_win.rs`). The assertion that `config.group_mapping`
+    // is populated therefore only applies on Unix targets.
+    #[cfg(unix)]
     #[test]
     fn merge_secluded_args_oc_rsync_client_wire_preserves_groupmap_wildcard() {
         // Phase 1 mirrors the fixed `build_minimal_daemon_args` output
