@@ -318,12 +318,18 @@ fn base_mode_for_permissions(
         source_mode & (!0o7777 | dflt_perms)
     };
 
-    if options.executability() && metadata.is_file() {
-        let source_exec = source_mode & 0o111;
-        if source_exec == 0 {
+    if options.executability() && metadata.is_file() && existing.is_some() {
+        // upstream: rsync.c:457-465 dest_mode() - for existing files only,
+        // copy source's exec presence: if source has no exec bits, clear
+        // them on dest; else if dest has no exec bits, grant exec to
+        // everyone who can already read (`new_mode & 0444 >> 2`). When dest
+        // already has some exec bits they are preserved verbatim. Upstream
+        // skips this branch for new files - the umask-masked source mode
+        // already encodes the right answer there.
+        if source_mode & 0o111 == 0 {
             destination_permissions &= !0o111;
-        } else {
-            destination_permissions |= 0o111;
+        } else if destination_permissions & 0o111 == 0 {
+            destination_permissions |= (destination_permissions & 0o444) >> 2;
         }
     }
 
@@ -370,11 +376,15 @@ fn apply_permissions_without_chmod(
                     .mode()
             };
 
-            let source_exec = metadata.permissions().mode() & 0o111;
-            if source_exec == 0 {
+            // upstream: rsync.c:457-465 dest_mode() - if source has no exec
+            // bits, clear them on dest; else if dest has no exec bits, grant
+            // exec to everyone who can already read (`new_mode & 0444 >> 2`).
+            // When dest already has some exec bits they are preserved
+            // verbatim.
+            if metadata.permissions().mode() & 0o111 == 0 {
                 destination_permissions &= !0o111;
-            } else {
-                destination_permissions |= 0o111;
+            } else if destination_permissions & 0o111 == 0 {
+                destination_permissions |= (destination_permissions & 0o444) >> 2;
             }
 
             if let Some(existing) = existing {
