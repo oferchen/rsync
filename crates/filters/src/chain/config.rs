@@ -43,6 +43,10 @@ pub struct DirMergeConfig {
     receiver_only: bool,
     anchor_root: bool,
     perishable: bool,
+    /// upstream: exclude.c - `C` modifier on dir-merge rules (FILTRULE_CVS_IGNORE).
+    /// Treats the merge file as a CVS-style ignore list: each whitespace
+    /// separated token is an exclude rule with no filter prefixes.
+    cvs_mode: bool,
 }
 
 impl DirMergeConfig {
@@ -60,6 +64,7 @@ impl DirMergeConfig {
             receiver_only: false,
             anchor_root: false,
             perishable: false,
+            cvs_mode: false,
         }
     }
 
@@ -117,6 +122,22 @@ impl DirMergeConfig {
         self
     }
 
+    /// Configures this merge file as a CVS-style ignore list.
+    ///
+    /// When enabled, the file's contents are parsed as whitespace-separated
+    /// tokens; each token becomes an exclude rule with no filter prefix
+    /// honoured. This mirrors upstream rsync's `C` modifier on dir-merge rules
+    /// (`FILTRULE_CVS_IGNORE`), which is set when the wire delivers
+    /// `:C .cvsignore`.
+    ///
+    /// upstream: exclude.c:1248 - `C` modifier toggles FILTRULE_NO_PREFIXES |
+    /// FILTRULE_WORD_SPLIT | FILTRULE_NO_INHERIT | FILTRULE_CVS_IGNORE.
+    #[must_use]
+    pub const fn with_cvs_mode(mut self, cvs_mode: bool) -> Self {
+        self.cvs_mode = cvs_mode;
+        self
+    }
+
     /// Per-directory merge filename configured for this rule.
     #[must_use]
     pub fn filename(&self) -> &str {
@@ -127,6 +148,12 @@ impl DirMergeConfig {
     #[must_use]
     pub const fn inherits(&self) -> bool {
         self.inherit
+    }
+
+    /// Returns whether this dir-merge uses CVS-style parsing.
+    #[must_use]
+    pub const fn cvs_mode(&self) -> bool {
+        self.cvs_mode
     }
 
     /// Returns whether the merge file itself should be excluded.

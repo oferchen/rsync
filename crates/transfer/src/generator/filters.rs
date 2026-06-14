@@ -14,11 +14,13 @@
 //! - `flist.c:2240-2264` - `--files-from` filename reading and resolution
 //! - `exclude.c:push_local_filters()` - per-directory merge file loading
 
+use std::env;
+use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 pub use ::filters::FilterSet;
-use filters::{DirMergeConfig, FilterChain};
+use filters::{DirMergeConfig, FilterChain, cvs_exclusion_rules};
 use logging::info_log;
 use protocol::filters::{FilterRuleWireFormat, RuleType, read_filter_list};
 
@@ -300,6 +302,9 @@ impl GeneratorContext {
     ) -> io::Result<(FilterSet, Vec<DirMergeConfig>)> {
         let mut rules = Vec::with_capacity(wire_rules.len());
         let mut merge_configs = Vec::new();
+        // upstream: exclude.c:1350 - get_cvs_excludes() flags rules as
+        // FILTRULE_PERISHABLE only when protocol_version >= 30.
+        let cvs_perishable = self.protocol.as_u8() >= 30;
 
         for wire_rule in wire_rules {
             // The wire format stores the bare pattern in `pattern` and carries
@@ -317,7 +322,21 @@ impl GeneratorContext {
             let reconstructed_pattern = reconstruct_pattern(wire_rule);
             let mut rule = match wire_rule.rule_type {
                 RuleType::Include => FilterRule::include(reconstructed_pattern),
-                RuleType::Exclude => FilterRule::exclude(reconstructed_pattern),
+                RuleType::Exclude => {
+                    // upstream: exclude.c:1441-1443 - a `-C` rule (cvs_exclude
+                    // with no pattern) triggers get_cvs_excludes() on the
+                    // local side, populating the filter list with the
+                    // default CVS-ignore patterns, `$HOME/.cvsignore`, and
+                    // `$CVSIGNORE`. Without expansion here, the bare empty
+                    // pattern's synthetic `**/` matcher would exclude every
+                    // top-level entry on the sender, defeating the whole
+                    // file list.
+                    if wire_rule.cvs_exclude && wire_rule.pattern.is_empty() {
+                        rules.extend(cvs_default_exclude_rules(cvs_perishable));
+                        continue;
+                    }
+                    FilterRule::exclude(reconstructed_pattern)
+                }
                 RuleType::Protect => FilterRule::protect(reconstructed_pattern),
                 RuleType::Risk => FilterRule::risk(reconstructed_pattern),
                 RuleType::Clear => {
@@ -332,7 +351,7 @@ impl GeneratorContext {
                     // upstream: exclude.c - dir-merge rules register a per-directory
                     // merge file that is read during walk_path(). The FilterChain
                     // handles reading and scoping.
-                    let config = wire_rule_to_dir_merge_config(wire_rule);
+                    let config = wire_rule_to_dir_merge_config(wire_rule, cvs_perishable);
                     merge_configs.push(config);
                     continue;
                 }
@@ -361,8 +380,10 @@ impl GeneratorContext {
                 rule = rule.with_negate(true);
             }
 
-            // Note: no_inherit, cvs_exclude, word_split, exclude_from_merge
-            // are pattern modifiers handled by the filters crate during compilation.
+            // Note: no_inherit, word_split, exclude_from_merge are pattern
+            // modifiers handled by the filters crate during compilation.
+            // The `C` (cvs_exclude) modifier on Exclude rules is expanded
+            // above into the equivalent CVS-ignore default rules.
 
             rules.push(rule);
         }
@@ -405,10 +426,20 @@ fn reconstruct_pattern(wire_rule: &FilterRuleWireFormat) -> String {
 /// Maps wire protocol modifier flags to the corresponding `DirMergeConfig`
 /// builder methods. The pattern field contains the merge filename.
 ///
+/// When the wire rule carries the `C` modifier (CVS-mode dir-merge, e.g.
+/// `:C .cvsignore`), upstream `exclude.c:1248-1254` implicitly sets
+/// `NO_PREFIXES | WORD_SPLIT | NO_INHERIT | CVS_IGNORE`. Mirror that by
+/// switching the config to CVS-mode parsing and disabling inheritance, and
+/// mark the rules as perishable when the negotiated protocol is >= 30.
+///
 /// # Upstream Reference
 ///
 /// - `exclude.c:parse_filter_str()` - modifier flag parsing for dir-merge rules
-fn wire_rule_to_dir_merge_config(wire_rule: &FilterRuleWireFormat) -> DirMergeConfig {
+/// - `exclude.c:1248-1254` - `C` modifier implies word-split + no-inherit + CVS-mode
+fn wire_rule_to_dir_merge_config(
+    wire_rule: &FilterRuleWireFormat,
+    cvs_perishable: bool,
+) -> DirMergeConfig {
     // upstream: exclude.c - a leading '/' on the merge filename means the
     // file is only looked for in the transfer root directory (anchor_root).
     // Strip the '/' so Path::join() produces a relative path.
@@ -446,7 +477,67 @@ fn wire_rule_to_dir_merge_config(wire_rule: &FilterRuleWireFormat) -> DirMergeCo
         config = config.with_perishable(true);
     }
 
+    // `C` modifier: CVS-style ignore list. Mirror upstream's implicit
+    // NO_PREFIXES | WORD_SPLIT | NO_INHERIT | CVS_IGNORE so that the dir
+    // merge filename's contents are parsed as whitespace-separated exclude
+    // tokens. Without this, `.cvsignore` lines like `one-in-one-out` would
+    // be rejected by the standard merge parser and abort the sender walk.
+    // Upstream's `:C` does NOT imply FILTRULE_EXCLUDE_SELF - only the
+    // explicit `e` modifier does (exclude.c:1256-1260); leave the existing
+    // `e` handling above to drive `excludes_self`.
+    if wire_rule.cvs_exclude {
+        config = config.with_cvs_mode(true).with_inherit(false);
+        if cvs_perishable {
+            config = config.with_perishable(true);
+        }
+    }
+
     config
+}
+
+/// Builds the local CVS-ignore exclude list for a `-C` wire rule.
+///
+/// Mirrors upstream `exclude.c:get_cvs_excludes()`: the built-in
+/// `DEFAULT_CVSIGNORE` patterns, then any tokens from `$HOME/.cvsignore`,
+/// then any tokens from `$CVSIGNORE`. Each entry becomes an exclude rule
+/// with `perishable=true` when the negotiated protocol is >= 30.
+///
+/// # Upstream Reference
+///
+/// - `exclude.c:1340-1358 get_cvs_excludes()` - default patterns, HOME/.cvsignore, env.
+fn cvs_default_exclude_rules(perishable: bool) -> Vec<FilterRule> {
+    let mut out: Vec<FilterRule> = cvs_exclusion_rules(perishable).collect();
+
+    if let Some(home) = env::var_os("HOME").filter(|value| !value.is_empty()) {
+        let path = Path::new(&home).join(".cvsignore");
+        if let Ok(contents) = fs::read(&path) {
+            let text = String::from_utf8_lossy(&contents).into_owned();
+            append_cvsignore_tokens(&mut out, &text, perishable);
+        }
+    }
+
+    if let Some(value) = env::var_os("CVSIGNORE").filter(|value| !value.is_empty()) {
+        let text = value.to_string_lossy().into_owned();
+        append_cvsignore_tokens(&mut out, &text, perishable);
+    }
+
+    out
+}
+
+/// Splits a CVS-ignore source on whitespace and appends an exclude rule per
+/// token, mirroring upstream's word-split parsing of `$CVSIGNORE` and
+/// `$HOME/.cvsignore` in `exclude.c:get_cvs_excludes()`.
+fn append_cvsignore_tokens(rules: &mut Vec<FilterRule>, source: &str, perishable: bool) {
+    for token in source.split_whitespace() {
+        if token.is_empty() {
+            continue;
+        }
+        let mut rule = FilterRule::exclude(token.to_owned());
+        if perishable {
+            rule = rule.with_perishable(true);
+        }
+        rules.push(rule);
+    }
 }
 
 /// Reads a `--files-from` list from a local file path on the server.
@@ -519,15 +610,31 @@ mod tests {
     #[test]
     fn wire_rule_to_dir_merge_config_strips_leading_slash() {
         let wire_rule = make_dir_merge_wire_rule("/.rsync-filter");
-        let config = wire_rule_to_dir_merge_config(&wire_rule);
+        let config = wire_rule_to_dir_merge_config(&wire_rule, true);
         assert_eq!(config.filename(), ".rsync-filter");
     }
 
     #[test]
     fn wire_rule_to_dir_merge_config_no_slash() {
         let wire_rule = make_dir_merge_wire_rule(".rsync-filter");
-        let config = wire_rule_to_dir_merge_config(&wire_rule);
+        let config = wire_rule_to_dir_merge_config(&wire_rule, true);
         assert_eq!(config.filename(), ".rsync-filter");
+    }
+
+    /// `:C .cvsignore` (FILTRULE_CVS_IGNORE on a DirMerge) must switch the
+    /// `DirMergeConfig` into CVS-mode so the chain parses each whitespace
+    /// token in `.cvsignore` as an exclude rule. Without this, lines like
+    /// `one-in-one-out` fail standard merge parsing and abort the walk.
+    /// Upstream's `:C` does NOT exclude the merge file itself; only the
+    /// explicit `e` modifier does.
+    #[test]
+    fn wire_rule_to_dir_merge_config_cvs_flag_enables_cvs_mode() {
+        let mut wire_rule = make_dir_merge_wire_rule(".cvsignore");
+        wire_rule.cvs_exclude = true;
+        let config = wire_rule_to_dir_merge_config(&wire_rule, true);
+        assert!(config.cvs_mode());
+        assert!(!config.inherits());
+        assert!(!config.excludes_self());
     }
 
     #[test]
