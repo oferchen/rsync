@@ -426,7 +426,6 @@ impl GeneratorContext {
 
                 let checksum_algorithm = self.get_checksum_algorithm();
                 let use_noatime = self.config.write.open_noatime;
-                let delta_total_bytes = delta_script.total_bytes();
                 let wire_ops = script_to_wire_delta(delta_script, block_length);
                 let use_compression = self.file_compression(source_path).is_some();
                 let is_zlib = matches!(
@@ -437,21 +436,33 @@ impl GeneratorContext {
                 // during the wire-write pass, eliminating the separate
                 // compute_file_checksum() call that re-opened and re-read the
                 // source file.
-                let result = write_delta_with_inline_checksum(
-                    &mut *writer,
-                    &wire_ops,
-                    if use_compression {
-                        token_encoder.as_mut()
-                    } else {
-                        None
-                    },
-                    is_zlib,
-                    source_path,
-                    use_noatime,
-                    checksum_algorithm,
-                )?;
-                writer.write_all(&result.checksum_buf[..result.checksum_len])?;
-                bytes_sent += delta_total_bytes;
+                //
+                // upstream: io.c:859 - stats.total_written counts actual wire
+                // bytes after each write() syscall, not the reconstructed file
+                // size. Wrap the delta+checksum write call in a CountingWriter
+                // so summary "sent N bytes" reflects the wire stream the
+                // receiver actually saw. Using delta_script.total_bytes()
+                // (reconstructed size) trips the testsuite's "delta did not
+                // engage" assertion on delta pushes.
+                let wire_bytes = {
+                    let mut cw = crate::writer::CountingWriter::new(&mut *writer);
+                    let result = write_delta_with_inline_checksum(
+                        &mut cw,
+                        &wire_ops,
+                        if use_compression {
+                            token_encoder.as_mut()
+                        } else {
+                            None
+                        },
+                        is_zlib,
+                        source_path,
+                        use_noatime,
+                        checksum_algorithm,
+                    )?;
+                    cw.write_all(&result.checksum_buf[..result.checksum_len])?;
+                    cw.bytes_written()
+                };
+                bytes_sent += wire_bytes;
             } else {
                 // upstream: sender.c:354-369 - whole-file path; MSG_NO_SEND on open failure
                 // Use unbuffered reader: stream_whole_file_transfer manages its
