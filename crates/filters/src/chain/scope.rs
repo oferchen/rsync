@@ -21,6 +21,10 @@ use crate::FilterSet;
 pub(super) struct DirScope {
     pub(super) depth: usize,
     pub(super) filter_set: FilterSet,
+    /// Whether the merge config that produced this scope inherits to
+    /// deeper directories. When `false`, the scope is only consulted at
+    /// its own depth, mirroring upstream `FILTRULE_NO_INHERIT`.
+    pub(super) inherits: bool,
 }
 
 /// Checks whether a `FilterSet` has any rule that matches the given path.
