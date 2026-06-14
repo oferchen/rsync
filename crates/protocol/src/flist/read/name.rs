@@ -86,13 +86,21 @@ impl FileListReader {
 
         // upstream: flist.c `l2 >= MAXPATHLEN - l1` overflow exit
         // Defence-in-depth: reject names that exceed MAXPATHLEN to prevent
-        // unbounded allocation from a malicious sender.
-        if same_len + suffix_len >= MAXPATHLEN {
+        // unbounded allocation from a malicious sender. checked_add guards
+        // against arithmetic overflow when a malicious sender supplies a
+        // wire-encoded suffix length near usize::MAX.
+        let total_len = same_len.checked_add(suffix_len).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("filename length overflow: same_len={same_len} suffix_len={suffix_len}"),
+            )
+        })?;
+        if total_len >= MAXPATHLEN {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
                 format!(
                     "filename length {} exceeds maximum {}",
-                    same_len + suffix_len,
+                    total_len,
                     MAXPATHLEN - 1,
                 ),
             ));
