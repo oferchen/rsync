@@ -155,4 +155,22 @@ impl MetadataOptions {
         self.destination_is_new = is_new;
         self
     }
+
+    /// Records whether `--keep-dirlinks` is active for this transfer.
+    ///
+    /// When enabled, the permission-apply path bypasses the dirfd-anchored
+    /// `secure_chmod_at` sandbox at path-based call sites. The sandbox
+    /// refuses symlinked parents (ELOOP/ENOTDIR), which is the correct
+    /// default but conflicts with the explicit opt-in to follow dest-side
+    /// symlinks-to-dirs that `--keep-dirlinks` represents.
+    ///
+    /// upstream: generator.c:1344 - `link_stat` honors `keep_dirlinks` so
+    /// the canonical target path is what subsequent chmod/chown see.
+    #[must_use]
+    #[doc(alias = "--keep-dirlinks")]
+    #[doc(alias = "-K")]
+    pub const fn with_keep_dirlinks(mut self, keep: bool) -> Self {
+        self.keep_dirlinks = keep;
+        self
+    }
 }
