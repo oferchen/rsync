@@ -382,6 +382,8 @@ include!("tests/chunks/daemon_inc_recurse_push.rs");
 include!("tests/chunks/daemon_checksum_push.rs");
 // Daemon compress push end-to-end test
 include!("tests/chunks/daemon_compress_push.rs");
+// Daemon compress pull goodbye-drain regression (UTS-v3 Cluster A)
+include!("tests/chunks/daemon_compress_pull_drains_peer_goodbye.rs");
 // Daemon delete push end-to-end test
 include!("tests/chunks/daemon_delete_push.rs");
 // Daemon delete push NDX_DEL_STATS regression (URV-6 upload-direction gap)
