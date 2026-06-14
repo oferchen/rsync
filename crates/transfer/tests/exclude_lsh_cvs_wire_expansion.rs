@@ -126,8 +126,7 @@ fn standard_dir_merge_rejects_unprefixed_cvsignore_token() {
 
     let err = chain
         .enter_directory(dir)
-        .err()
-        .expect("standard merge parse must fail on unprefixed token");
+        .expect_err("standard merge parse must fail on unprefixed token");
     let msg = err.to_string();
     assert!(
         msg.contains("one-in-one-out"),
