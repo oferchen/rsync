@@ -417,6 +417,49 @@ pub fn sort_and_clean_file_list(
     flist_clean(file_list)
 }
 
+/// Apply a precomputed sort permutation to two parallel slices in lockstep.
+///
+/// `source_indices[i] = j` encodes "the entry at position `j` in the source
+/// becomes the entry at position `i` after sorting." Both slices must have
+/// equal length matching `source_indices.len()`. Used by the generator's
+/// file-list sort to reorder a [`FileEntry`] (or arena header) slice alongside
+/// a parallel `Vec<PathBuf>` so both stay aligned after an indirect sort.
+///
+/// Cycle-following algorithm performs `O(n)` swaps and allocates a single
+/// destination-permutation vector of length `n`; no per-element clones.
+///
+/// # Upstream Reference
+///
+/// - `flist.c:f_name_cmp()` - upstream sorts the file list in-place;
+///   we sort via indirect permutation to avoid `O(n)` clones of `FileEntry`.
+pub fn apply_permutation_in_place<A, B>(
+    slice_a: &mut [A],
+    slice_b: &mut [B],
+    source_indices: Vec<usize>,
+) {
+    let n = slice_a.len();
+    debug_assert_eq!(slice_b.len(), n);
+    debug_assert_eq!(source_indices.len(), n);
+
+    if n == 0 {
+        return;
+    }
+
+    let mut dest_perm = vec![0; n];
+    for (new_pos, &old_pos) in source_indices.iter().enumerate() {
+        dest_perm[old_pos] = new_pos;
+    }
+
+    for i in 0..n {
+        while dest_perm[i] != i {
+            let j = dest_perm[i];
+            slice_a.swap(i, j);
+            slice_b.swap(i, j);
+            dest_perm.swap(i, j);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Generic versions for flat-flist migration (RSS-A.7.c)
 // ---------------------------------------------------------------------------

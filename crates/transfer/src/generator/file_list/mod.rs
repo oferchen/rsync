@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use logging::{PhaseTimer, debug_log, info_log};
-use protocol::flist::{FileEntry, compare_file_entries};
+use protocol::flist::FileEntry;
 
 use super::GeneratorContext;
 
@@ -99,26 +99,8 @@ impl GeneratorContext {
         // --qsort uses unstable sort (flist.c:2991).
         {
             let _t = PhaseTimer::new("file-list-sort");
-            let file_list_slice = self.file_list.as_slice();
-            let mut indices: Vec<usize> = {
-                let len = file_list_slice.len();
-                let mut v = Vec::with_capacity(len);
-                v.extend(0..len);
-                v
-            };
-            let cmp = |&a: &usize, &b: &usize| {
-                compare_file_entries(&file_list_slice[a], &file_list_slice[b])
-            };
-            if self.config.qsort {
-                indices.sort_unstable_by(cmp);
-            } else {
-                indices.sort_by(cmp);
-            }
-
-            // Apply permutation in-place using cycle-following algorithm.
-            // This avoids cloning every element - O(n) swaps instead of O(n) clones.
-            let legacy = self.file_list.as_mut_vec();
-            apply_permutation_in_place(legacy.as_mut_slice(), &mut self.full_paths, indices);
+            self.file_list
+                .sort_with_parallel(&mut self.full_paths, self.config.qsort);
         }
 
         // upstream: hlink.c:match_hard_links() - must be called after sort
@@ -298,24 +280,8 @@ impl GeneratorContext {
         // upstream: flist.c:f_name_cmp() - sort via indirect permutation
         {
             let _t = PhaseTimer::new("file-list-sort");
-            let file_list_slice = self.file_list.as_slice();
-            let mut indices: Vec<usize> = {
-                let len = file_list_slice.len();
-                let mut v = Vec::with_capacity(len);
-                v.extend(0..len);
-                v
-            };
-            let cmp = |&a: &usize, &b: &usize| {
-                compare_file_entries(&file_list_slice[a], &file_list_slice[b])
-            };
-            if self.config.qsort {
-                indices.sort_unstable_by(cmp);
-            } else {
-                indices.sort_by(cmp);
-            }
-
-            let legacy = self.file_list.as_mut_vec();
-            apply_permutation_in_place(legacy.as_mut_slice(), &mut self.full_paths, indices);
+            self.file_list
+                .sort_with_parallel(&mut self.full_paths, self.config.qsort);
         }
 
         // upstream: hlink.c:match_hard_links() - must be called after sort
@@ -494,48 +460,4 @@ fn non_relative_walk_base(path: &Path) -> (PathBuf, PathBuf) {
     }
 }
 
-/// Applies a source-based permutation to two parallel slices in-place.
-///
-/// Reorders elements according to `source_indices` using cycle-following with
-/// only swaps (no cloning). Used after sorting via indirect permutation to
-/// reorder `file_list` and `full_paths` simultaneously.
-///
-/// The permutation is inverted first (`source_indices[i] = j` becomes
-/// `dest_perm[j] = i`) so that cycle-following can use in-place swaps.
-///
-/// O(n) time and O(n) space for the inverse permutation.
-///
-/// # Upstream Reference
-///
-/// - `flist.c:f_name_cmp()` - upstream sorts the file list in-place;
-///   we sort via indirect permutation to avoid O(n) clones of `FileEntry`.
-pub(super) fn apply_permutation_in_place<A, B>(
-    slice_a: &mut [A],
-    slice_b: &mut [B],
-    source_indices: Vec<usize>,
-) {
-    let n = slice_a.len();
-    debug_assert_eq!(slice_b.len(), n);
-    debug_assert_eq!(source_indices.len(), n);
-
-    if n == 0 {
-        return;
-    }
-
-    // Invert the permutation: source_indices[i] = j becomes dest_perm[j] = i
-    // This converts "element at j goes to i" to "element at i goes to j"
-    let mut dest_perm = vec![0; n];
-    for (new_pos, &old_pos) in source_indices.iter().enumerate() {
-        dest_perm[old_pos] = new_pos;
-    }
-
-    // Apply destination-based permutation using cycle-following
-    for i in 0..n {
-        while dest_perm[i] != i {
-            let j = dest_perm[i];
-            slice_a.swap(i, j);
-            slice_b.swap(i, j);
-            dest_perm.swap(i, j);
-        }
-    }
-}
+pub(super) use protocol::flist::apply_permutation_in_place;
