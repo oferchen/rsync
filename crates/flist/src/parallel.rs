@@ -162,6 +162,9 @@ pub fn collect_paths_then_metadata_parallel(
 
     if errors.is_empty() {
         crate::sort::sort_file_entries(&mut entries);
+        // upstream: flist.c:3050 dedup_in_flist() - collapse identical
+        // sorted entries so repeated source operands transfer each file once.
+        crate::sort::dedup_sorted_file_entries(&mut entries);
         Ok(entries)
     } else {
         Err(errors)
@@ -277,6 +280,9 @@ pub fn collect_with_batched_stats(
 
     if errors.is_empty() {
         crate::sort::sort_file_entries(&mut entries);
+        // upstream: flist.c:3050 dedup_in_flist() - collapse identical
+        // sorted entries so repeated source operands transfer each file once.
+        crate::sort::dedup_sorted_file_entries(&mut entries);
         Ok(entries)
     } else {
         Err(errors)
@@ -347,6 +353,9 @@ pub fn collect_paths_chunked_parallel(
 
     if errors.is_empty() {
         crate::sort::sort_file_entries(&mut entries);
+        // upstream: flist.c:3050 dedup_in_flist() - collapse identical
+        // sorted entries so repeated source operands transfer each file once.
+        crate::sort::dedup_sorted_file_entries(&mut entries);
         Ok(entries)
     } else {
         Err(errors)
@@ -407,6 +416,9 @@ pub fn resolve_metadata_parallel(
 
     if errors.is_empty() {
         crate::sort::sort_file_entries(&mut resolved);
+        // upstream: flist.c:3050 dedup_in_flist() - collapse identical
+        // sorted entries so repeated source operands transfer each file once.
+        crate::sort::dedup_sorted_file_entries(&mut resolved);
         Ok(resolved)
     } else {
         Err(errors)
