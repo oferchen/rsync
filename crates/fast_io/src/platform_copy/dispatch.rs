@@ -286,7 +286,7 @@ pub(super) fn try_refs_reflink_impl(src: &Path, dst: &Path) -> io::Result<()> {
 
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Storage::FileSystem::{
-        CREATE_ALWAYS, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, GetDiskFreeSpaceW,
+        CreateFileW, GetDiskFreeSpaceW, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ,
         OPEN_EXISTING,
     };
     use windows_sys::Win32::System::IO::DeviceIoControl;
@@ -507,7 +507,7 @@ pub(super) fn try_refs_reflink_range_impl(
 
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, GetDiskFreeSpaceW, OPEN_EXISTING,
+        CreateFileW, GetDiskFreeSpaceW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, OPEN_EXISTING,
     };
     use windows_sys::Win32::System::IO::DeviceIoControl;
 
@@ -686,6 +686,14 @@ pub(super) fn try_refs_reflink_impl(_src: &Path, _dst: &Path) -> io::Result<()> 
 
 /// Linux `FICLONE` ioctl wrapper using `rustix::fs::ioctl_ficlone`.
 ///
+/// REFLINK-2: consults [`super::cow_detect::detect_cow_support`] against
+/// the destination's parent directory before attempting the ioctl. When
+/// the per-mountpoint cache says `No`, returns `ErrorKind::Unsupported`
+/// immediately so the dispatch falls through without paying the
+/// create-destination + EOPNOTSUPP round-trip. For `Yes`/`Probable` the
+/// FICLONE attempt runs, and any error outcome is recorded so the next
+/// caller on the same mount skips the syscall.
+///
 /// Creates the destination file, then attempts a reflink clone from the source.
 /// On success, source and destination share storage blocks (copy-on-write).
 /// On failure, the caller is responsible for cleaning up the destination.
@@ -694,13 +702,40 @@ pub(super) fn try_ficlone_impl(src: &Path, dst: &Path) -> io::Result<()> {
     use std::fs::File;
     use std::os::fd::AsFd;
 
+    use super::cow_detect::{detect_cow_support, record_probe_outcome, CowSupport};
+
+    let probe_path = dst
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(dst);
+    match detect_cow_support(probe_path) {
+        Ok(CowSupport::No) => {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "destination filesystem does not support FICLONE",
+            ));
+        }
+        Ok(CowSupport::Yes | CowSupport::Probable) | Err(_) => {}
+    }
+
     let source = File::open(src)?;
     let destination = File::create(dst)?;
 
     // rustix::fs::ioctl_ficlone is fully safe - it uses AsFd/BorrowedFd
     // for compile-time fd validity, and wraps the FICLONE ioctl internally.
-    rustix::fs::ioctl_ficlone(destination.as_fd(), source.as_fd())
-        .map_err(|e| io::Error::from_raw_os_error(e.raw_os_error()))
+    match rustix::fs::ioctl_ficlone(destination.as_fd(), source.as_fd()) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // EOPNOTSUPP / EXDEV / EINVAL all mean reflink is unavailable
+            // on this mount. Cache the outcome so future copies bypass
+            // the syscall on this mountpoint.
+            let raw = e.raw_os_error();
+            if matches!(raw, libc::EOPNOTSUPP | libc::EXDEV | libc::EINVAL) {
+                let _ = record_probe_outcome(probe_path, CowSupport::No);
+            }
+            Err(io::Error::from_raw_os_error(raw))
+        }
+    }
 }
 
 /// Stub for non-Linux platforms where FICLONE is unavailable.

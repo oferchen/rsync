@@ -46,6 +46,11 @@
 //! println!("Copied {} bytes via {:?}", result.bytes_copied, result.method);
 //! ```
 
+#[cfg(target_os = "linux")]
+mod cow_detect;
+#[cfg(not(target_os = "linux"))]
+#[path = "cow_detect_stub.rs"]
+mod cow_detect;
 mod dispatch;
 mod no_zero_copy;
 #[cfg(test)]
