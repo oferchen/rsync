@@ -1,10 +1,9 @@
-//! Portable [`WindowsChunkedReader`] alias for non-Windows platforms.
+//! Portable `WindowsChunkedReader` alias for non-Windows platforms.
 //!
-//! The real [`WindowsChunkedReader`](super::windows_chunked_reader::WindowsChunkedReader)
-//! is a bounded-RSS chunked file reader specific to Windows; it replaces the
-//! `mmap_reader_stub` `Vec<u8>`-per-file allocation that would otherwise
-//! dominate peak RSS on large basis files. See the Windows module for the
-//! full design.
+//! The real `WindowsChunkedReader` (compiled only on Windows) is a bounded-RSS
+//! chunked file reader; it replaces the `mmap_reader_stub` `Vec<u8>`-per-file
+//! allocation that would otherwise dominate peak RSS on large basis files. See
+//! the Windows module for the full design.
 //!
 //! On every other target the stub simply re-exposes [`std::fs::File`] under
 //! the `WindowsChunkedReader` name so cross-platform callers compile
@@ -13,9 +12,8 @@
 //! consumers require, so swapping the alias in is a zero-cost shim on Unix.
 //!
 //! This module is compiled when the target OS is not Windows. The Windows
-//! build pulls in the real implementation from
-//! [`super::windows_chunked_reader`] instead, so the type name is always
-//! resolvable regardless of platform.
+//! build pulls in the real implementation under the same module path so the
+//! type name is always resolvable regardless of platform.
 
 #![cfg(not(windows))]
 
