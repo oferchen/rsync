@@ -38,16 +38,14 @@ impl ClientConfig {
         self.batch_config.as_ref()
     }
 
-    /// Returns `true` when the local client is the sender (push transfer).
+    /// Returns `true` when the local client should emit the sender-side `<`
+    /// itemize direction arrow (push over a remote shell or daemon).
     ///
-    /// Inspects `transfer_args`: when no source operand is remote the local
-    /// client acts as the sender. Pure-local transfers (no remote operands at
-    /// all) also report the local client as sender by upstream convention -
-    /// they hit the `local_server` branch in `log.c:704` which independently
-    /// selects `>`, so the polarity is harmless there.
-    ///
-    /// Used by the output formatter to pick the itemize direction arrow:
-    /// upstream emits `<` for sender-via-SSH, `>` otherwise.
+    /// The oc-rsync formatter at `itemize.rs::format_itemized_changes` picks
+    /// `<` when this flag is set and `>` otherwise. It does not model
+    /// upstream's separate `local_server` branch, so this helper must only
+    /// report `true` when the destination is remote AND every source is
+    /// local - the exact case upstream renders as `<`.
     ///
     /// upstream: log.c:701-704 - `!local_server && *op == 's' ? '<' : '>'`
     #[must_use]
@@ -55,21 +53,26 @@ impl ClientConfig {
         use crate::client::remote::operand_is_remote;
 
         if self.transfer_args.len() < 2 {
-            return true;
+            return false;
         }
 
-        let (sources, _destination) = self.transfer_args.split_at(self.transfer_args.len() - 1);
+        let (sources, destination) = self.transfer_args.split_at(self.transfer_args.len() - 1);
         let any_source_remote = sources.iter().any(|s| operand_is_remote(s));
+        let dest_remote = destination
+            .first()
+            .map(|d| operand_is_remote(d))
+            .unwrap_or(false);
 
-        // Pull (any remote source): local is the receiver -> false.
-        // Push (remote dest, no remote sources): local is the sender -> true.
-        // Local copy (no remote operands): treated as sender by upstream
-        //   convention - itemize hits `local_server` and emits `>` regardless,
-        //   so the polarity is harmless.
-        // Proxy (both remote): no per-file itemize lines render locally; the
-        //   value is unobservable. Reporting `false` keeps the arrow defaulting
-        //   to `>` for the unreachable case.
-        !any_source_remote
+        // Push (remote dest, no remote sources): local is the SSH/daemon
+        //   sender -> upstream emits `<`, return true.
+        // Pull (any remote source): local is the receiver -> upstream emits
+        //   `>`, return false.
+        // Local copy (no remote operands): upstream's `local_server` branch
+        //   emits `>` -> return false so oc-rsync's formatter matches.
+        // Proxy (both remote): no per-file itemize lines render locally;
+        //   return false so the arrow defaults to `>` for the unreachable
+        //   case.
+        dest_remote && !any_source_remote
     }
 }
 
@@ -112,14 +115,15 @@ mod tests {
     }
 
     #[test]
-    fn is_local_sender_local_copy_reports_sender() {
+    fn is_local_sender_local_copy_reports_receiver() {
         // Pure-local copy: `oc-rsync src/ dst/`. Upstream's `log.c:704` falls
-        // into the `local_server` branch which emits `>` regardless of am_sender,
-        // so the polarity is harmless. Lock the upstream convention here.
+        // into the `local_server` branch which emits `>`. The oc-rsync formatter
+        // does not model `local_server`, so report `false` here to keep the
+        // arrow defaulting to `>` and stay byte-identical with upstream.
         let config = ClientConfig::builder()
             .transfer_args([OsString::from("src/"), OsString::from("dst/")])
             .build();
-        assert!(config.is_local_sender());
+        assert!(!config.is_local_sender());
     }
 
     #[test]
@@ -164,11 +168,11 @@ mod tests {
     }
 
     #[test]
-    fn is_local_sender_empty_args_reports_sender() {
-        // No transfer args (module-list mode etc.). Default to sender so the
-        // itemize formatter doesn't flip arrows for callers that never render
-        // per-file lines.
+    fn is_local_sender_empty_args_reports_receiver() {
+        // No transfer args (module-list mode etc.). Default to receiver so the
+        // itemize formatter emits `>` for any callers that do render lines,
+        // matching the upstream `local_server` polarity.
         let config = ClientConfig::default();
-        assert!(config.is_local_sender());
+        assert!(!config.is_local_sender());
     }
 }

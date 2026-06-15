@@ -92,11 +92,14 @@ fn compute_dest_mode(
 /// read-only flag on Windows).
 ///
 /// On Unix, copies the full mode bits (including suid/sgid/sticky). On
-/// Windows, only the read-only flag is mirrored.
+/// Windows, only the read-only flag is mirrored. The `options` carrier lets
+/// the Unix path honor `--keep-dirlinks` via [`chmod_path_honoring_keep_dirlinks`]
+/// instead of the dirfd sandbox that rejects symlinked parents.
 // upstream: rsync.c:set_file_attrs() - chmod path for direct permission copy
 pub(super) fn set_permissions_like(
     metadata: &fs::Metadata,
     destination: &Path,
+    options: &MetadataOptions,
 ) -> Result<(), MetadataError> {
     #[cfg(unix)]
     {
@@ -107,12 +110,15 @@ pub(super) fn set_permissions_like(
         // anchored on the parent dirfd. Mirrors the receiver chmod-apply
         // path through `apply_permissions_from_entry` so chmod-symlink-race
         // cannot redirect this syscall outside the receiver confinement.
-        fast_io::secure_chmod_at(destination, mode, true)
-            .map_err(|error| MetadataError::new("preserve permissions", destination, error))?
+        // Under `--keep-dirlinks` the user has opted into following dest-side
+        // symlinks-to-dirs, so the sandbox refusal is wrong - fall through to
+        // `chmod_path_honoring_keep_dirlinks` which uses `std::fs::set_permissions`.
+        chmod_path_honoring_keep_dirlinks(destination, mode, options, "preserve permissions")?;
     }
 
     #[cfg(not(unix))]
     {
+        let _ = options;
         let readonly = metadata.permissions().readonly();
         let mut destination_permissions = fs::metadata(destination)
             .map_err(|error| {
@@ -250,7 +256,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
                 MetadataError::new("preserve permissions", destination, io::Error::from(error))
             })?;
         } else {
-            set_permissions_like(metadata, destination)?;
+            set_permissions_like(metadata, destination, options)?;
         }
         return Ok(());
     }
@@ -387,7 +393,7 @@ fn apply_permissions_without_chmod(
                 return Ok(());
             }
         }
-        set_permissions_like(metadata, destination)?;
+        set_permissions_like(metadata, destination, options)?;
         return Ok(());
     }
 
@@ -425,8 +431,12 @@ fn apply_permissions_without_chmod(
             }
 
             // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant.
-            fast_io::secure_chmod_at(destination, destination_permissions, true)
-                .map_err(|error| MetadataError::new("preserve permissions", destination, error))?;
+            chmod_path_honoring_keep_dirlinks(
+                destination,
+                destination_permissions,
+                options,
+                "preserve permissions",
+            )?;
         }
     }
 
@@ -470,10 +480,14 @@ pub(super) fn apply_permissions_from_entry(
                 // dirfd opened with RESOLVE_BENEATH/RESOLVE_NO_SYMLINKS so a
                 // symlink swapped into any parent component cannot redirect
                 // the chmod outside the receiver's confinement (testsuite
-                // chdir-symlink-race).
-                fast_io::secure_chmod_at(destination, mode, true).map_err(|error| {
-                    MetadataError::new("preserve permissions", destination, error)
-                })?;
+                // chdir-symlink-race). Under `--keep-dirlinks` the helper
+                // follows symlinked parents to mirror upstream `generator.c:1344`.
+                chmod_path_honoring_keep_dirlinks(
+                    destination,
+                    mode,
+                    options,
+                    "preserve permissions",
+                )?;
                 perms_changed = true;
             }
         }
@@ -524,9 +538,10 @@ pub(super) fn apply_permissions_from_entry(
 
             let new_mode = chmod.apply(base_mode, current_meta.file_type());
             if new_mode != current_mode {
-                // upstream: syscall.c:do_chmod_at() symlink-race-safe variant
-                fast_io::secure_chmod_at(destination, new_mode, true)
-                    .map_err(|error| MetadataError::new("apply chmod", destination, error))?;
+                // upstream: syscall.c:do_chmod_at() symlink-race-safe variant.
+                // Helper follows symlinked parents under `--keep-dirlinks` to
+                // mirror upstream `generator.c:1344`.
+                chmod_path_honoring_keep_dirlinks(destination, new_mode, options, "apply chmod")?;
             }
         }
     }
