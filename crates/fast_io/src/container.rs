@@ -30,6 +30,17 @@
 //! helper into [`crate::io_uring`] configuration; SQP-LAND.7 added the
 //! [`rootless_signal`] accessor so the SQPOLL fall-back site can log
 //! which marker triggered the decision.
+//!
+//! ## Test override
+//!
+//! Setting the environment variable [`FORCE_ROOTLESS_ENV`]
+//! (`OC_RSYNC_FORCE_ROOTLESS_CONTAINER`) to a truthy value (`1`, `true`,
+//! `yes`, `on`, case-insensitive) makes [`rootless_signal`] report
+//! [`RootlessSignal::NonIdentityUidMap`] regardless of the actual host
+//! state. The override is consulted before the cached `/proc` probe, so
+//! it works inside any process even if detection already ran. SQP-LAND.6
+//! uses this hook to drive the SQPOLL graceful-fallback integration test
+//! without requiring a real rootless Podman container in CI.
 
 /// Returns `true` when the current process is running inside a rootless
 /// container or any user namespace where SQPOLL is structurally unable
@@ -96,7 +107,33 @@ impl RootlessSignal {
 /// invocation.
 #[must_use]
 pub fn rootless_signal() -> RootlessSignal {
+    if force_rootless_via_env() {
+        return RootlessSignal::NonIdentityUidMap;
+    }
     imp::rootless_signal()
+}
+
+/// Environment variable that forces [`rootless_signal`] to report a
+/// rootless verdict.
+///
+/// Setting this to `1`, `true`, `yes`, or `on` (case-insensitive) makes
+/// the helper return [`RootlessSignal::NonIdentityUidMap`] without
+/// consulting `/proc/self/uid_map` or any marker file. Used by the
+/// SQP-LAND.6 integration test so the SQPOLL graceful-fallback path can
+/// be exercised on hosts that are not actually rootless. The check runs
+/// before the cached probe so toggling the variable mid-process is
+/// effective even after detection already cached the host result.
+pub const FORCE_ROOTLESS_ENV: &str = "OC_RSYNC_FORCE_ROOTLESS_CONTAINER";
+
+/// Returns `true` when [`FORCE_ROOTLESS_ENV`] is set to a truthy value.
+fn force_rootless_via_env() -> bool {
+    match std::env::var(FORCE_ROOTLESS_ENV) {
+        Ok(v) => matches!(
+            v.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        Err(_) => false,
+    }
 }
 
 #[cfg(target_os = "linux")]

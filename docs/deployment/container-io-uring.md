@@ -90,6 +90,31 @@ To check whether io_uring is available inside your container:
 podman run --rm myimage oc-rsync --io-uring-status
 ```
 
+#### Detection
+
+oc-rsync detects rootless containers automatically (see
+`docs/design/sqpoll-rootless-container-detection.md`) by probing
+`/proc/self/uid_map`, `/run/.containerenv` (Podman), and `/.dockerenv`
+(Docker). When any of these signals fires, SQPOLL is skipped before the
+kernel can reject it and a single info-level log records the reason
+(see SQP-LAND.7 in `crates/fast_io/src/io_uring/config.rs`).
+
+#### Forcing detection for tests
+
+The environment variable `OC_RSYNC_FORCE_ROOTLESS_CONTAINER` lets
+integration tests and CI cells exercise the SQPOLL fall-back path on
+hosts that are not actually rootless. Setting it to `1`, `true`, `yes`,
+or `on` makes `fast_io::detect_rootless_container` and
+`fast_io::rootless_signal` report rootless regardless of the real host
+state, and the env hook runs before the cached `/proc` probe so it is
+effective even after detection has already cached the host result. The
+override is read by every `IoUringConfig::build_ring` call, so the same
+graceful-fallback path that a real container would take is exercised
+end-to-end. It is a test-only hook; setting it in production is harmless
+on rootless hosts (the verdict was already going to be rootless) but
+forces the SQPOLL skip on host systems, costing a small amount of I/O
+throughput. Do not set it in production manifests.
+
 ### Seccomp Considerations
 
 Default Docker and Podman seccomp profiles allow `io_uring_setup`,
