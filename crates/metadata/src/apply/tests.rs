@@ -1558,3 +1558,75 @@ fn keep_dirlinks_bypasses_secure_chmod_sandbox() {
         "chmod must follow the symlink and land on real_alpha/a.txt (got {landed_mode:o})",
     );
 }
+
+// KDL.7.1 cross-platform regression: `--keep-dirlinks` must succeed through a
+// symlinked destination directory on every supported platform. Pins the
+// guarantee from PR #5793 (macOS chmod bypass), PRs #5798/#5799 (extended to
+// four more chmod sites), and the KDL.7 audit that confirmed Linux
+// (openat2 RESOLVE_BENEATH sandboxes parents only, leaf symlink legal) and
+// Windows (chmod is a no-op) were CLEAN by construction but unpinned.
+#[test]
+fn keep_dirlinks_bypass_is_cross_platform_safe() {
+    let temp = tempdir().expect("tempdir");
+    let real_dir = temp.path().join("real_dir");
+    fs::create_dir(&real_dir).expect("create real_dir");
+
+    let dest_root = temp.path().join("dest");
+    fs::create_dir(&dest_root).expect("create dest");
+    let symlinked_dest = dest_root.join("alpha");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&real_dir, &symlinked_dest).expect("symlink alpha");
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&real_dir, &symlinked_dest).expect("symlink_dir alpha");
+
+    let source = temp.path().join("a.txt");
+    fs::write(&source, b"alpha").expect("write source");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&source, PermissionsExt::from_mode(0o755)).expect("source mode");
+    }
+
+    let dest_file = symlinked_dest.join("a.txt");
+    fs::write(&dest_file, b"alpha").expect("write dest through symlink");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&dest_file, PermissionsExt::from_mode(0o600)).expect("dest mode");
+    }
+
+    let source_meta = fs::metadata(&source).expect("stat source");
+
+    let opts = MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(false)
+        .with_keep_dirlinks(true);
+    apply_file_metadata_with_options(&dest_file, &source_meta, &opts)
+        .expect("apply_file_metadata_with_options must succeed under --keep-dirlinks");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let landed_mode = fs::metadata(real_dir.join("a.txt"))
+            .expect("stat real_dir/a.txt")
+            .permissions()
+            .mode()
+            & 0o7777;
+        assert_eq!(
+            landed_mode, 0o755,
+            "chmod must follow the symlink and land on real_dir/a.txt (got {landed_mode:o})",
+        );
+    }
+
+    #[cfg(windows)]
+    {
+        // Windows chmod is a no-op (FILE_ATTRIBUTE_READONLY only). The
+        // KDL.7.1 guarantee on Windows is that the call succeeds without
+        // ELOOP / permission errors through the symlinked dest dir.
+        let landed = fs::metadata(real_dir.join("a.txt")).expect("stat real_dir/a.txt");
+        assert!(
+            landed.is_file(),
+            "real_dir/a.txt must remain a regular file"
+        );
+    }
+}
