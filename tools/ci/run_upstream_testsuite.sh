@@ -96,12 +96,15 @@ build_upstream_helpers() {
         # $TOOLDIR/rsync) plus all CHECK_PROGS helper programs that the
         # testsuite scripts require. These are not part of the `all`
         # target so they must be named explicitly:
-        #   tls, getgroups   - used by rsync.fns (check_perms, rsync_getgroups)
-        #   getfsdev         - used by chmod-temp-dir.test (cross-filesystem detection)
-        #   trimslash        - used by trimslash.test
-        #   t_unsafe         - used by unsafe-byname.test
-        #   wildtest         - used by wildmatch.test
-        make all tls getgroups getfsdev trimslash t_unsafe wildtest \
+        #   tls, getgroups    - used by rsync.fns (check_perms, rsync_getgroups)
+        #   getfsdev          - used by chmod-temp-dir.test (cross-filesystem detection)
+        #   trimslash         - used by trimslash.test
+        #   t_unsafe          - used by unsafe-byname.test
+        #   t_chmod_secure    - used by chmod-symlink-race.test
+        #   t_secure_relpath  - used by secure-relpath-validation.test
+        #   wildtest          - used by wildmatch.test
+        make all tls getgroups getfsdev trimslash t_unsafe t_chmod_secure \
+            t_secure_relpath wildtest \
             >make.log 2>&1 || { tail -100 make.log; exit 1; }
     )
 }
