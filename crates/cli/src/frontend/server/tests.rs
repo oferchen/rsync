@@ -457,6 +457,49 @@ fn long_flags_receiver() {
     assert!(flags.is_receiver);
 }
 
+/// `--remove-source-files` is forwarded as a long-form flag and lands in
+/// `ServerLongFlags::remove_source_files`. The `run_server_mode` driver
+/// copies it onto `config.flags.remove_source_files` so the sender
+/// generator can act on it after a successful transfer.
+///
+/// upstream: options.c:2964-2965 - `server_options()` emits
+/// `--remove-source-files` whenever the client requested it.
+#[test]
+fn long_flags_remove_source_files() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--sender"),
+        OsString::from("--remove-source-files"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert!(flags.remove_source_files);
+}
+
+/// `--remove-sent-files` is the deprecated alias for `--remove-source-files`
+/// and must hit the same `ServerLongFlags::remove_source_files` field so a
+/// client built against the old name still drives the sender unlink path.
+///
+/// upstream: options.c - `{"remove-sent-files", 0, ...}` aliases
+/// `remove_source_files` in `parse_arguments()`.
+#[test]
+fn long_flags_remove_sent_files_alias() {
+    let args = vec![
+        OsString::from("--server"),
+        OsString::from("--sender"),
+        OsString::from("--remove-sent-files"),
+    ];
+    let flags = parse_server_long_flags(&args);
+    assert!(flags.remove_source_files);
+}
+
+/// Both forms must register as known server long flags so the flag-string
+/// scanner does not treat them as a positional path argument.
+#[test]
+fn remove_source_files_recognised_as_known_long_flag() {
+    assert!(is_known_server_long_flag("--remove-source-files"));
+    assert!(is_known_server_long_flag("--remove-sent-files"));
+}
+
 #[test]
 fn long_flags_ignore_errors() {
     let args = vec![
