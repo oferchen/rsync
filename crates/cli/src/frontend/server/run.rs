@@ -373,28 +373,41 @@ where
     let _ = stdout.flush();
     let _ = fast_io::shutdown_stdio_write();
 
-    // The drain loop stays receiver-only: the generator never expects
-    // post-goodbye stdin bytes, so reading there would just delay exit.
-    if role == ServerRole::Receiver {
-        let mut sink = [0u8; 4096];
-        loop {
-            match stdin.read(&mut sink) {
-                Ok(0) => break,
-                Ok(_) => continue,
-                Err(err)
-                    if matches!(
-                        err.kind(),
-                        io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
-                    ) =>
-                {
-                    continue;
-                }
-                Err(_) => break,
-            }
-        }
-    }
+    // Both roles drain stdin to EOF. The generator case is not vacuous:
+    // under lsh.sh the upstream peer (server-receiver child) parks in
+    // noop_io_until_death() waiting for our FIN. Without this drain the
+    // process exits, closing stdin before the peer has finished its own
+    // goodbye sequence, causing "connection unexpectedly closed" on the
+    // upstream side and a 300 s TIMEOUT in runtests.py.
+    //
+    // upstream: io.c:943 noop_io_until_death() called from cleanup.c:254
+    // _exit_cleanup() for both sender and receiver server roles.
+    drain_stdin_until_eof(&mut stdin);
 
     exit_code
+}
+
+/// Mirrors upstream rsync's `noop_io_until_death()` (io.c:943): reads from
+/// `stdin` until EOF, hard error, or any non-recoverable condition. Used by
+/// both server roles after the goodbye handshake completes so the peer can
+/// finish its own `exit_cleanup()` before our process closes its stdin.
+fn drain_stdin_until_eof<R: Read>(stdin: &mut R) {
+    let mut sink = [0u8; 4096];
+    loop {
+        match stdin.read(&mut sink) {
+            Ok(0) => break,
+            Ok(_) => continue,
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
+                ) =>
+            {
+                continue;
+            }
+            Err(_) => break,
+        }
+    }
 }
 
 /// Applies value-bearing flags to the server config, returning early on parse errors.
@@ -534,5 +547,104 @@ fn write_server_error<Err: Write>(stderr: &mut Err, brand: Brand, text: impl fmt
     message = message.with_role(Role::Server);
     if super::super::write_message(&message, &mut sink).is_err() {
         let _ = writeln!(sink.writer_mut(), "{text}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::drain_stdin_until_eof;
+    use std::io::{self, Read};
+
+    /// Reader that yields `Ok(0)` immediately - the EOF case the generator and
+    /// receiver server roles both encounter after their peer's `exit_cleanup`
+    /// closes the pipe.
+    struct Eof;
+
+    impl Read for Eof {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Ok(0)
+        }
+    }
+
+    /// Reader that returns bytes once, then yields EOF. Mirrors a peer that
+    /// emits trailing MSG_STATS / NDX_DONE / MSG_ERROR_EXIT envelopes after
+    /// our half-close before its own `exit_cleanup` closes the pipe.
+    struct Once {
+        payload: Vec<u8>,
+    }
+
+    impl Read for Once {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.payload.is_empty() {
+                Ok(0)
+            } else {
+                let n = self.payload.len().min(buf.len());
+                buf[..n].copy_from_slice(&self.payload[..n]);
+                self.payload.drain(..n);
+                Ok(0_usize.max(n))
+            }
+        }
+    }
+
+    /// Reader that yields a few `Interrupted` / `WouldBlock` retries before
+    /// reaching EOF - the drain must not abort on either.
+    struct Flaky {
+        steps: Vec<io::Result<usize>>,
+    }
+
+    impl Read for Flaky {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            if self.steps.is_empty() {
+                Ok(0)
+            } else {
+                self.steps.remove(0)
+            }
+        }
+    }
+
+    /// Reader that returns a hard error - upstream's noop_io_until_death()
+    /// also exits the loop on unrecoverable I/O failure rather than spinning.
+    struct HardError;
+
+    impl Read for HardError {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::other("connection reset"))
+        }
+    }
+
+    #[test]
+    fn drain_returns_immediately_on_eof() {
+        drain_stdin_until_eof(&mut Eof);
+    }
+
+    #[test]
+    fn drain_consumes_payload_then_eof() {
+        let mut reader = Once {
+            payload: b"trailing-goodbye-bytes".to_vec(),
+        };
+        drain_stdin_until_eof(&mut reader);
+        assert!(reader.payload.is_empty(), "drain must consume all bytes");
+    }
+
+    #[test]
+    fn drain_retries_through_interrupted_and_wouldblock() {
+        let mut reader = Flaky {
+            steps: vec![
+                Err(io::Error::from(io::ErrorKind::Interrupted)),
+                Err(io::Error::from(io::ErrorKind::WouldBlock)),
+                Err(io::Error::from(io::ErrorKind::Interrupted)),
+                Ok(0),
+            ],
+        };
+        drain_stdin_until_eof(&mut reader);
+        assert!(
+            reader.steps.is_empty(),
+            "drain must keep going past Interrupted/WouldBlock"
+        );
+    }
+
+    #[test]
+    fn drain_breaks_on_hard_error() {
+        drain_stdin_until_eof(&mut HardError);
     }
 }
