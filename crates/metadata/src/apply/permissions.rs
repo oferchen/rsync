@@ -543,6 +543,44 @@ pub(super) fn apply_permissions_from_entry(
                 // mirror upstream `generator.c:1344`.
                 chmod_path_honoring_keep_dirlinks(destination, new_mode, options, "apply chmod")?;
             }
+        } else if options.executability()
+            && !options.permissions()
+            && entry.file_type().is_regular()
+        {
+            // upstream: rsync.c:457-465 dest_mode() - `-E` without `-p` and
+            // without `--chmod` transfers only the executability bits from
+            // source to destination: if the source has no exec bits, clear
+            // them on dest; else if dest has no exec bits, grant exec to
+            // everyone who can already read (`new_mode & 0444 >> 2`). When
+            // dest already has some exec bits they are preserved verbatim.
+            let fresh_meta;
+            let current_meta = if let Some(meta) = cached_meta {
+                meta
+            } else {
+                fresh_meta = fs::metadata(destination).map_err(|error| {
+                    MetadataError::new("inspect destination permissions", destination, error)
+                })?;
+                &fresh_meta
+            };
+            let mut destination_permissions = current_meta.permissions().mode();
+
+            if entry.permissions() & 0o111 == 0 {
+                destination_permissions &= !0o111;
+            } else if destination_permissions & 0o111 == 0 {
+                destination_permissions |= (destination_permissions & 0o444) >> 2;
+            }
+
+            if destination_permissions != current_meta.permissions().mode() {
+                // upstream: syscall.c:do_chmod_at() symlink-race-safe variant.
+                // Helper follows symlinked parents under `--keep-dirlinks` to
+                // mirror upstream `generator.c:1344`.
+                chmod_path_honoring_keep_dirlinks(
+                    destination,
+                    destination_permissions,
+                    options,
+                    "preserve permissions",
+                )?;
+            }
         }
     }
 
