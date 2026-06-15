@@ -39,6 +39,18 @@ pub(crate) fn add_connection_and_logging_options(command: ClapCommand) -> ClapCo
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
+            Arg::new("tcp-fastopen")
+                .long("tcp-fastopen")
+                .value_name("MODE")
+                .help(
+                    "Enable TCP Fast Open on daemon and client sockets (auto, on, off). \
+                     Default is auto: enabled where supported, skipped elsewhere.",
+                )
+                .num_args(1)
+                .action(ArgAction::Set)
+                .value_parser(OsStringValueParser::new()),
+        )
+        .arg(
             Arg::new("blocking-io")
                 .long("blocking-io")
                 .help("Force the remote shell to use blocking I/O.")

@@ -10,6 +10,7 @@ mod compression;
 mod delete;
 mod files_from;
 mod human_readable;
+mod tcp_fastopen;
 mod timeout;
 
 pub use address::AddressMode;
@@ -18,4 +19,5 @@ pub use compression::CompressionSetting;
 pub use delete::DeleteMode;
 pub use files_from::FilesFromSource;
 pub use human_readable::{HumanReadableMode, HumanReadableModeParseError};
+pub use tcp_fastopen::{ParseTcpFastOpenModeError, TcpFastOpenMode};
 pub use timeout::TransferTimeout;

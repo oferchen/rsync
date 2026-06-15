@@ -3,7 +3,9 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-use core::client::{AddressMode, DeleteMode, HumanReadableMode, StrongChecksumChoice};
+use core::client::{
+    AddressMode, DeleteMode, HumanReadableMode, StrongChecksumChoice, TcpFastOpenMode,
+};
 
 use super::bandwidth::BandwidthArgument;
 use super::program_name::ProgramName;
@@ -81,6 +83,13 @@ pub struct ParsedArgs {
 
     /// `--sockopts` - comma-separated socket option settings.
     pub sockopts: Option<OsString>,
+
+    /// `--tcp-fastopen` - TCP Fast Open mode selection (auto/on/off).
+    ///
+    /// Wire-compatible with upstream rsync: the option only affects the
+    /// initial TCP SYN exchange. Defaults to `auto` which enables TFO
+    /// opportunistically on supported platforms.
+    pub tcp_fastopen: TcpFastOpenMode,
 
     /// `--blocking-io` / `--no-blocking-io` - blocking I/O for remote shell.
     pub blocking_io: Option<bool>,

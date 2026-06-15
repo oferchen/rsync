@@ -30,6 +30,7 @@ mod listing;
 mod parsing;
 mod request;
 mod socket_options;
+pub(crate) mod tcp_perf;
 mod types;
 
 pub use listing::{

@@ -2,8 +2,8 @@ use std::ffi::OsString;
 use std::io::Write;
 
 use core::client::{
-    AddressMode, BindAddress, ModuleListOptions, ModuleListRequest, TransferTimeout,
-    run_module_list_with_password_and_options,
+    AddressMode, BindAddress, ModuleListOptions, ModuleListRequest, TcpFastOpenMode,
+    TransferTimeout, run_module_list_with_password_and_options,
 };
 use logging_sink::MessageSink;
 use protocol::ProtocolVersion;
@@ -24,6 +24,7 @@ pub(super) struct ModuleListingInputs<'a> {
     pub timeout_setting: TransferTimeout,
     pub connect_timeout_setting: TransferTimeout,
     pub sockopts: Option<&'a OsString>,
+    pub tcp_fastopen: TcpFastOpenMode,
     pub blocking_io: Option<bool>,
 }
 
@@ -52,6 +53,7 @@ where
         timeout_setting,
         connect_timeout_setting,
         sockopts,
+        tcp_fastopen,
         blocking_io,
     } = inputs;
 
@@ -83,6 +85,7 @@ where
         .with_bind_address(bind_address.map(|addr| addr.socket()))
         .with_connect_program(connect_program.cloned())
         .with_sockopts(sockopts.cloned())
+        .with_tcp_fastopen(tcp_fastopen)
         .with_blocking_io(blocking_io);
 
     match run_module_list_with_password_and_options(

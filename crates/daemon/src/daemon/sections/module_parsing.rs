@@ -489,6 +489,12 @@ fn parse_max_connections(value: &OsString) -> Result<NonZeroUsize, DaemonError> 
         .ok_or_else(|| config_error("--max-connections must be greater than zero".to_owned()))
 }
 
+fn parse_tcp_fastopen_mode(value: &OsString, _brand: Brand) -> Result<TcpFastOpenMode, DaemonError> {
+    let text = value.to_string_lossy();
+    text.parse::<TcpFastOpenMode>()
+        .map_err(|error| config_error(error.to_string()))
+}
+
 fn parse_module_definition(
     value: &OsString,
     default_secrets: Option<&Path>,

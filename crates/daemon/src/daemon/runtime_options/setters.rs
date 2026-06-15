@@ -17,6 +17,10 @@ impl RuntimeOptions {
         Ok(())
     }
 
+    fn set_tcp_fastopen(&mut self, mode: TcpFastOpenMode) {
+        self.tcp_fastopen = mode;
+    }
+
     fn set_bandwidth_limit(
         &mut self,
         limit: Option<NonZeroU64>,

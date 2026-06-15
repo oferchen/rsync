@@ -325,7 +325,11 @@ pub use secure_dir::secure_open_dir;
 // See WIN-S.LAND.1.a audit (#5552) confirming zero external callers.
 #[cfg(unix)]
 pub use sendfile::send_file_to_fd_with_policy;
-pub use socket_options::set_socket_int_option;
+pub use socket_options::{
+    DEFAULT_TCP_FASTOPEN_QLEN, DEFAULT_TCP_NOTSENT_LOWAT, enable_tcp_fastopen_listener,
+    enable_tcp_fastopen_raw, set_listener_int_option, set_socket_int_option, set_tcp_notsent_lowat,
+    tcp_fastopen_listener_supported, tcp_notsent_lowat_supported,
+};
 #[cfg(target_os = "linux")]
 pub use splice::DEFAULT_PIPE_CAPACITY;
 pub use splice::{

@@ -210,6 +210,32 @@ mod runtime_options_tests {
     }
 
     #[test]
+    fn tcp_fastopen_defaults_to_auto() {
+        let options = RuntimeOptions::parse(&[]).expect("parse");
+        assert_eq!(options.tcp_fastopen(), TcpFastOpenMode::Auto);
+    }
+
+    #[test]
+    fn parse_tcp_fastopen_on() {
+        let args = vec![OsString::from("--tcp-fastopen"), OsString::from("on")];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert_eq!(options.tcp_fastopen(), TcpFastOpenMode::On);
+    }
+
+    #[test]
+    fn parse_tcp_fastopen_off() {
+        let args = vec![OsString::from("--tcp-fastopen=off")];
+        let options = RuntimeOptions::parse(&args).expect("parse");
+        assert_eq!(options.tcp_fastopen(), TcpFastOpenMode::Off);
+    }
+
+    #[test]
+    fn parse_tcp_fastopen_rejects_unknown_value() {
+        let args = vec![OsString::from("--tcp-fastopen=maybe")];
+        assert!(RuntimeOptions::parse(&args).is_err());
+    }
+
+    #[test]
     fn parse_bwlimit_option() {
         let args = vec![OsString::from("--bwlimit"), OsString::from("1000")];
         let options = RuntimeOptions::parse(&args).expect("parse");

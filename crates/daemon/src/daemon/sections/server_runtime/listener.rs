@@ -123,7 +123,11 @@ const UPSTREAM_IPPROTO_TCP: i32 = 6;
 /// `--debug=BIND` producer (`protocol::bind::trace`), mirroring upstream
 /// `socket.c:432-470` per-address-family accumulation. The errors are
 /// propagated to the caller unchanged.
-fn bind_with_backlog(addr: SocketAddr, backlog: i32) -> io::Result<TcpListener> {
+fn bind_with_backlog(
+    addr: SocketAddr,
+    backlog: i32,
+    tcp_fastopen: TcpFastOpenMode,
+) -> io::Result<TcpListener> {
     let domain = if addr.is_ipv4() {
         socket2::Domain::IPV4
     } else {
@@ -153,6 +157,31 @@ fn bind_with_backlog(addr: SocketAddr, backlog: i32) -> io::Result<TcpListener> 
     socket
         .bind(&addr.into())
         .inspect_err(|err| protocol::bind::trace_bind_failure(family, err))?;
+
+    // Apply TCP Fast Open server side before `listen(2)` so the kernel
+    // installs the SYN cookie cache from the start of the listener
+    // lifetime. Errors are downgraded to a debug log: TFO is an
+    // optimisation, not a correctness requirement, and a failing
+    // setsockopt must not prevent the daemon from accepting connections.
+    if tcp_fastopen.is_enabled() && fast_io::tcp_fastopen_listener_supported() {
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            let _ = fast_io::enable_tcp_fastopen_raw(
+                socket.as_raw_fd(),
+                fast_io::DEFAULT_TCP_FASTOPEN_QLEN,
+            );
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawSocket;
+            let _ = fast_io::enable_tcp_fastopen_raw(
+                socket.as_raw_socket(),
+                fast_io::DEFAULT_TCP_FASTOPEN_QLEN,
+            );
+        }
+    }
+
     socket.listen(backlog)?;
 
     Ok(socket.into())
@@ -162,4 +191,42 @@ fn bind_with_backlog(addr: SocketAddr, backlog: i32) -> io::Result<TcpListener> 
 fn configure_stream(stream: &DaemonStream) -> io::Result<()> {
     stream.set_read_timeout(Some(SOCKET_TIMEOUT))?;
     stream.set_write_timeout(Some(SOCKET_TIMEOUT))
+}
+
+/// One-shot guard so the `--tcp-fastopen=on` unsupported-platform warning
+/// fires at most once per daemon process.
+static TCP_FASTOPEN_UNSUPPORTED_WARNED: std::sync::Once = std::sync::Once::new();
+
+/// Emits a single startup warning when `--tcp-fastopen=on` is requested on
+/// a platform that does not implement server-side TFO.
+fn warn_tcp_fastopen_unsupported(log: Option<&SharedLogSink>) {
+    let mut should_emit = false;
+    TCP_FASTOPEN_UNSUPPORTED_WARNED.call_once(|| {
+        should_emit = true;
+    });
+
+    if !should_emit {
+        return;
+    }
+
+    let payload = format!(
+        "--tcp-fastopen=on requested but TCP Fast Open is not supported on \
+         this platform ({}); the daemon will accept connections without TFO",
+        std::env::consts::OS
+    );
+    let message = rsync_warning!(payload).with_role(Role::Daemon);
+
+    if let Some(sink) = log {
+        log_message(sink, &message);
+    } else {
+        eprintln!("{message}");
+    }
+}
+
+/// Applies the `TCP_NOTSENT_LOWAT` perf option to an accepted client
+/// stream, ignoring unsupported platforms and best-effort errors.
+fn apply_accepted_stream_tcp_notsent_lowat(stream: &TcpStream) {
+    if fast_io::tcp_notsent_lowat_supported() {
+        let _ = fast_io::set_tcp_notsent_lowat(stream, fast_io::DEFAULT_TCP_NOTSENT_LOWAT);
+    }
 }

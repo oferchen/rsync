@@ -9,7 +9,7 @@ use std::net::SocketAddr;
 
 use protocol::ProtocolVersion;
 
-use super::super::{AddressMode, ClientError};
+use super::super::{AddressMode, ClientError, TcpFastOpenMode};
 use super::parsing::{parse_host_port, split_daemon_host_module, strip_prefix_ignore_ascii_case};
 use super::types::DaemonAddress;
 
@@ -133,6 +133,7 @@ pub struct ModuleListOptions {
     connect_program: Option<OsString>,
     bind_address: Option<SocketAddr>,
     sockopts: Option<OsString>,
+    tcp_fastopen: TcpFastOpenMode,
     blocking_io: Option<bool>,
 }
 
@@ -146,6 +147,7 @@ impl ModuleListOptions {
             connect_program: None,
             bind_address: None,
             sockopts: None,
+            tcp_fastopen: TcpFastOpenMode::Auto,
             blocking_io: None,
         }
     }
@@ -202,6 +204,20 @@ impl ModuleListOptions {
     /// Returns the configured socket options, if any.
     pub fn sockopts(&self) -> Option<&OsStr> {
         self.sockopts.as_deref()
+    }
+
+    /// Configures the TCP Fast Open mode applied to the daemon socket.
+    #[must_use]
+    #[doc(alias = "--tcp-fastopen")]
+    pub const fn with_tcp_fastopen(mut self, mode: TcpFastOpenMode) -> Self {
+        self.tcp_fastopen = mode;
+        self
+    }
+
+    /// Returns the configured TCP Fast Open mode.
+    #[must_use]
+    pub const fn tcp_fastopen(&self) -> TcpFastOpenMode {
+        self.tcp_fastopen
     }
 
     /// Configures the desired blocking I/O mode for daemon TCP sockets.

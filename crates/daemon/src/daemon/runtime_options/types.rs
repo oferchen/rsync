@@ -65,6 +65,12 @@ pub(crate) struct RuntimeOptions {
     /// `SO_SNDBUF=65536`) applied to the daemon listener socket.
     socket_options: Option<String>,
     socket_options_from_config: bool,
+    /// TCP Fast Open mode applied to the daemon listener and accepted
+    /// client sockets. Defaults to [`TcpFastOpenMode::Auto`] which enables
+    /// TFO on platforms that support it and silently skips elsewhere.
+    /// Wire-compatible with upstream rsync: this option is an oc-rsync
+    /// perf improvement that touches only kernel socket behaviour.
+    tcp_fastopen: TcpFastOpenMode,
     /// Whether incoming connections require a PROXY protocol header.
     ///
     /// upstream: daemon-parm.h - `proxy_protocol` BOOL, P_GLOBAL, default False.
@@ -123,6 +129,7 @@ impl Default for RuntimeOptions {
             rsync_port: None,
             socket_options: None,
             socket_options_from_config: false,
+            tcp_fastopen: TcpFastOpenMode::Auto,
             proxy_protocol: false,
             daemon_chroot: None,
             detach: cfg!(unix),

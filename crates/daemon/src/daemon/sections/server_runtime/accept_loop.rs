@@ -36,6 +36,7 @@ fn serve_connections(
     let detach = options.detach();
     let listen_backlog = options.listen_backlog();
     let socket_options_str = options.socket_options().map(str::to_string);
+    let tcp_fastopen_mode = options.tcp_fastopen();
     let RuntimeOptions {
         bind_address,
         port,
@@ -165,7 +166,7 @@ fn serve_connections(
 
         for addr in &bind_addresses {
             let requested_addr = SocketAddr::new(*addr, port);
-            match bind_with_backlog(requested_addr, backlog) {
+            match bind_with_backlog(requested_addr, backlog, tcp_fastopen_mode) {
                 Ok(listener) => {
                     let local_addr = listener.local_addr().unwrap_or(requested_addr);
                     bound_addresses.push(local_addr);
@@ -199,6 +200,14 @@ fn serve_connections(
     // compromised worker cannot rebind another privileged port. No-op on
     // non-Linux targets and on builds that never held the capability.
     drop_cap_net_bind_service(log_sink.as_ref());
+
+    // Surface a one-shot warning when the operator asked for TFO
+    // unconditionally (`--tcp-fastopen=on`) but the running platform does
+    // not implement server-side TFO. `auto` mode stays silent because
+    // unsupported platforms are part of the expected fallback path.
+    if tcp_fastopen_mode.is_strict() && !fast_io::tcp_fastopen_listener_supported() {
+        warn_tcp_fastopen_unsupported(log_sink.as_ref());
+    }
 
     // upstream: socket.c:set_socket_options() - apply socket options to each
     // listener socket before accepting connections, and to each accepted
