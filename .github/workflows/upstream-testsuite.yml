@@ -78,7 +78,7 @@ jobs:
         with:
           path: |
             target/interop/upstream-src/rsync-${{ env.UPSTREAM_RSYNC_VERSION }}
-          key: upstream-testsuite-src-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ runner.os }}
+          key: upstream-testsuite-src-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ hashFiles('tools/ci/run_upstream_testsuite.sh') }}-${{ runner.os }}
 
       - name: Build oc-rsync (release)
         run: cargo build --locked --release --bin oc-rsync
