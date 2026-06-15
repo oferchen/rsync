@@ -182,6 +182,12 @@ pub mod mmap_reader;
 /// `OC_RSYNC_WIN_CHUNK_BYTES` tuning override.
 #[cfg(windows)]
 pub mod windows_chunked_reader;
+/// Non-Windows stub aliasing `WindowsChunkedReader` to [`std::fs::File`] so
+/// cross-platform callers can name the type without `#[cfg(windows)]`
+/// plumbing. Mirrors the `iocp_stub` / `io_uring_stub` pattern.
+#[cfg(not(windows))]
+#[path = "windows_chunked_reader_stub.rs"]
+pub mod windows_chunked_reader;
 
 /// io_uring-based async file and socket I/O for Linux 5.6+.
 ///
