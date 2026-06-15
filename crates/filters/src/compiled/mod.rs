@@ -43,6 +43,7 @@ impl CompiledRule {
             negate,
             exclude_only: _,
             no_inherit: _,
+            cvs_mode: _,
         } = rule;
         debug_assert!(
             !xattr_only,

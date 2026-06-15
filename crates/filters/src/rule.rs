@@ -67,6 +67,14 @@ pub struct FilterRule {
     pub(crate) exclude_only: bool,
     /// `n` modifier: on merge rules, do not inherit parent-directory rules.
     pub(crate) no_inherit: bool,
+    /// `C` modifier on merge / dir-merge rules: parse the merged file as
+    /// CVS-style ignores (whitespace-split, no comments, no prefixes,
+    /// no inheritance).
+    ///
+    /// upstream: exclude.c add_rule() ':C' modifier — CVS-ignore semantics
+    /// (sets `FILTRULE_NO_PREFIXES | FILTRULE_WORD_SPLIT | FILTRULE_NO_INHERIT
+    /// | FILTRULE_CVS_IGNORE`).
+    pub(crate) cvs_mode: bool,
 }
 
 impl FilterRule {
@@ -97,6 +105,7 @@ impl FilterRule {
             negate: false,
             exclude_only: false,
             no_inherit: false,
+            cvs_mode: false,
         }
     }
 
@@ -127,6 +136,7 @@ impl FilterRule {
             negate: false,
             exclude_only: false,
             no_inherit: false,
+            cvs_mode: false,
         }
     }
 
@@ -157,6 +167,7 @@ impl FilterRule {
             negate: false,
             exclude_only: false,
             no_inherit: false,
+            cvs_mode: false,
         }
     }
 
@@ -177,6 +188,7 @@ impl FilterRule {
             negate: false,
             exclude_only: false,
             no_inherit: false,
+            cvs_mode: false,
         }
     }
 
@@ -198,6 +210,7 @@ impl FilterRule {
             negate: false,
             exclude_only: false,
             no_inherit: false,
+            cvs_mode: false,
         }
     }
 
@@ -222,6 +235,7 @@ impl FilterRule {
             negate: false,
             exclude_only: false,
             no_inherit: false,
+            cvs_mode: false,
         }
     }
 
@@ -246,6 +260,7 @@ impl FilterRule {
             negate: false,
             exclude_only: false,
             no_inherit: false,
+            cvs_mode: false,
         }
     }
 
@@ -274,6 +289,7 @@ impl FilterRule {
             negate: false,
             exclude_only: false,
             no_inherit: false,
+            cvs_mode: false,
         }
     }
 
@@ -302,6 +318,7 @@ impl FilterRule {
             negate: false,
             exclude_only: false,
             no_inherit: false,
+            cvs_mode: false,
         }
     }
 
@@ -428,6 +445,27 @@ impl FilterRule {
     #[must_use]
     pub const fn with_no_inherit(mut self, no_inherit: bool) -> Self {
         self.no_inherit = no_inherit;
+        self
+    }
+
+    /// Returns whether the rule carries the `C` (CVS-ignore) modifier.
+    ///
+    /// On merge / dir-merge rules, this signals that the referenced file
+    /// must be parsed as CVS-style ignores (whitespace-split, no prefixes,
+    /// no inheritance).
+    ///
+    /// upstream: exclude.c add_rule() ':C' modifier — CVS-ignore semantics
+    #[must_use]
+    pub const fn is_cvs_mode(&self) -> bool {
+        self.cvs_mode
+    }
+
+    /// Sets the `C` (CVS-ignore) modifier on this rule.
+    ///
+    /// upstream: exclude.c add_rule() ':C' modifier — CVS-ignore semantics
+    #[must_use]
+    pub const fn with_cvs_mode(mut self, cvs_mode: bool) -> Self {
+        self.cvs_mode = cvs_mode;
         self
     }
 
