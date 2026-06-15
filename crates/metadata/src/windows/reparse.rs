@@ -1103,7 +1103,11 @@ mod integration_tests {
     }
 
     fn open_reparse(path: &Path) -> io::Result<OwnedHandle> {
-        let wide: Vec<u16> = path
+        // Route through `to_extended_path` so the integration test exercises
+        // the same long-path-safe wire format as the production helper at
+        // `open_reparse_handle()`. Without the prefix, deeply nested fixtures
+        // would trip the 260-character `MAX_PATH` cap.
+        let wide: Vec<u16> = to_extended_path(path)
             .as_os_str()
             .encode_wide()
             .chain(std::iter::once(0))
