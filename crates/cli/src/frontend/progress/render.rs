@@ -3,10 +3,9 @@ use std::io::{self, Write};
 use core::client::{ClientEvent, ClientEventKind, ClientSummary, HumanReadableMode};
 
 use super::format::{
-    compute_rate, describe_event_kind, event_matches_name_level, format_list_permissions,
-    format_list_size, format_list_timestamp, format_progress_bytes, format_progress_elapsed,
-    format_progress_percent, format_progress_rate, format_size, format_stat_categories,
-    format_summary_rate, format_verbose_rate, is_progress_event, list_only_event,
+    event_matches_name_level, format_list_permissions, format_list_size, format_list_timestamp,
+    format_progress_bytes, format_progress_elapsed, format_progress_percent, format_progress_rate,
+    format_size, format_stat_categories, format_summary_rate, is_progress_event, list_only_event,
 };
 use super::mode::{NameOutputLevel, ProgressMode};
 use crate::{OutFormat, OutFormatContext, emit_out_format};
@@ -487,39 +486,12 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
             rendered.push_str(&target.to_string_lossy());
         }
 
-        if verbosity == 1 {
-            writeln!(stdout, "{rendered}")?;
-            continue;
-        }
-
-        let descriptor = describe_event_kind(kind);
-        let bytes = event.bytes_transferred();
-        if bytes > 0 {
-            let size_text = format_size(bytes, human_readable);
-            if let Some(rate) = compute_rate(bytes, event.elapsed()) {
-                let rate_display = format_verbose_rate(rate, human_readable);
-                if let Some((secondary_value, secondary_unit)) = rate_display.secondary {
-                    writeln!(
-                        stdout,
-                        "{descriptor}: {rendered} ({size_text} bytes, {} {} ({} {}))",
-                        rate_display.primary.0,
-                        rate_display.primary.1,
-                        secondary_value,
-                        secondary_unit
-                    )?;
-                } else {
-                    writeln!(
-                        stdout,
-                        "{descriptor}: {rendered} ({size_text} bytes, {} {})",
-                        rate_display.primary.0, rate_display.primary.1
-                    )?;
-                }
-            } else {
-                writeln!(stdout, "{descriptor}: {rendered} ({size_text} bytes)")?;
-            }
-        } else {
-            writeln!(stdout, "{descriptor}: {rendered}")?;
-        }
+        // upstream: log.c:log_formatted() emits the default `%n%L` per-file
+        // line at every verbosity tier (set in options.c:2372). The rendered
+        // string already includes the `-> target` suffix for symlinks; higher
+        // tiers only add ancillary log messages, never a per-file descriptor
+        // prefix or byte-count wrapper.
+        writeln!(stdout, "{rendered}")?;
     }
     Ok(())
 }

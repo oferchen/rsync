@@ -688,7 +688,14 @@ fn parity_verbose_directory_names_end_with_slash() {
 }
 
 #[test]
-fn parity_verbose_v2_includes_descriptor_and_bytes() {
+fn parity_verbose_v2_emits_bare_name_per_upstream() {
+    // upstream: log.c:log_formatted() at NAME>=1 emits the default
+    // `%n%L` format set by options.c:2372 - bare name plus optional
+    // ` -> target` for symlinks or ` => hardlink` for hardlinks. Higher
+    // verbosity adds ancillary log frames, never a per-file descriptor
+    // prefix or byte-count wrapper. The upstream testsuite
+    // `duplicates.test` greps for `^<name>$` and `^<name> -> ` to detect
+    // duplicate copies, so any prefix breaks interop.
     let (summary, _temp) = create_known_summary(&[("vv.txt", b"double verbose content")]);
 
     let mut rendered = Vec::new();
@@ -711,18 +718,16 @@ fn parity_verbose_v2_includes_descriptor_and_bytes() {
     .expect("render");
     let output = String::from_utf8(rendered).expect("utf8");
 
-    // At verbosity 2, upstream rsync includes descriptors like "copied:" before filenames
-    // and byte counts for data transfers
-    let has_descriptor_line = output.lines().any(|line| {
-        line.contains("copied:")
-            || line.contains("directory:")
-            || line.contains("symlink:")
-            || line.contains("hard link:")
-    });
     assert!(
-        has_descriptor_line,
-        "verbosity 2 should include descriptor labels (e.g. 'copied:'):\n{output}"
+        output.lines().any(|line| line == "vv.txt"),
+        "verbosity 2 must emit bare `<name>` per upstream `%n%L`:\n{output}"
     );
+    for forbidden in ["copied:", "directory:", "symlink:", "hard link:"] {
+        assert!(
+            !output.contains(forbidden),
+            "verbosity 2 must not emit `{forbidden}` descriptor prefix:\n{output}"
+        );
+    }
 }
 
 #[test]
