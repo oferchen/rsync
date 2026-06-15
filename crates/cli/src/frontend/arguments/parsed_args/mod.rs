@@ -479,7 +479,10 @@ pub struct ParsedArgs {
     /// Orthogonal to `--cow` which controls FS-level reflink cloning.
     pub zero_copy_policy: fast_io::ZeroCopyPolicy,
 
-    /// `--cow` / `--no-cow` - copy-on-write reflink policy for whole-file copies.
+    /// `--cow` / `--no-cow` / `--reflink=<MODE>` - copy-on-write reflink
+    /// policy for whole-file copies. The binary `--cow`/`--no-cow` flags
+    /// map onto `Auto`/`Disabled`; the tri-state `--reflink=<MODE>` adds
+    /// the `Required` variant via `--reflink=always`.
     pub cow_policy: fast_io::CowPolicy,
 
     /// `--simd=<level>` - runtime override for SIMD checksum dispatch.
