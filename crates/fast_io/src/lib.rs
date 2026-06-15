@@ -141,6 +141,9 @@ pub mod copy_file_range;
 pub mod o_tmpfile;
 /// Platform-abstracted file copy trait with automatic optimization selection.
 pub mod platform_copy;
+/// Cross-platform abstraction seam for zero-copy file-to-socket transfer
+/// (`sendfile(2)` / `TransmitFile()`).
+pub mod platform_sendfile;
 /// ReFS filesystem detection for Windows reflink support.
 pub mod refs_detect;
 /// Zero-copy file-to-socket transfer using `sendfile` with automatic fallback.
@@ -279,6 +282,10 @@ pub use platform_copy::{
     CopyMethod, CopyResult, DefaultPlatformCopy, NoCowPlatformCopy, NoZeroCopyPlatformCopy,
     PlatformCopy, try_clonefile, try_fcopyfile, try_ficlone, try_refs_reflink,
     try_refs_reflink_range,
+};
+pub use platform_sendfile::{
+    LinuxSendFile, MacOsSendFile, PlatformSendFile, SocketHandle, UnsupportedSendFile,
+    WindowsTransmitFile, platform_default,
 };
 pub use traits::{FileReader, FileWriter};
 
