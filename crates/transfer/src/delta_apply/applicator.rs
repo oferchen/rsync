@@ -34,6 +34,34 @@ enum SameFsCache {
     DifferentFs,
 }
 
+/// Per-applicator gate for the REFLINK-4 `FICLONERANGE` partial-clone path.
+///
+/// The first eligible COPY token attempts a clone; subsequent calls only
+/// retry while the filesystem is still believed to support reflinks. Once a
+/// clone returns `Ok(false)` we mark the path `Declined` and stop issuing
+/// further ioctls so the receiver does not pay one ENOTSUP per COPY token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReflinkRangeCache {
+    /// No FICLONERANGE attempt has been made yet.
+    Unresolved,
+    /// At least one clone succeeded - keep trying eligible ranges.
+    Supported,
+    /// First attempt returned `Ok(false)` (filesystem rejected the clone,
+    /// alignment mismatch, or non-Linux platform). Skip further attempts.
+    Declined,
+}
+
+/// Minimum filesystem block size assumed for `FICLONERANGE` alignment checks.
+///
+/// Btrfs, XFS, and bcachefs all use a 4 KiB block size in default
+/// configurations. Configurations with larger blocks (16 KiB / 64 KiB) will
+/// still attempt the clone; on alignment mismatch the kernel returns
+/// `EINVAL`, the wrapper translates to `Ok(false)`, and the cache marks the
+/// path `Declined` for the rest of the file. The 4 KiB floor is the
+/// conservative cut-off: any range aligned to a smaller boundary cannot
+/// satisfy any real-world CoW filesystem.
+const REFLINK_BLOCK_ALIGNMENT: u64 = 4096;
+
 /// Basis-file mapping strategy: adaptive (mmap above 1 MiB) on Unix,
 /// buffered sliding window elsewhere.
 #[cfg(unix)]
@@ -149,6 +177,11 @@ pub struct DeltaApplicator<'a> {
     /// Cached same-filesystem decision for the IUD-10 `copy_file_range`
     /// fast path. Resolved on first eligible COPY token, then reused.
     same_fs: SameFsCache,
+    /// Cached gate for the REFLINK-4 `FICLONERANGE` partial-clone fast path.
+    /// Marks the filesystem as `Declined` after the first `Ok(false)` so the
+    /// receiver does not pay one `ENOTSUP` ioctl per COPY token on
+    /// non-reflink filesystems.
+    reflink_range: ReflinkRangeCache,
     stats: DeltaApplyResult,
 }
 
@@ -207,6 +240,7 @@ impl<'a> DeltaApplicator<'a> {
             basis_map,
             token_buffer: TokenBuffer::with_default_capacity(),
             same_fs: SameFsCache::Unresolved,
+            reflink_range: ReflinkRangeCache::Unresolved,
             stats: DeltaApplyResult::default(),
         })
     }
@@ -331,6 +365,28 @@ impl<'a> DeltaApplicator<'a> {
         ) {
             if let Some(basis_file) = basis_map.buffered_basis_file() {
                 let dest_off = self.stats.bytes_written;
+
+                // REFLINK-4: try FICLONERANGE first when the basis and
+                // destination ranges are block-aligned and large enough to
+                // amortize the ioctl. Success is metadata-only - no bytes
+                // traverse userspace or the kernel page cache. Failure
+                // (`Ok(false)`) falls through to `copy_file_range(2)`.
+                if Self::try_clone_basis_range(
+                    basis_file,
+                    offset,
+                    &self.output,
+                    dest_off,
+                    bytes_to_copy,
+                    &mut self.reflink_range,
+                )? {
+                    self.output
+                        .seek(SeekFrom::Start(dest_off + bytes_to_copy as u64))?;
+                    self.stats.bytes_written += bytes_to_copy as u64;
+                    self.stats.matched_bytes += bytes_to_copy as u64;
+                    self.stats.block_tokens += 1;
+                    return Ok(());
+                }
+
                 let dispatched = Self::try_copy_basis_range(
                     basis_file,
                     offset,
@@ -414,6 +470,56 @@ impl<'a> DeltaApplicator<'a> {
             return Ok(0);
         }
         fast_io::copy_basis_range(basis_file, basis_off, dest_file, dest_off, bytes_to_copy)
+    }
+
+    /// Attempts a `FICLONERANGE` partial reflink for a COPY token.
+    ///
+    /// Returns `Ok(true)` when the kernel cloned the full range (metadata-only,
+    /// zero data transferred), `Ok(false)` when the platform, filesystem,
+    /// alignment, or per-applicator gate disqualifies the call. The
+    /// destination is untouched on `Ok(false)` and the caller falls through to
+    /// `copy_file_range(2)`.
+    ///
+    /// The gating rules are conservative:
+    ///
+    /// - The cache must not be in the `Declined` state. After one negative
+    ///   result we assume the filesystem does not support reflinks and stop
+    ///   retrying.
+    /// - The COPY range must be at least [`fast_io::CLONE_FILE_RANGE_MIN_BYTES`]
+    ///   so the metadata-transaction cost is amortized.
+    /// - Both file offsets and the length must be multiples of
+    ///   [`REFLINK_BLOCK_ALIGNMENT`]. `FICLONERANGE` rejects unaligned
+    ///   requests with `EINVAL`; checking up-front avoids burning one ioctl
+    ///   per misaligned token.
+    fn try_clone_basis_range(
+        basis_file: &File,
+        basis_off: u64,
+        dest_file: &File,
+        dest_off: u64,
+        bytes_to_copy: usize,
+        cache: &mut ReflinkRangeCache,
+    ) -> io::Result<bool> {
+        if *cache == ReflinkRangeCache::Declined {
+            return Ok(false);
+        }
+        let len = bytes_to_copy as u64;
+        if len < fast_io::CLONE_FILE_RANGE_MIN_BYTES {
+            return Ok(false);
+        }
+        if basis_off % REFLINK_BLOCK_ALIGNMENT != 0
+            || dest_off % REFLINK_BLOCK_ALIGNMENT != 0
+            || len % REFLINK_BLOCK_ALIGNMENT != 0
+        {
+            return Ok(false);
+        }
+        let cloned =
+            fast_io::try_clone_file_range(basis_file, basis_off, dest_file, dest_off, len)?;
+        *cache = if cloned {
+            ReflinkRangeCache::Supported
+        } else {
+            ReflinkRangeCache::Declined
+        };
+        Ok(cloned)
     }
 
     /// Computes the same-filesystem decision once per file.
@@ -746,5 +852,93 @@ mod tests {
             DeltaApplicator::resolve_same_fs(&a, &b),
             SameFsCache::SameFs,
         );
+    }
+
+    /// REFLINK-4: range below `CLONE_FILE_RANGE_MIN_BYTES` declines without
+    /// touching the filesystem so tail blocks do not burn an ioctl.
+    #[test]
+    fn try_clone_basis_range_declines_below_threshold() {
+        let dir = tempdir().expect("tempdir");
+        let basis = File::create(dir.path().join("basis")).expect("basis");
+        let dest = File::create(dir.path().join("dest")).expect("dest");
+        let mut cache = ReflinkRangeCache::Unresolved;
+        let result = DeltaApplicator::try_clone_basis_range(
+            &basis,
+            0,
+            &dest,
+            0,
+            (fast_io::CLONE_FILE_RANGE_MIN_BYTES - 1) as usize,
+            &mut cache,
+        )
+        .expect("declines silently");
+        assert!(!result);
+        // Predicate must NOT poison the cache when it declines purely on
+        // size grounds - a subsequent large eligible token should still try.
+        assert_eq!(cache, ReflinkRangeCache::Unresolved);
+    }
+
+    /// REFLINK-4: misaligned basis offset declines without an ioctl.
+    /// `FICLONERANGE` rejects unaligned ranges with EINVAL; the predicate
+    /// front-runs that check.
+    #[test]
+    fn try_clone_basis_range_declines_on_unaligned_basis_offset() {
+        let dir = tempdir().expect("tempdir");
+        let basis = File::create(dir.path().join("basis")).expect("basis");
+        let dest = File::create(dir.path().join("dest")).expect("dest");
+        let mut cache = ReflinkRangeCache::Unresolved;
+        let result = DeltaApplicator::try_clone_basis_range(
+            &basis,
+            1,
+            &dest,
+            0,
+            REFLINK_BLOCK_ALIGNMENT as usize * 8,
+            &mut cache,
+        )
+        .expect("declines silently");
+        assert!(!result);
+        assert_eq!(cache, ReflinkRangeCache::Unresolved);
+    }
+
+    /// REFLINK-4: misaligned destination offset declines without an ioctl.
+    #[test]
+    fn try_clone_basis_range_declines_on_unaligned_dest_offset() {
+        let dir = tempdir().expect("tempdir");
+        let basis = File::create(dir.path().join("basis")).expect("basis");
+        let dest = File::create(dir.path().join("dest")).expect("dest");
+        let mut cache = ReflinkRangeCache::Unresolved;
+        let result = DeltaApplicator::try_clone_basis_range(
+            &basis,
+            0,
+            &dest,
+            1024,
+            REFLINK_BLOCK_ALIGNMENT as usize * 8,
+            &mut cache,
+        )
+        .expect("declines silently");
+        assert!(!result);
+        assert_eq!(cache, ReflinkRangeCache::Unresolved);
+    }
+
+    /// REFLINK-4: once the cache is `Declined` the predicate short-circuits
+    /// even for aligned, large enough ranges. This is the "one ioctl per
+    /// file" invariant that keeps non-reflink filesystems from paying a
+    /// per-token cost.
+    #[test]
+    fn try_clone_basis_range_short_circuits_when_declined() {
+        let dir = tempdir().expect("tempdir");
+        let basis = File::create(dir.path().join("basis")).expect("basis");
+        let dest = File::create(dir.path().join("dest")).expect("dest");
+        let mut cache = ReflinkRangeCache::Declined;
+        let result = DeltaApplicator::try_clone_basis_range(
+            &basis,
+            0,
+            &dest,
+            0,
+            REFLINK_BLOCK_ALIGNMENT as usize * 16,
+            &mut cache,
+        )
+        .expect("declines silently");
+        assert!(!result);
+        assert_eq!(cache, ReflinkRangeCache::Declined);
     }
 }
