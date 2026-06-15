@@ -109,6 +109,13 @@ pub(in crate::local_copy) fn finalize_guard_and_metadata(
             drop(writer_for_metadata.take());
         }
     } else {
+        // Non-unix inplace path: drop the writer before applying metadata so
+        // path-based metadata syscalls (fs::metadata, fs::set_permissions on
+        // Windows) don't compete with the held exclusive write handle. The
+        // unix path threads the open fd through `with_fd()` so it must stay
+        // open across apply_metadata_and_finalize.
+        #[cfg(not(unix))]
+        drop(writer_for_metadata.take());
         #[allow(unused_mut)] // REASON: mutated on unix for with_fd()
         let mut params = FinalizeMetadataParams::new(
             metadata,
