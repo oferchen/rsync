@@ -40,20 +40,51 @@ fn cached_umask() -> u32 {
     })
 }
 
+/// Returns the default permission bits a child of `destination`'s parent
+/// directory should inherit.
+///
+/// When the parent has a POSIX default ACL, its `user_obj`/`group_obj`/`other`
+/// bits override the umask-derived default (`ACCESSPERMS & ~orig_umask`).
+/// Mirrors upstream's `default_perms_for_dir(dn)` call at
+/// `generator.c:1339` and `receiver.c:847` so `dest_mode()` folds in the
+/// inherited bits when `!preserve_perms`. Without this, a permissive default
+/// ACL like `u::6,g::6,o:6` on the destination directory would be silently
+/// masked down to the process umask, and the testsuite `acls-default` check
+/// would land a 0600 file under a `rw-rw-rw-` default ACL.
+///
+/// On non-Unix platforms and on Unix targets without POSIX default ACL
+/// support (macOS, etc.) this falls back to the umask-derived default, which
+/// matches upstream's `#ifdef SUPPORT_ACLS` gating.
+#[cfg(unix)]
+fn dflt_perms_for_destination(destination: &Path) -> u32 {
+    let umask_bits = cached_umask();
+    let parent = destination.parent().unwrap_or(Path::new("."));
+    let parent = if parent.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        parent
+    };
+    crate::default_perms_for_dir(parent, umask_bits)
+}
+
 /// Computes the destination file mode matching upstream `rsync.c:dest_mode()`.
 ///
 /// When `-p` (preserve permissions) is not active, upstream rsync still applies
-/// the source mode masked by the umask-derived default permissions. This ensures
-/// that execute bits from the source are preserved (masked by umask) instead of
-/// being lost to `open()`'s default `0o666 & ~umask`.
+/// the source mode masked by the destination directory's default permissions.
+/// `dflt_perms` follows upstream `default_perms_for_dir()`: a POSIX default ACL
+/// on the parent directory overrides the umask, so files inherit the ACL bits
+/// instead of being clamped to `0o666 & ~umask`. Without this, `acls-default`
+/// would write a 0600 file under a `rw-rw-rw-` default ACL.
 ///
 /// For new files: `source_mode & (~0o7777 | dflt_perms)`
 /// For existing files: keeps existing permissions (returns `None`)
 ///
 /// upstream: rsync.c:449-472 `dest_mode()`
-/// upstream: generator.c:2280 `dflt_perms = (ACCESSPERMS & ~orig_umask)`
+/// upstream: generator.c:1339 + receiver.c:847 `dflt_perms = default_perms_for_dir(dn)`
+/// upstream: generator.c:2280 `dflt_perms = (ACCESSPERMS & ~orig_umask)` (initial value)
 #[cfg(unix)]
 fn compute_dest_mode(
+    destination: &Path,
     source_mode: u32,
     is_new: bool,
     existing: Option<&fs::Metadata>,
@@ -63,7 +94,7 @@ fn compute_dest_mode(
     if is_new {
         // upstream: dest_mode() for new files:
         // new_mode = flist_mode & (~CHMOD_BITS | dflt_perms)
-        let dflt_perms = 0o777 & !cached_umask();
+        let dflt_perms = dflt_perms_for_destination(destination);
         let new_mode = source_mode & (!0o7777 | dflt_perms);
         // Skip the chmod if the mode already matches
         if let Some(existing) = existing {
@@ -179,16 +210,18 @@ pub(super) fn apply_permissions_with_chmod(
     }
 
     // upstream: rsync.c:dest_mode() - when no explicit permission option is
-    // active, still apply source-mode-based permissions masked by umask.
-    // Without this, newly created files get `0o666 & ~umask` from open()
-    // instead of `source_mode & (~CHMOD_BITS | dflt_perms)`.
+    // active, still apply source-mode-based permissions masked by the parent
+    // directory's default-ACL bits (falling back to umask).
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let source_mode = metadata.permissions().mode();
-        if let Some(new_mode) =
-            compute_dest_mode(source_mode, options.destination_is_new(), existing)
-        {
+        if let Some(new_mode) = compute_dest_mode(
+            destination,
+            source_mode,
+            options.destination_is_new(),
+            existing,
+        ) {
             // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant.
             chmod_path_honoring_keep_dirlinks(destination, new_mode, options, "apply dest_mode")?;
         }
@@ -267,9 +300,15 @@ pub(super) fn apply_permissions_with_chmod_fd(
     }
 
     // upstream: rsync.c:dest_mode() - when no explicit permission option is
-    // active, still apply source-mode-based permissions masked by umask.
+    // active, still apply source-mode-based permissions masked by the parent
+    // directory's default-ACL bits (falling back to umask).
     let source_mode = metadata.permissions().mode();
-    if let Some(new_mode) = compute_dest_mode(source_mode, options.destination_is_new(), existing) {
+    if let Some(new_mode) = compute_dest_mode(
+        destination,
+        source_mode,
+        options.destination_is_new(),
+        existing,
+    ) {
         if let Some(fd) = fd {
             unix_fs::fchmod(
                 fd,
@@ -351,7 +390,7 @@ fn base_mode_for_permissions(
     let mut destination_permissions = if let Some(existing) = existing {
         (source_mode & !0o7777) | (existing.permissions().mode() & 0o7777)
     } else {
-        let dflt_perms = 0o777 & !cached_umask();
+        let dflt_perms = dflt_perms_for_destination(destination);
         source_mode & (!0o7777 | dflt_perms)
     };
 
@@ -529,7 +568,7 @@ pub(super) fn apply_permissions_from_entry(
                 // existing-file branch (keep destination's perm bits).
                 let source_mode = entry.permissions();
                 if cached_meta.is_none() {
-                    let dflt_perms = 0o777 & !cached_umask();
+                    let dflt_perms = dflt_perms_for_destination(destination);
                     source_mode & (!0o7777 | dflt_perms)
                 } else {
                     (source_mode & !0o7777) | (current_mode & 0o7777)

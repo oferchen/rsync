@@ -1630,3 +1630,68 @@ fn keep_dirlinks_bypass_is_cross_platform_safe() {
         );
     }
 }
+
+/// Regression: when `--no-perms` lands a new file under a directory with a
+/// permissive POSIX default ACL (`u::6,g::6,o:6`), the receiver must honour the
+/// inherited bits instead of clamping to the umask. Mirrors upstream's
+/// `testsuite/acls-default.test` where `RSYNC -rvv` into a default-ACL'd dir
+/// is expected to land `rw-rw-rw-` files. Without folding `default_perms_for_dir`
+/// into `dest_mode()`, the post-rename chmod would write 0o600 on a 0o077 umask
+/// and the test assertion `check_perms ... rw-rw-rw-` would fail.
+///
+/// upstream: rsync.c:449-472 `dest_mode()` + acls.c:1083-1139 `default_perms_for_dir`
+#[cfg(all(unix, feature = "acl", any(target_os = "linux", target_os = "freebsd")))]
+#[test]
+fn dest_mode_inherits_default_acl_bits_under_no_perms() {
+    use exacl::{AclEntry, AclOption, Perm, setfacl};
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let parent = temp.path().join("inherits");
+    fs::create_dir(&parent).expect("create parent");
+
+    // Default ACL `u::6,g::6,o:6` (matches the testsuite scenario at
+    // testsuite/acls-default.test line 55: `da777 u::7,g::7,o:7 rw-rw-rw-`).
+    let default_entries = vec![
+        AclEntry::allow_user("", Perm::READ | Perm::WRITE, None),
+        AclEntry::allow_group("", Perm::READ | Perm::WRITE, None),
+        AclEntry::allow_other(Perm::READ | Perm::WRITE, None),
+    ];
+    if setfacl(&[&parent], &default_entries, Some(AclOption::DEFAULT_ACL)).is_err() {
+        // Filesystem doesn't support POSIX default ACLs (e.g. tmpfs without
+        // `acl` mount option). Upstream's testsuite skips in the same case
+        // via `test_skipped`; mirror that here.
+        return;
+    }
+
+    // Source is mode 0o666 (testsuite line 50: `chmod 666 "$scratchdir/file"`).
+    let source = temp.path().join("source.txt");
+    fs::write(&source, b"file!").expect("write source");
+    fs::set_permissions(&source, PermissionsExt::from_mode(0o666)).expect("source chmod");
+    let source_meta = fs::metadata(&source).expect("source metadata");
+
+    // Simulate the post-rename state: temp open under SEC-1.h created the file
+    // at 0o600 (matching the diagnosed root cause). The receiver then calls
+    // `apply_file_metadata_with_options` with `--no-perms` and
+    // `destination_is_new(true)` - the same path taken from
+    // `disk_commit/process.rs:756`.
+    let dest = parent.join("dest.txt");
+    fs::write(&dest, b"file!").expect("write dest");
+    fs::set_permissions(&dest, PermissionsExt::from_mode(0o600)).expect("dest chmod");
+
+    apply_file_metadata_with_options(
+        &dest,
+        &source_meta,
+        &MetadataOptions::new()
+            .preserve_permissions(false)
+            .preserve_times(false)
+            .with_destination_is_new(true),
+    )
+    .expect("apply metadata");
+
+    let landed = current_mode(&dest) & 0o777;
+    assert_eq!(
+        landed, 0o666,
+        "dest must inherit default-ACL bits (rw-rw-rw-) not collapse to umask: got {landed:o}"
+    );
+}
