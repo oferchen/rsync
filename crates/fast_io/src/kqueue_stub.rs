@@ -162,6 +162,40 @@ pub fn is_kqueue_available() -> bool {
     false
 }
 
+/// Stub `EVFILT_TIMER` sleeper. Constructing one always returns
+/// `io::ErrorKind::Unsupported` so cross-platform callers can probe
+/// availability at runtime without `#[cfg]` branching.
+#[derive(Debug)]
+pub struct TimerSleeper {
+    _private: (),
+}
+
+impl TimerSleeper {
+    /// Always returns `Unsupported` on this platform.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `io::Error` with kind [`io::ErrorKind::Unsupported`].
+    pub fn new() -> io::Result<Self> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "kqueue EVFILT_TIMER is only available on macOS",
+        ))
+    }
+
+    /// Stub - always returns `Unsupported`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `io::Error` with kind [`io::ErrorKind::Unsupported`].
+    pub fn sleep(&self, _duration: Duration) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "kqueue EVFILT_TIMER is only available on macOS",
+        ))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,5 +209,11 @@ mod tests {
     #[test]
     fn availability_is_false() {
         assert!(!is_kqueue_available());
+    }
+
+    #[test]
+    fn timer_sleeper_new_returns_unsupported() {
+        let err = TimerSleeper::new().expect_err("stub never constructs");
+        assert_eq!(err.kind(), io::ErrorKind::Unsupported);
     }
 }

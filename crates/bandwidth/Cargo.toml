@@ -22,6 +22,7 @@ test-support = []
 async = ["dep:tokio"]
 
 [dependencies]
+fast_io = { path = "../fast_io", default-features = false }
 memchr = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, optional = true, features = ["time"] }

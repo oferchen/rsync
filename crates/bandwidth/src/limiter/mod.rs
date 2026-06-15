@@ -13,13 +13,17 @@
 
 use std::time::Duration;
 
+mod backend;
 mod change;
 mod core;
 mod sleep;
 
+pub use backend::{SleepBackend, active_backend};
 pub use change::{LimiterChange, apply_effective_limit};
 pub use core::BandwidthLimiter;
 pub use sleep::LimiterSleep;
+
+pub(super) use backend::sleep_with_backend;
 
 pub(super) use sleep::{duration_from_microseconds, sleep_for};
 
