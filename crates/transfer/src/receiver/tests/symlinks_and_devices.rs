@@ -103,6 +103,30 @@ fn emit_itemize_directory_creation() {
 }
 
 #[test]
+fn emit_itemize_root_directory_emits_creation_glyph_when_iflags_zero() {
+    // Regression: upstream `testsuite/itemize.test` expects `cd+++++++++ ./`
+    // as the second line of `-iplr from/ to/` against a non-existent dest.
+    // The root entry (path == ".") arrives at emit_itemize with iflags == 0
+    // because oc-rsync's create_directory_incremental cannot observe the
+    // pre-flight mkdir performed by `ensure_dest_root_exists`. Mirror
+    // upstream main.c:794-796 + generator.c:566-572 by treating the root
+    // dir as freshly created so the receiver still emits the line.
+    let handshake = test_handshake();
+    let config = receiver_config_with_itemize();
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
+    let mut writer = MockMsgInfoWriter::new();
+
+    let entry = FileEntry::new_directory(".".into(), 0o755);
+    let iflags = ItemFlags::from_raw(0);
+
+    ctx.emit_itemize(&mut writer, &iflags, &entry).unwrap();
+
+    assert_eq!(writer.messages.len(), 1);
+    let msg = String::from_utf8_lossy(&writer.messages[0]);
+    assert_eq!(msg, "cd+++++++++ ./\n");
+}
+
+#[test]
 fn emit_itemize_up_to_date_file() {
     let handshake = test_handshake();
     let config = receiver_config_with_itemize();

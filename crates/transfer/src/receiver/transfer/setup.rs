@@ -245,6 +245,14 @@ impl ReceiverContext {
         })?;
         if created_dest_root {
             debug_log!(Recv, 1, "created destination root {}", dest_dir.display());
+            // upstream: main.c:798-799 - `rprintf(FINFO, "created directory %s\n", dest_path)`
+            // gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`. Mirror the
+            // itemize half of that gate so `-i` invocations emit the notice
+            // ahead of the per-entry itemize lines, matching the upstream
+            // `testsuite/itemize.test` expectation.
+            if self.config.flags.info_flags.itemize {
+                println!("created directory {}", dest_dir.display());
+            }
         }
 
         // UTS-SLDB: when the dest root is a symlink that resolved to a real
