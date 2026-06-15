@@ -117,6 +117,25 @@ impl WindowsChunkedReader {
         self.size
     }
 
+    /// Returns the file size in bytes. Alias for [`Self::size`].
+    ///
+    /// Provided for ergonomics with the `Read`-trait ecosystem, where `len`
+    /// is the conventional name for the total length of a readable resource.
+    /// Always agrees with [`Self::size`] for a given instance.
+    #[must_use]
+    pub fn len(&self) -> u64 {
+        self.size
+    }
+
+    /// Returns `true` when the underlying file is empty.
+    ///
+    /// Companion to [`Self::len`] to satisfy the `len()`/`is_empty()`
+    /// clippy convention.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.size == 0
+    }
+
     /// Returns the current read/seek position.
     #[must_use]
     pub fn position(&self) -> u64 {
@@ -405,6 +424,28 @@ mod tests {
         let mut r = WindowsChunkedReader::open(tmp.path()).expect("open");
         assert!(r.seek(SeekFrom::Current(-1)).is_err());
         assert!(r.seek(SeekFrom::End(-100)).is_err());
+    }
+
+    /// Cross-platform smoke test: `WindowsChunkedReader` is nameable and
+    /// openable on the current platform. The same test runs against the
+    /// non-Windows alias in `windows_chunked_reader_stub::tests`.
+    #[test]
+    fn nameable_and_openable() {
+        let tmp = write_temp(b"hello");
+        let _reader = WindowsChunkedReader::open(tmp.path()).expect("open through real reader");
+    }
+
+    /// Cross-platform parity test: `len()` agrees with `size()` for a
+    /// known-size fixture. The non-Windows alias verifies the same length
+    /// through `metadata().len()` in `windows_chunked_reader_stub::tests`.
+    #[test]
+    fn len_matches_fixture_size() {
+        let payload = b"0123456789abcdef";
+        let tmp = write_temp(payload);
+        let reader = WindowsChunkedReader::open(tmp.path()).expect("open");
+        assert_eq!(reader.len(), payload.len() as u64);
+        assert_eq!(reader.len(), reader.size());
+        assert!(!reader.is_empty());
     }
 
     #[test]
