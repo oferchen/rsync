@@ -787,6 +787,7 @@ pub(super) fn apply_permissions_from_entry(
 
     #[cfg(not(unix))]
     {
+        let _ = pre_transfer_meta;
         if options.permissions() {
             let readonly = entry.permissions() & 0o200 == 0;
             let dest_perms_meta = if let Some(meta) = cached_meta {

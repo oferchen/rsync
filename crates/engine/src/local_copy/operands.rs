@@ -278,6 +278,11 @@ fn detect_marker_components_windows(operand: &OsStr) -> Option<usize> {
                 index += 1;
             }
         }
+    } else if is_separator(units[0]) {
+        count += 1;
+        while index < len && is_separator(units[index]) {
+            index += 1;
+        }
     }
 
     if index >= len {
@@ -606,6 +611,7 @@ mod tests {
         assert!(!spec.has_dot_dir_marker());
     }
 
+    #[cfg(unix)]
     #[test]
     fn source_spec_dot_dir_anchor_with_prefix() {
         let spec = SourceSpec::from_operand(&OsString::from("/src/./a/b")).unwrap();
