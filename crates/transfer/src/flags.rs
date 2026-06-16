@@ -110,6 +110,18 @@ pub struct ParsedServerFlags {
     /// rather than waiting for the complete list. This reduces startup latency
     /// for large directory transfers.
     pub incremental_recursion: bool,
+    /// Remove source files after successful transfer (long-form `--remove-source-files`).
+    ///
+    /// Not part of the compact flag string; set via long-form args (upstream
+    /// `options.c:2964-2965` emits `--remove-source-files` whenever the client
+    /// requested it). When true, the sender unlinks each source file after the
+    /// receiver acknowledges a successful transfer.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:129-178` `successful_send()` - performs the unlink
+    /// - `options.c:765` - `remove_source_files` global definition
+    pub remove_source_files: bool,
 
     /// Info flags after the first `.` separator.
     pub info_flags: InfoFlags,
@@ -435,6 +447,17 @@ mod tests {
     fn backup_not_set_by_default() {
         let flags = ParsedServerFlags::parse("-r").unwrap();
         assert!(!flags.backup);
+    }
+
+    /// `--remove-source-files` is long-form only and is propagated via the
+    /// `remove_source_files` field on `ParsedServerFlags`. The compact flag
+    /// parser does not set it; the field must default to `false`.
+    ///
+    /// upstream: options.c:765 - `remove_source_files` global definition.
+    #[test]
+    fn remove_source_files_not_set_by_default() {
+        let flags = ParsedServerFlags::parse("-r").unwrap();
+        assert!(!flags.remove_source_files);
     }
 
     /// When neither ACLs nor xattrs are requested, clearing unsupported features

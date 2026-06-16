@@ -76,6 +76,15 @@ pub(super) struct ServerLongFlags {
     pub(super) numeric_ids: bool,
     /// Delete extraneous files (upstream: `--delete-*` variants, long-form only).
     pub(super) delete: bool,
+    /// Remove source files after a successful transfer.
+    ///
+    /// upstream: options.c:2964-2965 - `server_options()` emits
+    /// `--remove-source-files` (or the legacy alias `--remove-sent-files`)
+    /// whenever the client asked for sender-side removal. The flag is
+    /// long-form only; the sender's `successful_send()` reads the global
+    /// `remove_source_files` to decide whether to unlink each file after
+    /// the receiver acknowledges a successful transfer.
+    pub(super) remove_source_files: bool,
     /// Whether `--stats` was forwarded by the client.
     ///
     /// upstream: options.c:2838-2839 - `server_options()` emits `--stats` whenever
@@ -178,6 +187,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         size_only: false,
         numeric_ids: false,
         delete: false,
+        remove_source_files: false,
         stats: false,
         ignore_existing: false,
         existing_only: false,
@@ -217,6 +227,12 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             // upstream: --delete variants are long-form only (options.c:2818-2827)
             "--delete" | "--delete-before" | "--delete-during" | "--delete-after"
             | "--delete-delay" | "--delete-excluded" => flags.delete = true,
+            // upstream: options.c:2964-2965 - --remove-source-files is long-form
+            // only. --remove-sent-files is the deprecated alias that still names
+            // the same option in `parse_arguments()`.
+            "--remove-source-files" | "--remove-sent-files" => {
+                flags.remove_source_files = true;
+            }
             // upstream: options.c:2838-2839 - --stats forwarded by server_options()
             // when do_stats was set. The server-side flag drives NDX_DEL_STATS
             // emission in the goodbye phase (generator.c:2377,2422).
@@ -409,6 +425,8 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--delete-after"
             | "--delete-delay"
             | "--delete-excluded"
+            | "--remove-source-files"
+            | "--remove-sent-files"
             | "--stats"
             | "--ignore-existing"
             | "--existing"

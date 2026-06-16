@@ -8,8 +8,9 @@
 //! - `sender.c:send_files()` - Main transfer loop (lines 210-462)
 
 use std::io::{self, Read, Write};
+use std::path::Path;
 
-use logging::debug_log;
+use logging::{debug_log, info_log};
 use protocol::codec::{
     MonotonicNdxWriter, NDX_DEL_STATS, NDX_DONE, NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec,
     create_ndx_codec,
@@ -506,6 +507,14 @@ impl GeneratorContext {
             }
             files_transferred += 1;
 
+            // upstream: sender.c:129-178 successful_send() - unlink the source
+            // when --remove-source-files is active and the transfer succeeded.
+            // Upstream defers the unlink to the MSG_SUCCESS handshake so the
+            // receiver's commit is confirmed; we run inline here at the
+            // file-transfer boundary because the generator does not exchange
+            // an MSG_SUCCESS round-trip with the receiver.
+            self.remove_source_file_if_requested(source_path);
+
             // upstream: sender.c:445-446
             // rprintf(FINFO, "sender finished %s%s%s\n", path,slash,fname)
             debug_log!(Send, 1, "sender finished {}", file_entry.path().display());
@@ -601,5 +610,60 @@ impl GeneratorContext {
             ndx_read_codec,
             ndx_write_codec,
         })
+    }
+
+    /// Unlinks the sender-side source file when `--remove-source-files` is active.
+    ///
+    /// Mirrors upstream `successful_send()` in sender.c:129-178: dry-run and
+    /// directory entries are skipped, vanished sources are tolerated as a
+    /// successful no-op, and any other unlink failure is logged but does not
+    /// fail the transfer. Upstream emits `FERROR_XFER` for failed unlinks and
+    /// `FINFO` for the success notice; we mirror that by routing the success
+    /// notice through the `info_log!(Remove, ...)` channel (gated by
+    /// `--info=remove` / `-vv`) and the failure path through `debug_log!`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `sender.c:129-178` `successful_send()`
+    /// - `options.c:765` `remove_source_files` global
+    fn remove_source_file_if_requested(&self, source_path: &Path) {
+        // upstream: sender.c:137-138 - bail before any FS calls when the flag is off.
+        if !self.config.flags.remove_source_files {
+            return;
+        }
+        // upstream: sender.c:131-138 - successful_send() is a no-op when
+        // do_xfers is false (dry-run). Mirror that early return so --dry-run
+        // never touches the filesystem.
+        if self.config.flags.dry_run {
+            return;
+        }
+        match std::fs::remove_file(source_path) {
+            Ok(()) => {
+                // upstream: sender.c:175-176 - rprintf(FINFO, "sender removed %s\n", fname)
+                info_log!(Remove, 1, "removing source {}", source_path.display());
+            }
+            // upstream: sender.c:170-171 - ENOENT is the "already removed" notice.
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                info_log!(
+                    Remove,
+                    1,
+                    "sender file already removed: {}",
+                    source_path.display()
+                );
+            }
+            Err(error) => {
+                // upstream: sender.c:172-173 - rsyserr(FERROR_XFER, ...) on
+                // unlink failure. We route to the debug channel instead of
+                // failing the transfer so a single permission error does not
+                // abort the rest of the run.
+                debug_log!(
+                    Send,
+                    1,
+                    "sender failed to remove {}: {}",
+                    source_path.display(),
+                    error
+                );
+            }
+        }
     }
 }

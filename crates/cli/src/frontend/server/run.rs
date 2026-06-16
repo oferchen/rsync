@@ -159,6 +159,11 @@ where
     config.file_selection.existing_only = long_flags.existing_only;
     config.flags.numeric_ids = long_flags.numeric_ids;
     config.flags.delete = long_flags.delete;
+    // upstream: options.c:2964-2965 - `--remove-source-files` is forwarded
+    // long-form when the client requested sender-side removal. The flag is
+    // consumed by the sender's `successful_send()` after each transferred
+    // file is acknowledged.
+    config.flags.remove_source_files = long_flags.remove_source_files;
     // upstream: options.c:2046-2048 - do_stats sets info_levels[INFO_STATS] >= 2.
     // The server-side flag must be set so the generator emits NDX_DEL_STATS
     // during the goodbye phase (generator.c:2377,2422).
