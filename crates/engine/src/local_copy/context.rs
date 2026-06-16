@@ -188,6 +188,14 @@ pub(crate) struct FinalizeMetadataParams<'a> {
     mode: LocalCopyExecution,
     path_context: MetadataPathContext<'a>,
 
+    /// Pre-transfer destination metadata captured before the temp-file
+    /// rename. Mirrors upstream's `stat_mode` argument to `dest_mode()`:
+    /// `Some(meta)` when the destination existed at transfer start;
+    /// `None` for a brand-new destination. Used by
+    /// [`::metadata::apply_dest_mode_pre_transfer`] to reproduce the
+    /// upstream `rsync.c:954-965` chmod-on-rename loop.
+    pre_transfer_meta: Option<&'a fs::Metadata>,
+
     #[cfg(unix)]
     fd: Option<std::os::fd::BorrowedFd<'a>>,
 
@@ -212,6 +220,7 @@ impl<'a> FinalizeMetadataParams<'a> {
             metadata_options,
             mode,
             path_context,
+            pre_transfer_meta: None,
             #[cfg(unix)]
             fd: None,
             #[cfg(all(unix, feature = "xattr"))]
@@ -225,6 +234,17 @@ impl<'a> FinalizeMetadataParams<'a> {
     #[cfg(unix)]
     pub(crate) const fn with_fd(mut self, fd: std::os::fd::BorrowedFd<'a>) -> Self {
         self.fd = Some(fd);
+        self
+    }
+
+    /// Attach the pre-transfer destination metadata so the apply path can
+    /// reproduce upstream `dest_mode()` semantics for the chmod-on-rename
+    /// loop.
+    pub(crate) const fn with_pre_transfer_meta(
+        mut self,
+        pre_transfer_meta: Option<&'a fs::Metadata>,
+    ) -> Self {
+        self.pre_transfer_meta = pre_transfer_meta;
         self
     }
 }

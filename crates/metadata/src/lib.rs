@@ -201,15 +201,19 @@ pub use acl_windows::{
 )))]
 pub use acl_noop::{apply_acls_from_cache, default_perms_for_dir, get_rsync_acl, sync_acls};
 
+#[cfg(unix)]
+pub use apply::{
+    apply_dest_mode_pre_transfer, apply_file_metadata_with_fd,
+    apply_file_metadata_with_fd_if_changed,
+};
 pub use apply::{
     apply_directory_metadata, apply_directory_metadata_with_options, apply_file_metadata,
     apply_file_metadata_if_changed, apply_file_metadata_with_options,
     apply_metadata_from_file_entry, apply_metadata_with_attrs_flags,
-    apply_metadata_with_cached_stat, apply_symlink_metadata, apply_symlink_metadata_from_entry,
-    apply_symlink_metadata_with_options, metadata_unchanged,
+    apply_metadata_with_attrs_flags_and_pre_transfer, apply_metadata_with_cached_stat,
+    apply_metadata_with_pre_transfer_stat, apply_symlink_metadata,
+    apply_symlink_metadata_from_entry, apply_symlink_metadata_with_options, metadata_unchanged,
 };
-#[cfg(unix)]
-pub use apply::{apply_file_metadata_with_fd, apply_file_metadata_with_fd_if_changed};
 
 pub use chmod::{ChmodError, ChmodModifiers};
 

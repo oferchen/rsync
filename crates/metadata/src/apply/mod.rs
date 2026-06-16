@@ -90,6 +90,26 @@ pub fn apply_file_metadata_with_options(
     Ok(())
 }
 
+/// Pre-applies upstream's `dest_mode()` chmod for callers that have the
+/// pre-transfer destination stat in hand.
+///
+/// See [`permissions::apply_dest_mode_pre_transfer`] for the full
+/// upstream-reference documentation.
+#[cfg(unix)]
+pub fn apply_dest_mode_pre_transfer(
+    destination: &Path,
+    source_metadata: &fs::Metadata,
+    options: &MetadataOptions,
+    pre_transfer_meta: Option<&fs::Metadata>,
+) -> Result<(), MetadataError> {
+    permissions::apply_dest_mode_pre_transfer(
+        destination,
+        source_metadata,
+        options,
+        pre_transfer_meta,
+    )
+}
+
 /// Applies file metadata using an open file descriptor for efficiency.
 ///
 /// When an fd is available (e.g. after writing a file), this avoids redundant
@@ -445,12 +465,34 @@ pub fn apply_metadata_with_cached_stat(
     options: &MetadataOptions,
     cached_meta: Option<fs::Metadata>,
 ) -> Result<(), MetadataError> {
-    apply_metadata_with_attrs_flags(
+    apply_metadata_with_pre_transfer_stat(destination, entry, options, cached_meta, None)
+}
+
+/// Applies metadata using both a cached post-rename stat and a pre-transfer
+/// stat.
+///
+/// Identical to [`apply_metadata_with_cached_stat`] except the additional
+/// `pre_transfer_meta` argument lets the receiver mirror upstream
+/// `rsync.c:dest_mode()`: when `-p`/`-E`/`--chmod` are all off, upstream
+/// still chmods a freshly-renamed temp file back to the pre-transfer
+/// destination's permission bits (`exists=true` branch) or to the
+/// umask-masked source mode (`exists=false` branch). Without the pre-
+/// transfer stat the receiver would feed the temp file's `0o600`/umask-
+/// default mode into the heuristic.
+pub fn apply_metadata_with_pre_transfer_stat(
+    destination: &Path,
+    entry: &protocol::flist::FileEntry,
+    options: &MetadataOptions,
+    cached_meta: Option<fs::Metadata>,
+    pre_transfer_meta: Option<fs::Metadata>,
+) -> Result<(), MetadataError> {
+    apply_metadata_with_attrs_flags_and_pre_transfer(
         destination,
         entry,
         options,
         cached_meta,
         AttrsFlags::empty(),
+        pre_transfer_meta,
     )
 }
 
@@ -476,9 +518,40 @@ pub fn apply_metadata_with_attrs_flags(
     cached_meta: Option<fs::Metadata>,
     attrs_flags: AttrsFlags,
 ) -> Result<(), MetadataError> {
+    apply_metadata_with_attrs_flags_and_pre_transfer(
+        destination,
+        entry,
+        options,
+        cached_meta,
+        attrs_flags,
+        None,
+    )
+}
+
+/// Like [`apply_metadata_with_attrs_flags`] but accepts a pre-transfer
+/// destination stat so the permission-apply path can reproduce upstream
+/// `rsync.c:dest_mode()` for the receiver chmod loop.
+///
+/// `pre_transfer_meta` is the destination's metadata captured before any
+/// temp-file rename. Pass `Some(meta)` when a destination file existed at
+/// transfer start; pass `None` when the destination is brand new.
+pub fn apply_metadata_with_attrs_flags_and_pre_transfer(
+    destination: &Path,
+    entry: &protocol::flist::FileEntry,
+    options: &MetadataOptions,
+    cached_meta: Option<fs::Metadata>,
+    attrs_flags: AttrsFlags,
+    pre_transfer_meta: Option<fs::Metadata>,
+) -> Result<(), MetadataError> {
     ownership::apply_ownership_from_entry(destination, entry, options, cached_meta.as_ref())?;
 
-    permissions::apply_permissions_from_entry(destination, entry, options, cached_meta.as_ref())?;
+    permissions::apply_permissions_from_entry(
+        destination,
+        entry,
+        options,
+        cached_meta.as_ref(),
+        pre_transfer_meta.as_ref(),
+    )?;
 
     // upstream: rsync.c:597 - `if (!(flags & ATTRS_SKIP_MTIME) && !same_mtime(...))`
     if options.times() && !attrs_flags.skip_mtime() {

@@ -271,6 +271,7 @@ impl<'a> CopyContext<'a> {
             metadata_options,
             mode,
             path_context,
+            pre_transfer_meta,
             #[cfg(unix)]
             fd,
             #[cfg(all(unix, feature = "xattr"))]
@@ -291,6 +292,23 @@ impl<'a> CopyContext<'a> {
             CreatedEntryKind::File,
             destination_previously_existed,
         );
+
+        // upstream: rsync.c:954-965 - when `-p`/`--chmod` are off, the
+        // receiver rewrites `file->mode` via `dest_mode()` BEFORE the
+        // transfer; `set_file_attrs()` then chmods the freshly-renamed
+        // temp file to that mode. Reproduce that chmod here so a re-
+        // transferred regular file holds its pre-transfer permission bits
+        // and a new regular file lands at `source_mode & dflt_perms`. The
+        // call short-circuits when `-p`/`--chmod` are active so the
+        // existing chmod chain owns the syscall.
+        #[cfg(unix)]
+        ::metadata::apply_dest_mode_pre_transfer(
+            destination,
+            metadata,
+            &metadata_options,
+            pre_transfer_meta,
+        )
+        .map_err(map_metadata_error)?;
 
         // Use fd-based metadata operations when an open fd is available (Unix).
         // Stat the destination first to skip redundant chown/chmod/utimensat
@@ -747,6 +765,11 @@ impl<'a> CopyContext<'a> {
                     file_type: path_context.file_type,
                     destination_previously_existed: path_context.destination_previously_existed,
                 },
+                // upstream: rsync.c:954-965 - deferred updates have already
+                // committed the rename + applied dest_mode at the original
+                // commit site, so there is no pre-transfer stat to recover
+                // here.
+                pre_transfer_meta: None,
                 #[cfg(unix)]
                 fd: None, // No fd available for deferred updates
                 #[cfg(all(unix, feature = "xattr"))]

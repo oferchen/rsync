@@ -25,6 +25,12 @@ use super::super::super::guard::DestinationWriteGuard;
 /// commit. Otherwise the guard is committed immediately and metadata is applied.
 /// If no guard is present (inplace path), metadata is applied directly to
 /// `destination`.
+///
+/// `pre_transfer_meta` is the destination's metadata captured before the
+/// temp-file rename. It mirrors upstream's `stat_mode` argument to
+/// `rsync.c:dest_mode()` and lets the apply path chmod a fresh temp file
+/// back to the destination's prior permission bits (`-p`/`--chmod` paths
+/// already drive their own chmod chain).
 #[allow(clippy::too_many_arguments)]
 pub(in crate::local_copy) fn finalize_guard_and_metadata(
     context: &mut CopyContext,
@@ -40,6 +46,7 @@ pub(in crate::local_copy) fn finalize_guard_and_metadata(
     destination_previously_existed: bool,
     delay_updates_enabled: bool,
     writer_for_metadata: &mut Option<fs::File>,
+    pre_transfer_meta: Option<&fs::Metadata>,
     #[cfg(all(unix, feature = "xattr"))] preserve_xattrs: bool,
     #[cfg(all(any(unix, windows), feature = "acl"))] preserve_acls: bool,
 ) -> Result<(), LocalCopyError> {
@@ -99,7 +106,8 @@ pub(in crate::local_copy) fn finalize_guard_and_metadata(
                 preserve_xattrs,
                 #[cfg(all(any(unix, windows), feature = "acl"))]
                 preserve_acls,
-            );
+            )
+            .with_pre_transfer_meta(pre_transfer_meta);
             #[cfg(unix)]
             if let Some(ref w) = *writer_for_metadata {
                 use std::os::fd::AsFd;
@@ -124,7 +132,8 @@ pub(in crate::local_copy) fn finalize_guard_and_metadata(
             preserve_xattrs,
             #[cfg(all(any(unix, windows), feature = "acl"))]
             preserve_acls,
-        );
+        )
+        .with_pre_transfer_meta(pre_transfer_meta);
         #[cfg(unix)]
         if let Some(ref w) = *writer_for_metadata {
             use std::os::fd::AsFd;
