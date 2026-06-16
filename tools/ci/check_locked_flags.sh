@@ -46,9 +46,23 @@
 # require explicit reviewer signoff - see CONTRIBUTING.md, section
 # "Cargo.lock maintenance".
 #
+# Excluded paths
+# --------------
+# `tools/ci/tests/` is excluded from the scan because its fixtures
+# intentionally embed missing-`--locked` cargo invocations to exercise
+# the gate. The self-test runner (`test_check_locked_flags.sh`) feeds
+# those fixtures back through this script with `OC_RSYNC_LOCKED_SCAN_ROOTS`
+# pointing at a tempdir.
+#
 # Usage
 # -----
 #   tools/ci/check_locked_flags.sh
+#
+# Test override
+# -------------
+#   OC_RSYNC_LOCKED_SCAN_ROOTS=/path/a:/path/b tools/ci/check_locked_flags.sh
+# Replaces the production scan roots with the supplied colon-separated
+# directory list (used by the self-test).
 #
 # Exit codes
 #   0 - all gated cargo invocations carry `--locked` (or are allowlisted).
@@ -58,6 +72,12 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+# Optional override used by the unit test in tools/ci/tests/. When set to a
+# colon-separated list of absolute directories the production scan roots below
+# are replaced with that list, and the per-line allowlist is suppressed so the
+# test can exercise the gating logic in isolation.
+OC_RSYNC_LOCKED_SCAN_ROOTS="${OC_RSYNC_LOCKED_SCAN_ROOTS:-}"
 
 # Subcommands that must carry --locked on the same logical command.
 # Order matters only for diagnostic output; the matcher checks all of
@@ -83,11 +103,21 @@ GATED_SUBCOMMANDS=(
 ALLOWLIST=(
 )
 
-# Scan roots.
-SCAN_ROOTS=(
-    "${REPO_ROOT}/.github/workflows"
-    "${REPO_ROOT}/tools/ci"
-)
+# Scan roots. Tests can replace these via OC_RSYNC_LOCKED_SCAN_ROOTS
+# (colon-separated absolute paths) to exercise the gating logic against a
+# controlled fixture tree.
+SCAN_ROOTS=()
+if [[ -n "${OC_RSYNC_LOCKED_SCAN_ROOTS}" ]]; then
+    IFS=':' read -r -a SCAN_ROOTS <<<"${OC_RSYNC_LOCKED_SCAN_ROOTS}"
+    # Re-root rel-path reporting at the first scan root so violation
+    # entries print as `<basename>:<lineno>` rather than full paths.
+    REPO_ROOT="${SCAN_ROOTS[0]}"
+else
+    SCAN_ROOTS=(
+        "${REPO_ROOT}/.github/workflows"
+        "${REPO_ROOT}/tools/ci"
+    )
+fi
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -230,7 +260,10 @@ while IFS= read -r -d '' f; do
     if is_scannable "$f"; then
         files+=("$f")
     fi
-done < <(find "${SCAN_ROOTS[@]}" -type f \( -name '*.yml' -o -name '*.yaml' -o -name '*.sh' \) -print0 | sort -z)
+done < <(find "${SCAN_ROOTS[@]}" -type f \
+    \( -name '*.yml' -o -name '*.yaml' -o -name '*.sh' \) \
+    -not -path '*/tools/ci/tests/*' \
+    -print0 | sort -z)
 
 for file in "${files[@]}"; do
     scanned_files=$((scanned_files + 1))
