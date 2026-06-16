@@ -1,0 +1,116 @@
+name: Validate daemon test is CI-environmental
+
+# Validates whether the upstream-testsuite `daemon` test failure (exit 10)
+# is CI-environment-only by running the same test with the UPSTREAM rsync
+# binary. If upstream rsync also fails here, the test is environmental and
+# the failure is not an oc-rsync bug.
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_name:
+        description: 'Upstream test to validate'
+        required: true
+        default: 'daemon'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  RUSTFLAGS: "-D warnings"
+  UPSTREAM_RSYNC_VERSION: "3.4.4"
+
+jobs:
+  validate:
+    name: validate environmental
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f # v1.6.1
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev libxxhash-dev
+          version: v1
+
+      - name: Cache upstream rsync source
+        id: cache-upstream
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            target/interop/upstream-src/rsync-${{ env.UPSTREAM_RSYNC_VERSION }}
+          key: validate-daemon-env-${{ env.UPSTREAM_RSYNC_VERSION }}
+
+      - name: Build oc-rsync (release) - needed by harness even when validating upstream
+        run: cargo build --locked --release --bin oc-rsync
+
+      - name: Build upstream rsync + helpers (via harness for one test)
+        env:
+          OC_RSYNC_BIN: target/release/oc-rsync
+          UPSTREAM_VERSION: ${{ env.UPSTREAM_RSYNC_VERSION }}
+          WHICHTESTS: "${{ github.event.inputs.test_name }}.test"
+        run: |
+          set -euo pipefail
+          mkdir -p target/interop
+          # Run the harness once just to build the upstream rsync binary + helpers.
+          # We tolerate the test result (it likely fails - that's the whole point of the validation).
+          bash tools/ci/run_upstream_testsuite.sh 2>&1 | tee target/interop/oc-rsync-baseline.log || true
+
+      - name: Validate test with UPSTREAM rsync binary
+        id: validate
+        env:
+          UPSTREAM_VERSION: ${{ env.UPSTREAM_RSYNC_VERSION }}
+        run: |
+          set +e
+          bash tools/ci/run_upstream_test_with_upstream_binary.sh "${{ github.event.inputs.test_name }}" 2>&1 \
+            | tee target/interop/upstream-validation.log
+          status=${PIPESTATUS[0]}
+          echo "upstream_exit=${status}" >> "$GITHUB_OUTPUT"
+          # Pull the oc-rsync exit code for the same test out of the baseline log.
+          oc_status=$(grep -E "^(PASS|FAIL|SKIP|XFAIL|UPASS)\s+${{ github.event.inputs.test_name }}\b" target/interop/oc-rsync-baseline.log | head -1 || echo "unknown")
+          echo "oc_status=${oc_status}" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Summarize
+        run: |
+          set -euo pipefail
+          echo "## Daemon test environmental validation" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Test under validation: \`${{ github.event.inputs.test_name }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Binary | Result |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| oc-rsync | \`${{ steps.validate.outputs.oc_status }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| upstream rsync (3.4.4) | exit code \`${{ steps.validate.outputs.upstream_exit }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          upstream_exit="${{ steps.validate.outputs.upstream_exit }}"
+          if [[ "$upstream_exit" == "0" ]]; then
+            echo "**Verdict**: upstream rsync PASSES in this environment - the oc-rsync failure IS a code bug." >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$upstream_exit" == "77" ]]; then
+            echo "**Verdict**: upstream rsync SKIPPED in this environment - inconclusive; test preconditions not met." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "**Verdict**: upstream rsync also FAILS (exit ${upstream_exit}) - the failure is ENVIRONMENTAL, not an oc-rsync bug." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: validate-daemon-env-logs
+          path: |
+            target/interop/oc-rsync-baseline.log
+            target/interop/upstream-validation.log
+            target/interop/upstream-testsuite/
+            target/interop/upstream-testsuite-validation/
+          if-no-files-found: ignore
+          retention-days: 14

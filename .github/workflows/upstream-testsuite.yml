@@ -92,7 +92,12 @@ jobs:
           set -euo pipefail
           mkdir -p target/interop
           bash tools/ci/run_upstream_testsuite.sh 2>&1 | tee target/interop/upstream-testsuite-output.log
-        continue-on-error: true
+        # No step-level continue-on-error: a non-zero exit from the harness
+        # (UNEXPECTED FAIL outside known_failures.conf or UPASS regression)
+        # MUST surface to the job conclusion so PRs that claim to fix an
+        # upstream test can be validated against the per-test result. The
+        # job-level continue-on-error (above) keeps this from blocking
+        # branch protection while the failure list stabilizes.
 
       - name: Generate job summary
         if: always()
