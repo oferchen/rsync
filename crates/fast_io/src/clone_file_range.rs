@@ -126,10 +126,10 @@ mod imp {
 
         let err = io::Error::last_os_error();
         match err.raw_os_error() {
-            // "This filesystem cannot reflink the requested range" — caller
+            // "This filesystem cannot reflink the requested range" - caller
             // falls back to copy_file_range / read+write.
+            // libc::ENOTSUP == libc::EOPNOTSUPP on Linux; one suffices.
             Some(libc::EOPNOTSUPP)
-            | Some(libc::ENOTSUP)
             | Some(libc::EXDEV)
             | Some(libc::EINVAL)
             | Some(libc::ENOSYS)
