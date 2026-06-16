@@ -266,9 +266,12 @@ impl GeneratorContext {
             // so the trailing-slash directories would otherwise stop at the
             // entry itself. Re-scan the directory here so the receiver sees
             // the listed dir's contents (`from/./dir/subdir/subsubdir2/` must
-            // emit `bin-lt-list`, etc.). The `entry.path == entry.base` case
-            // is already covered by the DOTDIR scan in `walk_path_with_metadata`.
-            if entry.recurse && entry.path != entry.base {
+            // emit `bin-lt-list`, etc.). DOTDIR entries (`from/./` and
+            // `from/.`) produce `entry.path == entry.base`; they still need
+            // the rescan because `flags.recursive` is cleared whenever
+            // `--files-from` is active (upstream `options.c:2189`), so
+            // `walk_path_with_metadata` would emit only the root entry.
+            if entry.recurse {
                 if let Ok(meta) = std::fs::symlink_metadata(&entry.path) {
                     if meta.is_dir() {
                         self.scan_files_from_marker_dir(&entry.base, &entry.path)?;
