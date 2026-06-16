@@ -323,8 +323,8 @@ mod tests {
         let f = fixture(b"hello");
         let (_recv, send) = socketpair_stream();
         let big_len = (i64::MAX / 2) as usize + 32;
-        let err = sendfile_macos(f.as_file().as_fd(), send.as_fd(), i64::MAX - 1, big_len)
-            .unwrap_err();
+        let err =
+            sendfile_macos(f.as_file().as_fd(), send.as_fd(), i64::MAX - 1, big_len).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
     }
 
