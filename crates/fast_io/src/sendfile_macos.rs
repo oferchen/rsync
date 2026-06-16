@@ -244,8 +244,10 @@ mod macos_impl {
 mod tests {
     use super::*;
     use std::io::{Seek, SeekFrom, Write};
+    #[cfg(unix)]
+    use std::os::fd::AsFd;
     #[cfg(target_os = "macos")]
-    use std::os::fd::{AsFd, AsRawFd};
+    use std::os::fd::AsRawFd;
     #[cfg(unix)]
     use std::os::fd::{FromRawFd, OwnedFd};
     use tempfile::NamedTempFile;
