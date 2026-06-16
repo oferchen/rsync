@@ -48,6 +48,7 @@ pub(crate) fn copy_sources(
 
     let destination_root = plan.destination_spec().path().to_path_buf();
     let mut context = CopyContext::new(mode, options, handler, destination_root);
+    context.set_multi_source(plan.sources().len() > 1);
     let result = {
         let context = &mut context;
         (|| -> Result<(), LocalCopyError> {
@@ -314,8 +315,155 @@ fn process_single_source(
         handle_non_directory_source(context, &proc_ctx, plan)?;
     }
 
+    retouch_relative_implied_dirs(
+        context,
+        source,
+        source_path,
+        destination_path,
+        relative_root.as_deref(),
+        file_type.is_dir(),
+    )?;
+
     context.enforce_timeout()?;
     Ok(())
+}
+
+/// Retouches the implied parent directories materialized along this source's
+/// `--relative` chain so they carry the source's directory metadata rather
+/// than the wall-clock timestamps deposited by `create_dir_all` and the FS
+/// side-effect of writing children.
+///
+/// Mirrors upstream rsync's two-phase approach:
+///
+/// 1. `flist.c:2417-2419` + `flist.c:1948` (`send_implied_dirs`) emit each
+///    implied parent (and the leading `.` when the operand carries the dot
+///    marker) into the flist with `FLAG_IMPLIED_DIR`.
+/// 2. `generator.c:1503` (`set_file_attrs` during `recv_generator`) and
+///    `generator.c:2128-2136` (`touch_up_dirs` at end-of-transfer) make sure
+///    every implied dir ends the transfer with the source's mtime/perms even
+///    after the receiver wrote children into it.
+///
+/// We replay both stages in a single post-source pass so file children added
+/// via a sibling source cannot leave the parent dir's mtime stuck at the
+/// wall-clock value the FS assigned during the file write.
+fn retouch_relative_implied_dirs(
+    context: &mut CopyContext,
+    source: &SourceSpec,
+    source_path: &Path,
+    destination_path: &Path,
+    relative_root: Option<&Path>,
+    source_is_dir: bool,
+) -> Result<(), LocalCopyError> {
+    if context.mode().is_dry_run()
+        || !context.relative_paths_enabled()
+        || !context.implied_dirs_enabled()
+    {
+        return Ok(());
+    }
+
+    let metadata_options = if context.omit_dir_times_enabled() {
+        context.metadata_options().preserve_times(false)
+    } else {
+        context.metadata_options()
+    };
+
+    // Phase 1: stamp the destination operand from the dot-dir anchor when the
+    // operand carries an explicit `./` marker. Upstream emits this as the
+    // synthetic `.` entry in `flist.c:2419`.
+    if source.has_dot_dir_marker()
+        && let Some(anchor) = source.dot_dir_anchor()
+    {
+        stamp_directory_from_source(destination_path, &anchor, &metadata_options)?;
+    }
+
+    // Phase 2: walk every implied parent dir along the relative chain and
+    // stamp each one from its source counterpart. For directory sources we
+    // skip the leaf because copy_directory_recursive's own
+    // apply_final_directory_metadata stamps it; for file/symlink/special
+    // sources every component of the relative path IS an implied parent.
+    let Some(relative) = relative_root else {
+        return Ok(());
+    };
+    let components: Vec<&std::ffi::OsStr> = relative.iter().collect();
+    if components.is_empty() {
+        return Ok(());
+    }
+    let parent_count = if source_is_dir {
+        components.len().saturating_sub(1)
+    } else {
+        components.len().saturating_sub(1)
+    };
+    if parent_count == 0 {
+        return Ok(());
+    }
+
+    let Some(source_root) = strip_path_suffix(source_path, relative) else {
+        return Ok(());
+    };
+    let destination_root = strip_path_suffix(destination_path, relative)
+        .unwrap_or_else(|| destination_path.to_path_buf());
+
+    let mut accumulated = PathBuf::new();
+    for component in &components[..parent_count] {
+        accumulated.push(component);
+        let src_dir = source_root.join(&accumulated);
+        let dst_dir = destination_root.join(&accumulated);
+        stamp_directory_from_source(&dst_dir, &src_dir, &metadata_options)?;
+    }
+
+    Ok(())
+}
+
+/// Applies `source_dir`'s directory metadata to `dest_dir`, silently skipping
+/// the pair when either side is not a directory we can stat. Mirrors the
+/// best-effort stance of upstream `set_file_attrs` for implied dirs - the
+/// transfer is allowed to proceed even when an implied parent is unstable
+/// (vanished or replaced with a non-dir between phases).
+fn stamp_directory_from_source(
+    dest_dir: &Path,
+    source_dir: &Path,
+    metadata_options: &::metadata::MetadataOptions,
+) -> Result<(), LocalCopyError> {
+    let source_meta = match fs::symlink_metadata(source_dir) {
+        Ok(meta) if meta.file_type().is_dir() => meta,
+        _ => return Ok(()),
+    };
+    match fs::symlink_metadata(dest_dir) {
+        Ok(meta) if meta.file_type().is_dir() => {}
+        _ => return Ok(()),
+    }
+    ::metadata::apply_directory_metadata_with_options(
+        dest_dir,
+        &source_meta,
+        metadata_options.clone(),
+    )
+    .map_err(crate::local_copy::map_metadata_error)?;
+    Ok(())
+}
+
+/// Strips `relative` from the trailing components of `path`. Returns the
+/// remaining prefix. Used to recover the source/destination roots used to
+/// join an implied-dir chain back together for stamping.
+fn strip_path_suffix(path: &Path, relative: &Path) -> Option<PathBuf> {
+    let path_components: Vec<_> = path.components().collect();
+    let rel_components: Vec<_> = relative.components().collect();
+    if rel_components.len() > path_components.len() {
+        return None;
+    }
+    let split = path_components.len() - rel_components.len();
+    for (idx, rel) in rel_components.iter().enumerate() {
+        if path_components[split + idx].as_os_str() != rel.as_os_str() {
+            return None;
+        }
+    }
+    let mut root = PathBuf::new();
+    for component in &path_components[..split] {
+        root.push(component.as_os_str());
+    }
+    if root.as_os_str().is_empty() {
+        return Some(PathBuf::from("."));
+    }
+    Some(root)
 }
 
 /// Flushes all deferred operations after source processing is complete.
