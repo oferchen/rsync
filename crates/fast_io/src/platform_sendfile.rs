@@ -4,7 +4,7 @@
 //! `TransmitFile()` entry points behind a single trait. The default
 //! implementations preserve byte-for-byte behaviour of the existing free
 //! functions ([`crate::sendfile::send_file_to_fd`] on unix,
-//! [`crate::iocp::try_transmit_file`] on Windows). The seam exists so
+//! `crate::iocp::try_transmit_file` on Windows). The seam exists so
 //! follow-on work can plug in alternative implementations (test doubles,
 //! a Windows `TransmitFile` probe, future kTLS / SEND_ZC dispatch) at the
 //! call site without touching the producers.
@@ -26,7 +26,7 @@
 //! - **unix**: wraps a `RawFd` (`i32`) - the same fd type accepted by
 //!   [`crate::sendfile::send_file_to_fd`].
 //! - **Windows**: wraps a `RawSocket` (`u64`) - the same Winsock handle
-//!   accepted by [`crate::iocp::try_transmit_file`].
+//!   accepted by `crate::iocp::try_transmit_file`.
 //!
 //! Callers obtain a `SocketHandle` from `AsRawFd::as_raw_fd()` or
 //! `AsRawSocket::as_raw_socket()` on their existing socket type; the
@@ -93,7 +93,7 @@ impl SocketHandle {
 ///
 /// - unix [`crate::sendfile::send_file_to_fd`] advances the source file
 ///   pointer by the returned byte count.
-/// - Windows [`crate::iocp::try_transmit_file`] does not touch the file
+/// - Windows `crate::iocp::try_transmit_file` does not touch the file
 ///   pointer; the caller positions the file before invoking the call.
 ///
 /// Returns the number of bytes the kernel reports it queued. Falls back
@@ -170,7 +170,7 @@ impl PlatformSendFile for MacOsSendFile {
 }
 
 /// Windows `TransmitFile()` implementation forwarding to
-/// [`crate::iocp::try_transmit_file`].
+/// `crate::iocp::try_transmit_file`.
 ///
 /// Only usable when both the host is Windows and the `transmitfile`
 /// feature is enabled; otherwise [`PlatformSendFile::send_to_socket`]
