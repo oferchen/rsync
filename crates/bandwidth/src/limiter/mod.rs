@@ -23,6 +23,7 @@ pub use change::{LimiterChange, apply_effective_limit};
 pub use core::BandwidthLimiter;
 pub use sleep::LimiterSleep;
 
+#[cfg(not(test))]
 pub(super) use backend::sleep_with_backend;
 
 pub(super) use sleep::{duration_from_microseconds, sleep_for};
