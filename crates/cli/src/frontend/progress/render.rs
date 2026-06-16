@@ -379,7 +379,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
     verbosity: u8,
     name_level: NameOutputLevel,
     name_overridden: bool,
-    human_readable: HumanReadableMode,
+    _human_readable: HumanReadableMode,
     stdout: &mut W,
 ) -> io::Result<()> {
     if matches!(name_level, NameOutputLevel::Disabled) && (verbosity == 0 || name_overridden) {
