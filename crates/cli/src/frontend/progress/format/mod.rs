@@ -13,9 +13,8 @@ pub(crate) use self::progress::{
     format_progress_elapsed, format_progress_percent, format_stat_categories,
 };
 pub(crate) use self::rate::{
-    VerboseRateDisplay, compute_rate, format_human_rate, format_progress_rate,
-    format_progress_rate_decimal, format_progress_rate_from_value, format_progress_rate_human,
-    format_summary_rate, format_verbose_rate, format_verbose_rate_decimal,
+    format_human_rate, format_progress_rate, format_progress_rate_decimal,
+    format_progress_rate_from_value, format_progress_rate_human, format_summary_rate,
     format_verbose_rate_human,
 };
 pub(crate) use self::remaining::RemainingTimeEstimator;
