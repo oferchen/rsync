@@ -714,3 +714,32 @@ fn parse_rejects_side_modifier_with_word_split_on_side_prefix() {
     let err = parse_rules("Hsw foo bar", Path::new("test")).unwrap_err();
     assert!(err.message.contains("invalid modifier 's'"));
 }
+
+// upstream: exclude.c:1404-1408 - merge / dir-merge with the `C`
+// (CVS-ignore) modifier and an empty pattern defaults to `.cvsignore`.
+#[test]
+fn parse_colon_c_empty_pattern_defaults_to_cvsignore() {
+    let rules = parse_rules(":C\n", Path::new("test")).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].action(), FilterAction::DirMerge);
+    assert_eq!(rules[0].pattern(), ".cvsignore");
+    assert!(rules[0].is_cvs_mode());
+}
+
+#[test]
+fn parse_colon_c_with_explicit_pattern_preserves_cvs_mode() {
+    let rules = parse_rules(":C my.ignore\n", Path::new("test")).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].action(), FilterAction::DirMerge);
+    assert_eq!(rules[0].pattern(), "my.ignore");
+    assert!(rules[0].is_cvs_mode());
+}
+
+#[test]
+fn parse_dot_c_empty_pattern_defaults_to_cvsignore() {
+    let rules = parse_rules(".C\n", Path::new("test")).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].action(), FilterAction::Merge);
+    assert_eq!(rules[0].pattern(), ".cvsignore");
+    assert!(rules[0].is_cvs_mode());
+}

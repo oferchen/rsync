@@ -154,7 +154,8 @@ impl RuleModifiers {
             .with_perishable(self.perishable)
             .with_xattr_only(self.xattr_only)
             .with_exclude_only(self.exclude_only)
-            .with_no_inherit(self.no_inherit);
+            .with_no_inherit(self.no_inherit)
+            .with_cvs_mode(self.cvs_mode);
 
         if self.sender_only && !self.receiver_only {
             rule = rule.with_sides(true, false);
@@ -303,6 +304,15 @@ fn try_parse_short_form(
 
     let (mods, pattern) = parse_modifiers(rest);
     if pattern.is_empty() {
+        // upstream: exclude.c:1404-1408 - a merge / dir-merge rule with the
+        // `C` (CVS-ignore) modifier and an empty pattern defaults to the
+        // filename `.cvsignore`. Without `C`, an empty pattern remains
+        // unrecognised here and falls through to long-form parsing.
+        if mods.cvs_mode && matches!(action, ShortFormAction::Merge | ShortFormAction::DirMerge) {
+            validate_side_modifiers(prefix_char, &mods, line, source_path, line_num)?;
+            let rule = action.to_rule(".cvsignore");
+            return Ok(Some(mods.apply(rule)));
+        }
         return Ok(None);
     }
     validate_side_modifiers(prefix_char, &mods, line, source_path, line_num)?;

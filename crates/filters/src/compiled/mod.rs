@@ -43,6 +43,7 @@ impl CompiledRule {
             negate,
             exclude_only: _,
             no_inherit: _,
+            cvs_mode: _,
         } = rule;
         debug_assert!(
             !xattr_only,
@@ -114,6 +115,7 @@ mod tests {
             negate: false,
             exclude_only: false,
             no_inherit: false,
+            cvs_mode: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Exclude);
@@ -134,6 +136,7 @@ mod tests {
             negate: false,
             exclude_only: false,
             no_inherit: false,
+            cvs_mode: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Include);
@@ -151,6 +154,7 @@ mod tests {
             negate: false,
             exclude_only: false,
             no_inherit: false,
+            cvs_mode: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.perishable);
@@ -173,6 +177,7 @@ mod tests {
             negate: false,
             exclude_only: false,
             no_inherit: false,
+            cvs_mode: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.directory_only);
@@ -197,6 +202,7 @@ mod tests {
             negate: false,
             exclude_only: false,
             no_inherit: false,
+            cvs_mode: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.directory_only);
@@ -225,6 +231,7 @@ mod tests {
                 negate: false,
                 exclude_only: false,
                 no_inherit: false,
+                cvs_mode: false,
             };
             let compiled = CompiledRule::new(rule).unwrap();
             assert!(
@@ -250,6 +257,7 @@ mod tests {
                 negate: false,
                 exclude_only: false,
                 no_inherit: false,
+                cvs_mode: false,
             };
             let compiled = CompiledRule::new(rule).unwrap();
             assert!(
@@ -273,6 +281,7 @@ mod tests {
                 negate: false,
                 exclude_only: false,
                 no_inherit: false,
+                cvs_mode: false,
             };
             let compiled = CompiledRule::new(rule).unwrap();
             assert!(
@@ -302,6 +311,7 @@ mod tests {
             negate: false,
             exclude_only: false,
             no_inherit: false,
+            cvs_mode: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -333,6 +343,7 @@ mod tests {
             negate: false,
             exclude_only: false,
             no_inherit: false,
+            cvs_mode: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         use std::path::Path;
@@ -355,6 +366,7 @@ mod tests {
             negate: false,
             exclude_only: false,
             no_inherit: false,
+            cvs_mode: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         use std::path::Path;
@@ -377,6 +389,7 @@ mod tests {
             negate: true,
             exclude_only: false,
             no_inherit: false,
+            cvs_mode: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.negate);
@@ -391,6 +404,7 @@ mod tests {
             negate: false,
             exclude_only: false,
             no_inherit: false,
+            cvs_mode: false,
         };
         let compiled2 = CompiledRule::new(rule2).unwrap();
         assert!(!compiled2.negate);
