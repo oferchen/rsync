@@ -244,8 +244,10 @@ mod macos_impl {
 mod tests {
     use super::*;
     use std::io::{Seek, SeekFrom, Write};
+    #[cfg(target_os = "macos")]
+    use std::os::fd::{AsFd, AsRawFd};
     #[cfg(unix)]
-    use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
+    use std::os::fd::{FromRawFd, OwnedFd};
     use tempfile::NamedTempFile;
 
     /// Build a temp file containing `content`, leaving its position at 0.
