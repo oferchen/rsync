@@ -56,6 +56,7 @@ pub fn default_perms_for_dir(dir: &Path, orig_umask: u32) -> u32 {
         let mut user_obj_perms: Option<u8> = None;
         let mut group_obj_perms: Option<u8> = None;
         let mut other_obj_perms: Option<u8> = None;
+        let mut mask_obj_perms: Option<u8> = None;
         for entry in &entries {
             let perms = exacl_perms_to_rsync(entry.perms);
             match entry.kind {
@@ -64,6 +65,9 @@ pub fn default_perms_for_dir(dir: &Path, orig_umask: u32) -> u32 {
                 }
                 AclEntryKind::Group if entry.name.is_empty() && group_obj_perms.is_none() => {
                     group_obj_perms = Some(perms);
+                }
+                AclEntryKind::Mask if mask_obj_perms.is_none() => {
+                    mask_obj_perms = Some(perms);
                 }
                 AclEntryKind::Other if other_obj_perms.is_none() => {
                     other_obj_perms = Some(perms);
@@ -75,10 +79,17 @@ pub fn default_perms_for_dir(dir: &Path, orig_umask: u32) -> u32 {
         let Some(user_obj) = user_obj_perms else {
             return default_perms;
         };
-        // upstream: acls.c:1132 - perms = rsync_acl_get_perms(&racl)
-        //   = (user_obj << 6) | (group_obj << 3) | other_obj
+        // upstream: acls.c:129-134 rsync_acl_get_perms:
+        //   = (user_obj << 6)
+        //     + ((mask_obj != NO_ENTRY ? mask_obj : group_obj) << 3)
+        //     + other_obj
+        // When the default ACL carries a `mask` entry, the mask supersedes
+        // the group_obj for the middle three bits because the mask is the
+        // effective upper bound for named users, named groups, and the
+        // group_obj in POSIX ACL semantics.
+        let group_bits = mask_obj_perms.unwrap_or_else(|| group_obj_perms.unwrap_or(0));
         let perms = (u32::from(user_obj) << 6)
-            | (u32::from(group_obj_perms.unwrap_or(0)) << 3)
+            | (u32::from(group_bits) << 3)
             | u32::from(other_obj_perms.unwrap_or(0));
         // upstream: acls.c:1133-1134 - DEBUG_GTE(ACL, 1) emission
         trace_default_perms_for_dir(perms, &dir_label);

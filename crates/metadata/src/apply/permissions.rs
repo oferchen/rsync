@@ -40,6 +40,38 @@ fn cached_umask() -> u32 {
     })
 }
 
+/// Returns the default permission seed for a child created under `parent`.
+///
+/// Mirrors upstream `generator.c:1337-1339` which calls `default_perms_for_dir(dn)`
+/// when `--perms` is off. The helper folds the parent directory's POSIX default
+/// ACL `user_obj`/`group_obj`/`other_obj` entries into the seed; when there is
+/// no default ACL (or the filesystem does not support POSIX default ACLs) it
+/// returns the umask-derived `ACCESSPERMS & ~orig_umask`.
+///
+/// upstream: `acls.c:1083-1139` `default_perms_for_dir`
+/// upstream: `generator.c:1337-1340` per-parent `dflt_perms` lookup
+#[cfg(unix)]
+fn default_perms_seed(parent: Option<&Path>) -> u32 {
+    let umask = cached_umask();
+    #[cfg(all(
+        feature = "acl",
+        any(target_os = "linux", target_os = "macos", target_os = "freebsd")
+    ))]
+    {
+        if let Some(parent) = parent {
+            return crate::default_perms_for_dir(parent, umask);
+        }
+    }
+    #[cfg(not(all(
+        feature = "acl",
+        any(target_os = "linux", target_os = "macos", target_os = "freebsd")
+    )))]
+    {
+        let _ = parent;
+    }
+    0o777 & !umask
+}
+
 /// Computes the destination file mode matching upstream `rsync.c:dest_mode()`.
 ///
 /// When `-p` (preserve permissions) is not active, upstream rsync still applies
@@ -50,20 +82,27 @@ fn cached_umask() -> u32 {
 /// For new files: `source_mode & (~0o7777 | dflt_perms)`
 /// For existing files: keeps existing permissions (returns `None`)
 ///
+/// The `dest_parent` argument carries the destination's parent directory so the
+/// new-file seed can inherit the parent's POSIX default ACL via
+/// [`default_perms_seed`] when the `acl` feature is enabled. Falls back to the
+/// umask-derived seed when the parent is unknown or no default ACL is present.
+///
 /// upstream: rsync.c:449-472 `dest_mode()`
+/// upstream: generator.c:1337-1339 `dflt_perms = default_perms_for_dir(dn)`
 /// upstream: generator.c:2280 `dflt_perms = (ACCESSPERMS & ~orig_umask)`
 #[cfg(unix)]
 fn compute_dest_mode(
     source_mode: u32,
     is_new: bool,
     existing: Option<&fs::Metadata>,
+    dest_parent: Option<&Path>,
 ) -> Option<u32> {
     use std::os::unix::fs::PermissionsExt;
 
     if is_new {
         // upstream: dest_mode() for new files:
         // new_mode = flist_mode & (~CHMOD_BITS | dflt_perms)
-        let dflt_perms = 0o777 & !cached_umask();
+        let dflt_perms = default_perms_seed(dest_parent);
         let new_mode = source_mode & (!0o7777 | dflt_perms);
         // Skip the chmod if the mode already matches
         if let Some(existing) = existing {
@@ -284,9 +323,12 @@ pub(super) fn apply_permissions_with_chmod(
     {
         use std::os::unix::fs::PermissionsExt;
         let source_mode = metadata.permissions().mode();
-        if let Some(new_mode) =
-            compute_dest_mode(source_mode, options.destination_is_new(), existing)
-        {
+        if let Some(new_mode) = compute_dest_mode(
+            source_mode,
+            options.destination_is_new(),
+            existing,
+            destination.parent(),
+        ) {
             // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant.
             chmod_path_honoring_keep_dirlinks(destination, new_mode, options, "apply dest_mode")?;
         }
@@ -367,7 +409,12 @@ pub(super) fn apply_permissions_with_chmod_fd(
     // upstream: rsync.c:dest_mode() - when no explicit permission option is
     // active, still apply source-mode-based permissions masked by umask.
     let source_mode = metadata.permissions().mode();
-    if let Some(new_mode) = compute_dest_mode(source_mode, options.destination_is_new(), existing) {
+    if let Some(new_mode) = compute_dest_mode(
+        source_mode,
+        options.destination_is_new(),
+        existing,
+        destination.parent(),
+    ) {
         if let Some(fd) = fd {
             unix_fs::fchmod(
                 fd,
@@ -443,13 +490,15 @@ fn base_mode_for_permissions(
 
     // upstream: rsync.c:455-470 - existing files keep destination's perm
     // bits with the type bits from the source mode; new files mask the
-    // source mode by `dflt_perms = ACCESSPERMS & ~orig_umask`. The
-    // destination tempfile mode is never the baseline.
+    // source mode by `dflt_perms = default_perms_for_dir(dn)`, which folds
+    // the parent's POSIX default ACL when one is present (acls.c:1083) and
+    // otherwise reduces to `ACCESSPERMS & ~orig_umask`. The destination
+    // tempfile mode is never the baseline.
     let source_mode = metadata.permissions().mode();
     let mut destination_permissions = if let Some(existing) = existing {
         (source_mode & !0o7777) | (existing.permissions().mode() & 0o7777)
     } else {
-        let dflt_perms = 0o777 & !cached_umask();
+        let dflt_perms = default_perms_seed(destination.parent());
         source_mode & (!0o7777 | dflt_perms)
     };
 
@@ -667,12 +716,14 @@ pub(super) fn apply_permissions_from_entry(
             } else {
                 // --no-perms: mirror upstream `dest_mode()`. For a fresh
                 // transfer (`cached_meta.is_none()`), use the new-file
-                // branch (`flist_mode & (~CHMOD_BITS | dflt_perms)`); for
-                // a quick-check skip on an existing dest, use the
-                // existing-file branch (keep destination's perm bits).
+                // branch (`flist_mode & (~CHMOD_BITS | dflt_perms)`) where
+                // `dflt_perms` honours the parent's POSIX default ACL via
+                // `default_perms_for_dir` (acls.c:1083); for a quick-check
+                // skip on an existing dest, use the existing-file branch
+                // (keep destination's perm bits).
                 let source_mode = entry.permissions();
                 if cached_meta.is_none() {
-                    let dflt_perms = 0o777 & !cached_umask();
+                    let dflt_perms = default_perms_seed(destination.parent());
                     source_mode & (!0o7777 | dflt_perms)
                 } else {
                     (source_mode & !0o7777) | (current_mode & 0o7777)
