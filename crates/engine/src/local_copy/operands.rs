@@ -611,6 +611,7 @@ mod tests {
         assert!(!spec.has_dot_dir_marker());
     }
 
+    #[cfg(unix)]
     #[test]
     fn source_spec_dot_dir_anchor_with_prefix() {
         let spec = SourceSpec::from_operand(&OsString::from("/src/./a/b")).unwrap();
