@@ -29,8 +29,6 @@
 //! tuple from `statfs.f_fsid` so repeated copies on the same mount
 //! only pay the `statfs` cost once.
 
-#![cfg(target_os = "linux")]
-
 use std::collections::HashMap;
 use std::io;
 use std::path::Path;
