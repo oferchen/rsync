@@ -16,8 +16,7 @@ use std::time::Duration;
 use logging::{debug_log, info_log};
 
 use crate::local_copy::{
-    CopyContext, LocalCopyAction, LocalCopyArgumentError, LocalCopyError, LocalCopyMetadata,
-    LocalCopyRecord,
+    CopyContext, LocalCopyAction, LocalCopyError, LocalCopyMetadata, LocalCopyRecord,
 };
 
 #[cfg(test)]
@@ -105,9 +104,18 @@ pub(crate) fn copy_file(
             destination_previously_existed = true;
             existing_metadata = None;
         } else {
-            return Err(LocalCopyError::invalid_argument(
-                LocalCopyArgumentError::ReplaceDirectoryWithFile,
-            ));
+            // upstream: flist.c:3067-3081 flist_sort_and_clean() resolves
+            // duplicate entries by keeping the directory and dropping the
+            // colliding regular file. Multi-source merge
+            // (`rsync src1/ src2/ dest/`) relies on this: a file in one source
+            // must not blow away a directory contributed by another. Upstream's
+            // generator.c:1734 fallback also bails via `goto cleanup` when
+            // delete_item() refuses to recurse without --force or --delete*,
+            // leaving the existing directory in place. Mirror that here by
+            // silently skipping the conflicting file - no error, no destination
+            // mutation. The explicit `--force` branch above is retained for the
+            // documented override.
+            return Ok(true);
         }
     }
 

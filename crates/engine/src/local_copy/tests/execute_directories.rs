@@ -487,7 +487,10 @@ fn execute_with_mkpath_creates_missing_parents_without_implied_dirs() {
 }
 
 #[test]
-fn execute_with_dry_run_detects_directory_conflict() {
+fn execute_with_dry_run_silently_keeps_directory_on_conflict() {
+    // upstream: flist.c:3067-3081 keeps the directory and drops the regular
+    // file entry when both share a name. Dry-run reports the same outcome:
+    // no error, destination directory preserved.
     let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     fs::write(&source, b"data").expect("write source");
@@ -500,16 +503,13 @@ fn execute_with_dry_run_detects_directory_conflict() {
     let operands = vec![source.into_os_string(), dest_root.into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let error = plan
-        .execute_with(LocalCopyExecution::DryRun)
-        .expect_err("dry-run should detect conflict");
+    plan.execute_with(LocalCopyExecution::DryRun)
+        .expect("dry-run silently keeps the directory");
 
-    match error.into_kind() {
-        LocalCopyErrorKind::InvalidArgument(reason) => {
-            assert_eq!(reason, LocalCopyArgumentError::ReplaceDirectoryWithFile);
-        }
-        other => panic!("unexpected error kind: {other:?}"),
-    }
+    assert!(
+        conflict_dir.is_dir(),
+        "destination directory should be preserved on conflict"
+    );
 }
 
 #[test]
@@ -1410,6 +1410,62 @@ fn execute_multiple_source_directories_to_destination() {
 
     assert!(dest_root.join("source_a").join("a.txt").exists());
     assert!(dest_root.join("source_b").join("b.txt").exists());
+}
+
+/// Regression: upstream `testsuite/merge.test` runs
+/// `rsync -avv from1/ from2/ from3/ to/` where `from1/dir-and-not-dir/` is a
+/// directory and `from3/dir-and-not-dir` is a regular file of the same name.
+/// Upstream `flist.c:3067-3081 flist_sort_and_clean()` deduplicates the
+/// colliding entries by keeping the directory and dropping the regular file,
+/// then `generator.c:1734` falls back to silent skip when the existing
+/// directory would otherwise be replaced without `--force` or `--delete*`.
+///
+/// The expected outcome: exit code 0, `to/dir-and-not-dir/` preserved as a
+/// directory containing the file from `from1/`, and the conflicting file from
+/// `from3/` silently dropped.
+#[test]
+fn execute_multi_source_merge_dir_wins_over_colliding_file() {
+    let temp = create_tempdir();
+    let from1 = temp.path().join("from1");
+    let from2 = temp.path().join("from2");
+    let from3 = temp.path().join("from3");
+    fs::create_dir_all(from1.join("dir-and-not-dir")).expect("create from1 dir");
+    fs::write(from1.join("dir-and-not-dir").join("inside"), b"extra").expect("write inside");
+    fs::create_dir_all(&from2).expect("create from2");
+    fs::write(from2.join("two"), b"two").expect("write two");
+    fs::create_dir_all(&from3).expect("create from3");
+    fs::write(from3.join("dir-and-not-dir"), b"not-dir").expect("write colliding file");
+
+    let dest_root = temp.path().join("to");
+
+    let mut from1_op = from1.into_os_string();
+    from1_op.push(std::path::MAIN_SEPARATOR.to_string());
+    let mut from2_op = from2.into_os_string();
+    from2_op.push(std::path::MAIN_SEPARATOR.to_string());
+    let mut from3_op = from3.into_os_string();
+    from3_op.push(std::path::MAIN_SEPARATOR.to_string());
+
+    let operands = vec![from1_op, from2_op, from3_op, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    plan.execute_with(LocalCopyExecution::Apply)
+        .expect("merge succeeds without --force");
+
+    let collided = dest_root.join("dir-and-not-dir");
+    assert!(
+        collided.is_dir(),
+        "directory contributed by from1 must win over from3's file"
+    );
+    assert_eq!(
+        fs::read(collided.join("inside")).expect("read inside"),
+        b"extra",
+        "contents from the surviving directory must be preserved"
+    );
+    assert_eq!(
+        fs::read(dest_root.join("two")).expect("read two"),
+        b"two",
+        "unrelated files from other sources must still merge"
+    );
 }
 
 #[test]

@@ -37,9 +37,14 @@ fn force_file_replaces_non_empty_directory() {
 }
 
 #[test]
-fn force_disabled_file_cannot_replace_directory_in_recursive_copy() {
-    // When copying source/ -> dest/, if source has "item" as a file but dest
-    // has "item" as a directory, rsync must fail without --force.
+fn force_disabled_file_silently_skips_directory_collision_in_recursive_copy() {
+    // upstream: flist.c:3067-3081 flist_sort_and_clean() drops the conflicting
+    // file entry when a directory of the same name is also in the file list;
+    // generator.c:1734 likewise bails via `goto cleanup` without --force.
+    // Multi-source merge depends on this: a regular file in one source must
+    // not overwrite a directory contributed by another source. Mirror upstream
+    // by silently leaving the destination directory in place - no error,
+    // no destination mutation, exit code 0.
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
@@ -53,20 +58,16 @@ fn force_disabled_file_cannot_replace_directory_in_recursive_copy() {
     let operands = vec![source_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let error = plan
-        .execute_with_options(
-            LocalCopyExecution::Apply,
-            LocalCopyOptions::default().force_replacements(false),
-        )
-        .expect_err("should fail without force");
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().force_replacements(false),
+    )
+    .expect("upstream silently keeps the directory");
 
-    match error.kind() {
-        LocalCopyErrorKind::InvalidArgument(reason) => {
-            assert_eq!(*reason, LocalCopyArgumentError::ReplaceDirectoryWithFile);
-        }
-        other => panic!("unexpected error kind: {other:?}"),
-    }
-    assert!(dest_root.join("item").is_dir(), "directory should remain untouched");
+    assert!(
+        dest_root.join("item").is_dir(),
+        "directory should remain untouched"
+    );
 }
 
 #[test]
@@ -224,7 +225,10 @@ fn force_replaces_file_entry_with_directory_during_recursive_copy() {
 }
 
 #[test]
-fn force_disabled_recursive_copy_fails_on_type_conflict() {
+fn force_disabled_recursive_copy_silently_skips_type_conflict() {
+    // upstream: flist.c:3067-3081 keeps the directory and drops the duplicate
+    // regular file entry. Without --force, oc-rsync mirrors that by leaving
+    // the destination directory intact and not raising an error.
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source root");
@@ -241,19 +245,12 @@ fn force_disabled_recursive_copy_fails_on_type_conflict() {
     let operands = vec![source_operand, dest_root.clone().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let error = plan
-        .execute_with_options(
-            LocalCopyExecution::Apply,
-            LocalCopyOptions::default().force_replacements(false),
-        )
-        .expect_err("should fail without force");
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().force_replacements(false),
+    )
+    .expect("upstream silently keeps the directory");
 
-    match error.kind() {
-        LocalCopyErrorKind::InvalidArgument(reason) => {
-            assert_eq!(*reason, LocalCopyArgumentError::ReplaceDirectoryWithFile);
-        }
-        other => panic!("unexpected error kind: {other:?}"),
-    }
     // The conflicting directory should still be intact
     assert!(dest_root.join("item").is_dir());
 }
