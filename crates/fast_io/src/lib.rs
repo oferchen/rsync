@@ -269,7 +269,9 @@ pub mod sqpoll_basis;
 mod status;
 
 pub use cached_sort::{CachedSortKey, cached_sort_by};
-pub use container::{RootlessSignal, detect_rootless_container, rootless_signal};
+pub use container::{
+    FORCE_ROOTLESS_ENV, RootlessSignal, detect_rootless_container, rootless_signal,
+};
 pub use copy_basis_range::{
     COPY_BASIS_RANGE_MIN_BYTES, copy_basis_range, copy_file_range_supported,
 };
