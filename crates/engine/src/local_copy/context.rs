@@ -119,6 +119,11 @@ pub(crate) struct CopyContext<'a> {
     /// When set to `true` and `--ignore-errors` is not enabled, deletions
     /// are suppressed to prevent data loss.
     io_errors_occurred: bool,
+    /// `true` when the active plan carries more than one source operand.
+    /// Used to switch `--delete-during` to a deferred sweep so the per-source
+    /// keep lists can be merged before any extraneous unlink fires; upstream
+    /// achieves the same result by sharing a single flist across sources.
+    multi_source: bool,
     /// Cache of parent directories whose existence has been verified.
     /// Eliminates redundant `statx` syscalls when many files share the
     /// same parent (e.g. 10K files in one directory → 1 stat instead of 10K).
