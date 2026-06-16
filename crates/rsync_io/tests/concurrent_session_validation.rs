@@ -103,6 +103,17 @@ fn run_sessions(concurrency: usize) -> io::Result<RunMetrics> {
                     pc.fetch_max(current, Ordering::SeqCst);
                     let session_start = Instant::now();
 
+                    // Briefly wait for another worker to arrive so the peak_threads
+                    // assertion observes real concurrency. Without this, a fast
+                    // worker can drain its 8KB stream and decrement the counter
+                    // before tokio's blocking pool lazily spawns a second thread,
+                    // producing peak_threads=1 on busy CI runners.
+                    let spin_deadline = Instant::now() + Duration::from_millis(50);
+                    while tc.load(Ordering::SeqCst) < 2 && Instant::now() < spin_deadline {
+                        thread::yield_now();
+                    }
+                    pc.fetch_max(tc.load(Ordering::SeqCst), Ordering::SeqCst);
+
                     let mut stream = stream;
                     let mut buf = vec![0u8; IO_BUF];
                     let mut total = 0usize;
