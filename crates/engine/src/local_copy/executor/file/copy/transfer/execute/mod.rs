@@ -609,6 +609,7 @@ pub(in crate::local_copy) fn execute_transfer(
         destination_previously_existed,
         delay_updates_enabled,
         &mut writer_for_metadata,
+        existing_metadata,
         #[cfg(all(unix, feature = "xattr"))]
         preserve_xattrs,
         #[cfg(all(any(unix, windows), feature = "acl"))]

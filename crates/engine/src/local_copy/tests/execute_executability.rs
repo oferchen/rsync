@@ -163,9 +163,9 @@ fn execute_executability_without_permissions_preserves_only_execute_bits() {
     fs::write(&source, b"payload").expect("write source");
     fs::write(&destination, b"existing").expect("write dest");
 
-    // Source has specific permissions including execute
+    // Source has specific permissions including execute. Destination starts at
+    // `0o620` so the pre-transfer destination mode lacks any x bit.
     fs::set_permissions(&source, PermissionsExt::from_mode(0o751)).expect("set source perms");
-    // Destination has different permissions
     fs::set_permissions(&destination, PermissionsExt::from_mode(0o620)).expect("set dest perms");
 
     let operands = vec![
@@ -183,10 +183,23 @@ fn execute_executability_without_permissions_preserves_only_execute_bits() {
 
     let metadata = fs::metadata(&destination).expect("dest metadata");
     let mode = metadata.permissions().mode() & 0o777;
-    // Only execute bits should match source, other bits should remain from dest
-    assert_eq!(mode & 0o111, 0o751 & 0o111, "execute bits should match source");
-    // Non-execute bits should be different from source (not preserved)
-    assert_ne!(mode & 0o666, 0o751 & 0o666, "non-execute bits should not be preserved");
+    // upstream: rsync.c:457-465 dest_mode() - when `-E` is on without `-p`,
+    // the receiver keeps the destination's pre-transfer permission bits and
+    // grants execute "to everyone who can already read" (`new_mode & 0444 >> 2`)
+    // when the source has any x bit and the destination has none. Starting
+    // from dest=0o620, only owner has read, so only owner gains x → 0o720.
+    // The non-x bits stay at the pre-transfer destination mode, not the
+    // source's; this matches upstream rsync 3.4.4 exactly.
+    assert_eq!(
+        mode, 0o720,
+        "expected upstream dest_mode() result 0o720 (rwx-w-----) for pre-transfer dest 0o620 + source 0o751"
+    );
+    assert_eq!(mode & 0o111, 0o100, "only owner x is granted (dest had only owner-read)");
+    assert_eq!(
+        mode & 0o666,
+        0o620,
+        "non-x bits stay at the pre-transfer destination's mode, not the source's"
+    );
     assert_eq!(summary.files_copied(), 1);
 }
 
