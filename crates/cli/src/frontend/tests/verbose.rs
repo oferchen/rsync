@@ -821,8 +821,18 @@ fn quiet_flag_produces_no_output() {
     assert_eq!(std::fs::read(destination).expect("read"), b"quiet mode");
 }
 
-/// Verifies that higher verbosity levels produce progressively more output.
-/// Level 0 < Level 1 < Level 2, measured by stdout byte count.
+/// Verifies that higher verbosity levels never drop output.
+///
+/// Level 0 emits nothing per upstream; Level 1 begins per-file `%n%L`
+/// (upstream `log.c::log_formatted` lines 633-659, triggered when
+/// `INFO_GTE(NAME, 1)` per `options.c::set_output_verbosity`). Level 2
+/// only adds further output for events that fire conditionally - it does
+/// NOT extend the per-file line with a descriptor prefix or rate-display
+/// wrapper. For a single-file success transfer through the local-copy
+/// executor (no `--stats`, no skipped files), `-v` and `-vv` therefore
+/// emit identical byte counts. The earlier strict-less assertion locked
+/// in the pre-bare-render divergence and started panicking after that
+/// renderer was aligned with upstream.
 #[test]
 fn higher_verbosity_produces_more_output() {
     use tempfile::tempdir;
@@ -864,10 +874,10 @@ fn higher_verbosity_produces_more_output() {
         stdout1.len()
     );
     assert!(
-        stdout1.len() < stdout2.len(),
-        "level 1 ({} bytes) should produce less output than level 2 ({} bytes)",
-        stdout1.len(),
-        stdout2.len()
+        stdout1.len() <= stdout2.len(),
+        "level 2 ({} bytes) must not drop output relative to level 1 ({} bytes)",
+        stdout2.len(),
+        stdout1.len()
     );
 }
 
