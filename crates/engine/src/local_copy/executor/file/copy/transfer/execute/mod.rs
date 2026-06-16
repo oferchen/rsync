@@ -9,11 +9,14 @@
 //!
 //! - `skip` - quick-check skip detection and metadata-only reuse recording
 //! - `clonefile` - macOS APFS clonefile fast path (whole-file CoW)
+//! - `ficlone` - Linux FICLONE fast path (whole-file CoW on Btrfs/XFS/bcachefs)
 //! - `iouring` - Linux io_uring registered-buffer data-write fast path
 //! - `wincopy` - Windows `CopyFileExW` / ReFS reflink fast path
 
 #[cfg(target_os = "macos")]
 mod clonefile;
+#[cfg(target_os = "linux")]
+mod ficlone;
 #[cfg(all(target_os = "linux", feature = "iouring-data-writes"))]
 mod iouring;
 mod skip;
@@ -203,6 +206,32 @@ pub(in crate::local_copy) fn execute_transfer(
         flags,
         copy_source_override.is_some(),
     ) && wincopy::try_copy(
+        context,
+        source,
+        destination,
+        metadata,
+        metadata_options.clone(),
+        record_path,
+        existing_metadata,
+        destination_previously_existed,
+        file_type,
+        relative,
+        mode,
+        flags,
+    )? {
+        return Ok(());
+    }
+
+    // Fast path: Linux FICLONE reflink for new whole-file copies on Btrfs,
+    // XFS (reflink enabled), and bcachefs. Cross-filesystem / unsupported-fs
+    // failures degrade to the generic read/write loop transparently.
+    #[cfg(target_os = "linux")]
+    if ficlone::eligible(
+        context,
+        existing_metadata,
+        flags,
+        copy_source_override.is_some(),
+    ) && ficlone::try_clone(
         context,
         source,
         destination,
@@ -609,6 +638,7 @@ pub(in crate::local_copy) fn execute_transfer(
         destination_previously_existed,
         delay_updates_enabled,
         &mut writer_for_metadata,
+        existing_metadata,
         #[cfg(all(unix, feature = "xattr"))]
         preserve_xattrs,
         #[cfg(all(any(unix, windows), feature = "acl"))]

@@ -36,6 +36,8 @@ pub(crate) mod file_reader;
 mod file_writer;
 mod overlapped;
 mod pump;
+/// Windows Registered I/O (RIO) wrappers for opt-in high-throughput socket I/O.
+pub mod rio;
 /// IOCP-based async socket I/O via `WSARecv` / `WSASend`.
 pub mod socket;
 /// Windows `TransmitFile()` zero-copy file-to-socket primitive.
@@ -62,6 +64,11 @@ pub use file_reader::IocpReader;
 pub use file_writer::IocpWriter;
 pub use pump::{
     CompletionHandler, CompletionPump, IocpPumpConfig, oneshot_handler, post_completion,
+};
+pub use rio::{
+    DEFAULT_RIO_POOL_BYTES, DEFAULT_RIO_SLOT_BYTES, RIO_ENV_VAR, RegisteredBuffer, RioBufferPool,
+    RioCompletionQueue, RioFunctions, RioMode, rio_create_request_queue, rio_enabled_from_env,
+    rio_notify, rio_recv, rio_send, try_init_rio,
 };
 #[cfg(feature = "transmitfile")]
 pub use transmit_file::{TRANSMIT_FILE_MAX_BYTES, try_transmit_file};

@@ -1,13 +1,18 @@
-//! macOS APFS clonefile fast path for whole-file copies.
+//! Linux FICLONE ioctl fast path for whole-file copies.
 //!
-//! `clonefile(2)` creates a copy-on-write clone on APFS, avoiding all
-//! read/write I/O. It is only safe when all metadata will either be
-//! preserved by finalize or corrected by [`normalize_cloned_metadata`].
+//! `ioctl(FICLONE)` creates a copy-on-write reflink on filesystems that
+//! support it (Btrfs, XFS with reflink enabled, bcachefs). Zero data is
+//! copied - source and destination share storage blocks until either is
+//! modified. The operation is O(1) regardless of file size.
 //!
-//! The fast-path dispatcher and metadata normalizer live here together so
-//! the eligibility checks, dispatch, and post-clone bookkeeping all evolve
-//! as a single concern. The parent `mod.rs` already gates this module on
-//! `target_os = "macos"`, so no inner `#![cfg(...)]` is needed.
+//! The eligibility checks, dispatch, and post-clone bookkeeping evolve as
+//! a single concern; the parent `mod.rs` already gates this module on
+//! `target_os = "linux"`, so no inner `#![cfg(...)]` is needed.
+//!
+//! Cross-filesystem, unsupported-filesystem, and read-only-fs failures are
+//! mapped to `Ok(false)` so the caller falls through to the generic copy
+//! path. Any I/O error after a successful reflink propagates as
+//! `LocalCopyError`.
 
 use std::fs;
 use std::path::Path;
@@ -25,11 +30,14 @@ use crate::local_copy::{
 use super::super::TransferFlags;
 use super::super::finalize::finalize_guard_and_metadata;
 
-/// Returns whether the current transfer satisfies every clonefile precondition.
+/// Returns whether the current transfer satisfies every FICLONE precondition.
 ///
-/// Centralizes all conditions that would make clonefile produce incorrect
-/// results so [`finalize_guard_and_metadata`] works identically for both the
-/// clonefile and standard copy paths.
+/// Mirrors the macOS [`super::clonefile::eligible`] gate: FICLONE preserves
+/// the source's data and timestamps verbatim, so any code path that needs
+/// delta, sparse handling, inplace writes, compression, bandwidth shaping,
+/// staging directories, or xattr filter rules must fall through to the
+/// regular copy path. The destination must also be a fresh file - FICLONE
+/// fails if it already exists.
 pub(super) fn eligible(
     context: &CopyContext,
     existing_metadata: Option<&fs::Metadata>,
@@ -56,9 +64,6 @@ pub(super) fn eligible(
         && !context.delay_updates_enabled()
         && context.temp_directory_path().is_none();
 
-    // Extended attributes: clonefile copies all xattrs verbatim, so skip
-    // when (a) xattr filters need selective copy, or (b) xattrs are disabled
-    // entirely (source xattrs would leak to destination).
     let xattr_ok = {
         #[cfg(all(unix, feature = "xattr"))]
         {
@@ -76,14 +81,12 @@ pub(super) fn eligible(
     transfer_ok && xattr_ok
 }
 
-/// Attempts the clonefile fast path; returns `true` on success.
+/// Attempts the FICLONE fast path; returns `true` on success.
 ///
-/// Dispatches through the configured `PlatformCopy`. Only commits to the
-/// fast path when the strategy reported a true zero-copy reflink
-/// (clonefile/FICLONE/ReFS reflink); any data-copy fallback would bypass
-/// rsync's delta machinery without honouring the eligibility assumptions,
-/// so on non-zero-copy results we discard and fall through to the normal
-/// copy path.
+/// Delegates to [`fast_io::try_ficlone`] (which wraps `ioctl_ficlone` via
+/// `rustix`). FICLONE failures - cross-device (`EXDEV`), unsupported
+/// filesystem (`EOPNOTSUPP`), permission, etc. - are mapped to
+/// `Ok(false)` so the caller falls through to the generic read/write loop.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn try_clone(
     context: &mut CopyContext,
@@ -101,24 +104,8 @@ pub(super) fn try_clone(
 ) -> Result<bool, LocalCopyError> {
     let file_size = metadata.len();
 
-    let cloned = match context
-        .options()
-        .platform_copy()
-        .copy_file(source, destination, file_size)
-    {
-        Ok(result) if result.is_zero_copy() => true,
-        Ok(_) => {
-            let _ = std::fs::remove_file(destination);
-            false
-        }
-        Err(_) => {
-            let _ = std::fs::remove_file(destination);
-            false
-        }
-    };
-    if !cloned {
-        // clonefile failed (cross-device, non-APFS, etc.) - caller falls
-        // through to normal copy path.
+    if fast_io::try_ficlone(source, destination).is_err() {
+        let _ = std::fs::remove_file(destination);
         return Ok(false);
     }
 
@@ -126,7 +113,7 @@ pub(super) fn try_clone(
     debug_log!(
         Send,
         1,
-        "cloned {}: {} bytes (CoW)",
+        "cloned {}: {} bytes (FICLONE)",
         record_path.display(),
         file_size
     );
@@ -169,13 +156,11 @@ pub(super) fn try_clone(
         .with_creation(true),
     );
 
-    // Normalize cloned metadata to match what open()-created files have.
-    // clonefile() preserves source metadata verbatim. Without this,
-    // finalize_guard_and_metadata skips corrections when preservation is
-    // disabled (e.g. --no-perms, --no-times), leaving source metadata
-    // instead of umask/current-time defaults.
-    // upstream: rsync creates files via open() then applies metadata -
-    // clonefile must produce identical results.
+    // FICLONE preserves source metadata verbatim. Normalize so finalize
+    // sees a fresh-open()-style destination when the user did not request
+    // preservation of perms/times, mirroring the macOS clonefile path.
+    // upstream: rsync creates via open() then applies metadata - reflinks
+    // must produce identical observable results.
     normalize_cloned_metadata(destination, metadata, &metadata_options)?;
 
     finalize_guard_and_metadata(
@@ -192,7 +177,7 @@ pub(super) fn try_clone(
         destination_previously_existed,
         false,
         &mut None,
-        existing_metadata,
+        None,
         #[cfg(all(unix, feature = "xattr"))]
         flags.preserve_xattrs,
         #[cfg(all(any(unix, windows), feature = "acl"))]
@@ -202,45 +187,18 @@ pub(super) fn try_clone(
     Ok(true)
 }
 
-/// Normalizes a clonefile'd destination to match open()-created file defaults.
+/// Normalizes a FICLONE'd destination to match open()-created file defaults.
 ///
-/// `clonefile()` preserves the source's exact metadata (permissions, mtime).
-/// When the user has not requested preservation of these attributes (e.g.
-/// `--no-perms`, `--no-times`), `finalize_guard_and_metadata` will skip
-/// corrections because it assumes the file already has process-default metadata.
-/// This function bridges that gap by resetting metadata to what `open()` would
-/// produce, so the finalize step works identically for both paths.
-///
-/// - Permissions: reset to `source_mode & ~umask` (matching `open()` behavior)
-/// - Timestamps: reset mtime to current time (matching newly created files)
+/// `FICLONE` clones the source's data and inherits the destination's mode
+/// from the `creat()` call inside the dispatcher. Permissions thus already
+/// reflect the process umask, but timestamps inherit from the source. When
+/// preservation is disabled (`--no-times`), reset mtime to "now" so
+/// finalize behaves identically to the regular copy path.
 fn normalize_cloned_metadata(
     destination: &Path,
-    source_metadata: &fs::Metadata,
+    _source_metadata: &fs::Metadata,
     options: &::metadata::MetadataOptions,
 ) -> Result<(), LocalCopyError> {
-    use std::os::unix::fs::PermissionsExt;
-
-    // When permissions are being preserved, finalize_guard_and_metadata will set
-    // them from the source - clonefile already did this, so no correction needed.
-    // When NOT preserving, reset to umask-applied mode (what open() would give).
-    if !options.permissions() {
-        // rustix provides a safe umask API (internally wraps the syscall).
-        // Read current umask by setting a dummy value, then restore.
-        let current_umask = rustix::process::umask(rustix::fs::Mode::empty());
-        rustix::process::umask(current_umask);
-        let umask_bits = u32::from(current_umask.bits());
-        // Mask to 0o777 - open() never sets special bits (setuid/setgid/sticky).
-        // upstream: rsync uses open(dest, O_CREAT, mode & 0777) for new files.
-        let source_mode = source_metadata.permissions().mode() & 0o777;
-        let default_mode = source_mode & !umask_bits;
-        fs::set_permissions(destination, PermissionsExt::from_mode(default_mode))
-            .map_err(|e| LocalCopyError::io("normalize cloned permissions", destination, e))?;
-    }
-
-    // When timestamps are being preserved, finalize will apply source mtime.
-    // When NOT preserving, reset to current time (what a newly created file has).
-    // Use utimensat via rustix to set mtime without needing write access -
-    // clonefile may produce a read-only destination (e.g. source mode 0o444).
     if !options.times() {
         let now = rustix::fs::Timestamps {
             last_access: rustix::fs::Timespec {

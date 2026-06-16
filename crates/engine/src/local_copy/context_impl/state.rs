@@ -140,6 +140,7 @@ impl<'a> CopyContext<'a> {
             deferred_sync,
             checksum_cache: None,
             io_errors_occurred: false,
+            multi_source: false,
             verified_parents: HashSet::new(),
             batch_flist_writer,
             batch_delta_buf,
@@ -186,6 +187,19 @@ impl<'a> CopyContext<'a> {
     /// Returns the execution mode (real or dry-run).
     pub(super) const fn mode(&self) -> LocalCopyExecution {
         self.mode
+    }
+
+    /// Records that the active plan carries more than one source operand.
+    /// Read by [`Self::multi_source`] to switch `--delete-during` to deferred
+    /// sweeps, merging per-source keep lists so a sibling source's flist
+    /// entries cannot be deleted before they are written.
+    pub(super) fn set_multi_source(&mut self, value: bool) {
+        self.multi_source = value;
+    }
+
+    /// Returns `true` when the plan carries multiple sources.
+    pub(super) const fn multi_source(&self) -> bool {
+        self.multi_source
     }
 
     /// Returns a reference to the full set of copy options.
@@ -242,11 +256,7 @@ impl<'a> CopyContext<'a> {
     }
 
     /// Returns whether a bandwidth limiter is active.
-    #[cfg(any(
-        target_os = "macos",
-        target_os = "windows",
-        all(target_os = "linux", feature = "iouring-data-writes")
-    ))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     pub(in crate::local_copy) const fn has_bandwidth_limiter(&self) -> bool {
         self.limiter.is_some()
     }
@@ -271,6 +281,7 @@ impl<'a> CopyContext<'a> {
             metadata_options,
             mode,
             path_context,
+            pre_transfer_meta,
             #[cfg(unix)]
             fd,
             #[cfg(all(unix, feature = "xattr"))]
@@ -291,6 +302,23 @@ impl<'a> CopyContext<'a> {
             CreatedEntryKind::File,
             destination_previously_existed,
         );
+
+        // upstream: rsync.c:954-965 - when `-p`/`--chmod` are off, the
+        // receiver rewrites `file->mode` via `dest_mode()` BEFORE the
+        // transfer; `set_file_attrs()` then chmods the freshly-renamed
+        // temp file to that mode. Reproduce that chmod here so a re-
+        // transferred regular file holds its pre-transfer permission bits
+        // and a new regular file lands at `source_mode & dflt_perms`. The
+        // call short-circuits when `-p`/`--chmod` are active so the
+        // existing chmod chain owns the syscall.
+        #[cfg(unix)]
+        ::metadata::apply_dest_mode_pre_transfer(
+            destination,
+            metadata,
+            &metadata_options,
+            pre_transfer_meta,
+        )
+        .map_err(map_metadata_error)?;
 
         // Use fd-based metadata operations when an open fd is available (Unix).
         // Stat the destination first to skip redundant chown/chmod/utimensat
@@ -747,6 +775,11 @@ impl<'a> CopyContext<'a> {
                     file_type: path_context.file_type,
                     destination_previously_existed: path_context.destination_previously_existed,
                 },
+                // upstream: rsync.c:954-965 - deferred updates have already
+                // committed the rename + applied dest_mode at the original
+                // commit site, so there is no pre-transfer stat to recover
+                // here.
+                pre_transfer_meta: None,
                 #[cfg(unix)]
                 fd: None, // No fd available for deferred updates
                 #[cfg(all(unix, feature = "xattr"))]

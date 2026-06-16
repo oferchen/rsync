@@ -40,6 +40,38 @@ fn cached_umask() -> u32 {
     })
 }
 
+/// Returns the default permission seed for a child created under `parent`.
+///
+/// Mirrors upstream `generator.c:1337-1339` which calls `default_perms_for_dir(dn)`
+/// when `--perms` is off. The helper folds the parent directory's POSIX default
+/// ACL `user_obj`/`group_obj`/`other_obj` entries into the seed; when there is
+/// no default ACL (or the filesystem does not support POSIX default ACLs) it
+/// returns the umask-derived `ACCESSPERMS & ~orig_umask`.
+///
+/// upstream: `acls.c:1083-1139` `default_perms_for_dir`
+/// upstream: `generator.c:1337-1340` per-parent `dflt_perms` lookup
+#[cfg(unix)]
+fn default_perms_seed(parent: Option<&Path>) -> u32 {
+    let umask = cached_umask();
+    #[cfg(all(
+        feature = "acl",
+        any(target_os = "linux", target_os = "macos", target_os = "freebsd")
+    ))]
+    {
+        if let Some(parent) = parent {
+            return crate::default_perms_for_dir(parent, umask);
+        }
+    }
+    #[cfg(not(all(
+        feature = "acl",
+        any(target_os = "linux", target_os = "macos", target_os = "freebsd")
+    )))]
+    {
+        let _ = parent;
+    }
+    0o777 & !umask
+}
+
 /// Computes the destination file mode matching upstream `rsync.c:dest_mode()`.
 ///
 /// When `-p` (preserve permissions) is not active, upstream rsync still applies
@@ -50,20 +82,27 @@ fn cached_umask() -> u32 {
 /// For new files: `source_mode & (~0o7777 | dflt_perms)`
 /// For existing files: keeps existing permissions (returns `None`)
 ///
+/// The `dest_parent` argument carries the destination's parent directory so the
+/// new-file seed can inherit the parent's POSIX default ACL via
+/// [`default_perms_seed`] when the `acl` feature is enabled. Falls back to the
+/// umask-derived seed when the parent is unknown or no default ACL is present.
+///
 /// upstream: rsync.c:449-472 `dest_mode()`
+/// upstream: generator.c:1337-1339 `dflt_perms = default_perms_for_dir(dn)`
 /// upstream: generator.c:2280 `dflt_perms = (ACCESSPERMS & ~orig_umask)`
 #[cfg(unix)]
 fn compute_dest_mode(
     source_mode: u32,
     is_new: bool,
     existing: Option<&fs::Metadata>,
+    dest_parent: Option<&Path>,
 ) -> Option<u32> {
     use std::os::unix::fs::PermissionsExt;
 
     if is_new {
         // upstream: dest_mode() for new files:
         // new_mode = flist_mode & (~CHMOD_BITS | dflt_perms)
-        let dflt_perms = 0o777 & !cached_umask();
+        let dflt_perms = default_perms_seed(dest_parent);
         let new_mode = source_mode & (!0o7777 | dflt_perms);
         // Skip the chmod if the mode already matches
         if let Some(existing) = existing {
@@ -85,6 +124,104 @@ fn compute_dest_mode(
         }
     } else {
         None
+    }
+}
+
+/// Pre-applies the upstream `rsync.c:dest_mode()` chmod for the source-
+/// `Metadata` apply path used by the local-copy executor and the receiver
+/// data fast path.
+///
+/// Mirrors upstream's `file->mode = dest_mode(...)` rewrite that runs
+/// BEFORE the temp file is opened; the freshly-renamed temp file then gets
+/// chmod'd to that mode by `set_file_attrs()`. Without this pre-chmod the
+/// destination would silently inherit the temp file's `0o600`/umask-default
+/// permissions instead of upstream's `dest_mode()` result.
+///
+/// Returns without acting when `-p`/`--chmod` are in effect: those paths
+/// already drive the chmod through `metadata.permissions().mode()` or the
+/// chmod modifier chain.
+///
+/// upstream: rsync.c:954-965 (`dest_mode()` invocation) + rsync.c:457-465
+/// (`dest_mode()` body)
+#[cfg(unix)]
+pub fn apply_dest_mode_pre_transfer(
+    destination: &Path,
+    source_metadata: &fs::Metadata,
+    options: &MetadataOptions,
+    pre_transfer_meta: Option<&fs::Metadata>,
+) -> Result<(), MetadataError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !source_metadata.file_type().is_file() {
+        return Ok(());
+    }
+    if options.permissions() || options.chmod().is_some() {
+        return Ok(());
+    }
+
+    let source_mode = source_metadata.permissions().mode();
+    let base_mode = if let Some(existing) = pre_transfer_meta {
+        // Existing destination: keep its prior permission bits.
+        let stat_mode = existing.permissions().mode();
+        (source_mode & !0o7777) | (stat_mode & 0o7777)
+    } else {
+        // New destination: source mode masked by default permissions.
+        let dflt_perms = 0o777 & !cached_umask();
+        source_mode & (!0o7777 | dflt_perms)
+    };
+
+    let mut target_perms = base_mode & 0o7777;
+    if options.executability() {
+        // upstream: rsync.c:457-465 - layer `-E` executability on top of the
+        // dest_mode() base.
+        if source_mode & 0o111 == 0 {
+            target_perms &= !0o111;
+        } else if target_perms & 0o111 == 0 {
+            target_perms |= (target_perms & 0o444) >> 2;
+        }
+    }
+    let new_mode = (base_mode & !0o7777) | target_perms;
+
+    // Compare against the file's CURRENT (post-rename) mode. If the temp
+    // file already happens to match the target we skip the chmod syscall.
+    let current_mode = fs::metadata(destination)
+        .map_err(|error| MetadataError::new("inspect destination permissions", destination, error))?
+        .permissions()
+        .mode();
+    if (current_mode & 0o7777) != (new_mode & 0o7777) {
+        chmod_path_honoring_keep_dirlinks(destination, new_mode, options, "apply dest_mode")?;
+    }
+    Ok(())
+}
+
+/// Computes the upstream `dest_mode()` result for the receiver entry path.
+///
+/// Returns the mode bits the destination would have AFTER upstream rewrites
+/// `file->mode = dest_mode(...)`. The `-E` layer (if active) goes on top of
+/// this base mode. Used both by the no-flag chmod fallback (which mirrors
+/// upstream's unconditional `set_file_attrs()` chmod) and by the `-E`
+/// without `-p` path.
+///
+/// upstream: rsync.c:449-472 `dest_mode()`
+#[cfg(unix)]
+fn dest_mode_for_existing_or_new(
+    entry: &protocol::flist::FileEntry,
+    pre_transfer_meta: Option<&fs::Metadata>,
+) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+
+    let source_mode = entry.permissions();
+    if let Some(existing) = pre_transfer_meta {
+        // Existing file: `(flist_mode & ~CHMOD_BITS) | (stat_mode & CHMOD_BITS)`
+        // - keep the destination's prior permission bits.
+        let stat_mode = existing.permissions().mode();
+        (source_mode & !0o7777) | (stat_mode & 0o7777)
+    } else {
+        // New file: `flist_mode & (~CHMOD_BITS | dflt_perms)` so exec bits
+        // survive the umask wash while special bits (suid/sgid/sticky) drop
+        // out.
+        let dflt_perms = 0o777 & !cached_umask();
+        source_mode & (!0o7777 | dflt_perms)
     }
 }
 
@@ -186,9 +323,12 @@ pub(super) fn apply_permissions_with_chmod(
     {
         use std::os::unix::fs::PermissionsExt;
         let source_mode = metadata.permissions().mode();
-        if let Some(new_mode) =
-            compute_dest_mode(source_mode, options.destination_is_new(), existing)
-        {
+        if let Some(new_mode) = compute_dest_mode(
+            source_mode,
+            options.destination_is_new(),
+            existing,
+            destination.parent(),
+        ) {
             // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant.
             chmod_path_honoring_keep_dirlinks(destination, new_mode, options, "apply dest_mode")?;
         }
@@ -269,7 +409,12 @@ pub(super) fn apply_permissions_with_chmod_fd(
     // upstream: rsync.c:dest_mode() - when no explicit permission option is
     // active, still apply source-mode-based permissions masked by umask.
     let source_mode = metadata.permissions().mode();
-    if let Some(new_mode) = compute_dest_mode(source_mode, options.destination_is_new(), existing) {
+    if let Some(new_mode) = compute_dest_mode(
+        source_mode,
+        options.destination_is_new(),
+        existing,
+        destination.parent(),
+    ) {
         if let Some(fd) = fd {
             unix_fs::fchmod(
                 fd,
@@ -345,13 +490,15 @@ fn base_mode_for_permissions(
 
     // upstream: rsync.c:455-470 - existing files keep destination's perm
     // bits with the type bits from the source mode; new files mask the
-    // source mode by `dflt_perms = ACCESSPERMS & ~orig_umask`. The
-    // destination tempfile mode is never the baseline.
+    // source mode by `dflt_perms = default_perms_for_dir(dn)`, which folds
+    // the parent's POSIX default ACL when one is present (acls.c:1083) and
+    // otherwise reduces to `ACCESSPERMS & ~orig_umask`. The destination
+    // tempfile mode is never the baseline.
     let source_mode = metadata.permissions().mode();
     let mut destination_permissions = if let Some(existing) = existing {
         (source_mode & !0o7777) | (existing.permissions().mode() & 0o7777)
     } else {
-        let dflt_perms = 0o777 & !cached_umask();
+        let dflt_perms = default_perms_seed(destination.parent());
         source_mode & (!0o7777 | dflt_perms)
     };
 
@@ -448,18 +595,63 @@ fn apply_permissions_without_chmod(
 /// Handles the receiver-side chmod path: applies the entry's permission bits
 /// directly, then layers any `--chmod` modifiers on top. Skips the syscall
 /// when the resulting mode already matches `cached_meta`.
+///
+/// `pre_transfer_meta` is the destination's metadata captured BEFORE the
+/// transfer started (before any temp-file rename). It mirrors upstream
+/// `rsync.c:dest_mode()`'s `stat_mode` argument: the receiver runs
+/// `dest_mode()` against the pre-transfer destination so the dest's prior
+/// permission bits (or umask-masked source bits for new files) propagate
+/// onto the freshly-renamed temp file. `Some(meta)` means "the file existed
+/// pre-transfer at this mode"; `None` means "no pre-transfer destination
+/// state available" - either the file is new or the caller cannot supply
+/// it.
 // upstream: rsync.c:set_file_attrs() - receiver-side permission application
 pub(super) fn apply_permissions_from_entry(
     destination: &Path,
     entry: &protocol::flist::FileEntry,
     options: &MetadataOptions,
     cached_meta: Option<&fs::Metadata>,
+    pre_transfer_meta: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
 
         if !options.permissions() && !options.executability() && options.chmod().is_none() {
+            // upstream: rsync.c:954-965 - even when `!preserve_perms` and
+            // `!preserve_executability`, the receiver mutates `file->mode` via
+            // `dest_mode()` and `set_file_attrs()` chmods the post-rename
+            // destination to it. For an existing destination this preserves
+            // the prior mode (so a re-transfer never silently downgrades to
+            // the temp file's `0o600`/umask-default permissions); for a new
+            // destination it applies `source_mode & (~CHMOD_BITS | dflt_perms)`.
+            // Only the regular-file branch ships - upstream restricts the
+            // `S_ISREG(flist_mode)` chmod-on-rename loop to data files. Skip
+            // when the caller has supplied neither a pre-transfer stat nor a
+            // cached post-rename stat: we cannot distinguish a fresh-from-
+            // rename temp file from an untouched destination, and the source-
+            // `Metadata` apply path already handles both cases via
+            // `apply_dest_mode_pre_transfer`.
+            if entry.file_type().is_regular() && pre_transfer_meta.is_some() {
+                let new_mode = dest_mode_for_existing_or_new(entry, pre_transfer_meta);
+                let fresh_meta;
+                let current_meta = if let Some(meta) = cached_meta {
+                    meta
+                } else {
+                    fresh_meta = fs::metadata(destination).map_err(|error| {
+                        MetadataError::new("inspect destination permissions", destination, error)
+                    })?;
+                    &fresh_meta
+                };
+                if (current_meta.permissions().mode() & 0o7777) != (new_mode & 0o7777) {
+                    chmod_path_honoring_keep_dirlinks(
+                        destination,
+                        new_mode,
+                        options,
+                        "apply dest_mode",
+                    )?;
+                }
+            }
             return Ok(());
         }
 
@@ -524,12 +716,14 @@ pub(super) fn apply_permissions_from_entry(
             } else {
                 // --no-perms: mirror upstream `dest_mode()`. For a fresh
                 // transfer (`cached_meta.is_none()`), use the new-file
-                // branch (`flist_mode & (~CHMOD_BITS | dflt_perms)`); for
-                // a quick-check skip on an existing dest, use the
-                // existing-file branch (keep destination's perm bits).
+                // branch (`flist_mode & (~CHMOD_BITS | dflt_perms)`) where
+                // `dflt_perms` honours the parent's POSIX default ACL via
+                // `default_perms_for_dir` (acls.c:1083); for a quick-check
+                // skip on an existing dest, use the existing-file branch
+                // (keep destination's perm bits).
                 let source_mode = entry.permissions();
                 if cached_meta.is_none() {
-                    let dflt_perms = 0o777 & !cached_umask();
+                    let dflt_perms = default_perms_seed(destination.parent());
                     source_mode & (!0o7777 | dflt_perms)
                 } else {
                     (source_mode & !0o7777) | (current_mode & 0o7777)
@@ -542,6 +736,51 @@ pub(super) fn apply_permissions_from_entry(
                 // Helper follows symlinked parents under `--keep-dirlinks` to
                 // mirror upstream `generator.c:1344`.
                 chmod_path_honoring_keep_dirlinks(destination, new_mode, options, "apply chmod")?;
+            }
+        } else if options.executability()
+            && !options.permissions()
+            && entry.file_type().is_regular()
+        {
+            // upstream: rsync.c:457-465 dest_mode() - `-E` without `-p` and
+            // without `--chmod` transfers only the executability bits from
+            // source to destination, layered on top of the pre-transfer
+            // destination mode (or the source-mode-masked-by-dflt-perms when
+            // the file is fresh). Using the post-rename temp file's
+            // `0o600`/umask-default bits would silently drop bits like the
+            // world-read bit upstream preserves. When the caller hasn't
+            // separately tracked the pre-transfer stat (e.g. quick-check
+            // path, public `apply_metadata_from_file_entry` API), fall back
+            // to `cached_meta` because no rename happened and the current
+            // stat IS the pre-transfer stat.
+            let base_meta = pre_transfer_meta.or(cached_meta);
+            let new_mode = dest_mode_for_existing_or_new(entry, base_meta);
+            let mut destination_permissions = new_mode & 0o7777;
+
+            if entry.permissions() & 0o111 == 0 {
+                destination_permissions &= !0o111;
+            } else if destination_permissions & 0o111 == 0 {
+                destination_permissions |= (destination_permissions & 0o444) >> 2;
+            }
+
+            let fresh_meta;
+            let current_meta = if let Some(meta) = cached_meta {
+                meta
+            } else {
+                fresh_meta = fs::metadata(destination).map_err(|error| {
+                    MetadataError::new("inspect destination permissions", destination, error)
+                })?;
+                &fresh_meta
+            };
+            if (current_meta.permissions().mode() & 0o7777) != destination_permissions {
+                // upstream: syscall.c:do_chmod_at() symlink-race-safe variant.
+                // Helper follows symlinked parents under `--keep-dirlinks` to
+                // mirror upstream `generator.c:1344`.
+                chmod_path_honoring_keep_dirlinks(
+                    destination,
+                    destination_permissions,
+                    options,
+                    "preserve permissions",
+                )?;
             }
         }
     }

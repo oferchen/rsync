@@ -2766,6 +2766,53 @@ mod files_from {
         );
     }
 
+    #[test]
+    fn build_file_list_with_base_dotdir_entry_scans_children() {
+        // Upstream `files-from.test` regression: a `--files-from` entry of
+        // the form `from/./` parses to a `FilesFromEntry` with
+        // `path == base` and `recurse == true` (upstream's DOTDIR_NAME
+        // case at `flist.c:2329`). With `--files-from` active,
+        // `options.c:2189` clears the global `recurse` flag, so
+        // `walk_path_with_metadata` emits only the root entry; the
+        // marker-dir rescan in `build_file_list_with_base` is the only
+        // path that re-injects the directory's children. The previous
+        // `entry.path != entry.base` gate skipped that rescan for the
+        // DOTDIR shape and the transfer collapsed to zero files.
+        let temp_dir = TempDir::new().unwrap();
+        let src = temp_dir.path().join("src");
+        let from_dir = src.join("from");
+        std::fs::create_dir_all(&from_dir).unwrap();
+        std::fs::write(from_dir.join("alpha.txt"), b"a").unwrap();
+        std::fs::write(from_dir.join("beta.txt"), b"b").unwrap();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.args = vec![OsString::from(&src)];
+        // Mirror upstream `options.c:2189` - `--files-from` disables
+        // global recursion; the per-entry `recurse` flag drives the
+        // DOTDIR rescan instead.
+        config.flags.recursive = false;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+
+        let dotdir_entry = super::filters::FilesFromEntry {
+            base: from_dir.clone(),
+            path: from_dir.clone(),
+            recurse: true,
+        };
+        ctx.build_file_list_with_base(&src, std::slice::from_ref(&dotdir_entry))
+            .unwrap();
+
+        let names: Vec<&str> = ctx.file_list().iter().map(|e| e.name()).collect();
+        assert!(
+            names.contains(&"alpha.txt"),
+            "DOTDIR entry must rescan children: expected alpha.txt in {names:?}"
+        );
+        assert!(
+            names.contains(&"beta.txt"),
+            "DOTDIR entry must rescan children: expected beta.txt in {names:?}"
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn relative_absolute_source_preserves_full_prefix() {

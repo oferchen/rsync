@@ -221,6 +221,9 @@ struct CompiledRule {
     applies_to_sender: bool,
     applies_to_receiver: bool,
     perishable: bool,
+    /// upstream: exclude.c:906 - `ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1`.
+    /// When set, the rule fires on paths that do NOT match the pattern.
+    negate: bool,
 }
 
 impl CompiledRule {
@@ -228,6 +231,7 @@ impl CompiledRule {
         let action = rule.action();
         let applies_to_sender = rule.applies_to_sender();
         let applies_to_receiver = rule.applies_to_receiver();
+        let negate = rule.is_negated();
         let pattern = rule.pattern().to_owned();
         let (anchored, directory_only, core_pattern) = normalise_pattern(&pattern);
 
@@ -268,10 +272,22 @@ impl CompiledRule {
             applies_to_sender,
             applies_to_receiver,
             perishable: rule.is_perishable(),
+            negate,
         })
     }
 
     fn matches(&self, path: &Path, is_dir: bool, check_descendants: bool) -> bool {
+        let pattern_matched = self.pattern_matches(path, is_dir, check_descendants);
+        // upstream: exclude.c:906 - `ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1`.
+        // A negated rule fires when the pattern does NOT match.
+        if self.negate {
+            !pattern_matched
+        } else {
+            pattern_matched
+        }
+    }
+
+    fn pattern_matches(&self, path: &Path, is_dir: bool, check_descendants: bool) -> bool {
         for matcher in &self.direct_matchers {
             if matcher.is_match(path) && (!self.directory_only || is_dir) {
                 return true;

@@ -119,6 +119,11 @@ pub(crate) struct CopyContext<'a> {
     /// When set to `true` and `--ignore-errors` is not enabled, deletions
     /// are suppressed to prevent data loss.
     io_errors_occurred: bool,
+    /// `true` when the active plan carries more than one source operand.
+    /// Used to switch `--delete-during` to a deferred sweep so the per-source
+    /// keep lists can be merged before any extraneous unlink fires; upstream
+    /// achieves the same result by sharing a single flist across sources.
+    multi_source: bool,
     /// Cache of parent directories whose existence has been verified.
     /// Eliminates redundant `statx` syscalls when many files share the
     /// same parent (e.g. 10K files in one directory → 1 stat instead of 10K).
@@ -188,6 +193,14 @@ pub(crate) struct FinalizeMetadataParams<'a> {
     mode: LocalCopyExecution,
     path_context: MetadataPathContext<'a>,
 
+    /// Pre-transfer destination metadata captured before the temp-file
+    /// rename. Mirrors upstream's `stat_mode` argument to `dest_mode()`:
+    /// `Some(meta)` when the destination existed at transfer start;
+    /// `None` for a brand-new destination. Used by
+    /// [`::metadata::apply_dest_mode_pre_transfer`] to reproduce the
+    /// upstream `rsync.c:954-965` chmod-on-rename loop.
+    pre_transfer_meta: Option<&'a fs::Metadata>,
+
     #[cfg(unix)]
     fd: Option<std::os::fd::BorrowedFd<'a>>,
 
@@ -212,6 +225,7 @@ impl<'a> FinalizeMetadataParams<'a> {
             metadata_options,
             mode,
             path_context,
+            pre_transfer_meta: None,
             #[cfg(unix)]
             fd: None,
             #[cfg(all(unix, feature = "xattr"))]
@@ -225,6 +239,17 @@ impl<'a> FinalizeMetadataParams<'a> {
     #[cfg(unix)]
     pub(crate) const fn with_fd(mut self, fd: std::os::fd::BorrowedFd<'a>) -> Self {
         self.fd = Some(fd);
+        self
+    }
+
+    /// Attach the pre-transfer destination metadata so the apply path can
+    /// reproduce upstream `dest_mode()` semantics for the chmod-on-rename
+    /// loop.
+    pub(crate) const fn with_pre_transfer_meta(
+        mut self,
+        pre_transfer_meta: Option<&'a fs::Metadata>,
+    ) -> Self {
+        self.pre_transfer_meta = pre_transfer_meta;
         self
     }
 }

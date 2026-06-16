@@ -794,23 +794,3 @@ fn progress_shows_filename_before_progress_line() {
         "filename should appear before xfr# line (fname_pos={fname_pos}, xfr_pos={xfr_pos})"
     );
 }
-
-#[test]
-fn compute_rate_returns_none_for_zero_duration() {
-    use super::compute_rate;
-    assert_eq!(compute_rate(1000, Duration::ZERO), None);
-}
-
-#[test]
-fn compute_rate_returns_bytes_per_second() {
-    use super::compute_rate;
-    let rate = compute_rate(2000, Duration::from_secs(2)).unwrap();
-    assert!((rate - 1000.0).abs() < 0.01);
-}
-
-#[test]
-fn compute_rate_handles_fractional_seconds() {
-    use super::compute_rate;
-    let rate = compute_rate(500, Duration::from_millis(250)).unwrap();
-    assert!((rate - 2000.0).abs() < 0.01);
-}

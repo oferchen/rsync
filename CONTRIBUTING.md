@@ -89,6 +89,9 @@ prevents.
   refresh and PR auto-sync workflows below, which must run *without*
   `--locked` to do their job. The allowlist lives inside
   `tools/ci/check_locked_flags.sh`; add to it only with reviewer signoff.
+- `tools/ci/tests/test_check_locked_flags.sh` self-tests the gate against
+  synthetic fixtures and runs in the same workflow job, so a regression in
+  the matcher itself surfaces before it can let a real violation through.
 
 ### Weekly auto-sync
 

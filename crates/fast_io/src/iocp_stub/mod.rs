@@ -25,6 +25,8 @@ mod file_factory;
 mod file_reader;
 mod file_writer;
 mod pump;
+/// Cross-platform stub for the Windows-only `iocp::rio` module.
+pub mod rio;
 /// Cross-platform stub for the Windows-only `iocp::socket` module.
 pub mod socket;
 
@@ -47,3 +49,7 @@ pub use file_factory::{
 pub use file_reader::IocpReader;
 pub use file_writer::IocpWriter;
 pub use pump::{CompletionHandler, CompletionPump, IocpPumpConfig, oneshot_handler};
+pub use rio::{
+    DEFAULT_RIO_POOL_BYTES, DEFAULT_RIO_SLOT_BYTES, RIO_ENV_VAR, RegisteredBuffer, RioBufferPool,
+    RioCompletionQueue, RioFunctions, RioMode, rio_enabled_from_env, try_init_rio,
+};

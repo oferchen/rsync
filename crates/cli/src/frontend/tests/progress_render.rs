@@ -90,7 +90,14 @@ fn emit_transfer_summary_with_progress_and_verbose_listing() {
 
     let output = String::from_utf8(rendered).expect("utf8");
     assert!(output.contains("(xfr#1, to-chk="));
-    assert!(output.contains("copied:"));
+    // upstream emits bare `%n%L` per-file even at -vv (options.c:2372).
+    // Do not emit descriptor prefixes like `copied:` - upstream testsuite
+    // `duplicates.test` greps for `^name1$` to detect duplicate copies.
+    assert!(
+        !output.contains("copied:"),
+        "verbosity 2 must not prefix lines with `copied:` - upstream `duplicates.test` greps for bare `^<name>$`:\n{output}"
+    );
+    assert!(output.contains("sample.txt"));
     assert!(output.contains("sent "));
     assert!(output.contains("speedup is"));
 }
