@@ -32,3 +32,9 @@ jobs:
 
       - name: Run check_locked_flags.sh
         run: bash tools/ci/check_locked_flags.sh
+
+      - name: Self-test check_locked_flags.sh
+        # Exercises the gate against synthetic fixtures so a regression in
+        # the matcher (false positives, false negatives, comment handling)
+        # surfaces here instead of as a silent gap on a future PR.
+        run: bash tools/ci/tests/test_check_locked_flags.sh
