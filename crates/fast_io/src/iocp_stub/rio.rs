@@ -79,13 +79,13 @@ impl RioFunctions {
 }
 
 /// Always returns `Ok(None)` on this platform: RIO is Windows-only.
-#[must_use]
 pub fn try_init_rio() -> io::Result<Option<RioFunctions>> {
     Ok(None)
 }
 
 /// Stub registered buffer pool. Construction always fails with
 /// [`std::io::ErrorKind::Unsupported`].
+#[derive(Debug)]
 pub struct RioBufferPool {
     _private: (),
 }
@@ -137,11 +137,13 @@ impl RioBufferPool {
 }
 
 /// Stub registered buffer handle. Cannot be constructed on this platform.
+#[derive(Debug)]
 pub struct RegisteredBuffer {
     _private: (),
 }
 
 /// Stub completion queue. Construction always fails with `Unsupported`.
+#[derive(Debug)]
 pub struct RioCompletionQueue {
     _private: (),
 }
