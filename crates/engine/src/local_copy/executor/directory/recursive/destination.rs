@@ -14,12 +14,32 @@ use crate::local_copy::{
 };
 
 /// Result of checking destination directory state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(super) enum DestinationState {
-    /// Destination directory already exists and is ready.
-    Ready,
+    /// Destination directory already exists and is ready. Carries the existing
+    /// directory metadata so callers can itemize attribute drift (mtime, perms,
+    /// ownership) against the source's metadata, matching upstream
+    /// `generator.c:1480-1483` which feeds the existing `sx.st` into
+    /// `itemize()` with `iflags=0` and lets `itemize()` compute the
+    /// `ITEM_REPORT_TIME|PERMS|...` bits.
+    Ready(Option<fs::Metadata>),
     /// Destination is missing and needs to be created.
     Missing,
+}
+
+impl DestinationState {
+    /// Returns `true` when the destination needs to be materialised.
+    pub(super) const fn is_missing(&self) -> bool {
+        matches!(self, Self::Missing)
+    }
+
+    /// Returns the existing destination metadata when available.
+    pub(super) fn existing_metadata(&self) -> Option<&fs::Metadata> {
+        match self {
+            Self::Ready(Some(meta)) => Some(meta),
+            _ => None,
+        }
+    }
 }
 
 /// Checks the destination path and determines if it needs to be created.
@@ -40,11 +60,11 @@ pub(super) fn check_destination_state(
             let file_type = existing.file_type();
             if file_type.is_dir() {
                 // Directory already present; nothing to do.
-                Ok(DestinationState::Ready)
+                Ok(DestinationState::Ready(Some(existing)))
             } else if file_type.is_symlink() && context.keep_dirlinks_enabled() {
                 let target_metadata = follow_symlink_metadata(destination)?;
                 if target_metadata.file_type().is_dir() {
-                    Ok(DestinationState::Ready)
+                    Ok(DestinationState::Ready(Some(target_metadata)))
                 } else if context.force_replacements_enabled() {
                     context.force_remove_destination(destination, relative, &existing)?;
                     Ok(DestinationState::Missing)

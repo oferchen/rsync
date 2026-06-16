@@ -586,3 +586,153 @@ fn change_set_detects_group_override_mismatch() {
 
     assert!(change_set.group_changed());
 }
+
+#[cfg(unix)]
+#[test]
+fn for_existing_directory_flags_time_change_when_mtimes_differ() {
+    use filetime::{FileTime, set_file_mtime};
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let src_dir = temp.path().join("src");
+    let dst_dir = temp.path().join("dst");
+    fs::create_dir(&src_dir).expect("create src");
+    fs::create_dir(&dst_dir).expect("create dst");
+
+    set_file_mtime(&src_dir, FileTime::from_unix_time(2_000_000, 0)).expect("set src mtime");
+    set_file_mtime(&dst_dir, FileTime::from_unix_time(1_000_000, 0)).expect("set dst mtime");
+
+    let src_meta = fs::metadata(&src_dir).expect("src meta");
+    let dst_meta = fs::metadata(&dst_dir).expect("dst meta");
+
+    let options = MetadataOptions::new().preserve_times(true);
+    let change_set = LocalCopyChangeSet::for_existing_directory(
+        &src_meta, &dst_meta, &options, false, false, false,
+    );
+
+    assert_eq!(change_set.time_change(), Some(TimeChange::Modified));
+    assert!(change_set.has_any_change());
+}
+
+#[cfg(unix)]
+#[test]
+fn for_existing_directory_no_change_when_mtimes_match() {
+    use filetime::{FileTime, set_file_mtime};
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let src_dir = temp.path().join("src");
+    let dst_dir = temp.path().join("dst");
+    fs::create_dir(&src_dir).expect("create src");
+    fs::create_dir(&dst_dir).expect("create dst");
+
+    let ts = FileTime::from_unix_time(1_500_000, 0);
+    set_file_mtime(&src_dir, ts).expect("set src mtime");
+    set_file_mtime(&dst_dir, ts).expect("set dst mtime");
+
+    let src_meta = fs::metadata(&src_dir).expect("src meta");
+    let dst_meta = fs::metadata(&dst_dir).expect("dst meta");
+
+    let options = MetadataOptions::new().preserve_times(true);
+    let change_set = LocalCopyChangeSet::for_existing_directory(
+        &src_meta, &dst_meta, &options, false, false, false,
+    );
+
+    assert_eq!(change_set.time_change(), None);
+    assert!(!change_set.has_any_change());
+}
+
+#[cfg(unix)]
+#[test]
+fn for_existing_directory_omit_dir_times_suppresses_time_flag() {
+    use filetime::{FileTime, set_file_mtime};
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let src_dir = temp.path().join("src");
+    let dst_dir = temp.path().join("dst");
+    fs::create_dir(&src_dir).expect("create src");
+    fs::create_dir(&dst_dir).expect("create dst");
+
+    set_file_mtime(&src_dir, FileTime::from_unix_time(2_000_000, 0)).expect("set src mtime");
+    set_file_mtime(&dst_dir, FileTime::from_unix_time(1_000_000, 0)).expect("set dst mtime");
+
+    let src_meta = fs::metadata(&src_dir).expect("src meta");
+    let dst_meta = fs::metadata(&dst_dir).expect("dst meta");
+
+    let options = MetadataOptions::new().preserve_times(true);
+    let change_set = LocalCopyChangeSet::for_existing_directory(
+        &src_meta, &dst_meta, &options, true, false, false,
+    );
+
+    assert_eq!(change_set.time_change(), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn for_recreated_symlink_sets_checksum_and_time_when_mtimes_differ() {
+    use filetime::{FileTime, set_symlink_file_times};
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let src_link = temp.path().join("src-link");
+    let dst_link = temp.path().join("dst-link");
+    symlink("target-a", &src_link).expect("create src");
+    symlink("target-b", &dst_link).expect("create dst");
+
+    set_symlink_file_times(
+        &src_link,
+        FileTime::from_unix_time(2_000_000, 0),
+        FileTime::from_unix_time(2_000_000, 0),
+    )
+    .expect("set src times");
+    set_symlink_file_times(
+        &dst_link,
+        FileTime::from_unix_time(1_000_000, 0),
+        FileTime::from_unix_time(1_000_000, 0),
+    )
+    .expect("set dst times");
+
+    let src_meta = fs::symlink_metadata(&src_link).expect("src meta");
+    let dst_meta = fs::symlink_metadata(&dst_link).expect("dst meta");
+
+    let options = MetadataOptions::new().preserve_times(true);
+    let change_set =
+        LocalCopyChangeSet::for_recreated_symlink(&src_meta, &dst_meta, &options, false);
+
+    assert!(change_set.checksum_changed());
+    assert_eq!(change_set.time_change(), Some(TimeChange::Modified));
+}
+
+#[cfg(unix)]
+#[test]
+fn for_recreated_symlink_omit_link_times_suppresses_time_flag() {
+    use filetime::{FileTime, set_symlink_file_times};
+    use std::os::unix::fs::symlink;
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let src_link = temp.path().join("src-link");
+    let dst_link = temp.path().join("dst-link");
+    symlink("target-a", &src_link).expect("create src");
+    symlink("target-b", &dst_link).expect("create dst");
+
+    set_symlink_file_times(
+        &src_link,
+        FileTime::from_unix_time(2_000_000, 0),
+        FileTime::from_unix_time(2_000_000, 0),
+    )
+    .expect("set src times");
+    set_symlink_file_times(
+        &dst_link,
+        FileTime::from_unix_time(1_000_000, 0),
+        FileTime::from_unix_time(1_000_000, 0),
+    )
+    .expect("set dst times");
+
+    let src_meta = fs::symlink_metadata(&src_link).expect("src meta");
+    let dst_meta = fs::symlink_metadata(&dst_link).expect("dst meta");
+
+    let options = MetadataOptions::new().preserve_times(true);
+    let change_set =
+        LocalCopyChangeSet::for_recreated_symlink(&src_meta, &dst_meta, &options, true);
+
+    assert!(change_set.checksum_changed());
+    assert_eq!(change_set.time_change(), None);
+}

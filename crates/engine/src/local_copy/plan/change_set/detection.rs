@@ -129,6 +129,105 @@ impl LocalCopyChangeSet {
 
         change_set
     }
+
+    /// Computes a change set for an existing destination directory.
+    ///
+    /// Mirrors upstream `itemize()` (`generator.c:511-572`) for the directory
+    /// branch reached via `generator.c:1480-1483` when `statret == 0`: the
+    /// receiver flags `ITEM_REPORT_TIME` when `mtime_differs` (gated by
+    /// `!omit_dir_times`), `ITEM_REPORT_PERMS` when the masked mode bits
+    /// differ, and `ITEM_REPORT_OWNER`/`ITEM_REPORT_GROUP` when ownership
+    /// differs. ACL/xattr drift is signalled when those features are active.
+    /// Symlink-only flags and size are skipped because directories never
+    /// participate in those positions.
+    pub fn for_existing_directory(
+        source: &fs::Metadata,
+        existing: &fs::Metadata,
+        metadata_options: &MetadataOptions,
+        omit_dir_times: bool,
+        xattrs_enabled: bool,
+        acls_enabled: bool,
+    ) -> Self {
+        let mut change_set = Self::new();
+
+        let times_preserved = metadata_options.times() && !omit_dir_times;
+        if times_preserved {
+            let new_mtime = metadata_modified_time(source);
+            let old_mtime = metadata_modified_time(existing);
+            match (new_mtime, old_mtime) {
+                (Some(new_value), Some(old_value)) if new_value == old_value => {}
+                _ => {
+                    change_set = change_set.with_time_change(Some(TimeChange::Modified));
+                }
+            }
+        }
+
+        if metadata_options.permissions() && permissions_changed(source, Some(existing), true) {
+            change_set = change_set.with_permissions_changed(true);
+        }
+        if metadata_options.chmod().is_some() {
+            change_set = change_set.with_permissions_changed(true);
+        }
+
+        if owner_changed(metadata_options, source, Some(existing), true) {
+            change_set = change_set.with_owner_changed(true);
+        }
+        if group_changed(metadata_options, source, Some(existing), true) {
+            change_set = change_set.with_group_changed(true);
+        }
+
+        if metadata_options.user_mapping().is_some() {
+            change_set = change_set.with_owner_changed(true);
+        }
+        if metadata_options.group_mapping().is_some() {
+            change_set = change_set.with_group_changed(true);
+        }
+
+        if xattrs_enabled {
+            change_set = change_set.with_xattr_changed(true);
+        }
+        if acls_enabled {
+            change_set = change_set.with_acl_changed(true);
+        }
+
+        change_set
+    }
+
+    /// Computes a change set for a recreated symlink whose existing
+    /// destination already pointed somewhere different.
+    ///
+    /// Mirrors upstream `generator.c:1608-1609`, where the recreate path calls
+    /// `itemize(... ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE ...)`.
+    /// `ITEM_REPORT_CHANGE` lights up the `c` glyph in position 2 to signal
+    /// that the link target itself changed. `itemize()` then adds
+    /// `ITEM_REPORT_TIME` when the symlink's mtime differs from the existing
+    /// link's mtime (gated by `!omit_link_times`).
+    pub fn for_recreated_symlink(
+        source: &fs::Metadata,
+        existing: &fs::Metadata,
+        metadata_options: &MetadataOptions,
+        omit_link_times: bool,
+    ) -> Self {
+        let mut change_set = Self::new().with_checksum_changed(true);
+
+        let times_preserved = metadata_options.times() && !omit_link_times;
+        if times_preserved {
+            let new_mtime = metadata_modified_time(source);
+            let old_mtime = metadata_modified_time(existing);
+            match (new_mtime, old_mtime) {
+                (Some(new_value), Some(old_value)) if new_value == old_value => {}
+                _ => {
+                    change_set = change_set.with_time_change(Some(TimeChange::Modified));
+                }
+            }
+        }
+
+        // upstream: generator.c:542-549 - `#ifndef CAN_CHMOD_SYMLINK` skips
+        // perm/owner/group bits for symlinks on platforms where chmod follows
+        // the link. Linux and macOS both behave that way for symlinks, so the
+        // itemize line never reports symlink perm changes in those slots.
+        change_set
+    }
 }
 
 /// Determines the appropriate time-change variant based on metadata options
