@@ -246,11 +246,22 @@ impl ReceiverContext {
         if created_dest_root {
             debug_log!(Recv, 1, "created destination root {}", dest_dir.display());
             // upstream: main.c:798-799 - `rprintf(FINFO, "created directory %s\n", dest_path)`
-            // gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`. Mirror the
-            // itemize half of that gate so `-i` invocations emit the notice
-            // ahead of the per-entry itemize lines, matching the upstream
-            // `testsuite/itemize.test` expectation.
-            if self.config.flags.info_flags.itemize {
+            // gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`. The notice
+            // is for the receiver's destination root only; alt-basis dirs
+            // (`--copy-dest`, `--link-dest`, `--compare-dest`) never produce
+            // this message because upstream's get_local_name() only mkdir's
+            // `dest_path`, not the ref_dirs.
+            //
+            // Restrict the println to client-mode runs: server-mode receivers
+            // (SSH/daemon) share stdout with the rsync multiplex stream, so a
+            // raw `println!` would inject "created directory ..." bytes into
+            // the wire protocol and corrupt the transfer (this is the
+            // alt-dest interop regression). The client-side
+            // `cli::frontend::progress::render` path already emits this
+            // notice for local-mode transfers via the local-copy summary, so
+            // gating here on client_mode keeps the upstream itemize.test
+            // golden satisfied without breaking SSH/daemon paths.
+            if self.config.flags.info_flags.itemize && self.config.connection.client_mode {
                 println!("created directory {}", dest_dir.display());
             }
         }
