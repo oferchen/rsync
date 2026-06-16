@@ -132,10 +132,12 @@ fn itemize_updated_file_shows_change_indicators() {
 
     assert_eq!(&format_str[0..1], ">");
     assert_eq!(&format_str[1..2], "f");
+    // upstream: generator.c:1942 - ITEM_REPORT_CHECKSUM is set only under
+    // `always_checksum > 0` (i.e. `--checksum`); without it, position 2 is '.'.
     assert_eq!(
         &format_str[2..3],
-        "c",
-        "checksum should be 'c': {format_str:?}"
+        ".",
+        "checksum slot should be '.' without --checksum: {format_str:?}"
     );
     assert_eq!(&format_str[3..4], "s", "size should be 's': {format_str:?}");
     assert_eq!(&format_str[4..5], "t", "time should be 't': {format_str:?}");
