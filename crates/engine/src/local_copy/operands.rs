@@ -278,6 +278,11 @@ fn detect_marker_components_windows(operand: &OsStr) -> Option<usize> {
                 index += 1;
             }
         }
+    } else if is_separator(units[0]) {
+        count += 1;
+        while index < len && is_separator(units[index]) {
+            index += 1;
+        }
     }
 
     if index >= len {
