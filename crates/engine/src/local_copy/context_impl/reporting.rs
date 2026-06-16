@@ -93,17 +93,57 @@ impl<'a> CopyContext<'a> {
     }
 
     /// Queues a directory for deferred deletion (processed after the transfer).
+    /// When a deferred deletion for the same `destination` already exists, the
+    /// new keep list is unioned into the existing entry so a sibling source's
+    /// flist contributions cannot be unlinked by an earlier source's sweep.
+    /// Mirrors upstream's shared-flist semantics where every source's entries
+    /// are visible to every `delete_in_dir()` call.
     pub(super) fn defer_deletion(
         &mut self,
         destination: PathBuf,
         relative: Option<PathBuf>,
         keep: Vec<OsString>,
     ) {
+        if let Some(existing) = self
+            .deferred_ops
+            .deletions
+            .iter_mut()
+            .find(|entry| entry.destination == destination)
+        {
+            for name in keep {
+                if !existing.keep.iter().any(|existing_name| existing_name == &name) {
+                    existing.keep.push(name);
+                }
+            }
+            return;
+        }
         self.deferred_ops.deletions.push(DeferredDeletion {
             destination,
             relative,
             keep,
         });
+    }
+
+    /// Adds `keep_name` to the keep list of every queued deferred deletion
+    /// whose `destination` is an ancestor of `child_path`. Allows a sibling
+    /// source's file to protect itself from a previously-queued sweep on the
+    /// same parent directory, replaying the shared-flist invariant upstream
+    /// `delete_in_dir()` relies on.
+    pub(super) fn register_keep_under_deferred_destination(&mut self, child_path: &Path) {
+        let Some(parent) = child_path.parent() else {
+            return;
+        };
+        let Some(name) = child_path.file_name() else {
+            return;
+        };
+        let owned_name: OsString = name.to_os_string();
+        for entry in &mut self.deferred_ops.deletions {
+            if entry.destination.as_path() == parent
+                && !entry.keep.iter().any(|existing| existing == &owned_name)
+            {
+                entry.keep.push(owned_name.clone());
+            }
+        }
     }
 
     /// Executes all queued deferred deletions, unless I/O errors suppress them.

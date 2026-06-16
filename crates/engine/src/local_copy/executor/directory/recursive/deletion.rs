@@ -32,7 +32,16 @@ pub(super) fn handle_post_transfer_deletions(
         return Ok(());
     }
 
-    match delete_timing.unwrap_or(DeleteTiming::During) {
+    let mut timing = delete_timing.unwrap_or(DeleteTiming::During);
+    // upstream: generator.c shares a single flist across sources so
+    // `delete_during` never unlinks an entry that a later source will recreate.
+    // We share the flist via deferred sweeps when more than one source is in
+    // play, merging per-source keep lists in `defer_deletion`.
+    if matches!(timing, DeleteTiming::During) && context.multi_source() {
+        timing = DeleteTiming::After;
+    }
+
+    match timing {
         DeleteTiming::Before => {
             // Already handled by apply_pre_transfer_deletions
         }

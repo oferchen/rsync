@@ -168,6 +168,7 @@ pub(crate) fn copy_directory_recursive(
                 source,
                 destination,
                 metadata,
+                relative,
                 #[cfg(any(
                     all(unix, any(feature = "acl", feature = "xattr")),
                     all(windows, feature = "acl")
@@ -266,6 +267,7 @@ pub(crate) fn copy_directory_recursive(
             source,
             destination,
             metadata,
+            relative,
             #[cfg(any(
                 all(unix, any(feature = "acl", feature = "xattr")),
                 all(windows, feature = "acl")

@@ -140,6 +140,7 @@ impl<'a> CopyContext<'a> {
             deferred_sync,
             checksum_cache: None,
             io_errors_occurred: false,
+            multi_source: false,
             verified_parents: HashSet::new(),
             batch_flist_writer,
             batch_delta_buf,
@@ -186,6 +187,19 @@ impl<'a> CopyContext<'a> {
     /// Returns the execution mode (real or dry-run).
     pub(super) const fn mode(&self) -> LocalCopyExecution {
         self.mode
+    }
+
+    /// Records that the active plan carries more than one source operand.
+    /// Read by [`Self::multi_source`] to switch `--delete-during` to deferred
+    /// sweeps, merging per-source keep lists so a sibling source's flist
+    /// entries cannot be deleted before they are written.
+    pub(super) fn set_multi_source(&mut self, value: bool) {
+        self.multi_source = value;
+    }
+
+    /// Returns `true` when the plan carries multiple sources.
+    pub(super) const fn multi_source(&self) -> bool {
+        self.multi_source
     }
 
     /// Returns a reference to the full set of copy options.

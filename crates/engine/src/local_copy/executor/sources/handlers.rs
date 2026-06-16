@@ -368,6 +368,11 @@ pub(super) fn handle_non_directory_source(
             false,
             context.options().iconv(),
         );
+        // upstream: a multi-source `--delete-during` sweep keys off the shared
+        // flist so a per-source file lands in the keep list for its parent
+        // dir's sweep. Register the file as kept under any deferred deletion
+        // queued by an earlier sibling source before the file is written.
+        context.register_keep_under_deferred_destination(&target);
         let _ = copy_file(
             context,
             source_path,

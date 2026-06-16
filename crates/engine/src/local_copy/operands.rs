@@ -11,6 +11,7 @@ pub(crate) struct SourceSpec {
     path: PathBuf,
     copy_contents: bool,
     relative_prefix_components: Option<usize>,
+    has_dot_dir_marker: bool,
 }
 
 impl SourceSpec {
@@ -28,11 +29,51 @@ impl SourceSpec {
         }
 
         let copy_contents = has_trailing_separator(operand.as_os_str());
+        let has_dot_dir_marker = detect_dot_dir_marker(operand.as_os_str());
         Ok(Self {
             path: PathBuf::from(operand),
             copy_contents,
             relative_prefix_components: detect_relative_prefix_components(operand.as_os_str()),
+            has_dot_dir_marker,
         })
+    }
+
+    /// Returns `true` when the operand contained an explicit `./` dot-dir
+    /// marker used to anchor `--relative` paths. Mirrors upstream
+    /// `flist.c:2368` which flips `implied_dot_dir` for `./xxx`-style args.
+    pub(crate) const fn has_dot_dir_marker(&self) -> bool {
+        self.has_dot_dir_marker
+    }
+
+    /// Returns the prefix of the source path that lies BEFORE the dot-dir
+    /// marker. For `/src/./a/b/c` returns `/src`; for the bare leading-`./`
+    /// form `./a/b/c` returns `.` (the receiver's current working directory).
+    /// Returns `None` when the source has no dot-dir marker. Mirrors how
+    /// upstream's `change_pathname()` anchors the implied `.` entry at the
+    /// source's effective root.
+    pub(crate) fn dot_dir_anchor(&self) -> Option<PathBuf> {
+        if !self.has_dot_dir_marker {
+            return None;
+        }
+        let skip = self.relative_prefix_components?;
+        if skip == 0 {
+            return Some(PathBuf::from("."));
+        }
+        let mut anchor = PathBuf::new();
+        for component in self.path.components().take(skip) {
+            match component {
+                Component::Prefix(prefix) => anchor.push(Path::new(prefix.as_os_str())),
+                Component::RootDir => anchor.push(Component::RootDir.as_os_str()),
+                Component::CurDir => {}
+                Component::ParentDir => anchor.push(".."),
+                Component::Normal(part) => anchor.push(Path::new(part)),
+            }
+        }
+        if anchor.as_os_str().is_empty() {
+            None
+        } else {
+            Some(anchor)
+        }
     }
 
     pub(crate) fn relative_root(&self) -> Option<PathBuf> {
@@ -96,6 +137,27 @@ impl DestinationSpec {
 
     pub(crate) const fn force_directory(&self) -> bool {
         self.force_directory
+    }
+}
+
+/// Returns `true` when `operand` contains an explicit `./` (or `\./`) dot-dir
+/// component used to anchor the `--relative` source root. Upstream tracks the
+/// same signal via the `implied_dot_dir` flag in `flist.c`.
+fn detect_dot_dir_marker(operand: &OsStr) -> bool {
+    #[cfg(unix)]
+    {
+        detect_marker_components_unix(operand).is_some()
+    }
+
+    #[cfg(windows)]
+    {
+        detect_marker_components_windows(operand).is_some()
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let text = operand.to_string_lossy();
+        text.split(|c| c == '/' || c == '\\').any(|seg| seg == ".")
     }
 }
 
@@ -522,5 +584,43 @@ mod tests {
         let a = SourceSpec::from_operand(&OsString::from("/src")).unwrap();
         let b = SourceSpec::from_operand(&OsString::from("/src")).unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn source_spec_has_dot_dir_marker_leading() {
+        let spec = SourceSpec::from_operand(&OsString::from("./a/b")).unwrap();
+        assert!(spec.has_dot_dir_marker());
+    }
+
+    #[test]
+    fn source_spec_has_dot_dir_marker_mid_path() {
+        let spec = SourceSpec::from_operand(&OsString::from("/src/./a/b")).unwrap();
+        assert!(spec.has_dot_dir_marker());
+    }
+
+    #[test]
+    fn source_spec_has_dot_dir_marker_absent() {
+        let spec = SourceSpec::from_operand(&OsString::from("/src/a/b")).unwrap();
+        assert!(!spec.has_dot_dir_marker());
+        let spec = SourceSpec::from_operand(&OsString::from("a/b/c")).unwrap();
+        assert!(!spec.has_dot_dir_marker());
+    }
+
+    #[test]
+    fn source_spec_dot_dir_anchor_with_prefix() {
+        let spec = SourceSpec::from_operand(&OsString::from("/src/./a/b")).unwrap();
+        assert_eq!(spec.dot_dir_anchor(), Some(PathBuf::from("/src")));
+    }
+
+    #[test]
+    fn source_spec_dot_dir_anchor_leading_returns_cwd_dot() {
+        let spec = SourceSpec::from_operand(&OsString::from("./a/b/c")).unwrap();
+        assert_eq!(spec.dot_dir_anchor(), Some(PathBuf::from(".")));
+    }
+
+    #[test]
+    fn source_spec_dot_dir_anchor_none_when_no_marker() {
+        let spec = SourceSpec::from_operand(&OsString::from("/src/a/b")).unwrap();
+        assert_eq!(spec.dot_dir_anchor(), None);
     }
 }
