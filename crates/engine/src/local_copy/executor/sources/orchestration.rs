@@ -321,7 +321,6 @@ fn process_single_source(
         source_path,
         destination_path,
         relative_root.as_deref(),
-        file_type.is_dir(),
     )?;
 
     context.enforce_timeout()?;
@@ -352,7 +351,6 @@ fn retouch_relative_implied_dirs(
     source_path: &Path,
     destination_path: &Path,
     relative_root: Option<&Path>,
-    source_is_dir: bool,
 ) -> Result<(), LocalCopyError> {
     if context.mode().is_dry_run()
         || !context.relative_paths_enabled()
@@ -388,11 +386,7 @@ fn retouch_relative_implied_dirs(
     if components.is_empty() {
         return Ok(());
     }
-    let parent_count = if source_is_dir {
-        components.len().saturating_sub(1)
-    } else {
-        components.len().saturating_sub(1)
-    };
+    let parent_count = components.len().saturating_sub(1);
     if parent_count == 0 {
         return Ok(());
     }
