@@ -1,0 +1,150 @@
+# CIM-LOCKFILE-5 fast PR gate.
+#
+# Diffs the PR against its base and asserts every cargo invocation
+# touched on this branch in `.github/workflows/**.yml` that runs a
+# gated subcommand (build, check, clippy, test, run, nextest run) also
+# carries `--locked`. Complementary to `check-locked-flags.yml`, which
+# runs the full historical scan via `tools/ci/check_locked_flags.sh`.
+#
+# Pure bash + grep, no cargo invocation; finishes in seconds and points
+# at the offending file:line. See docs/ci/locked-gate.md for the
+# exemption list and rationale.
+#
+# To make this a required check, add `locked-gate / gate` to the
+# protected-branch rule in repo settings after this workflow lands on
+# master.
+
+name: locked-gate
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/**.yml'
+      - '.github/workflows/**.yaml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: locked-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Gate changed workflows for --locked
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Gated subcommands (must carry `--locked` on the same logical
+          # command). Mirrors tools/ci/check_locked_flags.sh.
+          #   - cargo build, check, clippy, run, test
+          #   - cargo nextest run (the `run` subcommand only; `list` etc.
+          #     are not gated because they do not link tests).
+          # Exempt subcommands (intentionally lock-free):
+          #   - fmt, doc, bench, update, tree, metadata, fetch, install,
+          #     xtask, deb, generate-rpm, fuzz, cov, llvm-cov, deny,
+          #     hakari, publish.
+          # See docs/ci/locked-gate.md for the rationale.
+
+          # 1. Enumerate workflow YAMLs that changed on this PR. The
+          #    paths-filter on the workflow event already narrows the
+          #    trigger; this re-derives the precise file set so multi-
+          #    file PRs only scan the files they actually touch.
+          mapfile -t changed < <(
+              git diff --name-only --diff-filter=AM \
+                  "${BASE_SHA}" "${HEAD_SHA}" -- \
+                  '.github/workflows/*.yml' \
+                  '.github/workflows/*.yaml'
+          )
+
+          if [[ "${#changed[@]}" -eq 0 ]]; then
+              echo "locked-gate: no workflow YAMLs changed; nothing to gate."
+              exit 0
+          fi
+
+          echo "locked-gate: inspecting ${#changed[@]} changed workflow file(s)."
+          printf '  %s\n' "${changed[@]}"
+          echo
+
+          # 2. For each changed file, join backslash-continued lines and
+          #    grep for gated cargo invocations. Awk does the line join
+          #    so a `cargo build \` followed by `--locked` on the next
+          #    line is treated as a single logical command. Comments
+          #    (`# ...` at start-of-line or after whitespace) are
+          #    stripped before matching to avoid scanning prose.
+          violations=0
+          gated_re='(^|[^A-Za-z0-9_])cargo([[:space:]]+\+[A-Za-z0-9._-]+)?[[:space:]]+(build|check|clippy|run|test|nextest[[:space:]]+run)([[:space:]]|$)'
+          locked_re='(^|[[:space:]])--locked([[:space:]]|$)'
+
+          for f in "${changed[@]}"; do
+              [[ -f "$f" ]] || continue
+              # Join continuation lines, strip leading-whitespace `#` comments,
+              # then emit "<start-lineno>\t<joined-line>" rows.
+              while IFS=$'\t' read -r lineno joined; do
+                  [[ -z "$joined" ]] && continue
+                  # Skip lines that don't invoke a gated subcommand.
+                  if ! [[ "$joined" =~ $gated_re ]]; then
+                      continue
+                  fi
+                  if [[ "$joined" =~ $locked_re ]]; then
+                      continue
+                  fi
+                  violations=$((violations + 1))
+                  printf '::error file=%s,line=%s::missing --locked on gated cargo invocation\n' \
+                      "$f" "$lineno"
+                  printf 'VIOLATION %s:%s\n  %s\n\n' "$f" "$lineno" "$joined"
+              done < <(
+                  awk '
+                      {
+                          if (buf == "") start = NR
+                          line = $0
+                          # Strip a leading-whitespace `#` comment.
+                          sub(/^[[:space:]]*#.*$/, "", line)
+                          sub(/[[:space:]]+$/, "", line)
+                          if (line ~ /\\$/) {
+                              sub(/\\$/, "", line)
+                              buf = buf line " "
+                              next
+                          }
+                          buf = buf line
+                          if (buf ~ /cargo[[:space:]]/) {
+                              print start "\t" buf
+                          }
+                          buf = ""
+                      }
+                      END {
+                          if (buf != "" && buf ~ /cargo[[:space:]]/) {
+                              print start "\t" buf
+                          }
+                      }
+                  ' "$f"
+              )
+          done
+
+          if [[ "$violations" -gt 0 ]]; then
+              echo
+              echo "locked-gate: FAILED with ${violations} violation(s)."
+              echo
+              echo "Every cargo build|check|clippy|run|test|nextest run in a"
+              echo "workflow must pass --locked so Cargo.lock is honoured"
+              echo "byte-for-byte. If an invocation is genuinely lock-free"
+              echo "(e.g., a one-off plugin), add a line:line allowlist entry"
+              echo "to tools/ci/check_locked_flags.sh ALLOWLIST and call it"
+              echo "out in the PR description. See docs/ci/locked-gate.md."
+              exit 1
+          fi
+
+          echo "locked-gate: PASSED. All gated cargo invocations carry --locked."
