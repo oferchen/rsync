@@ -288,10 +288,14 @@ fn verbose_human_readable_combined_formats_sizes() {
     assert!(rendered.contains("1.54K (1,536) bytes"));
 }
 
-/// Verifies that -vv produces a descriptor-prefixed listing (e.g. "data-copied: file").
-/// At verbosity >= 2, the render layer uses `describe_event_kind` for each event.
+/// Verifies that -vv lists files using upstream's bare `%n%L` format
+/// (no `copied:`/`symlink:` descriptor prefix, no byte-count wrapper).
+/// Upstream: options.c:2372 sets `stdout_format = "%n%L"`; log.c:603-659
+/// expands `%n` to the filename and `%L` to ` -> target` for symlinks.
+/// The upstream testsuite `duplicates.test` greps `^name1$` to detect
+/// duplicate copies, so the per-file line must be bare.
 #[test]
-fn level_2_shows_descriptor_prefix() {
+fn level_2_emits_bare_name_per_upstream() {
     use tempfile::tempdir;
 
     let tmp = tempdir().expect("tempdir");
@@ -314,13 +318,15 @@ fn level_2_shows_descriptor_prefix() {
     );
     let rendered = String::from_utf8(stdout).expect("utf8");
     assert!(
-        rendered.contains("descriptor.txt"),
-        "level 2 should list the file name, got: {rendered:?}"
+        rendered.lines().any(|line| line == "descriptor.txt"),
+        "level 2 must emit bare `<name>` per upstream `%n%L`, got: {rendered:?}"
     );
-    assert!(
-        rendered.contains("bytes"),
-        "level 2 should show byte information, got: {rendered:?}"
-    );
+    for forbidden in ["copied:", "symlink:", "hard link:", "directory:"] {
+        assert!(
+            !rendered.contains(forbidden),
+            "level 2 must not emit `{forbidden}` descriptor prefix, got: {rendered:?}"
+        );
+    }
 }
 
 /// Verifies that -vv still includes the summary totals line.
@@ -988,5 +994,56 @@ fn verbose_dry_run_with_stats_shows_statistics() {
     assert!(
         !destination.exists(),
         "dry-run should not create destination"
+    );
+}
+
+/// Mirrors the upstream `testsuite/duplicates.test` scenario: the same
+/// source directory passed multiple times must produce exactly one
+/// bare `name1` line and exactly one `name2 -> target` line on -vv stdout.
+/// The test greps `^name1$` / `^name2 -> ` to detect duplicate copies, so
+/// any prefix (`copied:`, `symlink:`) or byte-count wrapper breaks interop.
+/// Upstream: `testsuite/duplicates.test`, options.c:2372 (`stdout_format = "%n%L"`).
+#[cfg(unix)]
+#[test]
+fn duplicates_testsuite_emits_bare_name_lines() {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let from = tmp.path().join("from");
+    let to = tmp.path().join("to");
+    fs::create_dir(&from).expect("create from");
+    fs::create_dir(&to).expect("create to");
+
+    let name1 = from.join("name1");
+    let name2 = from.join("name2");
+    fs::write(&name1, b"This is the file\n").expect("write name1");
+    symlink(&name1, &name2).expect("create symlink");
+
+    let mut from_arg = from.clone().into_os_string();
+    from_arg.push("/");
+    let mut argv = vec![OsString::from(RSYNC), OsString::from("-avv")];
+    for _ in 0..10 {
+        argv.push(from_arg.clone());
+    }
+    argv.push(to.into_os_string());
+
+    let (code, stdout, _stderr) = run_with_args(argv);
+    assert_eq!(code, 0, "duplicates transfer should succeed");
+
+    let rendered = String::from_utf8(stdout).expect("utf8");
+    let name1_lines = rendered.lines().filter(|line| *line == "name1").count();
+    let name2_lines = rendered
+        .lines()
+        .filter(|line| line.starts_with("name2 -> "))
+        .count();
+    assert_eq!(
+        name1_lines, 1,
+        "name1 must appear exactly once as a bare line, got: {rendered:?}"
+    );
+    assert_eq!(
+        name2_lines, 1,
+        "name2 must appear exactly once as `name2 -> ...`, got: {rendered:?}"
     );
 }
