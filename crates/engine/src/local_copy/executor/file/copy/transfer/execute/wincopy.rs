@@ -188,6 +188,7 @@ pub(super) fn try_copy(
         destination_previously_existed,
         false,
         &mut writer_for_metadata,
+        existing_metadata,
         #[cfg(all(unix, feature = "xattr"))]
         flags.preserve_xattrs,
         #[cfg(all(any(unix, windows), feature = "acl"))]

@@ -289,6 +289,8 @@ impl<'a> CopyContext<'a> {
             #[cfg(all(any(unix, windows), feature = "acl"))]
             preserve_acls,
         } = params;
+        #[cfg(not(unix))]
+        let _ = pre_transfer_meta;
 
         let MetadataPathContext {
             source,
