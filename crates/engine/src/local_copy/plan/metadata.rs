@@ -100,10 +100,14 @@ impl LocalCopyMetadata {
         #[cfg(not(unix))]
         let (mode, uid, gid, nlink) = (None, None, None, None);
 
-        let target = if matches!(kind, LocalCopyFileKind::Symlink) {
-            symlink_target
-        } else {
-            None
+        // upstream: log.c:643-654 - `%L` renders ` -> %s` for symlinks
+        // (`F_SYMLINK(file)`) and ` => %s` for hardlink aliases (`hlink`).
+        // Both reuse this `symlink_target` slot; keep the caller-supplied
+        // reference target for files too so the CLI placeholder can
+        // distinguish the two by the event kind.
+        let target = match kind {
+            LocalCopyFileKind::Symlink | LocalCopyFileKind::File => symlink_target,
+            _ => None,
         };
 
         Self {

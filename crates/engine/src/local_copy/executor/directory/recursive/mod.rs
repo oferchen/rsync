@@ -146,12 +146,64 @@ fn copy_directory_recursive_inner(
     let mut created_directory_on_disk = false;
     let creation_record_pending = destination_missing && relative.is_some();
     let mut record_emitted = false;
-    let metadata_record = relative.map(|rel| {
-        (
+    // upstream: main.c:794-796 + generator.c:566-572 - when the receiver
+    // mkdirs the destination root, `flist->files[0]->flags |= FLAG_DIR_CREATED`
+    // and `itemize()` emits `cd+++++++++ ./` for the synthesized "." entry.
+    // Synthesize a "." relative path for the root when the destination root
+    // was just created so the itemize stream emits `cd+++++++++ ./` ahead of
+    // its children, matching upstream's `testsuite/itemize.test` golden.
+    // Subsequent runs against an existing destination still see relative=None
+    // here, so no record is synthesized and the `-i` output omits the `./`
+    // entry as upstream does (test line 74-79).
+    // upstream: main.c:794-796 + generator.c:566-572 - when the receiver
+    // mkdirs the destination root, `flist->files[0]->flags |= FLAG_DIR_CREATED`
+    // and `itemize()` emits `cd+++++++++ ./` for the synthesized "." entry.
+    // The root flist entry has relative=None here because `non_empty_path("")`
+    // returns None upstream of this call. Synthesize a "." record when the
+    // sources orchestrator already mkdir'd the destination root in this run
+    // (signalled via `summary.destination_root_created()`), so the itemize
+    // stream emits the root row ahead of its children. Subsequent runs see
+    // the flag stay clear and skip the row, matching upstream's `-i` output
+    // when the destination already exists (test line 74-79).
+    let root_was_just_created = relative.is_none() && context.summary().destination_root_created();
+    let metadata_record = if let Some(rel) = relative {
+        Some((
             rel.to_path_buf(),
             LocalCopyMetadata::from_metadata(metadata, None),
-        )
-    });
+        ))
+    } else if destination_missing || root_was_just_created {
+        if destination_missing {
+            context.summary_mut().mark_destination_root_created();
+        }
+        Some((
+            std::path::PathBuf::from("."),
+            LocalCopyMetadata::from_metadata(metadata, None),
+        ))
+    } else {
+        None
+    };
+
+    // upstream: main.c:794-796 + generator.c:566-572 - the root directory
+    // entry (".") is itemized as `cd+++++++++ ./` when the pre-flight mkdir
+    // materialised the destination root. When `ensure_destination_directory`
+    // already created the root above this call frame, the per-frame
+    // `ensure_directory` closure exits early (directory_ready=true) and the
+    // closure's `record(...)` site never fires. Emit the synthetic "."
+    // record up-front so it precedes child entries in the event stream.
+    if root_was_just_created && let Some((ref rel_path, ref snapshot)) = metadata_record {
+        context.record(
+            LocalCopyRecord::new(
+                rel_path.clone(),
+                LocalCopyAction::DirectoryCreated,
+                0,
+                Some(snapshot.len()),
+                Duration::default(),
+                Some(snapshot.clone()),
+            )
+            .with_creation(true),
+        );
+        record_emitted = true;
+    }
 
     let mut kept_any = !prune_enabled;
 

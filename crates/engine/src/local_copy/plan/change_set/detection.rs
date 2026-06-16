@@ -7,6 +7,13 @@ use super::{LocalCopyChangeSet, TimeChange};
 
 impl LocalCopyChangeSet {
     /// Computes a change set for a file-like entry (regular files and symlinks).
+    ///
+    /// The position-2 `c` glyph is reserved for `--checksum` mode (upstream:
+    /// `generator.c:1942` - `if (always_checksum > 0) iflags |=
+    /// ITEM_REPORT_CHANGE`); this constructor leaves it cleared. Callers
+    /// running under `--checksum` should use
+    /// [`for_file_with_checksum`](Self::for_file_with_checksum) and pass
+    /// `checksum_enabled = true`.
     #[allow(clippy::too_many_arguments)]
     pub fn for_file(
         metadata: &fs::Metadata,
@@ -17,9 +24,40 @@ impl LocalCopyChangeSet {
         xattrs_enabled: bool,
         acls_enabled: bool,
     ) -> Self {
+        Self::for_file_with_checksum(
+            metadata,
+            existing,
+            metadata_options,
+            destination_previously_existed,
+            wrote_data,
+            xattrs_enabled,
+            acls_enabled,
+            false,
+        )
+    }
+
+    /// Computes a change set, gating the `c` (checksum) glyph on `checksum_enabled`.
+    ///
+    /// upstream: generator.c:1942 - `if (always_checksum > 0) iflags |=
+    /// ITEM_REPORT_CHANGE`. The position-2 `c` glyph fires only under
+    /// `--checksum`; without it, even when the receiver wrote new data, the
+    /// itemize line keeps `.` in slot 2. Callers that have an explicit
+    /// `--checksum` flag should use this constructor and pass `true` only
+    /// when checksum-mode is active.
+    #[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
+    pub fn for_file_with_checksum(
+        metadata: &fs::Metadata,
+        existing: Option<&fs::Metadata>,
+        metadata_options: &MetadataOptions,
+        destination_previously_existed: bool,
+        wrote_data: bool,
+        xattrs_enabled: bool,
+        acls_enabled: bool,
+        checksum_enabled: bool,
+    ) -> Self {
         let mut change_set = Self::new();
 
-        if wrote_data {
+        if wrote_data && checksum_enabled {
             change_set = change_set.with_checksum_changed(true);
         }
 
@@ -39,13 +77,19 @@ impl LocalCopyChangeSet {
             wrote_data,
         ));
 
-        if metadata_options.permissions()
+        // upstream: generator.c:542-549 - `#ifndef CAN_CHMOD_SYMLINK` skips
+        // the perm-compare entirely for symlinks. On Linux/macOS chmod
+        // follows the link, so a symlink's own perms cannot be changed and
+        // upstream rsync never reports ITEM_REPORT_PERMS for them.
+        let is_symlink = metadata.file_type().is_symlink();
+        if !is_symlink
+            && metadata_options.permissions()
             && permissions_changed(metadata, existing, destination_previously_existed)
         {
             change_set = change_set.with_permissions_changed(true);
         }
 
-        if metadata_options.chmod().is_some() {
+        if !is_symlink && metadata_options.chmod().is_some() {
             change_set = change_set.with_permissions_changed(true);
         }
 

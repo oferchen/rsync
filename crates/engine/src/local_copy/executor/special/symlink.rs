@@ -19,8 +19,8 @@ use crate::local_copy::sync_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
 use crate::local_copy::{
-    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyArgumentError, LocalCopyError,
-    LocalCopyMetadata, LocalCopyRecord, copy_directory_recursive, copy_file,
+    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyArgumentError, LocalCopyChangeSet,
+    LocalCopyError, LocalCopyMetadata, LocalCopyRecord, copy_directory_recursive, copy_file,
     follow_symlink_metadata, map_metadata_error, overrides::create_hard_link,
     remove_source_entry_if_requested,
 };
@@ -289,6 +289,69 @@ pub(crate) fn copy_symlink(
 
     if let Some(parent) = destination.parent() {
         context.prepare_parent_directory(parent)?;
+    }
+
+    // upstream: generator.c:1572-1585 - `quick_check_ok(FT_SYMLINK, ...)` -
+    // when the existing destination is already a symlink pointing at the
+    // same target, skip the re-create and only re-apply metadata. The
+    // itemize line collapses to `.L         ` under `-vv` and is suppressed
+    // outright under plain `-i` (iflags=0 path), matching the upstream
+    // `testsuite/itemize.test` golden for the post-setup assertion at line
+    // 74-79.
+    let symlink_target_unchanged = destination_metadata
+        .as_ref()
+        .is_some_and(|existing| existing.file_type().is_symlink())
+        && fs::read_link(destination)
+            .map(|existing_target| existing_target == target)
+            .unwrap_or(false);
+
+    if symlink_target_unchanged {
+        let existing = destination_metadata
+            .take()
+            .expect("existence verified above");
+        let symlink_options = if context.omit_link_times_enabled() {
+            metadata_options.clone().preserve_times(false)
+        } else {
+            metadata_options.clone()
+        };
+        if !mode.is_dry_run() {
+            apply_symlink_metadata_with_options(destination, metadata, &symlink_options)
+                .map_err(map_metadata_error)?;
+        }
+        context.summary_mut().record_symlink();
+        if let Some(path) = &record_path {
+            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
+            let total_bytes = Some(metadata_snapshot.len());
+            // upstream: generator.c:1577 - `itemize(..., 0, ...)` with
+            // iflags=0 produces no significant change bits when the link
+            // already points at the right place, so the `-i` golden omits
+            // the entry entirely. Emit a MetadataReused record without
+            // creation/changes so the suppression gate in
+            // `out_format::should_suppress_event` collapses the row.
+            let change_set = LocalCopyChangeSet::for_file(
+                metadata,
+                Some(&existing),
+                metadata_options,
+                true,
+                false,
+                false,
+                false,
+            );
+            context.record(
+                LocalCopyRecord::new(
+                    path.clone(),
+                    LocalCopyAction::MetadataReused,
+                    0,
+                    total_bytes,
+                    Duration::default(),
+                    Some(metadata_snapshot),
+                )
+                .with_change_set(change_set),
+            );
+        }
+        context.register_progress();
+        remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
+        return Ok(());
     }
 
     if !mode.is_dry_run()
