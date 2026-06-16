@@ -155,3 +155,117 @@ fn files_from_embedded_dot_marker_determines_destination_structure() {
         b"hello"
     );
 }
+
+/// Verifies that `--files-from` entries flagged as DOTDIR_NAME (`from/./`) and
+/// SLASH_ENDING_NAME (`dir/`) walk their immediate children even when global
+/// recursion is off, matching upstream `flist.c:2442`.
+///
+/// Upstream's `(xfer_dirs && name_type != NORMAL_NAME)` predicate forces
+/// `send_directory()` to emit one level of contents for the listed directory.
+/// Subdirectories encountered during that walk are NOT recursed into further
+/// (matching `recurse=0` semantics), but flat files and immediate subdirs are
+/// transferred.
+///
+/// # Upstream Reference
+///
+/// - `testsuite/files-from.test` - the local invocation exercises this path
+/// - `flist.c:2329` - SLASH_ENDING_NAME / DOTDIR_NAME flagging
+/// - `flist.c:2442-2456` - `(xfer_dirs && name_type != NORMAL_NAME)` walk
+#[test]
+fn files_from_dotdir_entry_walks_immediate_children() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let scratch = tmp.path().join("scratch");
+    let from = scratch.join("from");
+    std::fs::create_dir_all(&from).expect("create from");
+
+    // Flat files and an immediate subdir under from/.
+    std::fs::write(from.join("alpha.txt"), b"alpha").expect("write alpha");
+    std::fs::write(from.join("beta.txt"), b"beta").expect("write beta");
+    let sub = from.join("sub");
+    std::fs::create_dir(&sub).expect("create sub");
+    // Files nested deeper than one level must NOT appear at the destination
+    // because the DOTDIR walk is one level only.
+    std::fs::write(sub.join("nested.txt"), b"nested").expect("write nested");
+
+    // Filelist with a bare DOTDIR entry: should emit `from/`'s immediate
+    // children at the destination root.
+    let list_path = tmp.path().join("filelist");
+    std::fs::write(&list_path, "from/./\n").expect("write list");
+
+    let dest = tmp.path().join("dest");
+    std::fs::create_dir(&dest).expect("create dest");
+
+    let (code, _stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-av"),
+        OsString::from(format!("--files-from={}", list_path.display())),
+        scratch.clone().into_os_string(),
+        OsString::from(format!("{}/", dest.display())),
+    ]);
+
+    assert_eq!(code, 0, "transfer should succeed");
+
+    // Flat children of `from/` appear at the destination root.
+    assert!(
+        dest.join("alpha.txt").exists(),
+        "alpha.txt should appear under dest/"
+    );
+    assert!(
+        dest.join("beta.txt").exists(),
+        "beta.txt should appear under dest/"
+    );
+    // The immediate subdirectory must exist (one-level walk emits it).
+    assert!(
+        dest.join("sub").is_dir(),
+        "sub/ should exist as an empty directory at dest/"
+    );
+    // Recursion stops at one level: the nested file must NOT be copied.
+    assert!(
+        !dest.join("sub").join("nested.txt").exists(),
+        "sub/nested.txt must NOT be copied (recursion is off)"
+    );
+}
+
+/// Verifies that a SLASH_ENDING_NAME `--files-from` entry (`dir/`) at a
+/// deeper level walks its immediate children even when global recursion is
+/// off.
+///
+/// Mirrors `testsuite/files-from.test` line 22 (`from/./dir/subdir/subsubdir2/`)
+/// where the trailing slash must pull `bin-lt-list` into the destination.
+#[test]
+fn files_from_slash_ending_entry_walks_immediate_children() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let scratch = tmp.path().join("scratch");
+    let leaf = scratch.join("from").join("dir").join("leaf");
+    std::fs::create_dir_all(&leaf).expect("create leaf");
+    std::fs::write(leaf.join("payload.bin"), b"payload").expect("write payload");
+
+    let list_path = tmp.path().join("filelist");
+    std::fs::write(&list_path, "from/./dir/leaf/\n").expect("write list");
+
+    let dest = tmp.path().join("dest");
+    std::fs::create_dir(&dest).expect("create dest");
+
+    let (code, _stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-av"),
+        OsString::from(format!("--files-from={}", list_path.display())),
+        scratch.clone().into_os_string(),
+        OsString::from(format!("{}/", dest.display())),
+    ]);
+
+    assert_eq!(code, 0, "transfer should succeed");
+
+    // The leaf directory must exist at dest/dir/leaf/ and contain the file
+    // copied by the one-level walk.
+    let copied = dest.join("dir").join("leaf").join("payload.bin");
+    assert!(
+        copied.exists(),
+        "payload.bin should be copied via SLASH_ENDING_NAME walk"
+    );
+    assert_eq!(std::fs::read(&copied).expect("read"), b"payload");
+}
