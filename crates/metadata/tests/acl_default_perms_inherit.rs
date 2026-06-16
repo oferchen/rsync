@@ -20,7 +20,7 @@ use std::os::unix::fs::PermissionsExt;
 use exacl::{AclEntry, AclOption, Perm, setfacl};
 use tempfile::tempdir;
 
-use metadata::{MetadataOptions, apply_file_metadata_with_options};
+use metadata::{MetadataOptions, apply_file_metadata_with_options, default_perms_for_dir};
 
 /// Creates a destination directory with a POSIX default ACL granting
 /// user::rwx, group::r-x, other::r-x, then transfers a file whose source
@@ -83,5 +83,45 @@ fn child_file_inherits_parent_default_acl_when_perms_disabled() {
     assert_eq!(
         applied_mode, 0o644,
         "child mode {applied_mode:o} did not honour parent default ACL"
+    );
+}
+
+/// When a default ACL carries a `mask` entry, upstream's
+/// `rsync_acl_get_perms` returns the mask in the middle three bits instead
+/// of the `group_obj`. This matches POSIX semantics where the mask is the
+/// effective upper bound for the group entry.
+///
+/// Pins the upstream `acls-default.test` `da750mask` scenario: default ACL
+/// `u::7,u:0:7,g::7,m::5,o::0` must collapse to `0o750` (group_obj=7 masked
+/// to 5), not `0o770`.
+///
+/// # Upstream Reference
+///
+/// - `acls.c:129-134` `rsync_acl_get_perms` mask-vs-group_obj precedence
+#[test]
+fn default_perms_honours_mask_over_group_obj() {
+    let dir = tempdir().expect("tempdir");
+    let probe = dir.path().join("probe");
+    fs::create_dir(&probe).expect("create probe");
+
+    // upstream testsuite acls-default.test `da750mask` opts:
+    //   d:u::7,d:u:0:7,d:g::7,d:m:5,d:o:0
+    let default_entries = vec![
+        AclEntry::allow_user("", Perm::READ | Perm::WRITE | Perm::EXECUTE, None),
+        AclEntry::allow_user("root", Perm::READ | Perm::WRITE | Perm::EXECUTE, None),
+        AclEntry::allow_group("", Perm::READ | Perm::WRITE | Perm::EXECUTE, None),
+        AclEntry::allow_mask(Perm::READ | Perm::EXECUTE, None),
+        AclEntry::allow_other(Perm::empty(), None),
+    ];
+    if setfacl(&[&probe], &default_entries, Some(AclOption::DEFAULT_ACL)).is_err() {
+        // tmpfs without acl mount option, or other unsupported filesystem.
+        return;
+    }
+
+    // Pass umask = 0 so the fallback path cannot mask the ACL-derived bits.
+    let perms = default_perms_for_dir(&probe, 0);
+    assert_eq!(
+        perms, 0o750,
+        "mask entry not honoured: got {perms:o}, expected 0o750"
     );
 }
