@@ -192,6 +192,7 @@ pub(super) fn try_clone(
         destination_previously_existed,
         false,
         &mut None,
+        existing_metadata,
         #[cfg(all(unix, feature = "xattr"))]
         flags.preserve_xattrs,
         #[cfg(all(any(unix, windows), feature = "acl"))]

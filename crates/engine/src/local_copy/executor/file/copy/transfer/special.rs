@@ -136,6 +136,7 @@ pub(in crate::local_copy) fn copy_special_as_regular_file(
         destination_previously_existed,
         delay_updates_enabled,
         &mut no_writer,
+        existing_metadata,
         #[cfg(all(unix, feature = "xattr"))]
         flags.preserve_xattrs,
         #[cfg(all(any(unix, windows), feature = "acl"))]
