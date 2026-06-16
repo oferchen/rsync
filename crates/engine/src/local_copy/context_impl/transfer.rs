@@ -58,6 +58,31 @@ impl<'a> CopyContext<'a> {
         &self,
         source: &Path,
     ) -> Result<DirectoryFilterGuard, LocalCopyError> {
+        self.enter_directory_for_path(source, true)
+    }
+
+    /// Loads per-dir-merge filter files from the destination directory before a
+    /// deletion scan.
+    ///
+    /// upstream: delete.c:63 - `delete_dir_contents()` calls
+    /// `push_local_filters(fname, dlen)` with the destination directory so the
+    /// receiver applies any `: filter` rules found in the directory being
+    /// scanned for extraneous entries. The returned guard pops the loaded rules
+    /// when it drops, mirroring the matching `pop_local_filters()` call on
+    /// `delete.c:115`.
+    pub(crate) fn enter_destination_for_deletion(
+        &self,
+        destination: &Path,
+    ) -> Result<DirectoryFilterGuard, LocalCopyError> {
+        self.enter_directory_for_path(destination, false)
+    }
+
+    fn enter_directory_for_path(
+        &self,
+        directory: &Path,
+        check_directory_excluded: bool,
+    ) -> Result<DirectoryFilterGuard, LocalCopyError> {
+        let source = directory;
         let Some(program) = &self.filter_program else {
             let handles = DirectoryFilterHandles {
                 layers: Rc::clone(&self.dir_merge_layers),
@@ -184,7 +209,11 @@ impl<'a> CopyContext<'a> {
         drop(ephemeral_stack);
         drop(marker_ephemeral_stack);
 
-        let excluded = self.directory_excluded(source, program)?;
+        let excluded = if check_directory_excluded {
+            self.directory_excluded(source, program)?
+        } else {
+            false
+        };
 
         let handles = DirectoryFilterHandles {
             layers: Rc::clone(&self.dir_merge_layers),
