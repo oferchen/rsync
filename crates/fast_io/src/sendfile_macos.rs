@@ -273,7 +273,7 @@ mod tests {
 
     /// Drain everything readable from `fd` until EOF or `cap`
     /// bytes accumulate, whichever comes first.
-    #[cfg(unix)]
+    #[cfg(target_os = "macos")]
     fn drain_to_vec(fd: &OwnedFd, cap: usize) -> Vec<u8> {
         let mut out = Vec::with_capacity(cap);
         let mut buf = [0u8; 8192];
