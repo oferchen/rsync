@@ -112,6 +112,16 @@ pub(super) fn handle_dry_run(
     };
     let bytes_transferred = file_size.saturating_sub(append_offset);
 
+    // upstream: main.c:1839-1840 - `--only-write-batch` forces dry_run=1 but the
+    // batch_fd capture path still runs so the recorded stream contains the
+    // file's token data. Mirror that by capturing the whole file into the per-
+    // file batch delta buffer and finalising it (token end + xfer checksum)
+    // whenever a batch writer is active. Without this, `--only-write-batch`
+    // emits a batch file with flist entries but no delta payload, and the
+    // matching `--read-batch` reconstructs zero file content.
+    context.capture_batch_whole_file(source, file_size)?;
+    context.finalize_batch_file_delta(source)?;
+
     context
         .summary_mut()
         .record_file(file_size, bytes_transferred, None);
