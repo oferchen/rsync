@@ -88,10 +88,31 @@ pub fn read_varint<R: Read + ?Sized>(reader: &mut R) -> io::Result<i32> {
 /// # Arguments
 ///
 /// * `reader` - Source of the encoded bytes
-/// * `min_bytes` - Minimum number of bytes used in encoding (must match the write call)
+/// * `min_bytes` - Minimum number of bytes used in encoding (must be in `1..=8`
+///   and must match the write call).
+///
+/// # Errors
+///
+/// Returns [`io::ErrorKind::InvalidData`] when `min_bytes` is outside the
+/// supported range (`min_bytes == 0` or `min_bytes > 8`), or when the encoded
+/// header tag would push the cumulative byte count past `sizeof u.b == 9` in
+/// upstream's union (the same guard upstream `io.c:read_varlong()` uses at
+/// `if (min_bytes + extra > (int)sizeof u.b)`). Returns
+/// [`io::ErrorKind::UnexpectedEof`] on a truncated read.
 #[inline]
 pub fn read_varlong<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Result<i64> {
     // upstream: io.c:read_varlong() - read min_bytes first, then extra.
+    //
+    // Upstream takes `uchar min_bytes` and indexes `b2[min_bytes-1]` plus
+    // `u.b[min_bytes + extra - 1]`. A caller passing `min_bytes == 0` would
+    // underflow `min - 1` here and panic the receiver before any wire byte is
+    // consulted. The valid wire range is 1..=8 (the upstream `u.b` union is
+    // 9 bytes wide, and at least one byte is the leading tag). Surface a
+    // typed error instead of panicking so a fuzzer-found malformed caller
+    // configuration or future regression cannot crash the receiver.
+    if min_bytes == 0 || min_bytes > 8 {
+        return Err(invalid_data("invalid min_bytes in read_varlong"));
+    }
     let min = min_bytes as usize;
 
     let mut initial = [0u8; 8];
@@ -107,11 +128,11 @@ pub fn read_varlong<R: Read + ?Sized>(reader: &mut R, min_bytes: u8) -> io::Resu
     let extra = INT_BYTE_EXTRA[(leading / 4) as usize] as usize;
 
     if extra > 0 {
-        let bit = 1u8 << (8 - extra as u32);
         // upstream: `if (min_bytes + extra > (int)sizeof u.b)` where sizeof u.b = 9
         if min + extra > 9 {
             return Err(invalid_data("overflow in read_varlong"));
         }
+        let bit = 1u8 << (8 - extra as u32);
         reader.read_exact(&mut result[min - 1..min - 1 + extra])?;
         result[min + extra - 1] = leading & (bit - 1);
     } else {
