@@ -1835,6 +1835,22 @@ fn backup_emits_info_backup_notice() {
     let existing = dest_root.join("file.txt");
     fs::write(&existing, b"original").expect("write dest");
 
+    // upstream: backup.c:353 emits paths relative to the destination root, not
+    // absolute filesystem paths. Capture the relative form before `ctx.dest` is
+    // consumed by `into_os_string()` below so the assertion mirrors the
+    // production emission in state.rs:700-711.
+    let dest_rel = existing
+        .strip_prefix(&ctx.dest)
+        .expect("existing under ctx.dest")
+        .display()
+        .to_string();
+    let backup_rel = dest_root
+        .join("file.txt~")
+        .strip_prefix(&ctx.dest)
+        .expect("backup under ctx.dest")
+        .display()
+        .to_string();
+
     let operands = vec![ctx.source.into_os_string(), ctx.dest.into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().backup(true);
@@ -1854,9 +1870,7 @@ fn backup_emits_info_backup_notice() {
         })
         .collect();
 
-    let dest_display = existing.display().to_string();
-    let backup_display = dest_root.join("file.txt~").display().to_string();
-    let expected = format!("backed up {dest_display} to {backup_display}");
+    let expected = format!("backed up {dest_rel} to {backup_rel}");
 
     assert!(
         messages.iter().any(|m| m == &expected),
