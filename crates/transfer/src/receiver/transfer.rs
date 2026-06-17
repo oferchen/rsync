@@ -321,7 +321,11 @@ mod tests {
             "new-content",
             "staged file must replace destination after backup"
         );
-        let backup_path = backup_root.join("name1");
+        // upstream: backup.c::get_backup_name() appends the configured
+        // suffix even when backup_dir is set. `compute_backup_path` mirrors
+        // that semantic (see `compute_backup_path_with_backup_dir` in
+        // engine::local_copy::tests::executor_file_operations).
+        let backup_path = backup_root.join("name1~");
         assert_eq!(
             fs::read_to_string(&backup_path).unwrap(),
             "old-content",
