@@ -72,34 +72,171 @@ docker run --cap-add SYS_NICE myimage oc-rsync ...
 docker run --privileged myimage oc-rsync ...
 ```
 
-### Rootless Containers
+### Seccomp Considerations
 
-Rootless Podman and Docker (running without the daemon as root) cannot grant
-`CAP_SYS_NICE` because the user namespace does not map the capability. In
-rootless mode:
+Default Docker and Podman seccomp profiles allow `io_uring_setup`,
+`io_uring_enter`, and `io_uring_register` on kernels 5.6+. Custom seccomp
+profiles may block these syscalls. If oc-rsync reports io_uring as disabled
+despite a sufficient kernel version, check whether your seccomp profile allows
+the `io_uring_*` syscall family.
 
-- Basic io_uring works if the host kernel is 5.6+ and `io_uring_setup(2)` is
-  not blocked by seccomp.
-- SQPOLL is unavailable. The fallback to regular submission is automatic.
-- Some container runtimes block `io_uring_setup(2)` entirely via seccomp
-  profiles. In that case, oc-rsync falls back to standard buffered I/O.
+## SQPOLL in rootless containers
 
-To check whether io_uring is available inside your container:
+Rootless Podman and Docker (and Kubernetes Pods with `runAsNonRoot`) are
+the most common production deployment shape for oc-rsync, and they are
+also the environments where `IORING_SETUP_SQPOLL` cannot be granted.
+This section consolidates the problem, the runtime behaviour, and the
+operator-facing controls so deployers can pick the right configuration
+without reading the rest of the guide.
 
-```bash
-podman run --rm myimage oc-rsync --io-uring-status
+### The problem
+
+`IORING_SETUP_SQPOLL` spawns a kernel thread that polls the submission
+queue on the application's behalf. The kernel grants that thread
+elevated scheduling priority and therefore requires `CAP_SYS_NICE` (or
+real root) on the calling task. Rootless containers run inside a user
+namespace where `CAP_SYS_NICE` is structurally unmapped:
+
+- Rootless Podman drops the capability bounding set before exec.
+- Rootless Docker (`--userns=...`) maps the host UID to an unprivileged
+  user inside the namespace.
+- Kubernetes Pods with `securityContext.runAsNonRoot: true` (or any
+  Pod under the `restricted` Pod Security Admission profile) reject
+  `capabilities.add: ["SYS_NICE"]` at admission time.
+
+Without `CAP_SYS_NICE`, `io_uring_setup(2)` with the SQPOLL flag
+returns `EPERM`. A naive implementation would either abort io_uring
+entirely or surface an opaque "Operation not permitted" error to the
+operator.
+
+### Runtime behaviour: automatic detection and fallback
+
+oc-rsync detects rootless containers up-front and skips SQPOLL before
+the syscall is issued. The detection helper
+`fast_io::detect_rootless_container()` inspects three signals (see
+[`../design/sqpoll-rootless-container-detection.md`](../design/sqpoll-rootless-container-detection.md)
+for the full specification):
+
+| Signal | Source | Triggers verdict |
+|--------|--------|------------------|
+| User namespace map | `/proc/self/uid_map` shows a non-identity map | `UserNamespace` |
+| Podman marker | `/run/.containerenv` exists | `Podman` |
+| Docker marker | `/.dockerenv` exists | `Docker` |
+
+The verdict is cached for the lifetime of the process via `OnceLock`
+(one `open` + `read` of `/proc/self/uid_map` plus up to two `stat`
+calls; total cost under five microseconds, once per process).
+
+When any signal fires, `IoUringConfig::build_ring()` takes the
+non-SQPOLL path immediately and emits one structured info-level log
+line under the `Io` target at level 1 (visible with `--debug=io1`):
+
+```text
+io_uring SQPOLL disabled: rootless container detected (signal=podman, no CAP_SYS_NICE available in this user namespace); falling back to standard polling
 ```
 
-#### Detection
+The `signal=` label is one of `userns`, `podman`, or `docker` depending
+on which probe fired first. The log is gated by a one-shot `Once`
+guard so daemon workloads building many rings per process do not flood
+operator logs - one decision, one log line. The emitter lives in
+SQP-LAND.7 (`crates/fast_io/src/io_uring/config.rs:log_rootless_skip`).
 
-oc-rsync detects rootless containers automatically (see
-`docs/design/sqpoll-rootless-container-detection.md`) by probing
-`/proc/self/uid_map`, `/run/.containerenv` (Podman), and `/.dockerenv`
-(Docker). When any of these signals fires, SQPOLL is skipped before the
-kernel can reject it and a single info-level log records the reason
-(see SQP-LAND.7 in `crates/fast_io/src/io_uring/config.rs`).
+The fallback ring is fully race-free and otherwise identical to the
+SQPOLL ring: file and socket I/O, BGID-based buffer rings, registered
+buffers, file registration, and zero-copy socket sends all stay
+active. Only the kernel polling thread is omitted. The fallback is
+also reflected in `--io-uring-status`:
 
-#### Forcing detection for tests
+```text
+sqpoll fell back:   no
+sqpoll opt-out:     yes (rootless container)
+```
+
+`sqpoll fell back: no` here means the kernel never rejected SQPOLL
+because oc-rsync never asked for it. Contrast with the case where the
+detection signal is absent and SQPOLL is requested anyway: the kernel
+returns `EPERM` and the status shows `sqpoll fell back: yes
+(CAP_SYS_NICE likely missing)`. Both paths converge on the same
+non-SQPOLL ring; the detection path saves one failed syscall and
+produces a clearer log line.
+
+### Explicit opt-out: `--no-io-uring-sqpoll`
+
+Operators who want a deterministic guarantee that SQPOLL is never
+requested - regardless of how the rootless detector classifies the
+environment - can pass `--no-io-uring-sqpoll` on the command line.
+This is the policy `IoUringPolicy::SqpollOff`:
+
+```bash
+oc-rsync --no-io-uring-sqpoll src/ dst/
+```
+
+The flag is useful in three situations:
+
+1. **Audit-restricted production deployments** where the security
+   posture requires a positive, configuration-level statement that
+   the SQPOLL kthread will never be created. The detection path is
+   transparent but implicit; the flag is explicit and auditable.
+2. **Bare-metal hosts that simulate rootless behaviour**. The
+   detector returns `false` on a real host with `CAP_SYS_NICE`
+   available, so the SQPOLL request would otherwise succeed.
+   `--no-io-uring-sqpoll` lets a non-container test environment
+   reproduce the production codepath exactly.
+3. **Kubernetes Pods under the `restricted` Pod Security Admission
+   profile** where the implicit `EPERM` fallback works but the flag
+   removes the failed syscall from the audit log entirely.
+
+The flag suppresses only `IORING_SETUP_SQPOLL`. All other io_uring
+features remain available. See the CLI flag table at the bottom of
+this guide for the full matrix.
+
+### Granting SQPOLL inside Kubernetes (when you can)
+
+Trusted clusters that allow capability grants can run SQPOLL inside
+Pods by adding `SYS_NICE` to `securityContext.capabilities.add`:
+
+```yaml
+securityContext:
+  capabilities:
+    add:
+      - SYS_NICE
+```
+
+This snippet only works under the `baseline` or `privileged` Pod
+Security Admission profile and only when no admission controller
+(OPA Gatekeeper, Kyverno) blocks the capability cluster-wide. The
+full Pod spec, the PSA profile interaction table, and the daemon-Pod
+deployment manifest live in
+[kubernetes.md](kubernetes.md#2-sqpoll-and-cap_sys_nice-inside-pods).
+
+### Throughput delta
+
+The non-SQPOLL ring adds one `io_uring_enter(2)` syscall per
+submission batch. For most rsync workloads (moderate file counts,
+network-bound transfers) the difference is below measurement noise
+because the batch amortises the syscall over many SQEs.
+
+The cost becomes measurable on a specific workload shape: large
+delta transfers with high `COPY`-token ratios against an mmap'd
+basis file on NVMe storage. The bench plan in
+[`../design/sqpoll-nvme-rebench.md`](../design/sqpoll-nvme-rebench.md)
+estimates a **10-15% throughput reduction** for that workload
+class. Two practical consequences:
+
+- If your rootless deployment moves multi-gigabyte basis files over
+  NVMe with a tight `COPY`-heavy delta, plan for the 10-15% overhead
+  or schedule transfers on a host with `CAP_SYS_NICE` available.
+- For network-bound transfers, mixed-size file trees, or anything
+  smaller than ~1 GiB of basis I/O, the SQPOLL/non-SQPOLL delta is
+  effectively noise. The rootless fallback is free.
+
+The estimate is the upper bound; the in-container bench harness will
+narrow it when the SQM/SQP-LAND closeout benches land. Until then,
+treat 10-15% as the upper bound for the SQPOLL-eligible NVMe
+workload and "no measurable delta" as the expectation for everything
+else.
+
+### Forcing detection for tests
 
 The environment variable `OC_RSYNC_FORCE_ROOTLESS_CONTAINER` lets
 integration tests and CI cells exercise the SQPOLL fall-back path on
@@ -112,16 +249,19 @@ override is read by every `IoUringConfig::build_ring` call, so the same
 graceful-fallback path that a real container would take is exercised
 end-to-end. It is a test-only hook; setting it in production is harmless
 on rootless hosts (the verdict was already going to be rootless) but
-forces the SQPOLL skip on host systems, costing a small amount of I/O
-throughput. Do not set it in production manifests.
+forces the SQPOLL skip on host systems, costing the same 10-15% NVMe
+delta noted above. Do not set it in production manifests.
 
-### Seccomp Considerations
+### Checking the active tier
 
-Default Docker and Podman seccomp profiles allow `io_uring_setup`,
-`io_uring_enter`, and `io_uring_register` on kernels 5.6+. Custom seccomp
-profiles may block these syscalls. If oc-rsync reports io_uring as disabled
-despite a sufficient kernel version, check whether your seccomp profile allows
-the `io_uring_*` syscall family.
+To confirm which path is active inside your container:
+
+```bash
+podman run --rm myimage oc-rsync --io-uring-status
+```
+
+The full output format and example matrices are documented in
+[Verifying io_uring Status](#verifying-io_uring-status) below.
 
 ## Kubernetes Configuration
 
