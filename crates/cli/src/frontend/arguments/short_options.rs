@@ -70,7 +70,6 @@ fn classify_short_options(command: &ClapCommand) -> (HashSet<char>, HashSet<char
         };
 
         let num_args = argument.get_num_args().unwrap_or(ValueRange::EMPTY);
-        let takes_values = num_args.takes_values();
         let min_values = num_args.min_values();
         let action = argument.get_action();
 
@@ -78,8 +77,14 @@ fn classify_short_options(command: &ClapCommand) -> (HashSet<char>, HashSet<char
         // only appear at the end of a cluster so the following argument can be
         // treated as their value. Optional arguments (such as `-h`) are
         // treated as simple flags to preserve existing clap behaviour.
-        let requires_value = min_values > 0
-            || (takes_values && matches!(action, ArgAction::Set | ArgAction::Append));
+        //
+        // `ArgAction::Set` and `ArgAction::Append` always consume one value
+        // (their inferred `num_args` is `1`), but `Command::get_arguments()`
+        // returns the un-built command so `get_num_args()` may still be
+        // `None`. Trust the action directly so the filter Arg (`-f`, which
+        // omits `.num_args(1)` because clap infers it) is classified as
+        // value-bearing and the packed form `-f:C` gets split correctly.
+        let requires_value = min_values > 0 || matches!(action, ArgAction::Set | ArgAction::Append);
 
         if requires_value {
             value_options.extend(shorts);
@@ -308,6 +313,32 @@ mod tests {
                 .long("filter")
                 .action(ArgAction::Append)
                 .num_args(1),
+        );
+        let args = vec![OsString::from("rsync"), OsString::from("-f:C")];
+        let expanded = expand_short_options(&command, args);
+        assert_eq!(
+            expanded,
+            vec![
+                OsString::from("rsync"),
+                OsString::from("-f"),
+                OsString::from(":C"),
+            ]
+        );
+    }
+
+    /// Regression: the production filter Arg in `command_builder` does NOT call
+    /// `.num_args(1)` explicitly because clap infers it from `ArgAction::Append`.
+    /// Before the action-based classification fix, `classify_short_options`
+    /// saw `get_num_args() = None` (the command isn't built yet) and dropped
+    /// the filter into `flag_options`, so `expand_cluster` returned `None` for
+    /// `-f:C` and clap routed the unsplit token to the positional `args`.
+    #[test]
+    fn expand_short_options_filter_packed_no_explicit_num_args() {
+        let command = ClapCommand::new("rsync").arg(
+            clap::Arg::new("filter")
+                .short('f')
+                .long("filter")
+                .action(ArgAction::Append),
         );
         let args = vec![OsString::from("rsync"), OsString::from("-f:C")];
         let expanded = expand_short_options(&command, args);
