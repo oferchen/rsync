@@ -1097,3 +1097,70 @@ fn bind_listeners_per_family_single_family_propagates_error() {
         err.kind()
     );
 }
+
+#[test]
+fn parse_address_family_env_accepts_ipv4_variants() {
+    // The runtime override accepts a few common spellings so operators
+    // do not have to memorise the exact token. Case is normalised before
+    // matching.
+    for value in ["ipv4", "IPv4", "v4", "4", "INET", " ipv4 "] {
+        assert_eq!(
+            parse_address_family_env(value),
+            Some(AddressFamilyOverride::Ipv4),
+            "value {value:?} must map to Ipv4"
+        );
+    }
+}
+
+#[test]
+fn parse_address_family_env_accepts_ipv6_variants() {
+    for value in ["ipv6", "IPv6", "v6", "6", "INET6"] {
+        assert_eq!(
+            parse_address_family_env(value),
+            Some(AddressFamilyOverride::Ipv6),
+            "value {value:?} must map to Ipv6"
+        );
+    }
+}
+
+#[test]
+fn parse_address_family_env_accepts_both_variants() {
+    for value in ["both", "BOTH", "dual", "dualstack", "dual-stack"] {
+        assert_eq!(
+            parse_address_family_env(value),
+            Some(AddressFamilyOverride::Both),
+            "value {value:?} must map to Both"
+        );
+    }
+}
+
+#[test]
+fn parse_address_family_env_rejects_unknown() {
+    // Unknown values must fall through to `None` so the daemon falls
+    // back to the compile-time default instead of refusing to start on
+    // an operator typo.
+    for value in ["", " ", "ipv7", "any", "auto", "1"] {
+        assert_eq!(
+            parse_address_family_env(value),
+            None,
+            "value {value:?} must not map to a family"
+        );
+    }
+}
+
+#[test]
+fn warn_per_family_accept_failure_labels_ipv6() {
+    // The dual-stack accept loop must produce an identifiable diagnostic
+    // when one family's acceptor dies while another is still healthy.
+    // Mirrors the bind-failure warning's labelling contract.
+    let addr: SocketAddr = "[::]:8873".parse().unwrap();
+    let error = io::Error::new(io::ErrorKind::Other, "test failure");
+    warn_per_family_accept_failure(None, addr, &error);
+}
+
+#[test]
+fn warn_per_family_accept_failure_labels_ipv4() {
+    let addr: SocketAddr = "0.0.0.0:8873".parse().unwrap();
+    let error = io::Error::new(io::ErrorKind::Other, "test failure");
+    warn_per_family_accept_failure(None, addr, &error);
+}

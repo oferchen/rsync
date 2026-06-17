@@ -104,19 +104,27 @@ impl RuntimeOptions {
     fn force_address_family(&mut self, family: AddressFamily) -> Result<(), DaemonError> {
         if let Some(existing) = self.address_family {
             if existing != family {
-                let text = if self.bind_address_overridden {
-                    match existing {
+                // `--ipv4 --ipv6` together (or `--ipv6 --ipv4`) requests a
+                // dual-stack listener: bind one socket per family and fail
+                // only when both bind attempts fail. This mirrors upstream
+                // rsync's `default_af_hint = 0` ("any protocol") which lets
+                // getaddrinfo return both families and `open_socket_in`
+                // iterates them. The bind-address conflict still errors
+                // because an explicit IPv4/IPv6 address can only match one
+                // family.
+                if self.bind_address_overridden {
+                    let text = match existing {
                         AddressFamily::Ipv4 => {
                             "cannot use --ipv6 with an IPv4 bind address".to_owned()
                         }
                         AddressFamily::Ipv6 => {
                             "cannot use --ipv4 with an IPv6 bind address".to_owned()
                         }
-                    }
-                } else {
-                    "cannot combine --ipv4 with --ipv6".to_owned()
-                };
-                return Err(config_error(text));
+                    };
+                    return Err(config_error(text));
+                }
+                self.dual_stack = true;
+                return Ok(());
             }
         } else {
             self.address_family = Some(family);

@@ -1,3 +1,53 @@
+/// Runtime override selection for the daemon listener address family.
+///
+/// Used by the `OC_RSYNC_DAEMON_ADDRESS_FAMILY` environment variable so CI
+/// and test fixtures can force a specific family without rebuilding the
+/// CLI. The variable is read once at accept-loop entry; later changes do
+/// not affect a running daemon. Accepts `ipv4`, `ipv6`, or `both`
+/// (case-insensitive); unknown values are ignored so an operator's typo
+/// degrades to the compile-time default rather than failing startup.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AddressFamilyOverride {
+    /// Bind one IPv4 listener only.
+    Ipv4,
+    /// Bind one IPv6 listener only.
+    Ipv6,
+    /// Bind one IPv4 listener and one IPv6 listener, surfacing per-family
+    /// bind failures as warnings (matches upstream's `default_af_hint = 0`
+    /// iteration in `socket.c::open_socket_in`).
+    Both,
+}
+
+/// Name of the environment variable that overrides the listener address
+/// family. See [`AddressFamilyOverride`].
+pub(crate) const ADDRESS_FAMILY_ENV: &str = "OC_RSYNC_DAEMON_ADDRESS_FAMILY";
+
+/// Parses an `OC_RSYNC_DAEMON_ADDRESS_FAMILY` value into an
+/// [`AddressFamilyOverride`].
+///
+/// Returns `None` for empty or unrecognised values so the daemon falls
+/// back to its compile-time default instead of refusing to start.
+pub(crate) fn parse_address_family_env(value: &str) -> Option<AddressFamilyOverride> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "ipv4" | "v4" | "4" | "inet" => Some(AddressFamilyOverride::Ipv4),
+        "ipv6" | "v6" | "6" | "inet6" => Some(AddressFamilyOverride::Ipv6),
+        "both" | "dual" | "dualstack" | "dual-stack" => Some(AddressFamilyOverride::Both),
+        _ => None,
+    }
+}
+
+/// Reads [`ADDRESS_FAMILY_ENV`] and converts it to an
+/// [`AddressFamilyOverride`].
+///
+/// Returns `None` when the variable is unset, empty, or holds an
+/// unrecognised value.
+fn read_address_family_env_override() -> Option<AddressFamilyOverride> {
+    std::env::var(ADDRESS_FAMILY_ENV)
+        .ok()
+        .as_deref()
+        .and_then(parse_address_family_env)
+}
+
 /// Logs a systemd notification failure if a log sink is available.
 fn log_sd_notify_failure(log: Option<&SharedLogSink>, context: &str, error: &io::Error) {
     if let Some(sink) = log {
@@ -243,6 +293,35 @@ fn warn_per_family_bind_failure(
     let payload = format!(
         "{family} bind for {requested_addr} failed: {error}; \
          continuing with remaining address families"
+    );
+    let message = rsync_warning!(payload).with_role(Role::Daemon);
+
+    if let Some(sink) = log {
+        log_message(sink, &message);
+    } else {
+        eprintln!("{message}");
+    }
+}
+
+/// Emits a warning when one family's acceptor thread dies while another
+/// family is still serving connections in a dual-stack listener.
+///
+/// This is the GitHub Actions exit-10 failure mode: `bind(2)` to `[::]:873`
+/// succeeds on the runner but `accept(2)` later returns an unexpected
+/// address family or `EAFNOSUPPORT`, the IPv6 acceptor exits, and prior
+/// code treated that as fatal even though the IPv4 acceptor was healthy.
+/// Surfacing the family-specific failure as a warning preserves operator
+/// visibility into the degraded listener while keeping the daemon
+/// servicing traffic on the surviving family.
+fn warn_per_family_accept_failure(
+    log: Option<&SharedLogSink>,
+    local_addr: SocketAddr,
+    error: &io::Error,
+) {
+    let family = if local_addr.is_ipv6() { "IPv6" } else { "IPv4" };
+    let payload = format!(
+        "{family} accept on {local_addr} failed: {error}; \
+         remaining address families continue to serve connections"
     );
     let message = rsync_warning!(payload).with_role(Role::Daemon);
 
