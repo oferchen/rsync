@@ -184,7 +184,7 @@ impl<'a> CopyContext<'a> {
             if !entries.exclude_if_present.is_empty() {
                 new_frame
                     .loaded_markers
-                    .extend(entries.exclude_if_present.drain(..));
+                    .append(&mut entries.exclude_if_present);
             }
             new_frame
                 .active_rules
