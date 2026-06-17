@@ -2106,9 +2106,16 @@ fn backup_dir_replaces_preexisting_directory_at_target() {
         ctx.dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    // upstream: options.c:2278-2279 - when --backup-dir is set without an
+    // explicit --suffix, the suffix defaults to "" so the backup is placed
+    // at $bakdir/<rel> rather than $bakdir/<rel>~. The CLI calls
+    // `with_backup_suffix(None)` to apply this rule (see core/src/client/run/mod.rs);
+    // mirror that here so this test exercises the same effective default the
+    // production CLI uses.
     let options = LocalCopyOptions::default()
         .delete(true)
-        .with_backup_directory(Some(backup_dir.clone()));
+        .with_backup_directory(Some(backup_dir.clone()))
+        .with_backup_suffix::<OsString>(None);
 
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy with --delete + --backup-dir over preexisting dir must succeed");
