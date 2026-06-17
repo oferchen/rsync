@@ -47,9 +47,7 @@ fn test_data(size: usize) -> Vec<u8> {
     (0..size).map(|i| (i % 251) as u8).collect()
 }
 
-// ---------------------------------------------------------------------------
-// Upstream parity: PartialMode::None deletes temp on all interrupt types
-// ---------------------------------------------------------------------------
+// Upstream parity: PartialMode::None deletes temp on all interrupt types.
 
 /// upstream: cleanup.c:55-80 - do_unlink() removes temp on interrupt
 /// when keep_partial is false.
@@ -119,9 +117,7 @@ fn parity_none_disconnect_deletes_temp() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Upstream parity: PartialMode::Partial retains + stamps mtime=0
-// ---------------------------------------------------------------------------
+// Upstream parity: PartialMode::Partial retains + stamps mtime=0.
 
 /// Helper: run a partial-mode transfer with the given interrupt type and
 /// return the file_path and mtime of the retained file.
@@ -267,9 +263,7 @@ fn parity_partial_content_is_valid_prefix() {
     h.join_handle.join().unwrap();
 }
 
-// ---------------------------------------------------------------------------
-// Upstream parity: PartialMode::PartialDir retains WITHOUT mtime=0
-// ---------------------------------------------------------------------------
+// Upstream parity: PartialMode::PartialDir retains WITHOUT mtime=0.
 
 fn run_partial_dir_interrupt(
     dir: &tempfile::TempDir,
@@ -391,9 +385,7 @@ fn parity_partial_dir_disconnect_retains_without_mtime_zero() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Upstream parity: zero-byte transfers suppress partial retention
-// ---------------------------------------------------------------------------
+// Upstream parity: zero-byte transfers suppress partial retention.
 
 /// upstream: cleanup.c:130 - keep_partial && got_literal guard.
 /// If no literal data was received (bytes_written == 0), the partial file
@@ -458,9 +450,7 @@ fn parity_zero_bytes_suppresses_partial_dir_retention() {
     h.join_handle.join().unwrap();
 }
 
-// ---------------------------------------------------------------------------
-// Upstream parity: CleanupManager unregisters temp on partial retention
-// ---------------------------------------------------------------------------
+// Upstream parity: CleanupManager unregisters temp on partial retention.
 
 /// When a partial file is retained via --partial (renamed to dest), it must
 /// be unregistered from CleanupManager so a subsequent cleanup() call does
@@ -559,9 +549,7 @@ fn parity_partial_dir_retention_unregisters_from_cleanup_manager() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// Upstream parity: multi-chunk partial captures all written data
-// ---------------------------------------------------------------------------
+// Upstream parity: multi-chunk partial captures all written data.
 
 /// When multiple chunks are written before interrupt, the retained partial
 /// must contain the concatenation of all chunks - not just the last one.

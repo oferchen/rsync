@@ -662,8 +662,6 @@ fn whole_file_commit_via_io_uring_or_fallback() {
     h.join_handle.join().unwrap();
 }
 
-// --- PIR-2: Partial file retention tests ---
-
 #[test]
 fn partial_mode_default_is_none() {
     let config = DiskCommitConfig::default();
@@ -984,8 +982,6 @@ fn partial_mode_relative_partial_dir() {
     drop(h.file_tx);
     h.join_handle.join().unwrap();
 }
-
-// --- PIR-4.c: CleanupManager integration tests ---
 
 /// Verifies that the disk commit thread registers temp files with the global
 /// `CleanupManager` during transfer, and that calling `cleanup()` removes
@@ -1339,8 +1335,6 @@ fn cleanup_manager_inplace_skips_registration() {
     h.file_tx.send(FileMessage::Shutdown).unwrap();
     h.join_handle.join().unwrap();
 }
-// --- PIR-6.b: --partial-dir mid-transfer interrupt interop tests ---
-
 /// Verifies that aborting a multi-chunk transfer mid-stream with
 /// `PartialMode::PartialDir` moves the partial file to the partial-dir,
 /// not the final destination. The partial file should contain only the
@@ -2201,8 +2195,6 @@ fn delay_updates_sweep_replaces_existing_files() {
     );
 }
 
-// --- PIR-3: Partial file mtime=0 stamp tests ---
-
 /// Verifies that a partial file retained via `--partial` has its mtime
 /// stamped to epoch 0. Upstream cleanup.c:174-178 does this so that a
 /// subsequent `--update` run does not skip the partial file as "up to date".
@@ -2407,8 +2399,6 @@ fn partial_mode_partial_stamps_mtime_zero_on_disconnect() {
         "partial file mtime must be stamped to Unix epoch on disconnect"
     );
 }
-
-// --- PIR-5.d: Delay-updates interrupt behavior tests ---
 
 /// Verifies that when a transfer with `delay_updates` is interrupted via
 /// Shutdown after some files have been committed, already-staged files remain
