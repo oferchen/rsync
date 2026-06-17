@@ -54,6 +54,16 @@ impl RuntimeOptions {
     pub(crate) fn daemon_chroot(&self) -> Option<&Path> {
         self.daemon_chroot.as_deref()
     }
+
+    /// Returns the CLI verbosity counter (`-v` repeated count).
+    ///
+    /// Mirrors upstream `verbose` in `options.c`. Each `-v`, stacked short
+    /// form (`-vv`, `-vvv`, ...), or `--verbose` increments the counter;
+    /// `--no-verbose` / `--no-v` reset it to zero.
+    #[allow(dead_code)] // REASON: accessor consumed by tests; runtime wiring tracked separately.
+    pub(crate) fn verbosity(&self) -> u8 {
+        self.verbosity
+    }
 }
 
 #[cfg(test)]

@@ -293,6 +293,16 @@ impl<R: Read> MultiplexReader<R> {
     ///
     /// This eliminates one buffer copy for literal delta tokens that fit within
     /// a single MSG_DATA frame (the common case for tokens up to 32-64KB).
+    ///
+    /// # Batch recording
+    ///
+    /// When a batch recorder is attached, the borrowed bytes are teed to the
+    /// recorder before being returned. This mirrors the recording behavior in
+    /// the `Read` impl below and matches upstream rsync's `io.c:read_buf()`
+    /// which tees post-demux data to `batch_fd` unconditionally. Without this
+    /// tee, literal delta tokens taken via the zero-copy path would never
+    /// reach the batch file, leaving `--write-batch` outputs from daemon and
+    /// SSH transfers missing their delta payloads.
     pub(super) fn try_borrow_exact(&mut self, len: usize) -> io::Result<Option<&[u8]>> {
         if self.pos >= self.buffer.len() {
             loop {
@@ -312,6 +322,13 @@ impl<R: Read> MultiplexReader<R> {
         if available >= len {
             let start = self.pos;
             self.pos += len;
+            // upstream: io.c:read_buf() - tee post-demux data to batch_fd
+            if let Some(ref recorder) = self.batch_recorder {
+                let mut rec = recorder
+                    .lock()
+                    .map_err(|_| io::Error::other("batch recorder lock poisoned"))?;
+                rec.write_all(&self.buffer[start..start + len])?;
+            }
             Ok(Some(&self.buffer[start..start + len]))
         } else {
             Ok(None)

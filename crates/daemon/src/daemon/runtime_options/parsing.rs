@@ -96,6 +96,13 @@ impl RuntimeOptions {
                 options.set_cli_secrets_file(validated)?;
             } else if let Some(value) = take_option_value(argument, &mut iter, "--pid-file")? {
                 options.set_pid_file(PathBuf::from(value))?;
+            } else if argument == "--verbose" {
+                options.verbosity = options.verbosity.saturating_add(1);
+            } else if argument == "--no-verbose" || argument == "--no-v" {
+                options.verbosity = 0;
+            } else if is_stacked_short_verbose(argument) {
+                let extra = argument.to_string_lossy().matches('v').count();
+                options.verbosity = options.verbosity.saturating_add(extra as u8);
             } else if argument == "--module" {
                 let value = iter
                     .next()
@@ -120,4 +127,15 @@ impl RuntimeOptions {
 
         Ok(options)
     }
+}
+
+/// Returns `true` when `arg` is `-v`, `-vv`, `-vvv`, ... (a hyphen followed
+/// by one or more `v` characters and nothing else).
+///
+/// upstream: options.c stacks short flags so `-vvv` increments `verbose` by
+/// three. The daemon accepts the same stacked form via popt's short-option
+/// dispatch.
+fn is_stacked_short_verbose(arg: &OsString) -> bool {
+    let bytes = arg.as_encoded_bytes();
+    bytes.len() >= 2 && bytes[0] == b'-' && bytes[1..].iter().all(|&b| b == b'v')
 }
