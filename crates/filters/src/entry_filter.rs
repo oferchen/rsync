@@ -22,10 +22,6 @@ use protocol::flist::FileEntryAccessor;
 
 use crate::{FilterChain, FilterSet};
 
-// ---------------------------------------------------------------------------
-// FilterSet extensions
-// ---------------------------------------------------------------------------
-
 impl FilterSet {
     /// Returns `true` if the entry should be included in the transfer.
     ///
@@ -70,10 +66,6 @@ impl FilterSet {
     }
 }
 
-// ---------------------------------------------------------------------------
-// FilterChain extensions
-// ---------------------------------------------------------------------------
-
 impl FilterChain {
     /// Returns `true` if the entry should be included in the transfer.
     ///
@@ -96,17 +88,11 @@ impl FilterChain {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
     use protocol::flist::FileEntry;
 
     use crate::{FilterChain, FilterRule, FilterSet};
-
-    // -- FilterSet::allows_entry --
 
     #[test]
     fn allows_entry_includes_unmatched_file() {
@@ -139,8 +125,6 @@ mod tests {
         assert!(set.allows_entry(&entry));
     }
 
-    // -- FilterSet::allows_entry_deletion --
-
     #[test]
     fn allows_entry_deletion_protected() {
         let set = FilterSet::from_rules([FilterRule::protect("important.dat")]).unwrap();
@@ -154,8 +138,6 @@ mod tests {
         let entry = FileEntry::new_file("data.txt".into(), 512, 0o644);
         assert!(set.allows_entry_deletion(&entry));
     }
-
-    // -- FilterSet::allows_entry_deletion_when_excluded_removed --
 
     #[test]
     fn allows_entry_deletion_when_excluded_removed_excluded_file() {
@@ -171,8 +153,6 @@ mod tests {
         assert!(!set.allows_entry_deletion_when_excluded_removed(&entry));
     }
 
-    // -- FilterSet::entry_excluded_dir_by_non_dir_rule --
-
     #[test]
     fn entry_excluded_dir_by_non_dir_rule_generic_pattern() {
         let set = FilterSet::from_rules([FilterRule::exclude("*")]).unwrap();
@@ -186,8 +166,6 @@ mod tests {
         let dir = FileEntry::new_directory("cache".into(), 0o755);
         assert!(!set.entry_excluded_dir_by_non_dir_rule(&dir));
     }
-
-    // -- FilterChain::allows_entry --
 
     #[test]
     fn chain_allows_entry_global_rules() {
@@ -205,8 +183,6 @@ mod tests {
         assert!(chain.allows_entry(&entry));
     }
 
-    // -- FilterChain::allows_entry_deletion --
-
     #[test]
     fn chain_allows_entry_deletion_protected() {
         let global = FilterSet::from_rules([FilterRule::protect("*.conf")]).unwrap();
@@ -223,8 +199,6 @@ mod tests {
         assert!(chain.allows_entry_deletion(&entry));
     }
 
-    // -- Scoped chain evaluation --
-
     #[test]
     fn chain_scoped_allows_entry() {
         let global = FilterSet::default();
@@ -239,8 +213,6 @@ mod tests {
         assert!(chain.allows_entry(&included));
     }
 
-    // -- Equivalence with path-based API --
-
     #[test]
     fn allows_entry_matches_path_based_api() {
         let set = FilterSet::from_rules([FilterRule::exclude("*.o")]).unwrap();
@@ -252,8 +224,6 @@ mod tests {
         assert_eq!(path_result, entry_result);
         assert!(!entry_result);
     }
-
-    // -- Multi-rule interaction --
 
     #[test]
     fn allows_entry_first_match_wins() {
@@ -267,8 +237,6 @@ mod tests {
         assert!(set.allows_entry(&kept));
         assert!(!set.allows_entry(&dropped));
     }
-
-    // -- Directory entries --
 
     #[test]
     fn allows_entry_directory_excluded() {
