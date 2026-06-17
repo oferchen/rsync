@@ -19,12 +19,20 @@ impl<'a> CopyContext<'a> {
         total_size: u64,
         initial_bytes: u64,
         start: Instant,
+        basis_separate_from_writer: bool,
     ) -> Result<FileCopyOutcome, LocalCopyError> {
         // In inplace mode the writer IS the destination file; matched blocks
         // are already in place so no separate reader is needed. In normal mode
         // the writer is a temp file and we read matched blocks from the old
         // destination.
-        let inplace_mode = self.inplace_enabled();
+        //
+        // When `basis_separate_from_writer` is true, the basis lives at a
+        // different path than the writer (e.g. `--inplace --backup-dir` moved
+        // the original destination to the backup location before opening a
+        // fresh writer). In that case the inplace optimization is unsafe -
+        // the writer's file is empty, so matched blocks must be copied from
+        // the separate basis path. Fall through to the non-inplace code path.
+        let inplace_mode = self.inplace_enabled() && !basis_separate_from_writer;
 
         let mut destination_reader = if !inplace_mode {
             Some(fs::File::open(destination).map_err(|error| {
