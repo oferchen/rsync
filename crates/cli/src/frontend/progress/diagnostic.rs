@@ -3,9 +3,36 @@
 //! This module provides infrastructure for rendering diagnostic messages
 //! from the logging system's thread-local event queue.
 
+use std::cell::Cell;
 use std::io::{self, Write};
 
 pub use logging::DiagnosticEvent;
+
+thread_local! {
+    // The workflow records its resolved `--msgs-to-stderr` decision here so
+    // the post-execute final flush in `frontend::mod` can route any leftover
+    // diagnostic events to the same stream the workflow used. Defaults to
+    // false (upstream rsync's FINFO default: stdout in client mode).
+    // upstream: log.c:rwrite() routes FINFO to client stdout unless
+    // `msgs2stderr` is set, so initial events that emit before the workflow
+    // records its decision still land on the correct stream.
+    static MSGS_TO_STDERR: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Record the effective `--msgs-to-stderr` setting for the current thread.
+///
+/// The workflow calls this once it has resolved the CLI flag (and the
+/// `RSYNC_OUTPUT_TARGET=All` mode override) so that any diagnostic events
+/// left in the thread-local queue when execution returns are routed to the
+/// same stream the workflow itself used.
+pub fn set_msgs_to_stderr(value: bool) {
+    MSGS_TO_STDERR.with(|cell| cell.set(value));
+}
+
+/// Read the recorded `--msgs-to-stderr` setting for the current thread.
+pub fn msgs_to_stderr() -> bool {
+    MSGS_TO_STDERR.with(|cell| cell.get())
+}
 
 /// Render diagnostic events to the appropriate output stream.
 ///
