@@ -21,30 +21,30 @@ impl<'a> CopyContext<'a> {
         start: Instant,
         basis_separate_from_writer: bool,
     ) -> Result<FileCopyOutcome, LocalCopyError> {
-        // In inplace mode the writer IS the destination file; matched blocks
-        // are already in place so no separate reader is needed. In normal mode
-        // the writer is a temp file and we read matched blocks from the old
-        // destination.
+        // upstream: receiver.c:receive_data() - the matched-block path mirrors
+        // upstream's two-condition optimization. When `updating_basis_or_equiv
+        // && offset == offset2` (inplace + basis at the same offset as where
+        // we are writing), upstream calls skip_matched(), avoiding the copy.
+        // Otherwise upstream calls write_file(fd, offset, map, len) to copy
+        // the basis bytes to the writer at the current offset. We open a
+        // read fd on the basis even in inplace mode so the copy fallback has
+        // a source; the fast skip-path still fires for the common case.
         //
-        // When `basis_separate_from_writer` is true, the basis lives at a
-        // different path than the writer (e.g. `--inplace --backup-dir` moved
-        // the original destination to the backup location before opening a
-        // fresh writer). In that case the inplace optimization is unsafe -
-        // the writer's file is empty, so matched blocks must be copied from
-        // the separate basis path. Fall through to the non-inplace code path.
+        // When `basis_separate_from_writer` is true (e.g. `--inplace
+        // --backup-dir` moved the original destination to the backup
+        // location), the skip-path is never safe because the writer's file
+        // is freshly opened and contains nothing. Force every matched block
+        // through the copy path by treating the run as non-inplace.
         let inplace_mode = self.inplace_enabled() && !basis_separate_from_writer;
 
-        let mut destination_reader = if !inplace_mode {
+        let mut destination_reader =
             Some(fs::File::open(destination).map_err(|error| {
                 LocalCopyError::io(
                     "read existing destination",
                     destination.to_path_buf(),
                     error,
                 )
-            })?)
-        } else {
-            None
-        };
+            })?);
         let mut compressor = self.start_compressor(compress, source)?;
         let mut compressed_progress = 0u64;
         let mut total_bytes = 0u64;
@@ -141,16 +141,34 @@ impl<'a> CopyContext<'a> {
 
                 let block = index.block(block_index);
                 let block_len = block.len();
+                let matched = MatchedBlock::new(block, index.block_length());
+                let basis_offset = matched.offset();
 
-                // Inplace: matched blocks are already at the correct file
-                // position, so advance the tracker without copying. Normal
-                // mode: copy from the old destination into the temp file.
-                if inplace_mode {
+                // upstream: receiver.c:468-477. The skip-fast-path only fires
+                // when basis offset == output position. For any other matched
+                // block (re-ordered content, inserted prefix, ...) copy the
+                // basis bytes to the current write offset just like upstream
+                // does when `offset != offset2`. Without this fallback the
+                // writer keeps stale basis bytes at the new position and the
+                // final ftruncate clips the file off at the wrong length.
+                if inplace_mode && basis_offset == output_position {
                     output_position = output_position.saturating_add(block_len as u64);
                 } else {
-                    let matched = MatchedBlock::new(block, index.block_length());
+                    if inplace_mode {
+                        writer
+                            .seek(SeekFrom::Start(output_position))
+                            .map_err(|error| {
+                                LocalCopyError::io(
+                                    "seek destination file",
+                                    destination.to_path_buf(),
+                                    error,
+                                )
+                            })?;
+                    }
                     self.copy_matched_block(
-                        destination_reader.as_mut().expect("destination reader required for normal delta mode"),
+                        destination_reader
+                            .as_mut()
+                            .expect("destination reader is always open"),
                         writer,
                         buffer,
                         destination,
@@ -160,6 +178,9 @@ impl<'a> CopyContext<'a> {
                             state: &mut sparse_state,
                         },
                     )?;
+                    if inplace_mode {
+                        output_position = output_position.saturating_add(block_len as u64);
+                    }
                 }
 
                 total_bytes = total_bytes.saturating_add(block_len as u64);
