@@ -1209,8 +1209,6 @@ fn backup_with_inplace_mode() {
 // writer overwrites the (now-empty) destination.
 #[test]
 fn backup_dir_with_inplace_no_whole_file_copies_matched_blocks() {
-    use std::iter::repeat;
-
     let ctx = test_helpers::setup_copy_test();
     fs::create_dir_all(&ctx.dest).expect("create dest");
     let backup_root = ctx.dest.join("bak");
@@ -1222,7 +1220,7 @@ fn backup_dir_with_inplace_no_whole_file_copies_matched_blocks() {
     // they differ in the prefix so literal writes are also exercised. Without
     // the fix, the matched-block path is skipped for inplace mode, and the
     // destination loses the entire suffix.
-    let common_tail: String = repeat('y').take(8 * 1024).collect();
+    let common_tail = "y".repeat(8 * 1024);
     let source_content = format!("source-only-prefix-{}\n{}", "x".repeat(2 * 1024), common_tail);
     let basis_content = format!("BASIS-ONLY-PREFIX-{}\n{}", "Z".repeat(2 * 1024), common_tail);
 
@@ -1251,7 +1249,7 @@ fn backup_dir_with_inplace_no_whole_file_copies_matched_blocks() {
     let dest_after = fs::read(dest_root.join("payload.bin")).expect("read dest");
     assert_eq!(
         dest_after.len(),
-        source_content.as_bytes().len(),
+        source_content.len(),
         "destination size must match source size after delta with backup-dir",
     );
     assert_eq!(
