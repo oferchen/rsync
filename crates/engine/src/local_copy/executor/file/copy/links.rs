@@ -274,7 +274,13 @@ pub(super) fn process_links(
                     Duration::default(),
                     Some(reuse_snapshot),
                 )
-                .with_change_set(change_set),
+                .with_change_set(change_set)
+                // upstream: hlink.c:218-224 - when the destination already
+                // shares the source group leader's inode, the generator
+                // emits `"%s is uptodate"` at INFO_GTE(NAME, 2). Mark the
+                // record so the CLI verbose renderer prints that suffix
+                // instead of the bare path.
+                .with_hardlink_uptodate(true),
             );
             remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
             return Ok(LinkOutcome {

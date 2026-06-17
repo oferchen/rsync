@@ -77,6 +77,7 @@ pub struct ClientEvent {
     destination_root: Arc<Path>,
     destination_path: PathBuf,
     change_set: LocalCopyChangeSet,
+    hardlink_uptodate: bool,
 }
 
 impl ClientEvent {
@@ -92,6 +93,7 @@ impl ClientEvent {
             metadata,
             was_created,
             change_set,
+            hardlink_uptodate,
         ) = record.into_parts();
         let kind = match &action {
             LocalCopyAction::DataCopied => ClientEventKind::DataCopied,
@@ -155,6 +157,7 @@ impl ClientEvent {
             destination_root,
             destination_path,
             change_set,
+            hardlink_uptodate,
         }
     }
 
@@ -177,6 +180,7 @@ impl ClientEvent {
             destination_root,
             destination_path,
             change_set: LocalCopyChangeSet::new(),
+            hardlink_uptodate: false,
         }
     }
 
@@ -218,6 +222,14 @@ impl ClientEvent {
     #[must_use]
     pub const fn was_created(&self) -> bool {
         self.created
+    }
+
+    /// Returns whether the event describes a hardlink whose destination
+    /// already shared the source group leader's inode (upstream:
+    /// hlink.c:218-224).
+    #[must_use]
+    pub const fn is_hardlink_uptodate(&self) -> bool {
+        self.hardlink_uptodate
     }
 
     /// Returns the change flags associated with this event.
@@ -263,6 +275,7 @@ impl ClientEvent {
             destination_root,
             destination_path,
             change_set,
+            hardlink_uptodate: false,
         }
     }
 
