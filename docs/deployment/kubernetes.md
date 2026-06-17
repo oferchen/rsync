@@ -7,7 +7,10 @@ The focus is the interaction between Pod `securityContext`, the
 without disabling io_uring entirely.
 
 For the broader container guide (Podman, Docker, kernel matrix), see
-[container-io-uring.md](container-io-uring.md). For the per-feature
+[container-io-uring.md](container-io-uring.md); the
+[SQPOLL in rootless containers](container-io-uring.md#sqpoll-in-rootless-containers)
+section there covers the rootless detection helper, fallback log, and
+throughput delta that apply equally to Pods. For the per-feature
 kernel requirement matrix, see
 [io-uring-feature-matrix.md](io-uring-feature-matrix.md).
 
