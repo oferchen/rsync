@@ -86,6 +86,12 @@ pub(crate) struct RuntimeOptions {
     /// new connections pick up module definition changes without a restart.
     /// `None` when no config file was loaded (all modules from CLI flags).
     config_path: Option<PathBuf>,
+    /// CLI verbosity counter incremented per `-v` / `--verbose` flag.
+    ///
+    /// upstream: options.c:877 - `{"verbose", 'v', POPT_ARG_NONE, 0, 'v', 0, 0}`
+    /// in `long_daemon_options`. Stacked `-vv` / `-vvv` increment the same
+    /// counter, mirrored by `--no-verbose` / `--no-v` reset to zero.
+    pub(crate) verbosity: u8,
 }
 
 impl Default for RuntimeOptions {
@@ -134,6 +140,7 @@ impl Default for RuntimeOptions {
             daemon_chroot: None,
             detach: cfg!(unix),
             config_path: None,
+            verbosity: 0,
         }
     }
 }

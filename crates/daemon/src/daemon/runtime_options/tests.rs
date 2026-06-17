@@ -451,6 +451,31 @@ mod runtime_options_tests {
     }
 
     #[test]
+    fn parses_short_verbose_stack() {
+        let options =
+            RuntimeOptions::parse(&[OsString::from("-vvv")]).expect("parse -vvv");
+        assert_eq!(options.verbosity(), 3);
+    }
+
+    #[test]
+    fn parses_long_verbose_and_reset() {
+        let options = RuntimeOptions::parse(&[
+            OsString::from("--verbose"),
+            OsString::from("-v"),
+            OsString::from("--verbose"),
+        ])
+        .expect("parse stacked verbose");
+        assert_eq!(options.verbosity(), 3);
+
+        let reset = RuntimeOptions::parse(&[
+            OsString::from("-vv"),
+            OsString::from("--no-verbose"),
+        ])
+        .expect("parse with reset");
+        assert_eq!(reset.verbosity(), 0);
+    }
+
+    #[test]
     fn parse_motd_line_adds_to_motd() {
         let args = vec![
             OsString::from("--motd-line"),
