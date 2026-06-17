@@ -37,12 +37,12 @@ use transfer::{
 
 /// Builds a `ServerConfig::Generator` that mirrors the shape produced by
 /// the SSH-push path after the fix in `build_server_config_for_generator`.
-fn ssh_push_generator_config(source_root: &PathBuf, list_path: &PathBuf) -> ServerConfig {
+fn ssh_push_generator_config(source_root: &Path, list_path: &Path) -> ServerConfig {
     let flag_string = "-r.iLsfxCIvu".to_owned();
     let mut config = ServerConfig::from_flag_string_and_args(
         ServerRole::Generator,
         flag_string,
-        vec![source_root.clone().into_os_string()],
+        vec![source_root.to_path_buf().into_os_string()],
     )
     .expect("server config");
 
@@ -226,7 +226,7 @@ fn ssh_push_without_files_from_path_walks_source_recursively() {
 
     let handshake = test_handshake();
     let pipeline = test_pipeline();
-    let mut ctx = GeneratorContext::new(&handshake, config, pipeline);
+    let ctx = GeneratorContext::new(&handshake, config, pipeline);
     let paths = vec![source_root.clone()];
 
     let mut reader = std::io::Cursor::new(Vec::<u8>::new());

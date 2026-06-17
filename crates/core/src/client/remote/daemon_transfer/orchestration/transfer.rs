@@ -271,4 +271,5 @@ impl TransferProgressCallback for DaemonProgressAdapter<'_> {
 ///
 /// - `io.c:forward_filesfrom_data()` - reads from local fd, writes to socket
 /// - `main.c:1354-1356` - `start_filesfrom_forwarding(filesfrom_fd)`
+#[cfg(test)]
 pub(super) use crate::client::remote::files_from_forwarding::read_local_files_from_for_forwarding as read_files_from_for_forwarding;
