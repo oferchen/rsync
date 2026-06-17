@@ -442,3 +442,65 @@ fn filter_chain_protect_in_scope() {
     chain.leave_directory(guard);
     assert!(chain.allows_deletion(Path::new("important"), false));
 }
+
+/// `:C` inside a per-directory merge file must register a CVS-style
+/// `.cvsignore` for the current directory only, loading its whitespace
+/// tokens as exclude rules. Without this, the `:C` rule is silently dropped
+/// by [`FilterSet`] compilation and the named file is never consulted -
+/// the failing path that drives the upstream `exclude` / `exclude-lsh`
+/// testsuite checks.
+///
+/// upstream: exclude.c:parse_rule_tok() (rsync-3.4.3) - the `:C` token
+/// expands to `:s n,e+ .cvsignore` (no-prefix, word-split, no-inherit,
+/// FILTRULE_CVS_IGNORE), and exclude.c:1419-1428 registers the resulting
+/// per-dir merge so the named file is read at the current scope.
+#[test]
+fn dir_merge_inline_colon_c_loads_cvsignore_no_inherit() {
+    let parent = TempDir::new().unwrap();
+    fs::create_dir(parent.path().join("child")).unwrap();
+    fs::write(parent.path().join(".filt"), ":C\n").unwrap();
+    fs::write(parent.path().join(".cvsignore"), "one-in-one-out\n").unwrap();
+
+    let mut chain = FilterChain::empty();
+    chain.add_merge_config(DirMergeConfig::new(".filt"));
+
+    let parent_guard = chain.enter_directory(parent.path()).unwrap();
+    assert!(parent_guard.pushed_count() >= 1, "expected `:C` scope push");
+
+    // The `.cvsignore` token excludes `one-in-one-out` inside the parent dir.
+    assert!(!chain.allows(Path::new("one-in-one-out"), false));
+    assert!(chain.allows(Path::new("other-file"), false));
+
+    // upstream `:C` is FILTRULE_NO_INHERIT: descending into a child
+    // directory must not carry the parent's `.cvsignore` rules along.
+    let child_guard = chain.enter_directory(&parent.path().join("child")).unwrap();
+    assert!(
+        chain.allows(Path::new("one-in-one-out"), false),
+        "no-inherit `:C` must not propagate parent rules into descendants"
+    );
+    chain.leave_directory(child_guard);
+
+    chain.leave_directory(parent_guard);
+    assert!(chain.allows(Path::new("one-in-one-out"), false));
+}
+
+/// `:C` inside a per-directory merge file must be a no-op when the
+/// referenced `.cvsignore` is absent, matching upstream's silent skip
+/// for missing per-dir merge files.
+///
+/// upstream: exclude.c:push_local_filters() - missing files are skipped
+/// without error.
+#[test]
+fn dir_merge_inline_colon_c_missing_cvsignore_is_noop() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join(".filt"), ":C\n").unwrap();
+
+    let mut chain = FilterChain::empty();
+    chain.add_merge_config(DirMergeConfig::new(".filt"));
+
+    let guard = chain.enter_directory(dir.path()).unwrap();
+    assert_eq!(guard.pushed_count(), 0, "missing `.cvsignore` is silent");
+    assert!(chain.allows(Path::new("anything"), false));
+
+    chain.leave_directory(guard);
+}
