@@ -38,6 +38,7 @@ pub struct LocalCopySummary {
     file_list_size: u64,
     file_list_generation: Duration,
     file_list_transfer: Duration,
+    destination_root_created: bool,
 }
 
 impl LocalCopySummary {
@@ -227,6 +228,21 @@ impl LocalCopySummary {
         self.file_list_transfer
     }
 
+    /// Returns `true` when the transfer materialised the destination root directory.
+    ///
+    /// upstream: main.c:798-799 - `rprintf(FINFO, "created directory %s\n", dest_path)`
+    /// gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`. The CLI mirrors this
+    /// gate to emit the notice ahead of the per-entry itemize lines so the
+    /// upstream `testsuite/itemize.test` golden matches.
+    #[must_use]
+    pub const fn destination_root_created(&self) -> bool {
+        self.destination_root_created
+    }
+
+    pub(in crate::local_copy) const fn mark_destination_root_created(&mut self) {
+        self.destination_root_created = true;
+    }
+
     /// Creates a summary from server-side receiver statistics.
     ///
     /// This constructor is used when the local side acted as the receiver in a pull transfer.
@@ -319,6 +335,7 @@ impl LocalCopySummary {
             file_list_size: 0,
             file_list_generation: Duration::ZERO,
             file_list_transfer: Duration::ZERO,
+            destination_root_created: false,
         }
     }
 

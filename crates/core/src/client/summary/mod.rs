@@ -282,6 +282,17 @@ impl ClientSummary {
         self.stats.file_list_transfer_time()
     }
 
+    /// Returns `true` when the transfer materialised the destination root directory.
+    ///
+    /// Used by the CLI to emit upstream's `created directory <dest>` notice
+    /// before per-entry itemize lines when itemize-changes is enabled.
+    /// upstream: main.c:798-799 - `rprintf(FINFO, "created directory %s\n", dest_path)`
+    /// gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`.
+    #[must_use]
+    pub const fn destination_root_created(&self) -> bool {
+        self.stats.destination_root_created()
+    }
+
     /// Returns the I/O error exit code when the transfer finished with errors.
     ///
     /// Maps to upstream rsync exit codes such as `RERR_PARTIAL` (23),

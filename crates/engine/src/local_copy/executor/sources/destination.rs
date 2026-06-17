@@ -41,24 +41,30 @@ pub(crate) fn query_destination_state(path: &Path) -> Result<DestinationState, L
 }
 
 /// Ensures the destination path is a directory, creating it if necessary.
+///
+/// Returns `true` when this call materialised the destination directory,
+/// `false` when it was already present. upstream: main.c:798-799 - the
+/// generator emits `created directory %s` only when the pre-flight mkdir
+/// actually created the dest; subsequent runs against the same destination
+/// must remain silent.
 pub(crate) fn ensure_destination_directory(
     destination_path: &Path,
     state: &mut DestinationState,
     mode: LocalCopyExecution,
-) -> Result<(), LocalCopyError> {
+) -> Result<bool, LocalCopyError> {
     if state.exists {
         if !state.is_dir {
             return Err(LocalCopyError::invalid_argument(
                 LocalCopyArgumentError::DestinationMustBeDirectory,
             ));
         }
-        return Ok(());
+        return Ok(false);
     }
 
     if mode.is_dry_run() {
         state.exists = true;
         state.is_dir = true;
-        return Ok(());
+        return Ok(true);
     }
 
     fs::create_dir_all(destination_path).map_err(|error| {
@@ -70,7 +76,7 @@ pub(crate) fn ensure_destination_directory(
     })?;
     state.exists = true;
     state.is_dir = true;
-    Ok(())
+    Ok(true)
 }
 
 /// Computes the target path for a non-directory entry.

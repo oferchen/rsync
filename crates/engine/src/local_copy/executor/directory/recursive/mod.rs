@@ -20,14 +20,14 @@ use std::time::{Duration, Instant};
 
 use crate::local_copy::overrides::device_identifier;
 use crate::local_copy::{
-    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyError, LocalCopyMetadata,
-    LocalCopyRecord,
+    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet, LocalCopyError,
+    LocalCopyMetadata, LocalCopyRecord,
 };
 
 pub(crate) use batch::capture_batch_file_entry;
 pub(crate) use checksum::prefetch_directory_checksums;
 use deletion::{handle_empty_directory_pruning, handle_post_transfer_deletions};
-use destination::{DestinationState, check_destination_state, record_skipped_missing_destination};
+use destination::{check_destination_state, record_skipped_missing_destination};
 use dir_metadata::{apply_final_directory_metadata, record_directory_completion};
 use entry::process_planned_entry;
 
@@ -123,7 +123,9 @@ fn copy_directory_recursive_inner(
     };
 
     let destination_state = check_destination_state(context, destination, relative)?;
-    let destination_missing = destination_state == DestinationState::Missing;
+    let destination_missing = destination_state.is_missing();
+    let existing_destination_metadata: Option<fs::Metadata> =
+        destination_state.existing_metadata().cloned();
 
     if destination_missing && context.existing_only_enabled() {
         record_skipped_missing_destination(context, metadata, relative);
@@ -146,12 +148,110 @@ fn copy_directory_recursive_inner(
     let mut created_directory_on_disk = false;
     let creation_record_pending = destination_missing && relative.is_some();
     let mut record_emitted = false;
-    let metadata_record = relative.map(|rel| {
-        (
+    // upstream: main.c:794-796 + generator.c:566-572 - when the receiver
+    // mkdirs the destination root, `flist->files[0]->flags |= FLAG_DIR_CREATED`
+    // and `itemize()` emits `cd+++++++++ ./` for the synthesized "." entry.
+    // Synthesize a "." relative path for the root when the destination root
+    // was just created so the itemize stream emits `cd+++++++++ ./` ahead of
+    // its children, matching upstream's `testsuite/itemize.test` golden.
+    // Subsequent runs against an existing destination still see relative=None
+    // here, so no record is synthesized and the `-i` output omits the `./`
+    // entry as upstream does (test line 74-79).
+    // upstream: main.c:794-796 + generator.c:566-572 - when the receiver
+    // mkdirs the destination root, `flist->files[0]->flags |= FLAG_DIR_CREATED`
+    // and `itemize()` emits `cd+++++++++ ./` for the synthesized "." entry.
+    // The root flist entry has relative=None here because `non_empty_path("")`
+    // returns None upstream of this call. Synthesize a "." record when the
+    // sources orchestrator already mkdir'd the destination root in this run
+    // (signalled via `summary.destination_root_created()`), so the itemize
+    // stream emits the root row ahead of its children. Subsequent runs see
+    // the flag stay clear and skip the row, matching upstream's `-i` output
+    // when the destination already exists (test line 74-79).
+    let root_was_just_created = relative.is_none() && context.summary().destination_root_created();
+    let metadata_record = if let Some(rel) = relative {
+        Some((
             rel.to_path_buf(),
             LocalCopyMetadata::from_metadata(metadata, None),
-        )
-    });
+        ))
+    } else if destination_missing || root_was_just_created {
+        if destination_missing {
+            context.summary_mut().mark_destination_root_created();
+        }
+        Some((
+            std::path::PathBuf::from("."),
+            LocalCopyMetadata::from_metadata(metadata, None),
+        ))
+    } else {
+        None
+    };
+
+    // upstream: main.c:794-796 + generator.c:566-572 - the root directory
+    // entry (".") is itemized as `cd+++++++++ ./` when the pre-flight mkdir
+    // materialised the destination root. When `ensure_destination_directory`
+    // already created the root above this call frame, the per-frame
+    // `ensure_directory` closure exits early (directory_ready=true) and the
+    // closure's `record(...)` site never fires. Emit the synthetic "."
+    // record up-front so it precedes child entries in the event stream.
+    if root_was_just_created && let Some((ref rel_path, ref snapshot)) = metadata_record {
+        context.record(
+            LocalCopyRecord::new(
+                rel_path.clone(),
+                LocalCopyAction::DirectoryCreated,
+                0,
+                Some(snapshot.len()),
+                Duration::default(),
+                Some(snapshot.clone()),
+            )
+            .with_creation(true),
+        );
+        record_emitted = true;
+    }
+
+    // upstream: generator.c:1480-1483 - when the destination directory already
+    // exists (`statret == 0`), the generator still calls `itemize()` with
+    // `iflags=0`; `itemize()` then ORs in `ITEM_REPORT_TIME|PERMS|...` based
+    // on the existing-vs-source metadata drift. The line is emitted only when
+    // the resulting `iflags` carries `SIGNIFICANT_ITEM_FLAGS`
+    // (`generator.c:582-583`); otherwise it is suppressed.
+    //
+    // Mirror that here: when the directory already exists and any attribute
+    // differs from the source, emit a `MetadataReused` record carrying the
+    // computed change-set so the renderer produces lines like
+    // `.d..t...... foo/`. When nothing differs, the record stays unemitted
+    // and the renderer skips the directory row entirely.
+    if !record_emitted
+        && let Some((ref rel_path, ref snapshot)) = metadata_record
+        && let Some(existing_meta) = existing_destination_metadata.as_ref()
+    {
+        // upstream: generator.c:557-571 - ACL/xattr drift is computed by
+        // `set_acl(NULL, ...)` and `xattr_diff(...)`, both of which compare
+        // the actual on-disk attribute payloads. The local-copy fast path
+        // does not yet thread that comparison through, so leave these flags
+        // clear here; the existing-directory row stays accurate for the
+        // common `-iplrt` case the upstream `itemize.test` golden exercises.
+        let change_set = LocalCopyChangeSet::for_existing_directory(
+            metadata,
+            existing_meta,
+            &context.metadata_options(),
+            context.omit_dir_times_enabled(),
+            false,
+            false,
+        );
+        if change_set.has_any_change() {
+            context.record(
+                LocalCopyRecord::new(
+                    rel_path.clone(),
+                    LocalCopyAction::MetadataReused,
+                    0,
+                    Some(snapshot.len()),
+                    Duration::default(),
+                    Some(snapshot.clone()),
+                )
+                .with_change_set(change_set),
+            );
+            record_emitted = true;
+        }
+    }
 
     let mut kept_any = !prune_enabled;
 

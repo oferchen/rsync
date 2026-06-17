@@ -59,8 +59,16 @@ pub(crate) fn copy_sources(
                 destination_state.is_dir = true;
             }
 
+            // upstream: main.c:794-799 - the receiver pre-flight-mkdirs the
+            // destination root, flags the synthetic "." flist entry with
+            // FLAG_DIR_CREATED, and emits `created directory %s\n` when
+            // INFO_GTE(NAME, 1) || stdout_format_has_i. Surface the same
+            // signal here so the CLI itemize gate (rendered in
+            // emit_transfer_summary) and the synthesized `cd+++++++++ ./`
+            // root record (rendered by copy_directory_recursive) both fire.
+            let mut destination_root_created = false;
             if plan.destination_spec().force_directory() {
-                ensure_destination_directory(
+                destination_root_created |= ensure_destination_directory(
                     destination_path,
                     &mut destination_state,
                     context.mode(),
@@ -68,11 +76,15 @@ pub(crate) fn copy_sources(
             }
 
             if multiple_sources {
-                ensure_destination_directory(
+                destination_root_created |= ensure_destination_directory(
                     destination_path,
                     &mut destination_state,
                     context.mode(),
                 )?;
+            }
+
+            if destination_root_created {
+                context.summary_mut().mark_destination_root_created();
             }
 
             let destination_behaves_like_directory =

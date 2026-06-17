@@ -603,7 +603,7 @@ pub(in crate::local_copy) fn execute_transfer(
     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
     let total_bytes = Some(metadata_snapshot.len());
     let wrote_data = outcome.literal_bytes() > 0 || append_offset > 0;
-    let change_set = LocalCopyChangeSet::for_file(
+    let change_set = LocalCopyChangeSet::for_file_with_checksum(
         metadata,
         existing_metadata,
         &metadata_options,
@@ -611,6 +611,7 @@ pub(in crate::local_copy) fn execute_transfer(
         wrote_data,
         flags.xattrs_enabled(),
         flags.acls_enabled(),
+        flags.checksum_enabled,
     );
     context.record(
         LocalCopyRecord::new(
