@@ -428,8 +428,11 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--delay-updates"));
         }
 
+        // upstream: options.c:2630-2631 - bare `make_backups` is emitted as the
+        // `b` character in the compact flag string by `build_flag_string`. Only
+        // `--backup-dir` and `--suffix` are forwarded as long-form arguments
+        // (`options.c:2807,2813`).
         if self.config.backup() {
-            args.push(OsString::from("--backup"));
             if let Some(dir) = self.config.backup_directory() {
                 let mut arg = OsString::from("--backup-dir=");
                 arg.push(dir.as_os_str());
@@ -639,6 +642,16 @@ impl<'a> RemoteInvocationBuilder<'a> {
         }
         if self.config.partial() {
             flags.push('P');
+        }
+        // upstream: options.c:2630-2631 - `make_backups` is `b` in the compact
+        // flag string. Emitting `--backup` as a separate long arg lands as a
+        // positional path on upstream server arg parsers that do not consult
+        // popt for long flags - the receiver then mkdir's a literal `--backup`
+        // directory under `$HOME` instead of routing through the real
+        // destination tree, breaking the `symlink-dirlink-basis` regression
+        // test 4 (the `--backup` update-through-directory-symlink case).
+        if self.config.backup() {
+            flags.push('b');
         }
         if self.config.update() {
             flags.push('u');
