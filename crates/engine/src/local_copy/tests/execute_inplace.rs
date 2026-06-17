@@ -960,6 +960,126 @@ fn execute_inplace_with_delta_truncates_when_smaller() {
 }
 
 
+// Regression test for read-after-write basis corruption in `--inplace
+// --no-whole-file` when the source is shorter than the destination basis.
+//
+// Repro from `testsuite/backup.test` (upstream) line 60:
+//   oc-rsync -ai --inplace --no-whole-file "$fromdir/" "$bakdir/"
+// where `$bakdir/deep/name1` was longer than `$fromdir/deep/name1`.
+//
+// Failure mode (pre-fix): the matched block copy seeked the writer to the
+// current output position then read the basis bytes back through a separate
+// file handle. In inplace mode the basis IS the destination, so an earlier
+// literal flush at offset 0 had already overwritten the basis region the
+// matched block needed. The matched block copy therefore wrote the
+// just-written literal bytes again, scrambling the file from the first match
+// onward.
+#[test]
+fn execute_inplace_no_whole_file_shorter_source_matches_content() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.bin");
+    let destination = temp.path().join("dest.bin");
+
+    // Block sizing: rsync's `derive_block_length` picks 700 bytes for files up
+    // to ~490 KB. Choose distinct full blocks so each one signature-matches
+    // exactly one basis block.
+    const BLOCK: usize = 700;
+    let mut dest_content = Vec::with_capacity(BLOCK * 2);
+    dest_content.extend(std::iter::repeat_n(b'B', BLOCK));
+    dest_content.extend(std::iter::repeat_n(b'D', BLOCK));
+    fs::write(&destination, &dest_content).expect("write destination");
+
+    // Source carries new blocks (A, C) interleaved with blocks that recur in
+    // the basis (B, D). The source is *longer* than the basis and shares the
+    // matched blocks at strictly larger output offsets - the precise shape
+    // that drives read-after-write into the overwritten basis region.
+    let mut source_content = Vec::with_capacity(BLOCK * 4);
+    source_content.extend(std::iter::repeat_n(b'A', BLOCK));
+    source_content.extend(std::iter::repeat_n(b'B', BLOCK));
+    source_content.extend(std::iter::repeat_n(b'C', BLOCK));
+    source_content.extend(std::iter::repeat_n(b'D', BLOCK));
+    fs::write(&source, &source_content).expect("write source");
+
+    // Backdate destination so quick-check forces a transfer.
+    let old_time = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_mtime(&destination, old_time).expect("set dest mtime");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default()
+            .inplace(true)
+            .whole_file(false),
+    )
+    .expect("copy succeeds");
+
+    let final_content = fs::read(&destination).expect("read dest");
+    assert_eq!(
+        final_content.len(),
+        source_content.len(),
+        "destination size must match source after --inplace --no-whole-file",
+    );
+    assert_eq!(
+        final_content, source_content,
+        "destination content must equal source after --inplace --no-whole-file",
+    );
+}
+
+// Regression test: source is *shorter* than the basis, so the final
+// ftruncate must clip the tail. Also exercises the matched-block path with
+// basis_offset != output_position so the read-after-write hazard is covered
+// in the size-shrinking direction too.
+#[test]
+fn execute_inplace_no_whole_file_truncates_tail() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.bin");
+    let destination = temp.path().join("dest.bin");
+
+    const BLOCK: usize = 700;
+    // Basis has extra leading content + a shared trailing block.
+    let mut dest_content = Vec::with_capacity(BLOCK * 3);
+    dest_content.extend(std::iter::repeat_n(b'X', BLOCK));
+    dest_content.extend(std::iter::repeat_n(b'Y', BLOCK));
+    dest_content.extend(std::iter::repeat_n(b'Z', BLOCK));
+    fs::write(&destination, &dest_content).expect("write destination");
+
+    // Source is shorter: a fresh leading block plus the basis trailing block.
+    let mut source_content = Vec::with_capacity(BLOCK * 2);
+    source_content.extend(std::iter::repeat_n(b'N', BLOCK));
+    source_content.extend(std::iter::repeat_n(b'Z', BLOCK));
+    fs::write(&source, &source_content).expect("write source");
+
+    let old_time = FileTime::from_unix_time(1_600_000_000, 0);
+    set_file_mtime(&destination, old_time).expect("set dest mtime");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default()
+            .inplace(true)
+            .whole_file(false),
+    )
+    .expect("copy succeeds");
+
+    let final_content = fs::read(&destination).expect("read dest");
+    assert_eq!(
+        final_content.len(),
+        source_content.len(),
+        "destination size must shrink to source size",
+    );
+    assert_eq!(final_content, source_content);
+}
+
 #[test]
 fn execute_inplace_dry_run_does_not_modify() {
     let temp = tempdir().expect("tempdir");
