@@ -6,7 +6,6 @@
 use std::collections::HashSet;
 use std::ffi::OsString;
 
-use clap::builder::ValueRange;
 use clap::{ArgAction, Command as ClapCommand};
 
 /// Expands clusters of short options so the [`clap`] command can parse them.
@@ -69,22 +68,26 @@ fn classify_short_options(command: &ClapCommand) -> (HashSet<char>, HashSet<char
             continue;
         };
 
-        let num_args = argument.get_num_args().unwrap_or(ValueRange::EMPTY);
-        let min_values = num_args.min_values();
+        let num_args_opt = argument.get_num_args();
         let action = argument.get_action();
 
         // Arguments that require at least one value (for example `-M`) must
         // only appear at the end of a cluster so the following argument can be
-        // treated as their value. Optional arguments (such as `-h`) are
-        // treated as simple flags to preserve existing clap behaviour.
+        // treated as their value. Optional arguments (such as `-h`, declared
+        // with `.num_args(0..=1)`) are treated as simple flags so packed
+        // clusters like `-hh` continue to parse as repeated `-h` flags.
         //
-        // `ArgAction::Set` and `ArgAction::Append` always consume one value
-        // (their inferred `num_args` is `1`), but `Command::get_arguments()`
-        // returns the un-built command so `get_num_args()` may still be
-        // `None`. Trust the action directly so the filter Arg (`-f`, which
-        // omits `.num_args(1)` because clap infers it) is classified as
-        // value-bearing and the packed form `-f:C` gets split correctly.
-        let requires_value = min_values > 0 || matches!(action, ArgAction::Set | ArgAction::Append);
+        // When `num_args` is explicitly set, trust its `min_values`. When it
+        // is unset (`None`), `Command::get_arguments()` returns the un-built
+        // command so clap hasn't inferred the implicit `num_args` for
+        // value-bearing actions yet - fall back to the action so the filter
+        // Arg (`-f`, which omits `.num_args(1)` because clap infers it) is
+        // classified as value-bearing and the packed form `-f:C` gets split
+        // correctly.
+        let requires_value = match num_args_opt {
+            Some(range) => range.min_values() > 0,
+            None => matches!(action, ArgAction::Set | ArgAction::Append),
+        };
 
         if requires_value {
             value_options.extend(shorts);
