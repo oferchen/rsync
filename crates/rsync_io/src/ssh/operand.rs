@@ -127,9 +127,10 @@ pub fn parse_ssh_operand(operand: &OsStr) -> Result<RemoteOperand, RemoteOperand
         return Err(RemoteOperandParseError::InvalidFormat);
     }
 
-    if path.is_empty() {
-        return Err(RemoteOperandParseError::InvalidFormat);
-    }
+    // An empty path after the colon (e.g. `localhost:`) is valid: upstream
+    // rsync interprets it as the remote user's home directory.
+    // upstream: options.c::check_for_hostspec() returns `path + 1` after the
+    // `:`, which may point at the trailing NUL.
 
     // Defense-in-depth: reject hostnames or users that start with `-`. The
     // spawned `ssh` (or other remote shell) would otherwise interpret such a
@@ -368,11 +369,35 @@ mod tests {
     }
 
     #[test]
-    fn rejects_empty_path() {
+    fn accepts_empty_path_as_remote_home() {
+        // `host:` with no path after the colon means the remote user's home
+        // directory.
+        // upstream: options.c::check_for_hostspec() returns path pointing at
+        // the trailing NUL when nothing follows the colon.
         let operand = OsStr::new("host:");
-        let result = parse_ssh_operand(operand);
+        let result = parse_ssh_operand(operand).unwrap();
 
-        assert_eq!(result, Err(RemoteOperandParseError::InvalidFormat));
+        assert_eq!(result.host(), "host");
+        assert_eq!(result.path(), "");
+    }
+
+    #[test]
+    fn accepts_ipv6_with_empty_path_as_remote_home() {
+        let operand = OsStr::new("[::1]:");
+        let result = parse_ssh_operand(operand).unwrap();
+
+        assert_eq!(result.host(), "::1");
+        assert_eq!(result.path(), "");
+    }
+
+    #[test]
+    fn accepts_user_at_host_with_empty_path() {
+        let operand = OsStr::new("alice@example.com:");
+        let result = parse_ssh_operand(operand).unwrap();
+
+        assert_eq!(result.user(), Some("alice"));
+        assert_eq!(result.host(), "example.com");
+        assert_eq!(result.path(), "");
     }
 
     #[test]

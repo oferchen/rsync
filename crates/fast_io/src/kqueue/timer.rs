@@ -111,7 +111,7 @@ impl TimerSleeper {
             filter: libc::EVFILT_TIMER,
             flags: libc::EV_ADD | libc::EV_ONESHOT,
             fflags: libc::NOTE_NSECONDS,
-            data: nanos,
+            data: nanos as libc::intptr_t,
             udata: std::ptr::null_mut(),
         };
         let mut events = [empty_kevent()];
