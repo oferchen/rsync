@@ -50,9 +50,19 @@ impl CompiledRule {
             "xattr-only rules should be filtered before compilation"
         );
         let (anchored, directory_only, core_pattern) = normalise_pattern(&pattern);
+        // upstream: exclude.c:903-960 rule_matches() - an unanchored pattern
+        // that already contains `**` is matched with slash_handling = -1
+        // (try after every slash) by wildmatch_array (lib/wildmatch.c:316).
+        // The pattern itself already carries cross-segment semantics, so
+        // prepending an extra `**/` would compound recursion and emit
+        // matchers like `**/foo/**/bar` plus their `/**` descendants. Skip
+        // the prefix when `core_pattern` already contains `**` to keep our
+        // matcher set in lockstep with upstream's match-after-every-slash
+        // behaviour. Regression for UTS-DD-exclude.5.
+        let has_double_star = core_pattern.contains("**");
         let mut direct_patterns = HashSet::new();
         direct_patterns.insert(core_pattern.to_string());
-        if !anchored {
+        if !anchored && !has_double_star {
             direct_patterns.insert(format!("**/{core_pattern}"));
         }
 
@@ -91,7 +101,7 @@ impl CompiledRule {
         ) && !suppress_descendants
         {
             descendant_patterns.insert(format!("{core_pattern}/**"));
-            if !anchored {
+            if !anchored && !has_double_star {
                 descendant_patterns.insert(format!("**/{core_pattern}/**"));
             }
         }
@@ -431,6 +441,102 @@ mod tests {
         // `bar` alone does NOT match `bar/**` - the `/` after `bar` is
         // mandatory in the pattern.
         assert!(!compiled.matches(Path::new("bar"), true, true));
+    }
+
+    /// Collects the source pattern strings of every direct matcher attached
+    /// to `compiled` so wire-byte parity tests can assert exact matcher sets.
+    fn direct_pattern_strings(compiled: &CompiledRule) -> Vec<String> {
+        let mut out: Vec<String> = compiled
+            .direct_matchers
+            .iter()
+            .map(|m| m.glob().glob().to_string())
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// Collects the source pattern strings of every descendant matcher.
+    fn descendant_pattern_strings(compiled: &CompiledRule) -> Vec<String> {
+        let mut out: Vec<String> = compiled
+            .descendant_matchers
+            .iter()
+            .map(|m| m.glob().glob().to_string())
+            .collect();
+        out.sort();
+        out
+    }
+
+    fn make_exclude(pattern: &str) -> CompiledRule {
+        CompiledRule::new(FilterRule {
+            action: FilterAction::Exclude,
+            pattern: pattern.to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: false,
+            exclude_only: false,
+            no_inherit: false,
+            cvs_mode: false,
+        })
+        .unwrap()
+    }
+
+    /// UTS-DD-exclude.5 regression: an unanchored pattern that does NOT
+    /// contain `**` must still get the implicit `**/` prefix variant so it
+    /// matches at any depth, mirroring upstream's match-the-name handling
+    /// for `!u.slash_cnt && !FILTRULE_WILD2` (exclude.c:917-922).
+    #[test]
+    fn implicit_double_star_prefix_added_for_plain_pattern() {
+        let compiled = make_exclude("bar");
+        assert_eq!(direct_pattern_strings(&compiled), vec!["**/bar", "bar"]);
+        assert_eq!(
+            descendant_pattern_strings(&compiled),
+            vec!["**/bar/**", "bar/**"]
+        );
+    }
+
+    /// UTS-DD-exclude.5 fix: an unanchored pattern that already contains
+    /// `**` must NOT be wrapped again. Upstream rsync handles this via
+    /// `wildmatch_array(..., slash_handling=-1)` (lib/wildmatch.c:316,
+    /// exclude.c:952-956), so the wire-equivalent matcher set is just the
+    /// original pattern plus its `/**` descendant.
+    #[test]
+    fn implicit_double_star_prefix_skipped_when_pattern_already_has_double_star() {
+        let compiled = make_exclude("foo/**/bar");
+        assert_eq!(direct_pattern_strings(&compiled), vec!["foo/**/bar"]);
+        assert_eq!(descendant_pattern_strings(&compiled), vec!["foo/**/bar/**"]);
+    }
+
+    /// `**/baz` already has the recursive prefix; we must not double it
+    /// up into `**/**/baz` (which globset would collapse but still pollutes
+    /// the matcher set).
+    #[test]
+    fn implicit_double_star_prefix_skipped_for_leading_double_star() {
+        let compiled = make_exclude("**/baz");
+        assert_eq!(direct_pattern_strings(&compiled), vec!["**/baz"]);
+        assert_eq!(descendant_pattern_strings(&compiled), vec!["**/baz/**"]);
+    }
+
+    /// Unanchored pattern with an interior slash but no `**` still gets the
+    /// `**/` variant. Upstream's slash_cnt-based tail matching
+    /// (exclude.c:947-951) is wire-equivalent to globset's `**/foo/bar`.
+    #[test]
+    fn implicit_double_star_prefix_added_for_unanchored_slash_pattern() {
+        let compiled = make_exclude("foo/bar");
+        assert_eq!(
+            direct_pattern_strings(&compiled),
+            vec!["**/foo/bar", "foo/bar"]
+        );
+    }
+
+    /// Trailing `**` (e.g., `foo/**`) is unanchored but already carries
+    /// cross-segment semantics; the implicit prefix would emit
+    /// `**/foo/**` which upstream never produces.
+    #[test]
+    fn implicit_double_star_prefix_skipped_for_trailing_double_star() {
+        let compiled = make_exclude("foo/**");
+        assert_eq!(direct_pattern_strings(&compiled), vec!["foo/**"]);
     }
 
     #[test]
