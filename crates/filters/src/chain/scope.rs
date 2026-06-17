@@ -5,9 +5,11 @@
 //! leaving via the [`DirFilterGuard`] returned by
 //! [`FilterChain::enter_directory`](super::FilterChain::enter_directory).
 //!
-//! [`has_matching_rule`] determines whether any rule inside a scope actually
-//! matches a given path, which lets the chain fall through to outer scopes
-//! when the innermost scope is silent on a path.
+//! [`scope_has_transfer_match`] and [`scope_has_deletion_match`] determine
+//! whether any user-written rule inside a scope matches a given path. They
+//! let the chain fall through to outer scopes when the innermost scope is
+//! silent on a path, matching upstream `exclude.c:check_filter()` which only
+//! returns from a per-directory mergelist when a rule actually matched.
 
 use std::path::Path;
 
@@ -27,33 +29,28 @@ pub(super) struct DirScope {
     pub(super) inherits: bool,
 }
 
-/// Checks whether a `FilterSet` has any rule that matches the given path.
+/// Checks whether a `FilterSet` has any sender-side rule that matches the
+/// path, for use in the Transfer (sender) evaluation path.
 ///
-/// This is used to distinguish "no rules matched" (fall through to next scope)
-/// from "a rule matched and said include" (stop evaluation).
+/// Descendant matchers are skipped so the predicate reflects only real
+/// user-written rules. Mirrors upstream `exclude.c:rule_matches()` which
+/// has no descendant matching at all - descendant exclusion in the walk
+/// is a side effect of not descending into excluded directories. Without
+/// this guard, a synthetic `bar/**` descendant matcher (compiled for a
+/// `- /bar` rule) would short-circuit fall-through to outer scopes even
+/// when this scope contains no rule actually applicable to the path.
+pub(super) fn scope_has_transfer_match(filter_set: &FilterSet, path: &Path, is_dir: bool) -> bool {
+    filter_set.has_transfer_rule_match(path, is_dir)
+}
+
+/// Checks whether a `FilterSet` has any receiver-side rule that matches
+/// the path, for use in the Deletion (receiver) evaluation path.
 ///
-/// We detect a match by checking allows under traversal semantics and
-/// allows_deletion: if the path is excluded by either, a rule matched.
-/// Using traversal semantics (descendants disabled) for the transfer check
-/// mirrors upstream `exclude.c:rule_matches()` which has no descendant
-/// matching - the sender walk handles descendant exclusion by not
-/// descending into excluded directories. Without this, a `- /bar` rule
-/// in an outer scope would synthesize a `bar/**` descendant matcher that
-/// makes the scope appear to match every path under `bar/` and short-
-/// circuits inner-scope evaluation incorrectly.
-pub(super) fn has_matching_rule(filter_set: &FilterSet, path: &Path, is_dir: bool) -> bool {
-    if !filter_set.allows_during_traversal(path, is_dir) {
-        return true;
-    }
-
-    if !filter_set.allows_deletion(path, is_dir) {
-        return true;
-    }
-
-    // Include-only scopes cannot be detected as "matched" because the default
-    // is already allow-all. Return false to fall through to the next scope,
-    // matching upstream rsync's per-directory rule prepend semantics.
-    false
+/// Descendant matchers are skipped for the same reason as
+/// [`scope_has_transfer_match`]: synthetic descendant patterns are not
+/// user-written rules and must not short-circuit scope fall-through.
+pub(super) fn scope_has_deletion_match(filter_set: &FilterSet, path: &Path, is_dir: bool) -> bool {
+    filter_set.has_deletion_rule_match(path, is_dir)
 }
 
 /// RAII guard returned by [`FilterChain::enter_directory`].

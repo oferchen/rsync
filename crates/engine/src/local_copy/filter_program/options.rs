@@ -55,6 +55,15 @@ pub struct DirMergeOptions {
     receiver_side: SideState,
     anchor_root: bool,
     perishable: bool,
+    /// Mirrors upstream `FILTRULE_CVS_IGNORE` (the `C` modifier on a
+    /// dir-merge entry). Tracked separately from `use_whitespace` /
+    /// `inherit` so the CLI -> wire path can forward the flag unambiguously
+    /// instead of having to reverse-engineer it from a combination of
+    /// derived properties.
+    ///
+    /// upstream: exclude.c:1248-1254 - `C` modifier sets NO_PREFIXES |
+    /// WORD_SPLIT | NO_INHERIT | CVS_IGNORE on the rule template.
+    cvs_mode: bool,
 }
 
 impl DirMergeOptions {
@@ -74,6 +83,7 @@ impl DirMergeOptions {
             receiver_side: SideState::Unspecified,
             anchor_root: false,
             perishable: false,
+            cvs_mode: false,
         }
     }
 
@@ -186,6 +196,26 @@ impl DirMergeOptions {
     pub const fn mark_perishable(mut self) -> Self {
         self.perishable = true;
         self
+    }
+
+    /// Marks this dir-merge entry as carrying the `C` (CVS-ignore) modifier.
+    ///
+    /// upstream: exclude.c:1248-1254 - `C` modifier toggles FILTRULE_NO_PREFIXES |
+    /// FILTRULE_WORD_SPLIT | FILTRULE_NO_INHERIT | FILTRULE_CVS_IGNORE on the
+    /// rule template. The first three are already modelled by `use_whitespace`,
+    /// `allow_comments(false)`, and `inherit(false)`; this flag records the
+    /// remaining CVS-mode bit so the wire encoder can forward it as
+    /// `cvs_exclude=true` without having to infer it from the other options.
+    #[must_use]
+    pub const fn cvs_mode(mut self, cvs_mode: bool) -> Self {
+        self.cvs_mode = cvs_mode;
+        self
+    }
+
+    /// Reports whether the `C` (CVS-ignore) modifier was specified.
+    #[must_use]
+    pub const fn is_cvs_mode(&self) -> bool {
+        self.cvs_mode
     }
 
     /// Returns whether the parsed rules should be inherited.
@@ -387,6 +417,15 @@ mod tests {
         assert!(opts.applies_to_receiver());
         assert!(!opts.anchor_root_enabled());
         assert!(!opts.perishable());
+        assert!(!opts.is_cvs_mode());
+    }
+
+    #[test]
+    fn dir_merge_options_cvs_mode_round_trip() {
+        let opts = DirMergeOptions::new().cvs_mode(true);
+        assert!(opts.is_cvs_mode());
+        let cleared = opts.cvs_mode(false);
+        assert!(!cleared.is_cvs_mode());
     }
 
     #[test]

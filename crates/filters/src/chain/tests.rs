@@ -1,3 +1,4 @@
+use super::scope::DirScope;
 use super::*;
 use std::fs;
 use std::path::PathBuf;
@@ -503,4 +504,145 @@ fn dir_merge_inline_colon_c_missing_cvsignore_is_noop() {
     assert!(chain.allows(Path::new("anything"), false));
 
     chain.leave_directory(guard);
+}
+
+/// An inner scope's anchored exclude (`- /foo`) synthesizes a
+/// `foo/**` descendant matcher in the compiled rule. When the outer
+/// scope's `- down` rule is the only rule that *actually* applies to
+/// `foo/down`, the inner scope must NOT short-circuit fall-through
+/// merely because its descendant matcher pretends to match.
+///
+/// Upstream `exclude.c:rule_matches()` has no descendant matching at
+/// all; descendant exclusion is a side effect of the sender walk not
+/// descending into excluded directories. The per-directory chain must
+/// reflect that and fall through whenever a scope contains no real
+/// user-written rule for the path.
+///
+/// Pre-fix behaviour: the inner scope's `foo/**` descendant matcher
+/// would advertise a deletion-side match in `has_matching_rule`,
+/// causing the chain to consult the inner scope's traversal-mode
+/// `allows_during_traversal` (which skips descendants and so says
+/// include) and short-circuit before the outer `- down` rule fired,
+/// leaking `foo/down` into the destination.
+#[test]
+fn filter_chain_inner_scope_descendant_does_not_block_outer_fall_through() {
+    // Outer (global) rule that excludes any path with basename `down`.
+    let global = FilterSet::from_rules([FilterRule::exclude("down")]).unwrap();
+    let mut chain = FilterChain::new(global);
+
+    // Inner scope with `- /foo`: direct matcher is `foo`, descendant
+    // matcher is the synthetic `foo/**`. Only the descendant matcher
+    // touches `foo/down`, and it must not stop fall-through.
+    let inner = FilterSet::from_rules([FilterRule::exclude("/foo")]).unwrap();
+    let _guard = chain.push_scope(inner);
+
+    assert!(!chain.allows(Path::new("foo/down"), true));
+    assert!(!chain.allows(Path::new("foo/down"), false));
+}
+
+/// Root-level filter chain with `exclude down` must exclude every
+/// directory whose basename is `down`, regardless of nesting depth and
+/// regardless of whether an intervening per-directory scope contributes
+/// a rule. Mirrors the upstream `exclude` testsuite expectation that a
+/// root-anchored exclude propagates through `.filt` scopes that are
+/// silent on the same path.
+#[test]
+fn filter_chain_root_exclude_down_propagates_to_nested_dirs() {
+    let global = FilterSet::from_rules([FilterRule::exclude("down")]).unwrap();
+    let mut chain = FilterChain::new(global);
+
+    // Simulate descent into `foo/` with a per-dir scope that says nothing
+    // about `down`.
+    let foo_scope =
+        FilterSet::from_rules([FilterRule::include(".filt"), FilterRule::exclude("/file1")])
+            .unwrap();
+    let foo_guard = chain.push_scope(foo_scope);
+    assert!(!chain.allows(Path::new("foo/down"), true));
+    chain.leave_directory(foo_guard);
+
+    // Simulate descent into `bar/down/to/foo/` with several intervening
+    // per-dir scopes that are silent on `down`.
+    let bar_scope = FilterSet::from_rules([
+        FilterRule::exclude("home-cvs-exclude"),
+        FilterRule::include("to"),
+    ])
+    .unwrap();
+    let bar_guard = chain.push_scope(bar_scope);
+
+    let bar_down_to_scope = FilterSet::from_rules([FilterRule::exclude(".filt2")]).unwrap();
+    let bar_down_to_guard = chain.push_scope(bar_down_to_scope);
+
+    let bar_down_to_foo_scope = FilterSet::from_rules([FilterRule::include("*.junk")]).unwrap();
+    let bar_down_to_foo_guard = chain.push_scope(bar_down_to_foo_scope);
+
+    // Even though none of the per-dir scopes match `down`, the outer
+    // `exclude down` rule must still apply.
+    assert!(!chain.allows(Path::new("bar/down"), true));
+    assert!(!chain.allows(Path::new("foo/down"), true));
+
+    chain.leave_directory(bar_down_to_foo_guard);
+    chain.leave_directory(bar_down_to_guard);
+    chain.leave_directory(bar_guard);
+}
+
+/// A non-inheriting (`:C`-style) scope at depth N must not block outer
+/// inherited rules from applying at depth N. When the non-inheriting
+/// scope has no rule matching the path, evaluation must fall through to
+/// outer inherited scopes. Mirrors upstream's recursive
+/// `check_filter()` which returns 0 when no rule matches in the
+/// mergelist, letting the caller continue iterating the outer list.
+#[test]
+fn filter_chain_non_inheriting_scope_falls_through_to_outer_inherited() {
+    let global = FilterSet::from_rules([FilterRule::exclude("down")]).unwrap();
+    let mut chain = FilterChain::new(global);
+
+    // Outer inheriting scope (depth 1) with an unrelated rule.
+    let outer = FilterSet::from_rules([FilterRule::exclude("*.bak")]).unwrap();
+    let outer_guard = chain.push_scope(outer);
+
+    // Inner non-inheriting scope (depth 2) silent on `down`.
+    let inner_set = FilterSet::from_rules([FilterRule::exclude("*.junk")]).unwrap();
+    chain.current_depth += 1;
+    let inner_depth = chain.current_depth;
+    chain.scopes.push(DirScope {
+        depth: inner_depth,
+        filter_set: inner_set,
+        inherits: false,
+    });
+
+    // At depth 2 with a no-inherit inner scope that does not match
+    // `down`, the outer scope (depth 1) is also silent, and global
+    // `exclude down` must apply.
+    assert!(!chain.allows(Path::new("down"), true));
+    // Sanity: rules from each layer still fire on their own patterns.
+    assert!(!chain.allows(Path::new("file.junk"), false));
+    assert!(!chain.allows(Path::new("file.bak"), false));
+
+    // Pop the inner non-inheriting scope manually.
+    chain.scopes.retain(|s| s.depth != inner_depth);
+    chain.current_depth -= 1;
+
+    chain.leave_directory(outer_guard);
+}
+
+/// The Deletion-side scope fall-through uses the same descendant-free
+/// match predicate as the Transfer side. Without this, a scope that
+/// looks "silent" on a path via direct matchers would still claim a
+/// match via a synthetic `pattern/**` descendant matcher in the
+/// deletion code path, breaking outer-scope evaluation.
+#[test]
+fn filter_chain_deletion_falls_through_when_only_descendant_matches() {
+    // Outer (global) rule protects `foo/x` from deletion via a real
+    // protect rule that fires on the path's basename.
+    let global = FilterSet::from_rules([FilterRule::protect("x")]).unwrap();
+    let mut chain = FilterChain::new(global);
+
+    // Inner scope's `- /foo` synthesizes a `foo/**` descendant matcher.
+    // Direct matchers are silent on `foo/x`. With the fix the scope is
+    // detected as silent (no real rule match) and evaluation falls
+    // through to the outer protect rule.
+    let inner = FilterSet::from_rules([FilterRule::exclude("/foo")]).unwrap();
+    let _guard = chain.push_scope(inner);
+
+    assert!(!chain.allows_deletion(Path::new("foo/x"), false));
 }

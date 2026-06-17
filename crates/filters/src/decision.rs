@@ -142,6 +142,52 @@ impl FilterSetInner {
         decision
     }
 
+    /// Returns `true` when any rule in this set (in the supplied direction)
+    /// matches the path.
+    ///
+    /// Descendant matchers are skipped so the result reflects only real
+    /// user-written rules, matching upstream `exclude.c:rule_matches()`
+    /// which has no descendant matching at all. Both the include/exclude
+    /// and protect/risk chains are consulted: a protect rule still counts
+    /// as a scope match because it influences the deletion decision.
+    ///
+    /// This is the predicate the per-directory chain uses to detect
+    /// whether a scope is silent on a path and fall through to outer
+    /// scopes.
+    pub(crate) fn has_matching_rule(
+        &self,
+        path: &Path,
+        is_dir: bool,
+        context: DecisionContext,
+    ) -> bool {
+        let applies: fn(&CompiledRule) -> bool = match context {
+            DecisionContext::Transfer => |rule| rule.applies_to_sender,
+            DecisionContext::Deletion => |rule| rule.applies_to_receiver,
+        };
+        let include_perishable = matches!(context, DecisionContext::Transfer);
+        if first_matching_rule(
+            &self.include_exclude,
+            path,
+            is_dir,
+            applies,
+            include_perishable,
+            false,
+        )
+        .is_some()
+        {
+            return true;
+        }
+        first_matching_rule(
+            &self.protect_risk,
+            path,
+            is_dir,
+            applies,
+            include_perishable,
+            false,
+        )
+        .is_some()
+    }
+
     /// Checks whether a directory is excluded by a non-directory-specific rule.
     ///
     /// When `--prune-empty-dirs` is active, directories excluded by generic

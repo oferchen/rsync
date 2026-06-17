@@ -203,6 +203,13 @@ pub(crate) fn build_wire_format_rules(
             wire_rule.no_inherit = !options.inherit_rules();
             wire_rule.word_split = options.uses_whitespace();
             wire_rule.exclude_from_merge = options.excludes_self();
+            // upstream: exclude.c:1248-1254 - the `C` modifier on a dir-merge
+            // rule sets FILTRULE_CVS_IGNORE on the wire. Without this, `-f:C`
+            // would round-trip through the remote shell as a bare dir-merge
+            // missing the CVS flag, so the remote sender could neither
+            // default the empty pattern to `.cvsignore` nor activate
+            // CVS-style whitespace parsing of the per-directory file.
+            wire_rule.cvs_exclude = options.is_cvs_mode();
         }
 
         wire_rules.push(wire_rule);
@@ -589,6 +596,35 @@ mod tests {
         assert_eq!(rules[0].rule_type, RuleType::DirMerge);
         assert!(rules[0].no_inherit);
         assert!(rules[0].exclude_from_merge);
+        assert!(rules[0].word_split);
+    }
+
+    /// `-f:C` (and `--filter=:C`) is parsed locally into a DirMerge spec with
+    /// the `cvs_mode` option set. The wire encoder must forward that as
+    /// `cvs_exclude=true` so the remote sender can default the empty pattern
+    /// to `.cvsignore` (upstream `exclude.c:1404-1408`) and enable CVS-style
+    /// whitespace parsing of the merge file. Without this, `-f:C` reached the
+    /// remote rsync with the `C` modifier stripped, producing an empty merge
+    /// filename and silently disabling per-directory `.cvsignore` lookup.
+    #[test]
+    fn dir_merge_cvs_mode_forwards_cvs_exclude_flag() {
+        use engine::local_copy::DirMergeOptions;
+
+        let options = DirMergeOptions::new()
+            .use_whitespace()
+            .allow_comments(false)
+            .allow_list_clearing(true)
+            .inherit(false)
+            .cvs_mode(true);
+
+        let spec = FilterRuleSpec::dir_merge(".cvsignore", options);
+        let rules =
+            build_wire_format_rules(&[spec]).expect("should forward cvs_mode to wire format");
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].rule_type, RuleType::DirMerge);
+        assert!(rules[0].cvs_exclude);
+        assert!(rules[0].no_inherit);
         assert!(rules[0].word_split);
     }
 
