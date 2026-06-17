@@ -154,6 +154,7 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --simd=LEVEL Force the SIMD level used by checksum dispatch (auto, avx512, avx2, sse4, neon, none).\n",
             "      --cow        Allow copy-on-write reflinks for whole-file copies (default).\n",
             "      --no-cow     Disable copy-on-write reflinks; always use the portable std::fs::copy fallback.\n",
+            "      --reflink=MODE Copy-on-write reflink policy (auto, always, never).\n",
             "      --zero-copy  Allow I/O-level zero-copy (sendfile, splice, copy_file_range; io_uring SEND_ZC only when built with the iouring-send-zc cargo feature, otherwise downgrades to plain io_uring SEND) when supported by the kernel. This is the default (policy=auto/enabled).\n",
             "      --no-zero-copy  Disable I/O-level zero-copy; route through portable userspace read/write loops. Does not affect filesystem-level reflink/CoW cloning.\n",
             "      --inplace    Write updated data directly to destination files.\n",

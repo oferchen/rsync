@@ -459,10 +459,13 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
         }
     }
 
-    /// Swaps the platform copy strategy when `--no-cow` is in effect.
+    /// Swaps the platform copy strategy when `--no-cow` / `--reflink=never`
+    /// or `--reflink=always` is in effect.
     fn apply_cow_policy(options: LocalCopyOptions, config: &ClientConfig) -> LocalCopyOptions {
         match config.cow_policy() {
             fast_io::CowPolicy::Auto => options,
+            fast_io::CowPolicy::Required => options
+                .with_platform_copy(std::sync::Arc::new(fast_io::RequireCowPlatformCopy::new())),
             fast_io::CowPolicy::Disabled => {
                 options.with_platform_copy(std::sync::Arc::new(fast_io::NoCowPlatformCopy::new()))
             }
@@ -825,6 +828,31 @@ mod cow_policy_wiring_tests {
         assert_eq!(
             options.platform_copy().preferred_method(1024 * 1024 * 1024),
             fast_io::CopyMethod::StandardCopy
+        );
+    }
+
+    /// `--reflink=always` (`CowPolicy::Required`) must install the
+    /// adapter that surfaces an error when the destination filesystem
+    /// cannot honour the reflink request. The preferred method must
+    /// match the platform reflink primitive so callers that inspect
+    /// the trait surface observe the hard-required path.
+    #[test]
+    fn required_policy_installs_require_cow_strategy() {
+        let config = config_with_cow(fast_io::CowPolicy::Required);
+        let options = build_local_copy_options(&config, None);
+        let expected = if cfg!(target_os = "linux") {
+            fast_io::CopyMethod::Ficlone
+        } else if cfg!(target_os = "macos") {
+            fast_io::CopyMethod::Clonefile
+        } else if cfg!(target_os = "windows") {
+            fast_io::CopyMethod::ReFsReflink
+        } else {
+            fast_io::CopyMethod::StandardCopy
+        };
+        assert_eq!(options.platform_copy().preferred_method(0), expected);
+        assert_eq!(
+            options.platform_copy().preferred_method(1024 * 1024 * 1024),
+            expected
         );
     }
 }

@@ -257,6 +257,22 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .overrides_with("cow"),
             )
             .arg(
+                Arg::new("reflink")
+                    .long("reflink")
+                    .value_name("MODE")
+                    .help(
+                        "Copy-on-write reflink policy for whole-file copies. \
+                         MODE is one of auto (default; clone when supported, \
+                         fall back to std::fs::copy otherwise), always \
+                         (require a reflink and fail when the destination \
+                         filesystem cannot honour it), or never (always use \
+                         the portable std::fs::copy fallback). Equivalent to \
+                         the --cow/--no-cow binary form; the last of \
+                         --cow/--no-cow/--reflink on the command line wins.",
+                    )
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
                 Arg::new("zero-copy")
                     .long("zero-copy")
                     .help(
