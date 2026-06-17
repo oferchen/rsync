@@ -96,6 +96,10 @@ where
     // Threaded into `OutFormatContext` so the itemize renderer picks the correct
     // direction arrow (upstream: log.c:701-704 - `<` for sender, `>` otherwise).
     let is_sender = config.is_local_sender();
+    // upstream: flist.c:2251 emits "sending incremental file list" only when
+    // inc_recurse is on, which compat.c:172 disables when `!recurse`. Mirror
+    // that gate so single-file (`-v`) transfers don't get a spurious banner.
+    let recursive = config.recursive();
 
     let result = {
         let observer = live_progress
@@ -134,6 +138,7 @@ where
                     name_overridden,
                     human_readable_mode,
                     suppress_updated_only_totals,
+                    recursive,
                     writer,
                 )
             }) {
@@ -213,6 +218,9 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         is_sender,
     } = params;
     let context = OutFormatContext::with_is_sender(is_sender);
+    // The log file already carries the parallel "building file list" line via
+    // logging::info_log!(Flist, 1, ...); the FCLIENT "sending incremental file
+    // list" banner is for stdout only (upstream: flist.c:2248 vs 2252).
     emit_transfer_summary(
         summary,
         verbosity,
@@ -226,6 +234,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         name_level,
         name_overridden,
         human_readable_mode,
+        false,
         false,
         &mut log.file,
     )?;
