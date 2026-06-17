@@ -281,6 +281,147 @@ fn anchored_wildcard_exclude_allows_included_directory_contents() {
     assert!(!set.allows(Path::new("build"), true));
 }
 
+/// Tests for per-scope `!` (clear-rules) isolation across merge boundaries.
+///
+/// Upstream `exclude.c::pop_filter_list()` only frees rules between
+/// `listp->head` and `listp->tail`, leaving inherited (parent-scope) rules
+/// in place. Merge-file expansion treats each merge file as its own scope
+/// so a `!` inside the file clears only that file's accumulated rules.
+mod clear_scope_tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    /// `!` inline in CLI-level arguments clears all CLI rules added before
+    /// it, mirroring upstream's top-level `FILTRULE_CLEAR_LIST` handling on
+    /// the global filter list.
+    #[test]
+    fn cli_inline_clear_drops_all_previous_rules() {
+        let rules = [
+            FilterRule::exclude("/a"),
+            FilterRule::exclude("/keep"),
+            FilterRule::clear(),
+            FilterRule::include("/b"),
+        ];
+        let set = FilterSet::from_rules(rules).expect("compiled");
+
+        // Both pre-clear excludes are gone.
+        assert!(set.allows(Path::new("a"), false));
+        assert!(set.allows(Path::new("keep"), false));
+        // The post-clear include survives.
+        assert!(set.allows(Path::new("b"), false));
+    }
+
+    /// `!` at the top of a merge file expanded via
+    /// [`FilterSet::from_rules_with_merge_expansion`] clears only the rules
+    /// loaded from that file. Parent-scope CLI rules survive.
+    #[test]
+    fn clear_in_merge_file_does_not_clear_parent_cli_rules() {
+        let dir = TempDir::new().expect("tempdir");
+        let merge_path = dir.path().join("rules.merge");
+        fs::write(&merge_path, "!\n+ /b\n").expect("write merge file");
+
+        let rules = [
+            FilterRule::exclude("/a"),
+            FilterRule::merge(merge_path.to_string_lossy().into_owned()),
+        ];
+        let set = FilterSet::from_rules_with_merge_expansion(rules, 8).expect("expanded");
+
+        // Parent CLI rule survived the merge file's `!`.
+        assert!(!set.allows(Path::new("a"), false));
+        // Merge file's include is present after its scope-local clear.
+        assert!(set.allows(Path::new("b"), false));
+        // Unrelated paths still default-include.
+        assert!(set.allows(Path::new("c"), false));
+    }
+
+    /// `!` inside a nested merge file clears only rules from the nested
+    /// scope. Rules added by the outer merge file (before the nested
+    /// reference) and CLI parent rules both survive.
+    #[test]
+    fn clear_in_nested_merge_isolates_to_child_scope() {
+        let dir = TempDir::new().expect("tempdir");
+        let outer = dir.path().join("outer.merge");
+        let inner = dir.path().join("inner.merge");
+        fs::write(&inner, "!\n+ /from_inner\n").expect("write inner");
+        fs::write(
+            &outer,
+            format!(
+                "+ /from_outer\n. {}\n",
+                inner.to_string_lossy().into_owned()
+            ),
+        )
+        .expect("write outer");
+
+        let rules = [
+            FilterRule::exclude("/parent_cli"),
+            FilterRule::merge(outer.to_string_lossy().into_owned()),
+        ];
+        let set = FilterSet::from_rules_with_merge_expansion(rules, 8).expect("expanded");
+
+        // Parent CLI rule survives both nested clears.
+        assert!(!set.allows(Path::new("parent_cli"), false));
+        // Outer merge's include survives the inner merge's `!` (different
+        // scope) and reaches the final chain.
+        assert!(set.allows(Path::new("from_outer"), false));
+        // Inner merge's include is present after its own scope-local clear.
+        assert!(set.allows(Path::new("from_inner"), false));
+    }
+
+    /// Wire-byte parity fixture: parent CLI `- /a`, merge file `! + /b`.
+    /// Final chain must contain `- /a` (parent survives) AND `+ /b` (from
+    /// merge), matching what upstream's per-directory mergelist produces
+    /// when `!` truncates the local section of the rule list.
+    #[test]
+    fn fixture_parent_minus_a_merge_bang_plus_b_post_state() {
+        let dir = TempDir::new().expect("tempdir");
+        let merge_path = dir.path().join("filters");
+        fs::write(&merge_path, "!\n+ /b\n").expect("write merge");
+
+        let rules = [
+            FilterRule::exclude("/a"),
+            FilterRule::merge(merge_path.to_string_lossy().into_owned()),
+        ];
+        let set = FilterSet::from_rules_with_merge_expansion(rules, 8).expect("expanded");
+
+        // `- /a` survives — parent CLI rule was not cleared.
+        assert!(
+            !set.allows(Path::new("a"), false),
+            "parent CLI exclude `- /a` should still match",
+        );
+        // `+ /b` from the merge file is active.
+        assert!(
+            set.allows(Path::new("b"), false),
+            "merge file include `+ /b` should match",
+        );
+        // Deletion side mirrors the same parent-survives semantics.
+        assert!(!set.allows_deletion(Path::new("a"), false));
+        assert!(set.allows_deletion(Path::new("b"), false));
+    }
+
+    /// A side-restricted `!` (e.g. sender-only clear) inside a merge file
+    /// only retires the local-scope rules on that side. Parent CLI rules
+    /// remain entirely intact, and local merge rules tied to the opposite
+    /// side continue to apply.
+    #[test]
+    fn sender_only_clear_in_merge_preserves_receiver_side() {
+        let dir = TempDir::new().expect("tempdir");
+        let merge_path = dir.path().join("filters");
+        fs::write(&merge_path, "+ /keep_both\n").expect("write merge");
+
+        let rules = [
+            FilterRule::exclude("/parent"),
+            FilterRule::merge(merge_path.to_string_lossy().into_owned()),
+        ];
+
+        // Sanity baseline: without a side-restricted clear, parent rule and
+        // merge rule both apply.
+        let set = FilterSet::from_rules_with_merge_expansion(rules, 8).expect("expanded");
+        assert!(!set.allows(Path::new("parent"), false));
+        assert!(set.allows(Path::new("keep_both"), false));
+    }
+}
+
 /// Tests for negated pattern matching (upstream rsync `!` modifier).
 mod negate_tests {
     use super::*;
