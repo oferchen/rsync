@@ -149,12 +149,17 @@ pub(crate) struct RuleModifiers {
 impl RuleModifiers {
     /// Applies modifiers to a filter rule.
     pub(crate) fn apply(self, rule: FilterRule) -> FilterRule {
+        // upstream: exclude.c:1248-1254 - the `C` modifier on a merge/dir-merge
+        // rule implicitly sets FILTRULE_NO_INHERIT (alongside NO_PREFIXES,
+        // WORD_SPLIT, CVS_IGNORE). Mirror that here so `:C .cvsignore` rules
+        // do not propagate into descendant directories.
+        let no_inherit = self.no_inherit || self.cvs_mode;
         let mut rule = rule
             .with_negate(self.negate)
             .with_perishable(self.perishable)
             .with_xattr_only(self.xattr_only)
             .with_exclude_only(self.exclude_only)
-            .with_no_inherit(self.no_inherit)
+            .with_no_inherit(no_inherit)
             .with_cvs_mode(self.cvs_mode);
 
         if self.sender_only && !self.receiver_only {
