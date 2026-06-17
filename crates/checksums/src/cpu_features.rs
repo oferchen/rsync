@@ -99,7 +99,7 @@ impl SimdLevel {
 ///
 /// Each variant maps to a CPU feature gate the dispatcher verifies before
 /// activating a backend. The override layer answers
-/// [`feature_allowed`](self::feature_allowed) by intersecting the active
+/// [`feature_allowed`] by intersecting the active
 /// override with the host's CPUID-detected capabilities.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SimdFeature {

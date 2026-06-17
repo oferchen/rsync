@@ -1,7 +1,7 @@
 //! Linux `FICLONERANGE` ioctl wrapper for partial basis-range reflinks.
 //!
 //! This module exposes the [`try_clone_file_range`] entry point used by the
-//! delta-apply COPY-token fast path. Unlike [`crate::copy_basis_range`], which
+//! delta-apply COPY-token fast path. Unlike `crate::copy_basis_range`, which
 //! drives `copy_file_range(2)` and lets the kernel choose between an
 //! in-kernel byte copy or a CoW reflink, `FICLONERANGE` is unconditional: when
 //! it succeeds, the destination range shares storage extents with the basis

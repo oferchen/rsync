@@ -5,7 +5,7 @@
 //! `Unsupported`. This keeps cross-platform call sites (and the socket
 //! writer's fallback path) compiling without `cfg`-gating each reference.
 //!
-//! The [`ZeroCopySender`] type is gated on the `iouring-send-zc` feature
+//! The `ZeroCopySender` type is gated on the `iouring-send-zc` feature
 //! and mirrors the Linux constructor surface so cross-platform code can
 //! reference the type behind the feature flag; every method returns
 //! `io::ErrorKind::Unsupported`.

@@ -90,11 +90,11 @@ impl ParallelDeltaApplier {
         Ok(slot.writer)
     }
 
-    /// Blocks the calling thread until every outstanding [`SlotHandle`]
+    /// Blocks the calling thread until every outstanding `SlotHandle`
     /// for `ndx` has been dropped.
     ///
     /// Each call to [`Self::apply_one_chunk`] or
-    /// [`Self::apply_batch_parallel`] obtains a [`SlotHandle`] from
+    /// [`Self::apply_batch_parallel`] obtains a `SlotHandle` from
     /// [`Self::slot_for`] that bumps the slot's in-flight counter for the
     /// duration of the call (decrement on drop). `flush_workers` parks on
     /// the slot's [`std::sync::Condvar`] until that counter is observed to be zero.
@@ -111,7 +111,6 @@ impl ParallelDeltaApplier {
     /// [`ParallelApplyError::SlotPoisoned`] variant carries the offending
     /// `ndx` and the `"flush_workers"` call-site tag.
     ///
-    /// [`SlotHandle`]: super::SlotHandle
     /// [`Self::slot_for`]: super::ParallelDeltaApplier
     pub fn flush_workers(&self, ndx: impl Into<FileNdx>) -> std::io::Result<()> {
         let ndx = ndx.into();

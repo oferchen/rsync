@@ -41,7 +41,7 @@ impl ParallelDeltaApplier {
     ///
     /// Returns the first [`std::io::Error`] encountered while applying the
     /// batch, including any per-chunk strong-checksum mismatch surfaced by
-    /// [`Self::verify_chunk`].
+    /// `Self::verify_chunk`.
     pub fn apply_batch_parallel(&self, chunks: Vec<DeltaChunk>) -> std::io::Result<()> {
         // SAFETY (verify-write overlap contract - ABW-5.c audit:
         //   docs/audit/abw-5c-verify-write-mutex-scope.md)

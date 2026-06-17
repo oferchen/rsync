@@ -93,7 +93,7 @@ pub fn apply_file_metadata_with_options(
 /// Pre-applies upstream's `dest_mode()` chmod for callers that have the
 /// pre-transfer destination stat in hand.
 ///
-/// See [`permissions::apply_dest_mode_pre_transfer`] for the full
+/// See `permissions::apply_dest_mode_pre_transfer` for the full
 /// upstream-reference documentation.
 #[cfg(unix)]
 pub fn apply_dest_mode_pre_transfer(
