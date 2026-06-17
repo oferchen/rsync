@@ -107,6 +107,22 @@ pub struct ComputedChecksum {
     pub len: usize,
 }
 
+/// Destination-relative paths for a successful `--backup` rename.
+///
+/// Carried back from the disk commit thread so the receiver's main thread
+/// can emit upstream's `INFO_GTE(BACKUP, 1)` line. The disk thread cannot
+/// emit directly because its thread-local [`logging::VerbosityConfig`] is
+/// never seeded, so `info_gte(Backup, 1)` would always be false there.
+///
+/// upstream: backup.c:352 - `rprintf(FINFO, "backed up %s to %s\n", fname, buf)`
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackupNotice {
+    /// Destination-relative path of the original file before the rename.
+    pub original: PathBuf,
+    /// Destination-relative path of the renamed backup file.
+    pub backup: PathBuf,
+}
+
 /// Result of committing a file to disk, sent back from the disk thread.
 pub struct CommitResult {
     /// Number of bytes written to the file.
@@ -127,4 +143,8 @@ pub struct CommitResult {
     ///
     /// - `receiver.c:927-928`: `bitbag_set_bit(delayed_bits, ndx)`
     pub delayed_path: Option<PathBuf>,
+    /// Backup notice when `--backup` renamed a pre-existing file. The main
+    /// thread emits this as `INFO_GTE(BACKUP, 1)` so the `--info=backup`
+    /// line surfaces during pipelined wire transfers.
+    pub backup_notice: Option<BackupNotice>,
 }

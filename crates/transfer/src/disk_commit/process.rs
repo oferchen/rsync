@@ -14,11 +14,12 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use engine::{CleanupManager, compute_backup_path, trace_make_backup_rename};
-use logging::info_log;
 use protocol::acl::AclCache;
 
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
-use crate::pipeline::messages::{BeginMessage, CommitResult, ComputedChecksum, FileMessage};
+use crate::pipeline::messages::{
+    BackupNotice, BeginMessage, CommitResult, ComputedChecksum, FileMessage,
+};
 use crate::pipeline::spsc;
 use crate::temp_guard::TempFileGuard;
 #[cfg(not(unix))]
@@ -185,6 +186,7 @@ pub(super) fn process_file(
                     metadata_error,
                     computed_checksum,
                     delayed_path: outcome.delayed_path,
+                    backup_notice: outcome.backup_notice,
                 });
             }
             FileMessage::Abort { reason } => {
@@ -324,6 +326,7 @@ pub(super) fn process_whole_file(
         metadata_error,
         computed_checksum,
         delayed_path: outcome.delayed_path,
+        backup_notice: outcome.backup_notice,
     })
 }
 
@@ -464,6 +467,11 @@ struct CommitOutcome {
     /// When `--delay-updates` staged the file to `.~tmp~`, holds the
     /// staging path. `None` for immediate commits and inplace writes.
     delayed_path: Option<PathBuf>,
+    /// Destination-relative paths recorded when `--backup` renamed an
+    /// existing file. Propagated to the main thread via [`CommitResult`]
+    /// so the upstream `INFO_GTE(BACKUP, 1)` notice can be emitted by the
+    /// thread whose `VerbosityConfig` carries the user's `--info=backup`.
+    backup_notice: Option<BackupNotice>,
 }
 
 /// Performs backup, atomic rename, and inplace truncation after writing.
@@ -491,11 +499,15 @@ fn commit_file(
 ) -> io::Result<CommitOutcome> {
     // upstream: backup.c:make_backup() - rename existing file before overwrite
     // With delay_updates, backup happens during the sweep, not here.
-    if !config.delay_updates {
+    let backup_notice = if !config.delay_updates {
         if let Some(ref backup_config) = config.backup {
-            make_backup(&begin.file_path, backup_config)?;
+            make_backup(&begin.file_path, backup_config)?
+        } else {
+            None
         }
-    }
+    } else {
+        None
+    };
 
     if needs_rename && config.delay_updates {
         // upstream: receiver.c:916-929 - stage to partial dir (.~tmp~)
@@ -509,6 +521,7 @@ fn commit_file(
         return Ok(CommitOutcome {
             was_copy: result,
             delayed_path: Some(staging_path),
+            backup_notice,
         });
     }
 
@@ -535,6 +548,7 @@ fn commit_file(
     Ok(CommitOutcome {
         was_copy,
         delayed_path: None,
+        backup_notice,
     })
 }
 
@@ -790,10 +804,14 @@ fn apply_metadata_acls_and_xattrs(
 /// Mirrors upstream `backup.c:make_backup()` which renames the existing file
 /// to the backup path. Parent directories are created if needed when using
 /// `--backup-dir`. On success, emits the upstream `--debug=BACKUP` RENAME
-/// notice (`backup.c:216-217`).
-fn make_backup(file_path: &Path, config: &BackupConfig) -> io::Result<()> {
+/// notice (`backup.c:216-217`) and returns a [`BackupNotice`] carrying the
+/// destination-relative paths so the main thread can emit upstream's
+/// `INFO_GTE(BACKUP, 1)` line (`backup.c:352`). The disk thread cannot emit
+/// the info line directly because its thread-local [`logging::VerbosityConfig`]
+/// is never seeded with the user's `--info=backup` selection.
+fn make_backup(file_path: &Path, config: &BackupConfig) -> io::Result<Option<BackupNotice>> {
     if !file_path.exists() {
-        return Ok(());
+        return Ok(None);
     }
 
     let backup_path = compute_backup_path(
@@ -814,26 +832,23 @@ fn make_backup(file_path: &Path, config: &BackupConfig) -> io::Result<()> {
     // upstream: backup.c:216-217 - DEBUG_GTE(BACKUP, 1) on the RENAME success
     // branch of link_or_rename. disk_commit always uses rename here.
     trace_make_backup_rename(&file_path.display().to_string());
-    // upstream: backup.c:352 - INFO_GTE(BACKUP, 1) fires on success label
-    // for every successful backup. The local-copy executor already emits
-    // this via context_impl/state.rs; the wire-transfer receiver path must
-    // mirror it so `--info=backup` reports backups during delta transfers.
-    // Paths are displayed relative to the destination root to match upstream
-    // test assertions (testsuite/backup.test).
+    // upstream: backup.c:352 - INFO_GTE(BACKUP, 1) fires on success label for
+    // every successful backup. Paths are displayed relative to the destination
+    // root to match upstream test assertions (testsuite/backup.test). The
+    // actual `info_log!` emission happens on the main thread; see
+    // `crate::pipeline::receiver::emit_backup_notice`.
     let file_rel = file_path
         .strip_prefix(&config.dest_dir)
-        .unwrap_or(file_path);
+        .unwrap_or(file_path)
+        .to_path_buf();
     let backup_rel = backup_path
         .strip_prefix(&config.dest_dir)
-        .unwrap_or(&backup_path);
-    info_log!(
-        Backup,
-        1,
-        "backed up {} to {}",
-        file_rel.display(),
-        backup_rel.display()
-    );
-    Ok(())
+        .unwrap_or(&backup_path)
+        .to_path_buf();
+    Ok(Some(BackupNotice {
+        original: file_rel,
+        backup: backup_rel,
+    }))
 }
 
 /// Finalizes a checksum verifier into a `ComputedChecksum`.
@@ -1120,25 +1135,18 @@ mod tests {
         assert_eq!(staging, PathBuf::from("/dest/.~tmp~/file.txt"));
     }
 
-    /// Verifies `make_backup` emits the upstream-format `--info=BACKUP`
-    /// notice on success so wire-transfer (`--no-whole-file`) receivers
-    /// surface the same `backed up <fname> to <buf>` line as upstream
-    /// rsync's `backup.c:352`.
+    /// Verifies `make_backup` returns the upstream-format backup notice with
+    /// destination-relative paths so the main thread can surface upstream's
+    /// `INFO_GTE(BACKUP, 1)` line during wire transfers.
     ///
-    /// upstream: backup.c:352 - `INFO_GTE(BACKUP, 1)` fires on the
-    /// `success:` label inside `make_backup` for every backup written
-    /// regardless of whether the receiver took the wire-transfer or
-    /// local-copy code path. Mirrors the local-copy emission already
-    /// covered by `engine/tests/debug_backup_emissions.rs`.
+    /// upstream: backup.c:352 - `rprintf(FINFO, "backed up %s to %s\n",
+    /// fname, buf)` fires on the `success:` label for every backup written.
+    /// We propagate the notice via [`CommitResult::backup_notice`] because
+    /// the disk thread's `VerbosityConfig` is not seeded with the user's
+    /// `--info=backup` selection.
     #[test]
-    fn make_backup_emits_info_backup_message() {
-        use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, init};
+    fn make_backup_returns_destination_relative_notice() {
         use std::ffi::OsString;
-
-        let mut cfg = VerbosityConfig::default();
-        cfg.info.backup = 1;
-        init(cfg);
-        let _ = drain_events();
 
         let dir = tempfile::tempdir().unwrap();
         let file_path = dir.path().join("payload.bin");
@@ -1149,33 +1157,34 @@ mod tests {
             backup_dir: None,
             suffix: OsString::from("~"),
         };
-        make_backup(&file_path, &config).expect("make_backup succeeds");
+        let notice = make_backup(&file_path, &config)
+            .expect("make_backup succeeds")
+            .expect("notice produced when an existing file is backed up");
 
         let backup_path = file_path.with_extension("bin~");
         assert!(backup_path.exists(), "backup file must exist after rename");
         assert!(!file_path.exists(), "original file must be renamed away");
 
-        let file_rel = file_path.strip_prefix(dir.path()).unwrap_or(&file_path);
-        let backup_rel = backup_path.strip_prefix(dir.path()).unwrap_or(&backup_path);
-        let expected = format!(
-            "backed up {} to {}",
-            file_rel.display(),
-            backup_rel.display()
-        );
-        let messages: Vec<String> = drain_events()
-            .into_iter()
-            .filter_map(|event| match event {
-                DiagnosticEvent::Info {
-                    flag: InfoFlag::Backup,
-                    message,
-                    ..
-                } => Some(message),
-                _ => None,
-            })
-            .collect();
-        assert!(
-            messages.iter().any(|m| m == &expected),
-            "expected upstream-format INFO=BACKUP line {expected:?}; got {messages:?}"
-        );
+        assert_eq!(notice.original, PathBuf::from("payload.bin"));
+        assert_eq!(notice.backup, PathBuf::from("payload.bin~"));
+    }
+
+    /// Verifies `make_backup` is a no-op (and returns `None`) when the file
+    /// does not exist, mirroring upstream `backup.c:make_backup()` which
+    /// short-circuits when `stat(fname, &st) != 0`.
+    #[test]
+    fn make_backup_missing_file_is_noop() {
+        use std::ffi::OsString;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("absent.bin");
+
+        let config = BackupConfig {
+            dest_dir: dir.path().to_path_buf(),
+            backup_dir: None,
+            suffix: OsString::from("~"),
+        };
+        let notice = make_backup(&file_path, &config).expect("make_backup succeeds");
+        assert!(notice.is_none(), "no notice when nothing was backed up");
     }
 }
