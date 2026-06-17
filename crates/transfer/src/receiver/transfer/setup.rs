@@ -1091,12 +1091,20 @@ mod daemon_incoming_chmod_tests {
         let dest = tmp.path().join("bar.dest");
         fs::write(&source, b"payload").expect("write source");
         fs::write(&dest, b"payload").expect("write dest");
-        // Source mode is whatever the sender advertised; with `--no-perms`
-        // the receiver ignores it. The daemon's `incoming chmod` must still
-        // run against the destination's current mode.
-        fs::set_permissions(&source, fs::Permissions::from_mode(0o664)).expect("set source perms");
-        // Newly-renamed temp file lands at a tight 0o600 (the O_TMPFILE
-        // default). The chmod-apply path must lift it to the spec result.
+        // upstream: rsync.c:466-470 dest_mode() - for a fresh transfer under
+        // `--no-perms` the chmod baseline is `source_mode & (~CHMOD_BITS |
+        // dflt_perms)`, where `dflt_perms = ACCESSPERMS & ~orig_umask`. Pin
+        // the source mode at 0o600 so the baseline collapses to 0o600 under
+        // any umask the test host happens to use (0o022 producing
+        // `dflt_perms = 0o755`, 0o002 producing `dflt_perms = 0o775` - both
+        // mask 0o600 to 0o600). Using a wider source mode like 0o664 would
+        // leave the test environment-fragile: `0o664 & 0o775 = 0o664`
+        // already has group-write, so `a+rX` adds nothing and the assertion
+        // would fail on container hosts with a relaxed umask.
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o600)).expect("set source perms");
+        // Existing destination mode is irrelevant for this fresh-transfer
+        // path - upstream's `dest_mode(exists=false)` ignores the stat mode -
+        // but pin it anyway so the test reads symmetrically.
         fs::set_permissions(&dest, fs::Permissions::from_mode(0o600)).expect("set dest perms");
 
         let source_meta = fs::metadata(&source).expect("source metadata");
