@@ -54,6 +54,7 @@ fn emit_transfer_summary_list_only_emits_listing_and_stats() {
         false,
         HumanReadableMode::Enabled,
         false,
+        false, // emit_flist_banner (list_only path)
         &mut rendered,
     )
     .expect("render summary");
@@ -84,6 +85,7 @@ fn emit_transfer_summary_with_progress_and_verbose_listing() {
         false,
         HumanReadableMode::Enabled,
         false,
+        true, // emit_flist_banner
         &mut rendered,
     )
     .expect("render summary");
@@ -122,6 +124,7 @@ fn emit_transfer_summary_out_format_adds_separator_before_stats() {
         false,
         HumanReadableMode::Disabled,
         false,
+        false, // emit_flist_banner (out_format path: starts_with assertion)
         &mut rendered,
     )
     .expect("render summary");

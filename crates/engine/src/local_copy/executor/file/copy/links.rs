@@ -426,8 +426,11 @@ pub(super) fn process_links(
             ReferenceDecision::Skip => {
                 // upstream: generator.c:1010,1133 / rsync.c:676 - "is uptodate"
                 // emitted at INFO_GTE(NAME, 2) when a reference-directory match
-                // means no transfer is needed.
-                info_log!(Name, 2, "{} is uptodate", record_path.display());
+                // means no transfer is needed. Rendered by the CLI from the
+                // MetadataReused event (cli::frontend::progress::render) so
+                // the line lands ahead of the totals; emitting it via
+                // info_log! would route it through the post-summary
+                // diagnostic drain and break upstream ordering.
                 context.summary_mut().record_regular_file_matched();
                 let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
                 let total_bytes = Some(metadata_snapshot.len());
