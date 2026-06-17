@@ -26,7 +26,7 @@
 //!   the per-entry walk base; the suffix is the wire-side relative name.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::Path;
 
 use tempfile::TempDir;
 
