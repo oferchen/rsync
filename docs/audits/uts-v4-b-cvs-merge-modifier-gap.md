@@ -1,5 +1,8 @@
 # UTS-V4.B: `:C` per-dir merge modifier parser gap
 
+Canonical UTS-DD cross-test map: `docs/design/uts-dd-fix-plan.md`.
+This audit covers exclude.2 in the `exclude` / `exclude-lsh` cluster.
+
 ## Summary
 
 When a local user-supplied filter file (or `--filter` argv) contains

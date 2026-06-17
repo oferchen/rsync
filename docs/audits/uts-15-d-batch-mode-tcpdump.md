@@ -1,6 +1,7 @@
 # UTS-15.d: batch-mode wire-evidence capture
 
-
+Canonical UTS-DD cross-test map: `docs/design/uts-dd-fix-plan.md`.
+This audit covers batch-mode.1/.2/.3 in the `batch-mode` family.
 
 Status: shipped
 Tracks: UTS-15.d (#3731)

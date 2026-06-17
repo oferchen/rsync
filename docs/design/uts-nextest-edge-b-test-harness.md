@@ -3,6 +3,10 @@
 Tracks: UTS-NEXTEST-EDGE.b (design phase)
 Companion: `docs/audits/uts-nextest-edge-a-runtests-inventory.md` (UTS-NEXTEST-EDGE.a)
 
+Sibling: `docs/design/uts-dd-fix-plan.md` is the canonical UTS-DD
+cross-test root-cause map; this harness is the regression-pin
+infrastructure that backs the UTS-DD fixes.
+
 ## 1. Purpose
 
 The companion audit (UTS-NEXTEST-EDGE.a) catalogues the 111 upstream `*_test.py` files and identifies 30 Tier-1 ports plus 53 Tier-2 ports. This document specifies the harness primitives those ports will share so that:
