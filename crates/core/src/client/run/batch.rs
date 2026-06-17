@@ -331,10 +331,34 @@ fn replay_batch(
             "Batch replay complete"
         );
     }
-    let _ = &result;
 
+    // upstream: main.c:362-373 - on the --read-batch side the receiver reads
+    // total_read / total_written / stats.total_size from the batch trailer and
+    // surfaces them through output_summary(). Mirror that by populating the
+    // ClientSummary so the "sent X bytes received X bytes" / "total size is X"
+    // lines reflect the replayed payload instead of zeros.
+    //
+    // The replay engine accounts every flist entry against `file_count` and
+    // every byte of source-side material against `total_size`. Symlinks and
+    // dirs created during replay are counted as files_transferred because the
+    // receiver materialised them at the destination, matching upstream's
+    // num_files / num_transferred accounting under --read-batch.
     use engine::local_copy::LocalCopySummary;
-    Ok(ClientSummary::from_summary(LocalCopySummary::default()))
+    let files_listed = usize::try_from(result.file_count).unwrap_or(usize::MAX);
+    let files_transferred = files_listed;
+    let total_size = result.total_size;
+    let summary = LocalCopySummary::from_receiver_stats(
+        files_listed,
+        files_transferred,
+        total_size,
+        total_size,
+        total_size,
+        std::time::Duration::ZERO,
+        total_size,
+        0,
+        0,
+    );
+    Ok(ClientSummary::from_summary(summary))
 }
 
 #[cfg(test)]
