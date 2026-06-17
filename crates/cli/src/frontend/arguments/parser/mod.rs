@@ -18,7 +18,9 @@ use crate::frontend::execution::{
 };
 use crate::frontend::filter_rules::{collect_filter_arguments, locate_filter_arguments};
 use crate::frontend::progress::{NameOutputLevel, ProgressSetting};
-use core::client::{AddressMode, DeleteMode, HumanReadableMode, StrongChecksumChoice};
+use core::client::{
+    AddressMode, DeleteMode, HumanReadableMode, StrongChecksumChoice, TcpFastOpenMode,
+};
 
 use self::flags::{tri_state_flag_negative_first, tri_state_flag_positive_first};
 use self::values::join_os_values;
@@ -132,6 +134,18 @@ where
     };
     let bind_address_raw = matches.remove_one::<OsString>("address");
     let sockopts = matches.remove_one::<OsString>("sockopts");
+    let tcp_fastopen = match matches.remove_one::<OsString>("tcp-fastopen") {
+        Some(value) => value
+            .to_string_lossy()
+            .parse::<TcpFastOpenMode>()
+            .map_err(|error| {
+                clap::Error::raw(
+                    clap::error::ErrorKind::ValueValidation,
+                    format!("{error}\n"),
+                )
+            })?,
+        None => TcpFastOpenMode::default(),
+    };
     let blocking_io = tri_state_flag_positive_first(&matches, "blocking-io", "no-blocking-io");
     let archive = matches.get_flag("archive");
     let recursive_override = tri_state_flag_negative_first(&matches, "recursive", "no-recursive");
@@ -731,6 +745,7 @@ where
         address_mode,
         bind_address: bind_address_raw,
         sockopts,
+        tcp_fastopen,
         blocking_io,
         archive,
         recursive,

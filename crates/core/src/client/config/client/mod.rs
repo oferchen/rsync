@@ -11,7 +11,8 @@ use engine::SkipCompressList;
 use super::builder::ClientConfigBuilder;
 use super::{
     AddressMode, BandwidthLimit, BindAddress, CompressionSetting, DeleteMode, FilesFromSource,
-    FilterRuleSpec, IconvSetting, ReferenceDirectory, StrongChecksumChoice, TransferTimeout,
+    FilterRuleSpec, IconvSetting, ReferenceDirectory, StrongChecksumChoice, TcpFastOpenMode,
+    TransferTimeout,
 };
 
 /// Configuration describing the requested client operation.
@@ -188,6 +189,7 @@ pub struct ClientConfig {
     pub(super) connect_program: Option<OsString>,
     pub(super) bind_address: Option<BindAddress>,
     pub(super) sockopts: Option<OsString>,
+    pub(super) tcp_fastopen: TcpFastOpenMode,
     pub(super) blocking_io: Option<bool>,
     pub(super) iconv: IconvSetting,
     pub(super) remote_shell: Option<Vec<OsString>>,
@@ -388,6 +390,7 @@ impl Default for ClientConfig {
             connect_program: None,
             bind_address: None,
             sockopts: None,
+            tcp_fastopen: TcpFastOpenMode::Auto,
             blocking_io: None,
             iconv: IconvSetting::Unspecified,
             remote_shell: None,

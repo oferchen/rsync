@@ -14,7 +14,7 @@ pub(super) const SUPPORTED_OPTIONS_LIST: &str = concat!(
     "--include, --include-from, --compare-dest, --copy-dest, --link-dest, --hard-links/-H, --no-hard-links, ",
     "--cvs-exclude/-C, --apple-double-skip, --filter/-F (including exclude-if-present=FILE), --files-from, --password-file, --password-command, --no-motd, ",
     "--from0, --no-from0, --bwlimit, --no-bwlimit, --timeout, --contimeout, --stop-after/--time-limit, --stop-at, --sockopts, ",
-    "--blocking-io, --no-blocking-io, --protocol, --compress/-z, --no-compress, --compress-level, --compress-choice, --compress-threads, ",
+    "--tcp-fastopen, --blocking-io, --no-blocking-io, --protocol, --compress/-z, --no-compress, --compress-level, --compress-choice, --compress-threads, ",
     "--skip-compress, --open-noatime, --no-open-noatime, --iconv, --no-iconv, --info, --debug, --verbose/-v, --no-verbose, ",
     "--relative/-R, --no-relative, --one-file-system/-x, --no-one-file-system, --implied-dirs, --no-implied-dirs, ",
     "--mkpath, --no-mkpath/--old-dirs/--old-d, --prune-empty-dirs/-m, --no-prune-empty-dirs, --progress, --no-progress, --quiet, --no-quiet, ",

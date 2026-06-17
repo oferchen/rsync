@@ -64,6 +64,7 @@ where
         address_mode,
         bind_address: bind_address_raw,
         sockopts,
+        tcp_fastopen,
         blocking_io,
         archive,
         recursive: _recursive,
@@ -482,6 +483,7 @@ where
             timeout_setting,
             connect_timeout_setting,
             sockopts: sockopts.as_ref(),
+            tcp_fastopen,
             blocking_io,
         },
     ) {
@@ -731,6 +733,7 @@ where
         connect_program: connect_program.clone(),
         bind_address,
         sockopts: sockopts.clone(),
+        tcp_fastopen,
         blocking_io,
         dry_run,
         list_only,

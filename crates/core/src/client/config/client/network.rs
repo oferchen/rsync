@@ -27,6 +27,17 @@ impl ClientConfig {
         self.sockopts.as_deref()
     }
 
+    /// Returns the configured TCP Fast Open mode.
+    ///
+    /// Defaults to [`TcpFastOpenMode::Auto`]: TFO is enabled
+    /// opportunistically on platforms that implement it. `On` requests TFO
+    /// unconditionally, `Off` disables it.
+    #[doc(alias = "--tcp-fastopen")]
+    #[must_use]
+    pub const fn tcp_fastopen(&self) -> TcpFastOpenMode {
+        self.tcp_fastopen
+    }
+
     /// Returns the requested blocking I/O preference for remote shells.
     #[doc(alias = "--blocking-io")]
     #[doc(alias = "--no-blocking-io")]
@@ -210,6 +221,12 @@ mod tests {
     fn sockopts_default_is_none() {
         let config = default_config();
         assert!(config.sockopts().is_none());
+    }
+
+    #[test]
+    fn tcp_fastopen_default_is_auto() {
+        let config = default_config();
+        assert_eq!(config.tcp_fastopen(), TcpFastOpenMode::Auto);
     }
 
     #[test]

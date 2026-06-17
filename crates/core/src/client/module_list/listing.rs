@@ -419,6 +419,8 @@ fn configure_daemon_stream(
             apply_socket_options(socket, values)?;
         }
 
+        super::tcp_perf::apply_client_tcp_perf_options(socket, options.tcp_fastopen());
+
         if let Some(blocking) = options.blocking_io() {
             socket.set_nonblocking(!blocking).map_err(|error| {
                 let action = if blocking {
