@@ -13,8 +13,8 @@ use crate::local_copy::{is_device, is_fifo};
 use ::metadata::MetadataOptions;
 
 use super::super::{
-    capture_batch_file_entry, copy_device, copy_directory_recursive, copy_fifo, copy_file,
-    copy_symlink, non_empty_path, transcode_filename_component,
+    capture_batch_file_entry, copy_device, copy_directory_recursive, copy_directory_walk_one_level,
+    copy_fifo, copy_file, copy_symlink, non_empty_path, transcode_filename_component,
 };
 use super::destination::{compute_special_target_path, compute_target_path};
 use super::metadata::resolve_effective_metadata;
@@ -100,14 +100,29 @@ pub(super) fn handle_directory_contents_copy(
     // so the batch file matches upstream's wire format.
     capture_batch_file_entry(context, source_path, Path::new("."), metadata, true)?;
 
-    copy_directory_recursive(
-        context,
-        source_path,
-        &target_root,
-        metadata,
-        relative_root.and_then(|root| non_empty_path(root.as_path())),
-        root_device,
-    )?;
+    // upstream: flist.c:2442 - trailing-slash sources (DOTDIR_NAME /
+    // SLASH_ENDING_NAME) walk their immediate children even when global
+    // recursion is off, so `--files-from` entries like `from/./` and
+    // `subsubdir2/` populate the destination with one level of contents.
+    if context.recursive_enabled() {
+        copy_directory_recursive(
+            context,
+            source_path,
+            &target_root,
+            metadata,
+            relative_root.and_then(|root| non_empty_path(root.as_path())),
+            root_device,
+        )?;
+    } else {
+        copy_directory_walk_one_level(
+            context,
+            source_path,
+            &target_root,
+            metadata,
+            relative_root.and_then(|root| non_empty_path(root.as_path())),
+            root_device,
+        )?;
+    }
 
     Ok(true)
 }

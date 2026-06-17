@@ -52,6 +52,52 @@ pub(crate) fn copy_directory_recursive(
     relative: Option<&Path>,
     root_device: Option<u64>,
 ) -> Result<bool, LocalCopyError> {
+    copy_directory_recursive_inner(
+        context,
+        source,
+        destination,
+        metadata,
+        relative,
+        root_device,
+        false,
+    )
+}
+
+/// Walks a directory's immediate children even when global recursion is off.
+///
+/// Mirrors upstream `flist.c:2442` which honours `(xfer_dirs && name_type != NORMAL_NAME)`
+/// to walk one level beneath SLASH_ENDING_NAME / DOTDIR_NAME source arguments
+/// (and `--files-from` entries with the corresponding markers). Subdirectories
+/// encountered during this one-level walk are NOT recursed into further,
+/// matching upstream's `recurse=0` semantics inside `send_directory()`.
+pub(crate) fn copy_directory_walk_one_level(
+    context: &mut CopyContext,
+    source: &Path,
+    destination: &Path,
+    metadata: &fs::Metadata,
+    relative: Option<&Path>,
+    root_device: Option<u64>,
+) -> Result<bool, LocalCopyError> {
+    copy_directory_recursive_inner(
+        context,
+        source,
+        destination,
+        metadata,
+        relative,
+        root_device,
+        true,
+    )
+}
+
+fn copy_directory_recursive_inner(
+    context: &mut CopyContext,
+    source: &Path,
+    destination: &Path,
+    metadata: &fs::Metadata,
+    relative: Option<&Path>,
+    root_device: Option<u64>,
+    force_walk_one_level: bool,
+) -> Result<bool, LocalCopyError> {
     #[cfg(any(
         all(unix, any(feature = "acl", feature = "xattr")),
         all(windows, feature = "acl")
@@ -159,7 +205,11 @@ pub(crate) fn copy_directory_recursive(
         Ok(())
     };
 
-    if !context.recursive_enabled() {
+    // upstream: flist.c:2442 - global recursion off AND not a trailing-slash
+    // / DOTDIR source: emit the directory entry only and stop. Trailing-slash
+    // sources (`force_walk_one_level`) fall through to walk one level so
+    // upstream's `(xfer_dirs && name_type != NORMAL_NAME)` semantics hold.
+    if !context.recursive_enabled() && !force_walk_one_level {
         ensure_directory(context)?;
         record_directory_completion(context, creation_record_pending, None);
         if !context.mode().is_dry_run() {
