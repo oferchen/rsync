@@ -2,7 +2,7 @@
 
 use std::ffi::OsString;
 use std::fmt;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 
 use core::branding::Brand;
 use core::message::Role;
@@ -316,103 +316,24 @@ where
         }
     };
 
-    // UTS-v3 Cluster A (SSH leg): the upstream sender keeps writing trailing
-    // bytes (MSG_STATS / NDX_DONE / MSG_ERROR_EXIT) onto the SSH stdio pipe
-    // after our final NDX_DONE. Returning from `run_server_stdio` here lets
-    // the process exit immediately, dropping the stdin pipe end. The peer
-    // then sees EOF on its parallel read before the bytes it is still
-    // streaming reach us, and reports "connection unexpectedly closed (N
-    // bytes received so far) [receiver]" - the SSH-leg mirror of the
-    // daemon-as-sender cluster A failures already fixed for TCP in
-    // `daemon::sections::module_access::transfer` (PR 5765).
+    // upstream: main.c:1262 `start_server()` returns into `exit_cleanup(0)`,
+    // which on a clean exit just runs `close_all()` + `exit()`. The kernel
+    // closes the inherited stdio descriptors as the process tears down, and
+    // the peer (whether upstream rsync over SSH, lsh.sh, or `--rsh=fake_rsh`)
+    // observes EOF on its read side without any half-close dance in our
+    // userspace. `handle_goodbye()` (receiver/transfer/phases.rs:145 +
+    // generator/transfer/goodbye.rs:47) has already exchanged NDX_DONE in
+    // both directions before `run_server_stdio` returns, so the protocol
+    // handshake is complete; the only thing left is for the process to exit
+    // and let the kernel close FDs.
     //
-    // Mirror upstream's receiver child: after writing its final goodbye it
-    // enters `noop_io_until_death()` (io.c:943) and loops on
-    // `read_buf(iobuf.in_fd, ...)` until the parent reaps it. We collapse
-    // both sides into one process, so drain stdin to EOF here instead. The
-    // upstream sender FINs its end of the pipe when its own `exit_cleanup`
-    // runs, at which point our read returns 0 and we unblock. Errors are
-    // tolerated: the goodbye has already completed.
-    //
-    // Both server roles need the half-close. The receiver case is the one
-    // the comment above documents (post-goodbye drain). The generator case
-    // is the symmetric leg: under the lsh.sh pipe transport the upstream
-    // peer running as a server-receiver child also parks in
-    // `noop_io_until_death()` waiting for EOF, and the upstream
-    // `runtests.py` cluster of 00-hello, alt-dest, ssh-basic, files-from,
-    // symlink-dirlink-basis, and hardlinks all time out without it.
-    //
-    // Daemon mode never reaches this site (the daemon dispatches into
-    // `run_server_with_handshake` directly and runs its own TCP drain in
-    // `process_approved_module`), so this code only fires on the SSH /
-    // remote-shell path that produced cluster A's alt-dest regression.
-    //
-    // upstream: io.c:943-963 `noop_io_until_death()`; main.c:1075
-    // receiver-child loop on `read_final_goodbye()`; cleanup.c:254
-    // `noop_io_until_death()` call in `_exit_cleanup`.
-    //
-    // The sequence below makes EOF deterministic instead of waiting on
-    // a wall-clock heuristic:
-    //
-    //   1. `stdout.flush()` pushes any bytes buffered in the outer
-    //      writer down to the kernel so the peer's
-    //      `read_final_goodbye()` actually sees our NDX_DONE.
-    //   2. `shutdown_stdio_write()` closes the write side of FD 1.
-    //      On the SSH / lsh.sh transport stdout is a stream socket;
-    //      the helper issues `shutdown(SHUT_WR)`, sending FIN to the
-    //      peer while leaving the read side open. On the
-    //      `--rsh=fake_rsh --rsync-path=oc-rsync` interop transport
-    //      (test_iconv_local_ssh_interop / test_compress_ssh_interop
-    //      in `tools/ci/run_interop.sh`) stdout is a pipe; the
-    //      helper's `shutdown` returns ENOTSOCK and it falls back to
-    //      `dup2(/dev/null, STDOUT_FILENO)` so the peer reading our
-    //      pipe still sees EOF deterministically. Either way the
-    //      peer's `read_final_goodbye` unblocks and its
-    //      `exit_cleanup` runs, which is what step 3 waits on.
-    //   3. The drain loop reads stdin to EOF. Because step 2 already
-    //      told the peer we are done writing - regardless of the
-    //      transport's FD type - the peer's FIN arrives promptly. No
-    //      timer, no race. The pipe (ENOTSOCK) case is handled by
-    //      `stdio_shutdown.rs` falling back to `dup2(/dev/null, FD 1)`
-    //      so the peer reading our pipe still observes EOF.
-    let _ = stdout.flush();
-    let _ = fast_io::shutdown_stdio_write();
-
-    // Both roles drain stdin to EOF. The generator case is not vacuous:
-    // under lsh.sh the upstream peer (server-receiver child) parks in
-    // noop_io_until_death() waiting for our FIN. Without this drain the
-    // process exits, closing stdin before the peer has finished its own
-    // goodbye sequence, causing "connection unexpectedly closed" on the
-    // upstream side and a 300 s TIMEOUT in runtests.py.
-    //
-    // upstream: io.c:943 noop_io_until_death() called from cleanup.c:254
-    // _exit_cleanup() for both sender and receiver server roles.
-    drain_stdin_until_eof(&mut stdin);
-
+    // The previous flush + `shutdown_stdio_write` + `drain_stdin_until_eof`
+    // sequence deadlocked under lsh.sh: shutdown(SHUT_WR) is ENOTSOCK on
+    // pipes, the dup2(/dev/null) fallback only closes our copy of the pipe
+    // FD (lsh.sh, the parent shell, still holds an inherited copy), so the
+    // peer never sees EOF and the drain loops forever. Match upstream and
+    // let process exit do the work.
     exit_code
-}
-
-/// Mirrors upstream rsync's `noop_io_until_death()` (io.c:943): reads from
-/// `stdin` until EOF, hard error, or any non-recoverable condition. Used by
-/// both server roles after the goodbye handshake completes so the peer can
-/// finish its own `exit_cleanup()` before our process closes its stdin.
-fn drain_stdin_until_eof<R: Read>(stdin: &mut R) {
-    let mut sink = [0u8; 4096];
-    loop {
-        match stdin.read(&mut sink) {
-            Ok(0) => break,
-            Ok(_) => continue,
-            Err(err)
-                if matches!(
-                    err.kind(),
-                    io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
-                ) =>
-            {
-                continue;
-            }
-            Err(_) => break,
-        }
-    }
 }
 
 /// Applies value-bearing flags to the server config, returning early on parse errors.
@@ -552,104 +473,5 @@ fn write_server_error<Err: Write>(stderr: &mut Err, brand: Brand, text: impl fmt
     message = message.with_role(Role::Server);
     if super::super::write_message(&message, &mut sink).is_err() {
         let _ = writeln!(sink.writer_mut(), "{text}");
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::drain_stdin_until_eof;
-    use std::io::{self, Read};
-
-    /// Reader that yields `Ok(0)` immediately - the EOF case the generator and
-    /// receiver server roles both encounter after their peer's `exit_cleanup`
-    /// closes the pipe.
-    struct Eof;
-
-    impl Read for Eof {
-        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
-            Ok(0)
-        }
-    }
-
-    /// Reader that returns bytes once, then yields EOF. Mirrors a peer that
-    /// emits trailing MSG_STATS / NDX_DONE / MSG_ERROR_EXIT envelopes after
-    /// our half-close before its own `exit_cleanup` closes the pipe.
-    struct Once {
-        payload: Vec<u8>,
-    }
-
-    impl Read for Once {
-        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            if self.payload.is_empty() {
-                Ok(0)
-            } else {
-                let n = self.payload.len().min(buf.len());
-                buf[..n].copy_from_slice(&self.payload[..n]);
-                self.payload.drain(..n);
-                Ok(0_usize.max(n))
-            }
-        }
-    }
-
-    /// Reader that yields a few `Interrupted` / `WouldBlock` retries before
-    /// reaching EOF - the drain must not abort on either.
-    struct Flaky {
-        steps: Vec<io::Result<usize>>,
-    }
-
-    impl Read for Flaky {
-        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
-            if self.steps.is_empty() {
-                Ok(0)
-            } else {
-                self.steps.remove(0)
-            }
-        }
-    }
-
-    /// Reader that returns a hard error - upstream's noop_io_until_death()
-    /// also exits the loop on unrecoverable I/O failure rather than spinning.
-    struct HardError;
-
-    impl Read for HardError {
-        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
-            Err(io::Error::other("connection reset"))
-        }
-    }
-
-    #[test]
-    fn drain_returns_immediately_on_eof() {
-        drain_stdin_until_eof(&mut Eof);
-    }
-
-    #[test]
-    fn drain_consumes_payload_then_eof() {
-        let mut reader = Once {
-            payload: b"trailing-goodbye-bytes".to_vec(),
-        };
-        drain_stdin_until_eof(&mut reader);
-        assert!(reader.payload.is_empty(), "drain must consume all bytes");
-    }
-
-    #[test]
-    fn drain_retries_through_interrupted_and_wouldblock() {
-        let mut reader = Flaky {
-            steps: vec![
-                Err(io::Error::from(io::ErrorKind::Interrupted)),
-                Err(io::Error::from(io::ErrorKind::WouldBlock)),
-                Err(io::Error::from(io::ErrorKind::Interrupted)),
-                Ok(0),
-            ],
-        };
-        drain_stdin_until_eof(&mut reader);
-        assert!(
-            reader.steps.is_empty(),
-            "drain must keep going past Interrupted/WouldBlock"
-        );
-    }
-
-    #[test]
-    fn drain_breaks_on_hard_error() {
-        drain_stdin_until_eof(&mut HardError);
     }
 }
