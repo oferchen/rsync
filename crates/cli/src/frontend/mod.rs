@@ -305,7 +305,15 @@ where
                 Some(mode) => {
                     let mut adapter = OutbufAdapter::new(stdout, mode);
                     let exit_code = execute(parsed, &mut adapter, &mut stderr_sink);
-                    let _ = flush_diagnostics(&mut adapter, stderr_sink.writer_mut(), true);
+                    // Honour the workflow's resolved --msgs-to-stderr setting
+                    // for any leftover Info events. Hardcoding `true` here
+                    // routed every FINFO message (e.g. the --info=backup
+                    // notice from the local-copy executor) to stderr even
+                    // when the CLI default expected stdout, breaking
+                    // upstream tests that grep `$outfile` (stdout only).
+                    let msgs_to_stderr = progress::diagnostic::msgs_to_stderr();
+                    let _ =
+                        flush_diagnostics(&mut adapter, stderr_sink.writer_mut(), msgs_to_stderr);
                     if let Err(error) = adapter.flush() {
                         let message =
                             rsync_error!(1, "failed to flush stdout: {error}", error = error)
@@ -320,7 +328,8 @@ where
                 }
                 None => {
                     let exit_code = execute(parsed, stdout, &mut stderr_sink);
-                    let _ = flush_diagnostics(stdout, stderr_sink.writer_mut(), true);
+                    let msgs_to_stderr = progress::diagnostic::msgs_to_stderr();
+                    let _ = flush_diagnostics(stdout, stderr_sink.writer_mut(), msgs_to_stderr);
                     exit_code
                 }
             }

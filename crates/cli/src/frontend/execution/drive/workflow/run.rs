@@ -261,6 +261,12 @@ where
         StderrMode::All => true,
         StderrMode::Errors | StderrMode::Client => msgs_to_stderr_option.unwrap_or(false),
     };
+    // Record the resolved routing so the post-execute final flush in
+    // `frontend::mod` directs any leftover diagnostic events (e.g. the
+    // backup notice emitted by the local-copy executor) to the same stream
+    // the workflow itself uses. Without this, leftover Info events were
+    // hardcoded to stderr and invisible to upstream tests that grep stdout.
+    crate::frontend::progress::diagnostic::set_msgs_to_stderr(msgs_to_stderr_enabled);
 
     let verbosity_config = VerbosityConfig::from_verbose_level(verbosity);
     logging::init(verbosity_config);
