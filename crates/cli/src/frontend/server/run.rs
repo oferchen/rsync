@@ -308,14 +308,6 @@ where
         }
     }
 
-    let exit_code = match run_server_stdio(config, &mut stdin, stdout, None) {
-        Ok(_stats) => 0,
-        Err(e) => {
-            write_server_error(stderr, program_brand, format!("server error: {e}"));
-            1
-        }
-    };
-
     // upstream: main.c:1262 `start_server()` returns into `exit_cleanup(0)`,
     // which on a clean exit just runs `close_all()` + `exit()`. The kernel
     // closes the inherited stdio descriptors as the process tears down, and
@@ -333,7 +325,13 @@ where
     // FD (lsh.sh, the parent shell, still holds an inherited copy), so the
     // peer never sees EOF and the drain loops forever. Match upstream and
     // let process exit do the work.
-    exit_code
+    match run_server_stdio(config, &mut stdin, stdout, None) {
+        Ok(_stats) => 0,
+        Err(e) => {
+            write_server_error(stderr, program_brand, format!("server error: {e}"));
+            1
+        }
+    }
 }
 
 /// Applies value-bearing flags to the server config, returning early on parse errors.
