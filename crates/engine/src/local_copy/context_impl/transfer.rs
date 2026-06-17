@@ -316,6 +316,7 @@ impl<'a> CopyContext<'a> {
         total_size: u64,
         initial_bytes: u64,
         start: Instant,
+        basis_separate_from_writer: bool,
     ) -> Result<FileCopyOutcome, LocalCopyError> {
         if let Some(index) = delta {
             return self.copy_file_contents_with_delta(
@@ -331,6 +332,7 @@ impl<'a> CopyContext<'a> {
                 total_size,
                 initial_bytes,
                 start,
+                basis_separate_from_writer,
             );
         }
 

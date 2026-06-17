@@ -487,6 +487,14 @@ pub(in crate::local_copy) fn execute_transfer(
     // When backup moved the basis file, point the delta transfer at its new
     // location so it can read matched blocks from the backup copy.
     let delta_basis = delta_basis_override.as_deref().unwrap_or(destination);
+    // upstream: receiver.c:872-876 - when --inplace + --backup runs, upstream
+    // sets `fnamecmp = get_backup_name(fname)` (FNAMECMP_BACKUP) so matched
+    // blocks read from the backup path while the writer overwrites the
+    // (now-empty) destination. If we kept the inplace optimization in this
+    // case, matched-block bytes would never reach the writer (the writer's
+    // file is fresh after the backup rename), and the destination would end
+    // up with only literal bytes plus sparse holes.
+    let basis_separate_from_writer = delta_basis_override.is_some();
     let copy_result = context.copy_file_contents(
         &mut reader,
         &mut writer,
@@ -500,6 +508,7 @@ pub(in crate::local_copy) fn execute_transfer(
         file_size,
         append_offset,
         start,
+        basis_separate_from_writer,
     );
 
     // On Linux, keep writer alive for fd-based metadata (fchmod/fchown/futimens).
