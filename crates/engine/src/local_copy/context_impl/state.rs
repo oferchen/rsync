@@ -660,13 +660,22 @@ impl<'a> CopyContext<'a> {
             BackupStrategy::Symlink => trace_make_backup_symlink(&destination_display),
         }
 
-        // upstream: backup.c:352 - INFO_GTE(BACKUP, 1) fires on success label
+        // upstream: backup.c:353 - rprintf(FINFO, "backed up %s to %s\n", fname, buf)
+        // emits fname and buf as the rsync-relative paths (e.g. "deep/name1"),
+        // not absolute filesystem paths. Strip the destination_root prefix so
+        // the message matches upstream byte-for-byte and grep-by-relative-path
+        // assertions in the upstream backup.test pass.
+        let dest_root = self.destination_root();
+        let destination_rel = destination.strip_prefix(dest_root).unwrap_or(destination);
+        let backup_rel = backup_path
+            .strip_prefix(dest_root)
+            .unwrap_or(backup_path.as_path());
         info_log!(
             Backup,
             1,
             "backed up {} to {}",
-            destination.display(),
-            backup_path.display()
+            destination_rel.display(),
+            backup_rel.display()
         );
 
         Ok(())
