@@ -40,7 +40,7 @@ use std::io;
 use std::path::Path;
 
 use crate::merge::parse::parse_rules;
-use crate::{FilterRule, FilterSet};
+use crate::{FilterAction, FilterRule, FilterSet};
 
 pub use config::DirMergeConfig;
 pub use error::FilterChainError;
@@ -251,7 +251,17 @@ impl FilterChain {
                 }
             };
 
-            if rules.is_empty() && !config.excludes_self() {
+            // upstream: exclude.c:1419-1428 - a `:` (FILTRULE_PERDIR_MERGE)
+            // directive inside a merge file registers a new per-directory
+            // merge that takes effect for the current directory and below.
+            // `:C` is the common case: register `.cvsignore` as a CVS-style
+            // ignore list (no_inherit, word_split). Standard FilterSet
+            // compilation drops DirMerge rules, so handle them here by
+            // loading the named file from the current directory and folding
+            // its tokens into this scope.
+            let (rules, dir_merge_descriptors) = split_dir_merge_rules(rules);
+
+            if rules.is_empty() && dir_merge_descriptors.is_empty() && !config.excludes_self() {
                 continue;
             }
 
@@ -284,12 +294,101 @@ impl FilterChain {
                 });
                 pushed_count += 1;
             }
+
+            // upstream: exclude.c:1419-1428 - for each `:`/`:C` directive
+            // encountered in the merge file body, attempt to load the named
+            // file from the current directory now. The dir-merge rule itself
+            // carries the modifier flags (cvs_mode, no_inherit) that decide
+            // how to parse the file and whether descendant scopes inherit.
+            for descriptor in dir_merge_descriptors {
+                pushed_count += self.load_inline_dir_merge(directory, depth, &descriptor)?;
+            }
         }
 
         Ok(DirFilterGuard {
             depth,
             pushed_count,
         })
+    }
+
+    /// Loads a `:C` style per-directory merge declared inside another merge
+    /// file. Returns the number of scopes successfully pushed.
+    ///
+    /// Reads `directory/<filename>` if present and folds its rules into a
+    /// new scope at `depth`. CVS-mode entries are tokenised with
+    /// [`parse_cvs_ignore_tokens`]; other dir-merge variants reuse the
+    /// standard rule parser. The scope inherits to descendant directories
+    /// only when the source rule does not carry the no-inherit modifier.
+    ///
+    /// upstream: exclude.c:1419-1428 - a `:` directive inside a merge file
+    /// expands to a fresh per-directory merge for the current scope.
+    fn load_inline_dir_merge(
+        &mut self,
+        directory: &Path,
+        depth: usize,
+        descriptor: &InlineDirMerge,
+    ) -> Result<usize, FilterChainError> {
+        let merge_path = directory.join(&descriptor.filename);
+        let content = match fs::read_to_string(&merge_path) {
+            Ok(content) => content,
+            // upstream: exclude.c:push_local_filters() - parse_filter_file()
+            // silently skips missing files. Mirror that here so a `:C`
+            // without an accompanying `.cvsignore` is a no-op.
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(0),
+            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => return Ok(0),
+            Err(e) => {
+                self.pop_scopes_at_depth(depth);
+                self.current_depth -= 1;
+                return Err(FilterChainError::Io {
+                    path: merge_path,
+                    source: e,
+                });
+            }
+        };
+
+        let rules = if descriptor.cvs_mode {
+            parse_cvs_ignore_tokens(&content)
+        } else {
+            match parse_rules(&content, &merge_path) {
+                Ok(rules) => rules,
+                Err(e) => {
+                    self.pop_scopes_at_depth(depth);
+                    self.current_depth -= 1;
+                    return Err(FilterChainError::Parse {
+                        path: merge_path,
+                        message: e.to_string(),
+                    });
+                }
+            }
+        };
+
+        if rules.is_empty() {
+            return Ok(0);
+        }
+
+        let filter_set = match FilterSet::from_rules(rules) {
+            Ok(set) => set,
+            Err(e) => {
+                self.pop_scopes_at_depth(depth);
+                self.current_depth -= 1;
+                return Err(FilterChainError::Filter(e));
+            }
+        };
+
+        if filter_set.is_empty() {
+            return Ok(0);
+        }
+
+        // upstream: exclude.c:1248-1254 - `:C` implies FILTRULE_NO_INHERIT,
+        // so the loaded rules apply only to the directory containing the
+        // outer merge file, not to descendants. Other dir-merge variants
+        // preserve their explicit no-inherit setting.
+        self.scopes.push(DirScope {
+            depth,
+            filter_set,
+            inherits: !descriptor.no_inherit,
+        });
+        Ok(1)
     }
 
     /// Leaves a directory, removing all scopes pushed at the given depth.
@@ -369,4 +468,45 @@ fn parse_cvs_ignore_tokens(content: &str) -> Vec<FilterRule> {
         .filter(|token| !token.is_empty())
         .map(FilterRule::exclude)
         .collect()
+}
+
+/// Description of a dir-merge directive parsed from another merge file.
+///
+/// Captures the pieces of the source [`FilterRule`] that drive how the
+/// referenced file should be loaded: the filename (e.g. `.cvsignore`),
+/// whether to treat its contents as a CVS-style ignore list, and whether
+/// the loaded rules should propagate to descendant directories.
+#[derive(Clone, Debug)]
+struct InlineDirMerge {
+    filename: String,
+    cvs_mode: bool,
+    no_inherit: bool,
+}
+
+/// Splits parsed rules into ordinary entries plus dir-merge descriptors.
+///
+/// Standard [`FilterSet`] compilation discards [`FilterAction::DirMerge`]
+/// rules because they neither match paths nor encode a single decision.
+/// Pull them out here so the caller can load each referenced file inline,
+/// mirroring upstream's `:` directive that registers a fresh per-directory
+/// merge from inside another merge file.
+///
+/// upstream: exclude.c:1419-1428 - `FILTRULE_PERDIR_MERGE` inside
+/// `parse_filter_str()` adds a new per-dir rule rather than expanding the
+/// file at parse time.
+fn split_dir_merge_rules(rules: Vec<FilterRule>) -> (Vec<FilterRule>, Vec<InlineDirMerge>) {
+    let mut keep = Vec::with_capacity(rules.len());
+    let mut dir_merges = Vec::new();
+    for rule in rules {
+        if matches!(rule.action(), FilterAction::DirMerge) {
+            dir_merges.push(InlineDirMerge {
+                filename: rule.pattern().to_owned(),
+                cvs_mode: rule.is_cvs_mode(),
+                no_inherit: rule.is_no_inherit(),
+            });
+        } else {
+            keep.push(rule);
+        }
+    }
+    (keep, dir_merges)
 }
