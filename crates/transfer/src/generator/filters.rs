@@ -212,7 +212,7 @@ impl GeneratorContext {
     /// - `flist.c:2316-2330` - `/./` anchor split for relative-name emission
     /// - `main.c:681-685` - `filesfrom_fd` set to `STDIN_FILENO` for `--files-from=-`
     /// - `io.c:start_filesfrom_forwarding()` - client forwards local file over socket
-    pub(super) fn resolve_files_from_paths<R: Read>(
+    pub fn resolve_files_from_paths<R: Read>(
         &self,
         original_paths: &[PathBuf],
         reader: &mut R,
