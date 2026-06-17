@@ -1195,6 +1195,80 @@ fn backup_with_inplace_mode() {
     assert_eq!(fs::read(dest_root.join("file.txt")).expect("read dest"), b"inplace new");
 }
 
+// Regression: --inplace + --no-whole-file + --backup-dir on a delta transfer
+// must copy matched blocks from the renamed-away basis. Before the fix, the
+// inplace optimization (skip reading matched blocks because writer is the
+// basis file) ran against a fresh empty destination, so matched-block bytes
+// never reached the writer. The destination ended up containing only literal
+// bytes, surrounded by sparse holes / truncated to the literal tail.
+//
+// upstream backup.test invocation 5:
+//   rsync -ai --inplace --no-whole-file --backup --backup-dir=$bak from/ to/
+// upstream receiver.c:872-876 sets fnamecmp = get_backup_name(fname)
+// (FNAMECMP_BACKUP) so the basis is read from the backup path while the
+// writer overwrites the (now-empty) destination.
+#[test]
+fn backup_dir_with_inplace_no_whole_file_copies_matched_blocks() {
+    use std::iter::repeat;
+
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+    let backup_root = ctx.dest.join("bak");
+    fs::create_dir_all(&backup_root).expect("create backup dir");
+
+    // Build content large enough that the delta encoder uses multiple blocks
+    // (block_size defaults around 700 bytes for small files). Source and basis
+    // share an identical suffix so the matched-block path is exercised, and
+    // they differ in the prefix so literal writes are also exercised. Without
+    // the fix, the matched-block path is skipped for inplace mode, and the
+    // destination loses the entire suffix.
+    let common_tail: String = repeat('y').take(8 * 1024).collect();
+    let source_content = format!("source-only-prefix-{}\n{}", "x".repeat(2 * 1024), common_tail);
+    let basis_content = format!("BASIS-ONLY-PREFIX-{}\n{}", "Z".repeat(2 * 1024), common_tail);
+
+    let source_file = ctx.source.join("payload.bin");
+    fs::write(&source_file, source_content.as_bytes()).expect("write source");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    let existing = dest_root.join("payload.bin");
+    fs::write(&existing, basis_content.as_bytes()).expect("write basis");
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .backup(true)
+        .with_backup_directory(Some(backup_root.clone()))
+        .inplace(true)
+        .whole_file(false);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let dest_after = fs::read(dest_root.join("payload.bin")).expect("read dest");
+    assert_eq!(
+        dest_after.len(),
+        source_content.as_bytes().len(),
+        "destination size must match source size after delta with backup-dir",
+    );
+    assert_eq!(
+        dest_after,
+        source_content.as_bytes(),
+        "destination must be byte-identical to source after delta with backup-dir",
+    );
+
+    let backup_path = backup_root.join("payload.bin~");
+    let backed_up = fs::read(&backup_path).expect("read backup");
+    assert_eq!(
+        backed_up,
+        basis_content.as_bytes(),
+        "backup-dir must hold the pre-overwrite basis content",
+    );
+}
+
 #[test]
 fn backup_with_force_directory_replaced_by_file() {
     let ctx = test_helpers::setup_copy_test();
