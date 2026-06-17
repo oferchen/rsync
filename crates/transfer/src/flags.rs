@@ -77,6 +77,25 @@ pub struct ParsedServerFlags {
     pub ignore_times: bool,
     /// Copy symlinks as the referent file/dir (`L` flag, `--copy-links`).
     pub copy_links: bool,
+    /// Treat dest-side directory symlinks as the directories they point to
+    /// (`K` flag, `--keep-dirlinks`).
+    ///
+    /// Upstream: options.c:688 `{"keep-dirlinks", 'K', ...}` and
+    /// generator.c:1344 `link_stat(fname, &sx.st, keep_dirlinks && is_dir)`.
+    /// On the receiver this prevents replacing a destination symlink-to-dir
+    /// with a real directory and lets per-file operations (basis open, chmod
+    /// of the file leaf) follow the dir-symlink instead of being refused by
+    /// the dirfd sandbox. Issue #715 regression covered by
+    /// `testsuite/symlink-dirlink-basis.test`.
+    pub keep_dirlinks: bool,
+    /// Follow symlinks that point at directories on the sender (`k` flag,
+    /// `--copy-dirlinks`).
+    ///
+    /// Upstream: options.c:687 `{"copy-dirlinks", 'k', ...}`. Sender-only
+    /// semantics: the file list reports each dir-symlink as the directory
+    /// it resolves to. Captured here so the server-side sender process
+    /// honours `-k` when the client requested it.
+    pub copy_dirlinks: bool,
     /// Copy unsafe symlinks as files (long-form `--copy-unsafe-links`).
     ///
     /// Not part of the compact flag string; set via long-form args.
@@ -260,6 +279,19 @@ impl ParsedServerFlags {
             b'N' => self.crtimes = true,
             // upstream: options.c:764 - 'L' = copy_links (resolve symlinks).
             b'L' => self.copy_links = true,
+            // upstream: options.c:688 - 'K' = keep_dirlinks (preserve
+            // destination dir-symlinks instead of replacing them). The
+            // receiver also routes path-based chmod through the
+            // keep_dirlinks bypass so the leaf chmod follows the
+            // symlinked parent (PR #5793). Without parsing this, the
+            // server runs as if --keep-dirlinks was off and every per-
+            // file operation on `dir/file` (basis open, chmod) is
+            // refused by the dirfd sandbox because `dir` is a symlink.
+            b'K' => self.keep_dirlinks = true,
+            // upstream: options.c:687 - 'k' = copy_dirlinks (sender-side
+            // follow dir-symlinks). Sender-only knob; recorded for parity
+            // so the server-side sender process honours -k.
+            b'k' => self.copy_dirlinks = true,
             // upstream: options.c:764 - fuzzy_basis++ for each 'y'
             b'y' => self.fuzzy_level = self.fuzzy_level.saturating_add(1),
             b'm' => self.prune_empty_dirs = true,
@@ -441,6 +473,41 @@ mod tests {
         let flags = ParsedServerFlags::parse("-rb").unwrap();
         assert!(flags.recursive);
         assert!(flags.backup);
+    }
+
+    /// Issue #715 regression: the client emits `-K` in the compact flag
+    /// string whenever `--keep-dirlinks` is active (upstream
+    /// `options.c:688`). Without recognising the byte the receiver runs
+    /// with `keep_dirlinks=false`, so the dirfd sandbox refuses every
+    /// chmod through a destination dir-symlink and the
+    /// `symlink-dirlink-basis` test fails before any delta transfer.
+    #[test]
+    fn parses_keep_dirlinks_flag() {
+        let flags = ParsedServerFlags::parse("-KRlptv").unwrap();
+        assert!(flags.keep_dirlinks);
+        assert!(flags.relative);
+        assert!(flags.links);
+        assert!(flags.perms);
+        assert!(flags.times);
+        assert!(flags.verbose);
+    }
+
+    #[test]
+    fn keep_dirlinks_not_set_by_default() {
+        let flags = ParsedServerFlags::parse("-rlptv").unwrap();
+        assert!(!flags.keep_dirlinks);
+    }
+
+    /// upstream: options.c:687 - 'k' is `--copy-dirlinks`, captured for
+    /// parity even though it only affects the sender. The receiver
+    /// process must still ignore unknown bytes silently rather than
+    /// reject the flag string.
+    #[test]
+    fn parses_copy_dirlinks_flag() {
+        let flags = ParsedServerFlags::parse("-rk").unwrap();
+        assert!(flags.recursive);
+        assert!(flags.copy_dirlinks);
+        assert!(!flags.keep_dirlinks);
     }
 
     #[test]
