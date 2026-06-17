@@ -1184,7 +1184,7 @@ fn level_1_all_uptodate_emits_banner_only() {
         "-v (NAME<2) must NOT emit `is uptodate` lines, got: {rendered:?}"
     );
     assert!(
-        !lines.iter().any(|l| *l == "only.txt"),
+        !lines.contains(&"only.txt"),
         "unchanged file must NOT emit a bare-name line under -v without --progress, got: {rendered:?}"
     );
 }

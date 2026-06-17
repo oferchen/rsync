@@ -761,10 +761,14 @@ fn includes_backup_related_args() {
         .build();
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/path");
+    let string_args: Vec<String> = args
+        .iter()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect();
 
     // upstream: options.c:2630-2631 - `make_backups` rides in the compact
     // flag string as `b`, NOT as a standalone `--backup` long arg.
-    let flag_string = find_flag_string(&args);
+    let flag_string = find_flag_string(&string_args);
     assert!(
         transfer_flags_portion(flag_string).contains('b'),
         "expected 'b' in transfer flags portion: {flag_string}"
