@@ -105,18 +105,24 @@ impl SignatureGenerationConfig {
 /// Tries to find a basis file in the reference directories.
 ///
 /// Iterates through reference directories in order, checking if the relative
-/// path exists in each one. Returns the first match found.
+/// path exists in each one. Returns the first match found. The basis open
+/// goes through [`fast_io::open_basis_nofollow`], which follows directory
+/// symlinks (so `--copy-dirlinks` continues to work) but refuses to follow
+/// a symlinked leaf component, mirroring upstream `syscall.c:705`
+/// (`do_open_at`).
 ///
 /// # Upstream Reference
 ///
 /// - `generator.c:1400` - Reference directory basis file lookup
+/// - `syscall.c:705` (`do_open_at`) - dirname/basename split with
+///   `O_NOFOLLOW` on the basename.
 pub(super) fn try_reference_directories(
     relative_path: &std::path::Path,
     reference_directories: &[ReferenceDirectory],
 ) -> Option<(fs::File, u64, PathBuf)> {
     for ref_dir in reference_directories {
         let candidate = ref_dir.path.join(relative_path);
-        if let Ok(file) = fs::File::open(&candidate) {
+        if let Ok(file) = fast_io::open_basis_nofollow(&candidate) {
             if let Ok(meta) = file.metadata() {
                 if meta.is_file() {
                     return Some((file, meta.len(), candidate));
@@ -127,11 +133,16 @@ pub(super) fn try_reference_directories(
     None
 }
 
-/// Opens a file and returns it with metadata.
+/// Opens a basis file and returns it with metadata.
 ///
-/// Returns the file handle, size, and path if successful.
+/// Returns the file handle, size, and path if successful. The open is
+/// routed through [`fast_io::open_basis_nofollow`] so a symlinked
+/// basename is refused (`ELOOP`), matching upstream's `do_open_at()`
+/// receiver-side defence against pre-planted leaf symlinks while still
+/// honouring `--copy-dirlinks` directory symlinks at every intermediate
+/// component.
 fn try_open_file(path: &std::path::Path) -> Option<(fs::File, u64, PathBuf)> {
-    let file = fs::File::open(path).ok()?;
+    let file = fast_io::open_basis_nofollow(path).ok()?;
     let size = file.metadata().ok()?.len();
     Some((file, size, path.to_path_buf()))
 }
@@ -260,4 +271,110 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
 
     let sig_config = SignatureGenerationConfig::from_basis_config(config);
     generate_basis_signature(file, size, path, sig_config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+
+    /// Issue #715 regression (`symlink-dirlink-basis.test` test 1): when
+    /// the destination directory is a symlink to a real directory, the
+    /// receiver must open the basis file through the directory symlink.
+    /// Upstream sets this expectation in `syscall.c:705 do_open_at()` -
+    /// the dirname is resolved with normal symlink-following semantics.
+    #[cfg(unix)]
+    #[test]
+    fn try_open_file_follows_directory_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let real_dir = tmp.path().join("real-dir");
+        std::fs::create_dir(&real_dir).expect("mkdir");
+        std::fs::write(real_dir.join("basis"), b"basis-bytes").expect("write basis");
+
+        symlink("real-dir", tmp.path().join("dir")).expect("symlink dir -> real-dir");
+
+        let through_link = tmp.path().join("dir").join("basis");
+        let (mut file, size, path) =
+            try_open_file(&through_link).expect("basis open must succeed through dir symlink");
+        assert_eq!(size, b"basis-bytes".len() as u64);
+        assert_eq!(path, through_link);
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf).expect("read");
+        assert_eq!(buf, b"basis-bytes");
+    }
+
+    /// Security regression: the receiver must NOT follow a symlinked
+    /// basename pointing outside the destination tree (matches
+    /// upstream's `O_NOFOLLOW` on the basename in `do_open_at()` and
+    /// `secure_relative_open()` - the CVE-class defence the upstream
+    /// test header references). A symlinked basis basename is treated
+    /// as "no basis", forcing whole-file transfer.
+    #[cfg(unix)]
+    #[test]
+    fn try_open_file_rejects_symlinked_basename() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let secret = tmp.path().join("secret");
+        std::fs::write(&secret, b"do-not-leak").expect("write secret");
+
+        let dir = tmp.path().join("dir");
+        std::fs::create_dir(&dir).expect("mkdir dir");
+        let basis = dir.join("basis");
+        symlink(&secret, &basis).expect("symlink basis -> secret");
+
+        assert!(
+            try_open_file(&basis).is_none(),
+            "symlinked basename must be refused so the receiver falls back to whole-file"
+        );
+    }
+
+    /// Top-level basis path (`symlink-dirlink-basis.test` test 6): no
+    /// dirname split needed. Equivalent to upstream's `if (!slash)
+    /// return do_open(...)` short-circuit at `syscall.c:727`.
+    #[test]
+    fn try_open_file_handles_top_level_path() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let basis = tmp.path().join("topfile");
+        std::fs::write(&basis, b"top-bytes").expect("write");
+
+        let (mut file, size, path) = try_open_file(&basis).expect("top-level open");
+        assert_eq!(size, b"top-bytes".len() as u64);
+        assert_eq!(path, basis);
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf).expect("read");
+        assert_eq!(buf, b"top-bytes");
+    }
+
+    /// Reference directory lookup (`--copy-dest` / `--link-dest`) goes
+    /// through the same hardened open path. A symlinked basename inside
+    /// a reference directory must also be rejected.
+    #[cfg(unix)]
+    #[test]
+    fn try_reference_directories_rejects_symlinked_basename() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ref_root = tmp.path().join("ref");
+        std::fs::create_dir(&ref_root).expect("mkdir ref");
+        let secret = tmp.path().join("secret");
+        std::fs::write(&secret, b"leak").expect("write secret");
+
+        let sub = ref_root.join("sub");
+        std::fs::create_dir(&sub).expect("mkdir sub");
+        symlink(&secret, sub.join("basis")).expect("symlink basis -> secret");
+
+        let ref_dirs = vec![ReferenceDirectory {
+            kind: crate::config::ReferenceDirectoryKind::Compare,
+            path: ref_root.clone(),
+        }];
+        let rel = std::path::Path::new("sub").join("basis");
+
+        assert!(
+            try_reference_directories(&rel, &ref_dirs).is_none(),
+            "reference-dir lookup must refuse symlinked basename"
+        );
+    }
 }
