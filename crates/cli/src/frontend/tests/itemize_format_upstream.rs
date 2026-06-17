@@ -501,3 +501,64 @@ fn itemize_last_toggle_wins_disabled() {
         "last --no-itemize-changes should suppress output"
     );
 }
+
+/// upstream `testsuite/itemize.test` golden: an initial `-iplr from/ to/`
+/// against a non-existent dest emits a created-directory notice, a synthetic
+/// root `cd+++++++++ ./` row, a `cd+++++++++ <subdir>/` row for every
+/// directory entered during the recursive walk (including nested children),
+/// and then the per-file rows. Mirrors upstream `main.c:798-799` +
+/// `generator.c:566-572`.
+#[test]
+fn itemize_initial_recursive_transfer_emits_dir_rows_for_each_subdir() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let from = tmp.path().join("from");
+    let to = tmp.path().join("to");
+
+    std::fs::create_dir_all(from.join("foo")).expect("create from/foo");
+    std::fs::create_dir_all(from.join("bar").join("baz")).expect("create from/bar/baz");
+    std::fs::write(from.join("foo").join("config1"), b"hello\n").expect("write foo/config1");
+    std::fs::write(from.join("bar").join("baz").join("rsync"), b"world\n")
+        .expect("write bar/baz/rsync");
+
+    let from_arg = {
+        let mut p = from.into_os_string();
+        p.push("/");
+        p
+    };
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-iplr"),
+        from_arg,
+        to.clone().into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    let output = String::from_utf8(stdout).expect("utf8");
+    let mut lines = output.lines();
+
+    let first = lines.next().expect("first line");
+    assert!(
+        first.starts_with("created directory "),
+        "first line should announce destination root creation: {first:?}"
+    );
+    assert!(
+        first.ends_with(to.to_string_lossy().as_ref()),
+        "created-dir notice should name the dest root (no trailing slash): {first:?}"
+    );
+
+    let rest: Vec<&str> = lines.collect();
+    let expected = [
+        "cd+++++++++ ./",
+        "cd+++++++++ bar/",
+        "cd+++++++++ bar/baz/",
+        ">f+++++++++ bar/baz/rsync",
+        "cd+++++++++ foo/",
+        ">f+++++++++ foo/config1",
+    ];
+    assert_eq!(
+        rest, expected,
+        "itemize must emit root, every intermediate subdir, and file rows in upstream order"
+    );
+}
