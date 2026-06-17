@@ -285,7 +285,8 @@ fn run_client_internal(
         }
     }
 
-    let filter_program = filters::compile_filter_program(config.filter_rules())?;
+    let filter_program =
+        filters::compile_filter_program(config.filter_rules(), config.delete_excluded())?;
     let mut options = build_local_copy_options(&config, filter_program);
 
     let batch_writer_for_options = if let Some(ref writer) = batch_writer {

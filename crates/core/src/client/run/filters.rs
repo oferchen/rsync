@@ -13,6 +13,7 @@ use super::super::error::{ClientError, compile_filter_error};
 
 pub(crate) fn compile_filter_program(
     rules: &[FilterRuleSpec],
+    delete_excluded: bool,
 ) -> Result<Option<FilterProgram>, ClientError> {
     if rules.is_empty() {
         return Ok(None);
@@ -20,6 +21,14 @@ pub(crate) fn compile_filter_program(
 
     let mut entries = Vec::new();
     for rule in rules {
+        // upstream: exclude.c:1330-1332 add_rule() applies an implicit
+        // FILTRULE_SENDER_SIDE when --delete-excluded is active and the
+        // rule carries neither FILTRULES_SIDES nor merge/dir-merge.
+        let mut rule = rule.clone();
+        if delete_excluded {
+            rule.apply_implicit_sender_side_for_delete_excluded();
+        }
+
         match rule.kind() {
             FilterRuleKind::Include => entries.push(FilterProgramEntry::Rule(
                 EngineFilterRule::include(rule.pattern().to_owned())

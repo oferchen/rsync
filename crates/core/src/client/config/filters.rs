@@ -213,6 +213,39 @@ impl FilterRuleSpec {
         self.applies_to_receiver
     }
 
+    /// Applies the implicit sender-side flag that upstream rsync sets when
+    /// `--delete-excluded` is active and the rule carries no explicit side
+    /// modifier.
+    ///
+    /// Returns `true` if the rule was mutated.
+    ///
+    /// # Upstream Reference
+    ///
+    /// `exclude.c:1330-1332` (`add_rule`):
+    ///
+    /// ```c
+    /// if (delete_excluded
+    ///  && !(rule->rflags & (FILTRULES_SIDES|FILTRULE_MERGE_FILE|FILTRULE_PERDIR_MERGE)))
+    ///     rule->rflags |= FILTRULE_SENDER_SIDE;
+    /// ```
+    ///
+    /// In oc-rsync, `applies_to_sender == true && applies_to_receiver == true`
+    /// represents "no `FILTRULES_SIDES` bit set" - the rule applies to both
+    /// sides by default. Merge and dir-merge rules are excluded because they
+    /// expand into per-file rules that carry their own side information.
+    /// Protect and Risk rules already restrict themselves to the receiver
+    /// side, so the implicit flag never fires for them.
+    pub fn apply_implicit_sender_side_for_delete_excluded(&mut self) -> bool {
+        if !matches!(self.kind, FilterRuleKind::Include | FilterRuleKind::Exclude) {
+            return false;
+        }
+        if !(self.applies_to_sender && self.applies_to_receiver) {
+            return false;
+        }
+        self.applies_to_receiver = false;
+        true
+    }
+
     /// Applies dir-merge style overrides (anchor, side modifiers) to the rule.
     pub fn apply_dir_merge_overrides(&mut self, options: &DirMergeOptions) {
         if matches!(self.kind, FilterRuleKind::Clear) {
@@ -327,5 +360,77 @@ mod tests {
 
         assert!(rule.applies_to_sender());
         assert!(!rule.applies_to_receiver());
+    }
+
+    /// upstream: exclude.c:1330-1332 add_rule() applies the implicit
+    /// FILTRULE_SENDER_SIDE flag when --delete-excluded is active and the
+    /// rule carries neither FILTRULES_SIDES nor merge/dir-merge. A bare
+    /// `--exclude *.tmp` must therefore become sender-side under
+    /// --delete-excluded so the receiver can still delete matches.
+    #[test]
+    fn delete_excluded_applies_implicit_sender_side_to_exclude() {
+        let mut rule = FilterRuleSpec::exclude("*.tmp");
+        assert!(rule.applies_to_sender());
+        assert!(rule.applies_to_receiver());
+
+        let changed = rule.apply_implicit_sender_side_for_delete_excluded();
+        assert!(changed);
+        assert!(rule.applies_to_sender());
+        assert!(!rule.applies_to_receiver());
+    }
+
+    /// Include rules without an explicit side also gain the implicit
+    /// FILTRULE_SENDER_SIDE flag, matching upstream `exclude.c:1330-1332`.
+    #[test]
+    fn delete_excluded_applies_implicit_sender_side_to_include() {
+        let mut rule = FilterRuleSpec::include("keep/**");
+        let changed = rule.apply_implicit_sender_side_for_delete_excluded();
+        assert!(changed);
+        assert!(rule.applies_to_sender());
+        assert!(!rule.applies_to_receiver());
+    }
+
+    /// Upstream's check at `exclude.c:1331` masks against `FILTRULES_SIDES`.
+    /// A rule that already specifies one side (via `s`, `r`, `show`, `hide`,
+    /// etc.) must not be retargeted.
+    #[test]
+    fn delete_excluded_respects_explicit_sender_only_rule() {
+        let mut rule = FilterRuleSpec::hide("*.tmp"); // sender-only exclude
+        assert!(rule.applies_to_sender());
+        assert!(!rule.applies_to_receiver());
+
+        let changed = rule.apply_implicit_sender_side_for_delete_excluded();
+        assert!(!changed);
+        assert!(rule.applies_to_sender());
+        assert!(!rule.applies_to_receiver());
+    }
+
+    #[test]
+    fn delete_excluded_respects_explicit_receiver_only_rule() {
+        let mut rule = FilterRuleSpec::exclude("*.tmp").with_sender(false);
+        let changed = rule.apply_implicit_sender_side_for_delete_excluded();
+        assert!(!changed);
+        assert!(!rule.applies_to_sender());
+        assert!(rule.applies_to_receiver());
+    }
+
+    /// Protect/Risk and the merge rule families never trigger the implicit
+    /// flag - they either restrict to the receiver side already
+    /// (`FilterRuleSpec::protect`/`risk` set `sender=false`) or carry their
+    /// own `FILTRULE_MERGE_FILE`/`FILTRULE_PERDIR_MERGE` bits that upstream
+    /// excludes from the mask in `exclude.c:1331`.
+    #[test]
+    fn delete_excluded_skips_non_include_exclude_kinds() {
+        let mut protect = FilterRuleSpec::protect("keep");
+        assert!(!protect.apply_implicit_sender_side_for_delete_excluded());
+
+        let mut risk = FilterRuleSpec::risk("scratch");
+        assert!(!risk.apply_implicit_sender_side_for_delete_excluded());
+
+        let mut clear = FilterRuleSpec::clear();
+        assert!(!clear.apply_implicit_sender_side_for_delete_excluded());
+
+        let mut dir_merge = FilterRuleSpec::dir_merge(".rsync-filter", DirMergeOptions::new());
+        assert!(!dir_merge.apply_implicit_sender_side_for_delete_excluded());
     }
 }

@@ -154,10 +154,27 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
 /// `serialize_rule` here) re-append the trailing `/` for directory-only rules.
 pub(crate) fn build_wire_format_rules(
     client_rules: &[FilterRuleSpec],
+    delete_excluded: bool,
 ) -> Result<Vec<FilterRuleWireFormat>, ClientError> {
     let mut wire_rules = Vec::new();
 
     for spec in client_rules {
+        // upstream: exclude.c:1330-1332 add_rule() applies an implicit
+        // FILTRULE_SENDER_SIDE when --delete-excluded is active and the
+        // rule carries neither FILTRULES_SIDES nor merge/dir-merge. The
+        // flag drives `get_rule_prefix()` (exclude.c:1566-1568) to emit
+        // the `s` modifier on the wire and `send_rules()` (line 1605) to
+        // elide the rule from the receiver's view because it has already
+        // been applied locally on the sender.
+        let mut spec_owned;
+        let spec_ref = if delete_excluded {
+            spec_owned = spec.clone();
+            spec_owned.apply_implicit_sender_side_for_delete_excluded();
+            &spec_owned
+        } else {
+            spec
+        };
+        let spec = spec_ref;
         let rule_type = match spec.kind() {
             FilterRuleKind::Include => RuleType::Include,
             FilterRuleKind::Exclude => RuleType::Exclude,
@@ -414,14 +431,14 @@ mod tests {
 
     #[test]
     fn converts_empty_filter_list() {
-        let rules = build_wire_format_rules(&[]).expect("should convert empty list");
+        let rules = build_wire_format_rules(&[], false).expect("should convert empty list");
         assert_eq!(rules.len(), 0);
     }
 
     #[test]
     fn converts_simple_exclude_rule() {
         let spec = FilterRuleSpec::exclude("*.log");
-        let rules = build_wire_format_rules(&[spec]).expect("should convert exclude rule");
+        let rules = build_wire_format_rules(&[spec], false).expect("should convert exclude rule");
 
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].rule_type, RuleType::Exclude);
@@ -433,7 +450,7 @@ mod tests {
     #[test]
     fn converts_simple_include_rule() {
         let spec = FilterRuleSpec::include("*.txt");
-        let rules = build_wire_format_rules(&[spec]).expect("should convert include rule");
+        let rules = build_wire_format_rules(&[spec], false).expect("should convert include rule");
 
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].rule_type, RuleType::Include);
@@ -445,7 +462,7 @@ mod tests {
     #[test]
     fn detects_anchored_pattern() {
         let spec = FilterRuleSpec::exclude("/tmp");
-        let rules = build_wire_format_rules(&[spec]).expect("should convert anchored rule");
+        let rules = build_wire_format_rules(&[spec], false).expect("should convert anchored rule");
 
         assert_eq!(rules.len(), 1);
         assert!(rules[0].anchored);
@@ -458,7 +475,8 @@ mod tests {
     #[test]
     fn detects_directory_only_pattern() {
         let spec = FilterRuleSpec::exclude("cache/");
-        let rules = build_wire_format_rules(&[spec]).expect("should convert directory-only rule");
+        let rules =
+            build_wire_format_rules(&[spec], false).expect("should convert directory-only rule");
 
         assert_eq!(rules.len(), 1);
         assert!(rules[0].directory_only);
@@ -477,7 +495,7 @@ mod tests {
         // matching only at depth 1 and breaking deeper directory traversal
         // when combined with a trailing `--exclude='*'`.
         let spec = FilterRuleSpec::include("*/");
-        let rules = build_wire_format_rules(&[spec]).expect("should convert dir wildcard");
+        let rules = build_wire_format_rules(&[spec], false).expect("should convert dir wildcard");
 
         assert_eq!(rules.len(), 1);
         assert!(rules[0].directory_only);
@@ -487,8 +505,8 @@ mod tests {
     #[test]
     fn anchored_directory_only_preserves_both_flags() {
         let spec = FilterRuleSpec::exclude("/build/");
-        let rules =
-            build_wire_format_rules(&[spec]).expect("should convert anchored directory rule");
+        let rules = build_wire_format_rules(&[spec], false)
+            .expect("should convert anchored directory rule");
 
         assert_eq!(rules.len(), 1);
         assert!(rules[0].anchored);
@@ -502,7 +520,8 @@ mod tests {
         // and (formally) directory-only. Keep the slash in the pattern so
         // the wire is not empty after stripping.
         let spec = FilterRuleSpec::exclude("/");
-        let rules = build_wire_format_rules(&[spec]).expect("should convert bare slash rule");
+        let rules =
+            build_wire_format_rules(&[spec], false).expect("should convert bare slash rule");
 
         assert_eq!(rules.len(), 1);
         assert!(rules[0].anchored);
@@ -515,7 +534,7 @@ mod tests {
         let spec = FilterRuleSpec::exclude("*.tmp")
             .with_sender(true)
             .with_receiver(false);
-        let rules = build_wire_format_rules(&[spec]).expect("should convert side flags");
+        let rules = build_wire_format_rules(&[spec], false).expect("should convert side flags");
 
         assert_eq!(rules.len(), 1);
         assert!(rules[0].sender_side);
@@ -525,7 +544,8 @@ mod tests {
     #[test]
     fn preserves_perishable_flag() {
         let spec = FilterRuleSpec::exclude("*.swp").with_perishable(true);
-        let rules = build_wire_format_rules(&[spec]).expect("should convert perishable flag");
+        let rules =
+            build_wire_format_rules(&[spec], false).expect("should convert perishable flag");
 
         assert_eq!(rules.len(), 1);
         assert!(rules[0].perishable);
@@ -534,7 +554,8 @@ mod tests {
     #[test]
     fn preserves_xattr_only_flag() {
         let spec = FilterRuleSpec::exclude("user.*").with_xattr_only(true);
-        let rules = build_wire_format_rules(&[spec]).expect("should convert xattr_only flag");
+        let rules =
+            build_wire_format_rules(&[spec], false).expect("should convert xattr_only flag");
 
         assert_eq!(rules.len(), 1);
         assert!(rules[0].xattr_only);
@@ -553,7 +574,7 @@ mod tests {
             FilterRuleSpec::dir_merge(".rsync-filter", DirMergeOptions::new()),
         ];
 
-        let rules = build_wire_format_rules(&specs).expect("should convert all rule types");
+        let rules = build_wire_format_rules(&specs, false).expect("should convert all rule types");
 
         assert_eq!(rules.len(), 6);
         assert_eq!(rules[0].rule_type, RuleType::Include);
@@ -572,7 +593,8 @@ mod tests {
             FilterRuleSpec::include("*.txt"),
         ];
 
-        let rules = build_wire_format_rules(&specs).expect("should transmit ExcludeIfPresent");
+        let rules =
+            build_wire_format_rules(&specs, false).expect("should transmit ExcludeIfPresent");
 
         assert_eq!(rules.len(), 3);
         assert_eq!(rules[0].rule_type, RuleType::Exclude);
@@ -597,7 +619,8 @@ mod tests {
             .use_whitespace();
 
         let spec = FilterRuleSpec::dir_merge(".rsync-filter", options);
-        let rules = build_wire_format_rules(&[spec]).expect("should convert dir_merge options");
+        let rules =
+            build_wire_format_rules(&[spec], false).expect("should convert dir_merge options");
 
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].rule_type, RuleType::DirMerge);
@@ -625,14 +648,139 @@ mod tests {
             .cvs_mode(true);
 
         let spec = FilterRuleSpec::dir_merge(".cvsignore", options);
-        let rules =
-            build_wire_format_rules(&[spec]).expect("should forward cvs_mode to wire format");
+        let rules = build_wire_format_rules(&[spec], false)
+            .expect("should forward cvs_mode to wire format");
 
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].rule_type, RuleType::DirMerge);
         assert!(rules[0].cvs_exclude);
         assert!(rules[0].no_inherit);
         assert!(rules[0].word_split);
+    }
+
+    /// upstream: exclude.c:1330-1332 - --delete-excluded applies an implicit
+    /// FILTRULE_SENDER_SIDE to bare include/exclude rules. The wire encoder
+    /// is the user-visible surface for this: `get_rule_prefix()` emits an
+    /// `s` modifier in the rule prefix. Without this, oc-rsync's wire output
+    /// would diverge from upstream's `- *.tmp` vs `-s *.tmp` byte stream.
+    #[test]
+    fn delete_excluded_marks_bare_exclude_sender_side() {
+        let spec = FilterRuleSpec::exclude("*.tmp");
+        let rules = build_wire_format_rules(&[spec], true)
+            .expect("delete_excluded should apply implicit sender_side");
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].rule_type, RuleType::Exclude);
+        assert!(
+            rules[0].sender_side,
+            "implicit FILTRULE_SENDER_SIDE must be applied"
+        );
+        assert!(
+            !rules[0].receiver_side,
+            "receiver_side must be cleared by the implicit flag"
+        );
+    }
+
+    #[test]
+    fn delete_excluded_marks_bare_include_sender_side() {
+        let spec = FilterRuleSpec::include("keep/**");
+        let rules = build_wire_format_rules(&[spec], true).expect("delete_excluded include");
+
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].sender_side);
+        assert!(!rules[0].receiver_side);
+    }
+
+    /// A rule that explicitly carries a side hint (`s`, `r`, `show`, `hide`)
+    /// must be left untouched - upstream `exclude.c:1331` masks against
+    /// `FILTRULES_SIDES` and only applies the implicit flag when neither
+    /// side bit is set.
+    #[test]
+    fn delete_excluded_leaves_explicit_sender_rule_alone() {
+        let spec = FilterRuleSpec::hide("*.tmp");
+        let rules = build_wire_format_rules(&[spec], true).expect("hide rule with delete_excluded");
+
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].sender_side);
+        assert!(!rules[0].receiver_side);
+    }
+
+    #[test]
+    fn delete_excluded_leaves_explicit_receiver_rule_alone() {
+        let spec = FilterRuleSpec::exclude("keep.txt").with_sender(false);
+        let rules =
+            build_wire_format_rules(&[spec], true).expect("receiver-only with delete_excluded");
+
+        assert_eq!(rules.len(), 1);
+        assert!(!rules[0].sender_side);
+        assert!(rules[0].receiver_side);
+    }
+
+    /// Protect/Risk and DirMerge rules must not gain the implicit flag.
+    /// `exclude.c:1331` excludes merge rules from the mask; Protect/Risk
+    /// already restrict to the receiver side, so neither match the
+    /// "no FILTRULES_SIDES bit" precondition.
+    #[test]
+    fn delete_excluded_leaves_protect_rule_alone() {
+        let spec = FilterRuleSpec::protect("keep");
+        let rules = build_wire_format_rules(&[spec], true).expect("protect with delete_excluded");
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].rule_type, RuleType::Protect);
+        assert!(!rules[0].sender_side);
+        assert!(rules[0].receiver_side);
+    }
+
+    #[test]
+    fn delete_excluded_leaves_dir_merge_rule_alone() {
+        use engine::local_copy::DirMergeOptions;
+
+        let spec = FilterRuleSpec::dir_merge(".rsync-filter", DirMergeOptions::new());
+        let rules = build_wire_format_rules(&[spec], true).expect("dir_merge with delete_excluded");
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].rule_type, RuleType::DirMerge);
+        // DirMerge defaults: sender=true, receiver=true, both retained.
+        assert!(rules[0].sender_side);
+        assert!(rules[0].receiver_side);
+    }
+
+    /// Without --delete-excluded the implicit flag must not be applied even
+    /// for bare include/exclude rules. This guards against future
+    /// over-eager mutation that would silently restrict rule scope.
+    #[test]
+    fn no_delete_excluded_leaves_bare_rule_untouched() {
+        let spec = FilterRuleSpec::exclude("*.tmp");
+        let rules = build_wire_format_rules(&[spec], false).expect("no delete_excluded");
+
+        assert_eq!(rules.len(), 1);
+        assert!(rules[0].sender_side);
+        assert!(rules[0].receiver_side);
+    }
+
+    /// Wire-byte parity: when `--delete-excluded` is active, the rule must
+    /// serialize through `build_rule_prefix()` with the `s` modifier on the
+    /// wire. This is the byte stream upstream rsync 3.4.4 emits for the same
+    /// CLI input.
+    ///
+    /// upstream: exclude.c:1566-1568 `get_rule_prefix()` emits `s` when
+    /// `FILTRULE_SENDER_SIDE` is set and (`!for_xfer` or proto >= 29).
+    #[test]
+    fn delete_excluded_wire_prefix_carries_s_modifier() {
+        use protocol::ProtocolVersion;
+        use protocol::filters::build_rule_prefix;
+
+        let spec = FilterRuleSpec::exclude("*.tmp");
+        let rules = build_wire_format_rules(&[spec], true)
+            .expect("delete_excluded should apply implicit sender_side");
+
+        let proto = ProtocolVersion::from_supported(32).unwrap();
+        let prefix = build_rule_prefix(&rules[0], proto).expect("prefix must serialize");
+
+        // Upstream 3.4.4 emits `-s ` for `--exclude *.tmp` under
+        // `--delete-excluded`. Without the implicit flag, the prefix would
+        // be `- `, diverging from the upstream wire.
+        assert_eq!(prefix, "-s ");
     }
 
     #[test]

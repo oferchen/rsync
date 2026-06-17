@@ -45,7 +45,8 @@ pub(crate) fn run_pull_transfer(
     buffered: Vec<u8>,
     observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
-    let filter_rules = flags::build_wire_format_rules(config.filter_rules())?;
+    let filter_rules =
+        flags::build_wire_format_rules(config.filter_rules(), config.delete_excluded())?;
 
     // upstream: compat.c:599 - protocol was negotiated via @RSYNCD text exchange,
     // setup_protocol() skips the binary exchange because remote_protocol != 0.
@@ -111,7 +112,8 @@ pub(crate) fn run_push_transfer(
     buffered: Vec<u8>,
     observer: Option<&mut dyn ClientProgressObserver>,
 ) -> Result<ClientSummary, ClientError> {
-    let filter_rules = flags::build_wire_format_rules(config.filter_rules())?;
+    let filter_rules =
+        flags::build_wire_format_rules(config.filter_rules(), config.delete_excluded())?;
 
     // upstream: compat.c:599 - if (remote_protocol == 0) { ... }
     let mut handshake = build_daemon_handshake(config, protocol);
