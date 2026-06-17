@@ -90,6 +90,8 @@ pub(super) fn help_text(program_name: ProgramName) -> String {
             "      --timeout=SECS  Abort when no progress is observed for SECS seconds (0 disables the timeout).\n",
             "      --contimeout=SECS  Abort connection attempts after SECS seconds (0 disables the limit).\n",
             "      --sockopts=LIST  Set additional socket options (comma-separated LIST).\n",
+            "      --tcp-fastopen=MODE  Enable TCP Fast Open on daemon and client sockets\n",
+            "                              (auto, on, off; default auto: enabled where supported).\n",
             "      --blocking-io  Force the remote shell to use blocking I/O.\n",
             "      --no-blocking-io  Disable forced blocking I/O on the remote shell.\n",
             "      --protocol=NUM  Force a specific protocol version (28 through 32).\n",

@@ -17,6 +17,18 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Configures the TCP Fast Open mode applied to daemon and client sockets.
+    ///
+    /// `auto` (the default) enables TFO opportunistically on platforms that
+    /// support it. `on` requests TFO unconditionally and surfaces a startup
+    /// warning when the platform lacks support. `off` disables TFO.
+    #[must_use]
+    #[doc(alias = "--tcp-fastopen")]
+    pub const fn tcp_fastopen(mut self, mode: TcpFastOpenMode) -> Self {
+        self.tcp_fastopen = mode;
+        self
+    }
+
     builder_setter! {
         /// Controls whether blocking I/O should be forced for remote shells.
         #[doc(alias = "--blocking-io")]

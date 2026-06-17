@@ -275,6 +275,16 @@ fn test_sockopts_defaults_to_none() {
 }
 
 #[test]
+fn test_tcp_fastopen_defaults_to_auto() {
+    let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
+    assert_eq!(
+        args.tcp_fastopen,
+        core::client::TcpFastOpenMode::Auto,
+        "tcp_fastopen should default to Auto"
+    );
+}
+
+#[test]
 fn test_rsync_path_defaults_to_none() {
     let args = parse_args(["oc-rsync", "src", "dest"]).unwrap();
     assert_eq!(args.rsync_path, None, "rsync_path should default to None");

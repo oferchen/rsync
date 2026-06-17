@@ -134,6 +134,16 @@ pub fn run_daemon_transfer(
         }
     }
 
+    // Apply oc-rsync-specific TCP perf options (TCP_NOTSENT_LOWAT for the
+    // client side; client-side TFO is deferred to a follow-up). These are
+    // wire-compatible with upstream and only affect kernel socket state.
+    if let Some(tcp) = stream.as_tcp_stream() {
+        crate::client::module_list::tcp_perf::apply_client_tcp_perf_options(
+            tcp,
+            config.tcp_fastopen(),
+        );
+    }
+
     // When the client requests TLS, wrap the TCP stream before the daemon
     // handshake. Full TLS transfer wiring is deferred to TLS-11; for now
     // the presence of a TLS config triggers an early error so the code

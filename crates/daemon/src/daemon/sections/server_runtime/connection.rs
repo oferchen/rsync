@@ -358,6 +358,8 @@ fn run_single_listener_loop(
                     continue;
                 }
 
+                apply_accepted_stream_tcp_notsent_lowat(&tcp_stream);
+
                 let Some(mut stream) = wrap_accepted_stream(tcp_stream, state) else {
                     continue;
                 };
@@ -478,6 +480,8 @@ fn run_dual_stack_loop(
         // Use recv_timeout to allow periodic worker reaping and signal checks
         match rx.recv_timeout(Duration::from_millis(100)) {
             Ok(Ok((tcp_stream, raw_peer_addr))) => {
+                apply_accepted_stream_tcp_notsent_lowat(&tcp_stream);
+
                 let Some(mut stream) = wrap_accepted_stream(tcp_stream, state) else {
                     continue;
                 };

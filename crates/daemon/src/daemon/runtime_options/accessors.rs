@@ -24,6 +24,16 @@ impl RuntimeOptions {
         self.socket_options.as_deref()
     }
 
+    /// Returns the configured TCP Fast Open mode.
+    ///
+    /// Defaults to [`TcpFastOpenMode::Auto`] which enables TFO on platforms
+    /// that support it and silently skips elsewhere. `on` requests TFO
+    /// unconditionally and surfaces a startup warning when the platform
+    /// lacks support.
+    pub(crate) const fn tcp_fastopen(&self) -> TcpFastOpenMode {
+        self.tcp_fastopen
+    }
+
     /// Returns whether incoming connections require a PROXY protocol header.
     ///
     /// upstream: clientserver.c:1298 - checked before accepting client data.

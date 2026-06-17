@@ -83,7 +83,7 @@ macro_rules! builder_setter {
 use super::{
     AddressMode, BandwidthLimit, BindAddress, ClientConfig, CompressionSetting, DeleteMode,
     FilesFromSource, FilterRuleSpec, IconvSetting, ReferenceDirectory, ReferenceDirectoryKind,
-    StrongChecksumChoice, TransferTimeout,
+    StrongChecksumChoice, TcpFastOpenMode, TransferTimeout,
 };
 use ::metadata::{ChmodModifiers, GroupMapping, UserMapping};
 use compress::algorithm::CompressionAlgorithm;
@@ -246,6 +246,7 @@ pub struct ClientConfigBuilder {
     connect_program: Option<OsString>,
     bind_address: Option<BindAddress>,
     sockopts: Option<OsString>,
+    tcp_fastopen: TcpFastOpenMode,
     blocking_io: Option<bool>,
     iconv: IconvSetting,
     remote_shell: Option<Vec<OsString>>,
@@ -480,6 +481,7 @@ impl ClientConfigBuilder {
             connect_program: self.connect_program,
             bind_address: self.bind_address,
             sockopts: self.sockopts,
+            tcp_fastopen: self.tcp_fastopen,
             blocking_io: self.blocking_io,
             iconv: self.iconv,
             remote_shell: self.remote_shell,

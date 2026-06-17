@@ -1435,6 +1435,41 @@ mod option_values {
     }
 
     #[test]
+    fn tcp_fastopen_defaults_to_auto() {
+        let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.tcp_fastopen, core::client::TcpFastOpenMode::Auto);
+    }
+
+    #[test]
+    fn tcp_fastopen_accepts_on_off_auto() {
+        for (value, expected) in [
+            ("auto", core::client::TcpFastOpenMode::Auto),
+            ("on", core::client::TcpFastOpenMode::On),
+            ("off", core::client::TcpFastOpenMode::Off),
+        ] {
+            let parsed = parse_test_args(["--tcp-fastopen", value, "src/", "dst/"]).expect("parse");
+            assert_eq!(parsed.tcp_fastopen, expected, "value={value}");
+        }
+    }
+
+    #[test]
+    fn tcp_fastopen_with_equals_syntax() {
+        let parsed = parse_test_args(["--tcp-fastopen=on", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.tcp_fastopen, core::client::TcpFastOpenMode::On);
+    }
+
+    #[test]
+    fn tcp_fastopen_rejects_unknown_value() {
+        let error = parse_test_args(["--tcp-fastopen=maybe", "src/", "dst/"])
+            .expect_err("parse should fail");
+        let rendered = error.to_string();
+        assert!(
+            rendered.contains("--tcp-fastopen"),
+            "error should mention flag, got: {rendered}"
+        );
+    }
+
+    #[test]
     fn remote_option_with_equals() {
         let parsed =
             parse_test_args(["--remote-option=--bwlimit=100", "src/", "dst/"]).expect("parse");
