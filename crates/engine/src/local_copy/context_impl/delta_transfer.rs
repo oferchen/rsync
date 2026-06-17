@@ -153,18 +153,39 @@ impl<'a> CopyContext<'a> {
                 // final ftruncate clips the file off at the wrong length.
                 if inplace_mode && basis_offset == output_position {
                     output_position = output_position.saturating_add(block_len as u64);
-                } else {
-                    if inplace_mode {
-                        writer
-                            .seek(SeekFrom::Start(output_position))
-                            .map_err(|error| {
-                                LocalCopyError::io(
-                                    "seek destination file",
-                                    destination.to_path_buf(),
-                                    error,
-                                )
-                            })?;
+                } else if inplace_mode {
+                    // Inplace + basis == destination: reading basis at a
+                    // back-references offset can race with prior writes that
+                    // already overwrote that region. The matched window is
+                    // bit-equivalent to the basis block (both rolling and
+                    // strong checksums confirmed), so write the verified
+                    // source bytes directly rather than re-reading from the
+                    // (potentially overwritten) destination basis.
+                    writer
+                        .seek(SeekFrom::Start(output_position))
+                        .map_err(|error| {
+                            LocalCopyError::io(
+                                "seek destination file",
+                                destination.to_path_buf(),
+                                error,
+                            )
+                        })?;
+                    let matched_bytes = &scratch[..block_len];
+                    if sparse {
+                        let _ = write_sparse_chunk(
+                            writer,
+                            &mut sparse_state,
+                            matched_bytes,
+                            destination,
+                        )?;
+                    } else {
+                        writer.write_all(matched_bytes).map_err(|error| {
+                            LocalCopyError::io("copy file", destination, error)
+                        })?;
                     }
+                    self.capture_batch_block_match(&matched, destination)?;
+                    output_position = output_position.saturating_add(block_len as u64);
+                } else {
                     self.copy_matched_block(
                         destination_reader
                             .as_mut()
@@ -178,9 +199,6 @@ impl<'a> CopyContext<'a> {
                             state: &mut sparse_state,
                         },
                     )?;
-                    if inplace_mode {
-                        output_position = output_position.saturating_add(block_len as u64);
-                    }
                 }
 
                 total_bytes = total_bytes.saturating_add(block_len as u64);
@@ -327,20 +345,15 @@ impl<'a> CopyContext<'a> {
         Ok(written)
     }
 
-    pub(super) fn copy_matched_block(
+    /// Records a block-match token to the batch delta stream, if active.
+    ///
+    /// Mirrors upstream `token.c:simple_send_token()` which encodes a block
+    /// reference as `write_int(-(token+1))`.
+    fn capture_batch_block_match(
         &mut self,
-        existing: &mut fs::File,
-        writer: &mut fs::File,
-        buffer: &mut [u8],
+        matched: &MatchedBlock<'_>,
         destination: &Path,
-        matched: MatchedBlock<'_>,
-        sparse: SparseCopy<'_>,
     ) -> Result<(), LocalCopyError> {
-        let offset = matched.offset();
-        let block_length = matched.descriptor().len();
-
-        // Capture COPY (block match) operation to the batch delta buffer.
-        // upstream: token.c:simple_send_token() - block match is write_int(-(token+1)).
         if let Some(delta_writer) = self.batch_delta_writer() {
             let block_index = matched.descriptor().index();
 
@@ -362,6 +375,22 @@ impl<'a> CopyContext<'a> {
                 )
             })?;
         }
+        Ok(())
+    }
+
+    pub(super) fn copy_matched_block(
+        &mut self,
+        existing: &mut fs::File,
+        writer: &mut fs::File,
+        buffer: &mut [u8],
+        destination: &Path,
+        matched: MatchedBlock<'_>,
+        sparse: SparseCopy<'_>,
+    ) -> Result<(), LocalCopyError> {
+        let offset = matched.offset();
+        let block_length = matched.descriptor().len();
+
+        self.capture_batch_block_match(&matched, destination)?;
 
         existing.seek(SeekFrom::Start(offset)).map_err(|error| {
             LocalCopyError::io(
