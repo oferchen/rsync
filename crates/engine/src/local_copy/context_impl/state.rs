@@ -94,17 +94,17 @@ impl<'a> CopyContext<'a> {
                 CompressionLevel::Precise(v) => i32::from(v.get()),
             };
             match options.compression_algorithm() {
-                CompressionAlgorithm::Zlib => {
-                    Some(compress::strategy::adaptive_level::AdaptiveLevelController::for_zlib(
+                CompressionAlgorithm::Zlib => Some(
+                    compress::strategy::adaptive_level::AdaptiveLevelController::for_zlib(
                         level_i32,
-                    ))
-                }
+                    ),
+                ),
                 #[cfg(feature = "zstd")]
-                CompressionAlgorithm::Zstd => {
-                    Some(compress::strategy::adaptive_level::AdaptiveLevelController::for_zstd(
+                CompressionAlgorithm::Zstd => Some(
+                    compress::strategy::adaptive_level::AdaptiveLevelController::for_zstd(
                         level_i32,
-                    ))
-                }
+                    ),
+                ),
                 _ => None,
             }
         } else {
@@ -503,7 +503,9 @@ impl<'a> CopyContext<'a> {
                 .file_name()
                 .is_some_and(|name| name == super::options::staging::DELAY_UPDATES_PARTIAL_DIR)
             {
-                self.deferred_ops.delay_staging_dirs.insert(parent.to_path_buf());
+                self.deferred_ops
+                    .delay_staging_dirs
+                    .insert(parent.to_path_buf());
             }
         }
         let metadata = update.metadata.clone();
@@ -599,15 +601,45 @@ impl<'a> CopyContext<'a> {
         let strategy = match fs::rename(destination, &backup_path) {
             Ok(()) => BackupStrategy::Rename,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                if let Err(remove_error) = fs::remove_file(&backup_path)
-                    && remove_error.kind() != io::ErrorKind::NotFound
-                {
-                    return Err(LocalCopyError::io(
-                        "remove existing backup",
-                        backup_path,
-                        remove_error,
-                    ));
+            // upstream: backup.c:247-256 - link_or_rename failing with EEXIST or
+            // EISDIR is recoverable: lstat the target and call delete_item with
+            // DEL_RECURSE, then retry. EISDIR fires when the backup-dir already
+            // contains a directory at the path we need (e.g. user pre-created
+            // it, or a previous backup left a tree there); without this arm,
+            // backup test 4 from upstream backup.test fails as exit-23 fatal.
+            Err(error)
+                if error.kind() == io::ErrorKind::AlreadyExists
+                    || error.kind() == io::ErrorKind::IsADirectory =>
+            {
+                match fs::symlink_metadata(&backup_path) {
+                    Ok(meta) if meta.is_dir() => {
+                        fs::remove_dir_all(&backup_path).map_err(|remove_error| {
+                            LocalCopyError::io(
+                                "remove existing backup directory",
+                                backup_path.clone(),
+                                remove_error,
+                            )
+                        })?;
+                    }
+                    Ok(_) => {
+                        if let Err(remove_error) = fs::remove_file(&backup_path)
+                            && remove_error.kind() != io::ErrorKind::NotFound
+                        {
+                            return Err(LocalCopyError::io(
+                                "remove existing backup",
+                                backup_path,
+                                remove_error,
+                            ));
+                        }
+                    }
+                    Err(meta_error) if meta_error.kind() == io::ErrorKind::NotFound => {}
+                    Err(meta_error) => {
+                        return Err(LocalCopyError::io(
+                            "stat existing backup",
+                            backup_path,
+                            meta_error,
+                        ));
+                    }
                 }
                 fs::rename(destination, &backup_path).map_err(|rename_error| {
                     LocalCopyError::io("create backup", backup_path.clone(), rename_error)
