@@ -10,7 +10,7 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
-use logging::{debug_log, info_log};
+use logging::debug_log;
 
 use ::metadata::MetadataOptions;
 
@@ -137,8 +137,12 @@ pub(super) fn record_metadata_only_skip(
     );
     // upstream: rsync.c:672-676 - rprintf(FCLIENT, "%s is uptodate\n", fname)
     // at INFO_GTE(NAME, 2) when a quick-check or content-equal path reuses
-    // the existing destination instead of transferring.
-    info_log!(Name, 2, "{} is uptodate", record_path.display());
+    // the existing destination instead of transferring. The CLI renders this
+    // line from the MetadataReused event so it lands ahead of the summary
+    // (matching upstream's in-line FCLIENT emission); the diagnostic queue
+    // drains after the summary, so emitting via info_log! here would race the
+    // banner+totals ordering. Keep the record-based render as the single
+    // source of truth.
     ::metadata::apply_file_metadata_if_changed(destination, metadata, existing, metadata_options)
         .map_err(crate::local_copy::map_metadata_error)?;
 

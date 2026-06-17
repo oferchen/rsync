@@ -42,6 +42,7 @@ pub(crate) fn emit_transfer_summary(
     name_overridden: bool,
     human_readable_mode: HumanReadableMode,
     suppress_updated_only_totals: bool,
+    emit_flist_banner: bool,
     writer: &mut dyn Write,
 ) -> io::Result<()> {
     let events = summary.events();
@@ -67,6 +68,16 @@ pub(crate) fn emit_transfer_summary(
         }
 
         return Ok(());
+    }
+
+    // upstream: flist.c:2252 - rprintf(FCLIENT, "sending incremental file list\n")
+    // is gated on inc_recurse && INFO_GTE(FLIST, 1) && !am_server. The banner
+    // is FCLIENT-only - the parallel `rprintf(FLOG, "building file list\n")`
+    // covers the log file (already emitted via the logging::info_log! pipeline
+    // in the generator). Local-copy mode is treated as inc_recurse-equivalent
+    // because the source enumeration is interleaved with per-file dispatch.
+    if emit_flist_banner && verbosity > 0 {
+        writeln!(writer, "sending incremental file list")?;
     }
 
     // upstream: main.c:787-808 - when the receiver pre-flight-mkdirs the
@@ -433,6 +444,15 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 continue;
             }
 
+            // upstream: rsync.c:676 - uptodate notice uses `"%s is uptodate"`
+            // wording at INFO_GTE(NAME, 2). `--info=name2` sets name_level to
+            // UpdatedAndUnchanged here, so route MetadataReused through the
+            // uptodate phrasing instead of the bare path.
+            if matches!(kind, ClientEventKind::MetadataReused) {
+                writeln!(stdout, "{} is uptodate", event.relative_path().display())?;
+                continue;
+            }
+
             let mut rendered = event.relative_path().to_string_lossy().into_owned();
             if matches!(kind, ClientEventKind::SymlinkCopied)
                 && let Some(metadata) = event.metadata()
@@ -510,6 +530,22 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                     "skipping mount point \"{}\"",
                     event.relative_path().display()
                 )?;
+                continue;
+            }
+            ClientEventKind::MetadataReused => {
+                // upstream: rsync.c:672-676 - rprintf(FCLIENT, "%s is uptodate\n", fname)
+                // is gated by INFO_GTE(NAME, 2). At plain -v (verbose=1) the
+                // notice is suppressed and unchanged files leave no per-file
+                // trace. Emit only when NAME>=2 - either via -vv or explicit
+                // --info=name2 (which sets name_level to UpdatedAndUnchanged).
+                // The local-copy engine intentionally does NOT emit this via
+                // info_log! to avoid the diagnostic-flush ordering hazard
+                // (info_log! events drain AFTER the summary in cli mod.rs);
+                // routing it through the event renderer keeps `is uptodate`
+                // lines ahead of the totals to match upstream's wire order.
+                if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
+                    writeln!(stdout, "{} is uptodate", event.relative_path().display())?;
+                }
                 continue;
             }
             _ => {}

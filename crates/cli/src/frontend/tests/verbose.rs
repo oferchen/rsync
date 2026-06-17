@@ -1057,3 +1057,134 @@ fn duplicates_testsuite_emits_bare_name_lines() {
         "name2 must appear exactly once as `name2 -> ...`, got: {rendered:?}"
     );
 }
+
+/// Verifies that `-vv` on an all-uptodate tree mirrors upstream rsync 3.4.4:
+///
+/// 1. The first stdout line is `sending incremental file list` (flist.c:2252).
+/// 2. Unchanged files emit `<name> is uptodate` (rsync.c:676) at NAME>=2.
+/// 3. Files are NOT pre-listed as bare names before the uptodate notice -
+///    upstream gates the bare per-file emission on `INFO_EQ(PROGRESS, 1)`
+///    (receiver.c:1011, sender.c:450), and no `--progress` was requested here.
+#[test]
+fn level_2_all_uptodate_matches_upstream_banner_and_uptodate_lines() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let from = tmp.path().join("from");
+    let to = tmp.path().join("to");
+    std::fs::create_dir_all(from.join("foo")).expect("mkdir from/foo");
+    std::fs::write(from.join("foo").join("a.txt"), b"alpha").expect("write a");
+    std::fs::write(from.join("foo").join("b.txt"), b"bravo").expect("write b");
+
+    let mut from_slash = from.clone().into_os_string();
+    from_slash.push("/");
+
+    // Seed the destination so the second invocation finds everything uptodate.
+    let (code, _stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-tplr"),
+        from_slash.clone(),
+        to.clone().into_os_string(),
+    ]);
+    assert_eq!(code, 0, "seeding initial sync must succeed");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-vvplrH"),
+        from_slash,
+        to.into_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(
+        stderr.is_empty(),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&stderr)
+    );
+
+    let rendered = String::from_utf8(stdout).expect("verbose stdout utf8");
+    let lines: Vec<&str> = rendered.lines().collect();
+
+    assert!(
+        !lines.is_empty(),
+        "expected at least the `sending incremental file list` banner, got: {rendered:?}"
+    );
+    assert_eq!(
+        lines[0], "sending incremental file list",
+        "first line must be the FCLIENT banner (flist.c:2252), got: {rendered:?}"
+    );
+
+    // Per upstream rsync.c:676 + sender.c:450, no bare `<name>` lines should
+    // precede the `is uptodate` notice when --progress is absent. A regression
+    // would surface as e.g. `foo/a.txt` on its own line right after the banner.
+    let uptodate_count = lines.iter().filter(|l| l.ends_with(" is uptodate")).count();
+    assert_eq!(
+        uptodate_count, 2,
+        "expected `is uptodate` for each unchanged file, got: {rendered:?}"
+    );
+
+    let bare_path_count = lines
+        .iter()
+        .filter(|l| *l == &"foo/a.txt" || *l == &"foo/b.txt")
+        .count();
+    assert_eq!(
+        bare_path_count, 0,
+        "unchanged files must NOT emit a bare-name line before their `is uptodate` \
+         notice (upstream gates this on INFO_EQ(PROGRESS, 1)), got: {rendered:?}"
+    );
+
+    // Summary still appears.
+    assert!(
+        rendered.contains("sent "),
+        "expected sent/received summary line, got: {rendered:?}"
+    );
+}
+
+/// Verifies that `-v` (verbose=1) on an all-uptodate tree emits the banner
+/// but suppresses both `is uptodate` notices (which need NAME>=2) and bare
+/// per-file lines (which need `--progress`).
+#[test]
+fn level_1_all_uptodate_emits_banner_only() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let from = tmp.path().join("from");
+    let to = tmp.path().join("to");
+    std::fs::create_dir_all(&from).expect("mkdir from");
+    std::fs::write(from.join("only.txt"), b"only").expect("write");
+
+    let mut from_slash = from.clone().into_os_string();
+    from_slash.push("/");
+
+    let (code, _stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-tplr"),
+        from_slash.clone(),
+        to.clone().into_os_string(),
+    ]);
+    assert_eq!(code, 0);
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-vplrH"),
+        from_slash,
+        to.into_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8");
+    let lines: Vec<&str> = rendered.lines().collect();
+    assert_eq!(
+        lines.first().copied(),
+        Some("sending incremental file list"),
+        "first line must be the FCLIENT banner at -v, got: {rendered:?}"
+    );
+    assert!(
+        !rendered.contains("is uptodate"),
+        "-v (NAME<2) must NOT emit `is uptodate` lines, got: {rendered:?}"
+    );
+    assert!(
+        !lines.iter().any(|l| *l == "only.txt"),
+        "unchanged file must NOT emit a bare-name line under -v without --progress, got: {rendered:?}"
+    );
+}
