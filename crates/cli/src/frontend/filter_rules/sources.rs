@@ -7,6 +7,9 @@ use core::client::{FilterRuleKind, FilterRuleSpec};
 use core::message::{Message, Role};
 use core::rsync_error;
 
+use super::directive::FilterDirective;
+use super::parsing::parse_old_prefix_rule;
+
 pub(crate) fn append_filter_rules_from_files(
     destination: &mut Vec<FilterRuleSpec>,
     files: &[OsString],
@@ -21,17 +24,36 @@ pub(crate) fn append_filter_rules_from_files(
         return Err(message);
     }
 
+    // upstream: options.c:1541-1543 - --exclude-from and --include-from
+    // feed parse_filter_file with XFLG_OLD_PREFIXES so per-line `- pat`,
+    // `+ pat`, and `!` prefixes flip the rule kind or clear the list. Kinds
+    // other than Include/Exclude have no upstream OLD_PREFIXES analogue, so
+    // we keep the legacy raw-pattern behavior to preserve existing semantics.
+    let honor_old_prefixes = matches!(kind, FilterRuleKind::Include | FilterRuleKind::Exclude);
+
     for path in files {
         let patterns = load_filter_file_patterns(Path::new(path.as_os_str()))?;
-        destination.extend(patterns.into_iter().map(|pattern| match kind {
-            FilterRuleKind::Include => FilterRuleSpec::include(pattern),
-            FilterRuleKind::Exclude => FilterRuleSpec::exclude(pattern),
-            FilterRuleKind::Clear => FilterRuleSpec::clear(),
-            FilterRuleKind::ExcludeIfPresent => FilterRuleSpec::exclude_if_present(pattern),
-            FilterRuleKind::Protect => FilterRuleSpec::protect(pattern),
-            FilterRuleKind::Risk => FilterRuleSpec::risk(pattern),
-            FilterRuleKind::DirMerge => unreachable!("dir-merge handled above"),
-        }));
+        for pattern in patterns {
+            if honor_old_prefixes {
+                match parse_old_prefix_rule(&pattern, kind)? {
+                    FilterDirective::Rule(rule) => destination.push(rule),
+                    FilterDirective::Clear => destination.push(FilterRuleSpec::clear()),
+                    FilterDirective::Merge(_) => {
+                        unreachable!("parse_old_prefix_rule never emits FilterDirective::Merge")
+                    }
+                }
+            } else {
+                destination.push(match kind {
+                    FilterRuleKind::Include => FilterRuleSpec::include(pattern),
+                    FilterRuleKind::Exclude => FilterRuleSpec::exclude(pattern),
+                    FilterRuleKind::Clear => FilterRuleSpec::clear(),
+                    FilterRuleKind::ExcludeIfPresent => FilterRuleSpec::exclude_if_present(pattern),
+                    FilterRuleKind::Protect => FilterRuleSpec::protect(pattern),
+                    FilterRuleKind::Risk => FilterRuleSpec::risk(pattern),
+                    FilterRuleKind::DirMerge => unreachable!("dir-merge handled above"),
+                });
+            }
+        }
     }
     Ok(())
 }
