@@ -130,6 +130,11 @@ pub mod zero_detect;
 #[cfg(feature = "adaptive-basis-dispatch")]
 pub mod adaptive_dispatch;
 
+/// Linux `FICLONERANGE` partial-reflink wrapper for the delta-apply COPY-token
+/// fast path. Returns `Ok(true)` on metadata-only clone, `Ok(false)` when the
+/// platform / filesystem / alignment is unsuitable so the caller can fall
+/// back to a real copy.
+pub mod clone_file_range;
 /// Offset-aware basis-to-destination range copy via `copy_file_range(2)` for
 /// the delta-apply COPY-token fast path (IUD-10).
 pub mod copy_basis_range;
@@ -278,6 +283,7 @@ pub mod sqpoll_basis;
 mod status;
 
 pub use cached_sort::{CachedSortKey, cached_sort_by};
+pub use clone_file_range::{CLONE_FILE_RANGE_MIN_BYTES, try_clone_file_range};
 pub use container::{
     FORCE_ROOTLESS_ENV, RootlessSignal, detect_rootless_container, rootless_signal,
 };
