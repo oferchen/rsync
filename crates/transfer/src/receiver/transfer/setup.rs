@@ -153,6 +153,17 @@ impl ReceiverContext {
             .preserve_owner(self.config.flags.owner)
             .preserve_group(self.config.flags.group)
             .numeric_ids(self.config.flags.numeric_ids)
+            // upstream: generator.c:1344 - `link_stat(fname, &sx.st,
+            // keep_dirlinks && is_dir)` follows a destination symlink-to-dir
+            // at stat time instead of rejecting it. The
+            // `chmod_path_honoring_keep_dirlinks` helper in
+            // `crates/metadata/src/apply/permissions.rs` consults this flag
+            // to route past the dirfd sandbox when the symlinked parent
+            // would otherwise surface `ELOOP`/`ENOTDIR`. Without this the
+            // SSH receiver runs with `keep_dirlinks: false` even when the
+            // client sent `K` in the compact flag string, breaking the
+            // `symlink-dirlink-basis` regression test (Issue #715).
+            .with_keep_dirlinks(self.config.flags.keep_dirlinks)
             // upstream: clientserver.c:1106-1107 - `fake super = yes` on the
             // daemon module forces fake-super metadata storage on the receiver
             // (ownership and special-file metadata go to user.rsync.%stat
