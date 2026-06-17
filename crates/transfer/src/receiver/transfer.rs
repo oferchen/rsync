@@ -571,8 +571,6 @@ mod tests {
         );
     }
 
-    // --- PIR-5.d: Interrupt behavior ---
-
     /// Verifies that staged files in `.~tmp~/` persist as valid partials when
     /// the sweep is never called (simulating an interrupted transfer).
     ///

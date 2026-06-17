@@ -40,10 +40,6 @@ use crate::config::ServerConfig;
 use crate::handshake::HandshakeResult;
 use crate::role::ServerRole;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// Builds a `HandshakeResult` for the given protocol version.
 fn handshake_for(protocol_version: u8) -> HandshakeResult {
     HandshakeResult {
@@ -82,10 +78,6 @@ fn drive_handle_goodbye(ctx: &ReceiverContext, sender_bytes: Vec<u8>) -> io::Res
     ctx.handle_goodbye(&mut reader, &mut writer, &mut ndx_write, &mut ndx_read)
 }
 
-// ---------------------------------------------------------------------------
-// EDG-GOODBYE.4.a: EOF mid-byte inside the goodbye frame
-// ---------------------------------------------------------------------------
-//
 // Protocol-coverage note: `handle_goodbye` only *reads* a goodbye echo on
 // protocols >= 31 (the extended-goodbye gate). On protocol 28/29 the
 // receiver-side `handle_goodbye` is a pure write; the equivalent
@@ -139,10 +131,6 @@ fn handle_goodbye_proto32_eof_mid_modern_negative_prefix() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// EDG-GOODBYE.4.b: EOF before goodbye frame
-// ---------------------------------------------------------------------------
-
 /// Sender closes the connection without ever sending a goodbye byte.
 /// Receiver's first `read_exact` must surface `UnexpectedEof` rather than
 /// hang or panic.
@@ -176,10 +164,6 @@ fn read_expected_ndx_done_proto29_immediate_eof() {
         "immediate EOF before legacy goodbye must surface UnexpectedEof, got {err:?}",
     );
 }
-
-// ---------------------------------------------------------------------------
-// EDG-GOODBYE.4.c: garbage in place of NDX_DONE
-// ---------------------------------------------------------------------------
 
 /// Sender sends a perfectly framed but wrong-valued NDX (a positive file
 /// index) instead of `NDX_DONE`. The receiver must reject it with
@@ -238,10 +222,6 @@ fn read_expected_ndx_done_proto29_rejects_garbage() {
         "error message should include the context string; got: {msg}"
     );
 }
-
-// ---------------------------------------------------------------------------
-// EDG-GOODBYE.4.d: receiver does not hang on a non-progressing sender
-// ---------------------------------------------------------------------------
 
 /// A blocking reader that never produces bytes. Mimics a sender that
 /// connects, completes the transfer, and then hangs forever instead of
@@ -340,10 +320,6 @@ fn handle_goodbye_does_not_silently_complete_on_hung_sender() {
     }
 }
 
-// ---------------------------------------------------------------------------
-// EDG-GOODBYE.4.e: garbage NDX_DEL_STATS without trailing varints
-// ---------------------------------------------------------------------------
-
 /// Protocol 32 receiver accepts an `NDX_DEL_STATS` sentinel in
 /// `handle_goodbye` and then drains five varints before reading
 /// `NDX_DONE`. A sender that emits `NDX_DEL_STATS` and then cuts the
@@ -374,10 +350,6 @@ fn handle_goodbye_proto32_eof_inside_del_stats_payload() {
         "EOF inside del-stats payload must surface UnexpectedEof, got {err:?}",
     );
 }
-
-// ---------------------------------------------------------------------------
-// EDG-GOODBYE.4.f: contract sanity - happy path still passes
-// ---------------------------------------------------------------------------
 
 /// Sanity check: a well-formed single `NDX_DONE` byte from the sender
 /// drives `handle_goodbye` cleanly on protocol 32. This guards against
