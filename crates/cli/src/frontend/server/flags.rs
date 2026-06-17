@@ -433,6 +433,7 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--ignore-non-existing"
             | "--delay-updates"
             | "--partial-dir"
+            | "--backup"
     ) || arg == "-s"
         || arg == "--new-compress"
         || arg == "--old-compress"

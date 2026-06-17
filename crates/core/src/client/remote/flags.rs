@@ -114,6 +114,13 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
     if config.partial() {
         flags.push('P');
     }
+    // upstream: options.c:2630-2631 - `make_backups` rides in the compact
+    // flag string as `b`. Emitting `--backup` as a separate long arg lands
+    // as a positional path on upstream server arg parsers that do not
+    // consult popt for long flags.
+    if config.backup() {
+        flags.push('b');
+    }
     if config.update() {
         flags.push('u');
     }

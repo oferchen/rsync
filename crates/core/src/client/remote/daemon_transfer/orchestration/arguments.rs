@@ -341,9 +341,10 @@ pub(super) fn build_full_daemon_args(
         args.push("--inplace".to_owned());
     }
 
-    // upstream: options.c:2787-2795
+    // upstream: options.c:2630-2631 - `make_backups` rides in the compact
+    // flag string as `b` (added by `build_server_flag_string`). `--backup-dir`
+    // and `--suffix` remain long-form (`options.c:2807,2813`).
     if config.backup() {
-        args.push("--backup".to_owned());
         if let Some(dir) = config.backup_directory() {
             args.push("--backup-dir".to_owned());
             args.push(dir.display().to_string());

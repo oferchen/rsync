@@ -762,9 +762,17 @@ fn includes_backup_related_args() {
     let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
     let args = builder.build("/path");
 
+    // upstream: options.c:2630-2631 - `make_backups` rides in the compact
+    // flag string as `b`, NOT as a standalone `--backup` long arg.
+    let flag_string = find_flag_string(&args);
     assert!(
-        args.iter().any(|a| a == "--backup"),
-        "expected --backup in args: {args:?}"
+        transfer_flags_portion(flag_string).contains('b'),
+        "expected 'b' in transfer flags portion: {flag_string}"
+    );
+    assert!(
+        !args.iter().any(|a| a == "--backup"),
+        "must not emit --backup as a long arg (upstream emits 'b' in flag \
+         string instead, options.c:2630-2631): {args:?}"
     );
     assert!(
         args.iter()
@@ -1920,10 +1928,17 @@ fn partial_dir_also_emits_partial_flag_string() {
 }
 
 #[test]
-fn backup_without_dir_or_suffix_emits_only_backup() {
+fn backup_without_dir_or_suffix_emits_only_b_short_flag() {
     let config = ClientConfig::builder().backup(true).build();
     let args = build_sender_args(&config);
-    assert!(args.iter().any(|a| a == "--backup"));
+    // upstream: options.c:2630-2631 - bare `--backup` is `b` in the compact
+    // flag string, not a standalone long arg.
+    let flag_string = find_flag_string(&args);
+    assert!(
+        transfer_flags_portion(flag_string).contains('b'),
+        "expected 'b' in transfer flags portion: {flag_string}"
+    );
+    assert!(!args.iter().any(|a| a == "--backup"));
     assert!(!args.iter().any(|a| a.starts_with("--backup-dir=")));
     assert!(!args.iter().any(|a| a.starts_with("--suffix=")));
 }
@@ -2076,6 +2091,11 @@ fn omits_backup_args_when_disabled() {
         !args.iter().any(|a| a == "--backup"),
         "should not emit --backup when disabled: {args:?}"
     );
+    let flag_string = find_flag_string(&args);
+    assert!(
+        !transfer_flags_portion(flag_string).contains('b'),
+        "should not contain 'b' in transfer flags when disabled: {flag_string}"
+    );
 }
 
 #[test]
@@ -2215,6 +2235,7 @@ fn all_flags_enabled_produces_valid_invocation() {
         ('y', "fuzzy"),
         ('R', "relative_paths"),
         ('P', "partial"),
+        ('b', "backup"),
         ('u', "update"),
         ('N', "crtimes"),
         ('m', "prune_empty_dirs"),
@@ -2259,7 +2280,6 @@ fn all_flags_enabled_produces_valid_invocation() {
         "--omit-dir-times",
         "--omit-link-times",
         "--delay-updates",
-        "--backup",
         "--copy-devices",
         "--write-devices",
         "--open-noatime",
