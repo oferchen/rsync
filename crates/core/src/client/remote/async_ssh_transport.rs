@@ -215,10 +215,10 @@ fn build_pull_server_config(
 ) -> Result<ServerConfig, ClientError> {
     let mut server_config = build_server_config_for_receiver(config, local_paths)?;
     server_config.connection.client_mode = true;
-    server_config.connection.filter_rules = flags::build_wire_format_rules(config.filter_rules())
-        .map_err(|e| {
-        invalid_argument_error(&format!("failed to build filter rules: {e}"), 12)
-    })?;
+    server_config.connection.filter_rules =
+        flags::build_wire_format_rules(config.filter_rules(), config.delete_excluded()).map_err(
+            |e| invalid_argument_error(&format!("failed to build filter rules: {e}"), 12),
+        )?;
     server_config.stop_at = config.stop_at();
     Ok(server_config)
 }
@@ -229,10 +229,10 @@ fn build_push_server_config(
 ) -> Result<ServerConfig, ClientError> {
     let mut server_config = build_server_config_for_generator(config, local_paths)?;
     server_config.connection.client_mode = true;
-    server_config.connection.filter_rules = flags::build_wire_format_rules(config.filter_rules())
-        .map_err(|e| {
-        invalid_argument_error(&format!("failed to build filter rules: {e}"), 12)
-    })?;
+    server_config.connection.filter_rules =
+        flags::build_wire_format_rules(config.filter_rules(), config.delete_excluded()).map_err(
+            |e| invalid_argument_error(&format!("failed to build filter rules: {e}"), 12),
+        )?;
     server_config.stop_at = config.stop_at();
     Ok(server_config)
 }
