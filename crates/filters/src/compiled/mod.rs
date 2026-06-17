@@ -84,8 +84,7 @@ impl CompiledRule {
         let has_glob_wildcard =
             core_pattern.contains('*') || core_pattern.contains('?') || core_pattern.contains('[');
         let slash_anchored = pattern.starts_with('/');
-        let suppress_descendants =
-            (slash_anchored && has_glob_wildcard) || (has_glob_wildcard && directory_only);
+        let suppress_descendants = has_glob_wildcard && (slash_anchored || directory_only);
         if matches!(
             action,
             FilterAction::Exclude | FilterAction::Protect | FilterAction::Risk
