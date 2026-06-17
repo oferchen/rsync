@@ -33,6 +33,66 @@ pub(crate) fn parse_filter_directive(argument: &OsStr) -> Result<FilterDirective
     parse_rule_directive(trimmed_leading)
 }
 
+/// Parses a line under upstream rsync's `XFLG_OLD_PREFIXES` compatibility mode
+/// used by `--exclude`, `--exclude-from`, `--include`, and `--include-from`.
+///
+/// The only recognized prefixes are `- ` (exclude), `+ ` (include), and `!`
+/// (clear). Everything else is treated as a raw pattern that takes the
+/// `default_kind` (the rule kind associated with the option that introduced
+/// this line). Empty patterns are rejected to match upstream
+/// `exclude.c:parse_rule_tok()` which reports unexpected-end-of-rule.
+///
+/// upstream: exclude.c:parse_rule_tok() XFLG_OLD_PREFIXES branch (lines 1125-1133).
+pub(crate) fn parse_old_prefix_rule(
+    line: &str,
+    default_kind: FilterRuleKind,
+) -> Result<FilterDirective, Message> {
+    debug_assert!(
+        matches!(
+            default_kind,
+            FilterRuleKind::Include | FilterRuleKind::Exclude
+        ),
+        "old-prefix parsing only supports Include or Exclude defaults"
+    );
+
+    if line.is_empty() {
+        let message = rsync_error!(1, "filter rule is empty").with_role(Role::Client);
+        return Err(message);
+    }
+
+    let bytes = line.as_bytes();
+    // upstream: `*s == '!'` triggers FILTRULE_CLEAR_LIST tentatively. Any
+    // trailing non-whitespace then turns the rule back into a pattern, so
+    // we honor `!` (optionally followed by whitespace) as a clear and let
+    // `!pattern` fall through to the default rule kind.
+    if bytes[0] == b'!' && (line.len() == 1 || line[1..].trim().is_empty()) {
+        return Ok(FilterDirective::Clear);
+    }
+
+    let (kind, pattern) = if bytes.len() >= 2 && bytes[1] == b' ' {
+        match bytes[0] {
+            b'-' => (FilterRuleKind::Exclude, &line[2..]),
+            b'+' => (FilterRuleKind::Include, &line[2..]),
+            _ => (default_kind, line),
+        }
+    } else {
+        (default_kind, line)
+    };
+
+    if pattern.is_empty() {
+        let message =
+            rsync_error!(1, "filter rule is missing a pattern: '{}'", line).with_role(Role::Client);
+        return Err(message);
+    }
+
+    let rule = match kind {
+        FilterRuleKind::Include => FilterRuleSpec::include(pattern.to_owned()),
+        FilterRuleKind::Exclude => FilterRuleSpec::exclude(pattern.to_owned()),
+        _ => unreachable!("default_kind is restricted to Include/Exclude above"),
+    };
+    Ok(FilterDirective::Rule(rule))
+}
+
 fn parse_long_merge_directive(text: &str) -> Option<Result<FilterDirective, Message>> {
     let remainder = text.strip_prefix("merge")?;
     let mut remainder =
@@ -784,5 +844,95 @@ mod tests {
             }
             _ => panic!("expected Rule directive"),
         }
+    }
+
+    #[test]
+    fn old_prefix_minus_space_flips_to_exclude() {
+        let result = parse_old_prefix_rule("- to", FilterRuleKind::Include).unwrap();
+        match result {
+            FilterDirective::Rule(spec) => {
+                assert_eq!(spec.kind(), FilterRuleKind::Exclude);
+                assert_eq!(spec.pattern(), "to");
+            }
+            other => panic!("expected Rule, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn old_prefix_plus_space_flips_to_include() {
+        let result = parse_old_prefix_rule("+ *.rs", FilterRuleKind::Exclude).unwrap();
+        match result {
+            FilterDirective::Rule(spec) => {
+                assert_eq!(spec.kind(), FilterRuleKind::Include);
+                assert_eq!(spec.pattern(), "*.rs");
+            }
+            other => panic!("expected Rule, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn old_prefix_bang_emits_clear() {
+        assert!(matches!(
+            parse_old_prefix_rule("!", FilterRuleKind::Exclude).unwrap(),
+            FilterDirective::Clear
+        ));
+        assert!(matches!(
+            parse_old_prefix_rule("!   ", FilterRuleKind::Exclude).unwrap(),
+            FilterDirective::Clear
+        ));
+    }
+
+    #[test]
+    fn old_prefix_bang_with_pattern_is_raw_pattern() {
+        // upstream: `!pattern` (no space) is NOT a clear - it's the raw
+        // pattern because XFLG_OLD_PREFIXES only recognizes `!` as clear
+        // when followed by whitespace or end-of-line.
+        let result = parse_old_prefix_rule("!keepme", FilterRuleKind::Exclude).unwrap();
+        match result {
+            FilterDirective::Rule(spec) => {
+                assert_eq!(spec.kind(), FilterRuleKind::Exclude);
+                assert_eq!(spec.pattern(), "!keepme");
+            }
+            other => panic!("expected Rule, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn old_prefix_bare_pattern_uses_default_kind() {
+        let result = parse_old_prefix_rule("*.log", FilterRuleKind::Include).unwrap();
+        match result {
+            FilterDirective::Rule(spec) => {
+                assert_eq!(spec.kind(), FilterRuleKind::Include);
+                assert_eq!(spec.pattern(), "*.log");
+            }
+            other => panic!("expected Rule, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn old_prefix_minus_without_space_is_raw_pattern() {
+        // upstream: `-` without a trailing space is not the exclude prefix -
+        // it's a literal pattern character. Same for `+`.
+        let result = parse_old_prefix_rule("-foo", FilterRuleKind::Exclude).unwrap();
+        match result {
+            FilterDirective::Rule(spec) => {
+                assert_eq!(spec.kind(), FilterRuleKind::Exclude);
+                assert_eq!(spec.pattern(), "-foo");
+            }
+            other => panic!("expected Rule, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn old_prefix_empty_is_error() {
+        assert!(parse_old_prefix_rule("", FilterRuleKind::Exclude).is_err());
+    }
+
+    #[test]
+    fn old_prefix_short_prefix_only_is_error() {
+        // upstream: `parse_rule_tok` reports "unexpected end of filter rule"
+        // when no pattern follows the prefix.
+        assert!(parse_old_prefix_rule("- ", FilterRuleKind::Include).is_err());
+        assert!(parse_old_prefix_rule("+ ", FilterRuleKind::Exclude).is_err());
     }
 }

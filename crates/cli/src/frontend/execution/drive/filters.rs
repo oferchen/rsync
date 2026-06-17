@@ -6,13 +6,14 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use core::client::{ClientConfigBuilder, DirMergeOptions, FilterRuleKind, FilterRuleSpec};
+use core::message::Message;
 use logging_sink::MessageSink;
 
 use super::messages::fail_with_message;
 use crate::frontend::filter_rules::{
     FilterDirective, append_apple_double_exclude_rules, append_cvs_exclude_rules,
     append_filter_rules_from_files, apply_merge_directive, merge_directive_options,
-    os_string_to_pattern, parse_filter_directive,
+    os_string_to_pattern, parse_filter_directive, parse_old_prefix_rule,
 };
 
 /// Filter configuration supplied by the command line.
@@ -44,12 +45,13 @@ where
         return Err(fail_with_message(message, stderr));
     }
 
-    filter_rules.extend(
-        inputs
-            .includes
-            .into_iter()
-            .map(|pattern| FilterRuleSpec::include(os_string_to_pattern(pattern))),
-    );
+    for pattern in inputs.includes {
+        if let Err(message) =
+            push_old_prefix_rule(&mut filter_rules, pattern, FilterRuleKind::Include)
+        {
+            return Err(fail_with_message(message, stderr));
+        }
+    }
 
     if let Err(message) = append_filter_rules_from_files(
         &mut filter_rules,
@@ -59,12 +61,13 @@ where
         return Err(fail_with_message(message, stderr));
     }
 
-    filter_rules.extend(
-        inputs
-            .excludes
-            .into_iter()
-            .map(|pattern| FilterRuleSpec::exclude(os_string_to_pattern(pattern))),
-    );
+    for pattern in inputs.excludes {
+        if let Err(message) =
+            push_old_prefix_rule(&mut filter_rules, pattern, FilterRuleKind::Exclude)
+        {
+            return Err(fail_with_message(message, stderr));
+        }
+    }
 
     if inputs.cvs_exclude
         && let Err(message) = append_cvs_exclude_rules(&mut filter_rules)
@@ -106,4 +109,27 @@ where
     }
 
     Ok(builder)
+}
+
+/// Adds a CLI-supplied `--exclude`/`--include` pattern to `destination`,
+/// honoring upstream's `XFLG_OLD_PREFIXES` compatibility mode.
+///
+/// upstream: options.c:1512-1519 routes `--exclude`/`--include` through
+/// `parse_filter_str(..., XFLG_OLD_PREFIXES)`, so a value of `- pat` (or
+/// `+ pat`) flips the rule kind and `!` clears the list. Plain patterns
+/// retain `default_kind`.
+fn push_old_prefix_rule(
+    destination: &mut Vec<FilterRuleSpec>,
+    pattern: OsString,
+    default_kind: FilterRuleKind,
+) -> Result<(), Message> {
+    let text = os_string_to_pattern(pattern);
+    match parse_old_prefix_rule(&text, default_kind)? {
+        FilterDirective::Rule(rule) => destination.push(rule),
+        FilterDirective::Clear => destination.push(FilterRuleSpec::clear()),
+        FilterDirective::Merge(_) => {
+            unreachable!("parse_old_prefix_rule never emits FilterDirective::Merge")
+        }
+    }
+    Ok(())
 }
