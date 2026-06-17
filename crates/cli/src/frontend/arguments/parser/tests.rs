@@ -901,3 +901,52 @@ fn reflink_never_matches_no_cow() {
     let from_binary = parse_test_args(["--no-cow", "src/", "dst/"]).expect("parse binary form");
     assert_eq!(from_reflink.cow_policy, from_binary.cow_policy);
 }
+
+/// upstream: `testsuite/exclude.test:173` uses `-f:C` to inject the
+/// dir-merge .cvsignore rule via the packed short-arg form. Verify the
+/// pre-Clap expansion routes `:C` through to the filter list as the rule.
+#[test]
+fn filter_short_arg_packed_colon_rule() {
+    let parsed = parse_test_args(["-f:C", "src/", "dst/"]).expect("parse -f:C");
+    assert_eq!(parsed.filters, vec![std::ffi::OsString::from(":C")]);
+}
+
+/// `-f-C` is the packed spelling for `-f` with value `-C` (cvs-style
+/// exclude). It must round-trip through the parser without being mistaken
+/// for an unknown option or the `-C` short.
+#[test]
+fn filter_short_arg_packed_dash_rule() {
+    let parsed = parse_test_args(["-f-C", "src/", "dst/"]).expect("parse -f-C");
+    assert_eq!(parsed.filters, vec![std::ffi::OsString::from("-C")]);
+    assert!(!parsed.cvs_exclude);
+}
+
+/// Spaced form `-f :C` must produce the same filter rule as the packed form.
+#[test]
+fn filter_short_arg_spaced_colon_rule() {
+    let parsed = parse_test_args(["-f", ":C", "src/", "dst/"]).expect("parse -f :C");
+    assert_eq!(parsed.filters, vec![std::ffi::OsString::from(":C")]);
+}
+
+/// Combined invocation from `testsuite/exclude.test`: `-f:C -f-C` injects
+/// the two cvs-exclude filter rules in order.
+#[test]
+fn filter_short_arg_packed_pair_matches_exclude_test() {
+    let parsed = parse_test_args(["-f:C", "-f-C", "src/", "dst/"]).expect("parse -f:C -f-C");
+    assert_eq!(
+        parsed.filters,
+        vec![
+            std::ffi::OsString::from(":C"),
+            std::ffi::OsString::from("-C"),
+        ]
+    );
+}
+
+/// `-f:C` may also appear inside a flag cluster (`-avvf:C`). The leading
+/// flags are split out and the trailing value option keeps its packed rule.
+#[test]
+fn filter_short_arg_packed_inside_flag_cluster() {
+    let parsed = parse_test_args(["-avvf:C", "src/", "dst/"]).expect("parse -avvf:C");
+    assert_eq!(parsed.filters, vec![std::ffi::OsString::from(":C")]);
+    assert!(parsed.archive);
+}
