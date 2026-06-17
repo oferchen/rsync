@@ -15,8 +15,9 @@ use super::ActiveCompressor;
 use super::buffer_pool::{BufferPool, global_buffer_pool};
 use super::deferred_sync::{DeferredSync, SyncStrategy};
 use super::filter_program::{
-    ExcludeIfPresentLayers, ExcludeIfPresentStack, FilterContext, FilterProgram, FilterSegment,
-    FilterSegmentLayers, FilterSegmentStack, directory_has_marker,
+    ExcludeIfPresentLayers, ExcludeIfPresentRule, ExcludeIfPresentStack, FilterContext,
+    FilterOutcome, FilterProgram, FilterSegment, FilterSegmentLayers, FilterSegmentStack,
+    directory_has_marker,
 };
 
 #[cfg(all(any(unix, windows), feature = "acl"))]
@@ -30,7 +31,7 @@ use super::{
     CopyComparison, DeleteTiming, DestinationWriteGuard, HardLinkTracker, LocalCopyAction,
     LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, LocalCopyExecution,
     LocalCopyMetadata, LocalCopyOptions, LocalCopyProgress, LocalCopyRecord,
-    LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary, ReferenceDirectory,
+    LocalCopyRecordHandler, LocalCopyReport, LocalCopySummary, NestedDirMerge, ReferenceDirectory,
     SparseWriteState, SparseWriter, compute_backup_path, copy_entry_to_backup,
     delete_extraneous_entries, filter_program_local_error, follow_symlink_metadata,
     load_dir_merge_rules_recursive, map_metadata_error, remove_source_entry_if_requested,
@@ -92,6 +93,19 @@ pub(crate) struct CopyContext<'a> {
     observer: Option<&'a mut dyn LocalCopyRecordHandler>,
     dir_merge_ephemeral: Rc<RefCell<FilterSegmentStack>>,
     dir_merge_marker_ephemeral: Rc<RefCell<ExcludeIfPresentStack>>,
+    /// Per-directory stack of dynamic `dir-merge` rules registered while
+    /// loading parent per-directory merge files.
+    ///
+    /// upstream: exclude.c:1419-1428 - `dir-merge .filt2` inside `bar/.filt`
+    /// registers `.filt2` for lookup in every subdirectory entered beneath
+    /// `bar/`. Each stack frame matches one `enter_directory_for_path` call:
+    /// the frame's `active_rules` is the cumulative set inherited from the
+    /// parent frame plus any rules newly registered while processing the
+    /// current directory's merge files. `loaded_segments` and
+    /// `loaded_markers` are the segments / markers produced by looking up
+    /// the active rules against the current directory. The
+    /// [`DirectoryFilterGuard`] pops the frame on drop.
+    dynamic_dir_merge_stack: Rc<RefCell<Vec<DynamicDirMergeFrame>>>,
     deferred_ops: DeferredOperationQueue,
     timeout: Option<Duration>,
     stop_deadline: Option<Instant>,
@@ -430,6 +444,27 @@ include!("context_impl/transfer.rs");
 include!("context_impl/delta_transfer.rs");
 include!("context_impl/reporting.rs");
 
+/// Per-directory frame for runtime-registered `dir-merge` rules.
+///
+/// upstream: exclude.c:1419-1428 - tracks the cumulative set of nested
+/// `dir-merge` directives that are active at the current traversal depth
+/// (`active_rules`), and the segments / markers produced by looking those
+/// rules up against the directory being entered (`loaded_segments` and
+/// `loaded_markers`). The frame is pushed by `enter_directory_for_path` and
+/// popped by [`DirectoryFilterGuard`].
+#[derive(Clone, Debug, Default)]
+pub(crate) struct DynamicDirMergeFrame {
+    /// All dynamic dir-merge rules active at this depth, inherited from the
+    /// parent frame plus rules newly registered while loading this
+    /// directory's merge files.
+    pub(crate) active_rules: Vec<NestedDirMerge>,
+    /// Filter segments loaded by resolving `active_rules` against the
+    /// current directory's filesystem entries.
+    pub(crate) loaded_segments: Vec<FilterSegment>,
+    /// `exclude-if-present` markers loaded from the same files.
+    pub(crate) loaded_markers: Vec<ExcludeIfPresentRule>,
+}
+
 /// Shared references to the layered filter stacks, used by
 /// [`DirectoryFilterGuard`] to push and pop per-directory filter rules.
 #[derive(Clone)]
@@ -438,6 +473,7 @@ struct DirectoryFilterHandles {
     marker_layers: Rc<RefCell<ExcludeIfPresentLayers>>,
     ephemeral: Rc<RefCell<FilterSegmentStack>>,
     marker_ephemeral: Rc<RefCell<ExcludeIfPresentStack>>,
+    dynamic: Rc<RefCell<Vec<DynamicDirMergeFrame>>>,
 }
 
 /// RAII guard that reverts per-directory filter rules when dropped.
@@ -450,6 +486,7 @@ pub(crate) struct DirectoryFilterGuard {
     indices: Vec<usize>,
     marker_counts: Vec<(usize, usize)>,
     ephemeral_active: bool,
+    dynamic_active: bool,
     excluded: bool,
 }
 
@@ -459,6 +496,7 @@ impl DirectoryFilterGuard {
         indices: Vec<usize>,
         marker_counts: Vec<(usize, usize)>,
         ephemeral_active: bool,
+        dynamic_active: bool,
         excluded: bool,
     ) -> Self {
         Self {
@@ -466,6 +504,7 @@ impl DirectoryFilterGuard {
             indices,
             marker_counts,
             ephemeral_active,
+            dynamic_active,
             excluded,
         }
     }
@@ -478,6 +517,11 @@ impl DirectoryFilterGuard {
 
 impl Drop for DirectoryFilterGuard {
     fn drop(&mut self) {
+        if self.dynamic_active {
+            let mut stack = self.handles.dynamic.borrow_mut();
+            stack.pop();
+        }
+
         if self.ephemeral_active {
             let mut stack = self.handles.ephemeral.borrow_mut();
             stack.pop();

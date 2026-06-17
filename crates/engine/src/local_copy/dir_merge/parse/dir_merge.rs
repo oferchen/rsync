@@ -119,9 +119,9 @@ pub(super) fn parse_dir_merge_directive(
         remainder
     };
 
-    Ok(Some(ParsedFilterDirective::Merge {
-        path: PathBuf::from(path_text),
-        options: Some(options),
+    Ok(Some(ParsedFilterDirective::DirMerge {
+        pattern: PathBuf::from(path_text),
+        options,
     }))
 }
 
@@ -157,11 +157,10 @@ mod tests {
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
-            ParsedFilterDirective::Merge { path, options } => {
-                assert_eq!(path, PathBuf::from(".rsync-filter"));
-                assert!(options.is_some());
+            ParsedFilterDirective::DirMerge { pattern, .. } => {
+                assert_eq!(pattern, PathBuf::from(".rsync-filter"));
             }
-            _ => panic!("expected Merge directive"),
+            _ => panic!("expected DirMerge directive"),
         }
     }
 
@@ -171,11 +170,10 @@ mod tests {
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
-            ParsedFilterDirective::Merge { path, options } => {
-                assert_eq!(path, PathBuf::from(".rsync-filter"));
-                assert!(options.is_some());
+            ParsedFilterDirective::DirMerge { pattern, .. } => {
+                assert_eq!(pattern, PathBuf::from(".rsync-filter"));
             }
-            _ => panic!("expected Merge directive"),
+            _ => panic!("expected DirMerge directive"),
         }
     }
 
@@ -185,10 +183,10 @@ mod tests {
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
-            ParsedFilterDirective::Merge { path, .. } => {
-                assert_eq!(path, PathBuf::from(".rsync-filter"));
+            ParsedFilterDirective::DirMerge { pattern, .. } => {
+                assert_eq!(pattern, PathBuf::from(".rsync-filter"));
             }
-            _ => panic!("expected Merge directive"),
+            _ => panic!("expected DirMerge directive"),
         }
     }
 
@@ -198,12 +196,11 @@ mod tests {
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
-            ParsedFilterDirective::Merge { path, options } => {
-                assert_eq!(path, PathBuf::from(".rsync-filter"));
-                let opts = options.unwrap();
-                assert!(!opts.inherit_rules());
+            ParsedFilterDirective::DirMerge { pattern, options } => {
+                assert_eq!(pattern, PathBuf::from(".rsync-filter"));
+                assert!(!options.inherit_rules());
             }
-            _ => panic!("expected Merge directive"),
+            _ => panic!("expected DirMerge directive"),
         }
     }
 
@@ -213,11 +210,10 @@ mod tests {
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
-            ParsedFilterDirective::Merge { options, .. } => {
-                let opts = options.unwrap();
-                assert!(opts.excludes_self());
+            ParsedFilterDirective::DirMerge { options, .. } => {
+                assert!(options.excludes_self());
             }
-            _ => panic!("expected Merge directive"),
+            _ => panic!("expected DirMerge directive"),
         }
     }
 
@@ -227,11 +223,10 @@ mod tests {
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
-            ParsedFilterDirective::Merge { options, .. } => {
-                let opts = options.unwrap();
-                assert_eq!(opts.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
+            ParsedFilterDirective::DirMerge { options, .. } => {
+                assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
             }
-            _ => panic!("expected Merge directive"),
+            _ => panic!("expected DirMerge directive"),
         }
     }
 
@@ -241,11 +236,10 @@ mod tests {
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
-            ParsedFilterDirective::Merge { options, .. } => {
-                let opts = options.unwrap();
-                assert_eq!(opts.enforced_kind(), Some(DirMergeEnforcedKind::Include));
+            ParsedFilterDirective::DirMerge { options, .. } => {
+                assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Include));
             }
-            _ => panic!("expected Merge directive"),
+            _ => panic!("expected DirMerge directive"),
         }
     }
 
@@ -279,12 +273,11 @@ mod tests {
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
-            ParsedFilterDirective::Merge { path, options } => {
-                assert_eq!(path, PathBuf::from(".cvsignore"));
-                let opts = options.unwrap();
-                assert_eq!(opts.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
+            ParsedFilterDirective::DirMerge { pattern, options } => {
+                assert_eq!(pattern, PathBuf::from(".cvsignore"));
+                assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
             }
-            _ => panic!("expected Merge directive"),
+            _ => panic!("expected DirMerge directive"),
         }
     }
 
@@ -294,12 +287,11 @@ mod tests {
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
-            ParsedFilterDirective::Merge { options, .. } => {
-                let opts = options.unwrap();
-                assert!(!opts.inherit_rules());
-                assert!(opts.excludes_self());
+            ParsedFilterDirective::DirMerge { options, .. } => {
+                assert!(!options.inherit_rules());
+                assert!(options.excludes_self());
             }
-            _ => panic!("expected Merge directive"),
+            _ => panic!("expected DirMerge directive"),
         }
     }
 }

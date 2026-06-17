@@ -65,6 +65,22 @@ pub(crate) fn apply_dir_merge_rule_defaults(
     rule
 }
 
+/// Nested per-directory merge declaration encountered while loading another
+/// filter file.
+///
+/// upstream: exclude.c:1419-1428 - a `dir-merge` directive inside a merge file
+/// registers a new per-directory merge rule whose filename gets looked up in
+/// every subdirectory subsequently entered. The rule is NOT expanded against
+/// the enclosing file's directory.
+#[derive(Clone, Debug)]
+pub(crate) struct NestedDirMerge {
+    /// Bare merge-file name to look up in each subdirectory entered beneath
+    /// the scope where this directive appeared.
+    pub(crate) pattern: PathBuf,
+    /// Parser configuration for the registered per-directory merge rule.
+    pub(crate) options: DirMergeOptions,
+}
+
 /// Accumulated rules and `exclude-if-present` markers loaded from a single
 /// per-directory merge file (and any files it transitively merges).
 #[derive(Default)]
@@ -73,6 +89,9 @@ pub(crate) struct DirMergeEntries {
     pub(crate) rules: Vec<FilterRule>,
     /// `exclude-if-present` marker rules parsed from the merge file.
     pub(crate) exclude_if_present: Vec<ExcludeIfPresentRule>,
+    /// Nested `dir-merge`/`:` declarations to register as per-directory rules
+    /// for subsequent subdirectory traversal.
+    pub(crate) nested_dir_merges: Vec<NestedDirMerge>,
     /// Indicates a clear directive was encountered, meaning inherited rules
     /// from parent directories should also be cleared.
     pub(crate) clear_inherited: bool,
@@ -87,6 +106,10 @@ impl DirMergeEntries {
         self.exclude_if_present.push(rule);
     }
 
+    fn push_nested_dir_merge(&mut self, nested: NestedDirMerge) {
+        self.nested_dir_merges.push(nested);
+    }
+
     /// Merges another set of entries into this one.
     ///
     /// A `clear_inherited` flag in the nested entries propagates to this set,
@@ -97,11 +120,13 @@ impl DirMergeEntries {
         if other.clear_inherited {
             self.rules.clear();
             self.exclude_if_present.clear();
+            self.nested_dir_merges.clear();
             self.clear_inherited = true;
         }
         self.rules.append(&mut other.rules);
         self.exclude_if_present
             .append(&mut other.exclude_if_present);
+        self.nested_dir_merges.append(&mut other.nested_dir_merges);
     }
 }
 
@@ -207,6 +232,7 @@ pub(crate) fn load_dir_merge_rules_recursive(
                     Ok(Some(ParsedFilterDirective::Clear)) => {
                         entries.rules.clear();
                         entries.exclude_if_present.clear();
+                        entries.nested_dir_merges.clear();
                         entries.clear_inherited = true;
                     }
                     Ok(Some(ParsedFilterDirective::Merge {
@@ -231,6 +257,18 @@ pub(crate) fn load_dir_merge_rules_recursive(
                                 load_dir_merge_rules_recursive(&nested, options, visited)?;
                             entries.extend(nested_entries);
                         }
+                    }
+                    Ok(Some(ParsedFilterDirective::DirMerge {
+                        pattern,
+                        options: merge_options,
+                    })) => {
+                        // upstream: exclude.c:1419-1428 - register the merge
+                        // filename for lookup in each subdirectory; do NOT
+                        // load anything from the enclosing file's directory.
+                        entries.push_nested_dir_merge(NestedDirMerge {
+                            pattern,
+                            options: merge_options,
+                        });
                     }
                     Ok(None) => {}
                     Err(error) => return Err(map_error(error)),
@@ -303,9 +341,22 @@ pub(crate) fn load_dir_merge_rules_recursive(
                             entries.extend(nested_entries);
                         }
                     }
+                    Ok(Some(ParsedFilterDirective::DirMerge {
+                        pattern,
+                        options: merge_options,
+                    })) => {
+                        // upstream: exclude.c:1419-1428 - register the merge
+                        // filename for lookup in each subdirectory; do NOT
+                        // load anything from the enclosing file's directory.
+                        entries.push_nested_dir_merge(NestedDirMerge {
+                            pattern,
+                            options: merge_options,
+                        });
+                    }
                     Ok(Some(ParsedFilterDirective::Clear)) => {
                         entries.rules.clear();
                         entries.exclude_if_present.clear();
+                        entries.nested_dir_merges.clear();
                         entries.clear_inherited = true;
                     }
                     Ok(None) => {}

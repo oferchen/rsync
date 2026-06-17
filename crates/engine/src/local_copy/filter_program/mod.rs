@@ -24,9 +24,6 @@ pub(crate) use rules::directory_has_marker;
 pub use rules::{DirMergeRule, ExcludeIfPresentRule};
 
 pub(crate) use segments::{
-    ExcludeIfPresentLayers, ExcludeIfPresentStack, FilterContext, FilterSegment,
+    ExcludeIfPresentLayers, ExcludeIfPresentStack, FilterContext, FilterOutcome, FilterSegment,
     FilterSegmentLayers, FilterSegmentStack,
 };
-
-#[cfg(test)]
-pub(crate) use segments::FilterOutcome;
