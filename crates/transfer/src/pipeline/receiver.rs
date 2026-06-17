@@ -163,6 +163,7 @@ impl PipelinedReceiver {
             match self.result_rx.try_recv() {
                 Ok(Ok(result)) => {
                     self.collect_delayed_update(&result);
+                    Self::emit_backup_notice(&result);
                     self.verify_checksum(&result)?;
                     bytes += result.bytes_written;
                     if let Some(err) = result.metadata_error {
@@ -223,6 +224,7 @@ impl PipelinedReceiver {
             match self.result_rx.recv() {
                 Ok(Ok(result)) => {
                     self.collect_delayed_update(&result);
+                    Self::emit_backup_notice(&result);
                     self.verify_checksum(&result)?;
                     bytes += result.bytes_written;
                     if let Some(err) = result.metadata_error {
@@ -328,6 +330,30 @@ impl PipelinedReceiver {
                 self.delayed_updates
                     .push((staged.clone(), pending.file_path.clone()));
             }
+        }
+    }
+
+    /// Emit the upstream `INFO_GTE(BACKUP, 1)` line for a successful
+    /// `--backup` rename produced by the disk thread.
+    ///
+    /// The disk thread cannot emit this line itself because its thread-local
+    /// [`logging::VerbosityConfig`] is never seeded with the user's
+    /// `--info=backup` selection. Instead, [`crate::disk_commit::make_backup`]
+    /// records destination-relative paths on the [`CommitResult`] and the
+    /// main thread surfaces them here, so the `info_log!` guard runs against
+    /// the correct verbosity configuration.
+    ///
+    /// upstream: backup.c:352 - `rprintf(FINFO, "backed up %s to %s\n",
+    /// fname, buf)` on the `success:` label of `make_backup()`.
+    fn emit_backup_notice(result: &CommitResult) {
+        if let Some(ref notice) = result.backup_notice {
+            logging::info_log!(
+                Backup,
+                1,
+                "backed up {} to {}",
+                notice.original.display(),
+                notice.backup.display()
+            );
         }
     }
 
@@ -544,6 +570,7 @@ mod tests {
                 len: 4,
             }),
             delayed_path: None,
+            backup_notice: None,
         };
 
         // In phase 1 (redo_enabled=true), this should NOT return an error.
@@ -592,6 +619,7 @@ mod tests {
                 len: 4,
             }),
             delayed_path: None,
+            backup_notice: None,
         };
 
         // In phase 2, mismatch should still return Ok (error is logged, not fatal).
@@ -630,6 +658,7 @@ mod tests {
                 len: 4,
             }),
             delayed_path: None,
+            backup_notice: None,
         };
 
         pr.verify_checksum(&result).unwrap();
@@ -749,6 +778,7 @@ mod tests {
             metadata_error: None,
             computed_checksum: None,
             delayed_path: Some(PathBuf::from("/dest/.~tmp~/file.txt")),
+            backup_notice: None,
         };
 
         pr.collect_delayed_update(&result);
