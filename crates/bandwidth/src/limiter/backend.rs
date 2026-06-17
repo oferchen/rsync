@@ -60,7 +60,7 @@ pub enum SleepBackend {
 
 /// Active sleep backend for this process.
 ///
-/// Initialised on first call to [`sleep_with_backend`]; the value is
+/// Initialised on first call to `sleep_with_backend`; the value is
 /// fixed for the rest of the process. Reading the active backend is
 /// useful for diagnostics and for the Darwin-only regression test
 /// that asserts the kqueue path is exercised.

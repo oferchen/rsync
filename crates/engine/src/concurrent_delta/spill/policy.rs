@@ -89,7 +89,7 @@ pub enum SpillReclaim {
 /// Optional compression applied to spilled payloads.
 ///
 /// [`SpillCompression::None`] (the default) writes raw encoded bytes, which
-/// is what the existing on-disk format uses. [`SpillCompression::Zstd`] is
+/// is what the existing on-disk format uses. `SpillCompression::Zstd` is
 /// only constructable behind the `spill-compression` feature; this keeps
 /// the default builds free of the codec dependency while leaving the enum
 /// extensible.

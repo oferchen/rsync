@@ -152,7 +152,7 @@ impl From<ParallelApplyError> for io::Error {
 /// per-file sequence number assigned at submission time.
 ///
 /// Chunks are CPU-light at this stage; the heavy step is the strong-checksum
-/// rollup that [`ParallelDeltaApplier::verify_chunk`] runs on a rayon worker
+/// rollup that `ParallelDeltaApplier::verify_chunk` runs on a rayon worker
 /// using the negotiated [`ChecksumStrategy`].
 #[derive(Debug, Clone)]
 pub struct DeltaChunk {
@@ -172,7 +172,7 @@ pub struct DeltaChunk {
     pub is_literal: bool,
     /// Optional expected strong-checksum digest for `data`.
     ///
-    /// When `Some`, [`ParallelDeltaApplier::verify_chunk`] computes the
+    /// When `Some`, `ParallelDeltaApplier::verify_chunk` computes the
     /// digest of `data` using the negotiated strategy and compares it
     /// byte-for-byte against this value. A mismatch produces a typed
     /// [`ParallelApplyError::ChecksumMismatch`] so the receiver can fall
@@ -217,7 +217,7 @@ impl DeltaChunk {
     /// digest to this chunk.
     ///
     /// The receiver pipeline uses this to opt each chunk into real
-    /// per-chunk verification by [`ParallelDeltaApplier::verify_chunk`].
+    /// per-chunk verification by `ParallelDeltaApplier::verify_chunk`.
     /// Callers that have not negotiated per-chunk checksums (or are
     /// driving the applier from a bench/test that does not need the
     /// extra comparison) can leave the field unset.
@@ -493,7 +493,7 @@ impl ParallelDeltaApplier {
     ///
     /// Operators can override this default (and any future adaptive sizing)
     /// by exporting `OC_RSYNC_REORDER_RING_CAP` to a positive integer; see
-    /// [`ring_cap_env`] for the parser contract and ROB-11 (#3678) for the
+    /// `ring_cap_env` for the parser contract and ROB-11 (#3678) for the
     /// rationale.
     pub const DEFAULT_PER_FILE_REORDER_CAPACITY: usize = 64;
 
@@ -529,7 +529,7 @@ impl ParallelDeltaApplier {
     /// default `available_parallelism() * 4`. The heuristic
     /// (`(concurrency * 4).next_power_of_two().clamp(4, 1024)`) trades the
     /// default's CPU-relative sizing for one that tracks the applier's
-    /// worker fan-out. See [`shard_sizing`] and
+    /// worker fan-out. See `shard_sizing` and
     /// `docs/design/dmc-con-adaptive-sharding.md` for the rationale, and
     /// the `OC_RSYNC_DASHMAP_SHARDS` env override for tuning.
     ///
@@ -538,7 +538,7 @@ impl ParallelDeltaApplier {
     /// The per-file reorder-ring capacity defaults to
     /// [`Self::DEFAULT_PER_FILE_REORDER_CAPACITY`] but is overridden when
     /// `OC_RSYNC_REORDER_RING_CAP` is set to a positive integer. The env
-    /// var is read once per process via [`ring_cap_env`] and applies to
+    /// var is read once per process via `ring_cap_env` and applies to
     /// every applier constructed afterwards, including ones built via
     /// [`Self::new`]. Callers that need a per-instance override should
     /// chain [`Self::with_per_file_reorder_capacity`] after construction
@@ -603,9 +603,9 @@ impl ParallelDeltaApplier {
     /// events observed since the applier was constructed (ROB-2, #3667).
     ///
     /// Granularity-invariant: one increment per
-    /// [`IngestError::ReorderSaturated`] regardless of which file
+    /// `IngestError::ReorderSaturated` regardless of which file
     /// produced it. Pairs with the ROB-3 one-shot warning emitted by
-    /// [`Self::note_reorder_saturation`].
+    /// `Self::note_reorder_saturation`.
     #[must_use]
     pub fn reorder_saturations(&self) -> u64 {
         self.reorder_saturations.load(Ordering::Relaxed)

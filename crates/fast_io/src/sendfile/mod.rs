@@ -169,7 +169,7 @@ pub fn send_file_to_fd(source: &File, dest_fd: i32, length: u64) -> io::Result<u
 
 /// macOS dispatch - prefers Darwin's native `sendfile(2)` for sockets.
 ///
-/// Above [`SENDFILE_THRESHOLD`] the function attempts a zero-copy transfer
+/// Above `SENDFILE_THRESHOLD` the function attempts a zero-copy transfer
 /// via `try_sendfile_macos`. The Darwin `sendfile` only accepts socket
 /// destinations, so a non-socket `dest_fd` (pipe, regular file) falls back
 /// to the buffered `read`/`write` loop transparently.

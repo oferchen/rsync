@@ -24,7 +24,7 @@
 //! # Cross-platform
 //!
 //! [`sendfile_macos`] compiles unconditionally. On non-macOS targets
-//! it returns [`io::ErrorKind::Unsupported`] so call sites can be
+//! it returns `io::ErrorKind::Unsupported` so call sites can be
 //! written without `#[cfg]` gates.
 
 use std::fmt;
@@ -43,7 +43,7 @@ use std::os::fd::BorrowedFd;
 /// without re-querying the socket.
 ///
 /// Extract via [`io::Error::get_ref`] and
-/// [`std::error::Error::downcast_ref`].
+/// `<dyn std::error::Error>::downcast_ref::<PartialSend>()`.
 #[derive(Debug, Clone, Copy)]
 pub struct PartialSend {
     /// Bytes delivered to the destination before the would-block fired.
