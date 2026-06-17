@@ -374,6 +374,203 @@ mod tests {
         );
     }
 
+    /// Mirrors upstream `testsuite/backup.test:27-33` (`--no-whole-file
+    /// --backup` without `--backup-dir`). With `backup_dir = None` and a
+    /// `~` suffix, the existing destination must be renamed alongside the
+    /// original (`name1` -> `name1~`), and the staged update must land at
+    /// the original path. Upstream emits `backed up name1 to name1~`.
+    #[test]
+    fn handle_delayed_updates_backs_up_in_place_with_suffix_only() {
+        use crate::disk_commit::BackupConfig;
+        use std::ffi::OsString;
+
+        let dir = test_support::create_tempdir();
+        let dest_root = dir.path();
+
+        let staging_dir = dest_root.join(".~tmp~");
+        fs::create_dir(&staging_dir).unwrap();
+        let staged = staging_dir.join("name1");
+        fs::write(&staged, b"new-content").unwrap();
+
+        let final_path = dest_root.join("name1");
+        fs::write(&final_path, b"old-content").unwrap();
+
+        let backup_config = BackupConfig {
+            dest_dir: dest_root.to_path_buf(),
+            backup_dir: None,
+            suffix: OsString::from("~"),
+        };
+
+        handle_delayed_updates(&[(staged.clone(), final_path.clone())], Some(backup_config));
+
+        assert_eq!(
+            fs::read_to_string(&final_path).unwrap(),
+            "new-content",
+            "staged file must replace destination after in-place backup"
+        );
+        let backup_path = dest_root.join("name1~");
+        assert_eq!(
+            fs::read_to_string(&backup_path).unwrap(),
+            "old-content",
+            "pre-existing destination must be renamed to <name><suffix> in \
+             the same directory when no --backup-dir is set"
+        );
+    }
+
+    /// Mirrors upstream `testsuite/backup.test:38-45` (`--backup-dir=bakdir`
+    /// with nested source path `deep/name1`). The backup hierarchy must
+    /// mirror the source layout: `deep/name1` -> `bakdir/deep/name1~`.
+    /// Upstream's `copy_valid_path()` creates missing parents; oc-rsync's
+    /// `handle_delayed_updates` relies on `create_dir_all(parent)` for the
+    /// same effect.
+    #[test]
+    fn handle_delayed_updates_creates_intermediate_backup_dirs() {
+        use crate::disk_commit::BackupConfig;
+        use std::ffi::OsString;
+
+        let dir = test_support::create_tempdir();
+        let dest_root = dir.path();
+        let backup_root = dest_root.join("bak");
+        fs::create_dir(&backup_root).unwrap();
+
+        let deep_dest = dest_root.join("deep");
+        fs::create_dir(&deep_dest).unwrap();
+        let final_path = deep_dest.join("name1");
+        fs::write(&final_path, b"old-content").unwrap();
+
+        let staging_dir = dest_root.join(".~tmp~");
+        fs::create_dir(&staging_dir).unwrap();
+        let staged = staging_dir.join("name1");
+        fs::write(&staged, b"new-content").unwrap();
+
+        let backup_config = BackupConfig {
+            dest_dir: dest_root.to_path_buf(),
+            backup_dir: Some(backup_root.clone()),
+            suffix: OsString::from("~"),
+        };
+
+        handle_delayed_updates(&[(staged.clone(), final_path.clone())], Some(backup_config));
+
+        let backup_path = backup_root.join("deep").join("name1~");
+        assert!(
+            backup_path.exists(),
+            "backup_dir must mirror the source hierarchy: {} should exist",
+            backup_path.display()
+        );
+        assert_eq!(
+            fs::read_to_string(&backup_path).unwrap(),
+            "old-content",
+            "nested backup must carry the pre-existing destination content"
+        );
+        assert_eq!(
+            fs::read_to_string(&final_path).unwrap(),
+            "new-content",
+            "staged file must reach the nested destination path"
+        );
+    }
+
+    /// Mirrors upstream `testsuite/backup.test:43` regex `backed up $fn
+    /// to .*/$fn$` - when `--backup-dir` is set and `--suffix` is left at
+    /// its `--backup-dir` default (empty string), the backup path has NO
+    /// suffix appended. Upstream's `stringjoin(rel, remainder, fname,
+    /// backup_suffix, NULL)` collapses to just `bakdir/path/name` when
+    /// `backup_suffix == ""`.
+    #[test]
+    fn handle_delayed_updates_backup_dir_with_empty_suffix() {
+        use crate::disk_commit::BackupConfig;
+        use std::ffi::OsString;
+
+        let dir = test_support::create_tempdir();
+        let dest_root = dir.path();
+        let backup_root = dest_root.join("bak");
+        fs::create_dir(&backup_root).unwrap();
+
+        let staging_dir = dest_root.join(".~tmp~");
+        fs::create_dir(&staging_dir).unwrap();
+        let staged = staging_dir.join("name1");
+        fs::write(&staged, b"new-content").unwrap();
+
+        let final_path = dest_root.join("name1");
+        fs::write(&final_path, b"old-content").unwrap();
+
+        let backup_config = BackupConfig {
+            dest_dir: dest_root.to_path_buf(),
+            backup_dir: Some(backup_root.clone()),
+            suffix: OsString::from(""),
+        };
+
+        handle_delayed_updates(&[(staged.clone(), final_path.clone())], Some(backup_config));
+
+        let suffixed = backup_root.join("name1~");
+        assert!(
+            !suffixed.exists(),
+            "empty suffix must NOT append `~` (would diverge from upstream \
+             default when --backup-dir is set without explicit --suffix)"
+        );
+        let backup_path = backup_root.join("name1");
+        assert_eq!(
+            fs::read_to_string(&backup_path).unwrap(),
+            "old-content",
+            "with empty suffix, backup path is bakdir/<name> verbatim"
+        );
+        assert_eq!(fs::read_to_string(&final_path).unwrap(), "new-content");
+    }
+
+    /// Mirrors upstream `testsuite/backup.test:28,42,55` which iterate
+    /// `for fn in deep/name1 deep/name2; do ...` - a single `--backup`
+    /// invocation must back up every modified file in one delayed-updates
+    /// sweep, with each backup honoring its own source path.
+    #[test]
+    fn handle_delayed_updates_backs_up_multiple_files_in_one_sweep() {
+        use crate::disk_commit::BackupConfig;
+        use std::ffi::OsString;
+
+        let dir = test_support::create_tempdir();
+        let dest_root = dir.path();
+        let backup_root = dest_root.join("bak");
+        fs::create_dir(&backup_root).unwrap();
+
+        let staging_dir = dest_root.join(".~tmp~");
+        fs::create_dir(&staging_dir).unwrap();
+
+        let final_a = dest_root.join("name1");
+        let final_b = dest_root.join("name2");
+        fs::write(&final_a, b"old-a").unwrap();
+        fs::write(&final_b, b"old-b").unwrap();
+
+        let staged_a = staging_dir.join("name1");
+        let staged_b = staging_dir.join("name2");
+        fs::write(&staged_a, b"new-a").unwrap();
+        fs::write(&staged_b, b"new-b").unwrap();
+
+        let backup_config = BackupConfig {
+            dest_dir: dest_root.to_path_buf(),
+            backup_dir: Some(backup_root.clone()),
+            suffix: OsString::from("~"),
+        };
+
+        handle_delayed_updates(
+            &[
+                (staged_a.clone(), final_a.clone()),
+                (staged_b.clone(), final_b.clone()),
+            ],
+            Some(backup_config),
+        );
+
+        assert_eq!(fs::read_to_string(&final_a).unwrap(), "new-a");
+        assert_eq!(fs::read_to_string(&final_b).unwrap(), "new-b");
+        assert_eq!(
+            fs::read_to_string(backup_root.join("name1~")).unwrap(),
+            "old-a",
+            "every file in the sweep must be backed up independently"
+        );
+        assert_eq!(
+            fs::read_to_string(backup_root.join("name2~")).unwrap(),
+            "old-b",
+            "every file in the sweep must be backed up independently"
+        );
+    }
+
     // --- PIR-5.d: Interrupt behavior ---
 
     /// Verifies that staged files in `.~tmp~/` persist as valid partials when
