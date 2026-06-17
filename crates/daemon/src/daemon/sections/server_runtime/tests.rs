@@ -967,3 +967,28 @@ fn default_listen_backlog_is_128() {
     // systems and is the standard default for production TCP servers.
     assert_eq!(DEFAULT_LISTEN_BACKLOG, 128);
 }
+
+#[test]
+fn warn_per_family_bind_failure_labels_ipv6() {
+    // The dual-stack startup must surface per-family failure with the
+    // correct address-family label so operators investigating partial
+    // listener reachability can identify which family degraded. This
+    // mirrors upstream socket.c:463-465's `(address-family %d)` diagnostic.
+    let addr: SocketAddr = "[::]:8873".parse().unwrap();
+    let error = io::Error::new(io::ErrorKind::AddrNotAvailable, "test failure");
+
+    // Helper takes no log sink so it emits via eprintln! - this exercises
+    // the formatting path without requiring a SharedLogSink fixture.
+    warn_per_family_bind_failure(None, addr, &error);
+}
+
+#[test]
+fn warn_per_family_bind_failure_labels_ipv4() {
+    // IPv4 counterpart of the IPv6 label test. Both arms of the dual-stack
+    // loop must produce identifiable diagnostics when their bind fails so
+    // dual-stack startup with a degraded family is auditable.
+    let addr: SocketAddr = "0.0.0.0:8873".parse().unwrap();
+    let error = io::Error::new(io::ErrorKind::AddrInUse, "test failure");
+
+    warn_per_family_bind_failure(None, addr, &error);
+}

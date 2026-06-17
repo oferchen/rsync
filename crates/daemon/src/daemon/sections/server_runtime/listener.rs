@@ -223,6 +223,36 @@ fn warn_tcp_fastopen_unsupported(log: Option<&SharedLogSink>) {
     }
 }
 
+/// Emits a one-shot warning when a per-family bind fails while another
+/// family in the dual-stack startup is still available to try.
+///
+/// upstream: `socket.c:463-465` in rsync-3.4.1 logs the per-family failure
+/// via `asprintf(&errmsgs[ecnt++], "bind() failed: %s (address-family %d)")`
+/// and prints it through `rwrite(FLOG, ...)` either when all addresses fail
+/// or when running with `-vv` debug. oc-rsync surfaces it unconditionally on
+/// the assumption that operators of a long-lived daemon want to know that the
+/// dual-stack listener is degraded - GitHub Actions runners that have IPv6
+/// partially configured but unroutable trigger this path, and the silent
+/// fallback made the failure mode invisible until the daemon test exited 10.
+fn warn_per_family_bind_failure(
+    log: Option<&SharedLogSink>,
+    requested_addr: SocketAddr,
+    error: &io::Error,
+) {
+    let family = if requested_addr.is_ipv6() { "IPv6" } else { "IPv4" };
+    let payload = format!(
+        "{family} bind for {requested_addr} failed: {error}; \
+         continuing with remaining address families"
+    );
+    let message = rsync_warning!(payload).with_role(Role::Daemon);
+
+    if let Some(sink) = log {
+        log_message(sink, &message);
+    } else {
+        eprintln!("{message}");
+    }
+}
+
 /// Applies the `TCP_NOTSENT_LOWAT` perf option to an accepted client
 /// stream, ignoring unsupported platforms and best-effort errors.
 fn apply_accepted_stream_tcp_notsent_lowat(stream: &TcpStream) {
