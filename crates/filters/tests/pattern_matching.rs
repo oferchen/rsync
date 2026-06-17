@@ -275,13 +275,29 @@ fn directory_pattern_excludes_contents() {
 }
 
 /// Verifies nested directory patterns.
+///
+/// upstream: `exclude.c:rule_matches()` line 938-939 returns "no match"
+/// when the rule carries `FILTRULE_DIRECTORY` and the candidate is not
+/// itself a directory. The directory wildcard `packages/*/node_modules/`
+/// matches the directory entry `packages/app/node_modules` (`is_dir=true`)
+/// but does NOT match `packages/app/node_modules/pkg` (a file under it).
+/// Upstream relies on the sender's walk skipping descent into excluded
+/// directories; a file-level query bypassing the walk must therefore
+/// report "no match" so the file is included by default - any
+/// pre-baked `pattern/**` descendant matcher would diverge from upstream
+/// semantics.
 #[test]
 fn nested_directory_pattern() {
     let set = FilterSet::from_rules([FilterRule::exclude("packages/*/node_modules/")]).unwrap();
 
     assert!(!set.allows(Path::new("packages/app/node_modules"), true));
     assert!(!set.allows(Path::new("packages/lib/node_modules"), true));
-    assert!(!set.allows(Path::new("packages/app/node_modules/pkg"), false));
+    // upstream: FILTRULE_DIRECTORY + wildcard pattern returns "no match"
+    // for a non-directory entry; the file is included by default and the
+    // sender walk handles descent pruning by never entering the excluded
+    // directory in the first place. Wire-equivalent behaviour with
+    // upstream rsync 3.4.x.
+    assert!(set.allows(Path::new("packages/app/node_modules/pkg"), false));
 
     // Root node_modules not matched
     assert!(set.allows(Path::new("node_modules"), true));

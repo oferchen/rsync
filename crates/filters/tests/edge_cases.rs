@@ -398,6 +398,15 @@ fn filter_error_access() {
 }
 
 /// Verifies complex nested patterns.
+///
+/// upstream: `exclude.c:rule_matches()` line 938-939 returns "no match"
+/// for a non-directory entry when the rule carries `FILTRULE_DIRECTORY`.
+/// `**/node_modules/` is a wildcard directory-only pattern and so does
+/// NOT match a file like `node_modules/lodash` directly - upstream relies
+/// on the sender's walk skipping descent into the matched directory. The
+/// `.cache` include rule and the `.tmp` specific-exclude still apply on
+/// their own; this test pins that behaviour against single-path queries
+/// that bypass the walk.
 #[test]
 fn complex_nested_patterns() {
     // rsync uses first-match-wins: specific includes/excludes must come before general ones
@@ -408,14 +417,24 @@ fn complex_nested_patterns() {
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // node_modules excluded (third rule matches)
-    assert!(!set.allows(Path::new("node_modules/lodash"), false));
-    assert!(!set.allows(Path::new("packages/app/node_modules/react"), false));
+    // node_modules directory itself excluded (third rule matches the dir).
+    assert!(!set.allows(Path::new("node_modules"), true));
+    assert!(!set.allows(Path::new("packages/app/node_modules"), true));
 
-    // .cache within node_modules included (second rule matches)
+    // upstream: FILTRULE_DIRECTORY + wildcard pattern returns "no match"
+    // for non-directory entries; the sender's walk handles descent
+    // pruning, so single-path queries for files inside the directory
+    // report "no match" against the directory-only rule and fall through
+    // to defaults (include). Wire-equivalent behaviour with upstream
+    // rsync 3.4.x.
+    assert!(set.allows(Path::new("node_modules/lodash"), false));
+    assert!(set.allows(Path::new("packages/app/node_modules/react"), false));
+
+    // .cache within node_modules included (second rule matches via its
+    // user-written `**` direct matcher).
     assert!(set.allows(Path::new("node_modules/.cache/data"), false));
 
-    // But .tmp within .cache excluded (first rule matches)
+    // But .tmp within .cache excluded (first rule matches).
     assert!(!set.allows(Path::new("node_modules/.cache/scratch.tmp"), false));
 }
 

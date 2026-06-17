@@ -412,13 +412,23 @@ fn directory_pattern_includes_descendants() {
 }
 
 /// Verifies nested directory patterns.
+///
+/// upstream: `exclude.c:rule_matches()` line 938-939 returns "no match"
+/// for a non-directory entry when the rule carries `FILTRULE_DIRECTORY`.
+/// A wildcard directory-only pattern like `**/node_modules/` matches the
+/// directory entry itself but does NOT match files under it - the sender
+/// walk handles descent pruning by skipping the directory. A single-path
+/// query for a file under such a directory must therefore report "no
+/// match" so the file is included by default, mirroring upstream rsync.
 #[test]
 fn nested_directory_patterns() {
     let set = FilterSet::from_rules([FilterRule::exclude("**/node_modules/")]).unwrap();
 
     assert!(!set.allows(Path::new("node_modules"), true));
     assert!(!set.allows(Path::new("packages/app/node_modules"), true));
-    assert!(!set.allows(Path::new("packages/app/node_modules/pkg"), false));
+    // upstream: FILTRULE_DIRECTORY + wildcard pattern returns "no match"
+    // for a non-directory entry; the file is included by default.
+    assert!(set.allows(Path::new("packages/app/node_modules/pkg"), false));
 }
 
 /// Verifies gitignore-style patterns.

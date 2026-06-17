@@ -69,13 +69,27 @@ impl CompiledRule {
         // Anchored literal patterns (e.g., `/build`, `/target/`) still need
         // `{core}/**` descendants so that paths like `build/output` are
         // excluded when checked individually (e.g., by the receiver).
+        //
+        // Directory-only wildcard patterns (e.g., `foo/*/`, `**/node_modules/`)
+        // must ALSO suppress descendants. The wildcard's match set is decided
+        // per-directory at walk time, so pre-baking `foo/*/**` overreaches
+        // and excludes files inside subdirectories that a later include rule
+        // like `+ foo/s?b/` should keep. Upstream `exclude.c:rule_matches()`
+        // returns "no match" for a non-directory entry when the rule carries
+        // FILTRULE_DIRECTORY (line 938-939), so the file is included by
+        // default and the sender walk handles descent pruning by never
+        // entering the excluded directory. Pre-baked descendants would force
+        // an exclusion that upstream never produces. Regression for
+        // UTS-DD-exclude.3 (upstream `exclude` / `exclude-lsh` testsuite).
         let has_glob_wildcard =
             core_pattern.contains('*') || core_pattern.contains('?') || core_pattern.contains('[');
         let slash_anchored = pattern.starts_with('/');
+        let suppress_descendants =
+            (slash_anchored && has_glob_wildcard) || (has_glob_wildcard && directory_only);
         if matches!(
             action,
             FilterAction::Exclude | FilterAction::Protect | FilterAction::Risk
-        ) && !(slash_anchored && has_glob_wildcard)
+        ) && !suppress_descendants
         {
             descendant_patterns.insert(format!("{core_pattern}/**"));
             if !anchored {
@@ -187,14 +201,17 @@ mod tests {
         );
     }
 
-    /// Verifies that `--exclude '*/'` DOES generate descendant matchers.
+    /// Verifies that `--exclude 'cache/'` DOES generate descendant matchers.
     ///
-    /// upstream: Excluding a directory excludes all of its contents.
+    /// upstream: Excluding a literal directory excludes all of its contents
+    /// when the receiver checks them individually. Wildcard directory-only
+    /// patterns are handled separately - see
+    /// [`dir_only_wildcard_exclude_has_no_descendant_matchers`].
     #[test]
-    fn exclude_directory_only_has_descendant_matchers() {
+    fn exclude_directory_only_literal_has_descendant_matchers() {
         let rule = FilterRule {
             action: FilterAction::Exclude,
-            pattern: "*/".to_owned(),
+            pattern: "cache/".to_owned(),
             applies_to_sender: true,
             applies_to_receiver: true,
             perishable: false,
@@ -208,8 +225,48 @@ mod tests {
         assert!(compiled.directory_only);
         assert!(
             !compiled.descendant_matchers.is_empty(),
-            "exclude directory-only rules must have descendant matchers"
+            "exclude directory-only literal rules must have descendant matchers"
         );
+    }
+
+    /// Verifies that `--exclude '*/'` (and other directory-only wildcards)
+    /// does NOT generate descendant matchers.
+    ///
+    /// upstream: `exclude.c:rule_matches()` line 938-939 returns "no match"
+    /// when the rule carries `FILTRULE_DIRECTORY` and the candidate is not
+    /// itself a directory. Pre-baking `*/**` (or `foo/*/**`) overreaches
+    /// because the wildcard's per-directory match set is decided at walk
+    /// time. The sender skips the directory subtree on a match; the
+    /// receiver consults only the user-written rule and so should NOT see
+    /// a synthetic descendant fire on a file under the matched directory.
+    /// Regression for UTS-DD-exclude.3.
+    #[test]
+    fn dir_only_wildcard_exclude_has_no_descendant_matchers() {
+        for pattern in &[
+            "*/",
+            "foo/*/",
+            "foo/s?b/",
+            "bar/[a-z]*/",
+            "**/node_modules/",
+        ] {
+            let rule = FilterRule {
+                action: FilterAction::Exclude,
+                pattern: pattern.to_string(),
+                applies_to_sender: true,
+                applies_to_receiver: true,
+                perishable: false,
+                xattr_only: false,
+                negate: false,
+                exclude_only: false,
+                no_inherit: false,
+                cvs_mode: false,
+            };
+            let compiled = CompiledRule::new(rule).unwrap();
+            assert!(
+                compiled.descendant_matchers.is_empty(),
+                "directory-only wildcard pattern {pattern:?} must not have descendant matchers"
+            );
+        }
     }
 
     /// Anchored wildcard exclude patterns must NOT generate descendant
