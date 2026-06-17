@@ -124,7 +124,7 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     /// Sets the per-record compression codec applied to spilled payloads.
     ///
     /// [`SpillCompression::None`] (the default) writes raw encoded bytes,
-    /// matching the historical on-disk format. [`SpillCompression::Zstd`] is
+    /// matching the historical on-disk format. `SpillCompression::Zstd` is
     /// only constructable behind the `spill-compression` Cargo feature, so a
     /// default build cannot reach the Zstd branch at compile time - that
     /// `#[cfg]` gate is the "fail fast at construction" guarantee.

@@ -64,7 +64,7 @@ const NEXT_MATCH_NONE: u32 = u32::MAX;
 
 /// Index over a file signature that accelerates delta matching.
 ///
-/// Uses a chained bucket table ([`CompactLookup`]) addressed by the upper
+/// Uses a chained bucket table (`CompactLookup`) addressed by the upper
 /// half of the rolling sum (`sum2`) for O(1) block lookup with excellent
 /// cache locality. The lower half (`sum1`) lives inside each chain entry as
 /// an in-bucket discriminator, mirroring zsync's `librcksum`

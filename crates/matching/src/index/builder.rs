@@ -132,7 +132,7 @@ impl DeltaSignatureIndex {
     }
 
     /// Rebuilds the index in-place from a new signature, reusing the
-    /// existing [`CompactLookup`] allocation.
+    /// existing `CompactLookup` allocation.
     ///
     /// Mirrors upstream rsync's hash table reuse pattern (match.c):
     /// the table is cleared and repopulated rather than freed and

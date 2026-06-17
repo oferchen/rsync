@@ -171,7 +171,7 @@ impl SshConnection {
     /// This is the synchronous primitive for task #1795. It returns the
     /// existing [`SshConnection`] type so callers can transition without
     /// touching their downstream read/write paths. The async variant
-    /// ([`super::AsyncSshTransport::execute_remote_rsync`], task #1796)
+    /// (`super::AsyncSshTransport::execute_remote_rsync`, task #1796)
     /// is gated behind the `--features async-ssh` cargo feature.
     ///
     /// # Errors
