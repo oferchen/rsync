@@ -43,6 +43,46 @@ pub(super) fn apply_entry_metadata(
     Ok(())
 }
 
+/// Apply metadata (timestamps, optionally ownership) from a symlink file entry
+/// to a destination symbolic link without following the link target.
+///
+/// Mirrors upstream `rsync.c:set_file_attrs()` symlink handling: a symlink's
+/// own mtime and ownership are updated via `lutimes` / `AT_SYMLINK_NOFOLLOW`
+/// chown, but `chmod` is skipped because most platforms ignore the mode bits
+/// on a symlink and the call would otherwise follow the link and clobber the
+/// target file's permissions.
+///
+/// This is required during batch replay because phase 1 creates symlinks
+/// before phase 2 writes their target files. Calling [`apply_entry_metadata`]
+/// on a symlink whose target was just materialised would `chmod` the
+/// underlying regular file with the symlink's mode (typically `0777` on
+/// macOS), silently overwriting the correct permissions applied by the
+/// per-file metadata pass.
+///
+/// # Errors
+///
+/// Returns [`BatchError::Io`] if symlink metadata cannot be applied.
+pub(super) fn apply_symlink_entry_metadata(
+    dest_path: &Path,
+    entry: &protocol::flist::FileEntry,
+    flags: &BatchFlags,
+) -> BatchResult<()> {
+    let options = metadata::MetadataOptions::new()
+        .preserve_permissions(true)
+        .preserve_times(true)
+        .preserve_owner(flags.preserve_uid)
+        .preserve_group(flags.preserve_gid);
+
+    metadata::apply_symlink_metadata_from_entry(dest_path, entry, &options).map_err(|e| {
+        BatchError::Io(std::io::Error::other(format!(
+            "failed to apply symlink metadata to '{}': {e}",
+            dest_path.display()
+        )))
+    })?;
+
+    Ok(())
+}
+
 /// Create a symlink at `dest_path` pointing to the given `target`.
 ///
 /// On Unix, creates a symbolic link. On other platforms, falls back to
