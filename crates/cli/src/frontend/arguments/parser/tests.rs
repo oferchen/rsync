@@ -834,3 +834,70 @@ fn no_spill_combines_with_spill_dir_and_threshold() {
     );
     assert_eq!(parsed.spill_threshold_bytes, Some(64 * 1024));
 }
+
+/// `--reflink` defaults to `auto`, which surfaces as
+/// [`fast_io::CowPolicy::Auto`] so the existing default reflink path is
+/// preserved when neither the binary nor the tri-state form is given.
+#[test]
+fn reflink_default_is_auto() {
+    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.cow_policy, fast_io::CowPolicy::Auto);
+}
+
+#[test]
+fn reflink_auto_parses() {
+    let parsed = parse_test_args(["--reflink=auto", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.cow_policy, fast_io::CowPolicy::Auto);
+}
+
+#[test]
+fn reflink_always_parses_to_required() {
+    let parsed = parse_test_args(["--reflink=always", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.cow_policy, fast_io::CowPolicy::Required);
+}
+
+#[test]
+fn reflink_never_parses_to_disabled() {
+    let parsed = parse_test_args(["--reflink=never", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.cow_policy, fast_io::CowPolicy::Disabled);
+}
+
+/// Any value outside the tri-state vocabulary must fail at parse time
+/// with the canonical "expected one of ..." error message.
+#[test]
+fn reflink_bogus_value_errors_at_parse_time() {
+    let err = parse_test_args(["--reflink=bogus", "src/", "dst/"]).expect_err("parse must fail");
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains("--reflink"),
+        "error must mention the flag: {rendered}"
+    );
+    assert!(
+        rendered.contains("auto") && rendered.contains("always") && rendered.contains("never"),
+        "error must list valid values: {rendered}"
+    );
+}
+
+/// `--reflink` after `--cow`/`--no-cow` wins, matching upstream
+/// left-to-right option processing.
+#[test]
+fn reflink_after_binary_form_overrides() {
+    let parsed = parse_test_args(["--no-cow", "--reflink=always", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.cow_policy, fast_io::CowPolicy::Required);
+}
+
+/// `--no-cow` after `--reflink=always` wins.
+#[test]
+fn binary_form_after_reflink_overrides() {
+    let parsed = parse_test_args(["--reflink=always", "--no-cow", "src/", "dst/"]).expect("parse");
+    assert_eq!(parsed.cow_policy, fast_io::CowPolicy::Disabled);
+}
+
+/// `--reflink=never` is wire-equivalent to `--no-cow` once parsed.
+#[test]
+fn reflink_never_matches_no_cow() {
+    let from_reflink =
+        parse_test_args(["--reflink=never", "src/", "dst/"]).expect("parse reflink form");
+    let from_binary = parse_test_args(["--no-cow", "src/", "dst/"]).expect("parse binary form");
+    assert_eq!(from_reflink.cow_policy, from_binary.cow_policy);
+}

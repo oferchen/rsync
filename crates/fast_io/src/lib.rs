@@ -294,8 +294,8 @@ pub use page_aligned::{PageAlignedBuffer, page_size, round_up_to_page};
 pub use parallel::{ParallelExecutor, ParallelResult};
 pub use platform_copy::{
     CopyMethod, CopyResult, DefaultPlatformCopy, NoCowPlatformCopy, NoZeroCopyPlatformCopy,
-    PlatformCopy, try_clonefile, try_fcopyfile, try_ficlone, try_refs_reflink,
-    try_refs_reflink_range,
+    PlatformCopy, RequireCowPlatformCopy, try_clonefile, try_fcopyfile, try_ficlone,
+    try_refs_reflink, try_refs_reflink_range,
 };
 pub use platform_sendfile::{
     LinuxSendFile, MacOsSendFile, PlatformSendFile, SocketHandle, UnsupportedSendFile,

@@ -159,17 +159,26 @@ impl IoUringPolicy {
 /// fallback. Useful for benchmarking, diagnostics, or when downstream
 /// tooling does not handle reflinks correctly.
 ///
-/// The `--cow` (default) and `--no-cow` CLI flags map onto this enum:
-/// - `--cow` selects [`CowPolicy::Auto`].
-/// - `--no-cow` selects [`CowPolicy::Disabled`].
+/// Two CLI surfaces drive this enum:
+///
+/// - `--cow` / `--no-cow` is the binary opt-in/opt-out:
+///   - `--cow` selects [`CowPolicy::Auto`].
+///   - `--no-cow` selects [`CowPolicy::Disabled`].
+/// - `--reflink=<MODE>` is the tri-state form:
+///   - `--reflink=auto` selects [`CowPolicy::Auto`].
+///   - `--reflink=always` selects [`CowPolicy::Required`].
+///   - `--reflink=never` selects [`CowPolicy::Disabled`].
 ///
 /// The default is [`CowPolicy::Auto`], which delegates to
 /// [`platform_copy::DefaultPlatformCopy`] and uses the best available reflink
 /// mechanism with portable fallback.
 ///
-/// Unlike [`BackendPolicy`], reflink is best-effort: there is no `Enabled`
-/// variant because forcing reflink without filesystem support would have no
-/// useful semantics. The two-variant shape keeps this distinction explicit.
+/// [`CowPolicy::Required`] forces every whole-file copy through a CoW
+/// reflink and surfaces the underlying error when the destination
+/// filesystem does not support it (no silent fallback). Use it when a
+/// downstream guarantee depends on block sharing (snapshot dedup,
+/// container layer builds) and a portable `std::fs::copy` fallback would
+/// silently violate that guarantee.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CowPolicy {
     /// Auto-detect reflink support and use it when available (default).
@@ -178,6 +187,14 @@ pub enum CowPolicy {
     /// available copy mechanism per platform with portable fallback.
     #[default]
     Auto,
+    /// Require copy-on-write reflinks; fail when the destination
+    /// filesystem cannot honour the request.
+    ///
+    /// Selected by `--reflink=always`. Mirrors `BackendPolicy::Enabled`
+    /// semantics: the copy returns an error instead of falling back to
+    /// the portable `std::fs::copy` path when the platform reflink
+    /// attempt reports `ErrorKind::Unsupported` (or any other failure).
+    Required,
     /// Disable copy-on-write reflinks; always use portable `std::fs::copy`.
     ///
     /// Forces every whole-file copy through the standard buffered fallback,
@@ -432,7 +449,12 @@ mod tests {
 
     #[test]
     fn cow_policy_variants_are_distinct() {
-        assert_ne!(CowPolicy::Auto, CowPolicy::Disabled);
+        let variants = [CowPolicy::Auto, CowPolicy::Required, CowPolicy::Disabled];
+        for (i, a) in variants.iter().enumerate() {
+            for b in &variants[i + 1..] {
+                assert_ne!(a, b, "{a:?} must differ from {b:?}");
+            }
+        }
     }
 
     #[test]

@@ -53,6 +53,7 @@ mod cow_detect;
 mod cow_detect;
 mod dispatch;
 mod no_zero_copy;
+mod require_cow;
 #[cfg(test)]
 mod tests;
 mod types;
@@ -61,6 +62,7 @@ use std::io;
 use std::path::Path;
 
 pub use no_zero_copy::NoZeroCopyPlatformCopy;
+pub use require_cow::RequireCowPlatformCopy;
 pub use types::{CopyMethod, CopyResult, PlatformCopy};
 
 /// Default platform copy implementation with automatic mechanism selection.
