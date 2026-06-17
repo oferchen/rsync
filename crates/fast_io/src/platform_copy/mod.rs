@@ -48,9 +48,6 @@
 
 #[cfg(target_os = "linux")]
 mod cow_detect;
-#[cfg(not(target_os = "linux"))]
-#[path = "cow_detect_stub.rs"]
-mod cow_detect;
 mod dispatch;
 mod no_zero_copy;
 mod require_cow;
