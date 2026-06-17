@@ -298,3 +298,61 @@ fn dir_merge_clear_keyword_discards_rules_in_whitespace_mode() {
     assert_eq!(entries.rules.len(), 1);
     assert!(entries.exclude_if_present.is_empty());
 }
+
+/// Nested `dir-merge` inside a per-directory merge file should register the
+/// referenced filename for lookup in each visited subdirectory, NOT load it
+/// eagerly against the enclosing file's directory.
+///
+/// upstream: exclude.c:1419-1428 - mirrors the testsuite `exclude-lsh.test`
+/// fixture where `bar/.filt` declares `dir-merge .filt2`, and the actual
+/// `.filt2` exclusion rules live in subdirectories like `bar/baz/.filt2`.
+#[test]
+fn nested_dir_merge_registers_per_directory_rule() {
+    let temp = tempdir().expect("tempdir");
+    let source_root = temp.path().join("source");
+    let destination_root = temp.path().join("dest");
+    fs::create_dir_all(&source_root).expect("create source");
+    fs::create_dir_all(&destination_root).expect("create dest");
+
+    // bar/.filt declares a nested per-directory merge. Without the fix this
+    // tries to load bar/.filt2 (which does not exist) instead of registering
+    // .filt2 for subdirectory lookup.
+    let bar = source_root.join("bar");
+    fs::create_dir_all(&bar).expect("create bar");
+    fs::write(bar.join(".filt"), b"dir-merge .filt2\n").expect("write bar/.filt");
+
+    // bar/baz holds the per-subdir filter that the dir-merge should resolve.
+    let baz = bar.join("baz");
+    fs::create_dir_all(&baz).expect("create baz");
+    fs::write(baz.join(".filt2"), b"- *.deep\n").expect("write baz/.filt2");
+    fs::write(baz.join("file5.deep"), b"filtout").expect("write file5.deep");
+    fs::write(baz.join("keep.txt"), b"keep").expect("write keep");
+
+    let operands = vec![
+        source_root.into_os_string(),
+        destination_root.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let program = FilterProgram::new([FilterProgramEntry::DirMerge(DirMergeRule::new(
+        PathBuf::from(".filt"),
+        DirMergeOptions::default(),
+    ))])
+    .expect("compile filter program");
+
+    let options = LocalCopyOptions::default().with_filter_program(Some(program));
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let target_root = destination_root.join("source");
+    let copied_baz = target_root.join("bar").join("baz");
+    assert!(
+        copied_baz.join("keep.txt").exists(),
+        "unfiltered file should be copied"
+    );
+    assert!(
+        !copied_baz.join("file5.deep").exists(),
+        "nested dir-merge from bar/.filt should register .filt2 lookup in subdirectories and exclude bar/baz/file5.deep"
+    );
+}

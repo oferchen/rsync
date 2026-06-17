@@ -11,6 +11,13 @@ impl<'a> CopyContext<'a> {
     /// transfer. Returns `true` if the entry passes all filters.
     pub(super) fn allows(&self, relative: &Path, is_dir: bool) -> bool {
         if let Some(program) = &self.filter_program {
+            if let Some(outcome) =
+                self.evaluate_dynamic_segments(relative, is_dir, FilterContext::Transfer)
+                && outcome.transfer_decided()
+            {
+                return outcome.allows_transfer();
+            }
+
             let layers = self.dir_merge_layers.borrow();
             let ephemeral = self.dir_merge_ephemeral.borrow();
             let temp_layers = ephemeral.last().map(|entries| entries.as_slice());
@@ -39,6 +46,9 @@ impl<'a> CopyContext<'a> {
     /// exclude patterns (trailing `/`) should prevent traversal outright.
     pub(super) fn excluded_dir_by_non_dir_rule(&self, relative: &Path) -> bool {
         if let Some(program) = &self.filter_program {
+            if let Some(result) = self.dynamic_excluded_dir_by_non_dir_rule(relative) {
+                return result;
+            }
             let layers = self.dir_merge_layers.borrow();
             let ephemeral = self.dir_merge_ephemeral.borrow();
             let temp_layers = ephemeral.last().map(|entries| entries.as_slice());
@@ -55,6 +65,16 @@ impl<'a> CopyContext<'a> {
     pub(super) fn allows_deletion(&self, relative: &Path, is_dir: bool) -> bool {
         let delete_excluded = self.options.delete_excluded_enabled();
         if let Some(program) = &self.filter_program {
+            if let Some(outcome) =
+                self.evaluate_dynamic_segments(relative, is_dir, FilterContext::Deletion)
+                && outcome.transfer_decided()
+            {
+                return if delete_excluded {
+                    outcome.allows_deletion() || outcome.allows_deletion_when_excluded_removed()
+                } else {
+                    outcome.allows_deletion()
+                };
+            }
             let layers = self.dir_merge_layers.borrow();
             let ephemeral = self.dir_merge_ephemeral.borrow();
             let temp_layers = ephemeral.last().map(|entries| entries.as_slice());
@@ -80,5 +100,45 @@ impl<'a> CopyContext<'a> {
         } else {
             true
         }
+    }
+
+    /// Applies the top-of-stack dynamic per-directory merge segments against
+    /// `relative` using upstream's first-match-wins semantics.
+    ///
+    /// upstream: exclude.c:check_filter() - local child rules precede inherited
+    /// parent rules. Dynamic per-directory rules registered by a parent merge
+    /// file fire BEFORE the parent's own static rules so that a `.filt2` rule
+    /// in a subdirectory overrides any conflicting rule inherited from
+    /// `bar/.filt`.
+    fn evaluate_dynamic_segments(
+        &self,
+        relative: &Path,
+        is_dir: bool,
+        context: FilterContext,
+    ) -> Option<FilterOutcome> {
+        let stack = self.dynamic_dir_merge_stack.borrow();
+        let frame = stack.last()?;
+        if frame.loaded_segments.is_empty() {
+            return None;
+        }
+        let mut outcome = FilterOutcome::default();
+        for segment in frame.loaded_segments.iter().rev() {
+            if outcome.transfer_decided() {
+                break;
+            }
+            segment.apply(relative, is_dir, &mut outcome, context);
+        }
+        Some(outcome)
+    }
+
+    fn dynamic_excluded_dir_by_non_dir_rule(&self, relative: &Path) -> Option<bool> {
+        let stack = self.dynamic_dir_merge_stack.borrow();
+        let frame = stack.last()?;
+        for segment in frame.loaded_segments.iter().rev() {
+            if let Some(result) = segment.excluded_dir_by_non_dir_rule(relative) {
+                return Some(result);
+            }
+        }
+        None
     }
 }

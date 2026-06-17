@@ -89,11 +89,13 @@ impl<'a> CopyContext<'a> {
                 marker_layers: Rc::clone(&self.dir_merge_marker_layers),
                 ephemeral: Rc::clone(&self.dir_merge_ephemeral),
                 marker_ephemeral: Rc::clone(&self.dir_merge_marker_ephemeral),
+                dynamic: Rc::clone(&self.dynamic_dir_merge_stack),
             };
             return Ok(DirectoryFilterGuard::new(
                 handles,
                 Vec::new(),
                 Vec::new(),
+                false,
                 false,
                 false,
             ));
@@ -107,6 +109,87 @@ impl<'a> CopyContext<'a> {
         let mut marker_ephemeral_stack = self.dir_merge_marker_ephemeral.borrow_mut();
         ephemeral_stack.push(Vec::new());
         marker_ephemeral_stack.push(Vec::new());
+
+        // upstream: exclude.c:1419-1428 - inherit the parent frame's active
+        // nested dir-merge rules and look each one up in the current directory.
+        // Newly-registered rules (encountered while loading the files below)
+        // become active for subdirectories but are NOT looked up against the
+        // current directory.
+        let inherited_active: Vec<NestedDirMerge> = self
+            .dynamic_dir_merge_stack
+            .borrow()
+            .last()
+            .map(|frame| frame.active_rules.clone())
+            .unwrap_or_default();
+        let mut new_frame = DynamicDirMergeFrame {
+            active_rules: inherited_active.clone(),
+            loaded_segments: Vec::new(),
+            loaded_markers: Vec::new(),
+        };
+
+        for rule in &inherited_active {
+            let candidate = resolve_dir_merge_path(source, &rule.pattern);
+            let metadata = match fs::metadata(&candidate) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    ephemeral_stack.pop();
+                    marker_ephemeral_stack.pop();
+                    return Err(LocalCopyError::io(
+                        "inspect filter file",
+                        candidate,
+                        error,
+                    ));
+                }
+            };
+            if !metadata.is_file() {
+                continue;
+            }
+
+            let mut visited = Vec::new();
+            let mut entries = match load_dir_merge_rules_recursive(
+                candidate.as_path(),
+                &rule.options,
+                &mut visited,
+            ) {
+                Ok(entries) => entries,
+                Err(error) => {
+                    ephemeral_stack.pop();
+                    marker_ephemeral_stack.pop();
+                    return Err(error);
+                }
+            };
+
+            let mut segment = FilterSegment::default();
+            for compiled in entries.rules.drain(..) {
+                if let Err(error) = segment.push_rule(compiled) {
+                    ephemeral_stack.pop();
+                    marker_ephemeral_stack.pop();
+                    return Err(filter_program_local_error(&candidate, &error));
+                }
+            }
+
+            if rule.options.excludes_self() {
+                let pattern = rule.pattern.to_string_lossy().into_owned();
+                if let Err(error) = segment.push_rule(FilterRule::exclude(pattern)) {
+                    ephemeral_stack.pop();
+                    marker_ephemeral_stack.pop();
+                    return Err(filter_program_local_error(&candidate, &error));
+                }
+            }
+
+            if !segment.is_empty() {
+                new_frame.loaded_segments.push(segment);
+            }
+            if !entries.exclude_if_present.is_empty() {
+                new_frame
+                    .loaded_markers
+                    .extend(entries.exclude_if_present.drain(..));
+            }
+            new_frame
+                .active_rules
+                .append(&mut entries.nested_dir_merges);
+        }
 
         for (index, rule) in program.dir_merge_rules().iter().enumerate() {
             let candidate = resolve_dir_merge_path(source, rule.pattern());
@@ -165,6 +248,13 @@ impl<'a> CopyContext<'a> {
             let markers = entries.exclude_if_present;
             let clear_inherited = entries.clear_inherited;
 
+            // upstream: exclude.c:1419-1428 - any `dir-merge`/`:` directives
+            // inside the loaded file register new per-directory rules that
+            // apply to subdirectories of `source`, not to `source` itself.
+            new_frame
+                .active_rules
+                .append(&mut entries.nested_dir_merges);
+
             // If the filter file had a clear directive, we should clear inherited rules
             // from parent directories before adding any new rules from this directory.
             if clear_inherited && rule.options().inherit_rules() {
@@ -209,6 +299,8 @@ impl<'a> CopyContext<'a> {
         drop(ephemeral_stack);
         drop(marker_ephemeral_stack);
 
+        self.dynamic_dir_merge_stack.borrow_mut().push(new_frame);
+
         let excluded = if check_directory_excluded {
             self.directory_excluded(source, program)?
         } else {
@@ -220,11 +312,13 @@ impl<'a> CopyContext<'a> {
             marker_layers: Rc::clone(&self.dir_merge_marker_layers),
             ephemeral: Rc::clone(&self.dir_merge_ephemeral),
             marker_ephemeral: Rc::clone(&self.dir_merge_marker_ephemeral),
+            dynamic: Rc::clone(&self.dynamic_dir_merge_stack),
         };
         Ok(DirectoryFilterGuard::new(
             handles,
             added_indices,
             marker_counts,
+            true,
             true,
             excluded,
         ))
@@ -256,6 +350,15 @@ impl<'a> CopyContext<'a> {
                         return Ok(true);
                     }
                 }
+            }
+        }
+
+        {
+            let stack = self.dynamic_dir_merge_stack.borrow();
+            if let Some(frame) = stack.last()
+                && directory_has_marker(&frame.loaded_markers, directory)?
+            {
+                return Ok(true);
             }
         }
 

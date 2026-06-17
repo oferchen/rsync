@@ -111,9 +111,12 @@ pub(super) fn parse_short_merge_directive_line(
     };
 
     if allow_extended {
-        return Ok(Some(ParsedFilterDirective::Merge {
-            path: PathBuf::from(pattern),
-            options: Some(options),
+        // upstream: exclude.c:1419-1428 - ':' short form is a per-directory
+        // merge that registers a filename to look up in each subdirectory,
+        // not an eager merge of the parent file's adjacent rule file.
+        return Ok(Some(ParsedFilterDirective::DirMerge {
+            pattern: PathBuf::from(pattern),
+            options,
         }));
     }
 
@@ -233,11 +236,10 @@ mod tests {
         assert!(result.is_ok());
         let directive = result.unwrap().unwrap();
         match directive {
-            ParsedFilterDirective::Merge { path, options } => {
-                assert_eq!(path, PathBuf::from(".rsync-filter"));
-                assert!(options.is_some());
+            ParsedFilterDirective::DirMerge { pattern, .. } => {
+                assert_eq!(pattern, PathBuf::from(".rsync-filter"));
             }
-            _ => panic!("expected Merge directive"),
+            _ => panic!("expected DirMerge directive"),
         }
     }
 

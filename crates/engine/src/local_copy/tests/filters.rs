@@ -130,17 +130,16 @@ fn parse_filter_directive_dir_merge_without_modifiers() {
         .expect("parse")
         .expect("directive");
 
-    let (path, options) = match directive {
-        ParsedFilterDirective::Merge { path, options } => (path, options),
+    let (pattern, options) = match directive {
+        ParsedFilterDirective::DirMerge { pattern, options } => (pattern, options),
         other => panic!("expected dir-merge directive, got {other:?}"),
     };
 
-    assert_eq!(path, PathBuf::from(".rsync-filter"));
-    let opts = options.expect("options");
-    assert!(opts.inherit_rules());
-    assert!(opts.allows_comments());
-    assert!(!opts.uses_whitespace());
-    assert_eq!(opts.enforced_kind(), None);
+    assert_eq!(pattern, PathBuf::from(".rsync-filter"));
+    assert!(options.inherit_rules());
+    assert!(options.allows_comments());
+    assert!(!options.uses_whitespace());
+    assert_eq!(options.enforced_kind(), None);
 }
 
 #[test]
@@ -149,17 +148,16 @@ fn parse_filter_directive_per_dir_alias_without_modifiers() {
         .expect("parse")
         .expect("directive");
 
-    let (path, options) = match directive {
-        ParsedFilterDirective::Merge { path, options } => (path, options),
+    let (pattern, options) = match directive {
+        ParsedFilterDirective::DirMerge { pattern, options } => (pattern, options),
         other => panic!("expected dir-merge directive, got {other:?}"),
     };
 
-    assert_eq!(path, PathBuf::from(".rsync-filter"));
-    let opts = options.expect("options");
-    assert!(opts.inherit_rules());
-    assert!(opts.allows_comments());
-    assert!(!opts.uses_whitespace());
-    assert_eq!(opts.enforced_kind(), None);
+    assert_eq!(pattern, PathBuf::from(".rsync-filter"));
+    assert!(options.inherit_rules());
+    assert!(options.allows_comments());
+    assert!(!options.uses_whitespace());
+    assert_eq!(options.enforced_kind(), None);
 }
 
 #[test]
@@ -168,16 +166,15 @@ fn parse_filter_directive_dir_merge_with_modifiers() {
         .expect("parse")
         .expect("directive");
 
-    let (path, options) = match directive {
-        ParsedFilterDirective::Merge { path, options } => (path, options),
+    let (pattern, options) = match directive {
+        ParsedFilterDirective::DirMerge { pattern, options } => (pattern, options),
         other => panic!("expected dir-merge directive, got {other:?}"),
     };
 
-    assert_eq!(path, PathBuf::from("rules/filter.txt"));
-    let opts = options.expect("options");
-    assert!(!opts.inherit_rules());
-    assert!(opts.excludes_self());
-    assert_eq!(opts.enforced_kind(), Some(DirMergeEnforcedKind::Include));
+    assert_eq!(pattern, PathBuf::from("rules/filter.txt"));
+    assert!(!options.inherit_rules());
+    assert!(options.excludes_self());
+    assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Include));
 }
 
 #[test]
@@ -186,17 +183,16 @@ fn parse_filter_directive_dir_merge_cvs_default_path() {
         .expect("parse")
         .expect("directive");
 
-    let (path, options) = match directive {
-        ParsedFilterDirective::Merge { path, options } => (path, options),
+    let (pattern, options) = match directive {
+        ParsedFilterDirective::DirMerge { pattern, options } => (pattern, options),
         other => panic!("expected dir-merge directive, got {other:?}"),
     };
 
-    assert_eq!(path, PathBuf::from(".cvsignore"));
-    let opts = options.expect("options");
-    assert!(!opts.inherit_rules());
-    assert!(opts.list_clear_allowed());
-    assert!(opts.uses_whitespace());
-    assert_eq!(opts.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
+    assert_eq!(pattern, PathBuf::from(".cvsignore"));
+    assert!(!options.inherit_rules());
+    assert!(options.list_clear_allowed());
+    assert!(options.uses_whitespace());
+    assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
 }
 
 #[test]
@@ -238,14 +234,13 @@ fn parse_filter_directive_short_dir_merge_with_modifiers() {
         .expect("parse")
         .expect("directive");
 
-    let (path, options) = match directive {
-        ParsedFilterDirective::Merge { path, options } => (path, options),
+    let (pattern, options) = match directive {
+        ParsedFilterDirective::DirMerge { pattern, options } => (pattern, options),
         other => panic!("expected dir-merge directive, got {other:?}"),
     };
 
-    assert_eq!(path, PathBuf::from("per-dir"));
-    let opts = options.expect("options");
-    assert_eq!(opts.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
+    assert_eq!(pattern, PathBuf::from("per-dir"));
+    assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
 }
 
 #[test]
