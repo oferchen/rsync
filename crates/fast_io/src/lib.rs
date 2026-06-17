@@ -104,6 +104,9 @@ pub mod kernel_version;
 /// the SEC-1.l audit) and do not depend on this module.
 #[cfg(unix)]
 pub mod linux_capabilities;
+/// Receiver-side basis open with `O_NOFOLLOW` on the basename, matching
+/// upstream rsync's `do_open_at()` dirname/basename split.
+pub mod nofollow_open;
 /// Page-aligned buffer pool for IOCP no-buffering mode.
 pub mod page_aligned;
 /// Parallel file I/O operations using rayon.
@@ -322,6 +325,7 @@ pub use kernel_version::{
 };
 #[cfg(unix)]
 pub use linux_capabilities::openat2_supported;
+pub use nofollow_open::open_basis_nofollow;
 pub use refs_detect::{clear_refs_cache, is_refs_filesystem};
 #[cfg(unix)]
 pub use secure_dir::secure_open_dir;
