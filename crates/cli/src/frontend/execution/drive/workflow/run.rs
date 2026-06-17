@@ -561,11 +561,21 @@ where
         timestamp ^ (pid << 6)
     };
 
+    // upstream: batch.c:259 - write_arg(raw_argv[0]) writes the exact binary
+    // path the user invoked into the generated BATCH.sh. Mirror that by
+    // capturing argv[0] now so the replay script does not require oc-rsync
+    // on PATH (e.g. test harnesses and CI invoke by absolute path).
+    let invoker = std::env::args_os()
+        .next()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| String::from("oc-rsync"));
+
     let batch_config = if let Some(ref path) = write_batch {
         Some(
             BatchConfig::new(BatchMode::Write, path.to_string_lossy().into_owned(), 32)
                 .with_compat_flags(local_batch_compat_flags)
-                .with_checksum_seed(batch_checksum_seed),
+                .with_checksum_seed(batch_checksum_seed)
+                .with_invoker(invoker.clone()),
         )
     } else if let Some(ref path) = only_write_batch {
         Some(
@@ -575,7 +585,8 @@ where
                 32,
             )
             .with_compat_flags(local_batch_compat_flags)
-            .with_checksum_seed(batch_checksum_seed),
+            .with_checksum_seed(batch_checksum_seed)
+            .with_invoker(invoker.clone()),
         )
     } else {
         read_batch
