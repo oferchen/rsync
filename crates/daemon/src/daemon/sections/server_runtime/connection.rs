@@ -379,7 +379,14 @@ fn run_single_listener_loop(
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 // No pending connection - sleep briefly then re-check flags.
-                thread::sleep(SIGNAL_CHECK_INTERVAL);
+                // The 50ms interval matches `run_dual_stack_loop` so first-
+                // connection latency on a quiet daemon is bounded by half the
+                // sleep interval rather than the (much coarser) 500ms signal
+                // poll. The longer SIGNAL_CHECK_INTERVAL is still honoured for
+                // the signal-flag inspection at the top of the loop body via
+                // `check_signals_and_maintain`, which is the only consumer
+                // that needs that resolution.
+                thread::sleep(Duration::from_millis(50));
                 continue;
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {
