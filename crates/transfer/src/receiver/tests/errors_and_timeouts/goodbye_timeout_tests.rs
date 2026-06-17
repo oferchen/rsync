@@ -49,10 +49,6 @@ use crate::config::ServerConfig;
 use crate::handshake::HandshakeResult;
 use crate::role::ServerRole;
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 /// Wall-clock ceiling for any single test in this module. All readers
 /// honour an inner deadline well below this so a regression that breaks
 /// the typed-error surface fails fast instead of stalling CI.
@@ -98,10 +94,6 @@ fn drive_handle_goodbye<R: Read>(ctx: &ReceiverContext, mut reader: R) -> io::Re
     let mut ndx_read = create_ndx_codec(ctx.protocol.as_u8());
     ctx.handle_goodbye(&mut reader, &mut writer, &mut ndx_write, &mut ndx_read)
 }
-
-// ---------------------------------------------------------------------------
-// Synthetic `Read` impls
-// ---------------------------------------------------------------------------
 
 /// Reader that drains an in-memory prefix then surfaces
 /// `io::ErrorKind::TimedOut` once the configured deadline elapses.
@@ -188,10 +180,6 @@ impl Read for DisconnectAfterPrefixReader {
         Ok(0)
     }
 }
-
-// ---------------------------------------------------------------------------
-// EDG-GOODBYE.4: timeout-band tests
-// ---------------------------------------------------------------------------
 
 /// The sender delivers a single byte of the modern goodbye frame (the
 /// `0xFF` negative prefix that announces a negative NDX) and then
