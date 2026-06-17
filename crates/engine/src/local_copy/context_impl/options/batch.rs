@@ -73,6 +73,14 @@ impl<'a> CopyContext<'a> {
     /// user/group names are already embedded inline via XMIT_USER_NAME_FOLLOWS,
     /// the post-flist ID lists are empty (just varint30(0) terminators).
     ///
+    /// upstream: flist.c:2548 - `if (numeric_ids <= 0 && !inc_recurse)
+    /// send_id_lists(f)`. ID lists are only emitted when INC_RECURSE is
+    /// inactive; under INC_RECURSE the uid/gid names are inlined into
+    /// each flist entry via XMIT_USER_NAME_FOLLOWS / XMIT_GROUP_NAME_FOLLOWS
+    /// and no post-flist ID list bytes appear on the wire. Emitting the
+    /// terminators anyway leaves stray varints in the stream and drifts
+    /// the reader's position so subsequent NDX reads decode garbage.
+    ///
     /// Must be called after `finalize_batch_flist()` and before
     /// `flush_batch_delta_to_batch()`.
     pub(crate) fn write_batch_id_lists(&mut self) -> Result<(), crate::local_copy::LocalCopyError> {
@@ -81,7 +89,21 @@ impl<'a> CopyContext<'a> {
             None => return Ok(()),
         };
 
-        let proto = batch_writer_arc.lock().unwrap().config().protocol_version;
+        let (proto, compat_flags) = {
+            let cfg = batch_writer_arc.lock().unwrap();
+            (cfg.config().protocol_version, cfg.config().compat_flags)
+        };
+
+        // upstream: flist.c:2548 - skip send_id_lists() under INC_RECURSE.
+        let inc_recurse = compat_flags
+            .map(|cf| {
+                protocol::CompatibilityFlags::from_bits(cf as u32)
+                    .contains(protocol::CompatibilityFlags::INC_RECURSE)
+            })
+            .unwrap_or(false);
+        if inc_recurse {
+            return Ok(());
+        }
 
         // upstream: uidlist.c:recv_id_list() reads uid list then gid list.
         // Each list: loop reading varint30 until 0 (no entries), then done.
