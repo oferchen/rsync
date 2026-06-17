@@ -13,7 +13,9 @@
 //! plus the small per-instance overhead.
 //!
 //! Chunk size is tunable via `OC_RSYNC_WIN_CHUNK_BYTES` for benchmarking; the
-//! default of 4 MiB matches the IOCP file-reader page-aligned slab.
+//! default of 4 MiB matches the IOCP file-reader page-aligned slab. Explicit
+//! per-instance overrides go through [`WindowsChunkedReader::open_with_chunk_size`]
+//! and take precedence over the environment variable.
 //!
 //! `as_slice()` is retained for delta-apply, the single call site that needs
 //! random-access slicing of the full basis. The first `as_slice()` call loads
@@ -34,14 +36,93 @@ use std::path::Path;
 /// chunked reader is active.
 pub const DEFAULT_CHUNK_SIZE: usize = 4 * 1024 * 1024;
 
+/// Hard upper bound on chunk size accepted by the validated constructors
+/// (16 MiB).
+///
+/// The cap exists to keep the bounded-RSS contract meaningful: a caller that
+/// passes a chunk size larger than this is asking for behavior closer to the
+/// legacy `mmap_reader_stub::MmapReader` slurp than to a streaming reader, and
+/// would defeat the WIN-S.LAND.1.b regression budget. 16 MiB leaves ample
+/// headroom above the 4 MiB default for benchmarking sweeps without permitting
+/// pathological values.
+pub const MAX_CHUNK_SIZE: usize = 16 * 1024 * 1024;
+
 /// Environment variable name for overriding the chunk size at runtime.
 ///
-/// Set to a positive integer (bytes). Invalid or zero values fall back to the
-/// caller-supplied `chunk_size` argument.
+/// Set to a positive integer (bytes) within `1..=MAX_CHUNK_SIZE`. Empty,
+/// unset, or out-of-range values fall back to [`DEFAULT_CHUNK_SIZE`] and emit
+/// a `tracing::debug!` note. Only consulted by [`WindowsChunkedReader::open`];
+/// explicit per-instance overrides via
+/// [`WindowsChunkedReader::open_with_chunk_size`] ignore the env var.
 pub const CHUNK_SIZE_ENV: &str = "OC_RSYNC_WIN_CHUNK_BYTES";
 
 /// Sentinel meaning "no chunk currently loaded".
 const NO_CHUNK_LOADED: u64 = u64::MAX;
+
+/// Validates `chunk_size` against the `0 < n <= MAX_CHUNK_SIZE` window used by
+/// both explicit constructors and the env-var override path.
+fn validate_chunk_size(chunk_size: usize) -> io::Result<()> {
+    if chunk_size == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "WindowsChunkedReader chunk_size must be > 0",
+        ));
+    }
+    if chunk_size > MAX_CHUNK_SIZE {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "WindowsChunkedReader chunk_size {chunk_size} exceeds MAX_CHUNK_SIZE {MAX_CHUNK_SIZE}"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Reads `OC_RSYNC_WIN_CHUNK_BYTES` and returns a validated chunk size.
+///
+/// Returns `None` (and emits a `tracing::debug!` note) when the var is unset,
+/// empty, not valid UTF-8, non-numeric, or outside `1..=MAX_CHUNK_SIZE`. The
+/// debug note distinguishes the "unset" case from the "invalid" case so
+/// operators tuning the knob can see why their override was ignored.
+fn chunk_size_from_env() -> Option<usize> {
+    let raw = std::env::var_os(CHUNK_SIZE_ENV)?;
+    let Some(text) = raw.to_str() else {
+        tracing::debug!(
+            env = CHUNK_SIZE_ENV,
+            "WindowsChunkedReader: env value not valid UTF-8; using DEFAULT_CHUNK_SIZE"
+        );
+        return None;
+    };
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        tracing::debug!(
+            env = CHUNK_SIZE_ENV,
+            "WindowsChunkedReader: env value empty; using DEFAULT_CHUNK_SIZE"
+        );
+        return None;
+    }
+    match trimmed.parse::<usize>() {
+        Ok(n) if validate_chunk_size(n).is_ok() => Some(n),
+        Ok(n) => {
+            tracing::debug!(
+                env = CHUNK_SIZE_ENV,
+                value = n,
+                max = MAX_CHUNK_SIZE,
+                "WindowsChunkedReader: env value out of bounds; using DEFAULT_CHUNK_SIZE"
+            );
+            None
+        }
+        Err(_) => {
+            tracing::debug!(
+                env = CHUNK_SIZE_ENV,
+                value = trimmed,
+                "WindowsChunkedReader: env value not a positive integer; using DEFAULT_CHUNK_SIZE"
+            );
+            None
+        }
+    }
+}
 
 /// Bounded-RSS file reader for Windows.
 ///
@@ -80,31 +161,60 @@ impl std::fmt::Debug for WindowsChunkedReader {
 }
 
 impl WindowsChunkedReader {
-    /// Opens `path` for chunked reading with the default 4 MiB chunk size.
+    /// Opens `path` for chunked reading with the [default chunk size].
     ///
-    /// Honors `OC_RSYNC_WIN_CHUNK_BYTES` if set.
+    /// Resolution order for the effective chunk size:
+    ///
+    /// 1. `OC_RSYNC_WIN_CHUNK_BYTES`, when set to a base-10 positive integer
+    ///    within `1..=MAX_CHUNK_SIZE`.
+    /// 2. [`DEFAULT_CHUNK_SIZE`] (4 MiB).
+    ///
+    /// An unset, empty, non-numeric, or out-of-range env value is treated as
+    /// "no override" and falls back to [`DEFAULT_CHUNK_SIZE`]. The fallback is
+    /// logged via `tracing::debug!` so operators can confirm whether their
+    /// tuning knob took effect.
+    ///
+    /// Use [`open_with_chunk_size`](Self::open_with_chunk_size) when the caller
+    /// needs an explicit, validated chunk size that ignores the env var.
+    ///
+    /// [default chunk size]: DEFAULT_CHUNK_SIZE
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        Self::with_chunk_size(path, DEFAULT_CHUNK_SIZE)
+        let chunk_size = chunk_size_from_env().unwrap_or(DEFAULT_CHUNK_SIZE);
+        Self::open_inner(path.as_ref(), chunk_size)
+    }
+
+    /// Opens `path` with an explicit, validated chunk size.
+    ///
+    /// `chunk_size` must satisfy `0 < chunk_size <= MAX_CHUNK_SIZE`; values
+    /// outside that range return [`io::ErrorKind::InvalidInput`]. The
+    /// `OC_RSYNC_WIN_CHUNK_BYTES` environment variable is **ignored**: an
+    /// explicit constructor argument always wins, matching the precedence
+    /// documented on [`CHUNK_SIZE_ENV`].
+    ///
+    /// Use [`open`](Self::open) when the caller wants the env-aware default
+    /// path instead.
+    pub fn open_with_chunk_size(path: &Path, chunk_size: usize) -> io::Result<Self> {
+        validate_chunk_size(chunk_size)?;
+        Self::open_inner(path, chunk_size)
     }
 
     /// Opens `path` with a caller-specified chunk size.
     ///
-    /// The `OC_RSYNC_WIN_CHUNK_BYTES` environment variable, when parseable as a
-    /// non-zero `usize`, overrides `chunk_size`. Invalid, missing, or zero env
-    /// values fall back to `chunk_size`. The effective chunk size is clamped to
-    /// at least 1 byte so the refill loop always makes forward progress.
+    /// Equivalent to [`open_with_chunk_size`](Self::open_with_chunk_size);
+    /// retained as a generic-`P` convenience for existing call sites.
+    /// Validates `chunk_size` against the same bounds and ignores
+    /// `OC_RSYNC_WIN_CHUNK_BYTES`.
     pub fn with_chunk_size<P: AsRef<Path>>(path: P, chunk_size: usize) -> io::Result<Self> {
-        let env_chunk = std::env::var(CHUNK_SIZE_ENV)
-            .ok()
-            .and_then(|s| s.parse::<usize>().ok())
-            .filter(|n| *n > 0);
-        let effective = env_chunk.unwrap_or(chunk_size).max(1);
-        let file = File::open(path.as_ref())?;
+        Self::open_with_chunk_size(path.as_ref(), chunk_size)
+    }
+
+    fn open_inner(path: &Path, chunk_size: usize) -> io::Result<Self> {
+        let file = File::open(path)?;
         let size = file.metadata()?.len();
         Ok(Self {
             file,
             size,
-            chunk_size: effective,
+            chunk_size,
             position: 0,
             chunk_cache: Vec::new(),
             chunk_offset: NO_CHUNK_LOADED,
@@ -378,7 +488,7 @@ mod tests {
     }
 
     #[test]
-    fn env_var_chunk_size_honored() {
+    fn explicit_constructor_ignores_env_var() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let prev = std::env::var(CHUNK_SIZE_ENV).ok();
 
@@ -388,19 +498,140 @@ mod tests {
             std::env::set_var(CHUNK_SIZE_ENV, "8192");
         }
         let tmp = write_temp(&[0u8; 64]);
-        let r = WindowsChunkedReader::with_chunk_size(tmp.path(), 1024).expect("open");
-        assert_eq!(r.chunk_size(), 8192, "env should override caller arg");
+        let r = WindowsChunkedReader::open_with_chunk_size(tmp.path(), 1024).expect("open");
+        assert_eq!(
+            r.chunk_size(),
+            1024,
+            "explicit constructor must win over env"
+        );
+
+        let r_shim = WindowsChunkedReader::with_chunk_size(tmp.path(), 2048).expect("open");
+        assert_eq!(
+            r_shim.chunk_size(),
+            2048,
+            "with_chunk_size shim must also ignore env"
+        );
+
+        restore_env(prev);
+    }
+
+    #[test]
+    fn open_honors_env_var_within_bounds() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var(CHUNK_SIZE_ENV).ok();
+
+        unsafe {
+            std::env::set_var(CHUNK_SIZE_ENV, "8192");
+        }
+        let tmp = write_temp(&[0u8; 64]);
+        let r = WindowsChunkedReader::open(tmp.path()).expect("open");
+        assert_eq!(r.chunk_size(), 8192, "open() should honor env override");
+
+        restore_env(prev);
+    }
+
+    #[test]
+    fn open_falls_back_to_default_when_env_unset() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var(CHUNK_SIZE_ENV).ok();
 
         unsafe {
             std::env::remove_var(CHUNK_SIZE_ENV);
         }
-        let r2 = WindowsChunkedReader::with_chunk_size(tmp.path(), 1024).expect("open");
-        assert_eq!(r2.chunk_size(), 1024, "no env should fall back to arg");
+        let tmp = write_temp(&[0u8; 64]);
+        let r = WindowsChunkedReader::open(tmp.path()).expect("open");
+        assert_eq!(r.chunk_size(), DEFAULT_CHUNK_SIZE);
 
-        // Restore prior value so concurrent test runners do not observe leak.
-        if let Some(v) = prev {
+        restore_env(prev);
+    }
+
+    #[test]
+    fn open_falls_back_to_default_when_env_invalid() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var(CHUNK_SIZE_ENV).ok();
+
+        let tmp = write_temp(&[0u8; 64]);
+
+        for bogus in ["", "   ", "not-a-number", "-1", "0"] {
             unsafe {
-                std::env::set_var(CHUNK_SIZE_ENV, v);
+                std::env::set_var(CHUNK_SIZE_ENV, bogus);
+            }
+            let r = WindowsChunkedReader::open(tmp.path()).expect("open");
+            assert_eq!(
+                r.chunk_size(),
+                DEFAULT_CHUNK_SIZE,
+                "invalid env {bogus:?} should fall back to DEFAULT_CHUNK_SIZE"
+            );
+        }
+
+        // Out-of-range positive value should also fall back.
+        let too_big = (MAX_CHUNK_SIZE + 1).to_string();
+        unsafe {
+            std::env::set_var(CHUNK_SIZE_ENV, &too_big);
+        }
+        let r = WindowsChunkedReader::open(tmp.path()).expect("open");
+        assert_eq!(r.chunk_size(), DEFAULT_CHUNK_SIZE);
+
+        restore_env(prev);
+    }
+
+    #[test]
+    fn open_with_chunk_size_rejects_zero() {
+        let tmp = write_temp(&[0u8; 16]);
+        let err =
+            WindowsChunkedReader::open_with_chunk_size(tmp.path(), 0).expect_err("zero rejected");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn open_with_chunk_size_rejects_over_max() {
+        let tmp = write_temp(&[0u8; 16]);
+        let err = WindowsChunkedReader::open_with_chunk_size(tmp.path(), MAX_CHUNK_SIZE + 1)
+            .expect_err("over-max rejected");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+
+        // Exact MAX_CHUNK_SIZE must succeed (inclusive bound).
+        let r = WindowsChunkedReader::open_with_chunk_size(tmp.path(), MAX_CHUNK_SIZE)
+            .expect("MAX_CHUNK_SIZE accepted");
+        assert_eq!(r.chunk_size(), MAX_CHUNK_SIZE);
+    }
+
+    #[test]
+    fn explicit_chunk_size_observable_via_read_boundaries() {
+        // With chunk_size = 1024 and file size 2*chunk + 1 = 2049, three
+        // refills must occur to cover the whole stream. Verify by reading the
+        // entire file through a sink whose buffer is exactly chunk_size long:
+        // each `read()` returns at most one chunk, so the sequence of return
+        // values is [chunk, chunk, 1, 0].
+        let chunk = 1024_usize;
+        let total = 2 * chunk + 1;
+        let payload: Vec<u8> = (0..total).map(|i| (i & 0xFF) as u8).collect();
+        let tmp = write_temp(&payload);
+        let mut r = WindowsChunkedReader::open_with_chunk_size(tmp.path(), chunk).expect("open");
+
+        let mut sizes = Vec::new();
+        let mut buf = vec![0u8; chunk];
+        let mut collected = Vec::with_capacity(total);
+        loop {
+            let n = r.read(&mut buf).unwrap();
+            sizes.push(n);
+            if n == 0 {
+                break;
+            }
+            collected.extend_from_slice(&buf[..n]);
+        }
+        assert_eq!(sizes, vec![chunk, chunk, 1, 0]);
+        assert_eq!(collected, payload);
+    }
+
+    /// Restores the prior `OC_RSYNC_WIN_CHUNK_BYTES` value (or removes it
+    /// when none was set) so leaking env state cannot affect downstream
+    /// tests in the same process.
+    fn restore_env(prev: Option<String>) {
+        unsafe {
+            match prev {
+                Some(v) => std::env::set_var(CHUNK_SIZE_ENV, v),
+                None => std::env::remove_var(CHUNK_SIZE_ENV),
             }
         }
     }
