@@ -59,7 +59,7 @@ use crate::format::BatchFlags;
 use crate::reader::BatchReader;
 
 use delta_phase::apply_delta_phase;
-use fs_ops::{apply_entry_metadata, create_symlink};
+use fs_ops::{apply_entry_metadata, apply_symlink_entry_metadata, create_symlink};
 
 pub use delta::apply_delta_ops;
 
@@ -129,6 +129,16 @@ pub fn replay(
         recurse: flags.recurse,
         ..ReplayResult::default()
     };
+
+    // upstream: main.c:778-799 - get_local_name() creates the destination
+    // directory automatically when the transfer involves more than one file or
+    // the destination operand ends in a slash. Batch replay reproduces that
+    // behaviour so a fresh destination tree can absorb a batch without
+    // requiring the caller to pre-create the root. The flist root entry "."
+    // joined to a missing dest_root expands to `dest_root/.`, which
+    // `fs::create_dir_all` cannot materialise because the parent does not
+    // exist; creating dest_root first sidesteps that path-component edge.
+    ensure_dest_root(dest_root, &entries, &mut result)?;
 
     // Phase 1: Create directories and symlinks, ensure parent dirs for regular files.
     prepare_directories_and_symlinks(&entries, dest_root, verbosity, &mut result)?;
@@ -200,6 +210,41 @@ fn prepare_directories_and_symlinks(
     Ok(())
 }
 
+/// Ensure the destination root exists before per-entry processing.
+///
+/// Mirrors upstream `get_local_name()` semantics: a missing destination
+/// directory is materialised automatically when the batch carries more than
+/// one entry or any directory entry, so callers can replay into a fresh path
+/// without a separate `mkdir`. The dirs_created counter is bumped so the
+/// summary reflects the same "created directory" notice upstream emits.
+fn ensure_dest_root(
+    dest_root: &Path,
+    entries: &[protocol::flist::FileEntry],
+    result: &mut ReplayResult,
+) -> BatchResult<()> {
+    if dest_root.as_os_str().is_empty() || dest_root.exists() {
+        return Ok(());
+    }
+    let needs_dir = entries.len() > 1
+        || entries
+            .iter()
+            .any(|entry| entry.file_type() == protocol::flist::FileType::Directory);
+    if !needs_dir {
+        return Ok(());
+    }
+    fs::create_dir_all(dest_root).map_err(|e| {
+        BatchError::Io(std::io::Error::new(
+            e.kind(),
+            format!(
+                "failed to create destination directory '{}': {e}",
+                dest_root.display()
+            ),
+        ))
+    })?;
+    result.dirs_created += 1;
+    Ok(())
+}
+
 /// Create the parent directory of `path` if it does not already exist.
 fn ensure_parent_dir(path: &Path) -> BatchResult<()> {
     if let Some(parent) = path.parent() {
@@ -250,8 +295,16 @@ fn apply_all_metadata(
                 }
             }
             protocol::flist::FileType::Symlink => {
+                // upstream: rsync.c:set_file_attrs() - chmod is skipped for
+                // symlinks because most platforms ignore the mode bits and
+                // chmod through a symlink follows the link. Calling
+                // apply_entry_metadata here clobbers the target file's mode
+                // with the symlink entry's mode (typically 0o777), which
+                // breaks the batch-mode upstream testsuite case
+                // `nolf-symlink -> nolf` (nolf ends up as 0o777 instead of
+                // the recorded 0o644).
                 if dest_path.symlink_metadata().is_ok() {
-                    let _ = apply_entry_metadata(&dest_path, entry, flags);
+                    let _ = apply_symlink_entry_metadata(&dest_path, entry, flags);
                 }
             }
             _ => {}
