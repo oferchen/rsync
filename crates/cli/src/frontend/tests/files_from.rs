@@ -1726,3 +1726,194 @@ fn resolve_files_from_entry_with_leading_dot_slash_skips_extra_marker() {
     let expected = Path::new("/scratch").join("./dir/file.txt");
     assert_eq!(entries[0], expected.as_os_str());
 }
+
+/// Regression for the upstream `testsuite/files-from.test` first (local-mode)
+/// invocation.
+///
+/// Filelist:
+/// ```text
+/// from/./
+/// from/./dir/subdir
+/// from/./dir/subdir/subsubdir
+/// from/./dir/subdir/subsubdir2/
+/// from/./dir/subdir/foobar.baz
+/// ```
+///
+/// Source operand is `$scratchdir` (the parent of `from/`); dest is `$todir/`.
+/// Upstream `flist.c:2316-2440` honours `(xfer_dirs && name_type != NORMAL_NAME)`
+/// and calls `send_directory()` for every trailing-slash or dotdir entry, so
+/// `from/./` enumerates one level of `from/`'s children even though `--files-from`
+/// implicitly clears `recurse` (`options.c:2189`). The same applies to
+/// `from/./dir/subdir/subsubdir2/`, which must pull `bin-lt-list` even though
+/// `subsubdir/` (no trailing slash) does not pull `etc-ltr-list`.
+///
+/// Prior to PR #5852 the local-copy executor short-circuited at
+/// `copy_directory_recursive`'s `!recursive_enabled()` bail-out, so the
+/// destination only contained `dir/subdir/{foobar.baz,subsubdir,subsubdir2}`
+/// and was missing all top-level siblings plus `subsubdir2/bin-lt-list`.
+#[cfg(unix)]
+#[test]
+fn files_from_integration_matches_upstream_dotdir_walk() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = test_support::create_tempdir();
+    let scratch = tmp.path();
+    let from = scratch.join("from");
+
+    // hands_setup() shape from upstream testsuite/rsync.fns:
+    std::fs::create_dir_all(from.join("dir/subdir/subsubdir")).expect("subsubdir");
+    std::fs::create_dir_all(from.join("dir/subdir/subsubdir2")).expect("subsubdir2");
+    std::fs::create_dir(from.join("emptydir")).expect("emptydir");
+    std::fs::write(from.join("empty"), b"").expect("empty");
+    std::fs::write(from.join("nolf"), b"This file has no trailing lf").expect("nolf");
+    std::fs::write(from.join("text"), b"text payload").expect("text");
+    std::fs::write(from.join("filelist"), b"placeholder").expect("filelist file");
+    std::fs::write(from.join("dir/text"), b"dir text payload").expect("dir/text");
+    std::fs::write(from.join("dir/subdir/foobar.baz"), b"some data\n").expect("foobar.baz");
+    std::fs::write(
+        from.join("dir/subdir/subsubdir/etc-ltr-list"),
+        b"etc listing\n",
+    )
+    .expect("etc-ltr-list");
+    std::fs::write(
+        from.join("dir/subdir/subsubdir2/bin-lt-list"),
+        b"bin listing\n",
+    )
+    .expect("bin-lt-list");
+    symlink("nolf", from.join("nolf-symlink")).expect("nolf-symlink");
+
+    let list_path = scratch.join("filelist");
+    std::fs::write(
+        &list_path,
+        "from/./\n\
+         from/./dir/subdir\n\
+         from/./dir/subdir/subsubdir\n\
+         from/./dir/subdir/subsubdir2/\n\
+         from/./dir/subdir/foobar.baz\n",
+    )
+    .expect("write filelist");
+
+    let to = scratch.join("to");
+    std::fs::create_dir(&to).expect("create to");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-a"),
+        OsString::from(format!("--files-from={}", list_path.display())),
+        OsString::from(scratch.as_os_str()),
+        to.clone().into_os_string(),
+    ]);
+
+    assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
+    assert!(stdout.is_empty());
+
+    // Top-level siblings pulled in by `from/./` (one-level walk).
+    assert!(to.join("empty").is_file(), "to/empty missing");
+    assert!(to.join("emptydir").is_dir(), "to/emptydir missing");
+    assert!(to.join("filelist").is_file(), "to/filelist missing");
+    assert!(to.join("nolf").is_file(), "to/nolf missing");
+    assert!(
+        to.join("nolf-symlink").symlink_metadata().is_ok(),
+        "to/nolf-symlink missing"
+    );
+    assert!(to.join("text").is_file(), "to/text missing");
+    assert!(to.join("dir").is_dir(), "to/dir missing");
+
+    // `from/./dir/subdir` listed without trailing slash: directory itself, no
+    // children unless they are individually listed.
+    assert!(to.join("dir/subdir").is_dir(), "to/dir/subdir missing");
+    assert!(
+        to.join("dir/subdir/foobar.baz").is_file(),
+        "to/dir/subdir/foobar.baz missing"
+    );
+    assert!(
+        to.join("dir/subdir/subsubdir").is_dir(),
+        "to/dir/subdir/subsubdir missing"
+    );
+
+    // `from/./dir/subdir/subsubdir2/` listed with trailing slash: directory
+    // plus one level of contents (mirrors upstream `name_type=DOTDIR_NAME`).
+    assert!(
+        to.join("dir/subdir/subsubdir2").is_dir(),
+        "to/dir/subdir/subsubdir2 missing"
+    );
+    assert!(
+        to.join("dir/subdir/subsubdir2/bin-lt-list").is_file(),
+        "to/dir/subdir/subsubdir2/bin-lt-list missing (regression: walk-one-level dropped child)"
+    );
+
+    // `from/./dir/subdir/subsubdir` listed without trailing slash: directory
+    // itself only; its children must NOT be pulled.
+    assert!(
+        !to.join("dir/subdir/subsubdir/etc-ltr-list").exists(),
+        "non-trailing-slash entry should not pull descendants"
+    );
+
+    // `from/./` does NOT pull `dir/text` because that is two levels down from
+    // the marker, and a one-level walk only enumerates immediate children.
+    assert!(
+        !to.join("dir/text").exists(),
+        "one-level walk must not descend into dir/"
+    );
+}
+
+/// Companion regression test for a flat filelist where every listed entry is a
+/// top-level file. Before PR #5852 the executor walked only the entries that
+/// happened to land under an already-recursed directory; flat top-level files
+/// were silently dropped despite being in the list.
+#[test]
+fn files_from_integration_keeps_every_top_level_entry() {
+    let tmp = test_support::create_tempdir();
+    let source_dir = tmp.path().join("from");
+    std::fs::create_dir(&source_dir).expect("create source");
+
+    let names = [
+        "alpha.txt",
+        "bravo.txt",
+        "charlie.txt",
+        "delta.txt",
+        "echo.txt",
+        "foxtrot.txt",
+        "golf.txt",
+        "hotel.txt",
+        "india.txt",
+        "juliet.txt",
+    ];
+    for name in &names {
+        std::fs::write(source_dir.join(name), format!("body of {name}").as_bytes())
+            .expect("write source file");
+    }
+
+    let list_path = tmp.path().join("flat.list");
+    let mut list = String::new();
+    for name in &names {
+        list.push_str(name);
+        list.push('\n');
+    }
+    std::fs::write(&list_path, list).expect("write list");
+
+    let dest_dir = tmp.path().join("to");
+    std::fs::create_dir(&dest_dir).expect("create dest");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-a"),
+        OsString::from(format!("--files-from={}", list_path.display())),
+        source_dir.into_os_string(),
+        dest_dir.clone().into_os_string(),
+    ]);
+
+    assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
+    assert!(stdout.is_empty());
+
+    for name in &names {
+        let dest_path = dest_dir.join(name);
+        assert!(
+            dest_path.is_file(),
+            "{} missing from destination (regression: top-level entry dropped)",
+            dest_path.display()
+        );
+        let actual = std::fs::read(&dest_path).expect("read dest entry");
+        assert_eq!(actual, format!("body of {name}").as_bytes());
+    }
+}
