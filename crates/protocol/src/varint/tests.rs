@@ -446,6 +446,51 @@ fn read_varlong_empty_input() {
     assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
 }
 
+/// Regression: read_varlong with min_bytes == 0 must surface InvalidData
+/// instead of panicking on `min - 1` underflow. Without this guard a
+/// malformed caller (fuzzer-found or future regression) would crash the
+/// receiver mid-pull. upstream: io.c:read_varlong() implicitly requires
+/// min_bytes >= 1 (it always reads at least the leading tag byte).
+#[test]
+fn read_varlong_rejects_min_bytes_zero() {
+    let data = [0u8; 8];
+    let mut cursor = Cursor::new(&data[..]);
+    let err = read_varlong(&mut cursor, 0).expect_err("min_bytes==0 must fail");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+}
+
+/// Regression: read_varlong with min_bytes > 8 must surface InvalidData
+/// instead of panicking on slice OOB at `initial[..min]`. The upstream union
+/// is 9 bytes wide with at least one extra-byte tag, so any min_bytes > 8 is
+/// outside the encodable range.
+#[test]
+fn read_varlong_rejects_min_bytes_too_large() {
+    let data = [0u8; 16];
+    let mut cursor = Cursor::new(&data[..]);
+    let err = read_varlong(&mut cursor, 9).expect_err("min_bytes>8 must fail");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+}
+
+/// Regression: a fuzzer-style malformed leading tag that demands `extra > 4`
+/// must produce a typed InvalidData error from read_varint (not a panic or
+/// silent wrap). The 0xFC..=0xFF byte range maps to extra=5,5,6,6 in
+/// INT_BYTE_EXTRA, all of which exceed MAX_EXTRA_BYTES (4).
+/// upstream: io.c:1809 `if (extra >= (int)sizeof u.b) ... "Overflow in
+/// read_varint()"`. PULL-VARINT (#4345) cross-check.
+#[test]
+fn read_varint_overflow_full_extra_range() {
+    for tag in 0xFCu8..=0xFFu8 {
+        let data = [tag, 0, 0, 0, 0, 0, 0];
+        let mut cursor = Cursor::new(&data[..]);
+        let err = read_varint(&mut cursor).expect_err("overflow tag must fail");
+        assert_eq!(
+            err.kind(),
+            io::ErrorKind::InvalidData,
+            "tag {tag:#x} should surface InvalidData"
+        );
+    }
+}
+
 #[test]
 fn int_byte_extra_table_structure() {
     for (i, &val) in INT_BYTE_EXTRA[..32].iter().enumerate() {
