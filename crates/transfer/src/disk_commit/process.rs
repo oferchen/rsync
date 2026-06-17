@@ -14,6 +14,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use engine::{CleanupManager, compute_backup_path, trace_make_backup_rename};
+use logging::info_log;
 use protocol::acl::AclCache;
 
 use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
@@ -813,6 +814,25 @@ fn make_backup(file_path: &Path, config: &BackupConfig) -> io::Result<()> {
     // upstream: backup.c:216-217 - DEBUG_GTE(BACKUP, 1) on the RENAME success
     // branch of link_or_rename. disk_commit always uses rename here.
     trace_make_backup_rename(&file_path.display().to_string());
+    // upstream: backup.c:352 - INFO_GTE(BACKUP, 1) fires on success label
+    // for every successful backup. The local-copy executor already emits
+    // this via context_impl/state.rs; the wire-transfer receiver path must
+    // mirror it so `--info=backup` reports backups during delta transfers.
+    // Paths are displayed relative to the destination root to match upstream
+    // test assertions (testsuite/backup.test).
+    let file_rel = file_path
+        .strip_prefix(&config.dest_dir)
+        .unwrap_or(file_path);
+    let backup_rel = backup_path
+        .strip_prefix(&config.dest_dir)
+        .unwrap_or(&backup_path);
+    info_log!(
+        Backup,
+        1,
+        "backed up {} to {}",
+        file_rel.display(),
+        backup_rel.display()
+    );
     Ok(())
 }
 
@@ -1098,5 +1118,64 @@ mod tests {
         let path = Path::new("/dest/file.txt");
         let staging = partial_dir_path(path);
         assert_eq!(staging, PathBuf::from("/dest/.~tmp~/file.txt"));
+    }
+
+    /// Verifies `make_backup` emits the upstream-format `--info=BACKUP`
+    /// notice on success so wire-transfer (`--no-whole-file`) receivers
+    /// surface the same `backed up <fname> to <buf>` line as upstream
+    /// rsync's `backup.c:352`.
+    ///
+    /// upstream: backup.c:352 - `INFO_GTE(BACKUP, 1)` fires on the
+    /// `success:` label inside `make_backup` for every backup written
+    /// regardless of whether the receiver took the wire-transfer or
+    /// local-copy code path. Mirrors the local-copy emission already
+    /// covered by `engine/tests/debug_backup_emissions.rs`.
+    #[test]
+    fn make_backup_emits_info_backup_message() {
+        use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, init};
+        use std::ffi::OsString;
+
+        let mut cfg = VerbosityConfig::default();
+        cfg.info.backup = 1;
+        init(cfg);
+        let _ = drain_events();
+
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("payload.bin");
+        fs::write(&file_path, b"existing content").unwrap();
+
+        let config = BackupConfig {
+            dest_dir: dir.path().to_path_buf(),
+            backup_dir: None,
+            suffix: OsString::from("~"),
+        };
+        make_backup(&file_path, &config).expect("make_backup succeeds");
+
+        let backup_path = file_path.with_extension("bin~");
+        assert!(backup_path.exists(), "backup file must exist after rename");
+        assert!(!file_path.exists(), "original file must be renamed away");
+
+        let file_rel = file_path.strip_prefix(dir.path()).unwrap_or(&file_path);
+        let backup_rel = backup_path.strip_prefix(dir.path()).unwrap_or(&backup_path);
+        let expected = format!(
+            "backed up {} to {}",
+            file_rel.display(),
+            backup_rel.display()
+        );
+        let messages: Vec<String> = drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Info {
+                    flag: InfoFlag::Backup,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            messages.iter().any(|m| m == &expected),
+            "expected upstream-format INFO=BACKUP line {expected:?}; got {messages:?}"
+        );
     }
 }

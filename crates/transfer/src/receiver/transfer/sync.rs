@@ -344,6 +344,21 @@ impl ReceiverContext {
                 // upstream: backup.c:216-217 - DEBUG_GTE(BACKUP, 1) on RENAME
                 // success branch of link_or_rename.
                 engine::trace_make_backup_rename(&file_path.display().to_string());
+                // upstream: backup.c:352 - INFO_GTE(BACKUP, 1) reports every
+                // successful backup. Mirrors the local-copy executor emission
+                // in engine::local_copy::context_impl::state::backup_existing_entry.
+                // Paths are displayed relative to the destination root to
+                // match upstream test assertions (testsuite/backup.test).
+                let file_rel = file_path.strip_prefix(&dest_dir).unwrap_or(&file_path);
+                let backup_rel_display =
+                    backup_path.strip_prefix(&dest_dir).unwrap_or(&backup_path);
+                info_log!(
+                    Backup,
+                    1,
+                    "backed up {} to {}",
+                    file_rel.display(),
+                    backup_rel_display.display()
+                );
             }
 
             // upstream: Linux 5.11+ io_uring submits IORING_OP_RENAMEAT; we
