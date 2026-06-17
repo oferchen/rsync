@@ -145,18 +145,26 @@ pub(crate) fn emit_transfer_summary(
             human_readable_mode,
             writer,
         )?;
-        if stats_on {
-            writeln!(writer)?;
-        }
     }
 
     let name_enabled = !matches!(name_level, NameOutputLevel::Disabled);
     let suppress_name_totals =
         suppress_updated_only_totals && matches!(name_level, NameOutputLevel::UpdatedOnly);
+    let emit_trailer_totals =
+        !stats_on && (verbosity > 0 || (name_enabled && !suppress_name_totals));
+
+    // upstream: main.c:461 - `output_summary()` emits a blank
+    // `rprintf(FCLIENT, "\n")` before the INFO_GTE(STATS, 1) totals so the
+    // trailer is visually separated from preceding per-file output.
+    // `testsuite/itemize.test`'s `v_filt` helper relies on this empty line
+    // (`sed -e '/^$/,$d'`) to strip the trailer when matching `-vv` goldens.
+    if emit_verbose_listing && (stats_on || emit_trailer_totals) {
+        writeln!(writer)?;
+    }
 
     if stats_on {
         emit_stats(summary, writer, human_readable_mode, dry_run, stats_level)?;
-    } else if verbosity > 0 || (name_enabled && !suppress_name_totals) {
+    } else if emit_trailer_totals {
         emit_totals(summary, writer, human_readable_mode, dry_run)?;
     }
 
@@ -422,6 +430,19 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
     )
 }
 
+/// Returns whether an event represents a no-op uptodate emission. Used to
+/// reorder events so upstream's generator-first / receiver-second wire order
+/// is preserved in verbose mode.
+///
+/// upstream: hlink.c:218-224, generator.c:1010-1022, rsync.c:672-676 - the
+/// generator emits `"is uptodate"` synchronously while the receiver emits
+/// the bare-name notice from `set_file_attrs` only after the transfer
+/// completes. The two processes pipeline so uptodate lines appear ahead of
+/// transferred-file lines in the observable client output.
+fn is_uptodate_event(event: &ClientEvent) -> bool {
+    matches!(event.kind(), ClientEventKind::MetadataReused) || event.is_hardlink_uptodate()
+}
+
 /// Renders verbose listings for the provided transfer events.
 pub(crate) fn emit_verbose<W: Write + ?Sized>(
     events: &[ClientEvent],
@@ -435,7 +456,16 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
         return Ok(());
     }
 
-    for event in events {
+    // upstream pipelines the generator (which emits `"is uptodate"`
+    // synchronously) ahead of the receiver (which emits the bare-name
+    // notice only after `set_file_attrs` returns). In our event-stream
+    // pipeline the actions are recorded in traversal order, so partition
+    // them to recover the upstream wire order. The sort is stable so each
+    // group preserves its original relative ordering.
+    let mut ordered_events: Vec<&ClientEvent> = events.iter().collect();
+    ordered_events.sort_by_key(|event| if is_uptodate_event(event) { 0u8 } else { 1 });
+
+    for event in ordered_events {
         let kind = event.kind();
         let include_for_name = event_matches_name_level(event, name_level);
 
@@ -446,9 +476,10 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
 
             // upstream: rsync.c:676 - uptodate notice uses `"%s is uptodate"`
             // wording at INFO_GTE(NAME, 2). `--info=name2` sets name_level to
-            // UpdatedAndUnchanged here, so route MetadataReused through the
-            // uptodate phrasing instead of the bare path.
-            if matches!(kind, ClientEventKind::MetadataReused) {
+            // UpdatedAndUnchanged here, so route MetadataReused (or a
+            // HardLink whose destination was already linked to the leader)
+            // through the uptodate phrasing instead of the bare path.
+            if matches!(kind, ClientEventKind::MetadataReused) || event.is_hardlink_uptodate() {
                 writeln!(stdout, "{} is uptodate", event.relative_path().display())?;
                 continue;
             }
@@ -543,6 +574,17 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 // (info_log! events drain AFTER the summary in cli mod.rs);
                 // routing it through the event renderer keeps `is uptodate`
                 // lines ahead of the totals to match upstream's wire order.
+                if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
+                    writeln!(stdout, "{} is uptodate", event.relative_path().display())?;
+                }
+                continue;
+            }
+            ClientEventKind::HardLink if event.is_hardlink_uptodate() => {
+                // upstream: hlink.c:218-224 - when the destination already
+                // shares the source group leader's inode, the generator
+                // emits `"%s is uptodate"` at INFO_GTE(NAME, 2) instead of
+                // the bare path. Mirror the same gate so `-vv` without `-i`
+                // matches the upstream `testsuite/itemize.test` golden.
                 if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
                     writeln!(stdout, "{} is uptodate", event.relative_path().display())?;
                 }

@@ -1188,3 +1188,170 @@ fn level_1_all_uptodate_emits_banner_only() {
         "unchanged file must NOT emit a bare-name line under -v without --progress, got: {rendered:?}"
     );
 }
+
+/// Verifies that `-vvplrH` against an already-hardlinked destination emits the
+/// upstream `is uptodate` notice for the hardlink companion instead of the
+/// bare path.
+///
+/// upstream: hlink.c:218-224 - when the destination already shares the source
+/// group leader's inode, the generator emits `"%s is uptodate"` at
+/// `INFO_GTE(NAME, 2) && maybe_ATTRS_REPORT`. Mirrors `testsuite/itemize.test`
+/// at line 106 (`foo/extra is uptodate`).
+#[cfg(unix)]
+#[test]
+fn level_2_hardlink_uptodate_emits_is_uptodate_notice() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let from = tmp.path().join("from");
+    let to = tmp.path().join("to");
+    std::fs::create_dir_all(&from).expect("mkdir from");
+    std::fs::write(from.join("leader.txt"), b"leader content").expect("write leader");
+    std::fs::hard_link(from.join("leader.txt"), from.join("follower.txt"))
+        .expect("source hardlink");
+
+    let mut from_slash = from.clone().into_os_string();
+    from_slash.push("/");
+
+    let (code, _stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-plrH"),
+        from_slash.clone(),
+        to.clone().into_os_string(),
+    ]);
+    assert_eq!(code, 0);
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-vvplrH"),
+        from_slash,
+        to.into_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8");
+    assert!(
+        rendered.contains("leader.txt is uptodate"),
+        "leader must emit `is uptodate` under -vv, got: {rendered:?}"
+    );
+    assert!(
+        rendered.contains("follower.txt is uptodate"),
+        "hardlink follower must emit `is uptodate` under -vv (upstream hlink.c:218-224), got: {rendered:?}"
+    );
+    assert!(
+        !rendered.lines().any(|line| line == "follower.txt"),
+        "hardlink follower must not emit the bare path under -vv, got: {rendered:?}"
+    );
+}
+
+/// Verifies that `-vvplr` (no `--stats`) emits a blank line separating the
+/// per-file listing from the totals trailer so the upstream
+/// `testsuite/itemize.test` `v_filt` helper (`sed -e '/^$/,$d'`) can strip the
+/// trailer before diffing.
+///
+/// upstream: main.c:461 - `output_summary()` emits `rprintf(FCLIENT, "\n")`
+/// before the `INFO_GTE(STATS, 1)` totals block.
+#[test]
+fn level_2_blank_line_precedes_totals_trailer() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let from = tmp.path().join("from");
+    let to = tmp.path().join("to");
+    std::fs::create_dir_all(&from).expect("mkdir from");
+    std::fs::write(from.join("trailer.txt"), b"separator").expect("write source");
+
+    let mut from_slash = from.clone().into_os_string();
+    from_slash.push("/");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-vvplr"),
+        from_slash,
+        to.into_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8");
+    let lines: Vec<&str> = rendered.lines().collect();
+    let trailer_index = lines
+        .iter()
+        .position(|line| line.starts_with("sent "))
+        .expect("totals trailer must be present");
+    assert!(
+        trailer_index > 0,
+        "totals trailer must follow at least one listing line, got: {rendered:?}"
+    );
+    assert!(
+        lines[trailer_index - 1].is_empty(),
+        "an empty line must precede the totals trailer so v_filt strips it correctly, got: {rendered:?}"
+    );
+}
+
+/// Verifies that under `-vv` without `-i`, uptodate notices are emitted
+/// before transferred-file lines so the observable wire order matches
+/// upstream's pipelined generator-first / receiver-second emission.
+///
+/// upstream: generator.c emits `"is uptodate"` synchronously while the
+/// receiver emits the bare-name notice from `set_file_attrs` (rsync.c:672-676)
+/// only after the transfer completes. Mirrors `testsuite/itemize.test`
+/// lines 102-109 which expect uptodate notices to precede the transferred
+/// `foo/config2` line even though `foo/config2` precedes `foo/extra` and
+/// `foo/sym` alphabetically.
+#[test]
+fn level_2_uptodate_lines_precede_transferred_lines() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let from = tmp.path().join("from");
+    let to = tmp.path().join("to");
+    std::fs::create_dir_all(&from).expect("mkdir from");
+    std::fs::write(from.join("aaa.txt"), b"alpha content").expect("write aaa");
+    std::fs::write(from.join("bbb.txt"), b"bravo content").expect("write bbb");
+    std::fs::write(from.join("zzz.txt"), b"zulu content").expect("write zzz");
+
+    let mut from_slash = from.clone().into_os_string();
+    from_slash.push("/");
+
+    let (code, _stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-tplr"),
+        from_slash.clone(),
+        to.clone().into_os_string(),
+    ]);
+    assert_eq!(code, 0);
+
+    // Rewrite only `aaa.txt` so that the next run transfers `aaa.txt` while
+    // `bbb.txt` and `zzz.txt` stay uptodate.
+    std::fs::write(from.join("aaa.txt"), b"alpha modified content").expect("rewrite aaa");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-vvplr"),
+        from_slash,
+        to.into_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8");
+    let lines: Vec<&str> = rendered.lines().collect();
+    let bbb_idx = lines
+        .iter()
+        .position(|l| *l == "bbb.txt is uptodate")
+        .unwrap_or_else(|| panic!("missing `bbb.txt is uptodate`: {rendered:?}"));
+    let zzz_idx = lines
+        .iter()
+        .position(|l| *l == "zzz.txt is uptodate")
+        .unwrap_or_else(|| panic!("missing `zzz.txt is uptodate`: {rendered:?}"));
+    let aaa_idx = lines
+        .iter()
+        .position(|l| *l == "aaa.txt")
+        .unwrap_or_else(|| panic!("missing transferred `aaa.txt`: {rendered:?}"));
+    assert!(
+        bbb_idx < aaa_idx && zzz_idx < aaa_idx,
+        "uptodate notices must precede transferred files (upstream generator/receiver pipeline), got: {rendered:?}"
+    );
+}
