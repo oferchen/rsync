@@ -164,6 +164,14 @@ fn serve_connections(
         listeners = Vec::with_capacity(bind_addresses.len());
         bound_addresses = Vec::with_capacity(bind_addresses.len());
 
+        // Per-family bind failure handling mirrors upstream rsync's
+        // `socket.c::open_socket_in` (rsync-3.4.1, lines 428-494): the loop
+        // attempts every getaddrinfo result, accumulates per-family error
+        // messages, and only fails the daemon when zero sockets bound. A
+        // dual-stack startup on a kernel where one family is unavailable
+        // (e.g., GitHub Actions runners with IPv6 partially configured but
+        // unroutable) must succeed as long as the other family binds.
+        let dual_stack = bind_addresses.len() > 1;
         for addr in &bind_addresses {
             let requested_addr = SocketAddr::new(*addr, port);
             match bind_with_backlog(requested_addr, backlog, tcp_fastopen_mode) {
@@ -173,9 +181,18 @@ fn serve_connections(
                     listeners.push(listener);
                 }
                 Err(error) => {
-                    // If binding to one family fails (e.g., IPv6 not available), continue
-                    // with the other family if we're in dual-stack mode. Otherwise, fail.
-                    if bind_addresses.len() > 1 && !listeners.is_empty() {
+                    if dual_stack {
+                        // Surface the per-family failure rather than silently
+                        // swallowing it: operators investigating why only one
+                        // family is reachable need to see the underlying errno
+                        // (typically EADDRNOTAVAIL or EAFNOSUPPORT). Upstream's
+                        // equivalent diagnostic is the `bind() failed: ...
+                        // (address-family %d)` message at socket.c:463-465.
+                        warn_per_family_bind_failure(
+                            log_sink.as_ref(),
+                            requested_addr,
+                            &error,
+                        );
                         continue;
                     }
                     return Err(bind_error(requested_addr, error));
