@@ -14,6 +14,8 @@ use std::time::Duration;
 
 #[cfg(any(test, feature = "test-support"))]
 use super::append_recorded_sleeps;
+#[cfg(not(test))]
+use super::sleep_with_backend;
 
 /// Result returned by [`crate::limiter::BandwidthLimiter::register`] describing how long the limiter slept.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -82,16 +84,11 @@ pub(crate) fn sleep_for(duration: Duration) {
         #[cfg(any(test, feature = "test-support"))]
         {
             recorded_chunks.get_or_insert_with(Vec::new).push(chunk);
-
-            #[cfg(not(test))]
-            {
-                std::thread::sleep(chunk);
-            }
         }
 
-        #[cfg(all(not(test), not(feature = "test-support")))]
+        #[cfg(not(test))]
         {
-            std::thread::sleep(chunk);
+            sleep_with_backend(chunk);
         }
 
         remaining = remaining.saturating_sub(chunk);
