@@ -344,8 +344,7 @@ impl ReceiverContext {
                 );
 
                 // Non-blocking: collect any ready disk results.
-                let (disk_bytes, disk_meta_errors) = pipelined_receiver.drain_ready_results()?;
-                bytes_received += disk_bytes;
+                let (_disk_bytes, disk_meta_errors) = pipelined_receiver.drain_ready_results()?;
                 metadata_errors.extend(disk_meta_errors);
 
                 // Route accumulated warnings through the multiplexed writer
@@ -354,7 +353,10 @@ impl ReceiverContext {
                     let _ = writer.send_msg_info(warning.as_bytes());
                 }
 
-                bytes_received += result.total_bytes;
+                // upstream: io.c:820 stats.total_read only counts bytes read
+                // off the wire. Matched-from-basis bytes never traverse the
+                // read fd, so exclude them from bytes_received.
+                bytes_received += result.literal_bytes;
                 total_literal_bytes += result.literal_bytes;
                 total_matched_bytes += result.matched_bytes;
                 files_transferred += 1;
@@ -390,8 +392,7 @@ impl ReceiverContext {
             }
 
             // Drain all remaining disk results
-            let (disk_bytes, disk_meta_errors) = pipelined_receiver.drain_all_results()?;
-            bytes_received += disk_bytes;
+            let (_disk_bytes, disk_meta_errors) = pipelined_receiver.drain_all_results()?;
             metadata_errors.extend(disk_meta_errors);
 
             // Route accumulated warnings through the multiplexed writer.

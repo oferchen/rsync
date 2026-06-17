@@ -224,6 +224,7 @@ impl ReceiverContext {
             let writer_capacity = adaptive_writer_capacity(target_size);
             let mut output = std::io::BufWriter::with_capacity(writer_capacity, file);
             let mut total_bytes: u64 = 0;
+            let mut literal_bytes: u64 = 0;
 
             let use_sparse = self.config.flags.sparse;
             let mut sparse_state = if use_sparse {
@@ -261,6 +262,7 @@ impl ReceiverContext {
                 self.checksum_seed,
                 &file_path,
                 &mut total_bytes,
+                &mut literal_bytes,
             )?;
 
             if let Some(ref mut sparse) = sparse_state {
@@ -423,7 +425,10 @@ impl ReceiverContext {
                 metadata_errors.push((file_path.clone(), acl_err.to_string()));
             }
 
-            bytes_received += total_bytes;
+            // upstream: io.c:820 stats.total_read only counts bytes read
+            // off the wire. Matched-from-basis bytes never traverse the
+            // read fd, so exclude them from bytes_received.
+            bytes_received += literal_bytes;
             files_transferred += 1;
         }
 
@@ -488,6 +493,7 @@ fn apply_delta_tokens<R: Read>(
     checksum_seed: i32,
     file_path: &std::path::Path,
     total_bytes: &mut u64,
+    literal_bytes: &mut u64,
 ) -> io::Result<()> {
     loop {
         match token_reader.read_token(reader)? {
@@ -534,6 +540,7 @@ fn apply_delta_tokens<R: Read>(
                     write_chunk(output, sparse_state, &data)?;
                     checksum_verifier.update(&data);
                     *total_bytes += len as u64;
+                    *literal_bytes += len as u64;
                 }
                 LiteralData::Pending(len) => {
                     if let Some(data) = reader.try_borrow_exact(len)? {
@@ -547,6 +554,7 @@ fn apply_delta_tokens<R: Read>(
                         checksum_verifier.update(data);
                     }
                     *total_bytes += len as u64;
+                    *literal_bytes += len as u64;
                 }
             },
             TokenReaderDeltaToken::BlockRef(block_idx) => {
