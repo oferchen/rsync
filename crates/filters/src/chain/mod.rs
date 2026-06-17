@@ -46,7 +46,7 @@ pub use config::DirMergeConfig;
 pub use error::FilterChainError;
 pub use scope::DirFilterGuard;
 
-use scope::{DirScope, has_matching_rule};
+use scope::{DirScope, scope_has_deletion_match, scope_has_transfer_match};
 
 /// Per-directory scoped filter chain with push/pop semantics.
 ///
@@ -140,7 +140,9 @@ impl FilterChain {
             if !self.scope_applies_here(scope) {
                 continue;
             }
-            if !scope.filter_set.is_empty() && has_matching_rule(&scope.filter_set, path, is_dir) {
+            if !scope.filter_set.is_empty()
+                && scope_has_transfer_match(&scope.filter_set, path, is_dir)
+            {
                 return scope.filter_set.allows_during_traversal(path, is_dir);
             }
         }
@@ -162,7 +164,9 @@ impl FilterChain {
             if !self.scope_applies_here(scope) {
                 continue;
             }
-            if !scope.filter_set.is_empty() && has_matching_rule(&scope.filter_set, path, is_dir) {
+            if !scope.filter_set.is_empty()
+                && scope_has_deletion_match(&scope.filter_set, path, is_dir)
+            {
                 return scope.filter_set.allows_deletion(path, is_dir);
             }
         }

@@ -66,7 +66,8 @@ pub(crate) fn parse_merge_modifiers(
                     .use_whitespace()
                     .allow_comments(false)
                     .allow_list_clearing(true)
-                    .inherit(false);
+                    .inherit(false)
+                    .cvs_mode(true);
                 assume_cvsignore = true;
             }
             'e' => {
@@ -232,6 +233,9 @@ mod tests {
         assert_eq!(options.enforced_kind(), Some(DirMergeEnforcedKind::Exclude));
         assert!(options.uses_whitespace());
         assert!(!options.allows_comments());
+        // upstream: exclude.c:1248-1254 - `C` modifier sets FILTRULE_CVS_IGNORE.
+        // We record this so the wire encoder can forward it as cvs_exclude=true.
+        assert!(options.is_cvs_mode());
     }
 
     #[test]

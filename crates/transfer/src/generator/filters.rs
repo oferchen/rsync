@@ -440,12 +440,25 @@ fn wire_rule_to_dir_merge_config(
     wire_rule: &FilterRuleWireFormat,
     cvs_perishable: bool,
 ) -> DirMergeConfig {
+    // upstream: exclude.c:1404-1408 - when a merge or dir-merge rule carries
+    // FILTRULE_CVS_IGNORE (the `C` modifier, e.g. `-f:C` sent as `:C` on the
+    // wire) and arrives with an empty pattern, upstream substitutes
+    // ".cvsignore" as the default filename. Without this fallback the
+    // resulting `DirMergeConfig` would have an empty filename, which causes
+    // `enter_directory()` to look up the directory itself instead of any
+    // `.cvsignore` it contains, dropping CVS-style ignores entirely.
+    let pattern: &str = if wire_rule.cvs_exclude && wire_rule.pattern.is_empty() {
+        ".cvsignore"
+    } else {
+        wire_rule.pattern.as_str()
+    };
+
     // upstream: exclude.c - a leading '/' on the merge filename means the
     // file is only looked for in the transfer root directory (anchor_root).
     // Strip the '/' so Path::join() produces a relative path.
-    let (filename, anchor_root) = match wire_rule.pattern.strip_prefix('/') {
+    let (filename, anchor_root) = match pattern.strip_prefix('/') {
         Some(stripped) => (stripped, true),
-        None => (wire_rule.pattern.as_str(), false),
+        None => (pattern, false),
     };
     let mut config = DirMergeConfig::new(filename);
     if anchor_root {
@@ -635,6 +648,22 @@ mod tests {
         assert!(config.cvs_mode());
         assert!(!config.inherits());
         assert!(!config.excludes_self());
+    }
+
+    /// `-f:C` over remote shell arrives as a DirMerge wire rule with the `C`
+    /// modifier set and an empty pattern. Upstream `exclude.c:1404-1408`
+    /// substitutes `.cvsignore` as the default filename so the receiver knows
+    /// which per-directory file to consult. Without this fallback the merge
+    /// filename would be empty, causing the chain to stat each directory's
+    /// own inode and skip `.cvsignore` entirely.
+    #[test]
+    fn wire_rule_to_dir_merge_config_empty_pattern_defaults_to_cvsignore() {
+        let mut wire_rule = make_dir_merge_wire_rule("");
+        wire_rule.cvs_exclude = true;
+        let config = wire_rule_to_dir_merge_config(&wire_rule, true);
+        assert_eq!(config.filename(), ".cvsignore");
+        assert!(config.cvs_mode());
+        assert!(!config.inherits());
     }
 
     #[test]

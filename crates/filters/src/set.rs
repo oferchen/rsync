@@ -165,6 +165,34 @@ impl FilterSet {
             .allows_transfer()
     }
 
+    /// Returns `true` when any sender-side include/exclude or protect/risk
+    /// rule matches the path, ignoring synthetic descendant matchers.
+    ///
+    /// This is the predicate per-directory scope chains use to detect
+    /// whether a scope is silent on a path and should fall through to
+    /// outer scopes. It mirrors upstream `exclude.c:rule_matches()`, which
+    /// has no descendant matching at all - descendant exclusion in the
+    /// sender walk is a side effect of not descending into excluded
+    /// directories, not a rule match.
+    #[must_use]
+    pub(crate) fn has_transfer_rule_match(&self, path: &Path, is_dir: bool) -> bool {
+        self.inner
+            .has_matching_rule(path, is_dir, DecisionContext::Transfer)
+    }
+
+    /// Returns `true` when any receiver-side include/exclude or protect/risk
+    /// rule matches the path, ignoring synthetic descendant matchers.
+    ///
+    /// Mirrors upstream `exclude.c:rule_matches()` for the receiver side,
+    /// matching what `check_filter()` would see when iterating the rule list
+    /// during deletion checks. Used by the per-directory chain to detect
+    /// scope silence on the deletion path.
+    #[must_use]
+    pub(crate) fn has_deletion_rule_match(&self, path: &Path, is_dir: bool) -> bool {
+        self.inner
+            .has_matching_rule(path, is_dir, DecisionContext::Deletion)
+    }
+
     /// Returns `true` when a directory is excluded by a non-directory-specific rule.
     ///
     /// This is used by `--prune-empty-dirs` to decide whether to still descend
