@@ -264,6 +264,7 @@ dependencies = [
 name = "bandwidth"
 version = "0.6.3"
 dependencies = [
+ "fast_io",
  "memchr",
  "proptest",
  "thiserror",
