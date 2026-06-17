@@ -1,11 +1,12 @@
 //! Tests for the disk commit thread.
 
+use std::ffi::OsString;
 use std::fs;
 
 use crate::pipeline::messages::{BeginMessage, FileMessage};
 use crate::pipeline::spsc::TryRecvError;
 
-use super::config::{DELAY_UPDATES_PARTIAL_DIR, DiskCommitConfig, PartialMode};
+use super::config::{BackupConfig, DELAY_UPDATES_PARTIAL_DIR, DiskCommitConfig, PartialMode};
 use super::process::{DelayedUpdateEntry, delay_updates_staging_path, handle_delayed_updates};
 use super::thread::spawn_disk_thread;
 
@@ -2714,4 +2715,141 @@ fn delay_updates_channel_disconnect_preserves_staged_files() {
         "staged file must persist after channel disconnect"
     );
     assert_eq!(fs::read(&staging).unwrap(), b"disconnect data");
+}
+
+/// Verifies that committing a file through the pipelined disk thread with
+/// `--backup` (default suffix) returns a [`crate::pipeline::messages::BackupNotice`]
+/// on the [`crate::pipeline::messages::CommitResult`] when a pre-existing
+/// destination file is renamed out of the way. This is the wire-transfer
+/// equivalent of upstream `backup.test`'s line 27 invocation:
+///
+/// ```text
+/// rsync -ai --info=backup --no-whole-file --backup '$fromdir/' '$todir/'
+/// ```
+///
+/// Without the notice flowing back to the main thread, the upstream
+/// `grep "backed up $fn to $fn~"` would never match because the disk
+/// thread's `VerbosityConfig` is never seeded with the user's `--info=backup`.
+#[test]
+fn pipelined_backup_default_suffix_returns_destination_relative_notice() {
+    let dir = test_support::create_tempdir();
+    let dest_dir = dir.path().to_path_buf();
+    let file_path = dest_dir.join("payload.bin");
+    fs::write(&file_path, b"pre-existing payload").unwrap();
+
+    let config = DiskCommitConfig {
+        dest_dir: Some(dest_dir.clone()),
+        backup: Some(BackupConfig {
+            dest_dir: dest_dir.clone(),
+            backup_dir: None,
+            suffix: OsString::from("~"),
+        }),
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config).unwrap();
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 5,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Chunk(b"fresh".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Commit).unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    let notice = result
+        .backup_notice
+        .expect("disk thread must report the backup notice on the CommitResult");
+    assert_eq!(notice.original, std::path::PathBuf::from("payload.bin"));
+    assert_eq!(notice.backup, std::path::PathBuf::from("payload.bin~"));
+
+    let backup_path = dest_dir.join("payload.bin~");
+    assert_eq!(fs::read(&backup_path).unwrap(), b"pre-existing payload");
+    assert_eq!(fs::read(&file_path).unwrap(), b"fresh");
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+/// Verifies that committing a file with `--backup --backup-dir` reports the
+/// backup destination-relative to `dest_dir` so the upstream
+/// `backup.test` grep `backed up $fn to .*/$fn$` matches (line 43, 56).
+/// Mirrors upstream:
+///
+/// ```text
+/// rsync -ai --info=backup --no-whole-file --backup \
+///     --backup-dir='$bakdir' '$fromdir/' '$todir/'
+/// ```
+#[test]
+fn pipelined_backup_with_backup_dir_reports_destination_relative_paths() {
+    let dir = test_support::create_tempdir();
+    let dest_dir = dir.path().join("todir");
+    let backup_dir = dir.path().join("bakdir");
+    fs::create_dir_all(&dest_dir).unwrap();
+    fs::create_dir_all(&backup_dir).unwrap();
+
+    let deep = dest_dir.join("deep");
+    fs::create_dir_all(&deep).unwrap();
+    let file_path = deep.join("name1");
+    fs::write(&file_path, b"pre-existing content").unwrap();
+
+    let config = DiskCommitConfig {
+        dest_dir: Some(dest_dir.clone()),
+        backup: Some(BackupConfig {
+            dest_dir: dest_dir.clone(),
+            backup_dir: Some(backup_dir.clone()),
+            suffix: OsString::from("~"),
+        }),
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config).unwrap();
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 7,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Chunk(b"updated".to_vec()))
+        .unwrap();
+    h.file_tx.send(FileMessage::Commit).unwrap();
+
+    let result = h.result_rx.recv().unwrap().unwrap();
+    let notice = result
+        .backup_notice
+        .expect("disk thread must report the backup notice when --backup-dir is set");
+    // upstream: backup.c:352 emits paths relative to the destination root
+    // for both `fname` and `buf`, matching upstream test grep
+    // `backed up $fn to .*/$fn$`.
+    assert_eq!(notice.original, std::path::PathBuf::from("deep/name1"));
+    assert!(
+        notice.backup.ends_with("deep/name1"),
+        "backup path must end with the original relative path; got {:?}",
+        notice.backup
+    );
+
+    // Original was moved into the backup-dir tree (with the trailing suffix).
+    let backup_path = backup_dir.join("deep/name1~");
+    assert_eq!(fs::read(&backup_path).unwrap(), b"pre-existing content");
+    // Destination now holds the new content.
+    assert_eq!(fs::read(&file_path).unwrap(), b"updated");
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
 }
