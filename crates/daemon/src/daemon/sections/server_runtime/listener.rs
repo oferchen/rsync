@@ -253,6 +253,66 @@ fn warn_per_family_bind_failure(
     }
 }
 
+/// Binds one TCP listener per entry in `bind_addresses`, tolerating per-family
+/// failures while at least one family still binds successfully.
+///
+/// Mirrors upstream `socket.c::open_socket_in` (rsync-3.4.1, lines 428-498):
+/// the loop attempts every getaddrinfo result, emits a per-family diagnostic
+/// when a bind fails, and only returns an error when zero sockets bound. The
+/// dual-stack default (IPv6 then IPv4) tolerates GitHub Actions runners where
+/// IPv6 loopback is partially configured but unroutable - the IPv6 bind fails
+/// with `EADDRNOTAVAIL` or `EAFNOSUPPORT`, oc-rsync logs the per-family error,
+/// and the listener degrades to IPv4 instead of producing an opaque exit 10.
+///
+/// Returns the listeners in `bind_addresses` order (skipping families that
+/// failed) along with the matching `local_addr()` for status reporting. Returns
+/// `Err(io::Error)` only when every family in `bind_addresses` failed to bind;
+/// callers map that to a `DaemonError` with the first requested address as
+/// context, matching the existing `bind_error` contract.
+fn bind_listeners_per_family(
+    bind_addresses: &[IpAddr],
+    port: u16,
+    backlog: i32,
+    tcp_fastopen: TcpFastOpenMode,
+    log_sink: Option<&SharedLogSink>,
+) -> Result<(Vec<TcpListener>, Vec<SocketAddr>), io::Error> {
+    let mut listeners = Vec::with_capacity(bind_addresses.len());
+    let mut bound_addresses = Vec::with_capacity(bind_addresses.len());
+    let dual_stack = bind_addresses.len() > 1;
+    let mut last_error: Option<io::Error> = None;
+
+    for addr in bind_addresses {
+        let requested_addr = SocketAddr::new(*addr, port);
+        match bind_with_backlog(requested_addr, backlog, tcp_fastopen) {
+            Ok(listener) => {
+                let local_addr = listener.local_addr().unwrap_or(requested_addr);
+                bound_addresses.push(local_addr);
+                listeners.push(listener);
+            }
+            Err(error) => {
+                if dual_stack {
+                    warn_per_family_bind_failure(log_sink, requested_addr, &error);
+                    last_error = Some(error);
+                    continue;
+                }
+                return Err(error);
+            }
+        }
+    }
+
+    if listeners.is_empty() {
+        let error = last_error.unwrap_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::AddrNotAvailable,
+                "no addresses available to bind",
+            )
+        });
+        return Err(error);
+    }
+
+    Ok((listeners, bound_addresses))
+}
+
 /// Applies the `TCP_NOTSENT_LOWAT` perf option to an accepted client
 /// stream, ignoring unsupported platforms and best-effort errors.
 fn apply_accepted_stream_tcp_notsent_lowat(stream: &TcpStream) {
