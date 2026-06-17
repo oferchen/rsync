@@ -2029,4 +2029,133 @@ mod integration {
             "CPRES_ZLIB literal-only stream must decompress correctly without basis"
         );
     }
+
+    /// Regression: replay must apply symlink metadata via `lchown`/`lutimes`,
+    /// not follow the link and `chmod` the target. The upstream-testsuite
+    /// `batch-mode.test` exercises this through the `nolf-symlink -> nolf`
+    /// pair: `ln -s nolf nolf-symlink` produces a symlink whose own mode is
+    /// `0o777` while `nolf` itself is `0o644`. Phase 1 creates the symlink
+    /// before phase 2 writes `nolf`, so applying the symlink entry's mode
+    /// through the regular metadata path follows the link and clobbers the
+    /// underlying regular file's permissions.
+    ///
+    /// upstream: rsync.c:set_file_attrs() skips chmod for symlinks; mirror
+    /// that behaviour during batch replay so `nolf` ends up as `0o644`.
+    #[cfg(unix)]
+    #[test]
+    fn test_replay_symlink_metadata_does_not_follow_link() {
+        use protocol::flist::{FileEntry, FileListWriter};
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("symlink_meta.batch");
+        let dest_dir = temp_dir.path().join("dest");
+        fs::create_dir_all(&dest_dir).unwrap();
+
+        let protocol_version = 31;
+
+        let write_config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        )
+        .with_checksum_seed(99);
+
+        let mut writer = BatchWriter::new(write_config).unwrap();
+        let flags = BatchFlags {
+            preserve_links: true,
+            ..Default::default()
+        };
+        writer.write_header(flags).unwrap();
+
+        let protocol = protocol::ProtocolVersion::try_from(protocol_version as u8).unwrap();
+        let mut flist_writer = FileListWriter::new(protocol).with_preserve_links(true);
+
+        // Regular file with mode 0o644.
+        let file_entry = {
+            let mut e = FileEntry::new_file("nolf".into(), 4, 0o644);
+            e.set_mtime(1_700_000_000, 0);
+            e
+        };
+        // Symlink "nolf-symlink -> nolf". new_symlink() sets mode to 0o777
+        // unconditionally, matching the kernel default that `ln -s` produces.
+        let link_entry = {
+            let mut e =
+                FileEntry::new_symlink("nolf-symlink".into(), std::path::PathBuf::from("nolf"));
+            e.set_mtime(1_700_000_000, 0);
+            e
+        };
+
+        let mut buf = Vec::new();
+        flist_writer.write_entry(&mut buf, &file_entry).unwrap();
+        flist_writer.write_entry(&mut buf, &link_entry).unwrap();
+        writer.write_data(&buf).unwrap();
+
+        let mut end_buf = Vec::new();
+        flist_writer.write_end(&mut end_buf, None).unwrap();
+        writer.write_data(&end_buf).unwrap();
+
+        // NDX-framed delta for "nolf": whole-file literal "data".
+        {
+            use protocol::codec::{NdxCodec, NdxCodecEnum};
+
+            let mut ndx_codec = NdxCodecEnum::new(protocol_version as u8);
+            let mut ndx_buf = Vec::new();
+            ndx_codec.write_ndx(&mut ndx_buf, 0).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+
+            writer.write_data(&0x8000u16.to_le_bytes()).unwrap();
+            for _ in 0..4 {
+                writer.write_data(&0i32.to_le_bytes()).unwrap();
+            }
+
+            let mut delta_buf = Vec::new();
+            protocol::wire::delta::write_token_literal(&mut delta_buf, b"data").unwrap();
+            protocol::wire::delta::write_token_end(&mut delta_buf).unwrap();
+            writer.write_data(&delta_buf).unwrap();
+
+            writer.write_data(&[0u8; 16]).unwrap();
+
+            ndx_buf.clear();
+            ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+
+            ndx_buf.clear();
+            ndx_codec.write_ndx_done(&mut ndx_buf).unwrap();
+            writer.write_data(&ndx_buf).unwrap();
+        }
+
+        writer.finalize().unwrap();
+
+        let read_config = BatchConfig::new(
+            BatchMode::Read,
+            batch_path.to_string_lossy().to_string(),
+            protocol_version,
+        );
+
+        let result = crate::replay::replay(&read_config, &dest_dir, 0).unwrap();
+        assert_eq!(result.file_count, 2);
+        assert_eq!(result.symlinks_created, 1);
+
+        let nolf = dest_dir.join("nolf");
+        let nolf_link = dest_dir.join("nolf-symlink");
+        assert!(nolf.is_file(), "nolf must be a regular file");
+        assert!(
+            nolf_link
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "nolf-symlink must remain a symlink"
+        );
+
+        // Without the fix, nolf would inherit the symlink's 0o777 mode.
+        let nolf_mode = fs::metadata(&nolf).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            nolf_mode, 0o644,
+            "regular file mode must be 0o644 - the symlink entry's 0o777 mode \
+             must not propagate via apply_metadata_from_file_entry following \
+             the link"
+        );
+    }
 }
