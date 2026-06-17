@@ -1169,8 +1169,6 @@ fn fake_super_off_does_not_write_stat_xattr_via_local_metadata() {
     );
 }
 
-// --- metadata_unchanged tests ---
-
 #[cfg(unix)]
 #[test]
 fn metadata_unchanged_returns_true_when_all_attrs_match() {
