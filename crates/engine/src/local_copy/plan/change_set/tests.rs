@@ -268,7 +268,7 @@ fn for_file_wrote_data_sets_checksum_changed() {
     let metadata = fs::metadata(&path).expect("metadata");
     let options = MetadataOptions::new();
 
-    let change_set = LocalCopyChangeSet::for_file(
+    let change_set = LocalCopyChangeSet::for_file_with_checksum(
         &metadata,
         Some(&metadata),
         &options,
@@ -276,6 +276,7 @@ fn for_file_wrote_data_sets_checksum_changed() {
         true, // wrote data
         false,
         false,
+        true, // checksum mode active (gates position-2 `c` glyph per upstream generator.c:1942)
     );
 
     assert!(change_set.checksum_changed());
@@ -470,7 +471,6 @@ fn change_set_detects_size_and_time_changes() {
         false,
     );
 
-    assert!(change_set.checksum_changed());
     assert!(change_set.size_changed());
     assert!(matches!(
         change_set.time_change(),
