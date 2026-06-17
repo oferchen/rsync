@@ -595,6 +595,37 @@ fn multiplex_reader_batch_recorder_captures_demuxed_data() {
 }
 
 #[test]
+fn multiplex_reader_batch_recorder_captures_try_borrow_exact() {
+    // try_borrow_exact is the zero-copy fast path used by literal-delta-token
+    // reads. Before the fix, this path bypassed the batch recorder, so
+    // --write-batch over SSH / daemon produced batch files missing every
+    // literal payload that fit inside a single MSG_DATA frame. The downstream
+    // --read-batch then failed with "Failed to read literal data (N bytes):
+    // failed to fill whole buffer" once the reader exhausted the truncated
+    // batch body. This regression test exercises the zero-copy path and
+    // asserts the bytes still reach the recorder.
+    let payload = b"zero-copy literal block";
+    let mut stream = Vec::new();
+    protocol::send_msg(&mut stream, protocol::MessageCode::Data, payload).unwrap();
+
+    let mut mux = MultiplexReader::new(Cursor::new(stream));
+    let recorder_buf: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    mux.batch_recorder = Some(recorder_buf.clone());
+
+    let borrowed = mux
+        .try_borrow_exact(payload.len())
+        .unwrap()
+        .expect("frame buffer must contain full payload");
+    assert_eq!(borrowed, payload);
+
+    let recorded = recorder_buf.lock().unwrap();
+    assert_eq!(
+        &*recorded, payload,
+        "try_borrow_exact must tee bytes to the batch recorder"
+    );
+}
+
+#[test]
 fn multiplex_reader_batch_recorder_skips_control_messages() {
     // Verify that control messages (MSG_IO_ERROR) are NOT recorded -
     // only MSG_DATA payloads go to the batch recorder.
@@ -714,6 +745,48 @@ fn batch_recorder_roundtrip_writer_reader_capture_same_data() {
         "writer and reader recorders should capture identical data"
     );
     assert_eq!(&*write_recorded, b"roundtrip test data");
+}
+
+#[test]
+fn batch_recorder_roundtrip_try_borrow_exact_matches_write_side() {
+    // Same as `batch_recorder_roundtrip_writer_reader_capture_same_data` but
+    // drains the reader through `try_borrow_exact` instead of `Read::read`.
+    // This is the zero-copy path used by literal delta-token reads, and it
+    // must produce a byte-identical recording so `--write-batch` over wire
+    // transfers (SSH, daemon) captures the same payload as a local copy. The
+    // bug fixed alongside this test left the batch file truncated to the
+    // header + flist, causing `--read-batch` to fail with "Failed to read
+    // literal data (N bytes): failed to fill whole buffer".
+    use crate::writer::multiplex::MultiplexWriter;
+
+    let payload = b"literal payload taken via zero-copy borrow";
+    let mut wire = Vec::new();
+
+    let write_recorder: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    {
+        let mut mux_writer = MultiplexWriter::new(&mut wire);
+        mux_writer.batch_recorder = Some(write_recorder.clone());
+        mux_writer.write_all(payload).unwrap();
+        mux_writer.flush().unwrap();
+    }
+
+    let read_recorder: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+    let mut mux_reader = MultiplexReader::new(Cursor::new(wire));
+    mux_reader.batch_recorder = Some(read_recorder.clone());
+
+    let borrowed = mux_reader
+        .try_borrow_exact(payload.len())
+        .unwrap()
+        .expect("frame buffer must hold the full payload");
+    assert_eq!(borrowed, payload);
+
+    let write_recorded = write_recorder.lock().unwrap();
+    let read_recorded = read_recorder.lock().unwrap();
+    assert_eq!(
+        &*write_recorded, &*read_recorded,
+        "zero-copy reader path must produce the same batch recording as the writer side"
+    );
+    assert_eq!(&*write_recorded, payload);
 }
 
 // upstream: io.c:read_buf() tees data to batch_fd BEFORE decompression.
