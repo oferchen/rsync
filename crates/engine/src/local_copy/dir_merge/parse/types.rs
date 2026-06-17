@@ -11,7 +11,8 @@ pub(crate) enum ParsedFilterDirective {
     /// A concrete filter rule (`+`, `-`, `include`, `exclude`, `show`, `hide`,
     /// `protect`, `risk`).
     Rule(FilterRule),
-    /// A `merge` or `dir-merge` directive that pulls in another filter file.
+    /// A `merge` directive that pulls in another filter file eagerly,
+    /// resolved against the enclosing file's parent directory.
     Merge {
         /// Path to the merged file, resolved relative to the enclosing file's
         /// parent directory unless absolute.
@@ -20,6 +21,22 @@ pub(crate) enum ParsedFilterDirective {
         /// `None` indicates the merged file inherits the current parser
         /// configuration unchanged.
         options: Option<DirMergeOptions>,
+    },
+    /// A `dir-merge` (or `:` short form, `per-dir`) directive that registers
+    /// a per-directory merge filename to be looked up in each subdirectory
+    /// visited beneath the enclosing scope.
+    ///
+    /// upstream: exclude.c:1419-1428 - `FILTRULE_PERDIR_MERGE` rules are added
+    /// to the rule list with `parse_merge_name` rather than being expanded
+    /// immediately. They fire when the receiver descends into a subdirectory
+    /// that contains a matching file.
+    DirMerge {
+        /// Bare merge-file name (e.g. `.filt2`) as it appears in the directive,
+        /// NOT a parent-relative path. The actual file is resolved against
+        /// each subdirectory entered.
+        pattern: PathBuf,
+        /// Parser configuration for the registered per-directory merge rule.
+        options: DirMergeOptions,
     },
     /// An `exclude-if-present` directive naming a marker file whose presence
     /// excludes the containing directory.

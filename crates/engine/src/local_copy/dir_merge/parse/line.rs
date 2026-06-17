@@ -399,4 +399,27 @@ mod tests {
         let result = parse_filter_directive_line("- ");
         assert!(result.is_err());
     }
+
+    /// upstream: exclude.c:1419-1428 - the `dir-merge` keyword and the `:`
+    /// short form both register a per-directory merge rule. Both forms must
+    /// produce [`ParsedFilterDirective::DirMerge`] so the runtime can defer
+    /// the file lookup to each subdirectory rather than loading it eagerly
+    /// against the enclosing directory.
+    #[test]
+    fn parse_filter_directive_line_dir_merge_keyword_emits_dir_merge_variant() {
+        let result = parse_filter_directive_line("dir-merge .filt2").unwrap();
+        assert!(
+            matches!(result, Some(ParsedFilterDirective::DirMerge { .. })),
+            "dir-merge keyword must emit DirMerge variant"
+        );
+    }
+
+    #[test]
+    fn parse_filter_directive_line_colon_short_form_emits_dir_merge_variant() {
+        let result = parse_filter_directive_line(": .filt2").unwrap();
+        assert!(
+            matches!(result, Some(ParsedFilterDirective::DirMerge { .. })),
+            "':' short form must emit DirMerge variant"
+        );
+    }
 }
