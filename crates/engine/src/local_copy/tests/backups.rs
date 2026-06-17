@@ -1835,6 +1835,22 @@ fn backup_emits_info_backup_notice() {
     let existing = dest_root.join("file.txt");
     fs::write(&existing, b"original").expect("write dest");
 
+    // upstream: backup.c:353 emits paths relative to the destination root, not
+    // absolute filesystem paths. Capture the relative form before `ctx.dest` is
+    // consumed by `into_os_string()` below so the assertion mirrors the
+    // production emission in state.rs:700-711.
+    let dest_rel = existing
+        .strip_prefix(&ctx.dest)
+        .expect("existing under ctx.dest")
+        .display()
+        .to_string();
+    let backup_rel = dest_root
+        .join("file.txt~")
+        .strip_prefix(&ctx.dest)
+        .expect("backup under ctx.dest")
+        .display()
+        .to_string();
+
     let operands = vec![ctx.source.into_os_string(), ctx.dest.into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::default().backup(true);
@@ -1854,9 +1870,7 @@ fn backup_emits_info_backup_notice() {
         })
         .collect();
 
-    let dest_display = existing.display().to_string();
-    let backup_display = dest_root.join("file.txt~").display().to_string();
-    let expected = format!("backed up {dest_display} to {backup_display}");
+    let expected = format!("backed up {dest_rel} to {backup_rel}");
 
     assert!(
         messages.iter().any(|m| m == &expected),
@@ -2054,5 +2068,71 @@ fn backup_with_no_whole_file_does_not_produce_vanished_error() {
         fs::read(dest_root.join("delta.bin")).expect("read dest"),
         new_content,
         "destination must contain updated content"
+    );
+}
+
+/// Regression: `--backup --backup-dir=$bakdir --delete` must replace a
+/// pre-existing directory at the backup path with the moved file rather than
+/// failing fatally with EISDIR.
+///
+/// Mirrors invocation 4 of upstream rsync 3.4.4 `testsuite/backup.test`,
+/// which pre-creates `$bakdir/dname` as a directory before invoking rsync
+/// with `--delete --backup --backup-dir=$bakdir`. The destination file
+/// `$todir/dname` must be backed up over the pre-existing directory.
+///
+/// upstream: backup.c:247-256 link_or_rename failure recovery treats EEXIST
+/// and EISDIR identically by calling delete_item with DEL_RECURSE before
+/// retrying the rename.
+#[test]
+fn backup_dir_replaces_preexisting_directory_at_target() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    let source_file = ctx.source.join("keep.txt");
+    fs::write(&source_file, b"source content").expect("write source");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    fs::write(dest_root.join("keep.txt"), b"old keep").expect("write keep");
+    fs::write(dest_root.join("dname"), b"to be backed up").expect("write dname");
+
+    let backup_dir = ctx.dest.join("bak");
+    let preexisting_dir = backup_dir.join("source").join("dname");
+    fs::create_dir_all(&preexisting_dir).expect("create preexisting backup dir");
+    assert!(preexisting_dir.is_dir(), "preexisting dir must be a dir");
+
+    let operands = vec![
+        ctx.source.into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    // upstream: options.c:2278-2279 - when --backup-dir is set without an
+    // explicit --suffix, the suffix defaults to "" so the backup is placed
+    // at $bakdir/<rel> rather than $bakdir/<rel>~. The CLI calls
+    // `with_backup_suffix(None)` to apply this rule (see core/src/client/run/mod.rs);
+    // mirror that here so this test exercises the same effective default the
+    // production CLI uses.
+    let options = LocalCopyOptions::default()
+        .delete(true)
+        .with_backup_directory(Some(backup_dir.clone()))
+        .with_backup_suffix::<OsString>(None);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy with --delete + --backup-dir over preexisting dir must succeed");
+
+    let backup_dname = backup_dir.join("source").join("dname");
+    let backup_meta = fs::symlink_metadata(&backup_dname).expect("stat backup target");
+    assert!(
+        backup_meta.is_file(),
+        "backup target must be the moved regular file, not the original directory"
+    );
+    assert_eq!(
+        fs::read(&backup_dname).expect("read backup"),
+        b"to be backed up",
+        "backup must hold the destination file's pre-deletion content"
+    );
+    assert!(
+        !dest_root.join("dname").exists(),
+        "deleted file must not remain in destination"
     );
 }
