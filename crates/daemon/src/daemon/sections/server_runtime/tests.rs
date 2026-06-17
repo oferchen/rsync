@@ -992,3 +992,108 @@ fn warn_per_family_bind_failure_labels_ipv4() {
 
     warn_per_family_bind_failure(None, addr, &error);
 }
+
+#[test]
+fn bind_listeners_per_family_falls_back_when_first_family_unreachable() {
+    // Regression for UTS-DD-daemon-exit10: GitHub Actions Linux runners have
+    // IPv6 disabled or unroutable on loopback. The daemon's dual-stack
+    // default used to bind only `[::]:port` and silently swallowed the
+    // per-family failure, producing an opaque exit 10 when an IPv4-only
+    // client connected. This test simulates that environment by listing an
+    // unreachable address first (TEST-NET-1 192.0.2.1 - RFC 5737 reserves
+    // 192.0.2.0/24 for documentation and routers drop it, so `bind(2)`
+    // returns `EADDRNOTAVAIL`) and a loopback address second. The helper
+    // must produce a working listener on the loopback family rather than
+    // failing the whole startup.
+    //
+    // upstream: socket.c::open_socket_in (rsync-3.4.1:428-498) iterates
+    // every getaddrinfo result and only fails when zero sockets bound.
+    let unreachable = IpAddr::V4(std::net::Ipv4Addr::new(192, 0, 2, 1));
+    let reachable = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+    let bind_addresses = vec![unreachable, reachable];
+
+    let (listeners, bound_addresses) = bind_listeners_per_family(
+        &bind_addresses,
+        0,
+        DEFAULT_LISTEN_BACKLOG,
+        TcpFastOpenMode::Off,
+        None,
+    )
+    .expect("at least one family must bind");
+
+    assert_eq!(listeners.len(), 1, "only the reachable family should bind");
+    assert_eq!(bound_addresses.len(), 1);
+    assert!(
+        bound_addresses[0].ip() == reachable,
+        "fallback listener must be on the reachable address, got {}",
+        bound_addresses[0]
+    );
+    assert!(
+        bound_addresses[0].port() != 0,
+        "kernel must assign an ephemeral port for the bound listener"
+    );
+}
+
+#[test]
+fn bind_listeners_per_family_fails_only_when_all_families_unreachable() {
+    // Companion to the fallback test: confirm the helper surfaces an error
+    // when no family in the input list can bind. Both addresses here are
+    // TEST-NET-1 documentation prefixes (RFC 5737) which the kernel cannot
+    // assign to a local socket, so every bind attempt returns
+    // `EADDRNOTAVAIL`. Matches upstream socket.c:492-498 which returns NULL
+    // ("unable to bind any inbound sockets") only when the per-family loop
+    // produced zero usable sockets.
+    let bind_addresses = vec![
+        IpAddr::V4(std::net::Ipv4Addr::new(192, 0, 2, 1)),
+        IpAddr::V4(std::net::Ipv4Addr::new(192, 0, 2, 2)),
+    ];
+
+    let err = bind_listeners_per_family(
+        &bind_addresses,
+        0,
+        DEFAULT_LISTEN_BACKLOG,
+        TcpFastOpenMode::Off,
+        None,
+    )
+    .expect_err("no family should bind");
+
+    // The error returned must be the underlying bind failure (typically
+    // AddrNotAvailable). Callers map this to a DaemonError via bind_error()
+    // with exit code 10 (socket I/O), matching upstream's exit semantics.
+    assert!(
+        matches!(
+            err.kind(),
+            io::ErrorKind::AddrNotAvailable | io::ErrorKind::PermissionDenied
+        ),
+        "expected AddrNotAvailable or PermissionDenied, got {:?}: {err}",
+        err.kind()
+    );
+}
+
+#[test]
+fn bind_listeners_per_family_single_family_propagates_error() {
+    // When only one address is provided (no dual-stack), the helper must
+    // propagate the bind failure immediately - there is no other family to
+    // fall back to. This matches the non-dual-stack branch in the loop and
+    // ensures explicit `--address` configurations still surface the bind
+    // failure verbatim to the operator.
+    let bind_addresses = vec![IpAddr::V4(std::net::Ipv4Addr::new(192, 0, 2, 1))];
+
+    let err = bind_listeners_per_family(
+        &bind_addresses,
+        0,
+        DEFAULT_LISTEN_BACKLOG,
+        TcpFastOpenMode::Off,
+        None,
+    )
+    .expect_err("the single configured address must fail to bind");
+
+    assert!(
+        matches!(
+            err.kind(),
+            io::ErrorKind::AddrNotAvailable | io::ErrorKind::PermissionDenied
+        ),
+        "expected AddrNotAvailable or PermissionDenied, got {:?}: {err}",
+        err.kind()
+    );
+}
