@@ -1154,13 +1154,13 @@ fn warn_per_family_accept_failure_labels_ipv6() {
     // when one family's acceptor dies while another is still healthy.
     // Mirrors the bind-failure warning's labelling contract.
     let addr: SocketAddr = "[::]:8873".parse().unwrap();
-    let error = io::Error::new(io::ErrorKind::Other, "test failure");
+    let error = io::Error::other("test failure");
     warn_per_family_accept_failure(None, addr, &error);
 }
 
 #[test]
 fn warn_per_family_accept_failure_labels_ipv4() {
     let addr: SocketAddr = "0.0.0.0:8873".parse().unwrap();
-    let error = io::Error::new(io::ErrorKind::Other, "test failure");
+    let error = io::Error::other("test failure");
     warn_per_family_accept_failure(None, addr, &error);
 }

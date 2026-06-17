@@ -97,13 +97,6 @@ const fn normalize_peer_address(addr: SocketAddr) -> SocketAddr {
 /// standard default for production TCP servers.
 const DEFAULT_LISTEN_BACKLOG: i32 = 128;
 
-/// Interval between signal flag checks in the accept loop.
-///
-/// The listener uses a non-blocking timeout so the loop can periodically
-/// inspect signal flags (SIGHUP, SIGTERM/SIGINT, SIGUSR1, SIGUSR2) without
-/// waiting indefinitely for a new connection.
-const SIGNAL_CHECK_INTERVAL: Duration = Duration::from_millis(500);
-
 /// Logs a progress summary when SIGUSR2 is received.
 ///
 /// Outputs the number of active worker threads, total connections served, and
