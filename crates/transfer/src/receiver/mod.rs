@@ -849,15 +849,39 @@ impl ReceiverContext {
         if !self.should_emit_itemize() {
             return Ok(());
         }
-        // upstream: generator.c:574-576 - only emit when significant flags are
-        // set. When iflags == 0 (file is completely up-to-date), no line is
-        // produced. INFO_GTE(NAME, 2) and stdout_format_has_i > 1 gates are
-        // not applicable on the server side (the client controls display).
-        if !iflags.has_significant_flags() {
+        // upstream: main.c:794-796 - when the receiver pre-flight-mkdirs the
+        // destination root, `flist->files[0]->flags |= FLAG_DIR_CREATED`. The
+        // generator's `itemize()` then sees `statret < 0` for the root entry,
+        // ORs in `ITEM_IS_NEW`, and emits `cd+++++++++ ./` even when no other
+        // attribute differs. oc-rsync's `create_directory_incremental` cannot
+        // observe the `ensure_dest_root_exists` mkdir after the fact, so the
+        // root entry arrives here with `iflags == 0`. Mirror upstream's
+        // unconditional `cd+++++++++ ./` emission for the root directory so
+        // itemize-changes output matches the `testsuite/itemize.test` golden.
+        let is_root_dir = entry.is_dir() && entry.path().as_os_str() == ".";
+        if !is_root_dir && !iflags.has_significant_flags() {
+            // upstream: generator.c:574-576 - only emit when significant flags
+            // are set. When iflags == 0 (file is completely up-to-date), no
+            // line is produced. INFO_GTE(NAME, 2) and stdout_format_has_i > 1
+            // gates are not applicable on the server side (the client
+            // controls display).
             return Ok(());
         }
+        let effective_iflags = if is_root_dir && !iflags.has_significant_flags() {
+            // upstream: generator.c:1468-1471 + generator.c:566-572 - itemize()
+            // with `statret < 0` ORs `ITEM_LOCAL_CHANGE | ITEM_IS_NEW`. Apply
+            // the same bits here so `format_itemize_line` emits the full
+            // `cd+++++++++` glyph instead of `.d ...`.
+            crate::generator::ItemFlags::from_raw(
+                crate::generator::ItemFlags::ITEM_LOCAL_CHANGE
+                    | crate::generator::ItemFlags::ITEM_IS_NEW,
+            )
+        } else {
+            *iflags
+        };
         let ctx = self.itemize_context();
-        let line = crate::generator::itemize::format_itemize_line(iflags, entry, false, &ctx);
+        let line =
+            crate::generator::itemize::format_itemize_line(&effective_iflags, entry, false, &ctx);
         writer.send_msg_info(line.as_bytes())
     }
 

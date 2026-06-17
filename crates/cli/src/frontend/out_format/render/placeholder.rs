@@ -35,7 +35,16 @@ pub(super) fn render_placeholder_value(
                 .metadata()
                 .and_then(ClientEntryMetadata::symlink_target)
             {
-                rendered.push_str(" -> ");
+                // upstream: log.c:643-654 - `%L` renders ` => %s` for
+                // hard-link references and ` -> %s` for symlink targets.
+                // The two cases are mutually exclusive on a single record
+                // because a hardlink alias never carries a symlink target.
+                let connector = if matches!(event.kind(), ClientEventKind::HardLink) {
+                    " => "
+                } else {
+                    " -> "
+                };
+                rendered.push_str(connector);
                 rendered.push_str(&target.to_string_lossy());
             }
             Some(rendered)
@@ -68,7 +77,14 @@ pub(super) fn render_placeholder_value(
             .metadata()
             .and_then(ClientEntryMetadata::symlink_target)
             .map(|target| {
-                let mut rendered = String::from(" -> ");
+                // upstream: log.c:643-654 - `%L` standalone also renders the
+                // ` => %s` vs ` -> %s` distinction.
+                let connector = if matches!(event.kind(), ClientEventKind::HardLink) {
+                    " => "
+                } else {
+                    " -> "
+                };
+                let mut rendered = String::from(connector);
                 rendered.push_str(&target.to_string_lossy());
                 rendered
             }),

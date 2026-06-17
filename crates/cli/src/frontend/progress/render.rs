@@ -1,6 +1,23 @@
 use std::io::{self, Write};
+use std::path::Path;
 
 use core::client::{ClientEvent, ClientEventKind, ClientSummary, HumanReadableMode};
+
+/// Renders a path string with any trailing platform path separators trimmed,
+/// mirroring upstream rsync's `*cp = '\0'` slash-lopping in `main.c:789`
+/// before the `created directory %s\n` print.
+fn display_without_trailing_separators(path: &Path) -> String {
+    let mut rendered = path.display().to_string();
+    while rendered.len() > 1
+        && rendered
+            .as_bytes()
+            .last()
+            .is_some_and(|&b| b == b'/' || (cfg!(windows) && b == b'\\'))
+    {
+        rendered.pop();
+    }
+    rendered
+}
 
 use super::format::{
     event_matches_name_level, format_list_permissions, format_list_size, format_list_timestamp,
@@ -50,6 +67,27 @@ pub(crate) fn emit_transfer_summary(
         }
 
         return Ok(());
+    }
+
+    // upstream: main.c:787-808 - when the receiver pre-flight-mkdirs the
+    // destination root because `file_total > 1 || trailing_slash`, it lops
+    // off the trailing slash (`*cp = '\0'`) and prints `created directory
+    // %s\n` gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`. Mirror the
+    // same gate plus trailing-slash trim here so `-i` and `-v` invocations
+    // emit the notice ahead of the per-entry itemize lines, matching the
+    // upstream `testsuite/itemize.test` golden. The notice is only emitted
+    // when the local-copy executor reports that it materialised the
+    // destination root during this run.
+    if summary.destination_root_created()
+        && !dry_run
+        && (out_format.is_some() || verbosity > 0)
+        && let Some(dest_root) = events.iter().map(ClientEvent::destination_root).next()
+    {
+        writeln!(
+            writer,
+            "created directory {}",
+            display_without_trailing_separators(dest_root)
+        )?;
     }
 
     let formatted_rendered = if let Some(format) = out_format {

@@ -114,12 +114,24 @@ impl ClientEvent {
             LocalCopyAction::SourceRemoved => ClientEventKind::SourceRemoved,
         };
         let created = match &action {
-            LocalCopyAction::DataCopied => was_created,
-            LocalCopyAction::DirectoryCreated
+            // Honour the explicit `was_created` bit for every action whose
+            // record represents an entry that may either be newly created
+            // OR re-pointed/updated in place. upstream: log.c:736-738 -
+            // `(iflags & ITEM_IS_NEW)` flips slots 2-10 to `+`; that bit is
+            // only set by the generator when the destination did not exist
+            // (`statret < 0`). The renderer mirrors that gate via
+            // `was_created`. Callers must opt into creation with
+            // `.with_creation(true)` only when the destination was actually
+            // newly materialised.
+            LocalCopyAction::DataCopied
+            | LocalCopyAction::HardLink
             | LocalCopyAction::SymlinkCopied
             | LocalCopyAction::FifoCopied
-            | LocalCopyAction::DeviceCopied
-            | LocalCopyAction::HardLink => true,
+            | LocalCopyAction::DeviceCopied => was_created,
+            // DirectoryCreated retains the unconditional `true` because the
+            // local-copy executor only emits it when the directory was
+            // actually mkdir'd this run.
+            LocalCopyAction::DirectoryCreated => true,
             LocalCopyAction::MetadataReused
             | LocalCopyAction::SkippedExisting
             | LocalCopyAction::SkippedMissingDestination
