@@ -2226,6 +2226,139 @@ mod module_access_tests {
         assert!(matches!(result, Err(())));
     }
 
+    // UTS-NEXTEST-EDGE.m link-dest module-escape security pins.
+    //
+    // Ports the upstream `alt-dest-symlink-race.test` / `link-dest-module-
+    // escape` security scenario into the daemon's path-validation invariant.
+    // Upstream's defence is `secure_relative_open()` at receiver basis-lookup
+    // time; oc-rsync's daemon-side defence is `confine_basis_under_module`,
+    // which drops the basis before the request ever reaches the receiver.
+    //
+    // Behavioural divergence from the upstream test: upstream's daemon never
+    // emits a literal "outside the module" `@ERROR` for these scenarios. Its
+    // `util1.c:1035 sanitize_path` collapses `..` against the module root
+    // depth (rewriting the path under the module) and `main.c:841
+    // check_alt_basis_dirs` only warns when the resulting basis is missing.
+    // PR #5778 aligned the oc-rsync daemon with that contract by switching
+    // from a hard `@ERROR` reject to a silent drop. These tests pin the
+    // silent-drop contract so a future regression to either the old
+    // `@ERROR` reject path or to admitting the escape cannot ship.
+
+    #[test]
+    fn confine_basis_link_dest_relative_etc_passwd_escape_is_dropped() {
+        // Negative scenario from the upstream link-dest-module-escape pin:
+        // the client sends `--link-dest=../etc/passwd` from a dest under the
+        // module root that has fewer path components than the lexical climb.
+        // The lexical normalisation collapses `<dest>/../etc/passwd` past
+        // the module root to `<module_parent>/etc/passwd`, which `starts_with
+        // (module_root)` rejects. The basis must be dropped so the receiver
+        // re-transfers rather than hard-linking from outside the module.
+        let parent = tempfile::TempDir::new().expect("parent tempdir");
+        let module_root = parent.path().join("upload");
+        std::fs::create_dir(&module_root).expect("create module root");
+        let module_root = module_root.canonicalize().expect("canonicalise module");
+        // resolve_base is the module root itself (receiver dest = module
+        // root for a bare-module push), so `../etc/passwd` climbs one level
+        // above the module and lands on a sibling path.
+        let resolve_base = module_root.clone();
+        let escape = std::path::Path::new("../etc/passwd");
+
+        assert!(
+            confine_basis_under_module(escape, &resolve_base, &module_root).is_none(),
+            "--link-dest=../etc/passwd must be dropped (relative climb past module root)",
+        );
+    }
+
+    #[test]
+    fn confine_basis_link_dest_relative_in_module_sibling_is_accepted() {
+        // Positive control paired with the `../etc/passwd` negative case
+        // above. A relative basis that resolves to an in-module sibling
+        // must survive so operator-permitted snapshot layouts (e.g. the
+        // upstream `dest/00 + --link-dest=../01` pattern from main.c:1199
+        // -1206) still hard-link instead of re-transferring.
+        let module = tempfile::TempDir::new().expect("module tempdir");
+        let module_root = module.path().canonicalize().expect("canonicalise module");
+        let dest = module_root.join("00");
+        std::fs::create_dir(&dest).expect("create dest 00");
+        let sibling = module_root.join("01");
+        std::fs::create_dir(&sibling).expect("create sibling 01");
+
+        let resolved = confine_basis_under_module(
+            std::path::Path::new("../01"),
+            &dest,
+            &module_root,
+        )
+        .expect("relative in-module sibling basis must survive");
+        assert_eq!(resolved, module_root.join("01"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn confine_basis_link_dest_in_module_symlink_to_outside_is_dropped() {
+        // Ports the exact attack shape from upstream
+        // `alt-dest-symlink-race.test`: an in-module symlink (`mod/cd ->
+        // /outside`) used as a relative `--link-dest=cd` target. The
+        // canonicalisation step in `confine_basis_under_module` follows the
+        // symlink, finds the target outside the module root, and the
+        // containment check rejects it. Without this defence the receiver
+        // would hard-link the destination to attacker-readable files
+        // outside the module (the rsync delta-rolling read-disclosure
+        // primitive the upstream test guards against).
+        let parent = tempfile::TempDir::new().expect("parent tempdir");
+        let module_root = parent.path().join("upload");
+        std::fs::create_dir(&module_root).expect("create module root");
+        let outside = parent.path().join("outside");
+        std::fs::create_dir(&outside).expect("create outside dir");
+        let module_root = module_root.canonicalize().expect("canonicalise module");
+        let outside = outside.canonicalize().expect("canonicalise outside");
+
+        // Plant the attacker's symlink trap inside the module.
+        let trap = module_root.join("cd");
+        std::os::unix::fs::symlink(&outside, &trap).expect("plant in-module symlink trap");
+
+        // Client sends `--link-dest=cd`; resolve_base is the module root
+        // (the receiver dest for the bare-module push the upstream test
+        // uses). The symlink resolution must be detected and the basis
+        // dropped.
+        assert!(
+            confine_basis_under_module(
+                std::path::Path::new("cd"),
+                &module_root,
+                &module_root,
+            )
+            .is_none(),
+            "in-module symlink whose target escapes the module must be dropped \
+             (upstream alt-dest-symlink-race attack shape)",
+        );
+    }
+
+    #[test]
+    fn confine_basis_link_dest_absolute_etc_passwd_is_dropped() {
+        // Companion to the relative-path test above for the absolute form
+        // the upstream test family also exercises (`--link-dest=/etc/passwd`).
+        // The path canonicalises (or, when missing, falls through the
+        // lexical branch) to a location outside the module root, so the
+        // basis must be dropped.
+        let module = tempfile::TempDir::new().expect("module tempdir");
+        let module_root = module.path().canonicalize().expect("canonicalise module");
+        // `/etc/passwd` typically exists on Unix CI and macOS; on Windows
+        // the canonical form lives under `C:\Windows\System32\...`. Use a
+        // path under a sibling tempdir so the test is portable and never
+        // depends on whether `/etc/passwd` exists or is readable in CI.
+        let outside_parent = tempfile::TempDir::new().expect("outside tempdir");
+        let outside = outside_parent
+            .path()
+            .canonicalize()
+            .expect("canonicalise outside")
+            .join("passwd");
+        std::fs::write(&outside, b"root:x:0:0:root:/root:/bin/sh\n").expect("write outside file");
+
+        assert!(
+            confine_basis_under_module(&outside, &module_root, &module_root).is_none(),
+            "absolute --link-dest pointing outside the module root must be dropped",
+        );
+    }
+
     #[test]
     fn resolve_sender_sources_returns_module_root_without_positional() {
         // upstream: clientserver.c:1073 - bare module request (no sub-path)
