@@ -148,6 +148,12 @@ pub mod platform_sendfile;
 pub mod refs_detect;
 /// Zero-copy file-to-socket transfer using `sendfile` with automatic fallback.
 pub mod sendfile;
+/// Low-level macOS `sendfile(2)` wrapper exposing BSD partial-progress semantics.
+///
+/// See `docs/design/net-sf-macos-audit.md` for the audit. Complements the
+/// dispatch wrapper in [`sendfile`] by exposing explicit `offset` / `len`
+/// and surfacing `EAGAIN` with the partial byte count.
+pub mod sendfile_macos;
 /// Safe wrappers around platform signal-handler installation.
 pub mod signal;
 /// Safe wrappers around platform `setsockopt` for integer-valued options.
