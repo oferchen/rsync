@@ -86,7 +86,7 @@ fn make_basis(size: usize) -> (NamedTempFile, Vec<u8>) {
 #[test]
 fn full_file_map_ptr_succeeds_when_basis_smaller_than_max_map_size() {
     const FILE_SIZE: usize = 48128;
-    assert!(FILE_SIZE < MAX_MAP_SIZE);
+    const _: () = assert!(FILE_SIZE < MAX_MAP_SIZE);
 
     let (tmp, payload) = make_basis(FILE_SIZE);
     let mut map = BufferedMap::open(tmp.path()).expect("open basis");
@@ -109,7 +109,7 @@ fn full_file_map_ptr_succeeds_when_basis_smaller_than_max_map_size() {
 #[test]
 fn cached_tail_reread_after_near_eof_load_returns_payload() {
     const FILE_SIZE: usize = 48128;
-    assert!(FILE_SIZE < MAX_MAP_SIZE);
+    const _: () = assert!(FILE_SIZE < MAX_MAP_SIZE);
 
     let (tmp, payload) = make_basis(FILE_SIZE);
     let mut map = BufferedMap::open(tmp.path()).expect("open basis");
@@ -139,7 +139,7 @@ fn cached_tail_reread_after_near_eof_load_returns_payload() {
 #[test]
 fn map_ptr_past_basis_end_returns_unexpected_eof_not_panic() {
     const FILE_SIZE: usize = 32 * 1024;
-    assert!(FILE_SIZE < MAX_MAP_SIZE);
+    const _: () = assert!(FILE_SIZE < MAX_MAP_SIZE);
 
     let (tmp, _) = make_basis(FILE_SIZE);
     let mut map = BufferedMap::open(tmp.path()).expect("open basis");
@@ -160,7 +160,7 @@ fn map_ptr_past_basis_end_returns_unexpected_eof_not_panic() {
 #[test]
 fn sliding_window_walk_near_eof_matches_payload_and_caches_tail() {
     const FILE_SIZE: usize = 200 * 1024;
-    assert!(FILE_SIZE < MAX_MAP_SIZE);
+    const _: () = assert!(FILE_SIZE < MAX_MAP_SIZE);
     const WINDOW: usize = 32 * 1024;
 
     let (tmp, payload) = make_basis(FILE_SIZE);
