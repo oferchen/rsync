@@ -24,7 +24,7 @@ mod sync;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
-use logging::debug_log;
+use logging::{debug_log, info_log};
 
 use crate::receiver::ReceiverContext;
 use crate::receiver::stats::TransferStats;
@@ -100,8 +100,35 @@ pub(in crate::receiver) fn handle_delayed_updates(
                         let _ = fs::create_dir_all(parent);
                     }
                 }
-                if let Err(e) = fs::rename(final_path, &backup_path) {
-                    eprintln!("rsync: backup failed for {}: {e}", final_path.display());
+                match fs::rename(final_path, &backup_path) {
+                    Ok(()) => {
+                        // upstream: backup.c:216-217 - DEBUG_GTE(BACKUP, 1)
+                        // RENAME success notice. The delayed-updates sweep is
+                        // the third backup site (alongside disk-commit and
+                        // local-copy); upstream emits this from
+                        // backup.c:make_backup() regardless of caller.
+                        engine::trace_make_backup_rename(&final_path.display().to_string());
+                        // upstream: backup.c:352-353 - INFO_GTE(BACKUP, 1)
+                        // rprintf(FINFO, "backed up %s to %s\n", fname, buf)
+                        // fires on success label of make_backup() after the
+                        // rename completes. Paths are displayed relative to
+                        // the destination root to match the upstream test
+                        // assertions (testsuite/backup.test:29,43,56).
+                        let final_rel = final_path.strip_prefix(&bc.dest_dir).unwrap_or(final_path);
+                        let backup_rel = backup_path
+                            .strip_prefix(&bc.dest_dir)
+                            .unwrap_or(&backup_path);
+                        info_log!(
+                            Backup,
+                            1,
+                            "backed up {} to {}",
+                            final_rel.display(),
+                            backup_rel.display()
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!("rsync: backup failed for {}: {e}", final_path.display());
+                    }
                 }
             }
         }
@@ -250,6 +277,97 @@ mod tests {
     #[test]
     fn handle_delayed_updates_empty_is_noop() {
         handle_delayed_updates(&[], None);
+    }
+
+    /// Verifies that `handle_delayed_updates` backs up a pre-existing
+    /// destination file before renaming the staged file into place when a
+    /// `BackupConfig` is supplied.
+    ///
+    /// This is the receiver-side equivalent of upstream
+    /// `receiver.c:431-432 make_backup(fname, False)` -> `backup.c:make_backup`
+    /// which renames the existing file out of the way and emits the
+    /// `backed up X to Y` info_log via `INFO_GTE(BACKUP, 1)` at
+    /// `backup.c:352-353`. Upstream `testsuite/backup.test:43,56` greps for
+    /// that exact line under `--info=BACKUP --delay-updates` so the rename
+    /// must fire before the staged file replaces the destination.
+    #[test]
+    fn handle_delayed_updates_backs_up_existing_destination() {
+        use crate::disk_commit::BackupConfig;
+        use std::ffi::OsString;
+
+        let dir = test_support::create_tempdir();
+        let dest_root = dir.path();
+        let backup_root = dest_root.join("bak");
+        fs::create_dir(&backup_root).unwrap();
+
+        let staging_dir = dest_root.join(".~tmp~");
+        fs::create_dir(&staging_dir).unwrap();
+        let staged = staging_dir.join("name1");
+        fs::write(&staged, b"new-content").unwrap();
+
+        let final_path = dest_root.join("name1");
+        fs::write(&final_path, b"old-content").unwrap();
+
+        let backup_config = BackupConfig {
+            dest_dir: dest_root.to_path_buf(),
+            backup_dir: Some(backup_root.clone()),
+            suffix: OsString::from("~"),
+        };
+
+        handle_delayed_updates(&[(staged.clone(), final_path.clone())], Some(backup_config));
+
+        assert_eq!(
+            fs::read_to_string(&final_path).unwrap(),
+            "new-content",
+            "staged file must replace destination after backup"
+        );
+        let backup_path = backup_root.join("name1");
+        assert_eq!(
+            fs::read_to_string(&backup_path).unwrap(),
+            "old-content",
+            "pre-existing destination must be renamed into backup-dir before \
+             the staged file is renamed into place"
+        );
+        assert!(!staged.exists(), "staging file should be moved out");
+        assert!(
+            !staging_dir.exists(),
+            "empty .~tmp~ dir should be removed after sweep"
+        );
+    }
+
+    /// Verifies the backup step is skipped when no existing destination is
+    /// present, matching upstream `backup.c:make_backup()` which returns
+    /// early when `lstat(fname)` reports `ENOENT`.
+    #[test]
+    fn handle_delayed_updates_no_backup_when_dest_missing() {
+        use crate::disk_commit::BackupConfig;
+        use std::ffi::OsString;
+
+        let dir = test_support::create_tempdir();
+        let dest_root = dir.path();
+        let backup_root = dest_root.join("bak");
+        fs::create_dir(&backup_root).unwrap();
+
+        let staging_dir = dest_root.join(".~tmp~");
+        fs::create_dir(&staging_dir).unwrap();
+        let staged = staging_dir.join("name1");
+        fs::write(&staged, b"only-content").unwrap();
+
+        let final_path = dest_root.join("name1");
+
+        let backup_config = BackupConfig {
+            dest_dir: dest_root.to_path_buf(),
+            backup_dir: Some(backup_root.clone()),
+            suffix: OsString::from("~"),
+        };
+
+        handle_delayed_updates(&[(staged.clone(), final_path.clone())], Some(backup_config));
+
+        assert_eq!(fs::read_to_string(&final_path).unwrap(), "only-content");
+        assert!(
+            !backup_root.join("name1").exists(),
+            "no backup file should be created when destination did not exist"
+        );
     }
 
     // --- PIR-5.d: Interrupt behavior ---
