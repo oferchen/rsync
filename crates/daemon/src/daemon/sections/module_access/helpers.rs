@@ -348,21 +348,16 @@ fn split_filter_tokens(s: &str) -> Vec<String> {
     let mut tokens = Vec::new();
     let mut start = 0;
 
-    // Walk through the string looking for rule boundaries.
-    // A new rule starts when we see whitespace followed by a rule prefix.
     let bytes = s.as_bytes();
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b' ' || bytes[i] == b'\t' {
-            // Found whitespace - check if what follows is a new rule prefix
             let rest = &s[i..].trim_start();
             if !rest.is_empty() && starts_with_rule_prefix(rest) {
-                // Save current token
                 let token = s[start..i].trim();
                 if !token.is_empty() {
                     tokens.push(token.to_string());
                 }
-                // Advance past whitespace
                 let ws_len = s[i..].len() - rest.len();
                 start = i + ws_len;
                 i = start;
