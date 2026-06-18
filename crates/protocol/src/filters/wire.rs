@@ -4,11 +4,12 @@ use crate::ProtocolVersion;
 use std::io::{self, Read, Write};
 
 /// Rule type prefix character.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum RuleType {
     /// Include rule (`+` prefix).
     Include,
     /// Exclude rule (`-` prefix).
+    #[default]
     Exclude,
     /// Clear previously defined rules (`!` prefix).
     Clear,
@@ -60,7 +61,7 @@ impl RuleType {
 }
 
 /// Filter rule in wire format representation.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FilterRuleWireFormat {
     /// Rule type (Include/Exclude/Clear/etc.).
     pub rule_type: RuleType,
@@ -88,6 +89,17 @@ pub struct FilterRuleWireFormat {
     pub perishable: bool,
     /// No-match-with-this negates (`!` modifier).
     pub negate: bool,
+    /// No-prefixes modifier (`-` or `+` on a merge/dir-merge rule).
+    ///
+    /// upstream: `exclude.c:1227-1237` - `'-'` sets `FILTRULE_NO_PREFIXES`;
+    /// `'+'` additionally sets `FILTRULE_INCLUDE`. Both are only legal when
+    /// `FILTRULE_MERGE_FILE` (merge `.` or dir-merge `:`) is already set.
+    pub no_prefixes: bool,
+    /// Pairs with [`Self::no_prefixes`] to encode the `+` variant.
+    ///
+    /// When `no_prefixes && no_prefixes_include`, the merge file's per-dir
+    /// rules are treated as include-only; otherwise they are exclude-only.
+    pub no_prefixes_include: bool,
 }
 
 impl FilterRuleWireFormat {
@@ -107,6 +119,8 @@ impl FilterRuleWireFormat {
             receiver_side: false,
             perishable: false,
             negate: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         }
     }
 
@@ -126,6 +140,8 @@ impl FilterRuleWireFormat {
             receiver_side: false,
             perishable: false,
             negate: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         }
     }
 
@@ -276,18 +292,7 @@ fn parse_wire_rule_old_prefix(text: &str) -> io::Result<FilterRuleWireFormat> {
     if text == "!" {
         return Ok(FilterRuleWireFormat {
             rule_type: RuleType::Clear,
-            pattern: String::new(),
-            anchored: false,
-            directory_only: false,
-            no_inherit: false,
-            cvs_exclude: false,
-            word_split: false,
-            exclude_from_merge: false,
-            xattr_only: false,
-            sender_side: false,
-            receiver_side: false,
-            perishable: false,
-            negate: false,
+            ..FilterRuleWireFormat::default()
         });
     }
 
@@ -304,18 +309,7 @@ fn parse_wire_rule_old_prefix(text: &str) -> io::Result<FilterRuleWireFormat> {
 
     let mut rule = FilterRuleWireFormat {
         rule_type,
-        pattern: String::new(),
-        anchored: false,
-        directory_only: false,
-        no_inherit: false,
-        cvs_exclude: false,
-        word_split: false,
-        exclude_from_merge: false,
-        xattr_only: false,
-        sender_side: false,
-        receiver_side: false,
-        perishable: false,
-        negate: false,
+        ..FilterRuleWireFormat::default()
     };
 
     if let Some(stripped) = pattern_text.strip_suffix('/') {
@@ -350,18 +344,7 @@ fn parse_wire_rule_modern(
 
     let mut rule = FilterRuleWireFormat {
         rule_type,
-        pattern: String::new(),
-        anchored: false,
-        directory_only: false,
-        no_inherit: false,
-        cvs_exclude: false,
-        word_split: false,
-        exclude_from_merge: false,
-        xattr_only: false,
-        sender_side: false,
-        receiver_side: false,
-        perishable: false,
-        negate: false,
+        ..FilterRuleWireFormat::default()
     };
 
     let mut pattern_start = 1;
@@ -393,6 +376,20 @@ fn parse_wire_rule_modern(
             }
             'x' => {
                 rule.xattr_only = true;
+                pattern_start += 1;
+            }
+            // upstream: exclude.c:1227-1237 - `-` and `+` set FILTRULE_NO_PREFIXES
+            // on merge/dir-merge rules. `+` additionally sets FILTRULE_INCLUDE.
+            // Acceptance is gated on Merge/DirMerge to mirror upstream's
+            // FILTRULE_MERGE_FILE precondition; on other rule types these
+            // characters fall through to `_` and terminate modifier parsing.
+            '-' if matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge) => {
+                rule.no_prefixes = true;
+                pattern_start += 1;
+            }
+            '+' if matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge) => {
+                rule.no_prefixes = true;
+                rule.no_prefixes_include = true;
                 pattern_start += 1;
             }
             's' if protocol.supports_sender_receiver_modifiers() => {
@@ -595,6 +592,86 @@ mod tests {
         let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
         assert_eq!(parsed.len(), 1);
         assert!(parsed[0].perishable);
+    }
+
+    /// upstream: `exclude.c:1555-1560` get_rule_prefix() emits `-` between `w`
+    /// and `e` when FILTRULE_NO_PREFIXES is set on a merge/dir-merge rule;
+    /// `exclude.c:1227-1231` parse_rule_tok() accepts `-` after `:` or `.`.
+    /// Round-trip ensures encode/decode parity for `:- .excl`.
+    #[test]
+    fn dir_merge_no_prefixes_minus_roundtrip() {
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+        let rule = FilterRuleWireFormat {
+            rule_type: RuleType::DirMerge,
+            pattern: ".excl".to_owned(),
+            no_prefixes: true,
+            ..FilterRuleWireFormat::default()
+        };
+
+        let mut buf = Vec::new();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
+
+        // Payload: ":- .excl" - 8 bytes.
+        assert_eq!(&buf[..4], &8i32.to_le_bytes()[..]);
+        assert_eq!(&buf[4..12], b":- .excl");
+        assert_eq!(&buf[12..], &0i32.to_le_bytes()[..]);
+
+        let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].rule_type, RuleType::DirMerge);
+        assert_eq!(parsed[0].pattern, ".excl");
+        assert!(parsed[0].no_prefixes);
+        assert!(!parsed[0].no_prefixes_include);
+    }
+
+    /// upstream: `exclude.c:1232-1236` parse_rule_tok() - `+` after `:` or `.`
+    /// sets FILTRULE_NO_PREFIXES|FILTRULE_INCLUDE; `exclude.c:1556-1557`
+    /// get_rule_prefix() emits `+` when both bits are set.
+    #[test]
+    fn dir_merge_no_prefixes_plus_roundtrip() {
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+        let rule = FilterRuleWireFormat {
+            rule_type: RuleType::DirMerge,
+            pattern: ".incl".to_owned(),
+            no_prefixes: true,
+            no_prefixes_include: true,
+            ..FilterRuleWireFormat::default()
+        };
+
+        let mut buf = Vec::new();
+        write_filter_list(&mut buf, std::slice::from_ref(&rule), protocol).unwrap();
+
+        // Payload: ":+ .incl" - 8 bytes.
+        assert_eq!(&buf[..4], &8i32.to_le_bytes()[..]);
+        assert_eq!(&buf[4..12], b":+ .incl");
+
+        let parsed = read_filter_list(&mut &buf[..], protocol).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].rule_type, RuleType::DirMerge);
+        assert_eq!(parsed[0].pattern, ".incl");
+        assert!(parsed[0].no_prefixes);
+        assert!(parsed[0].no_prefixes_include);
+    }
+
+    /// upstream: `exclude.c:1228, 1233` - `-`/`+` modifiers are only valid
+    /// after FILTRULE_MERGE_FILE is set. A plain exclude rule with `-` after
+    /// the type prefix must NOT be parsed as no-prefixes; the modifier loop
+    /// terminates and the remainder becomes the pattern.
+    #[test]
+    fn no_prefixes_modifier_rejected_on_non_merge_rule() {
+        let protocol = ProtocolVersion::from_supported(32).unwrap();
+        // Raw wire bytes: "--foo" - the leading `-` is the rule type prefix
+        // (Exclude); the second `-` is not a legal modifier on Exclude rules
+        // and must fall through to the pattern.
+        let rules = read_filter_list(
+            &mut &[5u8, 0, 0, 0, b'-', b'-', b'f', b'o', b'o', 0, 0, 0, 0][..],
+            protocol,
+        )
+        .unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].rule_type, RuleType::Exclude);
+        assert!(!rules[0].no_prefixes);
+        assert_eq!(rules[0].pattern, "-foo");
     }
 
     #[test]

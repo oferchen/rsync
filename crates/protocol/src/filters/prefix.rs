@@ -54,7 +54,8 @@ fn build_old_prefix(rule: &FilterRuleWireFormat) -> Option<String> {
         || rule.xattr_only
         || rule.sender_side
         || rule.receiver_side
-        || rule.perishable;
+        || rule.perishable
+        || rule.no_prefixes;
 
     if has_modifiers {
         return None;
@@ -132,6 +133,13 @@ fn build_modern_prefix(rule: &FilterRuleWireFormat, protocol: ProtocolVersion) -
 
     if rule.word_split {
         prefix.push('w');
+    }
+
+    // upstream: exclude.c:1555-1560 - on a merge/dir-merge rule, emit `-` when
+    // FILTRULE_NO_PREFIXES is set and `+` when FILTRULE_NO_PREFIXES|FILTRULE_INCLUDE
+    // are both set. Order matches upstream: between `w` and `e`.
+    if rule.no_prefixes && matches!(rule.rule_type, RuleType::Merge | RuleType::DirMerge) {
+        prefix.push(if rule.no_prefixes_include { '+' } else { '-' });
     }
 
     if rule.exclude_from_merge {
@@ -297,18 +305,7 @@ mod tests {
         let protocol = ProtocolVersion::from_supported(32).unwrap();
         let rule = FilterRuleWireFormat {
             rule_type: RuleType::Clear,
-            pattern: String::new(),
-            anchored: false,
-            directory_only: false,
-            no_inherit: false,
-            cvs_exclude: false,
-            word_split: false,
-            exclude_from_merge: false,
-            xattr_only: false,
-            sender_side: false,
-            receiver_side: false,
-            perishable: false,
-            negate: false,
+            ..FilterRuleWireFormat::default()
         };
 
         let prefix = build_rule_prefix(&rule, protocol).unwrap();
@@ -325,17 +322,8 @@ mod tests {
         let rule = FilterRuleWireFormat {
             rule_type: RuleType::Protect,
             pattern: "important".to_owned(),
-            anchored: false,
-            directory_only: false,
-            no_inherit: false,
-            cvs_exclude: false,
-            word_split: false,
-            exclude_from_merge: false,
-            xattr_only: false,
-            sender_side: false,
             receiver_side: true,
-            perishable: false,
-            negate: false,
+            ..FilterRuleWireFormat::default()
         };
 
         let prefix = build_rule_prefix(&rule, protocol).unwrap();
@@ -350,17 +338,8 @@ mod tests {
         let rule = FilterRuleWireFormat {
             rule_type: RuleType::Risk,
             pattern: "scratch".to_owned(),
-            anchored: false,
-            directory_only: false,
-            no_inherit: false,
-            cvs_exclude: false,
-            word_split: false,
-            exclude_from_merge: false,
-            xattr_only: false,
-            sender_side: false,
             receiver_side: true,
-            perishable: false,
-            negate: false,
+            ..FilterRuleWireFormat::default()
         };
 
         let prefix = build_rule_prefix(&rule, protocol).unwrap();
