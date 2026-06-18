@@ -67,7 +67,7 @@ where
         tcp_fastopen,
         blocking_io,
         archive,
-        recursive: _recursive,
+        recursive,
         recursive_override,
         inc_recursive,
         dirs,
@@ -494,10 +494,14 @@ where
 
     // upstream: options.c:2169-2177 - --files-from disables default recursion,
     // enables xfer_dirs, and implies --relative.
+    //
+    // Otherwise honour the parser-computed `recursive` flag, which mirrors
+    // upstream's `recurse` default of 0 (options.c:112) and the `-r` / `-a` /
+    // `--no-recursive` precedence rules (parser/mod.rs:152-158).
     let recursive_effective = if files_from_active {
         false // upstream: options.c:2174 - if (recurse == 1) recurse = 0
     } else {
-        !matches!(recursive_override, Some(false))
+        recursive
     };
 
     // upstream: options.c:2176-2177 - xfer_dirs = 1 when files_from is active
