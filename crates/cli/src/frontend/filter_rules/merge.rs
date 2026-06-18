@@ -60,6 +60,12 @@ pub(crate) fn apply_merge_directive(
         )
     };
     let next_base = next_base_storage.as_deref().unwrap_or(base_dir);
+    // upstream: exclude.c:1393-1402 resolves FILTRULE_CLEAR_LIST via
+    // pop_filter_list (exclude.c:574-590), which truncates only the local
+    // section of the per-merge-file rule list. Mirror that by parsing the
+    // merge file into a scope-local buffer so a '!' inside the file cannot
+    // wipe parent-scope rules already in `destination`.
+    let mut local: Vec<FilterRuleSpec> = Vec::new();
     let result = (|| -> Result<(), Message> {
         let contents = if is_stdin {
             read_merge_from_standard_input()?
@@ -68,19 +74,17 @@ pub(crate) fn apply_merge_directive(
         };
 
         parse_merge_contents(
-            &contents,
-            &options,
-            next_base,
-            &display,
-            destination,
-            visited,
+            &contents, &options, next_base, &display, &mut local, visited,
         )
     })();
     visited.remove(&guard_key);
-    if result.is_ok() && options.excludes_self() && !is_stdin {
-        let mut rule = FilterRuleSpec::exclude(original_source_text);
-        rule.apply_dir_merge_overrides(&options);
-        destination.push(rule);
+    if result.is_ok() {
+        destination.extend(local);
+        if options.excludes_self() && !is_stdin {
+            let mut rule = FilterRuleSpec::exclude(original_source_text);
+            rule.apply_dir_merge_overrides(&options);
+            destination.push(rule);
+        }
     }
     result
 }

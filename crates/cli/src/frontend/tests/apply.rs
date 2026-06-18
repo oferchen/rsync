@@ -48,6 +48,8 @@ fn apply_merge_directive_respects_forced_include() {
         .expect("merge succeeds");
 
     assert!(visited.is_empty());
+    // upstream: exclude.c:1393-1402 - '!' inside a merge file clears only
+    // the local section, so the parent-scope "existing" rule survives.
     let patterns: Vec<_> = rules.iter().map(|rule| rule.pattern().to_owned()).collect();
-    assert_eq!(patterns, vec!["beta"]);
+    assert_eq!(patterns, vec!["existing", "beta"]);
 }

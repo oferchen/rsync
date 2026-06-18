@@ -17,12 +17,18 @@ pub(crate) fn append_cvs_exclude_rules(
         .map(|pattern| FilterRuleSpec::exclude((*pattern).to_owned()).with_perishable(true))
         .collect();
 
+    // upstream: exclude.c:1393-1402 scopes FILTRULE_CLEAR_LIST ('!') to the
+    // local list section. Parse ~/.cvsignore and $CVSIGNORE into per-scope
+    // buffers so a '!' inside either source cannot wipe the default
+    // CVS_EXCLUDE_PATTERNS already collected in `cvs_rules`.
     if let Some(home) = env::var_os("HOME").filter(|value| !value.is_empty()) {
         let path = Path::new(&home).join(".cvsignore");
         match fs::read(&path) {
             Ok(contents) => {
                 let owned = String::from_utf8_lossy(&contents).into_owned();
-                append_cvsignore_tokens(&mut cvs_rules, owned.split_whitespace());
+                let mut local = Vec::new();
+                append_cvsignore_tokens(&mut local, owned.split_whitespace());
+                cvs_rules.extend(local);
             }
             Err(error) if error.kind() == ErrorKind::NotFound => {}
             Err(error) => {
@@ -37,7 +43,9 @@ pub(crate) fn append_cvs_exclude_rules(
 
     if let Some(value) = env::var_os("CVSIGNORE").filter(|value| !value.is_empty()) {
         let owned = value.to_string_lossy().into_owned();
-        append_cvsignore_tokens(&mut cvs_rules, owned.split_whitespace());
+        let mut local = Vec::new();
+        append_cvsignore_tokens(&mut local, owned.split_whitespace());
+        cvs_rules.extend(local);
     }
 
     let options = DirMergeOptions::default()
