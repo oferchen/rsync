@@ -505,6 +505,13 @@ fn wire_rule_to_dir_merge_config(
         }
     }
 
+    // `-`/`+` modifier: FILTRULE_NO_PREFIXES. Per-dir merge file lines are
+    // consumed as literal patterns; the short-prefix dispatch is skipped.
+    // upstream: exclude.c:1116-1133 parse_rule_tok.
+    if wire_rule.no_prefixes {
+        config = config.with_no_prefixes(true, wire_rule.no_prefixes_include);
+    }
+
     config
 }
 

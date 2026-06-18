@@ -682,3 +682,112 @@ fn filter_chain_per_dir_deletion_does_not_block_via_synthetic_descendant() {
         "scope commit must not let synthetic `bar/**` override the include rule"
     );
 }
+
+// upstream: exclude.c:1116-1133 parse_rule_tok - when FILTRULE_NO_PREFIXES is
+// set on the template, every per-dir merge line is consumed as a literal
+// pattern. `+ foo`, `- bar`, `include baz` become LITERAL excludes - not
+// include/exclude rules - so paths matching those literal strings are blocked.
+#[test]
+fn dir_merge_no_prefixes_minus_literal_excludes() {
+    let dir = TempDir::new().unwrap();
+    let filter_content = "+ foo\n- bar\ninclude baz\n";
+    fs::write(dir.path().join(".filt"), filter_content).unwrap();
+
+    let mut chain = FilterChain::empty();
+    chain.add_merge_config(DirMergeConfig::new(".filt").with_no_prefixes(true, false));
+
+    let guard = chain.enter_directory(dir.path()).unwrap();
+    assert_eq!(guard.pushed_count(), 1);
+
+    // Each literal line excludes the EXACT verbatim pattern, so a file
+    // named "foo" (without `+ ` prefix) is NOT excluded by `+ foo`.
+    assert!(chain.allows(Path::new("foo"), false));
+    assert!(chain.allows(Path::new("bar"), false));
+    assert!(chain.allows(Path::new("baz"), false));
+
+    // But a file whose pattern matches the literal IS excluded. Patterns
+    // containing spaces match path components by name; rsync's matcher
+    // treats them as literal globs.
+    assert!(!chain.allows(Path::new("+ foo"), false));
+    assert!(!chain.allows(Path::new("- bar"), false));
+    assert!(!chain.allows(Path::new("include baz"), false));
+
+    chain.leave_directory(guard);
+}
+
+// upstream: exclude.c:1116-1133 with FILTRULE_INCLUDE - the `+` variant of
+// the no-prefixes modifier emits literal include rules instead of excludes.
+#[test]
+fn dir_merge_no_prefixes_plus_literal_includes() {
+    let dir = TempDir::new().unwrap();
+    let filter_content = "+ foo\n- bar\ninclude baz\n";
+    fs::write(dir.path().join(".filt"), filter_content).unwrap();
+
+    let global = FilterSet::from_rules([FilterRule::exclude("*")]).unwrap();
+    let mut chain = FilterChain::new(global);
+    chain.add_merge_config(DirMergeConfig::new(".filt").with_no_prefixes(true, true));
+
+    let guard = chain.enter_directory(dir.path()).unwrap();
+    assert_eq!(guard.pushed_count(), 1);
+
+    // Literal include lines beat the global `- *` for files matching the
+    // literal verbatim pattern.
+    assert!(chain.allows(Path::new("+ foo"), false));
+    assert!(chain.allows(Path::new("- bar"), false));
+    assert!(chain.allows(Path::new("include baz"), false));
+
+    // Files NOT matching the literals are still excluded by the global rule.
+    assert!(!chain.allows(Path::new("other"), false));
+
+    chain.leave_directory(guard);
+}
+
+// upstream: exclude.c:1123-1124 - without FILTRULE_CVS_IGNORE the bare `!`
+// line is just another literal pattern (no FILTRULE_CLEAR_LIST escape).
+#[test]
+fn dir_merge_no_prefixes_bang_is_literal_without_cvs() {
+    let dir = TempDir::new().unwrap();
+    let filter_content = "- foo\n!\n- bar\n";
+    fs::write(dir.path().join(".filt"), filter_content).unwrap();
+
+    let mut chain = FilterChain::empty();
+    chain.add_merge_config(DirMergeConfig::new(".filt").with_no_prefixes(true, false));
+
+    let guard = chain.enter_directory(dir.path()).unwrap();
+    assert_eq!(guard.pushed_count(), 1);
+
+    // List was NOT cleared - both literal excludes still bind, AND `!`
+    // itself binds as a literal exclude of the filename "!".
+    assert!(!chain.allows(Path::new("- foo"), false));
+    assert!(!chain.allows(Path::new("- bar"), false));
+    assert!(!chain.allows(Path::new("!"), false));
+
+    chain.leave_directory(guard);
+}
+
+// upstream: exclude.c:1123-1124 - with FILTRULE_CVS_IGNORE inherited from
+// the template (`:-C` modifier combination), a bare `!` line tentatively
+// triggers FILTRULE_CLEAR_LIST and clears any previously parsed rules.
+#[test]
+fn dir_merge_no_prefixes_bang_clears_list_with_cvs() {
+    let dir = TempDir::new().unwrap();
+    let filter_content = "- foo\n!\n- bar\n";
+    fs::write(dir.path().join(".filt"), filter_content).unwrap();
+
+    let mut chain = FilterChain::empty();
+    chain.add_merge_config(
+        DirMergeConfig::new(".filt")
+            .with_no_prefixes(true, false)
+            .with_cvs_mode(true),
+    );
+
+    let guard = chain.enter_directory(dir.path()).unwrap();
+
+    // After the `!` clear, the prior `- foo` literal exclude no longer
+    // applies; only the literal exclude of `- bar` (parsed after the
+    // clear) remains.
+    assert!(chain.allows(Path::new("- foo"), false));
+    assert!(!chain.allows(Path::new("- bar"), false));
+
+    chain.leave_directory(guard);
+}

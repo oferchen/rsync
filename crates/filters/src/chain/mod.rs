@@ -39,7 +39,7 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
-use crate::merge::parse::parse_rules;
+use crate::merge::parse::{parse_rules, parse_rules_no_prefixes};
 use crate::{FilterAction, FilterRule, FilterSet};
 
 pub use config::DirMergeConfig;
@@ -241,7 +241,19 @@ impl FilterChain {
             // separated tokens with every token implicitly an exclude.
             // Standard parse_rules would reject names like `one-in-one-out`
             // as "unrecognized filter rule", aborting the walk.
-            let rules = if config.cvs_mode() {
+            let rules = if config.no_prefixes() {
+                // upstream: exclude.c:1116-1133 - the `-`/`+` modifier on the
+                // dir-merge template skips short-prefix dispatch, so each
+                // line becomes a literal exclude (or include for `+`). When
+                // CVS_IGNORE is also inherited (e.g. `:-C`), a bare `!` line
+                // clears the list per FILTRULE_CLEAR_LIST.
+                parse_rules_no_prefixes(
+                    &content,
+                    &merge_path,
+                    config.no_prefixes_include(),
+                    config.cvs_mode(),
+                )
+            } else if config.cvs_mode() {
                 parse_cvs_ignore_tokens(&content)
             } else {
                 match parse_rules(&content, &merge_path) {
