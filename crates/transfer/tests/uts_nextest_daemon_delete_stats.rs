@@ -94,7 +94,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use tempfile::{tempdir, TempDir};
+use tempfile::{TempDir, tempdir};
 
 /// Maximum time the daemon has to start accepting connections.
 ///
