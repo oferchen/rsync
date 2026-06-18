@@ -333,6 +333,7 @@ mod tests {
             module_name: Some("backup".to_owned()),
             module_path: Some("/var/backup".to_owned()),
             is_sender: false,
+            emit_unchanged: false,
         };
         assert_eq!(ctx.remote_host.as_deref(), Some("server.example.com"));
         assert_eq!(ctx.remote_address.as_deref(), Some("192.168.1.1"));
