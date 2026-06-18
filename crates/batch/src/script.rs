@@ -23,7 +23,7 @@ use std::os::unix::fs::PermissionsExt;
 ///   without a shebang line. The `.sh` file is opened with mode `S_IRUSR |
 ///   S_IWUSR | S_IXUSR` (0o700).
 pub fn generate_script(config: &BatchConfig) -> BatchResult<()> {
-    generate_script_with_filters(config, None)
+    generate_script_with_filters(config, None, None)
 }
 
 /// Generate a shell script for replaying a batch file with optional filter rules.
@@ -33,14 +33,23 @@ pub fn generate_script(config: &BatchConfig) -> BatchResult<()> {
 /// heredoc so that the replay applies the same filters used during batch
 /// creation.
 ///
+/// When `destination` is `Some`, it is embedded as the fallback in the
+/// `${1:-<dest>}` placeholder so that `./BATCH.sh` (invoked without
+/// arguments) writes to the destination that was used when the batch was
+/// captured. Mirrors upstream `batch.c:300-304` which writes
+/// `${1:-<cooked_argv[argc-1]>}`. When `None`, a bare `.` is used (legacy
+/// behavior, only suitable when no destination is known).
+///
 /// # Upstream Reference
 ///
 /// - `batch.c:205-222`: `write_filter_rules()` embeds filter rules in the
 ///   shell script using a `<<'#E#'` heredoc.
 /// - `batch.c:262-267`: filter option selection based on protocol version.
+/// - `batch.c:300-304`: destination placeholder `${1:-<dest>}`.
 pub fn generate_script_with_filters(
     config: &BatchConfig,
     filter_rules: Option<&str>,
+    destination: Option<&str>,
 ) -> BatchResult<()> {
     let script_path = config.script_file_path();
     let batch_name = config.batch_file_path().to_string_lossy();
@@ -73,7 +82,13 @@ pub fn generate_script_with_filters(
     write!(file, " --read-batch={}", shell_quote(&batch_name))?;
 
     // upstream: batch.c:300-304 - destination placeholder
-    write!(file, " ${{1:-.}}")?;
+    // write_opt("${1:-", NULL) + write_arg(dest) + "}"
+    write!(file, " ${{1:-")?;
+    match destination {
+        Some(dest) if !dest.is_empty() => write!(file, "{}", shell_quote(dest))?,
+        _ => write!(file, ".")?,
+    }
+    write!(file, "}}")?;
 
     // upstream: batch.c:305-306 - append filter rules as heredoc
     if let Some(rules) = filter_rules {
@@ -608,7 +623,7 @@ mod tests {
 
         let filter_rules = "- *.tmp\n+ */\n+ *.txt\n- *\n";
 
-        let result = generate_script_with_filters(&config, Some(filter_rules));
+        let result = generate_script_with_filters(&config, Some(filter_rules), None);
         assert!(result.is_ok());
 
         let script_path = config.script_file_path();
@@ -641,7 +656,7 @@ mod tests {
             31,
         );
 
-        let result = generate_script_with_filters(&config, None);
+        let result = generate_script_with_filters(&config, None, None);
         assert!(result.is_ok());
 
         let script_path = config.script_file_path();
@@ -675,7 +690,7 @@ mod tests {
 
         let filter_rules = "- *.log\n";
 
-        let result = generate_script_with_filters(&config, Some(filter_rules));
+        let result = generate_script_with_filters(&config, Some(filter_rules), None);
         assert!(result.is_ok());
 
         let script_path = config.script_file_path();
@@ -691,6 +706,92 @@ mod tests {
         );
         assert!(content.contains("<<'#E#'"));
         assert!(content.contains("- *.log"));
+    }
+
+    /// Verify that `generate_script_with_filters` embeds the supplied
+    /// destination as the `${1:-<dest>}` fallback, matching upstream
+    /// `batch.c:300-304` (`write_opt("${1:-", NULL) + write_arg(dest) + "}"`).
+    ///
+    /// Without this, `./BATCH.sh` invoked with no argument falls back to `.`
+    /// (the current working directory) instead of the original destination,
+    /// breaking the upstream testsuite `batch-mode.test` BATCH.sh test which
+    /// expects the captured destination to be written to.
+    #[test]
+    fn test_generate_script_with_filters_embeds_destination() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("test.batch");
+
+        let config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            31,
+        );
+
+        let result = generate_script_with_filters(&config, None, Some("/path/to/dest"));
+        assert!(result.is_ok());
+
+        let script_path = config.script_file_path();
+        let content = fs::read_to_string(&script_path).unwrap();
+
+        assert!(
+            content.contains("${1:-/path/to/dest}"),
+            "Script must embed destination in placeholder: {content}"
+        );
+        assert!(
+            !content.contains("${1:-.}"),
+            "Script must not fall back to '.' when destination is supplied: {content}"
+        );
+    }
+
+    /// Verify that destinations containing shell-unsafe characters are
+    /// single-quoted in the `${1:-<dest>}` placeholder, matching upstream
+    /// `batch.c:303` which calls `write_arg(p)` (single-quotes when needed).
+    #[test]
+    fn test_generate_script_with_filters_quotes_destination_with_spaces() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("test.batch");
+
+        let config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            31,
+        );
+
+        let result = generate_script_with_filters(&config, None, Some("/path with spaces/dest"));
+        assert!(result.is_ok());
+
+        let script_path = config.script_file_path();
+        let content = fs::read_to_string(&script_path).unwrap();
+
+        assert!(
+            content.contains("${1:-'/path with spaces/dest'}"),
+            "Destination with spaces must be single-quoted: {content}"
+        );
+    }
+
+    /// Verify the legacy `None` destination still writes the `.` fallback so
+    /// any caller that has not yet migrated keeps working.
+    #[test]
+    fn test_generate_script_with_filters_no_destination_falls_back_to_dot() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("test.batch");
+
+        let config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            31,
+        );
+
+        let result = generate_script_with_filters(&config, None, None);
+        assert!(result.is_ok());
+
+        let script_path = config.script_file_path();
+        let content = fs::read_to_string(&script_path).unwrap();
+
+        assert!(
+            content.contains("${1:-.}"),
+            "Without a destination, the script must default to '.': {content}"
+        );
     }
 
     #[test]
