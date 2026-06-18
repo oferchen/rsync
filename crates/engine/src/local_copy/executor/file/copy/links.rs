@@ -323,6 +323,14 @@ pub(super) fn process_links(
             record_path.display(),
             existing_target.display()
         );
+        // upstream: hlink.c:223 - "%s is uptodate" at INFO_GTE(NAME, 2) when
+        // the destination's content is already in sync with the source group
+        // leader's inode. Upstream emits both the `=> realname` arrow (NAME>=1)
+        // and the `is uptodate` notice (NAME>=2) for the same alias when the
+        // generator pipes the row through `maybe_hard_link()` against a matched
+        // basis. Mirror that pairing here so `-vv` reports the leader-uptodate
+        // status alongside the freshly-linked alias.
+        info_log!(Name, 2, "{} is uptodate", record_path.display());
 
         context.record_hard_link(metadata, destination);
         context.summary_mut().record_hard_link();
