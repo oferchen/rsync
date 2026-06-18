@@ -17,6 +17,7 @@
 mod hardlinks;
 mod id_lists;
 mod incremental;
+mod prune;
 mod receive;
 mod sanitize;
 
