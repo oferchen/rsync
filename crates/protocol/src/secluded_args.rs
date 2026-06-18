@@ -20,6 +20,10 @@
 //! arg1\0arg2\0arg3\0\0
 //! ```
 //!
+//! An empty argument is escaped as the literal `.\0` (2 bytes) to avoid
+//! collision with the terminator NUL, matching upstream's
+//! `send_protected_args()` at `rsync.c:299-300`.
+//!
 //! # Charset Conversion
 //!
 //! When `--iconv` is configured, upstream rsync transcodes each argument
@@ -69,6 +73,23 @@ pub fn send_secluded_args<W: Write>(
 }
 
 /// Writes a single secluded arg, applying iconv when configured.
+///
+/// An empty argument is encoded as `.\0` (literal dot + NUL), matching
+/// upstream `rsync.c:299-300 send_protected_args()`:
+///
+/// ```c
+/// if (!args[i][0])
+///     write_buf(fd, ".", 2);
+/// ```
+///
+/// Without this escape an empty arg would emit a lone `\0`, which collides
+/// with the terminator NUL the receiver uses to detect end-of-list. The
+/// peer's `recv_secluded_args` would treat the empty arg as the terminator
+/// and stop reading mid-list, leaving the SSH/lsh.sh receiver blocked on
+/// `building file list ...` because the trailing positional args (the `.`
+/// separator and the source/destination paths) never arrive. This is the
+/// terminator-collision class behind the upstream `files-from.test`
+/// 4th-invocation PUSH hang surface.
 fn write_secluded_arg<W: Write>(
     writer: &mut W,
     arg: &[u8],
@@ -83,8 +104,15 @@ fn write_secluded_arg<W: Write>(
         },
         None => Cow::Borrowed(arg),
     };
-    writer.write_all(&bytes)?;
-    writer.write_all(b"\0")?;
+    if bytes.is_empty() {
+        // upstream: rsync.c:299-300 send_protected_args() encodes an empty
+        // arg as `.\0` so the terminator NUL can never be confused with a
+        // legitimately empty mid-list arg.
+        writer.write_all(b".\0")?;
+    } else {
+        writer.write_all(&bytes)?;
+        writer.write_all(b"\0")?;
+    }
     Ok(())
 }
 
@@ -337,6 +365,98 @@ mod tests {
 
         assert_eq!(with, without);
         assert_eq!(with, vec!["alpha", "beta", "gamma"]);
+    }
+
+    // Empty-arg encoding regression tests for UTS files-from 4th-invocation
+    // PUSH hang. Upstream `rsync.c:299-300 send_protected_args()` encodes an
+    // empty argument as the literal `.\0` (2 bytes) rather than a bare `\0`
+    // so the terminator can never be confused with a legitimately empty
+    // mid-list arg. Without this escape, an empty arg would emit `\0`, the
+    // receiver's `recv_secluded_args` would interpret it as the terminator,
+    // and every subsequent positional arg (the `.` separator and the path
+    // operands) would stall in the SSH pipe. The lsh.sh server then sits in
+    // `building file list ...` until the upstream testsuite kills it at
+    // 300s, surfacing as the 4th-invocation hang.
+
+    #[test]
+    fn send_empty_mid_list_arg_encodes_as_dot_to_avoid_terminator_collision() {
+        // The middle arg is empty. Without the dot escape this would emit
+        // `arg1\0\0arg3\0\0`, where the second `\0` collides with the
+        // recv-side terminator detection and truncates the list to one arg.
+        let args = vec!["arg1", "", "arg3"];
+        let mut buf = Vec::new();
+        send_secluded_args(&mut buf, &args, None).expect("send should succeed");
+
+        // upstream wire encoding: empty -> `.\0`, terminator -> trailing `\0`.
+        assert_eq!(buf, b"arg1\0.\0arg3\0\0");
+    }
+
+    #[test]
+    fn send_empty_first_arg_encodes_as_dot() {
+        let args = vec!["", "second"];
+        let mut buf = Vec::new();
+        send_secluded_args(&mut buf, &args, None).expect("send should succeed");
+        assert_eq!(buf, b".\0second\0\0");
+    }
+
+    #[test]
+    fn send_empty_last_arg_encodes_as_dot_before_terminator() {
+        let args = vec!["first", ""];
+        let mut buf = Vec::new();
+        send_secluded_args(&mut buf, &args, None).expect("send should succeed");
+        // Without the escape this would emit `first\0\0\0` which the
+        // receiver truncates at the first `\0\0` boundary, dropping the
+        // trailing args slot. With the escape the wire reads `first\0.\0\0`.
+        assert_eq!(buf, b"first\0.\0\0");
+    }
+
+    #[test]
+    fn round_trip_empty_mid_list_arg_recovers_dot_sentinel() {
+        // After the dot-escape the receiver decodes the empty arg as `.`.
+        // Upstream `read_args` treats the resulting `.` as the dot-separator
+        // it expects at this position in the argv stream, so the protocol
+        // contract holds even though the empty-string information is lost
+        // on the wire. This is the upstream-rsync contract verbatim.
+        let args = vec!["--server", "", "."];
+        let mut buf = Vec::new();
+        send_secluded_args(&mut buf, &args, None).expect("send should succeed");
+
+        let mut cursor = io::Cursor::new(buf);
+        let received = recv_secluded_args(&mut cursor, None).expect("recv should succeed");
+        assert_eq!(
+            received,
+            vec!["--server", ".", "."],
+            "empty arg must round-trip as `.` to avoid terminator collision; \
+             losing this contract reproduces the files-from 4th-invocation hang"
+        );
+    }
+
+    #[test]
+    fn empty_arg_round_trip_does_not_leak_into_next_phase() {
+        // Lock the post-fix invariant: after recv_secluded_args returns, the
+        // reader cursor must be positioned past the terminator NUL even when
+        // the args list contained empty entries. Any residual byte would
+        // poison the subsequent protocol greeting exchange.
+        let args = vec!["alpha", "", "omega"];
+        let mut wire = Vec::new();
+        send_secluded_args(&mut wire, &args, None).expect("send should succeed");
+        // Append a sentinel that simulates the next protocol byte.
+        wire.extend_from_slice(b"@RSYNCD");
+
+        let mut cursor = io::Cursor::new(&wire);
+        let received = recv_secluded_args(&mut cursor, None).expect("recv should succeed");
+        assert_eq!(received, vec!["alpha", ".", "omega"]);
+
+        let mut leftover = Vec::new();
+        cursor
+            .read_to_end(&mut leftover)
+            .expect("trailing bytes must remain readable");
+        assert_eq!(
+            leftover, b"@RSYNCD",
+            "recv_secluded_args must stop exactly at the terminator NUL even \
+             with empty-arg escapes, leaving the greeting bytes for the next \
+             reader"
+        );
     }
 
     // Drain-invariant tests for the secluded-args terminator.
