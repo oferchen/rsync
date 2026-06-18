@@ -4143,3 +4143,96 @@ fn batched_flush_mixed_ndx_and_data_parity() {
         batched_data.len()
     );
 }
+
+/// Regression tests for the `maybe_emit_itemize` emit-gate.
+///
+/// Upstream `generator.c:582-583` emits an itemize line when ANY of four
+/// conditions hold: significant flags set, `INFO_GTE(NAME, 2)`,
+/// `stdout_format_has_i > 1`, or `ITEM_XNAME_FOLLOWS`. The previous Rust
+/// gate only honored the first condition, so the `itemize.test` testsuite
+/// FAILed under `-ivvplrtH` because rows for completely unchanged entries
+/// (`iflags == 0`, e.g. `.d ./`, `.f foo/config1`, `.L foo/sym`) were
+/// silently dropped.
+mod itemize_emit_gate {
+    use super::*;
+    use crate::generator::item_flags::ItemFlags;
+    use logging::{VerbosityConfig, init};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    /// Drives `maybe_emit_itemize` in client mode with a captured callback.
+    fn run_gate(verbose_name_level: u8, iflags_raw: u32) -> Vec<String> {
+        // Seed the thread-local verbosity so `info_gte(InfoFlag::Name, 2)`
+        // reflects the test scenario. Other levels remain at defaults.
+        let mut cfg = VerbosityConfig::default();
+        cfg.info.name = verbose_name_level;
+        init(cfg);
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.connection.client_mode = true;
+        config.flags.info_flags.itemize = true;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+        ctx.file_list.push(protocol::flist::FileEntry::new_file(
+            "config1".into(),
+            42,
+            0o644,
+        ));
+
+        let captured: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+        let lines = Rc::clone(&captured);
+        let mut sink = move |line: &str| {
+            lines.borrow_mut().push(line.to_owned());
+        };
+        let mut callback: Option<&mut dyn crate::ItemizeCallback> = Some(&mut sink);
+
+        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+        let iflags = ItemFlags::from_raw(iflags_raw);
+        ctx.maybe_emit_itemize(&mut writer, &iflags, 0, &mut callback)
+            .expect("maybe_emit_itemize must not error in client mode");
+
+        // Reset the verbosity config so siblings see a clean default.
+        init(VerbosityConfig::default());
+        captured.borrow().clone()
+    }
+
+    /// upstream: generator.c:582 - `INFO_GTE(NAME, 2)` forces emission even
+    /// when `iflags == 0`. Without this branch the upstream `itemize.test`
+    /// testsuite (run under `-ivvplrtH`) lost `.d ./`, `.d bar/`,
+    /// `.f foo/config1`, and `.L foo/sym` rows on master.
+    #[test]
+    fn emits_under_verbose_name_2_with_zero_iflags() {
+        let lines = run_gate(2, 0);
+        assert_eq!(
+            lines.len(),
+            1,
+            "INFO_GTE(NAME, 2) must force an itemize line even when iflags == 0; got: {lines:?}"
+        );
+    }
+
+    /// upstream: generator.c:582 - `INFO_GTE(NAME, 2)` is the gate.
+    /// `-v` (NAME level 1) is below the threshold, so unchanged entries
+    /// must stay silent. This is the existing pre-fix behaviour for
+    /// significant-flag-only emission.
+    #[test]
+    fn suppresses_under_verbose_name_1_with_zero_iflags() {
+        let lines = run_gate(1, 0);
+        assert!(
+            lines.is_empty(),
+            "INFO_GTE(NAME, 1) must not force emission; got: {lines:?}"
+        );
+    }
+
+    /// upstream: generator.c:583 - `(xname && *xname)` (encoded as
+    /// `ITEM_XNAME_FOLLOWS` on the wire) forces emission. Verbose level 0
+    /// proves the new branch alone is sufficient.
+    #[test]
+    fn emits_under_xname_follows_with_zero_verbose() {
+        let lines = run_gate(0, ItemFlags::ITEM_XNAME_FOLLOWS);
+        assert_eq!(
+            lines.len(),
+            1,
+            "ITEM_XNAME_FOLLOWS must force an itemize line under upstream gate; got: {lines:?}"
+        );
+    }
+}
