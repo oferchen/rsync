@@ -155,6 +155,15 @@ pub(crate) struct OutFormatContext {
     /// `<` for sender (push), `>` for receiver (pull).
     /// (upstream: log.c:704 - uses `<` when am_sender && !am_server)
     pub(super) is_sender: bool,
+    /// Numeric verbose level threaded from the CLI verbosity counter.
+    ///
+    /// Upstream `generator.c:574-586` keeps an entry's itemize row when
+    /// `iflags & SIGNIFICANT_ITEM_FLAGS` is zero only if `INFO_GTE(NAME, 2)`
+    /// (i.e. `-vv`) or `stdout_format_has_i > 1` is set. This field carries
+    /// the `-v` counter so the suppression gate at the render layer can
+    /// honour `-vv`, matching upstream's `testsuite/itemize.test` `-ivv...`
+    /// golden where unchanged dirs/files/symlinks must still emit a row.
+    pub(super) verbose_level: u8,
 }
 
 impl OutFormatContext {
@@ -169,6 +178,19 @@ impl OutFormatContext {
             is_sender,
             ..Self::default()
         }
+    }
+
+    /// Returns the configured CLI verbose level (the `-v` counter).
+    #[must_use]
+    pub(crate) fn verbose_level(&self) -> u8 {
+        self.verbose_level
+    }
+
+    /// Sets the verbose level used by the suppression gate.
+    #[must_use]
+    pub(crate) fn with_verbose_level(mut self, verbose_level: u8) -> Self {
+        self.verbose_level = verbose_level;
+        self
     }
 }
 
@@ -305,6 +327,7 @@ mod tests {
             module_name: Some("backup".to_owned()),
             module_path: Some("/var/backup".to_owned()),
             is_sender: false,
+            verbose_level: 0,
         };
         assert_eq!(ctx.remote_host.as_deref(), Some("server.example.com"));
         assert_eq!(ctx.remote_address.as_deref(), Some("192.168.1.1"));

@@ -207,18 +207,22 @@ fn copy_directory_recursive_inner(
         record_emitted = true;
     }
 
-    // upstream: generator.c:1480-1483 - when the destination directory already
-    // exists (`statret == 0`), the generator still calls `itemize()` with
-    // `iflags=0`; `itemize()` then ORs in `ITEM_REPORT_TIME|PERMS|...` based
-    // on the existing-vs-source metadata drift. The line is emitted only when
-    // the resulting `iflags` carries `SIGNIFICANT_ITEM_FLAGS`
-    // (`generator.c:582-583`); otherwise it is suppressed.
+    // upstream: generator.c:1480-1483 + 574-586 - when the destination
+    // directory already exists (`statret == 0`), the generator calls
+    // `itemize()` with `iflags=0`; `itemize()` then ORs in
+    // `ITEM_REPORT_TIME|PERMS|...` based on the existing-vs-source metadata
+    // drift. The row is emitted when `iflags & SIGNIFICANT_ITEM_FLAGS` is
+    // non-zero OR when `INFO_GTE(NAME, 2)` / `stdout_format_has_i > 1` is set
+    // (`generator.c:582-585`). The verbose-OR term is what makes
+    // `testsuite/itemize.test`'s `-ivvplrtH` golden include the unchanged
+    // `.d ./` and `.d foo/` rows.
     //
-    // Mirror that here: when the directory already exists and any attribute
-    // differs from the source, emit a `MetadataReused` record carrying the
-    // computed change-set so the renderer produces lines like
-    // `.d..t...... foo/`. When nothing differs, the record stays unemitted
-    // and the renderer skips the directory row entirely.
+    // Mirror upstream's two-step shape here: emit a `MetadataReused` record
+    // unconditionally carrying the computed change-set, exactly like files
+    // (`copy/transfer/execute/skip.rs`) and symlinks (`special/symlink.rs`)
+    // already do, and let the render-layer's `should_suppress_event` gate
+    // implement the OR-chain (collapsing empty-change-set rows under `-i`
+    // unless `-vv` is set).
     if !record_emitted
         && let Some((ref rel_path, ref snapshot)) = metadata_record
         && let Some(existing_meta) = existing_destination_metadata.as_ref()
@@ -237,20 +241,18 @@ fn copy_directory_recursive_inner(
             false,
             false,
         );
-        if change_set.has_any_change() {
-            context.record(
-                LocalCopyRecord::new(
-                    rel_path.clone(),
-                    LocalCopyAction::MetadataReused,
-                    0,
-                    Some(snapshot.len()),
-                    Duration::default(),
-                    Some(snapshot.clone()),
-                )
-                .with_change_set(change_set),
-            );
-            record_emitted = true;
-        }
+        context.record(
+            LocalCopyRecord::new(
+                rel_path.clone(),
+                LocalCopyAction::MetadataReused,
+                0,
+                Some(snapshot.len()),
+                Duration::default(),
+                Some(snapshot.clone()),
+            )
+            .with_change_set(change_set),
+        );
+        record_emitted = true;
     }
 
     let mut kept_any = !prune_enabled;

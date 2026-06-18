@@ -50,17 +50,31 @@ impl OutFormat {
 
 /// Returns `true` when the event should be suppressed from `--out-format` output.
 ///
-/// Mirrors the upstream gate in `generator.c:574-576`: when `iflags == 0`
-/// (no significant attribute changes and the file was not transferred), the
-/// itemize line is suppressed. In the local-copy path, this corresponds to
-/// `MetadataReused` events whose `change_set` reports no changes and that
-/// were not newly created.
+/// Mirrors the upstream gate in `generator.c:574-586`: an entry with `iflags == 0`
+/// (no significant attribute changes and the file was not transferred) is
+/// normally suppressed, but the gate is kept open when `INFO_GTE(NAME, 2)`
+/// (`-vv` or higher) or `stdout_format_has_i > 1` is set, so unchanged
+/// directories, files and symlinks still emit a row under `-ivv...`. In the
+/// local-copy path, these correspond to `MetadataReused` events whose
+/// `change_set` reports no changes and that were not newly created.
 ///
-/// upstream: generator.c:574-576 - `iflags & (SIGNIFICANT_ITEM_FLAGS|ITEM_REPORT_XATTR)`
-fn should_suppress_event(event: &ClientEvent) -> bool {
-    matches!(event.kind(), ClientEventKind::MetadataReused)
-        && !event.was_created()
-        && !event.change_set().has_any_change()
+/// upstream: generator.c:574-586 - `(iflags & SIGNIFICANT_ITEM_FLAGS)
+/// || INFO_GTE(NAME, 2) || stdout_format_has_i > 1 || (xname && *xname)`
+fn should_suppress_event(event: &ClientEvent, context: &OutFormatContext) -> bool {
+    if !matches!(event.kind(), ClientEventKind::MetadataReused) {
+        return false;
+    }
+    if event.was_created() || event.change_set().has_any_change() {
+        return false;
+    }
+    // Upstream's `INFO_GTE(NAME, 2)` OR-term keeps the empty-iflags row when
+    // `-vv` is set; mirror that so `testsuite/itemize.test`'s `-ivvplrtH`
+    // invocation emits the unchanged-dir, unchanged-file, and unchanged-symlink
+    // rows the upstream golden expects.
+    if context.verbose_level() >= 2 {
+        return false;
+    }
+    true
 }
 
 /// Emits each event using the supplied `--out-format` specification.
@@ -71,7 +85,7 @@ pub(crate) fn emit_out_format<W: Write + ?Sized>(
     writer: &mut W,
 ) -> io::Result<()> {
     for event in events {
-        if should_suppress_event(event) {
+        if should_suppress_event(event, context) {
             continue;
         }
         format.render(event, context, writer)?;
