@@ -47,6 +47,16 @@ pub struct DirMergeConfig {
     /// Treats the merge file as a CVS-style ignore list: each whitespace
     /// separated token is an exclude rule with no filter prefixes.
     cvs_mode: bool,
+    /// upstream: exclude.c:1116-1133 - FILTRULE_NO_PREFIXES (`-`/`+` modifier
+    /// on a dir-merge rule). When set, each line in the per-dir merge file is
+    /// consumed as a literal pattern: the short-prefix dispatch (`+`, `-`,
+    /// `:`, `.`, modifiers) is skipped entirely.
+    no_prefixes: bool,
+    /// Pairs with [`Self::no_prefixes`] to select the `+` variant.
+    ///
+    /// When `no_prefixes && no_prefixes_include`, each literal line becomes
+    /// an include rule; otherwise it becomes an exclude rule.
+    no_prefixes_include: bool,
 }
 
 impl DirMergeConfig {
@@ -65,6 +75,8 @@ impl DirMergeConfig {
             anchor_root: false,
             perishable: false,
             cvs_mode: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         }
     }
 
@@ -154,6 +166,34 @@ impl DirMergeConfig {
     #[must_use]
     pub const fn cvs_mode(&self) -> bool {
         self.cvs_mode
+    }
+
+    /// Marks this dir-merge as having FILTRULE_NO_PREFIXES set (the `-`/`+`
+    /// modifier on a `:` rule). Per-dir merge file contents are then consumed
+    /// as literal patterns rather than being run through the normal rule
+    /// parser. `include` selects the `+` variant (literal includes); the
+    /// default and `-` variant emit literal excludes.
+    ///
+    /// upstream: exclude.c:1116-1133 parse_rule_tok - prefix dispatch is
+    /// skipped when FILTRULE_NO_PREFIXES is set on the template.
+    #[must_use]
+    pub const fn with_no_prefixes(mut self, no_prefixes: bool, include: bool) -> Self {
+        self.no_prefixes = no_prefixes;
+        self.no_prefixes_include = include;
+        self
+    }
+
+    /// Returns whether FILTRULE_NO_PREFIXES applies to this dir-merge.
+    #[must_use]
+    pub const fn no_prefixes(&self) -> bool {
+        self.no_prefixes
+    }
+
+    /// Returns whether literal lines should be treated as includes (true) or
+    /// excludes (false) when [`Self::no_prefixes`] is set.
+    #[must_use]
+    pub const fn no_prefixes_include(&self) -> bool {
+        self.no_prefixes_include
     }
 
     /// Returns whether the merge file itself should be excluded.

@@ -53,6 +53,51 @@ pub fn parse_rules(content: &str, source_path: &Path) -> Result<Vec<FilterRule>,
     Ok(rules)
 }
 
+/// Parses a per-dir merge file under FILTRULE_NO_PREFIXES semantics.
+///
+/// When a dir-merge rule carries the `-` or `+` modifier, upstream
+/// `exclude.c:1116-1133 parse_rule_tok` skips the entire short-prefix and
+/// long-form dispatch and consumes each non-empty, non-comment line as a
+/// literal pattern. Lines become exclude rules by default; when `force_include`
+/// is set (the `+` variant), they become include rules instead.
+///
+/// When `cvs_ignore` is true (FILTRULE_CVS_IGNORE inherited from the
+/// template), a bare `!` line tentatively clears the list, matching upstream's
+/// FILTRULE_CLEAR_LIST escape hatch at `exclude.c:1123-1124`. Without
+/// CVS_IGNORE, `!` is just another literal pattern.
+pub(crate) fn parse_rules_no_prefixes(
+    content: &str,
+    _source_path: &Path,
+    force_include: bool,
+    cvs_ignore: bool,
+) -> Vec<FilterRule> {
+    let mut rules = Vec::new();
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
+            continue;
+        }
+
+        // upstream: exclude.c:1123-1124 - when FILTRULE_CVS_IGNORE is set on
+        // the template, a bare `!` becomes FILTRULE_CLEAR_LIST. Without
+        // CVS_IGNORE the `!` is taken literally per the no-prefixes contract.
+        if cvs_ignore && trimmed == "!" {
+            rules.push(FilterRule::clear());
+            continue;
+        }
+
+        let rule = if force_include {
+            FilterRule::include(trimmed)
+        } else {
+            FilterRule::exclude(trimmed)
+        };
+        rules.push(rule);
+    }
+
+    rules
+}
+
 /// Parses a single filter rule line, potentially expanding into multiple rules.
 ///
 /// The `w` (word-split) modifier causes the pattern to be split on whitespace,
