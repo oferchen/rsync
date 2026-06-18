@@ -51,8 +51,11 @@ pub fn generate_script_with_filters(
         ))
     })?;
 
-    // upstream: write_batch_shell_file() writes the command without a shebang
-    write!(file, "oc-rsync")?;
+    // upstream: batch.c:259 - write_arg(raw_argv[0]) - the exact binary the
+    // user invoked. Without this, the generated BATCH.sh fails with
+    // "command not found" when oc-rsync is not on PATH (e.g. test harnesses
+    // and CI that invoke via absolute path).
+    write!(file, "{}", shell_quote(&config.invoker))?;
 
     // upstream: batch.c:262-267 - embed filter option before --read-batch
     // so the heredoc at the end of the script feeds rules into stdin
@@ -315,6 +318,80 @@ mod tests {
         );
         assert!(content.contains("--read-batch="));
         assert!(content.contains("oc-rsync"));
+    }
+
+    /// Verify the script embeds an absolute invoker path verbatim.
+    ///
+    /// Upstream `batch.c:259` writes `raw_argv[0]` literally so the replay
+    /// script works regardless of `PATH`. The CI testsuite invokes oc-rsync
+    /// by absolute path, so the generated BATCH.sh must also use the
+    /// absolute path - otherwise the wrapper script fails with
+    /// `oc-rsync: command not found`.
+    #[test]
+    fn test_generate_script_embeds_absolute_invoker_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("test.batch");
+        let absolute_invoker = "/home/runner/work/rsync/rsync/target/release/oc-rsync";
+
+        let config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            31,
+        )
+        .with_invoker(absolute_invoker);
+
+        generate_script(&config).unwrap();
+
+        let content = fs::read_to_string(config.script_file_path()).unwrap();
+        let first_line = content.lines().next().expect("script must have content");
+        assert!(
+            first_line.starts_with(absolute_invoker),
+            "wrapper script must start with the configured invoker path \
+             (matches upstream batch.c:259 raw_argv[0]); got: {first_line}"
+        );
+        assert!(first_line.contains("--read-batch="));
+    }
+
+    /// Verify shell-unsafe characters in the invoker get quoted.
+    #[test]
+    fn test_generate_script_quotes_invoker_with_spaces() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("test.batch");
+
+        let config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            31,
+        )
+        .with_invoker("/path with spaces/oc-rsync");
+
+        generate_script(&config).unwrap();
+
+        let content = fs::read_to_string(config.script_file_path()).unwrap();
+        assert!(
+            content.starts_with("'/path with spaces/oc-rsync'"),
+            "invoker with spaces must be single-quoted: {content}"
+        );
+    }
+
+    /// Verify the default invoker is the bare `oc-rsync` name for
+    /// backwards-compatible callers that don't configure one.
+    #[test]
+    fn test_generate_script_default_invoker_is_bare_name() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("test.batch");
+
+        let config = BatchConfig::new(
+            BatchMode::Write,
+            batch_path.to_string_lossy().to_string(),
+            31,
+        );
+        assert_eq!(config.invoker, "oc-rsync");
+
+        generate_script(&config).unwrap();
+
+        let content = fs::read_to_string(config.script_file_path()).unwrap();
+        assert!(content.starts_with("oc-rsync "));
     }
 
     #[test]
