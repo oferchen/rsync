@@ -59,7 +59,10 @@ pub(crate) fn run_pull_transfer(
     // local file or stdin, the client reads the file list locally and forwards
     // it to the daemon's generator over the protocol stream.
     if config.files_from().is_local_forwarded() {
-        let data = read_files_from_for_forwarding(config)?;
+        let data =
+            crate::client::remote::files_from_forwarding::read_local_files_from_for_forwarding(
+                config,
+            )?;
         server_config.connection.files_from_data = Some(data);
     }
 
@@ -260,70 +263,13 @@ impl TransferProgressCallback for DaemonProgressAdapter<'_> {
 /// Reads the `--files-from` source and serializes it into the wire format
 /// for forwarding to a remote daemon.
 ///
-/// Handles both `Stdin` (reads from standard input) and `LocalFile` (reads
-/// from the given path). The output is NUL-separated filenames terminated
-/// by a double-NUL sentinel, matching the format expected by
-/// [`protocol::read_files_from_stream`] on the remote side.
-///
-/// The `--from0` flag controls whether the input is already NUL-delimited.
+/// Re-export of the shared helper - see
+/// [`crate::client::remote::files_from_forwarding::read_local_files_from_for_forwarding`]
+/// for the implementation.
 ///
 /// # Upstream Reference
 ///
 /// - `io.c:forward_filesfrom_data()` - reads from local fd, writes to socket
 /// - `main.c:1354-1356` - `start_filesfrom_forwarding(filesfrom_fd)`
-pub(super) fn read_files_from_for_forwarding(
-    config: &ClientConfig,
-) -> Result<Vec<u8>, ClientError> {
-    use crate::client::config::FilesFromSource;
-
-    let eol_nulls = config.from0();
-    // upstream: compat.c:799-806 - filesfrom_convert is set when
-    // protect_args && files_from && (am_sender ? ic_send : ic_recv) != -1.
-    // For pull, this peer is the receiver writing to the wire; the converter
-    // transcodes from local charset to the UTF-8 wire encoding.
-    let iconv_converter = if config.protect_args().unwrap_or(false) {
-        config.iconv().resolve_converter()
-    } else {
-        None
-    };
-    let mut wire_data = Vec::new();
-
-    match config.files_from() {
-        FilesFromSource::Stdin => {
-            let stdin = std::io::stdin();
-            let mut reader = stdin.lock();
-            protocol::forward_files_from(
-                &mut reader,
-                &mut wire_data,
-                eol_nulls,
-                iconv_converter.as_ref(),
-            )
-            .map_err(|e| {
-                invalid_argument_error(&format!("failed to read --files-from stdin: {e}"), 23)
-            })?;
-        }
-        FilesFromSource::LocalFile(path) => {
-            let mut file = std::fs::File::open(path).map_err(|e| {
-                invalid_argument_error(
-                    &format!("failed to open --files-from {}: {e}", path.display()),
-                    23,
-                )
-            })?;
-            protocol::forward_files_from(
-                &mut file,
-                &mut wire_data,
-                eol_nulls,
-                iconv_converter.as_ref(),
-            )
-            .map_err(|e| {
-                invalid_argument_error(
-                    &format!("failed to read --files-from {}: {e}", path.display()),
-                    23,
-                )
-            })?;
-        }
-        FilesFromSource::None | FilesFromSource::RemoteFile(_) => {}
-    }
-
-    Ok(wire_data)
-}
+#[cfg(test)]
+pub(super) use crate::client::remote::files_from_forwarding::read_local_files_from_for_forwarding as read_files_from_for_forwarding;

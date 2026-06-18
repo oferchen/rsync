@@ -32,6 +32,7 @@ use super::super::config::ClientConfig;
 use super::super::error::{ClientError, invalid_argument_error, invalid_argument_error_typed};
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
+use super::files_from_forwarding::read_local_files_from_for_forwarding;
 use super::flags;
 use super::invocation::{
     RemoteInvocationBuilder, RemoteOperands, RemoteRole, TransferSpec, determine_transfer_role,
@@ -358,6 +359,16 @@ fn run_pull_transfer(
         )?;
     server_config.stop_at = config.stop_at();
 
+    // upstream: main.c:1372-1375 - when pulling with --files-from pointing to a
+    // local file or stdin, the receiver reads the file list locally and
+    // forwards its bytes back to the remote sender via
+    // `start_filesfrom_forwarding(filesfrom_fd)`. The remote sender consumes
+    // the forwarded bytes through its protocol stream.
+    if config.files_from().is_local_forwarded() {
+        let data = read_local_files_from_for_forwarding(config)?;
+        server_config.connection.files_from_data = Some(data);
+    }
+
     let batch_ctx = batch_writer.map(|bw| build_batch_context(config, bw));
 
     let start = Instant::now();
@@ -679,6 +690,19 @@ pub(super) fn build_server_config_for_receiver(
 }
 
 /// Builds server configuration for generator role (push transfer).
+///
+/// Propagates `--files-from` plumbing for the local sender (generator) so the
+/// file list is built from the requested entry list rather than the source
+/// directory's full tree walk.
+///
+/// # Upstream Reference
+///
+/// - `options.c:2465-2510` - the sender opens a local files-from file (or
+///   sets up filesfrom_fd for remote/stdin sources).
+/// - `flist.c:2275-2298` - `send_file_list()` chdirs to `argv[0]` then reads
+///   filenames from `filesfrom_fd` to emit the file list.
+/// - `main.c:1322-1328` - when `filesfrom_host` is non-NULL, the sender
+///   wires `filesfrom_fd = f_in` so the remote forwards bytes via the wire.
 pub(super) fn build_server_config_for_generator(
     config: &ClientConfig,
     local_paths: &[String],
@@ -696,8 +720,51 @@ pub(super) fn build_server_config_for_generator(
     server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
     server_config.file_selection.size_only = config.size_only();
 
+    apply_files_from_for_sender(config, &mut server_config);
+
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
+}
+
+/// Wires `--files-from` into a sender (`Generator`) server configuration.
+///
+/// The local sender resolves entries relative to `argv[0]` (the first transfer
+/// operand) and emits a file list constrained to those entries instead of
+/// walking the entire source tree. Without this wiring the generator would
+/// recurse the absolute source directory and (under `--relative`, implied by
+/// `--files-from`) mirror its absolute path on the destination - the exact
+/// failure mode that surfaces in the upstream `files-from.test` SSH-push
+/// invocation.
+///
+/// # Upstream Reference
+///
+/// - `options.c:2473` - `filesfrom_fd = 0` for `--files-from=-` (stdin).
+/// - `options.c:2501` - `filesfrom_fd = open(files_from, O_RDONLY|O_BINARY)`
+///   for local files.
+/// - `main.c:1322-1328` - remote files-from wires `filesfrom_fd = f_in` after
+///   `setup_protocol()`; the remote receiver forwards the list bytes over the
+///   wire via `start_filesfrom_forwarding`.
+fn apply_files_from_for_sender(config: &ClientConfig, server_config: &mut ServerConfig) {
+    use super::super::config::FilesFromSource;
+    match config.files_from() {
+        FilesFromSource::None => {}
+        FilesFromSource::Stdin => {
+            server_config.file_selection.files_from_path = Some("-".to_owned());
+            server_config.file_selection.from0 = config.from0();
+        }
+        FilesFromSource::LocalFile(path) => {
+            server_config.file_selection.files_from_path =
+                Some(path.to_string_lossy().into_owned());
+            server_config.file_selection.from0 = config.from0();
+        }
+        FilesFromSource::RemoteFile(_) => {
+            // The remote receiver opens the file and forwards its bytes back
+            // to us; the generator reads them as if they came from stdin.
+            // upstream: main.c:1191-1198 start_filesfrom_forwarding(filesfrom_fd)
+            server_config.file_selection.files_from_path = Some("-".to_owned());
+            server_config.file_selection.from0 = true;
+        }
+    }
 }
 
 /// Returns `true` when both rsync wire compression and SSH stream
@@ -770,6 +837,97 @@ mod tests {
         assert_eq!(server_config.args.len(), 2);
         assert_eq!(server_config.args[0], "file1.txt");
         assert_eq!(server_config.args[1], "file2.txt");
+    }
+
+    /// UTS files-from SSH push regression: the local sender (Generator) must
+    /// learn the local `--files-from` path so its generator reads entry names
+    /// from the requested list instead of recursing the source operand and
+    /// (under implied `--relative`) mirroring its absolute path on the
+    /// destination.
+    ///
+    /// upstream: `options.c:2501 filesfrom_fd = open(files_from, ...)`,
+    /// `flist.c:2275-2298` send_file_list() walking the open fd.
+    #[test]
+    fn generator_config_sets_files_from_path_for_local_file_push() {
+        use super::super::super::config::FilesFromSource;
+        use std::path::PathBuf;
+
+        let list_path = PathBuf::from("/tmp/filelist.txt");
+        let config = ClientConfig::builder()
+            .files_from(FilesFromSource::LocalFile(list_path.clone()))
+            .build();
+
+        let server_config = build_server_config_for_generator(&config, &["/tmp/source".to_owned()])
+            .expect("generator config builds");
+
+        assert_eq!(
+            server_config.file_selection.files_from_path.as_deref(),
+            Some(list_path.to_string_lossy().as_ref()),
+            "SSH push must point the local generator at the local --files-from \
+             file so entries are emitted with relative wire-side names"
+        );
+    }
+
+    /// SSH push with stdin-sourced `--files-from`: the local sender reads
+    /// filenames from its standard input. The transfer crate signals this with
+    /// the sentinel path "-" mirroring upstream's `options.c:2473
+    /// filesfrom_fd = 0` assignment.
+    #[test]
+    fn generator_config_sets_files_from_path_for_stdin_push() {
+        use super::super::super::config::FilesFromSource;
+
+        let config = ClientConfig::builder()
+            .files_from(FilesFromSource::Stdin)
+            .from0(true)
+            .build();
+
+        let server_config = build_server_config_for_generator(&config, &["/tmp/source".to_owned()])
+            .expect("generator config builds");
+
+        assert_eq!(
+            server_config.file_selection.files_from_path.as_deref(),
+            Some("-")
+        );
+        assert!(server_config.file_selection.from0);
+    }
+
+    /// SSH push with remote-sourced `--files-from`: the local sender consumes
+    /// the list bytes forwarded by the remote receiver over the wire. The
+    /// transfer crate's protocol stream is the "-" sentinel here too;
+    /// upstream wires this via `main.c:1322-1328 filesfrom_fd = f_in`.
+    #[test]
+    fn generator_config_sets_files_from_stdin_for_remote_push() {
+        use super::super::super::config::FilesFromSource;
+
+        let config = ClientConfig::builder()
+            .files_from(FilesFromSource::RemoteFile("/remote/list.txt".to_owned()))
+            .build();
+
+        let server_config = build_server_config_for_generator(&config, &["/tmp/source".to_owned()])
+            .expect("generator config builds");
+
+        assert_eq!(
+            server_config.file_selection.files_from_path.as_deref(),
+            Some("-"),
+            "remote --files-from is read from the wire on the local sender"
+        );
+        assert!(server_config.file_selection.from0);
+    }
+
+    /// SSH push baseline: when `--files-from` is not configured the generator
+    /// performs its usual recursive walk. The `files_from_path` field stays
+    /// empty so the engine falls back to `build_file_list(paths)`.
+    #[test]
+    fn generator_config_leaves_files_from_path_unset_when_disabled() {
+        let config = ClientConfig::builder().recursive(true).build();
+
+        let server_config = build_server_config_for_generator(&config, &["/tmp/source".to_owned()])
+            .expect("generator config builds");
+
+        assert!(
+            server_config.file_selection.files_from_path.is_none(),
+            "no --files-from must leave files_from_path unset"
+        );
     }
 
     #[test]
