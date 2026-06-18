@@ -242,7 +242,9 @@ mod macos_impl {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use super::*;
+    #[cfg(unix)]
     use std::io::{Seek, SeekFrom, Write};
     #[cfg(unix)]
     use std::os::fd::AsFd;
@@ -250,9 +252,11 @@ mod tests {
     use std::os::fd::AsRawFd;
     #[cfg(unix)]
     use std::os::fd::{FromRawFd, OwnedFd};
+    #[cfg(unix)]
     use tempfile::NamedTempFile;
 
     /// Build a temp file containing `content`, leaving its position at 0.
+    #[cfg(unix)]
     fn fixture(content: &[u8]) -> NamedTempFile {
         let mut f = NamedTempFile::new().expect("tempfile");
         f.write_all(content).expect("write");
