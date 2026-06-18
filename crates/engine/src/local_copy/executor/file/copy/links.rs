@@ -233,9 +233,7 @@ pub(super) fn process_links(
             // and ITEM_REPORT_TIME fires whenever the leader's source mtime
             // differs from the existing destination alias's mtime, even
             // without `-t` (`preserve_mtimes`). Without `-t` upstream's
-            // glyph is `T` (TransferTime), matching the
-            // `testsuite/itemize.test` golden at line 78
-            // (`hf..T...... foo/extra => foo/config1`).
+            // glyph is `T` (TransferTime).
             if !metadata_options.times()
                 && let Some(existing) = existing_metadata
                 && metadata.modified().ok() != existing.modified().ok()
@@ -243,28 +241,21 @@ pub(super) fn process_links(
                 change_set =
                     change_set.with_time_change(Some(crate::local_copy::TimeChange::TransferTime));
             }
-            // upstream: generator.c:1546-1604 - `hard_link_check()` returns
-            // 1 when the destination already shares the source group leader's
-            // inode. The generator then emits `itemize(..., 0, ...)` with
-            // iflags=0, producing an `hf...` row whose attribute slots
-            // reflect only what actually changed (mtime, perms, etc.).
-            // Tagging the record as HardLink keeps position 0 at 'h' instead
-            // of '.'; omitting `.with_creation(true)` keeps positions 2-10
-            // as deltas instead of `+++++++++`. We thread the existing
-            // destination link target through the metadata snapshot's
-            // `symlink_target` slot so the `%L` placeholder can render the
-            // upstream `=> %s` suffix without a separate plumbing channel.
-            // upstream: hlink.c:237 - `"%s => %s\n"` prints `realname`
-            // which is the leader's relative path. Strip the destination
-            // root from the recorded absolute path so the `%L` placeholder
-            // emits the upstream form (`=> foo/config1` rather than
-            // `=> /abs/path/to/foo/config1`).
-            let link_target_display = existing_target
-                .strip_prefix(context.destination_root())
-                .map(std::path::Path::to_path_buf)
-                .unwrap_or_else(|_| existing_target.clone());
-            let reuse_snapshot =
-                LocalCopyMetadata::from_metadata(metadata, Some(link_target_display));
+            // upstream: hlink.c:218-222 - when the destination already
+            // shares the source group leader's inode, `maybe_hard_link()`
+            // calls `itemize(fname, file, ndx, statret, sxp,
+            // ITEM_LOCAL_CHANGE | ITEM_XNAME_FOLLOWS, 0, "")` with an
+            // empty xname. `log.c:643-654` skips the `%L` `=> %s` suffix
+            // when the xname is empty, so the upstream `-i` row for an
+            // already-linked alias is `hf<dots>` with no trailer (line
+            // 122 of `testsuite/itemize.test`: `hf$allspace foo/extra`).
+            // Pass `None` for the symlink_target so the `%L` placeholder
+            // renders to the empty string, matching that behaviour.
+            //
+            // Tagging the record as HardLink keeps position 0 at 'h'
+            // instead of '.'; omitting `.with_creation(true)` keeps
+            // positions 2-10 as deltas instead of `+++++++++`.
+            let reuse_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
             context.record(
                 LocalCopyRecord::new(
                     record_path.to_path_buf(),

@@ -1355,3 +1355,56 @@ fn level_2_uptodate_lines_precede_transferred_lines() {
         "uptodate notices must precede transferred files (upstream generator/receiver pipeline), got: {rendered:?}"
     );
 }
+
+/// Verifies that `-iplrtH` against a destination already linked to the leader
+/// emits the `hf` itemized row WITHOUT the `=> leader` suffix.
+///
+/// upstream: hlink.c:218-222 - when the destination already shares the source
+/// group leader's inode, `maybe_hard_link()` calls
+/// `itemize(..., ITEM_LOCAL_CHANGE | ITEM_XNAME_FOLLOWS, 0, "")` with an
+/// empty xname. `log.c:643-654` skips the `%L` ` => %s` suffix when the
+/// xname is empty. Mirrors `testsuite/itemize.test` at line 122
+/// (`hf$allspace foo/extra`) which has no `=>` suffix because the dest
+/// alias is already linked to `foo/config1`.
+#[cfg(unix)]
+#[test]
+fn itemize_hardlink_already_linked_omits_arrow_suffix() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let from = tmp.path().join("from");
+    let to = tmp.path().join("to");
+    std::fs::create_dir_all(&from).expect("mkdir from");
+    std::fs::write(from.join("leader.bin"), b"shared content").expect("write leader");
+    std::fs::hard_link(from.join("leader.bin"), from.join("follower.bin"))
+        .expect("source hardlink");
+
+    let mut from_slash = from.clone().into_os_string();
+    from_slash.push("/");
+
+    // First pass: create the destination alias.
+    let (code, _stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-plrtH"),
+        from_slash.clone(),
+        to.clone().into_os_string(),
+    ]);
+    assert_eq!(code, 0);
+
+    // Second pass: destination is already linked. Itemize must not emit
+    // the `=> leader.bin` xname suffix on the follower row.
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-iplrtH"),
+        from_slash,
+        to.into_os_string(),
+    ]);
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+
+    let rendered = String::from_utf8(stdout).expect("utf8");
+    assert!(
+        !rendered.contains("=> leader.bin"),
+        "already-linked hardlink row must omit `=> leader.bin` (upstream hlink.c:218-222 passes empty xname to itemize), got: {rendered:?}"
+    );
+}
