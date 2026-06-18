@@ -272,11 +272,19 @@ impl FileListReader {
             self.stats.num_dirs += 1;
         } else if entry.is_file() {
             self.stats.num_files += 1;
-            self.stats.total_size += entry.size();
+            // upstream: flist.c:691 `stats.total_size += F_LENGTH(file)` uses
+            // signed int64 and tolerates wrap; this is a cosmetic counter logged
+            // by trace.rs and never gates wire format. Saturate instead of
+            // wrapping so debug builds (overflow-checks=true, e.g. cargo-fuzz)
+            // do not panic on adversarial sizes.
+            self.stats.total_size = self.stats.total_size.saturating_add(entry.size());
         } else if entry.is_symlink() {
             self.stats.num_symlinks += 1;
             if let Some(target) = entry.link_target() {
-                self.stats.total_size += target.as_os_str().len() as u64;
+                self.stats.total_size = self
+                    .stats
+                    .total_size
+                    .saturating_add(target.as_os_str().len() as u64);
             }
         } else if entry.is_device() {
             self.stats.num_devices += 1;
