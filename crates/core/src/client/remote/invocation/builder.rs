@@ -479,16 +479,31 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--log-format=%i"));
         }
 
-        // upstream: options.c:2944-2956 - --files-from forwarding. When the
-        // file is local (or stdin), the client reads it and forwards content
-        // over the socket, so we tell the server `--files-from=- --from0`.
-        // When the file is remote, we send `--files-from=<path>` and
-        // optionally `--from0`.
+        // upstream: options.c:2962-2974 - `if (files_from && (!am_sender ||
+        // filesfrom_host))`. The server-side `--files-from` arg is only added
+        // when we are NOT the sender (i.e. local is receiver, doing pull) OR
+        // the files-from spec was a hostspec (remote filelist).
+        //
+        // - PUSH with local filelist: local sender reads the list locally and
+        //   walks accordingly; the remote receiver gets no `--files-from`.
+        // - PUSH with remote filelist: remote receiver opens the file and
+        //   forwards its bytes back to the local sender (main.c:1191-1198).
+        // - PULL with local filelist: local receiver forwards the file bytes
+        //   on the wire; remote sender reads from `--files-from=-`.
+        // - PULL with remote filelist: remote sender opens the file via
+        //   `--files-from=<path>`.
+        //
+        // `RemoteRole::Sender` here means the local process is the sender
+        // (PUSH); `RemoteRole::Receiver` means the local process is the
+        // receiver (PULL).
+        let local_is_sender = self.role == RemoteRole::Sender;
         match self.config.files_from() {
             FilesFromSource::None => {}
             FilesFromSource::LocalFile(_) | FilesFromSource::Stdin => {
-                args.push(OsString::from("--files-from=-"));
-                args.push(OsString::from("--from0"));
+                if !local_is_sender {
+                    args.push(OsString::from("--files-from=-"));
+                    args.push(OsString::from("--from0"));
+                }
             }
             FilesFromSource::RemoteFile(path) => {
                 args.push(OsString::from(format!("--files-from={path}")));

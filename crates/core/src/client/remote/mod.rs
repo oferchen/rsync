@@ -28,6 +28,7 @@ pub mod daemon_transfer;
 /// Embedded SSH transfer orchestration using the russh library.
 #[cfg(feature = "embedded-ssh")]
 pub mod embedded_ssh_transfer;
+pub(crate) mod files_from_forwarding;
 pub(crate) mod flags;
 /// Remote rsync `--server` invocation argument builder.
 pub mod invocation;

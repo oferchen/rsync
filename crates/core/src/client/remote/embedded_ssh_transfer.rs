@@ -166,6 +166,16 @@ fn run_embedded_pull(
         )?;
     server_config.stop_at = config.stop_at();
 
+    // upstream: main.c:1372-1375 - pull with a local --files-from forwards the
+    // file's bytes back to the remote sender via the protocol stream.
+    if config.files_from().is_local_forwarded() {
+        let data =
+            crate::client::remote::files_from_forwarding::read_local_files_from_for_forwarding(
+                config,
+            )?;
+        server_config.connection.files_from_data = Some(data);
+    }
+
     let batch_ctx = batch_writer.map(|bw| build_batch_context(config, bw));
 
     run_transfer_over_embedded_ssh(
@@ -479,10 +489,16 @@ fn build_server_config_for_receiver(
 }
 
 /// Builds server configuration for generator role (push transfer).
+///
+/// Mirrors `ssh_transfer::build_server_config_for_generator`: the sender wires
+/// `--files-from` so the file list is built from the requested entry list, not
+/// from a recursive walk of the source operand.
 fn build_server_config_for_generator(
     config: &ClientConfig,
     local_paths: &[String],
 ) -> Result<ServerConfig, ClientError> {
+    use crate::client::config::FilesFromSource;
+
     let flag_string = flags::build_server_flag_string(config);
     let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
 
@@ -493,6 +509,26 @@ fn build_server_config_for_generator(
     server_config.flags.numeric_ids = config.numeric_ids();
     server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
     server_config.file_selection.size_only = config.size_only();
+
+    // upstream: options.c:2473,2501 / main.c:1322-1328 - the sender opens the
+    // local files-from file (Stdin/LocalFile) or reads from the wire when the
+    // list is hosted on the remote receiver (RemoteFile).
+    match config.files_from() {
+        FilesFromSource::None => {}
+        FilesFromSource::Stdin => {
+            server_config.file_selection.files_from_path = Some("-".to_owned());
+            server_config.file_selection.from0 = config.from0();
+        }
+        FilesFromSource::LocalFile(path) => {
+            server_config.file_selection.files_from_path =
+                Some(path.to_string_lossy().into_owned());
+            server_config.file_selection.from0 = config.from0();
+        }
+        FilesFromSource::RemoteFile(_) => {
+            server_config.file_selection.files_from_path = Some("-".to_owned());
+            server_config.file_selection.from0 = true;
+        }
+    }
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)

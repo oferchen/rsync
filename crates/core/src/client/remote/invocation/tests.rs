@@ -3103,3 +3103,122 @@ fn remote_option_short_flag_forwarded_verbatim() {
         "expected short flag -v from -M in args: {args:?}"
     );
 }
+
+/// SSH push with a local `--files-from` must NOT forward the option to the
+/// remote receiver. Upstream's `options.c:2962` gate
+/// `if (files_from && (!am_sender || filesfrom_host))` skips emission when
+/// the client is the sender and the list lives locally. The local sender
+/// reads the file directly to build the file list; emitting
+/// `--files-from=-` would make the remote receiver wait for entries that
+/// the sender's main loop never forwards.
+#[test]
+fn push_with_local_files_from_omits_remote_arg() {
+    use crate::client::config::FilesFromSource;
+    use std::path::PathBuf;
+
+    let config = ClientConfig::builder()
+        .files_from(FilesFromSource::LocalFile(PathBuf::from("/tmp/list.txt")))
+        .build();
+    // RemoteRole::Sender == local is sender (push).
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args = builder.build("/remote/dest");
+
+    assert!(
+        !args.iter().any(|a| {
+            let s = a.to_string_lossy();
+            s.starts_with("--files-from")
+        }),
+        "PUSH with local files-from must not send --files-from to the remote: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a == "--from0"),
+        "PUSH with local files-from must not send --from0 to the remote: {args:?}"
+    );
+}
+
+/// SSH push with `--files-from=-` (stdin) is treated identically to a local
+/// file source: the local sender consumes stdin to build the list and the
+/// remote receiver gets no `--files-from` arg.
+#[test]
+fn push_with_stdin_files_from_omits_remote_arg() {
+    use crate::client::config::FilesFromSource;
+
+    let config = ClientConfig::builder()
+        .files_from(FilesFromSource::Stdin)
+        .from0(true)
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args = builder.build("/remote/dest");
+
+    assert!(
+        !args.iter().any(|a| {
+            let s = a.to_string_lossy();
+            s.starts_with("--files-from")
+        }),
+        "PUSH with stdin files-from must not send --files-from to the remote: {args:?}"
+    );
+}
+
+/// SSH push with a remote-hosted `--files-from` (`host:path` or `:path`)
+/// forwards the path to the remote receiver, which opens the file and
+/// forwards its bytes back over the wire via `start_filesfrom_forwarding`.
+#[test]
+fn push_with_remote_files_from_forwards_path() {
+    use crate::client::config::FilesFromSource;
+
+    let config = ClientConfig::builder()
+        .files_from(FilesFromSource::RemoteFile("/remote/list.txt".to_owned()))
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
+    let args = builder.build("/remote/dest");
+
+    assert!(
+        args.iter()
+            .any(|a| a.to_string_lossy() == "--files-from=/remote/list.txt"),
+        "PUSH with remote files-from must forward the path to the remote: {args:?}"
+    );
+}
+
+/// SSH pull with a local `--files-from` must forward `--files-from=- --from0`
+/// to the remote sender, which reads filenames from the wire. The receiver
+/// (us) forwards the file's bytes after sending the filter list.
+#[test]
+fn pull_with_local_files_from_sends_files_from_stdin_to_remote() {
+    use crate::client::config::FilesFromSource;
+    use std::path::PathBuf;
+
+    let config = ClientConfig::builder()
+        .files_from(FilesFromSource::LocalFile(PathBuf::from("/tmp/list.txt")))
+        .build();
+    // RemoteRole::Receiver == local is receiver (pull).
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let args = builder.build("/remote/source");
+
+    assert!(
+        args.iter().any(|a| a == "--files-from=-"),
+        "PULL with local files-from must forward --files-from=- to the remote: {args:?}"
+    );
+    assert!(
+        args.iter().any(|a| a == "--from0"),
+        "PULL with local files-from must forward --from0 to the remote: {args:?}"
+    );
+}
+
+/// SSH pull with a remote-hosted `--files-from` forwards the absolute path
+/// (matching upstream `options.c:2964 safe_arg("", files_from)`).
+#[test]
+fn pull_with_remote_files_from_forwards_path() {
+    use crate::client::config::FilesFromSource;
+
+    let config = ClientConfig::builder()
+        .files_from(FilesFromSource::RemoteFile("/remote/list.txt".to_owned()))
+        .build();
+    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver);
+    let args = builder.build("/remote/source");
+
+    assert!(
+        args.iter()
+            .any(|a| a.to_string_lossy() == "--files-from=/remote/list.txt"),
+        "PULL with remote files-from must forward the path to the remote: {args:?}"
+    );
+}
