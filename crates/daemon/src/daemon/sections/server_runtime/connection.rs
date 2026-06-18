@@ -379,7 +379,14 @@ fn run_single_listener_loop(
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 // No pending connection - sleep briefly then re-check flags.
-                thread::sleep(SIGNAL_CHECK_INTERVAL);
+                // The 50ms interval matches `run_dual_stack_loop` so first-
+                // connection latency on a quiet daemon is bounded by half the
+                // sleep interval rather than the (much coarser) 500ms signal
+                // poll. The longer SIGNAL_CHECK_INTERVAL is still honoured for
+                // the signal-flag inspection at the top of the loop body via
+                // `check_signals_and_maintain`, which is the only consumer
+                // that needs that resolution.
+                thread::sleep(Duration::from_millis(50));
                 continue;
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {
@@ -419,6 +426,7 @@ fn run_dual_stack_loop(
     let graceful_exit = Arc::clone(&state.signal_flags.graceful_exit);
 
     let mut acceptor_handles: Vec<thread::JoinHandle<()>> = Vec::with_capacity(listeners.len());
+    let total_acceptors = listeners.len();
 
     for (listener, local_addr) in listeners.into_iter().zip(bound_addresses.iter().copied()) {
         let tx = tx.clone();
@@ -471,6 +479,18 @@ fn run_dual_stack_loop(
     // Drop our copy of the sender so the channel closes when acceptors exit
     drop(tx);
 
+    // Track how many per-family acceptors have failed. The dual-stack loop
+    // only escalates an accept error to a fatal daemon exit when every
+    // family has dropped out - a single family failing (the GitHub Actions
+    // exit-10 pattern: IPv6 `bind(2)` succeeds but `accept(2)` then
+    // returns a non-routable family) used to tear down the whole daemon
+    // and surface as `error in socket I/O (code 10)`. With this fix the
+    // surviving family keeps serving traffic and the failed family logs
+    // a warning, mirroring upstream `socket.c::start_accept_loop`
+    // semantics where one busted descriptor does not collapse the
+    // `select(2)` over the others.
+    let mut alive_acceptors = total_acceptors;
+
     // Main loop: receive connections from any listener
     loop {
         if let Some(true) = check_signals_and_maintain(state)? {
@@ -509,12 +529,15 @@ fn run_dual_stack_loop(
                     }
             }
             Ok(Err((local_addr, error))) => {
-                shutdown.store(true, Ordering::Relaxed);
-                // Wait for acceptor threads to finish
-                for handle in acceptor_handles {
-                    let _ = handle.join();
+                alive_acceptors = alive_acceptors.saturating_sub(1);
+                if alive_acceptors == 0 {
+                    shutdown.store(true, Ordering::Relaxed);
+                    for handle in acceptor_handles {
+                        let _ = handle.join();
+                    }
+                    return Err(accept_error(local_addr, error));
                 }
-                return Err(accept_error(local_addr, error));
+                warn_per_family_accept_failure(state.log_sink.as_ref(), local_addr, &error);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 continue;

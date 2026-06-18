@@ -102,6 +102,12 @@ impl RuntimeOptions {
         self.address_family
     }
 
+    /// Returns whether the operator requested a dual-stack listener via
+    /// `--ipv4 --ipv6`.
+    pub(super) fn dual_stack(&self) -> bool {
+        self.dual_stack
+    }
+
     pub(super) fn motd_lines(&self) -> &[String] {
         &self.motd_lines
     }

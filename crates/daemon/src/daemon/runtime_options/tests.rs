@@ -110,17 +110,42 @@ mod runtime_options_tests {
     }
 
     #[test]
-    fn ipv4_and_ipv6_conflict_is_rejected() {
+    fn ipv4_then_ipv6_enables_dual_stack() {
+        // UTS-DD-daemon-exit10: `--ipv4 --ipv6` together is the explicit
+        // opt-in for the upstream `default_af_hint = 0` semantic: bind one
+        // listener per family and tolerate per-family failure. The flag
+        // pair must succeed and surface as `dual_stack = true` rather than
+        // being rejected as a conflict.
         let args = vec![OsString::from("--ipv4"), OsString::from("--ipv6")];
-        let result = RuntimeOptions::parse(&args);
-        assert!(result.is_err());
+        let options = RuntimeOptions::parse(&args).expect("--ipv4 --ipv6 must parse");
+        assert!(
+            options.dual_stack(),
+            "dual_stack must be set when both family flags are given"
+        );
+        assert_eq!(options.address_family(), Some(AddressFamily::Ipv4));
     }
 
     #[test]
-    fn ipv6_and_ipv4_conflict_is_rejected() {
+    fn ipv6_then_ipv4_enables_dual_stack() {
+        // Companion to `ipv4_then_ipv6_enables_dual_stack`: the order of
+        // the family flags must not change the resulting dual-stack
+        // request.
         let args = vec![OsString::from("--ipv6"), OsString::from("--ipv4")];
-        let result = RuntimeOptions::parse(&args);
-        assert!(result.is_err());
+        let options = RuntimeOptions::parse(&args).expect("--ipv6 --ipv4 must parse");
+        assert!(
+            options.dual_stack(),
+            "dual_stack must be set regardless of family-flag order"
+        );
+        assert_eq!(options.address_family(), Some(AddressFamily::Ipv6));
+    }
+
+    #[test]
+    fn dual_stack_default_is_false() {
+        // Default daemon startup (no flags, no explicit bind address) must
+        // not enable dual-stack so the accept loop binds IPv4 only and
+        // avoids the GitHub Actions exit-10 IPv6-then-fail pattern.
+        let options = RuntimeOptions::default();
+        assert!(!options.dual_stack());
     }
 
     #[test]
