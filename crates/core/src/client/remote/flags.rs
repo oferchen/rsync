@@ -191,9 +191,6 @@ pub(crate) fn build_wire_format_rules(
                     pattern,
                     anchored,
                     directory_only,
-                    no_inherit: false,
-                    cvs_exclude: false,
-                    word_split: false,
                     // upstream: 'e' flag = FILTRULE_EXCLUDE_SELF.
                     exclude_from_merge: true,
                     xattr_only: spec.is_xattr_only(),
@@ -201,6 +198,7 @@ pub(crate) fn build_wire_format_rules(
                     receiver_side: spec.applies_to_receiver(),
                     perishable: spec.is_perishable(),
                     negate: spec.is_negated(),
+                    ..FilterRuleWireFormat::default()
                 });
                 continue;
             }
@@ -212,15 +210,12 @@ pub(crate) fn build_wire_format_rules(
             pattern,
             anchored,
             directory_only,
-            no_inherit: false,
-            cvs_exclude: false,
-            word_split: false,
-            exclude_from_merge: false,
             xattr_only: spec.is_xattr_only(),
             sender_side: spec.applies_to_sender(),
             receiver_side: spec.applies_to_receiver(),
             perishable: spec.is_perishable(),
             negate: spec.is_negated(),
+            ..FilterRuleWireFormat::default()
         };
 
         if let Some(options) = spec.dir_merge_options() {

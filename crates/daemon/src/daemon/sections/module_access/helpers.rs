@@ -424,18 +424,7 @@ fn parse_daemon_filter_token(token: &str) -> Option<FilterRuleWireFormat> {
     if strip_keyword_prefix(token, "clear").is_some() {
         return Some(FilterRuleWireFormat {
             rule_type: protocol::filters::RuleType::Clear,
-            pattern: String::new(),
-            anchored: false,
-            directory_only: false,
-            no_inherit: false,
-            cvs_exclude: false,
-            word_split: false,
-            exclude_from_merge: false,
-            xattr_only: false,
-            sender_side: false,
-            receiver_side: false,
-            perishable: false,
-            negate: false,
+            ..FilterRuleWireFormat::default()
         });
     }
 
