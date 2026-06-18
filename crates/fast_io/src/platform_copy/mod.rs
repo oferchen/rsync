@@ -46,8 +46,7 @@
 //! println!("Copied {} bytes via {:?}", result.bytes_copied, result.method);
 //! ```
 
-#[cfg(target_os = "linux")]
-mod cow_detect;
+pub mod cow_detect;
 mod dispatch;
 mod no_zero_copy;
 mod require_cow;
@@ -58,6 +57,7 @@ mod types;
 use std::io;
 use std::path::Path;
 
+pub use cow_detect::{CowSupport, detect_cow_filesystem, detect_cow_support, record_probe_outcome};
 pub use no_zero_copy::NoZeroCopyPlatformCopy;
 pub use require_cow::RequireCowPlatformCopy;
 pub use types::{CopyMethod, CopyResult, PlatformCopy};
