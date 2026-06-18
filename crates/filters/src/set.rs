@@ -22,7 +22,7 @@ use crate::{
     compiled::{CompiledRule, apply_clear_rule},
     cvs::default_patterns as cvs_default_patterns,
     decision::{DecisionContext, FilterSetInner},
-    merge::read_rules_recursive,
+    merge::{read_rules_recursive, scope_local_clear},
 };
 
 /// Compiled, immutable collection of filter rules for fast path matching.
@@ -404,9 +404,15 @@ impl From<FilterError> for FilterSetError {
 
 /// Recursively expands merge rules by reading and inlining their contents.
 ///
-/// This mirrors upstream rsync's behavior in `exclude.c` where `. FILE` rules
-/// cause the referenced file to be read and its rules inserted at that
-/// position in the chain.
+/// Each merge file is treated as its own clear-rules scope: a `Clear` (`!`)
+/// rule inside the merge file clears only rules accumulated from that file
+/// (and any nested merge files expanded from it), not rules supplied by the
+/// parent scope. This mirrors upstream `exclude.c:pop_filter_list()`, which
+/// only removes the local section of the rule list and leaves inherited
+/// (parent-scope) rules in place.
+///
+/// upstream: exclude.c:574 pop_filter_list() — frees the local section of
+/// the rule list, leaving inherited rules intact.
 fn expand_merge_rules(
     rules: Vec<FilterRule>,
     max_depth: usize,
@@ -429,7 +435,7 @@ fn expand_merge_rules(
                 let nested =
                     read_rules_recursive(merge_path, max_depth.saturating_sub(current_depth))?;
                 let nested_expanded = expand_merge_rules(nested, max_depth, current_depth + 1)?;
-                expanded.extend(nested_expanded);
+                expanded.extend(scope_local_clear(nested_expanded));
             }
             FilterAction::DirMerge => {
                 // Processed per-directory during traversal, not at compile time.
