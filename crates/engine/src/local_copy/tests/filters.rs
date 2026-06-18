@@ -333,7 +333,7 @@ fn deferred_updates_flush_commits_pending_files() {
 fn dir_merge_defaults_preserve_rule_side_overrides() {
     let options = DirMergeOptions::default();
     let rule = FilterRule::exclude("*.tmp").with_receiver(false);
-    let adjusted = apply_dir_merge_rule_defaults(rule, &options);
+    let adjusted = apply_dir_merge_rule_defaults(rule, &options, false);
 
     assert!(adjusted.applies_to_sender());
     assert!(!adjusted.applies_to_receiver());
@@ -345,11 +345,56 @@ fn dir_merge_modifiers_override_rule_side_overrides() {
     let receiver_only_options = DirMergeOptions::default().receiver_modifier();
 
     let rule = FilterRule::include("logs/**").with_receiver(false);
-    let sender_adjusted = apply_dir_merge_rule_defaults(rule.clone(), &sender_only_options);
+    let sender_adjusted =
+        apply_dir_merge_rule_defaults(rule.clone(), &sender_only_options, false);
     assert!(sender_adjusted.applies_to_sender());
     assert!(!sender_adjusted.applies_to_receiver());
 
-    let receiver_adjusted = apply_dir_merge_rule_defaults(rule, &receiver_only_options);
+    let receiver_adjusted = apply_dir_merge_rule_defaults(rule, &receiver_only_options, false);
     assert!(!receiver_adjusted.applies_to_sender());
     assert!(receiver_adjusted.applies_to_receiver());
+}
+
+/// upstream: exclude.c:1324-1332 parse_rule_tok - rules expanded from a
+/// merge file under --delete-excluded carry FILTRULE_SENDER_SIDE when
+/// neither side modifier is set on the wrapper. Per-token rules from
+/// `:C .cvsignore` or built-in CVS patterns must follow the same rule so
+/// the receiver's delete-pass does not skip them.
+#[test]
+fn dir_merge_defaults_apply_implicit_sender_side_under_delete_excluded() {
+    let options = DirMergeOptions::default();
+    let rule = FilterRule::exclude("*.bak");
+    let adjusted = apply_dir_merge_rule_defaults(rule, &options, true);
+
+    assert!(adjusted.applies_to_sender());
+    assert!(!adjusted.applies_to_receiver());
+}
+
+/// Explicit side modifiers on the dir-merge wrapper take precedence over
+/// the implicit `--delete-excluded` flip, mirroring upstream's check on
+/// FILTRULES_SIDES in `exclude.c:1330`.
+#[test]
+fn dir_merge_defaults_respect_explicit_side_modifier_under_delete_excluded() {
+    let receiver_only = DirMergeOptions::default().receiver_modifier();
+    let rule = FilterRule::exclude("*.bak");
+    let adjusted = apply_dir_merge_rule_defaults(rule, &receiver_only, true);
+
+    assert!(!adjusted.applies_to_sender());
+    assert!(adjusted.applies_to_receiver());
+}
+
+/// Protect and risk rules are receiver-only by construction; the implicit
+/// flip must not strip the receiver flag from them.
+#[test]
+fn dir_merge_defaults_skip_protect_risk_under_delete_excluded() {
+    let options = DirMergeOptions::default();
+    let protect = FilterRule::protect("keep");
+    let adjusted = apply_dir_merge_rule_defaults(protect, &options, true);
+    assert!(!adjusted.applies_to_sender());
+    assert!(adjusted.applies_to_receiver());
+
+    let risk = FilterRule::risk("scratch");
+    let adjusted = apply_dir_merge_rule_defaults(risk, &options, true);
+    assert!(!adjusted.applies_to_sender());
+    assert!(adjusted.applies_to_receiver());
 }

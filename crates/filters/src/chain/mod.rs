@@ -83,6 +83,14 @@ pub struct FilterChain {
     /// Ordered from outermost to innermost; evaluation iterates in reverse.
     scopes: Vec<DirScope>,
     current_depth: usize,
+    /// Mirrors upstream's `delete_excluded` global. When `true`, per-token
+    /// rules expanded from merge files acquire an implicit FILTRULE_SENDER_SIDE
+    /// flag so that the receiver's delete-pass does not skip matching files.
+    ///
+    /// upstream: exclude.c:1324-1332 parse_rule_tok - the OR fires for every
+    /// parsed rule under --delete-excluded except the merge/dir-merge wrappers
+    /// themselves.
+    delete_excluded: bool,
 }
 
 impl FilterChain {
@@ -97,6 +105,7 @@ impl FilterChain {
             merge_configs: Vec::new(),
             scopes: Vec::new(),
             current_depth: 0,
+            delete_excluded: false,
         }
     }
 
@@ -113,6 +122,25 @@ impl FilterChain {
     /// their rules into scoped filter sets.
     pub fn add_merge_config(&mut self, config: DirMergeConfig) {
         self.merge_configs.push(config);
+    }
+
+    /// Marks this chain as operating under `--delete-excluded`.
+    ///
+    /// When enabled, rules expanded out of per-directory merge files acquire
+    /// an implicit sender-side flag, mirroring upstream's per-token OR in
+    /// `exclude.c:1324-1332 parse_rule_tok`. Without this, the receiver's
+    /// delete-pass would treat merge-expanded excludes as receiver-side
+    /// excludes and skip the matching files instead of deleting them.
+    #[must_use]
+    pub const fn with_delete_excluded(mut self, delete_excluded: bool) -> Self {
+        self.delete_excluded = delete_excluded;
+        self
+    }
+
+    /// Reports whether implicit per-token sender-side promotion is active.
+    #[must_use]
+    pub const fn delete_excluded(&self) -> bool {
+        self.delete_excluded
     }
 
     /// Returns `true` if the path should be included in the transfer.
@@ -284,10 +312,12 @@ impl FilterChain {
             }
 
             let config = &self.merge_configs[config_index];
+            let delete_excluded = self.delete_excluded;
 
             let mut modified_rules: Vec<FilterRule> = rules
                 .into_iter()
                 .map(|rule| config.apply_modifiers(rule))
+                .map(|rule| apply_merge_implicit_sender_side(rule, delete_excluded))
                 .collect();
 
             // upstream: exclude.c - FILTRULE_EXCLUDE_SELF handling
@@ -383,6 +413,12 @@ impl FilterChain {
         if rules.is_empty() {
             return Ok(0);
         }
+
+        let delete_excluded = self.delete_excluded;
+        let rules: Vec<FilterRule> = rules
+            .into_iter()
+            .map(|rule| apply_merge_implicit_sender_side(rule, delete_excluded))
+            .collect();
 
         let filter_set = match FilterSet::from_rules(rules) {
             Ok(set) => set,
@@ -486,6 +522,29 @@ fn parse_cvs_ignore_tokens(content: &str) -> Vec<FilterRule> {
         .filter(|token| !token.is_empty())
         .map(FilterRule::exclude)
         .collect()
+}
+
+/// Applies upstream's per-token implicit FILTRULE_SENDER_SIDE flip to a rule
+/// expanded from a merge file when `--delete-excluded` is active.
+///
+/// Mirrors `exclude.c:1324-1332 parse_rule_tok`: the OR fires for every
+/// include/exclude rule produced by the parser unless the user explicitly
+/// requested a side via the `s` or `r` modifier, in which case the
+/// FILTRULES_SIDES bit is already set and the OR is skipped. Merge and
+/// dir-merge wrappers themselves are excluded by the FILTRULE_MERGE_FILE /
+/// FILTRULE_PERDIR_MERGE check, which oc-rsync handles by extracting those
+/// directives before calling this helper.
+fn apply_merge_implicit_sender_side(rule: FilterRule, delete_excluded: bool) -> FilterRule {
+    if !delete_excluded {
+        return rule;
+    }
+    if !matches!(rule.action(), FilterAction::Include | FilterAction::Exclude) {
+        return rule;
+    }
+    if !(rule.applies_to_sender() && rule.applies_to_receiver()) {
+        return rule;
+    }
+    rule.with_receiver(false)
 }
 
 /// Description of a dir-merge directive parsed from another merge file.

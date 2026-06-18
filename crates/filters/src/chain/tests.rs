@@ -791,3 +791,65 @@ fn dir_merge_no_prefixes_bang_clears_list_with_cvs() {
 
     chain.leave_directory(guard);
 }
+
+/// upstream: exclude.c:1324-1332 parse_rule_tok - under --delete-excluded,
+/// tokens expanded from a `:C .cvsignore` per-directory merge acquire the
+/// implicit FILTRULE_SENDER_SIDE flag. The receiver's delete-pass then
+/// observes `applies_to_receiver=false`, so the receiver-side rule
+/// no longer fires and the delete-pass proceeds (file is deleted).
+#[test]
+fn cvs_dir_merge_expands_to_sender_side_under_delete_excluded() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join(".cvsignore"), "*.junk *.bak").unwrap();
+
+    let config = DirMergeConfig::new(".cvsignore").with_cvs_mode(true);
+    let mut chain = FilterChain::empty().with_delete_excluded(true);
+    chain.add_merge_config(config);
+
+    let guard = chain.enter_directory(dir.path()).unwrap();
+    assert_eq!(guard.pushed_count(), 1);
+    assert!(chain.delete_excluded());
+
+    // Sender-side traversal still excludes these patterns from transfer,
+    // matching upstream's `parse_rule_tok` OR'ing on FILTRULE_SENDER_SIDE.
+    assert!(!chain.allows(Path::new("file.junk"), false));
+    assert!(!chain.allows(Path::new("file.bak"), false));
+
+    // Receiver-side deletion is no longer blocked because the rule lost
+    // its applies_to_receiver bit; without the implicit flip the rule
+    // would have matched on the receiver side and skipped deletion.
+    assert!(
+        chain.allows_deletion(Path::new("file.junk"), false),
+        "merge-expanded rule must not block receiver deletion under delete-excluded"
+    );
+    assert!(
+        chain.allows_deletion(Path::new("file.bak"), false),
+        "merge-expanded rule must not block receiver deletion under delete-excluded"
+    );
+
+    chain.leave_directory(guard);
+}
+
+/// Without --delete-excluded the implicit flip must NOT fire, so the
+/// expanded exclude rules continue to apply to both sides exactly as
+/// upstream's `add_rule()` leaves them in the default case. The receiver
+/// then matches the rule and skips deletion (default behaviour).
+#[test]
+fn cvs_dir_merge_preserves_both_sides_without_delete_excluded() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join(".cvsignore"), "*.junk").unwrap();
+
+    let config = DirMergeConfig::new(".cvsignore").with_cvs_mode(true);
+    let mut chain = FilterChain::empty();
+    chain.add_merge_config(config);
+    assert!(!chain.delete_excluded());
+
+    let guard = chain.enter_directory(dir.path()).unwrap();
+    assert_eq!(guard.pushed_count(), 1);
+
+    // Both sides still see the exclude when --delete-excluded is off.
+    assert!(!chain.allows(Path::new("file.junk"), false));
+    assert!(!chain.allows_deletion(Path::new("file.junk"), false));
+
+    chain.leave_directory(guard);
+}

@@ -150,6 +150,7 @@ impl<'a> CopyContext<'a> {
             let mut entries = match load_dir_merge_rules_recursive(
                 candidate.as_path(),
                 &rule.options,
+                self.options.delete_excluded_enabled(),
                 &mut visited,
             ) {
                 Ok(entries) => entries,
@@ -216,6 +217,7 @@ impl<'a> CopyContext<'a> {
             let mut entries = match load_dir_merge_rules_recursive(
                 candidate.as_path(),
                 rule.options(),
+                self.options.delete_excluded_enabled(),
                 &mut visited,
             ) {
                 Ok(entries) => entries,

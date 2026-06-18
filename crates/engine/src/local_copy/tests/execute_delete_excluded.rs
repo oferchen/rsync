@@ -236,3 +236,97 @@ fn delete_without_delete_excluded_preserves_filtered_tmp_files() {
         "only the non-excluded extraneous file is deleted"
     );
 }
+
+/// Mirrors the failing upstream-testsuite `exclude` sub-transfer:
+///
+/// ```text
+/// rsync -avv --filter='merge .cvsignore' -f:C -f-C \
+///     --delete-excluded --delete-during from/ to/
+/// ```
+///
+/// Source tree contains `*.bak`, `*.junk`, `*.old`, and a `home-cvs-exclude`
+/// entry that matches a `~/.cvsignore` pattern. The dest tree pre-populates
+/// the same files, expecting `--delete-excluded` to sweep every one of them
+/// because the merge-expanded `:C .cvsignore` rules AND the built-in `-C`
+/// CVS-exclude patterns acquire the implicit `FILTRULE_SENDER_SIDE` flag
+/// upstream's `exclude.c:1324-1332 parse_rule_tok` ORs onto every per-token
+/// rule under `--delete-excluded`.
+///
+/// Without the per-token flip, the receiver's delete-pass sees the
+/// expanded rules with `applies_to_receiver=true`, classifies the matching
+/// files as receiver-side excludes, and skips deletion.
+#[test]
+fn delete_excluded_with_cvs_dir_merge_removes_merge_expanded_matches() {
+    use crate::local_copy::{
+        DirMergeEnforcedKind, DirMergeOptions, DirMergeRule, FilterProgram, FilterProgramEntry,
+    };
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("from");
+    let dest = temp.path().join("to");
+    fs::create_dir_all(&source).expect("create source");
+    fs::create_dir_all(&dest).expect("create dest");
+
+    // .cvsignore tokens; the `:C` rule below loads this per-directory file.
+    fs::write(source.join(".cvsignore"), b"*.junk *.bak\n").expect("write .cvsignore");
+    fs::write(source.join("kept.txt"), b"survives the transfer").expect("write kept.txt");
+
+    // Files at the destination that should be swept by --delete-excluded.
+    // Use distinct sizes for any source-matching paths to dodge quick-check skips.
+    fs::write(dest.join("file1.bak"), b"stale backup at dest").expect("write file1.bak");
+    fs::write(dest.join("file4.junk"), b"stale junk at dest").expect("write file4.junk");
+    fs::write(dest.join("file2.old"), b"stale old at dest").expect("write file2.old");
+    fs::write(dest.join("home-cvs-exclude"), b"stale home cvs entry").expect("write home cvs");
+    fs::write(dest.join("kept.txt"), b"old kept content longer").expect("write old kept.txt");
+
+    let mut source_operand = source.clone().into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // Build a FilterProgram mirroring the CLI input:
+    //  - dir-merge `:C .cvsignore` (per-directory CVS-style ignore)
+    //  - built-in CVS patterns covering `*.bak`, `*.old`, etc.
+    //  - one extra exclude for `home-cvs-exclude` standing in for a
+    //    $HOME/.cvsignore entry the upstream test plants via `home-cvs-exclude`.
+    let cvs_options = DirMergeOptions::default()
+        .with_enforced_kind(Some(DirMergeEnforcedKind::Exclude))
+        .use_whitespace()
+        .allow_comments(false)
+        .inherit(false);
+    let program = FilterProgram::new([
+        FilterProgramEntry::DirMerge(DirMergeRule::new(".cvsignore", cvs_options)),
+        FilterProgramEntry::Rule(FilterRule::exclude("*.bak").with_perishable(true)),
+        FilterProgramEntry::Rule(FilterRule::exclude("*.old").with_perishable(true)),
+        FilterProgramEntry::Rule(FilterRule::exclude("home-cvs-exclude").with_perishable(true)),
+    ])
+    .expect("compile filter program");
+
+    let options = LocalCopyOptions::default()
+        .delete(true)
+        .delete_excluded(true)
+        .with_filter_program(Some(program));
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert!(dest.join("kept.txt").exists(), "kept.txt must remain");
+
+    // Each of these files must be deleted because the matching rule was
+    // expanded from a merge directive (or a top-level CVS exclude) under
+    // --delete-excluded, so the receiver's delete-pass treats it as a
+    // sender-side exclude rather than a receiver-side protect.
+    for name in ["file1.bak", "file4.junk", "file2.old", "home-cvs-exclude"] {
+        assert!(
+            !dest.join(name).exists(),
+            "{name} must be deleted by --delete-excluded after merge expansion"
+        );
+    }
+
+    assert!(
+        summary.items_deleted() >= 4,
+        "expected at least 4 deletions, got {}",
+        summary.items_deleted()
+    );
+}

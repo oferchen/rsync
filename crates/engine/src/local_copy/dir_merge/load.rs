@@ -42,9 +42,30 @@ pub(crate) fn resolve_dir_merge_path(base: &Path, pattern: &Path) -> PathBuf {
 /// Anchors the rule to the source root when configured, marks it perishable,
 /// and overrides the sender/receiver flags when the merge directive specified
 /// either side modifier. Returns the rule unchanged when no defaults apply.
+///
+/// When `delete_excluded` is set and neither side modifier was specified on
+/// the merge directive, mirrors upstream's per-token implicit SENDER_SIDE
+/// flag for rules expanded out of merge/dir-merge files.
+///
+/// # Upstream Reference
+///
+/// `exclude.c:1324-1332 parse_rule_tok`:
+///
+/// ```c
+/// if (delete_excluded
+///  && !(rule->rflags & (FILTRULES_SIDES|FILTRULE_MERGE_FILE|FILTRULE_PERDIR_MERGE)))
+///     rule->rflags |= FILTRULE_SENDER_SIDE;
+/// ```
+///
+/// The OR'ing fires for every rule produced by `parse_rule_tok`, including
+/// tokens expanded from a `:C .cvsignore` per-directory merge or the
+/// built-in `get_cvs_excludes()` patterns. Only the wrapper merge/dir-merge
+/// directives themselves are skipped (FILTRULE_MERGE_FILE /
+/// FILTRULE_PERDIR_MERGE bits), not the per-token rules they expand into.
 pub(crate) fn apply_dir_merge_rule_defaults(
     mut rule: FilterRule,
     options: &DirMergeOptions,
+    delete_excluded: bool,
 ) -> FilterRule {
     if options.anchor_root_enabled() {
         rule = rule.anchor_to_root();
@@ -54,12 +75,28 @@ pub(crate) fn apply_dir_merge_rule_defaults(
         rule = rule.with_perishable(true);
     }
 
-    if let Some(sender) = options.sender_side_override() {
+    let sender_override = options.sender_side_override();
+    let receiver_override = options.receiver_side_override();
+
+    if let Some(sender) = sender_override {
         rule = rule.with_sender(sender);
     }
 
-    if let Some(receiver) = options.receiver_side_override() {
+    if let Some(receiver) = receiver_override {
         rule = rule.with_receiver(receiver);
+    }
+
+    if delete_excluded
+        && sender_override.is_none()
+        && receiver_override.is_none()
+        && rule.applies_to_sender()
+        && rule.applies_to_receiver()
+        && matches!(
+            rule.action(),
+            filters::FilterAction::Include | filters::FilterAction::Exclude
+        )
+    {
+        rule = rule.with_receiver(false);
     }
 
     rule
@@ -137,9 +174,17 @@ impl DirMergeEntries {
 /// canonical-path stack used to detect cycles: if `path` would re-enter a file
 /// already on the stack the function returns an error rather than recursing
 /// infinitely. On success the visited entry is popped before returning.
+///
+/// `delete_excluded` propagates upstream's per-token implicit SENDER_SIDE
+/// flag (`exclude.c:1324-1332 parse_rule_tok`) onto every rule produced from
+/// this merge file when neither side modifier was specified on the dir-merge
+/// directive itself. This ensures the receiver's delete-pass treats expanded
+/// per-token rules the same way `add_rule()` flags them when the user passed
+/// `--delete-excluded`.
 pub(crate) fn load_dir_merge_rules_recursive(
     path: &Path,
     options: &DirMergeOptions,
+    delete_excluded: bool,
     visited: &mut Vec<PathBuf>,
 ) -> Result<DirMergeEntries, LocalCopyError> {
     let canonical = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
@@ -200,7 +245,11 @@ pub(crate) fn load_dir_merge_rules_recursive(
                         DirMergeEnforcedKind::Include => FilterRule::include(token.to_owned()),
                         DirMergeEnforcedKind::Exclude => FilterRule::exclude(token.to_owned()),
                     };
-                    entries.push_rule(apply_dir_merge_rule_defaults(rule, options));
+                    entries.push_rule(apply_dir_merge_rule_defaults(
+                        rule,
+                        options,
+                        delete_excluded,
+                    ));
                     continue;
                 }
 
@@ -224,7 +273,11 @@ pub(crate) fn load_dir_merge_rules_recursive(
 
                 match parse_filter_directive_line(&directive) {
                     Ok(Some(ParsedFilterDirective::Rule(rule))) => {
-                        entries.push_rule(apply_dir_merge_rule_defaults(rule, options));
+                        entries.push_rule(apply_dir_merge_rule_defaults(
+                            rule,
+                            options,
+                            delete_excluded,
+                        ));
                     }
                     Ok(Some(ParsedFilterDirective::ExcludeIfPresent(rule))) => {
                         entries.push_exclude_if_present(rule);
@@ -249,12 +302,17 @@ pub(crate) fn load_dir_merge_rules_recursive(
                             let nested_entries = load_dir_merge_rules_recursive(
                                 &nested,
                                 &options_override,
+                                delete_excluded,
                                 visited,
                             )?;
                             entries.extend(nested_entries);
                         } else {
-                            let nested_entries =
-                                load_dir_merge_rules_recursive(&nested, options, visited)?;
+                            let nested_entries = load_dir_merge_rules_recursive(
+                                &nested,
+                                options,
+                                delete_excluded,
+                                visited,
+                            )?;
                             entries.extend(nested_entries);
                         }
                     }
@@ -307,13 +365,21 @@ pub(crate) fn load_dir_merge_rules_recursive(
                         DirMergeEnforcedKind::Include => FilterRule::include(trimmed.to_owned()),
                         DirMergeEnforcedKind::Exclude => FilterRule::exclude(trimmed.to_owned()),
                     };
-                    entries.push_rule(apply_dir_merge_rule_defaults(rule, options));
+                    entries.push_rule(apply_dir_merge_rule_defaults(
+                        rule,
+                        options,
+                        delete_excluded,
+                    ));
                     continue;
                 }
 
                 match parse_filter_directive_line(trimmed) {
                     Ok(Some(ParsedFilterDirective::Rule(rule))) => {
-                        entries.push_rule(apply_dir_merge_rule_defaults(rule, options));
+                        entries.push_rule(apply_dir_merge_rule_defaults(
+                            rule,
+                            options,
+                            delete_excluded,
+                        ));
                     }
                     Ok(Some(ParsedFilterDirective::ExcludeIfPresent(rule))) => {
                         entries.push_exclude_if_present(rule);
@@ -332,12 +398,17 @@ pub(crate) fn load_dir_merge_rules_recursive(
                             let nested_entries = load_dir_merge_rules_recursive(
                                 &nested,
                                 &options_override,
+                                delete_excluded,
                                 visited,
                             )?;
                             entries.extend(nested_entries);
                         } else {
-                            let nested_entries =
-                                load_dir_merge_rules_recursive(&nested, options, visited)?;
+                            let nested_entries = load_dir_merge_rules_recursive(
+                                &nested,
+                                options,
+                                delete_excluded,
+                                visited,
+                            )?;
                             entries.extend(nested_entries);
                         }
                     }
