@@ -614,6 +614,7 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .help("Apply filter RULE (supports '+' include, '-' exclude, '!' clear, 'protect PATTERN', 'risk PATTERN', 'merge[,MODS] FILE' or '.[,MODS] FILE', and 'dir-merge[,MODS] FILE' or ':[,MODS] FILE').")
                     .value_parser(OsStringValueParser::new())
                     .allow_hyphen_values(true)
+                    .num_args(1)
                     .action(ArgAction::Append),
             )
             .arg(
