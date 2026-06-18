@@ -379,6 +379,18 @@ pub struct BatchConfig {
     /// Used to initialize the rolling checksum algorithm. Must match
     /// between writer and reader for checksums to validate correctly.
     pub checksum_seed: i32,
+
+    /// Binary name or path written to the replay script as the executable
+    /// to invoke for `--read-batch`.
+    ///
+    /// Mirrors upstream rsync's `batch.c:259` which writes `raw_argv[0]`
+    /// literally - the exact invocation path the user passed on the
+    /// command line. Defaults to `"oc-rsync"` when not set, which only
+    /// works if `oc-rsync` is resolvable on `PATH`. Callers that invoke
+    /// the binary by absolute path (test harnesses, CI) should set this
+    /// to the absolute path so the generated `BATCH.sh` runs without
+    /// requiring `PATH` setup.
+    pub invoker: String,
 }
 
 impl BatchConfig {
@@ -417,7 +429,7 @@ impl BatchConfig {
     ///
     /// - Protocol >= 30: `compat_flags` is initialized to `Some(0)`
     /// - Protocol < 30: `compat_flags` is `None`
-    pub const fn new(mode: BatchMode, batch_path: String, protocol_version: i32) -> Self {
+    pub fn new(mode: BatchMode, batch_path: String, protocol_version: i32) -> Self {
         Self {
             mode,
             batch_path,
@@ -428,6 +440,7 @@ impl BatchConfig {
                 None
             },
             checksum_seed: 0,
+            invoker: String::from("oc-rsync"),
         }
     }
 
@@ -472,6 +485,30 @@ impl BatchConfig {
     /// ```
     pub const fn with_checksum_seed(mut self, seed: i32) -> Self {
         self.checksum_seed = seed;
+        self
+    }
+
+    /// Set the binary name or path to embed in the replay shell script.
+    ///
+    /// Mirrors upstream rsync's `batch.c:259` which writes `raw_argv[0]`
+    /// literally to the generated `BATCH.sh`. Pass the path the user
+    /// originally invoked (`std::env::args_os().next()`) so the script
+    /// runs without requiring `PATH` setup. When invoked by absolute
+    /// path, this preserves that path; when invoked by bare name, the
+    /// generated script also uses the bare name.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use batch::{BatchConfig, BatchMode};
+    ///
+    /// let config = BatchConfig::new(BatchMode::Write, "/tmp/batch".to_string(), 31)
+    ///     .with_invoker("/usr/local/bin/oc-rsync");
+    ///
+    /// assert_eq!(config.invoker, "/usr/local/bin/oc-rsync");
+    /// ```
+    pub fn with_invoker(mut self, invoker: impl Into<String>) -> Self {
+        self.invoker = invoker.into();
         self
     }
 
