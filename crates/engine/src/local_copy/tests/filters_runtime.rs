@@ -272,8 +272,8 @@ fn dir_merge_clear_keyword_discards_previous_rules() {
 
     let mut visited = Vec::new();
     let options = DirMergeOptions::default();
-    let entries =
-        load_dir_merge_rules_recursive(&filter, &options, &mut visited).expect("parse filter");
+    let entries = load_dir_merge_rules_recursive(&filter, &options, false, &mut visited)
+        .expect("parse filter");
 
     assert_eq!(entries.rules.len(), 1);
     assert!(entries.rules.iter().any(|rule| {
@@ -292,8 +292,8 @@ fn dir_merge_clear_keyword_discards_rules_in_whitespace_mode() {
     let options = DirMergeOptions::default()
         .use_whitespace()
         .allow_list_clearing(true);
-    let entries =
-        load_dir_merge_rules_recursive(&filter, &options, &mut visited).expect("parse filter");
+    let entries = load_dir_merge_rules_recursive(&filter, &options, false, &mut visited)
+        .expect("parse filter");
 
     assert_eq!(entries.rules.len(), 1);
     assert!(entries.exclude_if_present.is_empty());
