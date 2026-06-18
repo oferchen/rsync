@@ -500,6 +500,18 @@ fn remove_source_files_recognised_as_known_long_flag() {
     assert!(is_known_server_long_flag("--remove-sent-files"));
 }
 
+/// upstream: options.c:2899-2903 - server_options() emits `--copy-unsafe-links`
+/// and `--safe-links` as bare flags when the matching booleans are set on the
+/// client side. The flag-string scanner must register them so the path that
+/// follows is not consumed as a positional argument (which causes the sender
+/// to call `link_stat("--copy-unsafe-links")` and fail with ENOENT, breaking
+/// upstream `exclude-lsh.test` --copy-unsafe-links sub-transfer).
+#[test]
+fn copy_unsafe_links_and_safe_links_recognised_as_known_long_flags() {
+    assert!(is_known_server_long_flag("--copy-unsafe-links"));
+    assert!(is_known_server_long_flag("--safe-links"));
+}
+
 #[test]
 fn long_flags_ignore_errors() {
     let args = vec![
