@@ -245,10 +245,6 @@ impl ReceiverContext {
                         for ((file_idx, file_entry, file_path), basis_result) in
                             batch.into_iter().zip(sig_results)
                         {
-                            if self.config.flags.verbose && self.config.connection.client_mode {
-                                info_log!(Name, 1, "{}", file_entry.path().display());
-                            }
-
                             let is_new_file = basis_result.is_empty();
                             let pending = send_file_request(
                                 writer,
@@ -272,10 +268,6 @@ impl ReceiverContext {
                     } else {
                         // Redo pass or empty batch: no basis files, skip signatures.
                         for (file_idx, file_entry, file_path) in batch {
-                            if self.config.flags.verbose && self.config.connection.client_mode {
-                                info_log!(Name, 1, "{}", file_entry.path().display());
-                            }
-
                             let pending = send_file_request(
                                 writer,
                                 &mut ndx_write_codec,
@@ -363,6 +355,9 @@ impl ReceiverContext {
 
                 // upstream: receiver.c:950 - log_item() after successful file transfer
                 {
+                    if self.config.flags.verbose && self.config.connection.client_mode {
+                        info_log!(Name, 1, "{}", file_entry.path().display());
+                    }
                     use crate::generator::ItemFlags;
                     let raw = ItemFlags::ITEM_TRANSFER
                         | if is_new_file {
