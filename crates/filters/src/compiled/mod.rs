@@ -80,21 +80,32 @@ impl CompiledRule {
         // `{core}/**` descendants so that paths like `build/output` are
         // excluded when checked individually (e.g., by the receiver).
         //
-        // Directory-only wildcard patterns (e.g., `foo/*/`, `**/node_modules/`)
-        // must ALSO suppress descendants. The wildcard's match set is decided
-        // per-directory at walk time, so pre-baking `foo/*/**` overreaches
-        // and excludes files inside subdirectories that a later include rule
-        // like `+ foo/s?b/` should keep. Upstream `exclude.c:rule_matches()`
-        // returns "no match" for a non-directory entry when the rule carries
-        // FILTRULE_DIRECTORY (line 938-939), so the file is included by
-        // default and the sender walk handles descent pruning by never
-        // entering the excluded directory. Pre-baked descendants would force
-        // an exclusion that upstream never produces. Regression for
-        // UTS-DD-exclude.3 (upstream `exclude` / `exclude-lsh` testsuite).
+        // Directory-only unanchored wildcard patterns (e.g., `foo/*/`,
+        // `**/node_modules/`) must ALSO suppress descendants. The wildcard's
+        // match set is decided per-directory at walk time, so pre-baking
+        // `foo/*/**` overreaches and excludes files inside subdirectories
+        // that a later include rule like `+ foo/s?b/` should keep. Upstream
+        // `exclude.c:rule_matches()` returns "no match" for a non-directory
+        // entry when the rule carries FILTRULE_DIRECTORY (line 938-939), so
+        // the file is included by default and the sender walk handles descent
+        // pruning by never entering the excluded directory. Pre-baked
+        // descendants would force an exclusion that upstream never produces.
+        // Regression for UTS-DD-exclude.3 (upstream `exclude` / `exclude-lsh`
+        // testsuite).
         let has_glob_wildcard =
             core_pattern.contains('*') || core_pattern.contains('?') || core_pattern.contains('[');
         let slash_anchored = pattern.starts_with('/');
-        let suppress_descendants = has_glob_wildcard && (slash_anchored || directory_only);
+        // Directory-only unanchored wildcard gate: the user wrote `foo/*/`
+        // (or any dir-only wildcard without a leading `/`). Upstream never
+        // synthesises a descendant rule for it; the sender's traversal
+        // pruning is the only exclusion mechanism and pre-baking
+        // `{core}/**` would steal precedence from a later include like
+        // `+ foo/s?b/`. Kept as an explicit predicate so the dir-only
+        // unanchored case is greppable and pinned by unit tests.
+        let is_directory_only_unanchored_wildcard =
+            directory_only && !slash_anchored && has_glob_wildcard;
+        let is_anchored_wildcard = slash_anchored && has_glob_wildcard;
+        let suppress_descendants = is_directory_only_unanchored_wildcard || is_anchored_wildcard;
         if matches!(
             action,
             FilterAction::Exclude | FilterAction::Protect | FilterAction::Risk
@@ -537,6 +548,46 @@ mod tests {
     fn implicit_double_star_prefix_skipped_for_trailing_double_star() {
         let compiled = make_exclude("foo/**");
         assert_eq!(direct_pattern_strings(&compiled), vec!["foo/**"]);
+    }
+
+    /// UTS-DD-exclude.3 wire-byte parity: `foo/*/` is directory-only,
+    /// unanchored, and wildcard-bearing. The direct matcher set must
+    /// be exactly `{foo/*, **/foo/*}` (tail-matching for upstream's
+    /// `slash_handling = -1` `wildmatch_array` over the user-written
+    /// pattern). The descendant matcher set MUST be empty - upstream
+    /// emits no `foo/*/**` rule.
+    #[test]
+    fn dir_only_unanchored_wildcard_exact_matcher_set() {
+        let compiled = make_exclude("foo/*/");
+        assert_eq!(direct_pattern_strings(&compiled), vec!["**/foo/*", "foo/*"]);
+        assert!(
+            descendant_pattern_strings(&compiled).is_empty(),
+            "`foo/*/` must not synthesise descendant matchers (upstream FILTRULE_DIRECTORY semantic)"
+        );
+    }
+
+    /// UTS-DD-exclude.3 wire-byte parity for `**/node_modules/`: leading
+    /// `**` already carries the recursive prefix, so direct stays
+    /// `{**/node_modules}` with no descendant `**/node_modules/**`.
+    #[test]
+    fn dir_only_unanchored_double_star_prefix_exact_matcher_set() {
+        let compiled = make_exclude("**/node_modules/");
+        assert_eq!(direct_pattern_strings(&compiled), vec!["**/node_modules"]);
+        assert!(descendant_pattern_strings(&compiled).is_empty());
+    }
+
+    /// UTS-DD-exclude.3 negative guard: a literal directory-only
+    /// unanchored pattern (`cache/`) is NOT covered by the dir-only
+    /// unanchored gate (no wildcard component), so descendants are
+    /// still synthesised for the receiver single-path API. Keeps the
+    /// gate scoped to wildcard patterns.
+    #[test]
+    fn dir_only_unanchored_literal_still_gets_descendants() {
+        let compiled = make_exclude("cache/");
+        assert_eq!(
+            descendant_pattern_strings(&compiled),
+            vec!["**/cache/**", "cache/**"]
+        );
     }
 
     #[test]
