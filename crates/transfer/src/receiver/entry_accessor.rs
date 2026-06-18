@@ -7,10 +7,10 @@
 //!
 //! Each function mirrors its concrete counterpart in the same crate:
 //!
-//! - [`quick_check_matches_generic`] - [`super::quick_check::quick_check_matches`]
-//! - [`dest_mtime_newer_generic`] - [`super::quick_check::dest_mtime_newer`]
-//! - [`is_hardlink_follower_generic`] - [`super::quick_check::is_hardlink_follower`]
-//! - [`apply_acls_generic`] - [`super::apply_acls_from_receiver_cache`]
+//! - [`quick_check_matches_generic`] - `super::quick_check::quick_check_matches`
+//! - [`dest_mtime_newer_generic`] - `super::quick_check::dest_mtime_newer`
+//! - [`is_hardlink_follower_generic`] - `super::quick_check::is_hardlink_follower`
+//! - [`apply_acls_generic`] - `super::apply_acls_from_receiver_cache`
 //!
 //! # Feature Gate
 //!
@@ -24,7 +24,7 @@ use protocol::flist::FileEntryAccessor;
 /// Pure-function quick-check: compares destination stat against a generic entry.
 ///
 /// Returns `true` when the destination file matches the source entry (skip
-/// transfer). Equivalent to [`super::quick_check::quick_check_matches`] but
+/// transfer). Equivalent to `super::quick_check::quick_check_matches` but
 /// accepts any `T: FileEntryAccessor` instead of a concrete `&FileEntry`.
 ///
 /// Follows upstream `generator.c:617 quick_check_ok()` evaluation order:
@@ -80,7 +80,7 @@ pub fn quick_check_matches_generic<T: FileEntryAccessor + ?Sized>(
 /// Returns `true` when the destination mtime is strictly newer than the source.
 ///
 /// Used by `--update` (`-u`) to skip files where the destination is already
-/// newer. Equivalent to [`super::quick_check::dest_mtime_newer`] but accepts
+/// newer. Equivalent to `super::quick_check::dest_mtime_newer` but accepts
 /// any `T: FileEntryAccessor`.
 ///
 /// upstream: generator.c:1709
@@ -107,7 +107,7 @@ pub fn dest_mtime_newer_generic<T: FileEntryAccessor + ?Sized>(
 /// a hard link rather than transferred via delta.
 ///
 /// A follower has XMIT_HLINKED set but NOT XMIT_HLINK_FIRST. Leaders have
-/// both flags set. Equivalent to [`super::quick_check::is_hardlink_follower`]
+/// both flags set. Equivalent to `super::quick_check::is_hardlink_follower`
 /// but accepts any `T: FileEntryAccessor`.
 ///
 /// # Upstream Reference
@@ -124,7 +124,7 @@ pub fn is_hardlink_follower_generic<T: FileEntryAccessor + ?Sized>(entry: &T) ->
 /// applies the corresponding ACL to `destination`. No-op when `acl_cache` is
 /// `None` or the entry has no ACL index.
 ///
-/// Equivalent to [`super::apply_acls_from_receiver_cache`] but accepts any
+/// Equivalent to `super::apply_acls_from_receiver_cache` but accepts any
 /// `T: FileEntryAccessor`.
 ///
 /// # Upstream Reference

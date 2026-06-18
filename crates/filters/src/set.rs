@@ -225,7 +225,7 @@ impl FilterSet {
     /// fall-through that has already pruned non-matching scopes.
     ///
     /// Suppresses the synthetic `pattern/**` descendant matchers that
-    /// [`CompiledRule::new`] bakes into anchored excludes like `- /bar`.
+    /// `CompiledRule::new` bakes into anchored excludes like `- /bar`.
     /// Without this, a per-dir rule installed in `./foo/.cvsignore` would
     /// match `./bar/x` via its synthetic `bar/**` matcher when the chain
     /// commits a sibling-subtree deletion decision, contradicting upstream

@@ -83,7 +83,7 @@ pub struct ParallelDrainOutcome<F: DeleteFs> {
 
 /// Cohort-coordinated parallel `DeleteEmitter` consumer.
 ///
-/// The emitter owns the shared [`SharedBatcher`] (a `Mutex<CohortBatcher>`
+/// The emitter owns the shared `SharedBatcher` (a `Mutex<CohortBatcher>`
 /// paired with a `Condvar`) plus the configuration the consumer thread
 /// needs to dispatch each [`DeleteOperation`] through the configured
 /// [`DeleteFs`]. The producer-facing API is intentionally minimal -

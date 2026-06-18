@@ -181,7 +181,7 @@ pub fn format_iflags_generic<T: FileEntryAccessor>(
 
 /// Formats a complete itemize output line for MSG_INFO emission.
 ///
-/// Trait-generic version of [`super::itemize::format_itemize_line`]. Uses
+/// Trait-generic version of `super::itemize::format_itemize_line`. Uses
 /// [`FileEntryAccessor::name`] for the path string and
 /// [`FileEntryAccessor::link_target_bytes`] for the symlink target.
 ///
