@@ -25,6 +25,7 @@ fn backup_flag_creates_default_suffix_backups() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("--backup"),
         source_dir.into_os_string(),
         dest_dir.clone().into_os_string(),
@@ -67,6 +68,7 @@ fn backup_dir_flag_places_backups_in_relative_directory() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("--backup-dir"),
         OsString::from("backups"),
         OsString::from("--suffix"),
@@ -119,6 +121,7 @@ fn backup_suffix_flag_overrides_default_suffix() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("--suffix"),
         OsString::from(".bak"),
         source_dir.into_os_string(),
