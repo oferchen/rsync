@@ -508,6 +508,9 @@ where
     } else {
         fast_io::ZeroCopyPolicy::Auto
     };
+    // Capture the reflink index before remove_one drains the match data;
+    // resolve_cow_policy needs it to break ties against --cow / --no-cow.
+    let reflink_index = last_occurrence(&matches, "reflink");
     let reflink_value = matches.remove_one::<OsString>("reflink");
     let reflink_explicit = match reflink_value {
         Some(value) => {
@@ -525,7 +528,7 @@ where
         }
         None => None,
     };
-    let cow_policy = resolve_cow_policy(&matches, reflink_explicit);
+    let cow_policy = resolve_cow_policy(&matches, reflink_explicit, reflink_index);
     let simd_override = match matches.remove_one::<OsString>("simd") {
         Some(value) => {
             let text = value.to_string_lossy();
@@ -1070,9 +1073,8 @@ fn parse_reflink_mode(input: &str) -> Option<fast_io::CowPolicy> {
 fn resolve_cow_policy(
     matches: &clap::ArgMatches,
     reflink_explicit: Option<fast_io::CowPolicy>,
+    reflink_index: Option<usize>,
 ) -> fast_io::CowPolicy {
-    let reflink_index = last_occurrence(matches, "reflink");
-
     let (binary_policy, binary_index) = if matches.get_flag("no-cow") {
         (
             Some(fast_io::CowPolicy::Disabled),
