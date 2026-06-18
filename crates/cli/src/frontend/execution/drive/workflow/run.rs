@@ -68,7 +68,7 @@ where
         blocking_io,
         archive,
         recursive,
-        recursive_override,
+        recursive_override: _,
         inc_recursive,
         dirs,
         delete_mode,
