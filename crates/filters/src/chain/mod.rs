@@ -167,7 +167,9 @@ impl FilterChain {
             if !scope.filter_set.is_empty()
                 && scope_has_deletion_match(&scope.filter_set, path, is_dir)
             {
-                return scope.filter_set.allows_deletion(path, is_dir);
+                return scope
+                    .filter_set
+                    .allows_deletion_during_traversal(path, is_dir);
             }
         }
 

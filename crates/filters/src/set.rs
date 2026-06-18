@@ -221,6 +221,26 @@ impl FilterSet {
             .allows_deletion()
     }
 
+    /// Like [`Self::allows_deletion`] but tailored for a per-directory chain
+    /// fall-through that has already pruned non-matching scopes.
+    ///
+    /// Suppresses the synthetic `pattern/**` descendant matchers that
+    /// [`CompiledRule::new`] bakes into anchored excludes like `- /bar`.
+    /// Without this, a per-dir rule installed in `./foo/.cvsignore` would
+    /// match `./bar/x` via its synthetic `bar/**` matcher when the chain
+    /// commits a sibling-subtree deletion decision, contradicting upstream
+    /// `exclude.c:rule_matches()` which has no descendant matching at all.
+    ///
+    /// Use this from per-directory chain code that commits a deletion
+    /// decision after deciding the scope is responsible. Single-path
+    /// API consumers should keep calling [`Self::allows_deletion`].
+    #[must_use]
+    pub fn allows_deletion_during_traversal(&self, path: &Path, is_dir: bool) -> bool {
+        self.inner
+            .decision_with_traversal(path, is_dir, DecisionContext::Deletion, true)
+            .allows_deletion()
+    }
+
     /// Returns `true` if the path may be removed during `--delete-excluded`
     /// processing.
     ///
