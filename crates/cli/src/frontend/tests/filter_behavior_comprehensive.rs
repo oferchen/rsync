@@ -522,6 +522,7 @@ fn exclude_and_filter_exclude_produce_same_result() {
 
     let (code1, _, _) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("--exclude"),
         OsString::from("*.tmp"),
         source_root1.into_os_string(),
@@ -539,6 +540,7 @@ fn exclude_and_filter_exclude_produce_same_result() {
 
     let (code2, _, _) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("-f"),
         OsString::from("- *.tmp"),
         source_root2.into_os_string(),
@@ -583,6 +585,7 @@ fn filter_include_then_exclude_all_via_short_f() {
 
     let (code, _, _) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("-f"),
         OsString::from("+ *.txt"),
         OsString::from("-f"),
@@ -617,6 +620,7 @@ fn exclude_from_and_filter_merge_produce_same_result() {
 
     let (code1, _, _) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("--exclude-from"),
         filter_file1.as_os_str().to_os_string(),
         source_root1.into_os_string(),
@@ -643,6 +647,7 @@ fn exclude_from_and_filter_merge_produce_same_result() {
     let merge_arg = format!("merge,- {}", filter_file2.display());
     let (code2, _, _) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("-f"),
         OsString::from(merge_arg),
         source_root2.into_os_string(),
