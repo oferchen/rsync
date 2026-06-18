@@ -646,3 +646,39 @@ fn filter_chain_deletion_falls_through_when_only_descendant_matches() {
 
     assert!(!chain.allows_deletion(Path::new("foo/x"), false));
 }
+
+/// A per-directory scope whose predicate match is decided by an include
+/// rule must not be overridden in the deletion commit by an earlier
+/// exclude rule's synthetic descendant matcher. The bug was that the
+/// chain's commit step in [`FilterChain::allows_deletion`] called
+/// `FilterSet::allows_deletion`, which re-enables synthetic
+/// `pattern/**` descendant matchers. An earlier `- /bar` rule then
+/// fired its `bar/**` synthetic against `bar/x` and beat the later
+/// include rule that the descendant-free predicate had selected.
+///
+/// Mirrors upstream `exclude.c:rule_matches()`, which has NO descendant
+/// matching: descendant exclusion is a side effect of the sender walk
+/// not descending into excluded directories, never a rule match in its
+/// own right. The receiver-side deletion commit through a per-dir
+/// scope must therefore honour the same descendant-free semantics.
+#[test]
+fn filter_chain_per_dir_deletion_does_not_block_via_synthetic_descendant() {
+    let global = FilterSet::default();
+    let mut chain = FilterChain::new(global);
+
+    // Scope rule order matters: the anchored `- /bar` is first, so
+    // its synthetic `bar/**` descendant would beat the later include
+    // if descendants were active during the scope commit.
+    let scope =
+        FilterSet::from_rules([FilterRule::exclude("/bar"), FilterRule::include("x")]).unwrap();
+    let _guard = chain.push_scope(scope);
+
+    // Descendant-free predicate sees `+ x` match (via `**/x`), so the
+    // chain routes the deletion decision through this scope. The
+    // commit must agree: with descendants suppressed, `+ x` is still
+    // the first matching rule and `bar/x` is deletable.
+    assert!(
+        chain.allows_deletion(Path::new("bar/x"), false),
+        "scope commit must not let synthetic `bar/**` override the include rule"
+    );
+}
