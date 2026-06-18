@@ -21,6 +21,16 @@ pub(crate) struct RuntimeOptions {
     bandwidth_burst: Option<NonZeroU64>,
     bandwidth_limit_configured: bool,
     address_family: Option<AddressFamily>,
+    /// Set when both `--ipv4` and `--ipv6` are requested on the CLI.
+    ///
+    /// Mirrors upstream rsync's `default_af_hint = 0` ("any protocol") when
+    /// the operator wants the daemon to bind one listener per family rather
+    /// than picking one. The accept-loop interprets this as "iterate IPv6
+    /// then IPv4, surface per-family bind failures as warnings, succeed as
+    /// long as at least one family bound." See
+    /// `target/interop/upstream-src/rsync-3.4.4/socket.c:402-499`
+    /// (`open_socket_in`) for the family-iteration loop oc-rsync reproduces.
+    pub(crate) dual_stack: bool,
     bind_address_overridden: bool,
     port_overridden: bool,
     log_file: Option<PathBuf>,
@@ -108,6 +118,7 @@ impl Default for RuntimeOptions {
             bandwidth_burst: None,
             bandwidth_limit_configured: false,
             address_family: None,
+            dual_stack: false,
             bind_address_overridden: false,
             port_overridden: false,
             log_file: None,
