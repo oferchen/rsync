@@ -1570,6 +1570,7 @@ fn render_remote_host_with_context_populated() {
         module_name: Some("backup".to_owned()),
         module_path: Some("/var/backup".to_owned()),
         is_sender: false,
+        emit_unchanged: false,
     };
     assert_eq!(
         render_format_with_context("%h", &event, &context),
@@ -1591,6 +1592,7 @@ fn render_remote_address_with_context_populated() {
         module_name: None,
         module_path: None,
         is_sender: false,
+        emit_unchanged: false,
     };
     assert_eq!(
         render_format_with_context("%a", &event, &context),
@@ -1612,6 +1614,7 @@ fn render_module_name_with_context_populated() {
         module_name: Some("data".to_owned()),
         module_path: None,
         is_sender: false,
+        emit_unchanged: false,
     };
     assert_eq!(render_format_with_context("%m", &event, &context), "data\n");
 }
@@ -1630,6 +1633,7 @@ fn render_module_path_with_context_populated() {
         module_name: None,
         module_path: Some("/srv/data".to_owned()),
         is_sender: false,
+        emit_unchanged: false,
     };
     assert_eq!(
         render_format_with_context("%P", &event, &context),
@@ -1651,6 +1655,7 @@ fn render_all_remote_placeholders_with_full_context() {
         module_name: Some("mod".to_owned()),
         module_path: Some("/path".to_owned()),
         is_sender: false,
+        emit_unchanged: false,
     };
     let rendered = render_format_with_context("%h %a %m %P", &event, &context);
     assert_eq!(rendered, "host addr mod /path\n");
@@ -1790,4 +1795,90 @@ fn render_binary_units_below_threshold_falls_back_to_separator() {
         PlaceholderFormat::new(None, PlaceholderAlignment::Right, HumanizeMode::BinaryUnits);
     // Values below 1024 fall back to separator format
     assert_eq!(format_numeric_value(1023, &format), "1,023");
+}
+
+// Regression: upstream `testsuite/itemize.test` line 113-124 expects `-ivvplrtH`
+// to emit all-dot itemize rows for unchanged dirs, files, and symlinks,
+// mirroring the upstream gate `INFO_GTE(NAME, 2)` in `generator.c:582-583`.
+// The renderer's empty-change-set suppression must be bypassed when the
+// context flags `emit_unchanged`.
+
+#[test]
+fn emit_out_format_suppresses_unchanged_metadata_reused_by_default() {
+    // Without `emit_unchanged`, a `MetadataReused` event whose change set
+    // reports no change and was not created must be omitted from output
+    // (upstream `generator.c:582` default gate).
+    let event = make_event(
+        ClientEventKind::MetadataReused,
+        false,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new(),
+    );
+    let events = [event];
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n")).unwrap();
+    let mut output = Vec::new();
+    emit_out_format(&events, &format, &OutFormatContext::default(), &mut output).unwrap();
+    assert!(
+        output.is_empty(),
+        "default context must suppress unchanged MetadataReused"
+    );
+}
+
+#[test]
+fn emit_out_format_emits_unchanged_metadata_reused_under_info_name_2() {
+    // With `emit_unchanged` (mirroring `INFO_GTE(NAME, 2)`), the same
+    // unchanged file row must surface as `.f          test.txt`.
+    let event = make_event(
+        ClientEventKind::MetadataReused,
+        false,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new(),
+    );
+    let events = [event];
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n")).unwrap();
+    let mut output = Vec::new();
+    let ctx = OutFormatContext::default().with_emit_unchanged(true);
+    emit_out_format(&events, &format, &ctx, &mut output).unwrap();
+    let rendered = String::from_utf8(output).unwrap();
+    assert_eq!(rendered, ".f          test.txt\n");
+}
+
+#[test]
+fn emit_out_format_emits_unchanged_directory_under_info_name_2() {
+    // upstream `testsuite/itemize.test:115-117` expects `.d          ./`,
+    // `.d          bar/`, `.d          bar/baz/` under `-ivvplrtH`. The
+    // unchanged directory row must surface when `emit_unchanged` is set.
+    let event = make_event(
+        ClientEventKind::MetadataReused,
+        false,
+        Some(ClientEntryKind::Directory),
+        LocalCopyChangeSet::new(),
+    );
+    let events = [event];
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n")).unwrap();
+    let mut output = Vec::new();
+    let ctx = OutFormatContext::default().with_emit_unchanged(true);
+    emit_out_format(&events, &format, &ctx, &mut output).unwrap();
+    let rendered = String::from_utf8(output).unwrap();
+    assert_eq!(rendered, ".d          test.txt\n");
+}
+
+#[test]
+fn emit_out_format_emits_unchanged_symlink_under_info_name_2() {
+    // upstream `testsuite/itemize.test:123` expects
+    // `.L          foo/sym -> ../bar/baz/rsync` under `-ivvplrtH` when the
+    // symlink already points at the right target.
+    let event = make_event(
+        ClientEventKind::MetadataReused,
+        false,
+        Some(ClientEntryKind::Symlink),
+        LocalCopyChangeSet::new(),
+    );
+    let events = [event];
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n")).unwrap();
+    let mut output = Vec::new();
+    let ctx = OutFormatContext::default().with_emit_unchanged(true);
+    emit_out_format(&events, &format, &ctx, &mut output).unwrap();
+    let rendered = String::from_utf8(output).unwrap();
+    assert_eq!(rendered, ".L          test.txt\n");
 }
