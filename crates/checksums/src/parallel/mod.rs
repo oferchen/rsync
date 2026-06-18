@@ -621,4 +621,110 @@ mod tests {
             expected.as_ref()
         );
     }
+
+    /// Parity test for the WIN-S.LAND.1.b.4 wire-up: on Windows the mmap
+    /// branch of the parallel hashers now streams through
+    /// `WindowsChunkedReader` instead of slurping into a `Vec<u8>`. Hashes
+    /// must remain byte-identical to a direct `std::fs::read` digest across
+    /// sizes that span the empty / 1-byte / sub-mmap-threshold /
+    /// at-threshold / over-threshold / multi-buffer boundaries.
+    #[test]
+    fn hash_files_parallel_matches_std_fs_read_across_size_boundaries() {
+        let dir = TempDir::new().unwrap();
+
+        // Sizes chosen to exercise every branch in hash_file_internal:
+        //   - empty file (size <= max_memory_file_size, read_to_end)
+        //   - 1 byte (same branch)
+        //   - just below MMAP_THRESHOLD (64 KiB) on Unix; streaming on Windows
+        //   - exactly MMAP_THRESHOLD: mmap path on Unix, streaming on Windows
+        //   - MMAP_THRESHOLD + 1: same as above plus a trailing partial buffer
+        //   - multi-buffer (320 KiB): drains the chunked reader across refills
+        let sizes: &[usize] = &[0, 1, 64 * 1024 - 1, 64 * 1024, 64 * 1024 + 1, 320 * 1024];
+
+        let mut paths = Vec::with_capacity(sizes.len());
+        let mut expected_digests = Vec::with_capacity(sizes.len());
+
+        for (i, &n) in sizes.iter().enumerate() {
+            let path = dir.path().join(format!("fixture_{i}_{n}.bin"));
+            // Deterministic non-trivial pattern so a one-byte truncation or
+            // off-by-one in the streaming path produces a different digest.
+            let content: Vec<u8> = (0..n).map(|j| ((j * 31 + i) & 0xFF) as u8).collect();
+            std::fs::write(&path, &content).unwrap();
+
+            let observed = std::fs::read(&path).unwrap();
+            assert_eq!(
+                observed, content,
+                "tempfile round-trip mismatch at size {n}"
+            );
+            expected_digests.push(Sha256::digest(&observed));
+            paths.push(path);
+        }
+
+        // max_memory_file_size = 0 forces every non-empty file past the small
+        // branch into the mmap-or-streaming code path under test.
+        let config = FileHashConfig::new()
+            .with_buffer_size(64 * 1024)
+            .with_max_memory_file_size(0);
+        let results = hash_files_parallel_with_config::<Sha256>(&paths, &config);
+
+        assert_eq!(results.len(), sizes.len());
+        for (i, (result, &n)) in results.iter().zip(sizes.iter()).enumerate() {
+            let digest = &result.digest;
+            assert!(digest.is_ok(), "digest failed at size {n}: {digest:?}");
+            assert_eq!(result.size, n as u64, "size mismatch at fixture {i}");
+            assert_eq!(
+                result.digest.as_ref().unwrap().as_ref(),
+                expected_digests[i].as_ref(),
+                "digest mismatch at size {n}: parallel hasher diverged from std::fs::read",
+            );
+        }
+    }
+
+    /// Parity test for the block-signature wire-up: the per-block rolling +
+    /// strong checksums must agree between the mmap fast path (Unix) /
+    /// `WindowsChunkedReader` streaming (Windows) and a direct read-then-hash
+    /// reference. Exercised at MMAP_THRESHOLD + tail so the file straddles
+    /// the threshold and the trailing partial block.
+    #[test]
+    fn compute_file_signatures_parallel_matches_direct_read_at_boundary() {
+        use crate::rolling::RollingChecksum;
+
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("signatures_boundary.bin");
+
+        let size = 64 * 1024 + 777; // straddles MMAP_THRESHOLD and ends on a partial block
+        let data: Vec<u8> = (0..size).map(|i| (i & 0xFF) as u8).collect();
+        std::fs::write(&path, &data).unwrap();
+
+        let block_size = 4096;
+        let results = compute_file_signatures_parallel::<Sha256>(&[path], block_size, 64 * 1024);
+
+        assert_eq!(results.len(), 1);
+        let signatures = results[0].signatures.as_ref().unwrap();
+
+        let expected_blocks = size.div_ceil(block_size);
+        assert_eq!(signatures.len(), expected_blocks);
+        assert_eq!(results[0].size, size as u64);
+
+        for (i, sig) in signatures.iter().enumerate() {
+            let start = i * block_size;
+            let end = (start + block_size).min(size);
+            let block = &data[start..end];
+
+            let mut expected_rolling = RollingChecksum::new();
+            expected_rolling.update(block);
+            assert_eq!(
+                sig.rolling,
+                expected_rolling.value(),
+                "rolling mismatch in block {i}"
+            );
+
+            let expected_strong = Sha256::digest(block);
+            assert_eq!(
+                sig.strong.as_ref(),
+                expected_strong.as_ref(),
+                "strong digest mismatch in block {i}",
+            );
+        }
+    }
 }
