@@ -606,17 +606,7 @@ mod tests {
         FilterRuleWireFormat {
             rule_type: RuleType::DirMerge,
             pattern: pattern.to_owned(),
-            anchored: false,
-            directory_only: false,
-            no_inherit: false,
-            cvs_exclude: false,
-            word_split: false,
-            exclude_from_merge: false,
-            xattr_only: false,
-            sender_side: false,
-            receiver_side: false,
-            perishable: false,
-            negate: false,
+            ..FilterRuleWireFormat::default()
         }
     }
 

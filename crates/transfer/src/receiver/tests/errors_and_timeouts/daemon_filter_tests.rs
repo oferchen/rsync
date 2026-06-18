@@ -23,17 +23,7 @@ fn daemon_filter_set_built_from_config_rules() {
     config.daemon_filter_rules = vec![FilterRuleWireFormat {
         rule_type: RuleType::Exclude,
         pattern: "*.tmp".to_string(),
-        anchored: false,
-        directory_only: false,
-        no_inherit: false,
-        cvs_exclude: false,
-        word_split: false,
-        exclude_from_merge: false,
-        xattr_only: false,
-        sender_side: false,
-        receiver_side: false,
-        perishable: false,
-        negate: false,
+        ..FilterRuleWireFormat::default()
     }];
     let ctx = ReceiverContext::new_for_test(&handshake, config);
 
@@ -66,32 +56,12 @@ fn daemon_filter_set_include_and_exclude() {
         FilterRuleWireFormat {
             rule_type: RuleType::Include,
             pattern: "*.rs".to_string(),
-            anchored: false,
-            directory_only: false,
-            no_inherit: false,
-            cvs_exclude: false,
-            word_split: false,
-            exclude_from_merge: false,
-            xattr_only: false,
-            sender_side: false,
-            receiver_side: false,
-            perishable: false,
-            negate: false,
+            ..FilterRuleWireFormat::default()
         },
         FilterRuleWireFormat {
             rule_type: RuleType::Exclude,
             pattern: "*".to_string(),
-            anchored: false,
-            directory_only: false,
-            no_inherit: false,
-            cvs_exclude: false,
-            word_split: false,
-            exclude_from_merge: false,
-            xattr_only: false,
-            sender_side: false,
-            receiver_side: false,
-            perishable: false,
-            negate: false,
+            ..FilterRuleWireFormat::default()
         },
     ];
     let ctx = ReceiverContext::new_for_test(&handshake, config);
@@ -119,16 +89,7 @@ fn daemon_filter_set_anchored_pattern() {
         rule_type: RuleType::Exclude,
         pattern: "/secret".to_string(),
         anchored: true,
-        directory_only: false,
-        no_inherit: false,
-        cvs_exclude: false,
-        word_split: false,
-        exclude_from_merge: false,
-        xattr_only: false,
-        sender_side: false,
-        receiver_side: false,
-        perishable: false,
-        negate: false,
+        ..FilterRuleWireFormat::default()
     }];
     let ctx = ReceiverContext::new_for_test(&handshake, config);
 
@@ -159,17 +120,7 @@ fn daemon_filter_rules_prepended_to_receiver_deletion_chain() {
     config.daemon_filter_rules = vec![FilterRuleWireFormat {
         rule_type: RuleType::Exclude,
         pattern: "secret_*".to_string(),
-        anchored: false,
-        directory_only: false,
-        no_inherit: false,
-        cvs_exclude: false,
-        word_split: false,
-        exclude_from_merge: false,
-        xattr_only: false,
-        sender_side: false,
-        receiver_side: false,
-        perishable: false,
-        negate: false,
+        ..FilterRuleWireFormat::default()
     }];
     let ctx = ReceiverContext::new_for_test(&handshake, config);
 
