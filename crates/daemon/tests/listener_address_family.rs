@@ -1,19 +1,19 @@
 //! Regression tests for UTS-DD-daemon-exit10.1 / .2.
 //!
-//! The default daemon listener must bind IPv4-only when no explicit family
-//! override is given. This avoids the GitHub Actions Linux failure mode
-//! where `bind(2)` to `[::]:873` succeeds but `accept(2)` later returns a
-//! non-routable address family, producing an opaque
+//! The default daemon listener binds IPv6 then IPv4 when no explicit family
+//! override is given, matching upstream rsync's `default_af_hint = 0`
+//! (AF_UNSPEC) behaviour. `bind_listeners_per_family` warns on each
+//! per-family failure and only fails the daemon when zero sockets bound,
+//! so GitHub Actions Linux runners with a partially configured IPv6 stack
+//! (where `bind(2)` to `[::]:port` returns `EADDRNOTAVAIL`) cleanly degrade
+//! to the IPv4 listener instead of producing an opaque
 //! `error in socket I/O (code 10)` daemon exit. These tests drive
 //! `run_daemon` with various `--ipv4` / `--ipv6` and
 //! `OC_RSYNC_DAEMON_ADDRESS_FAMILY` configurations and verify a TCP client
 //! on the expected family receives the `@RSYNCD:` greeting.
 //!
 //! upstream: socket.c:402-499 (`open_socket_in`) iterates every
-//! getaddrinfo result and only fails when zero sockets bound; oc-rsync
-//! reproduces that contract for the dual-stack case but defaults to
-//! IPv4-only when no override is given so the GitHub Actions IPv6 stack
-//! cannot mask the IPv4 listener.
+//! getaddrinfo result and only fails when zero sockets bound.
 
 use std::io::{BufRead, BufReader};
 use std::net::{Ipv4Addr, Ipv6Addr, TcpListener, TcpStream};
@@ -144,12 +144,14 @@ impl Drop for EnvGuard {
 }
 
 /// Default daemon (no `--ipv4`/`--ipv6` flags, no env override) must
-/// bind IPv4 successfully and serve an IPv4 client. This is the GitHub
-/// Actions exit-10 regression: before the fix, the daemon bound IPv6
-/// first and the IPv6 accept failed before the IPv4 listener was
-/// considered.
+/// serve an IPv4 client. With dual-stack default the IPv6 bind is
+/// attempted first; the helper logs a warning and falls back to the
+/// IPv4 listener when IPv6 is unavailable on the runner, so the IPv4
+/// client receives `@RSYNCD:` either way. This is the regression for
+/// the GitHub Actions exit-10 failure where the silent IPv6 swallow
+/// previously masked the IPv4 listener startup.
 #[test]
-fn default_daemon_binds_ipv4_and_serves_ipv4_client() {
+fn default_daemon_serves_ipv4_client_via_dual_stack() {
     let port = reserve_port_ipv4();
     let (handle, flags) = spawn_daemon_with_args(vec![
         "--no-detach".to_string(),

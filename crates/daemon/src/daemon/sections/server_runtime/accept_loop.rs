@@ -133,21 +133,20 @@ fn serve_connections(
     // `OC_RSYNC_DAEMON_ADDRESS_FAMILY` runtime override (used by CI/test
     // fixtures to force a specific family without rebuilding the CLI).
     //
-    // Default (no flag, no env, no explicit bind address): IPv4-only. This
-    // matches the upstream behaviour observed when `default_af_hint = 0`
-    // collapses to `AF_INET` on systems where the IPv6 stack is configured
-    // but unreachable - the daemon binds the one family that actually
-    // accepts traffic. GitHub Actions Linux runners are the canonical
-    // failure mode: `bind(2)` to `[::]:873` succeeds, but `accept(2)`
-    // returns a non-routable address family and the daemon exited 10
-    // before the IPv4 listener could service the test client. Defaulting
-    // to IPv4-only avoids the silent dual-stack misconfiguration; the
-    // operator opts in explicitly with `--ipv6` or `--ipv4 --ipv6`.
+    // Default (no flag, no env, no explicit bind address): dual-stack with
+    // IPv6 first, IPv4 second. Mirrors upstream's `default_af_hint = 0`
+    // (AF_UNSPEC) which lets `getaddrinfo(NULL, port, AI_PASSIVE, ...)`
+    // return every available family - on glibc that is `::` then `0.0.0.0`.
+    // `bind_listeners_per_family` walks the list in order, logs a warning
+    // for any per-family bind failure, and only fails the daemon when zero
+    // sockets bound. GitHub Actions Linux runners that have IPv6 partially
+    // configured (where `bind(2)` to `[::]:port` returns `EADDRNOTAVAIL`)
+    // cleanly fall back to the IPv4 listener instead of exiting 10 with a
+    // silent dual-stack misconfiguration.
     //
     // upstream: socket.c:402-499 (`open_socket_in`) walks every
     // getaddrinfo result, binds one socket per family, and only returns
-    // NULL when zero sockets bound. The dual-stack arm below preserves
-    // that semantic when the operator asks for both families.
+    // NULL when zero sockets bound.
     let env_family = read_address_family_env_override();
     let bind_addresses: Vec<IpAddr> = if bind_address_overridden {
         vec![bind_address]
@@ -169,7 +168,10 @@ fn serve_connections(
         match address_family {
             Some(AddressFamily::Ipv4) => vec![IpAddr::V4(Ipv4Addr::UNSPECIFIED)],
             Some(AddressFamily::Ipv6) => vec![IpAddr::V6(Ipv6Addr::UNSPECIFIED)],
-            None => vec![IpAddr::V4(Ipv4Addr::UNSPECIFIED)],
+            None => vec![
+                IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+            ],
         }
     };
 

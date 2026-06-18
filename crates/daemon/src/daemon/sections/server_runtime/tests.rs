@@ -1071,6 +1071,53 @@ fn bind_listeners_per_family_fails_only_when_all_families_unreachable() {
 }
 
 #[test]
+fn bind_listeners_per_family_falls_back_from_ipv6_to_ipv4() {
+    // The default dual-stack listener attempts IPv6 first then IPv4. On
+    // GitHub Actions Linux runners the IPv6 stack is partially configured
+    // so `bind(2)` to a non-link-local IPv6 address returns
+    // `EADDRNOTAVAIL`. This test simulates that environment with a
+    // synthetic getaddrinfo-style result list: an unreachable IPv6
+    // documentation address (RFC 3849 2001:db8::/32, which the kernel
+    // cannot bind to a local socket) is followed by IPv4 loopback. The
+    // helper must surface the IPv6 failure as a warning, continue to
+    // IPv4, and produce a working IPv4 listener instead of failing the
+    // whole daemon startup.
+    //
+    // upstream: socket.c::open_socket_in (rsync-3.4.4:432-498) iterates
+    // every getaddrinfo result, accumulates per-family errors via
+    // `errmsgs[ecnt++]`, and only fails when zero sockets bound.
+    let unreachable_v6 = IpAddr::V6(std::net::Ipv6Addr::new(0x2001, 0x0db8, 0, 0, 0, 0, 0, 1));
+    let reachable_v4 = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+    let bind_addresses = vec![unreachable_v6, reachable_v4];
+
+    let (listeners, bound_addresses) = bind_listeners_per_family(
+        &bind_addresses,
+        0,
+        DEFAULT_LISTEN_BACKLOG,
+        TcpFastOpenMode::Off,
+        None,
+    )
+    .expect("IPv4 fallback must bind when IPv6 is unreachable");
+
+    assert_eq!(listeners.len(), 1, "only the reachable IPv4 family should bind");
+    assert_eq!(bound_addresses.len(), 1);
+    assert!(
+        bound_addresses[0].is_ipv4(),
+        "fallback listener must be on IPv4, got {}",
+        bound_addresses[0]
+    );
+    assert!(
+        bound_addresses[0].ip() == reachable_v4,
+        "fallback listener must be on IPv4 loopback, got {}",
+        bound_addresses[0]
+    );
+    assert!(
+        bound_addresses[0].port() != 0,
+        "kernel must assign an ephemeral port for the bound listener"
+    );
+}
+
+#[test]
 fn bind_listeners_per_family_single_family_propagates_error() {
     // When only one address is provided (no dual-stack), the helper must
     // propagate the bind failure immediately - there is no other family to
