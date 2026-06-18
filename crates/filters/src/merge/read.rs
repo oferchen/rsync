@@ -80,12 +80,57 @@ fn read_rules_recursive_impl(
                 Path::new(rule.pattern()).to_path_buf()
             };
 
+            // Each nested merge file owns its own clear-rules scope. Resolve
+            // any `!` within the nested rule sequence here so it does not
+            // leak into the current file's accumulated rules.
+            //
+            // upstream: exclude.c:1393-1402 — FILTRULE_CLEAR_LIST inside a
+            // nested parse_filter_file() invocation only frees the local
+            // portion of that file's list before continuing.
             let nested = read_rules_recursive_impl(&merge_path, max_depth, current_depth + 1)?;
-            expanded.extend(nested);
+            expanded.extend(scope_local_clear(nested));
         } else {
             expanded.push(rule);
         }
     }
 
     Ok(expanded)
+}
+
+/// Resolves `Clear` rules within a merge file's expanded rule sequence so
+/// they only clear rules accumulated within that same merge file's scope.
+///
+/// Iterates the sequence and drops any rules preceding a `Clear` whose side
+/// flags the `Clear` covers. The `Clear` itself is consumed; surviving
+/// rules (including those that the `Clear` did not cover) are returned.
+/// Callers emit the result into the outer scope's rule list so parent
+/// rules remain untouched.
+///
+/// upstream: exclude.c:1393-1402 — `FILTRULE_CLEAR_LIST` calls
+/// `pop_filter_list(listp)` and then sets `listp->head = NULL`, removing
+/// only the local-scope rules between `head` and `tail`. Inherited rules
+/// (which are parent-scope rules in our model) are preserved.
+pub(crate) fn scope_local_clear(rules: Vec<FilterRule>) -> Vec<FilterRule> {
+    let mut result: Vec<FilterRule> = Vec::with_capacity(rules.len());
+    for rule in rules {
+        if rule.action() == FilterAction::Clear {
+            let clears_sender = rule.applies_to_sender();
+            let clears_receiver = rule.applies_to_receiver();
+            if !clears_sender && !clears_receiver {
+                continue;
+            }
+            result.retain_mut(|prior| {
+                if clears_sender {
+                    prior.applies_to_sender = false;
+                }
+                if clears_receiver {
+                    prior.applies_to_receiver = false;
+                }
+                prior.applies_to_sender || prior.applies_to_receiver
+            });
+            continue;
+        }
+        result.push(rule);
+    }
+    result
 }

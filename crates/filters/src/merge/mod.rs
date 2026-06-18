@@ -47,4 +47,5 @@ mod tests;
 
 pub use error::MergeFileError;
 pub use parse::parse_rules;
+pub(crate) use read::scope_local_clear;
 pub use read::{read_rules, read_rules_recursive};
