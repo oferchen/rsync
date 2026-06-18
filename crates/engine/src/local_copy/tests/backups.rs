@@ -1237,9 +1237,16 @@ fn backup_dir_with_inplace_no_whole_file_copies_matched_blocks() {
         ctx.dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    // upstream: options.c:2278-2279 - when --backup-dir is set without an
+    // explicit --suffix, the suffix defaults to "" so the backup is placed
+    // at $bakdir/<rel> rather than $bakdir/<rel>~. The CLI calls
+    // `with_backup_suffix(None)` to apply this rule (see core/src/client/run/mod.rs);
+    // mirror that here so this test exercises the same effective default the
+    // production CLI uses.
     let options = LocalCopyOptions::default()
         .backup(true)
         .with_backup_directory(Some(backup_root.clone()))
+        .with_backup_suffix::<OsString>(None)
         .inplace(true)
         .whole_file(false);
 
@@ -1258,7 +1265,12 @@ fn backup_dir_with_inplace_no_whole_file_copies_matched_blocks() {
         "destination must be byte-identical to source after delta with backup-dir",
     );
 
-    let backup_path = backup_root.join("payload.bin~");
+    // The source operand is `<tempdir>/source` (no trailing slash), so the
+    // destination layout is `<dest>/source/payload.bin`. compute_backup_path
+    // preserves the rsync-relative dirname under the backup directory, placing
+    // the backup at `<backup_root>/source/payload.bin` (with empty suffix per
+    // upstream options.c:2278-2279).
+    let backup_path = backup_root.join("source").join("payload.bin");
     let backed_up = fs::read(&backup_path).expect("read backup");
     assert_eq!(
         backed_up,
