@@ -31,19 +31,25 @@ pub(crate) fn append_filter_rules_from_files(
     // we keep the legacy raw-pattern behavior to preserve existing semantics.
     let honor_old_prefixes = matches!(kind, FilterRuleKind::Include | FilterRuleKind::Exclude);
 
+    // upstream: exclude.c:1393-1402 resolves FILTRULE_CLEAR_LIST via
+    // pop_filter_list (exclude.c:574-590), truncating only the local section
+    // of the per-file rule list. Buffer each --include-from/--exclude-from
+    // file's rules locally so a `!` inside the file clears only that scope
+    // and parent CLI rules survive.
     for path in files {
         let patterns = load_filter_file_patterns(Path::new(path.as_os_str()))?;
+        let mut local: Vec<FilterRuleSpec> = Vec::new();
         for pattern in patterns {
             if honor_old_prefixes {
                 match parse_old_prefix_rule(&pattern, kind)? {
-                    FilterDirective::Rule(rule) => destination.push(rule),
-                    FilterDirective::Clear => destination.push(FilterRuleSpec::clear()),
+                    FilterDirective::Rule(rule) => local.push(rule),
+                    FilterDirective::Clear => local.clear(),
                     FilterDirective::Merge(_) => {
                         unreachable!("parse_old_prefix_rule never emits FilterDirective::Merge")
                     }
                 }
             } else {
-                destination.push(match kind {
+                local.push(match kind {
                     FilterRuleKind::Include => FilterRuleSpec::include(pattern),
                     FilterRuleKind::Exclude => FilterRuleSpec::exclude(pattern),
                     FilterRuleKind::Clear => FilterRuleSpec::clear(),
@@ -54,6 +60,7 @@ pub(crate) fn append_filter_rules_from_files(
                 });
             }
         }
+        destination.extend(local);
     }
     Ok(())
 }
