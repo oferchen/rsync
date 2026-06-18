@@ -415,10 +415,20 @@ mod tests {
     }
 
     /// Protect/Risk and the merge rule families never trigger the implicit
-    /// flag - they either restrict to the receiver side already
-    /// (`FilterRuleSpec::protect`/`risk` set `sender=false`) or carry their
-    /// own `FILTRULE_MERGE_FILE`/`FILTRULE_PERDIR_MERGE` bits that upstream
-    /// excludes from the mask in `exclude.c:1331`.
+    /// flag at the top-level CLI compile step - they either restrict to the
+    /// receiver side already (`FilterRuleSpec::protect`/`risk` set
+    /// `sender=false`) or carry their own `FILTRULE_MERGE_FILE` /
+    /// `FILTRULE_PERDIR_MERGE` bits that upstream excludes from the mask in
+    /// `exclude.c:1330-1332`.
+    ///
+    /// DirMerge wrappers themselves remain a no-op here because the wrapper
+    /// directive is the "merge file" rule that upstream's mask spares; the
+    /// implicit FILTRULE_SENDER_SIDE flip applies instead to each per-token
+    /// rule expanded out of the merge file. That expansion happens in the
+    /// engine's dir-merge loader (`apply_dir_merge_rule_defaults`) and the
+    /// receiver's filter chain (`FilterChain::with_delete_excluded`), both
+    /// of which thread the same `delete_excluded` flag through their parse
+    /// path so the implicit flip fires once per expanded rule.
     #[test]
     fn delete_excluded_skips_non_include_exclude_kinds() {
         let mut protect = FilterRuleSpec::protect("keep");
@@ -430,7 +440,14 @@ mod tests {
         let mut clear = FilterRuleSpec::clear();
         assert!(!clear.apply_implicit_sender_side_for_delete_excluded());
 
+        // DirMerge wrappers are unchanged at compile_filter_program time so
+        // they are forwarded to the engine unmodified. The engine's
+        // load_dir_merge_rules_recursive path is what applies the implicit
+        // sender-side flip to each per-token rule expanded from the merge
+        // file under --delete-excluded.
         let mut dir_merge = FilterRuleSpec::dir_merge(".rsync-filter", DirMergeOptions::new());
         assert!(!dir_merge.apply_implicit_sender_side_for_delete_excluded());
+        assert!(dir_merge.applies_to_sender());
+        assert!(dir_merge.applies_to_receiver());
     }
 }
