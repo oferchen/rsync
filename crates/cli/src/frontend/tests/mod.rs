@@ -296,6 +296,8 @@ mod tracing_integration_tests;
 mod transfer_request_copies_tests;
 #[path = "transfer_request_reports.rs"]
 mod transfer_request_reports_tests;
+#[path = "transfer_request_skips_directories_without_recursion.rs"]
+mod transfer_request_skips_directories_without_recursion_tests;
 #[path = "transfer_request_with_apple_double.rs"]
 mod transfer_request_with_apple_double_tests;
 #[cfg(unix)]
