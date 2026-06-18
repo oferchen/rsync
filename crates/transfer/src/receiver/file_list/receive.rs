@@ -15,6 +15,7 @@ use protocol::flist::{IncrementalFileListBuilder, sort_file_list};
 use super::super::ReceiverContext;
 use super::hardlinks::{match_hard_links, normalize_pre30_hardlinks};
 use super::incremental::IncrementalFileListReceiver;
+use super::prune::prune_empty_dirs_pass;
 
 impl ReceiverContext {
     /// Receives the file list from the sender.
@@ -103,6 +104,15 @@ impl ReceiverContext {
         if !self.iconv_reorder_suppressed() {
             sort_file_list(&mut self.file_list, self.config.qsort, pre29);
         }
+
+        // upstream: flist.c:3121-3184 - flist_sort_and_clean() runs the
+        // `--prune-empty-dirs` pass after sorting and before the caller's
+        // match_hard_links() in recv_file_list(). Only the receiver runs this
+        // pass (am_sender is false); the sender ships every directory.
+        if self.config.flags.prune_empty_dirs {
+            prune_empty_dirs_pass(&mut self.file_list, &self.filter_chain);
+        }
+
         match_hard_links(&mut self.file_list, &mut self.prior_hlinks);
 
         // For protocol < 30, normalize (dev, ino) pairs into hardlink_idx and
