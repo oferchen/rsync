@@ -1062,6 +1062,7 @@ dependencies = [
  "filetime",
  "fs2",
  "libc",
+ "logging",
  "logging-sink",
  "metadata",
  "nix",
