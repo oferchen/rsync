@@ -2559,6 +2559,44 @@ mod iconv_integration {
     }
 }
 
+// Regression: `update_stats` must not panic when accumulator overflows.
+// Upstream `flist.c:691` uses signed int64 and wraps; oc-rsync used plain `+=`
+// on u64, which panicked under `overflow-checks=true` (cargo-fuzz debug
+// profile, hit by the `differential_flist` target). Saturate instead so the
+// cosmetic counter never aborts the transfer.
+#[test]
+fn update_stats_saturates_on_file_size_overflow() {
+    use crate::flist::entry::FileEntry;
+    use std::path::PathBuf;
+
+    let mut reader = FileListReader::new(test_protocol());
+    let entry = FileEntry::new_file(PathBuf::from("a"), u64::MAX, 0o100644);
+
+    reader.update_stats(&entry);
+    reader.update_stats(&entry);
+
+    assert_eq!(reader.stats().num_files, 2);
+    assert_eq!(reader.stats().total_size, u64::MAX);
+}
+
+#[test]
+fn update_stats_saturates_on_symlink_target_overflow() {
+    use crate::flist::entry::FileEntry;
+    use std::path::PathBuf;
+
+    let mut reader = FileListReader::new(test_protocol());
+
+    // Seed the accumulator at the cap so any further add must saturate.
+    let primer = FileEntry::new_file(PathBuf::from("primer"), u64::MAX, 0o100644);
+    reader.update_stats(&primer);
+
+    let link = FileEntry::new_symlink(PathBuf::from("link"), PathBuf::from("target"));
+    reader.update_stats(&link);
+
+    assert_eq!(reader.stats().num_symlinks, 1);
+    assert_eq!(reader.stats().total_size, u64::MAX);
+}
+
 // Parity with upstream rsync 3.4.2 "removal of multiple leading slashes"
 // fix (commit d4c4f67, NEWS.md:71). The upstream fix lives in `support/rrsync`;
 // here we pin the equivalent oc-rsync site (`clean_and_validate_name`) so any

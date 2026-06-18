@@ -132,6 +132,7 @@ const fn preferred_reflink_method() -> CopyMethod {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(not(target_os = "windows"))]
     use tempfile::TempDir;
 
     #[test]

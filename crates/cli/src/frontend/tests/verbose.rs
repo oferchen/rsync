@@ -830,12 +830,21 @@ fn quiet_flag_produces_no_output() {
 /// NOT extend the per-file line with a descriptor prefix or rate-display
 /// wrapper. For a single-file success transfer through the local-copy
 /// executor (no `--stats`, no skipped files), `-v` and `-vv` therefore
-/// emit identical byte counts. The earlier strict-less assertion locked
-/// in the pre-bare-render divergence and started panicking after that
-/// renderer was aligned with upstream.
+/// emit the same set of lines.
+///
+/// The invariant is compared on line counts rather than byte counts
+/// because the `sent X bytes received Y bytes Z bytes/sec` and
+/// `total size is N speedup is N.NN` lines contain timing-derived
+/// numerics (the rate field is `(sent + received) / elapsed`) whose
+/// rendered width varies by a few bytes between runs. Comparing line
+/// counts isolates the monotonicity check from that timing jitter.
 #[test]
 fn higher_verbosity_produces_more_output() {
     use tempfile::tempdir;
+
+    fn line_count(bytes: &[u8]) -> usize {
+        bytes.iter().filter(|b| **b == b'\n').count()
+    }
 
     let tmp = tempdir().expect("tempdir");
     let source = tmp.path().join("progressive.txt");
@@ -867,17 +876,23 @@ fn higher_verbosity_produces_more_output() {
     ]);
     assert_eq!(code, 0);
 
+    let lines0 = line_count(&stdout0);
+    let lines1 = line_count(&stdout1);
+    let lines2 = line_count(&stdout2);
+
     assert!(
-        stdout0.len() < stdout1.len(),
-        "level 0 ({} bytes) should produce less output than level 1 ({} bytes)",
-        stdout0.len(),
-        stdout1.len()
+        lines0 < lines1,
+        "level 0 ({lines0} lines) should produce fewer lines than level 1 ({lines1} lines)\n\
+         level 0 stdout: {:?}\nlevel 1 stdout: {:?}",
+        String::from_utf8_lossy(&stdout0),
+        String::from_utf8_lossy(&stdout1),
     );
     assert!(
-        stdout1.len() <= stdout2.len(),
-        "level 2 ({} bytes) must not drop output relative to level 1 ({} bytes)",
-        stdout2.len(),
-        stdout1.len()
+        lines1 <= lines2,
+        "level 2 ({lines2} lines) must not drop lines relative to level 1 ({lines1} lines)\n\
+         level 1 stdout: {:?}\nlevel 2 stdout: {:?}",
+        String::from_utf8_lossy(&stdout1),
+        String::from_utf8_lossy(&stdout2),
     );
 }
 
