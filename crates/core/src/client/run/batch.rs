@@ -211,7 +211,20 @@ pub(crate) fn finalize_batch(
         Some(filter_text.as_str())
     };
 
-    if let Err(e) = engine::batch::script::generate_script_with_filters(batch_cfg, filter_opt) {
+    // upstream: batch.c:300-304 - embed the destination operand as the
+    // `${1:-<dest>}` fallback so `./BATCH.sh` (with no argument) writes to
+    // the same destination used when the batch was captured. The destination
+    // is the last positional operand on the original command line.
+    let dest_operand = config
+        .transfer_args()
+        .last()
+        .map(|s| s.to_string_lossy().into_owned());
+
+    if let Err(e) = engine::batch::script::generate_script_with_filters(
+        batch_cfg,
+        filter_opt,
+        dest_operand.as_deref(),
+    ) {
         let msg = format!("failed to generate batch script: {e}");
         return Err(ClientError::new(
             1,
@@ -528,8 +541,11 @@ mod tests {
         ];
         let filter_text = serialize_filter_rules(&rules);
 
-        let result =
-            engine::batch::script::generate_script_with_filters(&batch_cfg, Some(&filter_text));
+        let result = engine::batch::script::generate_script_with_filters(
+            &batch_cfg,
+            Some(&filter_text),
+            None,
+        );
         assert!(result.is_ok());
 
         let script_path = batch_cfg.script_file_path();
