@@ -1,7 +1,10 @@
 use std::io::{self, Write};
 use std::path::Path;
 
-use core::client::{ClientEvent, ClientEventKind, ClientSummary, HumanReadableMode};
+use core::client::{
+    ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind, ClientSummary,
+    HumanReadableMode,
+};
 
 /// Renders a path string with any trailing platform path separators trimmed,
 /// mirroring upstream rsync's `*cp = '\0'` slash-lopping in `main.c:789`
@@ -479,7 +482,18 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
             // UpdatedAndUnchanged here, so route MetadataReused (or a
             // HardLink whose destination was already linked to the leader)
             // through the uptodate phrasing instead of the bare path.
+            //
+            // Skip directory MetadataReused events: upstream invokes
+            // `set_file_attrs(..., 0)` for dirs (generator.c:1503), so the
+            // rsync.c:676 "is uptodate" notice is gated off for them.
             if matches!(kind, ClientEventKind::MetadataReused) || event.is_hardlink_uptodate() {
+                if event
+                    .metadata()
+                    .map(ClientEntryMetadata::kind)
+                    .is_some_and(|kind| matches!(kind, ClientEntryKind::Directory))
+                {
+                    continue;
+                }
                 writeln!(stdout, "{} is uptodate", event.relative_path().display())?;
                 continue;
             }
@@ -574,6 +588,20 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 // (info_log! events drain AFTER the summary in cli mod.rs);
                 // routing it through the event renderer keeps `is uptodate`
                 // lines ahead of the totals to match upstream's wire order.
+                //
+                // upstream: generator.c:1503 calls `set_file_attrs(..., 0)`
+                // for directories (no ATTRS_REPORT flag), so dirs never trigger
+                // the rsync.c:676 "is uptodate" notice. Symlinks (line 1575)
+                // and regular files (line 1827) DO pass `maybe_ATTRS_REPORT`
+                // and therefore surface. Skip directory MetadataReused events
+                // here so the `-vv` golden in `testsuite/itemize.test` matches.
+                if event
+                    .metadata()
+                    .map(ClientEntryMetadata::kind)
+                    .is_some_and(|kind| matches!(kind, ClientEntryKind::Directory))
+                {
+                    continue;
+                }
                 if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
                     writeln!(stdout, "{} is uptodate", event.relative_path().display())?;
                 }

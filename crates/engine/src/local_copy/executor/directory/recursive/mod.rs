@@ -210,15 +210,17 @@ fn copy_directory_recursive_inner(
     // upstream: generator.c:1480-1483 - when the destination directory already
     // exists (`statret == 0`), the generator still calls `itemize()` with
     // `iflags=0`; `itemize()` then ORs in `ITEM_REPORT_TIME|PERMS|...` based
-    // on the existing-vs-source metadata drift. The line is emitted only when
-    // the resulting `iflags` carries `SIGNIFICANT_ITEM_FLAGS`
-    // (`generator.c:582-583`); otherwise it is suppressed.
+    // on the existing-vs-source metadata drift. The emit gate at
+    // `generator.c:582-583` then prints the row when any significant flag is
+    // set OR when `INFO_GTE(NAME, 2)` is in effect, so unchanged dirs still
+    // appear as all-dot `.d` rows under `-vv`.
     //
-    // Mirror that here: when the directory already exists and any attribute
-    // differs from the source, emit a `MetadataReused` record carrying the
-    // computed change-set so the renderer produces lines like
-    // `.d..t...... foo/`. When nothing differs, the record stays unemitted
-    // and the renderer skips the directory row entirely.
+    // Mirror that here: always emit a `MetadataReused` record for an existing
+    // destination directory so the event stream carries the entry. The CLI
+    // renderer suppresses records whose `change_set` reports no change unless
+    // the context flags `emit_unchanged` (mirroring `INFO_GTE(NAME, 2)`), so
+    // non-verbose runs continue to omit unchanged dirs while `-vv` surfaces
+    // them as `.d` rows.
     if !record_emitted
         && let Some((ref rel_path, ref snapshot)) = metadata_record
         && let Some(existing_meta) = existing_destination_metadata.as_ref()
@@ -237,20 +239,18 @@ fn copy_directory_recursive_inner(
             false,
             false,
         );
-        if change_set.has_any_change() {
-            context.record(
-                LocalCopyRecord::new(
-                    rel_path.clone(),
-                    LocalCopyAction::MetadataReused,
-                    0,
-                    Some(snapshot.len()),
-                    Duration::default(),
-                    Some(snapshot.clone()),
-                )
-                .with_change_set(change_set),
-            );
-            record_emitted = true;
-        }
+        context.record(
+            LocalCopyRecord::new(
+                rel_path.clone(),
+                LocalCopyAction::MetadataReused,
+                0,
+                Some(snapshot.len()),
+                Duration::default(),
+                Some(snapshot.clone()),
+            )
+            .with_change_set(change_set),
+        );
+        record_emitted = true;
     }
 
     let mut kept_any = !prune_enabled;
