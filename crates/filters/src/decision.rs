@@ -60,10 +60,13 @@ impl FilterSetInner {
         // Single-path API queries (no traversal context) keep descendants
         // active so callers can still see "build/output.bin" as excluded
         // by a `- build/` rule without walking the tree themselves.
-        // The receiver (Deletion) keeps descendants active for the same
-        // reason as the no-traversal API: it evaluates paths individually
-        // and depends on the descendant matchers to see deep excludes.
-        let check_descendants = !(traversal && matches!(context, DecisionContext::Transfer));
+        // Receiver-side (Deletion) during a per-directory chain commit
+        // suppresses descendants for the same reason: the chain has
+        // already routed the path to the responsible scope via the
+        // descendant-free `has_matching_rule` predicate, so re-enabling
+        // `pattern/**` here would let a per-dir rule like `bar` in
+        // `./foo/.cvsignore` fire against the sibling subtree `./bar/x`.
+        let check_descendants = !traversal;
 
         let transfer_rule = match context {
             DecisionContext::Transfer => first_matching_rule(
