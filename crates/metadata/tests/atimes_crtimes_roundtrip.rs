@@ -24,6 +24,8 @@
 //!   path runs cleanly and gracefully no-ops on filesystems that do not
 //!   surface a creation time.
 
+#![cfg(unix)]
+
 use filetime::{FileTime, set_file_atime, set_file_times};
 use metadata::{MetadataOptions, apply_file_metadata_with_options};
 use std::fs;
