@@ -692,7 +692,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("signatures_boundary.bin");
 
-        let size = 64 * 1024 + 777; // straddles MMAP_THRESHOLD and ends on a partial block
+        let size: usize = 64 * 1024 + 777; // straddles MMAP_THRESHOLD and ends on a partial block
         let data: Vec<u8> = (0..size).map(|i| (i & 0xFF) as u8).collect();
         std::fs::write(&path, &data).unwrap();
 
