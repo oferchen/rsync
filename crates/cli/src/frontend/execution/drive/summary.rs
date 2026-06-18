@@ -122,7 +122,14 @@ where
                 });
             }
 
-            let out_format_context = OutFormatContext::with_is_sender(is_sender);
+            // upstream: generator.c:582-583 - `INFO_GTE(NAME, 2)` (i.e. `-vv`
+            // or `--info=name2`) keeps emitting itemize lines for unchanged
+            // entries. Thread the resolved name-level into the renderer so it
+            // bypasses the empty-change-set suppression and surfaces all-dot
+            // rows for unchanged dirs, files, and symlinks.
+            let emit_unchanged = matches!(name_level, NameOutputLevel::UpdatedAndUnchanged);
+            let out_format_context =
+                OutFormatContext::with_is_sender(is_sender).with_emit_unchanged(emit_unchanged);
             if let Err(error) = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
                 emit_transfer_summary(
                     &summary,
@@ -217,7 +224,11 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         human_readable_mode,
         is_sender,
     } = params;
-    let context = OutFormatContext::with_is_sender(is_sender);
+    // upstream: generator.c:582-583 - mirror the `INFO_GTE(NAME, 2)` arm of
+    // the itemize emit gate in the log-file renderer so `-vv` / `--info=name2`
+    // surfaces unchanged entries in the log alongside stdout.
+    let emit_unchanged = matches!(name_level, NameOutputLevel::UpdatedAndUnchanged);
+    let context = OutFormatContext::with_is_sender(is_sender).with_emit_unchanged(emit_unchanged);
     // The log file already carries the parallel "building file list" line via
     // logging::info_log!(Flist, 1, ...); the FCLIENT "sending incremental file
     // list" banner is for stdout only (upstream: flist.c:2248 vs 2252).

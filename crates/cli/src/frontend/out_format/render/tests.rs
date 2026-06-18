@@ -1791,3 +1791,89 @@ fn render_binary_units_below_threshold_falls_back_to_separator() {
     // Values below 1024 fall back to separator format
     assert_eq!(format_numeric_value(1023, &format), "1,023");
 }
+
+// Regression: upstream `testsuite/itemize.test` line 113-124 expects `-ivvplrtH`
+// to emit all-dot itemize rows for unchanged dirs, files, and symlinks,
+// mirroring the upstream gate `INFO_GTE(NAME, 2)` in `generator.c:582-583`.
+// The renderer's empty-change-set suppression must be bypassed when the
+// context flags `emit_unchanged`.
+
+#[test]
+fn emit_out_format_suppresses_unchanged_metadata_reused_by_default() {
+    // Without `emit_unchanged`, a `MetadataReused` event whose change set
+    // reports no change and was not created must be omitted from output
+    // (upstream `generator.c:582` default gate).
+    let event = make_event(
+        ClientEventKind::MetadataReused,
+        false,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new(),
+    );
+    let events = [event];
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n")).unwrap();
+    let mut output = Vec::new();
+    emit_out_format(&events, &format, &OutFormatContext::default(), &mut output).unwrap();
+    assert!(
+        output.is_empty(),
+        "default context must suppress unchanged MetadataReused"
+    );
+}
+
+#[test]
+fn emit_out_format_emits_unchanged_metadata_reused_under_info_name_2() {
+    // With `emit_unchanged` (mirroring `INFO_GTE(NAME, 2)`), the same
+    // unchanged file row must surface as `.f          test.txt`.
+    let event = make_event(
+        ClientEventKind::MetadataReused,
+        false,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new(),
+    );
+    let events = [event];
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n")).unwrap();
+    let mut output = Vec::new();
+    let ctx = OutFormatContext::default().with_emit_unchanged(true);
+    emit_out_format(&events, &format, &ctx, &mut output).unwrap();
+    let rendered = String::from_utf8(output).unwrap();
+    assert_eq!(rendered, ".f          test.txt\n");
+}
+
+#[test]
+fn emit_out_format_emits_unchanged_directory_under_info_name_2() {
+    // upstream `testsuite/itemize.test:115-117` expects `.d          ./`,
+    // `.d          bar/`, `.d          bar/baz/` under `-ivvplrtH`. The
+    // unchanged directory row must surface when `emit_unchanged` is set.
+    let event = make_event(
+        ClientEventKind::MetadataReused,
+        false,
+        Some(ClientEntryKind::Directory),
+        LocalCopyChangeSet::new(),
+    );
+    let events = [event];
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n")).unwrap();
+    let mut output = Vec::new();
+    let ctx = OutFormatContext::default().with_emit_unchanged(true);
+    emit_out_format(&events, &format, &ctx, &mut output).unwrap();
+    let rendered = String::from_utf8(output).unwrap();
+    assert_eq!(rendered, ".d          test.txt\n");
+}
+
+#[test]
+fn emit_out_format_emits_unchanged_symlink_under_info_name_2() {
+    // upstream `testsuite/itemize.test:123` expects
+    // `.L          foo/sym -> ../bar/baz/rsync` under `-ivvplrtH` when the
+    // symlink already points at the right target.
+    let event = make_event(
+        ClientEventKind::MetadataReused,
+        false,
+        Some(ClientEntryKind::Symlink),
+        LocalCopyChangeSet::new(),
+    );
+    let events = [event];
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n")).unwrap();
+    let mut output = Vec::new();
+    let ctx = OutFormatContext::default().with_emit_unchanged(true);
+    emit_out_format(&events, &format, &ctx, &mut output).unwrap();
+    let rendered = String::from_utf8(output).unwrap();
+    assert_eq!(rendered, ".L          test.txt\n");
+}

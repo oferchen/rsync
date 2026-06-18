@@ -155,6 +155,15 @@ pub(crate) struct OutFormatContext {
     /// `<` for sender (push), `>` for receiver (pull).
     /// (upstream: log.c:704 - uses `<` when am_sender && !am_server)
     pub(super) is_sender: bool,
+    /// Whether `INFO_GTE(NAME, 2)` is in effect (i.e. `-vv` or
+    /// `--info=name2`).
+    ///
+    /// Upstream `generator.c:582-583` keeps emitting itemize lines for
+    /// entries whose `iflags == 0` when this is set, so unchanged dirs,
+    /// files, and symlinks still surface as all-dot rows. The render path
+    /// uses this to bypass the empty-change-set suppression that mirrors
+    /// the default upstream gate.
+    pub(super) emit_unchanged: bool,
 }
 
 impl OutFormatContext {
@@ -169,6 +178,25 @@ impl OutFormatContext {
             is_sender,
             ..Self::default()
         }
+    }
+
+    /// Sets the `INFO_GTE(NAME, 2)` flag (`-vv` / `--info=name2`).
+    ///
+    /// Upstream `generator.c:582-583` ORs `INFO_GTE(NAME, 2)` into the
+    /// itemize emit gate; mirroring that semantic locally requires the
+    /// renderer to skip the "no change set, no creation" suppression so
+    /// unchanged entries still print as all-dot rows.
+    #[must_use]
+    pub(crate) fn with_emit_unchanged(mut self, emit_unchanged: bool) -> Self {
+        self.emit_unchanged = emit_unchanged;
+        self
+    }
+
+    /// Returns whether the renderer should bypass empty-change-set
+    /// suppression to mirror upstream `INFO_GTE(NAME, 2)` semantics.
+    #[must_use]
+    pub(crate) const fn emit_unchanged(&self) -> bool {
+        self.emit_unchanged
     }
 }
 
