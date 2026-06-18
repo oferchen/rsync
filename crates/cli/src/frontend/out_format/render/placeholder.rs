@@ -127,6 +127,14 @@ pub(super) fn render_placeholder_value(
 /// Renders the path from an event, optionally appending a trailing slash for directories.
 fn render_path(event: &ClientEvent, ensure_trailing_slash: bool) -> String {
     let mut rendered = event.relative_path().to_string_lossy().into_owned();
+    // upstream: flist.c / log.c - itemize and out-format paths use POSIX
+    // forward-slash separators regardless of host OS. Normalize Windows
+    // native backslashes here at the rendering boundary; storage retains
+    // the platform-native form.
+    #[cfg(windows)]
+    {
+        rendered = rendered.replace('\\', "/");
+    }
     if ensure_trailing_slash
         && !rendered.ends_with('/')
         && event.metadata().map(ClientEntryMetadata::kind).map_or_else(
