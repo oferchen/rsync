@@ -51,15 +51,18 @@ impl CompiledRule {
         );
         let (anchored, directory_only, core_pattern) = normalise_pattern(&pattern);
         // upstream: exclude.c:903-960 rule_matches() - an unanchored pattern
-        // that already contains `**` is matched with slash_handling = -1
+        // that already begins with `**` is matched with slash_handling = -1
         // (try after every slash) by wildmatch_array (lib/wildmatch.c:316).
-        // The pattern itself already carries cross-segment semantics, so
+        // A leading `**` already carries the cross-depth anchor, so
         // prepending an extra `**/` would compound recursion and emit
-        // matchers like `**/foo/**/bar` plus their `/**` descendants. Skip
-        // the prefix when `core_pattern` already contains `**` to keep our
-        // matcher set in lockstep with upstream's match-after-every-slash
-        // behaviour. Regression for UTS-DD-exclude.5.
-        let has_double_star = core_pattern.contains("**");
+        // matchers like `**/**/baz`. Skip the prefix only when
+        // `core_pattern` already starts with `**`. Interior `**` (e.g.
+        // `foo**too`, `foo/**/bar`) is NOT cross-depth on its own - the
+        // pattern's leading literal still anchors it to the path root, so
+        // the implicit `**/` prefix is required for upstream's
+        // tail-matching semantics. Regression for UTS-DD-exclude.5 and the
+        // double_star_interior_matches_across_path_segments guard.
+        let has_double_star = core_pattern.starts_with("**");
         let mut direct_patterns = HashSet::new();
         direct_patterns.insert(core_pattern.to_string());
         if !anchored && !has_double_star {
@@ -507,16 +510,25 @@ mod tests {
         );
     }
 
-    /// UTS-DD-exclude.5 fix: an unanchored pattern that already contains
-    /// `**` must NOT be wrapped again. Upstream rsync handles this via
-    /// `wildmatch_array(..., slash_handling=-1)` (lib/wildmatch.c:316,
-    /// exclude.c:952-956), so the wire-equivalent matcher set is just the
-    /// original pattern plus its `/**` descendant.
+    /// An unanchored pattern with interior `**` (e.g. `foo/**/bar`) still
+    /// needs the implicit `**/` prefix variant. The leading literal `foo`
+    /// anchors the pattern to the path root absent the prefix, so without
+    /// `**/foo/**/bar` the matcher cannot tail-match `xx/foo/yy/bar`.
+    /// Upstream's `wildmatch_array(..., slash_handling=-1)`
+    /// (lib/wildmatch.c:316, exclude.c:952-956) tries the pattern after
+    /// every slash, which is wire-equivalent to the `**/` prefixed
+    /// variant.
     #[test]
-    fn implicit_double_star_prefix_skipped_when_pattern_already_has_double_star() {
+    fn implicit_double_star_prefix_added_for_interior_double_star_pattern() {
         let compiled = make_exclude("foo/**/bar");
-        assert_eq!(direct_pattern_strings(&compiled), vec!["foo/**/bar"]);
-        assert_eq!(descendant_pattern_strings(&compiled), vec!["foo/**/bar/**"]);
+        assert_eq!(
+            direct_pattern_strings(&compiled),
+            vec!["**/foo/**/bar", "foo/**/bar"]
+        );
+        assert_eq!(
+            descendant_pattern_strings(&compiled),
+            vec!["**/foo/**/bar/**", "foo/**/bar/**"]
+        );
     }
 
     /// `**/baz` already has the recursive prefix; we must not double it
@@ -541,13 +553,18 @@ mod tests {
         );
     }
 
-    /// Trailing `**` (e.g., `foo/**`) is unanchored but already carries
-    /// cross-segment semantics; the implicit prefix would emit
-    /// `**/foo/**` which upstream never produces.
+    /// Trailing `**` (e.g., `foo/**`) is unanchored: the leading literal
+    /// `foo` still anchors the pattern to the path root absent the
+    /// implicit `**/` prefix. The trailing `**` only covers descent under
+    /// `foo`, not the placement of `foo` itself, so `**/foo/**` is
+    /// required to tail-match nested directories like `xx/foo/yy`.
     #[test]
-    fn implicit_double_star_prefix_skipped_for_trailing_double_star() {
+    fn implicit_double_star_prefix_added_for_trailing_double_star_pattern() {
         let compiled = make_exclude("foo/**");
-        assert_eq!(direct_pattern_strings(&compiled), vec!["foo/**"]);
+        assert_eq!(
+            direct_pattern_strings(&compiled),
+            vec!["**/foo/**", "foo/**"]
+        );
     }
 
     /// UTS-DD-exclude.3 wire-byte parity: `foo/*/` is directory-only,
