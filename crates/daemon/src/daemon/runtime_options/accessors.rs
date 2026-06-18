@@ -59,8 +59,11 @@ impl RuntimeOptions {
     ///
     /// Mirrors upstream `verbose` in `options.c`. Each `-v`, stacked short
     /// form (`-vv`, `-vvv`, ...), or `--verbose` increments the counter;
-    /// `--no-verbose` / `--no-v` reset it to zero.
-    #[allow(dead_code)] // REASON: accessor consumed by tests; runtime wiring tracked separately.
+    /// `--no-verbose` / `--no-v` reset it to zero. Consumed by
+    /// `apply_verbosity` at startup to seed the thread-local
+    /// `logging::VerbosityConfig` so subsequent `info_gte` / `debug_gte`
+    /// checks gate log output per upstream's `set_output_verbosity()`
+    /// semantics (upstream: options.c:2062).
     pub(crate) fn verbosity(&self) -> u8 {
         self.verbosity
     }
