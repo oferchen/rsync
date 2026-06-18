@@ -16,7 +16,7 @@
 //! `options.c:2002` flips `compress_choice = "zlibx"` when the count of
 //! `-z` flags is `>= 2` and no explicit `--compress-choice` was given).
 //! The negotiation surface lives in `crates/protocol` (capability advertise
-//! + `compress` capability bit) and the codec implementation in
+//! and `compress` capability bit) and the codec implementation in
 //! `crates/compress`.
 //!
 //! The recurring failure mode that motivates the UTS-NEXTEST-EDGE family
