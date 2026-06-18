@@ -46,8 +46,8 @@ use arbitrary::{Arbitrary, Unstructured};
 use libfuzzer_sys::fuzz_target;
 
 use protocol::{
-    BorrowedMessageFrame, BorrowedMessageFrames, MESSAGE_HEADER_LEN, MessageCode, MessageFrame,
-    MessageHeader, recv_msg,
+    recv_msg, BorrowedMessageFrame, BorrowedMessageFrames, MessageCode, MessageFrame,
+    MessageHeader, MESSAGE_HEADER_LEN,
 };
 
 /// Structured input for differential testing of the multiplex layer.
@@ -109,8 +109,8 @@ fn check_header_differential(raw: u32) {
 
             // Invariant 2: encode_raw round-trip.
             let re_encoded = a.encode_raw();
-            let re_decoded = MessageHeader::from_raw(re_encoded)
-                .expect("encode_raw produced invalid header");
+            let re_decoded =
+                MessageHeader::from_raw(re_encoded).expect("encode_raw produced invalid header");
             assert_eq!(
                 a.code(),
                 re_decoded.code(),
@@ -171,9 +171,7 @@ fn check_frame_roundtrip(input: &DiffInput) {
     );
 
     // Invariant 7: frame.header() agrees with decoded header.
-    let frame_header = frame
-        .header()
-        .expect("header() failed on valid frame");
+    let frame_header = frame.header().expect("header() failed on valid frame");
     assert_eq!(frame_header.code(), code);
     assert_eq!(frame_header.payload_len() as usize, payload.len());
 
@@ -269,11 +267,13 @@ fn check_iterator_vs_manual(bytes: &[u8]) {
         }
     }
 
-    // Collect frames via manual decode_from_slice loop.
+    // Collect frames via manual decode_from_slice loop. Mirror BorrowedMessageFrames::next:
+    // attempt to decode while the remainder is non-empty so a short tail surfaces a
+    // TruncatedHeader Err rather than silently exiting, matching iterator semantics.
     let mut manual_frames: Vec<(MessageCode, Vec<u8>)> = Vec::new();
     let mut remaining = bytes;
     let mut manual_stopped_on_error = false;
-    while remaining.len() >= MESSAGE_HEADER_LEN {
+    while !remaining.is_empty() {
         match BorrowedMessageFrame::decode_from_slice(remaining) {
             Ok((frame, rest)) => {
                 manual_frames.push((frame.code(), frame.payload().to_vec()));
@@ -342,9 +342,7 @@ fn check_raw_bytes(data: &[u8]) {
         (Err(_), Err(_)) => {}
         _ => {
             // One succeeded and the other failed - finding.
-            panic!(
-                "raw bytes: owned/borrowed disagree: owned={owned:?} borrowed={borrowed:?}"
-            );
+            panic!("raw bytes: owned/borrowed disagree: owned={owned:?} borrowed={borrowed:?}");
         }
     }
 }
