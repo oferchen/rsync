@@ -150,11 +150,6 @@ impl ReceiverContext {
                 }
             }
 
-            // upstream: rsync.c:674
-            if self.config.flags.verbose && self.config.connection.client_mode {
-                info_log!(Name, 1, "{}", relative_path.display());
-            }
-
             let ndx = self.flat_to_wire_ndx(file_idx);
             ndx_write_codec.write_ndx(&mut *writer, ndx)?;
 
@@ -423,6 +418,17 @@ impl ReceiverContext {
                 !file_entry.is_symlink(),
             ) {
                 metadata_errors.push((file_path.clone(), acl_err.to_string()));
+            }
+
+            // upstream: rsync.c:672-676 set_file_attrs emits the bare-name
+            // notice AFTER the transfer/uptodate decision is known. Files
+            // that take this branch are always `updated` (the receiver only
+            // enters the delta loop when the generator selected the file
+            // for transfer), so emit the upstream "updated" line. Uptodate
+            // files are routed through the event-stream MetadataReused path
+            // and never reach this point.
+            if self.config.flags.verbose && self.config.connection.client_mode {
+                info_log!(Name, 1, "{}", relative_path.display());
             }
 
             // upstream: io.c:820 stats.total_read only counts bytes read

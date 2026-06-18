@@ -23,5 +23,6 @@ mod hard_links;
 mod munge_symlinks;
 mod parallel_delta_notice;
 mod partial_resume;
+mod post_decision_name_emission;
 mod support;
 mod symlinks_and_devices;
