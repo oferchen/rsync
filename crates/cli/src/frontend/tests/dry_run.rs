@@ -68,7 +68,7 @@ fn dry_run_with_verbose_lists_files_on_stdout() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        OsString::from("-nv"),
+        OsString::from("-rnv"),
         source_operand,
         dest_dir.clone().into_os_string(),
     ]);
@@ -81,6 +81,8 @@ fn dry_run_with_verbose_lists_files_on_stdout() {
     );
 
     // upstream: -v lists the files that would be transferred on stdout.
+    // Recurse is required for upstream to descend the source directory
+    // (options.c:112 defaults recurse=0).
     let output = String::from_utf8_lossy(&stdout);
     assert!(
         output.contains("file1.txt"),
@@ -293,7 +295,7 @@ fn dry_run_with_exclude_filter() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
-        OsString::from("-nv"),
+        OsString::from("-rnv"),
         OsString::from("--exclude=*.log"),
         source_operand,
         dest_dir.clone().into_os_string(),
