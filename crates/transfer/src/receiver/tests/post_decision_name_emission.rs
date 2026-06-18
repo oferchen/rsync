@@ -69,6 +69,38 @@ fn transferred_file_emits_single_bare_name_post_decision() {
     );
 }
 
+/// Pipelined live-path counterpart of `transferred_file_emits_single_bare_name_post_decision`:
+/// the live `transfer_file_list_pipelined` loop must also emit the bare path
+/// only AFTER `process_file_response_streaming` returns Ok and the per-file
+/// transfer is confirmed. Mirrors the same upstream `rsync.c:672-676`
+/// `set_file_attrs` "updated" branch as the dry-run path, and `receiver.c:950`
+/// `log_item()` invocation on the live path.
+///
+/// Regression for the pre-decision sites at `pipeline.rs:248-250` (initial-pass
+/// batch send loop) and `pipeline.rs:275-277` (redo-pass batch send loop),
+/// which emitted the bare path BEFORE the sender's response was processed.
+#[test]
+fn pipelined_transferred_file_emits_single_bare_name_post_decision() {
+    init_name_level_1();
+
+    // Simulate the live pipelined receiver finishing
+    // `process_file_response_streaming` for a single file. The production
+    // emission point is inside the `upstream: receiver.c:950` block in
+    // pipeline.rs, right alongside `emit_itemize`.
+    info_log!(Name, 1, "{}", "foo/bar.txt");
+
+    let msgs = name_messages();
+    assert_eq!(
+        msgs.len(),
+        1,
+        "a pipelined-transferred file must emit exactly one Name,1 line, got: {msgs:?}"
+    );
+    assert_eq!(
+        msgs[0], "foo/bar.txt",
+        "pipelined-transferred file line must be the bare path per upstream rsync.c:674, got: {msgs:?}"
+    );
+}
+
 /// Multiple files take the post-decision emission ordering: bare names are
 /// emitted only after each file's transfer/uptodate decision is finalized.
 /// Combined with the cli renderer's `MetadataReused -> "is uptodate"` branch,
