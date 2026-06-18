@@ -28,7 +28,7 @@
 //!   as [`CowSupport::Probable`] so a single FICLONE probe confirms.
 //!
 //! The detection result is cached in a process-wide
-//! [`OnceLock<Mutex<HashMap>>`] keyed by `statfs.f_fsid` so repeated
+//! `OnceLock<Mutex<HashMap>>` keyed by `statfs.f_fsid` so repeated
 //! copies on the same mountpoint only pay the `statfs` cost once.
 //!
 //! # Platform Support
