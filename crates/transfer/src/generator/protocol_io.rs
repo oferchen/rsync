@@ -13,7 +13,7 @@
 use std::io::{self, IoSlice, Read, Write};
 use std::time::{Duration, Instant};
 
-use logging::{PhaseTimer, debug_log, info_log};
+use logging::{InfoFlag, PhaseTimer, debug_log, info_gte, info_log};
 use protocol::CompatibilityFlags;
 use protocol::codec::{NDX_FLIST_EOF, NDX_FLIST_OFFSET, NdxCodec, NdxCodecEnum};
 use protocol::wire::SignatureBlock;
@@ -272,13 +272,17 @@ impl GeneratorContext {
     /// In client mode, writes directly to the process stdout via the
     /// itemize callback, matching upstream's `rwrite()` `FCLIENT` path.
     ///
-    /// Suppresses output when `iflags` has no significant flags set (the file
-    /// is completely unchanged), matching upstream's gate in `itemize()` at
-    /// `generator.c:574-576`.
+    /// Upstream `generator.c:582-583` emits when ANY of four OR'd conditions
+    /// hold: significant flags set, `INFO_GTE(NAME, 2)`, `stdout_format_has_i
+    /// > 1`, or an alternate basis name follows. Mirror the same semantic so
+    /// unchanged entries (`iflags == 0`) still appear under `-vv` (the case
+    /// the upstream `itemize.test` testsuite exercises with `-ivvplrtH`).
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:574-576` - `iflags & (SIGNIFICANT_ITEM_FLAGS|ITEM_REPORT_XATTR)`
+    /// - `generator.c:582-583` - emit gate: `(iflags & (SIGNIFICANT_ITEM_FLAGS
+    ///   | ITEM_REPORT_XATTR)) || INFO_GTE(NAME, 2) || stdout_format_has_i > 1
+    ///   || (xname && *xname)`
     /// - `sender.c:287` - `maybe_log_item()` for non-transfer items
     /// - `sender.c:430` - `log_item()` after file transfer
     /// - `log.c:330-340` - `rwrite()`: when `am_server`, sends MSG_INFO;
@@ -293,10 +297,16 @@ impl GeneratorContext {
         if !self.config.flags.info_flags.itemize {
             return Ok(());
         }
-        // upstream: generator.c:574-576 - only emit when significant flags are
-        // set. When iflags == 0 (file is completely up-to-date), no line is
-        // produced.
-        if !iflags.has_significant_flags() {
+        // upstream: generator.c:582-583 - the gate is the OR of four
+        // conditions. Significant flags is the common case; INFO_GTE(NAME, 2)
+        // makes `-vv` surface unchanged entries; ITEM_XNAME_FOLLOWS forces
+        // emission when an alternate basis name trails. `stdout_format_has_i
+        // > 1` is the `-ii` "show even unchanged" knob; oc-rsync does not
+        // distinguish single vs double `-i` yet, so that fourth condition is
+        // omitted here and the other three are honored.
+        let force_emit =
+            info_gte(InfoFlag::Name, 2) || iflags.raw() & ItemFlags::ITEM_XNAME_FOLLOWS != 0;
+        if !iflags.has_significant_flags() && !force_emit {
             return Ok(());
         }
         if ndx >= self.file_list.len() {
