@@ -466,11 +466,6 @@ impl ReceiverContext {
                 writer.write_all(&SenderAttrs::ITEM_TRANSFER.to_le_bytes())?;
             }
 
-            // Verbose: log the file name (client-mode only, same as non-dry-run path)
-            if self.config.flags.verbose && self.config.connection.client_mode {
-                info_log!(Name, 1, "{}", file_entry.path().display());
-            }
-
             // Flush before blocking on the sender's echo. The multiplex
             // writer's dirty-flag optimization skips the syscall when the
             // request fits within the 64KB buffer and no prior data was
@@ -485,6 +480,15 @@ impl ReceiverContext {
                     preserve_xattrs,
                     want_xattr_optim,
                 )?;
+
+            // upstream: rsync.c:672-676 set_file_attrs emits the bare-name
+            // notice AFTER the transfer decision is known. In dry-run the
+            // sender's echo confirms the file would have been transferred,
+            // so emit the "updated" line at the post-decision point to
+            // match upstream wire order.
+            if self.config.flags.verbose && self.config.connection.client_mode {
+                info_log!(Name, 1, "{}", file_entry.path().display());
+            }
         }
 
         writer.flush()?;
