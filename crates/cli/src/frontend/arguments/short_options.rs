@@ -73,13 +73,21 @@ fn classify_short_options(command: &ClapCommand) -> (HashSet<char>, HashSet<char
         let takes_values = num_args.takes_values();
         let min_values = num_args.min_values();
         let action = argument.get_action();
+        // Arguments that require `=` separator (such as `-h` with
+        // `require_equals(true)` + `num_args(0..=1)`) do not consume a packed
+        // remainder. clap routes only `-h=2` to the option; `-hh` clusters two
+        // independent `-h` occurrences. Treat them as flag-like so the cluster
+        // expander emits one `-h` per character and bare flag counts work.
+        let require_equals_with_optional_value =
+            argument.is_require_equals_set() && min_values == 0;
 
         // Arguments that require at least one value (for example `-M`) must
         // only appear at the end of a cluster so the following argument can be
         // treated as their value. Optional arguments (such as `-h`) are
         // treated as simple flags to preserve existing clap behaviour.
-        let requires_value = min_values > 0
-            || (takes_values && matches!(action, ArgAction::Set | ArgAction::Append));
+        let requires_value = !require_equals_with_optional_value
+            && (min_values > 0
+                || (takes_values && matches!(action, ArgAction::Set | ArgAction::Append)));
 
         if requires_value {
             value_options.extend(shorts);
