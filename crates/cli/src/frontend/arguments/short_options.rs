@@ -6,8 +6,8 @@
 use std::collections::HashSet;
 use std::ffi::OsString;
 
+use clap::Command as ClapCommand;
 use clap::builder::ValueRange;
-use clap::{ArgAction, Command as ClapCommand};
 
 /// Expands clusters of short options so the [`clap`] command can parse them.
 ///
@@ -70,16 +70,16 @@ fn classify_short_options(command: &ClapCommand) -> (HashSet<char>, HashSet<char
         };
 
         let num_args = argument.get_num_args().unwrap_or(ValueRange::EMPTY);
-        let takes_values = num_args.takes_values();
         let min_values = num_args.min_values();
-        let action = argument.get_action();
 
-        // Arguments that require at least one value (for example `-M`) must
-        // only appear at the end of a cluster so the following argument can be
-        // treated as their value. Optional arguments (such as `-h`) are
-        // treated as simple flags to preserve existing clap behaviour.
-        let requires_value = min_values > 0
-            || (takes_values && matches!(action, ArgAction::Set | ArgAction::Append));
+        // Arguments that require at least one value (for example `-M` or
+        // `-f<rule>`) must only appear at the end of a cluster so the
+        // following argument can be treated as their value. Optional
+        // arguments (such as `-h`, which accepts `-h` or `-h=2`) are
+        // treated as simple flags to preserve existing clap behaviour;
+        // packing a value onto an optional-value short flag is not
+        // supported by upstream rsync.
+        let requires_value = min_values > 0;
 
         if requires_value {
             value_options.extend(shorts);
@@ -133,6 +133,7 @@ fn expand_cluster(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::ArgAction;
 
     fn make_flags(chars: &str) -> HashSet<char> {
         chars.chars().collect()
