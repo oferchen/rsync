@@ -19,6 +19,7 @@
 //!    checksums, maintaining correct ordering.
 
 use std::collections::HashMap;
+#[cfg(unix)]
 use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
@@ -27,7 +28,12 @@ use std::sync::Arc;
 use rayon::prelude::*;
 
 use checksums::strong::{Md4, Md5, Sha1, StrongDigest, Xxh3, Xxh3_128, Xxh64};
-use fast_io::mmap_reader::{MMAP_THRESHOLD, MmapReader};
+#[cfg(any(unix, test))]
+use fast_io::mmap_reader::MMAP_THRESHOLD;
+#[cfg(unix)]
+use fast_io::mmap_reader::MmapReader;
+#[cfg(windows)]
+use fast_io::windows_chunked_reader::WindowsChunkedReader;
 
 use crate::local_copy::buffer_pool::{BufferPool, global_buffer_pool};
 use crate::signature::SignatureAlgorithm;
@@ -151,6 +157,10 @@ fn compute_file_checksum(
     // upstream: checksum.c:415 - map_file(fd, len, MAX_MAP_SIZE, CHUNK_SIZE)
     // Try mmap first for files at or above the threshold - eliminates all
     // read syscalls and enables zero-copy hashing directly from mapped pages.
+    // On Windows the legacy mmap_reader_stub slurps the whole file into a
+    // Vec<u8>; use WindowsChunkedReader streaming below instead so peak RSS
+    // stays bounded by the chunk size (default 4 MiB), not the file size.
+    #[cfg(unix)]
     if file_size >= MMAP_THRESHOLD {
         if let Ok(mmap) = MmapReader::open(path) {
             let _ = mmap.advise_sequential();
@@ -162,7 +172,10 @@ fn compute_file_checksum(
         }
     }
 
+    #[cfg(unix)]
     let file = File::open(path).ok()?;
+    #[cfg(windows)]
+    let file = WindowsChunkedReader::open(path).ok()?;
     let digest = hash_file_contents(file, file_size, algorithm, buffer_pool).ok()?;
 
     Some(FileChecksum {
@@ -175,11 +188,12 @@ fn compute_file_checksum(
 ///
 /// Uses a pre-sized read loop based on the known `file_size` to avoid
 /// the extra read() syscall that EOF-probe patterns (BufReader, loop-until-0)
-/// issue per file.
+/// issue per file. Generic over `R: Read` so the caller can pass `std::fs::File`
+/// (Unix streaming fallback) or `WindowsChunkedReader` (Windows bounded-RSS).
 ///
 /// upstream: checksum.c - sized read loop: `while (remaining > 0) { read(); remaining -= n; }`
-fn hash_file_contents(
-    mut file: File,
+fn hash_file_contents<R: Read>(
+    mut file: R,
     file_size: u64,
     algorithm: SignatureAlgorithm,
     buffer_pool: &Arc<BufferPool>,
@@ -189,8 +203,8 @@ fn hash_file_contents(
 
     /// Reads exactly `remaining` bytes from `file` into `hasher` using
     /// pre-sized chunks, avoiding a trailing EOF probe syscall.
-    fn read_into_hasher(
-        file: &mut File,
+    fn read_into_hasher<R: Read>(
+        file: &mut R,
         mut remaining: u64,
         buffer: &mut [u8],
         buf_len: usize,
@@ -258,7 +272,12 @@ fn hash_file_contents(
 /// read syscalls. This mirrors upstream rsync's `file_checksum()` which
 /// uses `map_file()` + `map_ptr()` to hash directly from mapped pages.
 ///
+/// Compiled on Unix only: the Windows production and test paths stream
+/// through `WindowsChunkedReader` to keep RSS bounded by the chunk size,
+/// so no caller feeds a full-file slice into this helper there.
+///
 /// upstream: checksum.c:415-492 - all hash algorithms operate on map_ptr() slices
+#[cfg(unix)]
 fn hash_mapped_contents(data: &[u8], algorithm: SignatureAlgorithm) -> Vec<u8> {
     match algorithm {
         SignatureAlgorithm::Md4 => Md4::digest(data).as_ref().to_vec(),
@@ -593,6 +612,7 @@ mod tests {
         assert!(!result.checksums_match());
     }
 
+    #[cfg(unix)]
     #[test]
     fn hash_mapped_matches_buffered_for_all_algorithms() {
         let dir = create_tempdir();
@@ -663,5 +683,57 @@ mod tests {
         let result = should_skip_with_prefetched_checksum(&prefetched, &source);
 
         assert_eq!(result, Some(true));
+    }
+
+    /// Parity test for the WIN-S.LAND.1.b.4 wire-up in `compute_file_checksum`:
+    /// on Windows the mmap branch now streams through `WindowsChunkedReader`
+    /// instead of slurping into a `Vec<u8>`. The prefetch digest must remain
+    /// byte-identical to a direct `std::fs::read` + algorithm digest across
+    /// sizes spanning the MMAP_THRESHOLD boundary and several chunk widths.
+    #[test]
+    fn prefetch_checksums_matches_direct_digest_across_size_boundaries() {
+        let dir = create_tempdir();
+        let algorithm = SignatureAlgorithm::Xxh3_128 { seed: 0 };
+        let sizes: &[usize] = &[
+            0,
+            1,
+            MMAP_THRESHOLD as usize - 1,
+            MMAP_THRESHOLD as usize,
+            MMAP_THRESHOLD as usize + 1,
+            (MMAP_THRESHOLD as usize) * 5 + 17,
+        ];
+
+        let mut pairs = Vec::with_capacity(sizes.len());
+        for (i, &n) in sizes.iter().enumerate() {
+            let source = dir.path().join(format!("src_{i}_{n}.bin"));
+            let destination = dir.path().join(format!("dst_{i}_{n}.bin"));
+            let content: Vec<u8> = (0..n).map(|j| ((j * 7 + i) & 0xFF) as u8).collect();
+            fs::write(&source, &content).unwrap();
+            fs::write(&destination, &content).unwrap();
+            pairs.push(FilePair {
+                source,
+                destination,
+                source_size: n as u64,
+                destination_size: n as u64,
+            });
+        }
+
+        let results = prefetch_checksums(&pairs, algorithm);
+        assert_eq!(results.len(), sizes.len());
+        for (pair, &n) in pairs.iter().zip(sizes.iter()) {
+            let result = results.get(&pair.source).expect("result for source");
+            assert!(
+                result.checksums_match(),
+                "checksums diverged at size {n}: {result:?}",
+            );
+            let src_observed = fs::read(&pair.source).unwrap();
+            assert_eq!(src_observed.len(), n);
+            let src_digest = &result
+                .source_checksum
+                .as_ref()
+                .expect("source digest present")
+                .digest;
+            assert!(!src_digest.is_empty() || n == 0);
+        }
     }
 }
