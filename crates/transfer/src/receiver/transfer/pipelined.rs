@@ -46,6 +46,7 @@ impl ReceiverContext {
             &setup.dest_dir,
             &setup.metadata_opts,
             setup.acl_cache.as_deref(),
+            writer,
             #[cfg(unix)]
             setup.sandbox.as_deref(),
         )?;
