@@ -113,9 +113,7 @@ fn validate_chunk_size(chunk_size: usize) -> io::Result<()> {
 /// Returns `true` when `chunk_size` satisfies the env-var contract: a power
 /// of two within `MIN_CHUNK_SIZE..=MAX_CHUNK_SIZE`.
 fn is_valid_env_chunk_size(chunk_size: usize) -> bool {
-    chunk_size >= MIN_CHUNK_SIZE
-        && chunk_size <= MAX_CHUNK_SIZE
-        && chunk_size.is_power_of_two()
+    chunk_size >= MIN_CHUNK_SIZE && chunk_size <= MAX_CHUNK_SIZE && chunk_size.is_power_of_two()
 }
 
 /// Returns the cached env override, loading it from the environment on first
