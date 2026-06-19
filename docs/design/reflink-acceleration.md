@@ -191,3 +191,136 @@ separately:
 - **REFLINK-10**: in-process bench comparing FICLONE +
   `detect_cow_filesystem` against the existing `copy_file_range`
   fallback at a range of file counts and sizes.
+
+## REFLINK-1: Local-copy dispatch audit (current master)
+
+Refreshes the stale `docs/design/reflink-1-local-copy-dispatch-audit.md`
+inventory against actual master. The earlier audit asserted "no Linux
+FICLONE arm in `execute_transfer`"; that gap has since been closed.
+This section reflects the production code in
+`crates/engine/src/local_copy/executor/file/copy/`.
+
+### Current dispatch site
+
+Entry: `crates/engine/src/local_copy/executor/file/copy/mod.rs::copy_file`
+hands regular-file transfers to `execute_transfer` in
+`crates/engine/src/local_copy/executor/file/copy/transfer/execute/mod.rs`.
+That module evaluates per-OS fast-path arms before falling through to
+`open_destination_writer` + `copy_file_contents`. Quoting the dispatch
+block (lines 173-249):
+
+```rust
+// Fast path: macOS clonefile for new whole-file copies.
+#[cfg(target_os = "macos")]
+if clonefile::eligible(...) && clonefile::try_clone(...)? {
+    return Ok(());
+}
+// Fast path: Windows CopyFileExW / ReFS reflink for new whole-file
+#[cfg(target_os = "windows")]
+if wincopy::eligible(...) && wincopy::try_copy(...)? {
+    return Ok(());
+}
+// Fast path: Linux FICLONE reflink for new whole-file copies on
+// Btrfs, XFS (reflink enabled), and bcachefs.
+#[cfg(target_os = "linux")]
+if ficlone::eligible(...) && ficlone::try_clone(...)? {
+    return Ok(());
+}
+```
+
+Submodules: `transfer/execute/clonefile.rs`, `transfer/execute/wincopy.rs`,
+and `transfer/execute/ficlone.rs` are all wired today.
+
+### Copy-method inventory matrix
+
+Matrix of whole-file copy primitives exposed by `fast_io` and their
+status in the local-copy executor (not counting delta or read-loop
+paths). Wired = arm exists in `execute_transfer`. Available = primitive
+exists in `fast_io` but is not reached directly from the executor.
+
+| Method | Platform | Wired into executor? | fast_io entry | Notes |
+| --- | --- | --- | --- | --- |
+| `clonefile(2)` | macOS APFS | YES (`transfer/execute/clonefile.rs::try_clone`) | `PlatformCopy::copy_file` -> `dispatch::clonefile_impl` | Zero-copy; gated on `is_zero_copy()`; falls through on `StandardCopy`. |
+| `fcopyfile(3)` | macOS | NO (executor) / YES (DefaultPlatformCopy fallback) | `dispatch::fcopyfile_impl` | Kernel-accelerated data-copy fallback when clonefile is ineligible. |
+| `ioctl(FICLONE)` | Linux Btrfs/XFS-reflink/bcachefs | YES (`transfer/execute/ficlone.rs::try_clone`) | `fast_io::try_ficlone` -> `dispatch::try_ficlone_impl` | Pre-gated by `cow_detect::detect_cow_support` (REFLINK-2); EOPNOTSUPP/EXDEV/EINVAL cached and translate to fall-through. |
+| `FSCTL_DUPLICATE_EXTENTS_TO_FILE` | Windows ReFS | YES (`transfer/execute/wincopy.rs::try_copy`, accepts `ReFsReflink`) | `fast_io::try_refs_reflink` | Pre-gated by `refs_detect::is_refs_filesystem`. |
+| `CopyFileExW` | Windows | YES (`wincopy::try_copy`, accepts `CopyFileEx`) | `PlatformCopy::copy_file` -> `dispatch::copy_file_ex_impl` | Kernel-side data copy with `COPY_FILE_NO_BUFFERING` for files > 4 MiB. |
+| `copy_file_range(2)` | Linux | NO direct arm; reached via the generic `copy_file_contents_buffered` loop | `fast_io::copy_file_range::copy_file_contents_buffered` | Last-resort read/write loop fallback after FICLONE/iouring arms decline. |
+| `sendfile(2)` | Linux/macOS (socket-target) | NO (engine local-copy is file-to-file) | `fast_io::platform_sendfile` / `sendfile_macos` | Used in network sender path, not the local-copy executor. |
+| `splice(2)` | Linux (pipe-target) | NO | `fast_io::splice` | Network sender path only. |
+| `vmsplice(2)` | Linux | NO | `fast_io::vmsplice_writer` | Network sender path only. |
+| `io_uring registered-buffer writes` | Linux (`iouring-data-writes` feature) | YES (`transfer/execute/iouring.rs::try_dispatch`) | `fast_io::io_uring_ops` | Not a reflink; routes after the FICLONE arm declines and before the generic write strategy. |
+| `std::io::copy` portable read/write | All | NO direct arm; reached via `copy_file_contents` | std | Final fallback inside `select_write_strategy`. |
+
+### Recommended reflink insertion point (REFLINK-9 already landed here)
+
+The insertion point that REFLINK-3/9 chose - and that REFLINK-1 should
+reconfirm rather than relocate - is
+`crates/engine/src/local_copy/executor/file/copy/transfer/execute/mod.rs:228`,
+where the `#[cfg(target_os = "linux")]` FICLONE arm sits between the
+Windows `wincopy::try_copy` arm and the `open_source_file` /
+delta-signature continuation. Any additional reflink dispatch (for
+example a future cross-fs `copy_file_range`-as-reflink probe under
+REFLINK-4) should reuse the same gating shape - `eligible` returning
+`bool` against `TransferFlags`, `try_clone` returning
+`Result<bool, LocalCopyError>` so a soft-fail falls through to the
+existing generic write path. The eligibility predicate must keep
+matching `clonefile::eligible` and `wincopy::eligible`: new
+destination, whole-file enabled, no inplace / partial / sparse /
+compression / bandwidth limiter / delay-updates / temp-dir / copy-source
+override. Diverging from that shape risks breaking the `--no-whole-file`
+and `--partial` invariants the existing arms enforce.
+
+### Same-filesystem detection assessment
+
+`fast_io` does not implement a generic `same_fs(src, dst)` helper that
+compares `st_dev`. Instead it relies on per-mechanism guard layers:
+
+- **Linux FICLONE**: pre-flighted by
+  `fast_io::platform_copy::cow_detect::detect_cow_support(parent)` and
+  cached per `statfs.f_fsid` (REFLINK-2). EXDEV / EOPNOTSUPP / EINVAL
+  outcomes are written back via `record_probe_outcome` so the next
+  caller on the same mount skips the ioctl. Cross-fs source/destination
+  surfaces as `EXDEV` from the kernel and gets cached.
+- **Windows ReFS reflink**: pre-flighted by
+  `fast_io::refs_detect::is_refs_filesystem(path)` which calls
+  `GetVolumeInformationByHandleW` and caches results keyed on volume
+  root path in a process-wide `Mutex<HashMap<PathBuf, bool>>`.
+- **macOS clonefile**: cross-volume calls return `EXDEV` from
+  `clonefile(2)`; the wrapper returns the error, the executor's
+  `try_clone` treats any error as fall-through, and there is no cached
+  same-volume predicate.
+
+Recommendation: keep this shape. A generic `same_fs(src, dst)` helper
+that compares `st_dev` (Linux/macOS) or volume serial number (Windows)
+would let the executor short-circuit before opening files, but the
+existing per-mechanism caching already collapses the ioctl cost on
+subsequent calls. If REFLINK-4 (FICLONERANGE) lands a partial-reflink
+path that needs the same gate, share `cow_detect::detect_cow_support`
+rather than introducing a parallel `st_dev` cache. Windows ReFS
+detection is already cached per volume root, which is the right
+granularity for FSCTL_DUPLICATE_EXTENTS.
+
+### Sequencing for REFLINK-3 / REFLINK-9 (status)
+
+- REFLINK-3 (FICLONE whole-file dispatch arm) - SHIPPED. Lives at
+  `transfer/execute/ficlone.rs`; the executor calls it at
+  `transfer/execute/mod.rs:228-249`.
+- REFLINK-9 (executor wiring) - SHIPPED in the same series as
+  REFLINK-3. The symmetry with `clonefile::try_clone` and
+  `wincopy::try_copy` is intentional and should be preserved when
+  REFLINK-4 lands.
+- REFLINK-4 (FICLONERANGE for delta-apply COPY tokens) - still pending.
+  When it lands, the call site is the delta-apply COPY-token writer in
+  the engine, not `execute_transfer`. The same-fs gate should reuse
+  `cow_detect`.
+- `--reflink=auto|always|never` (PR #5823's `RequireCowPlatformCopy`) -
+  still pending. Once it lands, both `transfer/execute/ficlone.rs` and
+  `transfer/execute/wincopy.rs` should switch between
+  `DefaultPlatformCopy` and `RequireCowPlatformCopy` based on the
+  parsed `LocalCopyOptions::platform_copy` value rather than
+  introducing a new field.
+
+The stale `docs/design/reflink-1-local-copy-dispatch-audit.md`
+recommendation block predates the FICLONE-arm landing; this section
+supersedes it.
