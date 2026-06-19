@@ -6,6 +6,11 @@ Scope: concrete implementation steps for replacing the synchronous accept loop i
 `crates/daemon` with a Tokio-driven listener that bridges to the existing sync
 transfer worker via `spawn_blocking`.
 
+> Feature flag: the implementation described here lands behind the existing
+> `async-daemon` Cargo feature on `crates/daemon` (see `crates/daemon/Cargo.toml`).
+> The long-form design rationale lives in
+> `docs/design/daemon-async-accept-sync-workers.md`.
+
 ## 1. Background
 
 - Issue #1934 captured the RFC for a Tokio-based async accept loop. The RFC has
