@@ -30,9 +30,10 @@ pub enum ServerWriter<W: Write> {
     Multiplex(MultiplexWriter<W>),
     /// Compressed+Multiplex mode - compress then multiplex.
     Compressed(CompressedWriter<MultiplexWriter<W>>),
-    /// Temporary state during in-place transformations.
-    /// Any operation on a Taken writer panics.
-    #[doc(hidden)]
+    /// Temporary sentinel state used during in-place transformations
+    /// (e.g. `mem::replace` in [`Self::activate_multiplex_inplace`] and
+    /// [`Self::finalize_compression`]). Any I/O operation while in this
+    /// state returns an `InvalidInput` error.
     Taken,
 }
 
