@@ -1073,6 +1073,7 @@ fn list_only_fifo_shows_pipe_type() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("-r"),
         OsString::from("--specials"),
         source_arg,
         dest_dir.into_os_string(),
