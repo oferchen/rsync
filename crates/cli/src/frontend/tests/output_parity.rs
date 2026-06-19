@@ -1767,6 +1767,7 @@ fn parity_info_progress2_shows_to_chk_counter() {
     let (code, stdout, _stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--info=progress2"),
+        OsString::from("--recursive"),
         src_operand,
         dest_dir.into_os_string(),
     ]);
