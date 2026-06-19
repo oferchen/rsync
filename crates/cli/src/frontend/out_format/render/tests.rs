@@ -1860,7 +1860,7 @@ fn emit_out_format_emits_unchanged_directory_under_info_name_2() {
     let ctx = OutFormatContext::default().with_emit_unchanged(true);
     emit_out_format(&events, &format, &ctx, &mut output).unwrap();
     let rendered = String::from_utf8(output).unwrap();
-    assert_eq!(rendered, ".d          test.txt\n");
+    assert_eq!(rendered, ".d          test.txt/\n");
 }
 
 #[test]

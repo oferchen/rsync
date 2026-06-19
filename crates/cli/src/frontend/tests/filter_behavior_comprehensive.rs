@@ -329,6 +329,7 @@ fn transfer_with_short_f_exclude_skips_matching_files() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("-f"),
         OsString::from("- *.log"),
         source_root.into_os_string(),
@@ -362,6 +363,7 @@ fn transfer_with_short_f_include_then_exclude_all() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("-f"),
         OsString::from("+ *.txt"),
         OsString::from("-f"),
@@ -392,6 +394,7 @@ fn transfer_with_short_f_clear_resets_rules() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("-f"),
         OsString::from("- *.log"),
         OsString::from("-f"),
@@ -428,6 +431,7 @@ fn transfer_with_short_f_merge_applies_rules_from_file() {
     let filter_arg = format!("merge {}", filter_file.display());
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("-f"),
         OsString::from(filter_arg),
         source_root.into_os_string(),
@@ -459,6 +463,7 @@ fn transfer_with_multiple_filters_order_matters() {
     // First-match-wins: include *.txt, exclude *.log, then everything else passes
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("--filter"),
         OsString::from("+ *.txt"),
         OsString::from("-f"),
@@ -493,6 +498,7 @@ fn transfer_with_filter_equals_excludes_patterns() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("--filter=- *.bak"),
         source_root.into_os_string(),
         dest_root.clone().into_os_string(),
@@ -807,6 +813,7 @@ fn transfer_with_filter_keyword_exclude() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("-f"),
         OsString::from("exclude *.bak"),
         source_root.into_os_string(),
@@ -840,6 +847,7 @@ fn transfer_with_filter_keyword_include_then_exclude_all() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("-f"),
         OsString::from("include *.txt"),
         OsString::from("-f"),
@@ -874,6 +882,7 @@ fn transfer_with_short_f_dot_merge_shorthand() {
     let merge_arg = format!(". {}", filter_file.display());
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("-f"),
         OsString::from(merge_arg),
         source_root.into_os_string(),
@@ -905,6 +914,7 @@ fn transfer_with_mixed_f_and_filter_preserves_order() {
     // -f include *.txt, --filter exclude *.log, -f exclude *.bak
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("-f"),
         OsString::from("+ *.txt"),
         OsString::from("--filter"),
@@ -972,6 +982,7 @@ fn transfer_with_multiple_wildcard_exclude_patterns() {
 
     let (code, _, _) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("-f"),
         OsString::from("- *.tmp"),
         OsString::from("-f"),

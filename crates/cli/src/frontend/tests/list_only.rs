@@ -54,6 +54,7 @@ fn list_only_formats_directory_without_trailing_slash() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("-r"),
         source_dir.into_os_string(),
         dest_dir.into_os_string(),
     ]);
@@ -186,6 +187,7 @@ fn list_only_formats_special_permission_bits_like_rsync() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("-r"),
         source_arg,
         dest_dir.into_os_string(),
     ]);
@@ -833,6 +835,7 @@ fn list_only_executable_file_permissions() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("-r"),
         source_arg,
         dest_dir.into_os_string(),
     ]);
@@ -882,6 +885,7 @@ fn list_only_human_readable_size_format() {
         OsString::from(RSYNC),
         OsString::from("--list-only"),
         OsString::from("--human-readable"),
+        OsString::from("-r"),
         source_arg,
         dest_dir.into_os_string(),
     ]);
@@ -1022,6 +1026,7 @@ fn list_only_implies_dry_run_no_files_transferred() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("-r"),
         source_arg,
         dest_dir.clone().into_os_string(),
     ]);
@@ -1072,6 +1077,7 @@ fn list_only_fifo_shows_pipe_type() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("-r"),
         OsString::from("--specials"),
         source_arg,
         dest_dir.into_os_string(),
