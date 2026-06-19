@@ -239,6 +239,8 @@ pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
         config.load_default_paths(),
     )?;
 
+    apply_verbosity(options.verbosity());
+
     // upstream: clientserver.c:1498 - `if (is_a_socket(STDIN_FILENO))`
     // When stdin is a socket, serve a single session over stdio (inetd mode)
     // instead of binding a TCP listener.
@@ -247,6 +249,23 @@ pub fn run_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
     }
 
     serve_connections(options, external_signal_flags, pre_bound_listener)
+}
+
+/// Seeds the thread-local [`logging::VerbosityConfig`] from the daemon's
+/// `-v` / `--verbose` counter so subsequent `info_gte` / `debug_gte` checks
+/// emitted from the protocol and transfer crates respect the operator's
+/// requested verbosity.
+///
+/// upstream: options.c:2062 `set_output_verbosity(verbose, DEFAULT_PRIORITY)`
+/// is invoked once after option parsing in `main.c`/`daemon-main` startup.
+/// Without this seeding the daemon's `INFO_GTE`/`DEBUG_GTE` checks short-
+/// circuit at level 0 regardless of how many `-v` flags were stacked on the
+/// daemon command line, producing diagnostically silent daemons under
+/// `-vv`/`-vvv` and breaking upstream verbosity parity (the bug surfaced
+/// as a UTS testsuite divergence after PR #5887 made the daemon accept
+/// `-v`/`-vv`/`-vvv` without wiring the count to log-message filtering).
+pub(crate) fn apply_verbosity(level: u8) {
+    logging::init(logging::VerbosityConfig::from_verbose_level(level));
 }
 
 /// Runs the daemon protocol over stdin/stdout for remote-shell daemon mode.
@@ -296,6 +315,8 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
         config.arguments().to_vec()
     };
     let options = RuntimeOptions::parse_with_brand(&arguments, brand, config.load_default_paths())?;
+
+    apply_verbosity(options.verbosity());
 
     let RuntimeOptions {
         modules,
@@ -421,6 +442,8 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
         config.brand(),
         config.load_default_paths(),
     )?;
+
+    apply_verbosity(options.verbosity());
 
     let RuntimeOptions {
         bind_address, port, ..

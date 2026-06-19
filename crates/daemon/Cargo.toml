@@ -53,6 +53,7 @@ core = { path = "../core", default-features = false }
 metadata = { path = "../metadata", default-features = false }
 platform = { path = "../platform" }
 protocol = { path = "../protocol" }
+logging = { path = "../logging" }
 logging-sink = { path = "../logging-sink" }
 fs2 = "0.4"
 socket2 = { workspace = true, features = ["all"] }
