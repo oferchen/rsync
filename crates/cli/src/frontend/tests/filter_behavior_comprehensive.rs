@@ -493,6 +493,7 @@ fn transfer_with_filter_equals_excludes_patterns() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("--filter=- *.bak"),
         source_root.into_os_string(),
         dest_root.clone().into_os_string(),
@@ -807,6 +808,7 @@ fn transfer_with_filter_keyword_exclude() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("-f"),
         OsString::from("exclude *.bak"),
         source_root.into_os_string(),
@@ -840,6 +842,7 @@ fn transfer_with_filter_keyword_include_then_exclude_all() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("-f"),
         OsString::from("include *.txt"),
         OsString::from("-f"),
