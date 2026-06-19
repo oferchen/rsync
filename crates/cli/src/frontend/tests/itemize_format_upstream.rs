@@ -563,3 +563,133 @@ fn itemize_initial_recursive_transfer_emits_dir_rows_for_each_subdir() {
         "itemize must emit root, every intermediate subdir, and file rows in upstream order"
     );
 }
+
+/// UTS-IT.15: focused regression for the synthetic root `cd+++++++++ ./` row.
+///
+/// Upstream `generator.c:566-572` emits a single dir-row for the destination
+/// root on an initial recursive transfer under `-i`/`--itemize-changes`, even
+/// when the source tree contains only top-level files. This locks down that
+/// behaviour in isolation so a regression cannot hide behind a broader test
+/// also asserting per-file rows.
+///
+/// upstream: generator.c:566-572 root row emission.
+#[test]
+fn itemize_initial_recursive_transfer_emits_root_dir_row() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let from = tmp.path().join("from");
+    let to = tmp.path().join("to");
+
+    std::fs::create_dir(&from).expect("create from");
+    std::fs::write(from.join("one.txt"), b"one\n").expect("write one.txt");
+    std::fs::write(from.join("two.txt"), b"two\n").expect("write two.txt");
+
+    let from_arg = {
+        let mut p = from.into_os_string();
+        p.push("/");
+        p
+    };
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-iplr"),
+        from_arg,
+        to.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    let output = String::from_utf8(stdout).expect("utf8");
+
+    assert!(
+        output.contains("cd+++++++++ ./\n"),
+        "initial recursive transfer must emit synthetic root row `cd+++++++++ ./`: {output:?}"
+    );
+
+    // Lock the root row's position: it must precede every per-file row so
+    // upstream consumers parsing the stream in order see the dest root
+    // before any contained entry.
+    let lines: Vec<&str> = output
+        .lines()
+        .filter(|l| !l.starts_with("created directory "))
+        .collect();
+    let root_idx = lines
+        .iter()
+        .position(|l| *l == "cd+++++++++ ./")
+        .expect("root row present");
+    let first_file_idx = lines
+        .iter()
+        .position(|l| l.starts_with(">f"))
+        .expect("at least one file row");
+    assert!(
+        root_idx < first_file_idx,
+        "root `cd+++++++++ ./` row must precede per-file rows: {lines:?}"
+    );
+}
+
+/// UTS-IT.16: focused regression for `cd+++++++++ <subdir>/` rows on every
+/// implicitly-created intermediate directory.
+///
+/// Upstream emits one dir-row per directory entered during the recursive
+/// walk, including nested children that the user did not name on the command
+/// line. This test exercises a two-level nesting (`a/` then `a/b/`) and
+/// asserts both rows are present, in upstream order, before the per-file
+/// row inside the nested directory.
+///
+/// upstream: generator.c:566-572 + flist walk recursion.
+#[test]
+fn itemize_initial_recursive_transfer_emits_intermediate_subdir_rows() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let from = tmp.path().join("from");
+    let to = tmp.path().join("to");
+
+    std::fs::create_dir_all(from.join("a").join("b")).expect("create from/a/b");
+    std::fs::write(from.join("a").join("inside_a"), b"a\n").expect("write a/inside_a");
+    std::fs::write(from.join("a").join("b").join("inside_b"), b"b\n").expect("write a/b/inside_b");
+
+    let from_arg = {
+        let mut p = from.into_os_string();
+        p.push("/");
+        p
+    };
+    let (code, stdout, _stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-iplr"),
+        from_arg,
+        to.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    let output = String::from_utf8(stdout).expect("utf8");
+
+    assert!(
+        output.contains("cd+++++++++ a/\n"),
+        "must emit `cd+++++++++ a/` for top-level created subdir: {output:?}"
+    );
+    assert!(
+        output.contains("cd+++++++++ a/b/\n"),
+        "must emit `cd+++++++++ a/b/` for nested created subdir: {output:?}"
+    );
+
+    // Lock relative ordering: parent dir-row precedes child dir-row, which
+    // precedes the file-row inside the child. Mirrors upstream depth-first
+    // walk order.
+    let lines: Vec<&str> = output.lines().collect();
+    let a_idx = lines
+        .iter()
+        .position(|l| *l == "cd+++++++++ a/")
+        .expect("a/ row present");
+    let ab_idx = lines
+        .iter()
+        .position(|l| *l == "cd+++++++++ a/b/")
+        .expect("a/b/ row present");
+    let ab_file_idx = lines
+        .iter()
+        .position(|l| *l == ">f+++++++++ a/b/inside_b")
+        .expect("a/b/inside_b row present");
+    assert!(
+        a_idx < ab_idx && ab_idx < ab_file_idx,
+        "intermediate dir-rows must appear in depth-first order before contained file-row: {lines:?}"
+    );
+}
