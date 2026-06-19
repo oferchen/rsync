@@ -50,6 +50,24 @@ is_known_failure() {
     return 1
 }
 
+# Emit a GitHub Actions error annotation. No-op outside GHA so local runs
+# stay quiet. The `::error` workflow command surfaces as a red marker on the
+# PR/check page, giving a per-test failure indicator without forcing the
+# reader to open the job log. See:
+# https://docs.github.com/actions/using-workflows/workflow-commands-for-github-actions#setting-an-error-message
+gha_annotate_fail() {
+    [[ -z "${GITHUB_ACTIONS:-}" ]] && return 0
+    local title=$1 message=$2
+    # Annotations don't support multiline; collapse newlines to spaces and
+    # strip the GHA control characters %, \r, \n that would otherwise break
+    # the workflow command parser.
+    local sanitized=${message//$'\n'/ }
+    sanitized=${sanitized//$'\r'/ }
+    sanitized=${sanitized//%/%25}
+    printf '::error file=tools/ci/run_upstream_testsuite.sh,title=%s::%s\n' \
+        "$title" "$sanitized"
+}
+
 ensure_oc_rsync() {
     if [[ -x "$oc_rsync_bin" ]]; then
         return
@@ -185,6 +203,8 @@ run_one_test() {
         if [[ $result -eq 0 ]]; then
             echo "UPASS   $testbase  (was expected to fail; remove from known_failures.conf)"
             unexpected_passes+=("$testbase")
+            gha_annotate_fail "upstream testsuite UPASS" \
+                "Test '$testbase' passed but is listed in known_failures.conf; remove it (log: ${log})"
             return 4
         fi
         echo "XFAIL   $testbase"
@@ -195,8 +215,12 @@ run_one_test() {
         0)   echo "PASS    $testbase";                            return 0 ;;
         77)  echo "SKIP    $testbase";                            return 1 ;;
         78)  echo "XFAIL   $testbase  (test_xfail self-marked)";  return 3 ;;
-        124) echo "FAIL    $testbase  (timed out after ${testrun_timeout}s)" ;;
-        *)   echo "FAIL    $testbase  (exit $result)" ;;
+        124) echo "FAIL    $testbase  (timed out after ${testrun_timeout}s)"
+             gha_annotate_fail "upstream testsuite FAIL" \
+                 "Test '$testbase' timed out after ${testrun_timeout}s (log: ${log})" ;;
+        *)   echo "FAIL    $testbase  (exit $result)"
+             gha_annotate_fail "upstream testsuite FAIL" \
+                 "Test '$testbase' FAILED with exit $result (log: ${log})" ;;
     esac
     failed_tests+=("$testbase")
     return 2
@@ -223,6 +247,46 @@ summarize() {
             echo "    - $t"
         done
     fi
+}
+
+# Append a markdown summary of the run to $GITHUB_STEP_SUMMARY when set.
+# This is GHA-only - outside CI the env var is unset and this is a no-op.
+# The summary surfaces the per-test FAIL list at-a-glance on the job page,
+# without requiring the reader to open the full job log.
+emit_gha_step_summary() {
+    local summary_file=${GITHUB_STEP_SUMMARY:-}
+    [[ -z "$summary_file" ]] && return 0
+
+    {
+        echo "## Upstream testsuite (per-test results)"
+        echo
+        echo "| Result | Count |"
+        echo "|--------|------:|"
+        echo "| PASS   | $passed |"
+        echo "| FAIL   | $failed |"
+        echo "| XFAIL  | $xfail |"
+        echo "| UPASS  | ${#unexpected_passes[@]} |"
+        echo "| SKIP   | $skipped |"
+        echo
+        if (( ${#failed_tests[@]} )); then
+            echo "### Failures"
+            echo
+            local t
+            for t in "${failed_tests[@]}"; do
+                echo "- \`$t\` (log: \`${log_root}/${t}.log\`)"
+            done
+            echo
+        fi
+        if (( ${#unexpected_passes[@]} )); then
+            echo "### Unexpected passes (remove from known_failures.conf)"
+            echo
+            local t
+            for t in "${unexpected_passes[@]}"; do
+                echo "- \`$t\`"
+            done
+            echo
+        fi
+    } >>"$summary_file"
 }
 
 main() {
@@ -264,6 +328,7 @@ main() {
     done
 
     summarize
+    emit_gha_step_summary
 
     if (( failed > 0 || ${#unexpected_passes[@]} > 0 )); then
         exit 1
