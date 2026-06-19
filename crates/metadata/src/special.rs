@@ -289,9 +289,33 @@ fn create_device_node_inner(
         .map_err(|error| MetadataError::new("create device", destination, error))
 }
 
+/// Emits the WIND-2 skip-with-warn diagnostic for a special-file entry
+/// the receiver cannot materialise on this target and returns `Ok(())` so
+/// the surrounding transfer continues with the next entry.
+///
+/// Mirrors the `xattr_stub::warn_xattr_unsupported` stderr convention used
+/// elsewhere in this crate for unsupported metadata operations.
+// WIND-2: skip-with-warn strategy for Windows device files.
+// docs/design/windows-device-file-strategy.md
+#[cfg(not(unix))]
+fn warn_skip_special(destination: &Path, kind_label: &'static str) {
+    eprintln!("{}", format_skip_special_message(destination, kind_label));
+}
+
+/// Builds the WIND-2 skip-with-warn message body so tests can assert the
+/// exact wording without capturing stderr.
+#[cfg(not(unix))]
+#[must_use]
+pub(crate) fn format_skip_special_message(destination: &Path, kind_label: &'static str) -> String {
+    format!(
+        "skipping {kind_label} \"{path}\": Windows targets cannot create device nodes [receiver]",
+        path = destination.display(),
+    )
+}
+
 #[cfg(not(unix))]
 fn create_fifo_inner(destination: &Path, _metadata: &fs::Metadata) -> Result<(), MetadataError> {
-    let _ = destination;
+    warn_skip_special(destination, "fifo entry");
     Ok(())
 }
 
@@ -300,7 +324,12 @@ fn create_device_node_inner(
     destination: &Path,
     _metadata: &fs::Metadata,
 ) -> Result<(), MetadataError> {
-    let _ = destination;
+    // `fs::FileType` on non-Unix targets cannot distinguish block vs
+    // character device or FIFO vs socket; the caller has already routed
+    // by entry kind, so we report the broadest accurate label and let the
+    // surrounding receiver layer refine wording when it knows more from
+    // the wire-protocol `FileEntry`.
+    warn_skip_special(destination, "device entry");
     Ok(())
 }
 
@@ -445,28 +474,57 @@ mod tests {
         );
     }
 
+    /// WIND-2 skip-with-warn: a FIFO request on a non-Unix target must
+    /// return `Ok(())`, must NOT create a destination inode, and the
+    /// diagnostic helper must surface the path and entry kind so operators
+    /// can see what was skipped.
     #[cfg(not(unix))]
     #[test]
-    fn create_fifo_noop_on_non_unix() {
+    fn create_fifo_skips_with_warn_on_non_unix() {
         let temp = tempfile::tempdir().expect("tempdir");
         let source = temp.path().join("source");
         fs::File::create(&source).expect("create source");
         let metadata = fs::metadata(&source).expect("metadata");
         let fifo_path = temp.path().join("fifo");
+
         let result = create_fifo(&fifo_path, &metadata);
-        assert!(result.is_ok());
+
+        assert!(result.is_ok(), "skip-with-warn must not surface an error");
+        assert!(
+            !fifo_path.exists(),
+            "skip path must not register a destination inode"
+        );
+
+        let message = format_skip_special_message(&fifo_path, "fifo entry");
+        assert!(message.contains("skipping fifo entry"));
+        assert!(message.contains("[receiver]"));
+        assert!(message.contains(&fifo_path.display().to_string()));
     }
 
+    /// WIND-2 skip-with-warn: a device request on a non-Unix target must
+    /// return `Ok(())`, must NOT create a destination inode, and the
+    /// diagnostic helper must identify it as a device entry.
     #[cfg(not(unix))]
     #[test]
-    fn create_device_node_noop_on_non_unix() {
+    fn create_device_node_skips_with_warn_on_non_unix() {
         let temp = tempfile::tempdir().expect("tempdir");
         let source = temp.path().join("source");
         fs::File::create(&source).expect("create source");
         let metadata = fs::metadata(&source).expect("metadata");
         let device_path = temp.path().join("device");
+
         let result = create_device_node(&device_path, &metadata);
-        assert!(result.is_ok());
+
+        assert!(result.is_ok(), "skip-with-warn must not surface an error");
+        assert!(
+            !device_path.exists(),
+            "skip path must not register a destination inode"
+        );
+
+        let message = format_skip_special_message(&device_path, "device entry");
+        assert!(message.contains("skipping device entry"));
+        assert!(message.contains("[receiver]"));
+        assert!(message.contains(&device_path.display().to_string()));
     }
 
     /// Under `--fake-super`, `create_fifo_with_fake_super` must never call
