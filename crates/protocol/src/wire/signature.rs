@@ -7,7 +7,10 @@
 
 use std::io::{self, Read, Write};
 
-use crate::varint::{read_varint, write_varint};
+use crate::varint::{read_varint, read_varlong, write_varint, write_varlong};
+
+/// Upstream caps a strong checksum at 32 bytes (`MAX_DIGEST_LEN` in checksum.c).
+const MAX_DIGEST_LEN: u8 = 32;
 
 /// Single signature block containing rolling and strong checksums.
 ///
@@ -62,8 +65,8 @@ pub struct SignatureBlock {
 /// # Wire Format
 ///
 /// **Header:**
-/// - Block count (varint) - Number of blocks in the file
-/// - Block length (varint) - Size of each block in bytes
+/// - Block count (varlong, min_bytes=3) - Number of blocks in the file
+/// - Block length (varlong, min_bytes=3) - Size of each block in bytes
 /// - Strong sum length (varint) - Length of strong checksums in bytes
 ///
 /// **For each block:**
@@ -108,9 +111,13 @@ pub fn write_signature<W: Write>(
     strong_sum_length: u8,
     blocks: &[SignatureBlock],
 ) -> io::Result<()> {
-    write_varint(writer, block_count as i32)?;
-    write_varint(writer, block_length as i32)?;
-    write_varint(writer, strong_sum_length as i32)?;
+    // upstream: match.c::send_sums() + io.c::read_varlong()
+    // block_count and block_length use varlong(min_bytes=3) since upstream
+    // 3.4.x emits sum_head->count/blength via write_varlong when they exceed
+    // the 30-bit varint range. strong_sum_length stays in plain varint.
+    write_varlong(writer, i64::from(block_count), 3)?;
+    write_varlong(writer, i64::from(block_length), 3)?;
+    write_varint(writer, i32::from(strong_sum_length))?;
 
     for block in blocks {
         writer.write_all(&block.rolling_sum.to_le_bytes())?;
@@ -164,9 +171,35 @@ pub fn write_signature<W: Write>(
 /// ```
 #[inline]
 pub fn read_signature<R: Read>(reader: &mut R) -> io::Result<(u32, u32, u8, Vec<SignatureBlock>)> {
-    let block_count = read_varint(reader)? as u32;
-    let block_length = read_varint(reader)? as u32;
-    let strong_sum_length = read_varint(reader)? as u8;
+    // upstream: match.c::send_sums() + io.c::read_varlong()
+    // block_count and block_length are written via write_varlong(min_bytes=3)
+    // on the sender side once they exceed the 30-bit varint range. Decoding
+    // them as plain varint produces "overflow in read_varint" on large basis
+    // files. Read as i64 then narrow to u32, surfacing InvalidData on overflow.
+    let block_count_raw = read_varlong(reader, 3)?;
+    let block_count = u32::try_from(block_count_raw).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("block_count {block_count_raw} exceeds u32::MAX"),
+        )
+    })?;
+
+    let block_length_raw = read_varlong(reader, 3)?;
+    let block_length = u32::try_from(block_length_raw).map_err(|_| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("block_length {block_length_raw} exceeds u32::MAX"),
+        )
+    })?;
+
+    let strong_sum_length_raw = read_varint(reader)?;
+    if !(0..=i32::from(MAX_DIGEST_LEN)).contains(&strong_sum_length_raw) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("strong_sum_length {strong_sum_length_raw} out of range 0..={MAX_DIGEST_LEN}"),
+        ));
+    }
+    let strong_sum_length = strong_sum_length_raw as u8;
 
     let mut blocks = Vec::with_capacity(block_count as usize);
 
@@ -273,6 +306,43 @@ mod tests {
                 .to_string()
                 .contains("strong sum length mismatch")
         );
+    }
+
+    #[test]
+    fn signature_roundtrip_large_block_count() {
+        // Regression: block_count > 30-bit varint range must round-trip via
+        // varlong(min_bytes=3) instead of overflowing read_varint.
+        // upstream: match.c::send_sums() + io.c::read_varlong()
+        let block_count: u32 = 5_000_000;
+        let block_length: u32 = 4096;
+        let strong_sum_length: u8 = 16;
+
+        let mut buf = Vec::new();
+        // Header only - skip per-block payload to keep the test fast.
+        write_varlong(&mut buf, i64::from(block_count), 3).unwrap();
+        write_varlong(&mut buf, i64::from(block_length), 3).unwrap();
+        write_varint(&mut buf, i32::from(strong_sum_length)).unwrap();
+
+        let mut cursor = &buf[..];
+        let decoded_block_count = read_varlong(&mut cursor, 3).unwrap();
+        let decoded_block_length = read_varlong(&mut cursor, 3).unwrap();
+        let decoded_strong_sum_length = read_varint(&mut cursor).unwrap();
+
+        assert_eq!(decoded_block_count, i64::from(block_count));
+        assert_eq!(decoded_block_length, i64::from(block_length));
+        assert_eq!(decoded_strong_sum_length, i32::from(strong_sum_length));
+    }
+
+    #[test]
+    fn signature_rejects_strong_sum_length_above_max_digest_len() {
+        let mut buf = Vec::new();
+        write_varlong(&mut buf, 1, 3).unwrap();
+        write_varlong(&mut buf, 4096, 3).unwrap();
+        write_varint(&mut buf, 64).unwrap();
+
+        let err = read_signature(&mut &buf[..]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("strong_sum_length"));
     }
 
     #[test]
