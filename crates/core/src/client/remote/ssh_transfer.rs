@@ -764,6 +764,14 @@ fn apply_files_from_for_sender(config: &ClientConfig, server_config: &mut Server
             server_config.file_selection.files_from_path = Some("-".to_owned());
             server_config.file_selection.from0 = true;
         }
+        FilesFromSource::HybridLocalRemote { .. } => {
+            // upstream: options.c:3112-3138 - localhost:path stripped; the
+            // client opens the file locally and stages the bytes into
+            // files_from_data, then the server reads them from the wire just
+            // like the plain RemoteFile case.
+            server_config.file_selection.files_from_path = Some("-".to_owned());
+            server_config.file_selection.from0 = true;
+        }
     }
 }
 

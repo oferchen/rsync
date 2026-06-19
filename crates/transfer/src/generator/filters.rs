@@ -236,7 +236,16 @@ impl GeneratorContext {
             // upstream: io.c:read_line(RL_CONVERT) - wire bytes are UTF-8 and
             // must be transcoded to the local charset via ic_recv when
             // protect_args && --iconv are both in effect (compat.c:799-806).
-            protocol::read_files_from_stream(reader, self.config.connection.iconv.as_ref())?
+            // UTS-V3.D defensive timeout: cap the receiver-side wait at
+            // FILES_FROM_RECV_DEFAULT_DEADLINE (30 s) so a client-side
+            // resolver regression surfaces as ETIMEDOUT instead of the 300 s
+            // testsuite hang documented in
+            // docs/design/uts-v3-d-files-from-hang-audit.md.
+            protocol::read_files_from_stream_with_deadline(
+                reader,
+                self.config.connection.iconv.as_ref(),
+                protocol::FILES_FROM_RECV_DEFAULT_DEADLINE,
+            )?
         } else {
             // Read from a local file on the server.
             // upstream: main.c:675-679 - open(files_from, O_RDONLY)

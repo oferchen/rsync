@@ -528,6 +528,12 @@ fn build_server_config_for_generator(
             server_config.file_selection.files_from_path = Some("-".to_owned());
             server_config.file_selection.from0 = true;
         }
+        FilesFromSource::HybridLocalRemote { .. } => {
+            // upstream: options.c:3112-3138 - localhost:path stripped; client
+            // opens locally, server reads bytes from the wire as for RemoteFile.
+            server_config.file_selection.files_from_path = Some("-".to_owned());
+            server_config.file_selection.from0 = true;
+        }
     }
 
     flags::apply_common_server_flags(config, &mut server_config);

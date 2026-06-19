@@ -51,27 +51,45 @@ pub(crate) fn read_local_files_from_for_forwarding(
             })?;
         }
         FilesFromSource::LocalFile(path) => {
-            let mut file = std::fs::File::open(path).map_err(|e| {
-                invalid_argument_error(
-                    &format!("failed to open --files-from {}: {e}", path.display()),
-                    23,
-                )
-            })?;
-            protocol::forward_files_from(
-                &mut file,
+            read_path_into(path, &mut wire_data, eol_nulls, iconv_converter.as_ref())?;
+        }
+        FilesFromSource::HybridLocalRemote { local_path, .. } => {
+            // upstream: options.c:3112-3138 - localhost:path stripped to a
+            // local file; client opens locally so PULL receivers have bytes
+            // to flush at crates/transfer/src/lib.rs:570 while the wire-arg
+            // still carries the stripped path for the remote server.
+            read_path_into(
+                local_path,
                 &mut wire_data,
                 eol_nulls,
                 iconv_converter.as_ref(),
-            )
-            .map_err(|e| {
-                invalid_argument_error(
-                    &format!("failed to read --files-from {}: {e}", path.display()),
-                    23,
-                )
-            })?;
+            )?;
         }
         FilesFromSource::None | FilesFromSource::RemoteFile(_) => {}
     }
 
     Ok(wire_data)
+}
+
+fn read_path_into(
+    path: &std::path::Path,
+    wire_data: &mut Vec<u8>,
+    eol_nulls: bool,
+    iconv_converter: Option<&protocol::FilenameConverter>,
+) -> Result<(), ClientError> {
+    let mut file = std::fs::File::open(path).map_err(|e| {
+        invalid_argument_error(
+            &format!("failed to open --files-from {}: {e}", path.display()),
+            23,
+        )
+    })?;
+    protocol::forward_files_from(&mut file, wire_data, eol_nulls, iconv_converter).map_err(
+        |e| {
+            invalid_argument_error(
+                &format!("failed to read --files-from {}: {e}", path.display()),
+                23,
+            )
+        },
+    )?;
+    Ok(())
 }
