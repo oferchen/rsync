@@ -511,6 +511,16 @@ impl<'a> RemoteInvocationBuilder<'a> {
                     args.push(OsString::from("--from0"));
                 }
             }
+            FilesFromSource::HybridLocalRemote { wire_arg, .. } => {
+                // upstream: options.c:3112-3138 - localhost:path stripped to
+                // wire_arg. The remote server still receives the stripped
+                // path in argv just like the RemoteFile case; the client also
+                // stages bytes locally for PULL flush at lib.rs:570.
+                args.push(OsString::from(format!("--files-from={wire_arg}")));
+                if self.config.from0() {
+                    args.push(OsString::from("--from0"));
+                }
+            }
         }
 
         // upstream: options.c:2894-2898 - --usermap / --groupmap are

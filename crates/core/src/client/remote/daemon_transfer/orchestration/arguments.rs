@@ -377,6 +377,16 @@ pub(super) fn build_full_daemon_args(
                     args.push("--from0".to_owned());
                 }
             }
+            FilesFromSource::HybridLocalRemote { wire_arg, .. } => {
+                // upstream: options.c:3112-3138 - localhost:path stripped to
+                // wire_arg. The daemon server-side argv carries the stripped
+                // path while the client also stages bytes locally for PULL
+                // flush at crates/transfer/src/lib.rs:570.
+                args.push(format!("--files-from={wire_arg}"));
+                if config.from0() {
+                    args.push("--from0".to_owned());
+                }
+            }
         }
     }
 

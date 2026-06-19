@@ -163,11 +163,62 @@ pub fn read_files_from_stream<R: Read>(
     reader: &mut R,
     iconv: Option<&FilenameConverter>,
 ) -> io::Result<Vec<String>> {
+    read_files_from_stream_inner(reader, iconv, None)
+}
+
+/// Default defensive deadline for the receiver-side files-from loop.
+///
+/// Upstream `io.c:forward_filesfrom_data` blocks indefinitely on the wire
+/// because the kernel buffers between the two halves of the loop. When a
+/// PULL client fails to stage the bytes (as in the UTS-V3.D `files-from`
+/// 4th-invocation hang), the remote sender's `recv_filesfrom` loop would
+/// otherwise hang the full 300 s test ceiling. 30 s is high enough to
+/// tolerate large file lists over slow links yet low enough to surface a
+/// resolver regression as a typed `ETIMEDOUT` (exit code 30) rather than a
+/// silent stall.
+pub const FILES_FROM_RECV_DEFAULT_DEADLINE: std::time::Duration =
+    std::time::Duration::from_secs(30);
+
+/// Reads NUL-separated filenames with a defensive total-elapsed deadline.
+///
+/// Behaves like [`read_files_from_stream`] but returns
+/// `io::ErrorKind::TimedOut` if the cumulative wall-clock time spent
+/// blocked on `reader.read` exceeds `deadline`. The deadline is checked
+/// before each per-byte read; in-flight reads are not interrupted.
+///
+/// This is the receiver-side defensive timeout specified by the
+/// UTS-V3.D audit at `docs/design/uts-v3-d-files-from-hang-audit.md`. It
+/// turns a 300 s testsuite hang into a clean `ETIMEDOUT` exit.
+pub fn read_files_from_stream_with_deadline<R: Read>(
+    reader: &mut R,
+    iconv: Option<&FilenameConverter>,
+    deadline: std::time::Duration,
+) -> io::Result<Vec<String>> {
+    read_files_from_stream_inner(reader, iconv, Some(deadline))
+}
+
+fn read_files_from_stream_inner<R: Read>(
+    reader: &mut R,
+    iconv: Option<&FilenameConverter>,
+    deadline: Option<std::time::Duration>,
+) -> io::Result<Vec<String>> {
     let mut filenames = Vec::new();
     let mut current = Vec::new();
+    let start = deadline.map(|_| std::time::Instant::now());
 
     let mut byte_buf = [0u8; 1];
     loop {
+        if let (Some(start), Some(deadline)) = (start, deadline)
+            && start.elapsed() >= deadline
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "--files-from stream read exceeded {} s deadline",
+                    deadline.as_secs()
+                ),
+            ));
+        }
         let n = reader.read(&mut byte_buf)?;
         if n == 0 {
             // Unexpected EOF - flush any pending entry then return.
