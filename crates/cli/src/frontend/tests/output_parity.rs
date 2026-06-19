@@ -1272,6 +1272,7 @@ fn parity_dry_run_with_itemize_shows_changes_without_modifying_files() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("--recursive"),
         OsString::from("--dry-run"),
         OsString::from("--itemize-changes"),
         src_operand,
@@ -1321,6 +1322,7 @@ fn parity_dry_run_with_verbose_lists_files_line_by_line() {
     let (code, stdout, _stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-nv"),
+        OsString::from("--recursive"),
         src_operand,
         dest_dir.into_os_string(),
     ]);
@@ -1765,6 +1767,7 @@ fn parity_info_progress2_shows_to_chk_counter() {
     let (code, stdout, _stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--info=progress2"),
+        OsString::from("--recursive"),
         src_operand,
         dest_dir.into_os_string(),
     ]);
