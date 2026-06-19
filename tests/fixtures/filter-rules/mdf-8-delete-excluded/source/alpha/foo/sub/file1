@@ -1,0 +1,1 @@
+child of foo/sub - must NOT be excluded by `- foo/*/` synthetic descendants (UTS-DD-exclude.3)

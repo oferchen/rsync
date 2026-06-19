@@ -19,29 +19,34 @@ OC_RSYNC="target/release/oc-rsync"
 FIXTURE="tests/fixtures/filter-rules/mdf-7-complex/source"
 OUTPUT="/tmp/mdf-8-diff"
 STRICT=0
+DELETE_EXCLUDED=0
 
 usage() {
     cat >&2 <<'EOF'
 Usage: mdf_8_filter_diff_harness.sh [options]
 
 Options:
-  --upstream PATH   Path to upstream rsync binary (default: /usr/bin/rsync)
-  --oc-rsync PATH   Path to oc-rsync binary       (default: target/release/oc-rsync)
-  --fixture PATH    Source fixture directory      (default: tests/fixtures/filter-rules/mdf-7-complex/source)
-  --output DIR      Output directory for logs     (default: /tmp/mdf-8-diff)
-  --strict          Compare level-2+ FILTER traces as well (future work).
-  -h, --help        Show this help.
+  --upstream PATH      Path to upstream rsync binary (default: /usr/bin/rsync)
+  --oc-rsync PATH      Path to oc-rsync binary       (default: target/release/oc-rsync)
+  --fixture PATH       Source fixture directory      (default: tests/fixtures/filter-rules/mdf-7-complex/source)
+  --output DIR         Output directory for logs     (default: /tmp/mdf-8-diff)
+  --strict             Compare level-2+ FILTER traces as well (future work).
+  --delete-excluded    Run both sides with --delete --delete-excluded so the diff
+                       harness also catches UTS-DD-exclude.1/.4/.5 regressions
+                       (see docs/design/fil-aud-3-mdf-gap-tests-spec.md section 2.7).
+  -h, --help           Show this help.
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --upstream)  UPSTREAM="$2"; shift 2 ;;
-        --oc-rsync)  OC_RSYNC="$2"; shift 2 ;;
-        --fixture)   FIXTURE="$2"; shift 2 ;;
-        --output)    OUTPUT="$2"; shift 2 ;;
-        --strict)    STRICT=1; shift ;;
-        -h|--help)   usage; exit 0 ;;
+        --upstream)        UPSTREAM="$2"; shift 2 ;;
+        --oc-rsync)        OC_RSYNC="$2"; shift 2 ;;
+        --fixture)         FIXTURE="$2"; shift 2 ;;
+        --output)          OUTPUT="$2"; shift 2 ;;
+        --strict)          STRICT=1; shift ;;
+        --delete-excluded) DELETE_EXCLUDED=1; shift ;;
+        -h|--help)         usage; exit 0 ;;
         *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
     esac
 done
@@ -85,13 +90,18 @@ normalise() {
 
 FIXTURE_ABS="$(cd "$FIXTURE" && pwd)"
 
+EXTRA_FLAGS=()
+if [[ "$DELETE_EXCLUDED" -eq 1 ]]; then
+    EXTRA_FLAGS+=(--delete --delete-excluded)
+fi
+
 set +e
-"$UPSTREAM" -av --debug=FILTER1,2,3,4 --dry-run \
+"$UPSTREAM" -av --debug=FILTER1,2,3,4 --dry-run "${EXTRA_FLAGS[@]}" \
     "$FIXTURE_ABS/" "$UPSTREAM_DEST/" 2>&1 \
     | grep '\[FILTER' > "$OUTPUT/upstream-filter.log"
 UPSTREAM_RC=$?
 
-"$OC_RSYNC" -av --debug=FILTER1,2,3,4 --dry-run \
+"$OC_RSYNC" -av --debug=FILTER1,2,3,4 --dry-run "${EXTRA_FLAGS[@]}" \
     "$FIXTURE_ABS/" "$OC_DEST/" 2>&1 \
     | grep -E '\[Filter\]|\[FILTER' > "$OUTPUT/oc-rsync-filter.log"
 OC_RC=$?
@@ -124,15 +134,40 @@ diff -u "$OUTPUT/upstream-filter-normalised.log" "$OUTPUT/oc-rsync-filter-normal
 
 DIFF_LINES="$(wc -l < "$OUTPUT/diff.txt" | tr -d ' ')"
 
+UPSTREAM_LOG_LINES="$(wc -l < "$OUTPUT/upstream-filter.log" | tr -d ' ')"
+OC_LOG_LINES="$(wc -l < "$OUTPUT/oc-rsync-filter.log" | tr -d ' ')"
+
 echo "MDF-8 filter diff harness"
 echo "  fixture           : $FIXTURE_ABS"
 echo "  upstream rsync    : $UPSTREAM"
 echo "  oc-rsync          : $OC_RSYNC"
 echo "  output dir        : $OUTPUT"
 echo "  strict mode       : $STRICT"
-echo "  upstream log lines: $(wc -l < "$OUTPUT/upstream-filter.log" | tr -d ' ')"
-echo "  oc-rsync log lines: $(wc -l < "$OUTPUT/oc-rsync-filter.log" | tr -d ' ')"
+echo "  delete-excluded   : $DELETE_EXCLUDED"
+echo "  upstream log lines: $UPSTREAM_LOG_LINES"
+echo "  oc-rsync log lines: $OC_LOG_LINES"
 echo "  diff lines        : $DIFF_LINES"
+
+# JSON summary so FIL-AUD-5 close-out automation can grep for fixture presence
+# and run-shape (delete_excluded, strict). Emitted unconditionally.
+if [[ "$DIFF_LINES" -eq 0 ]]; then
+    SUMMARY_STATUS="pass"
+else
+    SUMMARY_STATUS="fail"
+fi
+DELETE_EXCLUDED_JSON=$([[ "$DELETE_EXCLUDED" -eq 1 ]] && echo true || echo false)
+STRICT_JSON=$([[ "$STRICT" -eq 1 ]] && echo true || echo false)
+cat > "$OUTPUT/summary.json" <<EOF
+{
+  "fixture": "$FIXTURE_ABS",
+  "delete_excluded": $DELETE_EXCLUDED_JSON,
+  "strict": $STRICT_JSON,
+  "upstream_log_lines": $UPSTREAM_LOG_LINES,
+  "oc_rsync_log_lines": $OC_LOG_LINES,
+  "diff_lines": $DIFF_LINES,
+  "status": "$SUMMARY_STATUS"
+}
+EOF
 
 if [[ "$DIFF_LINES" -eq 0 ]]; then
     echo "PASS: filter-decision streams match after normalisation."
