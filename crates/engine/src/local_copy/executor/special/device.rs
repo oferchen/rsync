@@ -207,70 +207,104 @@ pub(crate) fn copy_device(
         }
     }
 
-    // create the actual device node, or a 0600 placeholder when --fake-super
-    // is active (mirrors upstream syscall.c:do_mknod()'s am_root < 0 branch).
+    // WIND-2: on non-Unix targets the receiver cannot materialise a device
+    // node. Emit a one-shot warning and skip the post-creation bookkeeping
+    // entirely. Previously this arm fell through to
+    // `register_created_path(CreatedEntryKind::Device, ...)` and
+    // `apply_file_metadata_with_options(...)` against an inode that was
+    // never written, silently recording a fake success.
+    #[cfg(not(unix))]
+    {
+        let _ = (metadata_options, destination_previously_existed);
+        eprintln!("{}", format_skip_device_message(destination));
+        if let Some(path) = &record_path {
+            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+            let total_bytes = Some(metadata_snapshot.len());
+            context.record(LocalCopyRecord::new(
+                path.clone(),
+                LocalCopyAction::SkippedNonRegular,
+                0,
+                total_bytes,
+                Duration::default(),
+                Some(metadata_snapshot),
+            ));
+        }
+        context.register_progress();
+        return Ok(());
+    }
+
     #[cfg(unix)]
     {
+        // create the actual device node, or a 0600 placeholder when
+        // --fake-super is active (mirrors upstream
+        // syscall.c:do_mknod()'s am_root < 0 branch).
         let fake_super = metadata_options.fake_super_enabled();
         create_device_node_with_fake_super(destination, metadata, fake_super)
             .map_err(map_metadata_error)?;
+
+        context.register_created_path(
+            destination,
+            CreatedEntryKind::Device,
+            destination_previously_existed,
+        );
+
+        apply_file_metadata_with_options(destination, metadata, metadata_options)
+            .map_err(map_metadata_error)?;
+        #[cfg(feature = "xattr")]
+        sync_xattrs_if_requested(
+            preserve_xattrs,
+            mode,
+            source,
+            destination,
+            true,
+            context.filter_program(),
+        )?;
+        #[cfg(feature = "acl")]
+        sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
+
+        // Under fake-super, capture the would-be device's mode/uid/gid/rdev
+        // in the rsync.%stat xattr so the destination can be restored later.
+        // This is the read-side complement of `apply_ownership_via_fake_super`
+        // for the local-copy path, where we have a full `fs::Metadata` rather
+        // than a wire-protocol `FileEntry`.
+        // upstream: xattrs.c:set_stat_xattr() under am_root < 0
+        #[cfg(feature = "xattr")]
+        if metadata_options.fake_super_enabled() {
+            store_fake_super_for_local_metadata(destination, metadata)?;
+        }
+
+        context.record_hard_link(metadata, destination);
+        context.summary_mut().record_device();
+
+        if let Some(path) = &record_path {
+            let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+            let total_bytes = Some(metadata_snapshot.len());
+            context.record(LocalCopyRecord::new(
+                path.clone(),
+                LocalCopyAction::DeviceCopied,
+                0,
+                total_bytes,
+                Duration::default(),
+                Some(metadata_snapshot),
+            ));
+        }
+
+        context.register_progress();
+        remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
     }
-    #[cfg(not(unix))]
-    {
-        // Windows / non-Unix: we can’t actually create a device node.
-        // Do nothing here - the rest (metadata + bookkeeping) still runs so the code compiles.
-    }
-
-    context.register_created_path(
-        destination,
-        CreatedEntryKind::Device,
-        destination_previously_existed,
-    );
-
-    apply_file_metadata_with_options(destination, metadata, metadata_options)
-        .map_err(map_metadata_error)?;
-    #[cfg(all(unix, feature = "xattr"))]
-    sync_xattrs_if_requested(
-        preserve_xattrs,
-        mode,
-        source,
-        destination,
-        true,
-        context.filter_program(),
-    )?;
-    #[cfg(all(any(unix, windows), feature = "acl"))]
-    sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
-
-    // Under fake-super, capture the would-be device's mode/uid/gid/rdev in
-    // the rsync.%stat xattr so the destination can be restored later. This
-    // is the read-side complement of `apply_ownership_via_fake_super` for
-    // the local-copy path, where we have a full `fs::Metadata` rather than
-    // a wire-protocol `FileEntry`.
-    // upstream: xattrs.c:set_stat_xattr() under am_root < 0
-    #[cfg(all(unix, feature = "xattr"))]
-    if metadata_options.fake_super_enabled() {
-        store_fake_super_for_local_metadata(destination, metadata)?;
-    }
-
-    context.record_hard_link(metadata, destination);
-    context.summary_mut().record_device();
-
-    if let Some(path) = &record_path {
-        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
-        let total_bytes = Some(metadata_snapshot.len());
-        context.record(LocalCopyRecord::new(
-            path.clone(),
-            LocalCopyAction::DeviceCopied,
-            0,
-            total_bytes,
-            Duration::default(),
-            Some(metadata_snapshot),
-        ));
-    }
-
-    context.register_progress();
-    remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
     Ok(())
+}
+
+/// Builds the WIND-2 skip-with-warn message for a device entry the Windows
+/// receiver cannot materialise. Exposed for regression tests so they can
+/// assert the wording without capturing stderr.
+// WIND-2: docs/design/windows-device-file-strategy.md
+#[cfg(not(unix))]
+pub(crate) fn format_skip_device_message(destination: &Path) -> String {
+    format!(
+        "skipping device entry \"{path}\": Windows targets cannot create device nodes [receiver]",
+        path = destination.display(),
+    )
 }
 
 /// Stores the would-be device/special metadata in the `rsync.%stat` xattr.
