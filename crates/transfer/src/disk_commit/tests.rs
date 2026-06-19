@@ -2829,7 +2829,7 @@ fn pipelined_backup_with_backup_dir_reports_destination_relative_paths() {
     // `backed up $fn to .*/$fn$`.
     assert_eq!(notice.original, std::path::PathBuf::from("deep/name1"));
     assert!(
-        notice.backup.ends_with("deep/name1"),
+        notice.backup.ends_with("deep/name1~"),
         "backup path must end with the original relative path; got {:?}",
         notice.backup
     );
