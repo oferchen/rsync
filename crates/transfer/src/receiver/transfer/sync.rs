@@ -70,6 +70,7 @@ impl ReceiverContext {
             &dest_dir,
             &metadata_opts,
             acl_cache.as_deref(),
+            writer,
             #[cfg(unix)]
             sandbox.as_deref(),
         )?;

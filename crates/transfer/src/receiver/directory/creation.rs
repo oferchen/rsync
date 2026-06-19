@@ -35,11 +35,15 @@ impl ReceiverContext {
     ///
     /// - `receiver.c:693` - `dry_run` skips all filesystem modifications
     /// - `generator.c:1432-1500` - directory creation and metadata in `recv_generator()`
-    pub(in crate::receiver) fn create_directories(
+    /// - `generator.c:1480-1483` - `itemize()` is invoked once per directory entry,
+    ///   so a freshly mkdir'd dir emits `cd+++++++++ <name>/` and an existing one
+    ///   emits a metadata-only `.d ...` row gated by the standard significance check
+    pub(in crate::receiver) fn create_directories<W: crate::writer::MsgInfoSender + ?Sized>(
         &self,
         dest_dir: &Path,
         metadata_opts: &MetadataOptions,
         acl_cache: Option<&AclCache>,
+        writer: &mut W,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
     ) -> io::Result<Vec<(PathBuf, String)>> {
         // upstream: receiver.c:693 - dry_run skips all filesystem modifications
@@ -77,6 +81,12 @@ impl ReceiverContext {
 
         let mut failed_dir_paths: std::collections::HashSet<PathBuf> =
             std::collections::HashSet::new();
+        // Track whether each directory was freshly created (true) or already
+        // existed (false). Drives the iflags passed to `emit_itemize` so the
+        // receiver matches upstream `generator.c:1480-1483`: a new dir emits
+        // `cd+++++++++ <name>/`, an existing one emits a metadata-only row
+        // gated by the standard significance check.
+        let mut dir_was_new: Vec<bool> = Vec::with_capacity(dir_entries.len());
         // upstream: generator.c:1337-1340 - probe each new parent directory's
         // default POSIX ACL when !preserve_perms so dest_mode() folds the bits
         // in. The probe also drives the `DEBUG_GTE(ACL, 1)` emission in
@@ -97,7 +107,9 @@ impl ReceiverContext {
             // `relative_path` is only read on Unix (mkdirat fast path).
             #[cfg(not(unix))]
             let _ = relative_path;
-            if !dir_path.exists() {
+            let is_new = !dir_path.exists();
+            dir_was_new.push(is_new);
+            if is_new {
                 #[cfg(all(
                     feature = "acl",
                     any(target_os = "linux", target_os = "macos", target_os = "freebsd")
@@ -160,6 +172,40 @@ impl ReceiverContext {
                     }
                     return Err(e);
                 }
+            }
+        }
+
+        // upstream: generator.c:1480-1483 - emit per-directory itemize rows
+        // after the mkdir pass and before metadata application, so the row
+        // ordering matches upstream's recv_generator() pass over the flist.
+        // Skipped dirs (PermissionDenied during mkdir) do not emit a row.
+        // The `should_emit_itemize` gate avoids touching the writer when
+        // the client did not request itemize output (or the receiver runs
+        // in client mode, where the CLI front-end emits via local-copy
+        // records instead of MSG_INFO frames).
+        if self.should_emit_itemize() {
+            for ((idx, _, dir_path), is_new) in dir_entries.iter().zip(dir_was_new.iter()) {
+                if failed_dir_paths.contains(dir_path) {
+                    continue;
+                }
+                let entry = &self.file_list[*idx];
+                let iflags = if *is_new {
+                    // upstream: generator.c:1481 - new dir is itemize()'d with
+                    // statret < 0, which ORs ITEM_LOCAL_CHANGE | ITEM_IS_NEW.
+                    crate::generator::ItemFlags::from_raw(
+                        crate::generator::ItemFlags::ITEM_LOCAL_CHANGE
+                            | crate::generator::ItemFlags::ITEM_IS_NEW,
+                    )
+                } else {
+                    // upstream: generator.c:1482 - existing dir is itemize()'d
+                    // with statret == 0 and iflags == 0; emit_itemize's
+                    // standard gate then drops the row when nothing is
+                    // significant, while the root-dir compensation in
+                    // emit_itemize still fires `cd+++++++++ ./` when the
+                    // pre-flight mkdir created the destination root.
+                    crate::generator::ItemFlags::from_raw(0)
+                };
+                let _ = self.emit_itemize(writer, &iflags, entry);
             }
         }
 
