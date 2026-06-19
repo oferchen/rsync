@@ -33,6 +33,11 @@ tracing = ["dep:tracing", "core/tracing"]
 acl = ["core/acl", "metadata/acl"]
 # Filename charset transcoding via the module `charset =` directive (iconv).
 iconv = ["core/iconv", "protocol/iconv"]
+# Async accept loop for the daemon listener. Flag-only landing step for the
+# DASYNC rollout tracked by `docs/design/daemon-async-accept-sync-workers.md`;
+# no code paths are gated on this feature yet. Subsequent steps will wire the
+# tokio-based listener and sync-worker dispatch behind this flag.
+daemon-async-accept = []
 # Native TLS termination via rustls - single-binary alternative to stunnel/HAProxy
 # sidecar. Opt-in; default builds remain TLS-free. See
 # `docs/design/daemon-async-accept-sync-workers.md` section 11 for the integration
