@@ -28,9 +28,11 @@
 # What it checks
 # --------------
 # 1. The workflow file exists and parses as valid YAML.
-# 2. `on.pull_request.paths` includes the root `Cargo.toml` and the
-#    `crates/**/Cargo.toml` glob (the two paths that drive dep drift in
-#    practice).
+# 2. `on.pull_request_target.paths` (or `on.pull_request.paths`) includes
+#    the root `Cargo.toml` and the `crates/**/Cargo.toml` glob (the two
+#    paths that drive dep drift in practice). `pull_request_target` is
+#    the production form because the workflow needs a write-capable
+#    GITHUB_TOKEN against fork PRs to post the fork-fallback comment.
 # 3. The job runs `cargo update --workspace` (the refresh step).
 # 4. The job runs `cargo update --workspace --offline` (the offline
 #    validation step that catches lockfiles that no longer resolve).
@@ -40,9 +42,11 @@
 #    `changed == 'true'`.
 # 7. The workflow has `contents: write` permission (required to push
 #    back to the PR branch).
-# 8. The job gates on first-party PRs (`head.repo.full_name ==
-#    github.repository`) and skips `github-actions[bot]` author to avoid
-#    looping on the weekly cron PR's output.
+# 8. The first-party PR guard is present at either the job level
+#    (`head.repo.full_name == github.repository`) or the step level
+#    (the push step is gated on `fork == 'false'`). The job also skips
+#    the `github-actions[bot]` author so the weekly cron PR does not
+#    loop on its own output.
 #
 # Usage
 # -----
@@ -122,22 +126,33 @@ if not isinstance(on_block, dict):
     fail("`on:` block missing or not a mapping")
     on_block = {}
 
-pr_block = on_block.get("pull_request")
+# Accept either `pull_request` or `pull_request_target` as the trigger.
+# The workflow uses `pull_request_target` so it can run with a write-capable
+# GITHUB_TOKEN against fork-originated PRs (needed to push back the
+# refreshed lockfile or post the fork-fallback comment); `pull_request`
+# was the historical form and is still accepted in case the security
+# posture is later relaxed.
+pr_block = on_block.get("pull_request_target")
+trigger_name = "pull_request_target"
 if not isinstance(pr_block, dict):
-    fail("`on.pull_request:` missing or not a mapping")
+    pr_block = on_block.get("pull_request")
+    trigger_name = "pull_request"
+if not isinstance(pr_block, dict):
+    fail("`on.pull_request_target:` (or `on.pull_request:`) missing or not a mapping")
     pr_block = {}
+    trigger_name = "pull_request_target"
 
 paths = pr_block.get("paths") or []
 if not isinstance(paths, list):
-    fail("`on.pull_request.paths` is not a list")
+    fail(f"`on.{trigger_name}.paths` is not a list")
     paths = []
 
 required_paths = ["Cargo.toml", "crates/**/Cargo.toml"]
 for required in required_paths:
     if required in paths:
-        ok(f"on.pull_request.paths includes {required!r}")
+        ok(f"on.{trigger_name}.paths includes {required!r}")
     else:
-        fail(f"on.pull_request.paths missing required entry {required!r}")
+        fail(f"on.{trigger_name}.paths missing required entry {required!r}")
 
 permissions = doc.get("permissions") or {}
 if isinstance(permissions, dict) and permissions.get("contents") == "write":
@@ -238,11 +253,32 @@ else:
 
 # Author/repo guard: must short-circuit fork PRs (cannot push back) and
 # the weekly cron bot (would loop on its own output).
+#
+# The first-party guard may live at the job level
+# (`head.repo.full_name == github.repository`) or at the step level via a
+# "Classify PR source" step whose `fork` output is then checked on the
+# push step (`steps.<id>.outputs.fork == 'false'`). The latter is the
+# production shape under `pull_request_target` because fork PRs still
+# need to run the workflow (to leave the fork-fallback comment) - they
+# just must not reach the push-back step.
 job_if_blob = "\n".join(job_if_clauses)
-if "head.repo.full_name" in job_if_blob and "github.repository" in job_if_blob:
+push_step_if = str(push_step.get("if") or "") if push_step else ""
+
+has_job_level_guard = (
+    "head.repo.full_name" in job_if_blob and "github.repository" in job_if_blob
+)
+has_step_level_guard = "fork" in push_step_if and "false" in push_step_if
+
+if has_job_level_guard:
     ok("job guards on first-party PRs (head.repo.full_name == github.repository)")
+elif has_step_level_guard:
+    ok("push-back step guards on first-party PRs (fork == 'false')")
 else:
-    fail("job missing first-party PR guard (head.repo.full_name == github.repository)")
+    fail(
+        "first-party PR guard missing: no job-level "
+        "`head.repo.full_name == github.repository` and no step-level "
+        "`fork == 'false'` condition on the push step"
+    )
 
 if "github-actions[bot]" in job_if_blob:
     ok("job skips `github-actions[bot]` author (weekly cron loop guard)")

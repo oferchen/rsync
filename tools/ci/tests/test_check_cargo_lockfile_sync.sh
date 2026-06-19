@@ -95,13 +95,19 @@ PY
 cp "${real_workflow}" "${tmp}/case1.yml"
 run_case "real workflow passes" 0 "${tmp}/case1.yml"
 
-# -------- Case 2: dropping the Cargo.toml pull_request path fails.
+# -------- Case 2: dropping the Cargo.toml trigger paths fails.
+# The workflow uses `pull_request_target` (production form) - strip the
+# Cargo.toml + crates/** entries from whichever trigger block carries
+# them so the assertion fires regardless of which form the workflow uses.
 mutate_workflow "${tmp}/case2.yml" "
 on_block = doc.get('on', doc.get(True))
-on_block['pull_request']['paths'] = [
-    p for p in on_block['pull_request']['paths']
-    if p not in ('Cargo.toml', 'crates/**/Cargo.toml')
-]
+for trigger_key in ('pull_request_target', 'pull_request'):
+    block = on_block.get(trigger_key) if isinstance(on_block, dict) else None
+    if isinstance(block, dict) and isinstance(block.get('paths'), list):
+        block['paths'] = [
+            p for p in block['paths']
+            if p not in ('Cargo.toml', 'crates/**/Cargo.toml')
+        ]
 "
 run_case "missing Cargo.toml + crates/** triggers fail" 1 "${tmp}/case2.yml"
 
@@ -170,12 +176,35 @@ job['steps'] = [
 "
 run_case "removing conditional git push fails" 1 "${tmp}/case7.yml"
 
-# -------- Case 8: dropping the first-party PR guard fails.
+# -------- Case 8: dropping the job-level if (bot-author guard) fails.
+# When the workflow uses pull_request_target with step-level fork
+# classification, the first-party guard lives on the push step, but the
+# bot-author skip still has to live at the job level. Stripping the
+# job-level `if:` removes the bot-author guard and must fail.
 mutate_workflow "${tmp}/case8.yml" "
 job = next(iter(doc['jobs'].values()))
 job.pop('if', None)
 "
-run_case "dropping first-party PR + bot-author guards fails" 1 "${tmp}/case8.yml"
+run_case "dropping job-level bot-author guard fails" 1 "${tmp}/case8.yml"
+
+# -------- Case 11: dropping the step-level fork guard on the push step
+# also fails when the job-level if does not carry a first-party check.
+# This exercises the production shape (pull_request_target + step-level
+# fork classification).
+mutate_workflow "${tmp}/case11.yml" "
+job = next(iter(doc['jobs'].values()))
+for step in job.get('steps') or []:
+    if not isinstance(step, dict):
+        continue
+    run_text = step.get('run') if isinstance(step.get('run'), str) else ''
+    if 'git push' in run_text:
+        cond = str(step.get('if') or '')
+        # Strip any reference to a fork classification so neither job
+        # nor step carries a first-party guard.
+        if 'fork' in cond:
+            step['if'] = \"steps.diff.outputs.changed == 'true'\"
+"
+run_case "dropping step-level fork guard on push step fails" 1 "${tmp}/case11.yml"
 
 # -------- Case 9: a malformed YAML file is reported as a parse failure.
 echo ': : :' >"${tmp}/case9.yml"
