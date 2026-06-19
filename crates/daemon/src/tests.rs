@@ -34,6 +34,8 @@ use crate::daemon::{
     advertised_capability_lines,
     // From sections/module_access.rs
     apply_module_bandwidth_limit,
+    // From daemon.rs apply_verbosity helper
+    apply_verbosity,
     cached_legacy_daemon_greeting,
     clap_command,
     clear_test_hostname_overrides,
@@ -89,6 +91,7 @@ use support::*;
 include!("tests/chunks/advertised_capability_lines_empty_without_modules.rs");
 include!("tests/chunks/advertised_capability_lines_include_authlist_when_required.rs");
 include!("tests/chunks/advertised_capability_lines_report_modules_without_auth.rs");
+include!("tests/chunks/apply_verbosity_seeds_logging_levels.rs");
 include!("tests/chunks/builder_allows_brand_override.rs");
 include!("tests/chunks/builder_collects_arguments.rs");
 include!("tests/chunks/clap_parse_error_is_reported_via_message.rs");
