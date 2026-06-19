@@ -20,8 +20,10 @@ sd-notify = ["dep:sd-notify", "core/sd-notify"]
 async = ["dep:tokio", "core/async"]
 # Hybrid async listener: tokio accept loop dispatching sync workers via
 # spawn_blocking. Skeleton path tracked under issue #1935; opt-in at build time
-# and not yet wired as the default. See
-# `docs/design/daemon-tokio-async-listener-impl.md` for the rollout plan.
+# and not yet wired as the default. This is also the landing flag for the
+# DASYNC rollout - the long-form rationale lives in
+# `docs/design/daemon-async-accept-sync-workers.md` and the concrete
+# implementation steps in `docs/design/daemon-tokio-async-listener-impl.md`.
 async-daemon = ["dep:tokio"]
 # Concurrent session tracking - enables efficient shared state for multi-session daemons
 concurrent-sessions = ["dep:dashmap"]
@@ -33,11 +35,6 @@ tracing = ["dep:tracing", "core/tracing"]
 acl = ["core/acl", "metadata/acl"]
 # Filename charset transcoding via the module `charset =` directive (iconv).
 iconv = ["core/iconv", "protocol/iconv"]
-# Async accept loop for the daemon listener. Flag-only landing step for the
-# DASYNC rollout tracked by `docs/design/daemon-async-accept-sync-workers.md`;
-# no code paths are gated on this feature yet. Subsequent steps will wire the
-# tokio-based listener and sync-worker dispatch behind this flag.
-daemon-async-accept = []
 # Native TLS termination via rustls - single-binary alternative to stunnel/HAProxy
 # sidecar. Opt-in; default builds remain TLS-free. See
 # `docs/design/daemon-async-accept-sync-workers.md` section 11 for the integration
