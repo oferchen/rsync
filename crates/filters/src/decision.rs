@@ -39,20 +39,13 @@ impl FilterSetInner {
     /// When `traversal` is `true`, synthetic descendant matchers (the
     /// `pattern/**` matcher pre-compiled for anchored excludes like
     /// `- /bar`) are skipped because the traversal itself handles descendant
-    /// exclusion - this mirrors upstream's `exclude.c::rule_matches()` which
+    /// exclusion - this mirrors upstream's `exclude.c:rule_matches()` which
     /// has NO descendant matching at all. When `false`, descendants stay
     /// active so single-path API callers (e.g. `set.allows("build/x.bin")`
     /// after `- build/`) still see the expected exclusion without walking
     /// the tree.
     ///
-    /// UTS-V3.B "narrow-descendants" fix: `CompiledRule::new` now emits
-    /// `pattern/**` matchers unconditionally for Exclude/Protect/Risk (the
-    /// PR #5749 dir-only-unanchored-wildcard suppression gate was scoped to
-    /// the call site). The runtime gate below is the single suppression
-    /// point under `DecisionContext::Deletion + Recursive traversal`, so
-    /// synthetic descendants do not contribute to the "include" verdict on
-    /// a candidate-delete path that the user-written rules never matched.
-    /// upstream: exclude.c::rule_matches()
+    /// upstream: exclude.c:rule_matches()
     pub(crate) fn decision_with_traversal(
         &self,
         path: &Path,
