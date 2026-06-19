@@ -199,6 +199,7 @@ fn itemize_multiple_new_files_each_show_new_format() {
     let (code, stdout, _stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-i"),
+        OsString::from("-r"),
         src_operand,
         dest_dir.into_os_string(),
     ]);
