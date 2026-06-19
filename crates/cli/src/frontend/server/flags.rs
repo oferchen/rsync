@@ -427,6 +427,8 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--delete-excluded"
             | "--remove-source-files"
             | "--remove-sent-files"
+            | "--copy-unsafe-links"
+            | "--safe-links"
             | "--stats"
             | "--ignore-existing"
             | "--existing"
