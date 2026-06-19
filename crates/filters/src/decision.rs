@@ -39,11 +39,20 @@ impl FilterSetInner {
     /// When `traversal` is `true`, synthetic descendant matchers (the
     /// `pattern/**` matcher pre-compiled for anchored excludes like
     /// `- /bar`) are skipped because the traversal itself handles descendant
-    /// exclusion - this mirrors upstream's `exclude.c:rule_matches()` which
+    /// exclusion - this mirrors upstream's `exclude.c::rule_matches()` which
     /// has NO descendant matching at all. When `false`, descendants stay
     /// active so single-path API callers (e.g. `set.allows("build/x.bin")`
     /// after `- build/`) still see the expected exclusion without walking
     /// the tree.
+    ///
+    /// UTS-V3.B "narrow-descendants" fix: `CompiledRule::new` now emits
+    /// `pattern/**` matchers unconditionally for Exclude/Protect/Risk (the
+    /// PR #5749 dir-only-unanchored-wildcard suppression gate was scoped to
+    /// the call site). The runtime gate below is the single suppression
+    /// point under `DecisionContext::Deletion + Recursive traversal`, so
+    /// synthetic descendants do not contribute to the "include" verdict on
+    /// a candidate-delete path that the user-written rules never matched.
+    /// upstream: exclude.c::rule_matches()
     pub(crate) fn decision_with_traversal(
         &self,
         path: &Path,
@@ -390,5 +399,114 @@ mod tests {
         let inner = FilterSetInner::default();
         assert!(inner.include_exclude.is_empty());
         assert!(inner.protect_risk.is_empty());
+    }
+
+    use crate::FilterRule;
+
+    fn push_rule(inner: &mut FilterSetInner, action: FilterAction, pattern: &str) {
+        let rule = FilterRule {
+            action,
+            pattern: pattern.to_owned(),
+            applies_to_sender: true,
+            applies_to_receiver: true,
+            perishable: false,
+            xattr_only: false,
+            negate: false,
+            exclude_only: false,
+            no_inherit: false,
+            cvs_mode: false,
+        };
+        inner
+            .include_exclude
+            .push(CompiledRule::new(rule).expect("compile"));
+    }
+
+    /// UTS-V3.B regression: `+ /bar/` under Deletion against `./bar/.filt`
+    /// must match upstream behaviour. The include rule is anchored and
+    /// directory-only; the file `bar/.filt` is not the included directory
+    /// and is not pulled in by it. With no excluding rule in the chain the
+    /// default decision is "allow deletion" - upstream's
+    /// `exclude.c::rule_matches()` returns no match for the include rule
+    /// (FILTRULE_DIRECTORY on a non-dir) and falls through.
+    ///
+    /// Both the Recursive-traversal call (`allows_deletion_during_traversal`)
+    /// and the single-path call (`allows_deletion`) converge on the same
+    /// upstream outcome.
+    ///
+    /// upstream: exclude.c::rule_matches()
+    #[test]
+    fn deletion_include_bar_dir_does_not_force_include_bar_filt() {
+        let mut inner = FilterSetInner::default();
+        push_rule(&mut inner, FilterAction::Include, "/bar/");
+
+        let path = Path::new("bar/.filt");
+        let recursive = inner.decision_with_traversal(path, false, DecisionContext::Deletion, true);
+        assert!(
+            recursive.allows_deletion(),
+            "Deletion+Recursive: + /bar/ must not force-include bar/.filt",
+        );
+
+        let single = inner.decision_with_traversal(path, false, DecisionContext::Deletion, false);
+        assert!(
+            single.allows_deletion(),
+            "Deletion single-path: + /bar/ must not force-include bar/.filt",
+        );
+    }
+
+    /// UTS-V3.B regression: `+ /foo/s?b/` under Deletion against
+    /// `./foo/sub/file1` must match upstream behaviour. The include rule
+    /// is anchored, directory-only, and wildcard-bearing - it matches the
+    /// directory `foo/sub` but does not pull files inside it into the
+    /// transfer (per upstream `exclude.c::rule_matches()` FILTRULE_DIRECTORY
+    /// semantic). With no other matching rule the default decision is
+    /// "allow deletion" on both the Recursive-traversal and single-path
+    /// entry points.
+    ///
+    /// upstream: exclude.c::rule_matches()
+    #[test]
+    fn deletion_include_foo_sub_dir_does_not_force_include_file1() {
+        let mut inner = FilterSetInner::default();
+        push_rule(&mut inner, FilterAction::Include, "/foo/s?b/");
+
+        let path = Path::new("foo/sub/file1");
+        let recursive = inner.decision_with_traversal(path, false, DecisionContext::Deletion, true);
+        assert!(
+            recursive.allows_deletion(),
+            "Deletion+Recursive: + /foo/s?b/ must not force-include foo/sub/file1",
+        );
+
+        let single = inner.decision_with_traversal(path, false, DecisionContext::Deletion, false);
+        assert!(
+            single.allows_deletion(),
+            "Deletion single-path: + /foo/s?b/ must not force-include foo/sub/file1",
+        );
+    }
+
+    /// UTS-V3.B regression: `- /bar` synthesises `bar/**` descendants.
+    /// Under Deletion single-path the descendant fires on `bar/.filt` so
+    /// the receiver excludes it from the delete pass; under
+    /// Deletion+Recursive the runtime `check_descendants = !traversal`
+    /// gate suppresses descendants because the walk itself handles
+    /// descent control, matching upstream `exclude.c::rule_matches()`.
+    ///
+    /// upstream: exclude.c::rule_matches()
+    #[test]
+    fn deletion_anchored_literal_exclude_descends_only_off_traversal() {
+        let mut inner = FilterSetInner::default();
+        push_rule(&mut inner, FilterAction::Exclude, "/bar");
+
+        let path = Path::new("bar/.filt");
+
+        let single = inner.decision_with_traversal(path, false, DecisionContext::Deletion, false);
+        assert!(
+            !single.allows_deletion(),
+            "Deletion single-path: - /bar must exclude bar/.filt via descendant matcher",
+        );
+
+        let recursive = inner.decision_with_traversal(path, false, DecisionContext::Deletion, true);
+        assert!(
+            recursive.allows_deletion(),
+            "Deletion+Recursive: descendant matchers are suppressed because the walk handles descent",
+        );
     }
 }
