@@ -27,6 +27,21 @@ pub enum FilesFromSource {
     ///
     /// - `options.c:2458` - `check_for_hostspec()` detects `:path` prefix
     RemoteFile(String),
+    /// Hybrid local-open + wire-forward source.
+    ///
+    /// Used when the `--files-from` spec names a `localhost:path` hostspec
+    /// and the stripped path is openable on the client. The client opens
+    /// the file locally and stages its contents into `files_from_data` so a
+    /// PULL client-receiver can flush the bytes back to the remote sender,
+    /// while the wire-arg keeps the stripped form for the remote server's
+    /// argv. Matches upstream `options.c:3112-3138 check_for_hostspec` +
+    /// `options.c:2476-2483` semantics on a single host.
+    HybridLocalRemote {
+        /// Local filesystem path to open for staging into `files_from_data`.
+        local_path: std::path::PathBuf,
+        /// Stripped path forwarded to the remote server's `--files-from`.
+        wire_arg: String,
+    },
 }
 
 impl FilesFromSource {
@@ -37,16 +52,23 @@ impl FilesFromSource {
     }
 
     /// Returns `true` when the file list is read on the remote server.
+    ///
+    /// The hybrid variant counts as remote because the server-side argv
+    /// receives the stripped path, but the client still stages the bytes
+    /// locally - see [`Self::is_local_forwarded`].
     #[must_use]
     pub fn is_remote(&self) -> bool {
-        matches!(self, Self::RemoteFile(_))
+        matches!(self, Self::RemoteFile(_) | Self::HybridLocalRemote { .. })
     }
 
     /// Returns `true` when the file list is read locally and must be
     /// forwarded over the protocol to the sender.
     #[must_use]
     pub fn is_local_forwarded(&self) -> bool {
-        matches!(self, Self::LocalFile(_) | Self::Stdin)
+        matches!(
+            self,
+            Self::LocalFile(_) | Self::Stdin | Self::HybridLocalRemote { .. }
+        )
     }
 }
 

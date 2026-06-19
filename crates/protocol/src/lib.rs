@@ -162,7 +162,10 @@ pub use envelope::{
     ParseMessageCodeError,
 };
 pub use error::NegotiationError;
-pub use files_from::{forward_files_from, read_files_from_stream};
+pub use files_from::{
+    FILES_FROM_RECV_DEFAULT_DEADLINE, forward_files_from, read_files_from_stream,
+    read_files_from_stream_with_deadline,
+};
 pub use fnamecmp::{FnameCmpType, InvalidFnameCmpType};
 pub use iconv::{
     ConversionError, EncodingConverter, EncodingError, EncodingPair, FilenameConverter,

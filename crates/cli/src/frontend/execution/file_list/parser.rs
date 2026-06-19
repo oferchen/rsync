@@ -4,7 +4,7 @@
 //! and resolves `--files-from` values into their source type.
 
 use std::ffi::{OsStr, OsString};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Resolves a `--files-from` CLI value into a [`FilesFromSource`].
 ///
@@ -49,11 +49,37 @@ pub(crate) fn resolve_files_from_source(files_from: &[OsString]) -> core::client
     // module specs (`host::module`). The latter is for daemon transfers,
     // which we do not currently support for files-from.
     if let Some((host, path)) = split_hostspec(&text) {
-        let _ = host; // host validation happens at transfer-arg level
+        // upstream: options.c:3112-3138 / options.c:2476-2483 -
+        // check_for_hostspec strips the host prefix and forwards the path
+        // to the remote server. When the host resolves to localhost AND the
+        // stripped path is openable on this client, emit a hybrid variant
+        // so a PULL client-receiver can stage the bytes locally while the
+        // wire argv still carries the stripped path for upstream parity.
+        // Without this, PULL with `--files-from=localhost:path` hangs at
+        // recv_filesfrom: the receiver flushes None and the remote sender
+        // blocks waiting for the secluded-args stream.
+        if host_is_localhost(host) {
+            let local_path = PathBuf::from(path);
+            if Path::new(&local_path).is_file() {
+                return FilesFromSource::HybridLocalRemote {
+                    local_path,
+                    wire_arg: path.to_owned(),
+                };
+            }
+        }
         return FilesFromSource::RemoteFile(path.to_owned());
     }
 
     FilesFromSource::LocalFile(PathBuf::from(last))
+}
+
+/// Returns `true` when the parsed hostspec names the local machine.
+///
+/// Matches upstream `main.c:1438 strcmp(filesfrom_host, shell_machine)`
+/// semantics: a hostspec of `localhost` (case-insensitive) refers to this
+/// client, allowing a hybrid local-open + wire-forward dispatch.
+fn host_is_localhost(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
 }
 
 /// Splits a `host:path` argument into `(host, path)` if `text` is a remote
