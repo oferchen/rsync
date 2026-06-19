@@ -124,8 +124,14 @@ fn log_file_multiple_files_produce_multiple_entries() {
     let mut source_trailing = source_dir.into_os_string();
     source_trailing.push(std::path::MAIN_SEPARATOR.to_string());
 
+    // upstream: options.c:112 defaults `recurse = 0` and flist.c:2451 prints
+    // `skipping directory %s` for a directory operand without -r/-a/-d, so a
+    // trailing-slash directory source must be paired with --recursive to fan
+    // out into the per-child %f log entries this test verifies. Mirrors the
+    // pattern from PRs #5985, #5946, #5934, #5955.
     let (code, _stdout, _stderr) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("--recursive"),
         OsString::from("--log-file"),
         log_path.clone().into_os_string(),
         OsString::from("--log-file-format=%f"),
