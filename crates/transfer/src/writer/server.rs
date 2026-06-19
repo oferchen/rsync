@@ -4,8 +4,10 @@
 //! transitions where the global I/O buffer state is modified at runtime.
 
 use std::io::{self, IoSlice, Write};
+use std::net::{Shutdown, TcpStream};
 use std::num::NonZeroU8;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use compress::algorithm::CompressionAlgorithm;
 use compress::zlib::CompressionLevel;
@@ -13,6 +15,7 @@ use protocol::MessageCode;
 
 use super::multiplex::MultiplexWriter;
 use crate::compressed_writer::CompressedWriter;
+use crate::is_early_close_error;
 
 /// Writer that can switch from plain to multiplex mode after protocol setup.
 ///
@@ -292,6 +295,50 @@ impl<W: Write> ServerWriter<W> {
         }
     }
 
+    /// Drains every user-space buffer in the writer graph so the next byte
+    /// any caller emits goes straight to the kernel.
+    ///
+    /// Idempotent. Calls [`finalize_compression`](Self::finalize_compression)
+    /// to emit the codec end-of-stream trailer (zlib `Z_FINISH`, lz4 footer,
+    /// zstd epilogue), which itself flushes the multiplex `BufWriter`. In
+    /// Multiplex / Plain mode it degrades to a plain [`flush`](Self::flush).
+    ///
+    /// Peer-already-closed errors are downgraded to `Ok(())` because the
+    /// transfer is finished by the time this barrier runs - the peer has
+    /// already FINed in the early-close case and there is no useful byte
+    /// left to deliver. Every other I/O error surfaces (Rule 12: fail loud).
+    ///
+    /// # UTS-V3.A drain-barrier contract
+    ///
+    /// The audit traced the cluster-A wire-cutoffs (~2.25 MB on batch-mode,
+    /// alt-dest, and `daemon-refuse-compress`; ~615 KB on
+    /// `daemon-gzip-download`) to user-space bytes still sitting in the
+    /// multiplex `BufWriter` / codec trailer when the daemon's
+    /// `SO_LINGER` + `shutdown(SHUT_WR)` teardown fired. Driving
+    /// `flush_all_pending` after `handle_goodbye_with_finalizer` returns
+    /// makes the drain observable and error-surfacing instead of relying
+    /// on the implicit `Drop` + `SO_LINGER` hand-off.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `cleanup.c::handle_cleanup()` brackets the sender's final
+    ///   `io_flush(FULL_FLUSH)` with the process exit so every user-space
+    ///   byte hits the wire before the kernel queues `FIN`.
+    /// - `main.c:983` calls `io_flush(FULL_FLUSH)` after
+    ///   `read_final_goodbye()` returns, mirroring the same barrier intent.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a non-early-close I/O error fires during codec
+    /// finalisation or multiplex flush.
+    pub fn flush_all_pending(&mut self) -> io::Result<()> {
+        match self.finalize_compression() {
+            Ok(()) => Ok(()),
+            Err(e) if is_early_close_error(&e) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
+
     /// Writes raw bytes directly to the underlying stream, bypassing multiplexing.
     ///
     /// Used for protocol exchanges like the final goodbye handshake where
@@ -355,5 +402,63 @@ impl<W: Write> Write for ServerWriter<W> {
                 "ServerWriter in invalid Taken state",
             )),
         }
+    }
+}
+
+/// Half-closes the send side of an accepted daemon connection after every
+/// in-flight TX byte has been ACKed.
+///
+/// Companion to [`ServerWriter::flush_all_pending`]: that drains the
+/// user-space writer graph; this drains the kernel send buffer. Together
+/// they replace the implicit `Drop` + `SO_LINGER` hand-off with an
+/// observable, timeout-bounded, error-surfacing two-stage barrier.
+///
+/// Sequence:
+/// 1. `SO_LINGER(timeout)` so `shutdown(SHUT_WR)` blocks until the queued
+///    TX bytes are ACKed (or the linger window expires). This is the
+///    catastrophic-failure fallback: even if the peer never reads, we
+///    refuse to wait beyond `timeout` before queuing `FIN`.
+/// 2. `shutdown(SHUT_WR)` issues the explicit half-close so the peer
+///    observes `FIN` exactly once `SO_LINGER` has drained the kernel
+///    queue. Any `NotConnected` / `BrokenPipe` is downgraded to `Ok(())`
+///    because that means the peer already closed.
+///
+/// Use only after the application-level write half is fully drained
+/// (e.g. [`ServerWriter::flush_all_pending`] returned `Ok(())`) AND the
+/// daemon-side read-drain loop has consumed the peer's trailing goodbye.
+/// Calling earlier risks the same race the audit fixed.
+///
+/// # Upstream Reference
+///
+/// - `io.c:943-963 noop_io_until_death()` keeps the sender's read side
+///   open until the peer FINs.
+/// - `cleanup.c:265 close_all()` finally drops the fds; the kernel
+///   queues `FIN` on the write side as a side effect of the exit.
+///
+/// # Errors
+///
+/// Returns the underlying `io::Error` from `shutdown` when it is not a
+/// peer-already-closed condition. The `SO_LINGER` set failure is
+/// surfaced because it would silently defeat the drain guarantee.
+pub fn shutdown_send_side(stream: &TcpStream, timeout: Duration) -> io::Result<()> {
+    // SO_LINGER bounds the kernel-level drain. If the peer is wedged,
+    // shutdown(SHUT_WR) will not block past `timeout`. Even if SO_LINGER
+    // is unsupported on the underlying socket, surfacing the failure is
+    // safer than silently degrading: callers can re-fall-back to the
+    // legacy SO_LINGER-then-drop pattern higher up the stack.
+    let sock = socket2::SockRef::from(stream);
+    sock.set_linger(Some(timeout))?;
+
+    match stream.shutdown(Shutdown::Write) {
+        Ok(()) => Ok(()),
+        Err(e)
+            if matches!(
+                e.kind(),
+                io::ErrorKind::NotConnected | io::ErrorKind::BrokenPipe
+            ) =>
+        {
+            Ok(())
+        }
+        Err(e) => Err(e),
     }
 }

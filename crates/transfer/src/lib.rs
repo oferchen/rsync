@@ -140,7 +140,7 @@ pub mod shared;
 pub mod symlink_safety;
 pub mod temp_cleanup;
 pub mod temp_guard;
-mod writer;
+pub mod writer;
 
 mod parallel_io;
 
@@ -178,7 +178,7 @@ pub use self::receiver::{ReceiverContext, SumHead, TransferStats};
 pub use self::role::ServerRole;
 pub use self::shared::{ChecksumFactory, TransferDeadline};
 pub use self::temp_cleanup::cleanup_stale_temp_files;
-pub use self::writer::{CountingWriter, MsgInfoSender};
+pub use self::writer::{CountingWriter, MsgInfoSender, ServerWriter, shutdown_send_side};
 pub use ack_batcher::{
     AckBatcher, AckBatcherConfig, AckBatcherStats, AckEntry, AckStatus, DEFAULT_BATCH_SIZE,
     DEFAULT_BATCH_TIMEOUT_MS, MAX_BATCH_SIZE, MAX_BATCH_TIMEOUT_MS, MIN_BATCH_SIZE,

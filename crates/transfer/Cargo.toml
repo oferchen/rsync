@@ -29,6 +29,10 @@ getrandom = "0.4"
 thiserror = { workspace = true }
 tracing = { workspace = true, optional = true }
 rayon = { workspace = true }
+# socket2 is used by `writer::server::shutdown_send_side` to drive the
+# explicit SO_LINGER + half-close drain barrier after the daemon-sender's
+# generator orchestrator returns (UTS-V3.A audit).
+socket2 = { workspace = true, features = ["all"] }
 tokio = { workspace = true, optional = true }
 tokio-util = { workspace = true, optional = true }
 
