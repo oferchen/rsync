@@ -14,8 +14,18 @@
 #   workflow-to-workflow dispatch is involved.
 #
 # Scope
-#   - First-party PRs only. Fork PRs cannot use `GITHUB_TOKEN` to push back;
-#     a fork fallback is tracked separately (CIM-LOCKFILE-7).
+#   - First-party PRs: regenerate `Cargo.lock` and push the refresh back to
+#     the PR branch (existing push-back path).
+#   - Fork PRs: the `pull_request` event's `GITHUB_TOKEN` is read-only on a
+#     fork-originated PR, so neither push-back nor PR commenting works there.
+#     This workflow therefore runs on `pull_request_target`, which executes in
+#     the base-repo context with a write-capable `GITHUB_TOKEN`. On fork PRs
+#     it regenerates the lockfile against the PR's merge ref and posts a
+#     sticky PR comment containing the `git diff Cargo.lock` patch so the
+#     contributor can apply it locally with `git apply` (CIM-LOCKFILE-7).
+#   - `pull_request_target` runs only `cargo update --workspace`, which
+#     resolves the dependency graph without executing `build.rs` or
+#     proc-macros, so it is safe to run against fork-controlled `Cargo.toml`.
 #   - Skips PRs authored by `github-actions[bot]` so the weekly cron PR
 #     (CIM-LOCKFILE-3) does not loop on its own output.
 #   - This workflow does not enforce `--locked`; that is CIM-LOCKFILE-4's
@@ -24,7 +34,7 @@
 name: Cargo.lock PR Auto-sync
 
 on:
-  pull_request:
+  pull_request_target:
     paths:
       - 'Cargo.toml'
       - 'crates/**/Cargo.toml'
@@ -37,23 +47,44 @@ concurrency:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   sync-lockfile:
     name: Sync Cargo.lock
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: >-
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.user.login != 'github-actions[bot]'
+    if: github.event.pull_request.user.login != 'github-actions[bot]'
 
     steps:
-      - name: Checkout PR head
+      - name: Classify PR source
+        id: source
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+        run: |
+          set -euo pipefail
+          if [[ "${HEAD_REPO}" == "${BASE_REPO}" && "${IS_FORK}" != "true" ]]; then
+            echo "fork=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "fork=true" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout PR head (first-party)
+        if: steps.source.outputs.fork == 'false'
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Checkout PR head (fork, read-only)
+        if: steps.source.outputs.fork == 'true'
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: refs/pull/${{ github.event.pull_request.number }}/merge
           fetch-depth: 0
 
       - name: Install Rust stable
@@ -75,7 +106,7 @@ jobs:
           fi
 
       - name: Commit and push refreshed Cargo.lock
-        if: steps.diff.outputs.changed == 'true'
+        if: steps.diff.outputs.changed == 'true' && steps.source.outputs.fork == 'false'
         env:
           GIT_AUTHOR_NAME: 'github-actions[bot]'
           GIT_AUTHOR_EMAIL: '41898282+github-actions[bot]@users.noreply.github.com'
@@ -86,3 +117,72 @@ jobs:
           git add Cargo.lock
           git commit -m 'chore: sync Cargo.lock'
           git push origin HEAD:${{ github.event.pull_request.head.ref }}
+
+      - name: Capture Cargo.lock diff (fork)
+        if: steps.diff.outputs.changed == 'true' && steps.source.outputs.fork == 'true'
+        id: fork_diff
+        run: |
+          set -euo pipefail
+          git diff -- Cargo.lock >cargo-lock.patch
+          # Truncate at 60 KiB so the comment stays under GitHub's 65535-char limit.
+          if [[ $(wc -c <cargo-lock.patch) -gt 61440 ]]; then
+            head -c 61440 cargo-lock.patch >cargo-lock.patch.trunc
+            mv cargo-lock.patch.trunc cargo-lock.patch
+            echo "truncated=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "truncated=false" >>"$GITHUB_OUTPUT"
+          fi
+
+      - name: Post or update sticky fork-fallback comment
+        if: steps.diff.outputs.changed == 'true' && steps.source.outputs.fork == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          TRUNCATED: ${{ steps.fork_diff.outputs.truncated }}
+        run: |
+          set -euo pipefail
+          MARKER='<!-- cargo-lockfile-sync-fork-fallback -->'
+          {
+            echo "${MARKER}"
+            echo
+            echo '## Cargo.lock refresh needed'
+            echo
+            echo 'This PR touches a workspace `Cargo.toml`, and re-running'
+            echo '`cargo update --workspace` against the PR head produced a'
+            echo '`Cargo.lock` diff. Because the PR comes from a fork, this'
+            echo "workflow cannot push the refreshed lockfile back to your"
+            echo 'branch. Please apply the patch below locally and push:'
+            echo
+            echo '```sh'
+            echo 'gh pr checkout '"${PR_NUMBER}"
+            echo 'cat <<'"'"'PATCH'"'"' | git apply'
+            cat cargo-lock.patch
+            echo 'PATCH'
+            echo 'git add Cargo.lock'
+            echo 'git commit -m "chore: sync Cargo.lock"'
+            echo 'git push'
+            echo '```'
+            if [[ "${TRUNCATED}" == "true" ]]; then
+              echo
+              echo '> Note: the diff exceeded GitHub'"'"'s comment-size limit and'
+              echo '> was truncated. Regenerate locally with'
+              echo '> `cargo update --workspace` instead of applying the patch.'
+            fi
+          } >comment-body.md
+          existing_id="$(gh api \
+            "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --paginate \
+            --jq '.[] | select(.body | startswith("'"${MARKER}"'")) | .id' \
+            | head -n1)"
+          if [[ -n "${existing_id}" ]]; then
+            gh api \
+              --method PATCH \
+              "repos/${REPO}/issues/comments/${existing_id}" \
+              -f body="$(cat comment-body.md)" >/dev/null
+          else
+            gh api \
+              --method POST \
+              "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              -f body="$(cat comment-body.md)" >/dev/null
+          fi
