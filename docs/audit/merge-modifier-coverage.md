@@ -74,6 +74,28 @@ merge-modifiers - they select a non-merge rule kind. They are covered by
 suites in `crates/filters/tests/protect_risk_rules.rs`, `negated_rules.rs`,
 and `clear_rules.rs`.
 
+## Implicit modifier hooks
+
+Modifier-shaped behaviours that are not parsed from a literal character but
+applied implicitly to rules expanded from merge / dir-merge files. Listed
+separately because they do not occupy a slot in `parse_rule_tok()`'s
+modifier-character loop; they are gates upstream OR's onto every per-token
+rule produced from a merge file under specific runtime conditions.
+
+| Modifier / hook | Upstream | oc-rsync | Wire flag |
+|---|---|---|---|
+| Implicit FILTRULE_SENDER_SIDE under `delete_excluded` | `exclude.c:1324-1332 parse_rule_tok` | `chain/mod.rs:537 apply_merge_implicit_sender_side` | `s` short-prefix on the wire (`-s pattern`) |
+
+The implicit flip OR's `FILTRULE_SENDER_SIDE` onto include/exclude rules
+expanded from per-token merge content when the runtime `delete_excluded`
+flag is set and the rule does not already carry an explicit `s`/`r` side
+modifier. Without it, the receiver's `--delete-excluded` pass would observe
+`applies_to_receiver = true` on the expanded exclude and skip the matching
+files instead of deleting them. Coverage:
+
+- Decision API: `crates/filters/src/chain/tests.rs::cvs_dir_merge_expands_to_sender_side_under_delete_excluded`.
+- Wire bytes: `crates/protocol/tests/mdf_2_2_delete_excluded_sender_side_wire.rs`.
+
 ## At-risk modifiers and follow-on tasks
 
 The "Partial" rows above isolate the gaps. Grouped by the smallest unit of
