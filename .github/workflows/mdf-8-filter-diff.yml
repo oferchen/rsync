@@ -63,3 +63,28 @@ jobs:
           name: mdf-8-filter-diff
           path: /tmp/mdf-8-diff/
           if-no-files-found: warn
+
+      # FIL-AUD-4 MDF-8.a: parallel run on the delete-excluded fixture so the
+      # diff harness catches UTS-DD-exclude.1/.4/.5 regressions in CI. Output
+      # goes to a separate directory so the artifact uploads stay distinct.
+      - name: Run MDF-8.a delete-excluded diff harness
+        run: |
+          ARGS=()
+          if [[ "${{ inputs.strict }}" == "true" ]]; then
+              ARGS+=(--strict)
+          fi
+          bash scripts/mdf_8_filter_diff_harness.sh \
+              --upstream /usr/bin/rsync \
+              --oc-rsync target/release/oc-rsync \
+              --fixture tests/fixtures/filter-rules/mdf-8-delete-excluded/source \
+              --output /tmp/mdf-8-delete-excluded-diff \
+              --delete-excluded \
+              "${ARGS[@]}"
+
+      - name: Upload delete-excluded diff artifact
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mdf-8-delete-excluded-diff
+          path: /tmp/mdf-8-delete-excluded-diff/
+          if-no-files-found: warn
