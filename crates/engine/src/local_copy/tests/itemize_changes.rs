@@ -87,7 +87,12 @@ fn itemize_modified_file_shows_change_indicators() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default().collect_events(true);
+    // upstream: generator.c:1942 - the position-2 `c` glyph fires only under
+    // `--checksum`; enable it here so `checksum_changed()` reflects the
+    // rewritten data.
+    let options = LocalCopyOptions::default()
+        .checksum(true)
+        .collect_events(true);
     let report = plan
         .execute_with_report(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
@@ -305,7 +310,10 @@ fn itemize_multiple_changes_shows_all_indicators() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
+    // upstream: generator.c:1942 - position-2 `c` is reserved for `--checksum`
+    // mode, so enable it here to assert the multi-indicator pattern.
     let options = LocalCopyOptions::default()
+        .checksum(true)
         .permissions(true)
         .times(true)
         .collect_events(true);
@@ -625,7 +633,10 @@ fn itemize_format_matches_upstream_for_changed_file() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
+    // upstream: generator.c:1942 - position-2 `c` is reserved for `--checksum`
+    // mode, so enable it here to exercise the `>f.st......` upstream pattern.
     let options = LocalCopyOptions::default()
+        .checksum(true)
         .times(true)
         .collect_events(true);
     let report = plan
