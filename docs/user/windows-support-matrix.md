@@ -72,7 +72,7 @@ flight are marked "Design only" or "Audit only" with a tracking link.
 | `--xattrs` on Windows | Backend shipped, CLI preflight blocks | `crates/cli/src/frontend/execution/drive/workflow/preflight.rs:176-180`. Follow-up PR #5564 widens the preflight cfg gate |
 | `--acls` on Windows | Shipped | Per WAS-1..WAS-8 series; `crates/metadata/src/acl_windows/` |
 | `--crtimes` | Not supported (`crtimes` is Cygwin-only upstream) | Daemon version banner advertises "no crtimes" |
-| `--specials`, `-D` | No-op | Matches upstream rsync on Cygwin (no `mknod` on NTFS) |
+| `--devices`, `--specials`, `-D` | Skip + warn (default); `--fake-super` writes upstream-format placeholder | Receiver emits a `[receiver]`-tagged warning per device / FIFO / socket entry, increments a typed skip counter, and exits `RERR_PARTIAL` (24). Under `--fake-super` the entry round-trips through an NTFS ADS (`user.rsync.%stat`) using upstream's `"%o %d,%d %d:%d"` format. Strategy spec: `docs/design/windows-device-file-strategy.md` (WIND-2). |
 | Compression (`-z`, `--zc=...`) | Shipped (platform-independent) | zlib and zstd both available |
 | Checksum negotiation (`--checksum-choice`) | Shipped | XXH3 / XXH128 / MD5 / MD4 with AVX2 / SSE2 fast paths on Windows x86_64 |
 | Bandwidth limits (`--bwlimit`) | Shipped | Userspace rate limiter |
@@ -87,6 +87,32 @@ flight are marked "Design only" or "Audit only" with a tracking link.
 | SSH transport (russh) | Shipped | Compatible with OpenSSH for Windows, PuTTY (`plink`), any RFC 4253 server |
 | Signal handling (Ctrl+C, Ctrl+Break, console close) | Shipped | `crates/platform/src/signal.rs` (SetConsoleCtrlHandler) |
 | Bounded-RSS file reader (replaces `mmap_reader_stub` `Vec<u8>`-per-file) | Skeleton landed; call sites still on stub | `crates/fast_io/src/windows_chunked_reader.rs` (skeleton); call-site migration tracked under WIN-S.LAND.1.b.4. Chunk size tunable via `OC_RSYNC_WIN_CHUNK_BYTES` (default 4 MiB). |
+
+### Notes on `--devices`, `--specials`, `-D`
+
+Native (non-Cygwin) Windows has no kernel API to create a Unix device
+node, FIFO, or socket inode: there is no `mknod`, no `mkfifo`, and no
+`bind`-into-`AF_UNIX`. Rather than silently dropping the entry (the
+previous behaviour) or aborting the whole transfer, the Windows receiver
+follows the WIND-2 strategy:
+
+- **Default**: emit one `[receiver]`-tagged warning per device / FIFO /
+  socket entry, increment a typed skip counter (`skipped_block`,
+  `skipped_char`, `skipped_fifo`, `skipped_sock`), leave the destination
+  untouched, and exit `RERR_PARTIAL` (24). The operator sees exactly what
+  was skipped; cross-platform mixed-content trees (Linux home dirs synced
+  to a Windows backup target, etc.) still complete every regular file.
+- **Under `--fake-super`**: write a 0-byte placeholder file and store the
+  upstream-format metadata string `"%o %d,%d %d:%d"` (mode, rdev-major,
+  rdev-minor, uid, gid) in an NTFS Alternate Data Stream named
+  `user.rsync.%stat`. This round-trips byte-for-byte through a Linux
+  receiver running with root and `--fake-super` disabled, matching
+  upstream's `syscall.c:168-174` placeholder format.
+
+The wire protocol is unchanged: the flist still carries `rdev` major /
+minor exactly as upstream encodes them. This is a receiver-local policy
+change. Full rationale, rejected alternatives, and the exit-code mapping
+are in `docs/design/windows-device-file-strategy.md`.
 
 ## 5. Gaps explicitly tracked
 
@@ -164,6 +190,8 @@ no row may be promoted past "Audit only" without a verified call site.
 - `docs/audit/windows-dacl-ace-inheritance.md` - inherited-ACE audit (WPC-10).
 - `docs/audit/windows-case-insensitive-conflict-detection.md` - case-collision audit (WPC-11).
 - `docs/audit/windows-perm-bits-posix-mapping.md` - permission-bits audit (WPC-12).
+- `docs/design/wind-1-device-file-audit.md` - device / FIFO / socket audit (WIND-1).
+- `docs/design/windows-device-file-strategy.md` - device-file skip-with-warn strategy and `--fake-super` placeholder contract (WIND-2).
 - `docs/audit/windows-copyfileex-platform-copy.md` - data-path dispatch chain.
 - `docs/audit/win-gc-gnu-eh-abi-status.md` - EH ABI status (WIN-G.c).
 - `docs/audit/win-gd-gnu-eh-release-implications.md` - EH release implications (WIN-G.d).
