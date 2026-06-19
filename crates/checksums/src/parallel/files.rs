@@ -1,10 +1,16 @@
 //! Parallel file hashing and signature computation.
 //!
 //! Provides concurrent file I/O with digest computation using rayon.
-//! For files above the mmap threshold, memory-mapping is attempted first
-//! to avoid per-chunk read syscalls, with buffered I/O as fallback.
+//! On Unix, files above the mmap threshold are zero-copy hashed from a
+//! `MmapReader` mapping; on Windows the equivalent path streams through
+//! [`WindowsChunkedReader`] so peak RSS stays bounded by the configured
+//! chunk size (default 4 MiB) rather than the file size, mirroring the
+//! WIN-S.LAND.1.b bounded-RSS contract.
 
+#[cfg(unix)]
 use fast_io::mmap_reader::{MMAP_THRESHOLD, MmapReader};
+#[cfg(windows)]
+use fast_io::windows_chunked_reader::WindowsChunkedReader;
 use rayon::prelude::*;
 use std::fs::File;
 use std::io::{self, Read};
@@ -17,8 +23,10 @@ use super::types::{BlockSignature, FileHashConfig, FileHashResult, FileSignature
 
 /// Hashes a single file using the specified digest algorithm.
 ///
-/// For files above [`MMAP_THRESHOLD`], memory-mapping is attempted first to
-/// avoid per-chunk read syscalls. Falls back to buffered I/O on mmap failure.
+/// On Unix, files above the mmap threshold are memory-mapped first to
+/// avoid per-chunk read syscalls, with buffered I/O as fallback. On
+/// Windows, the same size band streams through `WindowsChunkedReader`
+/// so peak RSS stays bounded by the chunk size, not the file size.
 fn hash_file_internal<D>(path: &Path, config: &FileHashConfig) -> FileHashResult<D::Digest>
 where
     D: StrongDigest,
@@ -35,6 +43,11 @@ where
             return Ok((D::digest(&data), size));
         }
 
+        // upstream: checksum.c:402 file_checksum() uses map_file() (mmap) for
+        // zero-copy hashing. On Windows the legacy mmap_reader_stub slurps the
+        // whole file into a Vec<u8>; switch to WindowsChunkedReader streaming
+        // below so peak RSS stays bounded by the chunk size, not the file size.
+        #[cfg(unix)]
         if size >= MMAP_THRESHOLD {
             if let Ok(mmap) = MmapReader::open(path) {
                 let _ = mmap.advise_sequential();
@@ -42,7 +55,12 @@ where
             }
         }
 
-        // upstream: checksum.c - pre-sized read loop avoids trailing EOF probe
+        // upstream: checksum.c - pre-sized read loop avoids trailing EOF probe.
+        // Windows shadows `file` with the bounded-RSS WindowsChunkedReader; the
+        // Unix streaming fallback continues to use the std::fs::File opened
+        // above (mmap unavailable on NFS/FUSE/procfs).
+        #[cfg(windows)]
+        let mut file = WindowsChunkedReader::open(path)?;
         let mut hasher = D::new();
         let mut buffer = vec![0u8; config.buffer_size];
         let mut remaining = size;
@@ -225,6 +243,11 @@ where
             return Ok((D::digest_with_seed(seed, &data), size));
         }
 
+        // upstream: checksum.c:402 file_checksum() uses map_file() (mmap) for
+        // zero-copy hashing. On Windows the legacy mmap_reader_stub slurps the
+        // whole file into a Vec<u8>; switch to WindowsChunkedReader streaming
+        // below so peak RSS stays bounded by the chunk size, not the file size.
+        #[cfg(unix)]
         if size >= MMAP_THRESHOLD {
             if let Ok(mmap) = MmapReader::open(path) {
                 let _ = mmap.advise_sequential();
@@ -232,7 +255,12 @@ where
             }
         }
 
-        // upstream: checksum.c - pre-sized read loop avoids trailing EOF probe
+        // upstream: checksum.c - pre-sized read loop avoids trailing EOF probe.
+        // Windows shadows `file` with the bounded-RSS WindowsChunkedReader; the
+        // Unix streaming fallback continues to use the std::fs::File opened
+        // above (mmap unavailable on NFS/FUSE/procfs).
+        #[cfg(windows)]
+        let mut file = WindowsChunkedReader::open(path)?;
         let mut hasher = D::with_seed(seed);
         let mut buffer = vec![0u8; config.buffer_size];
         let mut remaining = size;
@@ -324,8 +352,12 @@ where
         let size = metadata.len();
         let estimated_blocks = (size as usize).div_ceil(block_size);
 
-        // For files above the mmap threshold, slice blocks directly from
-        // mapped memory - zero read syscalls.
+        // For files above the mmap threshold on Unix, slice blocks directly
+        // from mapped memory - zero read syscalls. On Windows the legacy
+        // mmap_reader_stub would slurp the whole file into a Vec<u8>; switch
+        // to WindowsChunkedReader streaming below so peak RSS stays bounded
+        // by the chunk size, not the file size.
+        #[cfg(unix)]
         if size >= MMAP_THRESHOLD {
             if let Ok(mmap) = MmapReader::open(path) {
                 let _ = mmap.advise_sequential();
@@ -346,6 +378,11 @@ where
             }
         }
 
+        // Windows shadows `file` with the bounded-RSS WindowsChunkedReader;
+        // Unix retains the std::fs::File opened above for the streaming
+        // fallback (mmap unavailable on NFS/FUSE/procfs).
+        #[cfg(windows)]
+        let mut file = WindowsChunkedReader::open(path)?;
         let mut signatures = Vec::with_capacity(estimated_blocks);
         let _ = buffer_size; // size known from metadata; BufReader not needed
         let mut buffer = vec![0u8; block_size];
