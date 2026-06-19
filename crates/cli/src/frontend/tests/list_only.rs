@@ -24,6 +24,7 @@ fn list_only_lists_entries_without_copying() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("--recursive"),
         OsString::from("--links"),
         source_dir.into_os_string(),
         destination_dir.clone().into_os_string(),
@@ -54,7 +55,7 @@ fn list_only_formats_directory_without_trailing_slash() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
-        OsString::from("-r"),
+        OsString::from("--recursive"),
         source_dir.into_os_string(),
         dest_dir.into_os_string(),
     ]);
@@ -104,6 +105,7 @@ fn list_only_matches_rsync_format_for_regular_file() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("--recursive"),
         source_arg,
         dest_dir.clone().into_os_string(),
     ]);
@@ -133,6 +135,7 @@ fn list_only_matches_rsync_format_for_regular_file() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("--recursive"),
         OsString::from("--human-readable"),
         source_arg,
         dest_dir.into_os_string(),
@@ -187,7 +190,7 @@ fn list_only_formats_special_permission_bits_like_rsync() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
-        OsString::from("-r"),
+        OsString::from("--recursive"),
         source_arg,
         dest_dir.into_os_string(),
     ]);
@@ -381,6 +384,7 @@ fn list_only_symlink_shows_arrow_target_in_exact_format() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("--recursive"),
         OsString::from("--links"),
         source_arg,
         dest_dir.into_os_string(),
@@ -439,6 +443,7 @@ fn list_only_zero_byte_file_shows_zero_size() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("--recursive"),
         source_arg,
         dest_dir.into_os_string(),
     ]);
@@ -557,6 +562,7 @@ fn list_only_size_field_right_aligned_in_15_chars() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("--recursive"),
         source_arg,
         dest_dir.into_os_string(),
     ]);
@@ -680,6 +686,7 @@ fn list_only_large_file_size_has_thousands_separators() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("--recursive"),
         source_arg,
         dest_dir.into_os_string(),
     ]);
@@ -734,6 +741,7 @@ fn list_only_with_verbose_still_shows_listing_format() {
     let (code, stdout, _stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("--recursive"),
         OsString::from("--verbose"),
         source_arg,
         dest_dir.into_os_string(),
@@ -787,6 +795,7 @@ fn list_only_read_only_file_permissions() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("--recursive"),
         source_arg,
         dest_dir.into_os_string(),
     ]);
@@ -835,7 +844,7 @@ fn list_only_executable_file_permissions() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
-        OsString::from("-r"),
+        OsString::from("--recursive"),
         source_arg,
         dest_dir.into_os_string(),
     ]);
@@ -885,7 +894,7 @@ fn list_only_human_readable_size_format() {
         OsString::from(RSYNC),
         OsString::from("--list-only"),
         OsString::from("--human-readable"),
-        OsString::from("-r"),
+        OsString::from("--recursive"),
         source_arg,
         dest_dir.into_os_string(),
     ]);
@@ -948,6 +957,7 @@ fn list_only_multiple_files_have_consistent_column_alignment() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("--recursive"),
         source_arg,
         dest_dir.into_os_string(),
     ]);
@@ -1026,7 +1036,7 @@ fn list_only_implies_dry_run_no_files_transferred() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
-        OsString::from("-r"),
+        OsString::from("--recursive"),
         source_arg,
         dest_dir.clone().into_os_string(),
     ]);
@@ -1077,7 +1087,7 @@ fn list_only_fifo_shows_pipe_type() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
-        OsString::from("-r"),
+        OsString::from("--recursive"),
         OsString::from("--specials"),
         source_arg,
         dest_dir.into_os_string(),
@@ -1123,6 +1133,7 @@ fn list_only_with_stats_appends_summary() {
     let (code, stdout, _stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("--recursive"),
         OsString::from("--stats"),
         source_arg,
         dest_dir.into_os_string(),
@@ -1177,6 +1188,7 @@ fn list_only_timestamp_matches_yyyy_mm_dd_hh_mm_ss_format() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("--recursive"),
         source_arg,
         dest_dir.into_os_string(),
     ]);
@@ -1254,6 +1266,7 @@ fn list_only_verbose_appends_totals() {
     let (code, stdout, _stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("--recursive"),
         OsString::from("--verbose"),
         source_arg,
         dest_dir.into_os_string(),
