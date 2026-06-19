@@ -12,6 +12,24 @@ parallel CI-environment investigation under `daemon-exit10` is folded
 in because its outcome (XFAIL or in-tree fix) gates the cell's overall
 green status.
 
+## Deep-dive task index
+
+This synthesis draws from the UTS-DD-\* deep-dive task family
+(completed tasks #4503-#4536). Each row in the root-cause matrix below
+cites the originating deep-dive task ID alongside the landed PR.
+
+| Test | Deep-dive parent | Sub-task ID range |
+| --- | --- | --- |
+| `itemize` | UTS-DD-itemize (#4495) | UTS-DD-itemize.1-.4 (#4503-#4506) |
+| `files-from` | UTS-DD-files-from (#4500) | UTS-DD-files-from.1-.6 (#4507-#4512) |
+| `batch-mode` | UTS-DD-batch-mode (#4497) | UTS-DD-batch-mode.1-.3 (#4513-#4515) |
+| `backup` | UTS-DD-backup (#4496) | UTS-DD-backup.1-.5 (#4516-#4520) |
+| `symlink-dirlink-basis` | UTS-DD-symlink-dirlink-basis (#4501) | UTS-DD-sdb.1-.2 (#4521-#4522) |
+| `exclude` shared cluster | UTS-DD-exclude (#4498) | UTS-DD-exclude-shared.1-.3 (#4523-#4525) |
+| `exclude` test-specific | UTS-DD-exclude (#4498) | UTS-DD-exclude.1-.5 (#4526-#4530) |
+| `exclude-lsh` | UTS-DD-exclude-lsh (#4499) | UTS-DD-exclude-lsh.1-.2 (#4531-#4532) |
+| `daemon-exit10` | UTS-DD-daemon-exit10 (#4502) | UTS-DD-daemon-exit10.1-.4 (#4533-#4536) |
+
 ## Overview
 
 | Test | Pre-UTS-DD status | Current status (master @ 2026-06-17) | Driving PR set |
@@ -437,6 +455,122 @@ but they remain on the deep-dive radar.
    where the no-inherit propagation can produce a subtle scope
    surprise. No upstream test exercises this; flagged for future
    property-test coverage.
+
+## Remaining pending UTS-DD fix tasks
+
+As of 2026-06-19 the only UTS-DD-\* fix tasks that are still pending
+(distinct from this synthesis family, which is the umbrella for the
+document you are reading) are the two `exclude-lsh` wire-byte
+regression-pin tasks. Every code-path fix in the matrix above has
+shipped.
+
+| Pending task | ID | Description | Blocks |
+| --- | --- | --- | --- |
+| UTS-DD-exclude-lsh.1 | #4531 | Wire-byte tests for `:C` over remote shell after the exclude-shared.1/.2/.3 parse fixes landed | UTS-V3.FINAL re-run gate |
+| UTS-DD-exclude-lsh.2 | #4532 | Regression tests covering all six sub-transfers from upstream `exclude-lsh.test` | UTS-V3.FINAL re-run gate |
+
+### Remaining-pending dependency DAG
+
+The DAG for the two remaining pending tasks (plus the SYNTHESIS family
+that produced this document) as an adjacency list:
+
+```
+UTS-DD-exclude-shared.1 (#4523, DONE)  --> UTS-DD-exclude-lsh.1 (#4531, PENDING)
+UTS-DD-exclude-shared.2 (#4524, DONE)  --> UTS-DD-exclude-lsh.1 (#4531, PENDING)
+UTS-DD-exclude-shared.3 (#4525, DONE)  --> UTS-DD-exclude-lsh.1 (#4531, PENDING)
+UTS-DD-exclude.1 (#4526, DONE)         --> UTS-DD-exclude-lsh.2 (#4532, PENDING)
+UTS-DD-exclude.2 (#4527, DONE)         --> UTS-DD-exclude-lsh.2 (#4532, PENDING)
+UTS-DD-exclude.3 (#4528, DONE)         --> UTS-DD-exclude-lsh.2 (#4532, PENDING)
+UTS-DD-exclude.4 (#4529, DONE)         --> UTS-DD-exclude-lsh.2 (#4532, PENDING)
+UTS-DD-exclude.5 (#4530, DONE)         --> UTS-DD-exclude-lsh.2 (#4532, PENDING)
+UTS-DD-exclude-lsh.1 (#4531, PENDING)  --> UTS-V3.FINAL re-run gate
+UTS-DD-exclude-lsh.2 (#4532, PENDING)  --> UTS-V3.FINAL re-run gate
+UTS-DD-SYNTHESIS.a..h (#4576-#4583)    --> this document (UTS-DD-SYNTHESIS.f, #4581)
+```
+
+The DAG has two leaves: `UTS-DD-exclude-lsh.1` (#4531) and
+`UTS-DD-exclude-lsh.2` (#4532). Both are wire-byte regression-pin
+tasks, not code-path changes. Neither blocks any other UTS-DD-\* code
+fix; they only block the UTS-V3.FINAL re-run gate documented in the
+next section.
+
+### Pending-fix sequencing
+
+1. `UTS-DD-exclude-lsh.1` (#4531) - wire-byte test for `:C` over
+   remote shell. Lands first because its fixture is the smaller
+   sub-transfer and exercises a single parse path. Radius:
+   `crates/filters/tests/wire_compat/`, approximately 80 LoC test-only
+   nextest fixture, no production code change.
+2. `UTS-DD-exclude-lsh.2` (#4532) - all six `exclude-lsh.test`
+   sub-transfer regression pins. Lands second because the larger
+   matrix subsumes the .1 fixture and reuses its plumbing. Radius:
+   `crates/filters/tests/wire_compat/` and
+   `crates/transfer/tests/integration/`, approximately 200-260 LoC
+   test-only nextest fixtures across two crates, no production code
+   change.
+
+Both tasks are test-only and have no inter-fix ordering constraint
+between themselves; the recommended sequence keeps the smaller PR
+first to surface fixture-pattern issues before the matrix lands.
+
+## Verification plan
+
+Each completed root cause maps to one or more upstream-testsuite tests
+that close once the regression pin lands. The remaining-pending tasks
+close the same `exclude-lsh.test` upstream test that
+`exclude-shared.1-.3` + `exclude.1-.5` already drive on master:
+
+| Root cause cluster | Closing upstream test | Closing task |
+| --- | --- | --- |
+| Cluster A (parser) | `exclude.test` | exclude.2/.6/.7/.8 (all DONE) |
+| Cluster B (compiled rules) | `exclude.test` | exclude.3/.5 (all DONE) |
+| Cluster C (wire format) | `exclude.test` | exclude.4 (DONE) |
+| Cluster D (nested dir-merge) | `exclude-lsh.test` | exclude.1 (DONE) |
+| exclude-lsh wire-byte coverage | `exclude-lsh.test` | UTS-DD-exclude-lsh.1/.2 (PENDING) |
+| Goodbye-flush ordering | `batch-mode.test` | batch-mode.1/.2 (DONE) |
+| Encoding (compact flag, sentinel) | `files-from.test`, `symlink-dirlink-basis.test` | sdb.2, files-from.3 (DONE) |
+| Walk (per-dir row, dotdir rescan) | `itemize.test`, `files-from.test` | itemize.2, files-from.2 (DONE) |
+| Basis resolution | `symlink-dirlink-basis.test` | sdb.1 (DONE) |
+| Missing args | `files-from.test` | files-from.1/.3 (DONE) |
+
+## Recommended follow-up tasks
+
+This document does not create tasks. The following follow-up units
+were surfaced during the synthesis but do not yet have task entries.
+The parent agent should `TaskCreate` whichever it chooses to act on.
+
+| Recommended ID | Title | Rationale |
+| --- | --- | --- |
+| UTS-DD-FOLLOWUP.1 | `daemon-exit10` XFAIL removal once validator workflow confirms in-tree IPv4 fallback | Known gap 1 above; one-line `tools/ci/upstream_testsuite_known_failures.conf` edit |
+| UTS-DD-FOLLOWUP.2 | Differential filter-rule fuzzer against upstream `parse_filter_str`+`add_rule` | Known gap 2; would have caught exclude.4 and exclude.5 by parity before testsuite |
+| UTS-DD-FOLLOWUP.3 | Typed `RuleModifierSet` replacing the additive boolean fields on `FilterRule` | Known gap 3; API hygiene deferred during deep dive |
+| UTS-DD-FOLLOWUP.4 | Post-#5811 tcpdump regen for `batch-mode` wire evidence | Known gap 4; low priority, regression pin already in place |
+| UTS-DD-FOLLOWUP.5 | Two extra `symlink-dirlink-basis` nested-symlink topologies beyond the upstream eight | Known gap 5; not upstream-blocking |
+| UTS-DD-FOLLOWUP.6 | `files-from` `/./` anchor + `--protect-args` integration test | Known gap 6; close audit gap |
+| UTS-DD-FOLLOWUP.7 | Property test for CVS-mode descendant collision with non-CVS `dir-merge` | Known gap 7; flagged for future coverage |
+
+## UTS-V3.FINAL re-run gate
+
+The UTS-V3.FINAL re-run is the canonical end-of-cycle gate that
+exercises every UTS-V3.\* fix family against the upstream testsuite on
+the Linux host (`192.168.21.226`). Before UTS-V3.FINAL fires, the
+fixes ordered in the **Pending-fix sequencing** section above MUST
+land:
+
+1. `UTS-DD-exclude-lsh.1` (#4531) MUST be merged into master.
+2. `UTS-DD-exclude-lsh.2` (#4532) MUST be merged into master.
+
+UTS-V3.FINAL invocation is blocked until both pending tasks are
+green on master, because the `exclude-lsh.test` cell in the upstream
+testsuite needs both wire-byte regression pins to attest that the
+exclude shared-cluster A-D fixes ship with regression coverage. Once
+the two pending tasks land, UTS-V3.FINAL (parent #4341) can fire
+without re-running the eight code-path families covered by this
+document.
+
+The gate explicitly does NOT block on UTS-DD-FOLLOWUP.\* items
+above. Those are recommended follow-ups; none are upstream-test
+blockers.
 
 ## Cross-references
 
