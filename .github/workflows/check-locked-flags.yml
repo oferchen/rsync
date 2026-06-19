@@ -1,10 +1,18 @@
-# CIM-LOCKFILE-5: --locked flag regression guard.
+# CIM-LOCKFILE-5 / CIM-LOCKFILE-8: lockfile-machinery regression guards.
 #
 # Runs `tools/ci/check_locked_flags.sh` on every PR (and on push to
 # master) to assert that every cargo invocation in `.github/workflows/`
 # and `tools/ci/*.sh` that calls a gated subcommand (`build`, `check`,
 # `clippy`, `nextest run`, `run`, `test`) also passes `--locked`. The
 # rationale and allowlist live in the script itself.
+#
+# Also runs `tools/ci/check_cargo_lockfile_sync.sh` to assert the PR-side
+# Cargo.lock auto-sync workflow (`cargo-lockfile-sync.yml`) keeps its
+# load-bearing shape (correct trigger paths, `cargo update` step,
+# diff-detection step, conditional push-back, fork/bot guards). A drift
+# in that shape would silently stop dep-drift PRs from receiving an
+# auto-synced lockfile and resurface the original CIM-LOCKFILE failure
+# mode.
 
 name: Check --locked flags
 
@@ -38,3 +46,22 @@ jobs:
         # the matcher (false positives, false negatives, comment handling)
         # surfaces here instead of as a silent gap on a future PR.
         run: bash tools/ci/tests/test_check_locked_flags.sh
+
+      - name: Install PyYAML for workflow-shape gate
+        # ubuntu-latest already ships python3; install PyYAML so the
+        # cargo-lockfile-sync shape gate (CIM-LOCKFILE-8) can parse the
+        # workflow YAML. Pinned to a recent release that stays compatible
+        # with the runner's python3.
+        run: python3 -m pip install --quiet 'pyyaml>=6'
+
+      - name: Run check_cargo_lockfile_sync.sh
+        # CIM-LOCKFILE-8: assert cargo-lockfile-sync.yml still carries the
+        # load-bearing trigger paths, cargo update steps, diff-detection,
+        # conditional push, and fork/bot guards. See script comments.
+        run: bash tools/ci/check_cargo_lockfile_sync.sh
+
+      - name: Self-test check_cargo_lockfile_sync.sh
+        # Exercises the shape gate against mutated copies of the workflow
+        # so a regression that stops enforcing one of the assertions
+        # surfaces here.
+        run: bash tools/ci/tests/test_check_cargo_lockfile_sync.sh
