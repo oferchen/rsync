@@ -363,6 +363,7 @@ fn transfer_with_short_f_include_then_exclude_all() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        OsString::from("-r"),
         OsString::from("-f"),
         OsString::from("+ *.txt"),
         OsString::from("-f"),
