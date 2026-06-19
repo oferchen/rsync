@@ -1102,6 +1102,10 @@ fn process_approved_module(
         // SO_LINGER ensures the final goodbye TX bytes the engine wrote
         // are delivered before the kernel reclaims the socket. The 5s
         // window matches upstream's expected goodbye round-trip latency.
+        // Catastrophic-failure fallback: even if the UTS-V3.A
+        // `shutdown_send_side` barrier below cannot be reached (e.g. the
+        // TcpStream accessor is unavailable on a TLS-wrapped path),
+        // SO_LINGER still bounds the kernel-level drain.
         if let Some(tcp) = stream.tcp_stream() {
             let sock = socket2::SockRef::from(tcp);
             let _ = sock.set_linger(Some(Duration::from_secs(5)));
@@ -1136,6 +1140,32 @@ fn process_approved_module(
             }
         }
         let _ = stream.set_read_timeout(None);
+
+        // UTS-V3.A explicit drain barrier (kernel-level half-close).
+        // Once the peer has FINed (read-drain returned EOF/timeout) and
+        // the generator orchestrator has already flushed every user-space
+        // byte via `ServerWriter::flush_all_pending`, an explicit
+        // `shutdown(SHUT_WR)` is safe and observable: it confirms the
+        // half-close with a bounded SO_LINGER drain. Errors that mean
+        // "peer already closed" are tolerated; any other shutdown error
+        // is logged so the operator sees the failure rather than relying
+        // on the implicit Drop-time close. The companion SO_LINGER set
+        // above is the catastrophic-failure fallback.
+        //
+        // upstream: cleanup.c::handle_cleanup() -> close_all() emits the
+        // kernel FIN as the process exits; the threaded daemon collapses
+        // that pattern into the explicit shutdown here.
+        if let Some(tcp) = stream.tcp_stream() {
+            if let Err(err) =
+                core::server::writer::shutdown_send_side(tcp, Duration::from_secs(5))
+            {
+                if let Some(log) = ctx.log_sink {
+                    let text = format!("daemon-sender drain-barrier shutdown failed: {err}");
+                    let message = rsync_warning!(text).with_role(Role::Daemon);
+                    log_message(log, &message);
+                }
+            }
+        }
     }
 
     // Drop transfer-engine stream clones after the drain completes.

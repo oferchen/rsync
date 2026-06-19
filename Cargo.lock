@@ -4185,6 +4185,7 @@ dependencies = [
  "rand 0.10.1",
  "rayon",
  "signature 0.6.3",
+ "socket2",
  "tempfile",
  "test-support",
  "thiserror",

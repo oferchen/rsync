@@ -161,16 +161,39 @@ impl GeneratorContext {
             },
         )?;
 
-        // upstream: main.c:983 io_flush(FULL_FLUSH) is also called AFTER
-        // read_final_goodbye(), so any MSG_INFO diagnostic frame queued
-        // later in `run()` still ships before the transport FIN.
-        // `finalize_compression()` is idempotent on a Multiplex writer
-        // (degrades to a plain flush) so it is safe to call again here as
-        // defense-in-depth.
-        if let Err(e) = writer.finalize_compression() {
-            if !super::super::is_early_close_error(&e) {
-                return Err(e);
-            }
+        // UTS-V3.A drain barrier: explicit user-space drain after
+        // `handle_goodbye_with_finalizer` returns and before the writer
+        // graph drops. The audit traced the cluster-A wire-cutoffs
+        // (~2.25 MB on batch-mode, alt-dest, and daemon-refuse-compress;
+        // ~615 KB on daemon-gzip-download) to bytes still sitting in the
+        // multiplex BufWriter / codec trailer when the daemon's
+        // `SO_LINGER` + `shutdown(SHUT_WR)` teardown fired.
+        //
+        // `flush_all_pending` is idempotent: it re-runs
+        // `finalize_compression` (no-op on a Multiplex writer that has
+        // already been finalised inside `handle_goodbye_with_finalizer`,
+        // emits the codec trailer if any branch returned early), then
+        // flushes the multiplex BufWriter so the next byte goes straight
+        // to the kernel. Peer-already-closed is tolerated; every other
+        // I/O error surfaces.
+        //
+        // Companion call: the daemon teardown invokes
+        // `writer::shutdown_send_side` on the underlying TcpStream after
+        // the read-drain loop completes - that drains the kernel send
+        // buffer and issues the explicit `shutdown(SHUT_WR)`. The two
+        // calls together replace the implicit `Drop` + `SO_LINGER`
+        // hand-off with an observable two-stage barrier.
+        //
+        // Server-side only: client-mode keeps stdio open for the parent
+        // process to own teardown. Stdio (remote-shell daemon mode) is
+        // not server-side here, but the flush still benefits any buffered
+        // byte that needs to reach the pipe before control returns.
+        //
+        // upstream: cleanup.c::handle_cleanup() brackets the sender's
+        // final `io_flush(FULL_FLUSH)` with the process exit so every
+        // user-space byte hits the wire before the kernel queues FIN.
+        if !self.config.connection.client_mode {
+            writer.flush_all_pending()?;
         }
 
         // Calculate timing stats for return value
