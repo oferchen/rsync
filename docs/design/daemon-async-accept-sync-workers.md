@@ -4,6 +4,12 @@ Status: Design (TODO #1674)
 Audience: daemon maintainers, transfer-pipeline maintainers, operators
 Scope: hybrid async/sync execution model for the rsync daemon at high concurrency
 
+> Feature flag: the rollout described here lands behind the existing
+> `async-daemon` Cargo feature on `crates/daemon` (see `crates/daemon/Cargo.toml`).
+> The concrete implementation steps live in
+> `docs/design/daemon-tokio-async-listener-impl.md`; this document covers the
+> long-form design rationale.
+
 ## 1. Problem Statement
 
 `oc-rsync` runs as a long-lived daemon serving the rsync wire protocol over TCP. The current accept path is a synchronous loop that spawns one OS thread per accepted connection and then runs the full transfer state machine on that thread until the connection terminates. The model is simple, panic-isolated (`catch_unwind` per worker), and zero-allocation for the steady state. It works well into the low hundreds of concurrent connections and is the path that has been hardened against upstream interop.
