@@ -833,6 +833,7 @@ fn list_only_executable_file_permissions() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--list-only"),
+        OsString::from("-r"),
         source_arg,
         dest_dir.into_os_string(),
     ]);
