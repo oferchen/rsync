@@ -31,7 +31,7 @@ pub enum ServerWriter<W: Write> {
     /// Compressed+Multiplex mode - compress then multiplex.
     Compressed(CompressedWriter<MultiplexWriter<W>>),
     /// Temporary sentinel state used during in-place transformations
-    /// (e.g. `mem::replace` in [`Self::activate_multiplex_inplace`] and
+    /// (e.g. `mem::replace` in [`Self::activate_multiplex_in_place`] and
     /// [`Self::finalize_compression`]). Any I/O operation while in this
     /// state returns an `InvalidInput` error.
     Taken,
