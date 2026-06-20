@@ -501,7 +501,7 @@ fn copy_file_when_timestamps_differ() {
 // 1ns difference is invisible to Windows NTFS (100ns resolution).
 #[cfg(not(target_os = "windows"))]
 #[test]
-fn nanosecond_difference_triggers_copy() {
+fn subsecond_difference_does_not_trigger_copy() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
@@ -510,9 +510,16 @@ fn nanosecond_difference_triggers_copy() {
     fs::write(&source, content).expect("write source");
     fs::write(&destination, content).expect("write dest");
 
-    // Set timestamps that differ only in nanoseconds
-    let source_mtime = FileTime::from_unix_time(1_700_000_000, 1);  // 1 nanosecond
-    let dest_mtime = FileTime::from_unix_time(1_700_000_000, 0);     // 0 nanoseconds
+    // Timestamps land in the same whole second but differ in the fractional
+    // part. Upstream's quick check stores the source modtime as a `time_t` and
+    // compares whole seconds (`cmp_time(st->st_mtime, file->modtime)`), so a
+    // sub-second-only difference is invisible: the file is reported `is
+    // uptodate` and never transferred, even with `-t`.
+    //
+    // upstream: generator.c:unchanged_file() -> cmp_time() compares time_t
+    // seconds.
+    let source_mtime = FileTime::from_unix_time(1_700_000_000, 1); // 1 nanosecond
+    let dest_mtime = FileTime::from_unix_time(1_700_000_000, 0); // 0 nanoseconds
     set_file_mtime(&source, source_mtime).expect("set source mtime");
     set_file_mtime(&destination, dest_mtime).expect("set dest mtime");
 
@@ -529,8 +536,12 @@ fn nanosecond_difference_triggers_copy() {
         )
         .expect("copy succeeds");
 
-    // File should be copied because nanoseconds differ
-    assert_eq!(summary.files_copied(), 1, "1ns timestamp difference should trigger copy");
+    // Same whole second -> quick check treats the destination as up-to-date.
+    assert_eq!(
+        summary.files_copied(),
+        0,
+        "sub-second timestamp difference must not trigger a copy (whole-second quick check)"
+    );
 }
 
 #[test]
