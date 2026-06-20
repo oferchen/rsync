@@ -523,8 +523,13 @@ pub fn run_server_with_handshake<W: Write>(
 
     // upstream: io.c iobuf.in is 32KB circular; BufReader serves the same role,
     // batching small reads (4-byte multiplex headers) into fewer recvfrom syscalls.
+    // The CountingReader wraps the raw transport (below the multiplex demuxer and
+    // token decompression) so the running total reflects compressed wire bytes,
+    // matching upstream's `stats.total_read` (io.c:820).
+    let counting_stdin = reader::CountingReader::new(chained_stdin);
+    let bytes_received_counter = counting_stdin.counter();
     let reader =
-        reader::ServerReader::new_plain(io::BufReader::with_capacity(64 * 1024, chained_stdin));
+        reader::ServerReader::new_plain(io::BufReader::with_capacity(64 * 1024, counting_stdin));
     // MultiplexWriter provides 64KB buffering (matching upstream iobuf_out).
     let mut writer = writer::ServerWriter::new_plain(stdout);
 
@@ -611,6 +616,12 @@ pub fn run_server_with_handshake<W: Write>(
             let mut counting_writer = writer::CountingWriter::new(&mut writer);
             let mut stats = ctx.run(chained_reader, &mut counting_writer, progress)?;
             stats.bytes_sent = counting_writer.bytes_written();
+            // upstream: io.c:820 - stats.total_read counts raw bytes read off the
+            // socket (mux frames + compressed tokens), below decompression. Source
+            // bytes_received from the wire counter so --stats reports compressed
+            // wire bytes, not the post-decompression literal byte total.
+            stats.bytes_received =
+                bytes_received_counter.load(std::sync::atomic::Ordering::Relaxed);
 
             Ok(ServerStats::Receiver(stats))
         }
