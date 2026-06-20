@@ -300,6 +300,36 @@ fn upstream_verdict(
     Some(included)
 }
 
+/// Model the recursive-walk verdict that upstream's `--recursive --list-only`
+/// reports for a leaf path.
+///
+/// A deep entry is listed only if every ancestor directory is also included:
+/// upstream never descends into an excluded directory, so a leaf under an
+/// excluded parent is absent from the listing even when no rule matches the
+/// leaf's full path. oc-rsync's `FilterSet::allows` is traversal-driven by the
+/// same contract (it does not match descendants of excluded dirs; see
+/// `filters::chain::FilterChain::allows`), so this harness must replicate the
+/// ancestor walk to compare like with like.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn oc_walk_allows(oc_set: &FilterSet, rel_path: &str, is_dir: bool) -> bool {
+    let components: Vec<&str> = rel_path.split('/').filter(|s| !s.is_empty()).collect();
+    let mut prefix = String::new();
+    for (idx, component) in components.iter().enumerate() {
+        if idx > 0 {
+            prefix.push('/');
+        }
+        prefix.push_str(component);
+        let is_leaf = idx + 1 == components.len();
+        // Ancestor components are always directories; only the leaf carries the
+        // caller's is_dir flag.
+        let component_is_dir = if is_leaf { is_dir } else { true };
+        if !oc_set.allows(Path::new(&prefix), component_is_dir) {
+            return false;
+        }
+    }
+    true
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn run_one(input: Input) {
     if input.rules.is_empty() || input.rules.len() > MAX_RULES {
@@ -321,7 +351,7 @@ fn run_one(input: Input) {
         Err(_) => return,
     };
 
-    let oc_verdict = oc_set.allows(Path::new(&rel_path), input.is_dir);
+    let oc_verdict = oc_walk_allows(&oc_set, &rel_path, input.is_dir);
 
     let Some(rsync_bin) = upstream_binary() else {
         return;
