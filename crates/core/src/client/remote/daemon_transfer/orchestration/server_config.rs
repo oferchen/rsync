@@ -101,12 +101,26 @@ fn apply_common_daemon_config(
     server_config.checksum_choice = config.checksum_protocol_override();
     server_config.connection.compression_level = config.compression_level();
 
-    // upstream: compat.c:543,819 - when --compress-choice is explicitly set,
-    // bypass vstring negotiation and use the specified algorithm. Convert from
-    // compress crate enum to protocol crate enum via the canonical wire name.
-    if config.explicit_compress_choice() {
+    // upstream: options.c:2704,2800-2805 - replicate the compress flag/option
+    // split the client would emit so the daemon-push Generator actually
+    // engages the codec. `do_compression` in the transfer layer
+    // (transfer/src/lib.rs) reads `flags.compress` for the compact `-z` case
+    // and `connection.compress_choice` for everything else. Without this the
+    // client-push `TransferConfig` carried neither (it only set compress_choice
+    // for explicit choices and never set flags.compress), so both `-z` and
+    // `-zz` pushes to a daemon were sent uncompressed.
+    if config.compress() {
         let algo = config.compression_algorithm();
-        if let Ok(proto_algo) = protocol::CompressionAlgorithm::parse(algo.name()) {
+        let is_default_zlib = !config.explicit_compress_choice()
+            && algo == compress::algorithm::CompressionAlgorithm::default_algorithm();
+        if is_default_zlib {
+            // upstream: options.c:2704 - the compact `-z` flag drives default
+            // zlib through vstring negotiation (no explicit compress_choice).
+            server_config.flags.compress = true;
+        } else if let Ok(proto_algo) = protocol::CompressionAlgorithm::parse(algo.name()) {
+            // upstream: compat.c:543,819 / options.c:2800-2805 - explicit or
+            // non-default algorithms (e.g. `-zz` -> zlibx) bypass vstring
+            // negotiation and travel as a compress_choice.
             server_config.connection.compress_choice = Some(proto_algo);
         }
     }
