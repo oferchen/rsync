@@ -49,27 +49,15 @@ pub(crate) fn build_server_config_for_generator(
     apply_common_daemon_config(config, &mut server_config, filter_rules);
     server_config.reference_directories = config.reference_directories().to_vec();
 
-    // upstream: clientserver.c - when --files-from references a remote file
-    // (colon prefix), the daemon receiver opens the file locally and forwards
-    // its content to the client sender via start_filesfrom_forwarding().
-    if config.files_from().is_remote() {
-        server_config.file_selection.files_from_path = Some("-".to_owned());
-        server_config.file_selection.from0 = true;
-    }
-
-    // upstream: options.c:2944 - when the client is the sender and --files-from
-    // points to a local file, the sender reads the list directly.
-    use crate::client::config::FilesFromSource;
-    match config.files_from() {
-        FilesFromSource::LocalFile(path) => {
-            server_config.file_selection.files_from_path = Some(path.to_string_lossy().to_string());
-            server_config.file_selection.from0 = config.from0();
-        }
-        FilesFromSource::Stdin => {
-            server_config.file_selection.files_from_path = Some("-".to_owned());
-            server_config.file_selection.from0 = config.from0();
-        }
-        _ => {}
+    // upstream: options.c:2476-2501 / main.c:1322-1328 - the local sender
+    // resolves a single files-from fd. A local file (LocalFile/Stdin, or a
+    // localhost:path hostspec opened locally) is read directly; a remote-
+    // hosted list is forwarded from the daemon receiver over the wire and
+    // read here as `--files-from=-`.
+    let plan = config.files_from().resolve_for(true, config.from0());
+    if let Some(path) = plan.sender_files_from_path {
+        server_config.file_selection.files_from_path = Some(path);
+        server_config.file_selection.from0 = plan.sender_from0;
     }
 
     flags::apply_common_server_flags(config, &mut server_config);

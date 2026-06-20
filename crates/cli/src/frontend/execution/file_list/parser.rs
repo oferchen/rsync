@@ -50,14 +50,18 @@ pub(crate) fn resolve_files_from_source(files_from: &[OsString]) -> core::client
     // which we do not currently support for files-from.
     if let Some((host, path)) = split_hostspec(&text) {
         // upstream: options.c:3112-3138 / options.c:2476-2483 -
-        // check_for_hostspec strips the host prefix and forwards the path
-        // to the remote server. When the host resolves to localhost AND the
-        // stripped path is openable on this client, emit a hybrid variant
-        // so a PULL client-receiver can stage the bytes locally while the
-        // wire argv still carries the stripped path for upstream parity.
-        // Without this, PULL with `--files-from=localhost:path` hangs at
-        // recv_filesfrom: the receiver flushes None and the remote sender
-        // blocks waiting for the secluded-args stream.
+        // check_for_hostspec strips the host prefix and forwards the path to
+        // the remote server. When the host resolves to localhost AND the
+        // stripped path is openable on this client, emit the hybrid variant.
+        //
+        // Classification cannot decide local-vs-wire here: it does not know
+        // the transfer direction or whether the src operand is itself remote.
+        // `HybridLocalRemote::resolve_for` makes that single-fd choice per
+        // direction (PUSH opens the file locally; PULL stages its bytes and
+        // forwards `--files-from=-`), so the hybrid variant is safe to emit
+        // unconditionally for a localhost hostspec. Without it, PULL with
+        // `--files-from=localhost:path` hangs at recv_filesfrom: the receiver
+        // flushes None and the remote sender blocks waiting for the bytes.
         if host_is_localhost(host) {
             let local_path = PathBuf::from(path);
             if Path::new(&local_path).is_file() {
