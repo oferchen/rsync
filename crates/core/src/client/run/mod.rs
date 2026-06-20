@@ -204,10 +204,25 @@ fn run_client_internal(
         // upstream: main.c:1571-1586 - when `-e`/`--rsh` is active with `::`,
         // the client spawns SSH with `rsync --server --daemon .` as the remote
         // command, then speaks the daemon protocol over the SSH pipes.
-        if config.remote_shell().is_some() {
-            return remote::run_daemon_over_remote_shell(&config, observer, batch_writer);
+        let summary = if config.remote_shell().is_some() {
+            remote::run_daemon_over_remote_shell(&config, observer, batch_writer.clone())?
+        } else {
+            remote::run_daemon_transfer(&config, observer, batch_writer.clone())?
+        };
+
+        // upstream: main.c:374-383 - the client writes trailing batch stats and
+        // the NDX_DONE terminator after a successful transfer. The SSH and
+        // local-copy paths finalize here too; the daemon path previously
+        // returned early and relied on `BatchWriter` drop to flush, which left
+        // the batch file without its stats trailer (and, under load, races the
+        // header write into the recorder tee).
+        if let Some(ref writer_arc) = batch_writer
+            && let Some(batch_cfg) = config.batch_config()
+        {
+            batch::finalize_batch(writer_arc, batch_cfg, &config, &summary)?;
         }
-        return remote::run_daemon_transfer(&config, observer, batch_writer);
+
+        return Ok(summary);
     }
 
     let has_remote = config
