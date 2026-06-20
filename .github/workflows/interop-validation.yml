@@ -79,7 +79,7 @@ jobs:
         run: bash tools/ci/run_interop.sh build-only
 
       - name: Build oc-rsync
-        run: cargo build --locked --release --bin oc-rsync
+        uses: ./.github/actions/build-oc-rsync
 
       - name: Stage shared interop artifact
         run: |
