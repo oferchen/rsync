@@ -103,7 +103,7 @@ mod summary;
 pub use self::config::EmbeddedSshOptions;
 pub use self::config::{
     AddressMode, BandwidthLimit, BindAddress, ClientConfig, ClientConfigBuilder,
-    CompressionSetting, ConfigConflict, DeleteMode, FilesFromSource, FilterRuleKind,
+    CompressionSetting, ConfigConflict, DeleteMode, FilesFromPlan, FilesFromSource, FilterRuleKind,
     FilterRuleSpec, HumanReadableMode, HumanReadableModeParseError, IconvParseError, IconvSetting,
     ParseTcpFastOpenModeError, ReferenceDirectory, ReferenceDirectoryKind, StrongChecksumAlgorithm,
     StrongChecksumChoice, TcpFastOpenMode, TransferTimeout, force_no_compress_from_env,

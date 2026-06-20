@@ -58,7 +58,11 @@ pub(crate) fn run_pull_transfer(
     // upstream: main.c:1354-1356 - when pulling with --files-from pointing to a
     // local file or stdin, the client reads the file list locally and forwards
     // it to the daemon's generator over the protocol stream.
-    if config.files_from().is_local_forwarded() {
+    if config
+        .files_from()
+        .resolve_for(false, config.from0())
+        .stage_local_bytes
+    {
         let data =
             crate::client::remote::files_from_forwarding::read_local_files_from_for_forwarding(
                 config,

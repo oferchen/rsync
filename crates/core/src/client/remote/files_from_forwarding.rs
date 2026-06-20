@@ -54,10 +54,11 @@ pub(crate) fn read_local_files_from_for_forwarding(
             read_path_into(path, &mut wire_data, eol_nulls, iconv_converter.as_ref())?;
         }
         FilesFromSource::HybridLocalRemote { local_path, .. } => {
-            // upstream: options.c:3112-3138 - localhost:path stripped to a
-            // local file; client opens locally so PULL receivers have bytes
-            // to flush at crates/transfer/src/lib.rs:570 while the wire-arg
-            // still carries the stripped path for the remote server.
+            // upstream: options.c:2476-2501 - a localhost:path hostspec is a
+            // single local fd. This function only runs on PULL (gated by the
+            // resolver's stage_local_bytes), where the receiver opens the file
+            // locally and forwards its bytes to the remote sender. The remote
+            // sender reads `--files-from=-`; the stripped path is never sent.
             read_path_into(
                 local_path,
                 &mut wire_data,

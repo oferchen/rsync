@@ -17,7 +17,7 @@ pub use address::AddressMode;
 pub use checksum::{StrongChecksumAlgorithm, StrongChecksumChoice};
 pub use compression::CompressionSetting;
 pub use delete::DeleteMode;
-pub use files_from::FilesFromSource;
+pub use files_from::{FilesFromPlan, FilesFromSource};
 pub use human_readable::{HumanReadableMode, HumanReadableModeParseError};
 pub use tcp_fastopen::{ParseTcpFastOpenModeError, TcpFastOpenMode};
 pub use timeout::TransferTimeout;

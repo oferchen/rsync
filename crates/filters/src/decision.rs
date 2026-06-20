@@ -70,6 +70,7 @@ impl FilterSetInner {
         // `./foo/.cvsignore` fire against the sibling subtree `./bar/x`.
         let check_descendants = !traversal;
 
+        let for_deletion = matches!(context, DecisionContext::Deletion);
         let transfer_rule = match context {
             DecisionContext::Transfer => first_matching_rule(
                 &self.include_exclude,
@@ -78,6 +79,7 @@ impl FilterSetInner {
                 |rule| rule.applies_to_sender,
                 true,
                 check_descendants,
+                false,
             ),
             DecisionContext::Deletion => first_matching_rule(
                 &self.include_exclude,
@@ -86,6 +88,7 @@ impl FilterSetInner {
                 |rule| rule.applies_to_receiver,
                 false,
                 check_descendants,
+                true,
             ),
         };
 
@@ -97,6 +100,7 @@ impl FilterSetInner {
                 |rule| rule.applies_to_receiver,
                 true,
                 check_descendants,
+                for_deletion,
             )
         {
             decision.excluded_for_delete_excluded = matches!(rule.action, FilterAction::Exclude);
@@ -121,6 +125,7 @@ impl FilterSetInner {
                 |rule| rule.applies_to_sender,
                 true,
                 check_descendants,
+                false,
             ),
             DecisionContext::Deletion => first_matching_rule(
                 &self.protect_risk,
@@ -129,6 +134,7 @@ impl FilterSetInner {
                 |rule| rule.applies_to_receiver,
                 false,
                 check_descendants,
+                true,
             ),
         };
 
@@ -170,6 +176,7 @@ impl FilterSetInner {
             DecisionContext::Deletion => |rule| rule.applies_to_receiver,
         };
         let include_perishable = matches!(context, DecisionContext::Transfer);
+        let for_deletion = matches!(context, DecisionContext::Deletion);
         if first_matching_rule(
             &self.include_exclude,
             path,
@@ -177,6 +184,7 @@ impl FilterSetInner {
             applies,
             include_perishable,
             false,
+            for_deletion,
         )
         .is_some()
         {
@@ -189,6 +197,7 @@ impl FilterSetInner {
             applies,
             include_perishable,
             false,
+            for_deletion,
         )
         .is_some()
     }
@@ -210,6 +219,7 @@ impl FilterSetInner {
             |rule| rule.applies_to_sender,
             true,
             false,
+            false,
         ) {
             matches!(rule.action, FilterAction::Exclude) && !rule.is_directory_only()
         } else {
@@ -230,6 +240,12 @@ impl FilterSetInner {
 /// * `is_dir` - Whether the path is a directory (affects trailing-slash patterns)
 /// * `applies` - Predicate filtering which rules are considered (e.g., sender-only rules)
 /// * `include_perishable` - Whether to consider perishable rules (marked with `p` modifier)
+/// * `check_descendants` - Whether to consult the synthetic `pattern/**` descendant matchers
+/// * `for_deletion` - When `true`, also consult the deletion-only descendant
+///   matchers so an excluded directory protects its children from deletion
+///   (upstream subtree-pruning semantic). Kept off the transfer path so a
+///   directory-only unanchored wildcard like `foo/*/` does not over-exclude
+///   files inside subdirectories (#6015).
 ///
 /// # Returns
 ///
@@ -244,6 +260,7 @@ fn first_matching_rule<'a, F>(
     mut applies: F,
     include_perishable: bool,
     check_descendants: bool,
+    for_deletion: bool,
 ) -> Option<&'a CompiledRule>
 where
     F: FnMut(&CompiledRule) -> bool,
@@ -251,7 +268,11 @@ where
     rules.iter().find(|rule| {
         (include_perishable || !rule.perishable)
             && applies(rule)
-            && rule.matches(path, is_dir, check_descendants)
+            && if for_deletion {
+                rule.matches_for_deletion(path, is_dir, check_descendants)
+            } else {
+                rule.matches(path, is_dir, check_descendants)
+            }
     })
 }
 
@@ -500,6 +521,86 @@ mod tests {
         assert!(
             recursive.allows_deletion(),
             "Deletion+Recursive: descendant matchers are suppressed because the walk handles descent",
+        );
+    }
+
+    /// Regression for the `exclude` / `exclude-lsh` over-deletion: a
+    /// directory-only unanchored wildcard exclude (`foo/*/`) must protect the
+    /// children of the matched directory from deletion on the receiver. After
+    /// #6015 suppressed the synthesised `foo/*/**` descendant for BOTH the
+    /// transfer and deletion paths, `foo/sub/file1` fell through to the
+    /// default "allow deletion" and was over-deleted under `--delete-during`.
+    /// The deletion-only descendant matcher restores child protection while
+    /// keeping the descendant invisible to the transfer path (see
+    /// [`deletion_dir_only_wildcard_does_not_affect_transfer`]).
+    ///
+    /// upstream: an excluded directory protects its descendants from deletion
+    /// because the generator never descends into it (exclude.c subtree
+    /// pruning); the receiver scan must reproduce that per-candidate.
+    #[test]
+    fn deletion_dir_only_wildcard_protects_children() {
+        let mut inner = FilterSetInner::default();
+        push_rule(&mut inner, FilterAction::Exclude, "foo/*/");
+
+        let child = Path::new("foo/sub/file1");
+        // Both the single-path API and the per-directory traversal commit must
+        // treat the child of the excluded directory as NOT deletable; the
+        // deletion-only descendants fire independently of the traversal gate.
+        let single = inner.decision_with_traversal(child, false, DecisionContext::Deletion, false);
+        assert!(
+            !single.allows_deletion(),
+            "Deletion single-path: foo/*/ must protect foo/sub/file1 from deletion",
+        );
+        let recursive =
+            inner.decision_with_traversal(child, false, DecisionContext::Deletion, true);
+        assert!(
+            !recursive.allows_deletion(),
+            "Deletion+traversal: foo/*/ must protect foo/sub/file1 from deletion",
+        );
+
+        // A nested grandchild is equally protected.
+        let deep = Path::new("foo/sub/inner/file2");
+        assert!(
+            !inner
+                .decision_with_traversal(deep, false, DecisionContext::Deletion, false)
+                .allows_deletion(),
+            "Deletion: foo/*/ must protect foo/sub/inner/file2 from deletion",
+        );
+    }
+
+    /// #6015 guard: the deletion-only descendant for a directory-only
+    /// unanchored wildcard exclude (`foo/*/`) must NOT leak into the transfer
+    /// path. Upstream emits no `foo/*/**` transfer rule, so `foo/sub/file1`
+    /// stays included for transfer (it must match its own rules, and there is
+    /// none). Re-exposing the descendant here would re-trip the over-exclusion
+    /// #6015 fixed (`complex_nested_patterns`).
+    #[test]
+    fn deletion_dir_only_wildcard_does_not_affect_transfer() {
+        let mut inner = FilterSetInner::default();
+        push_rule(&mut inner, FilterAction::Exclude, "foo/*/");
+
+        let child = Path::new("foo/sub/file1");
+        // The directory itself is excluded for transfer (direct matcher).
+        assert!(
+            !inner
+                .decision(Path::new("foo/sub"), true, DecisionContext::Transfer)
+                .allows_transfer(),
+            "Transfer: foo/*/ excludes the directory foo/sub",
+        );
+        // But a file inside is NOT excluded by the directory-only wildcard on
+        // the transfer path - it would only be skipped because the sender walk
+        // never descends into the pruned directory.
+        assert!(
+            inner
+                .decision(child, false, DecisionContext::Transfer)
+                .allows_transfer(),
+            "Transfer: foo/*/ must NOT exclude foo/sub/file1 via a synthetic descendant (#6015)",
+        );
+        assert!(
+            inner
+                .decision_with_traversal(child, false, DecisionContext::Transfer, true)
+                .allows_transfer(),
+            "Transfer+traversal: foo/*/ must NOT exclude foo/sub/file1 (#6015)",
         );
     }
 }
