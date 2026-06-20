@@ -180,13 +180,45 @@ pub(crate) fn should_skip_copy(params: CopyComparison<'_>) -> bool {
     }
 }
 
+/// Returns the whole-second UNIX timestamp for `time`, discarding any
+/// sub-second component.
+///
+/// Floors toward negative infinity so pre-epoch timestamps map to the same
+/// second regardless of their fractional part, mirroring the `time_t`
+/// truncation upstream applies before comparing modification times.
+fn unix_seconds(time: SystemTime) -> i64 {
+    match time.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(diff) => diff.as_secs() as i64,
+        Err(error) => {
+            let diff = error.duration();
+            // A non-zero sub-second remainder means the instant lands strictly
+            // before the flooring boundary, so subtract one to floor.
+            if diff.subsec_nanos() == 0 {
+                -(diff.as_secs() as i64)
+            } else {
+                -(diff.as_secs() as i64) - 1
+            }
+        }
+    }
+}
+
 /// Returns `true` when two timestamps differ by no more than `window`.
 ///
-/// With a zero window, only exact equality matches.
-// upstream: generator.c:unchanged_file() - modify window comparison
+/// With a zero window the comparison is at whole-second granularity: the
+/// sub-second component of each timestamp is discarded before comparing. This
+/// mirrors upstream, which stores the source `modtime` as a `time_t` and whose
+/// `same_time()` helper reduces to `f1_sec == f2_sec` when `modify_window == 0`,
+/// so a destination that only differs in the fractional second is still treated
+/// as up-to-date by the quick check.
+///
+/// With a non-zero window the original full-resolution duration comparison is
+/// retained so sub-second `--modify-window` tolerances continue to apply.
+///
+/// upstream: generator.c:unchanged_file() -> same_time() - whole-second
+/// comparison when `modify_window == 0`.
 pub(crate) fn system_time_within_window(a: SystemTime, b: SystemTime, window: Duration) -> bool {
     if window.is_zero() {
-        return a.eq(&b);
+        return unix_seconds(a) == unix_seconds(b);
     }
 
     match a.duration_since(b) {
@@ -434,6 +466,33 @@ mod tests {
         };
 
         assert!(should_skip_copy(comparison));
+    }
+
+    #[test]
+    fn system_time_within_zero_window_ignores_subsecond_difference() {
+        // upstream: generator.c:unchanged_file() -> same_time() reduces to
+        // `f1_sec == f2_sec` when modify_window == 0, so a destination written
+        // without `-t` that lands in the same second as the source (but with a
+        // different fractional part) is still treated as up-to-date. Without
+        // this the quick check would re-transfer a content-identical file on
+        // every run, which surfaced as a missing `is uptodate` notice for an
+        // already-hardlinked alias under `-vvH`.
+        let base = SystemTime::UNIX_EPOCH + Duration::new(1_700_000_000, 100_000_000);
+        let same_second = SystemTime::UNIX_EPOCH + Duration::new(1_700_000_000, 900_000_000);
+        assert!(system_time_within_window(base, same_second, Duration::ZERO));
+    }
+
+    #[test]
+    fn system_time_within_zero_window_separates_whole_second_difference() {
+        // A one-second difference must still be observed at zero window so a
+        // genuinely newer source is not skipped.
+        let earlier = SystemTime::UNIX_EPOCH + Duration::new(1_700_000_000, 900_000_000);
+        let next_second = SystemTime::UNIX_EPOCH + Duration::new(1_700_000_001, 0);
+        assert!(!system_time_within_window(
+            earlier,
+            next_second,
+            Duration::ZERO
+        ));
     }
 
     #[test]
