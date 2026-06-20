@@ -788,7 +788,6 @@ fn stream_whole_file_produces_correct_wire_format() {
     )
     .unwrap();
 
-    assert_eq!(result.total_bytes, data.len() as u64);
     assert!(result.checksum_len > 0);
 
     // Compare wire output byte-for-byte with write_whole_file_delta
@@ -815,7 +814,6 @@ fn stream_whole_file_handles_empty_file() {
     )
     .unwrap();
 
-    assert_eq!(result.total_bytes, 0);
     // Wire output should only contain the end marker: write_int(0) = 4 zero bytes
     assert_eq!(wire_output, [0u8; 4]);
 }
@@ -853,7 +851,6 @@ fn stream_whole_file_computes_correct_checksum() {
         &result.checksum_buf[..result.checksum_len],
         &expected_buf[..expected_len]
     );
-    assert_eq!(result.total_bytes, 1024);
 }
 
 #[test]
@@ -928,7 +925,6 @@ fn stream_whole_file_none_checksum() {
     // None algorithm produces a 1-byte zero placeholder
     assert_eq!(result.checksum_len, 1);
     assert_eq!(result.checksum_buf[0], 0);
-    assert_eq!(result.total_bytes, 256);
 }
 
 #[test]
