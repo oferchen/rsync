@@ -25,7 +25,7 @@ where
     Out: Write,
     Err: Write,
 {
-    use core::server::{ServerConfig, ServerRole, run_server_stdio};
+    use core::server::{run_server_stdio, ServerConfig, ServerRole};
 
     let program_brand =
         super::super::detect_program_name(args.first().map(OsString::as_os_str)).brand();
@@ -122,6 +122,24 @@ where
     if let Err(code) = apply_value_flags(&mut config, &long_flags, stderr, program_brand) {
         return code;
     }
+
+    // Install the negotiated verbosity into this thread's verbosity config
+    // before any generator/receiver work runs. The verbosity flags are a
+    // per-thread thread-local (logging::thread_local) and the client-driving
+    // `run.rs` init only touches the client thread; the `--server` path runs
+    // its generator/receiver on this thread, so without this call the config
+    // stays at the default (NAME=0) and `info_gte(Name, 2)` is always false.
+    // That dropped the unchanged dir/file/symlink itemize rows that upstream
+    // emits under `-vv` (upstream: generator.c:582-583 `INFO_GTE(NAME, 2)`).
+    //
+    // upstream: options.c:2044 set_output_verbosity(verbose, DEFAULT_PRIORITY)
+    // maps the `-v` count to info/debug levels. `-vv` reaches the server as
+    // repeated `v` characters in the compact flag string (options.c:2625-2626),
+    // captured here as `flags.verbose_level`. Applied at DEFAULT priority,
+    // so the higher-priority `--info` overrides below still win.
+    logging::init(logging::VerbosityConfig::from_verbose_level(
+        config.flags.verbose_level,
+    ));
 
     // upstream: options.c parse_output_words - server-side info parsing
     // silently ignores unknown tokens so a newer client can forward names
@@ -264,7 +282,7 @@ where
                 .ok()
                 .or_else(|| dest_path.parent().and_then(|p| p.canonicalize().ok()))
             {
-                use fast_io::landlock::{LandlockOutcome, is_supported, restrict_to_module_paths};
+                use fast_io::landlock::{is_supported, restrict_to_module_paths, LandlockOutcome};
                 if is_supported() {
                     let mut allowed = vec![root];
 

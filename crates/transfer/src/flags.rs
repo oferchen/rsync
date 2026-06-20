@@ -34,6 +34,17 @@ pub struct ParsedServerFlags {
     pub archive: bool,
     /// Verbose output (`v` flag, `--verbose`).
     pub verbose: bool,
+    /// Verbosity level: the number of `v` flags in the compact string.
+    ///
+    /// Upstream forwards `-vv` as repeated `v` characters in `argstr`
+    /// (upstream: options.c:2625-2626 `for (i = 0; i < verbose; i++)
+    /// argstr[x++] = 'v'`). The server side feeds this count into
+    /// `set_output_verbosity()` so `INFO_GTE(NAME, 2)` becomes true under
+    /// `-vv`, which makes the generator itemize every entry including
+    /// unchanged ones (upstream: generator.c:582-583). Collapsing the count
+    /// to a single bool loses that distinction, so the level is preserved
+    /// here alongside the `verbose` predicate.
+    pub verbose_level: u8,
     /// Compress during transfer (`z` flag, `--compress`).
     pub compress: bool,
     /// Checksum-based transfer (`c` flag, `--checksum`).
@@ -255,7 +266,10 @@ impl ParsedServerFlags {
             b'r' => self.recursive = true,
             b'e' => self.rsh = true,
             b'a' => self.archive = true,
-            b'v' => self.verbose = true,
+            b'v' => {
+                self.verbose = true;
+                self.verbose_level = self.verbose_level.saturating_add(1);
+            }
             b'z' => self.compress = true,
             b'c' => self.checksum = true,
             b'H' => self.hard_links = true,
@@ -433,6 +447,56 @@ mod tests {
         let flags = ParsedServerFlags::parse("-rm").unwrap();
         assert!(flags.recursive);
         assert!(flags.prune_empty_dirs);
+    }
+
+    #[test]
+    fn single_verbose_flag_sets_level_one() {
+        let flags = ParsedServerFlags::parse("-rv").unwrap();
+        assert!(flags.verbose);
+        assert_eq!(flags.verbose_level, 1);
+    }
+
+    #[test]
+    fn double_verbose_flag_preserves_count() {
+        // upstream forwards `-vv` as repeated `v` characters in the compact
+        // flag string (options.c:2625-2626); the count must survive so the
+        // server can raise INFO_GTE(NAME, 2) and itemize unchanged entries.
+        let flags = ParsedServerFlags::parse("-rvv").unwrap();
+        assert!(flags.verbose);
+        assert_eq!(flags.verbose_level, 2);
+    }
+
+    #[test]
+    fn verbose_level_defaults_to_zero() {
+        let flags = ParsedServerFlags::parse("-r").unwrap();
+        assert!(!flags.verbose);
+        assert_eq!(flags.verbose_level, 0);
+    }
+
+    // Regression: the server/generator thread must raise INFO_GTE(NAME, 2)
+    // when the client forwarded `-vv`, so the generator itemizes every entry
+    // including unchanged dir/file/symlink rows (upstream: generator.c:582-583).
+    // The `-vv` count is forwarded in the compact flag string and the server
+    // feeds `verbose_level` into `from_verbose_level`. Verifying the
+    // end-to-end mapping guards against silently dropping the count back to a
+    // bool, which is what previously left `info_gte(Name, 2)` false and
+    // suppressed the unchanged rows under server-driven `-ivv`.
+    #[test]
+    fn double_verbose_flag_string_enables_name_level_two() {
+        use logging::{info_gte, init, InfoFlag, VerbosityConfig};
+
+        // Default-config thread cannot itemize unchanged entries.
+        init(VerbosityConfig::default());
+        assert!(!info_gte(InfoFlag::Name, 2));
+
+        // A `-vv` server flag string carries verbose_level == 2.
+        let flags = ParsedServerFlags::parse("-rvv").unwrap();
+        assert_eq!(flags.verbose_level, 2);
+
+        // Installing the negotiated level - exactly what the `--server`
+        // entry now does before running the generator - flips the gate on.
+        init(VerbosityConfig::from_verbose_level(flags.verbose_level));
+        assert!(info_gte(InfoFlag::Name, 2));
     }
 
     #[test]
