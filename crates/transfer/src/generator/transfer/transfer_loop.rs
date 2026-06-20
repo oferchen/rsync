@@ -494,10 +494,10 @@ impl GeneratorContext {
                 // bytes after each write() syscall, not the source file size.
                 // Wrap the whole-file stream in a CountingWriter so the summary
                 // "sent N bytes" reflects the post-compression wire stream the
-                // receiver saw, matching the delta path above. result.total_bytes
-                // is the raw source size; under -z/-zz it over-reports by the
-                // compression ratio and trips the daemon-gzip "did -zz engage?"
-                // assertion on whole-file pushes.
+                // receiver saw, matching the delta path above. The raw source
+                // size would over-report by the compression ratio under -z/-zz
+                // and trip the daemon-gzip "did -zz engage?" assertion on
+                // whole-file pushes.
                 let wire_bytes = {
                     let mut cw = crate::writer::CountingWriter::new(&mut *writer);
                     let result = stream_whole_file_transfer(

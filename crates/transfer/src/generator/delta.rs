@@ -77,11 +77,10 @@ pub(super) const LARGE_FILE_WARNING_THRESHOLD: u64 = 8 * 1024 * 1024 * 1024; // 
 
 /// Result of streaming a whole file to the wire.
 ///
-/// Returned by [`stream_whole_file_transfer`] with the byte count and
-/// whole-file checksum that the sender appends after the token stream.
+/// Returned by [`stream_whole_file_transfer`] with the whole-file checksum that
+/// the sender appends after the token stream. The wire byte count is tracked by
+/// the caller's `CountingWriter` (post-compression), so it is not duplicated here.
 pub(super) struct StreamResult {
-    /// Total bytes of file content written to the wire.
-    pub total_bytes: u64,
     /// Whole-file checksum computed during streaming.
     pub checksum_buf: [u8; ChecksumVerifier::MAX_DIGEST_LEN],
     /// Number of valid bytes in `checksum_buf`.
@@ -234,7 +233,6 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
     const MAX_READ_SIZE: usize = 256 * 1024;
     let read_size = (file_size as usize).clamp(1, MAX_READ_SIZE);
 
-    let mut total_bytes: u64 = 0;
     let mut remaining = file_size;
 
     if let Some(encoder) = encoder {
@@ -244,7 +242,6 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
             source.read_exact(&mut buf[..to_read])?;
             verifier.update(&buf[..to_read]);
             encoder.send_literal(writer, &buf[..to_read])?;
-            total_bytes += to_read as u64;
             remaining -= to_read as u64;
         }
         encoder.finish(writer)?;
@@ -270,7 +267,6 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
                 writer.write_all(&buf[wire_off..wire_off + 4 + chunk])?;
                 wire_off += chunk;
             }
-            total_bytes += to_read as u64;
             remaining -= to_read as u64;
         }
         write_token_end(writer)?;
@@ -280,7 +276,6 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
     let checksum_len = verifier.finalize_into(&mut checksum_buf);
 
     Ok(StreamResult {
-        total_bytes,
         checksum_buf,
         checksum_len,
     })
