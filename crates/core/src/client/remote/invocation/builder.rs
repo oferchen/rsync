@@ -13,8 +13,8 @@ use std::ffi::OsString;
 use std::time::SystemTime;
 
 use super::super::super::config::{
-    ClientConfig, DeleteMode, FilesFromSource, IconvSetting, ReferenceDirectoryKind,
-    StrongChecksumAlgorithm, TransferTimeout,
+    ClientConfig, DeleteMode, IconvSetting, ReferenceDirectoryKind, StrongChecksumAlgorithm,
+    TransferTimeout,
 };
 use super::{RemoteRole, SecludedInvocation};
 use transfer::setup::build_capability_string_suffix;
@@ -496,30 +496,20 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // `RemoteRole::Sender` here means the local process is the sender
         // (PUSH); `RemoteRole::Receiver` means the local process is the
         // receiver (PULL).
-        let local_is_sender = self.role == RemoteRole::Sender;
-        match self.config.files_from() {
-            FilesFromSource::None => {}
-            FilesFromSource::LocalFile(_) | FilesFromSource::Stdin => {
-                if !local_is_sender {
-                    args.push(OsString::from("--files-from=-"));
-                    args.push(OsString::from("--from0"));
-                }
-            }
-            FilesFromSource::RemoteFile(path) => {
-                args.push(OsString::from(format!("--files-from={path}")));
-                if self.config.from0() {
-                    args.push(OsString::from("--from0"));
-                }
-            }
-            FilesFromSource::HybridLocalRemote { wire_arg, .. } => {
-                // upstream: options.c:3112-3138 - localhost:path stripped to
-                // wire_arg. The remote server still receives the stripped
-                // path in argv just like the RemoteFile case; the client also
-                // stages bytes locally for PULL flush at lib.rs:570.
-                args.push(OsString::from(format!("--files-from={wire_arg}")));
-                if self.config.from0() {
-                    args.push(OsString::from("--from0"));
-                }
+        // upstream: options.c:2962 server_options() - the files-from arg is
+        // forwarded only when the remote peer reads the list (`!am_sender ||
+        // filesfrom_host`). The direction-aware resolver collapses the single
+        // files-from fd so a localhost:path hostspec is treated as a plain
+        // local file in either direction and never double-sourced.
+        let local_is_push = self.role == RemoteRole::Sender;
+        let plan = self
+            .config
+            .files_from()
+            .resolve_for(local_is_push, self.config.from0());
+        if let Some(arg) = plan.remote_arg {
+            args.push(OsString::from(format!("--files-from={arg}")));
+            if plan.remote_from0 {
+                args.push(OsString::from("--from0"));
             }
         }
 
