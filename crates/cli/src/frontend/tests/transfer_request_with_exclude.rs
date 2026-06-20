@@ -18,6 +18,10 @@ fn transfer_request_with_exclude_from_skips_patterns() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        // upstream recurse defaults to 0 (options.c:112); a directory operand
+        // without -r transfers nothing. --recursive walks source/ so the
+        // exclude rules are actually exercised, mirroring upstream.
+        OsString::from("--recursive"),
         OsString::from("--exclude-from"),
         exclude_file.as_os_str().to_os_string(),
         source_root.into_os_string(),
@@ -48,6 +52,10 @@ fn transfer_request_with_exclude_from_stdin_skips_patterns() {
     super::set_filter_stdin_input(b"*.tmp\n".to_vec());
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        // upstream recurse defaults to 0 (options.c:112); a directory operand
+        // without -r transfers nothing. --recursive walks source/ so the
+        // exclude rules are actually exercised, mirroring upstream.
+        OsString::from("--recursive"),
         OsString::from("--exclude-from"),
         OsString::from("-"),
         source_root.into_os_string(),

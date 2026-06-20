@@ -52,6 +52,10 @@ fn transfer_request_with_include_from_reinstate_patterns() {
     // With first-match-wins, --include-from must come before --exclude
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        // upstream recurse defaults to 0 (options.c:112); keep/ is a subdir, so
+        // without -r nothing under it transfers. --recursive walks the tree and
+        // lets the include/exclude rules be exercised, mirroring upstream.
+        OsString::from("--recursive"),
         OsString::from("--include-from"),
         include_file.as_os_str().to_os_string(),
         OsString::from("--exclude"),

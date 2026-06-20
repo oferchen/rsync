@@ -2195,6 +2195,12 @@ fn parity_verbose_v3_produces_output_with_debug_info() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-vvv"),
+        // upstream recurse defaults to 0 (options.c:112); a trailing-slash
+        // directory operand is "skipping directory ." without -r/-d, so it
+        // transfers nothing. Pass --recursive so the top-level file is
+        // actually enumerated and the verbose listing has something to show,
+        // mirroring upstream `rsync -vvv -r src/ dst`.
+        OsString::from("--recursive"),
         src_operand,
         dest_dir.into_os_string(),
     ]);
@@ -2204,7 +2210,7 @@ fn parity_verbose_v3_produces_output_with_debug_info() {
     let err = String::from_utf8(stderr).expect("utf8 stderr");
     let combined = format!("{out}{err}");
 
-    // At -vvv, file listing should still be present
+    // At -vvv with recursion, the transferred file is listed by name.
     assert!(
         combined.contains("debug.txt"),
         "verbose level 3 should list transferred files:\n{combined}"
