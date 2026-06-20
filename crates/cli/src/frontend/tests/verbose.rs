@@ -1244,6 +1244,20 @@ fn level_2_hardlink_uptodate_emits_is_uptodate_notice() {
     ]);
     assert_eq!(code, 0);
 
+    // The first transfer omits -t, so the destination leader inherits the
+    // current wall-clock mtime rather than the source's. The second pass must
+    // see the leader as up-to-date so the quick-check skips it and preserves
+    // its inode; only then does the follower's `(dev, ino)` still match the
+    // leader's, triggering the hardlink `is uptodate` notice (upstream
+    // generator.c::unchanged_file -> hlink.c:218-224). Pinning source and
+    // destination leader to one fixed second makes that precondition
+    // deterministic across filesystems and runner speeds instead of relying on
+    // both syncs landing in the same wall-clock second. Both files in each tree
+    // share an inode, so stamping the leader stamps the follower too.
+    let pinned = filetime::FileTime::from_unix_time(1_000_000_000, 0);
+    filetime::set_file_mtime(from.join("leader.txt"), pinned).expect("pin source mtime");
+    filetime::set_file_mtime(to.join("leader.txt"), pinned).expect("pin dest mtime");
+
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-vvplrH"),

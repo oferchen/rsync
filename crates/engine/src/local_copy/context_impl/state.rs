@@ -609,9 +609,16 @@ impl<'a> CopyContext<'a> {
             // contains a directory at the path we need (e.g. user pre-created
             // it, or a previous backup left a tree there); without this arm,
             // backup test 4 from upstream backup.test fails as exit-23 fatal.
+            // Windows reports renaming a file onto an existing directory as
+            // ERROR_ACCESS_DENIED (PermissionDenied) rather than EEXIST/EISDIR,
+            // so it must enter the same recovery arm; the inner symlink_metadata
+            // re-stat below still gates removal on the target actually existing,
+            // so a genuine permission error falls through to the retry-and-fail
+            // path unchanged.
             Err(error)
                 if error.kind() == io::ErrorKind::AlreadyExists
-                    || error.kind() == io::ErrorKind::IsADirectory =>
+                    || error.kind() == io::ErrorKind::IsADirectory
+                    || error.kind() == io::ErrorKind::PermissionDenied =>
             {
                 match fs::symlink_metadata(&backup_path) {
                     Ok(meta) if meta.is_dir() => {
