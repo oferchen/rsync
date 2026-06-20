@@ -168,7 +168,11 @@ fn run_embedded_pull(
 
     // upstream: main.c:1372-1375 - pull with a local --files-from forwards the
     // file's bytes back to the remote sender via the protocol stream.
-    if config.files_from().is_local_forwarded() {
+    if config
+        .files_from()
+        .resolve_for(false, config.from0())
+        .stage_local_bytes
+    {
         let data =
             crate::client::remote::files_from_forwarding::read_local_files_from_for_forwarding(
                 config,
@@ -497,8 +501,6 @@ fn build_server_config_for_generator(
     config: &ClientConfig,
     local_paths: &[String],
 ) -> Result<ServerConfig, ClientError> {
-    use crate::client::config::FilesFromSource;
-
     let flag_string = flags::build_server_flag_string(config);
     let args: Vec<OsString> = local_paths.iter().map(OsString::from).collect();
 
@@ -510,30 +512,14 @@ fn build_server_config_for_generator(
     server_config.flags.delete = config.delete_mode().is_enabled() || config.delete_excluded();
     server_config.file_selection.size_only = config.size_only();
 
-    // upstream: options.c:2473,2501 / main.c:1322-1328 - the sender opens the
-    // local files-from file (Stdin/LocalFile) or reads from the wire when the
-    // list is hosted on the remote receiver (RemoteFile).
-    match config.files_from() {
-        FilesFromSource::None => {}
-        FilesFromSource::Stdin => {
-            server_config.file_selection.files_from_path = Some("-".to_owned());
-            server_config.file_selection.from0 = config.from0();
-        }
-        FilesFromSource::LocalFile(path) => {
-            server_config.file_selection.files_from_path =
-                Some(path.to_string_lossy().into_owned());
-            server_config.file_selection.from0 = config.from0();
-        }
-        FilesFromSource::RemoteFile(_) => {
-            server_config.file_selection.files_from_path = Some("-".to_owned());
-            server_config.file_selection.from0 = true;
-        }
-        FilesFromSource::HybridLocalRemote { .. } => {
-            // upstream: options.c:3112-3138 - localhost:path stripped; client
-            // opens locally, server reads bytes from the wire as for RemoteFile.
-            server_config.file_selection.files_from_path = Some("-".to_owned());
-            server_config.file_selection.from0 = true;
-        }
+    // upstream: options.c:2476-2501 / main.c:1322-1328 - the local sender
+    // resolves a single files-from fd: a local file (Stdin/LocalFile, or a
+    // localhost:path hostspec opened locally) or the wire fd when the list is
+    // hosted on the remote receiver (RemoteFile reads `--files-from=-`).
+    let plan = config.files_from().resolve_for(true, config.from0());
+    if let Some(path) = plan.sender_files_from_path {
+        server_config.file_selection.files_from_path = Some(path);
+        server_config.file_selection.from0 = plan.sender_from0;
     }
 
     flags::apply_common_server_flags(config, &mut server_config);

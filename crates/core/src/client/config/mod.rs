@@ -35,7 +35,7 @@ pub use client::ClientConfig;
 pub use client::EmbeddedSshOptions;
 pub use compress_env::force_no_compress_from_env;
 pub use enums::{
-    AddressMode, CompressionSetting, DeleteMode, FilesFromSource, HumanReadableMode,
+    AddressMode, CompressionSetting, DeleteMode, FilesFromPlan, FilesFromSource, HumanReadableMode,
     HumanReadableModeParseError, ParseTcpFastOpenModeError, StrongChecksumAlgorithm,
     StrongChecksumChoice, TcpFastOpenMode, TransferTimeout,
 };

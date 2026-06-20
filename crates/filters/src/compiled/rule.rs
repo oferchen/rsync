@@ -23,6 +23,17 @@ pub(crate) struct CompiledRule {
     pub(super) directory_only: bool,
     pub(super) direct_matchers: Vec<GlobMatcher>,
     pub(super) descendant_matchers: Vec<GlobMatcher>,
+    /// Descendant matchers (`{core}/**`) that must fire ONLY on the deletion
+    /// (receiver) path. Populated for directory-only unanchored wildcard
+    /// excludes such as `foo/*/`. Upstream's sender walk prunes the excluded
+    /// directory and never emits a `foo/*/**` transfer rule (exclude.c:938-939
+    /// FILTRULE_DIRECTORY returns "no match" for a non-dir candidate), so these
+    /// must stay invisible to the Transfer path to preserve the `foo/*/`
+    /// per-directory wildcard semantics that #6015 fixed. The receiver's
+    /// per-candidate deletion scan has no traversal-pruning side effect, so it
+    /// needs these descendants live to protect children of an excluded
+    /// directory from over-deletion.
+    pub(super) deletion_descendant_matchers: Vec<GlobMatcher>,
     pub(crate) applies_to_sender: bool,
     pub(crate) applies_to_receiver: bool,
     pub(crate) perishable: bool,
@@ -59,6 +70,43 @@ impl CompiledRule {
         } else {
             pattern_matched
         }
+    }
+
+    /// Like [`Self::matches`] but for the receiver's deletion scan.
+    ///
+    /// Adds the `deletion_descendant_matchers` set on top of the regular
+    /// matchers. Those descendants encode the
+    /// upstream invariant that an excluded directory protects its descendants
+    /// from deletion (the generator never descends into it). They are
+    /// consulted independently of `check_descendants` because the deletion
+    /// scan evaluates each candidate in isolation - it has no traversal-pruning
+    /// side effect to suppress, and the local-copy delete pass calls with
+    /// `check_descendants = false`. Keeping them out of [`Self::matches`]
+    /// preserves the `foo/*/` per-directory wildcard transfer semantics fixed
+    /// in #6015.
+    ///
+    /// upstream: exclude.c:rule_matches() / name_is_excluded() subtree pruning
+    pub(crate) fn matches_for_deletion(
+        &self,
+        path: &Path,
+        is_dir: bool,
+        check_descendants: bool,
+    ) -> bool {
+        let pattern_matched = self.pattern_matches_impl(path, is_dir, check_descendants)
+            || self.deletion_descendant_matches(path);
+
+        if self.negate {
+            !pattern_matched
+        } else {
+            pattern_matched
+        }
+    }
+
+    /// Returns `true` when a deletion-only descendant matcher fires for `path`.
+    fn deletion_descendant_matches(&self, path: &Path) -> bool {
+        self.deletion_descendant_matchers
+            .iter()
+            .any(|matcher| matcher.is_match(path))
     }
 
     /// Internal pattern matching without negate logic.
