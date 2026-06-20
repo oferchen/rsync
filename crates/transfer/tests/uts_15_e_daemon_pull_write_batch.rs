@@ -34,9 +34,12 @@
 //!    exits with status 0.
 //! 2. `DEST` matches the daemon-side source byte-for-byte (including a
 //!    nested subdirectory and a multi-KiB file).
-//! 3. The batch file is created and non-empty, and starts with the
-//!    canonical batch magic header (`RSYNC` followed by the batch flags
-//!    byte) emitted by `crates/batch/src/writer.rs::write_header`.
+//! 3. The batch file is created and non-empty, and its header decodes to
+//!    the negotiated protocol version. The batch format has NO ASCII magic:
+//!    upstream `batch.c:113` writes the stream-flags i32 first, then
+//!    `io.c:2446` writes the protocol-version i32. So bytes 4..8 of the file
+//!    must equal the negotiated protocol (32). Emitted by
+//!    `crates/batch/src/writer.rs::write_header`.
 //! 4. A subsequent `oc-rsync --read-batch=FILE DEST_REPLAY/` (no remote
 //!    URL) reconstructs the same source tree from the batch file alone,
 //!    so the recorded batch is functional, not just non-empty.
@@ -69,8 +72,9 @@
 //!   `daemon_transfer/orchestration/arguments.rs:451`.
 //! - `main.c:1830-1846` (3.4.4) - `--write-batch` / `--only-write-batch`
 //!   open the batch fd before the transfer drives the receiver.
-//! - `batch.c::write_batch_open` - the magic-header format
-//!   (`RSYNC` + flags byte) this test asserts against.
+//! - `batch.c:113` `write_int(batch_fd, flags)` then `io.c:2446`
+//!   `write_int(batch_fd, protocol_version)` - the header format this test
+//!   asserts against: stream-flags i32 + protocol-version i32, no ASCII magic.
 
 #![cfg(unix)]
 
@@ -422,11 +426,17 @@ fn daemon_pull_write_batch_records_and_replays() {
         "client destination",
     );
 
-    // Batch file must exist, be non-empty, and start with the canonical
-    // `RSYNC` + flags-byte header. `crates/batch/src/writer.rs`
-    // `BatchWriter::write_header` is the single emission site - if it
-    // is bypassed on the daemon-pull path the receiver writes nothing
-    // here and the assertion below trips.
+    // Batch file must exist, be non-empty, and start with the upstream
+    // rsync batch header. `crates/batch/src/writer.rs`
+    // `BatchWriter::write_header` is the single emission site - if it is
+    // bypassed on the daemon-pull path the receiver writes nothing here and
+    // the header assertion below trips.
+    //
+    // upstream: batch.c:113 `write_int(batch_fd, flags)` followed by
+    // io.c:2446 `write_int(batch_fd, protocol_version)`. The batch format has
+    // NO ASCII magic - the first field is the stream-flags i32, the second is
+    // the negotiated protocol version. So the header is validated by decoding
+    // the protocol-version field (bytes 4..8) rather than a magic string.
     let batch_meta = fs::metadata(&batch_path).expect("stat batch file");
     assert!(
         batch_meta.len() > 0,
@@ -434,15 +444,19 @@ fn daemon_pull_write_batch_records_and_replays() {
         batch_path.display(),
     );
     let batch_bytes = fs::read(&batch_path).expect("read batch file");
+    // stream-flags i32 + protocol i32 = 8 bytes minimum before any body.
     assert!(
-        batch_bytes.len() > b"RSYNC".len(),
-        "batch file too short to contain the magic header + flags byte: {} bytes",
+        batch_bytes.len() >= 8,
+        "batch file too short to contain the stream-flags + protocol header: {} bytes",
         batch_bytes.len(),
     );
+    let protocol_version =
+        i32::from_le_bytes(batch_bytes[4..8].try_into().expect("4-byte protocol field"));
     assert_eq!(
-        &batch_bytes[..b"RSYNC".len()],
-        b"RSYNC",
-        "batch file must start with the RSYNC magic header; first 16 bytes = {:?}",
+        protocol_version,
+        32,
+        "batch header protocol-version field (bytes 4..8) must be the negotiated \
+         protocol 32; first 16 bytes = {:?}",
         &batch_bytes[..batch_bytes.len().min(16)],
     );
 
