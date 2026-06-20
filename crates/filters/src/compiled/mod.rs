@@ -114,25 +114,45 @@ impl CompiledRule {
             directory_only && !slash_anchored && has_glob_wildcard;
         let is_anchored_wildcard = slash_anchored && has_glob_wildcard;
         let suppress_descendants = is_directory_only_unanchored_wildcard || is_anchored_wildcard;
+        let mut deletion_descendant_patterns = HashSet::new();
         if matches!(
             action,
             FilterAction::Exclude | FilterAction::Protect | FilterAction::Risk
-        ) && !suppress_descendants
-        {
-            descendant_patterns.insert(format!("{core_pattern}/**"));
-            if !anchored && !has_double_star {
-                descendant_patterns.insert(format!("**/{core_pattern}/**"));
+        ) {
+            if !suppress_descendants {
+                descendant_patterns.insert(format!("{core_pattern}/**"));
+                if !anchored && !has_double_star {
+                    descendant_patterns.insert(format!("**/{core_pattern}/**"));
+                }
+            } else if is_directory_only_unanchored_wildcard {
+                // upstream: exclude.c:rule_matches() emits no `foo/*/**`
+                // transfer rule for a directory-only unanchored wildcard - the
+                // sender walk prunes the matched directory instead (#6015).
+                // The receiver's per-candidate deletion scan has no such
+                // pruning, so route `{core}/**` into a deletion-only set that
+                // keeps children of the excluded directory off the delete pass
+                // without re-exposing `foo/*/**` to the Transfer path. The
+                // anchored-wildcard case (`/*`) stays fully suppressed because
+                // `*/**` would over-match nested paths even on deletion
+                // (regression #5421).
+                deletion_descendant_patterns.insert(format!("{core_pattern}/**"));
+                if !anchored && !has_double_star {
+                    deletion_descendant_patterns.insert(format!("**/{core_pattern}/**"));
+                }
             }
         }
 
         let direct_matchers = compile_patterns(direct_patterns, &pattern)?;
         let descendant_matchers = compile_patterns(descendant_patterns, &pattern)?;
+        let deletion_descendant_matchers =
+            compile_patterns(deletion_descendant_patterns, &pattern)?;
 
         Ok(Self {
             action,
             directory_only,
             direct_matchers,
             descendant_matchers,
+            deletion_descendant_matchers,
             applies_to_sender,
             applies_to_receiver,
             perishable,
@@ -485,6 +505,19 @@ mod tests {
         out
     }
 
+    /// Collects the source pattern strings of every deletion-only descendant
+    /// matcher (those that fire on the receiver delete pass but never on the
+    /// transfer path).
+    fn deletion_descendant_pattern_strings(compiled: &CompiledRule) -> Vec<String> {
+        let mut out: Vec<String> = compiled
+            .deletion_descendant_matchers
+            .iter()
+            .map(|m| m.glob().glob().to_string())
+            .collect();
+        out.sort();
+        out
+    }
+
     fn make_exclude(pattern: &str) -> CompiledRule {
         CompiledRule::new(FilterRule {
             action: FilterAction::Exclude,
@@ -586,8 +619,36 @@ mod tests {
         assert_eq!(direct_pattern_strings(&compiled), vec!["**/foo/*", "foo/*"]);
         assert!(
             descendant_pattern_strings(&compiled).is_empty(),
-            "`foo/*/` must not synthesise descendant matchers (upstream FILTRULE_DIRECTORY semantic)"
+            "`foo/*/` must not synthesise transfer descendant matchers (upstream FILTRULE_DIRECTORY semantic)"
         );
+        // The `{core}/**` descendant is routed to the deletion-only set so the
+        // receiver protects children of the excluded directory (exclude /
+        // exclude-lsh over-deletion regression) without re-exposing `foo/*/**`
+        // to the transfer path (#6015).
+        assert_eq!(
+            deletion_descendant_pattern_strings(&compiled),
+            vec!["**/foo/*/**", "foo/*/**"],
+        );
+    }
+
+    /// The deletion-only descendant matcher must fire only on the deletion
+    /// path. `matches_for_deletion` sees `foo/sub/file1`; the transfer
+    /// `matches` (any `check_descendants`) must not (#6015 guard).
+    #[test]
+    fn deletion_descendant_matches_only_for_deletion() {
+        use std::path::Path;
+        let compiled = make_exclude("foo/*/");
+        let child = Path::new("foo/sub/file1");
+
+        assert!(
+            compiled.matches_for_deletion(child, false, false),
+            "foo/*/ deletion path must protect foo/sub/file1",
+        );
+        assert!(
+            !compiled.matches(child, false, true),
+            "foo/*/ transfer path must NOT match foo/sub/file1 even with check_descendants",
+        );
+        assert!(!compiled.matches(child, false, false));
     }
 
     /// UTS-DD-exclude.3 wire-byte parity for `**/node_modules/`: leading
