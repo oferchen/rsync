@@ -144,6 +144,10 @@ fn level_1_lists_multiple_transferred_files() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        // recurse defaults to 0 (options.c:112); a trailing-slash directory
+        // without -r is "skipping directory ." and lists nothing. Pass -r so
+        // the files transfer and -v lists them, mirroring upstream.
+        OsString::from("--recursive"),
         OsString::from("-v"),
         source_operand,
         dest_dir.into_os_string(),
@@ -419,6 +423,10 @@ fn verbose_with_dry_run_lists_files() {
 
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
+        // recurse defaults to 0 (options.c:112); a trailing-slash directory
+        // without -r is "skipping directory ." and lists nothing. Pass -r so
+        // the files transfer and -v lists them, mirroring upstream.
+        OsString::from("--recursive"),
         OsString::from("-nv"),
         source_operand,
         dest_dir.clone().into_os_string(),
