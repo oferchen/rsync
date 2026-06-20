@@ -788,7 +788,6 @@ fn stream_whole_file_produces_correct_wire_format() {
     )
     .unwrap();
 
-    assert_eq!(result.total_bytes, data.len() as u64);
     assert!(result.checksum_len > 0);
 
     // Compare wire output byte-for-byte with write_whole_file_delta
@@ -815,7 +814,8 @@ fn stream_whole_file_handles_empty_file() {
     )
     .unwrap();
 
-    assert_eq!(result.total_bytes, 0);
+    // An empty file still produces a strong checksum digest (MD5 of zero bytes).
+    assert!(result.checksum_len > 0);
     // Wire output should only contain the end marker: write_int(0) = 4 zero bytes
     assert_eq!(wire_output, [0u8; 4]);
 }
@@ -853,7 +853,6 @@ fn stream_whole_file_computes_correct_checksum() {
         &result.checksum_buf[..result.checksum_len],
         &expected_buf[..expected_len]
     );
-    assert_eq!(result.total_bytes, 1024);
 }
 
 #[test]
@@ -904,6 +903,7 @@ fn stream_whole_file_reuses_buffer() {
 
 #[test]
 fn stream_whole_file_none_checksum() {
+    use protocol::wire::write_whole_file_delta;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -928,7 +928,13 @@ fn stream_whole_file_none_checksum() {
     // None algorithm produces a 1-byte zero placeholder
     assert_eq!(result.checksum_len, 1);
     assert_eq!(result.checksum_buf[0], 0);
-    assert_eq!(result.total_bytes, 256);
+
+    // The checksum algorithm only affects the returned digest, not the wire
+    // stream: the literal token carries all source bytes. Compare against the
+    // known-good delta encoding to prove all 256 bytes were streamed.
+    let mut expected = Vec::new();
+    write_whole_file_delta(&mut expected, &data).unwrap();
+    assert_eq!(wire_output, expected);
 }
 
 #[test]
