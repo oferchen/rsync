@@ -230,7 +230,6 @@ pub(crate) fn copy_device(
             ));
         }
         context.register_progress();
-        return Ok(());
     }
 
     #[cfg(unix)]

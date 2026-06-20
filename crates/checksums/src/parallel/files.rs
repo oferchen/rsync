@@ -347,7 +347,13 @@ where
     D::Seed: Default,
 {
     let result = (|| -> io::Result<SignatureComputeResult<D::Digest>> {
+        // Unix mutates `file` in the streaming read loop below; Windows only
+        // reads its metadata before shadowing it with WindowsChunkedReader, so
+        // `mut` there would be flagged unused under -D unused-mut.
+        #[cfg(unix)]
         let mut file = File::open(path)?;
+        #[cfg(windows)]
+        let file = File::open(path)?;
         let metadata = file.metadata()?;
         let size = metadata.len();
         let estimated_blocks = (size as usize).div_ceil(block_size);

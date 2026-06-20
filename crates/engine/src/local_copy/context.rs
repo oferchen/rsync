@@ -417,6 +417,10 @@ pub(crate) enum CreatedEntryKind {
     Directory,
     Symlink,
     Fifo,
+    // REASON: device nodes are only created on Unix; non-Unix receivers skip
+    // device-node creation entirely (WIND-2), so this variant is never
+    // constructed there.
+    #[cfg_attr(not(unix), allow(dead_code))]
     Device,
     HardLink,
 }
