@@ -364,7 +364,11 @@ fn run_pull_transfer(
     // forwards its bytes back to the remote sender via
     // `start_filesfrom_forwarding(filesfrom_fd)`. The remote sender consumes
     // the forwarded bytes through its protocol stream.
-    if config.files_from().is_local_forwarded() {
+    if config
+        .files_from()
+        .resolve_for(false, config.from0())
+        .stage_local_bytes
+    {
         let data = read_local_files_from_for_forwarding(config)?;
         server_config.connection.files_from_data = Some(data);
     }
@@ -745,33 +749,14 @@ pub(super) fn build_server_config_for_generator(
 ///   `setup_protocol()`; the remote receiver forwards the list bytes over the
 ///   wire via `start_filesfrom_forwarding`.
 fn apply_files_from_for_sender(config: &ClientConfig, server_config: &mut ServerConfig) {
-    use super::super::config::FilesFromSource;
-    match config.files_from() {
-        FilesFromSource::None => {}
-        FilesFromSource::Stdin => {
-            server_config.file_selection.files_from_path = Some("-".to_owned());
-            server_config.file_selection.from0 = config.from0();
-        }
-        FilesFromSource::LocalFile(path) => {
-            server_config.file_selection.files_from_path =
-                Some(path.to_string_lossy().into_owned());
-            server_config.file_selection.from0 = config.from0();
-        }
-        FilesFromSource::RemoteFile(_) => {
-            // The remote receiver opens the file and forwards its bytes back
-            // to us; the generator reads them as if they came from stdin.
-            // upstream: main.c:1191-1198 start_filesfrom_forwarding(filesfrom_fd)
-            server_config.file_selection.files_from_path = Some("-".to_owned());
-            server_config.file_selection.from0 = true;
-        }
-        FilesFromSource::HybridLocalRemote { .. } => {
-            // upstream: options.c:3112-3138 - localhost:path stripped; the
-            // client opens the file locally and stages the bytes into
-            // files_from_data, then the server reads them from the wire just
-            // like the plain RemoteFile case.
-            server_config.file_selection.files_from_path = Some("-".to_owned());
-            server_config.file_selection.from0 = true;
-        }
+    // upstream: options.c:2476-2501 / main.c:1322-1328 - the local sender
+    // resolves a single files-from fd. A localhost:path hostspec is opened
+    // locally here (never staged + wire-forwarded), matching a plain local
+    // file; a remote-hosted list is read from the wire as `--files-from=-`.
+    let plan = config.files_from().resolve_for(true, config.from0());
+    if let Some(path) = plan.sender_files_from_path {
+        server_config.file_selection.files_from_path = Some(path);
+        server_config.file_selection.from0 = plan.sender_from0;
     }
 }
 

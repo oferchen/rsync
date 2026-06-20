@@ -359,33 +359,20 @@ pub(super) fn build_full_daemon_args(
         args.push("--remove-source-files".to_owned());
     }
 
-    // upstream: options.c:2944-2956 - --files-from
+    // upstream: options.c:2944-2962 - server_options() forwards the
+    // files-from arg only when the remote peer reads the list. `is_sender`
+    // here means the daemon is the sender (PULL), so the local side pushes
+    // when `!is_sender`. The direction-aware resolver collapses the single
+    // files-from fd so a localhost:path hostspec is never double-sourced.
     {
-        use crate::client::config::FilesFromSource;
-        let client_is_sender = !is_sender;
-        match config.files_from() {
-            FilesFromSource::None => {}
-            FilesFromSource::Stdin | FilesFromSource::LocalFile(_) => {
-                if !client_is_sender {
-                    args.push("--files-from=-".to_owned());
-                    args.push("--from0".to_owned());
-                }
-            }
-            FilesFromSource::RemoteFile(path) => {
-                args.push(format!("--files-from={path}"));
-                if config.from0() {
-                    args.push("--from0".to_owned());
-                }
-            }
-            FilesFromSource::HybridLocalRemote { wire_arg, .. } => {
-                // upstream: options.c:3112-3138 - localhost:path stripped to
-                // wire_arg. The daemon server-side argv carries the stripped
-                // path while the client also stages bytes locally for PULL
-                // flush at crates/transfer/src/lib.rs:570.
-                args.push(format!("--files-from={wire_arg}"));
-                if config.from0() {
-                    args.push("--from0".to_owned());
-                }
+        let local_is_push = !is_sender;
+        let plan = config
+            .files_from()
+            .resolve_for(local_is_push, config.from0());
+        if let Some(arg) = plan.remote_arg {
+            args.push(format!("--files-from={arg}"));
+            if plan.remote_from0 {
+                args.push("--from0".to_owned());
             }
         }
     }
