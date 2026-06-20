@@ -254,6 +254,14 @@ fn process_file_ndx(
 
     let entry_name = entries[flat_index].name().to_owned();
     let entry_size = entries[flat_index].size();
+    // Only regular files are valid delta targets. A directory or symlink must
+    // never be opened as a basis file or overwritten with literal data - on
+    // Unix `File::open` on a directory succeeds (so a stray transfer record is
+    // harmless), but on Windows it returns ERROR_ACCESS_DENIED. We still drain
+    // the per-file sum_head + token + checksum stream below to stay in sync
+    // before skipping the materialisation step.
+    // upstream: rsync only sends ITEM_TRANSFER for regular files.
+    let is_regular = entries[flat_index].file_type() == protocol::flist::FileType::Regular;
     let dest_path = dest_root.join(&entry_name);
 
     let stream = reader
@@ -262,8 +270,9 @@ fn process_file_ndx(
     let (block_count, block_length_wire, remainder_wire) = read_sum_head(stream)?;
 
     // Compute block geometry before token reading - needed for CPRES_ZLIB
-    // see_token() calls which reference basis blocks by index.
-    let basis_exists = dest_path.exists();
+    // see_token() calls which reference basis blocks by index. A non-regular
+    // dest never has a usable basis (and must not be opened as one).
+    let basis_exists = is_regular && dest_path.exists();
     let block_length = if block_length_wire > 0 {
         block_length_wire as usize
     } else {
@@ -302,14 +311,21 @@ fn process_file_ndx(
         println!("  {} delta operations", delta_ops.len());
     }
 
-    apply_file_delta(
-        &dest_path,
-        basis_exists,
-        delta_ops,
-        block_length,
-        block_count as u32,
-        remainder,
-    )
+    // The per-file stream is now fully drained. Only materialise regular
+    // files; directories and symlinks were created in the flist phase and must
+    // not be overwritten with a delta-reconstructed file.
+    if is_regular {
+        apply_file_delta(
+            &dest_path,
+            basis_exists,
+            delta_ops,
+            block_length,
+            block_count as u32,
+            remainder,
+        )
+    } else {
+        Ok(())
+    }
 }
 
 /// Reads delta tokens for one file, dispatching by compression codec.
