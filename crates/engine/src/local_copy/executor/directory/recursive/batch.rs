@@ -167,8 +167,23 @@ pub(crate) fn capture_batch_file_entry(
     // Record sort metadata for this entry so flush_batch_delta_to_batch()
     // can compute the traversal-to-sorted index mapping that upstream's
     // flist_sort_and_clean() produces after reading the batch flist.
-    let name_bytes = relative_path.as_os_str().as_encoded_bytes();
-    context.record_batch_entry_sort_data(name_bytes, metadata.is_dir());
+    //
+    // The sort key MUST use the wire-canonical name (always '/'-separated),
+    // because batch replay re-sorts the flist by the names it decodes off the
+    // batch, which are wire-canonical. On Windows the OS-native separator is
+    // '\\' (0x5C), which sorts after '/' (0x2F); recording raw OS bytes here
+    // would diverge from the replay-side sort and misalign the NDX-to-entry
+    // mapping. Normalise '\\' -> '/' to match path_bytes_to_wire().
+    let raw_name = relative_path.as_os_str().as_encoded_bytes();
+    let wire_name: Vec<u8> = if std::path::MAIN_SEPARATOR == '/' {
+        raw_name.to_vec()
+    } else {
+        raw_name
+            .iter()
+            .map(|&b| if b == b'\\' { b'/' } else { b })
+            .collect()
+    };
+    context.record_batch_entry_sort_data(&wire_name, metadata.is_dir());
 
     // Increment the flist index counter. This assigns each captured entry
     // a sequential index matching upstream's flist numbering. Regular files
