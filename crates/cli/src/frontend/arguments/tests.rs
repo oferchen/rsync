@@ -2964,6 +2964,28 @@ mod name_level_tests {
     }
 
     #[test]
+    fn itemize_with_double_verbose_emits_unchanged() {
+        // upstream: generator.c:582 - INFO_GTE(NAME, 2) (set by -vv) forces the
+        // itemize line for unchanged entries, so `-ivv` must surface unchanged
+        // dirs, files, and symlinks rather than capping at the updated-only level.
+        let parsed = parse_test_args(["-i", "-vv", "src/", "dst/"]).expect("parse");
+        assert!(parsed.itemize_changes);
+        assert_eq!(parsed.name_level, NameOutputLevel::UpdatedAndUnchanged);
+    }
+
+    #[test]
+    fn itemize_with_single_verbose_stays_updated_only() {
+        let parsed = parse_test_args(["-i", "-v", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.name_level, NameOutputLevel::UpdatedOnly);
+    }
+
+    #[test]
+    fn itemize_with_info_name2_emits_unchanged() {
+        let parsed = parse_test_args(["-i", "--info=name2", "src/", "dst/"]).expect("parse");
+        assert_eq!(parsed.name_level, NameOutputLevel::UpdatedAndUnchanged);
+    }
+
+    #[test]
     fn itemize_then_no_itemize() {
         let parsed =
             parse_test_args(["-i", "--no-itemize-changes", "src/", "dst/"]).expect("parse");
