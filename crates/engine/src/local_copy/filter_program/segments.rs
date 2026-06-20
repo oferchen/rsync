@@ -74,11 +74,25 @@ impl FilterSegment {
         // literal name-match semantics and prevents anchored patterns like
         // `- /bar` from over-matching deep paths (UTS-V3-B exclude-lsh).
         let check_descendants = false;
+        // upstream: an excluded directory protects its descendants from
+        // deletion because the generator never descends into it. On the
+        // deletion scan a directory-only unanchored wildcard exclude (`foo/*/`)
+        // therefore keeps `foo/sub/file1` off the delete pass via its
+        // deletion-only descendant matchers; the Transfer path must NOT see
+        // those (it would re-trip the #6015 `foo/*/` over-exclusion).
+        let for_deletion = matches!(context, FilterContext::Deletion);
+        let rule_matches = |rule: &CompiledRule, path: &Path, is_dir: bool| {
+            if for_deletion {
+                rule.matches_for_deletion(path, is_dir, check_descendants)
+            } else {
+                rule.matches(path, is_dir, check_descendants)
+            }
+        };
         for rule in &self.include_exclude {
             if outcome.transfer_decided() {
                 break;
             }
-            if rule.matches(path, is_dir, check_descendants) {
+            if rule_matches(rule, path, is_dir) {
                 if matches!(context, FilterContext::Deletion) && rule.applies_to_receiver {
                     outcome.set_delete_excluded(matches!(rule.action, FilterAction::Exclude));
                 }
@@ -108,7 +122,7 @@ impl FilterSegment {
             if matches!(context, FilterContext::Deletion) && rule.perishable {
                 continue;
             }
-            if rule.matches(path, is_dir, check_descendants) {
+            if rule_matches(rule, path, is_dir) {
                 let applies = match context {
                     FilterContext::Transfer => rule.applies_to_sender,
                     FilterContext::Deletion => rule.applies_to_receiver,
@@ -218,6 +232,12 @@ struct CompiledRule {
     directory_only: bool,
     direct_matchers: Vec<GlobMatcher>,
     descendant_matchers: Vec<GlobMatcher>,
+    /// Descendant matchers (`{core}/**`) consulted ONLY on the deletion path.
+    /// Populated for directory-only unanchored wildcard excludes (`foo/*/`) so
+    /// the receiver keeps `foo/sub/file1` off the delete pass while the
+    /// Transfer path never sees `foo/*/**` (mirrors the filters-crate
+    /// `CompiledRule`; preserves the #6015 `foo/*/` over-exclusion fix).
+    deletion_descendant_matchers: Vec<GlobMatcher>,
     applies_to_sender: bool,
     applies_to_receiver: bool,
     perishable: bool,
@@ -253,14 +273,30 @@ impl CompiledRule {
         let has_glob_wildcard =
             core_pattern.contains('*') || core_pattern.contains('?') || core_pattern.contains('[');
         let slash_anchored = pattern.starts_with('/');
+        let is_directory_only_unanchored_wildcard =
+            directory_only && !slash_anchored && has_glob_wildcard;
+        let is_anchored_wildcard = slash_anchored && has_glob_wildcard;
+        let mut deletion_descendant_patterns = HashSet::new();
         if matches!(
             action,
             FilterAction::Exclude | FilterAction::Protect | FilterAction::Risk
-        ) && !(slash_anchored && has_glob_wildcard)
-        {
-            descendant_patterns.insert(format!("{core_pattern}/**"));
-            if !anchored {
-                descendant_patterns.insert(format!("**/{core_pattern}/**"));
+        ) {
+            if !(is_anchored_wildcard || is_directory_only_unanchored_wildcard) {
+                descendant_patterns.insert(format!("{core_pattern}/**"));
+                if !anchored {
+                    descendant_patterns.insert(format!("**/{core_pattern}/**"));
+                }
+            } else if is_directory_only_unanchored_wildcard {
+                // upstream: a directory-only unanchored wildcard (`foo/*/`)
+                // emits no `foo/*/**` transfer rule (#6015); the sender walk
+                // prunes the matched directory. The receiver's per-candidate
+                // deletion scan has no such pruning, so route `{core}/**` into
+                // a deletion-only set so excluded-directory children stay off
+                // the delete pass without re-exposing `foo/*/**` to transfer.
+                deletion_descendant_patterns.insert(format!("{core_pattern}/**"));
+                if !anchored {
+                    deletion_descendant_patterns.insert(format!("**/{core_pattern}/**"));
+                }
             }
         }
 
@@ -269,6 +305,7 @@ impl CompiledRule {
             directory_only,
             direct_matchers: compile_patterns(direct_patterns, &pattern)?,
             descendant_matchers: compile_patterns(descendant_patterns, &pattern)?,
+            deletion_descendant_matchers: compile_patterns(deletion_descendant_patterns, &pattern)?,
             applies_to_sender,
             applies_to_receiver,
             perishable: rule.is_perishable(),
@@ -280,6 +317,26 @@ impl CompiledRule {
         let pattern_matched = self.pattern_matches(path, is_dir, check_descendants);
         // upstream: exclude.c:906 - `ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1`.
         // A negated rule fires when the pattern does NOT match.
+        if self.negate {
+            !pattern_matched
+        } else {
+            pattern_matched
+        }
+    }
+
+    /// Like [`Self::matches`] but additionally consults the deletion-only
+    /// descendant matchers. An excluded directory protects its descendants
+    /// from deletion regardless of `check_descendants`, because the receiver
+    /// scan evaluates each candidate in isolation with no traversal-pruning
+    /// side effect.
+    ///
+    /// upstream: exclude.c:rule_matches() / name_is_excluded() subtree pruning
+    fn matches_for_deletion(&self, path: &Path, is_dir: bool, check_descendants: bool) -> bool {
+        let pattern_matched = self.pattern_matches(path, is_dir, check_descendants)
+            || self
+                .deletion_descendant_matchers
+                .iter()
+                .any(|matcher| matcher.is_match(path));
         if self.negate {
             !pattern_matched
         } else {
@@ -564,17 +621,24 @@ mod tests {
         assert!(!rule.matches(Path::new("subdir/report.csv"), false, true));
     }
 
-    /// `--exclude '*/'` exposes descendant matchers, but the per-entry filter
-    /// path (`FilterSegment::apply`) does NOT consult them. This mirrors
-    /// upstream `exclude.c:rule_matches()` which has no descendant logic at
-    /// all; descendants only fire when a caller explicitly asks for them
-    /// outside the normal traversal-driven evaluation.
+    /// `--exclude '*/'` (a directory-only unanchored wildcard) routes its
+    /// `*/**` descendant into the deletion-only set, mirroring upstream
+    /// `exclude.c:rule_matches()`: the transfer path emits no `*/**` rule (the
+    /// sender walk prunes the matched directory, #6015), while the receiver
+    /// deletion scan must protect children of the excluded directory from
+    /// over-deletion (`exclude` / `exclude-lsh` regression).
     #[test]
-    fn exclude_directory_only_descendant_gated_on_check_descendants() {
+    fn exclude_directory_only_descendant_gated_by_context() {
         let rule = CompiledRule::new(FilterRule::exclude("*/".to_owned())).unwrap();
+        // Directory entry matches directly in both contexts.
         assert!(rule.matches(Path::new("subdir"), true, false));
-        assert!(rule.matches(Path::new("subdir/debug.log"), false, true));
+        // Transfer path never matches a child via a synthetic descendant, even
+        // with check_descendants requested (#6015 guard).
+        assert!(!rule.matches(Path::new("subdir/debug.log"), false, true));
         assert!(!rule.matches(Path::new("subdir/debug.log"), false, false));
+        // Deletion path protects the child regardless of check_descendants.
+        assert!(rule.matches_for_deletion(Path::new("subdir/debug.log"), false, false));
+        assert!(rule.matches_for_deletion(Path::new("subdir/debug.log"), false, true));
     }
 
     /// Verifies patterns with internal `/` but no leading `/` are NOT
@@ -660,6 +724,39 @@ mod tests {
         assert!(
             outcome.allows_deletion_when_excluded_removed(),
             "matching exclude rule must enable --delete-excluded removal"
+        );
+    }
+
+    /// Regression for the `exclude` / `exclude-lsh` over-deletion: under
+    /// `--delete-during` a directory-only unanchored wildcard exclude
+    /// (`- foo/*/`) must protect the children of the matched directory from
+    /// deletion. `FilterSegment::apply` calls with `check_descendants = false`,
+    /// so the protection rides on the deletion-only descendant matchers. The
+    /// transfer evaluation of the same child must stay "allowed" so #6015's
+    /// `foo/*/` over-exclusion does not return.
+    #[test]
+    fn deletion_dir_only_wildcard_protects_children() {
+        let mut segment = FilterSegment::default();
+        segment
+            .push_rule(FilterRule::exclude("foo/*/".to_owned()))
+            .unwrap();
+
+        let child = Path::new("foo/sub/file1");
+
+        let mut del = FilterOutcome::default();
+        segment.apply(child, false, &mut del, FilterContext::Deletion);
+        assert!(
+            !del.allows_deletion(),
+            "`foo/sub/file1` must be protected from deletion by `- foo/*/`",
+        );
+
+        // The transfer path must NOT exclude the child via a synthetic
+        // descendant - the sender walk prunes the directory instead (#6015).
+        let mut xfer = FilterOutcome::default();
+        segment.apply(child, false, &mut xfer, FilterContext::Transfer);
+        assert!(
+            xfer.allows_transfer(),
+            "`foo/sub/file1` must not be excluded on the transfer path (#6015)",
         );
     }
 
