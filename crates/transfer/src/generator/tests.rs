@@ -814,6 +814,8 @@ fn stream_whole_file_handles_empty_file() {
     )
     .unwrap();
 
+    // An empty file still produces a strong checksum digest (MD5 of zero bytes).
+    assert!(result.checksum_len > 0);
     // Wire output should only contain the end marker: write_int(0) = 4 zero bytes
     assert_eq!(wire_output, [0u8; 4]);
 }
