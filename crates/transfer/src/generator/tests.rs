@@ -901,6 +901,7 @@ fn stream_whole_file_reuses_buffer() {
 
 #[test]
 fn stream_whole_file_none_checksum() {
+    use protocol::wire::write_whole_file_delta;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
@@ -925,6 +926,13 @@ fn stream_whole_file_none_checksum() {
     // None algorithm produces a 1-byte zero placeholder
     assert_eq!(result.checksum_len, 1);
     assert_eq!(result.checksum_buf[0], 0);
+
+    // The checksum algorithm only affects the returned digest, not the wire
+    // stream: the literal token carries all source bytes. Compare against the
+    // known-good delta encoding to prove all 256 bytes were streamed.
+    let mut expected = Vec::new();
+    write_whole_file_delta(&mut expected, &data).unwrap();
+    assert_eq!(wire_output, expected);
 }
 
 #[test]
