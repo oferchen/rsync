@@ -89,9 +89,16 @@ impl<'a> CopyContext<'a> {
             None => return Ok(()),
         };
 
-        let (proto, compat_flags) = {
+        let (proto, compat_flags, preserve_uid, preserve_gid, preserve_acls) = {
             let cfg = batch_writer_arc.lock().unwrap();
-            (cfg.config().protocol_version, cfg.config().compat_flags)
+            let flags = cfg.stream_flags();
+            (
+                cfg.config().protocol_version,
+                cfg.config().compat_flags,
+                flags.preserve_uid,
+                flags.preserve_gid,
+                flags.preserve_acls,
+            )
         };
 
         // upstream: flist.c:2548 - skip send_id_lists() under INC_RECURSE.
@@ -105,25 +112,38 @@ impl<'a> CopyContext<'a> {
             return Ok(());
         }
 
-        // upstream: uidlist.c:recv_id_list() reads uid list then gid list.
-        // Each list: loop reading varint30 until 0 (no entries), then done.
-        // Without xmit_id0_names (ID0_NAMES not in compat_flags), the
-        // terminator is just varint30(0) for each list.
+        // upstream: uidlist.c:send_id_lists() - the uid list is emitted only
+        // when (preserve_uid || preserve_acls), and the gid list only when
+        // (preserve_gid || preserve_acls). The matching reader
+        // (crates/batch/src/reader/flist.rs, recv_id_list) gates on the same
+        // predicates, so emitting terminators unconditionally would drift the
+        // stream cursor and corrupt the subsequent NDX reads. Each list, when
+        // present, terminates with a single varint30(0) (no ID0_NAMES inline).
+        let send_uid_list = preserve_uid || preserve_acls;
+        let send_gid_list = preserve_gid || preserve_acls;
+        if !send_uid_list && !send_gid_list {
+            return Ok(());
+        }
+
         let mut buf = Vec::with_capacity(2);
-        protocol::write_varint30_int(&mut buf, 0, proto as u8).map_err(|e| {
-            crate::local_copy::LocalCopyError::io(
-                "write batch uid list terminator",
-                std::path::PathBuf::new(),
-                e,
-            )
-        })?;
-        protocol::write_varint30_int(&mut buf, 0, proto as u8).map_err(|e| {
-            crate::local_copy::LocalCopyError::io(
-                "write batch gid list terminator",
-                std::path::PathBuf::new(),
-                e,
-            )
-        })?;
+        if send_uid_list {
+            protocol::write_varint30_int(&mut buf, 0, proto as u8).map_err(|e| {
+                crate::local_copy::LocalCopyError::io(
+                    "write batch uid list terminator",
+                    std::path::PathBuf::new(),
+                    e,
+                )
+            })?;
+        }
+        if send_gid_list {
+            protocol::write_varint30_int(&mut buf, 0, proto as u8).map_err(|e| {
+                crate::local_copy::LocalCopyError::io(
+                    "write batch gid list terminator",
+                    std::path::PathBuf::new(),
+                    e,
+                )
+            })?;
+        }
 
         let mut writer_guard = batch_writer_arc.lock().unwrap();
         writer_guard.write_data(&buf).map_err(|e| {

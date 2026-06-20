@@ -18,6 +18,12 @@ pub struct BatchWriter {
     batch_file: Option<BufWriter<File>>,
     /// Whether the header has been written.
     header_written: bool,
+    /// Stream flags recorded in the batch header.
+    ///
+    /// Captured at [`BatchWriter::write_header`] so the post-flist id-list
+    /// region can be gated on the same `preserve_uid` / `preserve_gid` /
+    /// `preserve_acls` predicates upstream uses in `uidlist.c:send_id_lists()`.
+    stream_flags: BatchFlags,
 }
 
 impl BatchWriter {
@@ -39,7 +45,16 @@ impl BatchWriter {
             config,
             batch_file: Some(BufWriter::new(file)),
             header_written: false,
+            stream_flags: BatchFlags::default(),
         })
+    }
+
+    /// Returns the stream flags recorded in the batch header.
+    ///
+    /// Defaults to [`BatchFlags::default`] until [`BatchWriter::write_header`]
+    /// records the caller's flags.
+    pub const fn stream_flags(&self) -> &BatchFlags {
+        &self.stream_flags
     }
 
     /// Write the batch header with stream flags.
@@ -54,6 +69,7 @@ impl BatchWriter {
         let mut header = BatchHeader::new(self.config.protocol_version, self.config.checksum_seed);
         header.compat_flags = self.config.compat_flags;
         header.stream_flags = flags;
+        self.stream_flags = flags;
 
         if let Some(ref mut writer) = self.batch_file {
             header.write_to(writer).map_err(|e| {
