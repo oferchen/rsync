@@ -28,7 +28,8 @@ impl SourceSpec {
             ));
         }
 
-        let copy_contents = has_trailing_separator(operand.as_os_str());
+        let copy_contents =
+            has_trailing_separator(operand.as_os_str()) || operand_is_dot_dir(operand.as_os_str());
         let has_dot_dir_marker = detect_dot_dir_marker(operand.as_os_str());
         Ok(Self {
             path: PathBuf::from(operand),
@@ -346,6 +347,53 @@ pub(crate) fn has_trailing_separator(path: &OsStr) -> bool {
     }
 }
 
+/// Returns `true` when the operand's final path component is a bare `.`
+/// (the operand is exactly `.` or ends with `/.`). Upstream treats such a
+/// source as contents-only, identical to a trailing slash. See upstream
+/// flist.c:2331 where a `DOTDIR_NAME` last component sets the
+/// "copy directory contents" semantics.
+pub(crate) fn operand_is_dot_dir(path: &OsStr) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+
+        let bytes = path.as_bytes();
+        match bytes.last() {
+            Some(b'.') => bytes.len() == 1 || bytes[bytes.len() - 2] == b'/',
+            _ => false,
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+
+        const DOT: u16 = b'.' as u16;
+        const SLASH: u16 = b'/' as u16;
+        const BACKSLASH: u16 = b'\\' as u16;
+
+        let mut prev = None;
+        let mut last = None;
+        for ch in path.encode_wide() {
+            if ch != 0 {
+                prev = last;
+                last = Some(ch);
+            }
+        }
+
+        match last {
+            Some(DOT) => prev.is_none_or(|ch| ch == SLASH || ch == BACKSLASH),
+            _ => false,
+        }
+    }
+
+    #[cfg(not(any(unix, windows)))]
+    {
+        let text = path.to_string_lossy();
+        text == "." || text.ends_with("/.") || text.ends_with("\\.")
+    }
+}
+
 pub(crate) fn operand_is_remote(path: &OsStr) -> bool {
     let text = path.to_string_lossy();
 
@@ -536,6 +584,28 @@ mod tests {
     fn source_spec_from_operand_with_trailing_slash() {
         let spec = SourceSpec::from_operand(&OsString::from("/tmp/dir/")).unwrap();
         assert!(spec.copy_contents());
+    }
+
+    #[test]
+    fn source_spec_from_operand_dot_dir_copies_contents() {
+        // upstream flist.c:2331 treats a `.` last component as contents-only,
+        // identical to a trailing slash; a bare `.` must not error out trying
+        // to derive a directory name from `file_name()`.
+        for operand in [".", "foo/.", "/tmp/dir/."] {
+            let spec = SourceSpec::from_operand(&OsString::from(operand)).unwrap();
+            assert!(spec.copy_contents(), "{operand:?} should copy contents");
+        }
+    }
+
+    #[test]
+    fn operand_is_dot_dir_classification() {
+        assert!(operand_is_dot_dir(OsStr::new(".")));
+        assert!(operand_is_dot_dir(OsStr::new("foo/.")));
+        assert!(operand_is_dot_dir(OsStr::new("/tmp/dir/.")));
+        assert!(!operand_is_dot_dir(OsStr::new("..")));
+        assert!(!operand_is_dot_dir(OsStr::new("foo.")));
+        assert!(!operand_is_dot_dir(OsStr::new("foo/bar")));
+        assert!(!operand_is_dot_dir(OsStr::new("")));
     }
 
     #[test]
