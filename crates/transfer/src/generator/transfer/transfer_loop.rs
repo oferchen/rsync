@@ -490,20 +490,32 @@ impl GeneratorContext {
 
                 let checksum_algorithm = self.get_checksum_algorithm();
                 let use_compression = self.file_compression(source_path).is_some();
-                let result = stream_whole_file_transfer(
-                    &mut *writer,
-                    source,
-                    file_size,
-                    checksum_algorithm,
-                    if use_compression {
-                        token_encoder.as_mut()
-                    } else {
-                        None
-                    },
-                    &mut stream_buf,
-                )?;
-                writer.write_all(&result.checksum_buf[..result.checksum_len])?;
-                bytes_sent += result.total_bytes;
+                // upstream: io.c:859 - stats.total_written counts actual wire
+                // bytes after each write() syscall, not the source file size.
+                // Wrap the whole-file stream in a CountingWriter so the summary
+                // "sent N bytes" reflects the post-compression wire stream the
+                // receiver saw, matching the delta path above. result.total_bytes
+                // is the raw source size; under -z/-zz it over-reports by the
+                // compression ratio and trips the daemon-gzip "did -zz engage?"
+                // assertion on whole-file pushes.
+                let wire_bytes = {
+                    let mut cw = crate::writer::CountingWriter::new(&mut *writer);
+                    let result = stream_whole_file_transfer(
+                        &mut cw,
+                        source,
+                        file_size,
+                        checksum_algorithm,
+                        if use_compression {
+                            token_encoder.as_mut()
+                        } else {
+                            None
+                        },
+                        &mut stream_buf,
+                    )?;
+                    cw.write_all(&result.checksum_buf[..result.checksum_len])?;
+                    cw.bytes_written()
+                };
+                bytes_sent += wire_bytes;
             }
             files_transferred += 1;
 

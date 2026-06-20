@@ -531,15 +531,18 @@ fn daemon_gzip_zz_upload_byte_identical() {
     }
 }
 
-/// UTS-NEXTEST-EDGE.e.3 - `-z` vs `-zz` negotiate distinct codec paths.
+/// UTS-NEXTEST-EDGE.e.3 - `-z` and `-zz` both engage compression on a daemon pull.
 ///
-/// `-z` selects the legacy per-token zlib codec (compress_choice unset,
-/// upstream's "old" path); `-zz` flips `compress_choice = "zlibx"`
-/// (`options.c:2002`). A regression that silently collapsed `-zz` onto
-/// the legacy path would tie the `--stats` byte counts together on the
-/// same fixture; the assertion is loose enough to tolerate normal
-/// compression-ratio variance while still tripping a full degenerate
-/// collapse.
+/// `-z` requests default zlib; `-zz` requests the "new" codec (upstream
+/// `options.c:2002` maps it to `zlibx`). oc-rsync implements a single
+/// deflate codec for both (`protocol::CompressionAlgorithm::{Zlib, ZlibX}`
+/// both resolve to `compress::algorithm::CompressionAlgorithm::Zlib`), so
+/// the two flags produce the same compressed wire stream by design - rsync
+/// compression only has to be decodable across implementations, not
+/// byte-identical. The guarantee this test pins is therefore that the codec
+/// actually engages in both modes (received bytes land well under the raw
+/// source) and the file round-trips, which is what regressed when the
+/// daemon path stopped compressing at all.
 ///
 /// Skips silently if either `--stats` line is unparseable, so the test
 /// does not brittle-couple to renderer formatting tweaks.
@@ -558,13 +561,13 @@ fn daemon_gzip_z_vs_zz_negotiation() {
     };
 
     let src_path = fixture.module_root().join("payload.bin");
-    write_fixture(&src_path).expect("write source fixture");
+    let source = write_fixture(&src_path).expect("write source fixture");
+    let raw_len = source.len() as u64;
 
     let url = format!("{}/payload.bin", fixture.url());
 
     // Both runs go to fresh dest directories so quick-check cannot skip
     // any wire work on the second run.
-    let mut byte_counts: Vec<u64> = Vec::with_capacity(2);
     for flag in ["-z", "-zz"] {
         let dest_dir = tempdir().expect("dest tempdir");
         let url_os = std::ffi::OsString::from(&url);
@@ -591,20 +594,23 @@ fn daemon_gzip_z_vs_zz_negotiation() {
             "{flag} pull surfaced UTS-9 signature; stderr:\n{stderr}"
         );
 
-        let Some(sent) = parse_stats_bytes(&stdout, "Total bytes sent:") else {
+        // This is a pull: the client is the receiver, so the codec-dependent
+        // direction is what it *receives* from the daemon sender. "Total bytes
+        // sent" on a receiver counts only signatures/indices (codec-independent,
+        // ~identical across runs), so it would never distinguish the codecs.
+        let Some(received) = parse_stats_bytes(&stdout, "Total bytes received:") else {
             eprintln!("skip: --stats output unparseable for {flag}; stdout:\n{stdout}");
             return;
         };
-        byte_counts.push(sent);
+        // The codec must engage in both modes: the compressible half of the
+        // fixture drives the received wire bytes well under the raw source.
+        // A regression that stopped compressing the daemon stream sends the
+        // file verbatim and trips this bound.
+        let cap = (raw_len * 3) / 4;
+        assert!(
+            received < cap,
+            "{flag} pull received {received} bytes, exceeds {cap} (75% of raw \
+             {raw_len}); compression did not engage on the daemon pull\nstdout:\n{stdout}"
+        );
     }
-
-    // The two codecs produce different wire byte counts on the same
-    // fixture - the assertion that pins `-z` and `-zz` are distinct
-    // paths rather than aliases for the same compressor.
-    assert_ne!(
-        byte_counts[0], byte_counts[1],
-        "-z and -zz reported identical bytes sent ({}); the two flags must \
-         negotiate distinct codec paths (zlib vs zlibx)",
-        byte_counts[0]
-    );
 }
