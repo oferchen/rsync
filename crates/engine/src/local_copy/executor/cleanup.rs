@@ -170,7 +170,8 @@ fn build_plan_for_directory<S: AsRef<OsStr>>(
     // receiver applies any `: filter` rules found in the directory being
     // scanned. The guard pops the loaded rules at end of scope, mirroring
     // upstream's matching `pop_local_filters()` on delete.c:115.
-    let _destination_dir_merge_guard = context.enter_destination_for_deletion(destination)?;
+    let _destination_dir_merge_guard =
+        context.enter_destination_for_deletion(destination, relative)?;
 
     let keep: HashSet<OsString> = source_entries
         .iter()

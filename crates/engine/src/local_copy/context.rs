@@ -448,6 +448,60 @@ include!("context_impl/transfer.rs");
 include!("context_impl/delta_transfer.rs");
 include!("context_impl/reporting.rs");
 
+/// Outcome of loading one nested `dir-merge` file in a directory: the compiled
+/// rule segment (absent when the file had no concrete rules), any
+/// `exclude-if-present` markers, and any further nested dir-merge rules it
+/// registered.
+struct LoadedNestedDirMerge {
+    segment: Option<FilterSegment>,
+    markers: Vec<ExcludeIfPresentRule>,
+    nested: Vec<NestedDirMerge>,
+}
+
+/// Rewrites an anchored per-dir merge rule so its leading `/` anchor binds to
+/// the merge file's directory (`relative_dir`) rather than the transfer root.
+///
+/// upstream: exclude.c:200-207 `add_rule` - for a rule loaded via
+/// `parse_filter_file` with `XFLG_ANCHORED2ABS`, a leading-`/` pattern gets the
+/// directory prefix `dirbuf + module_dirlen` (length
+/// `dirbuf_len - module_dirlen - 1`) prepended, so `- /file1` in `foo/.filt`
+/// matches `foo/file1`. Unanchored patterns and rules with no directory context
+/// are returned unchanged.
+fn anchor_dir_merge_rule(rule: FilterRule, relative_dir: Option<&Path>) -> FilterRule {
+    let Some(dir) = relative_dir else {
+        return rule;
+    };
+    if dir.as_os_str().is_empty() {
+        return rule;
+    }
+    let pattern = rule.pattern();
+    let Some(rest) = pattern.strip_prefix('/') else {
+        return rule;
+    };
+    // `dir` is the transfer-root-relative directory of the merge file; build the
+    // anchored pattern `/<dir>/<rest>` using forward slashes (filter patterns are
+    // always `/`-delimited regardless of platform separator).
+    let dir_str = dir.to_string_lossy().replace('\\', "/");
+    let dir_str = dir_str.trim_matches('/');
+    let new_pattern = if rest.is_empty() {
+        format!("/{dir_str}")
+    } else {
+        format!("/{dir_str}/{rest}")
+    };
+    rule.with_pattern(new_pattern)
+}
+
+/// A filter segment loaded from a runtime-registered `dir-merge` file, paired
+/// with whether the originating rule inherits into subdirectories.
+#[derive(Clone, Debug)]
+pub(crate) struct LoadedDynamicSegment {
+    /// Compiled rules loaded from the merge file in this directory.
+    pub(crate) segment: FilterSegment,
+    /// `true` unless the dir-merge rule carried the `n` modifier
+    /// (`FILTRULE_NO_INHERIT`); inheritable segments propagate to child frames.
+    pub(crate) inherit: bool,
+}
+
 /// Per-directory frame for runtime-registered `dir-merge` rules.
 ///
 /// upstream: exclude.c:1419-1428 - tracks the cumulative set of nested
@@ -463,8 +517,16 @@ pub(crate) struct DynamicDirMergeFrame {
     /// directory's merge files.
     pub(crate) active_rules: Vec<NestedDirMerge>,
     /// Filter segments loaded by resolving `active_rules` against the
-    /// current directory's filesystem entries.
-    pub(crate) loaded_segments: Vec<FilterSegment>,
+    /// current directory's filesystem entries, each tagged with whether the
+    /// originating dir-merge rule inherits into subdirectories.
+    ///
+    /// upstream: exclude.c:801 `push_local_filters` sets `lp->tail = NULL` so
+    /// rules loaded at an ancestor depth stay in `lp->head` and continue to
+    /// match descendants. The frame's loaded segments therefore accumulate the
+    /// inheritable segments of every ancestor; segments whose rule carried the
+    /// `n` modifier (`FILTRULE_NO_INHERIT`) are flagged non-inheritable and are
+    /// dropped from child frames.
+    pub(crate) loaded_segments: Vec<LoadedDynamicSegment>,
     /// `exclude-if-present` markers loaded from the same files.
     pub(crate) loaded_markers: Vec<ExcludeIfPresentRule>,
 }
