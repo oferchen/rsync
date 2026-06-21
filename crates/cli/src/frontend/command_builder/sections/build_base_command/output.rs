@@ -94,11 +94,15 @@ pub(super) fn add_output_args(command: ClapCommand) -> ClapCommand {
                 .value_parser(OsStringValueParser::new()),
         )
         .arg(
+            // upstream: options.c - `-i`/`--itemize-changes` is a repeatable
+            // counter (`-ii` raises itemize detail), so accept multiple
+            // occurrences via Count rather than SetTrue, which clap rejects on
+            // repeat with "cannot be used multiple times".
             Arg::new("itemize-changes")
                 .long("itemize-changes")
                 .short('i')
                 .help("Output a change summary for each updated entry.")
-                .action(ArgAction::SetTrue)
+                .action(ArgAction::Count)
                 .overrides_with("no-itemize-changes"),
         )
         .arg(

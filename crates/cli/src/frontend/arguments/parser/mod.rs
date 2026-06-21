@@ -601,7 +601,7 @@ where
         } else {
             ProgressSetting::Unspecified
         };
-    let itemize_changes_flag = matches.get_flag("itemize-changes");
+    let itemize_changes_flag = matches.get_count("itemize-changes") > 0;
     let no_itemize_changes_flag = matches.get_flag("no-itemize-changes");
     let name_overridden = itemize_changes_flag || no_itemize_changes_flag;
     let mut verbosity = matches.get_count("verbose") as u8;
