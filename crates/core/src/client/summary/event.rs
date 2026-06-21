@@ -17,6 +17,9 @@ use super::metadata::{ClientEntryKind, ClientEntryMetadata};
 pub enum ClientEventKind {
     /// File data was copied into place.
     DataCopied,
+    /// A regular file was reconstructed locally from a `--copy-dest` basis.
+    /// Itemizes with the local-change indicator (`c`).
+    ReferenceCopied,
     /// The destination already matched the source and metadata was reused.
     MetadataReused,
     /// A hard link was created to a previously copied destination file.
@@ -55,6 +58,7 @@ impl ClientEventKind {
         matches!(
             self,
             Self::DataCopied
+                | Self::ReferenceCopied
                 | Self::MetadataReused
                 | Self::HardLink
                 | Self::SymlinkCopied
@@ -97,6 +101,7 @@ impl ClientEvent {
         ) = record.into_parts();
         let kind = match &action {
             LocalCopyAction::DataCopied => ClientEventKind::DataCopied,
+            LocalCopyAction::ReferenceCopied => ClientEventKind::ReferenceCopied,
             LocalCopyAction::MetadataReused => ClientEventKind::MetadataReused,
             LocalCopyAction::HardLink => ClientEventKind::HardLink,
             LocalCopyAction::SymlinkCopied => ClientEventKind::SymlinkCopied,
@@ -129,12 +134,19 @@ impl ClientEvent {
             | LocalCopyAction::HardLink
             | LocalCopyAction::SymlinkCopied
             | LocalCopyAction::FifoCopied
-            | LocalCopyAction::DeviceCopied => was_created,
-            // DirectoryCreated retains the unconditional `true` because the
-            // local-copy executor only emits it when the directory was
-            // actually mkdir'd this run.
-            LocalCopyAction::DirectoryCreated => true,
-            LocalCopyAction::MetadataReused
+            | LocalCopyAction::DeviceCopied
+            // DirectoryCreated honours the explicit `was_created` bit: genuine
+            // mkdirs set `.with_creation(true)`, while a directory reconstructed
+            // from a `--copy-dest` basis records a change set without creation so
+            // its row stays `cd` + blank instead of `cd+++++++++`.
+            // upstream: generator.c:1480-1482 - the copy-dest match itemizes with
+            // ITEM_LOCAL_CHANGE, never ITEM_IS_NEW.
+            | LocalCopyAction::DirectoryCreated => was_created,
+            // upstream: generator.c:1039 itemizes the copy-dest reconstruction
+            // with statret == 0 (the basis was stat'd successfully), so
+            // ITEM_IS_NEW is never set and attribute slots are never `+`.
+            LocalCopyAction::ReferenceCopied
+            | LocalCopyAction::MetadataReused
             | LocalCopyAction::SkippedExisting
             | LocalCopyAction::SkippedMissingDestination
             | LocalCopyAction::SkippedNewerDestination

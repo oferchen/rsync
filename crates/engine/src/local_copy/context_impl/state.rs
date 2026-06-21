@@ -455,6 +455,58 @@ impl<'a> CopyContext<'a> {
         Ok(None)
     }
 
+    /// Locates a `--link-dest` basis symlink at `relative` that points at the
+    /// same `target`.
+    ///
+    /// Returns the basis symlink path when a link-dest entry holds a symlink
+    /// with a matching target, so the receiver can hard-link the symlink into
+    /// place (`hL`) instead of recreating it.
+    ///
+    /// upstream: generator.c:1117-1134 try_dests_non() - LINK_DEST hard-links a
+    /// matching symlink from the basis when CAN_HARDLINK_SYMLINK is supported.
+    pub(super) fn link_dest_symlink_target(
+        &self,
+        relative: &Path,
+        target: &Path,
+    ) -> Result<Option<PathBuf>, LocalCopyError> {
+        if self.options.link_dest_entries().is_empty() {
+            return Ok(None);
+        }
+
+        for entry in self.options.link_dest_entries() {
+            let candidate = entry.resolve(self.destination_root(), relative);
+            let candidate_metadata = match fs::symlink_metadata(&candidate) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(LocalCopyError::io(
+                        "inspect link-dest symlink",
+                        candidate,
+                        error,
+                    ));
+                }
+            };
+
+            if !candidate_metadata.file_type().is_symlink() {
+                continue;
+            }
+
+            match fs::read_link(&candidate) {
+                Ok(basis_target) if basis_target == target => return Ok(Some(candidate)),
+                Ok(_) => continue,
+                Err(error) => {
+                    return Err(LocalCopyError::io(
+                        "read link-dest symlink",
+                        candidate,
+                        error,
+                    ));
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Returns the configured `--link-dest` / `--copy-dest` / `--compare-dest`
     /// reference directories.
     pub(super) fn reference_directories(&self) -> &[ReferenceDirectory] {

@@ -61,6 +61,10 @@ fn is_already_hardlinked(destination: &Path, target: &Path) -> bool {
 /// Result of hard-link and reference-directory processing for a file.
 pub(super) struct LinkOutcome {
     pub(super) copy_source_override: Option<PathBuf>,
+    /// When set, the pending copy reconstructs the file from this
+    /// `--copy-dest` basis and must itemize as a local change (`c`) compared
+    /// against the basis rather than as a network transfer (`>`).
+    pub(super) reference_basis: Option<PathBuf>,
     pub(super) completed: bool,
 }
 
@@ -93,6 +97,7 @@ pub(super) fn process_links(
     let _ = mode;
 
     let mut copy_source_override: Option<PathBuf> = None;
+    let mut reference_basis: Option<PathBuf> = None;
 
     // 1. --link-dest style linking
     if let Some(link_target) = context.link_dest_target(
@@ -147,18 +152,41 @@ pub(super) fn process_links(
             link_target.display()
         );
 
+        // upstream: hlink.c:215-224 / generator.c:1008-1013 - a `--link-dest`
+        // cluster member is linked from the basis, so it ends up sharing the
+        // same inode as its already-placed in-transfer leader. `maybe_hard_link`
+        // then takes the same-inode branch, itemizing with an empty xname and
+        // emitting `"%s is uptodate"` at NAME>=2: the row is suppressed at plain
+        // `-i` but shown blank with a `=> leader` trailer under `-vv`. Thread the
+        // leader through the symlink_target slot for the `%L` trailer and flag
+        // the record uptodate so the plain-`-i` gate drops it.
+        let leader_display = context
+            .existing_hard_link_target(metadata)
+            .and_then(|leader| {
+                leader
+                    .strip_prefix(context.destination_root())
+                    .map(std::path::Path::to_path_buf)
+                    .ok()
+                    .filter(|relative| relative != record_path)
+            });
         context.record_hard_link(metadata, destination);
         context.summary_mut().record_hard_link();
-        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, leader_display);
         let total_bytes = Some(metadata_snapshot.len());
-        context.record(LocalCopyRecord::new(
-            record_path.to_path_buf(),
-            LocalCopyAction::HardLink,
-            0,
-            total_bytes,
-            Duration::default(),
-            Some(metadata_snapshot),
-        ));
+        context.record(
+            LocalCopyRecord::new(
+                record_path.to_path_buf(),
+                LocalCopyAction::HardLink,
+                0,
+                total_bytes,
+                Duration::default(),
+                Some(metadata_snapshot),
+            )
+            // A `--link-dest` hardlink reproduces the basis file exactly, so it
+            // is reported as `"<path> is uptodate"` under `-vv` and suppressed at
+            // plain `-i` - the same gate as an already-shared-inode alias.
+            .with_hardlink_uptodate(true),
+        );
         context.register_created_path(
             destination,
             CreatedEntryKind::HardLink,
@@ -167,6 +195,7 @@ pub(super) fn process_links(
         remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
         return Ok(LinkOutcome {
             copy_source_override: None,
+            reference_basis: None,
             completed: true,
         });
     }
@@ -276,6 +305,7 @@ pub(super) fn process_links(
             remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
             return Ok(LinkOutcome {
                 copy_source_override: None,
+                reference_basis: None,
                 completed: true,
             });
         }
@@ -350,11 +380,24 @@ pub(super) fn process_links(
         // existing inode was reused. Build a change_set so the attribute
         // slots reflect the real deltas (mtime / perms / etc.) instead of
         // collapsing to all-dots-or-spaces.
+        //
+        // upstream: generator.c:1009-1013 - the itemize for a hardlinked alias
+        // is computed with `statret = 1` against the group leader's stat
+        // (`sxp->st`), not a (possibly absent) prior destination. Comparing the
+        // source against the leader (`existing_target`) keeps the size/time/perm
+        // columns blank when the alias is identical to its leader, even though
+        // the alias path itself is being created this run. Fall back to the
+        // prior-destination comparison when the leader stat is unavailable.
+        let leader_metadata = fs::symlink_metadata(&existing_target).ok();
+        let (compare_against, compare_existed) = match leader_metadata.as_ref() {
+            Some(leader) => (Some(leader), true),
+            None => (existing_metadata, destination_previously_existed),
+        };
         let mut change_set = LocalCopyChangeSet::for_file(
             metadata,
-            existing_metadata,
+            compare_against,
             &metadata_options,
-            destination_previously_existed,
+            compare_existed,
             false,
             {
                 #[cfg(all(unix, feature = "xattr"))]
@@ -407,6 +450,7 @@ pub(super) fn process_links(
         remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
         return Ok(LinkOutcome {
             copy_source_override: None,
+            reference_basis: None,
             completed: true,
         });
     }
@@ -428,7 +472,7 @@ pub(super) fn process_links(
         )?
     {
         match decision {
-            ReferenceDecision::Skip => {
+            ReferenceDecision::Skip(basis) => {
                 // upstream: generator.c:1010,1133 / rsync.c:676 - "is uptodate"
                 // emitted at INFO_GTE(NAME, 2) when a reference-directory match
                 // means no transfer is needed. Rendered by the CLI from the
@@ -436,12 +480,22 @@ pub(super) fn process_links(
                 // the line lands ahead of the totals; emitting it via
                 // info_log! would route it through the post-summary
                 // diagnostic drain and break upstream ordering.
+                //
+                // upstream: generator.c:1140 - a `--compare-dest` match itemizes
+                // `.f` against the compare basis (`sxp->st`), so the attribute
+                // columns reflect drift vs the basis, not the absent
+                // destination. Compare source against the basis with
+                // `destination_previously_existed = true` so identical files
+                // stay blank.
                 context.summary_mut().record_regular_file_matched();
+                let basis_metadata = fs::symlink_metadata(&basis).map_err(|error| {
+                    LocalCopyError::io("inspect compare-dest basis", basis.clone(), error)
+                })?;
                 let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
                 let total_bytes = Some(metadata_snapshot.len());
                 let change_set = LocalCopyChangeSet::for_file(
                     metadata,
-                    existing_metadata,
+                    Some(&basis_metadata),
                     &metadata_options,
                     true,
                     false,
@@ -481,10 +535,17 @@ pub(super) fn process_links(
                 remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
                 return Ok(LinkOutcome {
                     copy_source_override: None,
+                    reference_basis: None,
                     completed: true,
                 });
             }
             ReferenceDecision::Copy(path) => {
+                // upstream: generator.c:1033-1039 - copy_altdest_file() copies
+                // the basis into place and itemizes as ITEM_LOCAL_CHANGE (`c`).
+                // The copy still flows through the transfer pipeline via
+                // `copy_source_override`; `reference_basis` flags the record so
+                // it is attributed to the basis instead of a network transfer.
+                reference_basis = Some(path.clone());
                 copy_source_override = Some(path);
             }
             ReferenceDecision::Link(path) => {
@@ -524,6 +585,10 @@ pub(super) fn process_links(
                 }
 
                 if degrade_to_copy {
+                    // upstream: generator.c:1031 try_a_copy - a cross-device
+                    // hard-link failure falls back to copy_altdest_file(), which
+                    // still itemizes as a local change (`c`).
+                    reference_basis = Some(path.clone());
                     copy_source_override = Some(path);
                 } else if copy_source_override.is_none() {
                     apply_file_metadata_with_options(destination, metadata, &metadata_options)
@@ -580,6 +645,7 @@ pub(super) fn process_links(
                     )?;
                     return Ok(LinkOutcome {
                         copy_source_override: None,
+                        reference_basis: None,
                         completed: true,
                     });
                 }
@@ -589,6 +655,7 @@ pub(super) fn process_links(
 
     Ok(LinkOutcome {
         copy_source_override,
+        reference_basis,
         completed: false,
     })
 }

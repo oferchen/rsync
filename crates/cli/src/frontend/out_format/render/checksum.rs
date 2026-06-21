@@ -18,7 +18,10 @@ pub(super) fn format_full_checksum(event: &ClientEvent) -> String {
 
     if !matches!(
         event.kind(),
-        ClientEventKind::DataCopied | ClientEventKind::MetadataReused | ClientEventKind::HardLink,
+        ClientEventKind::DataCopied
+            | ClientEventKind::ReferenceCopied
+            | ClientEventKind::MetadataReused
+            | ClientEventKind::HardLink,
     ) {
         return EMPTY_CHECKSUM.to_owned();
     }

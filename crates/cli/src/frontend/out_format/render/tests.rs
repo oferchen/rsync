@@ -1930,11 +1930,12 @@ fn emit_out_format_emits_uptodate_hardlink_alias_with_changed_attr() {
 }
 
 #[test]
-fn emit_out_format_emits_uptodate_hardlink_alias_with_relink_target() {
-    // upstream: generator.c:582 `(xname && *xname)` arm - when the alias was
-    // (re)created the xname is the relink target (`=> %s`), which forces the
-    // row even at plain `-i`. The local-copy engine carries that target in the
-    // metadata symlink_target slot for HardLink events.
+fn emit_out_format_suppresses_uptodate_hardlink_alias_at_plain_i() {
+    // upstream: hlink.c:219-221 - an already-shared-inode cluster alias (e.g. a
+    // `--link-dest` member that links from the basis and ends up sharing its
+    // leader's inode) is itemized with an EMPTY xname, so the plain-`-i` emit
+    // gate drops it even though the engine carries a `=> leader` trailer for the
+    // `-vv` view. Verified against upstream rsync 3.4.4 `-iplrtH --link-dest`.
     let metadata = ClientEvent::test_metadata(ClientEntryKind::File)
         .with_symlink_target_for_test("foo/leader");
     let event = ClientEvent::for_test(
@@ -1945,6 +1946,39 @@ fn emit_out_format_emits_uptodate_hardlink_alias_with_relink_target() {
         LocalCopyChangeSet::new(),
     )
     .with_hardlink_uptodate_for_test();
+    let events = [event];
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n%L")).unwrap();
+
+    // Plain `-i`: suppressed.
+    let mut plain = Vec::new();
+    emit_out_format(&events, &format, &OutFormatContext::default(), &mut plain).unwrap();
+    assert_eq!(String::from_utf8(plain).unwrap(), "");
+
+    // `-vv` (`emit_unchanged`): shown with the `=> leader` trailer.
+    let mut verbose = Vec::new();
+    let ctx = OutFormatContext::default().with_emit_unchanged(true);
+    emit_out_format(&events, &format, &ctx, &mut verbose).unwrap();
+    assert_eq!(
+        String::from_utf8(verbose).unwrap(),
+        "hf          test.txt => foo/leader\n"
+    );
+}
+
+#[test]
+fn emit_out_format_emits_fresh_hardlink_alias_with_relink_target() {
+    // upstream: generator.c:582 `(xname && *xname)` arm / hlink.c:232-234 - a
+    // freshly atomic_create'd alias (NOT sharing the leader inode, e.g. a
+    // `--copy-dest` cluster member linked to a copied leader) itemizes with the
+    // relink target as the xname (`=> %s`), forcing the row even at plain `-i`.
+    let metadata = ClientEvent::test_metadata(ClientEntryKind::File)
+        .with_symlink_target_for_test("foo/leader");
+    let event = ClientEvent::for_test(
+        PathBuf::from("test.txt"),
+        ClientEventKind::HardLink,
+        false,
+        Some(metadata),
+        LocalCopyChangeSet::new(),
+    );
     let events = [event];
     let format = parse_out_format(std::ffi::OsStr::new("%i %n%L")).unwrap();
     let mut output = Vec::new();
@@ -1971,4 +2005,109 @@ fn emit_out_format_emits_unchanged_symlink_under_info_name_2() {
     emit_out_format(&events, &format, &ctx, &mut output).unwrap();
     let rendered = String::from_utf8(output).unwrap();
     assert_eq!(rendered, ".L          test.txt\n");
+}
+
+// upstream: generator.c:1039 / log.c:707-749 - a `--copy-dest` reconstruction
+// itemizes the regular file with ITEM_LOCAL_CHANGE (`c`) and, when the source
+// already matched the basis, leaves the attribute columns blank. ITEM_IS_NEW is
+// never set, so the row is `cf` + 9 spaces rather than `>f+++++++++`.
+#[test]
+fn itemize_reference_copied_file_is_c_with_blank_attrs() {
+    let event = make_event(
+        ClientEventKind::ReferenceCopied,
+        false,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new(),
+    );
+    assert_eq!(format_itemized_changes(&event, false), "cf         ");
+}
+
+// A copy-dest reconstruction that differs from the basis in mtime keeps the `c`
+// update char but reports the drift (`cf...t.....`), never collapsing to `+`.
+#[test]
+fn itemize_reference_copied_file_reports_basis_drift() {
+    let cs = LocalCopyChangeSet::new().with_time_change(Some(TimeChange::Modified));
+    let event = make_event(
+        ClientEventKind::ReferenceCopied,
+        false,
+        Some(ClientEntryKind::File),
+        cs,
+    );
+    assert_eq!(format_itemized_changes(&event, false), "cf..t......");
+}
+
+// upstream: generator.c:1127 do_link_at() - a `--link-dest` exact match
+// hard-links from the basis and itemizes as `hf` + blank when identical.
+#[test]
+fn itemize_link_dest_hardlink_is_h_with_blank_attrs() {
+    let event = make_event(
+        ClientEventKind::HardLink,
+        false,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new(),
+    );
+    assert_eq!(format_itemized_changes(&event, false), "hf         ");
+}
+
+// A copy-dest directory reconstruction itemizes as `cd` + blank against the
+// basis, never `cd+++++++++`.
+#[test]
+fn itemize_reference_copied_directory_is_cd_with_blank_attrs() {
+    let event = make_event(
+        ClientEventKind::DirectoryCreated,
+        false,
+        Some(ClientEntryKind::Directory),
+        LocalCopyChangeSet::new(),
+    );
+    assert_eq!(format_itemized_changes(&event, false), "cd         ");
+}
+
+// A copy-dest symlink reconstruction itemizes as `cL` + blank against the
+// basis when the reconstructed link is identical.
+#[test]
+fn itemize_reference_copied_symlink_is_cl_with_blank_attrs() {
+    let event = make_event(
+        ClientEventKind::SymlinkCopied,
+        false,
+        Some(ClientEntryKind::Symlink),
+        LocalCopyChangeSet::new(),
+    );
+    assert_eq!(format_itemized_changes(&event, false), "cL         ");
+}
+
+// upstream: generator.c:582-583 + rsync.h:258 - at plain `-i` (no `-vv`) the
+// blank copy-dest reconstruction rows carry only ITEM_LOCAL_CHANGE, which is
+// excluded from SIGNIFICANT_ITEM_FLAGS, so the emit gate drops them. Only `-vv`
+// (`emit_unchanged`) surfaces the `cf`/`cd`/`cL` rows.
+#[test]
+fn copy_dest_blank_rows_suppressed_at_plain_itemize() {
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n")).unwrap();
+    for (kind, entry) in [
+        (ClientEventKind::ReferenceCopied, ClientEntryKind::File),
+        (
+            ClientEventKind::DirectoryCreated,
+            ClientEntryKind::Directory,
+        ),
+        (ClientEventKind::SymlinkCopied, ClientEntryKind::Symlink),
+    ] {
+        let event = make_event(kind, false, Some(entry), LocalCopyChangeSet::new());
+        let events = [event];
+
+        // Plain `-i`: suppressed.
+        let mut plain = Vec::new();
+        emit_out_format(&events, &format, &OutFormatContext::default(), &mut plain).unwrap();
+        assert!(
+            String::from_utf8(plain).unwrap().is_empty(),
+            "blank copy-dest row must be suppressed at plain -i"
+        );
+
+        // `-vv` (`emit_unchanged`): surfaced.
+        let mut verbose = Vec::new();
+        let ctx = OutFormatContext::default().with_emit_unchanged(true);
+        emit_out_format(&events, &format, &ctx, &mut verbose).unwrap();
+        assert!(
+            !String::from_utf8(verbose).unwrap().is_empty(),
+            "blank copy-dest row must surface under -vv"
+        );
+    }
 }

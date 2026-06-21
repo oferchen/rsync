@@ -11,7 +11,7 @@ mod tests;
 
 use std::io::{self, Write};
 
-use core::client::{ClientEntryMetadata, ClientEvent, ClientEventKind};
+use core::client::{ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind};
 
 use super::tokens::{OutFormat, OutFormatContext, OutFormatToken};
 
@@ -74,22 +74,65 @@ fn should_suppress_event(event: &ClientEvent, context: &OutFormatContext) -> boo
         return true;
     }
 
-    // upstream: hlink.c:215-227 + generator.c:581-583 - an already-correct
-    // hardlink alias is itemized via `itemize(..., ITEM_LOCAL_CHANGE |
-    // ITEM_XNAME_FOLLOWS, 0, "")` with an EMPTY xname. The generator only
-    // writes that row when a significant attribute flag is set, `INFO_GTE(NAME,
-    // 2)` (handled above via `emit_unchanged`), `stdout_format_has_i > 1`
-    // (`-ii`), or the xname is non-empty (a relink occurred). For an up-to-date
-    // alias with no attribute change, empty xname, and plain `-i`, all of those
-    // are false, so the row is suppressed. The shared inode means config1's
-    // perm fix already reached the alias, so itemizing `foo/extra` would
-    // over-report. Detect that case: a hardlink-uptodate record with an empty
-    // change-set and no `=> target` xname (None symlink target).
-    matches!(event.kind(), ClientEventKind::HardLink)
-        && event.is_hardlink_uptodate()
+    // upstream: generator.c:582-583 + rsync.h:258 - a `--copy-dest`
+    // reconstruction that exactly matches the basis is itemized with only
+    // ITEM_LOCAL_CHANGE, which is excluded from `SIGNIFICANT_ITEM_FLAGS`. At
+    // plain `-i` (NAME < 2, no `-ii`) the emit gate therefore drops the row.
+    // A directory, symlink, fifo, device, or regular-file copy reconstructed
+    // from the basis with no attribute drift and no creation is suppressed;
+    // only the `-vv` path (`emit_unchanged`, handled above) surfaces it. The
+    // symlink's own `-> target` is the `%L` field, not an xname, so it does NOT
+    // force emission - only a hardlink alias's `=> leader` xname does, which the
+    // dedicated HardLink rule below preserves.
+    if matches!(
+        event.kind(),
+        ClientEventKind::ReferenceCopied
+            | ClientEventKind::DirectoryCreated
+            | ClientEventKind::SymlinkCopied
+            | ClientEventKind::FifoCopied
+            | ClientEventKind::DeviceCopied
+    ) && !event.was_created()
+        && !event.change_set().has_any_change()
+    {
+        return true;
+    }
+
+    // upstream: generator.c:1119-1147 - a `--link-dest` symlink hard-linked
+    // from the basis (`hL`) carries only ITEM_LOCAL_CHANGE and no `=> leader`
+    // xname, so it is suppressed at plain `-i`. Its `-> target` is the `%L`
+    // field, not an xname, so it does not force emission.
+    if matches!(event.kind(), ClientEventKind::HardLink)
         && !event.was_created()
         && !event.change_set().has_any_change()
         && event
+            .metadata()
+            .map(ClientEntryMetadata::kind)
+            .is_some_and(|kind| matches!(kind, ClientEntryKind::Symlink))
+    {
+        return true;
+    }
+
+    // upstream: hlink.c:215-227 + generator.c:581-583 - a hardlink alias is
+    // itemized via `itemize(..., ITEM_LOCAL_CHANGE | ITEM_XNAME_FOLLOWS, 0,
+    // xname)`. The generator writes the row only when a significant attribute
+    // flag is set, `INFO_GTE(NAME, 2)` (handled above via `emit_unchanged`),
+    // `-ii`, or the alias was freshly atomic_create'd with a non-empty xname.
+    // Two blank cases are suppressed at plain `-i`:
+    //   1. An alias with no attribute change and no `=> leader` trailer (empty
+    //      xname) - a fresh `--link-dest`/basis hardlink.
+    //   2. An already-shared-inode cluster alias (`is_hardlink_uptodate`): even
+    //      though it carries a `=> leader` trailer for the `-vv` view, upstream
+    //      itemizes it with an EMPTY xname (hlink.c:219-221), so the plain-`-i`
+    //      gate drops it.
+    // A hard-linked symlink's `-> target` is handled by the earlier Symlink rule.
+    if !matches!(event.kind(), ClientEventKind::HardLink)
+        || event.was_created()
+        || event.change_set().has_any_change()
+    {
+        return false;
+    }
+    event.is_hardlink_uptodate()
+        || event
             .metadata()
             .and_then(ClientEntryMetadata::symlink_target)
             .is_none()

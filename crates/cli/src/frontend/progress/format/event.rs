@@ -15,6 +15,7 @@ pub(crate) const fn event_matches_name_level(event: &ClientEvent, level: NameOut
         NameOutputLevel::UpdatedOnly => matches!(
             event.kind(),
             ClientEventKind::DataCopied
+                | ClientEventKind::ReferenceCopied
                 | ClientEventKind::HardLink
                 | ClientEventKind::SymlinkCopied
                 | ClientEventKind::FifoCopied
@@ -25,6 +26,7 @@ pub(crate) const fn event_matches_name_level(event: &ClientEvent, level: NameOut
         NameOutputLevel::UpdatedAndUnchanged => matches!(
             event.kind(),
             ClientEventKind::DataCopied
+                | ClientEventKind::ReferenceCopied
                 | ClientEventKind::MetadataReused
                 | ClientEventKind::HardLink
                 | ClientEventKind::SymlinkCopied
@@ -40,6 +42,7 @@ pub(crate) const fn event_matches_name_level(event: &ClientEvent, level: NameOut
 pub(crate) const fn describe_event_kind(kind: &ClientEventKind) -> &'static str {
     match kind {
         ClientEventKind::DataCopied => "copied",
+        ClientEventKind::ReferenceCopied => "copied from reference",
         ClientEventKind::MetadataReused => "metadata reused",
         ClientEventKind::HardLink => "hard link",
         ClientEventKind::SymlinkCopied => "symlink",

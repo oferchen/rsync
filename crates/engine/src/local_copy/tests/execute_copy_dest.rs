@@ -712,3 +712,145 @@ fn copy_dest_copies_zero_length_file() {
     assert_eq!(destination_file.metadata().expect("metadata").len(), 0);
     assert_eq!(summary.files_copied(), 1);
 }
+
+// upstream: generator.c:1033-1039 - a `--copy-dest` file that matches the
+// source is reconstructed locally and itemized with ITEM_LOCAL_CHANGE (`c`),
+// NOT ITEM_TRANSFER / ITEM_IS_NEW (`>f+++++++++`). The record must therefore be
+// `ReferenceCopied`, not created, with no attribute drift against the basis.
+#[test]
+fn copy_dest_identical_file_records_reference_copy_with_blank_attrs() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let copy_dest_dir = temp.path().join("copy_dest");
+    let destination_dir = temp.path().join("dest");
+    fs::create_dir_all(&source_dir).expect("create source dir");
+    fs::create_dir_all(&copy_dest_dir).expect("create copy_dest dir");
+
+    let source_file = source_dir.join("file.txt");
+    let copy_dest_file = copy_dest_dir.join("file.txt");
+    fs::write(&source_file, b"identical content").expect("write source");
+    fs::write(&copy_dest_file, b"identical content").expect("write copy_dest");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_mtime(&source_file, timestamp).expect("source mtime");
+    set_file_mtime(&copy_dest_file, timestamp).expect("copy_dest mtime");
+
+    let destination_file = destination_dir.join("file.txt");
+    let operands = vec![
+        source_file.into_os_string(),
+        destination_file.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .collect_events(true)
+        .extend_reference_directories([ReferenceDirectory::new(
+            ReferenceDirectoryKind::Copy,
+            &copy_dest_dir,
+        )]);
+
+    let report = plan
+        .execute_with_report(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let file_record = report
+        .records()
+        .iter()
+        .find(|record| record.relative_path().ends_with("file.txt"))
+        .expect("file record present");
+    assert_eq!(file_record.action(), &LocalCopyAction::ReferenceCopied);
+    assert!(
+        !file_record.was_created(),
+        "copy-dest match must not be ITEM_IS_NEW"
+    );
+    assert_eq!(
+        file_record.change_set(),
+        LocalCopyChangeSet::new(),
+        "identical copy-dest basis leaves all attribute columns blank"
+    );
+}
+
+// upstream: generator.c:1469-1483 / 1117-1148 - a directory and symlink present
+// in a `--copy-dest` basis but absent from the destination itemize as local
+// changes (`cd`/`cL` + blank) against the basis, never `cd+++++++++`.
+#[cfg(unix)]
+#[test]
+fn copy_dest_directory_and_symlink_record_local_change_not_new() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let copy_dest_dir = temp.path().join("copy_dest");
+    let destination_dir = temp.path().join("dest");
+    fs::create_dir_all(source_dir.join("sub")).expect("create source subdir");
+    fs::create_dir_all(copy_dest_dir.join("sub")).expect("create copy_dest subdir");
+
+    // Identical regular file inside the subdir plus a symlink to it.
+    fs::write(source_dir.join("sub/file.txt"), b"content").expect("write source file");
+    fs::write(copy_dest_dir.join("sub/file.txt"), b"content").expect("write basis file");
+    std::os::unix::fs::symlink("sub/file.txt", source_dir.join("link")).expect("source symlink");
+    std::os::unix::fs::symlink("sub/file.txt", copy_dest_dir.join("link")).expect("basis symlink");
+
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_mtime(source_dir.join("sub/file.txt"), timestamp).expect("src file mtime");
+    set_file_mtime(copy_dest_dir.join("sub/file.txt"), timestamp).expect("basis file mtime");
+    // The `sub` directory mtime must match the basis so the dir itemizes blank.
+    set_file_mtime(source_dir.join("sub"), timestamp).expect("src dir mtime");
+    set_file_mtime(copy_dest_dir.join("sub"), timestamp).expect("basis dir mtime");
+    // Symlink mtimes match the basis (symtimes preserved under `-t`).
+    filetime::set_symlink_file_times(source_dir.join("link"), timestamp, timestamp)
+        .expect("src link mtime");
+    filetime::set_symlink_file_times(copy_dest_dir.join("link"), timestamp, timestamp)
+        .expect("basis link mtime");
+
+    // Trailing-slash source so contents land directly under destination_dir.
+    let mut source_operand = source_dir.clone().into_os_string();
+    source_operand.push("/");
+    let operands = vec![source_operand, destination_dir.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .links(true)
+        .times(true)
+        .collect_events(true)
+        .extend_reference_directories([ReferenceDirectory::new(
+            ReferenceDirectoryKind::Copy,
+            &copy_dest_dir,
+        )]);
+
+    let report = plan
+        .execute_with_report(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let dir_record = report
+        .records()
+        .iter()
+        .find(|record| record.relative_path() == Path::new("sub"))
+        .expect("directory record present");
+    assert_eq!(dir_record.action(), &LocalCopyAction::DirectoryCreated);
+    assert!(
+        !dir_record.was_created(),
+        "copy-dest directory match must not be ITEM_IS_NEW"
+    );
+    assert_eq!(
+        dir_record.change_set(),
+        LocalCopyChangeSet::new(),
+        "identical copy-dest directory leaves attribute columns blank"
+    );
+
+    let link_record = report
+        .records()
+        .iter()
+        .find(|record| record.relative_path() == Path::new("link"))
+        .expect("symlink record present");
+    assert_eq!(link_record.action(), &LocalCopyAction::SymlinkCopied);
+    assert!(
+        !link_record.was_created(),
+        "copy-dest symlink match must not be ITEM_IS_NEW"
+    );
+    assert_eq!(
+        link_record.change_set(),
+        LocalCopyChangeSet::new(),
+        "identical copy-dest symlink leaves attribute columns blank"
+    );
+}
