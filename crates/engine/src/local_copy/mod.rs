@@ -216,6 +216,36 @@ const CROSS_DEVICE_ERROR_CODE: i32 = 17;
 #[cfg(not(any(unix, windows)))]
 const CROSS_DEVICE_ERROR_CODE: i32 = 18;
 
+/// Collapses `.` and `..` components in `path` purely lexically, without
+/// touching the filesystem. A leading `..` that cannot be cancelled is
+/// preserved so the path stays valid relative to its anchor.
+///
+/// Used when resolving relative `--link-dest` / `--copy-dest` / `--compare-dest`
+/// candidates so they resolve even when an intermediate directory (e.g. a
+/// not-yet-created dry-run destination) is absent from disk.
+pub(crate) fn lexically_normalize(path: &std::path::Path) -> std::path::PathBuf {
+    use std::path::{Component, PathBuf};
+
+    let mut normalized: Vec<Component<'_>> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match normalized.last() {
+                Some(Component::Normal(_)) => {
+                    normalized.pop();
+                }
+                Some(Component::RootDir) => {}
+                _ => normalized.push(component),
+            },
+            other => normalized.push(other),
+        }
+    }
+    if normalized.is_empty() {
+        return PathBuf::from(".");
+    }
+    normalized.iter().collect()
+}
+
 #[cfg(test)]
 pub(crate) fn with_hard_link_override<F, R>(override_fn: F, action: impl FnOnce() -> R) -> R
 where

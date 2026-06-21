@@ -37,34 +37,8 @@ pub(crate) fn resolve_reference_candidate(
                 break;
             }
         }
-        lexically_normalize(&ancestor.join(base).join(relative))
+        crate::local_copy::lexically_normalize(&ancestor.join(base).join(relative))
     }
-}
-
-/// Collapses `.` and `..` components purely lexically, without touching the
-/// filesystem. A leading `..` that cannot be cancelled is preserved so the
-/// path stays valid relative to its anchor.
-fn lexically_normalize(path: &Path) -> PathBuf {
-    use std::path::Component;
-
-    let mut normalized: Vec<Component<'_>> = Vec::new();
-    for component in path.components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => match normalized.last() {
-                Some(Component::Normal(_)) => {
-                    normalized.pop();
-                }
-                Some(Component::RootDir) => {}
-                _ => normalized.push(component),
-            },
-            other => normalized.push(other),
-        }
-    }
-    if normalized.is_empty() {
-        return PathBuf::from(".");
-    }
-    normalized.iter().collect()
 }
 
 /// Parameters for finding a matching file in reference directories.
