@@ -1864,6 +1864,96 @@ fn emit_out_format_emits_unchanged_directory_under_info_name_2() {
 }
 
 #[test]
+fn emit_out_format_suppresses_uptodate_hardlink_alias_by_default() {
+    // upstream: hlink.c:215-227 + generator.c:581-583 - an already-correct
+    // hardlink alias is itemized with an empty xname (no `=> target`) and an
+    // empty change-set. Under plain `-i` (NAME<2, has_i==1) the row must be
+    // suppressed: the shared inode already carries the leader's attributes, so
+    // emitting it would over-report. This is the `foo/extra` case in upstream
+    // `testsuite/itemize.test`.
+    let event = make_event(
+        ClientEventKind::HardLink,
+        false,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new(),
+    )
+    .with_hardlink_uptodate_for_test();
+    let events = [event];
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n")).unwrap();
+    let mut output = Vec::new();
+    emit_out_format(&events, &format, &OutFormatContext::default(), &mut output).unwrap();
+    assert!(
+        output.is_empty(),
+        "default context must suppress an up-to-date hardlink alias"
+    );
+}
+
+#[test]
+fn emit_out_format_emits_uptodate_hardlink_alias_under_info_name_2() {
+    // upstream: generator.c:582 `INFO_GTE(NAME, 2)` arm - under `-ivv` (or
+    // `--info=name2`) the same up-to-date alias surfaces as `hf          n`.
+    let event = make_event(
+        ClientEventKind::HardLink,
+        false,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new(),
+    )
+    .with_hardlink_uptodate_for_test();
+    let events = [event];
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n")).unwrap();
+    let mut output = Vec::new();
+    let ctx = OutFormatContext::default().with_emit_unchanged(true);
+    emit_out_format(&events, &format, &ctx, &mut output).unwrap();
+    let rendered = String::from_utf8(output).unwrap();
+    assert_eq!(rendered, "hf          test.txt\n");
+}
+
+#[test]
+fn emit_out_format_emits_uptodate_hardlink_alias_with_changed_attr() {
+    // A hardlink-uptodate record that DOES carry an attribute change (e.g. a
+    // perm fix that did not propagate via the shared inode) is significant and
+    // must still print at plain `-i`, mirroring upstream's
+    // `iflags & SIGNIFICANT_ITEM_FLAGS` arm.
+    let event = make_event(
+        ClientEventKind::HardLink,
+        false,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new().with_permissions_changed(true),
+    )
+    .with_hardlink_uptodate_for_test();
+    let events = [event];
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n")).unwrap();
+    let mut output = Vec::new();
+    emit_out_format(&events, &format, &OutFormatContext::default(), &mut output).unwrap();
+    let rendered = String::from_utf8(output).unwrap();
+    assert_eq!(rendered, "hf...p..... test.txt\n");
+}
+
+#[test]
+fn emit_out_format_emits_uptodate_hardlink_alias_with_relink_target() {
+    // upstream: generator.c:582 `(xname && *xname)` arm - when the alias was
+    // (re)created the xname is the relink target (`=> %s`), which forces the
+    // row even at plain `-i`. The local-copy engine carries that target in the
+    // metadata symlink_target slot for HardLink events.
+    let metadata = ClientEvent::test_metadata(ClientEntryKind::File)
+        .with_symlink_target_for_test("foo/leader");
+    let event = ClientEvent::for_test(
+        PathBuf::from("test.txt"),
+        ClientEventKind::HardLink,
+        false,
+        Some(metadata),
+        LocalCopyChangeSet::new(),
+    )
+    .with_hardlink_uptodate_for_test();
+    let events = [event];
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n%L")).unwrap();
+    let mut output = Vec::new();
+    emit_out_format(&events, &format, &OutFormatContext::default(), &mut output).unwrap();
+    let rendered = String::from_utf8(output).unwrap();
+    assert_eq!(rendered, "hf          test.txt => foo/leader\n");
+}
+
+#[test]
 fn emit_out_format_emits_unchanged_symlink_under_info_name_2() {
     // upstream `testsuite/itemize.test:123` expects
     // `.L          foo/sym -> ../bar/baz/rsync` under `-ivvplrtH` when the
