@@ -86,7 +86,7 @@ jobs:
           key: interop-windows
 
       - name: Build oc-rsync
-        run: cargo build --locked --release --bin oc-rsync
+        uses: ./.github/actions/build-oc-rsync
 
       # Set up MSYS2 with a current rsync package. MSYS2 ships
       # rsync >= 3.2 with a Cygwin-style runtime; this is the most
