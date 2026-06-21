@@ -15,6 +15,7 @@ mod entry;
 
 use std::cell::Cell;
 use std::fs;
+use std::io;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -33,6 +34,22 @@ use entry::process_planned_entry;
 
 use super::planner::{apply_pre_transfer_deletions, plan_directory_entries};
 use super::support::read_directory_entries_sorted_reuse;
+
+/// Maximum directory nesting depth the recursive executor descends before
+/// returning an error instead of risking a thread stack overflow.
+///
+/// `copy_directory_recursive_inner` recurses once per directory level with a
+/// large per-frame footprint (per-entry closures, the directory plan, metadata
+/// snapshots). The safe ceiling is governed by the thread stack size: Windows
+/// threads default to 1 MB, which a sufficiently deep tree overflows in debug
+/// builds, while Unix threads default to 8 MB. The caps stay far above any
+/// realistic directory tree while bounding the worst case below each platform's
+/// overflow threshold, mirroring upstream rsync rejecting paths beyond
+/// `MAXPATHLEN` (util1.c) rather than recursing unboundedly.
+#[cfg(windows)]
+const MAX_DIRECTORY_DEPTH: usize = 100;
+#[cfg(not(windows))]
+const MAX_DIRECTORY_DEPTH: usize = 1000;
 
 /// Recursively copies a directory and its contents from source to destination.
 ///
@@ -98,6 +115,25 @@ fn copy_directory_recursive_inner(
     root_device: Option<u64>,
     force_walk_one_level: bool,
 ) -> Result<bool, LocalCopyError> {
+    // Bound recursion depth before allocating this frame's locals or recursing
+    // further. The planner builds each child entry's `relative` as the parent's
+    // relative path plus the child name, so the component count of `relative`
+    // equals the current directory depth - no separate counter need be threaded
+    // through the call chain. A too-deep tree returns a typed I/O error
+    // (ENAMETOOLONG-equivalent, exit 23 RERR_PARTIAL) which the per-entry loop
+    // records and continues past, mirroring upstream rsync's handling of paths
+    // that exceed `MAXPATHLEN`, instead of overflowing the thread stack.
+    if relative.map_or(0, |rel| rel.components().count()) > MAX_DIRECTORY_DEPTH {
+        return Err(LocalCopyError::io(
+            "recurse into directory exceeding the nesting limit",
+            destination,
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("directory nesting exceeds {MAX_DIRECTORY_DEPTH} levels"),
+            ),
+        ));
+    }
+
     #[cfg(any(
         all(unix, any(feature = "acl", feature = "xattr")),
         all(windows, feature = "acl")
@@ -124,8 +160,13 @@ fn copy_directory_recursive_inner(
 
     let destination_state = check_destination_state(context, destination, relative)?;
     let destination_missing = destination_state.is_missing();
-    let existing_destination_metadata: Option<fs::Metadata> =
-        destination_state.existing_metadata().cloned();
+    // Box the owned metadata so it lives on the heap, not on this stack frame.
+    // `copy_directory_recursive_inner` recurses once per directory level; an
+    // inline `fs::Metadata` (~80 bytes on Windows) multiplied across a deep
+    // tree overflows Windows's 1 MB default thread stack. The boxed pointer is
+    // 8 bytes per frame instead.
+    let existing_destination_metadata: Option<Box<fs::Metadata>> =
+        destination_state.existing_metadata().cloned().map(Box::new);
 
     // upstream: generator.c:1469-1483 - when a directory is freshly created in
     // the destination but present in a `--copy-dest` basis, the generator
@@ -136,11 +177,13 @@ fn copy_directory_recursive_inner(
     // record will be emitted (`destination_missing` for children, the root's
     // just-created marker for the root).
     let root_just_created = relative.is_none() && context.summary().destination_root_created();
-    let copy_dest_basis: Option<fs::Metadata> = if destination_missing || root_just_created {
+    // Boxed for the same reason as `existing_destination_metadata` above: keep
+    // the owned `fs::Metadata` off the per-directory recursion frame.
+    let copy_dest_basis: Option<Box<fs::Metadata>> = if destination_missing || root_just_created {
         // The transfer root has `relative == None`; use an empty path so the
         // basis lookup resolves the copy-dest directory itself.
         let lookup_relative = relative.unwrap_or_else(|| Path::new(""));
-        super::super::find_copy_dest_basis(context, destination, lookup_relative)?
+        super::super::find_copy_dest_basis(context, destination, lookup_relative)?.map(Box::new)
     } else {
         None
     };
@@ -227,7 +270,7 @@ fn copy_directory_recursive_inner(
         );
         // upstream: generator.c:1480-1482 - a copy-dest match itemizes the
         // directory against the basis (ITEM_LOCAL_CHANGE, no ITEM_IS_NEW).
-        let record = if let Some(basis_meta) = copy_dest_basis.as_ref() {
+        let record = if let Some(basis_meta) = copy_dest_basis.as_deref() {
             record.with_change_set(LocalCopyChangeSet::for_existing_directory(
                 metadata,
                 basis_meta,
@@ -259,7 +302,7 @@ fn copy_directory_recursive_inner(
     // them as `.d` rows.
     if !record_emitted
         && let Some((ref rel_path, ref snapshot)) = metadata_record
-        && let Some(existing_meta) = existing_destination_metadata.as_ref()
+        && let Some(existing_meta) = existing_destination_metadata.as_deref()
     {
         // upstream: generator.c:557-571 - ACL/xattr drift is computed by
         // `set_acl(NULL, ...)` and `xattr_diff(...)`, both of which compare
@@ -334,7 +377,7 @@ fn copy_directory_recursive_inner(
             );
             // upstream: generator.c:1480-1482 - a copy-dest match itemizes the
             // directory against the basis (ITEM_LOCAL_CHANGE, no ITEM_IS_NEW).
-            let record = if let Some(basis_meta) = copy_dest_basis.as_ref() {
+            let record = if let Some(basis_meta) = copy_dest_basis.as_deref() {
                 record.with_change_set(LocalCopyChangeSet::for_existing_directory(
                     metadata,
                     basis_meta,
