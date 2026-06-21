@@ -57,8 +57,9 @@ impl<'a> CopyContext<'a> {
     pub(super) fn enter_directory(
         &self,
         source: &Path,
+        relative_dir: Option<&Path>,
     ) -> Result<DirectoryFilterGuard, LocalCopyError> {
-        self.enter_directory_for_path(source, true)
+        self.enter_directory_for_path(source, relative_dir, true)
     }
 
     /// Loads per-dir-merge filter files from the destination directory before a
@@ -73,13 +74,15 @@ impl<'a> CopyContext<'a> {
     pub(crate) fn enter_destination_for_deletion(
         &self,
         destination: &Path,
+        relative_dir: Option<&Path>,
     ) -> Result<DirectoryFilterGuard, LocalCopyError> {
-        self.enter_directory_for_path(destination, false)
+        self.enter_directory_for_path(destination, relative_dir, false)
     }
 
     fn enter_directory_for_path(
         &self,
         directory: &Path,
+        relative_dir: Option<&Path>,
         check_directory_excluded: bool,
     ) -> Result<DirectoryFilterGuard, LocalCopyError> {
         let source = directory;
@@ -110,87 +113,30 @@ impl<'a> CopyContext<'a> {
         ephemeral_stack.push(Vec::new());
         marker_ephemeral_stack.push(Vec::new());
 
-        // upstream: exclude.c:1419-1428 - inherit the parent frame's active
-        // nested dir-merge rules and look each one up in the current directory.
-        // Newly-registered rules (encountered while loading the files below)
-        // become active for subdirectories but are NOT looked up against the
-        // current directory.
-        let inherited_active: Vec<NestedDirMerge> = self
-            .dynamic_dir_merge_stack
-            .borrow()
-            .last()
-            .map(|frame| frame.active_rules.clone())
-            .unwrap_or_default();
+        // upstream: exclude.c:801 `push_local_filters` sets `lp->tail = NULL`,
+        // keeping `lp->head` so rules loaded at an ancestor depth keep matching
+        // descendants. Seed the new frame's active rules AND inheritable loaded
+        // segments from the parent frame, then look each active rule up in this
+        // directory. Non-inheritable (`n`-modifier) segments are dropped.
+        let (inherited_active, inherited_segments): (Vec<NestedDirMerge>, Vec<LoadedDynamicSegment>) =
+            self.dynamic_dir_merge_stack
+                .borrow()
+                .last()
+                .map(|frame| {
+                    let segments = frame
+                        .loaded_segments
+                        .iter()
+                        .filter(|loaded| loaded.inherit)
+                        .cloned()
+                        .collect();
+                    (frame.active_rules.clone(), segments)
+                })
+                .unwrap_or_default();
         let mut new_frame = DynamicDirMergeFrame {
-            active_rules: inherited_active.clone(),
-            loaded_segments: Vec::new(),
+            active_rules: inherited_active,
+            loaded_segments: inherited_segments,
             loaded_markers: Vec::new(),
         };
-
-        for rule in &inherited_active {
-            let candidate = resolve_dir_merge_path(source, &rule.pattern);
-            let metadata = match fs::metadata(&candidate) {
-                Ok(metadata) => metadata,
-                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-                Err(error) => {
-                    ephemeral_stack.pop();
-                    marker_ephemeral_stack.pop();
-                    return Err(LocalCopyError::io(
-                        "inspect filter file",
-                        candidate,
-                        error,
-                    ));
-                }
-            };
-            if !metadata.is_file() {
-                continue;
-            }
-
-            let mut visited = Vec::new();
-            let mut entries = match load_dir_merge_rules_recursive(
-                candidate.as_path(),
-                &rule.options,
-                self.options.delete_excluded_enabled(),
-                &mut visited,
-            ) {
-                Ok(entries) => entries,
-                Err(error) => {
-                    ephemeral_stack.pop();
-                    marker_ephemeral_stack.pop();
-                    return Err(error);
-                }
-            };
-
-            let mut segment = FilterSegment::default();
-            for compiled in entries.rules.drain(..) {
-                if let Err(error) = segment.push_rule(compiled) {
-                    ephemeral_stack.pop();
-                    marker_ephemeral_stack.pop();
-                    return Err(filter_program_local_error(&candidate, &error));
-                }
-            }
-
-            if rule.options.excludes_self() {
-                let pattern = rule.pattern.to_string_lossy().into_owned();
-                if let Err(error) = segment.push_rule(FilterRule::exclude(pattern)) {
-                    ephemeral_stack.pop();
-                    marker_ephemeral_stack.pop();
-                    return Err(filter_program_local_error(&candidate, &error));
-                }
-            }
-
-            if !segment.is_empty() {
-                new_frame.loaded_segments.push(segment);
-            }
-            if !entries.exclude_if_present.is_empty() {
-                new_frame
-                    .loaded_markers
-                    .append(&mut entries.exclude_if_present);
-            }
-            new_frame
-                .active_rules
-                .append(&mut entries.nested_dir_merges);
-        }
 
         for (index, rule) in program.dir_merge_rules().iter().enumerate() {
             let candidate = resolve_dir_merge_path(source, rule.pattern());
@@ -230,6 +176,12 @@ impl<'a> CopyContext<'a> {
 
             let mut segment = FilterSegment::default();
             for compiled in entries.rules.drain(..) {
+                // upstream: exclude.c:200-207 add_rule - an anchored pattern in a
+                // per-dir merge file is rooted at the merge file's directory, not
+                // the transfer root: `pre_len = dirbuf_len - module_dirlen - 1`
+                // prepends the dir prefix. Mirror that so `- /file1` in `foo/.filt`
+                // matches `foo/file1`, not a top-level `file1`.
+                let compiled = anchor_dir_merge_rule(compiled, relative_dir);
                 if let Err(error) = segment.push_rule(compiled) {
                     ephemeral_stack.pop();
                     marker_ephemeral_stack.pop();
@@ -250,9 +202,12 @@ impl<'a> CopyContext<'a> {
             let markers = entries.exclude_if_present;
             let clear_inherited = entries.clear_inherited;
 
-            // upstream: exclude.c:1419-1428 - any `dir-merge`/`:` directives
-            // inside the loaded file register new per-directory rules that
-            // apply to subdirectories of `source`, not to `source` itself.
+            // upstream: exclude.c:787-789 - dir-merge directives found in a
+            // top-level merge file register per-directory rules that the growing
+            // push loop then loads against this same directory (and descendants).
+            // Append them to the dynamic frame's active set; the growing while
+            // loop below picks them up so `dir-merge .filt2` in `bar/.filt` loads
+            // `bar/.filt2` here as well as in descendants.
             new_frame
                 .active_rules
                 .append(&mut entries.nested_dir_merges);
@@ -298,6 +253,36 @@ impl<'a> CopyContext<'a> {
 
         drop(layers);
         drop(marker_layers);
+
+        // upstream: exclude.c:787-789 - walk the GROWING active-rule list so a
+        // dir-merge directive registered while loading an inherited file (or a
+        // top-level merge file above) is itself loaded against THIS directory.
+        // Loading a rule may append further nested rules; the re-read bound then
+        // picks them up. This makes `:C` load `.cvsignore` for the current dir
+        // and a same-directory nested `dir-merge` apply to the current dir.
+        let mut next_index = 0usize;
+        while next_index < new_frame.active_rules.len() {
+            let rule = new_frame.active_rules[next_index].clone();
+            next_index += 1;
+            let loaded = match self.load_nested_dir_merge(source, relative_dir, &rule) {
+                Ok(loaded) => loaded,
+                Err(error) => {
+                    ephemeral_stack.pop();
+                    marker_ephemeral_stack.pop();
+                    return Err(error);
+                }
+            };
+            let Some(mut loaded) = loaded else { continue };
+            if let Some(segment) = loaded.segment.take() {
+                new_frame.loaded_segments.push(LoadedDynamicSegment {
+                    segment,
+                    inherit: rule.options.inherit_rules(),
+                });
+            }
+            new_frame.loaded_markers.append(&mut loaded.markers);
+            new_frame.active_rules.append(&mut loaded.nested);
+        }
+
         drop(ephemeral_stack);
         drop(marker_ephemeral_stack);
 
@@ -324,6 +309,61 @@ impl<'a> CopyContext<'a> {
             true,
             excluded,
         ))
+    }
+
+    /// Resolves a single nested `dir-merge` rule against `source` and loads its
+    /// filter file (if present), returning the compiled segment, any
+    /// `exclude-if-present` markers, and any further nested dir-merge rules the
+    /// file registered.
+    ///
+    /// Anchored patterns are rewritten relative to `relative_dir` to mirror
+    /// upstream `exclude.c:200-207 add_rule`.
+    fn load_nested_dir_merge(
+        &self,
+        source: &Path,
+        relative_dir: Option<&Path>,
+        rule: &NestedDirMerge,
+    ) -> Result<Option<LoadedNestedDirMerge>, LocalCopyError> {
+        let candidate = resolve_dir_merge_path(source, &rule.pattern);
+        let metadata = match fs::metadata(&candidate) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(LocalCopyError::io("inspect filter file", candidate, error));
+            }
+        };
+        if !metadata.is_file() {
+            return Ok(None);
+        }
+
+        let mut visited = Vec::new();
+        let mut entries = load_dir_merge_rules_recursive(
+            candidate.as_path(),
+            &rule.options,
+            self.options.delete_excluded_enabled(),
+            &mut visited,
+        )?;
+
+        let mut segment = FilterSegment::default();
+        for compiled in entries.rules.drain(..) {
+            let compiled = anchor_dir_merge_rule(compiled, relative_dir);
+            segment
+                .push_rule(compiled)
+                .map_err(|error| filter_program_local_error(&candidate, &error))?;
+        }
+
+        if rule.options.excludes_self() {
+            let pattern = rule.pattern.to_string_lossy().into_owned();
+            segment
+                .push_rule(FilterRule::exclude(pattern))
+                .map_err(|error| filter_program_local_error(&candidate, &error))?;
+        }
+
+        Ok(Some(LoadedNestedDirMerge {
+            segment: (!segment.is_empty()).then_some(segment),
+            markers: entries.exclude_if_present,
+            nested: entries.nested_dir_merges,
+        }))
     }
 
     pub(super) fn directory_excluded(

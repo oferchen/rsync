@@ -122,11 +122,13 @@ impl<'a> CopyContext<'a> {
             return None;
         }
         let mut outcome = FilterOutcome::default();
-        for segment in frame.loaded_segments.iter().rev() {
+        for loaded in frame.loaded_segments.iter().rev() {
             if outcome.transfer_decided() {
                 break;
             }
-            segment.apply(relative, is_dir, &mut outcome, context);
+            loaded
+                .segment
+                .apply(relative, is_dir, &mut outcome, context);
         }
         Some(outcome)
     }
@@ -134,8 +136,8 @@ impl<'a> CopyContext<'a> {
     fn dynamic_excluded_dir_by_non_dir_rule(&self, relative: &Path) -> Option<bool> {
         let stack = self.dynamic_dir_merge_stack.borrow();
         let frame = stack.last()?;
-        for segment in frame.loaded_segments.iter().rev() {
-            if let Some(result) = segment.excluded_dir_by_non_dir_rule(relative) {
+        for loaded in frame.loaded_segments.iter().rev() {
+            if let Some(result) = loaded.segment.excluded_dir_by_non_dir_rule(relative) {
                 return Some(result);
             }
         }

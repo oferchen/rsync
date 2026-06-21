@@ -199,7 +199,7 @@ fn copy_directory_recursive_inner(
     context.reserve_event_capacity(entries.len());
     context.register_progress();
 
-    let dir_merge_guard = context.enter_directory(source)?;
+    let dir_merge_guard = context.enter_directory(source, relative)?;
     if dir_merge_guard.is_excluded() {
         return Ok(false);
     }

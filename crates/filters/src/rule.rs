@@ -484,6 +484,17 @@ impl FilterRule {
         }
         self
     }
+
+    /// Returns the rule with its pattern text replaced, preserving every other
+    /// attribute (action, side flags, perishability, negation, modifiers).
+    ///
+    /// Used to re-anchor a per-directory merge rule against the merge file's
+    /// directory without rebuilding the rule from scratch.
+    #[must_use]
+    pub fn with_pattern(mut self, pattern: impl Into<String>) -> Self {
+        self.pattern = pattern.into();
+        self
+    }
 }
 
 #[cfg(test)]
