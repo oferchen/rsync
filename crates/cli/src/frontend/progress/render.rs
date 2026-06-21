@@ -86,14 +86,13 @@ pub(crate) fn emit_transfer_summary(
     // upstream: main.c:787-808 - when the receiver pre-flight-mkdirs the
     // destination root because `file_total > 1 || trailing_slash`, it lops
     // off the trailing slash (`*cp = '\0'`) and prints `created directory
-    // %s\n` gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`. Mirror the
-    // same gate plus trailing-slash trim here so `-i` and `-v` invocations
-    // emit the notice ahead of the per-entry itemize lines, matching the
-    // upstream `testsuite/itemize.test` golden. The notice is only emitted
-    // when the local-copy executor reports that it materialised the
-    // destination root during this run.
+    // %s\n` gated on `INFO_GTE(NAME, 1) || stdout_format_has_i`. The print at
+    // main.c:808 precedes the `dry_run++` at main.c:810, so a dry-run still
+    // reports the directory it would create. Mirror the same gate plus
+    // trailing-slash trim here so `-i` and `-v` invocations - including
+    // `--dry-run` - emit the notice ahead of the per-entry itemize lines,
+    // matching the upstream `testsuite/itemize.test` golden.
     if summary.destination_root_created()
-        && !dry_run
         && (out_format.is_some() || verbosity > 0)
         && let Some(dest_root) = events.iter().map(ClientEvent::destination_root).next()
     {
