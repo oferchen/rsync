@@ -123,10 +123,26 @@ where
         return code;
     }
 
+    // upstream: options.c set_output_verbosity - the packed `-v` count maps to
+    // info/debug levels via info_verbosity[] (options.c:239-243) before any
+    // explicit --info override is layered on. Without this, the server thread's
+    // thread-local verbosity stays at the zero default, so `-vv` never raises
+    // info.name to 2 and the itemize line for an unchanged entry
+    // (INFO_GTE(NAME, 2), generator.c:582-583) is suppressed - exactly the
+    // gap that fails the upstream `itemize` test under SSH `--server` mode,
+    // where `-vv` arrives as packed `v` letters rather than `--info=name2`.
+    if config.flags.verbose_level > 0 {
+        logging::init(logging::VerbosityConfig::from_verbose_level(
+            config.flags.verbose_level,
+        ));
+    }
+
     // upstream: options.c parse_output_words - server-side info parsing
     // silently ignores unknown tokens so a newer client can forward names
     // this build has not learned yet. The well-formed empty/level errors
-    // still surface so malformed input is not swallowed entirely.
+    // still surface so malformed input is not swallowed entirely. Applied
+    // after the verbose-derived base so an explicit `--info` overrides it,
+    // matching upstream's verbose-then-info ordering.
     if !long_flags.info.is_empty() {
         match super::super::execution::parse_info_flags_server(&long_flags.info) {
             Ok(settings) => {
