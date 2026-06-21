@@ -665,3 +665,52 @@ fn itemize_format_matches_upstream_for_changed_file() {
     assert_eq!(change_set.time_change(), Some(TimeChange::Modified)); // 't'
     assert!(!change_set.permissions_changed()); // '.' (same perms)
 }
+
+#[cfg(unix)]
+#[test]
+fn itemize_existing_root_dir_emits_metadata_reused() {
+    // upstream: generator.c:1480-1483 + 582-583 - the transfer-root "." entry is
+    // itemized whether or not it changed; under `INFO_GTE(NAME, 2)` (`-vv`) the
+    // unchanged root prints `.d ./`. The local-copy engine previously skipped the
+    // "." record entirely when the destination root already existed, so the row
+    // never appeared under `-vv` while child directories still did. Assert the
+    // root frame now emits a `MetadataReused` record for "." so the renderer can
+    // surface `.d ./` under `-vv` (and suppress it under `-i`), matching upstream
+    // and the other directory rows (regression for upstream `itemize.test`).
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source_dir");
+    let destination = temp.path().join("dest_dir");
+
+    fs::create_dir(&source).expect("create source dir");
+    fs::create_dir(&destination).expect("create dest dir");
+    fs::write(source.join("file.txt"), b"content").expect("write child file");
+
+    // Pin both directory mtimes identical so the root "." is genuinely unchanged.
+    let timestamp = FileTime::from_unix_time(1_700_000_000, 0);
+    set_file_mtime(&source, timestamp).expect("set source dir mtime");
+    set_file_mtime(&destination, timestamp).expect("set dest dir mtime");
+
+    // Trailing slash on the source copies its contents INTO the existing
+    // destination, so the transfer root is `dest_dir` itself (relative=None).
+    let mut source_with_slash = source.into_os_string();
+    source_with_slash.push("/");
+    let operands = vec![source_with_slash, destination.into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .times(true)
+        .collect_events(true);
+    let report = plan
+        .execute_with_report(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let root_record = report
+        .records()
+        .iter()
+        .find(|r| r.relative_path() == std::path::Path::new("."))
+        .expect("transfer-root \".\" entry must produce an itemize record");
+
+    assert!(!root_record.was_created());
+    assert_eq!(root_record.action(), &LocalCopyAction::MetadataReused);
+}

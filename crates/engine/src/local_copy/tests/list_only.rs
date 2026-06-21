@@ -437,10 +437,18 @@ fn list_only_handles_empty_directory() {
         )
         .expect("dry run succeeds");
 
-    // Empty directory listing should succeed with no records
+    // An empty-directory listing must copy no file data. The only record the
+    // executor may emit is a directory-metadata operation on the transfer root
+    // ".": DirectoryCreated when the destination is freshly made, or
+    // MetadataReused when it already exists (upstream itemizes the "." entry
+    // whether or not it changed - generator.c:1480-1483).
     assert_eq!(summary.files_copied(), 0);
-    assert!(collector.records.is_empty() || collector.records.iter().all(|r| {
-        matches!(r.action(), LocalCopyAction::DirectoryCreated)
+    assert!(collector.records.iter().all(|r| {
+        r.relative_path() == std::path::Path::new(".")
+            && matches!(
+                r.action(),
+                LocalCopyAction::DirectoryCreated | LocalCopyAction::MetadataReused
+            )
     }));
 }
 
