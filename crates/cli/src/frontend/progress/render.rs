@@ -618,6 +618,37 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 }
                 continue;
             }
+            // upstream: generator.c:1021-1022 / 1044-1046 / 1145-1147 - a
+            // `--copy-dest` match that needs no transfer prints `"%s%s is
+            // uptodate\n"` at INFO_GTE(NAME, 2), with a trailing `/` for
+            // directories, and prints nothing at lower verbosity (the bare
+            // per-file name is only emitted for entries that were actually
+            // transferred). Regular files are recorded as `ReferenceCopied`;
+            // directories and symlinks reconstructed from the basis carry a
+            // blank change set and no creation flag. Genuine new entries keep
+            // `was_created`, so they fall through to the bare-path emission.
+            ClientEventKind::ReferenceCopied => {
+                if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
+                    writeln!(stdout, "{} is uptodate", event.relative_path().display())?;
+                }
+                continue;
+            }
+            ClientEventKind::DirectoryCreated
+                if !event.was_created() && !event.change_set().has_any_change() =>
+            {
+                if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
+                    writeln!(stdout, "{}/ is uptodate", event.relative_path().display())?;
+                }
+                continue;
+            }
+            ClientEventKind::SymlinkCopied
+                if !event.was_created() && !event.change_set().has_any_change() =>
+            {
+                if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
+                    writeln!(stdout, "{} is uptodate", event.relative_path().display())?;
+                }
+                continue;
+            }
             _ => {}
         }
 
