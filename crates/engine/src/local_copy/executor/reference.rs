@@ -107,6 +107,98 @@ pub(crate) fn find_reference_action(
     Ok(None)
 }
 
+/// Locates a `--copy-dest` basis symlink at `relative` whose target matches.
+///
+/// Returns the basis symlink metadata when a `Copy` reference holds a symlink
+/// pointing at `target`. A copy-dest match reconstructs the link from the basis
+/// and itemizes it as a local change (`cL`) instead of a new entry.
+///
+/// upstream: generator.c:1094 quick_check_ok(FT_SYMLINK) compares link targets.
+pub(crate) fn find_copy_dest_symlink(
+    context: &CopyContext<'_>,
+    destination: &Path,
+    relative: &Path,
+    target: &Path,
+) -> Result<Option<fs::Metadata>, LocalCopyError> {
+    if relative.as_os_str().is_empty() {
+        return Ok(None);
+    }
+    for reference in context.reference_directories() {
+        if reference.kind() != ReferenceDirectoryKind::Copy {
+            continue;
+        }
+        let candidate = resolve_reference_candidate(reference.path(), relative, destination);
+        let candidate_metadata = match fs::symlink_metadata(&candidate) {
+            Ok(meta) => meta,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "inspect reference symlink",
+                    candidate,
+                    error,
+                ));
+            }
+        };
+        if !candidate_metadata.file_type().is_symlink() {
+            continue;
+        }
+        match fs::read_link(&candidate) {
+            Ok(basis_target) if basis_target == target => {
+                return Ok(Some(candidate_metadata));
+            }
+            Ok(_) => continue,
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "read reference symlink",
+                    candidate,
+                    error,
+                ));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Locates a `--copy-dest` basis directory at `relative`.
+///
+/// Returns the basis metadata when a `Copy` (copy-dest) reference contains a
+/// directory at `relative`. A directory reconstructed from a copy-dest basis
+/// itemizes as a local change (`cd`) compared against the basis rather than as
+/// a new entry (`cd+++++++++`).
+///
+/// upstream: generator.c:1117-1148 try_dests_non() - a copy-dest match itemizes
+/// with ITEM_LOCAL_CHANGE and never sets ITEM_IS_NEW.
+pub(crate) fn find_copy_dest_basis(
+    context: &CopyContext<'_>,
+    destination: &Path,
+    relative: &Path,
+) -> Result<Option<fs::Metadata>, LocalCopyError> {
+    if relative.as_os_str().is_empty() {
+        return Ok(None);
+    }
+    for reference in context.reference_directories() {
+        if reference.kind() != ReferenceDirectoryKind::Copy {
+            continue;
+        }
+        let candidate = resolve_reference_candidate(reference.path(), relative, destination);
+        let candidate_metadata = match fs::symlink_metadata(&candidate) {
+            Ok(meta) => meta,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "inspect reference directory",
+                    candidate,
+                    error,
+                ));
+            }
+        };
+        if candidate_metadata.file_type().is_dir() {
+            return Ok(Some(candidate_metadata));
+        }
+    }
+    Ok(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

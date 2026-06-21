@@ -61,6 +61,10 @@ fn is_already_hardlinked(destination: &Path, target: &Path) -> bool {
 /// Result of hard-link and reference-directory processing for a file.
 pub(super) struct LinkOutcome {
     pub(super) copy_source_override: Option<PathBuf>,
+    /// When set, the pending copy reconstructs the file from this
+    /// `--copy-dest` basis and must itemize as a local change (`c`) compared
+    /// against the basis rather than as a network transfer (`>`).
+    pub(super) reference_basis: Option<PathBuf>,
     pub(super) completed: bool,
 }
 
@@ -93,6 +97,7 @@ pub(super) fn process_links(
     let _ = mode;
 
     let mut copy_source_override: Option<PathBuf> = None;
+    let mut reference_basis: Option<PathBuf> = None;
 
     // 1. --link-dest style linking
     if let Some(link_target) = context.link_dest_target(
@@ -167,6 +172,7 @@ pub(super) fn process_links(
         remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
         return Ok(LinkOutcome {
             copy_source_override: None,
+            reference_basis: None,
             completed: true,
         });
     }
@@ -276,6 +282,7 @@ pub(super) fn process_links(
             remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
             return Ok(LinkOutcome {
                 copy_source_override: None,
+                reference_basis: None,
                 completed: true,
             });
         }
@@ -407,6 +414,7 @@ pub(super) fn process_links(
         remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
         return Ok(LinkOutcome {
             copy_source_override: None,
+            reference_basis: None,
             completed: true,
         });
     }
@@ -481,10 +489,17 @@ pub(super) fn process_links(
                 remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
                 return Ok(LinkOutcome {
                     copy_source_override: None,
+                    reference_basis: None,
                     completed: true,
                 });
             }
             ReferenceDecision::Copy(path) => {
+                // upstream: generator.c:1033-1039 - copy_altdest_file() copies
+                // the basis into place and itemizes as ITEM_LOCAL_CHANGE (`c`).
+                // The copy still flows through the transfer pipeline via
+                // `copy_source_override`; `reference_basis` flags the record so
+                // it is attributed to the basis instead of a network transfer.
+                reference_basis = Some(path.clone());
                 copy_source_override = Some(path);
             }
             ReferenceDecision::Link(path) => {
@@ -524,6 +539,10 @@ pub(super) fn process_links(
                 }
 
                 if degrade_to_copy {
+                    // upstream: generator.c:1031 try_a_copy - a cross-device
+                    // hard-link failure falls back to copy_altdest_file(), which
+                    // still itemizes as a local change (`c`).
+                    reference_basis = Some(path.clone());
                     copy_source_override = Some(path);
                 } else if copy_source_override.is_none() {
                     apply_file_metadata_with_options(destination, metadata, &metadata_options)
@@ -580,6 +599,7 @@ pub(super) fn process_links(
                     )?;
                     return Ok(LinkOutcome {
                         copy_source_override: None,
+                        reference_basis: None,
                         completed: true,
                     });
                 }
@@ -589,6 +609,7 @@ pub(super) fn process_links(
 
     Ok(LinkOutcome {
         copy_source_override,
+        reference_basis,
         completed: false,
     })
 }

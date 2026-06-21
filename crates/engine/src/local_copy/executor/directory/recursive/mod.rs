@@ -127,6 +127,18 @@ fn copy_directory_recursive_inner(
     let existing_destination_metadata: Option<fs::Metadata> =
         destination_state.existing_metadata().cloned();
 
+    // upstream: generator.c:1469-1483 - when a directory is absent from the
+    // destination but present in a `--copy-dest` basis, the generator itemizes
+    // it as a local change (`cd` + blank) against the basis instead of a new
+    // entry (`cd+++++++++`). Capture the basis metadata so the creation records
+    // below can compute the basis-relative change set.
+    let copy_dest_basis: Option<fs::Metadata> = if destination_missing {
+        let lookup_relative = relative.unwrap_or_else(|| Path::new("."));
+        super::super::find_copy_dest_basis(context, destination, lookup_relative)?
+    } else {
+        None
+    };
+
     if destination_missing && context.existing_only_enabled() {
         record_skipped_missing_destination(context, metadata, relative);
         return Ok(false);
@@ -199,17 +211,29 @@ fn copy_directory_recursive_inner(
     // closure's `record(...)` site never fires. Emit the synthetic "."
     // record up-front so it precedes child entries in the event stream.
     if root_was_just_created && let Some((ref rel_path, ref snapshot)) = metadata_record {
-        context.record(
-            LocalCopyRecord::new(
-                rel_path.clone(),
-                LocalCopyAction::DirectoryCreated,
-                0,
-                Some(snapshot.len()),
-                Duration::default(),
-                Some(snapshot.clone()),
-            )
-            .with_creation(true),
+        let record = LocalCopyRecord::new(
+            rel_path.clone(),
+            LocalCopyAction::DirectoryCreated,
+            0,
+            Some(snapshot.len()),
+            Duration::default(),
+            Some(snapshot.clone()),
         );
+        // upstream: generator.c:1480-1482 - a copy-dest match itemizes the
+        // directory against the basis (ITEM_LOCAL_CHANGE, no ITEM_IS_NEW).
+        let record = if let Some(basis_meta) = copy_dest_basis.as_ref() {
+            record.with_change_set(LocalCopyChangeSet::for_existing_directory(
+                metadata,
+                basis_meta,
+                &context.metadata_options(),
+                context.omit_dir_times_enabled(),
+                false,
+                false,
+            ))
+        } else {
+            record.with_creation(true)
+        };
+        context.record(record);
         record_emitted = true;
     }
 
@@ -294,17 +318,29 @@ fn copy_directory_recursive_inner(
         // BEFORE their children in the itemize output. Emit the record
         // immediately so it precedes child entries in the record stream.
         if !record_emitted && let Some((ref rel_path, ref snapshot)) = metadata_record {
-            context.record(
-                LocalCopyRecord::new(
-                    rel_path.clone(),
-                    LocalCopyAction::DirectoryCreated,
-                    0,
-                    Some(snapshot.len()),
-                    Duration::default(),
-                    Some(snapshot.clone()),
-                )
-                .with_creation(true),
+            let record = LocalCopyRecord::new(
+                rel_path.clone(),
+                LocalCopyAction::DirectoryCreated,
+                0,
+                Some(snapshot.len()),
+                Duration::default(),
+                Some(snapshot.clone()),
             );
+            // upstream: generator.c:1480-1482 - a copy-dest match itemizes the
+            // directory against the basis (ITEM_LOCAL_CHANGE, no ITEM_IS_NEW).
+            let record = if let Some(basis_meta) = copy_dest_basis.as_ref() {
+                record.with_change_set(LocalCopyChangeSet::for_existing_directory(
+                    metadata,
+                    basis_meta,
+                    &context.metadata_options(),
+                    context.omit_dir_times_enabled(),
+                    false,
+                    false,
+                ))
+            } else {
+                record.with_creation(true)
+            };
+            context.record(record);
             record_emitted = true;
         }
 

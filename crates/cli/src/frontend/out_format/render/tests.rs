@@ -1972,3 +1972,71 @@ fn emit_out_format_emits_unchanged_symlink_under_info_name_2() {
     let rendered = String::from_utf8(output).unwrap();
     assert_eq!(rendered, ".L          test.txt\n");
 }
+
+// upstream: generator.c:1039 / log.c:707-749 - a `--copy-dest` reconstruction
+// itemizes the regular file with ITEM_LOCAL_CHANGE (`c`) and, when the source
+// already matched the basis, leaves the attribute columns blank. ITEM_IS_NEW is
+// never set, so the row is `cf` + 9 spaces rather than `>f+++++++++`.
+#[test]
+fn itemize_reference_copied_file_is_c_with_blank_attrs() {
+    let event = make_event(
+        ClientEventKind::ReferenceCopied,
+        false,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new(),
+    );
+    assert_eq!(format_itemized_changes(&event, false), "cf         ");
+}
+
+// A copy-dest reconstruction that differs from the basis in mtime keeps the `c`
+// update char but reports the drift (`cf...t.....`), never collapsing to `+`.
+#[test]
+fn itemize_reference_copied_file_reports_basis_drift() {
+    let cs = LocalCopyChangeSet::new().with_time_change(Some(TimeChange::Modified));
+    let event = make_event(
+        ClientEventKind::ReferenceCopied,
+        false,
+        Some(ClientEntryKind::File),
+        cs,
+    );
+    assert_eq!(format_itemized_changes(&event, false), "cf..t......");
+}
+
+// upstream: generator.c:1127 do_link_at() - a `--link-dest` exact match
+// hard-links from the basis and itemizes as `hf` + blank when identical.
+#[test]
+fn itemize_link_dest_hardlink_is_h_with_blank_attrs() {
+    let event = make_event(
+        ClientEventKind::HardLink,
+        false,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new(),
+    );
+    assert_eq!(format_itemized_changes(&event, false), "hf         ");
+}
+
+// A copy-dest directory reconstruction itemizes as `cd` + blank against the
+// basis, never `cd+++++++++`.
+#[test]
+fn itemize_reference_copied_directory_is_cd_with_blank_attrs() {
+    let event = make_event(
+        ClientEventKind::DirectoryCreated,
+        false,
+        Some(ClientEntryKind::Directory),
+        LocalCopyChangeSet::new(),
+    );
+    assert_eq!(format_itemized_changes(&event, false), "cd         ");
+}
+
+// A copy-dest symlink reconstruction itemizes as `cL` + blank against the
+// basis when the reconstructed link is identical.
+#[test]
+fn itemize_reference_copied_symlink_is_cl_with_blank_attrs() {
+    let event = make_event(
+        ClientEventKind::SymlinkCopied,
+        false,
+        Some(ClientEntryKind::Symlink),
+        LocalCopyChangeSet::new(),
+    );
+    assert_eq!(format_itemized_changes(&event, false), "cL         ");
+}

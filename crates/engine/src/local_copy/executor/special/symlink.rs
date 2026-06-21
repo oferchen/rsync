@@ -524,6 +524,16 @@ pub(crate) fn copy_symlink(
     context.record_hard_link(metadata, destination);
     context.summary_mut().record_symlink();
     if let Some(path) = &record_path {
+        // upstream: generator.c:1119-1148 try_dests_non() - a symlink absent
+        // from the destination but present (with the same target) in a
+        // `--copy-dest` basis itemizes as a local change (`cL` + blank)
+        // against the basis instead of a new entry (`cL+++++++++`).
+        let copy_dest_basis = if !destination_previously_existed {
+            super::super::find_copy_dest_symlink(context, destination, path, &target)?
+        } else {
+            None
+        };
+
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
         let total_bytes = Some(metadata_snapshot.len());
 
@@ -532,7 +542,8 @@ pub(crate) fn copy_symlink(
         // path flips `statret = -1` so `itemize()` lights up `ITEM_IS_NEW`
         // and the row renders `cL+++++++++`. Mirror that by treating a
         // non-symlink replacement as a fresh creation.
-        let was_created = !destination_previously_existed || pre_replace_symlink_metadata.is_none();
+        let was_created = copy_dest_basis.is_none()
+            && (!destination_previously_existed || pre_replace_symlink_metadata.is_none());
 
         let mut record = LocalCopyRecord::new(
             path.clone(),
@@ -557,6 +568,24 @@ pub(crate) fn copy_symlink(
                 existing_symlink,
                 metadata_options,
                 context.omit_link_times_enabled(),
+            );
+            record = record.with_change_set(change_set);
+        } else if let Some(basis_meta) = copy_dest_basis.as_ref() {
+            // Compare source against the copy-dest basis symlink so the row
+            // stays blank when the reconstructed link is identical.
+            let symlink_options = if context.omit_link_times_enabled() {
+                metadata_options.clone().preserve_times(false)
+            } else {
+                metadata_options.clone()
+            };
+            let change_set = LocalCopyChangeSet::for_file(
+                metadata,
+                Some(basis_meta),
+                &symlink_options,
+                true,
+                false,
+                false,
+                false,
             );
             record = record.with_change_set(change_set);
         }

@@ -32,6 +32,9 @@ pub(super) fn format_itemized_changes(event: &ClientEvent, is_sender: bool) -> S
             }
         }
         HardLink => 'h',
+        // upstream: generator.c:1039 - copy-dest reconstruction itemizes with
+        // ITEM_LOCAL_CHANGE, rendered as 'c' by log.c:707-708.
+        ReferenceCopied => 'c',
         DirectoryCreated | SymlinkCopied | FifoCopied | DeviceCopied | SourceRemoved => 'c',
         MetadataReused
         | SkippedExisting
@@ -54,6 +57,7 @@ pub(super) fn format_itemized_changes(event: &ClientEvent, is_sender: bool) -> S
             DeviceCopied => ClientEntryKind::CharDevice,
             HardLink
             | DataCopied
+            | ReferenceCopied
             | MetadataReused
             | SkippedExisting
             | SkippedMissingDestination

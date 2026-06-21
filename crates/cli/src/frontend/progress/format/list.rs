@@ -11,6 +11,7 @@ pub(crate) const fn list_only_event(kind: &ClientEventKind) -> bool {
     matches!(
         kind,
         ClientEventKind::DataCopied
+            | ClientEventKind::ReferenceCopied
             | ClientEventKind::MetadataReused
             | ClientEventKind::HardLink
             | ClientEventKind::SymlinkCopied
