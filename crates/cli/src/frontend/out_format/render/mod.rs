@@ -11,7 +11,7 @@ mod tests;
 
 use std::io::{self, Write};
 
-use core::client::{ClientEntryMetadata, ClientEvent, ClientEventKind};
+use core::client::{ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind};
 
 use super::tokens::{OutFormat, OutFormatContext, OutFormatToken};
 
@@ -93,6 +93,21 @@ fn should_suppress_event(event: &ClientEvent, context: &OutFormatContext) -> boo
             | ClientEventKind::DeviceCopied
     ) && !event.was_created()
         && !event.change_set().has_any_change()
+    {
+        return true;
+    }
+
+    // upstream: generator.c:1119-1147 - a `--link-dest` symlink hard-linked
+    // from the basis (`hL`) carries only ITEM_LOCAL_CHANGE and no `=> leader`
+    // xname, so it is suppressed at plain `-i`. Its `-> target` is the `%L`
+    // field, not an xname, so it does not force emission.
+    if matches!(event.kind(), ClientEventKind::HardLink)
+        && !event.was_created()
+        && !event.change_set().has_any_change()
+        && event
+            .metadata()
+            .map(ClientEntryMetadata::kind)
+            .is_some_and(|kind| matches!(kind, ClientEntryKind::Symlink))
     {
         return true;
     }

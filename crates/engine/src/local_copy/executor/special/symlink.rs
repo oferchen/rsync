@@ -372,6 +372,78 @@ pub(crate) fn copy_symlink(
         remove_existing_destination(destination)?;
     }
 
+    // upstream: generator.c:1117-1134 try_dests_non() - a `--link-dest` basis
+    // symlink with the same target is hard-linked into place rather than
+    // recreated, itemizing as `hL` + blank against the basis. Only applies when
+    // the destination is being created fresh (no prior symlink to recreate).
+    if !mode.is_dry_run() && pre_replace_symlink_metadata.is_none() {
+        let link_relative = relative.unwrap_or(record_path.as_deref().unwrap_or(Path::new("")));
+        if !link_relative.as_os_str().is_empty()
+            && let Some(basis_symlink) = context.link_dest_symlink_target(link_relative, &target)?
+        {
+            let mut attempted_commit = false;
+            loop {
+                match create_hard_link(&basis_symlink, destination) {
+                    Ok(()) => break,
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                        remove_existing_destination(destination)?;
+                        create_hard_link(&basis_symlink, destination).map_err(|link_error| {
+                            LocalCopyError::io(
+                                "create hard link",
+                                destination.to_path_buf(),
+                                link_error,
+                            )
+                        })?;
+                        break;
+                    }
+                    Err(error)
+                        if error.kind() == io::ErrorKind::NotFound
+                            && context.delay_updates_enabled()
+                            && !attempted_commit =>
+                    {
+                        context.commit_deferred_update_for(&basis_symlink)?;
+                        attempted_commit = true;
+                        continue;
+                    }
+                    Err(error) => {
+                        return Err(LocalCopyError::io(
+                            "create hard link",
+                            destination.to_path_buf(),
+                            error,
+                        ));
+                    }
+                }
+            }
+
+            context.record_hard_link(metadata, destination);
+            context.summary_mut().record_hard_link();
+            context.summary_mut().record_symlink();
+            if let Some(path) = &record_path {
+                let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
+                let total_bytes = Some(metadata_snapshot.len());
+                // The hard-linked symlink shares the basis inode, so it matches
+                // the source exactly: itemize `hL` + blank with the `-> target`
+                // trailer from the symlink's own metadata.
+                context.record(LocalCopyRecord::new(
+                    path.clone(),
+                    LocalCopyAction::HardLink,
+                    0,
+                    total_bytes,
+                    Duration::default(),
+                    Some(metadata_snapshot),
+                ));
+            }
+            context.register_created_path(
+                destination,
+                CreatedEntryKind::HardLink,
+                destination_previously_existed,
+            );
+            context.register_progress();
+            remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
+            return Ok(());
+        }
+    }
+
     if let Some(existing_target) = context.existing_hard_link_target(metadata) {
         if mode.is_dry_run() {
             context.summary_mut().record_symlink();

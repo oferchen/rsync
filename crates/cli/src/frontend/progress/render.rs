@@ -455,16 +455,32 @@ fn is_uptodate_event(event: &ClientEvent) -> bool {
         ClientEventKind::DirectoryCreated | ClientEventKind::SymlinkCopied => {
             !event.was_created() && !event.change_set().has_any_change()
         }
+        // A `--link-dest` symlink hard-linked from the basis is `hL` + blank and
+        // emits `"%s is uptodate"` like the other alt-dest matches.
+        ClientEventKind::HardLink => is_hardlinked_symlink_event(event),
         _ => false,
     }
 }
 
+/// Returns `true` for a HardLink event describing a hard-linked symlink (`hL`).
+/// Its metadata kind is `Symlink` and its `symlink_target` slot holds the link
+/// target, not a `=> leader` trailer.
+fn is_hardlinked_symlink_event(event: &ClientEvent) -> bool {
+    matches!(event.kind(), ClientEventKind::HardLink)
+        && event
+            .metadata()
+            .map(ClientEntryMetadata::kind)
+            .is_some_and(|kind| matches!(kind, ClientEntryKind::Symlink))
+}
+
 /// Returns `true` for a hardlink alias freshly linked to a leader placed during
 /// this run. Upstream defers the `"%s => %s"` notice to the hardlink-finishing
-/// phase (hlink.c:236), so it appears after the regular per-file lines.
+/// phase (hlink.c:236), so it appears after the regular per-file lines. A
+/// hard-linked symlink is excluded (its trailer is `-> target`, not `=> leader`).
 fn is_deferred_hardlink_event(event: &ClientEvent) -> bool {
     matches!(event.kind(), ClientEventKind::HardLink)
         && !event.is_hardlink_uptodate()
+        && !is_hardlinked_symlink_event(event)
         && event
             .metadata()
             .and_then(ClientEntryMetadata::symlink_target)
@@ -662,6 +678,14 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
             // blank change set and no creation flag. Genuine new entries keep
             // `was_created`, so they fall through to the bare-path emission.
             ClientEventKind::ReferenceCopied => {
+                if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
+                    writeln!(stdout, "{} is uptodate", event.relative_path().display())?;
+                }
+                continue;
+            }
+            // upstream: generator.c:1145-1147 - a `--link-dest` symlink
+            // hard-linked from the basis prints `"%s is uptodate"` at NAME>=2.
+            ClientEventKind::HardLink if is_hardlinked_symlink_event(event) => {
                 if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
                     writeln!(stdout, "{} is uptodate", event.relative_path().display())?;
                 }

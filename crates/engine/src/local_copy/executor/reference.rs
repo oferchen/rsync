@@ -159,26 +159,29 @@ pub(crate) fn find_copy_dest_symlink(
     Ok(None)
 }
 
-/// Locates a `--copy-dest` basis directory at `relative`.
+/// Locates an alternate-basis directory at `relative` (`--copy-dest` or
+/// `--link-dest`).
 ///
-/// Returns the basis metadata when a `Copy` (copy-dest) reference contains a
-/// directory at `relative`. A directory reconstructed from a copy-dest basis
-/// itemizes as a local change (`cd`) compared against the basis rather than as
-/// a new entry (`cd+++++++++`).
+/// Returns the basis metadata when a `Copy` or `Link` reference contains a
+/// directory at `relative`. A directory matched against either basis itemizes
+/// as a local change (`cd`) compared to the basis rather than as a new entry
+/// (`cd+++++++++`); directories are never hard-linked, so both kinds behave
+/// identically here.
 ///
-/// upstream: generator.c:1117-1148 try_dests_non() - a copy-dest match itemizes
-/// with ITEM_LOCAL_CHANGE and never sets ITEM_IS_NEW.
+/// upstream: generator.c:1117-1148 try_dests_non() - a match itemizes with
+/// ITEM_LOCAL_CHANGE and never sets ITEM_IS_NEW (the LINK_DEST hard-link branch
+/// is skipped for directories at line 1126).
 pub(crate) fn find_copy_dest_basis(
     context: &CopyContext<'_>,
     destination: &Path,
     relative: &Path,
 ) -> Result<Option<fs::Metadata>, LocalCopyError> {
-    // An empty `relative` is the transfer root: the basis is the copy-dest
+    // An empty `relative` is the transfer root: the basis is the reference
     // directory itself, resolved from the destination root. Unlike the file and
     // symlink lookups, the directory lookup must handle this case so the `./`
     // row itemizes against the basis root.
     for reference in context.reference_directories() {
-        if reference.kind() != ReferenceDirectoryKind::Copy {
+        if matches!(reference.kind(), ReferenceDirectoryKind::Compare) {
             continue;
         }
         let candidate = resolve_reference_candidate(reference.path(), relative, destination);
