@@ -463,9 +463,10 @@ struct LoadedNestedDirMerge {
 ///
 /// upstream: exclude.c:200-207 `add_rule` - for a rule loaded via
 /// `parse_filter_file` with `XFLG_ANCHORED2ABS`, a leading-`/` pattern gets the
-/// directory prefix `dirbuf + module_dirlen` (length `dirbuf_len - module_dirlen
-/// - 1`) prepended, so `- /file1` in `foo/.filt` matches `foo/file1`. Unanchored
-/// patterns and rules with no directory context are returned unchanged.
+/// directory prefix `dirbuf + module_dirlen` (length
+/// `dirbuf_len - module_dirlen - 1`) prepended, so `- /file1` in `foo/.filt`
+/// matches `foo/file1`. Unanchored patterns and rules with no directory context
+/// are returned unchanged.
 fn anchor_dir_merge_rule(rule: FilterRule, relative_dir: Option<&Path>) -> FilterRule {
     let Some(dir) = relative_dir else {
         return rule;
