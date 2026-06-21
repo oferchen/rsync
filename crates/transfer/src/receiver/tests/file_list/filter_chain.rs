@@ -164,6 +164,87 @@ fn single_char_wildcard_exclude_does_not_block_top_level_deletion() {
     assert_eq!(stats.files, 1);
 }
 
+/// Regression: a per-directory merge file must be honored during the
+/// `--delete` pass, mirroring upstream `delete_in_dir` which calls
+/// `change_local_filter_dir` to reload that directory's merge filters
+/// before scanning it for extraneous entries.
+///
+/// Before the fix, the receiver cloned a shared `FilterChain` carrying
+/// only the global rules and never called `enter_directory`, so a
+/// `.rsync-filter` placed inside a subdirectory was ignored. An
+/// extraneous file the merge file protected (`- *.deep`) was therefore
+/// wrongly deleted, while the upstream tests `exclude` / `exclude-lsh`
+/// expect it to survive. This pins the per-worker per-directory reload:
+/// the protected file must survive and an unprotected sibling must still
+/// be deleted.
+///
+/// upstream: generator.c:308 change_local_filter_dir in delete_in_dir.
+#[test]
+fn per_dir_merge_filter_protects_during_deletion() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    let subdir = dest.join("sub");
+    std::fs::create_dir(&subdir).unwrap();
+
+    // Per-directory merge file protecting `*.deep` from deletion.
+    std::fs::write(subdir.join(".rsync-filter"), b"- *.deep\n").unwrap();
+
+    // keep.txt is in the source flist; protected.deep and extraneous.txt
+    // are both extraneous (absent from the flist).
+    std::fs::write(subdir.join("keep.txt"), b"keep").unwrap();
+    std::fs::write(subdir.join("protected.deep"), b"protected").unwrap();
+    std::fs::write(subdir.join("extraneous.txt"), b"extraneous").unwrap();
+
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.flags.delete = true;
+    config.args = vec![OsString::from(dest.to_str().unwrap())];
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+    ctx.file_list
+        .push(FileEntry::new_directory(".".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_directory("sub".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_file("sub/keep.txt".into(), 4, 0o644));
+    // The merge file is in the flist so it is not itself a deletion
+    // candidate; the test isolates the `*.deep` protection.
+    ctx.file_list
+        .push(FileEntry::new_file("sub/.rsync-filter".into(), 8, 0o644));
+
+    // Global chain carries no path rules; the protection lives entirely in
+    // the per-directory `.rsync-filter`, registered as a dir-merge config.
+    let mut chain = ::filters::FilterChain::empty();
+    chain.add_merge_config(::filters::DirMergeConfig::new(".rsync-filter"));
+    ctx.set_filter_chain(chain);
+
+    let mut writer = TestDeletionWriter;
+    let (_stats, _, _) = ctx
+        .delete_extraneous_files(
+            dest,
+            #[cfg(unix)]
+            None,
+            &mut writer,
+        )
+        .unwrap();
+
+    assert!(
+        subdir.join("protected.deep").exists(),
+        "protected.deep must survive: the per-dir .rsync-filter excludes it from deletion",
+    );
+    assert!(
+        !subdir.join("extraneous.txt").exists(),
+        "extraneous.txt must be deleted: no merge rule protects it",
+    );
+    assert!(
+        subdir.join("keep.txt").exists(),
+        "keep.txt must survive: it is in the source file list",
+    );
+}
+
 #[test]
 fn receiver_set_and_get_filter_chain() {
     let handshake = test_handshake();

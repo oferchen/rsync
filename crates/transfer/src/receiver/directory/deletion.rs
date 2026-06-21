@@ -98,14 +98,22 @@ impl ReceiverContext {
         // upstream: main.c:1367 - deletion_count >= max_delete
         let deletions_performed = Arc::new(AtomicU64::new(0));
 
-        // Share directory children map and filter chain across workers.
-        // The filter chain clone captures the global rules snapshot for
-        // allows_deletion() checks. Per-directory merge files are not
-        // re-read during deletion (upstream also only evaluates the
-        // pre-loaded filter list in delete_in_dir).
+        // Share directory children map across workers, plus a filter-chain
+        // template each worker clones into an owned, mutable chain.
+        //
+        // Each parallel worker re-reads the per-directory merge files for the
+        // directory it is about to scan via `enter_directory`, mirroring
+        // upstream's per-directory filter reload before deletion. The template
+        // carries the global rules plus the registered merge configs; the
+        // transfer root is set to the destination directory so leading-`/`
+        // merge rules re-anchor to the merge file's own directory.
+        // upstream: generator.c:308 change_local_filter_dir in delete_in_dir -
+        // push_local_filters() reloads `.rsync-filter`/`:C`/dir-merge files
+        // for each directory before it is scanned for extraneous entries.
         let dir_children = Arc::new(dir_children);
-        let filter_chain = Arc::new(self.filter_chain.clone());
         let dest_dir_owned = dest_dir.to_path_buf();
+        let mut filter_chain_template = self.filter_chain.clone();
+        filter_chain_template.set_transfer_root(dest_dir_owned.clone());
         // SEC-1.q2: clone the sandbox `Arc` into the worker closure so
         // every per-directory job can route its scan and per-entry
         // deletions through the sandbox-anchored `*at` helpers without
@@ -145,6 +153,45 @@ impl ReceiverContext {
                         Some(set) => set,
                         None => return (DeleteStats::new(), Vec::new(), None),
                     };
+
+                    // upstream: generator.c:308 change_local_filter_dir in
+                    // delete_in_dir - reload the per-directory merge files for
+                    // the scan target before listing it. Upstream pushes every
+                    // merge file from the transfer root down to the target so
+                    // inheriting parent rules apply, so walk the ancestors here
+                    // too. Each worker owns a fresh chain clone, so entering a
+                    // directory never races a sibling (scopes are path-local).
+                    // The scopes live in this owned chain clone until it is
+                    // dropped at the end of the closure, so the returned guards
+                    // need not be retained explicitly.
+                    let mut filter_chain = filter_chain_template.clone();
+                    // Directories to enter: the transfer root first, then each
+                    // ancestor component down to the scan target.
+                    let mut enter_dirs = vec![dest_dir_owned.clone()];
+                    let mut walk = dest_dir_owned.clone();
+                    for component in dir_relative.components() {
+                        if let std::path::Component::Normal(part) = component {
+                            walk.push(part);
+                            enter_dirs.push(walk.clone());
+                        }
+                    }
+                    let mut walk_failed = None;
+                    for dir in enter_dirs {
+                        match filter_chain.enter_directory(&dir) {
+                            Ok(_guard) => {}
+                            Err(filters::FilterChainError::Io { source, .. }) => {
+                                walk_failed = Some(source);
+                                break;
+                            }
+                            Err(e) => {
+                                walk_failed = Some(io::Error::other(e.to_string()));
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(err) = walk_failed {
+                        return classify_scan_error(err);
+                    }
 
                     #[cfg(unix)]
                     let sandbox_ref = sandbox_for_workers.as_deref();
@@ -210,7 +257,8 @@ impl ReceiverContext {
 
                         // upstream: generator.c:delete_in_dir() - is_excluded()
                         // check before deletion. allows_deletion() evaluates
-                        // protect/risk rules from the global filter chain.
+                        // protect/risk rules from this directory's per-directory
+                        // merge scopes (loaded above) plus the global chain.
                         //
                         // Strip the implicit "." directory prefix when scanning
                         // the deletion root so a glob like `?` does not see the
