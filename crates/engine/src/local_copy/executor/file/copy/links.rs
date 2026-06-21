@@ -152,9 +152,24 @@ pub(super) fn process_links(
             link_target.display()
         );
 
+        // upstream: generator.c:1008-1009 / 1048-1049 - when the matched file is
+        // a member of a hard-link cluster whose leader was already placed this
+        // run, `finish_hard_link()` itemizes the alias with the in-transfer
+        // leader as the xname (`=> foo/config1`), not the basis path. Thread the
+        // leader's relative path through the snapshot's symlink_target slot so
+        // the `%L` placeholder renders the `=> leader` trailer.
+        let leader_display = context
+            .existing_hard_link_target(metadata)
+            .and_then(|leader| {
+                leader
+                    .strip_prefix(context.destination_root())
+                    .map(std::path::Path::to_path_buf)
+                    .ok()
+                    .filter(|relative| relative != record_path)
+            });
         context.record_hard_link(metadata, destination);
         context.summary_mut().record_hard_link();
-        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, leader_display);
         let total_bytes = Some(metadata_snapshot.len());
         context.record(LocalCopyRecord::new(
             record_path.to_path_buf(),
