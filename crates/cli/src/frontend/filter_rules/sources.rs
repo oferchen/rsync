@@ -44,8 +44,10 @@ pub(crate) fn append_filter_rules_from_files(
                 match parse_old_prefix_rule(&pattern, kind)? {
                     FilterDirective::Rule(rule) => local.push(rule),
                     FilterDirective::Clear => local.clear(),
-                    FilterDirective::Merge(_) => {
-                        unreachable!("parse_old_prefix_rule never emits FilterDirective::Merge")
+                    FilterDirective::Merge(_) | FilterDirective::CvsDefaults => {
+                        unreachable!(
+                            "parse_old_prefix_rule never emits FilterDirective::Merge or CvsDefaults"
+                        )
                     }
                 }
             } else {

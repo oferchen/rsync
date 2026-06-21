@@ -6,6 +6,7 @@ use core::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleSpec};
 use core::message::{Message, Role};
 use core::rsync_error;
 
+use super::cvs::cvs_default_exclude_rules;
 use super::directive::{
     FilterDirective, MergeDirective, merge_directive_options, os_string_to_pattern,
 };
@@ -217,6 +218,20 @@ pub(crate) fn process_merge_directive(
             })?;
         }
         Ok(FilterDirective::Clear) => destination.clear(),
+        // upstream: exclude.c:1441-1443 a non-merge FILTRULE_CVS_IGNORE rule
+        // (`-C`) inside a merge file expands to the global CVS defaults at this
+        // position in the chain.
+        Ok(FilterDirective::CvsDefaults) => {
+            let rules = cvs_default_exclude_rules().map_err(|error| {
+                let detail = error.to_string();
+                rsync_error!(
+                    1,
+                    format!("failed to process merge file '{display}': {detail}")
+                )
+                .with_role(Role::Client)
+            })?;
+            destination.extend(rules);
+        }
         Err(error) => {
             let detail = error.to_string();
             let message = rsync_error!(

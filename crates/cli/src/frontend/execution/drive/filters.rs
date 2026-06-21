@@ -12,8 +12,8 @@ use logging_sink::MessageSink;
 use super::messages::fail_with_message;
 use crate::frontend::filter_rules::{
     FilterDirective, append_apple_double_exclude_rules, append_cvs_exclude_rules,
-    append_filter_rules_from_files, apply_merge_directive, merge_directive_options,
-    os_string_to_pattern, parse_filter_directive, parse_old_prefix_rule,
+    append_filter_rules_from_files, apply_merge_directive, cvs_default_exclude_rules,
+    merge_directive_options, os_string_to_pattern, parse_filter_directive, parse_old_prefix_rule,
 };
 
 /// Filter configuration supplied by the command line.
@@ -100,6 +100,10 @@ where
                 }
             }
             Ok(FilterDirective::Clear) => filter_rules.clear(),
+            Ok(FilterDirective::CvsDefaults) => match cvs_default_exclude_rules() {
+                Ok(rules) => filter_rules.extend(rules),
+                Err(message) => return Err(fail_with_message(message, stderr)),
+            },
             Err(message) => return Err(fail_with_message(message, stderr)),
         }
     }
@@ -127,8 +131,8 @@ fn push_old_prefix_rule(
     match parse_old_prefix_rule(&text, default_kind)? {
         FilterDirective::Rule(rule) => destination.push(rule),
         FilterDirective::Clear => destination.push(FilterRuleSpec::clear()),
-        FilterDirective::Merge(_) => {
-            unreachable!("parse_old_prefix_rule never emits FilterDirective::Merge")
+        FilterDirective::Merge(_) | FilterDirective::CvsDefaults => {
+            unreachable!("parse_old_prefix_rule only emits Rule or Clear")
         }
     }
     Ok(())
