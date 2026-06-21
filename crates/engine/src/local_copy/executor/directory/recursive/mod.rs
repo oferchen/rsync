@@ -161,19 +161,27 @@ fn copy_directory_recursive_inner(
     // mkdirs the destination root, `flist->files[0]->flags |= FLAG_DIR_CREATED`
     // and `itemize()` emits `cd+++++++++ ./` for the synthesized "." entry.
     // The root flist entry has relative=None here because `non_empty_path("")`
-    // returns None upstream of this call. Synthesize a "." record when the
-    // sources orchestrator already mkdir'd the destination root in this run
-    // (signalled via `summary.destination_root_created()`), so the itemize
-    // stream emits the root row ahead of its children. Subsequent runs see
-    // the flag stay clear and skip the row, matching upstream's `-i` output
-    // when the destination already exists (test line 74-79).
+    // returns None upstream of this call. `root_was_just_created` is true when
+    // the sources orchestrator already mkdir'd the destination root in this run
+    // (signalled via `summary.destination_root_created()`), driving the
+    // `cd+++++++++ ./` creation row below.
     let root_was_just_created = relative.is_none() && context.summary().destination_root_created();
     let metadata_record = if let Some(rel) = relative {
         Some((
             rel.to_path_buf(),
             LocalCopyMetadata::from_metadata(metadata, None),
         ))
-    } else if destination_missing || root_was_just_created {
+    } else {
+        // Root frame (relative=None): always carry a "." record so the
+        // existing-directory `MetadataReused` emission below fires for the
+        // transfer root exactly as it does for child directories. Upstream
+        // generator.c:1480-1483 itemizes the "." entry whether or not it
+        // changed; the emit gate at generator.c:582-583 prints it when a
+        // significant flag is set OR under `INFO_GTE(NAME, 2)`. The CLI
+        // renderer suppresses the unchanged "." record unless `-vv`
+        // (`emit_unchanged`) is set, so `-i` output still omits the `./` row
+        // when the destination already exists (test line 74-79) while `-vv`
+        // surfaces it as `.d ./`.
         if destination_missing {
             context.summary_mut().mark_destination_root_created();
         }
@@ -181,8 +189,6 @@ fn copy_directory_recursive_inner(
             std::path::PathBuf::from("."),
             LocalCopyMetadata::from_metadata(metadata, None),
         ))
-    } else {
-        None
     };
 
     // upstream: main.c:794-796 + generator.c:566-572 - the root directory
