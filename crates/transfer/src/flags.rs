@@ -32,8 +32,16 @@ pub struct ParsedServerFlags {
     pub rsh: bool,
     /// Archive mode shorthand (`a` flag, `--archive`).
     pub archive: bool,
-    /// Verbose output (`v` flag, `--verbose`).
+    /// Verbose output (`v` flag, `--verbose`). True when at least one `v` is
+    /// present; see [`verbose_level`](Self::verbose_level) for the count.
     pub verbose: bool,
+    /// Count of `v` flags in the packed server flag string. Upstream derives
+    /// info/debug levels from this count via `info_verbosity[]`
+    /// (options.c:239-243); `-vv` sets `info.name = 2`, which gates the
+    /// itemize line for an unchanged entry (`INFO_GTE(NAME, 2)`,
+    /// generator.c:582-583). Collapsing to the `verbose` bool alone loses the
+    /// level needed to surface `-ivv` unchanged rows.
+    pub verbose_level: u8,
     /// Compress during transfer (`z` flag, `--compress`).
     pub compress: bool,
     /// Checksum-based transfer (`c` flag, `--checksum`).
@@ -255,7 +263,10 @@ impl ParsedServerFlags {
             b'r' => self.recursive = true,
             b'e' => self.rsh = true,
             b'a' => self.archive = true,
-            b'v' => self.verbose = true,
+            b'v' => {
+                self.verbose = true;
+                self.verbose_level = self.verbose_level.saturating_add(1);
+            }
             b'z' => self.compress = true,
             b'c' => self.checksum = true,
             b'H' => self.hard_links = true,
@@ -372,6 +383,21 @@ mod tests {
         assert!(flags.recursive);
         assert!(!flags.links);
         assert!(!flags.verbose);
+        assert_eq!(flags.verbose_level, 0);
+    }
+
+    #[test]
+    fn counts_verbose_level_from_packed_flags() {
+        // upstream sends `-vv` as packed `v` letters in the server flag
+        // string; the count must survive so info.name reaches 2 (INFO_GTE
+        // NAME 2) and `-ivv` surfaces unchanged itemize rows. The `v` inside
+        // the trailing `-e.` capability section (`iLsfxCIvu`) must NOT count.
+        assert_eq!(ParsedServerFlags::parse("-v").unwrap().verbose_level, 1);
+        assert_eq!(ParsedServerFlags::parse("-vv").unwrap().verbose_level, 2);
+        assert_eq!(ParsedServerFlags::parse("-vvv").unwrap().verbose_level, 3);
+        let packed = ParsedServerFlags::parse("-vvlogDtpre.iLsfxCIvu").unwrap();
+        assert_eq!(packed.verbose_level, 2);
+        assert!(packed.verbose);
     }
 
     #[test]
