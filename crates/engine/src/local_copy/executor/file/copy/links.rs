@@ -357,11 +357,24 @@ pub(super) fn process_links(
         // existing inode was reused. Build a change_set so the attribute
         // slots reflect the real deltas (mtime / perms / etc.) instead of
         // collapsing to all-dots-or-spaces.
+        //
+        // upstream: generator.c:1009-1013 - the itemize for a hardlinked alias
+        // is computed with `statret = 1` against the group leader's stat
+        // (`sxp->st`), not a (possibly absent) prior destination. Comparing the
+        // source against the leader (`existing_target`) keeps the size/time/perm
+        // columns blank when the alias is identical to its leader, even though
+        // the alias path itself is being created this run. Fall back to the
+        // prior-destination comparison when the leader stat is unavailable.
+        let leader_metadata = fs::symlink_metadata(&existing_target).ok();
+        let (compare_against, compare_existed) = match leader_metadata.as_ref() {
+            Some(leader) => (Some(leader), true),
+            None => (existing_metadata, destination_previously_existed),
+        };
         let mut change_set = LocalCopyChangeSet::for_file(
             metadata,
-            existing_metadata,
+            compare_against,
             &metadata_options,
-            destination_previously_existed,
+            compare_existed,
             false,
             {
                 #[cfg(all(unix, feature = "xattr"))]

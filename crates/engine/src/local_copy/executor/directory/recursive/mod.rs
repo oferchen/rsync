@@ -127,12 +127,16 @@ fn copy_directory_recursive_inner(
     let existing_destination_metadata: Option<fs::Metadata> =
         destination_state.existing_metadata().cloned();
 
-    // upstream: generator.c:1469-1483 - when a directory is absent from the
-    // destination but present in a `--copy-dest` basis, the generator itemizes
-    // it as a local change (`cd` + blank) against the basis instead of a new
-    // entry (`cd+++++++++`). Capture the basis metadata so the creation records
-    // below can compute the basis-relative change set.
-    let copy_dest_basis: Option<fs::Metadata> = if destination_missing {
+    // upstream: generator.c:1469-1483 - when a directory is freshly created in
+    // the destination but present in a `--copy-dest` basis, the generator
+    // itemizes it as a local change (`cd` + blank) against the basis instead of
+    // a new entry (`cd+++++++++`). The transfer root is materialised by the
+    // sources orchestrator before this frame runs, so `destination_missing` is
+    // false there even though the row is a creation; gate on whether a creation
+    // record will be emitted (`destination_missing` for children, the root's
+    // just-created marker for the root).
+    let root_just_created = relative.is_none() && context.summary().destination_root_created();
+    let copy_dest_basis: Option<fs::Metadata> = if destination_missing || root_just_created {
         let lookup_relative = relative.unwrap_or_else(|| Path::new("."));
         super::super::find_copy_dest_basis(context, destination, lookup_relative)?
     } else {
@@ -177,7 +181,7 @@ fn copy_directory_recursive_inner(
     // the sources orchestrator already mkdir'd the destination root in this run
     // (signalled via `summary.destination_root_created()`), driving the
     // `cd+++++++++ ./` creation row below.
-    let root_was_just_created = relative.is_none() && context.summary().destination_root_created();
+    let root_was_just_created = root_just_created;
     let metadata_record = if let Some(rel) = relative {
         Some((
             rel.to_path_buf(),
