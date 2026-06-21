@@ -36,8 +36,8 @@ pub(crate) use file::{
 };
 pub(crate) use iconv::transcode_filename_component;
 pub(crate) use reference::{
-    ReferenceDecision, ReferenceQuery, find_copy_dest_basis, find_copy_dest_symlink,
-    find_reference_action,
+    ReferenceDecision, ReferenceQuery, find_compare_dest_symlink, find_copy_dest_basis,
+    find_copy_dest_symlink, find_reference_action,
 };
 pub(crate) use sources::copy_sources;
 pub(crate) use special::{

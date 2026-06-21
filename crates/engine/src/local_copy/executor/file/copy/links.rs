@@ -472,7 +472,7 @@ pub(super) fn process_links(
         )?
     {
         match decision {
-            ReferenceDecision::Skip => {
+            ReferenceDecision::Skip(basis) => {
                 // upstream: generator.c:1010,1133 / rsync.c:676 - "is uptodate"
                 // emitted at INFO_GTE(NAME, 2) when a reference-directory match
                 // means no transfer is needed. Rendered by the CLI from the
@@ -480,12 +480,22 @@ pub(super) fn process_links(
                 // the line lands ahead of the totals; emitting it via
                 // info_log! would route it through the post-summary
                 // diagnostic drain and break upstream ordering.
+                //
+                // upstream: generator.c:1140 - a `--compare-dest` match itemizes
+                // `.f` against the compare basis (`sxp->st`), so the attribute
+                // columns reflect drift vs the basis, not the absent
+                // destination. Compare source against the basis with
+                // `destination_previously_existed = true` so identical files
+                // stay blank.
                 context.summary_mut().record_regular_file_matched();
+                let basis_metadata = fs::symlink_metadata(&basis).map_err(|error| {
+                    LocalCopyError::io("inspect compare-dest basis", basis.clone(), error)
+                })?;
                 let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
                 let total_bytes = Some(metadata_snapshot.len());
                 let change_set = LocalCopyChangeSet::for_file(
                     metadata,
-                    existing_metadata,
+                    Some(&basis_metadata),
                     &metadata_options,
                     true,
                     false,

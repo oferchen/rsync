@@ -287,6 +287,49 @@ pub(crate) fn copy_symlink(
         return Ok(());
     }
 
+    // upstream: generator.c:1140 + try_dests_non() - a `--compare-dest` symlink
+    // whose target matches the basis is neither recreated nor transferred; it
+    // itemizes `.L` against the basis. Detect that before any creation work so
+    // the destination stays empty (compare-dest semantics) and the row collapses
+    // to `.L` + blank, suppressed at plain `-i`.
+    if destination_metadata.is_none()
+        && let Some(path) = record_path.as_ref()
+        && !path.as_os_str().is_empty()
+        && let Some(basis_meta) =
+            super::super::find_compare_dest_symlink(context, destination, path, &target)?
+    {
+        let symlink_options = if context.omit_link_times_enabled() {
+            metadata_options.clone().preserve_times(false)
+        } else {
+            metadata_options.clone()
+        };
+        let change_set = LocalCopyChangeSet::for_file(
+            metadata,
+            Some(&basis_meta),
+            &symlink_options,
+            true,
+            false,
+            false,
+            false,
+        );
+        context.summary_mut().record_symlink();
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
+        context.record(
+            LocalCopyRecord::new(
+                path.clone(),
+                LocalCopyAction::MetadataReused,
+                0,
+                Some(metadata_snapshot.len()),
+                Duration::default(),
+                Some(metadata_snapshot),
+            )
+            .with_change_set(change_set),
+        );
+        context.register_progress();
+        remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
+        return Ok(());
+    }
+
     if let Some(parent) = destination.parent() {
         context.prepare_parent_directory(parent)?;
     }

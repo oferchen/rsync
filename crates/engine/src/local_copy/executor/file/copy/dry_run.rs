@@ -239,32 +239,25 @@ fn simulate_reference_match(
     };
 
     let (action, basis) = match decision {
-        ReferenceDecision::Skip => (LocalCopyAction::MetadataReused, None),
-        ReferenceDecision::Copy(path) => (LocalCopyAction::ReferenceCopied, Some(path)),
+        ReferenceDecision::Skip(path) => (LocalCopyAction::MetadataReused, path),
+        ReferenceDecision::Copy(path) => (LocalCopyAction::ReferenceCopied, path),
         // A degraded link-dest copy still itemizes as a local change.
-        ReferenceDecision::Link(path) => (LocalCopyAction::ReferenceCopied, Some(path)),
+        ReferenceDecision::Link(path) => (LocalCopyAction::ReferenceCopied, path),
     };
     context.summary_mut().record_regular_file_matched();
-    let change_set = match basis.as_deref() {
-        Some(path) => {
-            let basis_metadata = fs::symlink_metadata(path)
-                .map_err(|error| LocalCopyError::io("inspect reference basis", path, error))?;
-            LocalCopyChangeSet::for_file(
-                metadata,
-                Some(&basis_metadata),
-                &metadata_options,
-                true,
-                false,
-                false,
-                false,
-            )
-        }
-        None => {
-            // compare-dest: itemize against the basis the same way the real run
-            // does (no transfer, blank columns when identical).
-            LocalCopyChangeSet::new()
-        }
-    };
+    // Itemize against the basis (compare/copy/link) so identical files stay
+    // blank, matching generator.c:1140 and the real-run change set.
+    let basis_metadata = fs::symlink_metadata(&basis)
+        .map_err(|error| LocalCopyError::io("inspect reference basis", basis, error))?;
+    let change_set = LocalCopyChangeSet::for_file(
+        metadata,
+        Some(&basis_metadata),
+        &metadata_options,
+        true,
+        false,
+        false,
+        false,
+    );
     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
     context.record(
         LocalCopyRecord::new(

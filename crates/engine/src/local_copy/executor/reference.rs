@@ -10,7 +10,9 @@ use super::{CopyComparison, should_skip_copy};
 
 /// Outcome of evaluating a reference directory candidate against source metadata.
 pub(crate) enum ReferenceDecision {
-    Skip,
+    /// A `--compare-dest` match: the file is skipped and itemized as `.f`
+    /// against the carried basis path (blank columns when identical).
+    Skip(PathBuf),
     Copy(PathBuf),
     Link(PathBuf),
 }
@@ -100,7 +102,7 @@ pub(crate) fn find_reference_action(
             prefetched_match: None,
         }) {
             return Ok(Some(match reference.kind() {
-                ReferenceDirectoryKind::Compare => ReferenceDecision::Skip,
+                ReferenceDirectoryKind::Compare => ReferenceDecision::Skip(candidate),
                 ReferenceDirectoryKind::Copy => ReferenceDecision::Copy(candidate),
                 ReferenceDirectoryKind::Link => ReferenceDecision::Link(candidate),
             }));
@@ -123,11 +125,43 @@ pub(crate) fn find_copy_dest_symlink(
     relative: &Path,
     target: &Path,
 ) -> Result<Option<fs::Metadata>, LocalCopyError> {
+    find_reference_symlink(context, destination, relative, target, |kind| {
+        kind == ReferenceDirectoryKind::Copy
+    })
+}
+
+/// Locates a `--compare-dest` basis symlink at `relative` whose target matches.
+///
+/// A compare-dest match means the symlink already exists elsewhere, so the
+/// receiver neither recreates it nor reports a transfer; it itemizes `.L`
+/// against the basis.
+///
+/// upstream: generator.c:1140 - COMPARE_DEST forces `chg = 0` for non-directory
+/// matches, so the update char stays `.`.
+pub(crate) fn find_compare_dest_symlink(
+    context: &CopyContext<'_>,
+    destination: &Path,
+    relative: &Path,
+    target: &Path,
+) -> Result<Option<fs::Metadata>, LocalCopyError> {
+    find_reference_symlink(context, destination, relative, target, |kind| {
+        kind == ReferenceDirectoryKind::Compare
+    })
+}
+
+/// Shared symlink lookup across reference directories whose kind passes `accept`.
+fn find_reference_symlink(
+    context: &CopyContext<'_>,
+    destination: &Path,
+    relative: &Path,
+    target: &Path,
+    accept: impl Fn(ReferenceDirectoryKind) -> bool,
+) -> Result<Option<fs::Metadata>, LocalCopyError> {
     if relative.as_os_str().is_empty() {
         return Ok(None);
     }
     for reference in context.reference_directories() {
-        if reference.kind() != ReferenceDirectoryKind::Copy {
+        if !accept(reference.kind()) {
             continue;
         }
         let candidate = resolve_reference_candidate(reference.path(), relative, destination);
@@ -162,18 +196,19 @@ pub(crate) fn find_copy_dest_symlink(
     Ok(None)
 }
 
-/// Locates an alternate-basis directory at `relative` (`--copy-dest` or
-/// `--link-dest`).
+/// Locates an alternate-basis directory at `relative` (`--copy-dest`,
+/// `--link-dest`, or `--compare-dest`).
 ///
-/// Returns the basis metadata when a `Copy` or `Link` reference contains a
-/// directory at `relative`. A directory matched against either basis itemizes
-/// as a local change (`cd`) compared to the basis rather than as a new entry
-/// (`cd+++++++++`); directories are never hard-linked, so both kinds behave
-/// identically here.
+/// Returns the basis metadata when any reference contains a directory at
+/// `relative`. A directory matched against any basis itemizes as a local change
+/// (`cd`) compared to the basis rather than as a new entry (`cd+++++++++`);
+/// directories are never hard-linked, so all three kinds behave identically
+/// here.
 ///
 /// upstream: generator.c:1117-1148 try_dests_non() - a match itemizes with
 /// ITEM_LOCAL_CHANGE and never sets ITEM_IS_NEW (the LINK_DEST hard-link branch
-/// is skipped for directories at line 1126).
+/// is skipped for directories at line 1126, and COMPARE_DEST forces
+/// ITEM_LOCAL_CHANGE for directories at line 1140).
 pub(crate) fn find_copy_dest_basis(
     context: &CopyContext<'_>,
     destination: &Path,
@@ -184,9 +219,6 @@ pub(crate) fn find_copy_dest_basis(
     // symlink lookups, the directory lookup must handle this case so the `./`
     // row itemizes against the basis root.
     for reference in context.reference_directories() {
-        if matches!(reference.kind(), ReferenceDirectoryKind::Compare) {
-            continue;
-        }
         let candidate = resolve_reference_candidate(reference.path(), relative, destination);
         let candidate_metadata = match fs::symlink_metadata(&candidate) {
             Ok(meta) => meta,
@@ -296,8 +328,12 @@ mod tests {
 
     #[test]
     fn reference_decision_skip_variant() {
-        let decision = ReferenceDecision::Skip;
-        assert!(matches!(decision, ReferenceDecision::Skip));
+        let path = PathBuf::from("/compare/basis");
+        let decision = ReferenceDecision::Skip(path.clone());
+        match decision {
+            ReferenceDecision::Skip(p) => assert_eq!(p, path),
+            _ => panic!("Expected Skip variant"),
+        }
     }
 
     #[test]
