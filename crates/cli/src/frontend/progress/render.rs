@@ -443,7 +443,32 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
 /// completes. The two processes pipeline so uptodate lines appear ahead of
 /// transferred-file lines in the observable client output.
 fn is_uptodate_event(event: &ClientEvent) -> bool {
-    matches!(event.kind(), ClientEventKind::MetadataReused) || event.is_hardlink_uptodate()
+    if matches!(event.kind(), ClientEventKind::MetadataReused) || event.is_hardlink_uptodate() {
+        return true;
+    }
+    // upstream: generator.c:1019-1022 / 1145-1147 - a `--copy-dest` match emits
+    // its `"is uptodate"` notice from the generator, ahead of the receiver's
+    // bare-name lines. Regular files are `ReferenceCopied`; dirs and symlinks
+    // reconstructed from the basis carry a blank change set and no creation.
+    match event.kind() {
+        ClientEventKind::ReferenceCopied => true,
+        ClientEventKind::DirectoryCreated | ClientEventKind::SymlinkCopied => {
+            !event.was_created() && !event.change_set().has_any_change()
+        }
+        _ => false,
+    }
+}
+
+/// Returns `true` for a hardlink alias freshly linked to a leader placed during
+/// this run. Upstream defers the `"%s => %s"` notice to the hardlink-finishing
+/// phase (hlink.c:236), so it appears after the regular per-file lines.
+fn is_deferred_hardlink_event(event: &ClientEvent) -> bool {
+    matches!(event.kind(), ClientEventKind::HardLink)
+        && !event.is_hardlink_uptodate()
+        && event
+            .metadata()
+            .and_then(ClientEntryMetadata::symlink_target)
+            .is_some()
 }
 
 /// Renders verbose listings for the provided transfer events.
@@ -466,7 +491,16 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
     // them to recover the upstream wire order. The sort is stable so each
     // group preserves its original relative ordering.
     let mut ordered_events: Vec<&ClientEvent> = events.iter().collect();
-    ordered_events.sort_by_key(|event| if is_uptodate_event(event) { 0u8 } else { 1 });
+    ordered_events.sort_by_key(|event| {
+        if is_uptodate_event(event) {
+            0u8
+        } else if is_deferred_hardlink_event(event) {
+            // Hardlink aliases linked to a this-run leader are finished last.
+            2
+        } else {
+            1
+        }
+    });
 
     for event in ordered_events {
         let kind = event.kind();
@@ -659,6 +693,14 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
         {
             rendered.push_str(" -> ");
             rendered.push_str(&target.to_string_lossy());
+        } else if matches!(kind, ClientEventKind::HardLink)
+            && let Some(metadata) = event.metadata()
+            && let Some(leader) = metadata.symlink_target()
+        {
+            // upstream: hlink.c:236 - a freshly-linked alias prints
+            // `"%s => %s"` with the group leader's relative path.
+            rendered.push_str(" => ");
+            rendered.push_str(&leader.to_string_lossy());
         }
 
         // upstream: log.c:log_formatted() emits the default `%n%L` per-file
