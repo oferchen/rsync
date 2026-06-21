@@ -245,6 +245,151 @@ fn per_dir_merge_filter_protects_during_deletion() {
     );
 }
 
+/// Regression: an inheriting per-directory merge rule defined in an
+/// ancestor must protect a deletion candidate several levels below it,
+/// the way upstream `exclude-lsh` relies on `bar/down/to/bar/.filt2`
+/// (`- *.deep`) protecting `bar/down/to/bar/baz/file5.deep`.
+///
+/// The receiver re-enters every ancestor of the scan target before
+/// listing it, so the inheriting scope pushed at the ancestor's depth
+/// must still apply at the deeper scan depth. The per-entry deletion
+/// check passes a transfer-root-relative path (`top/mid/protected.deep`),
+/// matching the path convention the generator uses for `allows`, so the
+/// inherited rule fires. Pins that the deeper candidate is protected
+/// while a sibling the rule does not name is still deleted.
+///
+/// upstream: exclude-lsh.test:75-78, generator.c:308 change_local_filter_dir.
+#[test]
+fn inherited_per_dir_merge_protects_deeper_deletion_candidate() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    // dest/top/.filt2 = `- *.deep` (inheriting); the candidate lives two
+    // levels below in dest/top/mid/leaf.
+    let top = dest.join("top");
+    let mid = top.join("mid");
+    std::fs::create_dir_all(&mid).unwrap();
+    std::fs::write(top.join(".filt2"), b"- *.deep\n").unwrap();
+
+    std::fs::write(mid.join("keep.txt"), b"keep").unwrap();
+    std::fs::write(mid.join("protected.deep"), b"deep").unwrap();
+    std::fs::write(mid.join("extraneous.txt"), b"extra").unwrap();
+
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.flags.delete = true;
+    config.args = vec![OsString::from(dest.to_str().unwrap())];
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+    ctx.file_list
+        .push(FileEntry::new_directory(".".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_directory("top".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_file("top/.filt2".into(), 8, 0o644));
+    ctx.file_list
+        .push(FileEntry::new_directory("top/mid".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_file("top/mid/keep.txt".into(), 4, 0o644));
+
+    let mut chain = ::filters::FilterChain::empty();
+    chain.add_merge_config(::filters::DirMergeConfig::new(".filt2"));
+    ctx.set_filter_chain(chain);
+
+    let mut writer = TestDeletionWriter;
+    ctx.delete_extraneous_files(
+        dest,
+        #[cfg(unix)]
+        None,
+        &mut writer,
+    )
+    .unwrap();
+
+    assert!(
+        mid.join("protected.deep").exists(),
+        "protected.deep must survive: the ancestor `top/.filt2 - *.deep` inherits down to `top/mid`",
+    );
+    assert!(
+        !mid.join("extraneous.txt").exists(),
+        "extraneous.txt must be deleted: no merge rule protects it",
+    );
+    assert!(
+        mid.join("keep.txt").exists(),
+        "keep.txt must survive: it is in the source file list",
+    );
+}
+
+/// Regression: a non-inheriting `:C`/.cvsignore scope must protect a
+/// candidate in the directory it was loaded in, but must NOT leak into a
+/// child directory. Mirrors upstream `exclude-lsh` where `mid/.filt`
+/// (`:C`) loads `mid/.cvsignore` for `mid` only.
+///
+/// The receiver pushes the `:C` scope at the scan directory's depth; the
+/// depth-gated `scope_applies_here` check (filters chain `scope_applies_here`)
+/// keeps it from suppressing deletions one level deeper. Pins both halves
+/// so a regression in the per-worker ancestor-walk depth bookkeeping is
+/// caught.
+///
+/// upstream: exclude-lsh.test:80-88, exclude.c FILTRULE_NO_INHERIT.
+#[test]
+fn non_inheriting_cvsignore_scope_is_depth_local_during_deletion() {
+    use tempfile::TempDir;
+
+    let temp_dir = TempDir::new().unwrap();
+    let dest = temp_dir.path();
+
+    // dest/.cvsignore protects `ignored` in the root only (non-inheriting).
+    let sub = dest.join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    std::fs::write(dest.join(".cvsignore"), b"ignored\n").unwrap();
+
+    std::fs::write(dest.join("ignored"), b"top").unwrap();
+    std::fs::write(sub.join("ignored"), b"deep").unwrap();
+
+    let handshake = test_handshake();
+    let mut config = test_config();
+    config.flags.delete = true;
+    config.args = vec![OsString::from(dest.to_str().unwrap())];
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+
+    ctx.file_list
+        .push(FileEntry::new_directory(".".into(), 0o755));
+    ctx.file_list
+        .push(FileEntry::new_file(".cvsignore".into(), 8, 0o644));
+    ctx.file_list
+        .push(FileEntry::new_directory("sub".into(), 0o755));
+
+    // `.cvsignore` registered as a non-inheriting CVS-mode dir-merge, the
+    // way upstream's `:C` directive expands it.
+    let mut chain = ::filters::FilterChain::empty();
+    chain.add_merge_config(
+        ::filters::DirMergeConfig::new(".cvsignore")
+            .with_cvs_mode(true)
+            .with_inherit(false),
+    );
+    ctx.set_filter_chain(chain);
+
+    let mut writer = TestDeletionWriter;
+    ctx.delete_extraneous_files(
+        dest,
+        #[cfg(unix)]
+        None,
+        &mut writer,
+    )
+    .unwrap();
+
+    assert!(
+        dest.join("ignored").exists(),
+        "root `ignored` must survive: dest/.cvsignore protects it at the root depth",
+    );
+    assert!(
+        !sub.join("ignored").exists(),
+        "sub/ignored must be deleted: the non-inheriting `.cvsignore` scope does not leak into `sub`",
+    );
+}
+
 #[test]
 fn receiver_set_and_get_filter_chain() {
     let handshake = test_handshake();
