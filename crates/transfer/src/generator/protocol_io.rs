@@ -267,10 +267,14 @@ impl GeneratorContext {
 
     /// Emits itemize output when conditions are met.
     ///
-    /// In server mode (daemon/SSH), sends the formatted itemize string
-    /// (`"%i %n%L\n"`) as a MSG_INFO multiplexed message to the client.
-    /// In client mode, writes directly to the process stdout via the
-    /// itemize callback, matching upstream's `rwrite()` `FCLIENT` path.
+    /// Emits the per-file itemize line, but ONLY in client mode. Upstream
+    /// `log.c:812 log_item()` gates the `FCLIENT` itemize emission on
+    /// `!am_server`: a server process (sender OR receiver) never prints its own
+    /// itemize row - the client always computes and prints it (the generator
+    /// ships the `iflags` over the wire, not the rendered text). Emitting from
+    /// the server duplicated the client's row, producing a spurious sender
+    /// `<f...` line alongside the receiver `>f...` line under `-ii` over a
+    /// remote shell (upstream `exclude-lsh.test` `-aiiO --update` leg).
     ///
     /// Upstream `generator.c:582-583` emits when ANY of four OR'd conditions
     /// hold: significant flags set, `INFO_GTE(NAME, 2)`, `stdout_format_has_i
@@ -280,21 +284,29 @@ impl GeneratorContext {
     ///
     /// # Upstream Reference
     ///
+    /// - `log.c:812-820` - `log_item()`: `code != FLOG && stdout_format &&
+    ///   !am_server` gates the `log_formatted(FCLIENT, ...)` itemize emission;
+    ///   the server's only itemize output is to its local `logfile`, never the
+    ///   client stream.
     /// - `generator.c:582-583` - emit gate: `(iflags & (SIGNIFICANT_ITEM_FLAGS
     ///   | ITEM_REPORT_XATTR)) || INFO_GTE(NAME, 2) || stdout_format_has_i > 1
     ///   || (xname && *xname)`
     /// - `sender.c:287` - `maybe_log_item()` for non-transfer items
     /// - `sender.c:430` - `log_item()` after file transfer
-    /// - `log.c:330-340` - `rwrite()`: when `am_server`, sends MSG_INFO;
-    ///   when `!am_server`, writes to stdout (FCLIENT)
     pub(super) fn maybe_emit_itemize<W: Write>(
         &self,
-        writer: &mut super::super::writer::ServerWriter<W>,
+        _writer: &mut super::super::writer::ServerWriter<W>,
         iflags: &super::item_flags::ItemFlags,
         ndx: usize,
         itemize_cb: &mut Option<&mut dyn super::super::ItemizeCallback>,
     ) -> io::Result<()> {
         if !self.config.flags.info_flags.itemize {
+            return Ok(());
+        }
+        // upstream: log.c:812 log_item() - only the client (`!am_server`) renders
+        // the itemize line; a server sender/receiver stays silent so it does not
+        // duplicate the client's row over MSG_INFO.
+        if !self.config.connection.client_mode {
             return Ok(());
         }
         // upstream: generator.c:582-583 - the gate is the OR of four
@@ -318,15 +330,12 @@ impl GeneratorContext {
         // Generator role is always the sender side
         let line = super::itemize::format_itemize_line(iflags, entry, true, &ctx);
 
-        if self.config.connection.client_mode {
-            // upstream: log.c:330-340 - when !am_server, rwrite() sends to FCLIENT (stdout)
-            if let Some(cb) = itemize_cb.as_mut() {
-                cb.on_itemize(&line);
-            }
-            Ok(())
-        } else {
-            writer.send_message(protocol::MessageCode::Info, line.as_bytes())
+        // upstream: log.c:818 - `log_formatted(FCLIENT, ...)` writes to stdout on
+        // the client. Reached only in client mode (server returned early above).
+        if let Some(cb) = itemize_cb.as_mut() {
+            cb.on_itemize(&line);
         }
+        Ok(())
     }
 
     /// Sends the file list to the receiver.

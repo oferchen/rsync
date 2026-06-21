@@ -4241,4 +4241,63 @@ mod itemize_emit_gate {
             "ITEM_XNAME_FOLLOWS must force an itemize line under upstream gate; got: {lines:?}"
         );
     }
+
+    /// upstream: log.c:812 `log_item()` gates `log_formatted(FCLIENT, ...)` on
+    /// `!am_server`. A server process (sender OR receiver) must NOT emit its own
+    /// itemize row - the client computes and prints it. Emitting from the server
+    /// produced a spurious sender `<f...` line that duplicated the client's
+    /// `>f...` row under `-ii` over a remote shell (`exclude-lsh.test`).
+    #[test]
+    fn server_mode_does_not_emit_itemize() {
+        init(VerbosityConfig::default());
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.connection.client_mode = false;
+        config.flags.info_flags.itemize = true;
+        let mut ctx = GeneratorContext::new_for_test(&handshake, config);
+        ctx.file_list.push(protocol::flist::FileEntry::new_file(
+            "config1".into(),
+            42,
+            0o644,
+        ));
+
+        let captured: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+        let lines = Rc::clone(&captured);
+        let mut sink = move |line: &str| {
+            lines.borrow_mut().push(line.to_owned());
+        };
+        let mut callback: Option<&mut dyn crate::ItemizeCallback> = Some(&mut sink);
+
+        // Route the wire through a shared buffer so the test can prove no
+        // MSG_INFO itemize frame is multiplexed to the client.
+        struct SharedBuf(Rc<RefCell<Vec<u8>>>);
+        impl std::io::Write for SharedBuf {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.borrow_mut().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let wire: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
+        let mut writer = crate::writer::ServerWriter::new_plain(SharedBuf(Rc::clone(&wire)));
+        // ITEM_XNAME_FOLLOWS would force emission in client mode; the server
+        // role must suppress it entirely.
+        let iflags = ItemFlags::from_raw(ItemFlags::ITEM_XNAME_FOLLOWS);
+        ctx.maybe_emit_itemize(&mut writer, &iflags, 0, &mut callback)
+            .expect("maybe_emit_itemize must not error in server mode");
+
+        assert!(
+            captured.borrow().is_empty(),
+            "server role must not emit an itemize line to the client callback; got: {:?}",
+            captured.borrow()
+        );
+        assert!(
+            wire.borrow().is_empty(),
+            "server role must not multiplex a MSG_INFO itemize frame to the client; got {} bytes",
+            wire.borrow().len()
+        );
+    }
 }
