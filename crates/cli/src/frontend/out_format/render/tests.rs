@@ -1930,11 +1930,12 @@ fn emit_out_format_emits_uptodate_hardlink_alias_with_changed_attr() {
 }
 
 #[test]
-fn emit_out_format_emits_uptodate_hardlink_alias_with_relink_target() {
-    // upstream: generator.c:582 `(xname && *xname)` arm - when the alias was
-    // (re)created the xname is the relink target (`=> %s`), which forces the
-    // row even at plain `-i`. The local-copy engine carries that target in the
-    // metadata symlink_target slot for HardLink events.
+fn emit_out_format_suppresses_uptodate_hardlink_alias_at_plain_i() {
+    // upstream: hlink.c:219-221 - an already-shared-inode cluster alias (e.g. a
+    // `--link-dest` member that links from the basis and ends up sharing its
+    // leader's inode) is itemized with an EMPTY xname, so the plain-`-i` emit
+    // gate drops it even though the engine carries a `=> leader` trailer for the
+    // `-vv` view. Verified against upstream rsync 3.4.4 `-iplrtH --link-dest`.
     let metadata = ClientEvent::test_metadata(ClientEntryKind::File)
         .with_symlink_target_for_test("foo/leader");
     let event = ClientEvent::for_test(
@@ -1945,6 +1946,39 @@ fn emit_out_format_emits_uptodate_hardlink_alias_with_relink_target() {
         LocalCopyChangeSet::new(),
     )
     .with_hardlink_uptodate_for_test();
+    let events = [event];
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n%L")).unwrap();
+
+    // Plain `-i`: suppressed.
+    let mut plain = Vec::new();
+    emit_out_format(&events, &format, &OutFormatContext::default(), &mut plain).unwrap();
+    assert_eq!(String::from_utf8(plain).unwrap(), "");
+
+    // `-vv` (`emit_unchanged`): shown with the `=> leader` trailer.
+    let mut verbose = Vec::new();
+    let ctx = OutFormatContext::default().with_emit_unchanged(true);
+    emit_out_format(&events, &format, &ctx, &mut verbose).unwrap();
+    assert_eq!(
+        String::from_utf8(verbose).unwrap(),
+        "hf          test.txt => foo/leader\n"
+    );
+}
+
+#[test]
+fn emit_out_format_emits_fresh_hardlink_alias_with_relink_target() {
+    // upstream: generator.c:582 `(xname && *xname)` arm / hlink.c:232-234 - a
+    // freshly atomic_create'd alias (NOT sharing the leader inode, e.g. a
+    // `--copy-dest` cluster member linked to a copied leader) itemizes with the
+    // relink target as the xname (`=> %s`), forcing the row even at plain `-i`.
+    let metadata = ClientEvent::test_metadata(ClientEntryKind::File)
+        .with_symlink_target_for_test("foo/leader");
+    let event = ClientEvent::for_test(
+        PathBuf::from("test.txt"),
+        ClientEventKind::HardLink,
+        false,
+        Some(metadata),
+        LocalCopyChangeSet::new(),
+    );
     let events = [event];
     let format = parse_out_format(std::ffi::OsStr::new("%i %n%L")).unwrap();
     let mut output = Vec::new();

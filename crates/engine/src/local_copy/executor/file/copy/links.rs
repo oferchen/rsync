@@ -152,12 +152,14 @@ pub(super) fn process_links(
             link_target.display()
         );
 
-        // upstream: generator.c:1008-1009 / 1048-1049 - when the matched file is
-        // a member of a hard-link cluster whose leader was already placed this
-        // run, `finish_hard_link()` itemizes the alias with the in-transfer
-        // leader as the xname (`=> foo/config1`), not the basis path. Thread the
-        // leader's relative path through the snapshot's symlink_target slot so
-        // the `%L` placeholder renders the `=> leader` trailer.
+        // upstream: hlink.c:215-224 / generator.c:1008-1013 - a `--link-dest`
+        // cluster member is linked from the basis, so it ends up sharing the
+        // same inode as its already-placed in-transfer leader. `maybe_hard_link`
+        // then takes the same-inode branch, itemizing with an empty xname and
+        // emitting `"%s is uptodate"` at NAME>=2: the row is suppressed at plain
+        // `-i` but shown blank with a `=> leader` trailer under `-vv`. Thread the
+        // leader through the symlink_target slot for the `%L` trailer and flag
+        // the record uptodate so the plain-`-i` gate drops it.
         let leader_display = context
             .existing_hard_link_target(metadata)
             .and_then(|leader| {
@@ -167,18 +169,22 @@ pub(super) fn process_links(
                     .ok()
                     .filter(|relative| relative != record_path)
             });
+        let is_cluster_alias = leader_display.is_some();
         context.record_hard_link(metadata, destination);
         context.summary_mut().record_hard_link();
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, leader_display);
         let total_bytes = Some(metadata_snapshot.len());
-        context.record(LocalCopyRecord::new(
-            record_path.to_path_buf(),
-            LocalCopyAction::HardLink,
-            0,
-            total_bytes,
-            Duration::default(),
-            Some(metadata_snapshot),
-        ));
+        context.record(
+            LocalCopyRecord::new(
+                record_path.to_path_buf(),
+                LocalCopyAction::HardLink,
+                0,
+                total_bytes,
+                Duration::default(),
+                Some(metadata_snapshot),
+            )
+            .with_hardlink_uptodate(is_cluster_alias),
+        );
         context.register_created_path(
             destination,
             CreatedEntryKind::HardLink,

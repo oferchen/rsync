@@ -114,19 +114,25 @@ fn should_suppress_event(event: &ClientEvent, context: &OutFormatContext) -> boo
 
     // upstream: hlink.c:215-227 + generator.c:581-583 - a hardlink alias is
     // itemized via `itemize(..., ITEM_LOCAL_CHANGE | ITEM_XNAME_FOLLOWS, 0,
-    // xname)`. The generator only writes the row when a significant attribute
+    // xname)`. The generator writes the row only when a significant attribute
     // flag is set, `INFO_GTE(NAME, 2)` (handled above via `emit_unchanged`),
-    // `stdout_format_has_i > 1` (`-ii`), or the xname is non-empty (a `=> leader`
-    // trailer). A hardlink alias with no attribute change and an empty xname is
-    // therefore suppressed at plain `-i`, whether it is an already-shared inode
-    // (`is_hardlink_uptodate`) or a fresh link from a `--link-dest` basis. The
-    // `=> leader` case (in-transfer cluster) carries a non-None symlink_target
-    // and is preserved; a hard-linked symlink's `-> target` is handled by the
-    // earlier Symlink rule.
-    matches!(event.kind(), ClientEventKind::HardLink)
-        && !event.was_created()
-        && !event.change_set().has_any_change()
-        && event
+    // `-ii`, or the alias was freshly atomic_create'd with a non-empty xname.
+    // Two blank cases are suppressed at plain `-i`:
+    //   1. An alias with no attribute change and no `=> leader` trailer (empty
+    //      xname) - a fresh `--link-dest`/basis hardlink.
+    //   2. An already-shared-inode cluster alias (`is_hardlink_uptodate`): even
+    //      though it carries a `=> leader` trailer for the `-vv` view, upstream
+    //      itemizes it with an EMPTY xname (hlink.c:219-221), so the plain-`-i`
+    //      gate drops it.
+    // A hard-linked symlink's `-> target` is handled by the earlier Symlink rule.
+    if !matches!(event.kind(), ClientEventKind::HardLink)
+        || event.was_created()
+        || event.change_set().has_any_change()
+    {
+        return false;
+    }
+    event.is_hardlink_uptodate()
+        || event
             .metadata()
             .and_then(ClientEntryMetadata::symlink_target)
             .is_none()
