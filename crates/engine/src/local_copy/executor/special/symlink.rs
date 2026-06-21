@@ -527,29 +527,71 @@ pub(crate) fn copy_symlink(
     if mode.is_dry_run() {
         context.summary_mut().record_symlink();
         if let Some(path) = &record_path {
+            // upstream: generator.c:1117-1147 - a dry-run still evaluates
+            // alt-dest bases. A `--link-dest` symlink with a matching target
+            // itemizes as `hL`; a `--copy-dest` symlink as `cL` against the
+            // basis. Both leave attribute columns blank when identical.
+            let link_dest_match = pre_replace_symlink_metadata.is_none()
+                && !path.as_os_str().is_empty()
+                && context.link_dest_symlink_target(path, &target)?.is_some();
+            let copy_dest_basis = if pre_replace_symlink_metadata.is_none() && !link_dest_match {
+                super::super::find_copy_dest_symlink(context, destination, path, &target)?
+            } else {
+                None
+            };
+
             let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
             let total_bytes = Some(metadata_snapshot.len());
-            let was_created =
-                !destination_previously_existed || pre_replace_symlink_metadata.is_none();
-            let mut record = LocalCopyRecord::new(
-                path.clone(),
-                LocalCopyAction::SymlinkCopied,
-                0,
-                total_bytes,
-                Duration::default(),
-                Some(metadata_snapshot),
-            )
-            .with_creation(was_created);
-            if let Some(existing_symlink) = pre_replace_symlink_metadata.as_ref() {
-                let change_set = LocalCopyChangeSet::for_recreated_symlink(
-                    metadata,
-                    existing_symlink,
-                    metadata_options,
-                    context.omit_link_times_enabled(),
-                );
-                record = record.with_change_set(change_set);
+
+            if link_dest_match {
+                context.summary_mut().record_hard_link();
+                context.record(LocalCopyRecord::new(
+                    path.clone(),
+                    LocalCopyAction::HardLink,
+                    0,
+                    total_bytes,
+                    Duration::default(),
+                    Some(metadata_snapshot),
+                ));
+            } else {
+                let was_created = copy_dest_basis.is_none()
+                    && (!destination_previously_existed || pre_replace_symlink_metadata.is_none());
+                let mut record = LocalCopyRecord::new(
+                    path.clone(),
+                    LocalCopyAction::SymlinkCopied,
+                    0,
+                    total_bytes,
+                    Duration::default(),
+                    Some(metadata_snapshot),
+                )
+                .with_creation(was_created);
+                if let Some(existing_symlink) = pre_replace_symlink_metadata.as_ref() {
+                    let change_set = LocalCopyChangeSet::for_recreated_symlink(
+                        metadata,
+                        existing_symlink,
+                        metadata_options,
+                        context.omit_link_times_enabled(),
+                    );
+                    record = record.with_change_set(change_set);
+                } else if let Some(basis_meta) = copy_dest_basis.as_ref() {
+                    let symlink_options = if context.omit_link_times_enabled() {
+                        metadata_options.clone().preserve_times(false)
+                    } else {
+                        metadata_options.clone()
+                    };
+                    let change_set = LocalCopyChangeSet::for_file(
+                        metadata,
+                        Some(basis_meta),
+                        &symlink_options,
+                        true,
+                        false,
+                        false,
+                        false,
+                    );
+                    record = record.with_change_set(change_set);
+                }
+                context.record(record);
             }
-            context.record(record);
         }
         context.register_progress();
         remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
