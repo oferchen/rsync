@@ -52,7 +52,7 @@ jobs:
           key: validate-daemon-env-${{ env.UPSTREAM_RSYNC_VERSION }}
 
       - name: Build oc-rsync (release) - needed by harness even when validating upstream
-        run: cargo build --locked --release --bin oc-rsync
+        uses: ./.github/actions/build-oc-rsync
 
       - name: Build upstream rsync + helpers (via harness for one test)
         env:
