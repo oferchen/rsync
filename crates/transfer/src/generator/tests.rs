@@ -4166,8 +4166,11 @@ mod itemize_emit_gate {
     use std::cell::RefCell;
     use std::rc::Rc;
 
-    /// Drives `maybe_emit_itemize` in client mode with a captured callback.
-    fn run_gate(verbose_name_level: u8, iflags_raw: u32) -> Vec<String> {
+    /// Drives `maybe_emit_itemize` with a captured callback.
+    ///
+    /// `client_mode` selects the role: a CLIENT (terminal owner) writes the
+    /// itemize line through the callback; a SERVER-sender must emit nothing.
+    fn run_gate(client_mode: bool, verbose_name_level: u8, iflags_raw: u32) -> Vec<String> {
         // Seed the thread-local verbosity so `info_gte(InfoFlag::Name, 2)`
         // reflects the test scenario. Other levels remain at defaults.
         let mut cfg = VerbosityConfig::default();
@@ -4176,7 +4179,7 @@ mod itemize_emit_gate {
 
         let handshake = test_handshake();
         let mut config = test_config();
-        config.connection.client_mode = true;
+        config.connection.client_mode = client_mode;
         config.flags.info_flags.itemize = true;
         let mut ctx = GeneratorContext::new_for_test(&handshake, config);
         ctx.file_list.push(protocol::flist::FileEntry::new_file(
@@ -4192,10 +4195,9 @@ mod itemize_emit_gate {
         };
         let mut callback: Option<&mut dyn crate::ItemizeCallback> = Some(&mut sink);
 
-        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
         let iflags = ItemFlags::from_raw(iflags_raw);
-        ctx.maybe_emit_itemize(&mut writer, &iflags, 0, &mut callback)
-            .expect("maybe_emit_itemize must not error in client mode");
+        ctx.maybe_emit_itemize(&iflags, 0, &mut callback)
+            .expect("maybe_emit_itemize must not error");
 
         // Reset the verbosity config so siblings see a clean default.
         init(VerbosityConfig::default());
@@ -4208,7 +4210,7 @@ mod itemize_emit_gate {
     /// `.f foo/config1`, and `.L foo/sym` rows on master.
     #[test]
     fn emits_under_verbose_name_2_with_zero_iflags() {
-        let lines = run_gate(2, 0);
+        let lines = run_gate(true, 2, 0);
         assert_eq!(
             lines.len(),
             1,
@@ -4222,7 +4224,7 @@ mod itemize_emit_gate {
     /// significant-flag-only emission.
     #[test]
     fn suppresses_under_verbose_name_1_with_zero_iflags() {
-        let lines = run_gate(1, 0);
+        let lines = run_gate(true, 1, 0);
         assert!(
             lines.is_empty(),
             "INFO_GTE(NAME, 1) must not force emission; got: {lines:?}"
@@ -4234,11 +4236,27 @@ mod itemize_emit_gate {
     /// proves the new branch alone is sufficient.
     #[test]
     fn emits_under_xname_follows_with_zero_verbose() {
-        let lines = run_gate(0, ItemFlags::ITEM_XNAME_FOLLOWS);
+        let lines = run_gate(true, 0, ItemFlags::ITEM_XNAME_FOLLOWS);
         assert_eq!(
             lines.len(),
             1,
             "ITEM_XNAME_FOLLOWS must force an itemize line under upstream gate; got: {lines:?}"
+        );
+    }
+
+    /// upstream: sender.c:211 + log.c:816 - a SERVER-sender must not echo
+    /// itemize onto the client display channel. On a pull (oc-rsync is the
+    /// server-sender) the client's receiver emits the `>f` row; a server-sender
+    /// `<f` row over MSG_INFO would duplicate every itemized line under `-ii`.
+    /// Even with the emit gate fully satisfied (`ITEM_XNAME_FOLLOWS`), the
+    /// server-sender path produces no itemize output. This is the regression
+    /// guard for the exclude-lsh `-ii` duplicate-arrow failure.
+    #[test]
+    fn server_sender_emits_nothing_even_when_gate_passes() {
+        let lines = run_gate(false, 0, ItemFlags::ITEM_XNAME_FOLLOWS);
+        assert!(
+            lines.is_empty(),
+            "server-sender must not emit itemize to the client display channel; got: {lines:?}"
         );
     }
 }

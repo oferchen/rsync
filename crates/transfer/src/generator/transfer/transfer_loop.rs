@@ -333,7 +333,7 @@ impl GeneratorContext {
                 // so the receiver can pair the response with its outstanding
                 // request and apply xattr-only updates. Without this echo the
                 // wire stream stalls when ITEM_REPORT_XATTR is the only delta.
-                self.maybe_emit_itemize(writer, &iflags, ndx, itemize)?;
+                self.maybe_emit_itemize(&iflags, ndx, itemize)?;
                 self.write_ndx_iflags_and_xattr_response(
                     &mut *writer,
                     &mut ndx_write_codec,
@@ -532,7 +532,7 @@ impl GeneratorContext {
             debug_log!(Send, 1, "sender finished {}", file_entry.path().display());
 
             // upstream: sender.c:430 - log_item(log_code, file, iflags, NULL)
-            self.maybe_emit_itemize(writer, &iflags, ndx, itemize)?;
+            self.maybe_emit_itemize(&iflags, ndx, itemize)?;
 
             if let Some(cb) = progress.as_mut() {
                 // upstream: progress.c:80 - "to" once the final sub-list has been

@@ -265,36 +265,43 @@ impl GeneratorContext {
         Ok(())
     }
 
-    /// Emits itemize output when conditions are met.
+    /// Emits the sender-side itemize line for one file when the gate allows.
     ///
-    /// In server mode (daemon/SSH), sends the formatted itemize string
-    /// (`"%i %n%L\n"`) as a MSG_INFO multiplexed message to the client.
-    /// In client mode, writes directly to the process stdout via the
-    /// itemize callback, matching upstream's `rwrite()` `FCLIENT` path.
+    /// Only the terminal-owning CLIENT process writes user-visible itemize
+    /// output (via the FCLIENT callback to stdout). A SERVER-sender is a no-op
+    /// here: upstream `sender.c:211` sets `itemizing = am_server ?
+    /// logfile_format_has_i : stdout_format_has_i`, so a server-sender itemizes
+    /// only into the logfile format, never onto the client-visible display
+    /// channel. On a pull (oc-rsync is the server-sender) the client's
+    /// receiver/generator already emits the `>f` row; echoing a `<f` row back
+    /// over MSG_INFO would make the client print BOTH, duplicating every
+    /// itemized line under `-ii`. (Daemon logfile logging is a separate path
+    /// and is unaffected.)
     ///
-    /// Upstream `generator.c:582-583` emits when ANY of four OR'd conditions
-    /// hold: significant flags set, `INFO_GTE(NAME, 2)`, `stdout_format_has_i
-    /// > 1`, or an alternate basis name follows. Mirror the same semantic so
-    /// unchanged entries (`iflags == 0`) still appear under `-vv` (the case
-    /// the upstream `itemize.test` testsuite exercises with `-ivvplrtH`).
+    /// The emit gate (which entries produce a line at all) mirrors upstream
+    /// `generator.c:582-583`: significant flags set, `INFO_GTE(NAME, 2)`, or
+    /// `ITEM_XNAME_FOLLOWS`. `stdout_format_has_i > 1` is not yet distinguished.
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:582-583` - emit gate: `(iflags & (SIGNIFICANT_ITEM_FLAGS
-    ///   | ITEM_REPORT_XATTR)) || INFO_GTE(NAME, 2) || stdout_format_has_i > 1
-    ///   || (xname && *xname)`
-    /// - `sender.c:287` - `maybe_log_item()` for non-transfer items
-    /// - `sender.c:430` - `log_item()` after file transfer
-    /// - `log.c:330-340` - `rwrite()`: when `am_server`, sends MSG_INFO;
-    ///   when `!am_server`, writes to stdout (FCLIENT)
-    pub(super) fn maybe_emit_itemize<W: Write>(
+    /// - `sender.c:211` - `itemizing = am_server ? logfile_format_has_i : stdout_format_has_i`
+    /// - `log.c:816` - `log_item()`: stdout itemize gated on `!am_server`
+    /// - `log.c:822-836` - `maybe_log_item()`: server routes itemize to FLOG only
+    /// - `generator.c:582-583` - emit gate
+    pub(super) fn maybe_emit_itemize(
         &self,
-        writer: &mut super::super::writer::ServerWriter<W>,
         iflags: &super::item_flags::ItemFlags,
         ndx: usize,
         itemize_cb: &mut Option<&mut dyn super::super::ItemizeCallback>,
     ) -> io::Result<()> {
         if !self.config.flags.info_flags.itemize {
+            return Ok(());
+        }
+        // upstream: sender.c:211 / log.c:816 - a server-sender never writes
+        // itemize to the client display channel; only the client (terminal
+        // owner) prints. Suppressing this here prevents the server-sender's
+        // `<f` row from duplicating the client receiver's `>f` row under `-ii`.
+        if !self.config.connection.client_mode {
             return Ok(());
         }
         // upstream: generator.c:582-583 - the gate is the OR of four
@@ -317,16 +324,11 @@ impl GeneratorContext {
         let ctx = self.itemize_context();
         // Generator role is always the sender side
         let line = super::itemize::format_itemize_line(iflags, entry, true, &ctx);
-
-        if self.config.connection.client_mode {
-            // upstream: log.c:330-340 - when !am_server, rwrite() sends to FCLIENT (stdout)
-            if let Some(cb) = itemize_cb.as_mut() {
-                cb.on_itemize(&line);
-            }
-            Ok(())
-        } else {
-            writer.send_message(protocol::MessageCode::Info, line.as_bytes())
+        // upstream: log.c:330-340 - when !am_server, rwrite() sends to FCLIENT (stdout)
+        if let Some(cb) = itemize_cb.as_mut() {
+            cb.on_itemize(&line);
         }
+        Ok(())
     }
 
     /// Sends the file list to the receiver.
