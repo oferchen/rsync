@@ -174,27 +174,10 @@ fn simulate_reference_match(
     let checksum = context.checksum_enabled();
     let metadata_options = context.metadata_options();
 
-    // An intra-transfer hard-link leader placed earlier this run takes
-    // precedence: the alias itemizes as `hf <path> => <leader>`.
-    if let Some(leader) = context.existing_hard_link_target(metadata) {
-        let leader_display = leader
-            .strip_prefix(context.destination_root())
-            .map(std::path::Path::to_path_buf)
-            .ok()
-            .filter(|relative| relative != record_path);
-        context.record_hard_link(metadata, destination);
-        context.summary_mut().record_hard_link();
-        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, leader_display);
-        record_match(
-            context,
-            record_path,
-            LocalCopyAction::HardLink,
-            &metadata_snapshot,
-        );
-        return Ok(true);
-    }
-
-    // --link-dest hardlink of a matching basis file.
+    // --link-dest hardlink of a matching basis file takes precedence, matching
+    // `process_links`. The alias links directly from the basis, so its itemize
+    // carries an empty xname (no `=> leader` trailer) and is suppressed at plain
+    // `-i`.
     if context
         .link_dest_target(
             record_path,
@@ -209,6 +192,26 @@ fn simulate_reference_match(
         context.record_hard_link(metadata, destination);
         context.summary_mut().record_hard_link();
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        record_match(
+            context,
+            record_path,
+            LocalCopyAction::HardLink,
+            &metadata_snapshot,
+        );
+        return Ok(true);
+    }
+
+    // An intra-transfer hard-link leader placed earlier this run: the alias
+    // itemizes as `hf <path> => <leader>` against the in-transfer leader.
+    if let Some(leader) = context.existing_hard_link_target(metadata) {
+        let leader_display = leader
+            .strip_prefix(context.destination_root())
+            .map(std::path::Path::to_path_buf)
+            .ok()
+            .filter(|relative| relative != record_path);
+        context.record_hard_link(metadata, destination);
+        context.summary_mut().record_hard_link();
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, leader_display);
         record_match(
             context,
             record_path,

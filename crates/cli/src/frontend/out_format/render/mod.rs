@@ -112,19 +112,18 @@ fn should_suppress_event(event: &ClientEvent, context: &OutFormatContext) -> boo
         return true;
     }
 
-    // upstream: hlink.c:215-227 + generator.c:581-583 - an already-correct
-    // hardlink alias is itemized via `itemize(..., ITEM_LOCAL_CHANGE |
-    // ITEM_XNAME_FOLLOWS, 0, "")` with an EMPTY xname. The generator only
-    // writes that row when a significant attribute flag is set, `INFO_GTE(NAME,
-    // 2)` (handled above via `emit_unchanged`), `stdout_format_has_i > 1`
-    // (`-ii`), or the xname is non-empty (a relink occurred). For an up-to-date
-    // alias with no attribute change, empty xname, and plain `-i`, all of those
-    // are false, so the row is suppressed. The shared inode means config1's
-    // perm fix already reached the alias, so itemizing `foo/extra` would
-    // over-report. Detect that case: a hardlink-uptodate record with an empty
-    // change-set and no `=> target` xname (None symlink target).
+    // upstream: hlink.c:215-227 + generator.c:581-583 - a hardlink alias is
+    // itemized via `itemize(..., ITEM_LOCAL_CHANGE | ITEM_XNAME_FOLLOWS, 0,
+    // xname)`. The generator only writes the row when a significant attribute
+    // flag is set, `INFO_GTE(NAME, 2)` (handled above via `emit_unchanged`),
+    // `stdout_format_has_i > 1` (`-ii`), or the xname is non-empty (a `=> leader`
+    // trailer). A hardlink alias with no attribute change and an empty xname is
+    // therefore suppressed at plain `-i`, whether it is an already-shared inode
+    // (`is_hardlink_uptodate`) or a fresh link from a `--link-dest` basis. The
+    // `=> leader` case (in-transfer cluster) carries a non-None symlink_target
+    // and is preserved; a hard-linked symlink's `-> target` is handled by the
+    // earlier Symlink rule.
     matches!(event.kind(), ClientEventKind::HardLink)
-        && event.is_hardlink_uptodate()
         && !event.was_created()
         && !event.change_set().has_any_change()
         && event
