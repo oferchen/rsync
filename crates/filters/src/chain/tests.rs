@@ -506,6 +506,100 @@ fn dir_merge_inline_colon_c_missing_cvsignore_is_noop() {
     chain.leave_directory(guard);
 }
 
+/// A leading-`/` rule read from a per-directory merge file is anchored at
+/// the merge file's own directory, not the transfer root. With the
+/// transfer root recorded, `- /file1` inside `<root>/foo/.filt` must match
+/// `foo/file1` and leave a top-level `file1` untouched.
+///
+/// upstream: exclude.c:200-228 add_rule under XFLG_ANCHORED2ABS prepends
+/// the merge directory (relative to the module root) to a leading-`/`
+/// pattern. oc-rsync expresses root anchoring as a leading `/`, so the
+/// rewrite is `/file1` -> `/foo/file1`.
+#[test]
+fn dir_merge_leading_slash_rule_reanchors_to_merge_dir() {
+    let root = TempDir::new().unwrap();
+    fs::create_dir(root.path().join("foo")).unwrap();
+    fs::write(root.path().join("foo/.filt"), "- /file1\n").unwrap();
+
+    let mut chain = FilterChain::empty();
+    chain.add_merge_config(DirMergeConfig::new(".filt"));
+    chain.set_transfer_root(root.path());
+
+    let root_guard = chain.enter_directory(root.path()).unwrap();
+    let foo_guard = chain.enter_directory(&root.path().join("foo")).unwrap();
+    assert_eq!(
+        foo_guard.pushed_count(),
+        1,
+        "expected `foo/.filt` scope push"
+    );
+
+    // `- /file1` from `foo/.filt` re-anchors to `/foo/file1`.
+    assert!(
+        !chain.allows(Path::new("foo/file1"), false),
+        "re-anchored rule must exclude foo/file1"
+    );
+    // A top-level `file1` is at the module root, not below `foo`, so the
+    // re-anchored rule must not touch it.
+    assert!(
+        chain.allows(Path::new("file1"), false),
+        "re-anchored rule must not exclude top-level file1"
+    );
+
+    chain.leave_directory(foo_guard);
+    chain.leave_directory(root_guard);
+}
+
+/// A `dir-merge` directive parsed from inside a per-directory merge file
+/// becomes a persistent per-directory config that is re-read in every
+/// descendant directory, not a one-shot read of the declaring directory.
+/// Sibling subtrees each load their own copy of the named file.
+///
+/// upstream: exclude.c:294 appends a `dir-merge` parsed from a merge file
+/// to the global `mergelist_parents`, so `push_local_filters()` re-reads
+/// it at every directory below the declaration.
+#[test]
+fn dir_merge_nested_directive_inherits_into_every_descendant() {
+    let root = TempDir::new().unwrap();
+    fs::create_dir_all(root.path().join("bar/d1")).unwrap();
+    fs::create_dir_all(root.path().join("bar/d2")).unwrap();
+    fs::write(root.path().join("bar/.filt"), "dir-merge .filt2\n").unwrap();
+    fs::write(root.path().join("bar/d1/.filt2"), "- a.deep\n").unwrap();
+    fs::write(root.path().join("bar/d2/.filt2"), "- b.deep\n").unwrap();
+
+    let mut chain = FilterChain::empty();
+    chain.add_merge_config(DirMergeConfig::new(".filt"));
+    chain.set_transfer_root(root.path());
+
+    let root_guard = chain.enter_directory(root.path()).unwrap();
+    // Reading `bar/.filt` registers the nested `dir-merge .filt2`.
+    let bar_guard = chain.enter_directory(&root.path().join("bar")).unwrap();
+
+    // First descendant re-reads its own `.filt2`.
+    let d1_guard = chain.enter_directory(&root.path().join("bar/d1")).unwrap();
+    assert!(
+        !chain.allows(Path::new("bar/d1/a.deep"), false),
+        "bar/d1/.filt2 must exclude a.deep"
+    );
+    assert!(
+        chain.allows(Path::new("bar/d1/b.deep"), false),
+        "b.deep is only named in the sibling d2/.filt2"
+    );
+    chain.leave_directory(d1_guard);
+
+    // Sibling descendant re-reads its own `.filt2`; without persistent
+    // registration the nested dir-merge would have been one-shot at `bar`
+    // and this exclusion would never fire.
+    let d2_guard = chain.enter_directory(&root.path().join("bar/d2")).unwrap();
+    assert!(
+        !chain.allows(Path::new("bar/d2/b.deep"), false),
+        "bar/d2/.filt2 must be re-read and exclude b.deep"
+    );
+    chain.leave_directory(d2_guard);
+
+    chain.leave_directory(bar_guard);
+    chain.leave_directory(root_guard);
+}
+
 /// An inner scope's anchored exclude (`- /foo`) synthesizes a
 /// `foo/**` descendant matcher in the compiled rule. When the outer
 /// scope's `- down` rule is the only rule that *actually* applies to

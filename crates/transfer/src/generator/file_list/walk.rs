@@ -75,6 +75,11 @@ impl GeneratorContext {
         path: &Path,
         emitted_dirs: Option<&HashSet<PathBuf>>,
     ) -> io::Result<bool> {
+        // Record the transfer root so per-directory merge files re-anchor their
+        // leading-`/` rules to the merge file's own directory (upstream
+        // exclude.c add_rule XFLG_ANCHORED2ABS). Idempotent across source
+        // entries; `base` is the same root for the whole walk.
+        self.filter_chain.set_transfer_root(base.to_path_buf());
         // upstream: flist.c:2390 - link_stat() once, then pass &st to
         // send_file_name(). Reuse the metadata to avoid a redundant stat
         // inside walk_path_with_metadata.

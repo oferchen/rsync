@@ -37,7 +37,7 @@ mod tests;
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use crate::merge::parse::{parse_rules, parse_rules_no_prefixes};
 use crate::{FilterAction, FilterRule, FilterSet};
@@ -91,6 +91,17 @@ pub struct FilterChain {
     /// parsed rule under --delete-excluded except the merge/dir-merge wrappers
     /// themselves.
     delete_excluded: bool,
+    /// Transfer-root directory used to re-anchor leading-`/` rules read from a
+    /// per-directory merge file to the merge file's own directory.
+    ///
+    /// upstream: exclude.c:200-228 add_rule - under `XFLG_ANCHORED2ABS` a
+    /// leading-`/` rule in a per-dir merge file is rewritten so its pattern is
+    /// prefixed with the merge file's directory (relative to the module root).
+    /// `/file1` read from `foo/.filt` therefore matches `foo/file1`, not a
+    /// top-level `file1`. When `None`, no re-anchoring is performed (preserving
+    /// the behaviour of callers that pass merge directories already relative to
+    /// the transfer root, e.g. unit tests).
+    transfer_root: Option<PathBuf>,
 }
 
 impl FilterChain {
@@ -106,6 +117,7 @@ impl FilterChain {
             scopes: Vec::new(),
             current_depth: 0,
             delete_excluded: false,
+            transfer_root: None,
         }
     }
 
@@ -141,6 +153,33 @@ impl FilterChain {
     #[must_use]
     pub const fn delete_excluded(&self) -> bool {
         self.delete_excluded
+    }
+
+    /// Records the transfer-root directory so that leading-`/` rules read from
+    /// per-directory merge files are re-anchored to the merge file's directory.
+    ///
+    /// Callers walking a tree (e.g. the sender generator) pass the same base
+    /// directory they strip from each path before calling
+    /// [`allows`](Self::allows). With the root set, a `- /file1` rule inside
+    /// `<root>/foo/.filt` is rewritten to match `foo/file1`, mirroring upstream
+    /// rsync's `XFLG_ANCHORED2ABS` handling in `exclude.c:add_rule`.
+    pub fn set_transfer_root(&mut self, root: impl Into<PathBuf>) {
+        self.transfer_root = Some(root.into());
+    }
+
+    /// Returns the directory of a per-dir merge file relative to the transfer
+    /// root, as a forward-slash string, or `None` when re-anchoring is not in
+    /// effect (no root set, the path is the root itself, or it is not below the
+    /// root). The returned prefix never has leading or trailing slashes.
+    fn merge_rel_dir(&self, directory: &Path) -> Option<String> {
+        let root = self.transfer_root.as_ref()?;
+        let rel = directory.strip_prefix(root).ok()?;
+        let joined = path_to_forward_slash(rel);
+        if joined.is_empty() {
+            None
+        } else {
+            Some(joined)
+        }
     }
 
     /// Returns `true` if the path should be included in the transfer.
@@ -244,6 +283,12 @@ impl FilterChain {
         let depth = self.current_depth;
         let mut pushed_count = 0;
 
+        // upstream: exclude.c:200-228 - leading-`/` rules in a per-dir merge
+        // file are re-anchored to the merge file's directory (relative to the
+        // module root). Compute that directory once for every merge file read
+        // in this directory.
+        let rel_dir_prefix = self.merge_rel_dir(directory);
+
         for config_index in 0..self.merge_configs.len() {
             let config = &self.merge_configs[config_index];
             let merge_path = directory.join(config.filename());
@@ -317,6 +362,7 @@ impl FilterChain {
             let mut modified_rules: Vec<FilterRule> = rules
                 .into_iter()
                 .map(|rule| config.apply_modifiers(rule))
+                .map(|rule| reanchor_merge_rule(rule, rel_dir_prefix.as_deref()))
                 .map(|rule| apply_merge_implicit_sender_side(rule, delete_excluded))
                 .collect();
 
@@ -349,6 +395,27 @@ impl FilterChain {
             // carries the modifier flags (cvs_mode, no_inherit) that decide
             // how to parse the file and whether descendant scopes inherit.
             for descriptor in dir_merge_descriptors {
+                // upstream: exclude.c:294 - a `dir-merge` directive parsed from
+                // inside a merge file is appended to the global
+                // `mergelist_parents`, so `push_local_filters()` re-reads it in
+                // every descendant directory. An inheriting dir-merge must
+                // therefore become a persistent per-directory config, not just
+                // a one-shot read of the current directory. Non-inheriting
+                // (`:C`, no-inherit) variants stay one-shot to avoid leaking
+                // into sibling subtrees. Dedupe by filename like upstream's
+                // "already mentioned" guard (exclude.c:262-279).
+                if !descriptor.no_inherit
+                    && !self
+                        .merge_configs
+                        .iter()
+                        .any(|c| c.filename() == descriptor.filename)
+                {
+                    self.merge_configs.push(
+                        DirMergeConfig::new(descriptor.filename.clone())
+                            .with_cvs_mode(descriptor.cvs_mode)
+                            .with_inherit(true),
+                    );
+                }
                 pushed_count += self.load_inline_dir_merge(directory, depth, &descriptor)?;
             }
         }
@@ -571,6 +638,38 @@ struct InlineDirMerge {
 /// upstream: exclude.c:1419-1428 - `FILTRULE_PERDIR_MERGE` inside
 /// `parse_filter_str()` adds a new per-dir rule rather than expanding the
 /// file at parse time.
+/// Joins a relative path's normal components with `/`, ignoring any leading
+/// `./`, `..`, or root components. Produces the module-root-relative directory
+/// string used to re-anchor merge-file rules.
+fn path_to_forward_slash(path: &Path) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for component in path.components() {
+        if let Component::Normal(part) = component {
+            if let Some(s) = part.to_str() {
+                parts.push(s);
+            }
+        }
+    }
+    parts.join("/")
+}
+
+/// Re-anchors a single rule read from a per-directory merge file.
+///
+/// upstream: exclude.c:200-228 add_rule - under `XFLG_ANCHORED2ABS`, a rule
+/// whose pattern begins with `/` is rewritten to be anchored at the merge
+/// file's directory rather than the module root. oc-rsync expresses root
+/// anchoring as a leading `/` in the pattern, so `/file1` from merge directory
+/// `foo` becomes `/foo/file1`. Rules without a leading `/` (and the root merge
+/// file, where `rel_dir` is `None`) are returned unchanged.
+fn reanchor_merge_rule(mut rule: FilterRule, rel_dir: Option<&str>) -> FilterRule {
+    if let Some(dir) = rel_dir {
+        if let Some(rest) = rule.pattern.strip_prefix('/') {
+            rule.pattern = format!("/{dir}/{rest}");
+        }
+    }
+    rule
+}
+
 fn split_dir_merge_rules(rules: Vec<FilterRule>) -> (Vec<FilterRule>, Vec<InlineDirMerge>) {
     let mut keep = Vec::with_capacity(rules.len());
     let mut dir_merges = Vec::new();
