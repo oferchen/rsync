@@ -279,6 +279,18 @@ impl ClientEvent {
         }
     }
 
+    /// Marks the event as an up-to-date hardlink alias for testing purposes.
+    ///
+    /// Mirrors the `with_hardlink_uptodate(true)` flag set by the local-copy
+    /// engine for an already-correct hardlink alias, so renderer tests can
+    /// exercise the suppression gate without running a transfer.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_hardlink_uptodate_for_test(mut self) -> Self {
+        self.hardlink_uptodate = true;
+        self
+    }
+
     /// Constructs a [`ClientEntryMetadata`] for testing purposes.
     #[doc(hidden)]
     pub fn test_metadata(kind: ClientEntryKind) -> ClientEntryMetadata {

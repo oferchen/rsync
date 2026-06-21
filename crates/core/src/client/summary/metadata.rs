@@ -104,6 +104,17 @@ impl ClientEntryMetadata {
         }
     }
 
+    /// Attaches a symlink/xname target for testing purposes.
+    ///
+    /// Used by renderer tests to model a relinked hardlink alias, whose `%L`
+    /// placeholder renders ` => target`.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_symlink_target_for_test(mut self, target: &str) -> Self {
+        self.symlink_target = Some(std::path::PathBuf::from(target));
+        self
+    }
+
     /// Returns the kind of entry represented by this metadata snapshot.
     #[must_use]
     pub const fn kind(&self) -> ClientEntryKind {
