@@ -15,6 +15,7 @@ mod entry;
 
 use std::cell::Cell;
 use std::fs;
+use std::io;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -33,6 +34,22 @@ use entry::process_planned_entry;
 
 use super::planner::{apply_pre_transfer_deletions, plan_directory_entries};
 use super::support::read_directory_entries_sorted_reuse;
+
+/// Maximum directory nesting depth the recursive executor descends before
+/// returning an error instead of risking a thread stack overflow.
+///
+/// `copy_directory_recursive_inner` recurses once per directory level with a
+/// large per-frame footprint (per-entry closures, the directory plan, metadata
+/// snapshots). The safe ceiling is governed by the thread stack size: Windows
+/// threads default to 1 MB, which a sufficiently deep tree overflows in debug
+/// builds, while Unix threads default to 8 MB. The caps stay far above any
+/// realistic directory tree while bounding the worst case below each platform's
+/// overflow threshold, mirroring upstream rsync rejecting paths beyond
+/// `MAXPATHLEN` (util1.c) rather than recursing unboundedly.
+#[cfg(windows)]
+const MAX_DIRECTORY_DEPTH: usize = 100;
+#[cfg(not(windows))]
+const MAX_DIRECTORY_DEPTH: usize = 1000;
 
 /// Recursively copies a directory and its contents from source to destination.
 ///
@@ -98,6 +115,25 @@ fn copy_directory_recursive_inner(
     root_device: Option<u64>,
     force_walk_one_level: bool,
 ) -> Result<bool, LocalCopyError> {
+    // Bound recursion depth before allocating this frame's locals or recursing
+    // further. The planner builds each child entry's `relative` as the parent's
+    // relative path plus the child name, so the component count of `relative`
+    // equals the current directory depth - no separate counter need be threaded
+    // through the call chain. A too-deep tree returns a typed I/O error
+    // (ENAMETOOLONG-equivalent, exit 23 RERR_PARTIAL) which the per-entry loop
+    // records and continues past, mirroring upstream rsync's handling of paths
+    // that exceed `MAXPATHLEN`, instead of overflowing the thread stack.
+    if relative.map_or(0, |rel| rel.components().count()) > MAX_DIRECTORY_DEPTH {
+        return Err(LocalCopyError::io(
+            "recurse into directory exceeding the nesting limit",
+            destination,
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("directory nesting exceeds {MAX_DIRECTORY_DEPTH} levels"),
+            ),
+        ));
+    }
+
     #[cfg(any(
         all(unix, any(feature = "acl", feature = "xattr")),
         all(windows, feature = "acl")
