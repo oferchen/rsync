@@ -191,7 +191,19 @@ impl<'a> CopyContext<'a> {
 
             if rule.options().excludes_self() {
                 let pattern = rule.pattern().to_string_lossy().into_owned();
-                if let Err(error) = segment.push_rule(FilterRule::exclude(pattern)) {
+                // The merge file hides itself; that synthetic exclude must
+                // inherit the merge file's side (a `:s` merge -> sender-side)
+                // so on the delete pass it elides like every other rule loaded
+                // from that file instead of protecting the dest extra. Mirror
+                // apply_dir_merge_rule_defaults (dir_merge/load.rs).
+                let mut self_rule = FilterRule::exclude(pattern);
+                if let Some(sender) = rule.options().sender_side_override() {
+                    self_rule = self_rule.with_sender(sender);
+                }
+                if let Some(receiver) = rule.options().receiver_side_override() {
+                    self_rule = self_rule.with_receiver(receiver);
+                }
+                if let Err(error) = segment.push_rule(self_rule) {
                     ephemeral_stack.pop();
                     marker_ephemeral_stack.pop();
                     return Err(filter_program_local_error(&candidate, &error));

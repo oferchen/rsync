@@ -102,6 +102,39 @@ pub(crate) fn apply_dir_merge_rule_defaults(
     rule
 }
 
+/// Propagates the enclosing merge file's sender/receiver side onto a nested
+/// `dir-merge` directive that did not declare its own side.
+///
+/// # Upstream Reference
+///
+/// `exclude.c:1293-1303 parse_rule_tok`:
+///
+/// ```c
+/// if (template->rflags & FILTRULES_SIDES) {
+///     if (rule->rflags & FILTRULES_SIDES) { ... reject ... }
+///     rule->rflags |= template->rflags & FILTRULES_SIDES;
+/// }
+/// ```
+///
+/// Every rule read from a side-specified merge file (`:s`/`:r`) inherits that
+/// side, including a nested `dir-merge` directive. The nested merge then
+/// becomes the template for its own file, so the side propagates transitively.
+/// Without this, rules expanded from a `:s`-inherited `dir-merge` keep
+/// `applies_to_receiver = true` and wrongly protect destination extras from
+/// the receiver's deletion pass.
+fn inherit_enclosing_side(enclosing: &DirMergeOptions, child: DirMergeOptions) -> DirMergeOptions {
+    if child.sender_side_override().is_some() || child.receiver_side_override().is_some() {
+        return child;
+    }
+    match (
+        enclosing.sender_side_override(),
+        enclosing.receiver_side_override(),
+    ) {
+        (None, None) => child,
+        (sender, receiver) => child.with_side_overrides(sender, receiver),
+    }
+}
+
 /// Nested per-directory merge declaration encountered while loading another
 /// filter file.
 ///
@@ -323,9 +356,11 @@ pub(crate) fn load_dir_merge_rules_recursive(
                         // upstream: exclude.c:1419-1428 - register the merge
                         // filename for lookup in each subdirectory; do NOT
                         // load anything from the enclosing file's directory.
+                        // exclude.c:1293-1303 - inherit the enclosing file's
+                        // side so a `:s`-loaded `dir-merge` carries sender-side.
                         entries.push_nested_dir_merge(NestedDirMerge {
                             pattern,
-                            options: merge_options,
+                            options: inherit_enclosing_side(options, merge_options),
                         });
                     }
                     Ok(None) => {}
@@ -419,9 +454,11 @@ pub(crate) fn load_dir_merge_rules_recursive(
                         // upstream: exclude.c:1419-1428 - register the merge
                         // filename for lookup in each subdirectory; do NOT
                         // load anything from the enclosing file's directory.
+                        // exclude.c:1293-1303 - inherit the enclosing file's
+                        // side so a `:s`-loaded `dir-merge` carries sender-side.
                         entries.push_nested_dir_merge(NestedDirMerge {
                             pattern,
-                            options: merge_options,
+                            options: inherit_enclosing_side(options, merge_options),
                         });
                     }
                     Ok(Some(ParsedFilterDirective::Clear)) => {
@@ -488,6 +525,38 @@ mod tests {
         let pattern = Path::new(".");
         let result = resolve_dir_merge_path(base, pattern);
         assert_eq!(result, PathBuf::from("/base/."));
+    }
+
+    #[test]
+    fn nested_dir_merge_inherits_sender_side_from_enclosing() {
+        // upstream exclude.c:1293-1303 - a `dir-merge` directive read from a
+        // `:s` merge file inherits sender-side, so its rules elide at the
+        // receiver delete pass and the excluded dest files become extraneous.
+        let enclosing = DirMergeOptions::default().sender_modifier();
+        let child = DirMergeOptions::default();
+        let inherited = inherit_enclosing_side(&enclosing, child);
+        assert_eq!(inherited.sender_side_override(), Some(true));
+        assert_eq!(inherited.receiver_side_override(), Some(false));
+    }
+
+    #[test]
+    fn nested_dir_merge_keeps_its_own_side_over_enclosing() {
+        // A nested directive that declares its own side is not overridden by
+        // the enclosing merge file's side.
+        let enclosing = DirMergeOptions::default().sender_modifier();
+        let child = DirMergeOptions::default().receiver_modifier();
+        let inherited = inherit_enclosing_side(&enclosing, child);
+        assert_eq!(inherited.sender_side_override(), Some(false));
+        assert_eq!(inherited.receiver_side_override(), Some(true));
+    }
+
+    #[test]
+    fn nested_dir_merge_no_inheritance_when_enclosing_is_sideless() {
+        let enclosing = DirMergeOptions::default();
+        let child = DirMergeOptions::default();
+        let inherited = inherit_enclosing_side(&enclosing, child);
+        assert_eq!(inherited.sender_side_override(), None);
+        assert_eq!(inherited.receiver_side_override(), None);
     }
 
     #[test]

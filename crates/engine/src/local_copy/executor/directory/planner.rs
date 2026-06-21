@@ -110,9 +110,18 @@ fn decide_entry_action(
             return Ok(EntryAction::CopyDirectory);
         }
 
-        if context.options().delete_excluded_enabled() {
-            *keep_name = false;
-        }
+        // A source-excluded entry is absent from upstream's file list
+        // (make_file returns NULL on a match, flist.c:1360), so it can never
+        // shield a same-named destination entry from deletion via the keep
+        // set. Drop it from the keep set unconditionally; whether the dest
+        // entry actually deletes is decided independently by allows_deletion
+        // (the receiver-active filter evaluated against the destination, i.e.
+        // delete_in_dir's flist-absence test, generator.c:340). This keeps the
+        // two upstream gates separate: flist presence vs receiver-side filter.
+        // A sender-side-only rule (e.g. `hide`) elides on the delete side, so
+        // such an entry becomes deletable; a sideless/receiver-active rule
+        // (e.g. `- *.deep`) still protects the dest entry through allows_deletion.
+        *keep_name = false;
         return Ok(EntryAction::SkipExcluded);
     }
 
