@@ -316,6 +316,11 @@ mod tests {
         assert_eq!(result, PathBuf::from("/dest/backup"));
     }
 
+    // POSIX-absolute path: `/ref/../other` is only absolute on Unix. On Windows
+    // it lacks a drive letter, so `is_absolute()` is false and the relative
+    // branch lexically normalizes away the `..`. Gate to Unix where the absolute
+    // branch is exercised; real Windows paths (`C:\...`) hit the same branch.
+    #[cfg(unix)]
     #[test]
     fn resolve_dotdot_in_base() {
         let base = Path::new("/ref/../other");
