@@ -18,7 +18,10 @@ pub(crate) enum ReferenceDecision {
 /// Computes the full path for a reference directory candidate.
 ///
 /// Absolute bases are joined directly; relative bases are resolved from
-/// the destination ancestor at the same depth as `relative`.
+/// the destination ancestor at the same depth as `relative`. The result is
+/// lexically normalized (collapsing `..`/`.`) so the candidate resolves even
+/// when an intermediate directory (e.g. a not-yet-created dry-run destination)
+/// does not exist on disk.
 pub(crate) fn resolve_reference_candidate(
     base: &Path,
     relative: &Path,
@@ -34,8 +37,34 @@ pub(crate) fn resolve_reference_candidate(
                 break;
             }
         }
-        ancestor.join(base).join(relative)
+        lexically_normalize(&ancestor.join(base).join(relative))
     }
+}
+
+/// Collapses `.` and `..` components purely lexically, without touching the
+/// filesystem. A leading `..` that cannot be cancelled is preserved so the
+/// path stays valid relative to its anchor.
+fn lexically_normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut normalized: Vec<Component<'_>> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match normalized.last() {
+                Some(Component::Normal(_)) => {
+                    normalized.pop();
+                }
+                Some(Component::RootDir) => {}
+                _ => normalized.push(component),
+            },
+            other => normalized.push(other),
+        }
+    }
+    if normalized.is_empty() {
+        return PathBuf::from(".");
+    }
+    normalized.iter().collect()
 }
 
 /// Parameters for finding a matching file in reference directories.
@@ -232,9 +261,9 @@ mod tests {
         let destination = Path::new("/home/user/dest");
         let result = resolve_reference_candidate(base, relative, destination);
         // destination "/home/user/dest" -> pop 1 level (for relative depth 1) -> "/home/user"
-        // then join "../backup" -> "/home/backup"
+        // then join "../backup" -> "/home/user/../backup" -> normalized "/home/backup"
         // then join "file.txt" -> "/home/backup/file.txt"
-        assert_eq!(result, PathBuf::from("/home/user/../backup/file.txt"));
+        assert_eq!(result, PathBuf::from("/home/backup/file.txt"));
     }
 
     #[test]
