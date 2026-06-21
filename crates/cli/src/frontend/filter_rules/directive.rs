@@ -11,6 +11,12 @@ pub(crate) enum FilterDirective {
     Merge(MergeDirective),
     /// Clears all existing filter rules.
     Clear,
+    /// The `-C` cvs-convenience rule: expands to the global CVS default
+    /// excludes (built-in list + `$HOME/.cvsignore` + `$CVSIGNORE`).
+    ///
+    /// upstream: exclude.c:1441-1443 get_cvs_excludes() on a non-merge
+    /// FILTRULE_CVS_IGNORE rule.
+    CvsDefaults,
 }
 
 /// Describes a filter merge directive including its source and options.

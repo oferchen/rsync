@@ -162,6 +162,10 @@ fn parse_rule_directive(text: &str) -> Result<FilterDirective, Message> {
         return Ok(FilterDirective::Clear);
     }
 
+    if is_cvs_convenience_rule(trimmed) {
+        return Ok(FilterDirective::CvsDefaults);
+    }
+
     if let Some(result) = parse_shorthand_rules(trimmed) {
         return result;
     }
@@ -183,6 +187,30 @@ fn parse_rule_directive(text: &str) -> Result<FilterDirective, Message> {
     }
 
     parse_keyword_rule(trimmed)
+}
+
+/// Detects the cvs-convenience filter rule (`-C` or `+C`, with an optional
+/// comma between the action and the modifier). Such a rule carries only the
+/// `C` (cvs-ignore) modifier and no pattern; upstream expands it into the
+/// global CVS default excludes rather than treating it as a literal pattern.
+///
+/// The per-directory `:C` / `.C` merge forms are handled earlier by the
+/// merge-directive parser, so they never reach this check.
+///
+/// upstream: exclude.c:1441-1443 - a FILTRULE_CVS_IGNORE rule that is not a
+/// merge triggers get_cvs_excludes().
+fn is_cvs_convenience_rule(trimmed: &str) -> bool {
+    let body = match trimmed
+        .strip_prefix('-')
+        .or_else(|| trimmed.strip_prefix('+'))
+    {
+        Some(rest) => rest,
+        None => return false,
+    };
+    let body = body.strip_prefix(',').unwrap_or(body);
+    // upstream: exclude.c:1252 the cvs-ignore modifier is uppercase `C`; a
+    // lowercase `c` is rejected as an invalid modifier, so match exactly.
+    body == "C"
 }
 
 fn parse_shorthand_rules(trimmed: &str) -> Option<Result<FilterDirective, Message>> {
@@ -934,5 +962,58 @@ mod tests {
         // when no pattern follows the prefix.
         assert!(parse_old_prefix_rule("- ", FilterRuleKind::Include).is_err());
         assert!(parse_old_prefix_rule("+ ", FilterRuleKind::Exclude).is_err());
+    }
+
+    #[test]
+    fn is_cvs_convenience_rule_detects_exclude_and_include_forms() {
+        // upstream: exclude.c:1252 - the `C` (cvs-ignore) modifier is valid on
+        // both `-` and `+` rule chars, with an optional comma separator.
+        assert!(is_cvs_convenience_rule("-C"));
+        assert!(is_cvs_convenience_rule("+C"));
+        assert!(is_cvs_convenience_rule("-,C"));
+        assert!(is_cvs_convenience_rule("+,C"));
+    }
+
+    #[test]
+    fn is_cvs_convenience_rule_rejects_non_cvs_forms() {
+        // A lowercase `c` is an invalid modifier upstream, and a space or any
+        // trailing pattern means this is an ordinary exclude/include rule.
+        assert!(!is_cvs_convenience_rule("-c"));
+        assert!(!is_cvs_convenience_rule("- C"));
+        assert!(!is_cvs_convenience_rule("-Cp"));
+        assert!(!is_cvs_convenience_rule("-foo"));
+        assert!(!is_cvs_convenience_rule("C"));
+        assert!(!is_cvs_convenience_rule(":C"));
+    }
+
+    #[test]
+    fn parse_cvs_convenience_rule_emits_cvs_defaults() {
+        // `-C` / `+C` as a filter rule expand to the global CVS default
+        // excludes rather than a literal pattern "C".
+        assert_eq!(
+            parse_filter_directive(OsStr::new("-C")).unwrap(),
+            FilterDirective::CvsDefaults
+        );
+        assert_eq!(
+            parse_filter_directive(OsStr::new("+C")).unwrap(),
+            FilterDirective::CvsDefaults
+        );
+        assert_eq!(
+            parse_filter_directive(OsStr::new("-,C")).unwrap(),
+            FilterDirective::CvsDefaults
+        );
+    }
+
+    #[test]
+    fn parse_literal_dash_pattern_is_not_cvs() {
+        // `- C` (with a space) is an ordinary exclude of the pattern "C", not
+        // the cvs-convenience rule.
+        match parse_filter_directive(OsStr::new("- C")).unwrap() {
+            FilterDirective::Rule(spec) => {
+                assert_eq!(spec.kind(), FilterRuleKind::Exclude);
+                assert_eq!(spec.pattern(), "C");
+            }
+            other => panic!("expected exclude Rule, got {other:?}"),
+        }
     }
 }

@@ -12,6 +12,31 @@ use crate::frontend::defaults::CVS_EXCLUDE_PATTERNS;
 pub(crate) fn append_cvs_exclude_rules(
     destination: &mut Vec<FilterRuleSpec>,
 ) -> Result<(), Message> {
+    let mut cvs_rules = cvs_default_exclude_rules()?;
+
+    let options = DirMergeOptions::default()
+        .with_enforced_kind(Some(DirMergeEnforcedKind::Exclude))
+        .use_whitespace()
+        .allow_comments(false)
+        .inherit(false)
+        .allow_list_clearing(true);
+    cvs_rules.push(FilterRuleSpec::dir_merge(".cvsignore".to_owned(), options));
+
+    destination.extend(cvs_rules);
+    Ok(())
+}
+
+/// Builds the global CVS default exclude rules: the built-in pattern list,
+/// `$HOME/.cvsignore`, and the `$CVSIGNORE` environment variable, in that
+/// order. Unlike [`append_cvs_exclude_rules`], this does NOT add the
+/// per-directory `.cvsignore` dir-merge - that layer is contributed
+/// separately by a `:C` filter rule.
+///
+/// upstream: exclude.c:1340 get_cvs_excludes() - the `-C` convenience filter
+/// rule (FILTRULE_CVS_IGNORE without a merge flag) populates the global cvs
+/// list from these three sources only; the per-directory merge is the
+/// separate `:C` rule.
+pub(crate) fn cvs_default_exclude_rules() -> Result<Vec<FilterRuleSpec>, Message> {
     let mut cvs_rules: Vec<FilterRuleSpec> = CVS_EXCLUDE_PATTERNS
         .iter()
         .map(|pattern| FilterRuleSpec::exclude((*pattern).to_owned()).with_perishable(true))
@@ -48,16 +73,7 @@ pub(crate) fn append_cvs_exclude_rules(
         cvs_rules.extend(local);
     }
 
-    let options = DirMergeOptions::default()
-        .with_enforced_kind(Some(DirMergeEnforcedKind::Exclude))
-        .use_whitespace()
-        .allow_comments(false)
-        .inherit(false)
-        .allow_list_clearing(true);
-    cvs_rules.push(FilterRuleSpec::dir_merge(".cvsignore".to_owned(), options));
-
-    destination.extend(cvs_rules);
-    Ok(())
+    Ok(cvs_rules)
 }
 
 fn append_cvsignore_tokens<'a, I>(destination: &mut Vec<FilterRuleSpec>, tokens: I)
