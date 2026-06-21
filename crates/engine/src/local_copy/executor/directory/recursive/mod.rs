@@ -124,8 +124,13 @@ fn copy_directory_recursive_inner(
 
     let destination_state = check_destination_state(context, destination, relative)?;
     let destination_missing = destination_state.is_missing();
-    let existing_destination_metadata: Option<fs::Metadata> =
-        destination_state.existing_metadata().cloned();
+    // Box the owned metadata so it lives on the heap, not on this stack frame.
+    // `copy_directory_recursive_inner` recurses once per directory level; an
+    // inline `fs::Metadata` (~80 bytes on Windows) multiplied across a deep
+    // tree overflows Windows's 1 MB default thread stack. The boxed pointer is
+    // 8 bytes per frame instead.
+    let existing_destination_metadata: Option<Box<fs::Metadata>> =
+        destination_state.existing_metadata().cloned().map(Box::new);
 
     // upstream: generator.c:1469-1483 - when a directory is freshly created in
     // the destination but present in a `--copy-dest` basis, the generator
@@ -136,11 +141,13 @@ fn copy_directory_recursive_inner(
     // record will be emitted (`destination_missing` for children, the root's
     // just-created marker for the root).
     let root_just_created = relative.is_none() && context.summary().destination_root_created();
-    let copy_dest_basis: Option<fs::Metadata> = if destination_missing || root_just_created {
+    // Boxed for the same reason as `existing_destination_metadata` above: keep
+    // the owned `fs::Metadata` off the per-directory recursion frame.
+    let copy_dest_basis: Option<Box<fs::Metadata>> = if destination_missing || root_just_created {
         // The transfer root has `relative == None`; use an empty path so the
         // basis lookup resolves the copy-dest directory itself.
         let lookup_relative = relative.unwrap_or_else(|| Path::new(""));
-        super::super::find_copy_dest_basis(context, destination, lookup_relative)?
+        super::super::find_copy_dest_basis(context, destination, lookup_relative)?.map(Box::new)
     } else {
         None
     };
@@ -227,7 +234,7 @@ fn copy_directory_recursive_inner(
         );
         // upstream: generator.c:1480-1482 - a copy-dest match itemizes the
         // directory against the basis (ITEM_LOCAL_CHANGE, no ITEM_IS_NEW).
-        let record = if let Some(basis_meta) = copy_dest_basis.as_ref() {
+        let record = if let Some(basis_meta) = copy_dest_basis.as_deref() {
             record.with_change_set(LocalCopyChangeSet::for_existing_directory(
                 metadata,
                 basis_meta,
@@ -259,7 +266,7 @@ fn copy_directory_recursive_inner(
     // them as `.d` rows.
     if !record_emitted
         && let Some((ref rel_path, ref snapshot)) = metadata_record
-        && let Some(existing_meta) = existing_destination_metadata.as_ref()
+        && let Some(existing_meta) = existing_destination_metadata.as_deref()
     {
         // upstream: generator.c:557-571 - ACL/xattr drift is computed by
         // `set_acl(NULL, ...)` and `xattr_diff(...)`, both of which compare
@@ -334,7 +341,7 @@ fn copy_directory_recursive_inner(
             );
             // upstream: generator.c:1480-1482 - a copy-dest match itemizes the
             // directory against the basis (ITEM_LOCAL_CHANGE, no ITEM_IS_NEW).
-            let record = if let Some(basis_meta) = copy_dest_basis.as_ref() {
+            let record = if let Some(basis_meta) = copy_dest_basis.as_deref() {
                 record.with_change_set(LocalCopyChangeSet::for_existing_directory(
                     metadata,
                     basis_meta,
