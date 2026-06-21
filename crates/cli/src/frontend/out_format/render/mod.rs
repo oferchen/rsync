@@ -74,6 +74,29 @@ fn should_suppress_event(event: &ClientEvent, context: &OutFormatContext) -> boo
         return true;
     }
 
+    // upstream: generator.c:582-583 + rsync.h:258 - a `--copy-dest`
+    // reconstruction that exactly matches the basis is itemized with only
+    // ITEM_LOCAL_CHANGE, which is excluded from `SIGNIFICANT_ITEM_FLAGS`. At
+    // plain `-i` (NAME < 2, no `-ii`) the emit gate therefore drops the row.
+    // A directory, symlink, fifo, device, or regular-file copy reconstructed
+    // from the basis with no attribute drift and no creation is suppressed;
+    // only the `-vv` path (`emit_unchanged`, handled above) surfaces it. The
+    // symlink's own `-> target` is the `%L` field, not an xname, so it does NOT
+    // force emission - only a hardlink alias's `=> leader` xname does, which the
+    // dedicated HardLink rule below preserves.
+    if matches!(
+        event.kind(),
+        ClientEventKind::ReferenceCopied
+            | ClientEventKind::DirectoryCreated
+            | ClientEventKind::SymlinkCopied
+            | ClientEventKind::FifoCopied
+            | ClientEventKind::DeviceCopied
+    ) && !event.was_created()
+        && !event.change_set().has_any_change()
+    {
+        return true;
+    }
+
     // upstream: hlink.c:215-227 + generator.c:581-583 - an already-correct
     // hardlink alias is itemized via `itemize(..., ITEM_LOCAL_CHANGE |
     // ITEM_XNAME_FOLLOWS, 0, "")` with an EMPTY xname. The generator only

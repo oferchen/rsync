@@ -2040,3 +2040,40 @@ fn itemize_reference_copied_symlink_is_cl_with_blank_attrs() {
     );
     assert_eq!(format_itemized_changes(&event, false), "cL         ");
 }
+
+// upstream: generator.c:582-583 + rsync.h:258 - at plain `-i` (no `-vv`) the
+// blank copy-dest reconstruction rows carry only ITEM_LOCAL_CHANGE, which is
+// excluded from SIGNIFICANT_ITEM_FLAGS, so the emit gate drops them. Only `-vv`
+// (`emit_unchanged`) surfaces the `cf`/`cd`/`cL` rows.
+#[test]
+fn copy_dest_blank_rows_suppressed_at_plain_itemize() {
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n")).unwrap();
+    for (kind, entry) in [
+        (ClientEventKind::ReferenceCopied, ClientEntryKind::File),
+        (
+            ClientEventKind::DirectoryCreated,
+            ClientEntryKind::Directory,
+        ),
+        (ClientEventKind::SymlinkCopied, ClientEntryKind::Symlink),
+    ] {
+        let event = make_event(kind, false, Some(entry), LocalCopyChangeSet::new());
+        let events = [event];
+
+        // Plain `-i`: suppressed.
+        let mut plain = Vec::new();
+        emit_out_format(&events, &format, &OutFormatContext::default(), &mut plain).unwrap();
+        assert!(
+            String::from_utf8(plain).unwrap().is_empty(),
+            "blank copy-dest row must be suppressed at plain -i"
+        );
+
+        // `-vv` (`emit_unchanged`): surfaced.
+        let mut verbose = Vec::new();
+        let ctx = OutFormatContext::default().with_emit_unchanged(true);
+        emit_out_format(&events, &format, &ctx, &mut verbose).unwrap();
+        assert!(
+            !String::from_utf8(verbose).unwrap().is_empty(),
+            "blank copy-dest row must surface under -vv"
+        );
+    }
+}
