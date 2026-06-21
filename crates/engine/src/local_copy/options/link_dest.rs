@@ -85,12 +85,16 @@ impl LinkDestEntry {
     }
 
     pub(crate) fn resolve(&self, destination_root: &Path, relative: &Path) -> PathBuf {
-        let base = if self.is_relative {
-            destination_root.join(&self.path)
+        if self.is_relative {
+            // Lexically collapse `..`/`.` so the candidate resolves even when an
+            // intermediate directory (e.g. a not-yet-created dry-run
+            // destination) is absent from disk.
+            crate::local_copy::lexically_normalize(
+                &destination_root.join(&self.path).join(relative),
+            )
         } else {
-            self.path.clone()
-        };
-        base.join(relative)
+            self.path.join(relative)
+        }
     }
 }
 

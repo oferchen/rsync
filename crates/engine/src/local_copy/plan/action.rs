@@ -3,6 +3,13 @@
 pub enum LocalCopyAction {
     /// File data was copied into place.
     DataCopied,
+    /// A regular file was reconstructed locally from a `--copy-dest` basis
+    /// directory because it matched the source. Itemizes as a local change
+    /// (`c`) rather than a network transfer (`>`).
+    ///
+    /// upstream: generator.c:1039 - `itemize(..., ITEM_LOCAL_CHANGE, ...)`
+    /// after `copy_altdest_file()` for `COPY_DEST`.
+    ReferenceCopied,
     /// An existing destination file already matched the source.
     MetadataReused,
     /// A hard link was created pointing at a previously copied destination.

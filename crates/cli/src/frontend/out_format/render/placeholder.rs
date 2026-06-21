@@ -19,6 +19,24 @@ use super::checksum::format_full_checksum;
 use super::format::format_numeric_value;
 use super::itemize::format_itemized_changes;
 
+/// Returns the `%L` connector for an event carrying a target in its metadata.
+///
+/// upstream: log.c:643-654 - `%L` renders ` -> %s` when the entry itself is a
+/// symlink (`S_ISLNK`) and ` => %s` for a hard-link xname (`=> leader`). A
+/// hard-linked symlink is still a symlink, so it uses ` -> `; only a hard-linked
+/// regular file uses ` => `.
+fn symlink_target_connector(event: &ClientEvent) -> &'static str {
+    let is_symlink = event
+        .metadata()
+        .map(ClientEntryMetadata::kind)
+        .is_some_and(|kind| matches!(kind, ClientEntryKind::Symlink));
+    if matches!(event.kind(), ClientEventKind::HardLink) && !is_symlink {
+        " => "
+    } else {
+        " -> "
+    }
+}
+
 /// Resolves a placeholder token to its string value for the given event and context.
 ///
 /// Returns `None` when the placeholder is inapplicable (e.g., symlink target on a regular file).
@@ -35,16 +53,7 @@ pub(super) fn render_placeholder_value(
                 .metadata()
                 .and_then(ClientEntryMetadata::symlink_target)
             {
-                // upstream: log.c:643-654 - `%L` renders ` => %s` for
-                // hard-link references and ` -> %s` for symlink targets.
-                // The two cases are mutually exclusive on a single record
-                // because a hardlink alias never carries a symlink target.
-                let connector = if matches!(event.kind(), ClientEventKind::HardLink) {
-                    " => "
-                } else {
-                    " -> "
-                };
-                rendered.push_str(connector);
+                rendered.push_str(symlink_target_connector(event));
                 rendered.push_str(&target.to_string_lossy());
             }
             Some(rendered)
@@ -77,14 +86,7 @@ pub(super) fn render_placeholder_value(
             .metadata()
             .and_then(ClientEntryMetadata::symlink_target)
             .map(|target| {
-                // upstream: log.c:643-654 - `%L` standalone also renders the
-                // ` => %s` vs ` -> %s` distinction.
-                let connector = if matches!(event.kind(), ClientEventKind::HardLink) {
-                    " => "
-                } else {
-                    " -> "
-                };
-                let mut rendered = String::from(connector);
+                let mut rendered = String::from(symlink_target_connector(event));
                 rendered.push_str(&target.to_string_lossy());
                 rendered
             }),

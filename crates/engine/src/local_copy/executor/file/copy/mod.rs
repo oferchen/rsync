@@ -247,6 +247,7 @@ pub(crate) fn copy_file(
         transfer_flags,
         mode,
         link_outcome.copy_source_override,
+        link_outcome.reference_basis,
     )?;
     Ok(true)
 }

@@ -35,7 +35,10 @@ pub(crate) use file::{
     temporary_destination_path,
 };
 pub(crate) use iconv::transcode_filename_component;
-pub(crate) use reference::{ReferenceDecision, ReferenceQuery, find_reference_action};
+pub(crate) use reference::{
+    ReferenceDecision, ReferenceQuery, find_compare_dest_symlink, find_copy_dest_basis,
+    find_copy_dest_symlink, find_reference_action,
+};
 pub(crate) use sources::copy_sources;
 pub(crate) use special::{
     copy_device, copy_fifo, copy_symlink, create_symlink, symlink_target_is_safe,

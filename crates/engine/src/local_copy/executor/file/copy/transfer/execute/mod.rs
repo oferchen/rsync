@@ -72,6 +72,11 @@ pub(in crate::local_copy) fn execute_transfer(
     flags: TransferFlags,
     mode: LocalCopyExecution,
     copy_source_override: Option<PathBuf>,
+    // When `Some`, the copy reconstructs the file from a `--copy-dest` basis.
+    // The transfer itemizes as a local change (`c`) compared against the basis
+    // rather than a network transfer (`>`).
+    // upstream: generator.c:1039 - itemize(..., ITEM_LOCAL_CHANGE, ...).
+    reference_basis: Option<PathBuf>,
 ) -> Result<(), LocalCopyError> {
     #[cfg(not(all(unix, any(feature = "xattr", feature = "acl"))))]
     let _ = mode;
@@ -603,27 +608,56 @@ pub(in crate::local_copy) fn execute_transfer(
     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
     let total_bytes = Some(metadata_snapshot.len());
     let wrote_data = outcome.literal_bytes() > 0 || append_offset > 0;
+
+    // upstream: generator.c:1039 - a `--copy-dest` reconstruction itemizes the
+    // attribute columns against the alternate basis (`sxp->st`), not the
+    // (absent) prior destination, and never sets ITEM_IS_NEW. Comparing source
+    // against the basis with `destination_previously_existed = true` keeps the
+    // size/time/perm slots blank when the source already matched the basis.
+    let basis_metadata = match reference_basis.as_deref() {
+        Some(path) => match fs::symlink_metadata(path) {
+            Ok(meta) => Some(meta),
+            Err(error) => {
+                return Err(LocalCopyError::io(
+                    "inspect reference basis",
+                    path.to_path_buf(),
+                    error,
+                ));
+            }
+        },
+        None => None,
+    };
+    let is_reference_copy = basis_metadata.is_some();
     let change_set = LocalCopyChangeSet::for_file_with_checksum(
         metadata,
-        existing_metadata,
+        if is_reference_copy {
+            basis_metadata.as_ref()
+        } else {
+            existing_metadata
+        },
         &metadata_options,
-        destination_previously_existed,
-        wrote_data,
+        is_reference_copy || destination_previously_existed,
+        wrote_data && !is_reference_copy,
         flags.xattrs_enabled(),
         flags.acls_enabled(),
         flags.checksum_enabled,
     );
+    let action = if is_reference_copy {
+        LocalCopyAction::ReferenceCopied
+    } else {
+        LocalCopyAction::DataCopied
+    };
     context.record(
         LocalCopyRecord::new(
             record_path.to_path_buf(),
-            LocalCopyAction::DataCopied,
+            action,
             outcome.literal_bytes(),
             total_bytes,
             elapsed,
             Some(metadata_snapshot),
         )
         .with_change_set(change_set)
-        .with_creation(!destination_previously_existed),
+        .with_creation(!is_reference_copy && !destination_previously_existed),
     );
 
     if let Err(timeout_error) = context.enforce_timeout() {

@@ -9,7 +9,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::local_copy::{
-    CopyContext, LocalCopyAction, LocalCopyError, LocalCopyMetadata, LocalCopyRecord,
+    CopyContext, LocalCopyAction, LocalCopyChangeSet, LocalCopyError, LocalCopyMetadata,
+    LocalCopyRecord, ReferenceDecision, ReferenceQuery, find_reference_action,
     remove_source_entry_if_requested,
 };
 
@@ -79,6 +80,17 @@ pub(super) fn handle_dry_run(
         return Ok(());
     }
 
+    // upstream: generator.c:1469-1483 - in dry-run mode the generator still
+    // evaluates `--link-dest` / `--copy-dest` / `--compare-dest` and itemizes
+    // the file against the matched basis (`hf`/`cf`/`.f` + blank) rather than
+    // reporting a full transfer (`>f+++++++++`). Mirror that here so a dry-run
+    // produces the same itemize stream as the real run.
+    if existing_metadata.is_none()
+        && simulate_reference_match(context, source, destination, metadata, record_path)?
+    {
+        return Ok(());
+    }
+
     let mut reader = fs::File::open(source)
         .map_err(|error| LocalCopyError::io("open source file", source, error))?;
 
@@ -140,4 +152,147 @@ pub(super) fn handle_dry_run(
     );
     remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
     Ok(())
+}
+
+/// Records the dry-run itemize for a regular file that would be satisfied by a
+/// `--link-dest` / `--copy-dest` / `--compare-dest` basis or an in-transfer
+/// hard-link leader, without performing any I/O.
+///
+/// Returns `true` when a match was recorded, mirroring the real-run itemize:
+/// `hf` for a link-dest hardlink or an intra-transfer alias, `cf` for a
+/// copy-dest reconstruction, and `.f` for a compare-dest match. The change set
+/// is computed against the basis so identical files leave the columns blank.
+fn simulate_reference_match(
+    context: &mut CopyContext,
+    source: &Path,
+    destination: &Path,
+    metadata: &fs::Metadata,
+    record_path: &Path,
+) -> Result<bool, LocalCopyError> {
+    let size_only = context.size_only_enabled();
+    let ignore_times = context.ignore_times_enabled();
+    let checksum = context.checksum_enabled();
+    let metadata_options = context.metadata_options();
+
+    // --link-dest hardlink of a matching basis file takes precedence, matching
+    // `process_links`. The alias links directly from the basis, so its itemize
+    // carries an empty xname (no `=> leader` trailer) and is suppressed at plain
+    // `-i`.
+    if context
+        .link_dest_target(
+            record_path,
+            source,
+            metadata,
+            size_only,
+            ignore_times,
+            checksum,
+        )?
+        .is_some()
+    {
+        context.record_hard_link(metadata, destination);
+        context.summary_mut().record_hard_link();
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        record_match(
+            context,
+            record_path,
+            LocalCopyAction::HardLink,
+            &metadata_snapshot,
+            true,
+        );
+        return Ok(true);
+    }
+
+    // An intra-transfer hard-link leader placed earlier this run: the alias
+    // itemizes as `hf <path> => <leader>` against the in-transfer leader (fresh
+    // atomic_create, shown even at plain `-i`).
+    if let Some(leader) = context.existing_hard_link_target(metadata) {
+        let leader_display = leader
+            .strip_prefix(context.destination_root())
+            .map(std::path::Path::to_path_buf)
+            .ok()
+            .filter(|relative| relative != record_path);
+        context.record_hard_link(metadata, destination);
+        context.summary_mut().record_hard_link();
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, leader_display);
+        record_match(
+            context,
+            record_path,
+            LocalCopyAction::HardLink,
+            &metadata_snapshot,
+            false,
+        );
+        return Ok(true);
+    }
+
+    // --copy-dest / --compare-dest matches.
+    let query = ReferenceQuery {
+        destination,
+        relative: record_path,
+        source,
+        metadata,
+        size_only,
+        ignore_times,
+        checksum,
+    };
+    let Some(decision) = find_reference_action(context, query)? else {
+        return Ok(false);
+    };
+
+    let (action, basis) = match decision {
+        ReferenceDecision::Skip(path) => (LocalCopyAction::MetadataReused, path),
+        ReferenceDecision::Copy(path) => (LocalCopyAction::ReferenceCopied, path),
+        // A degraded link-dest copy still itemizes as a local change.
+        ReferenceDecision::Link(path) => (LocalCopyAction::ReferenceCopied, path),
+    };
+    context.summary_mut().record_regular_file_matched();
+    // Itemize against the basis (compare/copy/link) so identical files stay
+    // blank, matching generator.c:1140 and the real-run change set.
+    let basis_metadata = fs::symlink_metadata(&basis)
+        .map_err(|error| LocalCopyError::io("inspect reference basis", basis, error))?;
+    let change_set = LocalCopyChangeSet::for_file(
+        metadata,
+        Some(&basis_metadata),
+        &metadata_options,
+        true,
+        false,
+        false,
+        false,
+    );
+    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+    context.record(
+        LocalCopyRecord::new(
+            record_path.to_path_buf(),
+            action,
+            0,
+            Some(metadata_snapshot.len()),
+            Duration::default(),
+            Some(metadata_snapshot),
+        )
+        .with_change_set(change_set),
+    );
+    Ok(true)
+}
+
+/// Records a hard-link dry-run match with no attribute drift.
+///
+/// `uptodate` flags a `--link-dest` basis hardlink, which is reported as
+/// `"<path> is uptodate"` under `-vv` and suppressed at plain `-i`.
+fn record_match(
+    context: &mut CopyContext,
+    record_path: &Path,
+    action: LocalCopyAction,
+    metadata_snapshot: &LocalCopyMetadata,
+    uptodate: bool,
+) {
+    context.record(
+        LocalCopyRecord::new(
+            record_path.to_path_buf(),
+            action,
+            0,
+            Some(metadata_snapshot.len()),
+            Duration::default(),
+            Some(metadata_snapshot.clone()),
+        )
+        .with_hardlink_uptodate(uptodate),
+    );
 }

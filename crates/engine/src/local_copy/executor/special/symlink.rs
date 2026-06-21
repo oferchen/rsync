@@ -287,6 +287,49 @@ pub(crate) fn copy_symlink(
         return Ok(());
     }
 
+    // upstream: generator.c:1140 + try_dests_non() - a `--compare-dest` symlink
+    // whose target matches the basis is neither recreated nor transferred; it
+    // itemizes `.L` against the basis. Detect that before any creation work so
+    // the destination stays empty (compare-dest semantics) and the row collapses
+    // to `.L` + blank, suppressed at plain `-i`.
+    if destination_metadata.is_none()
+        && let Some(path) = record_path.as_ref()
+        && !path.as_os_str().is_empty()
+        && let Some(basis_meta) =
+            super::super::find_compare_dest_symlink(context, destination, path, &target)?
+    {
+        let symlink_options = if context.omit_link_times_enabled() {
+            metadata_options.clone().preserve_times(false)
+        } else {
+            metadata_options.clone()
+        };
+        let change_set = LocalCopyChangeSet::for_file(
+            metadata,
+            Some(&basis_meta),
+            &symlink_options,
+            true,
+            false,
+            false,
+            false,
+        );
+        context.summary_mut().record_symlink();
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
+        context.record(
+            LocalCopyRecord::new(
+                path.clone(),
+                LocalCopyAction::MetadataReused,
+                0,
+                Some(metadata_snapshot.len()),
+                Duration::default(),
+                Some(metadata_snapshot),
+            )
+            .with_change_set(change_set),
+        );
+        context.register_progress();
+        remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
+        return Ok(());
+    }
+
     if let Some(parent) = destination.parent() {
         context.prepare_parent_directory(parent)?;
     }
@@ -372,6 +415,78 @@ pub(crate) fn copy_symlink(
         remove_existing_destination(destination)?;
     }
 
+    // upstream: generator.c:1117-1134 try_dests_non() - a `--link-dest` basis
+    // symlink with the same target is hard-linked into place rather than
+    // recreated, itemizing as `hL` + blank against the basis. Only applies when
+    // the destination is being created fresh (no prior symlink to recreate).
+    if !mode.is_dry_run() && pre_replace_symlink_metadata.is_none() {
+        let link_relative = relative.unwrap_or(record_path.as_deref().unwrap_or(Path::new("")));
+        if !link_relative.as_os_str().is_empty()
+            && let Some(basis_symlink) = context.link_dest_symlink_target(link_relative, &target)?
+        {
+            let mut attempted_commit = false;
+            loop {
+                match create_hard_link(&basis_symlink, destination) {
+                    Ok(()) => break,
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                        remove_existing_destination(destination)?;
+                        create_hard_link(&basis_symlink, destination).map_err(|link_error| {
+                            LocalCopyError::io(
+                                "create hard link",
+                                destination.to_path_buf(),
+                                link_error,
+                            )
+                        })?;
+                        break;
+                    }
+                    Err(error)
+                        if error.kind() == io::ErrorKind::NotFound
+                            && context.delay_updates_enabled()
+                            && !attempted_commit =>
+                    {
+                        context.commit_deferred_update_for(&basis_symlink)?;
+                        attempted_commit = true;
+                        continue;
+                    }
+                    Err(error) => {
+                        return Err(LocalCopyError::io(
+                            "create hard link",
+                            destination.to_path_buf(),
+                            error,
+                        ));
+                    }
+                }
+            }
+
+            context.record_hard_link(metadata, destination);
+            context.summary_mut().record_hard_link();
+            context.summary_mut().record_symlink();
+            if let Some(path) = &record_path {
+                let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
+                let total_bytes = Some(metadata_snapshot.len());
+                // The hard-linked symlink shares the basis inode, so it matches
+                // the source exactly: itemize `hL` + blank with the `-> target`
+                // trailer from the symlink's own metadata.
+                context.record(LocalCopyRecord::new(
+                    path.clone(),
+                    LocalCopyAction::HardLink,
+                    0,
+                    total_bytes,
+                    Duration::default(),
+                    Some(metadata_snapshot),
+                ));
+            }
+            context.register_created_path(
+                destination,
+                CreatedEntryKind::HardLink,
+                destination_previously_existed,
+            );
+            context.register_progress();
+            remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
+            return Ok(());
+        }
+    }
+
     if let Some(existing_target) = context.existing_hard_link_target(metadata) {
         if mode.is_dry_run() {
             context.summary_mut().record_symlink();
@@ -455,29 +570,71 @@ pub(crate) fn copy_symlink(
     if mode.is_dry_run() {
         context.summary_mut().record_symlink();
         if let Some(path) = &record_path {
+            // upstream: generator.c:1117-1147 - a dry-run still evaluates
+            // alt-dest bases. A `--link-dest` symlink with a matching target
+            // itemizes as `hL`; a `--copy-dest` symlink as `cL` against the
+            // basis. Both leave attribute columns blank when identical.
+            let link_dest_match = pre_replace_symlink_metadata.is_none()
+                && !path.as_os_str().is_empty()
+                && context.link_dest_symlink_target(path, &target)?.is_some();
+            let copy_dest_basis = if pre_replace_symlink_metadata.is_none() && !link_dest_match {
+                super::super::find_copy_dest_symlink(context, destination, path, &target)?
+            } else {
+                None
+            };
+
             let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
             let total_bytes = Some(metadata_snapshot.len());
-            let was_created =
-                !destination_previously_existed || pre_replace_symlink_metadata.is_none();
-            let mut record = LocalCopyRecord::new(
-                path.clone(),
-                LocalCopyAction::SymlinkCopied,
-                0,
-                total_bytes,
-                Duration::default(),
-                Some(metadata_snapshot),
-            )
-            .with_creation(was_created);
-            if let Some(existing_symlink) = pre_replace_symlink_metadata.as_ref() {
-                let change_set = LocalCopyChangeSet::for_recreated_symlink(
-                    metadata,
-                    existing_symlink,
-                    metadata_options,
-                    context.omit_link_times_enabled(),
-                );
-                record = record.with_change_set(change_set);
+
+            if link_dest_match {
+                context.summary_mut().record_hard_link();
+                context.record(LocalCopyRecord::new(
+                    path.clone(),
+                    LocalCopyAction::HardLink,
+                    0,
+                    total_bytes,
+                    Duration::default(),
+                    Some(metadata_snapshot),
+                ));
+            } else {
+                let was_created = copy_dest_basis.is_none()
+                    && (!destination_previously_existed || pre_replace_symlink_metadata.is_none());
+                let mut record = LocalCopyRecord::new(
+                    path.clone(),
+                    LocalCopyAction::SymlinkCopied,
+                    0,
+                    total_bytes,
+                    Duration::default(),
+                    Some(metadata_snapshot),
+                )
+                .with_creation(was_created);
+                if let Some(existing_symlink) = pre_replace_symlink_metadata.as_ref() {
+                    let change_set = LocalCopyChangeSet::for_recreated_symlink(
+                        metadata,
+                        existing_symlink,
+                        metadata_options,
+                        context.omit_link_times_enabled(),
+                    );
+                    record = record.with_change_set(change_set);
+                } else if let Some(basis_meta) = copy_dest_basis.as_ref() {
+                    let symlink_options = if context.omit_link_times_enabled() {
+                        metadata_options.clone().preserve_times(false)
+                    } else {
+                        metadata_options.clone()
+                    };
+                    let change_set = LocalCopyChangeSet::for_file(
+                        metadata,
+                        Some(basis_meta),
+                        &symlink_options,
+                        true,
+                        false,
+                        false,
+                        false,
+                    );
+                    record = record.with_change_set(change_set);
+                }
+                context.record(record);
             }
-            context.record(record);
         }
         context.register_progress();
         remove_source_entry_if_requested(context, source, record_path.as_deref(), file_type)?;
@@ -524,6 +681,16 @@ pub(crate) fn copy_symlink(
     context.record_hard_link(metadata, destination);
     context.summary_mut().record_symlink();
     if let Some(path) = &record_path {
+        // upstream: generator.c:1119-1148 try_dests_non() - a symlink absent
+        // from the destination but present (with the same target) in a
+        // `--copy-dest` basis itemizes as a local change (`cL` + blank)
+        // against the basis instead of a new entry (`cL+++++++++`).
+        let copy_dest_basis = if !destination_previously_existed {
+            super::super::find_copy_dest_symlink(context, destination, path, &target)?
+        } else {
+            None
+        };
+
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
         let total_bytes = Some(metadata_snapshot.len());
 
@@ -532,7 +699,8 @@ pub(crate) fn copy_symlink(
         // path flips `statret = -1` so `itemize()` lights up `ITEM_IS_NEW`
         // and the row renders `cL+++++++++`. Mirror that by treating a
         // non-symlink replacement as a fresh creation.
-        let was_created = !destination_previously_existed || pre_replace_symlink_metadata.is_none();
+        let was_created = copy_dest_basis.is_none()
+            && (!destination_previously_existed || pre_replace_symlink_metadata.is_none());
 
         let mut record = LocalCopyRecord::new(
             path.clone(),
@@ -557,6 +725,24 @@ pub(crate) fn copy_symlink(
                 existing_symlink,
                 metadata_options,
                 context.omit_link_times_enabled(),
+            );
+            record = record.with_change_set(change_set);
+        } else if let Some(basis_meta) = copy_dest_basis.as_ref() {
+            // Compare source against the copy-dest basis symlink so the row
+            // stays blank when the reconstructed link is identical.
+            let symlink_options = if context.omit_link_times_enabled() {
+                metadata_options.clone().preserve_times(false)
+            } else {
+                metadata_options.clone()
+            };
+            let change_set = LocalCopyChangeSet::for_file(
+                metadata,
+                Some(basis_meta),
+                &symlink_options,
+                true,
+                false,
+                false,
+                false,
             );
             record = record.with_change_set(change_set);
         }
