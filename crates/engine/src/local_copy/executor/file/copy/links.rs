@@ -169,7 +169,6 @@ pub(super) fn process_links(
                     .ok()
                     .filter(|relative| relative != record_path)
             });
-        let is_cluster_alias = leader_display.is_some();
         context.record_hard_link(metadata, destination);
         context.summary_mut().record_hard_link();
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, leader_display);
@@ -183,7 +182,10 @@ pub(super) fn process_links(
                 Duration::default(),
                 Some(metadata_snapshot),
             )
-            .with_hardlink_uptodate(is_cluster_alias),
+            // A `--link-dest` hardlink reproduces the basis file exactly, so it
+            // is reported as `"<path> is uptodate"` under `-vv` and suppressed at
+            // plain `-i` - the same gate as an already-shared-inode alias.
+            .with_hardlink_uptodate(true),
         );
         context.register_created_path(
             destination,

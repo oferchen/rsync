@@ -197,12 +197,14 @@ fn simulate_reference_match(
             record_path,
             LocalCopyAction::HardLink,
             &metadata_snapshot,
+            true,
         );
         return Ok(true);
     }
 
     // An intra-transfer hard-link leader placed earlier this run: the alias
-    // itemizes as `hf <path> => <leader>` against the in-transfer leader.
+    // itemizes as `hf <path> => <leader>` against the in-transfer leader (fresh
+    // atomic_create, shown even at plain `-i`).
     if let Some(leader) = context.existing_hard_link_target(metadata) {
         let leader_display = leader
             .strip_prefix(context.destination_root())
@@ -217,6 +219,7 @@ fn simulate_reference_match(
             record_path,
             LocalCopyAction::HardLink,
             &metadata_snapshot,
+            false,
         );
         return Ok(true);
     }
@@ -278,18 +281,25 @@ fn simulate_reference_match(
 }
 
 /// Records a hard-link dry-run match with no attribute drift.
+///
+/// `uptodate` flags a `--link-dest` basis hardlink, which is reported as
+/// `"<path> is uptodate"` under `-vv` and suppressed at plain `-i`.
 fn record_match(
     context: &mut CopyContext,
     record_path: &Path,
     action: LocalCopyAction,
     metadata_snapshot: &LocalCopyMetadata,
+    uptodate: bool,
 ) {
-    context.record(LocalCopyRecord::new(
-        record_path.to_path_buf(),
-        action,
-        0,
-        Some(metadata_snapshot.len()),
-        Duration::default(),
-        Some(metadata_snapshot.clone()),
-    ));
+    context.record(
+        LocalCopyRecord::new(
+            record_path.to_path_buf(),
+            action,
+            0,
+            Some(metadata_snapshot.len()),
+            Duration::default(),
+            Some(metadata_snapshot.clone()),
+        )
+        .with_hardlink_uptodate(uptodate),
+    );
 }
