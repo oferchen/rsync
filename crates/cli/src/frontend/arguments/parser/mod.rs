@@ -603,11 +603,6 @@ where
         };
     let itemize_changes_flag = matches.get_flag("itemize-changes");
     let no_itemize_changes_flag = matches.get_flag("no-itemize-changes");
-    let name_level = if itemize_changes_flag && !no_itemize_changes_flag {
-        NameOutputLevel::UpdatedOnly
-    } else {
-        NameOutputLevel::Disabled
-    };
     let name_overridden = itemize_changes_flag || no_itemize_changes_flag;
     let mut verbosity = matches.get_count("verbose") as u8;
     if matches.get_flag("no-verbose") {
@@ -712,10 +707,36 @@ where
     let from0 = matches.get_flag("from0");
     let disable_from0 = matches.get_flag("no-from0");
     let from0 = from0 && !disable_from0;
-    let info = matches
+    let info: Vec<OsString> = matches
         .remove_many::<OsString>("info")
         .map(Iterator::collect)
         .unwrap_or_default();
+    // upstream: generator.c:582-583 - the itemize line for an unchanged entry
+    // is emitted only when `INFO_GTE(NAME, 2)` is in effect, which `-vv` and
+    // `--info=name2` both set. Resolve the effective NAME info level the same
+    // way the logging config does (verbose count + any `--info=` override) so
+    // `-ivv` surfaces unchanged dirs, files, and symlinks like upstream rather
+    // than capping at the updated-only level.
+    let name_info_level = {
+        let mut cfg = logging::VerbosityConfig::from_verbose_level(verbosity);
+        for token in &info {
+            if let Some(text) = token.to_str() {
+                for part in text.split(',') {
+                    let _ = cfg.apply_info_flag(part.trim());
+                }
+            }
+        }
+        cfg.info.get(logging::InfoFlag::Name)
+    };
+    let name_level = if itemize_changes_flag && !no_itemize_changes_flag {
+        if name_info_level >= 2 {
+            NameOutputLevel::UpdatedAndUnchanged
+        } else {
+            NameOutputLevel::UpdatedOnly
+        }
+    } else {
+        NameOutputLevel::Disabled
+    };
     let debug = matches
         .remove_many::<OsString>("debug")
         .map(Iterator::collect)
