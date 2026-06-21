@@ -137,7 +137,9 @@ fn copy_directory_recursive_inner(
     // just-created marker for the root).
     let root_just_created = relative.is_none() && context.summary().destination_root_created();
     let copy_dest_basis: Option<fs::Metadata> = if destination_missing || root_just_created {
-        let lookup_relative = relative.unwrap_or_else(|| Path::new("."));
+        // The transfer root has `relative == None`; use an empty path so the
+        // basis lookup resolves the copy-dest directory itself.
+        let lookup_relative = relative.unwrap_or_else(|| Path::new(""));
         super::super::find_copy_dest_basis(context, destination, lookup_relative)?
     } else {
         None

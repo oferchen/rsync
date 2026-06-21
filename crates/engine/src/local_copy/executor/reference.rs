@@ -173,9 +173,10 @@ pub(crate) fn find_copy_dest_basis(
     destination: &Path,
     relative: &Path,
 ) -> Result<Option<fs::Metadata>, LocalCopyError> {
-    if relative.as_os_str().is_empty() {
-        return Ok(None);
-    }
+    // An empty `relative` is the transfer root: the basis is the copy-dest
+    // directory itself, resolved from the destination root. Unlike the file and
+    // symlink lookups, the directory lookup must handle this case so the `./`
+    // row itemizes against the basis root.
     for reference in context.reference_directories() {
         if reference.kind() != ReferenceDirectoryKind::Copy {
             continue;
