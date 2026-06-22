@@ -1476,15 +1476,15 @@ fn verbose_directory_listing_has_trailing_slash_and_root_row() {
     let rendered = String::from_utf8(stdout).expect("utf8");
     let lines: Vec<&str> = rendered.lines().collect();
     assert!(
-        lines.iter().any(|line| *line == "./"),
+        lines.contains(&"./"),
         "expected a `./` root row in the verbose listing, got: {rendered:?}"
     );
     assert!(
-        lines.iter().any(|line| *line == "sub/"),
+        lines.contains(&"sub/"),
         "expected directory `sub/` with a trailing slash, got: {rendered:?}"
     );
     assert!(
-        lines.iter().any(|line| *line == "sub/file.txt"),
+        lines.contains(&"sub/file.txt"),
         "expected the file row `sub/file.txt`, got: {rendered:?}"
     );
 }
