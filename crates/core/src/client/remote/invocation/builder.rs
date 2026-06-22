@@ -566,123 +566,149 @@ impl<'a> RemoteInvocationBuilder<'a> {
         let files_from_active = self.config.files_from().is_active();
         let effective_recursive = self.config.recursive() && !files_from_active;
         let effective_relative = self.config.relative_paths() || files_from_active;
+        let effective_dirs = self.config.dirs() || files_from_active;
+        // upstream: options.c:2641 / :2655 - several compact letters live in a
+        // direction-specific branch. `am_sender` is true when the local process
+        // is the sender (push); false on a pull. RemoteRole::Sender == push.
+        let am_sender = self.role == RemoteRole::Sender;
 
-        // upstream: options.c:server_options() - transfer flag order.
-        if self.config.links() {
-            flags.push('l');
+        // The compact letter ORDER mirrors upstream `server_options()`
+        // (options.c:2619-2723) byte-for-byte so the server arg string matches
+        // upstream rsync exactly. Letters are appended in upstream's source
+        // order, NOT alphabetical or grouped-by-concern order.
+
+        // upstream: options.c:2625-2626 - one 'v' per verbosity level, first.
+        for _ in 0..self.config.verbosity() {
+            flags.push('v');
         }
-        if self.config.copy_links() {
-            flags.push('L');
+        // upstream: options.c:2630-2631 - `make_backups` rides as `b`. Emitting
+        // `--backup` as a long arg lands as a positional path on upstream
+        // server parsers, so `b` is mandatory here.
+        if self.config.backup() {
+            flags.push('b');
         }
-        if self.config.copy_dirlinks() {
-            flags.push('k');
+        // upstream: options.c:2632-2633 - update_only.
+        if self.config.update() {
+            flags.push('u');
         }
-        if self.config.keep_dirlinks() {
-            flags.push('K');
-        }
-        if self.config.preserve_owner() {
-            flags.push('o');
-        }
-        if self.config.preserve_group() {
-            flags.push('g');
-        }
-        if self.config.preserve_devices() || self.config.preserve_specials() {
-            flags.push('D');
-        }
-        if self.config.preserve_times() {
-            flags.push('t');
-        }
-        if self.config.preserve_atimes() {
-            flags.push('U');
-        }
-        if self.config.preserve_permissions() {
-            flags.push('p');
-        } else if self.config.preserve_executability() {
-            // upstream: options.c:2672-2675 - 'E' is only sent when
-            // preserve_perms is false (else-if). When perms are preserved,
-            // executability is implicitly included.
-            flags.push('E');
-        }
-        if effective_recursive {
-            flags.push('r');
-        }
-        if self.config.compress() {
-            flags.push('z');
-        }
-        if self.config.checksum() {
-            flags.push('c');
-        }
-        if self.config.preserve_hard_links() {
-            flags.push('H');
-        }
-        #[cfg(all(any(unix, windows), feature = "acl"))]
-        if self.config.preserve_acls() {
-            flags.push('A');
-        }
-        #[cfg(all(unix, feature = "xattr"))]
-        if self.config.preserve_xattrs() {
-            flags.push('X');
-        }
-        // upstream: 'n' = dry_run (!do_xfers), NOT numeric_ids.
-        // numeric_ids is always sent as long-form --numeric-ids (options.c:2887-2888).
+        // upstream: options.c:2634-2635 - 'n' = dry_run (!do_xfers), NOT
+        // numeric_ids (which is long-form --numeric-ids).
         if self.config.dry_run() {
             flags.push('n');
         }
-        // upstream: 'd' = --dirs (xfer_dirs without recursion), NOT delete.
-        // delete variants are always sent as long-form --delete-* (options.c:2818-2827).
-        // When --files-from is active, upstream sets xfer_dirs=1 and recurse=0,
-        // so 'd' is emitted (options.c:2620).
-        let effective_dirs = self.config.dirs() || files_from_active;
+        // upstream: options.c:2636-2637 - preserve_links.
+        if self.config.links() {
+            flags.push('l');
+        }
+        // upstream: options.c:2638-2640 - 'd' = --dirs (xfer_dirs without
+        // recursion). When --files-from is active, upstream sets xfer_dirs=1 and
+        // recurse=0, so 'd' is emitted.
         if effective_dirs && !effective_recursive {
             flags.push('d');
         }
-        // upstream: options.c:2644-2648 - only send 'W' when explicitly set
+        if am_sender {
+            // upstream: options.c:2642-2654 - sender-only compact letters.
+            if self.config.keep_dirlinks() {
+                flags.push('K');
+            }
+            if self.config.prune_empty_dirs() {
+                flags.push('m');
+            }
+            // upstream: options.c:2650-2654 - 'y' for fuzzy, 'yy' for level 2.
+            for _ in 0..self.config.fuzzy_level() {
+                flags.push('y');
+            }
+        } else {
+            // upstream: options.c:2655-2660 - receiver-only compact letters.
+            // copy_links/copy_dirlinks dereference on the sender, so they are
+            // forwarded to the remote only when the remote is the sender (pull).
+            if self.config.copy_links() {
+                flags.push('L');
+            }
+            if self.config.copy_dirlinks() {
+                flags.push('k');
+            }
+        }
+        // upstream: options.c:2662-2663 - only send 'W' when explicitly set
         // (whole_file > 0). The default for remote transfers is no-whole-file;
         // upstream never sends --no-whole-file because it's the default.
         if self.config.whole_file_raw() == Some(true) {
             flags.push('W');
         }
-        if self.config.sparse() {
-            flags.push('S');
+        // upstream: options.c:2668-2672 - preserve_hard_links.
+        if self.config.preserve_hard_links() {
+            flags.push('H');
         }
-        // upstream: options.c:2613 - send 'y' for fuzzy, 'yy' for level 2
-        for _ in 0..self.config.fuzzy_level() {
-            flags.push('y');
+        // upstream: options.c:2673-2674 - preserve_uid.
+        if self.config.preserve_owner() {
+            flags.push('o');
         }
+        // upstream: options.c:2675-2676 - preserve_gid.
+        if self.config.preserve_group() {
+            flags.push('g');
+        }
+        // upstream: options.c:2677-2678 - preserve_devices (specials handled
+        // via long-form --specials/--no-specials).
+        if self.config.preserve_devices() || self.config.preserve_specials() {
+            flags.push('D');
+        }
+        // upstream: options.c:2679-2680 - preserve_mtimes.
+        if self.config.preserve_times() {
+            flags.push('t');
+        }
+        // upstream: options.c:2681-2685 - preserve_atimes.
+        if self.config.preserve_atimes() {
+            flags.push('U');
+        }
+        // upstream: options.c:2686-2689 - preserve_crtimes.
+        if self.config.preserve_crtimes() {
+            flags.push('N');
+        }
+        if self.config.preserve_permissions() {
+            // upstream: options.c:2690-2691 - preserve_perms.
+            flags.push('p');
+        } else if self.config.preserve_executability() && am_sender {
+            // upstream: options.c:2692-2693 - 'E' only when preserve_perms is
+            // false AND we are the sender.
+            flags.push('E');
+        }
+        #[cfg(all(any(unix, windows), feature = "acl"))]
+        if self.config.preserve_acls() {
+            // upstream: options.c:2694-2697 - preserve_acls (after p/E).
+            flags.push('A');
+        }
+        #[cfg(all(unix, feature = "xattr"))]
+        if self.config.preserve_xattrs() {
+            // upstream: options.c:2698-2704 - preserve_xattrs (before r).
+            flags.push('X');
+        }
+        // upstream: options.c:2705-2706 - recurse.
+        if effective_recursive {
+            flags.push('r');
+        }
+        // upstream: options.c:2707-2708 - always_checksum.
+        if self.config.checksum() {
+            flags.push('c');
+        }
+        // upstream: options.c:2713-2714 - relative_paths.
+        if effective_relative {
+            flags.push('R');
+        }
+        // upstream: options.c:2715-2719 - one_file_system ('x', 'xx').
         for _ in 0..self.config.one_file_system_level() {
             flags.push('x');
         }
-        if effective_relative {
-            flags.push('R');
+        // upstream: options.c:2720-2721 - sparse_files.
+        if self.config.sparse() {
+            flags.push('S');
+        }
+        // upstream: options.c:2722-2723 - 'z' only for zlib compression.
+        if self.config.compress() {
+            flags.push('z');
         }
         if self.config.partial() {
             flags.push('P');
         }
-        // upstream: options.c:2630-2631 - `make_backups` is `b` in the compact
-        // flag string. Emitting `--backup` as a separate long arg lands as a
-        // positional path on upstream server arg parsers that do not consult
-        // popt for long flags - the receiver then mkdir's a literal `--backup`
-        // directory under `$HOME` instead of routing through the real
-        // destination tree, breaking the `symlink-dirlink-basis` regression
-        // test 4 (the `--backup` update-through-directory-symlink case).
-        if self.config.backup() {
-            flags.push('b');
-        }
-        if self.config.update() {
-            flags.push('u');
-        }
-        if self.config.preserve_crtimes() {
-            flags.push('N');
-        }
-        if self.config.prune_empty_dirs() {
-            flags.push('m');
-        }
-        for _ in 0..self.config.verbosity() {
-            flags.push('v');
-        }
-
-        // upstream: options.c:2750-2762 - itemize-changes is forwarded via
-        // --log-format=%i in append_long_form_args(), not as a compact flag.
 
         flags
     }
