@@ -327,7 +327,10 @@ fn apply_delete_side_effects(
             context.backup_existing_entry(&path, Some(entry_relative.as_path()), file_type)?;
         }
         if is_dir {
-            info_log!(Del, 1, "deleting directory {}", entry_relative.display());
+            // upstream: log.c:log_delete emits "deleting %n"; f_name appends a
+            // trailing slash for directories and never inserts the word
+            // "directory".
+            info_log!(Del, 1, "deleting {}/", entry_relative.display());
         } else {
             info_log!(Del, 1, "deleting {}", entry_relative.display());
         }
@@ -385,7 +388,9 @@ fn record_directory_subtree(
         })?;
         if file_type.is_dir() {
             record_directory_subtree(context, path_buf, relative_buf)?;
-            info_log!(Del, 1, "deleting directory {}", relative_buf.display());
+            // upstream: log.c:log_delete "deleting %n" - trailing slash for
+            // dirs, no "directory" word.
+            info_log!(Del, 1, "deleting {}/", relative_buf.display());
         } else {
             info_log!(Del, 1, "deleting {}", relative_buf.display());
         }
