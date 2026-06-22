@@ -88,7 +88,10 @@ fn is_partial_for_partial_errors() {
 #[test]
 fn display_shows_description() {
     assert_eq!(format!("{}", ExitCode::Ok), "success");
-    assert_eq!(format!("{}", ExitCode::PartialTransfer), "partial transfer");
+    assert_eq!(
+        format!("{}", ExitCode::PartialTransfer),
+        "some files/attrs were not transferred (see previous errors)"
+    );
 }
 
 #[test]
@@ -261,7 +264,10 @@ fn from_io_error_defaults_to_file_io() {
 fn exit_code_description_function_works() {
     assert_eq!(exit_code_description(0), "success");
     assert_eq!(exit_code_description(1), "syntax or usage error");
-    assert_eq!(exit_code_description(23), "partial transfer");
+    assert_eq!(
+        exit_code_description(23),
+        "some files/attrs were not transferred (see previous errors)"
+    );
     assert_eq!(
         exit_code_description(6),
         "daemon unable to append to log-file"

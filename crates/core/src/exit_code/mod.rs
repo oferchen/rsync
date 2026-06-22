@@ -18,7 +18,10 @@
 //!
 //! let code = ExitCode::PartialTransfer;
 //! assert_eq!(code.as_i32(), 23);
-//! assert_eq!(code.description(), "partial transfer");
+//! assert_eq!(
+//!     code.description(),
+//!     "some files/attrs were not transferred (see previous errors)"
+//! );
 //! ```
 
 mod codes;
