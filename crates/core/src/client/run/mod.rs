@@ -640,6 +640,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
         config: &ClientConfig,
     ) -> LocalCopyOptions {
         options
+            .itemize_active(config.itemize_changes())
             .checksum(config.checksum())
             .with_checksum_algorithm(config.checksum_signature_algorithm())
             .enable_xxh64_dedup(config.xxh64_dedup())

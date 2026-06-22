@@ -43,6 +43,27 @@ impl LocalCopyOptions {
             .as_deref()
             .unwrap_or(DEFAULT_LOG_FILE_FORMAT)
     }
+
+    /// Records whether `--itemize-changes`/`-i` is active for the transfer.
+    ///
+    /// upstream: log.c:log_delete - when `stdout_format_has_o_or_i` is set the
+    /// deletion line is emitted through the itemize format and the plain
+    /// `"deleting %n"` line is never produced. The engine mirrors that mutual
+    /// exclusion by suppressing its `info_log!(Del,1,..)` deletion line when
+    /// this flag is set, leaving the `*deleting` itemize record as the sole
+    /// emitter.
+    #[must_use]
+    #[doc(alias = "--itemize-changes")]
+    pub const fn itemize_active(mut self, active: bool) -> Self {
+        self.itemize_active = active;
+        self
+    }
+
+    /// Returns whether `--itemize-changes`/`-i` is active for the transfer.
+    #[must_use]
+    pub const fn is_itemize_active(&self) -> bool {
+        self.itemize_active
+    }
 }
 
 #[cfg(test)]
