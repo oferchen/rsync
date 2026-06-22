@@ -1445,3 +1445,46 @@ fn itemize_hardlink_already_linked_omits_arrow_suffix() {
         "already-linked hardlink row must omit `=> leader.bin` (upstream hlink.c:218-222 passes empty xname to itemize), got: {rendered:?}"
     );
 }
+
+/// Verifies that `-rv` lists directories with a trailing `/` and emits a `./`
+/// root row for the transfer root, matching upstream rsync's `f_name()`
+/// formatting (flist.c / log.c:639-640, where `%n` appends `/` for S_ISDIR and
+/// the root is shown as `./`). The destination is created fresh so every
+/// directory is freshly created and reaches the bare-name emission path.
+#[test]
+fn verbose_directory_listing_has_trailing_slash_and_root_row() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source = tmp.path().join("src");
+    let sub = source.join("sub");
+    std::fs::create_dir_all(&sub).expect("create source tree");
+    std::fs::write(sub.join("file.txt"), b"data").expect("write file");
+    let destination = tmp.path().join("dst");
+
+    let mut src_arg = source.into_os_string();
+    src_arg.push("/");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-rv"),
+        src_arg,
+        destination.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&stderr));
+    let rendered = String::from_utf8(stdout).expect("utf8");
+    let lines: Vec<&str> = rendered.lines().collect();
+    assert!(
+        lines.contains(&"./"),
+        "expected a `./` root row in the verbose listing, got: {rendered:?}"
+    );
+    assert!(
+        lines.contains(&"sub/"),
+        "expected directory `sub/` with a trailing slash, got: {rendered:?}"
+    );
+    assert!(
+        lines.contains(&"sub/file.txt"),
+        "expected the file row `sub/file.txt`, got: {rendered:?}"
+    );
+}
