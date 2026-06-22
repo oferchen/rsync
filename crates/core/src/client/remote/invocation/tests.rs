@@ -662,11 +662,11 @@ fn includes_checksum_choice_long_arg() {
 
 #[test]
 fn includes_copy_links_flag() {
+    // upstream: options.c:2655-2657 - copy_links ('L') is a receiver-branch
+    // compact letter: it is forwarded to the remote only when the remote is the
+    // sender (a pull), so the builder must run in the Receiver role to emit it.
     let config = ClientConfig::builder().copy_links(true).build();
-    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
-
-    let flags = args[2].to_string_lossy();
+    let flags = receiver_flag_string(&config);
     assert!(flags.contains('L'), "expected 'L' in flags: {flags}");
 }
 
@@ -1126,8 +1126,10 @@ fn includes_links_flag() {
 
 #[test]
 fn includes_copy_dirlinks_flag() {
+    // upstream: options.c:2658-2659 - copy_dirlinks ('k') is a receiver-branch
+    // compact letter, emitted only when the remote is the sender (a pull).
     let config = ClientConfig::builder().copy_dirlinks(true).build();
-    let flags = sender_flag_string(&config);
+    let flags = receiver_flag_string(&config);
     assert!(flags.contains('k'), "expected 'k' in flags: {flags}");
 }
 
@@ -2216,10 +2218,12 @@ fn all_flags_enabled_produces_valid_invocation() {
 
     let full_flags = find_flag_string(&args);
     let flags = transfer_flags_portion(full_flags);
+    // upstream: options.c:2655-2659 - copy_links ('L') and copy_dirlinks ('k')
+    // are receiver-branch compact letters, so a Sender (push) invocation like
+    // this one does NOT emit them. keep_dirlinks ('K') is sender-branch and is
+    // present.
     for (ch, name) in [
         ('l', "links"),
-        ('L', "copy_links"),
-        ('k', "copy_dirlinks"),
         ('K', "keep_dirlinks"),
         ('o', "owner"),
         ('g', "group"),
