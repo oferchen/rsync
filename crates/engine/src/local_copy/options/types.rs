@@ -97,6 +97,12 @@ pub struct LocalCopyOptions {
     pub(super) delete_timing: DeleteTiming,
     pub(super) delete_excluded: bool,
     pub(super) delete_missing_args: bool,
+    /// Mirrors the client's `--itemize-changes`/`-i` state. When set, the
+    /// engine suppresses the plain `info_log!(Del,1,"deleting %n")` line so
+    /// only the `*deleting` itemize record reaches output, matching upstream
+    /// `log.c:log_delete` where `stdout_format_has_o_or_i` makes the itemize
+    /// format and the plain "deleting %n" line mutually exclusive.
+    pub(super) itemize_active: bool,
     pub(super) max_deletions: Option<u64>,
     pub(super) min_file_size: Option<u64>,
     pub(super) max_file_size: Option<u64>,
@@ -256,6 +262,7 @@ impl LocalCopyOptions {
             delete_timing: DeleteTiming::default(),
             delete_excluded: false,
             delete_missing_args: false,
+            itemize_active: false,
             max_deletions: None,
             min_file_size: None,
             max_file_size: None,

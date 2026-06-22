@@ -15,6 +15,7 @@ pub struct LocalCopyRecord {
     created: bool,
     change_set: LocalCopyChangeSet,
     hardlink_uptodate: bool,
+    is_directory: bool,
 }
 
 impl LocalCopyRecord {
@@ -37,7 +38,19 @@ impl LocalCopyRecord {
             created: false,
             change_set: LocalCopyChangeSet::new(),
             hardlink_uptodate: false,
+            is_directory: false,
         }
+    }
+
+    /// Marks whether this record describes a directory entry.
+    ///
+    /// Carried so the CLI renderer can append the upstream `%n` trailing
+    /// slash for directory rows (e.g. `*deleting sub/`) even when no metadata
+    /// snapshot is attached, as is the case for `EntryDeleted` records.
+    #[must_use]
+    pub(in crate::local_copy) const fn with_directory(mut self, is_directory: bool) -> Self {
+        self.is_directory = is_directory;
+        self
     }
 
     /// Marks whether the record corresponds to the creation of a new destination entry.
@@ -97,6 +110,12 @@ impl LocalCopyRecord {
         self.created
     }
 
+    /// Returns whether this record describes a directory entry.
+    #[must_use]
+    pub const fn is_directory(&self) -> bool {
+        self.is_directory
+    }
+
     /// Returns whether this record describes a hardlink whose destination
     /// already shared the source group leader's inode (upstream:
     /// hlink.c:218-224).
@@ -139,6 +158,7 @@ impl LocalCopyRecord {
         bool,
         LocalCopyChangeSet,
         bool,
+        bool,
     ) {
         (
             self.relative_path,
@@ -150,6 +170,7 @@ impl LocalCopyRecord {
             self.created,
             self.change_set,
             self.hardlink_uptodate,
+            self.is_directory,
         )
     }
 }
@@ -339,8 +360,18 @@ mod tests {
     #[test]
     fn into_parts_moves_relative_path() {
         let record = test_record().with_creation(true);
-        let (path, action, bytes, total, elapsed, meta, created, change_set, hardlink_uptodate) =
-            record.into_parts();
+        let (
+            path,
+            action,
+            bytes,
+            total,
+            elapsed,
+            meta,
+            created,
+            change_set,
+            hardlink_uptodate,
+            is_directory,
+        ) = record.into_parts();
         assert_eq!(path, Path::new("test/file.txt"));
         assert_eq!(action, LocalCopyAction::DataCopied);
         assert_eq!(bytes, 1024);
@@ -349,6 +380,7 @@ mod tests {
         assert!(meta.is_none());
         assert!(created);
         assert!(!hardlink_uptodate);
+        assert!(!is_directory);
         assert_eq!(change_set, LocalCopyChangeSet::new());
     }
 

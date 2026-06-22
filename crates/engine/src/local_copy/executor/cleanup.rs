@@ -326,23 +326,30 @@ fn apply_delete_side_effects(
         if !context.mode().is_dry_run() {
             context.backup_existing_entry(&path, Some(entry_relative.as_path()), file_type)?;
         }
-        if is_dir {
-            // upstream: log.c:log_delete emits "deleting %n"; f_name appends a
-            // trailing slash for directories and never inserts the word
-            // "directory".
-            info_log!(Del, 1, "deleting {}/", entry_relative.display());
-        } else {
-            info_log!(Del, 1, "deleting {}", entry_relative.display());
+        // upstream: log.c:log_delete emits exactly ONE line - the itemize
+        // format when stdout_format_has_o_or_i, otherwise "deleting %n".
+        // Suppress the plain line when itemize is active so only the
+        // `*deleting` record renders; f_name appends a trailing slash for
+        // directories and never inserts the word "directory".
+        if !context.options().is_itemize_active() {
+            if is_dir {
+                info_log!(Del, 1, "deleting {}/", entry_relative.display());
+            } else {
+                info_log!(Del, 1, "deleting {}", entry_relative.display());
+            }
         }
         context.summary_mut().record_deletion();
-        context.record(LocalCopyRecord::new(
-            entry_relative,
-            LocalCopyAction::EntryDeleted,
-            0,
-            None,
-            Duration::default(),
-            None,
-        ));
+        context.record(
+            LocalCopyRecord::new(
+                entry_relative,
+                LocalCopyAction::EntryDeleted,
+                0,
+                None,
+                Duration::default(),
+                None,
+            )
+            .with_directory(is_dir),
+        );
         context.register_progress();
     }
     Ok(())
@@ -386,23 +393,32 @@ fn record_directory_subtree(
                 error,
             )
         })?;
-        if file_type.is_dir() {
+        let is_dir = file_type.is_dir();
+        if is_dir {
             record_directory_subtree(context, path_buf, relative_buf)?;
-            // upstream: log.c:log_delete "deleting %n" - trailing slash for
-            // dirs, no "directory" word.
-            info_log!(Del, 1, "deleting {}/", relative_buf.display());
-        } else {
-            info_log!(Del, 1, "deleting {}", relative_buf.display());
+        }
+        // upstream: log.c:log_delete emits one line; suppress the plain
+        // "deleting %n" when itemize is active. f_name appends a trailing
+        // slash for dirs and never inserts the word "directory".
+        if !context.options().is_itemize_active() {
+            if is_dir {
+                info_log!(Del, 1, "deleting {}/", relative_buf.display());
+            } else {
+                info_log!(Del, 1, "deleting {}", relative_buf.display());
+            }
         }
         context.summary_mut().record_deletion();
-        context.record(LocalCopyRecord::new(
-            relative_buf.clone(),
-            LocalCopyAction::EntryDeleted,
-            0,
-            None,
-            Duration::default(),
-            None,
-        ));
+        context.record(
+            LocalCopyRecord::new(
+                relative_buf.clone(),
+                LocalCopyAction::EntryDeleted,
+                0,
+                None,
+                Duration::default(),
+                None,
+            )
+            .with_directory(is_dir),
+        );
         context.register_progress();
         relative_buf.pop();
         path_buf.pop();

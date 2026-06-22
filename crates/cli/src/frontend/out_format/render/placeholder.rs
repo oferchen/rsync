@@ -140,7 +140,11 @@ fn render_path(event: &ClientEvent, ensure_trailing_slash: bool) -> String {
     if ensure_trailing_slash
         && !rendered.ends_with('/')
         && event.metadata().map(ClientEntryMetadata::kind).map_or_else(
-            || matches!(event.kind(), ClientEventKind::DirectoryCreated),
+            // upstream: log.c:639-640 - %n appends `/` for any directory entry.
+            // `EntryDeleted` rows carry no metadata snapshot, so fall back to the
+            // record's directory bit (set by the engine cleanup pass) alongside
+            // the freshly-created-directory case.
+            || matches!(event.kind(), ClientEventKind::DirectoryCreated) || event.is_directory(),
             ClientEntryKind::is_directory,
         )
     {

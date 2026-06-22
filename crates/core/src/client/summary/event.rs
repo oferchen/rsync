@@ -82,6 +82,7 @@ pub struct ClientEvent {
     destination_path: PathBuf,
     change_set: LocalCopyChangeSet,
     hardlink_uptodate: bool,
+    is_directory: bool,
 }
 
 impl ClientEvent {
@@ -98,6 +99,7 @@ impl ClientEvent {
             was_created,
             change_set,
             hardlink_uptodate,
+            is_directory,
         ) = record.into_parts();
         let kind = match &action {
             LocalCopyAction::DataCopied => ClientEventKind::DataCopied,
@@ -170,6 +172,7 @@ impl ClientEvent {
             destination_path,
             change_set,
             hardlink_uptodate,
+            is_directory,
         }
     }
 
@@ -193,6 +196,7 @@ impl ClientEvent {
             destination_path,
             change_set: LocalCopyChangeSet::new(),
             hardlink_uptodate: false,
+            is_directory: false,
         }
     }
 
@@ -234,6 +238,16 @@ impl ClientEvent {
     #[must_use]
     pub const fn was_created(&self) -> bool {
         self.created
+    }
+
+    /// Returns whether the event describes a directory entry.
+    ///
+    /// Carried for `EntryDeleted` records, which lack a metadata snapshot, so
+    /// the renderer can still append the upstream `%n` trailing slash to a
+    /// deleted-directory row (e.g. `*deleting sub/`).
+    #[must_use]
+    pub const fn is_directory(&self) -> bool {
+        self.is_directory
     }
 
     /// Returns whether the event describes a hardlink whose destination
@@ -288,6 +302,7 @@ impl ClientEvent {
             destination_path,
             change_set,
             hardlink_uptodate: false,
+            is_directory: false,
         }
     }
 
