@@ -486,6 +486,28 @@ fn is_deferred_hardlink_event(event: &ClientEvent) -> bool {
             .is_some()
 }
 
+/// Renders an event's path for the verbose file listing, mirroring upstream
+/// `f_name()` (flist.c): directory names carry a trailing `/` and the transfer
+/// root (`.`) renders as `./`. Non-directory entries render verbatim. This
+/// matches the receiver-side verbose path (receiver/transfer/sync.rs) so a
+/// local-copy `-v`/`--info=name` listing agrees with upstream.
+///
+/// upstream: log.c:639-640 - the `%n` token strlcat()s a `/` for S_ISDIR
+/// entries; the transfer root is listed as `./`.
+fn verbose_listing_name(event: &ClientEvent) -> String {
+    let path = event.relative_path();
+    if matches!(
+        event.metadata().map(ClientEntryMetadata::kind),
+        Some(ClientEntryKind::Directory)
+    ) {
+        if path.as_os_str() == "." {
+            return String::from("./");
+        }
+        return format!("{}/", path.display());
+    }
+    path.to_string_lossy().into_owned()
+}
+
 /// Renders verbose listings for the provided transfer events.
 pub(crate) fn emit_verbose<W: Write + ?Sized>(
     events: &[ClientEvent],
@@ -547,7 +569,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 continue;
             }
 
-            let mut rendered = event.relative_path().to_string_lossy().into_owned();
+            let mut rendered = verbose_listing_name(event);
             if matches!(kind, ClientEventKind::SymlinkCopied)
                 && let Some(metadata) = event.metadata()
                 && let Some(target) = metadata.symlink_target()
@@ -709,7 +731,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
             _ => {}
         }
 
-        let mut rendered = event.relative_path().to_string_lossy().into_owned();
+        let mut rendered = verbose_listing_name(event);
         if matches!(kind, ClientEventKind::SymlinkCopied)
             && let Some(metadata) = event.metadata()
             && let Some(target) = metadata.symlink_target()
