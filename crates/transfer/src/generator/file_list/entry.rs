@@ -120,7 +120,13 @@ impl GeneratorContext {
             #[cfg(not(unix))]
             let mode = 0o755;
 
-            FileEntry::new_directory(relative_path, mode)
+            // upstream: flist.c:1465 - `file->len32 = (uint32)st.st_size` runs for
+            // every entry; only devices/specials are zeroed (flist.c:1452-1454).
+            // Directories therefore carry their on-disk inode size on the wire,
+            // which feeds `--list-only`, `%l`, and the `--stats` total.
+            let mut entry = FileEntry::new_directory(relative_path, mode);
+            entry.set_size(metadata.len());
+            entry
         } else if file_type.is_symlink() || {
             #[cfg(windows)]
             {
@@ -160,7 +166,13 @@ impl GeneratorContext {
             // re-applies the prefix when the link is materialized on disk.
             let target = strip_symlink_munge_prefix(self.config.munge_symlinks, raw_target);
 
-            FileEntry::new_symlink(relative_path, target)
+            // upstream: flist.c:1465 - symlinks carry `st_size`, which lstat
+            // reports as the byte length of the link target. The receiver gets
+            // the target separately, so this length is purely the size shown by
+            // `--list-only`/`%l` and summed into the `--stats` total.
+            let mut entry = FileEntry::new_symlink(relative_path, target);
+            entry.set_size(metadata.len());
+            entry
         } else {
             // Device and special file types (Unix only)
             #[cfg(unix)]
@@ -1147,6 +1159,106 @@ mod windows_reparse_tests {
         assert!(
             !link_target.as_os_str().is_empty(),
             "directory symlink target must be preserved, entry={entry:?}"
+        );
+    }
+}
+
+#[cfg(all(test, unix))]
+mod entry_length_tests {
+    //! `F_LENGTH` parity regression for directory and symlink entries.
+    //!
+    //! upstream: flist.c:1465 - `file->len32 = (uint32)st.st_size` runs for
+    //! every entry type; only devices and specials are zeroed at flist.c:1452
+    //! and flist.c:1454. Directories therefore carry their on-disk inode size
+    //! and symlinks carry `st_size` (the target byte length). That field is
+    //! summed into the `--stats` "Total file size" total at flist.c:679 and
+    //! rendered by `--list-only` and `%l`, so emitting 0 here would diverge
+    //! from upstream's observable output byte-for-byte.
+
+    use super::super::super::GeneratorContext;
+    use crate::config::ServerConfig;
+    use crate::handshake::HandshakeResult;
+    use crate::role::ServerRole;
+    use protocol::ProtocolVersion;
+    use protocol::flist::FileType;
+    use std::ffi::OsString;
+    use std::os::unix::fs::symlink;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    fn generator() -> GeneratorContext {
+        let handshake = HandshakeResult {
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        };
+        let mut config = ServerConfig {
+            role: ServerRole::Generator,
+            protocol: ProtocolVersion::try_from(32u8).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![OsString::from(".")],
+            ..Default::default()
+        };
+        config.flags.numeric_ids = true;
+        GeneratorContext::new_for_test(&handshake, config)
+    }
+
+    #[test]
+    fn directory_entry_carries_on_disk_size() {
+        let tmp = TempDir::new().expect("tempdir");
+        let dir = tmp.path().join("subdir");
+        std::fs::create_dir(&dir).expect("create dir");
+        let meta = std::fs::symlink_metadata(&dir).expect("metadata");
+
+        let ctx = generator();
+        let entry = ctx
+            .create_entry(&dir, PathBuf::from("subdir"), &meta)
+            .expect("create_entry");
+
+        assert_eq!(entry.file_type(), FileType::Directory);
+        assert!(
+            meta.len() > 0,
+            "directories report a non-zero on-disk st_size on Unix",
+        );
+        assert_eq!(
+            entry.size(),
+            meta.len(),
+            "directory F_LENGTH must mirror st_size (upstream flist.c:1465), \
+             not the hardcoded 0 from FileEntry::new_directory",
+        );
+    }
+
+    #[test]
+    fn symlink_entry_carries_target_length() {
+        let tmp = TempDir::new().expect("tempdir");
+        let link = tmp.path().join("link");
+        // lstat reports st_size == strlen(target) for symlinks.
+        let target = "some/relative/target";
+        symlink(target, &link).expect("create symlink");
+        let meta = std::fs::symlink_metadata(&link).expect("metadata");
+
+        let ctx = generator();
+        let entry = ctx
+            .create_entry(&link, PathBuf::from("link"), &meta)
+            .expect("create_entry");
+
+        assert_eq!(entry.file_type(), FileType::Symlink);
+        assert_eq!(
+            entry.size(),
+            target.len() as u64,
+            "symlink F_LENGTH must equal the target byte length \
+             (upstream flist.c:1465), not the hardcoded 0 from \
+             FileEntry::new_symlink",
+        );
+        assert_eq!(
+            entry.size(),
+            meta.len(),
+            "F_LENGTH must mirror lstat st_size"
         );
     }
 }
