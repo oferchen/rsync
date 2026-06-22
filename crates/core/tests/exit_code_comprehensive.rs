@@ -263,10 +263,7 @@ fn exit_code_15_is_crashed() {
 
 #[test]
 fn exit_code_15_description() {
-    assert_eq!(
-        ExitCode::Crashed.description(),
-        "received SIGSEGV or SIGBUS or SIGABRT"
-    );
+    assert_eq!(ExitCode::Crashed.description(), "sibling process crashed");
 }
 
 #[test]
@@ -286,7 +283,7 @@ fn exit_code_16_is_terminated() {
 fn exit_code_16_description() {
     assert_eq!(
         ExitCode::Terminated.description(),
-        "received SIGINT, SIGTERM, or SIGHUP"
+        "sibling process terminated abnormally"
     );
 }
 
@@ -383,7 +380,10 @@ fn exit_code_23_is_partial_transfer() {
 
 #[test]
 fn exit_code_23_description() {
-    assert_eq!(ExitCode::PartialTransfer.description(), "partial transfer");
+    assert_eq!(
+        ExitCode::PartialTransfer.description(),
+        "some files/attrs were not transferred (see previous errors)"
+    );
 }
 
 #[test]
@@ -424,7 +424,7 @@ fn exit_code_25_is_delete_limit() {
 fn exit_code_25_description() {
     assert_eq!(
         ExitCode::DeleteLimit.description(),
-        "max delete limit stopped deletions"
+        "the --max-delete limit stopped deletions"
     );
 }
 
@@ -485,10 +485,7 @@ fn exit_code_124_is_command_failed() {
 
 #[test]
 fn exit_code_124_description() {
-    assert_eq!(
-        ExitCode::CommandFailed.description(),
-        "remote command failed"
-    );
+    assert_eq!(ExitCode::CommandFailed.description(), "remote shell failed");
 }
 
 #[test]
@@ -506,10 +503,7 @@ fn exit_code_125_is_command_killed() {
 
 #[test]
 fn exit_code_125_description() {
-    assert_eq!(
-        ExitCode::CommandKilled.description(),
-        "remote command killed"
-    );
+    assert_eq!(ExitCode::CommandKilled.description(), "remote shell killed");
 }
 
 #[test]
@@ -859,7 +853,10 @@ fn exit_code_implements_debug() {
 fn exit_code_implements_display() {
     let code = ExitCode::PartialTransfer;
     let display = format!("{code}");
-    assert_eq!(display, "partial transfer");
+    assert_eq!(
+        display,
+        "some files/attrs were not transferred (see previous errors)"
+    );
 }
 
 #[test]
@@ -1065,13 +1062,10 @@ fn exit_code_descriptions_match_upstream_log_c() {
         "errors with program diagnostics"
     );
     assert_eq!(ExitCode::Ipc.description(), "error in IPC code");
-    assert_eq!(
-        ExitCode::Crashed.description(),
-        "received SIGSEGV or SIGBUS or SIGABRT"
-    );
+    assert_eq!(ExitCode::Crashed.description(), "sibling process crashed");
     assert_eq!(
         ExitCode::Terminated.description(),
-        "received SIGINT, SIGTERM, or SIGHUP"
+        "sibling process terminated abnormally"
     );
     assert_eq!(ExitCode::Signal1.description(), "received SIGUSR1");
     assert_eq!(
@@ -1083,14 +1077,17 @@ fn exit_code_descriptions_match_upstream_log_c() {
         ExitCode::Malloc.description(),
         "error allocating core memory buffers"
     );
-    assert_eq!(ExitCode::PartialTransfer.description(), "partial transfer");
+    assert_eq!(
+        ExitCode::PartialTransfer.description(),
+        "some files/attrs were not transferred (see previous errors)"
+    );
     assert_eq!(
         ExitCode::Vanished.description(),
         "some files vanished before they could be transferred"
     );
     assert_eq!(
         ExitCode::DeleteLimit.description(),
-        "max delete limit stopped deletions"
+        "the --max-delete limit stopped deletions"
     );
     assert_eq!(
         ExitCode::Timeout.description(),
@@ -1100,14 +1097,8 @@ fn exit_code_descriptions_match_upstream_log_c() {
         ExitCode::ConnectionTimeout.description(),
         "timeout waiting for daemon connection"
     );
-    assert_eq!(
-        ExitCode::CommandFailed.description(),
-        "remote command failed"
-    );
-    assert_eq!(
-        ExitCode::CommandKilled.description(),
-        "remote command killed"
-    );
+    assert_eq!(ExitCode::CommandFailed.description(), "remote shell failed");
+    assert_eq!(ExitCode::CommandKilled.description(), "remote shell killed");
     assert_eq!(
         ExitCode::CommandRun.description(),
         "remote command could not be run"
