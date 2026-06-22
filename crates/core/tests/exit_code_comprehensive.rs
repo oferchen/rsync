@@ -1493,10 +1493,12 @@ mod exit_code_semantics {
 
         for (value, code) in command_codes {
             assert_eq!(code.as_i32(), value, "{code:?} should be {value}");
+            // Upstream rerr_names (log.c): 124/125 use "remote shell",
+            // 126/127 use "remote command". Both denote remote execution.
             assert!(
-                code.description().contains("remote command")
-                    || code.description().contains("command"),
-                "{code:?} description should mention 'command'"
+                code.description().contains("remote shell")
+                    || code.description().contains("remote command"),
+                "{code:?} description should mention remote shell/command execution"
             );
         }
     }
