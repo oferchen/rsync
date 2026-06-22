@@ -496,16 +496,25 @@ fn is_deferred_hardlink_event(event: &ClientEvent) -> bool {
 /// entries; the transfer root is listed as `./`.
 fn verbose_listing_name(event: &ClientEvent) -> String {
     let path = event.relative_path();
-    if matches!(
+    let is_dir = matches!(
         event.metadata().map(ClientEntryMetadata::kind),
         Some(ClientEntryKind::Directory)
-    ) {
-        if path.as_os_str() == "." {
-            return String::from("./");
-        }
-        return format!("{}/", path.display());
+    );
+    if is_dir && path.as_os_str() == "." {
+        return String::from("./");
     }
-    path.to_string_lossy().into_owned()
+    let mut rendered = path.to_string_lossy().into_owned();
+    // upstream: flist.c f_name() emits POSIX forward-slash separators
+    // regardless of host OS. Normalize Windows native backslashes at the
+    // rendering boundary; storage retains the platform-native form.
+    #[cfg(windows)]
+    {
+        rendered = rendered.replace('\\', "/");
+    }
+    if is_dir {
+        rendered.push('/');
+    }
+    rendered
 }
 
 /// Renders verbose listings for the provided transfer events.
