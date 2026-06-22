@@ -152,6 +152,27 @@ pub(crate) fn build_server_flag_string(config: &ClientConfig) -> String {
 /// upstream: `exclude.c:1238-1240` - leading `/` is parsed as the
 /// `FILTRULE_ABS_PATH` modifier. `exclude.c:get_rule_prefix()` (and
 /// `serialize_rule` here) re-append the trailing `/` for directory-only rules.
+/// Maps a spec's two-sided applicability onto the wire's `FILTRULES_SIDES`
+/// encoding: a rule that applies to both sides carries *neither* side bit on
+/// the wire, while a one-sided rule carries the matching bit.
+///
+/// oc-rsync's [`FilterRuleSpec`] represents "applies to both sides" as
+/// `applies_to_sender() && applies_to_receiver()`, but upstream's wire format
+/// encodes that default as no side flag at all. A naive copy of both booleans
+/// would serialize a plain `--exclude` as `-sr` instead of `- `.
+///
+/// upstream: exclude.c:1566-1572 (`get_rule_prefix`) emits `s` iff
+/// `FILTRULE_SENDER_SIDE` and `r` iff `FILTRULE_RECEIVER_SIDE`; a both-sides
+/// rule has neither bit set (exclude.c:1331 masks `FILTRULES_SIDES`).
+fn wire_sender_side(spec: &FilterRuleSpec) -> bool {
+    spec.applies_to_sender() && !spec.applies_to_receiver()
+}
+
+/// Receiver-side counterpart of [`wire_sender_side`].
+fn wire_receiver_side(spec: &FilterRuleSpec) -> bool {
+    spec.applies_to_receiver() && !spec.applies_to_sender()
+}
+
 pub(crate) fn build_wire_format_rules(
     client_rules: &[FilterRuleSpec],
     delete_excluded: bool,
@@ -194,8 +215,8 @@ pub(crate) fn build_wire_format_rules(
                     // upstream: 'e' flag = FILTRULE_EXCLUDE_SELF.
                     exclude_from_merge: true,
                     xattr_only: spec.is_xattr_only(),
-                    sender_side: spec.applies_to_sender(),
-                    receiver_side: spec.applies_to_receiver(),
+                    sender_side: wire_sender_side(spec),
+                    receiver_side: wire_receiver_side(spec),
                     perishable: spec.is_perishable(),
                     negate: spec.is_negated(),
                     ..FilterRuleWireFormat::default()
@@ -211,8 +232,8 @@ pub(crate) fn build_wire_format_rules(
             anchored,
             directory_only,
             xattr_only: spec.is_xattr_only(),
-            sender_side: spec.applies_to_sender(),
-            receiver_side: spec.applies_to_receiver(),
+            sender_side: wire_sender_side(spec),
+            receiver_side: wire_receiver_side(spec),
             perishable: spec.is_perishable(),
             negate: spec.is_negated(),
             ..FilterRuleWireFormat::default()
@@ -735,22 +756,26 @@ mod tests {
 
         assert_eq!(rules.len(), 1);
         assert_eq!(rules[0].rule_type, RuleType::DirMerge);
-        // DirMerge defaults: sender=true, receiver=true, both retained.
-        assert!(rules[0].sender_side);
-        assert!(rules[0].receiver_side);
+        // DirMerge defaults apply to both sides, which upstream encodes as
+        // neither FILTRULES_SIDES bit (no `s`/`r` modifier on the wire).
+        assert!(!rules[0].sender_side);
+        assert!(!rules[0].receiver_side);
     }
 
     /// Without --delete-excluded the implicit flag must not be applied even
-    /// for bare include/exclude rules. This guards against future
-    /// over-eager mutation that would silently restrict rule scope.
+    /// for bare include/exclude rules. A plain exclude applies to both sides,
+    /// which upstream serializes with neither FILTRULES_SIDES bit (`- *.tmp`,
+    /// not `-sr *.tmp`); the wire encoder must carry no side flag.
+    ///
+    /// upstream: exclude.c:1566-1572 - a both-sides rule emits no `s`/`r`.
     #[test]
     fn no_delete_excluded_leaves_bare_rule_untouched() {
         let spec = FilterRuleSpec::exclude("*.tmp");
         let rules = build_wire_format_rules(&[spec], false).expect("no delete_excluded");
 
         assert_eq!(rules.len(), 1);
-        assert!(rules[0].sender_side);
-        assert!(rules[0].receiver_side);
+        assert!(!rules[0].sender_side);
+        assert!(!rules[0].receiver_side);
     }
 
     /// Wire-byte parity: when `--delete-excluded` is active, the rule must
@@ -776,6 +801,29 @@ mod tests {
         // `--delete-excluded`. Without the implicit flag, the prefix would
         // be `- `, diverging from the upstream wire.
         assert_eq!(prefix, "-s ");
+    }
+
+    /// Wire-byte parity: a plain `--exclude` (applies to both sides) must
+    /// serialize as `- pattern` with no `s`/`r` modifier. oc-rsync's spec
+    /// encodes "both sides" as both `applies_to_*` booleans, but upstream
+    /// carries neither FILTRULES_SIDES bit, so a naive copy would emit the
+    /// divergent `-sr ` prefix instead of `- `.
+    ///
+    /// upstream: exclude.c:1566-1572 - `get_rule_prefix()` emits no side
+    /// modifier when neither `FILTRULE_SENDER_SIDE` nor `FILTRULE_RECEIVER_SIDE`
+    /// is set.
+    #[test]
+    fn plain_exclude_wire_prefix_has_no_side_modifier() {
+        use protocol::ProtocolVersion;
+        use protocol::filters::build_rule_prefix;
+
+        let spec = FilterRuleSpec::exclude("*.tmp");
+        let rules = build_wire_format_rules(&[spec], false).expect("plain exclude");
+
+        let proto = ProtocolVersion::from_supported(32).unwrap();
+        let prefix = build_rule_prefix(&rules[0], proto).expect("prefix must serialize");
+
+        assert_eq!(prefix, "- ");
     }
 
     #[test]
