@@ -59,7 +59,12 @@ fn build_protocol_file_entry(
         // upstream: flist.c:send_file_entry() - symlink target is read and
         // included in the flist entry so batch replay can recreate symlinks.
         let link_target = fs::read_link(source_path).unwrap_or_default();
-        protocol::flist::FileEntry::new_symlink(name, link_target)
+        // upstream: flist.c:1465 - symlinks carry stat.st_size (the target byte
+        // length), matching the directory case above; only devices/specials are
+        // zeroed.
+        let mut symlink_entry = protocol::flist::FileEntry::new_symlink(name, link_target);
+        symlink_entry.set_size(metadata.len());
+        symlink_entry
     } else {
         protocol::flist::FileEntry::new_file(name, metadata.len(), permissions)
     };
@@ -191,4 +196,40 @@ pub(crate) fn capture_batch_file_entry(
     context.increment_batch_flist_index();
 
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::build_protocol_file_entry;
+    use std::os::unix::fs::symlink;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    /// upstream: flist.c:1465 - a symlink's `F_LENGTH` is its `st_size`, which
+    /// lstat reports as the target byte length. Batch capture must record the
+    /// same value the network flist would, otherwise `--list-only`/`%l` and the
+    /// `--stats` total computed from a replayed batch diverge from upstream.
+    #[test]
+    fn symlink_batch_entry_carries_target_length() {
+        let tmp = TempDir::new().expect("tempdir");
+        let link = tmp.path().join("link");
+        let target = "some/relative/target";
+        symlink(target, &link).expect("create symlink");
+        let meta = std::fs::symlink_metadata(&link).expect("metadata");
+
+        let entry = build_protocol_file_entry(&link, &PathBuf::from("link"), &meta, false, true);
+
+        assert!(entry.is_symlink());
+        assert_eq!(
+            entry.size(),
+            target.len() as u64,
+            "batch symlink F_LENGTH must equal the target byte length, \
+             not the hardcoded 0 from FileEntry::new_symlink",
+        );
+        assert_eq!(
+            entry.size(),
+            meta.len(),
+            "F_LENGTH must mirror lstat st_size"
+        );
+    }
 }
