@@ -542,11 +542,38 @@ struct DirectoryFilterHandles {
     dynamic: Rc<RefCell<Vec<DynamicDirMergeFrame>>>,
 }
 
+/// Whole-stack snapshot of the source-visible per-directory filter state.
+///
+/// Captured before a destination-side deletion scan loads its `dir-merge`
+/// files and restored verbatim when the scan's guard drops, so the
+/// destination load can never perturb the source-side filter evaluation.
+///
+/// upstream: delete.c:65-115 `delete_in_dir()` runs the destination
+/// per-directory filter push/pop (`push_local_filters`/`pop_local_filters`)
+/// against a separate `delete_filt` chain seeded from `change_local_filter_dir`;
+/// the receiver's destination scan never mutates the sender's `filter_list`.
+/// We mirror that isolation by snapshotting and restoring the source-visible
+/// stacks around the destination scan rather than relying on a per-index pop,
+/// which cannot balance the nested `dir-merge` directives a destination merge
+/// file may register (exclude.c:801 `push_local_filters` seeds `lp->head` from
+/// rules an arbitrary number of indices deep).
+struct FilterStateSnapshot {
+    layers: FilterSegmentLayers,
+    marker_layers: ExcludeIfPresentLayers,
+    ephemeral: FilterSegmentStack,
+    marker_ephemeral: ExcludeIfPresentStack,
+    dynamic: Vec<DynamicDirMergeFrame>,
+}
+
 /// RAII guard that reverts per-directory filter rules when dropped.
 ///
 /// Pushing dir-merge rules into the layered filter stacks yields this guard.
 /// On drop, all rules pushed for the directory are popped, restoring the
 /// filter state to what it was before entering the directory.
+///
+/// When `restore` is set (destination-deletion scans), the guard restores the
+/// captured [`FilterStateSnapshot`] wholesale instead of running the per-index
+/// pop logic, guaranteeing source-side state is left untouched.
 pub(crate) struct DirectoryFilterGuard {
     handles: DirectoryFilterHandles,
     indices: Vec<usize>,
@@ -554,6 +581,7 @@ pub(crate) struct DirectoryFilterGuard {
     ephemeral_active: bool,
     dynamic_active: bool,
     excluded: bool,
+    restore: Option<FilterStateSnapshot>,
 }
 
 impl DirectoryFilterGuard {
@@ -572,6 +600,7 @@ impl DirectoryFilterGuard {
             ephemeral_active,
             dynamic_active,
             excluded,
+            restore: None,
         }
     }
 
@@ -579,10 +608,27 @@ impl DirectoryFilterGuard {
     pub(crate) const fn is_excluded(&self) -> bool {
         self.excluded
     }
+
+    /// Arms the guard to restore the captured source-visible filter state on
+    /// drop instead of running the per-index pop logic. Used by the
+    /// destination-deletion path so the destination merge load is isolated from
+    /// source-side evaluation.
+    fn arm_restore(&mut self, snapshot: FilterStateSnapshot) {
+        self.restore = Some(snapshot);
+    }
 }
 
 impl Drop for DirectoryFilterGuard {
     fn drop(&mut self) {
+        if let Some(snapshot) = self.restore.take() {
+            *self.handles.layers.borrow_mut() = snapshot.layers;
+            *self.handles.marker_layers.borrow_mut() = snapshot.marker_layers;
+            *self.handles.ephemeral.borrow_mut() = snapshot.ephemeral;
+            *self.handles.marker_ephemeral.borrow_mut() = snapshot.marker_ephemeral;
+            *self.handles.dynamic.borrow_mut() = snapshot.dynamic;
+            return;
+        }
+
         if self.dynamic_active {
             let mut stack = self.handles.dynamic.borrow_mut();
             stack.pop();
