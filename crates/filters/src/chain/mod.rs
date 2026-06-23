@@ -136,6 +136,20 @@ impl FilterChain {
         self.merge_configs.push(config);
     }
 
+    /// Reports whether any per-directory merge file configurations are
+    /// registered on this chain.
+    ///
+    /// The receiver's delete pass consults this to decide whether it must
+    /// reload per-directory merge rules while scanning each destination
+    /// directory (mirroring upstream `delete.c`/`exclude.c`
+    /// `change_local_filter_dir` -> `push_local_filters`). When no merge
+    /// configs exist the shared global rule snapshot is sufficient and the
+    /// per-directory reload is skipped.
+    #[must_use]
+    pub fn has_per_dir_merge(&self) -> bool {
+        !self.merge_configs.is_empty()
+    }
+
     /// Marks this chain as operating under `--delete-excluded`.
     ///
     /// When enabled, rules expanded out of per-directory merge files acquire

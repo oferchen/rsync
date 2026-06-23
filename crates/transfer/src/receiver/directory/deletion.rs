@@ -63,6 +63,14 @@ impl ReceiverContext {
 
         let max_delete = self.config.deletion.max_delete;
 
+        // Whether the deletion chain carries per-directory merge configs
+        // (`.rsync-filter`, dir-merge `.filt`/`.filt2`). Computed up front so it
+        // can gate both the scan-target expansion below and the per-worker
+        // reload further down. When there are no per-dir merge configs the
+        // deletion pass behaves exactly as before: dirs_to_scan is keyed off
+        // parents-with-a-visible-child and the flat global chain decides.
+        let needs_perdir_merge = self.deletion_filter_chain.has_per_dir_merge();
+
         // Build directory -> children map from the file list.
         // Use owned OsString keys so the map can be shared across threads.
         // On macOS, normalize filenames to NFC so that NFD names from read_dir
@@ -90,6 +98,26 @@ impl ReceiverContext {
                     .or_default()
                     .insert(normalize_filename_for_compare(name));
             }
+
+            // upstream: generator.c:delete_in_dir() runs for EVERY content
+            // directory in the file list. Each directory's deletion candidate
+            // list is built from a fresh readdir of the destination, regardless
+            // of whether any of that directory's source children are visible in
+            // the flist. A directory whose only source children are filter-
+            // hidden (e.g. `--filter='hide,! */'`) must still be scanned so
+            // extraneous destination entries inside it are removed. Keying
+            // dirs_to_scan solely off parents-with-a-visible-child skips such
+            // directories and leaves extraneous files undeleted, so register
+            // every directory entry as its own scan target with a (possibly
+            // empty) keep-set. Gated on `needs_perdir_merge`: the expanded
+            // scan set is only safe when the per-directory merge rules are
+            // reloaded per dir to protect dest-side merge files and their
+            // excludes; without them, scanning extra dirs against the flat
+            // chain would over-delete. Daemon/non-merge transfers keep the
+            // master scan set unchanged.
+            if needs_perdir_merge && entry.is_dir() {
+                dir_children.entry(relative.to_path_buf()).or_default();
+            }
         }
 
         let dirs_to_scan: Vec<PathBuf> = dir_children.keys().cloned().collect();
@@ -98,13 +126,29 @@ impl ReceiverContext {
         // upstream: main.c:1367 - deletion_count >= max_delete
         let deletions_performed = Arc::new(AtomicU64::new(0));
 
-        // Share directory children map and filter chain across workers.
-        // The filter chain clone captures the global rules snapshot for
-        // allows_deletion() checks. Per-directory merge files are not
-        // re-read during deletion (upstream also only evaluates the
-        // pre-loaded filter list in delete_in_dir).
+        // Share directory children map and filter chains across workers.
+        //
+        // Two chains are carried: `flat_chain` is the global rules snapshot
+        // used when no per-directory merge files are in play, and `merge_chain`
+        // is the deletion-pass chain that knows about per-directory merge
+        // configs (`.rsync-filter`, dir-merge `.filt`/`.filt2`).
+        //
+        // upstream: generator.c:308 delete_in_dir() ->
+        // change_local_filter_dir() -> exclude.c:push_local_filters() reloads
+        // each destination directory's per-directory merge file(s) (including
+        // nested merges) before is_excluded() tests a deletion candidate, so a
+        // merge file's own protect rule (and any merge-driven excludes) take
+        // effect during deletion. Carry the transfer root so leading-`/` rules
+        // in those merge files re-anchor correctly, and remember whether any
+        // per-directory merge configs exist so workers only pay the reload cost
+        // when the chain actually has per-dir merges.
         let dir_children = Arc::new(dir_children);
-        let filter_chain = Arc::new(self.filter_chain.clone());
+        let flat_chain = Arc::new(self.filter_chain.clone());
+        let merge_chain = Arc::new({
+            let mut chain = self.deletion_filter_chain.clone();
+            chain.set_transfer_root(dest_dir.to_path_buf());
+            chain
+        });
         let dest_dir_owned = dest_dir.to_path_buf();
         // SEC-1.q2: clone the sandbox `Arc` into the worker closure so
         // every per-directory job can route its scan and per-entry
@@ -178,6 +222,30 @@ impl ReceiverContext {
 
                     let mut stats = DeleteStats::new();
                     let mut deleted_paths = Vec::new();
+
+                    // upstream parity: reload this destination directory's
+                    // per-directory merge rules (and its inheriting ancestors')
+                    // so dir-merge self-exclusion and merge-driven excludes are
+                    // active while deciding deletions. Only entered when the
+                    // deletion chain has per-dir merge configs; otherwise the
+                    // flat global chain is consulted directly. enter_directory
+                    // takes `&mut self`, so each worker reloads onto its own
+                    // clone of the merge chain.
+                    let local_chain = if needs_perdir_merge {
+                        let mut chain = (*merge_chain).clone();
+                        let _ = chain.enter_directory(&dest_dir_owned);
+                        if dir_relative.as_os_str() != "." {
+                            let mut cur = dest_dir_owned.clone();
+                            for comp in dir_relative.iter() {
+                                cur.push(comp);
+                                let _ = chain.enter_directory(&cur);
+                            }
+                        }
+                        Some(chain)
+                    } else {
+                        None
+                    };
+
                     for entry in read_dir_iter {
                         #[cfg(unix)]
                         let (name, kind) = match entry {
@@ -223,7 +291,11 @@ impl ReceiverContext {
                         } else {
                             dir_relative.join(&name)
                         };
-                        if !filter_chain.allows_deletion(&rel_for_filter, is_dir) {
+                        let allows = match &local_chain {
+                            Some(chain) => chain.allows_deletion(&rel_for_filter, is_dir),
+                            None => flat_chain.allows_deletion(&rel_for_filter, is_dir),
+                        };
+                        if !allows {
                             continue;
                         }
 
