@@ -57,6 +57,55 @@ fn trace_chown_change(
     }
 }
 
+/// Returns `true` when the current process may set a file's group to `gid`
+/// without privilege: it is the effective gid or one of the supplementary
+/// groups. Mirrors upstream `is_in_group()` (uidlist.c:195-239), the test that
+/// gates `FLAG_SKIP_GROUP` for a non-root sender.
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn process_in_group(gid: unix_fs::Gid) -> bool {
+    if rustix::process::getegid() == gid {
+        return true;
+    }
+    let target = gid.as_raw();
+    // SAFETY: the first call passes a NULL buffer with size 0 to learn the
+    // supplementary-group count; the second fills an exactly-sized buffer.
+    // Both are standard POSIX `getgroups` invocations with no aliasing.
+    let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
+    if count <= 0 {
+        return false;
+    }
+    let mut groups = vec![0 as libc::gid_t; count as usize];
+    // SAFETY: `groups` is sized to `count`, matching the value just returned.
+    let filled = unsafe { libc::getgroups(count, groups.as_mut_ptr()) };
+    if filled < 0 {
+        return false;
+    }
+    groups[..filled as usize].contains(&target)
+}
+
+/// Gates an owner UID resolved from the *preserve* path (`-o`/`-a`, no explicit
+/// `--chown`/`--usermap`). Mirrors upstream `change_uid = am_root && ...`
+/// (rsync.c:526): a non-root process never sets a file's owner uid, so the
+/// chown is skipped rather than attempted and failed. Before this gate oc-rsync
+/// attempted it and surfaced the resulting `EPERM` as a fatal exit-code-23
+/// error, e.g. under `-aR` when an implied parent directory is owned by another
+/// user. Explicit overrides keep their fail-loud behaviour and are not routed here.
+#[cfg(unix)]
+pub(super) fn gate_preserved_owner(owner: Option<unix_fs::Uid>) -> Option<unix_fs::Uid> {
+    owner.filter(|_| rustix::process::geteuid().is_root())
+}
+
+/// Gates a group GID resolved from the *preserve* path (`-g`/`-a`, no explicit
+/// `--chown`/`--groupmap`). Mirrors upstream's `FLAG_SKIP_GROUP` gate
+/// (uidlist.c:284): a non-root process may only set a group it belongs to, so a
+/// non-member group is skipped rather than attempted and failed. Explicit
+/// overrides keep their fail-loud behaviour and are not routed here.
+#[cfg(unix)]
+pub(super) fn gate_preserved_group(group: Option<unix_fs::Gid>) -> Option<unix_fs::Gid> {
+    group.filter(|gid| rustix::process::geteuid().is_root() || process_in_group(*gid))
+}
+
 /// Resolves the target UID and GID after applying overrides, mappings, and
 /// numeric-id rules. Returns `(None, None)` when no ownership change is
 /// requested.
@@ -89,7 +138,7 @@ pub(super) fn resolve_ownership(
         {
             raw_uid = mapped;
         }
-        map_uid(raw_uid, options.numeric_ids_enabled())
+        gate_preserved_owner(map_uid(raw_uid, options.numeric_ids_enabled()))
     } else {
         None
     };
@@ -104,7 +153,7 @@ pub(super) fn resolve_ownership(
         {
             raw_gid = mapped;
         }
-        map_gid(raw_gid, options.numeric_ids_enabled())
+        gate_preserved_group(map_gid(raw_gid, options.numeric_ids_enabled()))
     } else {
         None
     };
@@ -300,7 +349,7 @@ pub(super) fn apply_ownership_from_entry(
     let owner = if let Some(uid_override) = options.owner_override() {
         Some(ownership::uid_from_raw(uid_override as RawUid))
     } else if options.owner() {
-        entry.uid().and_then(|uid| {
+        gate_preserved_owner(entry.uid().and_then(|uid| {
             let mut mapped_uid = uid as RawUid;
             if let Some(mapping) = options.user_mapping()
                 && let Ok(Some(mapped)) = mapping.map_uid(mapped_uid)
@@ -308,7 +357,7 @@ pub(super) fn apply_ownership_from_entry(
                 mapped_uid = mapped;
             }
             map_uid(mapped_uid, options.numeric_ids_enabled())
-        })
+        }))
     } else {
         None
     };
@@ -316,7 +365,7 @@ pub(super) fn apply_ownership_from_entry(
     let group = if let Some(gid_override) = options.group_override() {
         Some(ownership::gid_from_raw(gid_override as RawGid))
     } else if options.group() {
-        entry.gid().and_then(|gid| {
+        gate_preserved_group(entry.gid().and_then(|gid| {
             let mut mapped_gid = gid as RawGid;
             if let Some(mapping) = options.group_mapping()
                 && let Ok(Some(mapped)) = mapping.map_gid(mapped_gid)
@@ -324,7 +373,7 @@ pub(super) fn apply_ownership_from_entry(
                 mapped_gid = mapped;
             }
             map_gid(mapped_gid, options.numeric_ids_enabled())
-        })
+        }))
     } else {
         None
     };
@@ -389,7 +438,7 @@ pub(super) fn apply_symlink_ownership_from_entry(
     let owner = if let Some(uid_override) = options.owner_override() {
         Some(ownership::uid_from_raw(uid_override as RawUid))
     } else if options.owner() {
-        entry.uid().and_then(|uid| {
+        gate_preserved_owner(entry.uid().and_then(|uid| {
             let mut mapped_uid = uid as RawUid;
             if let Some(mapping) = options.user_mapping()
                 && let Ok(Some(mapped)) = mapping.map_uid(mapped_uid)
@@ -397,7 +446,7 @@ pub(super) fn apply_symlink_ownership_from_entry(
                 mapped_uid = mapped;
             }
             map_uid(mapped_uid, options.numeric_ids_enabled())
-        })
+        }))
     } else {
         None
     };
@@ -405,7 +454,7 @@ pub(super) fn apply_symlink_ownership_from_entry(
     let group = if let Some(gid_override) = options.group_override() {
         Some(ownership::gid_from_raw(gid_override as RawGid))
     } else if options.group() {
-        entry.gid().and_then(|gid| {
+        gate_preserved_group(entry.gid().and_then(|gid| {
             let mut mapped_gid = gid as RawGid;
             if let Some(mapping) = options.group_mapping()
                 && let Ok(Some(mapped)) = mapping.map_gid(mapped_gid)
@@ -413,7 +462,7 @@ pub(super) fn apply_symlink_ownership_from_entry(
                 mapped_gid = mapped;
             }
             map_gid(mapped_gid, options.numeric_ids_enabled())
-        })
+        }))
     } else {
         None
     };

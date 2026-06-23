@@ -1628,3 +1628,34 @@ fn keep_dirlinks_bypass_is_cross_platform_safe() {
         );
     }
 }
+
+// Mirrors upstream rsync's `change_uid`/`change_gid` privilege gates
+// (rsync.c:526-528): a non-root process must not attempt to set a file's owner
+// uid, and may only set its group to one it belongs to. Before this gate,
+// oc-rsync attempted the chown unconditionally and surfaced the resulting
+// EPERM as a fatal exit-code-23 error (e.g. under `-aR` when an implied parent
+// directory is owned by root).
+#[cfg(unix)]
+#[test]
+fn non_root_ownership_gate_drops_owner_keeps_member_group() {
+    if rustix::process::geteuid().is_root() {
+        // As root the gate is a no-op; root behaviour is exercised by the
+        // geteuid()==0 chown tests above.
+        return;
+    }
+
+    let owner = Some(ownership::uid_from_raw(0));
+    let group = Some(ownership::gid_from_raw(rustix::process::getegid().as_raw()));
+
+    let gated_owner = super::ownership::gate_preserved_owner(owner);
+    let gated_group = super::ownership::gate_preserved_group(group);
+
+    assert!(
+        gated_owner.is_none(),
+        "non-root must not attempt to set the owner uid"
+    );
+    assert!(
+        gated_group.is_some(),
+        "non-root may set the group to its own effective gid"
+    );
+}
