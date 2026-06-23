@@ -1620,6 +1620,7 @@ fn render_remote_host_with_context_populated() {
         module_path: Some("/var/backup".to_owned()),
         is_sender: false,
         emit_unchanged: false,
+        itemize_repeated: false,
     };
     assert_eq!(
         render_format_with_context("%h", &event, &context),
@@ -1642,6 +1643,7 @@ fn render_remote_address_with_context_populated() {
         module_path: None,
         is_sender: false,
         emit_unchanged: false,
+        itemize_repeated: false,
     };
     assert_eq!(
         render_format_with_context("%a", &event, &context),
@@ -1664,6 +1666,7 @@ fn render_module_name_with_context_populated() {
         module_path: None,
         is_sender: false,
         emit_unchanged: false,
+        itemize_repeated: false,
     };
     assert_eq!(render_format_with_context("%m", &event, &context), "data\n");
 }
@@ -1683,6 +1686,7 @@ fn render_module_path_with_context_populated() {
         module_path: Some("/srv/data".to_owned()),
         is_sender: false,
         emit_unchanged: false,
+        itemize_repeated: false,
     };
     assert_eq!(
         render_format_with_context("%P", &event, &context),
@@ -1705,6 +1709,7 @@ fn render_all_remote_placeholders_with_full_context() {
         module_path: Some("/path".to_owned()),
         is_sender: false,
         emit_unchanged: false,
+        itemize_repeated: false,
     };
     let rendered = render_format_with_context("%h %a %m %P", &event, &context);
     assert_eq!(rendered, "host addr mod /path\n");
