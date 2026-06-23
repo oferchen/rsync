@@ -110,7 +110,13 @@ fn decide_entry_action(
             return Ok(EntryAction::CopyDirectory);
         }
 
-        if context.options().delete_excluded_enabled() {
+        // upstream: a file absent from the sender flist (sender-side hide, or any
+        // exclude under --delete-excluded) is extraneous at the receiver and is
+        // removed by --del/--delete-during. Drop it from the keep-set exactly when
+        // the delete-side filter permits deletion. Protective both-sides excludes
+        // keep allows_deletion() == false, so they stay in the keep-set and are
+        // never deleted (e.g. a per-dir `- *.deep` still protects nodel.deep).
+        if context.allows_deletion(relative_path, effective_type.is_dir()) {
             *keep_name = false;
         }
         return Ok(EntryAction::SkipExcluded);
