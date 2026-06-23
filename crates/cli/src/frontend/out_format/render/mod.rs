@@ -12,6 +12,7 @@ mod tests;
 use std::io::{self, Write};
 
 use core::client::{ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind};
+use logging::{InfoFlag, info_gte};
 
 use super::tokens::{OutFormat, OutFormatContext, OutFormatToken};
 
@@ -146,6 +147,17 @@ pub(crate) fn emit_out_format<W: Write + ?Sized>(
     writer: &mut W,
 ) -> io::Result<()> {
     for event in events {
+        // upstream: generator.c:1721-1724 - a file skipped by `--update`
+        // because the destination is newer never reaches the itemize call.
+        // The generator emits `"%s is newer"` only at INFO_GTE(SKIP, 1) and
+        // then `goto cleanup`, so the itemized row is suppressed regardless
+        // of `-i`/`-ii`.
+        if matches!(event.kind(), ClientEventKind::SkippedNewerDestination) {
+            if info_gte(InfoFlag::Skip, 1) {
+                writeln!(writer, "{} is newer", event.relative_path().display())?;
+            }
+            continue;
+        }
         if should_suppress_event(event, context) {
             continue;
         }
