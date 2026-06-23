@@ -28,6 +28,11 @@ pub(crate) fn build_server_config_for_receiver(
 
     apply_common_daemon_config(config, &mut server_config, filter_rules);
     server_config.reference_directories = config.reference_directories().to_vec();
+    // upstream flist.c:flist_sort_and_clean prunes empty dirs on the receiver
+    // (prune_empty_dirs && !am_sender); on a pull the local client IS the receiver,
+    // and -m is never sent over the wire (options.c gates it on am_sender), so the
+    // flag must be carried onto the local receiver config here.
+    server_config.flags.prune_empty_dirs = config.prune_empty_dirs();
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
