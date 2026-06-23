@@ -345,6 +345,24 @@ pub struct ReceiverContext {
     ///
     /// - `generator.c:delete_in_dir()` - `is_excluded()` check before deletion
     filter_chain: FilterChain,
+    /// Per-directory merge rules consulted exclusively by the `--delete` pass.
+    ///
+    /// Held separately from `filter_chain` because `filter_chain` is also read
+    /// by the `--prune-empty-dirs` pass (`prune_empty_dirs_pass`); the deletion
+    /// pass needs the dir-merge configs (`.rsync-filter`, `.filt`/`.filt2`) so
+    /// it can reload each destination directory's per-directory merge files
+    /// while scanning, but those rules must not perturb prune-empty-dirs.
+    ///
+    /// On a local-client pull the wire filter list is never received
+    /// (`should_read_filter_list()` is false in client mode), so this is built
+    /// in `setup_transfer` from the local CLI filter rules. On a daemon/server
+    /// receiver it is cloned from the wire-populated `filter_chain`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:delete_in_dir()` -> `change_local_filter_dir()` ->
+    ///   `exclude.c:push_local_filters()` reloads dest-side per-dir merge files
+    deletion_filter_chain: FilterChain,
     /// Tracker for hardlink leader/follower relationships during file apply.
     ///
     /// Records committed leader paths so followers can be hard-linked to them.
@@ -459,6 +477,7 @@ impl ReceiverContext {
             gid_list: IdList::new(),
             daemon_filter_set,
             filter_chain: FilterChain::empty(),
+            deletion_filter_chain: FilterChain::empty(),
             hardlink_tracker,
             prior_hlinks: HashMap::new(),
             flist_io_error: 0,
@@ -790,6 +809,15 @@ impl ReceiverContext {
     #[must_use]
     pub fn filter_chain(&self) -> &FilterChain {
         &self.filter_chain
+    }
+
+    /// Sets the deletion-pass filter chain.
+    ///
+    /// Held separately from `filter_chain` so the `--delete` pass can reload
+    /// per-directory merge files without perturbing `--prune-empty-dirs`. In
+    /// production this is populated by `setup_transfer`; tests set it directly.
+    pub fn set_deletion_filter_chain(&mut self, chain: FilterChain) {
+        self.deletion_filter_chain = chain;
     }
 
     /// Returns the compiled daemon filter set, if any rules were configured.

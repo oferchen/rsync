@@ -108,6 +108,41 @@ impl ReceiverContext {
                 }
                 self.filter_chain = chain;
             }
+        } else if self.config.connection.client_mode
+            && !self.config.connection.filter_rules.is_empty()
+        {
+            // upstream: generator.c:delete_in_dir() -> change_local_filter_dir()
+            // reloads each DESTINATION directory's per-directory merge files
+            // before deciding deletions. On a local-client pull the wire filter
+            // list is never received (should_read_filter_list() is false in
+            // client mode), so the receiver's `--delete` pass would otherwise
+            // run against an empty filter chain and mis-handle dir-merge-governed
+            // trees (over-deleting self-protected `.filt`/`.filt2` merge files,
+            // under-deleting extraneous entries in filter-hidden dirs). Build a
+            // dedicated deletion chain from the same local CLI filter rules the
+            // generator consumes (generator/filters.rs), so the per-directory
+            // merge reload in `delete_extraneous_files` has the dir-merge
+            // configs. Held separately from `filter_chain` so `--prune-empty-dirs`
+            // is unaffected. Only the deletion pass consults this, so it is inert
+            // when `--delete` is not active.
+            let (filter_set, merge_configs) = parse_wire_filters_for_receiver(
+                &self.config.connection.filter_rules,
+            )
+            .map_err(|e| {
+                io::Error::new(
+                    e.kind(),
+                    format!(
+                        "filter error: {e} {}{}",
+                        crate::role_trailer::error_location!(),
+                        crate::role_trailer::receiver()
+                    ),
+                )
+            })?;
+            let mut chain = FilterChain::new(filter_set);
+            for config in merge_configs {
+                chain.add_merge_config(config);
+            }
+            self.deletion_filter_chain = chain;
         }
 
         // FSM: filter list reading is complete. Advance to FileListTransfer.
