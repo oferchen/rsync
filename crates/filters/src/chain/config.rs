@@ -202,6 +202,24 @@ impl DirMergeConfig {
         self.exclude_self
     }
 
+    /// Reports whether this config restricts its rules to the sender side.
+    ///
+    /// Used to propagate the `s` modifier of a side-restricted per-directory
+    /// merge into any `dir-merge` directives nested inside it, mirroring
+    /// upstream `exclude.c:1293-1303` (`rflags |= template->rflags & SIDES`).
+    #[must_use]
+    pub(super) const fn is_sender_only(&self) -> bool {
+        self.sender_only && !self.receiver_only
+    }
+
+    /// Reports whether this config restricts its rules to the receiver side.
+    ///
+    /// Mirror of [`Self::is_sender_only`] for the `r` modifier.
+    #[must_use]
+    pub(super) const fn is_receiver_only(&self) -> bool {
+        self.receiver_only && !self.sender_only
+    }
+
     /// Applies configured modifiers to a parsed rule.
     pub(super) fn apply_modifiers(&self, mut rule: FilterRule) -> FilterRule {
         if self.anchor_root {

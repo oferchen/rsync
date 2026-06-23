@@ -364,7 +364,7 @@ impl FilterChain {
             // compilation drops DirMerge rules, so handle them here by
             // loading the named file from the current directory and folding
             // its tokens into this scope.
-            let (rules, dir_merge_descriptors) = split_dir_merge_rules(rules);
+            let (rules, mut dir_merge_descriptors) = split_dir_merge_rules(rules);
 
             if rules.is_empty() && dir_merge_descriptors.is_empty() && !config.excludes_self() {
                 continue;
@@ -372,6 +372,23 @@ impl FilterChain {
 
             let config = &self.merge_configs[config_index];
             let delete_excluded = self.delete_excluded;
+
+            // upstream: exclude.c:1293-1303 - a `dir-merge` directive parsed from
+            // inside a side-restricted per-directory merge (e.g. `:s .filt`)
+            // inherits the container's FILTRULES_SIDES, so the rules it later
+            // loads (and every descendant reload of the registered config) become
+            // side-restricted too. Without this, a nested `dir-merge .filt2`
+            // declared inside a `:s` merge stays two-sided and its `- *.deep`
+            // wrongly protects flist-absent files from receiver-side deletion.
+            if config.is_sender_only() {
+                for descriptor in &mut dir_merge_descriptors {
+                    descriptor.sender_only = true;
+                }
+            } else if config.is_receiver_only() {
+                for descriptor in &mut dir_merge_descriptors {
+                    descriptor.receiver_only = true;
+                }
+            }
 
             let mut modified_rules: Vec<FilterRule> = rules
                 .into_iter()
@@ -427,7 +444,9 @@ impl FilterChain {
                     self.merge_configs.push(
                         DirMergeConfig::new(descriptor.filename.clone())
                             .with_cvs_mode(descriptor.cvs_mode)
-                            .with_inherit(true),
+                            .with_inherit(true)
+                            .with_sender_only(descriptor.sender_only)
+                            .with_receiver_only(descriptor.receiver_only),
                     );
                 }
                 pushed_count += self.load_inline_dir_merge(directory, depth, &descriptor)?;
@@ -498,6 +517,7 @@ impl FilterChain {
         let delete_excluded = self.delete_excluded;
         let rules: Vec<FilterRule> = rules
             .into_iter()
+            .map(|rule| apply_dir_merge_inherited_side(rule, descriptor))
             .map(|rule| apply_merge_implicit_sender_side(rule, delete_excluded))
             .collect();
 
@@ -628,6 +648,31 @@ fn apply_merge_implicit_sender_side(rule: FilterRule, delete_excluded: bool) -> 
     rule.with_receiver(false)
 }
 
+/// Applies a nested dir-merge's inherited side modifier to a loaded rule.
+///
+/// When a `dir-merge` directive is side-restricted (its own `s`/`r` modifier,
+/// or inherited from a side-restricted container per-directory merge), the
+/// rules it loads default to that side unless they carry their own. Only
+/// two-sided include/exclude rules are adjusted, matching upstream's
+/// `FILTRULES_SIDES` inheritance (exclude.c:1293-1303); a rule that already
+/// specifies a side keeps it.
+fn apply_dir_merge_inherited_side(rule: FilterRule, descriptor: &InlineDirMerge) -> FilterRule {
+    if !descriptor.sender_only && !descriptor.receiver_only {
+        return rule;
+    }
+    if !matches!(rule.action(), FilterAction::Include | FilterAction::Exclude) {
+        return rule;
+    }
+    if !(rule.applies_to_sender() && rule.applies_to_receiver()) {
+        return rule;
+    }
+    if descriptor.sender_only {
+        rule.with_sides(true, false)
+    } else {
+        rule.with_sides(false, true)
+    }
+}
+
 /// Description of a dir-merge directive parsed from another merge file.
 ///
 /// Captures the pieces of the source [`FilterRule`] that drive how the
@@ -639,6 +684,15 @@ struct InlineDirMerge {
     filename: String,
     cvs_mode: bool,
     no_inherit: bool,
+    /// Restricts the rules loaded from this merge to the sender side.
+    ///
+    /// Set from the source `dir-merge` rule's own `s` modifier, then OR-ed
+    /// with the side of the containing per-directory merge so a `dir-merge`
+    /// nested inside a `:s` merge inherits sender-side. upstream:
+    /// `exclude.c:1293-1303` inherits `FILTRULES_SIDES` from the template.
+    sender_only: bool,
+    /// Receiver-side counterpart of [`Self::sender_only`] (`r` modifier).
+    receiver_only: bool,
 }
 
 /// Splits parsed rules into ordinary entries plus dir-merge descriptors.
@@ -693,6 +747,8 @@ fn split_dir_merge_rules(rules: Vec<FilterRule>) -> (Vec<FilterRule>, Vec<Inline
                 filename: rule.pattern().to_owned(),
                 cvs_mode: rule.is_cvs_mode(),
                 no_inherit: rule.is_no_inherit(),
+                sender_only: rule.applies_to_sender() && !rule.applies_to_receiver(),
+                receiver_only: rule.applies_to_receiver() && !rule.applies_to_sender(),
             });
         } else {
             keep.push(rule);
