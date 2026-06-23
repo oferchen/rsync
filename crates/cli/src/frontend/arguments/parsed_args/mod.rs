@@ -540,6 +540,13 @@ pub struct ParsedArgs {
     /// `--itemize-changes`, `-i` - output a change summary per file.
     pub itemize_changes: bool,
 
+    /// `-ii` (the `-i` flag repeated) - upstream `stdout_format_has_i > 1`.
+    ///
+    /// Forces the itemize line for entries whose `iflags == 0` (a quick-check
+    /// match with no attribute drift), independently of `-vv`. See upstream
+    /// `generator.c:582-583` and `options.c:1581,2354`.
+    pub itemize_repeated: bool,
+
     /// `--out-format` - format string for file transfer messages.
     pub out_format: Option<OsString>,
 
