@@ -76,7 +76,35 @@ impl<'a> CopyContext<'a> {
         destination: &Path,
         relative_dir: Option<&Path>,
     ) -> Result<DirectoryFilterGuard, LocalCopyError> {
-        self.enter_directory_for_path(destination, relative_dir, false)
+        // upstream: delete.c:65-115 `delete_in_dir()` pushes the destination
+        // directory's per-dir merge files onto a separate `delete_filt` chain
+        // (seeded by `change_local_filter_dir`) and pops them afterwards, so the
+        // destination scan never perturbs the sender's `filter_list`. Our merge
+        // stacks are shared between source planning (`allows`) and the deletion
+        // scan (`allows_deletion`), and a destination merge file can register
+        // nested `dir-merge` directives whose loaded segments the per-index pop
+        // logic cannot fully balance (exclude.c:801 seeds `lp->head` from rules
+        // an arbitrary number of indices deep). Snapshot the whole source-visible
+        // state before the destination load and restore it verbatim on guard
+        // drop. The loaded frame stays live for the duration of the scan so
+        // `allows_deletion` still honours destination-side per-dir protect rules
+        // (the data-loss guardrail), then the source plan is restored exactly.
+        let snapshot = self.snapshot_filter_state();
+        let mut guard = self.enter_directory_for_path(destination, relative_dir, false)?;
+        guard.arm_restore(snapshot);
+        Ok(guard)
+    }
+
+    /// Captures the current source-visible per-directory filter state so a
+    /// destination-deletion scan can be reverted exactly when its guard drops.
+    fn snapshot_filter_state(&self) -> FilterStateSnapshot {
+        FilterStateSnapshot {
+            layers: self.dir_merge_layers.borrow().clone(),
+            marker_layers: self.dir_merge_marker_layers.borrow().clone(),
+            ephemeral: self.dir_merge_ephemeral.borrow().clone(),
+            marker_ephemeral: self.dir_merge_marker_ephemeral.borrow().clone(),
+            dynamic: self.dynamic_dir_merge_stack.borrow().clone(),
+        }
     }
 
     fn enter_directory_for_path(
