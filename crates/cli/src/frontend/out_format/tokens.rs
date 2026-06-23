@@ -164,6 +164,15 @@ pub(crate) struct OutFormatContext {
     /// uses this to bypass the empty-change-set suppression that mirrors
     /// the default upstream gate.
     pub(super) emit_unchanged: bool,
+    /// Whether `-ii` (the `-i` flag repeated) is in effect, i.e. upstream
+    /// `stdout_format_has_i > 1`.
+    ///
+    /// Upstream `generator.c:582-583` ORs `stdout_format_has_i > 1` into the
+    /// itemize emit gate as a term separate from `INFO_GTE(NAME, 2)`. Two
+    /// `-i` flags therefore surface unchanged (`iflags == 0`) entries as
+    /// all-dot rows even without `-vv`. The render path uses this to bypass
+    /// the empty-change-set suppression independently of `emit_unchanged`.
+    pub(super) itemize_repeated: bool,
 }
 
 impl OutFormatContext {
@@ -197,6 +206,24 @@ impl OutFormatContext {
     #[must_use]
     pub(crate) const fn emit_unchanged(&self) -> bool {
         self.emit_unchanged
+    }
+
+    /// Sets the `-ii` flag (`stdout_format_has_i > 1`).
+    ///
+    /// Upstream `generator.c:582-583` ORs `stdout_format_has_i > 1` into the
+    /// itemize emit gate; mirroring it locally makes the renderer skip the
+    /// "no change set, no creation" suppression for `-ii` even without `-vv`.
+    #[must_use]
+    pub(crate) fn with_itemize_repeated(mut self, itemize_repeated: bool) -> Self {
+        self.itemize_repeated = itemize_repeated;
+        self
+    }
+
+    /// Returns whether the renderer should bypass empty-change-set
+    /// suppression to mirror upstream `stdout_format_has_i > 1` (`-ii`).
+    #[must_use]
+    pub(crate) const fn itemize_repeated(&self) -> bool {
+        self.itemize_repeated
     }
 }
 

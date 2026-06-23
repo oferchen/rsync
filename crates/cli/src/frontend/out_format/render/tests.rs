@@ -1893,6 +1893,48 @@ fn emit_out_format_emits_unchanged_metadata_reused_under_info_name_2() {
 }
 
 #[test]
+fn emit_out_format_emits_unchanged_metadata_reused_under_double_itemize() {
+    // upstream `testsuite/exclude.test:243-247` runs `-aiiO --update` and
+    // expects an equal-mtime quick-check match to surface as `.f          `.
+    // The `-ii` arm (`stdout_format_has_i > 1`, threaded as `itemize_repeated`)
+    // forces the row independently of `-vv`, mirroring `generator.c:582-583`.
+    let event = make_event(
+        ClientEventKind::MetadataReused,
+        false,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new(),
+    );
+    let events = [event];
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n")).unwrap();
+    let mut output = Vec::new();
+    let ctx = OutFormatContext::default().with_itemize_repeated(true);
+    emit_out_format(&events, &format, &ctx, &mut output).unwrap();
+    let rendered = String::from_utf8(output).unwrap();
+    assert_eq!(rendered, ".f          test.txt\n");
+}
+
+#[test]
+fn emit_out_format_single_itemize_still_suppresses_unchanged_metadata_reused() {
+    // A single `-i` (`stdout_format_has_i == 1`, `itemize_repeated == false`)
+    // keeps the default suppression: only `-ii` or `-vv` forces the row.
+    let event = make_event(
+        ClientEventKind::MetadataReused,
+        false,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new(),
+    );
+    let events = [event];
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n")).unwrap();
+    let mut output = Vec::new();
+    let ctx = OutFormatContext::default().with_itemize_repeated(false);
+    emit_out_format(&events, &format, &ctx, &mut output).unwrap();
+    assert!(
+        output.is_empty(),
+        "single -i must still suppress unchanged MetadataReused"
+    );
+}
+
+#[test]
 fn emit_out_format_emits_unchanged_directory_under_info_name_2() {
     // upstream `testsuite/itemize.test:115-117` expects `.d          ./`,
     // `.d          bar/`, `.d          bar/baz/` under `-ivvplrtH`. The

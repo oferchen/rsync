@@ -62,10 +62,12 @@ impl OutFormat {
 /// | ITEM_REPORT_XATTR) || INFO_GTE(NAME, 2) || stdout_format_has_i > 1
 /// || (xname && *xname)`.
 fn should_suppress_event(event: &ClientEvent, context: &OutFormatContext) -> bool {
-    if context.emit_unchanged() {
-        // upstream: generator.c:582 - the `INFO_GTE(NAME, 2)` arm forces the
-        // itemize line for unchanged entries so `-vv` surfaces dirs, files,
-        // and symlinks that match the source exactly.
+    if context.emit_unchanged() || context.itemize_repeated() {
+        // upstream: generator.c:582-583 - two separate arms force the itemize
+        // line for unchanged entries: `INFO_GTE(NAME, 2)` (`-vv`, threaded as
+        // `emit_unchanged`) and `stdout_format_has_i > 1` (`-ii`, threaded as
+        // `itemize_repeated`). Either one surfaces dirs, files, and symlinks
+        // that match the source exactly as all-dot rows.
         return false;
     }
     if matches!(event.kind(), ClientEventKind::MetadataReused)

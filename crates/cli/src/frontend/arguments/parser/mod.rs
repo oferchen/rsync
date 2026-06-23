@@ -602,6 +602,12 @@ where
             ProgressSetting::Unspecified
         };
     let itemize_changes_flag = matches.get_count("itemize-changes") > 0;
+    // upstream: options.c:1581 increments itemize_changes per `-i`, and
+    // options.c:2354 sets `stdout_format_has_i = itemize_changes`; the
+    // emit gate at generator.c:582 fires on `stdout_format_has_i > 1`, i.e.
+    // the `-i` flag given at least twice.
+    let itemize_changes_repeated =
+        matches.get_count("itemize-changes") > 1 && !matches.get_flag("no-itemize-changes");
     let no_itemize_changes_flag = matches.get_flag("no-itemize-changes");
     let name_overridden = itemize_changes_flag || no_itemize_changes_flag;
     let mut verbosity = matches.get_count("verbose") as u8;
@@ -902,6 +908,7 @@ where
         outbuf,
         max_alloc,
         itemize_changes,
+        itemize_repeated: itemize_changes_repeated,
         whole_file,
         xxh64_dedup,
         excludes,
