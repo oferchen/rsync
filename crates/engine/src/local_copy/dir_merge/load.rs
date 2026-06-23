@@ -102,6 +102,28 @@ pub(crate) fn apply_dir_merge_rule_defaults(
     rule
 }
 
+/// Propagates a parent dir-merge's SIDE flags onto a nested `dir-merge`
+/// directive that specified none of its own.
+///
+/// upstream: exclude.c:1293-1303 - a nested per-dir merge inherits the
+/// enclosing template's FILTRULES_SIDES when it carries no side modifier of its
+/// own. Without this, a `:s .filt` whose body declares `dir-merge .filt2` would
+/// load `.filt2` as both-sides, wrongly protecting a sender-side-hidden file
+/// from `--delete`.
+fn inherit_dir_merge_side(nested: DirMergeOptions, parent: &DirMergeOptions) -> DirMergeOptions {
+    if nested.sender_side_override().is_some() || nested.receiver_side_override().is_some() {
+        return nested;
+    }
+    let mut nested = nested;
+    if parent.sender_side_override() == Some(true) {
+        nested = nested.sender_modifier();
+    }
+    if parent.receiver_side_override() == Some(true) {
+        nested = nested.receiver_modifier();
+    }
+    nested
+}
+
 /// Nested per-directory merge declaration encountered while loading another
 /// filter file.
 ///
@@ -323,6 +345,13 @@ pub(crate) fn load_dir_merge_rules_recursive(
                         // upstream: exclude.c:1419-1428 - register the merge
                         // filename for lookup in each subdirectory; do NOT
                         // load anything from the enclosing file's directory.
+                        // upstream: exclude.c:1293-1303 - a nested dir-merge
+                        // inherits the enclosing per-dir merge's SIDE flags
+                        // (FILTRULES_SIDES) when it specifies none of its own,
+                        // so `:s`/`.s` per-dir merges keep sender-side semantics
+                        // through nesting (the delete pass must not protect a
+                        // sender-side-hidden file).
+                        let merge_options = inherit_dir_merge_side(merge_options, options);
                         entries.push_nested_dir_merge(NestedDirMerge {
                             pattern,
                             options: merge_options,
@@ -419,6 +448,13 @@ pub(crate) fn load_dir_merge_rules_recursive(
                         // upstream: exclude.c:1419-1428 - register the merge
                         // filename for lookup in each subdirectory; do NOT
                         // load anything from the enclosing file's directory.
+                        // upstream: exclude.c:1293-1303 - a nested dir-merge
+                        // inherits the enclosing per-dir merge's SIDE flags
+                        // (FILTRULES_SIDES) when it specifies none of its own,
+                        // so `:s`/`.s` per-dir merges keep sender-side semantics
+                        // through nesting (the delete pass must not protect a
+                        // sender-side-hidden file).
+                        let merge_options = inherit_dir_merge_side(merge_options, options);
                         entries.push_nested_dir_merge(NestedDirMerge {
                             pattern,
                             options: merge_options,
@@ -599,5 +635,45 @@ mod tests {
 
         assert_eq!(parent_entries.rules.len(), 2);
         assert!(!parent_entries.clear_inherited);
+    }
+
+    #[test]
+    fn inherit_dir_merge_side_propagates_parent_sender_flag() {
+        // upstream: exclude.c:1293-1303 - a `:s` per-dir merge whose body declares
+        // a bare `dir-merge .filt2` must load `.filt2` with the parent's
+        // sender-side semantics, otherwise the delete pass would treat a
+        // sender-hidden file as both-sides-protected and refuse to delete it.
+        let parent = DirMergeOptions::default().sender_modifier();
+        let nested = DirMergeOptions::default();
+
+        let inherited = inherit_dir_merge_side(nested, &parent);
+
+        assert_eq!(inherited.sender_side_override(), Some(true));
+        assert_eq!(inherited.receiver_side_override(), Some(false));
+    }
+
+    #[test]
+    fn inherit_dir_merge_side_preserves_explicit_nested_side() {
+        // A nested merge that names its own side modifier keeps it; the parent's
+        // flags must not override an explicit choice.
+        let parent = DirMergeOptions::default().sender_modifier();
+        let nested = DirMergeOptions::default().receiver_modifier();
+
+        let inherited = inherit_dir_merge_side(nested, &parent);
+
+        assert_eq!(inherited.sender_side_override(), Some(false));
+        assert_eq!(inherited.receiver_side_override(), Some(true));
+    }
+
+    #[test]
+    fn inherit_dir_merge_side_is_noop_for_unspecified_parent() {
+        // A parent with no side modifier leaves a bare nested merge unspecified.
+        let parent = DirMergeOptions::default();
+        let nested = DirMergeOptions::default();
+
+        let inherited = inherit_dir_merge_side(nested, &parent);
+
+        assert_eq!(inherited.sender_side_override(), None);
+        assert_eq!(inherited.receiver_side_override(), None);
     }
 }
