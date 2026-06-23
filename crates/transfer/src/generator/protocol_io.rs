@@ -319,13 +319,27 @@ impl GeneratorContext {
         let line = super::itemize::format_itemize_line(iflags, entry, true, &ctx);
 
         if self.config.connection.client_mode {
-            // upstream: log.c:330-340 - when !am_server, rwrite() sends to FCLIENT (stdout)
+            // upstream: log.c:822-823 - when !am_server, rwrite() sends FCLIENT
+            // to stdout. In a pull the local client is the receiver and this
+            // Generator(sender) callback path surfaces the client-side row.
             if let Some(cb) = itemize_cb.as_mut() {
                 cb.on_itemize(&line);
             }
             Ok(())
         } else {
-            writer.send_message(protocol::MessageCode::Info, line.as_bytes())
+            // upstream: sender.c:215 - `itemizing = am_server ?
+            // logfile_format_has_i : stdout_format_has_i`. On a server-sender
+            // (am_server) with no `--log-file-format`, logfile_format_has_i == 0,
+            // so the sender emits no client-visible itemize at all:
+            // maybe_log_item (log.c:828-843) only ever reaches
+            // log_item(FLOG, ...), a local `--log-file` artifact, never an
+            // MSG_INFO forward to the client. The client-visible itemize is
+            // owned by the receiver-side generator (receiver/mod.rs::emit_itemize).
+            // Forwarding a sender-direction row here duplicated every
+            // transferred file under `-ii`/`-vv` over a remote shell (the
+            // upstream `exclude-lsh` pull leg emitted both `>f` and `<f`).
+            let _ = writer;
+            Ok(())
         }
     }
 
