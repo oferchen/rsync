@@ -38,6 +38,8 @@ pub(crate) struct TransferExecutionInputs<'a> {
     pub(crate) progress_output_config: ProgressOutputConfig,
     pub(crate) human_readable_mode: HumanReadableMode,
     pub(crate) itemize_changes: bool,
+    /// `-ii` (the `-i` flag repeated) - upstream `stdout_format_has_i > 1`.
+    pub(crate) itemize_repeated: bool,
     pub(crate) stats_level: u8,
     pub(crate) verbosity: u8,
     pub(crate) list_only: bool,
@@ -66,6 +68,7 @@ where
         progress_output_config,
         human_readable_mode,
         itemize_changes,
+        itemize_repeated,
         stats_level,
         verbosity,
         list_only,
@@ -128,8 +131,9 @@ where
             // bypasses the empty-change-set suppression and surfaces all-dot
             // rows for unchanged dirs, files, and symlinks.
             let emit_unchanged = matches!(name_level, NameOutputLevel::UpdatedAndUnchanged);
-            let out_format_context =
-                OutFormatContext::with_is_sender(is_sender).with_emit_unchanged(emit_unchanged);
+            let out_format_context = OutFormatContext::with_is_sender(is_sender)
+                .with_emit_unchanged(emit_unchanged)
+                .with_itemize_repeated(itemize_repeated);
             if let Err(error) = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
                 emit_transfer_summary(
                     &summary,
@@ -168,6 +172,7 @@ where
                     name_overridden,
                     human_readable_mode,
                     is_sender,
+                    itemize_repeated,
                 })
             {
                 let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
@@ -209,6 +214,9 @@ struct EmitLogOutputParams<'a> {
     /// Whether the local client is the sender. Threaded through so the
     /// itemize direction arrow matches upstream `log.c:701-704`.
     is_sender: bool,
+    /// `-ii` (the `-i` flag repeated) - upstream `stdout_format_has_i > 1`.
+    /// Forces unchanged itemize rows in the log file as it does on stdout.
+    itemize_repeated: bool,
 }
 
 /// Writes the transfer summary to the configured log file.
@@ -223,12 +231,16 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         name_overridden,
         human_readable_mode,
         is_sender,
+        itemize_repeated,
     } = params;
     // upstream: generator.c:582-583 - mirror the `INFO_GTE(NAME, 2)` arm of
     // the itemize emit gate in the log-file renderer so `-vv` / `--info=name2`
-    // surfaces unchanged entries in the log alongside stdout.
+    // surfaces unchanged entries in the log alongside stdout. The `-ii`
+    // (`stdout_format_has_i > 1`) arm forces them independently of `-vv`.
     let emit_unchanged = matches!(name_level, NameOutputLevel::UpdatedAndUnchanged);
-    let context = OutFormatContext::with_is_sender(is_sender).with_emit_unchanged(emit_unchanged);
+    let context = OutFormatContext::with_is_sender(is_sender)
+        .with_emit_unchanged(emit_unchanged)
+        .with_itemize_repeated(itemize_repeated);
     // The log file already carries the parallel "building file list" line via
     // logging::info_log!(Flist, 1, ...); the FCLIENT "sending incremental file
     // list" banner is for stdout only (upstream: flist.c:2248 vs 2252).
