@@ -33,6 +33,11 @@ pub(crate) fn build_server_config_for_receiver(
     // and -m is never sent over the wire (options.c gates it on am_sender), so the
     // flag must be carried onto the local receiver config here.
     server_config.flags.prune_empty_dirs = config.prune_empty_dirs();
+    // upstream generator.c:1368-1383 never creates a directory absent at the
+    // destination under --existing (ignore_non_existing); on a pull the local
+    // client IS the receiver and --existing is a long-form-only flag absent from
+    // the compact letter string, so carry it onto the local receiver config here.
+    server_config.file_selection.existing_only = config.existing_only();
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)

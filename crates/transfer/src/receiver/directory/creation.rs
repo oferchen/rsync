@@ -103,12 +103,34 @@ impl ReceiverContext {
         ))]
         let mut probed_parents: std::collections::HashSet<PathBuf> =
             std::collections::HashSet::new();
+        // upstream: generator.c:1368-1383 - with --existing (ignore_non_existing),
+        // a directory that does not yet exist at the destination is never created;
+        // upstream sets skip_dir = file and FLAG_MISSING_DIR so the missing dir and
+        // its descendants are skipped. Because dir_entries are processed in
+        // parent-first sorted order and we never create the parent, each descendant
+        // path also fails the .exists() probe and is skipped the same way.
+        let existing_only = self.config.file_selection.existing_only;
         for (_, relative_path, dir_path) in &dir_entries {
             // `relative_path` is only read on Unix (mkdirat fast path).
             #[cfg(not(unix))]
             let _ = relative_path;
             let is_new = !dir_path.exists();
             dir_was_new.push(is_new);
+            if is_new && existing_only {
+                // upstream: generator.c:1374-1378 - "not creating new directory".
+                // Reuse the failed-dir set so the itemize and metadata passes
+                // below skip this directory (it was never created on disk).
+                if self.config.flags.verbose && self.config.connection.client_mode {
+                    info_log!(
+                        Skip,
+                        1,
+                        "not creating new directory \"{}\"",
+                        dir_path.display()
+                    );
+                }
+                failed_dir_paths.insert(dir_path.clone());
+                continue;
+            }
             if is_new {
                 #[cfg(all(
                     feature = "acl",
@@ -401,6 +423,23 @@ impl ReceiverContext {
         // `fs::create_dir_all`, which preserves the parent-walk for
         // `--relative` shapes.
         let is_new = !dir_path.exists();
+        // upstream: generator.c:1368-1383 - with --existing (ignore_non_existing),
+        // a directory missing at the destination is never created; the dir is
+        // marked skipped (FLAG_MISSING_DIR) so its descendants are skipped too.
+        // Marking it failed here drives the same descendant skip via the
+        // failed-ancestor check above on subsequent entries.
+        if is_new && self.config.file_selection.existing_only {
+            if self.config.flags.verbose && self.config.connection.client_mode {
+                info_log!(
+                    Skip,
+                    1,
+                    "not creating new directory \"{}\"",
+                    dir_path.display()
+                );
+            }
+            failed_dirs.mark_failed(entry.name());
+            return Ok(None);
+        }
         if is_new {
             #[cfg(unix)]
             let create_result = fast_io::mkdirat_via_sandbox_or_fallback(

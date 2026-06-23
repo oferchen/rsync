@@ -225,6 +225,84 @@ mod create_directory_incremental_tests {
         assert_eq!(failed.count(), 0);
     }
 
+    /// Regression (exclude-lsh / upstream generator.c:1368-1383): with
+    /// `--existing` (`ignore_non_existing`), a directory that is missing at
+    /// the destination must NOT be created, and it must be marked failed so
+    /// its descendants are skipped too. Before the fix, the remote-pull
+    /// receiver created every directory from the file list unconditionally,
+    /// so `--existing --include='*/' --exclude='*'` re-materialised empty
+    /// directory skeletons that upstream leaves absent.
+    #[test]
+    fn existing_only_skips_missing_directory() {
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path();
+
+        let entry = FileEntry::new_directory("missing".into(), 0o755);
+        let opts = metadata::MetadataOptions::default();
+        let mut failed = FailedDirectories::new();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.file_selection.existing_only = true;
+        let ctx = ReceiverContext::new_for_test(&handshake, config);
+
+        let result = ctx.create_directory_incremental(
+            dest,
+            &entry,
+            &opts,
+            &mut failed,
+            None,
+            #[cfg(unix)]
+            None,
+        );
+
+        assert!(result.is_ok());
+        // Returns None (skipped) and the directory is never created on disk.
+        assert_eq!(result.unwrap(), None);
+        assert!(
+            !dest.join("missing").exists(),
+            "--existing must not create a missing directory on a remote pull"
+        );
+        // The skipped dir is marked failed so descendants are skipped via the
+        // failed-ancestor check (mirrors upstream FLAG_MISSING_DIR).
+        assert_eq!(failed.count(), 1);
+    }
+
+    /// With `--existing`, a directory that already exists at the destination
+    /// is left in place (metadata still applies); only creation of *missing*
+    /// directories is suppressed.
+    #[test]
+    fn existing_only_keeps_present_directory() {
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path();
+        std::fs::create_dir(dest.join("present")).unwrap();
+
+        let entry = FileEntry::new_directory("present".into(), 0o755);
+        let opts = metadata::MetadataOptions::default();
+        let mut failed = FailedDirectories::new();
+
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.file_selection.existing_only = true;
+        let ctx = ReceiverContext::new_for_test(&handshake, config);
+
+        let result = ctx.create_directory_incremental(
+            dest,
+            &entry,
+            &opts,
+            &mut failed,
+            None,
+            #[cfg(unix)]
+            None,
+        );
+
+        assert!(result.is_ok());
+        // Returns Some(false): existing dir, not newly created.
+        assert_eq!(result.unwrap(), Some(false));
+        assert!(dest.join("present").exists());
+        assert_eq!(failed.count(), 0);
+    }
+
     #[test]
     fn skips_child_of_failed_parent() {
         let temp = TempDir::new().unwrap();
