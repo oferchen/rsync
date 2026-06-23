@@ -302,6 +302,14 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // as --log-format=%i, but the local ServerConfig also needs the flag set so
     // the generator's maybe_emit_itemize() produces client-side output via callback.
     server_config.flags.info_flags.itemize = config.itemize_changes();
+    // upstream: flist.c::flist_sort_and_clean - prune_empty_dirs is a global the
+    // RECEIVER acts on (clean_flist drops empty-dir chains) regardless of
+    // transport. It is deliberately not part of build_server_flag_string because
+    // that compact string is parsed by the remote SENDER, which must ship all
+    // dirs. Propagate it here so the local receiver's flist prune pass
+    // (receiver::file_list::prune::prune_empty_dirs_pass) runs on remote-shell
+    // pulls; otherwise empty directories survive that upstream would have pruned.
+    server_config.flags.prune_empty_dirs = config.prune_empty_dirs();
     // upstream: flist.c::iconv_for_local and options.c::recv_iconv_settings -
     // when --iconv is configured, the local process must transcode file-list
     // entries between the local and remote charsets. Without this bridge the
@@ -399,6 +407,25 @@ mod tests {
         let mut server_config = ServerConfig::default();
         apply_common_server_flags(&config, &mut server_config);
         assert!(!server_config.flags.info_flags.itemize);
+    }
+
+    #[test]
+    fn apply_common_server_flags_sets_prune_empty_dirs() {
+        // upstream: flist.c::flist_sort_and_clean honours prune_empty_dirs on the
+        // receiver for every transport; the remote-shell receiver ServerConfig
+        // must carry the flag so the local prune pass runs.
+        let config = ClientConfig::builder().prune_empty_dirs(true).build();
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert!(server_config.flags.prune_empty_dirs);
+    }
+
+    #[test]
+    fn apply_common_server_flags_prune_empty_dirs_default_false() {
+        let config = ClientConfig::default();
+        let mut server_config = ServerConfig::default();
+        apply_common_server_flags(&config, &mut server_config);
+        assert!(!server_config.flags.prune_empty_dirs);
     }
 
     #[test]
