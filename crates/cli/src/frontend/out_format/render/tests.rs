@@ -916,6 +916,55 @@ fn itemize_skipped_newer_destination_shows_dot() {
     );
 }
 
+// upstream: generator.c:1721-1724 - an `--update` skip (destination newer)
+// emits `"%s is newer"` only at INFO_GTE(SKIP, 1) and never itemizes the
+// entry. These two tests pin that orchestration behavior so the entry is not
+// rendered as an itemized `.f` row when `-ii` is also in effect.
+#[test]
+fn emit_out_format_update_skip_emits_is_newer_under_info_skip() {
+    logging::init(logging::VerbosityConfig::from_verbose_level(2));
+    let event = make_event(
+        ClientEventKind::SkippedNewerDestination,
+        false,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new(),
+    );
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n")).unwrap();
+    let mut output = Vec::new();
+    emit_out_format(
+        std::slice::from_ref(&event),
+        &format,
+        &OutFormatContext::default(),
+        &mut output,
+    )
+    .unwrap();
+    assert_eq!(String::from_utf8(output).unwrap(), "test.txt is newer\n");
+}
+
+#[test]
+fn emit_out_format_update_skip_silent_without_info_skip() {
+    logging::init(logging::VerbosityConfig::from_verbose_level(0));
+    let event = make_event(
+        ClientEventKind::SkippedNewerDestination,
+        false,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new(),
+    );
+    let format = parse_out_format(std::ffi::OsStr::new("%i %n")).unwrap();
+    let mut output = Vec::new();
+    emit_out_format(
+        std::slice::from_ref(&event),
+        &format,
+        &OutFormatContext::default(),
+        &mut output,
+    )
+    .unwrap();
+    assert!(
+        String::from_utf8(output).unwrap().is_empty(),
+        "update-skip must not itemize without --info=skip"
+    );
+}
+
 #[test]
 fn itemize_skipped_non_regular_shows_dot() {
     let event = make_event(
