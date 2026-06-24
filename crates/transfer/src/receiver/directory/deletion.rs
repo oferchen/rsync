@@ -118,7 +118,21 @@ impl ReceiverContext {
             }
         }
 
+        // upstream: generator.c:delete_in_dir() always runs for the transfer
+        // root. When every source entry is filter-excluded (e.g. `--exclude='*'
+        // --delete-excluded`) the file list contains only "." and the loop
+        // above registers no directories, so the root would never be scanned
+        // and top-level extraneous entries would survive. Register "." with a
+        // (possibly empty) keep-set so the root is always a scan target.
+        dir_children.entry(PathBuf::from(".")).or_default();
+
         let dirs_to_scan: Vec<PathBuf> = dir_children.keys().cloned().collect();
+        logging::debug_log!(
+            Del,
+            2,
+            "delete pass scanning {} directories (needs_perdir_merge={needs_perdir_merge})",
+            dirs_to_scan.len()
+        );
 
         // Atomic counter for max_delete enforcement across parallel workers.
         // upstream: main.c:1367 - deletion_count >= max_delete
