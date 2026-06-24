@@ -354,10 +354,14 @@ fn complex_perishable_scenario() {
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // src tmp files excluded from transfer (first rule, perishable applies on sender)
-    assert!(!set.allows(Path::new("src/scratch.tmp"), false));
+    // src tmp files excluded from transfer (first rule, perishable applies on
+    // sender). Use a nested path: upstream `src/**/*.tmp` needs an intermediate
+    // directory (the `**/` consumes a real `/`), so `src/sub/scratch.tmp`
+    // exercises the perishable exclude where a top-level `src/scratch.tmp`
+    // would not match it at all.
+    assert!(!set.allows(Path::new("src/sub/scratch.tmp"), false));
     // For deletion: perishable exclude skipped, include src/** matches, deletable
-    assert!(set.allows_deletion(Path::new("src/scratch.tmp"), false));
+    assert!(set.allows_deletion(Path::new("src/sub/scratch.tmp"), false));
 
     // src files included in transfer (second rule)
     assert!(set.allows(Path::new("src/main.rs"), false));

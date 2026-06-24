@@ -48,8 +48,13 @@ fn deeply_nested_include_exclude_hierarchy() {
     // Regular src files are included
     assert!(set.allows(Path::new("src/main.rs"), false));
 
-    // Node modules in src are excluded
-    assert!(!set.allows(Path::new("src/node_modules/pkg/index.js"), false));
+    // upstream rsync: `src/**/node_modules/**` needs an intermediate directory
+    // between `src` and `node_modules`, so `src/node_modules/...` (node_modules
+    // directly under src) is NOT matched by the exclude. Per-path, the later
+    // `include src/**` then matches and includes it (the full-transfer pruning
+    // of the bare `src` dir is a traversal concern this per-path test does not
+    // model - cf. the included assertions above).
+    assert!(set.allows(Path::new("src/node_modules/pkg/index.js"), false));
 
     // Root files are excluded
     assert!(!set.allows(Path::new("Cargo.toml"), false));
