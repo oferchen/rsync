@@ -43,10 +43,11 @@ jobs:
     continue-on-error: true
 
     env:
-      # 60-second measurement budget per benchmark group. Criterion will
-      # allocate samples within this window. The job-level timeout is the
-      # hard ceiling for the entire workflow run.
-      BENCH_MEASUREMENT_TIME: "10"
+      # Per-benchmark measurement budget. Criterion allocates samples within
+      # this window. The full checksums_benchmark suite has ~50 benches; at a
+      # larger budget the suite overruns the per-step `timeout` below. The
+      # job-level timeout is the hard ceiling for the entire workflow run.
+      BENCH_MEASUREMENT_TIME: "5"
 
     steps:
       - name: Checkout
@@ -83,13 +84,15 @@ jobs:
 
           # Run the main checksums_benchmark which covers rolling checksum,
           # MD4, MD5, SHA-1, SHA-256, SHA-512, XXH64, XXH3, and the
-          # algorithm_comparison group at 8 KiB block size.
-          timeout 600 \
+          # algorithm_comparison group at 8 KiB block size. This suite has the
+          # most benches, so it gets the larger per-step timeout below.
+          timeout 900 \
             cargo bench \
               -p checksums \
               --bench checksums_benchmark \
               -- \
               --output-format bencher \
+              --warm-up-time 1 \
               --measurement-time "$BENCH_MEASUREMENT_TIME" \
             | tee "$OUT"
 
@@ -107,6 +110,7 @@ jobs:
               --bench pipelined_benchmark \
               -- \
               --output-format bencher \
+              --warm-up-time 1 \
               --measurement-time "$BENCH_MEASUREMENT_TIME" \
             | tee "$OUT"
 

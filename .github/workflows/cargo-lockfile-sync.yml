@@ -90,6 +90,13 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
 
+      # Populate ~/.cargo/registry from the committed Cargo.lock so the offline
+      # resolvability check below has the crate index + sources to work from.
+      # Without this, a cold runner (no rust-cache restore) has an empty
+      # registry and `cargo update --offline` fails on the first crate.
+      - name: Warm cargo registry cache
+        run: cargo fetch
+
       - name: Validate lockfile resolves offline
         run: cargo update --workspace --offline
 
