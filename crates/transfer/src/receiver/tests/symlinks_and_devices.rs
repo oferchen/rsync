@@ -103,17 +103,19 @@ fn emit_itemize_directory_creation() {
 }
 
 #[test]
-fn emit_itemize_root_directory_emits_creation_glyph_when_iflags_zero() {
+fn emit_itemize_root_directory_emits_creation_glyph_when_freshly_created() {
     // Regression: upstream `testsuite/itemize.test` expects `cd+++++++++ ./`
     // as the second line of `-iplr from/ to/` against a non-existent dest.
     // The root entry (path == ".") arrives at emit_itemize with iflags == 0
     // because oc-rsync's create_directory_incremental cannot observe the
-    // pre-flight mkdir performed by `ensure_dest_root_exists`. Mirror
-    // upstream main.c:794-796 + generator.c:566-572 by treating the root
-    // dir as freshly created so the receiver still emits the line.
+    // pre-flight mkdir performed by `ensure_dest_root_exists`. When that
+    // pre-flight actually created the root (`dest_root_created == true`),
+    // mirror upstream main.c:794-796 FLAG_DIR_CREATED by forcing the
+    // created-directory glyph for the root entry.
     let handshake = test_handshake();
     let config = receiver_config_with_itemize();
-    let ctx = ReceiverContext::new_for_test(&handshake, config);
+    let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+    ctx.dest_root_created = true;
     let mut writer = MockMsgInfoWriter::new();
 
     let entry = FileEntry::new_directory(".".into(), 0o755);
@@ -124,6 +126,28 @@ fn emit_itemize_root_directory_emits_creation_glyph_when_iflags_zero() {
     assert_eq!(writer.messages.len(), 1);
     let msg = String::from_utf8_lossy(&writer.messages[0]);
     assert_eq!(msg, "cd+++++++++ ./\n");
+}
+
+#[test]
+fn emit_itemize_root_directory_no_glyph_when_dest_root_preexisted() {
+    // upstream main.c:794-796 only sets FLAG_DIR_CREATED when the receiver
+    // had to mkdir the destination root. When the root already existed
+    // (e.g. `up1/ -> up2/` where up2 is present), the flag stays clear and
+    // the root reports a metadata-only row that the significance gate drops
+    // (no `cd+++++++++ ./`). Without this, the exclude-lsh `--update` leg
+    // wrongly itemized the existing root as freshly created.
+    let handshake = test_handshake();
+    let config = receiver_config_with_itemize();
+    let ctx = ReceiverContext::new_for_test(&handshake, config);
+    // dest_root_created defaults to false (root pre-existed).
+    let mut writer = MockMsgInfoWriter::new();
+
+    let entry = FileEntry::new_directory(".".into(), 0o755);
+    let iflags = ItemFlags::from_raw(0);
+
+    ctx.emit_itemize(&mut writer, &iflags, &entry).unwrap();
+
+    assert!(writer.messages.is_empty());
 }
 
 #[test]
