@@ -417,12 +417,12 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--fake-super"));
         }
 
-        if self.config.omit_dir_times() {
-            args.push(OsString::from("--omit-dir-times"));
-        }
-        if self.config.omit_link_times() {
-            args.push(OsString::from("--omit-link-times"));
-        }
+        // upstream: options.c:2646-2649 - --omit-dir-times ('O') and
+        // --omit-link-times ('J') are encoded as sender-only compact letters in
+        // the transfer-flag string (see the `am_sender` block above), not as
+        // standalone long options. Emitting them here would forward
+        // `--omit-dir-times` to a remote sender (pull), which then stats it as a
+        // source path.
 
         if self.config.delay_updates() {
             args.push(OsString::from("--delay-updates"));
@@ -613,6 +613,19 @@ impl<'a> RemoteInvocationBuilder<'a> {
             }
             if self.config.prune_empty_dirs() {
                 flags.push('m');
+            }
+            // upstream: options.c:2646-2649 - 'O' = --omit-dir-times, 'J' =
+            // --omit-link-times. These are sender-only compact letters (the
+            // `if (am_sender)` block), placed after 'm' and before the fuzzy
+            // 'y' letters. For a pull (remote is the sender) they are NOT sent;
+            // the local receiver applies omit-dir/link-times itself. Sending
+            // `--omit-dir-times` as a separate long option to the remote sender
+            // makes it stat the flag as a source path.
+            if self.config.omit_dir_times() {
+                flags.push('O');
+            }
+            if self.config.omit_link_times() {
+                flags.push('J');
             }
             // upstream: options.c:2650-2654 - 'y' for fuzzy, 'yy' for level 2.
             for _ in 0..self.config.fuzzy_level() {
