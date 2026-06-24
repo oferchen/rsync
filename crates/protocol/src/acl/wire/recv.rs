@@ -77,9 +77,9 @@ pub fn recv_rsync_acl<R: Read + ?Sized>(reader: &mut R) -> io::Result<RecvAclRes
     // malicious peer can send i32::MIN, making `ndx_plus_one - 1` underflow and
     // panic under overflow-checks builds. Reject that edge with a protocol
     // error rather than panicking, mirroring upstream's index validation.
-    let ndx = ndx_plus_one.checked_sub(1).ok_or_else(|| {
-        io::Error::new(io::ErrorKind::InvalidData, "invalid ACL cache index")
-    })?;
+    let ndx = ndx_plus_one
+        .checked_sub(1)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid ACL cache index"))?;
 
     if ndx >= 0 {
         return Ok(RecvAclResult::CacheHit(ndx as u32));
