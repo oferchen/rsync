@@ -49,10 +49,20 @@ logging = { path = "../logging" }
 # On unix, the `asm` feature on sha1/sha2 enables sha2-asm which provides assembly
 # fallbacks; the pure-Rust backend already auto-detects SHA-NI (x86_64) and
 # crypto extensions (aarch64) via `cpufeatures` regardless of this feature.
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 md-5 = { workspace = true, features = ["std", "asm"] }
 sha1 = { version = "0.10", default-features = false, features = ["std", "asm"] }
 sha2 = { version = "0.10", default-features = false, features = ["std", "asm"] }
+
+# The *-asm backends miscompute digests on macOS aarch64 (Apple Silicon,
+# macOS 26): sha1-asm returns the wrong SHA1 of empty input. Per the note
+# above, the pure-Rust RustCrypto backend already auto-detects SHA-NI (x86_64)
+# and crypto extensions (aarch64) via `cpufeatures`, so dropping `asm` on macOS
+# keeps hardware acceleration while restoring correct digests.
+[target.'cfg(target_os = "macos")'.dependencies]
+md-5 = { workspace = true, features = ["std"] }
+sha1 = { version = "0.10", default-features = false, features = ["std"] }
+sha2 = { version = "0.10", default-features = false, features = ["std"] }
 
 [target.'cfg(not(unix))'.dependencies]
 md-5 = { workspace = true, features = ["std"] }
