@@ -322,6 +322,20 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // upstream: generator.c:124 - EARLY_DELETE_DONE_MSG = !(delete_during==2 || delete_after)
     server_config.deletion.late_delete =
         matches!(config.delete_mode(), DeleteMode::Delay | DeleteMode::After);
+    // upstream: options.c `delete_excluded` - the receiver's delete pass must
+    // treat filter-excluded (non-protected) entries as deletable. For a
+    // remote-shell pull the receiver builds its deletion chain from the local
+    // CLI filter rules, so the flag has to be carried onto this local receiver
+    // config (the wire-side sender conversion in build_wire_format_rules only
+    // affects what the remote sender hides, not local delete protection).
+    server_config.deletion.delete_excluded = config.delete_excluded();
+    logging::debug_log!(
+        Del,
+        2,
+        "receiver config: delete_excluded={} delete_mode={:?}",
+        config.delete_excluded(),
+        config.delete_mode()
+    );
     // upstream: options.c:2881-2885 - copy_unsafe_links and safe_links are long-form only
     server_config.flags.copy_unsafe_links = config.copy_unsafe_links();
     server_config.flags.safe_links = config.safe_links();

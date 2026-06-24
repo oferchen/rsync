@@ -138,10 +138,18 @@ impl ReceiverContext {
                     ),
                 )
             })?;
-            let mut chain = FilterChain::new(filter_set);
+            let mut chain =
+                FilterChain::new(filter_set).with_delete_excluded(self.config.deletion.delete_excluded);
             for config in merge_configs {
                 chain.add_merge_config(config);
             }
+            logging::debug_log!(
+                Del,
+                2,
+                "deletion filter chain built: delete_excluded={} merge_configs_active={}",
+                self.config.deletion.delete_excluded,
+                chain.has_per_dir_merge()
+            );
             self.deletion_filter_chain = chain;
         }
 
