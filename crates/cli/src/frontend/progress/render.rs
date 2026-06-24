@@ -150,8 +150,16 @@ pub(crate) fn emit_transfer_summary(
     }
 
     let name_enabled = !matches!(name_level, NameOutputLevel::Disabled);
-    let suppress_name_totals =
-        suppress_updated_only_totals && matches!(name_level, NameOutputLevel::UpdatedOnly);
+    // upstream: main.c output_summary() emits the `sent/received/total size`
+    // trailer only for `verbose > 0 || INFO_GTE(STATS, 1)`; itemize alone
+    // (`-i` or `-ii`, no `-v`/`--stats`) never shows it. `suppress_updated_only_totals`
+    // captures that itemize-without-verbose-or-stats condition, so it applies to
+    // both itemize name levels (`UpdatedOnly` for `-i`, `UpdatedAndUnchanged` for `-ii`).
+    let suppress_name_totals = suppress_updated_only_totals
+        && matches!(
+            name_level,
+            NameOutputLevel::UpdatedOnly | NameOutputLevel::UpdatedAndUnchanged
+        );
     let emit_trailer_totals =
         !stats_on && (verbosity > 0 || (name_enabled && !suppress_name_totals));
 
