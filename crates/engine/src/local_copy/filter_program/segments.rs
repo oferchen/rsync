@@ -8,6 +8,7 @@ use std::path::Path;
 
 use filters::{FilterAction, FilterRule};
 use globset::{GlobBuilder, GlobMatcher};
+use logging::debug_log;
 
 /// Compiled list of rules evaluated sequentially.
 #[derive(Clone, Debug, Default)]
@@ -102,6 +103,7 @@ impl FilterSegment {
                 match context {
                     FilterContext::Transfer => {
                         if rule.applies_to_sender {
+                            report_filter_result(rule, path, is_dir, "sender");
                             outcome
                                 .set_transfer_allowed(matches!(rule.action, FilterAction::Include));
                             outcome.decide_transfer();
@@ -109,6 +111,7 @@ impl FilterSegment {
                     }
                     FilterContext::Deletion => {
                         if rule.applies_to_receiver {
+                            report_filter_result(rule, path, is_dir, "generator");
                             outcome
                                 .set_transfer_allowed(matches!(rule.action, FilterAction::Include));
                             outcome.decide_transfer();
@@ -128,6 +131,11 @@ impl FilterSegment {
                     FilterContext::Deletion => rule.applies_to_receiver,
                 };
                 if applies {
+                    let who = match context {
+                        FilterContext::Transfer => "sender",
+                        FilterContext::Deletion => "generator",
+                    };
+                    report_filter_result(rule, path, is_dir, who);
                     match rule.action {
                         FilterAction::Protect => outcome.protect(),
                         FilterAction::Risk => outcome.unprotect(),
@@ -145,6 +153,31 @@ impl FilterSegment {
             }
         }
     }
+}
+
+/// Emits a `--debug=FILTER` line for a rule that fired on `path`, naming the
+/// file, its type, and the matching pattern.
+///
+/// upstream: exclude.c:report_filter_result() - `[who] {action}ing {type}
+/// {name} because of pattern {pattern}{/}`. `debug_log!` gates on the FILTER
+/// debug level internally, so the message is only formatted when enabled.
+fn report_filter_result(rule: &CompiledRule, path: &Path, is_dir: bool, who: &str) {
+    let verb = match rule.action {
+        FilterAction::Include => "including",
+        FilterAction::Exclude => "excluding",
+        FilterAction::Protect => "protecting",
+        FilterAction::Risk => "risking",
+        _ => return,
+    };
+    let kind = if is_dir { "directory" } else { "file" };
+    let slash = if rule.directory_only { "/" } else { "" };
+    debug_log!(
+        Filter,
+        1,
+        "[{who}] {verb} {kind} {} because of pattern {}{slash}",
+        path.display(),
+        rule.pattern,
+    );
 }
 
 #[derive(Clone, Debug)]
@@ -229,6 +262,9 @@ impl Default for FilterOutcome {
 #[derive(Clone, Debug)]
 struct CompiledRule {
     action: FilterAction,
+    /// The source pattern, retained for `--debug=FILTER` reporting
+    /// (upstream: exclude.c:report_filter_result() logs `ent->pattern`).
+    pattern: String,
     directory_only: bool,
     direct_matchers: Vec<GlobMatcher>,
     descendant_matchers: Vec<GlobMatcher>,
@@ -310,6 +346,7 @@ impl CompiledRule {
             applies_to_receiver,
             perishable: rule.is_perishable(),
             negate,
+            pattern,
         })
     }
 
