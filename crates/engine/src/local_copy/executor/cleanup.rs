@@ -8,8 +8,19 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use logging::{debug_log, info_log};
+use rayon::prelude::*;
 
 use std::sync::Arc;
+
+/// Minimum number of deletion candidates in a single destination directory
+/// before the per-entry filter matching switches to a rayon `par_iter`.
+///
+/// Mirrors the codebase's `PARALLEL_STAT_THRESHOLD = 64` convention: below
+/// this count the serial path avoids rayon's fork/join overhead; above it the
+/// pure `allows_deletion` decisions are computed across worker threads. The
+/// threshold does not affect the decision SET or emission ORDER - only WHERE
+/// the matching runs.
+const PARALLEL_DELETION_MATCH_THRESHOLD: usize = 64;
 
 use crate::delete::{
     DeleteContext, DeleteEntry, DeleteEntryKind, DeleteFs, DeletePlan, DeletePlanMap, RealDeleteFs,
@@ -196,7 +207,12 @@ fn build_plan_for_directory<S: AsRef<OsStr>>(
         .and_then(|p| p.file_name())
         .map(OsStr::to_os_string);
 
-    let mut plan = DeletePlan::new(destination.to_path_buf());
+    // Phase A (serial): scan the destination in readdir order and collect the
+    // candidates that survive the cheap keep / partial-dir filters. The filter
+    // decision (`allows_deletion`) is deferred to Phase B so it can be batched.
+    // readdir order is preserved through every phase so the max-delete limit and
+    // debug logging observe the exact same sequence as the original serial loop.
+    let mut candidates: Vec<DeletionCandidate> = Vec::new();
     for entry in read_dir {
         context.enforce_timeout()?;
         let entry = entry
@@ -226,12 +242,51 @@ fn build_plan_for_directory<S: AsRef<OsStr>>(
             )
         })?;
 
-        if !context.allows_deletion(entry_relative.as_path(), file_type.is_dir()) {
+        let is_dir = file_type.is_dir();
+        candidates.push(DeletionCandidate {
+            name,
+            entry_relative,
+            file_type,
+            is_dir,
+        });
+    }
+
+    // Phase B (parallel above threshold): compute the pure `allows_deletion`
+    // decision for every candidate against an immutable, Send + Sync snapshot
+    // of the directory's filter chain. The closure captures ONLY the snapshot
+    // (no Rc/RefCell CopyContext), so it is safe to run on rayon workers.
+    // `par_iter().map().collect()` preserves index order, keeping decisions
+    // aligned with the readdir-order candidates for Phase C.
+    let snapshot = context.deletion_filter_snapshot();
+    let allowed: Vec<bool> = if candidates.len() >= PARALLEL_DELETION_MATCH_THRESHOLD {
+        candidates
+            .par_iter()
+            .map(|candidate| {
+                snapshot.allows_deletion(candidate.entry_relative.as_path(), candidate.is_dir)
+            })
+            .collect()
+    } else {
+        candidates
+            .iter()
+            .map(|candidate| {
+                snapshot.allows_deletion(candidate.entry_relative.as_path(), candidate.is_dir)
+            })
+            .collect()
+    };
+
+    // Phase C (serial): apply the decisions in readdir order. Filter-protected
+    // entries log and are dropped; the rest count against the max-delete limit
+    // and join the plan. The final `sort_by_name` fixes the wire emission order.
+    // This sequence is identical to the original serial loop - only the matching
+    // in Phase B was parallelised.
+    let mut plan = DeletePlan::new(destination.to_path_buf());
+    for (candidate, allowed) in candidates.into_iter().zip(allowed) {
+        if !allowed {
             debug_log!(
                 Filter,
                 2,
                 "filter protected {} from deletion",
-                entry_relative.display()
+                candidate.entry_relative.display()
             );
             continue;
         }
@@ -247,10 +302,24 @@ fn build_plan_for_directory<S: AsRef<OsStr>>(
             continue;
         }
 
-        plan.push(DeleteEntry::new(name, classify_kind(file_type)));
+        plan.push(DeleteEntry::new(
+            candidate.name,
+            classify_kind(candidate.file_type),
+        ));
     }
     plan.sort_by_name();
     Ok(Some(plan))
+}
+
+/// A destination entry that survived the cheap keep / partial-dir filters and
+/// awaits the `allows_deletion` decision in [`build_plan_for_directory`].
+///
+/// Holds only `Send` data so a slice of candidates can be matched in parallel.
+struct DeletionCandidate {
+    name: OsString,
+    entry_relative: PathBuf,
+    file_type: fs::FileType,
+    is_dir: bool,
 }
 
 /// Mirrors the upstream classification table used by
