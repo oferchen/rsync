@@ -72,7 +72,14 @@ pub fn recv_ida_entries<R: Read + ?Sized>(reader: &mut R) -> io::Result<(IdaEntr
 /// Mirrors `recv_rsync_acl()` in `acls.c` lines 731-800.
 pub fn recv_rsync_acl<R: Read + ?Sized>(reader: &mut R) -> io::Result<RecvAclResult> {
     let ndx_plus_one = read_varint(reader)?;
-    let ndx = ndx_plus_one - 1;
+    // upstream: acls.c:736-740 reads `int ndx = read_varint(f)` and rejects
+    // out-of-range indices with an error. The wire value is an index + 1, so a
+    // malicious peer can send i32::MIN, making `ndx_plus_one - 1` underflow and
+    // panic under overflow-checks builds. Reject that edge with a protocol
+    // error rather than panicking, mirroring upstream's index validation.
+    let ndx = ndx_plus_one
+        .checked_sub(1)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid ACL cache index"))?;
 
     if ndx >= 0 {
         return Ok(RecvAclResult::CacheHit(ndx as u32));
@@ -227,4 +234,23 @@ pub fn receive_acl_cached<R: Read + ?Sized>(
     };
 
     Ok((access_ndx, default_ndx))
+}
+
+#[cfg(test)]
+mod edg_panic_tests {
+    use super::recv_rsync_acl;
+    use std::io;
+
+    /// A malicious peer must not crash the parser by sending a cache index that
+    /// underflows the `wire_value - 1` remap. upstream: acls.c:736-740 reads the
+    /// index and rejects out-of-range values; the varint i32::MIN drives
+    /// `ndx_plus_one - 1` past i32::MIN, so the hardened decode must return a
+    /// clean InvalidData error rather than panicking under overflow-checks.
+    #[test]
+    fn recv_rsync_acl_rejects_underflowing_cache_index() {
+        // Varint of i32::MIN: leading tag 0xF0 (4 extra bytes) + LE 0x8000_0000.
+        let wire = [0xF0u8, 0x00, 0x00, 0x00, 0x80];
+        let err = recv_rsync_acl(&mut &wire[..]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
 }

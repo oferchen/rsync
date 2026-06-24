@@ -217,8 +217,12 @@ impl FileListReader {
             self.state.prev_hardlink_dev()
         } else {
             let raw_dev = crate::read_longint(reader)?;
-            // Upstream stores dev + 1, so subtract 1
-            let dev = raw_dev - 1;
+            // Upstream stores dev + 1, so subtract 1. upstream: flist.c:1177
+            // `dev = read_longint(f)` then the +1 offset is undone with plain
+            // int64 arithmetic that wraps; a malicious sender can supply
+            // raw_dev == i64::MIN, so wrapping_sub matches upstream's wrap and
+            // avoids an overflow-checks panic (cargo-fuzz / debug builds).
+            let dev = raw_dev.wrapping_sub(1);
             self.state.update_hardlink_dev(dev);
             dev
         };
@@ -291,5 +295,41 @@ impl FileListReader {
         } else if entry.is_special() {
             self.stats.num_specials += 1;
         }
+    }
+}
+
+#[cfg(test)]
+mod edg_panic_tests {
+    use crate::flist::flags::{FileFlags, XMIT_HLINKED};
+    use crate::flist::read::FileListReader;
+    use crate::version::ProtocolVersion;
+
+    /// A malicious sender must not crash the protocol 28-29 hardlink decode by
+    /// sending dev == i64::MIN, which would underflow the `raw_dev - 1` offset
+    /// (upstream: flist.c:1177) and panic under overflow-checks (cargo-fuzz /
+    /// debug). The hardened decode mirrors upstream's int64 wraparound and must
+    /// return cleanly instead of panicking.
+    #[test]
+    fn read_hardlink_dev_ino_tolerates_min_dev_without_panic() {
+        let proto = ProtocolVersion::from_supported(28).expect("protocol 28 supported");
+        let mut reader = FileListReader::new(proto).with_preserve_hard_links(true);
+
+        // dev: read_longint sentinel 0xFFFFFFFF then i64::MIN little-endian.
+        // ino: a plain 4-byte longint (0).
+        let mut wire = Vec::new();
+        wire.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0xFF]);
+        wire.extend_from_slice(&i64::MIN.to_le_bytes());
+        wire.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+
+        // XMIT_HLINKED set, XMIT_SAME_DEV_PRE30 clear -> dev read from the wire.
+        let flags = FileFlags::new(0, XMIT_HLINKED);
+        let mode = 0o100_644; // regular file, not a directory
+
+        let (dev, ino) = reader
+            .read_hardlink_dev_ino(&mut &wire[..], flags, mode)
+            .expect("decode must not error")
+            .expect("hardlink dev/ino present");
+        assert_eq!(dev, i64::MAX); // i64::MIN.wrapping_sub(1)
+        assert_eq!(ino, 0);
     }
 }
