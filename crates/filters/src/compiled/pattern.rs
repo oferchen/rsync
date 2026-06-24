@@ -9,22 +9,21 @@ use crate::wildmatch::wildmatch;
 
 /// A compiled filter pattern matched with upstream rsync's `wildmatch()`.
 ///
-/// The glob string is retained for diagnostics and wire-parity introspection,
-/// while matching itself is delegated to [`wildmatch`] so `*`, `**`, `?`,
-/// `[...]`, and `\` behave byte-for-byte like `lib/wildmatch.c:dowild()`.
-/// globset is still used at compile time to reject malformed patterns, keeping
-/// [`FilterError`] behaviour unchanged.
+/// Matching is delegated to [`wildmatch`] so `*`, `**`, `?`, `[...]`, and `\`
+/// behave byte-for-byte like `lib/wildmatch.c:dowild()`. globset is still used
+/// at compile time to reject malformed patterns, keeping [`FilterError`]
+/// behaviour unchanged.
 #[derive(Debug, Clone)]
 pub(crate) struct CompiledPattern {
-    glob: String,
     bytes: Vec<u8>,
 }
 
 impl CompiledPattern {
-    /// Returns the source glob string this pattern was compiled from.
+    /// Returns the source glob string this pattern was compiled from. Patterns
+    /// always originate from a `String`, so the bytes are valid UTF-8.
     #[cfg(test)]
-    pub(super) fn glob(&self) -> &str {
-        &self.glob
+    pub(super) fn glob(&self) -> String {
+        String::from_utf8_lossy(&self.bytes).into_owned()
     }
 
     /// Tests whether `path` matches this pattern using upstream wildmatch
@@ -108,8 +107,9 @@ pub(crate) fn compile_patterns(
             .backslash_escape(true)
             .build()
             .map_err(|error| FilterError::new(original.to_owned(), error))?;
-        let bytes = pattern.clone().into_bytes();
-        matchers.push(CompiledPattern { glob: pattern, bytes });
+        matchers.push(CompiledPattern {
+            bytes: pattern.into_bytes(),
+        });
     }
     Ok(matchers)
 }
