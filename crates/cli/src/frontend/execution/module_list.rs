@@ -18,13 +18,15 @@ pub(crate) fn render_module_list<W: Write, E: Write>(
         }
     }
 
+    // upstream: clientserver.c:1254 - `io_printf(fd, "%-15s\t%s\n", name, comment)`
+    // always emits the name, a tab, then the (possibly empty) comment. The name
+    // already carries its `%-15s` padding (preserved by the `\t` split in
+    // ModuleListEntry::from_line), so a comment-less module renders as
+    // `name<pad>\t` - matching upstream rather than dropping the trailing tab.
     for entry in list.entries() {
         let name = entry.name();
-        if let Some(comment) = entry.comment() {
-            writeln!(stdout, "{name}\t{comment}")?;
-        } else {
-            writeln!(stdout, "{name}")?;
-        }
+        let comment = entry.comment().unwrap_or("");
+        writeln!(stdout, "{name}\t{comment}")?;
     }
     Ok(())
 }
