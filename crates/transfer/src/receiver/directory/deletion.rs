@@ -100,22 +100,20 @@ impl ReceiverContext {
             }
 
             // upstream: generator.c:delete_in_dir() runs for EVERY content
-            // directory in the file list. Each directory's deletion candidate
-            // list is built from a fresh readdir of the destination, regardless
-            // of whether any of that directory's source children are visible in
-            // the flist. A directory whose only source children are filter-
-            // hidden (e.g. `--filter='hide,! */'`) must still be scanned so
-            // extraneous destination entries inside it are removed. Keying
-            // dirs_to_scan solely off parents-with-a-visible-child skips such
-            // directories and leaves extraneous files undeleted, so register
-            // every directory entry as its own scan target with a (possibly
-            // empty) keep-set. Gated on `needs_perdir_merge`: the expanded
-            // scan set is only safe when the per-directory merge rules are
-            // reloaded per dir to protect dest-side merge files and their
-            // excludes; without them, scanning extra dirs against the flat
-            // chain would over-delete. Daemon/non-merge transfers keep the
-            // master scan set unchanged.
-            if needs_perdir_merge && entry.is_dir() {
+            // directory in the file list, regardless of whether any of that
+            // directory's source children are visible in the flist. A
+            // directory whose source children are all filter-hidden (e.g.
+            // `--filter='hide,! */'`) must still be scanned so its extraneous
+            // destination entries are removed; keying the scan set solely off
+            // parents-with-a-visible-child leaves those entries undeleted.
+            // Register every directory in the file list as its own scan target
+            // with a (possibly empty) keep-set. Protection of entries that must
+            // survive is the responsibility of the per-candidate
+            // `allows_deletion` check below - which consults the per-directory
+            // merge chain when one is reloaded for the directory, and otherwise
+            // the flat global chain (complete when no per-dir merges exist) -
+            // not of pruning the scan set.
+            if entry.is_dir() {
                 dir_children.entry(relative.to_path_buf()).or_default();
             }
         }
