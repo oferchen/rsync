@@ -683,9 +683,8 @@ mod tests {
         use rayon::prelude::*;
         use std::path::Path;
 
-        let program =
-            FilterProgram::new([FilterProgramEntry::Rule(FilterRule::exclude("*.deep"))])
-                .expect("filter program builds");
+        let program = FilterProgram::new([FilterProgramEntry::Rule(FilterRule::exclude("*.deep"))])
+            .expect("filter program builds");
         let mut dynamic_segment = FilterSegment::default();
         dynamic_segment
             .push_rule(FilterRule::exclude("secret"))
