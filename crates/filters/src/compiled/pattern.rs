@@ -32,7 +32,20 @@ impl CompiledPattern {
     /// matching is identical across platforms (rsync transfer paths are always
     /// `/`-separated and relative).
     pub(super) fn is_match(&self, path: &Path) -> bool {
-        wildmatch(&self.bytes, &path_match_bytes(path))
+        let body = path_match_bytes(path);
+        // upstream: exclude.c:929-931 rule_matches() - when the pattern begins
+        // with `**` (FILTRULE_WILD2_PREFIX) the candidate is matched with a
+        // leading "/" prepended, so `**/bar` matches a top-level `bar` (via
+        // `/bar`) as well as `a/b/bar`. Our relative candidates never start
+        // with '/', so the prepend always applies.
+        if self.bytes.starts_with(b"**") {
+            let mut candidate = Vec::with_capacity(body.len() + 1);
+            candidate.push(b'/');
+            candidate.extend_from_slice(&body);
+            wildmatch(&self.bytes, &candidate)
+        } else {
+            wildmatch(&self.bytes, &body)
+        }
     }
 }
 
