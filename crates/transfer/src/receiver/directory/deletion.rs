@@ -246,6 +246,11 @@ impl ReceiverContext {
                         None
                     };
 
+                    // upstream: generator.c:delete_in_dir() emits this at
+                    // `DEBUG_GTE(DEL, 2)` for every destination directory whose
+                    // contents are scanned for deletion.
+                    debug_log!(Del, 2, "delete_in_dir({})", dest_path.display());
+
                     for entry in read_dir_iter {
                         #[cfg(unix)]
                         let (name, kind) = match entry {
@@ -296,6 +301,18 @@ impl ReceiverContext {
                             None => flat_chain.allows_deletion(&rel_for_filter, is_dir),
                         };
                         if !allows {
+                            // upstream: generator.c:delete_in_dir() - an excluded
+                            // entry never enters get_dirlist()'s candidate set, so
+                            // it is silently protected from deletion. We surface
+                            // that protection at `DEBUG_GTE(DEL, 3)` so the
+                            // per-candidate decision is observable, mirroring the
+                            // `--debug=DEL` diagnostic granularity of upstream.
+                            debug_log!(
+                                Del,
+                                3,
+                                "not deleting {} (protected by filter rule)",
+                                rel_for_filter.display()
+                            );
                             continue;
                         }
 
@@ -325,6 +342,25 @@ impl ReceiverContext {
                         } else {
                             dir_relative.join(&name)
                         };
+
+                        // upstream: delete.c:delete_item() emits this at
+                        // `DEBUG_GTE(DEL, 2)` just before removing the entry. The
+                        // mode here carries only the file-type bits available from
+                        // `read_dir` (perms are not needed to identify the item).
+                        let type_bits = if is_dir {
+                            0o040000
+                        } else if is_symlink {
+                            0o120000
+                        } else {
+                            0o100000
+                        };
+                        debug_log!(
+                            Del,
+                            2,
+                            "delete_item({}) mode={:o}",
+                            path.display(),
+                            type_bits
+                        );
 
                         let result = if is_dir {
                             // SEC-1.q2 audit row #6
