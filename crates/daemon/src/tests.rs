@@ -195,6 +195,7 @@ include!("tests/chunks/run_daemon_config_flag_overrides_default_path.rs");
 include!("tests/chunks/run_daemon_loads_modules_from_config_file.rs");
 include!("tests/chunks/run_daemon_loads_modules_from_inline_config_flag.rs");
 include!("tests/chunks/run_daemon_lists_modules_with_motd_lines.rs");
+include!("tests/chunks/run_daemon_lists_modules_with_module_timeout.rs");
 include!("tests/chunks/run_daemon_omits_unlisted_modules_from_listing.rs");
 include!("tests/chunks/run_daemon_panic_isolation_keeps_daemon_alive.rs");
 include!("tests/chunks/run_daemon_post_ok_refused_option_uses_multiplexed_error.rs");
