@@ -667,6 +667,102 @@ impl Drop for DirectoryFilterGuard {
 mod tests {
     use super::*;
 
+    /// The XMP invariant: parallelising the per-entry deletion matcher must not
+    /// change WHICH entries are deleted nor the ORDER they are emitted - only
+    /// WHERE the pure `allows_deletion` decision is computed. This test feeds an
+    /// identical candidate set through serial and rayon `par_iter` evaluation of
+    /// the same immutable [`DeletionFilterSnapshot`] (built from a nested
+    /// dir-merge fixture: a global `- *.deep` exclude plus a dynamic `- secret`
+    /// segment) and asserts the decision SET and the name-sorted emission ORDER
+    /// are byte-for-byte identical. If they ever diverge, the wire output would
+    /// no longer match upstream rsync, so this test must fail.
+    #[test]
+    fn deletion_snapshot_parallel_matches_serial_set_and_order() {
+        use crate::local_copy::filter_program::FilterProgramEntry;
+        use filters::FilterRule;
+        use rayon::prelude::*;
+        use std::path::Path;
+
+        let program =
+            FilterProgram::new([FilterProgramEntry::Rule(FilterRule::exclude("*.deep"))])
+                .expect("filter program builds");
+        let mut dynamic_segment = FilterSegment::default();
+        dynamic_segment
+            .push_rule(FilterRule::exclude("secret"))
+            .expect("dynamic rule compiles");
+
+        let snapshot = DeletionFilterSnapshot {
+            program: Some(program),
+            layers: FilterSegmentLayers::new(),
+            ephemeral_last: None,
+            dynamic_loaded_segments: vec![LoadedDynamicSegment {
+                segment: dynamic_segment,
+                inherit: true,
+            }],
+            filter_set: None,
+            delete_excluded: false,
+        };
+
+        // A wide directory: `*.deep` and `secret` are filter-protected (must NOT
+        // delete), everything else is deletable. The mix guarantees both
+        // outcomes are exercised so the test can fail if either path regresses.
+        let candidates: Vec<(String, bool)> = (0..200)
+            .map(|i| {
+                let name = if i % 3 == 0 {
+                    format!("f{i}.deep")
+                } else if i % 7 == 0 {
+                    "secret".to_string()
+                } else {
+                    format!("f{i}.txt")
+                };
+                (name, false)
+            })
+            .collect();
+
+        let decide = |name: &str, is_dir: bool| snapshot.allows_deletion(Path::new(name), is_dir);
+
+        let serial: Vec<bool> = candidates
+            .iter()
+            .map(|(name, is_dir)| decide(name, *is_dir))
+            .collect();
+        let parallel: Vec<bool> = candidates
+            .par_iter()
+            .map(|(name, is_dir)| decide(name, *is_dir))
+            .collect();
+
+        // Decision SET parity: par_iter preserves index order, so the aligned
+        // decision vectors must be identical element-for-element.
+        assert_eq!(serial, parallel, "parallel decisions diverged from serial");
+
+        // Sanity: the fixture must produce both outcomes, otherwise the parity
+        // assertion above could pass vacuously.
+        assert!(serial.iter().any(|&d| d), "expected some deletable entries");
+        assert!(
+            serial.iter().any(|&d| !d),
+            "expected some protected entries"
+        );
+        assert!(!decide("secret", false), "dynamic - secret must protect");
+        assert!(!decide("f0.deep", false), "global - *.deep must protect");
+        assert!(decide("f1.txt", false), "unmatched entry must be deletable");
+
+        // Emission ORDER parity: the plan emits deletable names name-sorted.
+        // Derive that order from both decision vectors; they must match.
+        let emission = |decisions: &[bool]| -> Vec<String> {
+            let mut names: Vec<String> = candidates
+                .iter()
+                .zip(decisions)
+                .filter_map(|((name, _), &keep)| keep.then(|| name.clone()))
+                .collect();
+            names.sort_unstable();
+            names
+        };
+        assert_eq!(
+            emission(&serial),
+            emission(&parallel),
+            "parallel emission order diverged from serial"
+        );
+    }
+
     #[test]
     fn file_copy_outcome_new_stores_values() {
         let outcome = FileCopyOutcome::new(1000, Some(500));
