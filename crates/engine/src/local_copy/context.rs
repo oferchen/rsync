@@ -750,7 +750,8 @@ mod tests {
             let mut names: Vec<String> = candidates
                 .iter()
                 .zip(decisions)
-                .filter_map(|((name, _), &keep)| keep.then(|| name.clone()))
+                .filter(|&(_, &keep)| keep)
+                .map(|((name, _), _)| name.clone())
                 .collect();
             names.sort_unstable();
             names
