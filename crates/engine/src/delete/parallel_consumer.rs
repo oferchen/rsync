@@ -58,6 +58,11 @@ use super::plan::DeleteEntryKind;
 use super::reorder_buffer::{DeleteCohortKey, DeleteOperation, ReorderBufferError};
 use protocol::DeleteStats;
 
+#[cfg(unix)]
+use super::emitter::{open_dir_at, plan_directory_to_relative};
+#[cfg(unix)]
+use fast_io::DirSandbox;
+
 /// Outcome returned by [`ParallelDeleteEmitter::run`].
 ///
 /// Bundles the consumed [`DeleteFs`] dispatcher, the accumulated stats,
@@ -121,6 +126,14 @@ pub struct ParallelDeleteEmitter<F: DeleteFs> {
     fs: F,
     policy: EmitterErrorPolicy,
     shared: Arc<SharedBatcher>,
+    /// Optional SEC-1.q dirfd anchor. When attached, each cohort's parent
+    /// directory is opened once against [`DirSandbox::root_dirfd`] and the
+    /// cohort's ops dispatch through the dirfd-anchored `*_at` trait
+    /// methods, closing the mid-delete prefix-symlink-swap TOCTOU that a
+    /// path-based re-resolution leaves open. With no sandbox attached the
+    /// consumer falls back to path-based dispatch (the original behaviour).
+    #[cfg(unix)]
+    sandbox: Option<Arc<DirSandbox>>,
 }
 
 /// Mutex-protected [`CohortBatcher`] paired with a [`Condvar`] for the
@@ -158,7 +171,25 @@ impl<F: DeleteFs + Sync + Send + 'static> ParallelDeleteEmitter<F> {
             fs,
             policy,
             shared: Arc::new(SharedBatcher::default()),
+            #[cfg(unix)]
+            sandbox: None,
         }
+    }
+
+    /// Attaches a [`DirSandbox`] so each cohort dispatches through the
+    /// SEC-1.q dirfd-anchored `*_at` trait methods.
+    ///
+    /// The cohort's destination-relative parent directory is opened once
+    /// against [`DirSandbox::root_dirfd`] just before its ops dispatch; the
+    /// resulting dirfd anchors every `unlinkat`/`rmdir_at` so a concurrent
+    /// rename of an ancestor path component cannot redirect the deletion
+    /// outside the sandbox root. Mirrors
+    /// [`super::emitter::DeleteEmitter::with_sandbox`].
+    #[cfg(unix)]
+    #[must_use]
+    pub fn with_sandbox(mut self, sandbox: Arc<DirSandbox>) -> Self {
+        self.sandbox = Some(sandbox);
+        self
     }
 
     /// Publishes one sealed cohort for the consumer to drain.
@@ -241,13 +272,19 @@ impl<F: DeleteFs + Sync + Send + 'static> ParallelDeleteEmitter<F> {
     /// errors accumulate into the returned outcome's `io_error` bitmask
     /// and the drain continues.
     pub fn run(self) -> io::Result<ParallelDrainOutcome<F>> {
-        let Self { fs, policy, shared } = self;
+        #[cfg(unix)]
+        let consumer_sandbox = self.sandbox.clone();
+        #[cfg(not(unix))]
+        let consumer_sandbox = None::<()>;
+        let fs = self.fs;
+        let policy = self.policy;
+        let shared = self.shared;
         let fs = Arc::new(fs);
         let consumer_fs = Arc::clone(&fs);
         let consumer_shared = Arc::clone(&shared);
         let consumer_handle = std::thread::Builder::new()
             .name("oc-rsync-del-consumer".into())
-            .spawn(move || consumer_loop(consumer_shared, consumer_fs, policy))
+            .spawn(move || consumer_loop(consumer_shared, consumer_fs, policy, consumer_sandbox))
             .map_err(|err| {
                 io::Error::other(format!(
                     "failed to spawn parallel delete consumer thread: {err}"
@@ -290,6 +327,8 @@ fn consumer_loop<F: DeleteFs + Sync + Send>(
     shared: Arc<SharedBatcher>,
     fs: Arc<F>,
     policy: EmitterErrorPolicy,
+    #[cfg(unix)] sandbox: Option<Arc<DirSandbox>>,
+    #[cfg(not(unix))] _sandbox: Option<()>,
 ) -> io::Result<ConsumerSummary> {
     let mut summary = ConsumerSummary::default();
     loop {
@@ -301,7 +340,18 @@ fn consumer_loop<F: DeleteFs + Sync + Send>(
             if lock_or_recover(&shared.batcher).is_panicked() {
                 return Ok(summary);
             }
-            dispatch_cohort(&fs, &policy, &entry.ops, &mut summary)?;
+            #[cfg(unix)]
+            let sandbox_ref = sandbox.as_ref();
+            #[cfg(not(unix))]
+            let sandbox_ref = None::<()>;
+            dispatch_cohort(
+                &fs,
+                &policy,
+                entry.key.path(),
+                &entry.ops,
+                sandbox_ref,
+                &mut summary,
+            )?;
         }
     }
 }
@@ -337,12 +387,35 @@ fn wait_for_batch(shared: &Arc<SharedBatcher>) -> io::Result<Option<CohortBatch>
 fn dispatch_cohort<F: DeleteFs + Sync + Send>(
     fs: &Arc<F>,
     policy: &EmitterErrorPolicy,
+    #[cfg(unix)] cohort_dir: &std::path::Path,
+    #[cfg(not(unix))] _cohort_dir: &std::path::Path,
     ops: &[DeleteOperation],
+    #[cfg(unix)] sandbox: Option<&Arc<DirSandbox>>,
+    #[cfg(not(unix))] _sandbox: Option<()>,
     summary: &mut ConsumerSummary,
 ) -> io::Result<()> {
     if ops.is_empty() {
         return Ok(());
     }
+
+    // SEC-1.q: open the cohort's destination-relative parent directory once
+    // via the sandbox so every op dispatches through the dirfd-anchored
+    // `*_at` methods. A failed open (vanished parent, or no sandbox
+    // attached) leaves `parent_fd` as `None` and each op transparently
+    // falls back to the path-based method, preserving the original
+    // behaviour.
+    #[cfg(unix)]
+    let parent_handle: Option<std::os::fd::OwnedFd> = sandbox
+        .and_then(|sb| open_dir_at(sb.root_dirfd(), plan_directory_to_relative(cohort_dir)).ok());
+    #[cfg(unix)]
+    let parent_fd = parent_handle.as_ref().map(std::os::fd::AsFd::as_fd);
+
+    #[cfg(unix)]
+    let results: Vec<io::Result<DeleteEntryKind>> = ops
+        .par_iter()
+        .map(|op| dispatch_one(fs.as_ref(), op, parent_fd))
+        .collect();
+    #[cfg(not(unix))]
     let results: Vec<io::Result<DeleteEntryKind>> = ops
         .par_iter()
         .map(|op| dispatch_one(fs.as_ref(), op))
@@ -364,6 +437,34 @@ fn dispatch_cohort<F: DeleteFs + Sync + Send>(
     Ok(())
 }
 
+/// Dispatches one op through the dirfd-anchored `*_at` methods when a
+/// cohort dirfd is available, falling back to the path-based methods
+/// otherwise. `op.leaf` is the single-component leaf name anchored against
+/// `parent_fd`; `op.path` is the absolute reconstruction used by the
+/// fallback.
+#[cfg(unix)]
+fn dispatch_one<F: DeleteFs>(
+    fs: &F,
+    op: &DeleteOperation,
+    parent_fd: Option<std::os::fd::BorrowedFd<'_>>,
+) -> io::Result<DeleteEntryKind> {
+    let leaf = op.leaf.as_os_str();
+    let outcome = match (op.kind, parent_fd) {
+        (DeleteEntryKind::File, Some(fd)) => fs.unlink_file_at(fd, leaf),
+        (DeleteEntryKind::Symlink, Some(fd)) => fs.unlink_symlink_at(fd, leaf),
+        (DeleteEntryKind::Device, Some(fd)) => fs.unlink_device_at(fd, leaf),
+        (DeleteEntryKind::Special, Some(fd)) => fs.unlink_special_at(fd, leaf),
+        (DeleteEntryKind::Dir, Some(fd)) => dispatch_dir_at(fs, fd, leaf),
+        (DeleteEntryKind::File, None) => fs.unlink_file(&op.path),
+        (DeleteEntryKind::Symlink, None) => fs.unlink_symlink(&op.path),
+        (DeleteEntryKind::Device, None) => fs.unlink_device(&op.path),
+        (DeleteEntryKind::Special, None) => fs.unlink_special(&op.path),
+        (DeleteEntryKind::Dir, None) => dispatch_dir(fs, &op.path),
+    };
+    outcome.map(|()| op.kind)
+}
+
+#[cfg(not(unix))]
 fn dispatch_one<F: DeleteFs>(fs: &F, op: &DeleteOperation) -> io::Result<DeleteEntryKind> {
     let outcome = match op.kind {
         DeleteEntryKind::File => fs.unlink_file(&op.path),
@@ -379,6 +480,22 @@ fn dispatch_dir<F: DeleteFs>(fs: &F, path: &std::path::Path) -> io::Result<()> {
     match fs.rmdir(path) {
         Ok(()) => Ok(()),
         Err(err) if is_not_empty(&err) => fs.remove_dir_all(path),
+        Err(err) => Err(err),
+    }
+}
+
+/// Dirfd-anchored directory removal: `rmdir_at` first, then the recursive
+/// `remove_dir_all_at` peel on `ENOTEMPTY`, mirroring the path-based
+/// [`dispatch_dir`] but anchored against `parent_fd`.
+#[cfg(unix)]
+fn dispatch_dir_at<F: DeleteFs>(
+    fs: &F,
+    parent_fd: std::os::fd::BorrowedFd<'_>,
+    leaf: &std::ffi::OsStr,
+) -> io::Result<()> {
+    match fs.rmdir_at(parent_fd, leaf) {
+        Ok(()) => Ok(()),
+        Err(err) if is_not_empty(&err) => fs.remove_dir_all_at(parent_fd, leaf),
         Err(err) => Err(err),
     }
 }
@@ -499,6 +616,176 @@ mod tests {
         assert_eq!(outcome.stats.files, 3);
         assert_eq!(outcome.io_error, 0);
         assert_eq!(outcome.exit_code, 0);
+    }
+
+    /// DFD: when a [`DirSandbox`] is attached, a cohort's ops dispatch
+    /// through the dirfd-anchored `*_at` trait methods instead of the
+    /// path-based fallback. The cohort's destination-relative parent dir
+    /// is opened once against the sandbox root; `RecordingDeleteFs`
+    /// records the leaf-only path for `*_at` calls (vs the absolute path
+    /// for path-based calls), so a leaf-only event proves the dirfd anchor
+    /// fired. This closes the mid-delete prefix-symlink-swap TOCTOU on the
+    /// parallel consumer, matching the sequential emitter's SEC-1.q
+    /// behaviour.
+    #[cfg(unix)]
+    #[test]
+    fn cohort_with_sandbox_dispatches_through_dirfd() {
+        use fast_io::DirSandbox;
+
+        // The cohort directory must exist as a real directory so the
+        // sandbox `openat` for the parent dirfd succeeds.
+        let root = tempfile::tempdir().expect("tempdir");
+        let cohort_dir = root.path().join("sub");
+        std::fs::create_dir(&cohort_dir).expect("create cohort dir");
+
+        let sandbox = Arc::new(DirSandbox::open_root(root.path()).expect("open sandbox root"));
+        let emitter = ParallelDeleteEmitter::new(RecordingDeleteFs::new()).with_sandbox(sandbox);
+
+        // The cohort key is the destination-relative parent dir ("sub").
+        // The op's leaf is "f"; with the dirfd anchor it dispatches via
+        // `unlink_file_at`, which RecordingDeleteFs logs as the leaf only.
+        let op = DeleteOperation::new(
+            cohort_dir.join("f"),
+            OsString::from("f"),
+            DeleteEntryKind::File,
+        );
+        emitter.enqueue_cohort(key("sub"), 0, vec![op]).unwrap();
+        emitter.mark_producers_done();
+        let outcome = emitter.run().expect("drain returns Ok");
+
+        let events = outcome.fs.events();
+        assert_eq!(events.len(), 1, "exactly one dispatch expected");
+        assert_eq!(
+            events[0].path,
+            PathBuf::from("f"),
+            "leaf-only path proves the dirfd-anchored unlink_file_at fired; an \
+             absolute path would mean the path-based fallback was used"
+        );
+        assert_eq!(events[0].kind, DeleteEntryKind::File);
+        assert_eq!(outcome.stats.files, 1);
+        assert_eq!(outcome.io_error, 0);
+        assert_eq!(outcome.exit_code, 0);
+    }
+
+    /// DFD.3.b (anchor proof): the dirfd opened for a cohort pins the parent
+    /// inode, so a concurrent rename of an ANCESTOR path component to a
+    /// symlink pointing outside the sandbox cannot redirect the unlink.
+    /// Proven deterministically by program order: open the cohort dirfd
+    /// FIRST, THEN swap the ancestor, THEN dispatch the unlinkat on the
+    /// already-open fd. No threads, no sleeps. Exercises the exact
+    /// production helpers (`open_dir_at`, `RealDeleteFs::unlink_file_at`)
+    /// the consumer's `dispatch_cohort` uses.
+    #[cfg(unix)]
+    #[test]
+    fn dirfd_anchor_survives_ancestor_rename_swap() {
+        use crate::delete::emitter::{RealDeleteFs, open_dir_at, plan_directory_to_relative};
+        use fast_io::DirSandbox;
+        use std::os::fd::AsFd;
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("root");
+        let cohort = root.join("ancestor").join("cohort");
+        std::fs::create_dir_all(&cohort).expect("mk cohort tree");
+        let victim = cohort.join("victim");
+        std::fs::write(&victim, b"x").expect("write victim");
+
+        // Sentinel OUTSIDE the sandbox subtree; must survive untouched.
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir(&outside).expect("mk outside");
+        let sentinel = outside.join("sentinel");
+        std::fs::write(&sentinel, b"do-not-touch").expect("write sentinel");
+
+        let sandbox = DirSandbox::open_root(&root).expect("open sandbox root");
+        let fs = RealDeleteFs;
+
+        // (1) OPEN the cohort dirfd, exactly as dispatch_cohort does.
+        let cohort_rel = plan_directory_to_relative(std::path::Path::new("ancestor/cohort"));
+        let parent = open_dir_at(sandbox.root_dirfd(), cohort_rel).expect("open cohort dirfd");
+
+        // (2) SWAP an ancestor component to a symlink pointing at `outside`.
+        // The path `root/ancestor/cohort/victim` no longer names the real
+        // victim; the open fd from step (1) is immune.
+        std::fs::rename(root.join("ancestor"), root.join("ancestor.bak"))
+            .expect("move real ancestor aside");
+        symlink(&outside, root.join("ancestor")).expect("plant ancestor symlink");
+
+        // (3) DISPATCH the dirfd-anchored unlink on the already-open fd.
+        fs.unlink_file_at(parent.as_fd(), std::ffi::OsStr::new("victim"))
+            .expect("anchored unlinkat removes the real victim");
+
+        // Anchor hit the real inode: the victim (now under ancestor.bak) is gone.
+        assert!(
+            !root
+                .join("ancestor.bak")
+                .join("cohort")
+                .join("victim")
+                .exists(),
+            "anchored unlinkat must remove the real in-sandbox victim",
+        );
+        // The redirect target is untouched.
+        assert!(
+            sentinel.exists(),
+            "outside sentinel must survive; the dirfd anchor refused the ancestor-symlink redirect",
+        );
+        assert!(
+            !outside.join("victim").exists(),
+            "no deletion leaked into the outside dir",
+        );
+    }
+
+    /// DFD.3.b (end-to-end): with an ancestor component already swapped to an
+    /// outside-pointing symlink before `run()`, the consumer's per-cohort
+    /// `open_dir_at` component walk refuses the symlink (`O_NOFOLLOW`), so
+    /// `parent_fd` falls back to `None` and the path-based unlink also
+    /// traverses the planted symlink and fails. Either way no deletion lands
+    /// on the outside sentinel; the failure surfaces as a non-fatal io error
+    /// and zero files removed.
+    #[cfg(unix)]
+    #[test]
+    fn consumer_refuses_ancestor_symlink_and_spares_outside_sentinel() {
+        use crate::delete::emitter::RealDeleteFs;
+        use fast_io::DirSandbox;
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(root.join("ancestor").join("cohort")).expect("mk tree");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir(&outside).expect("mk outside");
+        // Same leaf name as the op makes any redirect maximally detectable.
+        let sentinel = outside.join("victim");
+        std::fs::write(&sentinel, b"do-not-touch").expect("write sentinel");
+
+        // Pre-stage the ancestor-symlink swap.
+        std::fs::rename(root.join("ancestor"), root.join("ancestor.bak")).expect("aside");
+        symlink(&outside, root.join("ancestor")).expect("plant symlink");
+
+        let sandbox = Arc::new(DirSandbox::open_root(&root).expect("open root"));
+        let emitter = ParallelDeleteEmitter::new(RealDeleteFs).with_sandbox(sandbox);
+
+        let op = DeleteOperation::new(
+            root.join("ancestor").join("cohort").join("victim"),
+            OsString::from("victim"),
+            DeleteEntryKind::File,
+        );
+        emitter
+            .enqueue_cohort(key("ancestor/cohort"), 0, vec![op])
+            .unwrap();
+        emitter.mark_producers_done();
+        let outcome = emitter
+            .run()
+            .expect("drain returns Ok under default policy");
+
+        assert!(
+            sentinel.exists(),
+            "outside sentinel must survive: no op may be redirected through the ancestor symlink",
+        );
+        assert_eq!(outcome.stats.files, 0, "no file was actually unlinked");
+        assert_ne!(
+            outcome.io_error, 0,
+            "the refused/failed unlink surfaces as a non-fatal io error",
+        );
     }
 
     /// DEL-1.a cross-cohort wire-ordering invariant: cohort `N + 1`'s
