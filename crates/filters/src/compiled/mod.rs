@@ -488,7 +488,7 @@ mod tests {
         let mut out: Vec<String> = compiled
             .direct_matchers
             .iter()
-            .map(|m| m.glob().glob().to_string())
+            .map(|m| m.glob().to_string())
             .collect();
         out.sort();
         out
@@ -499,7 +499,7 @@ mod tests {
         let mut out: Vec<String> = compiled
             .descendant_matchers
             .iter()
-            .map(|m| m.glob().glob().to_string())
+            .map(|m| m.glob().to_string())
             .collect();
         out.sort();
         out
@@ -512,7 +512,7 @@ mod tests {
         let mut out: Vec<String> = compiled
             .deletion_descendant_matchers
             .iter()
-            .map(|m| m.glob().glob().to_string())
+            .map(|m| m.glob().to_string())
             .collect();
         out.sort();
         out
@@ -673,6 +673,27 @@ mod tests {
             descendant_pattern_strings(&compiled),
             vec!["**/cache/**", "cache/**"]
         );
+    }
+
+    /// Differential-fuzzer regression: a `*/***/` exclude must match a
+    /// top-level directory, mirroring upstream's `FILTRULE_WILD3_SUFFIX` which
+    /// appends `/` to a directory candidate (`exclude.c:936-937`). The
+    /// trailing-dir-slash + `/***` combination must collapse to the
+    /// directory-only stem `*`; before the `normalise_pattern` reorder oc-rsync
+    /// kept `*/***` and failed to match a slashless directory name, so the dir
+    /// was wrongly included where upstream excludes it.
+    #[test]
+    fn wild3_suffix_with_trailing_dir_slash_matches_top_level_dir() {
+        use std::path::Path;
+        let compiled = make_exclude("*/***/");
+        // A top-level directory is excluded (upstream parity).
+        assert!(compiled.matches(Path::new("0"), true, true));
+        assert!(compiled.matches(Path::new("anydir"), true, true));
+        // Its contents are excluded on the deletion path.
+        assert!(compiled.matches_for_deletion(Path::new("0/child"), false, true));
+        // A top-level *file* is not a directory, so the directory-only stem
+        // does not match it.
+        assert!(!compiled.matches(Path::new("0"), false, true));
     }
 
     #[test]

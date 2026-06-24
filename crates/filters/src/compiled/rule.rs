@@ -1,8 +1,8 @@
 use std::path::Path;
 
-use globset::GlobMatcher;
 use logging::debug_log;
 
+use super::pattern::CompiledPattern;
 use crate::FilterAction;
 
 /// A compiled filter rule with pre-built glob matchers for efficient matching.
@@ -21,8 +21,8 @@ use crate::FilterAction;
 pub(crate) struct CompiledRule {
     pub(crate) action: FilterAction,
     pub(super) directory_only: bool,
-    pub(super) direct_matchers: Vec<GlobMatcher>,
-    pub(super) descendant_matchers: Vec<GlobMatcher>,
+    pub(super) direct_matchers: Vec<CompiledPattern>,
+    pub(super) descendant_matchers: Vec<CompiledPattern>,
     /// Descendant matchers (`{core}/**`) that must fire ONLY on the deletion
     /// (receiver) path. Populated for directory-only unanchored wildcard
     /// excludes such as `foo/*/`. Upstream's sender walk prunes the excluded
@@ -33,7 +33,7 @@ pub(crate) struct CompiledRule {
     /// per-candidate deletion scan has no traversal-pruning side effect, so it
     /// needs these descendants live to protect children of an excluded
     /// directory from over-deletion.
-    pub(super) deletion_descendant_matchers: Vec<GlobMatcher>,
+    pub(super) deletion_descendant_matchers: Vec<CompiledPattern>,
     pub(crate) applies_to_sender: bool,
     pub(crate) applies_to_receiver: bool,
     pub(crate) perishable: bool,
