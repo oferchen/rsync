@@ -16,6 +16,13 @@ use crate::wildmatch::wildmatch;
 #[derive(Debug, Clone)]
 pub(crate) struct CompiledPattern {
     bytes: Vec<u8>,
+    /// upstream `FILTRULE_WILD2_PREFIX` (exclude.c:241-242): set only when the
+    /// user's pattern *starts* with `**` (which implies it is unanchored). Such
+    /// rules are matched with a leading `/` prepended to the candidate so
+    /// `**/bar` matches a top-level `bar`. An anchored pattern like `/**/*`
+    /// whose stem merely begins with `**` after the leading-`/` strip is NOT a
+    /// WILD2_PREFIX rule and must not get the prepend.
+    wild2_prefix: bool,
 }
 
 impl CompiledPattern {
@@ -32,12 +39,12 @@ impl CompiledPattern {
     /// `/`-separated and relative).
     pub(super) fn is_match(&self, path: &Path) -> bool {
         let body = path_match_bytes(path);
-        // upstream: exclude.c:929-931 rule_matches() - when the pattern begins
-        // with `**` (FILTRULE_WILD2_PREFIX) the candidate is matched with a
-        // leading "/" prepended, so `**/bar` matches a top-level `bar` (via
-        // `/bar`) as well as `a/b/bar`. Our relative candidates never start
-        // with '/', so the prepend always applies.
-        if self.bytes.starts_with(b"**") {
+        // upstream: exclude.c:929-931 rule_matches() - a WILD2_PREFIX rule
+        // matches the candidate with a leading "/" prepended, so `**/bar`
+        // matches a top-level `bar` (via `/bar`) as well as `a/b/bar`. Our
+        // relative candidates never start with '/', so the prepend always
+        // applies when the flag is set.
+        if self.wild2_prefix {
             let mut candidate = Vec::with_capacity(body.len() + 1);
             candidate.push(b'/');
             candidate.extend_from_slice(&body);
@@ -82,6 +89,7 @@ fn path_match_bytes(path: &Path) -> Vec<u8> {
 pub(crate) fn compile_patterns(
     patterns: HashSet<String>,
     original: &str,
+    wild2_prefix: bool,
 ) -> Result<Vec<CompiledPattern>, FilterError> {
     let mut expanded: HashSet<String> = HashSet::with_capacity(patterns.len() * 2);
     for pattern in patterns {
@@ -109,6 +117,7 @@ pub(crate) fn compile_patterns(
             .map_err(|error| FilterError::new(original.to_owned(), error))?;
         matchers.push(CompiledPattern {
             bytes: pattern.into_bytes(),
+            wild2_prefix,
         });
     }
     Ok(matchers)

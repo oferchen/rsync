@@ -142,10 +142,15 @@ impl CompiledRule {
             }
         }
 
-        let direct_matchers = compile_patterns(direct_patterns, &pattern)?;
-        let descendant_matchers = compile_patterns(descendant_patterns, &pattern)?;
+        // upstream FILTRULE_WILD2_PREFIX (exclude.c:241-242): set only when the
+        // user's pattern starts with `**`, which implies it is unanchored.
+        // Anchored patterns (`/**/*`) whose stem starts with `**` after the
+        // leading-`/` strip are NOT WILD2_PREFIX and must not get the prepend.
+        let wild2_prefix = !anchored && core_pattern.starts_with("**");
+        let direct_matchers = compile_patterns(direct_patterns, &pattern, wild2_prefix)?;
+        let descendant_matchers = compile_patterns(descendant_patterns, &pattern, wild2_prefix)?;
         let deletion_descendant_matchers =
-            compile_patterns(deletion_descendant_patterns, &pattern)?;
+            compile_patterns(deletion_descendant_patterns, &pattern, wild2_prefix)?;
 
         Ok(Self {
             action,
