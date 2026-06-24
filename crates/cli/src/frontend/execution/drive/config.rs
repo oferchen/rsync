@@ -374,6 +374,13 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
     };
 
     builder = builder.itemize_changes(inputs.itemize_changes);
+    // upstream: generator.c:575-576 - emit itemize rows for unchanged entries
+    // when `-ii` / `--info=name2` / `-vv` raised the level. The parser folds
+    // all three into `NameOutputLevel::UpdatedAndUnchanged`.
+    builder = builder.itemize_unchanged(matches!(
+        inputs.name_level,
+        NameOutputLevel::UpdatedAndUnchanged
+    ));
 
     let force_event_collection = inputs.itemize_changes
         || inputs.out_format_template.is_some()

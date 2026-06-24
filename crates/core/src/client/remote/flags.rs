@@ -14,6 +14,7 @@ use protocol::filters::{FilterRuleWireFormat, RuleType};
 
 use super::super::config::{ClientConfig, DeleteMode, FilterRuleKind, FilterRuleSpec};
 use super::super::error::ClientError;
+use crate::client::DirMergeEnforcedKind;
 use crate::server::ServerConfig;
 
 /// Builds the compact server flag string from client configuration.
@@ -243,6 +244,21 @@ pub(crate) fn build_wire_format_rules(
             wire_rule.no_inherit = !options.inherit_rules();
             wire_rule.word_split = options.uses_whitespace();
             wire_rule.exclude_from_merge = options.excludes_self();
+            // upstream: exclude.c:1227-1237 - the `-`/`+` modifier on a
+            // dir-merge rule sets FILTRULE_NO_PREFIXES (and FILTRULE_INCLUDE for
+            // `+`), so the per-directory file's bare lines are taken as literal
+            // excludes (or includes) rather than prefixed rules. Without
+            // carrying this on the wire, the remote sender parses the merge file
+            // with the strict short-form parser and rejects a bare pattern like
+            // `file3` as an unrecognised rule.
+            match options.enforced_kind() {
+                Some(DirMergeEnforcedKind::Exclude) => wire_rule.no_prefixes = true,
+                Some(DirMergeEnforcedKind::Include) => {
+                    wire_rule.no_prefixes = true;
+                    wire_rule.no_prefixes_include = true;
+                }
+                None => {}
+            }
             // upstream: exclude.c:1248-1254 - the `C` modifier on a dir-merge
             // rule sets FILTRULE_CVS_IGNORE on the wire. Without this, `-f:C`
             // would round-trip through the remote shell as a bare dir-merge
@@ -306,6 +322,20 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // upstream: generator.c:124 - EARLY_DELETE_DONE_MSG = !(delete_during==2 || delete_after)
     server_config.deletion.late_delete =
         matches!(config.delete_mode(), DeleteMode::Delay | DeleteMode::After);
+    // upstream: options.c `delete_excluded` - the receiver's delete pass must
+    // treat filter-excluded (non-protected) entries as deletable. For a
+    // remote-shell pull the receiver builds its deletion chain from the local
+    // CLI filter rules, so the flag has to be carried onto this local receiver
+    // config (the wire-side sender conversion in build_wire_format_rules only
+    // affects what the remote sender hides, not local delete protection).
+    server_config.deletion.delete_excluded = config.delete_excluded();
+    logging::debug_log!(
+        Del,
+        2,
+        "receiver config: delete_excluded={} delete_mode={:?}",
+        config.delete_excluded(),
+        config.delete_mode()
+    );
     // upstream: options.c:2881-2885 - copy_unsafe_links and safe_links are long-form only
     server_config.flags.copy_unsafe_links = config.copy_unsafe_links();
     server_config.flags.safe_links = config.safe_links();
@@ -315,6 +345,10 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // as --log-format=%i, but the local ServerConfig also needs the flag set so
     // the generator's maybe_emit_itemize() produces client-side output via callback.
     server_config.flags.info_flags.itemize = config.itemize_changes();
+    // upstream: generator.c:575-576 - `-ii` (stdout_format_has_i > 1) and
+    // `--info=name2` make the generator emit itemize rows for unchanged
+    // entries too; the local receiver-generator needs the same gate.
+    server_config.flags.info_flags.itemize_unchanged = config.itemize_unchanged();
     // upstream: flist.c::iconv_for_local and options.c::recv_iconv_settings -
     // when --iconv is configured, the local process must transcode file-list
     // entries between the local and remote charsets. Without this bridge the

@@ -121,6 +121,7 @@ mod error;
 pub mod merge;
 mod rule;
 mod set;
+mod wildmatch;
 
 pub use action::FilterAction;
 pub use apple_double::{

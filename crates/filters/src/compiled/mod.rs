@@ -49,6 +49,25 @@ impl CompiledRule {
             !xattr_only,
             "xattr-only rules should be filtered before compilation"
         );
+
+        // upstream: exclude.c:add_rule() logs every parsed rule at
+        // `DEBUG_GTE(FILTER, 2)` so the active rule set is observable.
+        logging::debug_log!(
+            Filter,
+            2,
+            "add_rule({} {})",
+            match action {
+                FilterAction::Include => "+",
+                FilterAction::Exclude => "-",
+                FilterAction::Protect => "P",
+                FilterAction::Risk => "R",
+                FilterAction::Clear => "!",
+                FilterAction::Merge => "merge",
+                FilterAction::DirMerge => "dir-merge",
+            },
+            pattern
+        );
+
         let (anchored, directory_only, core_pattern) = normalise_pattern(&pattern);
         // upstream: exclude.c:903-960 rule_matches() - an unanchored pattern
         // that already begins with `**` is matched with slash_handling = -1
@@ -142,13 +161,19 @@ impl CompiledRule {
             }
         }
 
-        let direct_matchers = compile_patterns(direct_patterns, &pattern)?;
-        let descendant_matchers = compile_patterns(descendant_patterns, &pattern)?;
+        // upstream FILTRULE_WILD2_PREFIX (exclude.c:241-242): set only when the
+        // user's pattern starts with `**`, which implies it is unanchored.
+        // Anchored patterns (`/**/*`) whose stem starts with `**` after the
+        // leading-`/` strip are NOT WILD2_PREFIX and must not get the prepend.
+        let wild2_prefix = !anchored && core_pattern.starts_with("**");
+        let direct_matchers = compile_patterns(direct_patterns, &pattern, wild2_prefix)?;
+        let descendant_matchers = compile_patterns(descendant_patterns, &pattern, wild2_prefix)?;
         let deletion_descendant_matchers =
-            compile_patterns(deletion_descendant_patterns, &pattern)?;
+            compile_patterns(deletion_descendant_patterns, &pattern, wild2_prefix)?;
 
         Ok(Self {
             action,
+            pattern,
             directory_only,
             direct_matchers,
             descendant_matchers,
@@ -488,7 +513,7 @@ mod tests {
         let mut out: Vec<String> = compiled
             .direct_matchers
             .iter()
-            .map(|m| m.glob().glob().to_string())
+            .map(|m| m.glob().to_string())
             .collect();
         out.sort();
         out
@@ -499,7 +524,7 @@ mod tests {
         let mut out: Vec<String> = compiled
             .descendant_matchers
             .iter()
-            .map(|m| m.glob().glob().to_string())
+            .map(|m| m.glob().to_string())
             .collect();
         out.sort();
         out
@@ -512,7 +537,7 @@ mod tests {
         let mut out: Vec<String> = compiled
             .deletion_descendant_matchers
             .iter()
-            .map(|m| m.glob().glob().to_string())
+            .map(|m| m.glob().to_string())
             .collect();
         out.sort();
         out
@@ -673,6 +698,45 @@ mod tests {
             descendant_pattern_strings(&compiled),
             vec!["**/cache/**", "cache/**"]
         );
+    }
+
+    /// Differential-fuzzer regression: a `*/***/` exclude must match a
+    /// top-level directory, mirroring upstream's `FILTRULE_WILD3_SUFFIX` which
+    /// appends `/` to a directory candidate (`exclude.c:936-937`). The
+    /// trailing-dir-slash + `/***` combination must collapse to the
+    /// directory-only stem `*`; before the `normalise_pattern` reorder oc-rsync
+    /// kept `*/***` and failed to match a slashless directory name, so the dir
+    /// was wrongly included where upstream excludes it.
+    #[test]
+    fn wild3_suffix_with_trailing_dir_slash_matches_top_level_dir() {
+        use std::path::Path;
+        let compiled = make_exclude("*/***/");
+        // A top-level directory is excluded (upstream parity).
+        assert!(compiled.matches(Path::new("0"), true, true));
+        assert!(compiled.matches(Path::new("anydir"), true, true));
+        // Its contents are excluded on the deletion path.
+        assert!(compiled.matches_for_deletion(Path::new("0/child"), false, true));
+        // A top-level *file* is not a directory, so the directory-only stem
+        // does not match it.
+        assert!(!compiled.matches(Path::new("0"), false, true));
+    }
+
+    /// Differential-fuzzer regression: an anchored `/**/*` must NOT match a
+    /// top-level single-component entry. The stem `**/*` begins with `**` after
+    /// the leading-`/` strip, but the rule is anchored, so it is NOT a
+    /// `FILTRULE_WILD2_PREFIX` rule and the candidate is matched without a
+    /// prepended `/`. `**/*` then needs a `/` in the path, which `1` lacks -
+    /// verified against upstream `rsync -rn --filter='- /**/*'` which includes
+    /// a top-level `1`. An unanchored `**/*` (WILD2_PREFIX) DOES match it.
+    #[test]
+    fn anchored_double_star_does_not_match_top_level_entry() {
+        use std::path::Path;
+        // Anchored `/**/*` does not match a top-level `1` (no WILD2_PREFIX).
+        let anchored = make_exclude("/**/*");
+        assert!(!anchored.matches(Path::new("1"), false, true));
+        // Unanchored `**/*` (WILD2_PREFIX) does match the top-level `1`.
+        let unanchored = make_exclude("**/*");
+        assert!(unanchored.matches(Path::new("1"), false, true));
     }
 
     #[test]

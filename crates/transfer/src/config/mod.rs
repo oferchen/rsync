@@ -122,6 +122,13 @@ pub struct DeletionConfig {
     ///
     /// - `generator.c:124`: `#define EARLY_DELETE_DONE_MSG() (!(delete_during == 2 || delete_after))`
     pub late_delete: bool,
+    /// Also delete filter-excluded entries from the destination
+    /// (`--delete-excluded`). When set, the receiver's delete pass treats an
+    /// excluded (non-protected) entry as deletable rather than protected.
+    ///
+    /// upstream: `options.c` `delete_excluded` global; `exclude.c:rule_matches()`
+    /// drops the protection an exclude would otherwise grant during deletion.
+    pub delete_excluded: bool,
 }
 
 /// Connection and protocol context configuration.

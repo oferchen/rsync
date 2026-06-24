@@ -478,7 +478,17 @@ fn build_pattern_rule(pattern: &str, is_include: bool) -> FilterRuleWireFormat {
     // upstream: exclude.c:200-202 - XFLG_ABS_IF_SLASH sets FILTRULE_ABS_PATH
     // when the pattern starts with '/' or contains any embedded '/'. Patterns
     // like "subdir/file.txt" are anchored relative to the module root.
-    let anchored = pattern.starts_with('/') || pattern.contains('/');
+    //
+    // A pattern that starts with `**` is an exception: upstream sets
+    // FILTRULE_WILD2_PREFIX independently of FILTRULE_ABS_PATH (exclude.c:241-242
+    // checks the raw pattern's leading `**`), and the WILD2_PREFIX prepend
+    // (exclude.c:929-931) is what lets `**/*.o` match a root-level `build.o`.
+    // oc-rsync encodes anchoring by prepending `/` to the pattern, which would
+    // turn `**/*.o` into `/**/*.o` and destroy the leading-`**` that WILD2_PREFIX
+    // depends on. Since root-anchoring of a `**`-prefixed pattern is already
+    // implied by WILD2_PREFIX, leave such patterns unanchored.
+    let anchored = !pattern.starts_with("**")
+        && (pattern.starts_with('/') || pattern.contains('/'));
     let directory_only = pattern.ends_with('/');
 
     // upstream: exclude.c:212-213 - XFLG_DIR2WILD3 applies only to

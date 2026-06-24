@@ -47,6 +47,18 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// When true, itemize rows are emitted for unchanged entries too.
+    ///
+    /// Set when `-i` was given at least twice (`stdout_format_has_i > 1`) or
+    /// `--info=name2` raised the NAME level. Mirrors upstream's `itemize()`
+    /// emit gate at generator.c:575-576.
+    #[must_use]
+    #[doc(alias = "-ii")]
+    pub const fn itemize_unchanged(mut self, enabled: bool) -> Self {
+        self.itemize_unchanged = enabled;
+        self
+    }
+
     /// Suppresses daemon MOTD (message of the day) output.
     #[must_use]
     #[doc(alias = "--no-motd")]

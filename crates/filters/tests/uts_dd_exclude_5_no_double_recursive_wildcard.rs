@@ -53,7 +53,11 @@ fn upstream_exclude_test_leading_double_star_matches_any_depth() {
 fn rooted_infix_double_star_pattern_still_matches() {
     let rules = [FilterRule::exclude("foo/**/bar")];
     let set = FilterSet::from_rules(rules).unwrap();
-    assert!(!set.allows(Path::new("foo/bar"), false));
+    // upstream rsync: the infix `/**/` consumes a real `/`, so `foo/**/bar`
+    // requires at least one intermediate directory. `foo/bar` (no intermediate)
+    // is NOT matched and survives; `foo/x/bar` and deeper are excluded -
+    // verified against upstream `rsync -rn --exclude=foo/**/bar`.
+    assert!(set.allows(Path::new("foo/bar"), false));
     assert!(!set.allows(Path::new("foo/x/bar"), false));
     assert!(!set.allows(Path::new("foo/x/y/bar"), false));
 }

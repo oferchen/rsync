@@ -159,6 +159,14 @@ pub struct ParsedServerFlags {
 pub struct InfoFlags {
     /// Itemize changes (`i` info flag).
     pub itemize: bool,
+    /// Surface itemize rows for unchanged entries.
+    ///
+    /// Set when the client requested `-i` at least twice
+    /// (`stdout_format_has_i > 1`) or `--info=name2`. Mirrors upstream's
+    /// `itemize()` emit gate `... || stdout_format_has_i > 1 || INFO_GTE(NAME, 2)`
+    /// (generator.c:575-576): an up-to-date file whose `iflags` carry no
+    /// significant bits still prints a `.f         ` / `.d         ` row.
+    pub itemize_unchanged: bool,
     /// Log format active (`L` info flag).
     pub log_format: bool,
     /// Statistics enabled (`s` info flag).

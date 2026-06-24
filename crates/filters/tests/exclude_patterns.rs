@@ -403,7 +403,11 @@ mod double_star_patterns {
     fn double_star_middle() {
         let set = FilterSet::from_rules([FilterRule::exclude("src/**/test.rs")]).unwrap();
 
-        assert!(!set.allows(Path::new("src/test.rs"), false));
+        // upstream rsync: `**/` consumes a real `/`, so `src/**/test.rs`
+        // requires at least one intermediate directory. `src/test.rs` (no
+        // intermediate) is NOT matched and survives - verified against
+        // `rsync -rn --exclude=src/**/test.rs` which lists `src/test.rs`.
+        assert!(set.allows(Path::new("src/test.rs"), false));
         assert!(!set.allows(Path::new("src/module/test.rs"), false));
         assert!(!set.allows(Path::new("src/a/b/c/test.rs"), false));
 
