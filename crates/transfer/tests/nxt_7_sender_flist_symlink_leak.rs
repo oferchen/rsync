@@ -36,8 +36,8 @@ use std::path::Path;
 
 use tempfile::TempDir;
 
-use protocol::flist::FileType;
 use protocol::ProtocolVersion;
+use protocol::flist::FileType;
 use transfer::{
     GeneratorContext, HandshakeResult, ServerConfig, ServerRole, TransferPhase, TransferPipeline,
 };
