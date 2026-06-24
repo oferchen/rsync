@@ -1,6 +1,7 @@
 mod direct;
 mod program;
 mod proxy;
+mod rsh;
 #[cfg(feature = "client-tls")]
 pub(crate) mod tls;
 
@@ -18,6 +19,7 @@ pub(crate) use proxy::{
     ProxyConfig, ProxyCredentials, connect_via_proxy, establish_proxy_tunnel, load_daemon_proxy,
     parse_proxy_spec,
 };
+pub(crate) use rsh::{RshDaemonSpawn, spawn_rsh_daemon_stream};
 
 /// Read half of a [`DaemonStream`] after splitting.
 pub(crate) enum DaemonStreamReader {

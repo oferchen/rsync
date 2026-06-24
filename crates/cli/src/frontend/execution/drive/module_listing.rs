@@ -7,6 +7,7 @@ use core::client::{
 };
 use logging_sink::MessageSink;
 use protocol::ProtocolVersion;
+use rsync_io::ssh;
 
 use crate::frontend::{execution::render_module_list, write_message};
 
@@ -21,6 +22,8 @@ pub(super) struct ModuleListingInputs<'a> {
     pub address_mode: AddressMode,
     pub bind_address: Option<&'a BindAddress>,
     pub connect_program: Option<&'a OsString>,
+    pub remote_shell: Option<&'a OsString>,
+    pub rsync_path: Option<&'a OsString>,
     pub timeout_setting: TransferTimeout,
     pub connect_timeout_setting: TransferTimeout,
     pub sockopts: Option<&'a OsString>,
@@ -50,6 +53,8 @@ where
         address_mode,
         bind_address,
         connect_program,
+        remote_shell,
+        rsync_path,
         timeout_setting,
         connect_timeout_setting,
         sockopts,
@@ -79,11 +84,19 @@ where
         request
     };
 
+    // upstream: main.c - an explicit `-e`/`--rsh` makes `host::` listings reach
+    // the daemon over the remote shell (daemon-over-rsh) rather than TCP. Parse
+    // the shell spec the same way the transfer path does (config.rs). A
+    // malformed spec is ignored, matching the transfer path's lenient handling.
+    let remote_shell_args = remote_shell.and_then(|spec| ssh::parse_remote_shell(spec).ok());
+
     let list_options = ModuleListOptions::default()
         .suppress_motd(no_motd)
         .with_address_mode(address_mode)
         .with_bind_address(bind_address.map(|addr| addr.socket()))
         .with_connect_program(connect_program.cloned())
+        .with_remote_shell(remote_shell_args)
+        .with_rsync_path(rsync_path.cloned())
         .with_sockopts(sockopts.cloned())
         .with_tcp_fastopen(tcp_fastopen)
         .with_blocking_io(blocking_io);

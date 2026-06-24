@@ -481,6 +481,8 @@ where
             address_mode,
             bind_address: bind_address.as_ref(),
             connect_program: connect_program.as_ref(),
+            remote_shell: parsed.remote_shell.as_ref(),
+            rsync_path: parsed.rsync_path.as_ref(),
             timeout_setting,
             connect_timeout_setting,
             sockopts: sockopts.as_ref(),
