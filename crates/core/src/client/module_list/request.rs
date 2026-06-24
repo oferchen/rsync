@@ -135,6 +135,8 @@ pub struct ModuleListOptions {
     sockopts: Option<OsString>,
     tcp_fastopen: TcpFastOpenMode,
     blocking_io: Option<bool>,
+    remote_shell: Option<Vec<OsString>>,
+    rsync_path: Option<OsString>,
 }
 
 impl ModuleListOptions {
@@ -149,6 +151,8 @@ impl ModuleListOptions {
             sockopts: None,
             tcp_fastopen: TcpFastOpenMode::Auto,
             blocking_io: None,
+            remote_shell: None,
+            rsync_path: None,
         }
     }
 
@@ -191,6 +195,36 @@ impl ModuleListOptions {
     /// Returns the configured connect program command, if any.
     pub fn connect_program(&self) -> Option<&std::ffi::OsStr> {
         self.connect_program.as_deref()
+    }
+
+    /// Supplies the `-e`/`--rsh` remote-shell argv for daemon-over-rsh listings.
+    ///
+    /// When present, `host::` listings reach the daemon by spawning this
+    /// program with `rsync --server --daemon .` instead of opening TCP,
+    /// mirroring upstream `main.c`'s daemon-over-rsh dispatch.
+    #[must_use]
+    #[doc(alias = "--rsh")]
+    pub fn with_remote_shell(mut self, shell: Option<Vec<OsString>>) -> Self {
+        self.remote_shell = shell;
+        self
+    }
+
+    /// Returns the configured remote-shell argv, if any.
+    pub fn remote_shell(&self) -> Option<&[OsString]> {
+        self.remote_shell.as_deref()
+    }
+
+    /// Supplies the `--rsync-path` override for daemon-over-rsh listings.
+    #[must_use]
+    #[doc(alias = "--rsync-path")]
+    pub fn with_rsync_path(mut self, rsync_path: Option<OsString>) -> Self {
+        self.rsync_path = rsync_path;
+        self
+    }
+
+    /// Returns the configured remote `--rsync-path`, if any.
+    pub fn rsync_path(&self) -> Option<&OsStr> {
+        self.rsync_path.as_deref()
     }
 
     /// Configures additional socket options that should be applied to daemon connections.

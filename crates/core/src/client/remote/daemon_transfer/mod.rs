@@ -23,22 +23,21 @@ mod orchestration;
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
-use std::ffi::OsStr;
 use std::io::BufReader;
-use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use engine::batch::BatchWriter;
 
+use super::super::DAEMON_SOCKET_TIMEOUT;
 use super::super::config::ClientConfig;
 use super::super::error::{ClientError, invalid_argument_error, socket_error};
 use super::super::module_list::{
-    DaemonStream, apply_socket_options, open_daemon_stream, resolve_connect_timeout,
+    RshDaemonSpawn, apply_socket_options, open_daemon_stream, resolve_connect_timeout,
+    spawn_rsh_daemon_stream,
 };
 use super::super::progress::ClientProgressObserver;
 use super::super::summary::ClientSummary;
-use super::super::{DAEMON_SOCKET_TIMEOUT, IPC_EXIT_CODE};
 use super::batch_support::build_batch_context;
 use super::invocation::{RemoteRole, TransferSpec, determine_transfer_role};
 
@@ -296,61 +295,18 @@ pub fn run_daemon_over_remote_shell(
         .remote_shell()
         .ok_or_else(|| invalid_argument_error("daemon-over-remote-shell requires -e/--rsh", 1))?;
 
-    let ssh_program = if shell_args.is_empty() {
-        OsStr::new("ssh")
-    } else {
-        &shell_args[0]
-    };
-    let mut cmd = Command::new(ssh_program);
-
-    for opt in shell_args.iter().skip(1) {
-        cmd.arg(opt);
-    }
-
-    if let Some(bind_addr) = config.bind_address() {
-        cmd.arg("-o")
-            .arg(format!("BindAddress={}", bind_addr.socket().ip()));
-    }
-
-    if let Some(jump) = config.jump_hosts() {
-        cmd.arg("-J").arg(jump);
-    }
-
-    if let Some(timeout) = config.connect_timeout().effective(Duration::from_secs(30)) {
-        cmd.arg("-o")
-            .arg(format!("ConnectTimeout={}", timeout.as_secs()));
-    }
-
-    if let Some(user) = &request.username {
-        cmd.arg("-l").arg(user);
-    }
-
-    cmd.arg(request.address.host());
-
-    let rsync_path = config.rsync_path().unwrap_or(OsStr::new("rsync"));
-    cmd.arg(rsync_path).arg("--server").arg("--daemon").arg(".");
-
-    // upstream: main.c:1571-1572 - set_env_num("RSYNC_PORT", env_port)
-    cmd.env("RSYNC_PORT", request.address.port().to_string());
-    cmd.stdin(Stdio::piped());
-    cmd.stdout(Stdio::piped());
-    cmd.stderr(Stdio::inherit());
-
-    let mut child = cmd.spawn().map_err(|e| {
-        invalid_argument_error(
-            &format!("failed to spawn remote shell for daemon-over-rsh: {e}"),
-            IPC_EXIT_CODE,
-        )
+    // Shared with the module-listing path so `-e PROG host::` behaves
+    // identically whether listing modules or transferring files.
+    let stream = spawn_rsh_daemon_stream(RshDaemonSpawn {
+        shell_args,
+        host: request.address.host(),
+        username: request.username.as_deref(),
+        port: request.address.port(),
+        rsync_path: config.rsync_path(),
+        bind_address: config.bind_address().map(|addr| addr.socket().ip()),
+        jump_hosts: config.jump_hosts(),
+        connect_timeout: config.connect_timeout().effective(Duration::from_secs(30)),
     })?;
-
-    let stdin = child.stdin.take().ok_or_else(|| {
-        invalid_argument_error("remote shell process did not expose stdin", IPC_EXIT_CODE)
-    })?;
-    let stdout = child.stdout.take().ok_or_else(|| {
-        invalid_argument_error("remote shell process did not expose stdout", IPC_EXIT_CODE)
-    })?;
-
-    let stream = DaemonStream::from_child_process(child, stdin, stdout);
 
     let transfer_timeout = config
         .timeout()

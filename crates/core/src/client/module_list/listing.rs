@@ -31,7 +31,9 @@ use super::auth::{
 };
 #[cfg(feature = "client-tls")]
 use super::connect::open_daemon_stream_tls;
-use super::connect::{open_daemon_stream, resolve_connect_timeout};
+use super::connect::{
+    RshDaemonSpawn, open_daemon_stream, resolve_connect_timeout, spawn_rsh_daemon_stream,
+};
 use super::errors::{legacy_daemon_error_payload, map_daemon_handshake_error, read_trimmed_line};
 use super::request::ModuleListOptions;
 use super::request::ModuleListRequest;
@@ -221,14 +223,34 @@ pub fn run_module_list_with_password_and_options(
         ));
     }
 
-    let mut stream = open_daemon_stream(
-        addr,
-        connect_duration,
-        effective_timeout,
-        address_mode,
-        options.connect_program(),
-        options.bind_address(),
-    )?;
+    // Precedence mirrors upstream `main.c`: an explicit `-e`/`--rsh` for a
+    // `host::` listing reaches the daemon through the remote shell
+    // (daemon-over-rsh); otherwise RSYNC_CONNECT_PROG, otherwise plain TCP.
+    let mut stream = if let Some(shell_args) = options.remote_shell() {
+        // upstream: main.c:594-604 + main.c:1571-1586 - spawn the remote shell
+        // with `rsync --server --daemon .` and speak the `@RSYNCD:` listing
+        // handshake over its pipes instead of opening a TCP socket. Matches
+        // `clientserver.c:start_inband_exchange` carried over the shell.
+        spawn_rsh_daemon_stream(RshDaemonSpawn {
+            shell_args,
+            host: addr.host(),
+            username: username.as_deref(),
+            port: addr.port(),
+            rsync_path: options.rsync_path(),
+            bind_address: options.bind_address().map(|addr| addr.ip()),
+            jump_hosts: None,
+            connect_timeout: connect_duration,
+        })?
+    } else {
+        open_daemon_stream(
+            addr,
+            connect_duration,
+            effective_timeout,
+            address_mode,
+            options.connect_program(),
+            options.bind_address(),
+        )?
+    };
 
     configure_daemon_stream(&mut stream, &options, addr)?;
 
@@ -510,5 +532,45 @@ mod tests {
         let custom = NonZeroU64::new(60).unwrap();
         let result = effective_timeout(TransferTimeout::Seconds(custom), default);
         assert_eq!(result, Some(Duration::from_secs(60)));
+    }
+
+    /// When `-e`/remote_shell is configured (and no connect program), a
+    /// `host::` listing must reach the daemon by spawning the remote shell -
+    /// not by opening TCP to the daemon port.
+    ///
+    /// WHY: upstream `rsync -e PROG host::` lists modules over the spawned
+    /// shell (`main.c` daemon-over-rsh). Regressing to TCP yields
+    /// `connect()` -> ECONNREFUSED (exit 10) against port 873, the exact
+    /// daemon.test failure this path fixes. Pointing remote_shell at a
+    /// nonexistent program makes the rsh branch fail at spawn time with an
+    /// IPC error mentioning "daemon-over-rsh", proving the listing took the
+    /// remote-shell branch rather than the TCP branch.
+    #[test]
+    fn listing_with_remote_shell_uses_rsh_not_tcp() {
+        use std::ffi::OsString;
+
+        let operands = vec![OsString::from("localhost::")];
+        let request = ModuleListRequest::from_operands(&operands)
+            .expect("valid operands")
+            .expect("daemon listing request");
+
+        let options = ModuleListOptions::default().with_remote_shell(Some(vec![OsString::from(
+            "/nonexistent/oc-rsync-rsh-daemon-probe-bin",
+        )]));
+
+        let err = run_module_list_with_password_and_options(
+            request,
+            options,
+            None,
+            TransferTimeout::Default,
+            TransferTimeout::Default,
+        )
+        .expect_err("spawning a nonexistent remote shell must fail");
+
+        assert_eq!(err.exit_code(), crate::client::IPC_EXIT_CODE);
+        assert!(
+            err.to_string().contains("daemon-over-rsh"),
+            "listing should fail in the daemon-over-rsh spawn, got: {err}"
+        );
     }
 }
