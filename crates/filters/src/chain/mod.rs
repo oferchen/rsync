@@ -268,7 +268,9 @@ impl FilterChain {
 
             let base = self.global.allows_deletion(path, is_dir);
             base || (self.delete_excluded
-                && self.global.allows_deletion_when_excluded_removed(path, is_dir))
+                && self
+                    .global
+                    .allows_deletion_when_excluded_removed(path, is_dir))
         })();
 
         logging::debug_log!(

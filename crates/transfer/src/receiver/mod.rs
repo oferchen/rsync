@@ -428,6 +428,18 @@ pub struct ReceiverContext {
     /// advanced through `FileListTransfer`, `DeltaTransfer`, `Finalization`,
     /// and `Complete` as the receiver progresses.
     pipeline: TransferPipeline,
+    /// Whether `setup_transfer`'s pre-flight mkdir actually created the
+    /// destination root directory this run.
+    ///
+    /// Mirrors upstream `main.c:794-796` which sets `FLAG_DIR_CREATED` on the
+    /// first flist entry only when the receiver had to `do_mkdir()` the dest
+    /// root. The generator's `itemize()` then ORs `ITEM_IS_NEW` for the root
+    /// entry, emitting `cd+++++++++ ./`. When the dest root already existed
+    /// (e.g. `up1/ -> up2/` where `up2` is present), the flag stays clear and
+    /// the root reports a metadata-only row that the standard significance
+    /// gate drops. `emit_itemize` reads this to decide whether to force the
+    /// created-directory glyph for the root entry.
+    dest_root_created: bool,
 }
 
 impl ReceiverContext {
@@ -485,6 +497,7 @@ impl ReceiverContext {
             delete_ctx: None,
             pending_del_stats: DeleteStats::new(),
             pipeline,
+            dest_root_created: false,
         }
     }
 
@@ -904,22 +917,25 @@ impl ReceiverContext {
         // upstream: main.c:794-796 - when the receiver pre-flight-mkdirs the
         // destination root, `flist->files[0]->flags |= FLAG_DIR_CREATED`. The
         // generator's `itemize()` then sees `statret < 0` for the root entry,
-        // ORs in `ITEM_IS_NEW`, and emits `cd+++++++++ ./` even when no other
-        // attribute differs. oc-rsync's `create_directory_incremental` cannot
-        // observe the `ensure_dest_root_exists` mkdir after the fact, so the
-        // root entry arrives here with `iflags == 0`. Mirror upstream's
-        // unconditional `cd+++++++++ ./` emission for the root directory so
-        // itemize-changes output matches the `testsuite/itemize.test` golden.
-        let is_root_dir = entry.is_dir() && entry.path().as_os_str() == ".";
-        if !is_root_dir && !iflags.has_significant_flags() {
-            // upstream: generator.c:574-576 - only emit when significant flags
-            // are set. When iflags == 0 (file is completely up-to-date), no
-            // line is produced. INFO_GTE(NAME, 2) and stdout_format_has_i > 1
-            // gates are not applicable on the server side (the client
-            // controls display).
+        // ORs in `ITEM_IS_NEW`, and emits `cd+++++++++ ./`. oc-rsync's
+        // `create_directory_incremental` cannot observe the
+        // `ensure_dest_root_exists` mkdir after the fact, so the root entry
+        // arrives here with `iflags == 0`. Force the created-directory glyph
+        // ONLY when the pre-flight mkdir actually created the root this run
+        // (`dest_root_created`); when the dest root already existed (e.g.
+        // `up1/ -> up2/`), `FLAG_DIR_CREATED` is clear upstream and the root
+        // reports a metadata-only row that the significance gate drops.
+        let is_created_root_dir =
+            self.dest_root_created && entry.is_dir() && entry.path().as_os_str() == ".";
+        // upstream: generator.c:575-576 - emit when significant flags are set OR
+        // the itemize level requests unchanged rows (`-ii` / `--info=name2` /
+        // `-vv`). Without one of those, an all-unchanged entry produces no line.
+        let show_unchanged =
+            self.config.flags.info_flags.itemize_unchanged || self.config.flags.verbose_level > 1;
+        if !is_created_root_dir && !show_unchanged && !iflags.has_significant_flags() {
             return Ok(());
         }
-        let effective_iflags = if is_root_dir && !iflags.has_significant_flags() {
+        let effective_iflags = if is_created_root_dir && !iflags.has_significant_flags() {
             // upstream: generator.c:1468-1471 + generator.c:566-572 - itemize()
             // with `statret < 0` ORs `ITEM_LOCAL_CHANGE | ITEM_IS_NEW`. Apply
             // the same bits here so `format_itemize_line` emits the full

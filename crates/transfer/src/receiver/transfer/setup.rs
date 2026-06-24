@@ -138,8 +138,8 @@ impl ReceiverContext {
                     ),
                 )
             })?;
-            let mut chain =
-                FilterChain::new(filter_set).with_delete_excluded(self.config.deletion.delete_excluded);
+            let mut chain = FilterChain::new(filter_set)
+                .with_delete_excluded(self.config.deletion.delete_excluded);
             for config in merge_configs {
                 chain.add_merge_config(config);
             }
@@ -286,6 +286,10 @@ impl ReceiverContext {
                 ),
             )
         })?;
+        // upstream: main.c:794-796 - record whether the pre-flight mkdir
+        // created the dest root so the root entry's itemize row can OR in
+        // ITEM_IS_NEW (cd+++++++++ ./) only when it was actually created.
+        self.dest_root_created = created_dest_root;
         if created_dest_root {
             debug_log!(Recv, 1, "created destination root {}", dest_dir.display());
             // upstream: main.c:798-799 - `rprintf(FINFO, "created directory %s\n", dest_path)`

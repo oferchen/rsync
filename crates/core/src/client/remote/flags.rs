@@ -13,8 +13,8 @@
 use protocol::filters::{FilterRuleWireFormat, RuleType};
 
 use super::super::config::{ClientConfig, DeleteMode, FilterRuleKind, FilterRuleSpec};
-use crate::client::DirMergeEnforcedKind;
 use super::super::error::ClientError;
+use crate::client::DirMergeEnforcedKind;
 use crate::server::ServerConfig;
 
 /// Builds the compact server flag string from client configuration.
@@ -345,6 +345,10 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // as --log-format=%i, but the local ServerConfig also needs the flag set so
     // the generator's maybe_emit_itemize() produces client-side output via callback.
     server_config.flags.info_flags.itemize = config.itemize_changes();
+    // upstream: generator.c:575-576 - `-ii` (stdout_format_has_i > 1) and
+    // `--info=name2` make the generator emit itemize rows for unchanged
+    // entries too; the local receiver-generator needs the same gate.
+    server_config.flags.info_flags.itemize_unchanged = config.itemize_unchanged();
     // upstream: flist.c::iconv_for_local and options.c::recv_iconv_settings -
     // when --iconv is configured, the local process must transcode file-list
     // entries between the local and remote charsets. Without this bridge the

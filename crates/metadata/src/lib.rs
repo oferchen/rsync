@@ -166,6 +166,24 @@ pub mod fake_super;
 #[cfg(target_os = "windows")]
 pub mod windows;
 
+/// Returns whether the process runs with an effective UID of 0 (root).
+///
+/// Mirrors upstream rsync's `am_root` (`main.c:1284 am_root = (our_uid == 0)`),
+/// which gates ownership-change attempts and the `ITEM_REPORT_OWNER` itemize
+/// flag (`generator.c:546`). Always `false` on Windows, matching upstream's
+/// `am_root = 0` on platforms without POSIX uid semantics.
+#[must_use]
+pub fn am_root() -> bool {
+    #[cfg(unix)]
+    {
+        rustix::process::geteuid().is_root()
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 #[cfg(all(
     feature = "acl",
     any(target_os = "linux", target_os = "macos", target_os = "freebsd")

@@ -48,7 +48,7 @@ impl ReceiverContext {
         metadata_errors: &mut Vec<(PathBuf, String)>,
         stats: &mut TransferStats,
         acl_cache: Option<&protocol::acl::AclCache>,
-    ) -> Vec<(usize, &'a FileEntry, PathBuf)> {
+    ) -> Vec<(usize, &'a FileEntry, PathBuf, u32)> {
         // upstream: generator.c:1234-1235 - "recv_generator(%s,%d)" emitted at
         // the top of recv_generator() for every file the generator considers
         // (regular files, directories, symlinks, devices, specials). Skipping
@@ -125,9 +125,19 @@ impl ReceiverContext {
         // transfer but still builds the candidate list so NDX requests are sent
         // to the sender, which logs each file name for verbose output.
         if self.config.flags.dry_run {
+            // upstream: generator.c:1925-1926 - dry-run still itemizes with
+            // ITEM_TRANSFER; the dry-run loop writes the bare ITEM_TRANSFER
+            // attrs over the wire and does not consume this precomputed value.
             return candidates
                 .into_iter()
-                .map(|(idx, entry)| (idx, entry, dest_dir.join(entry.path())))
+                .map(|(idx, entry)| {
+                    (
+                        idx,
+                        entry,
+                        dest_dir.join(entry.path()),
+                        crate::generator::ItemFlags::ITEM_TRANSFER,
+                    )
+                })
                 .collect();
         }
 
@@ -200,6 +210,11 @@ impl ReceiverContext {
                     size_only,
                     always_checksum,
                 ) {
+                    // upstream: generator.c:1816 - itemize() with iflags=0 for an
+                    // up-to-date file; the attr-comparison may still surface a
+                    // metadata-only row (perms/owner/group differing while
+                    // size+mtime match).
+                    let unchanged_iflags = self.itemize_existing_flags(entry, meta, 0);
                     self.apply_no_change_metadata(
                         writer,
                         &file_path,
@@ -209,6 +224,7 @@ impl ReceiverContext {
                         metadata_errors,
                         acl_cache,
                         emit_itemize,
+                        unchanged_iflags,
                         has_acls,
                         has_xattrs,
                         needs_metadata_apply,
@@ -236,9 +252,98 @@ impl ReceiverContext {
                     continue;
                 }
             }
-            files_to_transfer.push((idx, entry, file_path));
+            // upstream: generator.c:504-572 itemize() - compute the base itemize
+            // flags before the data transfer so the row reflects attribute
+            // changes against the pre-transfer destination. A non-existent dest
+            // (statret < 0) is ITEM_IS_NEW; an existing one OR-s the per-attr
+            // report bits onto ITEM_TRANSFER.
+            let base_iflags = match dest_meta {
+                Some(ref meta) => self.itemize_existing_flags(
+                    entry,
+                    meta,
+                    crate::generator::ItemFlags::ITEM_TRANSFER,
+                ),
+                None => {
+                    crate::generator::ItemFlags::ITEM_TRANSFER
+                        | crate::generator::ItemFlags::ITEM_IS_NEW
+                }
+            };
+            files_to_transfer.push((idx, entry, file_path, base_iflags));
         }
         files_to_transfer
+    }
+
+    /// Computes the attribute-comparison itemize flags for a destination file
+    /// that already exists, mirroring upstream `generator.c:508-549` `itemize()`.
+    ///
+    /// `base` is `ITEM_TRANSFER` for a file being transferred, or `0` for an
+    /// up-to-date file (quick-check match). The returned raw flags OR `base`
+    /// with `ITEM_REPORT_{SIZE,TIME,PERMS,OWNER,GROUP}` for every attribute that
+    /// differs between `entry` (the sender's view) and `dest_meta` (the
+    /// pre-transfer destination stat). Only regular-file candidates reach this
+    /// path, so `keep_time` reduces to the `--times` preservation flag.
+    fn itemize_existing_flags(
+        &self,
+        entry: &FileEntry,
+        dest_meta: &fs::Metadata,
+        base: u32,
+    ) -> u32 {
+        use crate::generator::ItemFlags;
+        let mut iflags = base;
+        // upstream: generator.c:514 - S_ISREG(file->mode) && F_LENGTH(file) != st_size
+        if entry.is_file() && entry.size() != dest_meta.len() {
+            iflags |= ItemFlags::ITEM_REPORT_SIZE;
+        }
+        // upstream: generator.c:519-523 - keep_time ? mtime_differs(&st, file).
+        // For regular files keep_time == preserve_mtimes (`--times`).
+        if self.config.flags.times {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if dest_meta.mtime() != entry.mtime() {
+                    iflags |= ItemFlags::ITEM_REPORT_TIME;
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let dest_secs = dest_meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs() as i64);
+                if dest_secs != Some(entry.mtime()) {
+                    iflags |= ItemFlags::ITEM_REPORT_TIME;
+                }
+            }
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt;
+            // upstream: generator.c:540-542 - preserve_perms && CHMOD_BITS differ
+            if self.config.flags.perms {
+                const CHMOD_BITS: u32 = 0o7777;
+                if (dest_meta.mode() & CHMOD_BITS) != (entry.mode() & CHMOD_BITS) {
+                    iflags |= ItemFlags::ITEM_REPORT_PERMS;
+                }
+            }
+            // upstream: generator.c:546-547 - uid_ndx && am_root && uid differs
+            if self.config.flags.owner && metadata::am_root() {
+                if let Some(uid) = entry.uid() {
+                    if dest_meta.uid() != uid {
+                        iflags |= ItemFlags::ITEM_REPORT_OWNER;
+                    }
+                }
+            }
+            // upstream: generator.c:548-549 - gid_ndx && !FLAG_SKIP_GROUP && gid differs
+            if self.config.flags.group {
+                if let Some(gid) = entry.gid() {
+                    if dest_meta.gid() != gid {
+                        iflags |= ItemFlags::ITEM_REPORT_GROUP;
+                    }
+                }
+            }
+        }
+        iflags
     }
 
     /// Applies metadata updates for a file that passed quick-check (no transfer needed).
@@ -262,15 +367,17 @@ impl ReceiverContext {
         metadata_errors: &mut Vec<(PathBuf, String)>,
         acl_cache: Option<&protocol::acl::AclCache>,
         emit_itemize: bool,
+        unchanged_iflags: u32,
         has_acls: bool,
         has_xattrs: bool,
         needs_metadata_apply: bool,
     ) {
-        // upstream: generator.c:1816 - itemize() with iflags=0 for up-to-date
-        // files. iflags=0 has no significant flags, so emit_itemize will suppress
-        // output (generator.c:574-576). Skip the call entirely.
+        // upstream: generator.c:1816 - itemize() for an up-to-date file. The
+        // attr-comparison flags were computed against the pre-apply dest stat;
+        // emit_itemize's own gate drops the row when nothing is significant
+        // unless the itemize level requests unchanged rows (generator.c:574-576).
         if emit_itemize {
-            let iflags = crate::generator::ItemFlags::from_raw(0);
+            let iflags = crate::generator::ItemFlags::from_raw(unchanged_iflags);
             let _ = self.emit_itemize(writer, &iflags, entry);
         }
 
