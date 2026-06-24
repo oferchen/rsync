@@ -141,7 +141,14 @@ pub fn read_xattr_definitions<R: Read>(reader: &mut R) -> io::Result<XattrSet> {
 /// on `ndx != 0` for cache hit vs literal data.
 pub fn recv_xattr<R: Read>(reader: &mut R) -> io::Result<RecvXattrResult> {
     let ndx_plus_one = read_varint(reader)?;
-    let ndx = ndx_plus_one - 1;
+    // upstream: xattrs.c:773-775 reads `int ndx = read_varint(f)` and rejects
+    // out-of-range indices with an error. The wire value is an index + 1, so a
+    // malicious peer can send i32::MIN, making `ndx_plus_one - 1` underflow and
+    // panic under overflow-checks builds. Reject that edge with a protocol
+    // error rather than panicking, mirroring upstream's index validation.
+    let ndx = ndx_plus_one
+        .checked_sub(1)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid xattr cache index"))?;
 
     if ndx >= 0 {
         return Ok(RecvXattrResult::CacheHit(ndx as u32));
@@ -288,4 +295,23 @@ pub fn checksum_matches(checksum: &[u8], local_value: &[u8], checksum_seed: i32)
     }
     let local_checksum = compute_xattr_checksum(local_value, checksum_seed);
     checksum == local_checksum
+}
+
+#[cfg(test)]
+mod edg_panic_tests {
+    use super::recv_xattr;
+    use std::io;
+
+    /// A malicious peer must not crash the parser by sending a cache index that
+    /// underflows the `wire_value - 1` remap. upstream: xattrs.c:773-775 reads
+    /// the index and rejects out-of-range values; the varint i32::MIN drives
+    /// `ndx_plus_one - 1` past i32::MIN, so the hardened decode must return a
+    /// clean InvalidData error rather than panicking under overflow-checks.
+    #[test]
+    fn recv_xattr_rejects_underflowing_cache_index() {
+        // Varint of i32::MIN: leading tag 0xF0 (4 extra bytes) + LE 0x8000_0000.
+        let wire = [0xF0u8, 0x00, 0x00, 0x00, 0x80];
+        let err = recv_xattr(&mut &wire[..]).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
 }
