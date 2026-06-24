@@ -183,6 +183,13 @@ impl ReceiverContext {
                     continue;
                 }
                 if update_only && dest_mtime_newer(meta, entry) {
+                    // upstream: generator.c:1723-1724 - `if (INFO_GTE(SKIP, 1))
+                    // rprintf(FINFO, "%s is newer\n", fname)`. Report the skip on
+                    // the same sink as itemize so the ordering matches upstream.
+                    if logging::info_gte(logging::InfoFlag::Skip, 1) {
+                        let name = entry.path().to_string_lossy();
+                        let _ = self.emit_info_line(writer, &format!("{name} is newer\n"));
+                    }
                     continue;
                 }
                 if quick_check_matches(

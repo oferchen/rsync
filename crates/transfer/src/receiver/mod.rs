@@ -830,12 +830,36 @@ impl ReceiverContext {
 
     /// Returns whether itemize emission should be active.
     ///
-    /// MSG_INFO itemize frames are only emitted when:
-    /// - Running in server mode (daemon or SSH) - not client mode
-    /// - The client requested `--itemize-changes` (`-i`)
+    /// Whether itemize-changes output should be produced for this transfer.
+    ///
+    /// Emitted whenever the user requested `--itemize-changes` (`-i`). The
+    /// destination of each line depends on the role (see [`Self::emit_info_line`]):
+    /// a server receiver multiplexes it as a `MSG_INFO` frame to the client,
+    /// while a client receiver (a pull, where oc is the generator) writes it to
+    /// its own stdout - mirroring upstream `log.c:rwrite()` which sends
+    /// `MSG_INFO` only when `am_server` and otherwise writes to the client fd.
     #[must_use]
     const fn should_emit_itemize(&self) -> bool {
-        !self.config.connection.client_mode && self.config.flags.info_flags.itemize
+        self.config.flags.info_flags.itemize
+    }
+
+    /// Routes an already-formatted info line (itemize, skip notice) to the
+    /// correct sink: a server receiver multiplexes it as `MSG_INFO`; a client
+    /// receiver (pull) writes it directly to stdout.
+    ///
+    /// upstream: log.c:rwrite() - `am_server` -> `MSG_INFO`, else write to the
+    /// client output fd.
+    fn emit_info_line<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        line: &str,
+    ) -> std::io::Result<()> {
+        if self.config.connection.client_mode {
+            use std::io::Write as _;
+            std::io::stdout().write_all(line.as_bytes())
+        } else {
+            writer.send_msg_info(line.as_bytes())
+        }
     }
 
     /// Builds the display context for itemize time-position rendering.
@@ -910,7 +934,7 @@ impl ReceiverContext {
         let ctx = self.itemize_context();
         let line =
             crate::generator::itemize::format_itemize_line(&effective_iflags, entry, false, &ctx);
-        writer.send_msg_info(line.as_bytes())
+        self.emit_info_line(writer, &line)
     }
 
     /// Reclaims heap data from the oldest unreclaimed INC_RECURSE segment.
