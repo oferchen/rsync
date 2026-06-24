@@ -359,13 +359,18 @@ impl ReceiverContext {
                     if self.config.flags.verbose && self.config.connection.client_mode {
                         info_log!(Name, 1, "{}", file_entry.path().display());
                     }
-                    // upstream: generator.c:504-580 itemize() - emit the base
-                    // itemize flags computed against the pre-transfer dest stat
-                    // (ITEM_TRANSFER plus per-attribute report bits, or
-                    // ITEM_TRANSFER|ITEM_IS_NEW for a freshly created file).
-                    use crate::generator::ItemFlags;
-                    let iflags = ItemFlags::from_raw(base_iflags);
-                    let _ = self.emit_itemize(writer, &iflags, file_entry);
+                    // upstream: generator.c:1925-1937 - the transfer itemize is
+                    // emitted right after the file request. With
+                    // log_before_transfer == 0 (`am_server`) the row is logged
+                    // after the transfer, so a server-mode receiver emits it
+                    // here. Client-mode receivers (log_before_transfer == 1)
+                    // already emitted it in the linear candidate pass to keep
+                    // the stdout interleaving with skip/unchanged rows.
+                    if !self.config.connection.client_mode {
+                        use crate::generator::ItemFlags;
+                        let iflags = ItemFlags::from_raw(base_iflags);
+                        let _ = self.emit_itemize(writer, &iflags, file_entry);
+                    }
                 }
 
                 if let Some(cb) = progress.as_mut() {

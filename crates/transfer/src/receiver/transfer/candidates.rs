@@ -268,6 +268,17 @@ impl ReceiverContext {
                         | crate::generator::ItemFlags::ITEM_IS_NEW
                 }
             };
+            // upstream: generator.c:1925-1937 - the generator emits the transfer
+            // itemize right after write_ndx(ndx), in flist order. With
+            // log_before_transfer (`!am_server`, i.e. client mode) the row is
+            // written to stdout before the data moves, so emit it here in the
+            // linear candidate pass to preserve the interleaving with the
+            // skip/unchanged rows. Server-mode receivers defer to the pipeline
+            // (after the transfer completes) to match `log_before_transfer == 0`.
+            if emit_itemize && self.config.connection.client_mode {
+                let iflags = crate::generator::ItemFlags::from_raw(base_iflags);
+                let _ = self.emit_itemize(writer, &iflags, entry);
+            }
             files_to_transfer.push((idx, entry, file_path, base_iflags));
         }
         files_to_transfer
