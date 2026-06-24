@@ -701,6 +701,24 @@ mod tests {
         assert!(!compiled.matches(Path::new("0"), false, true));
     }
 
+    /// Differential-fuzzer regression: an anchored `/**/*` must NOT match a
+    /// top-level single-component entry. The stem `**/*` begins with `**` after
+    /// the leading-`/` strip, but the rule is anchored, so it is NOT a
+    /// `FILTRULE_WILD2_PREFIX` rule and the candidate is matched without a
+    /// prepended `/`. `**/*` then needs a `/` in the path, which `1` lacks -
+    /// verified against upstream `rsync -rn --filter='- /**/*'` which includes
+    /// a top-level `1`. An unanchored `**/*` (WILD2_PREFIX) DOES match it.
+    #[test]
+    fn anchored_double_star_does_not_match_top_level_entry() {
+        use std::path::Path;
+        // Anchored `/**/*` does not match a top-level `1` (no WILD2_PREFIX).
+        let anchored = make_exclude("/**/*");
+        assert!(!anchored.matches(Path::new("1"), false, true));
+        // Unanchored `**/*` (WILD2_PREFIX) does match the top-level `1`.
+        let unanchored = make_exclude("**/*");
+        assert!(unanchored.matches(Path::new("1"), false, true));
+    }
+
     #[test]
     fn compiled_rule_negate_flag_preserved() {
         let rule = FilterRule {
