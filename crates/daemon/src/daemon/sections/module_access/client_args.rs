@@ -327,6 +327,19 @@ fn clamp_verbose_flags(flag_string: &str, max_verbosity: i32) -> String {
         .collect()
 }
 
+/// Counts the `v` (verbose) characters in an already-clamped flag string,
+/// yielding the effective per-connection verbosity level.
+///
+/// The input is expected to be the output of [`clamp_verbose_flags`], so the
+/// count already respects the module's `max verbosity`. The result seeds the
+/// worker thread's [`logging::VerbosityConfig`] via `apply_verbosity`,
+/// matching upstream's `limit_output_verbosity(lp_max_verbosity(i))`
+/// (clientserver.c:1127). Saturates at [`u8::MAX`].
+fn clamped_verbose_level(flag_string: &str) -> u8 {
+    let count = flag_string.chars().filter(|&ch| ch == 'v').count();
+    u8::try_from(count).unwrap_or(u8::MAX)
+}
+
 /// Extracts the positional path arguments sent by the client after the `.`
 /// separator and strips the leading module-name component from each so the
 /// receiver can resolve them relative to the on-disk module path.
@@ -815,6 +828,16 @@ fn build_server_config(
 
     // upstream: clientserver.c - clamp verbose to lp_max_verbosity(i)
     let flag_string = clamp_verbose_flags(&flag_string, module.max_verbosity);
+
+    // upstream: clientserver.c:1127 `limit_output_verbosity(lp_max_verbosity(i))`
+    // caps the per-connection log verbosity once the module is selected. Each
+    // oc-rsync connection runs on its own worker thread whose thread-local
+    // `logging::VerbosityConfig` starts at level 0, so seed it from the clamped
+    // client request here. Without this, daemon-side `info_log!`/`debug_log!`
+    // emissions during the transfer stay silent regardless of the client's
+    // `-v`/`-vv` and the module's `max verbosity`, since the daemon's own
+    // startup `apply_verbosity` only seeded the main accept-loop thread.
+    crate::daemon::apply_verbosity(clamped_verbose_level(&flag_string));
 
     // upstream: main.c:1203-1204 + util1.c:804 (glob_expand_module) - receivers
     // resolve their destination by joining the module path with the client's
@@ -1545,5 +1568,77 @@ mod iconv_charset_converter_tests {
 
         let round_trip = converter.remote_to_local(&wire).expect("remote_to_local");
         assert_eq!(round_trip.as_ref(), local_bytes);
+    }
+}
+
+#[cfg(test)]
+mod clamped_verbosity_tests {
+    use super::{clamp_verbose_flags, clamped_verbose_level};
+    use crate::daemon::apply_verbosity;
+    use logging::{InfoFlag, info_gte};
+
+    // WHY: upstream gates per-connection log floods with
+    // `limit_output_verbosity(lp_max_verbosity(i))` (clientserver.c:1127). Each
+    // oc-rsync connection runs on its own worker thread, so the clamped client
+    // request must seed that thread's `logging::VerbosityConfig` or every
+    // `info_log!`/`debug_log!` emission stays silent. These tests pin the
+    // observable gate (`info_gte`) rather than the intermediate count so they
+    // fail if the clamp-then-seed chain ever stops controlling log output.
+    //
+    // Each subtest spawns a fresh thread because `apply_verbosity` writes
+    // thread-local state; sharing the harness thread would leak the level into
+    // sibling tests.
+
+    fn seed_from_client(flag_string: &str, max_verbosity: i32) {
+        let clamped = clamp_verbose_flags(flag_string, max_verbosity);
+        apply_verbosity(clamped_verbose_level(&clamped));
+    }
+
+    #[test]
+    fn level0_request_suppresses_level1_message() {
+        // Client asked for no `-v`; a level-1 INFO (e.g. NAME) must not fire.
+        std::thread::spawn(|| {
+            seed_from_client("-logDtpr", 1);
+            assert!(
+                !info_gte(InfoFlag::Name, 1),
+                "verbosity 0 must suppress the level-1 NAME info message",
+            );
+        })
+        .join()
+        .expect("level0 thread");
+    }
+
+    #[test]
+    fn level1_request_emits_level1_message() {
+        // Client asked for `-v` and the module permits it; level-1 INFO fires.
+        std::thread::spawn(|| {
+            seed_from_client("-logDtprv", 1);
+            assert!(
+                info_gte(InfoFlag::Name, 1),
+                "verbosity 1 must emit the level-1 NAME info message",
+            );
+        })
+        .join()
+        .expect("level1 thread");
+    }
+
+    #[test]
+    fn max_verbosity_clamps_higher_client_request() {
+        // Client stacked `-vvv` but the module caps `max verbosity` at 1: the
+        // effective level is 1, so a level-2 message stays suppressed even
+        // though the client requested far more.
+        std::thread::spawn(|| {
+            seed_from_client("-logDtprvvv", 1);
+            assert!(
+                info_gte(InfoFlag::Name, 1),
+                "clamped verbosity 1 must still emit the level-1 message",
+            );
+            assert!(
+                !info_gte(InfoFlag::Name, 2),
+                "max verbosity 1 must clamp the client's -vvv down to level 1",
+            );
+        })
+        .join()
+        .expect("clamp thread");
     }
 }
