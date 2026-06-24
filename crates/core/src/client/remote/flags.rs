@@ -13,6 +13,7 @@
 use protocol::filters::{FilterRuleWireFormat, RuleType};
 
 use super::super::config::{ClientConfig, DeleteMode, FilterRuleKind, FilterRuleSpec};
+use crate::client::DirMergeEnforcedKind;
 use super::super::error::ClientError;
 use crate::server::ServerConfig;
 
@@ -243,6 +244,21 @@ pub(crate) fn build_wire_format_rules(
             wire_rule.no_inherit = !options.inherit_rules();
             wire_rule.word_split = options.uses_whitespace();
             wire_rule.exclude_from_merge = options.excludes_self();
+            // upstream: exclude.c:1227-1237 - the `-`/`+` modifier on a
+            // dir-merge rule sets FILTRULE_NO_PREFIXES (and FILTRULE_INCLUDE for
+            // `+`), so the per-directory file's bare lines are taken as literal
+            // excludes (or includes) rather than prefixed rules. Without
+            // carrying this on the wire, the remote sender parses the merge file
+            // with the strict short-form parser and rejects a bare pattern like
+            // `file3` as an unrecognised rule.
+            match options.enforced_kind() {
+                Some(DirMergeEnforcedKind::Exclude) => wire_rule.no_prefixes = true,
+                Some(DirMergeEnforcedKind::Include) => {
+                    wire_rule.no_prefixes = true;
+                    wire_rule.no_prefixes_include = true;
+                }
+                None => {}
+            }
             // upstream: exclude.c:1248-1254 - the `C` modifier on a dir-merge
             // rule sets FILTRULE_CVS_IGNORE on the wire. Without this, `-f:C`
             // would round-trip through the remote shell as a bare dir-merge
