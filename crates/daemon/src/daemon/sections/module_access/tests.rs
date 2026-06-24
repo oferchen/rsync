@@ -1477,6 +1477,23 @@ mod module_access_tests {
     }
 
     #[test]
+    fn build_pattern_rule_doublestar_prefix_stays_unanchored() {
+        // A `**`-prefixed daemon exclude contains a slash but must NOT be
+        // anchored: upstream sets WILD2_PREFIX independently of ABS_PATH, and
+        // anchoring would prepend `/` (-> `/**/*.o`) and stop `**/*.o` from
+        // matching a root-level `build.o`. Regression for the
+        // daemon-filter-doublestar interop test.
+        let rule = build_pattern_rule("**/*.o", false);
+        assert!(!rule.anchored, "`**/*.o` must stay unanchored");
+        assert_eq!(rule.pattern, "**/*.o");
+
+        // A slash-containing pattern that does NOT start with `**` is still
+        // anchored (XFLG_ABS_IF_SLASH).
+        let nested = build_pattern_rule("sub/file.o", false);
+        assert!(nested.anchored, "`sub/file.o` is anchored by ABS_IF_SLASH");
+    }
+
+    #[test]
     fn build_pattern_rule_directory_only_exclude_dir2wild3() {
         // upstream: exclude.c:211-217 - XFLG_DIR2WILD3 transforms dir/ to dir/***
         let rule = build_pattern_rule("build/", false);

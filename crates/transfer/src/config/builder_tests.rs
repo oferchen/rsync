@@ -388,6 +388,7 @@ mod composite_setters {
             max_delete: Some(50),
             ignore_errors: true,
             late_delete: true,
+            delete_excluded: false,
         };
         let config = ServerConfigBuilder::new()
             .deletion(deletion.clone())

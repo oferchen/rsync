@@ -44,6 +44,16 @@ impl ClientConfig {
         self.itemize_changes
     }
 
+    /// Reports whether unchanged entries should be itemized too (`-ii` /
+    /// `--info=name2`).
+    ///
+    /// upstream: generator.c:575-576 - `stdout_format_has_i > 1 || INFO_GTE(NAME, 2)`
+    #[must_use]
+    #[doc(alias = "-ii")]
+    pub const fn itemize_unchanged(&self) -> bool {
+        self.itemize_unchanged
+    }
+
     /// Reports whether event collection has been explicitly requested by the caller.
     #[must_use]
     pub const fn force_event_collection(&self) -> bool {

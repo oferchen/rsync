@@ -250,6 +250,13 @@ impl ServerConfigBuilder {
         self
     }
 
+    /// Enables or disables deletion of filter-excluded destination entries
+    /// (`--delete-excluded`).
+    pub fn delete_excluded(&mut self, enabled: bool) -> &mut Self {
+        self.deletion.delete_excluded = enabled;
+        self
+    }
+
     /// Sets the full write configuration.
     pub fn write(&mut self, write: WriteConfig) -> &mut Self {
         self.write = write;

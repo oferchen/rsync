@@ -114,7 +114,9 @@ fn double_star_at_end_matches_all_descendants() {
 fn double_star_in_middle() {
     let set = FilterSet::from_rules([FilterRule::exclude("src/**/test.rs")]).unwrap();
 
-    assert!(!set.allows(Path::new("src/test.rs"), false));
+    // upstream rsync: `**/` consumes a real `/`, so `src/**/test.rs` needs at
+    // least one intermediate directory; `src/test.rs` survives the filter.
+    assert!(set.allows(Path::new("src/test.rs"), false));
     assert!(!set.allows(Path::new("src/module/test.rs"), false));
     assert!(!set.allows(Path::new("src/a/b/c/test.rs"), false));
 

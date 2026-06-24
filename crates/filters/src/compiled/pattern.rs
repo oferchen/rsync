@@ -1,9 +1,75 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
+use std::path::Path;
 
-use globset::{GlobBuilder, GlobMatcher};
+use globset::GlobBuilder;
 
 use crate::FilterError;
+use crate::wildmatch::wildmatch;
+
+/// A compiled filter pattern matched with upstream rsync's `wildmatch()`.
+///
+/// Matching is delegated to [`wildmatch`] so `*`, `**`, `?`, `[...]`, and `\`
+/// behave byte-for-byte like `lib/wildmatch.c:dowild()`. globset is still used
+/// at compile time to reject malformed patterns, keeping [`FilterError`]
+/// behaviour unchanged.
+#[derive(Debug, Clone)]
+pub(crate) struct CompiledPattern {
+    bytes: Vec<u8>,
+    /// upstream `FILTRULE_WILD2_PREFIX` (exclude.c:241-242): set only when the
+    /// user's pattern *starts* with `**` (which implies it is unanchored). Such
+    /// rules are matched with a leading `/` prepended to the candidate so
+    /// `**/bar` matches a top-level `bar`. An anchored pattern like `/**/*`
+    /// whose stem merely begins with `**` after the leading-`/` strip is NOT a
+    /// WILD2_PREFIX rule and must not get the prepend.
+    wild2_prefix: bool,
+}
+
+impl CompiledPattern {
+    /// Returns the source glob string this pattern was compiled from. Patterns
+    /// always originate from a `String`, so the bytes are valid UTF-8.
+    #[cfg(test)]
+    pub(super) fn glob(&self) -> String {
+        String::from_utf8_lossy(&self.bytes).into_owned()
+    }
+
+    /// Tests whether `path` matches this pattern using upstream wildmatch
+    /// semantics. The path is rendered as a `/`-joined relative byte string so
+    /// matching is identical across platforms (rsync transfer paths are always
+    /// `/`-separated and relative).
+    pub(super) fn is_match(&self, path: &Path) -> bool {
+        let body = path_match_bytes(path);
+        // upstream: exclude.c:929-931 rule_matches() - a WILD2_PREFIX rule
+        // matches the candidate with a leading "/" prepended, so `**/bar`
+        // matches a top-level `bar` (via `/bar`) as well as `a/b/bar`. Our
+        // relative candidates never start with '/', so the prepend always
+        // applies when the flag is set.
+        if self.wild2_prefix {
+            let mut candidate = Vec::with_capacity(body.len() + 1);
+            candidate.push(b'/');
+            candidate.extend_from_slice(&body);
+            wildmatch(&self.bytes, &candidate)
+        } else {
+            wildmatch(&self.bytes, &body)
+        }
+    }
+}
+
+/// Renders `path` as the byte string upstream rsync matches against: the
+/// relative name verbatim, with platform separators normalised to `/`.
+///
+/// rsync feeds filter candidates as `/`-separated relative names, so a literal
+/// rendering (preserving `.`/`..` and single components) is what `wildmatch()`
+/// expects. Backslashes are folded to `/` on Windows so matching is identical
+/// across platforms.
+fn path_match_bytes(path: &Path) -> Vec<u8> {
+    let rendered = path.to_string_lossy();
+    if cfg!(windows) && rendered.contains('\\') {
+        rendered.replace('\\', "/").into_bytes()
+    } else {
+        rendered.into_owned().into_bytes()
+    }
+}
 
 /// Compiles a set of glob pattern strings into sorted, deduplicated matchers.
 ///
@@ -23,7 +89,8 @@ use crate::FilterError;
 pub(crate) fn compile_patterns(
     patterns: HashSet<String>,
     original: &str,
-) -> Result<Vec<GlobMatcher>, FilterError> {
+    wild2_prefix: bool,
+) -> Result<Vec<CompiledPattern>, FilterError> {
     let mut expanded: HashSet<String> = HashSet::with_capacity(patterns.len() * 2);
     for pattern in patterns {
         let rewritten = match normalise_recursive_wildcards(&pattern) {
@@ -41,12 +108,17 @@ pub(crate) fn compile_patterns(
 
     let mut matchers = Vec::with_capacity(unique.len());
     for pattern in unique {
-        let glob = GlobBuilder::new(&pattern)
+        // globset still validates the pattern so malformed globs surface as
+        // FilterError exactly as before; matching is delegated to wildmatch.
+        GlobBuilder::new(&pattern)
             .literal_separator(true)
             .backslash_escape(true)
             .build()
             .map_err(|error| FilterError::new(original.to_owned(), error))?;
-        matchers.push(glob.compile_matcher());
+        matchers.push(CompiledPattern {
+            bytes: pattern.into_bytes(),
+            wild2_prefix,
+        });
     }
     Ok(matchers)
 }
@@ -166,19 +238,29 @@ fn normalise_recursive_wildcards(pattern: &str) -> Cow<'_, str> {
 pub(super) fn normalise_pattern(pattern: &str) -> (bool, bool, Cow<'_, str>) {
     let starts_with_slash = pattern.starts_with('/');
 
-    // upstream: exclude.c:243-248 - a trailing `/***` (SLASH_WILD3_SUFFIX)
-    // means "match both the directory and everything inside it". Normalize
-    // by stripping `/***` and treating the result as directory-only.
-    let (stripped, directory_only) = if pattern.ends_with("/***") && pattern.len() > 4 {
-        // `/***` fully consumed - the stem has no trailing `/`.
-        (&pattern[..pattern.len() - 4], true)
-    } else if pattern.ends_with('/') && pattern.len() > 1 {
-        (&pattern[..pattern.len() - 1], true)
-    } else if pattern == "/" {
-        (pattern, true)
-    } else {
-        (pattern, false)
-    };
+    // upstream: exclude.c:190-193 then 243-248 - add_rule() first peels a
+    // single trailing `/` (FILTRULE_DIRECTORY), THEN detects a trailing `***`
+    // (FILTRULE_WILD3_SUFFIX). Matching that order is required so the combined
+    // `dir/***/` form collapses to a directory-only stem; checking `/***`
+    // before the slash-peel misses it and leaves `*/***`, which cannot match a
+    // slashless directory name (differential fuzzer divergence on `*/***/`).
+    let mut directory_only = false;
+    let mut stem: &str = pattern;
+    if stem.len() > 1 && stem.ends_with('/') {
+        stem = &stem[..stem.len() - 1];
+        directory_only = true;
+    } else if stem == "/" {
+        directory_only = true;
+    }
+    if stem.len() > 4 && stem.ends_with("/***") {
+        // `/***` (SLASH_WILD3_SUFFIX) means "match both the directory and
+        // everything inside it". Strip it and treat the stem as directory-only;
+        // the descendant-matcher expansion then produces the `dir/**` content
+        // matchers.
+        stem = &stem[..stem.len() - 4];
+        directory_only = true;
+    }
+    let stripped = stem;
 
     // Strip the leading `/` if present.
     let core_pattern = if starts_with_slash {

@@ -100,27 +100,39 @@ impl ReceiverContext {
             }
 
             // upstream: generator.c:delete_in_dir() runs for EVERY content
-            // directory in the file list. Each directory's deletion candidate
-            // list is built from a fresh readdir of the destination, regardless
-            // of whether any of that directory's source children are visible in
-            // the flist. A directory whose only source children are filter-
-            // hidden (e.g. `--filter='hide,! */'`) must still be scanned so
-            // extraneous destination entries inside it are removed. Keying
-            // dirs_to_scan solely off parents-with-a-visible-child skips such
-            // directories and leaves extraneous files undeleted, so register
-            // every directory entry as its own scan target with a (possibly
-            // empty) keep-set. Gated on `needs_perdir_merge`: the expanded
-            // scan set is only safe when the per-directory merge rules are
-            // reloaded per dir to protect dest-side merge files and their
-            // excludes; without them, scanning extra dirs against the flat
-            // chain would over-delete. Daemon/non-merge transfers keep the
-            // master scan set unchanged.
-            if needs_perdir_merge && entry.is_dir() {
+            // directory in the file list, regardless of whether any of that
+            // directory's source children are visible in the flist. A
+            // directory whose source children are all filter-hidden (e.g.
+            // `--filter='hide,! */'`) must still be scanned so its extraneous
+            // destination entries are removed; keying the scan set solely off
+            // parents-with-a-visible-child leaves those entries undeleted.
+            // Register every directory in the file list as its own scan target
+            // with a (possibly empty) keep-set. Protection of entries that must
+            // survive is the responsibility of the per-candidate
+            // `allows_deletion` check below - which consults the per-directory
+            // merge chain when one is reloaded for the directory, and otherwise
+            // the flat global chain (complete when no per-dir merges exist) -
+            // not of pruning the scan set.
+            if entry.is_dir() {
                 dir_children.entry(relative.to_path_buf()).or_default();
             }
         }
 
+        // upstream: generator.c:delete_in_dir() always runs for the transfer
+        // root. When every source entry is filter-excluded (e.g. `--exclude='*'
+        // --delete-excluded`) the file list contains only "." and the loop
+        // above registers no directories, so the root would never be scanned
+        // and top-level extraneous entries would survive. Register "." with a
+        // (possibly empty) keep-set so the root is always a scan target.
+        dir_children.entry(PathBuf::from(".")).or_default();
+
         let dirs_to_scan: Vec<PathBuf> = dir_children.keys().cloned().collect();
+        logging::debug_log!(
+            Del,
+            2,
+            "delete pass scanning {} directories (needs_perdir_merge={needs_perdir_merge})",
+            dirs_to_scan.len()
+        );
 
         // Atomic counter for max_delete enforcement across parallel workers.
         // upstream: main.c:1367 - deletion_count >= max_delete
@@ -246,6 +258,11 @@ impl ReceiverContext {
                         None
                     };
 
+                    // upstream: generator.c:delete_in_dir() emits this at
+                    // `DEBUG_GTE(DEL, 2)` for every destination directory whose
+                    // contents are scanned for deletion.
+                    debug_log!(Del, 2, "delete_in_dir({})", dest_path.display());
+
                     for entry in read_dir_iter {
                         #[cfg(unix)]
                         let (name, kind) = match entry {
@@ -296,6 +313,18 @@ impl ReceiverContext {
                             None => flat_chain.allows_deletion(&rel_for_filter, is_dir),
                         };
                         if !allows {
+                            // upstream: generator.c:delete_in_dir() - an excluded
+                            // entry never enters get_dirlist()'s candidate set, so
+                            // it is silently protected from deletion. We surface
+                            // that protection at `DEBUG_GTE(DEL, 3)` so the
+                            // per-candidate decision is observable, mirroring the
+                            // `--debug=DEL` diagnostic granularity of upstream.
+                            debug_log!(
+                                Del,
+                                3,
+                                "not deleting {} (protected by filter rule)",
+                                rel_for_filter.display()
+                            );
                             continue;
                         }
 
@@ -325,6 +354,25 @@ impl ReceiverContext {
                         } else {
                             dir_relative.join(&name)
                         };
+
+                        // upstream: delete.c:delete_item() emits this at
+                        // `DEBUG_GTE(DEL, 2)` just before removing the entry. The
+                        // mode here carries only the file-type bits available from
+                        // `read_dir` (perms are not needed to identify the item).
+                        let type_bits = if is_dir {
+                            0o040000
+                        } else if is_symlink {
+                            0o120000
+                        } else {
+                            0o100000
+                        };
+                        debug_log!(
+                            Del,
+                            2,
+                            "delete_item({}) mode={:o}",
+                            path.display(),
+                            type_bits
+                        );
 
                         let result = if is_dir {
                             // SEC-1.q2 audit row #6

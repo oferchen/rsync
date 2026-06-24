@@ -366,8 +366,11 @@ fn subset_patterns() {
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // src .rs files included (first rule matches)
-    assert!(set.allows(Path::new("src/main.rs"), false));
+    // upstream rsync: `src/**/*.rs` needs an intermediate directory (the `**/`
+    // consumes a real `/`), so `src/main.rs` is NOT matched by the include and
+    // falls through to `exclude **/*.rs`, which excludes it. Only nested
+    // `src/<dir>/*.rs` files are included by the first rule.
+    assert!(!set.allows(Path::new("src/main.rs"), false));
     assert!(set.allows(Path::new("src/lib/util.rs"), false));
 
     // Other .rs files excluded (second rule matches)

@@ -110,10 +110,24 @@ impl FilterSetInner {
             let allowed = matches!(rule.action, FilterAction::Include);
             decision.transfer_allowed = allowed;
 
+            // upstream: exclude.c:report_filter_result() names the matched
+            // pattern in the `--debug=FILTER` line.
             if allowed {
-                debug_log!(Filter, 1, "including {:?} (matched rule)", path);
+                debug_log!(
+                    Filter,
+                    1,
+                    "including {:?} because of pattern {}",
+                    path,
+                    rule.pattern
+                );
             } else {
-                debug_log!(Filter, 1, "excluding {:?} (matched rule)", path);
+                debug_log!(
+                    Filter,
+                    1,
+                    "excluding {:?} because of pattern {}",
+                    path,
+                    rule.pattern
+                );
             }
         }
 

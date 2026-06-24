@@ -735,7 +735,12 @@ where
         cfg.info.get(logging::InfoFlag::Name)
     };
     let name_level = if itemize_changes_flag && !no_itemize_changes_flag {
-        if name_info_level >= 2 {
+        // upstream: generator.c:575-576 - the itemize emit gate fires for an
+        // unchanged entry when `stdout_format_has_i > 1` (i.e. `-i` given at
+        // least twice, captured by `itemize_changes_repeated`) OR
+        // `INFO_GTE(NAME, 2)` (`-vv` / `--info=name2`, captured by
+        // `name_info_level >= 2`). Either path surfaces unchanged rows.
+        if name_info_level >= 2 || itemize_changes_repeated {
             NameOutputLevel::UpdatedAndUnchanged
         } else {
             NameOutputLevel::UpdatedOnly

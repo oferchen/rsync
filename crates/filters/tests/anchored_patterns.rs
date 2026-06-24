@@ -194,8 +194,13 @@ fn double_star_anchored() {
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Anchored but ** allows nested matching under /src
-    assert!(!set.allows(Path::new("src/test.txt"), false));
+    // upstream rsync 3.4.4: `**/` consumes a real `/` boundary, so
+    // `/src/**/test.txt` requires at least one intermediate directory. A
+    // top-level `src/test.txt` (no intermediate dir) is NOT excluded - verified
+    // against `rsync -rn -i --exclude=/src/**/test.txt` which lists
+    // `src/test.txt` as surviving the filter.
+    assert!(set.allows(Path::new("src/test.txt"), false));
+    // With one or more intermediate directories the `**` matches and excludes.
     assert!(!set.allows(Path::new("src/a/test.txt"), false));
     assert!(!set.allows(Path::new("src/a/b/c/test.txt"), false));
     // Not in /src

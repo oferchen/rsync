@@ -416,7 +416,10 @@ fn include_middle_double_star() {
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    assert!(set.allows(Path::new("src/mod.rs"), false));
+    // upstream rsync: `src/**/mod.rs` needs an intermediate directory, so
+    // `src/mod.rs` is NOT matched by the include and is excluded by `exclude *`.
+    // Nested `src/<dir>/mod.rs` files are included.
+    assert!(!set.allows(Path::new("src/mod.rs"), false));
     assert!(set.allows(Path::new("src/utils/mod.rs"), false));
     assert!(set.allows(Path::new("src/a/b/c/mod.rs"), false));
 
@@ -456,7 +459,11 @@ fn include_multiple_double_stars() {
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    assert!(set.allows(Path::new("tests/fixtures/data.json"), false));
+    // upstream rsync: `**/tests/**/fixtures/**` has a `**/fixtures` whose `**/`
+    // needs an intermediate directory, so `tests/fixtures/...` (fixtures
+    // directly under tests) is NOT matched and is excluded by `exclude *`.
+    // `tests/<dir>/fixtures/...` is included.
+    assert!(!set.allows(Path::new("tests/fixtures/data.json"), false));
     assert!(set.allows(Path::new("tests/unit/fixtures/mock.js"), false));
     assert!(set.allows(
         Path::new("packages/app/tests/integration/fixtures/setup.ts"),
@@ -606,8 +613,10 @@ fn complex_include_exclude_interaction() {
     // Test files are excluded (second rule)
     assert!(!set.allows(Path::new("src/tests/test_main.rs"), false));
 
-    // Regular .rs files are included (third rule)
-    assert!(set.allows(Path::new("src/main.rs"), false));
+    // upstream rsync: `src/**/*.rs` needs an intermediate directory, so
+    // `src/main.rs` is NOT matched by the include and is excluded by the
+    // trailing `exclude *`. Nested `src/<dir>/*.rs` files are included.
+    assert!(!set.allows(Path::new("src/main.rs"), false));
     assert!(set.allows(Path::new("src/lib/utils.rs"), false));
 
     // Everything else excluded (fourth rule)
@@ -885,8 +894,10 @@ fn multiple_includes_depth_patterns() {
     assert!(set.allows(Path::new("nested.txt"), false));
     assert!(set.allows(Path::new("a/b/nested.txt"), false));
 
-    // Specific structure
-    assert!(set.allows(Path::new("deep/file.txt"), false));
+    // upstream rsync: `deep/**/file.txt` needs an intermediate directory, so
+    // `deep/file.txt` (file directly in deep) is NOT matched and is excluded by
+    // `exclude *`; `deep/<dir>/file.txt` is included.
+    assert!(!set.allows(Path::new("deep/file.txt"), false));
     assert!(set.allows(Path::new("deep/a/b/file.txt"), false));
     assert!(!set.allows(Path::new("other/file.txt"), false));
 }

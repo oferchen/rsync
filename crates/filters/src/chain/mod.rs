@@ -241,20 +241,46 @@ impl FilterChain {
     /// [`allows`](Self::allows).
     #[must_use]
     pub fn allows_deletion(&self, path: &Path, is_dir: bool) -> bool {
-        for scope in self.scopes.iter().rev() {
-            if !self.scope_applies_here(scope) {
-                continue;
+        // upstream: exclude.c:rule_matches() with the `delete_excluded` global -
+        // an entry that an exclude rule would normally protect from deletion
+        // becomes deletable under `--delete-excluded` (a `protect`/`P` rule
+        // still protects it). Mirror that by OR-ing in the
+        // "excluded-removed" decision whenever `delete_excluded` is set, on
+        // whichever scope (or the global set) decides the path.
+        let result = (|| {
+            for scope in self.scopes.iter().rev() {
+                if !self.scope_applies_here(scope) {
+                    continue;
+                }
+                if !scope.filter_set.is_empty()
+                    && scope_has_deletion_match(&scope.filter_set, path, is_dir)
+                {
+                    let base = scope
+                        .filter_set
+                        .allows_deletion_during_traversal(path, is_dir);
+                    return base
+                        || (self.delete_excluded
+                            && scope
+                                .filter_set
+                                .allows_deletion_when_excluded_removed(path, is_dir));
+                }
             }
-            if !scope.filter_set.is_empty()
-                && scope_has_deletion_match(&scope.filter_set, path, is_dir)
-            {
-                return scope
-                    .filter_set
-                    .allows_deletion_during_traversal(path, is_dir);
-            }
-        }
 
-        self.global.allows_deletion(path, is_dir)
+            let base = self.global.allows_deletion(path, is_dir);
+            base || (self.delete_excluded
+                && self
+                    .global
+                    .allows_deletion_when_excluded_removed(path, is_dir))
+        })();
+
+        logging::debug_log!(
+            Filter,
+            3,
+            "allows_deletion({:?}, is_dir={is_dir}) delete_excluded={} -> {result}",
+            path,
+            self.delete_excluded
+        );
+        result
     }
 
     /// Returns `true` if the given scope is in effect at the chain's

@@ -25,8 +25,12 @@ fn deeply_nested_include_exclude_hierarchy() {
     ];
     let set = FilterSet::from_rules(rules).unwrap();
 
-    // Most specific: golden files in fixtures are included
-    assert!(set.allows(
+    // upstream rsync: the include `src/**/tests/**/fixtures/**/*.golden` has a
+    // trailing `**/*.golden` whose `**/` needs an intermediate directory, so a
+    // golden file directly in `fixtures/` is NOT matched by it. Rule 2
+    // (`exclude src/**/tests/**/fixtures/**`) then matches and excludes it -
+    // verified against upstream `rsync -rn` with both rules.
+    assert!(!set.allows(
         Path::new("src/lib/tests/unit/fixtures/expected.golden"),
         false
     ));
@@ -44,8 +48,13 @@ fn deeply_nested_include_exclude_hierarchy() {
     // Regular src files are included
     assert!(set.allows(Path::new("src/main.rs"), false));
 
-    // Node modules in src are excluded
-    assert!(!set.allows(Path::new("src/node_modules/pkg/index.js"), false));
+    // upstream rsync: `src/**/node_modules/**` needs an intermediate directory
+    // between `src` and `node_modules`, so `src/node_modules/...` (node_modules
+    // directly under src) is NOT matched by the exclude. Per-path, the later
+    // `include src/**` then matches and includes it (the full-transfer pruning
+    // of the bare `src` dir is a traversal concern this per-path test does not
+    // model - cf. the included assertions above).
+    assert!(set.allows(Path::new("src/node_modules/pkg/index.js"), false));
 
     // Root files are excluded
     assert!(!set.allows(Path::new("Cargo.toml"), false));
@@ -383,9 +392,11 @@ fn directory_file_pattern_interaction() {
     // logs directory included
     assert!(set.allows(Path::new("logs"), true));
 
-    // upstream: logs/ directory-only include does NOT include contents.
-    // tmp files match exclude("logs/**/*.tmp") rule
-    assert!(!set.allows(Path::new("logs/app.tmp"), false));
+    // upstream rsync: `logs/**/*.tmp` has a `**/` that consumes a real `/`, so
+    // it needs an intermediate directory. `logs/app.tmp` (tmp directly in logs)
+    // is NOT matched and survives; `logs/debug/trace.tmp` (intermediate
+    // `debug`) is excluded - verified against upstream `rsync -rn`.
+    assert!(set.allows(Path::new("logs/app.tmp"), false));
     assert!(!set.allows(Path::new("logs/debug/trace.tmp"), false));
 
     // logs non-tmp files: no rule matches, default is allow

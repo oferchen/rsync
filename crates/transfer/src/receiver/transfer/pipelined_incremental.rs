@@ -173,7 +173,9 @@ impl ReceiverContext {
             if !redo_indices.is_empty() {
                 setup.checksum_length = REDO_CHECKSUM_LENGTH;
 
-                let redo_files: Vec<(usize, &FileEntry, PathBuf)> = redo_indices
+                // upstream: generator.c:1926 - the phase-2 redo re-itemizes with
+                // ITEM_TRANSFER; the basis comparison is not re-run for the retry.
+                let redo_files: Vec<(usize, &FileEntry, PathBuf, u32)> = redo_indices
                     .iter()
                     .filter_map(|&idx| {
                         self.file_list.get(idx).map(|entry| {
@@ -183,7 +185,12 @@ impl ReceiverContext {
                             } else {
                                 setup.dest_dir.join(p)
                             };
-                            (idx, entry, file_path)
+                            (
+                                idx,
+                                entry,
+                                file_path,
+                                crate::generator::ItemFlags::ITEM_TRANSFER,
+                            )
                         })
                     })
                     .collect();

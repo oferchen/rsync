@@ -181,11 +181,14 @@ fn post_expansion_chain_keeps_all_top_level_dirs() {
     }
 }
 
-/// Inverse guard: confirm that the wire `-C ` rule, WITHOUT expansion,
-/// would in fact eat every top-level entry except `bar`. This pins the
-/// regression that the wire parser fix addresses.
+/// Defense-in-depth guard: even if an unexpanded empty exclude (`-C ` shape)
+/// leaks through, the faithful wildmatch matcher makes it harmless. Under the
+/// old globset engine the empty exclude expanded to a `**/` matcher that
+/// "matched any path with at least one component" and swallowed every
+/// top-level entry. With upstream's `wildmatch()` a trailing-`/` pattern only
+/// matches a path that ends in `/`, so a normal candidate is never eaten.
 #[test]
-fn unexpanded_empty_exclude_swallows_top_level_entries() {
+fn unexpanded_empty_exclude_is_harmless() {
     let mut rules = vec![
         FilterRule::include("**/bar"),
         // Standalone empty exclude reproduces the pre-fix shape of `-C `:
@@ -199,17 +202,11 @@ fn unexpanded_empty_exclude_swallows_top_level_entries() {
 
     let chain = FilterChain::new(FilterSet::from_rules(rules).expect("compiled"));
 
-    // Documented broken behaviour: an empty exclude pattern matches every
-    // top-level entry (the unanchored expansion adds `**/` which globset
-    // treats as "any path with at least one component").
-    assert!(
-        !chain.allows(Path::new(".filt"), false),
-        "documented bug: empty exclude eats `.filt`",
-    );
-    assert!(
-        !chain.allows(Path::new("foo"), true),
-        "documented bug: empty exclude eats `foo`",
-    );
+    // The empty exclude's `**/` matcher no longer swallows top-level entries:
+    // `wildmatch("**/", "/x")` is false, so these survive (no rule excludes
+    // them and the default is to include).
+    assert!(chain.allows(Path::new(".filt"), false));
+    assert!(chain.allows(Path::new("foo"), true));
     // `bar` survives because its include rule wins (`+ **/bar`).
     assert!(chain.allows(Path::new("bar"), true));
 }

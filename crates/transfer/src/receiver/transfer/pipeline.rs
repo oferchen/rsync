@@ -49,7 +49,7 @@ impl ReceiverContext {
         writer: &mut W,
         pipeline_config: PipelineConfig,
         setup: &PipelineSetup,
-        files_to_transfer: Vec<(usize, &FileEntry, PathBuf)>,
+        files_to_transfer: Vec<(usize, &FileEntry, PathBuf, u32)>,
         metadata_errors: &mut Vec<(PathBuf, String)>,
         is_redo_pass: bool,
         total_files: usize,
@@ -105,7 +105,7 @@ impl ReceiverContext {
 
         let mut pipeline = PipelineState::new(pipeline_config);
         let mut file_iter = files_to_transfer.into_iter();
-        let mut pending_files_info: VecDeque<(usize, PathBuf, &FileEntry, bool)> =
+        let mut pending_files_info: VecDeque<(usize, PathBuf, &FileEntry, u32)> =
             VecDeque::with_capacity(pipeline.window_size());
         let mut files_transferred = 0usize;
         let mut bytes_received = 0u64;
@@ -204,7 +204,7 @@ impl ReceiverContext {
                         let sig_results: Vec<_> = if batch.len() >= sig_threshold {
                             batch
                                 .par_iter()
-                                .map(|(_, file_entry, file_path)| {
+                                .map(|(_, file_entry, file_path, _)| {
                                     let basis_config = BasisFileConfig {
                                         file_path,
                                         dest_dir,
@@ -223,7 +223,7 @@ impl ReceiverContext {
                         } else {
                             batch
                                 .iter()
-                                .map(|(_, file_entry, file_path)| {
+                                .map(|(_, file_entry, file_path, _)| {
                                     let basis_config = BasisFileConfig {
                                         file_path,
                                         dest_dir,
@@ -242,10 +242,9 @@ impl ReceiverContext {
                         };
 
                         // Send requests sequentially (wire order matters).
-                        for ((file_idx, file_entry, file_path), basis_result) in
+                        for ((file_idx, file_entry, file_path, base_iflags), basis_result) in
                             batch.into_iter().zip(sig_results)
                         {
-                            let is_new_file = basis_result.is_empty();
                             let pending = send_file_request(
                                 writer,
                                 &mut ndx_write_codec,
@@ -262,12 +261,12 @@ impl ReceiverContext {
                                 file_idx,
                                 file_path,
                                 file_entry,
-                                is_new_file,
+                                base_iflags,
                             ));
                         }
                     } else {
                         // Redo pass or empty batch: no basis files, skip signatures.
-                        for (file_idx, file_entry, file_path) in batch {
+                        for (file_idx, file_entry, file_path, base_iflags) in batch {
                             let pending = send_file_request(
                                 writer,
                                 &mut ndx_write_codec,
@@ -281,8 +280,10 @@ impl ReceiverContext {
 
                             pipeline.push(pending);
                             pending_files_info.push_back((
-                                file_idx, file_path, file_entry,
-                                true, // is_new_file: no basis in redo pass
+                                file_idx,
+                                file_path,
+                                file_entry,
+                                base_iflags,
                             ));
                         }
                     }
@@ -301,7 +302,7 @@ impl ReceiverContext {
                 // Process one response from a previously flushed request.
                 let pending = pipeline.pop().expect("pipeline not empty");
                 flushed_pending = flushed_pending.saturating_sub(1);
-                let (file_idx, file_path, file_entry, is_new_file) =
+                let (file_idx, file_path, file_entry, base_iflags) =
                     pending_files_info.pop_front().expect("pipeline not empty");
 
                 let response_ctx = ResponseContext {
@@ -358,15 +359,18 @@ impl ReceiverContext {
                     if self.config.flags.verbose && self.config.connection.client_mode {
                         info_log!(Name, 1, "{}", file_entry.path().display());
                     }
-                    use crate::generator::ItemFlags;
-                    let raw = ItemFlags::ITEM_TRANSFER
-                        | if is_new_file {
-                            ItemFlags::ITEM_IS_NEW
-                        } else {
-                            0
-                        };
-                    let iflags = ItemFlags::from_raw(raw);
-                    let _ = self.emit_itemize(writer, &iflags, file_entry);
+                    // upstream: generator.c:1925-1937 - the transfer itemize is
+                    // emitted right after the file request. With
+                    // log_before_transfer == 0 (`am_server`) the row is logged
+                    // after the transfer, so a server-mode receiver emits it
+                    // here. Client-mode receivers (log_before_transfer == 1)
+                    // already emitted it in the linear candidate pass to keep
+                    // the stdout interleaving with skip/unchanged rows.
+                    if !self.config.connection.client_mode {
+                        use crate::generator::ItemFlags;
+                        let iflags = ItemFlags::from_raw(base_iflags);
+                        let _ = self.emit_itemize(writer, &iflags, file_entry);
+                    }
                 }
 
                 if let Some(cb) = progress.as_mut() {
@@ -431,7 +435,7 @@ impl ReceiverContext {
         &self,
         reader: &mut crate::reader::ServerReader<R>,
         writer: &mut W,
-        files_to_transfer: &[(usize, &FileEntry, PathBuf)],
+        files_to_transfer: &[(usize, &FileEntry, PathBuf, u32)],
     ) -> io::Result<()> {
         if files_to_transfer.is_empty() {
             writer.flush()?;
@@ -450,7 +454,7 @@ impl ReceiverContext {
         // upstream: io.c perform_io() flushes output via select() while waiting
         // for input. We flush once before blocking on each response read, but
         // only when needed (the multiplex dirty-flag skips redundant syscalls).
-        for &(file_idx, file_entry, _) in files_to_transfer {
+        for &(file_idx, file_entry, _, _) in files_to_transfer {
             // upstream: generator.c:1925 - write_ndx(f_out, ndx)
             let wire_ndx = self.flat_to_wire_ndx(file_idx);
             ndx_write_codec.write_ndx(&mut *writer, wire_ndx)?;

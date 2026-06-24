@@ -1665,22 +1665,36 @@ fn includes_existing_only_long_arg() {
 }
 
 #[test]
-fn includes_omit_dir_times_long_arg() {
+fn includes_omit_dir_times_compact_flag() {
+    // upstream: options.c:2628-2629 - omit_dir_times rides the compact flag
+    // string as 'O' inside the am_sender block, not as a standalone long arg.
     let config = ClientConfig::builder().omit_dir_times(true).build();
     let args = build_sender_args(&config);
+    let flags = transfer_flags_portion(find_flag_string(&args));
     assert!(
-        args.iter().any(|a| a == "--omit-dir-times"),
-        "expected --omit-dir-times in args: {args:?}"
+        flags.contains('O'),
+        "expected 'O' (omit-dir-times) in compact flags {flags:?}: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a == "--omit-dir-times"),
+        "omit-dir-times must not appear as a long arg: {args:?}"
     );
 }
 
 #[test]
-fn includes_omit_link_times_long_arg() {
+fn includes_omit_link_times_compact_flag() {
+    // upstream: options.c:2630-2631 - omit_link_times rides the compact flag
+    // string as 'J' inside the am_sender block, not as a standalone long arg.
     let config = ClientConfig::builder().omit_link_times(true).build();
     let args = build_sender_args(&config);
+    let flags = transfer_flags_portion(find_flag_string(&args));
     assert!(
-        args.iter().any(|a| a == "--omit-link-times"),
-        "expected --omit-link-times in args: {args:?}"
+        flags.contains('J'),
+        "expected 'J' (omit-link-times) in compact flags {flags:?}: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a == "--omit-link-times"),
+        "omit-link-times must not appear as a long arg: {args:?}"
     );
 }
 
@@ -2247,6 +2261,11 @@ fn all_flags_enabled_produces_valid_invocation() {
         ('u', "update"),
         ('N', "crtimes"),
         ('m', "prune_empty_dirs"),
+        // upstream: options.c:2628-2631 - omit_dir_times ('O') and
+        // omit_link_times ('J') ride in the compact flag string inside the
+        // am_sender block, never as standalone long args.
+        ('O', "omit_dir_times"),
+        ('J', "omit_link_times"),
     ] {
         assert!(
             flags.contains(ch),
@@ -2285,8 +2304,6 @@ fn all_flags_enabled_produces_valid_invocation() {
         "--remove-source-files",
         "--no-implied-dirs",
         "--fake-super",
-        "--omit-dir-times",
-        "--omit-link-times",
         "--delay-updates",
         "--copy-devices",
         "--write-devices",

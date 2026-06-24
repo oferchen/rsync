@@ -159,7 +159,9 @@ fn double_star_at_end() {
 fn double_star_in_middle() {
     let set = FilterSet::from_rules([FilterRule::exclude("src/**/test.rs")]).unwrap();
 
-    assert!(!set.allows(Path::new("src/test.rs"), false));
+    // upstream rsync: `**/` consumes a real `/`, so `src/**/test.rs` needs at
+    // least one intermediate directory; `src/test.rs` survives the filter.
+    assert!(set.allows(Path::new("src/test.rs"), false));
     assert!(!set.allows(Path::new("src/module/test.rs"), false));
     assert!(!set.allows(Path::new("src/a/b/c/test.rs"), false));
 
@@ -182,9 +184,13 @@ fn double_star_slash() {
 fn multiple_double_stars() {
     let set = FilterSet::from_rules([FilterRule::exclude("**/src/**/test")]).unwrap();
 
-    assert!(!set.allows(Path::new("src/test"), false));
+    // upstream rsync: the interior `/**/` between `src` and `test` requires at
+    // least one intermediate directory, so `src/test` and `project/src/test`
+    // (no component between `src` and `test`) survive; only paths with a
+    // directory between `src` and `test` are excluded.
+    assert!(set.allows(Path::new("src/test"), false));
     assert!(!set.allows(Path::new("src/module/test"), false));
-    assert!(!set.allows(Path::new("project/src/test"), false));
+    assert!(set.allows(Path::new("project/src/test"), false));
     assert!(!set.allows(Path::new("project/src/lib/test"), false));
 }
 
