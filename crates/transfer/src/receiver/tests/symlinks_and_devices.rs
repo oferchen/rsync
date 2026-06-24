@@ -169,10 +169,14 @@ fn emit_itemize_up_to_date_file() {
 }
 
 #[test]
-fn emit_itemize_skipped_in_client_mode() {
+fn emit_itemize_client_mode_uses_stdout_not_msg_info() {
+    // A client receiver (pull) itemizes to its own stdout via emit_info_line,
+    // never as a MSG_INFO frame - mirroring upstream log.c:rwrite() which
+    // writes to the client fd when !am_server. So the MsgInfoSender writer
+    // receives nothing even though the row was produced (to stdout).
     let handshake = test_handshake();
     let mut config = receiver_config_with_itemize();
-    config.connection.client_mode = true; // Client mode suppresses emission
+    config.connection.client_mode = true;
     let ctx = ReceiverContext::new_for_test(&handshake, config);
     let mut writer = MockMsgInfoWriter::new();
 
@@ -229,12 +233,15 @@ fn should_emit_itemize_conditions() {
     let ctx = ReceiverContext::new_for_test(&handshake, config);
     assert!(ctx.should_emit_itemize());
 
-    // Client mode + itemize -> false
+    // Client mode + itemize -> true. A client receiver (pull, where oc is the
+    // generator) itemizes to its own stdout via emit_info_line, mirroring
+    // upstream log.c:rwrite() which writes to the client fd when !am_server.
+    // Emission is gated only on the itemize flag, not the role.
     let mut config = test_config();
     config.connection.client_mode = true;
     config.flags.info_flags.itemize = true;
     let ctx = ReceiverContext::new_for_test(&handshake, config);
-    assert!(!ctx.should_emit_itemize());
+    assert!(ctx.should_emit_itemize());
 
     // Server mode + no itemize -> false
     let mut config = test_config();
