@@ -97,6 +97,7 @@
 //! enables parallel processing while bounding memory - upstream does not need
 //! this because it never queues ahead.
 
+mod adaptive_semaphore;
 mod bounded;
 mod capacity;
 mod drain;
@@ -105,6 +106,9 @@ pub mod limiter;
 #[cfg(feature = "multi-producer")]
 mod multi_producer;
 
+pub use adaptive_semaphore::{
+    AdaptiveSemaphore, MAX_CAPACITY, MIN_CAPACITY, ResizeError, SemStats,
+};
 pub use bounded::{SendError, WorkQueueReceiver, WorkQueueSender, bounded, bounded_with_capacity};
 pub use capacity::{adaptive_queue_depth, default_capacity};
 pub use iter::WorkQueueIter;
