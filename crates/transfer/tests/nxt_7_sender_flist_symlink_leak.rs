@@ -15,9 +15,9 @@
 //! The invariant: during recursive file-list generation the sender records
 //! a symlink-to-directory as a single symlink entry and never descends into
 //! its target, so no path outside the transfer root ever reaches the wire.
-//! This holds because the default stat is an `lstat` (`fs::symlink_metadata`)
-//! - a symlink reports `is_dir() == false`, so `should_recurse` stays false
-//! in `walk.rs`.
+//! This holds because the default stat is an `lstat`
+//! (`fs::symlink_metadata`): a symlink reports `is_dir() == false`, so
+//! `should_recurse` stays false in `walk.rs`.
 //!
 //! # Upstream Reference
 //!
