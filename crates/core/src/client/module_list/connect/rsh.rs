@@ -43,6 +43,17 @@ pub(crate) struct RshDaemonSpawn<'a> {
     pub connect_timeout: Option<Duration>,
 }
 
+/// Returns whether the remote-shell program is ssh (or an ssh-family binary
+/// such as `/usr/bin/ssh`), which understands the `-o`/`-J`/`-l` connection
+/// options. A custom `-e` program (`rsh`, the testsuite `lsh.sh`, etc.) does
+/// not, and upstream only injects those SSH flags when the rsh is ssh.
+fn is_ssh_like(program: &OsStr) -> bool {
+    let name = std::path::Path::new(program)
+        .file_name()
+        .map_or_else(|| program.to_string_lossy(), |n| n.to_string_lossy());
+    name == "ssh" || name.ends_with("ssh")
+}
+
 /// Spawns the remote shell and wraps its stdio as a [`DaemonStream`].
 ///
 /// Builds `PROG <pre-args> [ssh opts] <host> "<rsync-path> --server --daemon ."`
@@ -62,24 +73,43 @@ pub(crate) fn spawn_rsh_daemon_stream(
         cmd.arg(opt);
     }
 
-    if let Some(bind_addr) = spec.bind_address {
-        cmd.arg("-o").arg(format!("BindAddress={bind_addr}"));
+    // upstream: main.c - the `-o`/`-J`/`-l` connection options are SSH-specific
+    // and are only injected when the remote-shell program is ssh. A custom
+    // `-e PROG` (e.g. the testsuite `lsh.sh`, or `rsh`) is spawned verbatim as
+    // `PROG <pre-args> <host> "<cmd>"`; passing it `-o ConnectTimeout=...`
+    // breaks programs that do not understand SSH flags (lsh.sh reads the next
+    // token as the host and fails with "unable to connect to host
+    // ConnectTimeout=10").
+    let ssh_like = is_ssh_like(ssh_program);
+    if ssh_like {
+        if let Some(bind_addr) = spec.bind_address {
+            cmd.arg("-o").arg(format!("BindAddress={bind_addr}"));
+        }
+
+        if let Some(jump) = spec.jump_hosts {
+            cmd.arg("-J").arg(jump);
+        }
+
+        if let Some(timeout) = spec.connect_timeout {
+            cmd.arg("-o")
+                .arg(format!("ConnectTimeout={}", timeout.as_secs()));
+        }
+
+        if let Some(user) = spec.username {
+            cmd.arg("-l").arg(user);
+        }
     }
 
-    if let Some(jump) = spec.jump_hosts {
-        cmd.arg("-J").arg(jump);
+    // ssh takes the login via `-l user` above and the bare host here; a custom
+    // rsh program receives `user@host` (upstream do_cmd handling).
+    match (ssh_like, spec.username) {
+        (false, Some(user)) => {
+            cmd.arg(format!("{user}@{}", spec.host));
+        }
+        _ => {
+            cmd.arg(spec.host);
+        }
     }
-
-    if let Some(timeout) = spec.connect_timeout {
-        cmd.arg("-o")
-            .arg(format!("ConnectTimeout={}", timeout.as_secs()));
-    }
-
-    if let Some(user) = spec.username {
-        cmd.arg("-l").arg(user);
-    }
-
-    cmd.arg(spec.host);
 
     // upstream: main.c:594-604 - the remote command is
     // `rsync_path --server --daemon .` with no server_options().
