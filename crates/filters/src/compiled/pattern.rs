@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 use std::collections::HashSet;
-use std::path::{Component, Path};
+use std::path::Path;
 
 use globset::GlobBuilder;
 
@@ -49,32 +49,20 @@ impl CompiledPattern {
     }
 }
 
-/// Renders `path` as the `/`-joined byte string upstream rsync matches against.
+/// Renders `path` as the byte string upstream rsync matches against: the
+/// relative name verbatim, with platform separators normalised to `/`.
 ///
-/// Only `Normal` components contribute; a leading `RootDir` is preserved as a
-/// single `/` and `CurDir` (`.`) segments are dropped, matching how rsync feeds
-/// relative transfer names to `wildmatch()`.
+/// rsync feeds filter candidates as `/`-separated relative names, so a literal
+/// rendering (preserving `.`/`..` and single components) is what `wildmatch()`
+/// expects. Backslashes are folded to `/` on Windows so matching is identical
+/// across platforms.
 fn path_match_bytes(path: &Path) -> Vec<u8> {
-    let mut out = String::new();
-    for component in path.components() {
-        match component {
-            Component::RootDir => out.push('/'),
-            Component::CurDir => {}
-            Component::Normal(seg) => {
-                if !out.is_empty() && !out.ends_with('/') {
-                    out.push('/');
-                }
-                out.push_str(&seg.to_string_lossy());
-            }
-            other => {
-                if !out.is_empty() && !out.ends_with('/') {
-                    out.push('/');
-                }
-                out.push_str(&other.as_os_str().to_string_lossy());
-            }
-        }
+    let rendered = path.to_string_lossy();
+    if cfg!(windows) && rendered.contains('\\') {
+        rendered.replace('\\', "/").into_bytes()
+    } else {
+        rendered.into_owned().into_bytes()
     }
-    out.into_bytes()
 }
 
 /// Compiles a set of glob pattern strings into sorted, deduplicated matchers.
