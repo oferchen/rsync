@@ -573,7 +573,7 @@ fn is_not_empty(err: &io::Error) -> bool {
 /// helpers require a relative path; an absolute leaf bypasses the
 /// dirfd anchor and would defeat the security posture.
 #[cfg(unix)]
-fn plan_directory_to_relative(plan_directory: &Path) -> &Path {
+pub(crate) fn plan_directory_to_relative(plan_directory: &Path) -> &Path {
     use std::path::Component;
     let mut components = plan_directory.components();
     loop {
@@ -602,7 +602,7 @@ fn plan_directory_to_relative(plan_directory: &Path) -> &Path {
 /// `parent_fd` itself via `openat(parent_fd, ".", O_DIRECTORY)` so the
 /// caller always receives an `OwnedFd` it can borrow uniformly.
 #[cfg(unix)]
-fn open_dir_at(
+pub(crate) fn open_dir_at(
     parent_fd: std::os::fd::BorrowedFd<'_>,
     relative: &Path,
 ) -> io::Result<std::os::fd::OwnedFd> {
