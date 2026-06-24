@@ -250,6 +250,19 @@ pub(crate) fn build_wire_format_rules(
             // default the empty pattern to `.cvsignore` nor activate
             // CVS-style whitespace parsing of the per-directory file.
             wire_rule.cvs_exclude = options.is_cvs_mode();
+            // upstream: exclude.c:1566-1572 get_rule_prefix() emits `s`/`r` for a
+            // side-restricted dir-merge. A `:s`/`:r` dir-merge's side lives in
+            // DirMergeOptions, NOT in the spec's applies_to_* booleans that
+            // wire_sender_side()/wire_receiver_side() read (FilterRuleSpec::dir_merge
+            // hardcodes both true). Without carrying it here, a `:s .filt`
+            // serializes with no side flag, so the receiver's --delete pass loads
+            // it (and any nested dir-merge) as two-sided and wrongly protects
+            // flist-absent files from deletion. Mirror the both-sides==no-flag
+            // convention exactly.
+            let dm_sender = options.applies_to_sender();
+            let dm_receiver = options.applies_to_receiver();
+            wire_rule.sender_side = dm_sender && !dm_receiver;
+            wire_rule.receiver_side = dm_receiver && !dm_sender;
         }
 
         wire_rules.push(wire_rule);
