@@ -49,6 +49,25 @@ impl CompiledRule {
             !xattr_only,
             "xattr-only rules should be filtered before compilation"
         );
+
+        // upstream: exclude.c:add_rule() logs every parsed rule at
+        // `DEBUG_GTE(FILTER, 2)` so the active rule set is observable.
+        logging::debug_log!(
+            Filter,
+            2,
+            "add_rule({} {})",
+            match action {
+                FilterAction::Include => "+",
+                FilterAction::Exclude => "-",
+                FilterAction::Protect => "P",
+                FilterAction::Risk => "R",
+                FilterAction::Clear => "!",
+                FilterAction::Merge => "merge",
+                FilterAction::DirMerge => "dir-merge",
+            },
+            pattern
+        );
+
         let (anchored, directory_only, core_pattern) = normalise_pattern(&pattern);
         // upstream: exclude.c:903-960 rule_matches() - an unanchored pattern
         // that already begins with `**` is matched with slash_handling = -1
@@ -154,6 +173,7 @@ impl CompiledRule {
 
         Ok(Self {
             action,
+            pattern,
             directory_only,
             direct_matchers,
             descendant_matchers,

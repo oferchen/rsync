@@ -155,6 +155,20 @@ impl FilterSegment {
     }
 }
 
+/// Short-form action prefix used in `add_rule()` debug lines, mirroring
+/// upstream rsync's filter-rule syntax (`+`/`-`/`P`/`R`/`H`/`S`).
+fn filter_action_prefix(action: FilterAction) -> &'static str {
+    match action {
+        FilterAction::Include => "+",
+        FilterAction::Exclude => "-",
+        FilterAction::Protect => "P",
+        FilterAction::Risk => "R",
+        FilterAction::Clear => "!",
+        FilterAction::Merge => "merge",
+        FilterAction::DirMerge => "dir-merge",
+    }
+}
+
 /// Emits a `--debug=FILTER` line for a rule that fired on `path`, naming the
 /// file, its type, and the matching pattern.
 ///
@@ -289,6 +303,17 @@ impl CompiledRule {
         let applies_to_receiver = rule.applies_to_receiver();
         let negate = rule.is_negated();
         let pattern = rule.pattern().to_owned();
+
+        // upstream: exclude.c:add_rule() logs every parsed rule at
+        // `DEBUG_GTE(FILTER, 2)` so the active rule set is observable.
+        debug_log!(
+            Filter,
+            2,
+            "add_rule({} {})",
+            filter_action_prefix(action),
+            pattern
+        );
+
         let (anchored, directory_only, core_pattern) = normalise_pattern(&pattern);
 
         let mut direct_patterns = HashSet::new();

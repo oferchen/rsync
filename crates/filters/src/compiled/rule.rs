@@ -20,6 +20,9 @@ use crate::FilterAction;
 #[derive(Debug)]
 pub(crate) struct CompiledRule {
     pub(crate) action: FilterAction,
+    /// The source pattern, retained for `--debug=FILTER` reporting
+    /// (upstream: exclude.c:report_filter_result() logs `ent->pattern`).
+    pub(crate) pattern: String,
     pub(super) directory_only: bool,
     pub(super) direct_matchers: Vec<CompiledPattern>,
     pub(super) descendant_matchers: Vec<CompiledPattern>,
