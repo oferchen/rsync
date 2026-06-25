@@ -33,7 +33,7 @@ fn munge_links_prefixes_absolute_symlink_target() {
     )
     .expect("copy succeeds");
 
-    let dest_link = dest_root.join("abs_link");
+    let dest_link = dest_root.join("src").join("abs_link");
     assert!(
         fs::symlink_metadata(&dest_link)
             .expect("meta")
@@ -77,7 +77,7 @@ fn munge_links_prefixes_relative_symlink_target() {
     )
     .expect("copy succeeds");
 
-    let dest_link = dest_root.join("rel_link");
+    let dest_link = dest_root.join("src").join("rel_link");
     let copied_target = fs::read_link(&dest_link).expect("read link");
     assert_eq!(
         copied_target,
@@ -114,7 +114,7 @@ fn munge_links_disabled_preserves_symlink_target() {
     )
     .expect("copy succeeds");
 
-    let dest_link = dest_root.join("link");
+    let dest_link = dest_root.join("src").join("link");
     let copied_target = fs::read_link(&dest_link).expect("read link");
     assert_eq!(
         copied_target,
@@ -153,7 +153,7 @@ fn munge_links_unmunges_already_munged_source() {
     )
     .expect("copy succeeds");
 
-    let dest_link = dest_root.join("munged_link");
+    let dest_link = dest_root.join("src").join("munged_link");
     let copied_target = fs::read_link(&dest_link).expect("read link");
     // The source target was `/rsyncd-munged//etc/passwd`, which gets unmunged
     // to `/etc/passwd`, then re-munged back to `/rsyncd-munged//etc/passwd`.
@@ -192,7 +192,7 @@ fn munge_links_safe_relative_target_still_munged() {
     )
     .expect("copy succeeds");
 
-    let dest_link = dest_root.join("safe_link");
+    let dest_link = dest_root.join("src").join("safe_link");
     let copied_target = fs::read_link(&dest_link).expect("read link");
     assert_eq!(
         copied_target,

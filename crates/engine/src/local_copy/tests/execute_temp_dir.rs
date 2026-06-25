@@ -241,15 +241,15 @@ fn execute_with_temp_dir_handles_nested_directories() {
 
     assert_eq!(summary.files_copied(), 3);
     assert_eq!(
-        fs::read(dest_root.join("a").join("file1.txt")).expect("read"),
+        fs::read(dest_root.join("source").join("a").join("file1.txt")).expect("read"),
         b"level1"
     );
     assert_eq!(
-        fs::read(dest_root.join("a").join("b").join("file2.txt")).expect("read"),
+        fs::read(dest_root.join("source").join("a").join("b").join("file2.txt")).expect("read"),
         b"level2"
     );
     assert_eq!(
-        fs::read(dest_root.join("a").join("b").join("c").join("file3.txt")).expect("read"),
+        fs::read(dest_root.join("source").join("a").join("b").join("c").join("file3.txt")).expect("read"),
         b"level3"
     );
 
@@ -1224,15 +1224,15 @@ fn execute_with_temp_dir_nested_source_uses_flat_staging() {
 
     // Verify all files exist at correct destinations
     assert_eq!(
-        fs::read(dest_root.join("top.txt")).expect("read"),
+        fs::read(dest_root.join("source").join("top.txt")).expect("read"),
         b"top level"
     );
     assert_eq!(
-        fs::read(dest_root.join("a").join("mid.txt")).expect("read"),
+        fs::read(dest_root.join("source").join("a").join("mid.txt")).expect("read"),
         b"mid level"
     );
     assert_eq!(
-        fs::read(dest_root.join("a").join("b").join("deep.txt")).expect("read"),
+        fs::read(dest_root.join("source").join("a").join("b").join("deep.txt")).expect("read"),
         b"deep level"
     );
 

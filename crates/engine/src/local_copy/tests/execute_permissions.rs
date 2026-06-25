@@ -288,10 +288,10 @@ fn mode_0000_nested_directory_structure() {
 
     // Verify all files have mode 0000
     let dest_files = [
-        (dest_root.join("source/root.txt"), b"root" as &[u8]),
-        (dest_root.join("source/level1/one.txt"), b"level1"),
-        (dest_root.join("source/level1/level2/two.txt"), b"level2"),
-        (dest_root.join("source/level1/level2/level3/three.txt"), b"level3"),
+        (dest_root.join("source").join("source/root.txt"), b"root" as &[u8]),
+        (dest_root.join("source").join("source/level1/one.txt"), b"level1"),
+        (dest_root.join("source").join("source/level1/level2/two.txt"), b"level2"),
+        (dest_root.join("source").join("source/level1/level2/level3/three.txt"), b"level3"),
     ];
 
     for (path, expected_content) in &dest_files {
@@ -341,12 +341,12 @@ fn mode_0000_with_symlink_preservation() {
     assert_eq!(summary.symlinks_copied(), 1);
 
     // Verify target has mode 0000
-    let dest_target = dest_dir.join("source/target.txt");
+    let dest_target = dest_dir.join("source").join("source/target.txt");
     let metadata = fs::metadata(&dest_target).expect("target metadata");
     assert_eq!(metadata.permissions().mode() & 0o777, 0o000);
 
     // Verify symlink was created
-    let dest_link = dest_dir.join("source/link.txt");
+    let dest_link = dest_dir.join("source").join("source/link.txt");
     assert!(dest_link.exists());
     let link_metadata = fs::symlink_metadata(&dest_link).expect("link metadata");
     assert!(link_metadata.file_type().is_symlink());

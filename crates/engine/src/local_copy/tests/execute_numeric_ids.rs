@@ -523,7 +523,7 @@ fn numeric_ids_with_directory() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let metadata = fs::metadata(&destination).expect("dest metadata");
+    let metadata = fs::metadata(destination.join("source_dir")).expect("dest metadata");
     assert!(metadata.is_dir());
     assert_eq!(metadata.uid(), test_uid);
     assert_eq!(metadata.gid(), test_gid);

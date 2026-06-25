@@ -344,15 +344,15 @@ fn delay_updates_handles_nested_directories() {
 
     assert_eq!(summary.files_copied(), 3);
     assert_eq!(
-        fs::read(dest_root.join("a").join("file1.txt")).expect("read"),
+        fs::read(dest_root.join("source").join("a").join("file1.txt")).expect("read"),
         b"level1"
     );
     assert_eq!(
-        fs::read(dest_root.join("a").join("b").join("file2.txt")).expect("read"),
+        fs::read(dest_root.join("source").join("a").join("b").join("file2.txt")).expect("read"),
         b"level2"
     );
     assert_eq!(
-        fs::read(dest_root.join("a").join("b").join("c").join("file3.txt")).expect("read"),
+        fs::read(dest_root.join("source").join("a").join("b").join("c").join("file3.txt")).expect("read"),
         b"level3"
     );
 }
@@ -1209,15 +1209,15 @@ fn delay_updates_preserves_multiple_hard_link_groups() {
         .expect("copy succeeds");
 
     // Check group 1
-    let g1a = fs::metadata(dest_root.join("group1_a.txt")).expect("metadata");
-    let g1b = fs::metadata(dest_root.join("group1_b.txt")).expect("metadata");
+    let g1a = fs::metadata(dest_root.join("source").join("group1_a.txt")).expect("metadata");
+    let g1b = fs::metadata(dest_root.join("source").join("group1_b.txt")).expect("metadata");
     assert_eq!(g1a.ino(), g1b.ino(), "group1 should share inode");
     assert_eq!(g1a.nlink(), 2);
 
     // Check group 2
-    let g2a = fs::metadata(dest_root.join("group2_a.txt")).expect("metadata");
-    let g2b = fs::metadata(dest_root.join("group2_b.txt")).expect("metadata");
-    let g2c = fs::metadata(dest_root.join("group2_c.txt")).expect("metadata");
+    let g2a = fs::metadata(dest_root.join("source").join("group2_a.txt")).expect("metadata");
+    let g2b = fs::metadata(dest_root.join("source").join("group2_b.txt")).expect("metadata");
+    let g2c = fs::metadata(dest_root.join("source").join("group2_c.txt")).expect("metadata");
     assert_eq!(g2a.ino(), g2b.ino(), "group2 a+b should share inode");
     assert_eq!(g2a.ino(), g2c.ino(), "group2 a+c should share inode");
     assert_eq!(g2a.nlink(), 3);
@@ -1512,7 +1512,7 @@ fn delay_updates_handles_deeply_nested_structure() {
     assert_eq!(summary.files_copied(), 8);
 
     // Verify each level
-    let mut check = dest_root;
+    let mut check = dest_root.join("source");
     for depth in 0..8 {
         check = check.join(format!("level{depth}"));
         assert_eq!(
@@ -2000,13 +2000,13 @@ fn delay_updates_creates_destination_directories_as_needed() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 2);
-    assert!(dest_root.join("new_dir").join("nested").is_dir());
+    assert!(dest_root.join("source").join("new_dir").join("nested").is_dir());
     assert_eq!(
-        fs::read(dest_root.join("new_dir").join("nested").join("file.txt")).expect("read"),
+        fs::read(dest_root.join("source").join("new_dir").join("nested").join("file.txt")).expect("read"),
         b"deeply nested"
     );
     assert_eq!(
-        fs::read(dest_root.join("new_dir").join("sibling.txt")).expect("read"),
+        fs::read(dest_root.join("source").join("new_dir").join("sibling.txt")).expect("read"),
         b"sibling"
     );
 }

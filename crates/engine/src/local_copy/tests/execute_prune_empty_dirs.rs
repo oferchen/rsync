@@ -19,8 +19,8 @@ fn prune_empty_dirs_does_not_create_empty_directories() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(!ctx.dest.join("empty_dir").exists(), "empty dir should not be created");
-    assert!(ctx.dest.join("file.txt").exists(), "file should be copied");
+    assert!(!ctx.dest.join("source").join("empty_dir").exists(), "empty dir should not be created");
+    assert!(ctx.dest.join("source").join("file.txt").exists(), "file should be copied");
 }
 
 #[test]
@@ -43,9 +43,9 @@ fn prune_empty_dirs_creates_directories_with_files() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(ctx.dest.join("dir_with_files").is_dir(), "directory with files should be created");
-    assert!(ctx.dest.join("dir_with_files/file1.txt").exists());
-    assert!(ctx.dest.join("dir_with_files/file2.txt").exists());
+    assert!(ctx.dest.join("source").join("dir_with_files").is_dir(), "directory with files should be created");
+    assert!(ctx.dest.join("source").join("dir_with_files/file1.txt").exists());
+    assert!(ctx.dest.join("source").join("dir_with_files/file2.txt").exists());
 }
 
 #[test]
@@ -69,9 +69,9 @@ fn prune_empty_dirs_prunes_nested_empty_directories() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(!ctx.dest.join("level1").exists(), "nested empty dirs should be pruned");
-    assert!(ctx.dest.join("keep").is_dir(), "directory with file should be created");
-    assert!(ctx.dest.join("keep/file.txt").exists());
+    assert!(!ctx.dest.join("source").join("level1").exists(), "nested empty dirs should be pruned");
+    assert!(ctx.dest.join("source").join("keep").is_dir(), "directory with file should be created");
+    assert!(ctx.dest.join("source").join("keep/file.txt").exists());
 }
 
 #[test]
@@ -100,15 +100,15 @@ fn prune_empty_dirs_with_filter_excluding_all_files() {
         .expect("copy succeeds");
 
     assert!(
-        !ctx.dest.join("excluded_dir").exists(),
+        !ctx.dest.join("source").join("excluded_dir").exists(),
         "directory with only excluded files should be pruned"
     );
     assert!(
-        ctx.dest.join("included_dir").is_dir(),
+        ctx.dest.join("source").join("included_dir").is_dir(),
         "directory with non-excluded files should exist"
     );
-    assert!(ctx.dest.join("included_dir/keep.txt").exists());
-    assert!(!ctx.dest.join("included_dir/also_temp.tmp").exists());
+    assert!(ctx.dest.join("source").join("included_dir/keep.txt").exists());
+    assert!(!ctx.dest.join("source").join("included_dir/also_temp.tmp").exists());
 }
 
 #[test]
@@ -131,9 +131,9 @@ fn prune_empty_dirs_preserves_non_empty_parent_of_empty_child() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(ctx.dest.join("parent").is_dir(), "parent with file should exist");
-    assert!(ctx.dest.join("parent/file.txt").exists());
-    assert!(!ctx.dest.join("parent/empty_child").exists(), "empty child should be pruned");
+    assert!(ctx.dest.join("source").join("parent").is_dir(), "parent with file should exist");
+    assert!(ctx.dest.join("source").join("parent/file.txt").exists());
+    assert!(!ctx.dest.join("source").join("parent/empty_child").exists(), "empty child should be pruned");
 }
 
 #[test]
@@ -158,12 +158,12 @@ fn prune_empty_dirs_with_multiple_branches() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(!ctx.dest.join("branch1").exists(), "branch1 with only empty child should be pruned");
-    assert!(ctx.dest.join("branch2").is_dir(), "branch2 with file should exist");
-    assert!(ctx.dest.join("branch2/full").is_dir());
-    assert!(ctx.dest.join("branch2/full/file.txt").exists());
-    assert!(!ctx.dest.join("branch3").exists(), "branch3 with nested empty should be pruned");
-    assert!(!ctx.dest.join("branch4").exists(), "empty branch4 should be pruned");
+    assert!(!ctx.dest.join("source").join("branch1").exists(), "branch1 with only empty child should be pruned");
+    assert!(ctx.dest.join("source").join("branch2").is_dir(), "branch2 with file should exist");
+    assert!(ctx.dest.join("source").join("branch2/full").is_dir());
+    assert!(ctx.dest.join("source").join("branch2/full/file.txt").exists());
+    assert!(!ctx.dest.join("source").join("branch3").exists(), "branch3 with nested empty should be pruned");
+    assert!(!ctx.dest.join("source").join("branch4").exists(), "empty branch4 should be pruned");
 }
 
 #[test]
@@ -243,12 +243,12 @@ fn prune_empty_dirs_with_min_size_filter() {
         .expect("copy succeeds");
 
     assert!(
-        !ctx.dest.join("small_files_only").exists(),
+        !ctx.dest.join("source").join("small_files_only").exists(),
         "directory with only small files should be pruned"
     );
-    assert!(ctx.dest.join("mixed_dir").is_dir(), "directory with large file should exist");
-    assert!(ctx.dest.join("mixed_dir/large.txt").exists());
-    assert!(!ctx.dest.join("mixed_dir/tiny.txt").exists());
+    assert!(ctx.dest.join("source").join("mixed_dir").is_dir(), "directory with large file should exist");
+    assert!(ctx.dest.join("source").join("mixed_dir/large.txt").exists());
+    assert!(!ctx.dest.join("source").join("mixed_dir/tiny.txt").exists());
 }
 
 #[test]
@@ -276,12 +276,12 @@ fn prune_empty_dirs_with_max_size_filter() {
         .expect("copy succeeds");
 
     assert!(
-        !ctx.dest.join("large_files_only").exists(),
+        !ctx.dest.join("source").join("large_files_only").exists(),
         "directory with only large files should be pruned"
     );
-    assert!(ctx.dest.join("mixed_dir").is_dir(), "directory with small file should exist");
-    assert!(ctx.dest.join("mixed_dir/small.txt").exists());
-    assert!(!ctx.dest.join("mixed_dir/huge.bin").exists());
+    assert!(ctx.dest.join("source").join("mixed_dir").is_dir(), "directory with small file should exist");
+    assert!(ctx.dest.join("source").join("mixed_dir/small.txt").exists());
+    assert!(!ctx.dest.join("source").join("mixed_dir/huge.bin").exists());
 }
 
 #[test]
@@ -304,11 +304,11 @@ fn prune_empty_dirs_disabled_creates_all_directories() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(ctx.dest.join("empty1").is_dir(), "empty1 should be created");
-    assert!(ctx.dest.join("empty2").is_dir(), "empty2 should be created");
-    assert!(ctx.dest.join("empty2/nested").is_dir(), "nested empty should be created");
-    assert!(ctx.dest.join("nonempty").is_dir());
-    assert!(ctx.dest.join("nonempty/file.txt").exists());
+    assert!(ctx.dest.join("source").join("empty1").is_dir(), "empty1 should be created");
+    assert!(ctx.dest.join("source").join("empty2").is_dir(), "empty2 should be created");
+    assert!(ctx.dest.join("source").join("empty2/nested").is_dir(), "nested empty should be created");
+    assert!(ctx.dest.join("source").join("nonempty").is_dir());
+    assert!(ctx.dest.join("source").join("nonempty/file.txt").exists());
 }
 
 #[test]
@@ -333,8 +333,8 @@ fn prune_empty_dirs_with_collect_events_reports_pruning() {
         .execute_with_report(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(!ctx.dest.join("empty").exists());
-    assert!(ctx.dest.join("nonempty").is_dir());
+    assert!(!ctx.dest.join("source").join("empty").exists());
+    assert!(ctx.dest.join("source").join("nonempty").is_dir());
 
     let records = report.records();
     let dir_created = records
@@ -389,9 +389,9 @@ fn prune_empty_dirs_with_symlink_in_directory() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(!ctx.dest.join("empty").exists(), "empty dir should be pruned");
+    assert!(!ctx.dest.join("source").join("empty").exists(), "empty dir should be pruned");
     assert!(
-        ctx.dest.join("dir_with_link").is_dir(),
+        ctx.dest.join("source").join("dir_with_link").is_dir(),
         "directory with symlink should exist"
     );
     // The symlink should exist (implementation may vary)
@@ -419,16 +419,16 @@ fn prune_empty_dirs_deep_hierarchy_partial_pruning() {
         .expect("copy succeeds");
 
     // Path to file should be preserved
-    assert!(ctx.dest.join("a").is_dir());
-    assert!(ctx.dest.join("a/b").is_dir());
-    assert!(ctx.dest.join("a/b/c").is_dir());
-    assert!(ctx.dest.join("a/b/c/d").is_dir());
-    assert!(ctx.dest.join("a/b/c/d/e").is_dir());
-    assert!(ctx.dest.join("a/b/c/d/e/file.txt").exists());
+    assert!(ctx.dest.join("source").join("a").is_dir());
+    assert!(ctx.dest.join("source").join("a/b").is_dir());
+    assert!(ctx.dest.join("source").join("a/b/c").is_dir());
+    assert!(ctx.dest.join("source").join("a/b/c/d").is_dir());
+    assert!(ctx.dest.join("source").join("a/b/c/d/e").is_dir());
+    assert!(ctx.dest.join("source").join("a/b/c/d/e/file.txt").exists());
 
     // Empty branches should be pruned
-    assert!(!ctx.dest.join("a/b/empty").exists());
-    assert!(!ctx.dest.join("a/x").exists());
+    assert!(!ctx.dest.join("source").join("a/b/empty").exists());
+    assert!(!ctx.dest.join("source").join("a/x").exists());
 }
 
 #[test]
@@ -456,8 +456,8 @@ fn prune_empty_dirs_with_existing_only_option() {
         .expect("copy succeeds");
 
     // With existing_only, new directories shouldn't be created anyway
-    assert!(!ctx.dest.join("new_dir").exists());
-    assert!(!ctx.dest.join("empty").exists());
+    assert!(!ctx.dest.join("source").join("new_dir").exists());
+    assert!(!ctx.dest.join("source").join("empty").exists());
 }
 
 #[test]
@@ -492,13 +492,13 @@ fn prune_empty_dirs_with_include_exclude_filters() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(ctx.dest.join("docs").is_dir(), "docs has .txt files");
-    assert!(ctx.dest.join("docs/readme.txt").exists());
-    assert!(ctx.dest.join("docs/notes.txt").exists());
-    assert!(!ctx.dest.join("docs/secret.doc").exists());
+    assert!(ctx.dest.join("source").join("docs").is_dir(), "docs has .txt files");
+    assert!(ctx.dest.join("source").join("docs/readme.txt").exists());
+    assert!(ctx.dest.join("source").join("docs/notes.txt").exists());
+    assert!(!ctx.dest.join("source").join("docs/secret.doc").exists());
 
     // code directory should be pruned (only has .rs and .tmp)
-    assert!(!ctx.dest.join("code").exists(), "code has no .txt files");
+    assert!(!ctx.dest.join("source").join("code").exists(), "code has no .txt files");
 }
 
 #[test]
@@ -518,7 +518,7 @@ fn prune_empty_dirs_single_file_at_root_no_dirs() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(ctx.dest.join("only_file.txt").exists());
+    assert!(ctx.dest.join("source").join("only_file.txt").exists());
 }
 
 #[test]
@@ -561,14 +561,14 @@ fn prune_empty_dirs_mixed_empty_and_nonempty_siblings() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    assert!(!ctx.dest.join("alpha").exists(), "alpha is empty");
-    assert!(ctx.dest.join("bravo").is_dir(), "bravo has a file");
-    assert!(ctx.dest.join("bravo/file.txt").exists());
-    assert!(!ctx.dest.join("charlie").exists(), "charlie is empty");
-    assert!(ctx.dest.join("delta").is_dir(), "delta has nested file");
-    assert!(ctx.dest.join("delta/sub").is_dir());
-    assert!(ctx.dest.join("delta/sub/file.txt").exists());
-    assert!(!ctx.dest.join("echo").exists(), "echo is empty");
+    assert!(!ctx.dest.join("source").join("alpha").exists(), "alpha is empty");
+    assert!(ctx.dest.join("source").join("bravo").is_dir(), "bravo has a file");
+    assert!(ctx.dest.join("source").join("bravo/file.txt").exists());
+    assert!(!ctx.dest.join("source").join("charlie").exists(), "charlie is empty");
+    assert!(ctx.dest.join("source").join("delta").is_dir(), "delta has nested file");
+    assert!(ctx.dest.join("source").join("delta/sub").is_dir());
+    assert!(ctx.dest.join("source").join("delta/sub/file.txt").exists());
+    assert!(!ctx.dest.join("source").join("echo").exists(), "echo is empty");
 }
 
 #[test]
@@ -599,15 +599,15 @@ fn prune_empty_dirs_with_filter_partial_exclusion_preserves_dir() {
         .expect("copy succeeds");
 
     // src/ should exist because .rs files are included
-    assert!(ctx.dest.join("project/src").is_dir());
-    assert!(ctx.dest.join("project/src/main.rs").exists());
-    assert!(ctx.dest.join("project/src/lib.rs").exists());
-    assert!(!ctx.dest.join("project/src/temp.bak").exists());
+    assert!(ctx.dest.join("source").join("project/src").is_dir());
+    assert!(ctx.dest.join("source").join("project/src/main.rs").exists());
+    assert!(ctx.dest.join("source").join("project/src/lib.rs").exists());
+    assert!(!ctx.dest.join("source").join("project/src/temp.bak").exists());
 
     // build/ should exist because output.o is included
-    assert!(ctx.dest.join("project/build").is_dir());
-    assert!(ctx.dest.join("project/build/output.o").exists());
-    assert!(!ctx.dest.join("project/build/output.bak").exists());
+    assert!(ctx.dest.join("source").join("project/build").is_dir());
+    assert!(ctx.dest.join("source").join("project/build/output.o").exists());
+    assert!(!ctx.dest.join("source").join("project/build/output.bak").exists());
 }
 
 #[test]
@@ -630,8 +630,8 @@ fn prune_empty_dirs_deeply_nested_single_file() {
         .expect("copy succeeds");
 
     // All directories along the path should be created
-    assert!(ctx.dest.join("a/b/c/d/e/f/g/h/i/j").is_dir());
-    assert!(ctx.dest.join("a/b/c/d/e/f/g/h/i/j/leaf.txt").exists());
+    assert!(ctx.dest.join("source").join("a/b/c/d/e/f/g/h/i/j").is_dir());
+    assert!(ctx.dest.join("source").join("a/b/c/d/e/f/g/h/i/j/leaf.txt").exists());
 }
 
 #[test]
@@ -659,15 +659,15 @@ fn prune_empty_dirs_min_and_max_size_combined() {
         .expect("copy succeeds");
 
     assert!(
-        !ctx.dest.join("too_small").exists(),
+        !ctx.dest.join("source").join("too_small").exists(),
         "directory with only too-small files should be pruned"
     );
     assert!(
-        !ctx.dest.join("too_large").exists(),
+        !ctx.dest.join("source").join("too_large").exists(),
         "directory with only too-large files should be pruned"
     );
-    assert!(ctx.dest.join("just_right").is_dir(), "directory with right-sized file should exist");
-    assert!(ctx.dest.join("just_right/medium.txt").exists());
+    assert!(ctx.dest.join("source").join("just_right").is_dir(), "directory with right-sized file should exist");
+    assert!(ctx.dest.join("source").join("just_right/medium.txt").exists());
 }
 
 #[test]
@@ -743,8 +743,8 @@ fn prune_empty_dirs_idempotent_run() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("first copy succeeds");
 
-    assert!(!ctx.dest.join("empty").exists());
-    assert!(ctx.dest.join("kept/file.txt").exists());
+    assert!(!ctx.dest.join("source").join("empty").exists());
+    assert!(ctx.dest.join("source").join("kept/file.txt").exists());
 
     // Second run (destination already exists with content)
     let operands = vec![
@@ -757,8 +757,8 @@ fn prune_empty_dirs_idempotent_run() {
     plan.execute_with_options(LocalCopyExecution::Apply, options)
         .expect("second copy succeeds");
 
-    assert!(!ctx.dest.join("empty").exists());
-    assert!(ctx.dest.join("kept/file.txt").exists());
+    assert!(!ctx.dest.join("source").join("empty").exists());
+    assert!(ctx.dest.join("source").join("kept/file.txt").exists());
 }
 
 #[test]
@@ -787,8 +787,8 @@ fn prune_empty_dirs_cascading_after_filter_removes_all_files() {
         .expect("copy succeeds");
 
     // root_dir should exist because keep.txt is there
-    assert!(ctx.dest.join("root_dir").is_dir());
-    assert!(ctx.dest.join("root_dir/keep.txt").exists());
+    assert!(ctx.dest.join("source").join("root_dir").is_dir());
+    assert!(ctx.dest.join("source").join("root_dir/keep.txt").exists());
     // sub1 should be pruned because after excluding .log files, it's empty
-    assert!(!ctx.dest.join("root_dir/sub1").exists(), "sub1 should be pruned (all .log files excluded)");
+    assert!(!ctx.dest.join("source").join("root_dir/sub1").exists(), "sub1 should be pruned (all .log files excluded)");
 }

@@ -443,7 +443,7 @@ fn log_file_combined_with_builder_archive() {
 
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(
-        fs::read(dest_root.join("file.txt")).expect("read"),
+        fs::read(dest_root.join("source").join("file.txt")).expect("read"),
         b"archive + log"
     );
 }

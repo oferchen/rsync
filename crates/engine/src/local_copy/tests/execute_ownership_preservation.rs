@@ -450,7 +450,7 @@ fn owner_and_group_preserved_on_directory() {
         )
         .expect("copy succeeds");
 
-    let metadata = fs::metadata(&dest_dir).expect("dest metadata");
+    let metadata = fs::metadata(dest_dir.join("source_dir")).expect("dest metadata");
     assert!(metadata.is_dir());
     assert_eq!(metadata.uid(), test_uid);
     assert_eq!(metadata.gid(), test_gid);
@@ -509,12 +509,12 @@ fn owner_preserved_recursively_in_directory_tree() {
         .expect("copy succeeds");
 
     // Verify all entries have the preserved ownership
-    let dest_file1 = dest_dir.join("file1.txt");
-    let dest_subdir = dest_dir.join("subdir");
+    let dest_file1 = dest_dir.join("source").join("file1.txt");
+    let dest_subdir = dest_dir.join("source").join("subdir");
     let dest_file2 = dest_subdir.join("file2.txt");
 
-    assert_eq!(fs::metadata(&dest_dir).expect("dir").uid(), test_uid);
-    assert_eq!(fs::metadata(&dest_dir).expect("dir").gid(), test_gid);
+    assert_eq!(fs::metadata(dest_dir.join("source")).expect("dir").uid(), test_uid);
+    assert_eq!(fs::metadata(dest_dir.join("source")).expect("dir").gid(), test_gid);
     assert_eq!(fs::metadata(&dest_file1).expect("file1").uid(), test_uid);
     assert_eq!(fs::metadata(&dest_file1).expect("file1").gid(), test_gid);
     assert_eq!(fs::metadata(&dest_subdir).expect("subdir").uid(), test_uid);
@@ -573,7 +573,7 @@ fn owner_and_group_preserved_on_symlink() {
         )
         .expect("copy succeeds");
 
-    let dest_link = dest_dir.join("link");
+    let dest_link = dest_dir.join("source").join("link");
     let metadata = fs::symlink_metadata(&dest_link).expect("symlink metadata");
     assert!(metadata.is_symlink());
     assert_eq!(metadata.uid(), test_uid);
@@ -832,7 +832,7 @@ fn owner_with_archive_options() {
         )
         .expect("copy succeeds");
 
-    let dest_file = dest_dir.join("file.txt");
+    let dest_file = dest_dir.join("source").join("file.txt");
     let metadata = fs::metadata(&dest_file).expect("dest metadata");
     assert_eq!(metadata.uid(), test_uid);
     assert_eq!(metadata.gid(), test_gid);
@@ -1025,9 +1025,9 @@ fn owner_preserved_on_multiple_files() {
         )
         .expect("copy succeeds");
 
-    let dest_file1 = dest_dir.join("file1.txt");
-    let dest_file2 = dest_dir.join("file2.txt");
-    let dest_file3 = dest_dir.join("file3.txt");
+    let dest_file1 = dest_dir.join("source").join("file1.txt");
+    let dest_file2 = dest_dir.join("source").join("file2.txt");
+    let dest_file3 = dest_dir.join("source").join("file3.txt");
 
     assert_eq!(fs::metadata(&dest_file1).expect("m1").uid(), uid1);
     assert_eq!(fs::metadata(&dest_file2).expect("m2").uid(), uid2);

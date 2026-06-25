@@ -41,7 +41,7 @@ fn symlink_absolute_target_within_source_tree() {
         .expect("copy succeeds");
 
     // Symlink should be copied (absolute path preserved)
-    let dest_link = dest_root.join("abs_link");
+    let dest_link = dest_root.join("src").join("abs_link");
     assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
 
     // Absolute target path should be preserved exactly
@@ -79,7 +79,7 @@ fn symlink_relative_target_stays_relative() {
     )
     .expect("copy succeeds");
 
-    let dest_link = dest_root.join("rel_link");
+    let dest_link = dest_root.join("src").join("rel_link");
     assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
 
     // Relative target should be preserved exactly (not converted to absolute)
@@ -119,7 +119,7 @@ fn symlink_complex_relative_path_with_dotdot() {
     )
     .expect("copy succeeds");
 
-    let dest_link = dest_root.join("dir1/link");
+    let dest_link = dest_root.join("src").join("dir1/link");
     let copied_target = fs::read_link(&dest_link).expect("read link");
     assert_eq!(copied_target, Path::new("../dir2/target.txt"));
 
@@ -155,7 +155,7 @@ fn broken_symlink_with_relative_target_preserved() {
         )
         .expect("copy succeeds");
 
-    let dest_link = dest_root.join("broken");
+    let dest_link = dest_root.join("src").join("broken");
     assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
 
     // Broken symlinks are still copied
@@ -191,7 +191,7 @@ fn broken_symlink_with_absolute_target_preserved() {
     )
     .expect("copy succeeds");
 
-    let dest_link = dest_root.join("broken_abs");
+    let dest_link = dest_root.join("src").join("broken_abs");
     assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
 
     let copied_target = fs::read_link(&dest_link).expect("read link");
@@ -229,8 +229,8 @@ fn broken_symlink_becomes_valid_when_target_copied() {
     .expect("copy succeeds");
 
     // Both target and link should exist in destination
-    let dest_target = dest_root.join("target.txt");
-    let dest_link = dest_root.join("link");
+    let dest_target = dest_root.join("src").join("target.txt");
+    let dest_link = dest_root.join("src").join("link");
 
     assert!(dest_target.is_file());
     assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
@@ -275,16 +275,16 @@ fn symlink_chain_two_levels() {
         .expect("copy succeeds");
 
     // All links and target should be copied
-    assert!(dest_root.join("target.txt").is_file());
-    assert!(fs::symlink_metadata(dest_root.join("link1")).expect("meta").file_type().is_symlink());
-    assert!(fs::symlink_metadata(dest_root.join("link2")).expect("meta").file_type().is_symlink());
+    assert!(dest_root.join("src").join("target.txt").is_file());
+    assert!(fs::symlink_metadata(dest_root.join("src").join("link1")).expect("meta").file_type().is_symlink());
+    assert!(fs::symlink_metadata(dest_root.join("src").join("link2")).expect("meta").file_type().is_symlink());
 
     // Chain should resolve correctly
-    assert_eq!(fs::read_link(dest_root.join("link1")).expect("read"), Path::new("target.txt"));
-    assert_eq!(fs::read_link(dest_root.join("link2")).expect("read"), Path::new("link1"));
+    assert_eq!(fs::read_link(dest_root.join("src").join("link1")).expect("read"), Path::new("target.txt"));
+    assert_eq!(fs::read_link(dest_root.join("src").join("link2")).expect("read"), Path::new("link1"));
 
     // Following full chain should reach content
-    assert_eq!(fs::read(dest_root.join("link2")).expect("read content"), b"final content");
+    assert_eq!(fs::read(dest_root.join("src").join("link2")).expect("read content"), b"final content");
     assert_eq!(summary.symlinks_copied(), 2);
 }
 
@@ -325,7 +325,7 @@ fn symlink_chain_three_levels_deep() {
 
     // All levels should be preserved
     for link_name in ["link1", "link2", "link3"] {
-        let dest_link = dest_root.join(link_name);
+        let dest_link = dest_root.join("src").join(link_name);
         assert!(
             fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink(),
             "{link_name} should be a symlink"
@@ -333,7 +333,7 @@ fn symlink_chain_three_levels_deep() {
     }
 
     // Full chain resolution should work
-    assert_eq!(fs::read(dest_root.join("link3")).expect("read"), b"deep content");
+    assert_eq!(fs::read(dest_root.join("src").join("link3")).expect("read"), b"deep content");
 }
 
 #[cfg(unix)]
@@ -374,7 +374,7 @@ fn symlink_chain_across_directories() {
     .expect("copy succeeds");
 
     // Cross-directory chain should work
-    let dest_link2 = dest_root.join("b/link2");
+    let dest_link2 = dest_root.join("src").join("b/link2");
     assert!(fs::symlink_metadata(&dest_link2).expect("meta").file_type().is_symlink());
     assert_eq!(fs::read_link(&dest_link2).expect("read"), Path::new("../a/link1"));
 
@@ -417,7 +417,7 @@ fn symlink_to_parent_directory_escapes_tree() {
         .execute_with_report(LocalCopyExecution::Apply, options)
         .expect("copy completes");
 
-    let dest_link = dest_root.join("escape");
+    let dest_link = dest_root.join("src").join("escape");
     assert!(!dest_link.exists(), "escaping symlink should be skipped");
     assert_eq!(report.summary().symlinks_copied(), 0);
 }
@@ -455,7 +455,7 @@ fn symlink_multiple_dotdot_levels_escape() {
         .execute_with_report(LocalCopyExecution::Apply, options)
         .expect("copy completes");
 
-    let dest_link = dest_root.join("a/b/c/escape");
+    let dest_link = dest_root.join("src").join("a/b/c/escape");
     assert!(!dest_link.exists(), "deeply escaping symlink should be skipped");
     assert_eq!(report.summary().symlinks_copied(), 0);
 }
@@ -495,7 +495,7 @@ fn symlink_escapes_but_copy_unsafe_links_dereferences() {
         )
         .expect("copy succeeds");
 
-    let dest_file = dest_root.join("escape");
+    let dest_file = dest_root.join("src").join("escape");
     let meta = fs::symlink_metadata(&dest_file).expect("meta");
 
     // Should be dereferenced to a regular file
@@ -534,7 +534,7 @@ fn self_referencing_symlink_handled() {
         )
         .expect("copy succeeds");
 
-    let dest_link = dest_root.join("self");
+    let dest_link = dest_root.join("src").join("self");
     assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
     assert_eq!(fs::read_link(&dest_link).expect("read"), Path::new("self"));
     assert_eq!(summary.symlinks_copied(), 1);
@@ -572,8 +572,8 @@ fn mutual_symlink_cycle_preserved() {
         )
         .expect("copy succeeds");
 
-    let dest_link_a = dest_root.join("link_a");
-    let dest_link_b = dest_root.join("link_b");
+    let dest_link_a = dest_root.join("src").join("link_a");
+    let dest_link_b = dest_root.join("src").join("link_b");
 
     assert!(fs::symlink_metadata(&dest_link_a).expect("meta").file_type().is_symlink());
     assert!(fs::symlink_metadata(&dest_link_b).expect("meta").file_type().is_symlink());
@@ -616,7 +616,7 @@ fn three_way_symlink_cycle() {
 
     // All three links should be copied preserving the cycle
     for name in ["a", "b", "c"] {
-        let dest_link = dest_root.join(name);
+        let dest_link = dest_root.join("src").join(name);
         assert!(
             fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink(),
             "link {name} should be preserved"
@@ -660,11 +660,11 @@ fn symlink_preserves_target_timestamp_not_link() {
     .expect("copy succeeds");
 
     // The symlink itself is preserved
-    let dest_link = dest_root.join("link");
+    let dest_link = dest_root.join("src").join("link");
     assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
 
     // Target should have its mtime preserved
-    let dest_target = dest_root.join("target.txt");
+    let dest_target = dest_root.join("src").join("target.txt");
     let target_meta = fs::metadata(&dest_target).expect("target meta");
     let target_mtime = FileTime::from_last_modification_time(&target_meta);
     assert_eq!(target_mtime, old_time);
@@ -703,11 +703,11 @@ fn symlink_to_directory_with_permissions() {
     .expect("copy succeeds");
 
     // Symlink should be preserved
-    let dest_link = dest_root.join("dir_link");
+    let dest_link = dest_root.join("src").join("dir_link");
     assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
 
     // Original directory should have permissions preserved
-    let dest_dir = dest_root.join("target_dir");
+    let dest_dir = dest_root.join("src").join("target_dir");
     let dir_perms = fs::metadata(&dest_dir).expect("dir meta").permissions();
     assert_eq!(dir_perms.mode() & 0o777, 0o755);
 }
@@ -749,7 +749,7 @@ fn symlink_omit_link_times_option() {
     )
     .expect("copy succeeds");
 
-    let dest_link = dest_root.join("link");
+    let dest_link = dest_root.join("src").join("link");
     assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
 
     // The symlink should exist and work
@@ -785,7 +785,7 @@ fn symlink_with_spaces_in_name() {
     )
     .expect("copy succeeds");
 
-    let dest_link = dest_root.join("link with spaces");
+    let dest_link = dest_root.join("src").join("link with spaces");
     assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
     assert_eq!(fs::read_link(&dest_link).expect("read"), Path::new("target file.txt"));
 }
@@ -818,7 +818,7 @@ fn symlink_with_unicode_characters() {
     )
     .expect("copy succeeds");
 
-    let dest_link = dest_root.join("link_\u{00f1}");
+    let dest_link = dest_root.join("src").join("link_\u{00f1}");
     assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
     assert_eq!(
         fs::read_link(&dest_link).expect("read"),
@@ -855,7 +855,7 @@ fn symlink_target_with_newline() {
     )
     .expect("copy succeeds");
 
-    let dest_link = dest_root.join("link");
+    let dest_link = dest_root.join("src").join("link");
     assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
     assert_eq!(
         fs::read_link(&dest_link).expect("read"),
@@ -890,7 +890,7 @@ fn symlink_to_current_directory() {
     )
     .expect("copy succeeds");
 
-    let dest_link = dest_root.join("dot_link");
+    let dest_link = dest_root.join("src").join("dot_link");
     assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
     assert_eq!(fs::read_link(&dest_link).expect("read"), Path::new("."));
 }
@@ -926,7 +926,7 @@ fn symlink_to_parent_within_safe_boundary() {
     )
     .expect("copy succeeds");
 
-    let dest_link = dest_root.join("subdir/parent_link");
+    let dest_link = dest_root.join("src").join("subdir/parent_link");
     assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
     assert_eq!(fs::read_link(&dest_link).expect("read"), Path::new(".."));
 }
@@ -972,8 +972,8 @@ fn hard_link_to_symlink_preserved() {
         .expect("copy succeeds");
 
     // Both should be symlinks in destination
-    let dest_link1 = dest_root.join("link1");
-    let dest_link2 = dest_root.join("link2");
+    let dest_link1 = dest_root.join("src").join("link1");
+    let dest_link2 = dest_root.join("src").join("link2");
 
     assert!(fs::symlink_metadata(&dest_link1).expect("meta").file_type().is_symlink());
     assert!(fs::symlink_metadata(&dest_link2).expect("meta").file_type().is_symlink());
@@ -1023,7 +1023,7 @@ fn symlink_size_is_target_path_length() {
 
     // Symlink size should be the length of the target path
     let source_link_meta = fs::symlink_metadata(&link).expect("source meta");
-    let dest_link = dest_root.join("link");
+    let dest_link = dest_root.join("src").join("link");
     let dest_link_meta = fs::symlink_metadata(&dest_link).expect("dest meta");
 
     // The size of a symlink is the length of its target path

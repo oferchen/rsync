@@ -33,7 +33,7 @@ fn transfer_request_with_omit_dir_times_skips_directory_timestamp() {
     assert!(stdout.is_empty());
     assert!(stderr.is_empty());
 
-    let dest_dir = dest_root.join("nested");
+    let dest_dir = dest_root.join("source").join("nested");
     let dest_file = dest_dir.join("file.txt");
 
     let dir_metadata = std::fs::metadata(&dest_dir).expect("dest dir metadata");
@@ -79,8 +79,8 @@ fn transfer_request_with_omit_link_times_skips_symlink_timestamp() {
     assert!(stdout.is_empty());
     assert!(stderr.is_empty());
 
-    let dest_target = dest_root.join("target.txt");
-    let dest_link = dest_root.join("link.txt");
+    let dest_target = dest_root.join("source").join("target.txt");
+    let dest_link = dest_root.join("source").join("link.txt");
 
     let dest_target_metadata = fs::metadata(&dest_target).expect("dest target metadata");
     let dest_link_metadata = fs::symlink_metadata(&dest_link).expect("dest link metadata");

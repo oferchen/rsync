@@ -321,9 +321,9 @@ fn execute_copies_mixed_fifos_and_sockets() {
         .expect("copy succeeds");
 
     // Both FIFO and socket should be created
-    let dest_fifo = dest_root.join("pipe");
-    let dest_socket = dest_root.join("sock");
-    let dest_regular = dest_root.join("regular.txt");
+    let dest_fifo = dest_root.join("source").join("pipe");
+    let dest_socket = dest_root.join("source").join("sock");
+    let dest_regular = dest_root.join("source").join("regular.txt");
 
     assert!(
         fs::symlink_metadata(&dest_fifo)
@@ -385,8 +385,8 @@ fn execute_without_specials_skips_both_fifos_and_sockets() {
 
     let summary = report.summary();
     assert_eq!(summary.fifos_created(), 0);
-    assert!(!dest_root.join("pipe").exists());
-    assert!(!dest_root.join("sock").exists());
+    assert!(!dest_root.join("source").join("pipe").exists());
+    assert!(!dest_root.join("source").join("sock").exists());
 
     let skip_count = report
         .records()
@@ -439,7 +439,7 @@ fn execute_archive_mode_copies_socket() {
         )
         .expect("archive copy succeeds");
 
-    let dest_socket = dest_root.join("my.sock");
+    let dest_socket = dest_root.join("source").join("my.sock");
     let metadata = fs::symlink_metadata(&dest_socket).expect("dest socket metadata");
     assert!(metadata.file_type().is_socket());
     assert_eq!(summary.fifos_created(), 1);
@@ -486,18 +486,18 @@ fn execute_archive_mode_copies_fifo_and_socket_together() {
         .expect("archive copy succeeds");
 
     assert!(
-        fs::symlink_metadata(dest_root.join("pipe"))
+        fs::symlink_metadata(dest_root.join("source").join("pipe"))
             .expect("meta")
             .file_type()
             .is_fifo()
     );
     assert!(
-        fs::symlink_metadata(dest_root.join("sock"))
+        fs::symlink_metadata(dest_root.join("source").join("sock"))
             .expect("meta")
             .file_type()
             .is_socket()
     );
-    assert!(dest_root.join("file.txt").is_file());
+    assert!(dest_root.join("source").join("file.txt").is_file());
     assert_eq!(summary.fifos_created(), 2);
     assert_eq!(summary.files_copied(), 1);
 }
@@ -660,8 +660,8 @@ fn execute_preserves_socket_hard_links() {
         )
         .expect("copy succeeds");
 
-    let dest_a = dest_root.join("sock-a");
-    let dest_b = dest_root.join("sock-b");
+    let dest_a = dest_root.join("source").join("sock-a");
+    let dest_b = dest_root.join("source").join("sock-b");
     let meta_a = fs::symlink_metadata(&dest_a).expect("dest a metadata");
     let meta_b = fs::symlink_metadata(&dest_b).expect("dest b metadata");
 
@@ -896,13 +896,13 @@ fn execute_copies_socket_and_symlink_together() {
         .expect("copy succeeds");
 
     assert!(
-        fs::symlink_metadata(dest_root.join("my.sock"))
+        fs::symlink_metadata(dest_root.join("source").join("my.sock"))
             .expect("meta")
             .file_type()
             .is_socket()
     );
     assert!(
-        fs::symlink_metadata(dest_root.join("link"))
+        fs::symlink_metadata(dest_root.join("source").join("link"))
             .expect("meta")
             .file_type()
             .is_symlink()

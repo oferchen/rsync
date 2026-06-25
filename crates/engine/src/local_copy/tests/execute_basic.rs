@@ -310,7 +310,7 @@ fn execute_copies_directory_tree() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
     assert_eq!(
-        fs::read(dest_root.join("nested").join("file.txt")).expect("read"),
+        fs::read(dest_root.join("source").join("nested").join("file.txt")).expect("read"),
         b"tree"
     );
     assert_eq!(summary.files_copied(), 1);
@@ -629,7 +629,7 @@ fn execute_copies_deeply_nested_directory() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    let dest_file = dest_root.join("a").join("b").join("c").join("d").join("deep.txt");
+    let dest_file = dest_root.join("source").join("a").join("b").join("c").join("d").join("deep.txt");
     assert_eq!(fs::read(&dest_file).expect("read deep file"), b"deep content");
 }
 
@@ -704,8 +704,8 @@ fn execute_summary_tracks_directories_created() {
         .expect("copy succeeds");
 
     assert!(summary.directories_created() >= 3);
-    assert!(dest_root.join("dir1").join("subdir").exists());
-    assert!(dest_root.join("dir2").exists());
+    assert!(dest_root.join("source").join("dir1").join("subdir").exists());
+    assert!(dest_root.join("source").join("dir2").exists());
 }
 
 
@@ -851,8 +851,8 @@ fn execute_copies_directory_with_files() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 2);
-    assert_eq!(fs::read(dest_root.join("file1.txt")).expect("read"), b"content1");
-    assert_eq!(fs::read(dest_root.join("file2.txt")).expect("read"), b"content2");
+    assert_eq!(fs::read(dest_root.join("source").join("file1.txt")).expect("read"), b"content1");
+    assert_eq!(fs::read(dest_root.join("source").join("file2.txt")).expect("read"), b"content2");
 }
 
 #[test]
@@ -876,8 +876,8 @@ fn execute_copies_nested_directories() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 2);
-    assert_eq!(fs::read(dest_root.join("root.txt")).expect("read"), b"root");
-    assert_eq!(fs::read(dest_root.join("subdir").join("nested.txt")).expect("read"), b"nested");
+    assert_eq!(fs::read(dest_root.join("source").join("root.txt")).expect("read"), b"root");
+    assert_eq!(fs::read(dest_root.join("source").join("subdir").join("nested.txt")).expect("read"), b"nested");
 }
 
 
@@ -951,8 +951,8 @@ fn execute_preserves_timestamps_across_multiple_files() {
 
     assert_eq!(summary.files_copied(), 2);
 
-    let dest_file1 = dest_root.join("file1.txt");
-    let dest_file2 = dest_root.join("file2.txt");
+    let dest_file1 = dest_root.join("source").join("file1.txt");
+    let dest_file2 = dest_root.join("source").join("file2.txt");
 
     let dest_mtime1 = FileTime::from_last_modification_time(
         &fs::metadata(&dest_file1).expect("file1 metadata"),
@@ -1135,8 +1135,8 @@ fn execute_preserves_permissions_across_directory_tree() {
 
     assert_eq!(summary.files_copied(), 2);
 
-    let dest_file1 = dest_root.join("public.txt");
-    let dest_file2 = dest_root.join("private.txt");
+    let dest_file1 = dest_root.join("source").join("public.txt");
+    let dest_file2 = dest_root.join("source").join("private.txt");
 
     assert_eq!(
         fs::metadata(&dest_file1).expect("file1 metadata").permissions().mode() & 0o777,
@@ -1229,7 +1229,7 @@ fn execute_handles_various_file_sizes() {
     assert_eq!(summary.files_copied(), sizes.len() as u64);
 
     for (name, size) in &sizes {
-        let dest_file = dest_root.join(name);
+        let dest_file = dest_root.join("source").join(name);
         assert_eq!(
             fs::metadata(&dest_file).expect("metadata").len(),
             *size as u64,
@@ -1445,7 +1445,7 @@ fn execute_handles_deep_directory_nesting() {
     assert_eq!(summary.files_copied(), 1);
 
     // Verify the deeply nested file was copied
-    let mut expected_path = dest_root.clone();
+    let mut expected_path = dest_root.join("source");
     for i in 0..10 {
         expected_path = expected_path.join(format!("level{i}"));
     }
@@ -1474,9 +1474,9 @@ fn execute_copies_multiple_empty_directories() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 0);
-    assert!(dest_root.join("empty1").is_dir());
-    assert!(dest_root.join("empty2").is_dir());
-    assert!(dest_root.join("empty3").is_dir());
+    assert!(dest_root.join("source").join("empty1").is_dir());
+    assert!(dest_root.join("source").join("empty2").is_dir());
+    assert!(dest_root.join("source").join("empty3").is_dir());
 }
 
 

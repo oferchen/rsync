@@ -422,8 +422,8 @@ fn min_size_prunes_empty_directories_when_enabled() {
         .expect("copy succeeds");
 
     // Directories should be pruned since all files were filtered out
-    assert!(!ctx.dest.join("source/empty_dir").exists(), "empty_dir should be pruned");
-    assert!(!ctx.dest.join("source/dir_with_small_files").exists(),
+    assert!(!ctx.dest.join("source").join("source/empty_dir").exists(), "empty_dir should be pruned");
+    assert!(!ctx.dest.join("source").join("source/dir_with_small_files").exists(),
             "dir_with_small_files should be pruned");
 }
 
@@ -459,8 +459,8 @@ fn min_size_does_not_affect_symlinks() {
         .expect("copy succeeds");
 
     // Target file should be excluded by min-size
-    assert!(!ctx.dest.join("source/target.txt").exists(), "small target excluded");
+    assert!(!ctx.dest.join("source").join("source/target.txt").exists(), "small target excluded");
 
     // Symlink should still be created (symlinks are not filtered by size)
-    assert!(ctx.dest.join("source/link.txt").exists(), "symlink should be included");
+    assert!(ctx.dest.join("source").join("source/link.txt").exists(), "symlink should be included");
 }
