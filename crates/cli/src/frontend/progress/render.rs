@@ -234,21 +234,25 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
         .filter(|event| is_progress_event(event.kind()))
         .collect();
 
+    // Denominator counts every checked entry; the numerator counts down only the
+    // transfers, so to-chk reaches 0 on the last transferred file even when an
+    // up-to-date entry (e.g. an unchanged parent dir) trails it in the list.
     let total = flist_entries.len();
-    if total == 0 {
+    let transferred_total = flist_entries
+        .iter()
+        .filter(|event| !is_uptodate_event(event))
+        .count();
+    if transferred_total == 0 {
         return Ok(false);
     }
 
     let mut xfr_index = 0usize;
-    let mut emitted_any = false;
-    for (position, event) in flist_entries.into_iter().enumerate() {
-        // Up-to-date entries advance the `to-chk` position but emit no line.
+    for event in flist_entries.into_iter() {
         if is_uptodate_event(event) {
             continue;
         }
-        emitted_any = true;
         xfr_index += 1;
-        let remaining = total - position - 1;
+        let remaining = transferred_total - xfr_index;
 
         writeln!(stdout, "{}", event.relative_path().display())?;
 
@@ -275,7 +279,7 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
         )?;
     }
 
-    Ok(emitted_any)
+    Ok(true)
 }
 
 /// Emits a statistics summary mirroring the subset of counters supported by the local engine.
