@@ -246,9 +246,13 @@ fn verbose_human_readable_formats_sizes() {
     std::fs::write(&source, vec![0u8; 1_536]).expect("write source");
 
     let dest_default = tmp.path().join("default.bin");
+    // --stats so the deterministic `Total file size: 1,536 bytes` line is
+    // present: `Total bytes sent` now also includes the file-list size (like
+    // upstream), so it is no longer exactly the 1,536-byte payload.
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-vv"),
+        OsString::from("--stats"),
         source.clone().into_os_string(),
         dest_default.into_os_string(),
     ]);
@@ -262,6 +266,7 @@ fn verbose_human_readable_formats_sizes() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-vv"),
+        OsString::from("--stats"),
         OsString::from("--human-readable"),
         source.into_os_string(),
         dest_human.into_os_string(),
@@ -285,6 +290,7 @@ fn verbose_human_readable_combined_formats_sizes() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-vv"),
+        OsString::from("--stats"),
         OsString::from("--human-readable=2"),
         source.into_os_string(),
         destination.into_os_string(),

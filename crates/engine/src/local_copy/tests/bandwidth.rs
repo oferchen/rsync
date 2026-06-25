@@ -193,7 +193,9 @@ fn execute_records_transmitted_bytes_for_uncompressed_copy() {
     let expected = payload.len() as u64;
     assert_eq!(summary.bytes_copied(), expected);
     assert_eq!(summary.bytes_sent(), expected);
-    assert_eq!(summary.bytes_received(), expected);
+    // A local copy records the data as sent, not received: it emulates the
+    // protocol sender, which writes the data and reads back only small replies.
+    assert_eq!(summary.bytes_received(), 0);
     assert_eq!(summary.matched_bytes(), 0);
 }
 
