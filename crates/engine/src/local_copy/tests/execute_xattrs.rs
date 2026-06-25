@@ -381,19 +381,19 @@ mod xattr_tests {
 
         // Verify xattrs at all levels
         assert_eq!(
-            xattr::get(&dest_root, "user.root_attr")
+            xattr::get(dest_root.join("source"), "user.root_attr")
                 .expect("read")
                 .expect("present"),
             b"root"
         );
         assert_eq!(
-            xattr::get(dest_root.join("level1"), "user.level1_attr")
+            xattr::get(dest_root.join("source").join("level1"), "user.level1_attr")
                 .expect("read")
                 .expect("present"),
             b"level1"
         );
         assert_eq!(
-            xattr::get(dest_root.join("level1").join("level2"), "user.level2_attr")
+            xattr::get(dest_root.join("source").join("level1").join("level2"), "user.level2_attr")
                 .expect("read")
                 .expect("present"),
             b"level2"
@@ -436,14 +436,14 @@ mod xattr_tests {
 
         // Verify directory xattr
         assert_eq!(
-            xattr::get(&dest_root, "user.dir_metadata")
+            xattr::get(dest_root.join("source"), "user.dir_metadata")
                 .expect("read")
                 .expect("present"),
             b"dir_value"
         );
         // Verify file xattr
         assert_eq!(
-            xattr::get(dest_root.join("file.txt"), "user.file_metadata")
+            xattr::get(dest_root.join("source").join("file.txt"), "user.file_metadata")
                 .expect("read")
                 .expect("present"),
             b"file_value"

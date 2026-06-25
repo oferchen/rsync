@@ -27,8 +27,8 @@ fn execute_with_delay_updates_preserves_hard_links() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let dest_a = dest_root.join("file-a");
-    let dest_b = dest_root.join("file-b");
+    let dest_a = dest_root.join("source").join("file-a");
+    let dest_b = dest_root.join("source").join("file-b");
     let metadata_a = fs::metadata(&dest_a).expect("metadata a");
     let metadata_b = fs::metadata(&dest_b).expect("metadata b");
 
@@ -133,9 +133,9 @@ fn execute_detects_hard_links_between_files() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let dest_a = dest_root.join("file-a.txt");
-    let dest_b = dest_root.join("file-b.txt");
-    let dest_c = dest_root.join("file-c.txt");
+    let dest_a = dest_root.join("source").join("file-a.txt");
+    let dest_b = dest_root.join("source").join("file-b.txt");
+    let dest_c = dest_root.join("source").join("file-c.txt");
 
     let dest_metadata_a = fs::metadata(&dest_a).expect("dest metadata a");
     let dest_metadata_b = fs::metadata(&dest_b).expect("dest metadata b");
@@ -188,10 +188,10 @@ fn execute_preserves_multiple_hard_links_to_same_inode() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let dest_original = dest_root.join("original.txt");
-    let dest_link1 = dest_root.join("link1.txt");
-    let dest_link2 = dest_root.join("link2.txt");
-    let dest_link3 = dest_root.join("link3.txt");
+    let dest_original = dest_root.join("source").join("original.txt");
+    let dest_link1 = dest_root.join("source").join("link1.txt");
+    let dest_link2 = dest_root.join("source").join("link2.txt");
+    let dest_link3 = dest_root.join("source").join("link3.txt");
 
     let dest_metadata_orig = fs::metadata(&dest_original).expect("dest metadata orig");
     let dest_metadata_link1 = fs::metadata(&dest_link1).expect("dest metadata link1");
@@ -253,9 +253,9 @@ fn execute_hardlink_tracking_across_subdirectories() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let dest_file1 = dest_root.join("dir1").join("file.txt");
-    let dest_file2 = dest_root.join("dir2").join("linked.txt");
-    let dest_file3 = dest_root.join("root-link.txt");
+    let dest_file1 = dest_root.join("source").join("dir1").join("file.txt");
+    let dest_file2 = dest_root.join("source").join("dir2").join("linked.txt");
+    let dest_file3 = dest_root.join("source").join("root-link.txt");
 
     let dest_metadata1 = fs::metadata(&dest_file1).expect("dest metadata 1");
     let dest_metadata2 = fs::metadata(&dest_file2).expect("dest metadata 2");
@@ -314,8 +314,8 @@ fn execute_without_hard_links_option_copies_separately() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let dest_a = dest_root.join("file-a.txt");
-    let dest_b = dest_root.join("file-b.txt");
+    let dest_a = dest_root.join("source").join("file-a.txt");
+    let dest_b = dest_root.join("source").join("file-b.txt");
 
     let dest_metadata_a = fs::metadata(&dest_a).expect("dest metadata a");
     let dest_metadata_b = fs::metadata(&dest_b).expect("dest metadata b");
@@ -366,9 +366,9 @@ fn execute_hardlink_with_partial_and_delay_updates() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let dest_a = dest_root.join("alpha.txt");
-    let dest_b = dest_root.join("beta.txt");
-    let dest_c = dest_root.join("gamma.txt");
+    let dest_a = dest_root.join("source").join("alpha.txt");
+    let dest_b = dest_root.join("source").join("beta.txt");
+    let dest_c = dest_root.join("source").join("gamma.txt");
 
     let metadata_a = fs::metadata(&dest_a).expect("metadata a");
     let metadata_b = fs::metadata(&dest_b).expect("metadata b");
@@ -438,10 +438,10 @@ fn execute_hardlink_tracking_table_consistency() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let dest1 = dest_root.join("first.txt");
-    let dest2 = dest_root.join("second.txt");
-    let dest3 = dest_root.join("third.txt");
-    let dest4 = dest_root.join("fourth.txt");
+    let dest1 = dest_root.join("source").join("first.txt");
+    let dest2 = dest_root.join("source").join("second.txt");
+    let dest3 = dest_root.join("source").join("third.txt");
+    let dest4 = dest_root.join("source").join("fourth.txt");
 
     let dest_meta1 = fs::metadata(&dest1).expect("dest meta1");
     let dest_meta2 = fs::metadata(&dest2).expect("dest meta2");
@@ -487,8 +487,9 @@ fn execute_hardlink_with_existing_destination() {
     let dest_root = temp.path().join("dest");
     fs::create_dir_all(&dest_root).expect("create dest root");
 
-    let dest_a = dest_root.join("file-a.txt");
-    let dest_b = dest_root.join("file-b.txt");
+    fs::create_dir_all(dest_root.join("source")).expect("create dest source dir");
+    let dest_a = dest_root.join("source").join("file-a.txt");
+    let dest_b = dest_root.join("source").join("file-b.txt");
     fs::write(&dest_a, b"old content a").expect("write old dest a");
     fs::write(&dest_b, b"old content b").expect("write old dest b");
 
@@ -504,8 +505,8 @@ fn execute_hardlink_with_existing_destination() {
         .expect("copy succeeds");
 
     // Files are created in dest/source/ subdirectory
-    let dest_a_actual = dest_root.join("source/file-a.txt");
-    let dest_b_actual = dest_root.join("source/file-b.txt");
+    let dest_a_actual = dest_root.join("source").join("file-a.txt");
+    let dest_b_actual = dest_root.join("source").join("file-b.txt");
     let dest_metadata_a = fs::metadata(&dest_a_actual).expect("dest metadata a");
     let dest_metadata_b = fs::metadata(&dest_b_actual).expect("dest metadata b");
 
@@ -548,9 +549,9 @@ fn execute_hardlink_preserves_first_occurrence_then_links() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let dest_orig = dest_root.join("aaa-first.txt");
-    let dest_link1 = dest_root.join("bbb-second.txt");
-    let dest_link2 = dest_root.join("ccc-third.txt");
+    let dest_orig = dest_root.join("source").join("aaa-first.txt");
+    let dest_link1 = dest_root.join("source").join("bbb-second.txt");
+    let dest_link2 = dest_root.join("source").join("ccc-third.txt");
 
     assert!(dest_orig.exists());
     assert!(dest_link1.exists());
@@ -607,8 +608,8 @@ fn execute_hardlink_detection_by_device_inode() {
         .expect("copy succeeds");
 
     // Verify files were NOT hardlinked (different source inodes)
-    let dest_a = dest_root.join("similar_a.txt");
-    let dest_b = dest_root.join("similar_b.txt");
+    let dest_a = dest_root.join("source").join("similar_a.txt");
+    let dest_b = dest_root.join("source").join("similar_b.txt");
 
     let dest_meta_a = fs::metadata(&dest_a).expect("dest meta a");
     let dest_meta_b = fs::metadata(&dest_b).expect("dest meta b");
@@ -656,8 +657,8 @@ fn execute_hardlink_zero_length_files() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let dest_a = dest_root.join("empty_a.txt");
-    let dest_b = dest_root.join("empty_b.txt");
+    let dest_a = dest_root.join("source").join("empty_a.txt");
+    let dest_b = dest_root.join("source").join("empty_b.txt");
 
     let dest_meta_a = fs::metadata(&dest_a).expect("dest meta a");
     let dest_meta_b = fs::metadata(&dest_b).expect("dest meta b");
@@ -699,8 +700,8 @@ fn execute_hardlink_long_filenames() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let dest_a = dest_root.join(&long_name_a);
-    let dest_b = dest_root.join(&long_name_b);
+    let dest_a = dest_root.join("source").join(&long_name_a);
+    let dest_b = dest_root.join("source").join(&long_name_b);
 
     let dest_meta_a = fs::metadata(&dest_a).expect("dest meta a");
     let dest_meta_b = fs::metadata(&dest_b).expect("dest meta b");
@@ -741,9 +742,9 @@ fn execute_hardlink_special_characters_in_names() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let dest_a = dest_root.join("file with spaces.txt");
-    let dest_b = dest_root.join("file-with-dashes.txt");
-    let dest_c = dest_root.join("file_with_underscores.txt");
+    let dest_a = dest_root.join("source").join("file with spaces.txt");
+    let dest_b = dest_root.join("source").join("file-with-dashes.txt");
+    let dest_c = dest_root.join("source").join("file_with_underscores.txt");
 
     let dest_meta_a = fs::metadata(&dest_a).expect("dest meta a");
     let dest_meta_b = fs::metadata(&dest_b).expect("dest meta b");
@@ -869,8 +870,8 @@ fn execute_hardlink_nlink_changes_during_operation() {
         .expect("copy succeeds");
 
     // Verify the result is correct even if timing varies
-    let dest_a = dest_root.join("file-a.txt");
-    let dest_b = dest_root.join("file-b.txt");
+    let dest_a = dest_root.join("source").join("file-a.txt");
+    let dest_b = dest_root.join("source").join("file-b.txt");
 
     assert!(dest_a.exists(), "dest_a should exist");
     assert!(dest_b.exists(), "dest_b should exist");
@@ -920,8 +921,8 @@ fn execute_hardlink_in_writable_directory() {
         .expect("copy succeeds");
 
     // Files should be in dest/source/ subdirectory
-    let dest_a = dest_root.join("source/file-a.txt");
-    let dest_b = dest_root.join("source/file-b.txt");
+    let dest_a = dest_root.join("source").join("file-a.txt");
+    let dest_b = dest_root.join("source").join("file-b.txt");
 
     let dest_meta_a = fs::metadata(&dest_a).expect("dest meta a");
     let dest_meta_b = fs::metadata(&dest_b).expect("dest meta b");
@@ -968,9 +969,9 @@ fn execute_hardlink_mixed_with_symlinks() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let dest_regular = dest_root.join("regular.txt");
-    let dest_hardlink = dest_root.join("hardlink.txt");
-    let dest_symlink = dest_root.join("symlink.txt");
+    let dest_regular = dest_root.join("source").join("regular.txt");
+    let dest_hardlink = dest_root.join("source").join("hardlink.txt");
+    let dest_symlink = dest_root.join("source").join("symlink.txt");
 
     // Verify hardlink is preserved
     let dest_meta_regular = fs::metadata(&dest_regular).expect("dest meta regular");

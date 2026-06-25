@@ -40,10 +40,13 @@ fn copy_with_dir_merge(source: &Path, dest: &Path) {
     ))])
     .expect("filter program compiles");
 
-    let operands = vec![
-        source.to_path_buf().into_os_string(),
-        dest.to_path_buf().into_os_string(),
-    ];
+    // Trailing slash so the source contents copy into `dest` directly. Without
+    // it, upstream get_local_name keeps the source name (`dest/<source>/...`);
+    // these tests assert on the per-directory filter decisions, not the layout,
+    // so copying the contents keeps every assertion path stable.
+    let mut source_arg = source.to_path_buf().into_os_string();
+    source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_arg, dest.to_path_buf().into_os_string()];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
     let options = LocalCopyOptions::new()
         .recursive(true)

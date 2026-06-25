@@ -190,15 +190,15 @@ fn execute_whole_file_in_recursive_directory_copy() {
 
     // Verify content
     assert_eq!(
-        fs::read(dest_root.join("source/file1.txt")).expect("read file1"),
+        fs::read(dest_root.join("source").join("file1.txt")).expect("read file1"),
         b"first file"
     );
     assert_eq!(
-        fs::read(dest_root.join("source/file2.txt")).expect("read file2"),
+        fs::read(dest_root.join("source").join("file2.txt")).expect("read file2"),
         b"second file"
     );
     assert_eq!(
-        fs::read(dest_root.join("source/subdir/file3.txt")).expect("read file3"),
+        fs::read(dest_root.join("source").join("subdir").join("file3.txt")).expect("read file3"),
         b"third file"
     );
 }

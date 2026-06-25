@@ -113,7 +113,7 @@ fn execute_executability_only_affects_regular_files() {
     // Directory permissions should not be affected by executability flag
     // (directories need execute bits for traversal, so this test just ensures
     // that executability flag doesn't interfere with normal directory handling)
-    let dir_metadata = fs::metadata(&dest_dir).expect("dest dir metadata");
+    let dir_metadata = fs::metadata(dest_dir.join("source")).expect("dest dir metadata");
     assert!(dir_metadata.is_dir());
 
     assert_eq!(summary.files_copied(), 1);

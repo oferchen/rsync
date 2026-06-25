@@ -121,7 +121,7 @@ fn force_directory_replaces_file() {
 
     assert!(destination.is_dir(), "file should be replaced by directory");
     assert_eq!(
-        fs::read(destination.join("inner.txt")).expect("read inner"),
+        fs::read(destination.join("srcdir").join("inner.txt")).expect("read inner"),
         b"inner"
     );
 }
@@ -573,9 +573,9 @@ fn force_with_no_type_conflict_copies_normally() {
         )
         .expect("copy succeeds");
 
-    assert!(dest_root.join("file.txt").is_file());
+    assert!(dest_root.join("source").join("file.txt").is_file());
     assert_eq!(
-        fs::read(dest_root.join("file.txt")).expect("read"),
+        fs::read(dest_root.join("source").join("file.txt")).expect("read"),
         b"content"
     );
     assert_eq!(summary.files_copied(), 1);

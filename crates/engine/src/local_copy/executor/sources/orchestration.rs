@@ -14,6 +14,7 @@ use crate::local_copy::{
     SourceSpec,
 };
 
+use super::super::file::remove_existing_destination;
 use super::super::non_empty_path;
 use super::destination::{ensure_destination_directory, query_destination_state};
 use super::handlers::{
@@ -76,6 +77,52 @@ pub(crate) fn copy_sources(
             }
 
             if multiple_sources {
+                destination_root_created |= ensure_destination_directory(
+                    destination_path,
+                    &mut destination_state,
+                    context.mode(),
+                )?;
+            }
+
+            // upstream: main.c:778 get_local_name() - `if (file_total > 1 ||
+            // trailing_slash) { do_mkdir(dest_path); ... }`. The transfer-level
+            // decision is made ONCE, from the flist entry count. For a single
+            // no-trailing-slash directory source `file_total > 1` requires the
+            // directory's children to be enumerated into the flist, which only
+            // happens under recursion (`-r`/`-a`): then pre-create the
+            // destination root here (counting it and emitting `created directory
+            // <dest>`) and let `destination_behaves_like_directory` keep the
+            // source name. Without `-r`/`-d` the directory operand is skipped
+            // entirely (`flist.c:2451` `!xfer_dirs`) and no destination is
+            // created; with `-d` alone a no-trailing-slash directory contributes
+            // only its own entry (`file_total == 1`), so the name is dropped and
+            // the destination is materialised AS the directory. Gating on
+            // recursion keeps all three cases byte-for-byte with upstream.
+            if !multiple_sources
+                && context.recursive_enabled()
+                && !plan.destination_spec().force_directory()
+                && !destination_state.is_dir
+                && let Some(source) = plan.sources().first()
+                && !source.copy_contents()
+                && fs::symlink_metadata(source.path()).is_ok_and(|meta| meta.is_dir())
+                && fs::read_dir(source.path()).is_ok_and(|mut entries| entries.next().is_some())
+            {
+                // A pre-existing non-directory destination blocks the mkdir.
+                // When force replacements are enabled, remove it first (mirrors
+                // the per-entry force-replace path in handlers.rs) so the
+                // source name is preserved as `dest/<source>/`. Without force,
+                // refuse to replace the existing file with a directory, mirroring
+                // the recursive executor's error for the same conflict.
+                if destination_state.exists && !destination_state.is_dir {
+                    if context.force_replacements_enabled() && !context.mode().is_dry_run() {
+                        remove_existing_destination(destination_path)?;
+                        destination_state.exists = false;
+                    } else {
+                        return Err(LocalCopyError::invalid_argument(
+                            LocalCopyArgumentError::ReplaceNonDirectoryWithDirectory,
+                        ));
+                    }
+                }
                 destination_root_created |= ensure_destination_directory(
                     destination_path,
                     &mut destination_state,

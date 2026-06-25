@@ -280,7 +280,7 @@ fn execute_applies_owner_override_to_directory() {
         )
         .expect("copy succeeds");
 
-    let metadata = fs::metadata(&dest_root).expect("dest metadata");
+    let metadata = fs::metadata(dest_root.join("source")).expect("dest metadata");
     assert_eq!(metadata.uid(), override_uid);
     assert!(summary.directories_created() >= 1);
 }
@@ -334,7 +334,7 @@ fn execute_applies_owner_override_to_symlink() {
         )
         .expect("copy succeeds");
 
-    let dest_link = dest_root.join("link");
+    let dest_link = dest_root.join("source").join("link");
     let metadata = fs::symlink_metadata(&dest_link).expect("symlink metadata");
     assert_eq!(metadata.uid(), override_uid);
     assert!(summary.symlinks_copied() >= 1);
@@ -392,8 +392,8 @@ fn execute_applies_group_override_to_multiple_files() {
         )
         .expect("copy succeeds");
 
-    let dest1 = dest_root.join("file1.txt");
-    let dest2 = dest_root.join("file2.txt");
+    let dest1 = dest_root.join("source").join("file1.txt");
+    let dest2 = dest_root.join("source").join("file2.txt");
     let metadata1 = fs::metadata(&dest1).expect("metadata1");
     let metadata2 = fs::metadata(&dest2).expect("metadata2");
 

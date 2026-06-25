@@ -115,9 +115,9 @@ fn times_flag_preserves_mtime_on_multiple_files() {
     .expect("copy succeeds");
 
     // Verify each file has its mtime preserved
-    let dest_file1 = dest_root.join("file1.txt");
-    let dest_file2 = dest_root.join("file2.txt");
-    let dest_file3 = dest_root.join("file3.txt");
+    let dest_file1 = dest_root.join("source").join("file1.txt");
+    let dest_file2 = dest_root.join("source").join("file2.txt");
+    let dest_file3 = dest_root.join("source").join("file3.txt");
 
     let dest_mtime1 = FileTime::from_last_modification_time(&fs::metadata(&dest_file1).expect("file1 meta"));
     let dest_mtime2 = FileTime::from_last_modification_time(&fs::metadata(&dest_file2).expect("file2 meta"));
@@ -390,7 +390,7 @@ fn times_flag_on_directory() {
     )
     .expect("copy succeeds");
 
-    let dest_metadata = fs::metadata(&dest_dir).expect("dest metadata");
+    let dest_metadata = fs::metadata(dest_dir.join("source_dir")).expect("dest metadata");
     let dest_mtime = FileTime::from_last_modification_time(&dest_metadata);
 
     assert_eq!(dest_mtime, dir_mtime, "directory mtime should be preserved with --times");
@@ -893,9 +893,9 @@ fn nested_directory_timestamps_preserved() {
     .expect("copy succeeds");
 
     // Verify each directory level has correct mtime
-    let dest_root_mtime = FileTime::from_last_modification_time(&fs::metadata(&dest_root).expect("root meta"));
-    let dest_level1_mtime = FileTime::from_last_modification_time(&fs::metadata(dest_root.join("level1")).expect("level1 meta"));
-    let dest_level2_mtime = FileTime::from_last_modification_time(&fs::metadata(dest_root.join("level1/level2")).expect("level2 meta"));
+    let dest_root_mtime = FileTime::from_last_modification_time(&fs::metadata(dest_root.join("source")).expect("root meta"));
+    let dest_level1_mtime = FileTime::from_last_modification_time(&fs::metadata(dest_root.join("source").join("level1")).expect("level1 meta"));
+    let dest_level2_mtime = FileTime::from_last_modification_time(&fs::metadata(dest_root.join("source").join("level1/level2")).expect("level2 meta"));
 
     assert_eq!(dest_root_mtime, root_mtime, "root directory mtime should be preserved");
     assert_eq!(dest_level1_mtime, level1_mtime, "level1 directory mtime should be preserved");

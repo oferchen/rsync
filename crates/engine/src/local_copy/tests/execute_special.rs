@@ -127,8 +127,8 @@ fn execute_preserves_fifo_hard_links() {
         )
         .expect("copy succeeds");
 
-    let dest_a = dest_root.join("pipe-a");
-    let dest_b = dest_root.join("pipe-b");
+    let dest_a = dest_root.join("source").join("pipe-a");
+    let dest_b = dest_root.join("source").join("pipe-b");
     let meta_a = fs::symlink_metadata(&dest_a).expect("dest a metadata");
     let meta_b = fs::symlink_metadata(&dest_b).expect("dest b metadata");
 
@@ -375,8 +375,8 @@ fn execute_with_one_file_system_skips_mount_points() {
     )
     .expect("copy executes");
 
-    assert!(destination.join("data").join("file.txt").exists());
-    assert!(!destination.join("mount").exists());
+    assert!(destination.join("source").join("data").join("file.txt").exists());
+    assert!(!destination.join("source").join("mount").exists());
     assert!(report.records().iter().any(|record| {
         record.action() == &LocalCopyAction::SkippedMountPoint
             && record.relative_path().to_string_lossy().contains("mount")
@@ -419,7 +419,7 @@ fn execute_without_one_file_system_crosses_mount_points() {
     )
     .expect("copy executes");
 
-    assert!(destination.join("mount").join("inside.txt").exists());
+    assert!(destination.join("source").join("mount").join("inside.txt").exists());
     assert!(
         report
             .records()
@@ -490,7 +490,7 @@ fn execute_copies_symlink_within_directory() {
         .expect("copy succeeds");
 
     assert_eq!(summary.symlinks_copied(), 1);
-    let dest_link = dest_root.join("link");
+    let dest_link = dest_root.join("source").join("link");
     let dest_target = fs::read_link(&dest_link).expect("read dest link");
     assert_eq!(dest_target, Path::new("target.txt"));
 }
@@ -528,7 +528,7 @@ fn execute_copies_symlink_with_safe_links_keeps_safe() {
         .expect("copy succeeds");
 
     assert_eq!(summary.symlinks_copied(), 1);
-    let dest_link = dest_root.join("safe_link");
+    let dest_link = dest_root.join("source").join("safe_link");
     assert!(fs::symlink_metadata(&dest_link).expect("meta").file_type().is_symlink());
 }
 
@@ -568,7 +568,7 @@ fn execute_with_safe_links_skips_unsafe() {
 
     let summary = report.summary();
     assert_eq!(summary.symlinks_copied(), 0);
-    assert!(!dest_root.join("unsafe_link").exists());
+    assert!(!dest_root.join("source").join("unsafe_link").exists());
     assert!(report.records().iter().any(|record| {
         matches!(record.action(), LocalCopyAction::SkippedUnsafeSymlink)
     }));
@@ -603,8 +603,8 @@ fn execute_preserves_hard_links_within_directory() {
         )
         .expect("copy succeeds");
 
-    let dest_a = dest_root.join("file_a.txt");
-    let dest_b = dest_root.join("file_b.txt");
+    let dest_a = dest_root.join("source").join("file_a.txt");
+    let dest_b = dest_root.join("source").join("file_b.txt");
     let meta_a = fs::metadata(&dest_a).expect("meta a");
     let meta_b = fs::metadata(&dest_b).expect("meta b");
 
@@ -638,8 +638,8 @@ fn execute_without_hard_links_copies_separately() {
         .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
         .expect("copy succeeds");
 
-    let dest_a = dest_root.join("file_a.txt");
-    let dest_b = dest_root.join("file_b.txt");
+    let dest_a = dest_root.join("source").join("file_a.txt");
+    let dest_b = dest_root.join("source").join("file_b.txt");
     let meta_a = fs::metadata(&dest_a).expect("meta a");
     let meta_b = fs::metadata(&dest_b).expect("meta b");
 
@@ -777,13 +777,13 @@ fn execute_copies_mixed_special_files() {
     assert_eq!(summary.symlinks_copied(), 1);
     assert_eq!(summary.fifos_created(), 1);
 
-    assert!(dest_root.join("regular.txt").is_file());
-    assert!(dest_root.join("target.txt").is_file());
-    assert!(fs::symlink_metadata(dest_root.join("link"))
+    assert!(dest_root.join("source").join("regular.txt").is_file());
+    assert!(dest_root.join("source").join("target.txt").is_file());
+    assert!(fs::symlink_metadata(dest_root.join("source").join("link"))
         .expect("meta")
         .file_type()
         .is_symlink());
-    assert!(fs::symlink_metadata(dest_root.join("fifo"))
+    assert!(fs::symlink_metadata(dest_root.join("source").join("fifo"))
         .expect("meta")
         .file_type()
         .is_fifo());
@@ -823,7 +823,7 @@ fn execute_symlink_pointing_to_fifo_preserved_as_symlink() {
         .expect("copy succeeds");
 
     // The symlink should be preserved as a symlink
-    let dest_link = dest_root.join("link_to_pipe");
+    let dest_link = dest_root.join("source").join("link_to_pipe");
     let link_meta = fs::symlink_metadata(&dest_link).expect("link meta");
     assert!(link_meta.file_type().is_symlink());
     assert_eq!(
@@ -832,7 +832,7 @@ fn execute_symlink_pointing_to_fifo_preserved_as_symlink() {
     );
 
     // The FIFO should be recreated as a FIFO
-    let dest_fifo = dest_root.join("real.pipe");
+    let dest_fifo = dest_root.join("source").join("real.pipe");
     let fifo_meta = fs::symlink_metadata(&dest_fifo).expect("fifo meta");
     assert!(fifo_meta.file_type().is_fifo());
 
@@ -881,7 +881,7 @@ fn execute_symlink_pointing_to_socket_preserved_as_symlink() {
         .expect("copy succeeds");
 
     // The symlink should be preserved as a symlink
-    let dest_link = dest_root.join("link_to_sock");
+    let dest_link = dest_root.join("source").join("link_to_sock");
     let link_meta = fs::symlink_metadata(&dest_link).expect("link meta");
     assert!(link_meta.file_type().is_symlink());
     assert_eq!(
@@ -890,7 +890,7 @@ fn execute_symlink_pointing_to_socket_preserved_as_symlink() {
     );
 
     // The socket should be recreated
-    let dest_socket = dest_root.join("real.sock");
+    let dest_socket = dest_root.join("source").join("real.sock");
     let socket_meta = fs::symlink_metadata(&dest_socket).expect("socket meta");
     assert!(socket_meta.file_type().is_socket());
 
@@ -1127,9 +1127,9 @@ fn execute_copies_multiple_fifos_with_different_permissions() {
 
     assert_eq!(summary.fifos_created(), 3);
 
-    let dest_public = dest_root.join("public.pipe");
-    let dest_private = dest_root.join("private.pipe");
-    let dest_group = dest_root.join("group.pipe");
+    let dest_public = dest_root.join("source").join("public.pipe");
+    let dest_private = dest_root.join("source").join("private.pipe");
+    let dest_group = dest_root.join("source").join("group.pipe");
 
     assert!(fs::symlink_metadata(&dest_public).expect("meta").file_type().is_fifo());
     assert!(fs::symlink_metadata(&dest_private).expect("meta").file_type().is_fifo());
@@ -1261,7 +1261,7 @@ fn execute_copy_links_follows_symlink_to_fifo_specials_disabled_skips() {
 
     // The regular file should be copied
     assert_eq!(
-        fs::read(dest.join("regular.txt")).expect("read regular"),
+        fs::read(dest.join("source").join("regular.txt")).expect("read regular"),
         b"regular file"
     );
 
@@ -1351,7 +1351,7 @@ fn execute_copy_dirlinks_follows_dir_symlink_but_preserves_file_symlink_in_tree(
     .expect("copy succeeds");
 
     // dir_link should be dereferenced (copy_dirlinks follows directory symlinks)
-    let dest_dir_link = dest_root.join("dir_link");
+    let dest_dir_link = dest_root.join("source").join("dir_link");
     let dir_meta = fs::symlink_metadata(&dest_dir_link).expect("dir_link meta");
     assert!(
         dir_meta.file_type().is_dir(),
@@ -1367,7 +1367,7 @@ fn execute_copy_dirlinks_follows_dir_symlink_but_preserves_file_symlink_in_tree(
     );
 
     // file_link should remain a symlink (copy_dirlinks only affects directory symlinks)
-    let dest_file_link = dest_root.join("file_link");
+    let dest_file_link = dest_root.join("source").join("file_link");
     let file_meta = fs::symlink_metadata(&dest_file_link).expect("file_link meta");
     assert!(
         file_meta.file_type().is_symlink(),
@@ -1422,7 +1422,7 @@ fn execute_safe_links_with_copy_dirlinks_follows_unsafe_dir_symlink() {
 
     // copy_dirlinks should follow the directory symlink (dereferencing it)
     // regardless of safe_links, since it copies the directory contents
-    let dest_dir = dest_root.join("unsafe_dir_link");
+    let dest_dir = dest_root.join("source").join("unsafe_dir_link");
     let dir_meta = fs::symlink_metadata(&dest_dir).expect("dir meta");
     assert!(
         dir_meta.file_type().is_dir(),
@@ -1434,7 +1434,7 @@ fn execute_safe_links_with_copy_dirlinks_follows_unsafe_dir_symlink() {
     );
 
     // The safe file symlink should be preserved
-    let dest_safe = dest_root.join("safe_file_link");
+    let dest_safe = dest_root.join("source").join("safe_file_link");
     assert!(
         fs::symlink_metadata(&dest_safe)
             .expect("meta")
@@ -1512,7 +1512,7 @@ fn execute_copy_links_follows_nested_symlink_chain_to_regular_file() {
 
     // All entries should be dereferenced to regular files
     for name in &["link_a", "link_b", "real.txt"] {
-        let dest_file = dest_dir.join(name);
+        let dest_file = dest_dir.join("source").join(name);
         let meta = fs::symlink_metadata(&dest_file).expect("metadata");
         assert!(
             meta.file_type().is_file(),
@@ -1567,7 +1567,7 @@ fn execute_copy_links_overrides_links_option() {
         )
         .expect("copy succeeds");
 
-    let dest_link = dest_root.join("link");
+    let dest_link = dest_root.join("source").join("link");
     let meta = fs::symlink_metadata(&dest_link).expect("meta");
     assert!(
         meta.file_type().is_file(),
@@ -1615,8 +1615,8 @@ fn execute_without_links_skips_symlink_records_event() {
     let summary = report.summary();
     assert_eq!(summary.symlinks_copied(), 0);
     assert_eq!(summary.files_copied(), 1); // only target.txt
-    assert!(!dest_root.join("link").exists(), "symlink should not be copied");
-    assert!(dest_root.join("target.txt").exists(), "regular file should be copied");
+    assert!(!dest_root.join("source").join("link").exists(), "symlink should not be copied");
+    assert!(dest_root.join("source").join("target.txt").exists(), "regular file should be copied");
     assert!(report.records().iter().any(|record| {
         record.action() == &LocalCopyAction::SkippedNonRegular
     }));
@@ -1669,12 +1669,12 @@ fn execute_fifo_with_archive_options_preserves_all_metadata() {
         )
         .expect("archive copy succeeds");
 
-    let dest_fifo = dest_root.join("archive.pipe");
+    let dest_fifo = dest_root.join("source").join("archive.pipe");
     let fifo_meta = fs::symlink_metadata(&dest_fifo).expect("fifo meta");
     assert!(fifo_meta.file_type().is_fifo());
     assert_eq!(fifo_meta.permissions().mode() & 0o777, 0o640);
 
-    let dest_socket = dest_root.join("archive.sock");
+    let dest_socket = dest_root.join("source").join("archive.sock");
     assert!(
         fs::symlink_metadata(&dest_socket)
             .expect("meta")
@@ -1683,7 +1683,7 @@ fn execute_fifo_with_archive_options_preserves_all_metadata() {
     );
 
     assert_eq!(
-        fs::read(dest_root.join("file.txt")).expect("read"),
+        fs::read(dest_root.join("source").join("file.txt")).expect("read"),
         b"archive"
     );
 
@@ -1735,7 +1735,7 @@ fn execute_copy_unsafe_links_in_tree_preserves_safe_and_dereferences_unsafe() {
         .expect("copy succeeds");
 
     // Safe link stays as symlink
-    let dest_safe = dest_root.join("sub/safe_link");
+    let dest_safe = dest_root.join("source").join("sub/safe_link");
     assert!(
         fs::symlink_metadata(&dest_safe)
             .expect("meta")
@@ -1748,7 +1748,7 @@ fn execute_copy_unsafe_links_in_tree_preserves_safe_and_dereferences_unsafe() {
     );
 
     // Unsafe link is dereferenced to regular file
-    let dest_unsafe = dest_root.join("sub/unsafe_link");
+    let dest_unsafe = dest_root.join("source").join("sub/unsafe_link");
     let unsafe_meta = fs::symlink_metadata(&dest_unsafe).expect("meta");
     assert!(unsafe_meta.file_type().is_file());
     assert!(!unsafe_meta.file_type().is_symlink());
