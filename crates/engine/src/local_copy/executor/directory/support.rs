@@ -67,7 +67,7 @@ fn read_directory_entries_sorted_sequential(
         });
     }
 
-    entries.sort_unstable_by(|a, b| compare_file_names(&a.file_name, &b.file_name));
+    entries.sort_unstable_by(compare_directory_entries);
     Ok(entries)
 }
 
@@ -111,7 +111,7 @@ fn read_directory_entries_sorted_parallel(
                 metadata,
             });
         }
-        entries.sort_unstable_by(|a, b| compare_file_names(&a.file_name, &b.file_name));
+        entries.sort_unstable_by(compare_directory_entries);
         return Ok(entries);
     }
 
@@ -152,7 +152,7 @@ fn read_directory_entries_sorted_parallel(
         }
     }
 
-    entries.sort_unstable_by(|a, b| compare_file_names(&a.file_name, &b.file_name));
+    entries.sort_unstable_by(compare_directory_entries);
     Ok(entries)
 }
 
@@ -181,6 +181,27 @@ fn compare_file_names(left: &OsStr, right: &OsStr) -> Ordering {
     {
         left.to_string_lossy().cmp(&right.to_string_lossy())
     }
+}
+
+/// Orders directory entries to match upstream rsync's file-list sort.
+///
+/// Upstream `f_name_cmp()` keys on the entry type before the name: with
+/// `protocol_version >= 29` a directory is `t_PATH` and every non-directory is
+/// `t_ITEM`, and the type test runs first - `if (type1 != type2) return type1
+/// == t_PATH ? 1 : -1` - so within a single directory non-directories sort
+/// *before* subdirectories. Walking that order emits each directory's own
+/// entries immediately after it and before descending into child directories,
+/// producing the interleaved itemize stream (`cd dir/`, `>f dir/file`, `cd
+/// dir/sub/`, ...). The directory type is taken from the lstat'd metadata, so
+/// an unfollowed symlink-to-directory is a non-directory here, matching
+/// upstream's `S_ISDIR` test on the flist entry.
+// upstream: flist.c:3299 f_name_cmp() - type-then-name ordering
+fn compare_directory_entries(a: &DirectoryEntry, b: &DirectoryEntry) -> Ordering {
+    // `false < true`, so non-directories (is_dir == false) sort first.
+    a.metadata
+        .is_dir()
+        .cmp(&b.metadata.is_dir())
+        .then_with(|| compare_file_names(&a.file_name, &b.file_name))
 }
 
 /// Returns `true` when the given file type represents a "special" file
@@ -526,6 +547,27 @@ mod tests {
                 "entries not sorted: {prev:?} > {curr:?}"
             );
         }
+    }
+
+    #[test]
+    fn directory_entries_sort_non_directories_before_subdirectories() {
+        // upstream: flist.c:3299 f_name_cmp() - within a directory, every
+        // non-directory sorts before any subdirectory. Plain byte ordering
+        // would interleave these as a_dir, b_file, c_dir, d_file; the upstream
+        // key yields the two files first, then the two directories.
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("a_dir")).expect("create a_dir");
+        std::fs::write(temp.path().join("b_file"), b"x").expect("write b_file");
+        std::fs::create_dir(temp.path().join("c_dir")).expect("create c_dir");
+        std::fs::write(temp.path().join("d_file"), b"x").expect("write d_file");
+
+        let entries = super::read_directory_entries_sorted_parallel(temp.path(), &mut Vec::new())
+            .expect("read entries");
+        let order: Vec<String> = entries
+            .iter()
+            .map(|e| e.file_name.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(order, ["b_file", "d_file", "a_dir", "c_dir"]);
     }
 
     #[test]
