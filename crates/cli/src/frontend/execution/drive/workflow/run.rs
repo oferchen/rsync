@@ -390,6 +390,7 @@ where
         stats_level,
         name_level,
         name_overridden,
+        show_copy_method,
         debug_flags_list,
         bandwidth_limit,
         max_delete_limit,
@@ -948,6 +949,8 @@ where
             verbosity,
             list_only,
             dry_run,
+            // `--info=copy` opts into the oc-rsync `Copy method` stats line.
+            show_copy_method,
             out_format_template: out_format_template.as_ref(),
             name_level,
             name_overridden,

@@ -71,6 +71,7 @@ fn render_stats_at_level(
         human_readable,
         false,
         false, // emit_flist_banner
+        false, // show_copy_method
         &mut rendered,
     )
     .expect("render stats");
@@ -94,6 +95,7 @@ fn render_verbose(summary: &ClientSummary, verbosity: u8) -> String {
         HumanReadableMode::Disabled,
         false,
         true, // emit_flist_banner
+        false, // show_copy_method
         &mut rendered,
     )
     .expect("render verbose");
@@ -476,6 +478,7 @@ fn parity_totals_only_without_stats_flag() {
         HumanReadableMode::Disabled,
         false,
         true, // emit_flist_banner
+        false, // show_copy_method
         &mut rendered,
     )
     .expect("render");
@@ -717,6 +720,7 @@ fn parity_verbose_v2_emits_bare_name_per_upstream() {
         HumanReadableMode::Disabled,
         false,
         true, // emit_flist_banner
+        false, // show_copy_method
         &mut rendered,
     )
     .expect("render");

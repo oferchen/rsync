@@ -61,6 +61,8 @@ pub(crate) struct DerivedSettings {
     pub(crate) stats_level: u8,
     pub(crate) name_level: NameOutputLevel,
     pub(crate) name_overridden: bool,
+    /// `--info=copy`: opt-in to the oc-rsync `Copy method` stats line.
+    pub(crate) show_copy_method: bool,
     pub(crate) debug_flags_list: Vec<OsString>,
     pub(crate) bandwidth_limit: Option<BandwidthLimit>,
     pub(crate) max_delete_limit: Option<u64>,
@@ -93,6 +95,8 @@ struct InfoFlagsResult {
     stats_level: u8,
     name_level: NameOutputLevel,
     name_overridden: bool,
+    /// `--info=copy`: opt-in to the oc-rsync `Copy method` stats line.
+    show_copy_method: bool,
 }
 
 /// Parses --info flags and returns display settings.
@@ -120,6 +124,7 @@ where
             stats_level,
             name_level,
             name_overridden,
+            show_copy_method: false,
         });
     }
 
@@ -164,6 +169,7 @@ where
                 stats_level,
                 name_level,
                 name_overridden,
+                show_copy_method: settings.copy.is_some_and(|level| level > 0),
             })
         }
         Err(message) => Err(fail_with_message(message, stderr)),
@@ -581,6 +587,7 @@ where
         stats_level: info_result.stats_level,
         name_level: info_result.name_level,
         name_overridden: info_result.name_overridden,
+        show_copy_method: info_result.show_copy_method,
         debug_flags_list,
         bandwidth_limit: limits.bandwidth_limit,
         max_delete_limit: limits.max_delete_limit,

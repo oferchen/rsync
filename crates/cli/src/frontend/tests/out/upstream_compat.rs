@@ -239,6 +239,7 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         HumanReadableMode::Disabled,
         false,
         false, // emit_flist_banner
+        false, // show_copy_method
         &mut with_out_format,
     )
     .expect("render with out-format");
@@ -259,6 +260,7 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         HumanReadableMode::Disabled,
         false,
         false, // emit_flist_banner
+        false, // show_copy_method
         &mut without_out_format,
     )
     .expect("render without out-format");

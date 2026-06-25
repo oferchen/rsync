@@ -46,6 +46,7 @@ pub(crate) fn emit_transfer_summary(
     human_readable_mode: HumanReadableMode,
     suppress_updated_only_totals: bool,
     emit_flist_banner: bool,
+    show_copy_method: bool,
     writer: &mut dyn Write,
 ) -> io::Result<()> {
     let events = summary.events();
@@ -62,12 +63,12 @@ pub(crate) fn emit_transfer_summary(
             if wrote_listing {
                 writeln!(writer)?;
             }
-            emit_stats(summary, writer, human_readable_mode, dry_run, stats_level)?;
+            emit_stats(summary, writer, human_readable_mode, dry_run, stats_level, show_copy_method)?;
         } else if verbosity > 0 {
             if wrote_listing {
                 writeln!(writer)?;
             }
-            emit_totals(summary, writer, human_readable_mode, dry_run)?;
+            emit_totals(summary, writer, human_readable_mode, dry_run, show_copy_method)?;
         }
 
         return Ok(());
@@ -173,9 +174,9 @@ pub(crate) fn emit_transfer_summary(
     }
 
     if stats_on {
-        emit_stats(summary, writer, human_readable_mode, dry_run, stats_level)?;
+        emit_stats(summary, writer, human_readable_mode, dry_run, stats_level, show_copy_method)?;
     } else if emit_trailer_totals {
-        emit_totals(summary, writer, human_readable_mode, dry_run)?;
+        emit_totals(summary, writer, human_readable_mode, dry_run, show_copy_method)?;
     }
 
     Ok(())
@@ -306,6 +307,7 @@ pub(crate) fn emit_stats<W: Write + ?Sized>(
     human_readable: HumanReadableMode,
     dry_run: bool,
     level: u8,
+    show_copy_method: bool,
 ) -> io::Result<()> {
     if level == 0 {
         return Ok(());
@@ -316,7 +318,7 @@ pub(crate) fn emit_stats<W: Write + ?Sized>(
         writeln!(stdout)?;
     }
 
-    emit_totals(summary, stdout, human_readable, dry_run)
+    emit_totals(summary, stdout, human_readable, dry_run, show_copy_method)
 }
 
 /// Emits the level-2+ detail block: file counts, byte-breakdown, file-list
@@ -422,6 +424,7 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
     stdout: &mut W,
     human_readable: HumanReadableMode,
     dry_run: bool,
+    show_copy_method: bool,
 ) -> io::Result<()> {
     let sent = summary.bytes_sent();
     let received = summary.bytes_received();
@@ -447,10 +450,10 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
 
     // oc-rsync extension: when a local copy used a kernel acceleration
     // (clonefile/reflink/io_uring), report which technology moved the data so
-    // the byte totals make sense (a CoW clone copies no bytes). Gated on an
-    // accelerated method actually running, so protocol transfers - which always
-    // reconstruct from the wire (standard) - keep upstream-identical output.
-    if summary.used_copy_acceleration() {
+    // the byte totals make sense (a CoW clone copies no bytes). Opt-in via
+    // `--info=copy`, and further gated on an accelerated method actually running
+    // so it never alters default or protocol-transfer output (upstream parity).
+    if show_copy_method && summary.used_copy_acceleration() {
         let methods = summary
             .copy_method_breakdown()
             .into_iter()
