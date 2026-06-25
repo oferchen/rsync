@@ -216,6 +216,26 @@ impl LocalCopySummary {
         self.file_list_size = self.file_list_size.saturating_add(entry_size as u64);
     }
 
+    /// Folds the file-list size into the `sent` byte total so a local copy
+    /// reports the protocol-equivalent figure upstream prints.
+    ///
+    /// Upstream always runs the transfer protocol over a socketpair, even for a
+    /// purely local copy, so its `Total bytes sent` (`total_written`) is
+    /// dominated by the file list it serialises (plus any literal data tokens).
+    /// The local-copy executor bypasses the wire entirely, so `bytes_sent` would
+    /// otherwise report only the literal data - `0` on a no-change run. Folding
+    /// the separately tracked file-list size in yields a comparable `sent`
+    /// total (and a meaningful speedup) instead of `sent 0 bytes`.
+    ///
+    /// Call exactly once when finalising a local-copy summary. The figure is an
+    /// approximation: a local copy transmits nothing, so it can never match
+    /// upstream's real socketpair byte counts exactly.
+    ///
+    /// upstream: main.c output_summary, io.c stats.total_written
+    pub fn fold_file_list_into_sent(&mut self) {
+        self.bytes_sent = self.bytes_sent.saturating_add(self.file_list_size);
+    }
+
     /// Returns the time spent enumerating the file list.
     #[must_use]
     pub const fn file_list_generation_time(&self) -> Duration {
@@ -687,5 +707,39 @@ mod tests {
         summary.record_total_bytes(300);
 
         assert_eq!(summary.total_source_bytes(), 800);
+    }
+
+    #[test]
+    fn fold_file_list_into_sent_reports_flist_as_wire_sent() {
+        // A no-change local copy transmits no data, so `bytes_sent` stays 0
+        // while the file-list size accumulates. Upstream's `Total bytes sent`
+        // for the same copy is dominated by the serialised file list, so the
+        // fold must surface that figure as `sent` rather than leaving it 0.
+        let mut summary = LocalCopySummary::default();
+        summary.record_file_list_entry(93);
+        summary.record_file_list_entry(95);
+        assert_eq!(summary.bytes_sent(), 0);
+        assert_eq!(summary.file_list_size(), 188);
+
+        summary.fold_file_list_into_sent();
+
+        assert_eq!(summary.bytes_sent(), 188);
+        // The file-list size is still reported independently; upstream prints
+        // both `File list size` and `Total bytes sent`.
+        assert_eq!(summary.file_list_size(), 188);
+    }
+
+    #[test]
+    fn fold_file_list_into_sent_keeps_literal_data() {
+        // When data is transmitted, the fold adds the file list on top of the
+        // literal bytes already counted, mirroring upstream's total_written.
+        let mut summary = LocalCopySummary::default();
+        summary.record_file(1_000, 1_000, None);
+        summary.record_file_list_entry(40);
+        assert_eq!(summary.bytes_sent(), 1_000);
+
+        summary.fold_file_list_into_sent();
+
+        assert_eq!(summary.bytes_sent(), 1_040);
     }
 }
