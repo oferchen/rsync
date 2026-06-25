@@ -63,12 +63,25 @@ pub(crate) fn emit_transfer_summary(
             if wrote_listing {
                 writeln!(writer)?;
             }
-            emit_stats(summary, writer, human_readable_mode, dry_run, stats_level, show_copy_method)?;
+            emit_stats(
+                summary,
+                writer,
+                human_readable_mode,
+                dry_run,
+                stats_level,
+                show_copy_method,
+            )?;
         } else if verbosity > 0 {
             if wrote_listing {
                 writeln!(writer)?;
             }
-            emit_totals(summary, writer, human_readable_mode, dry_run, show_copy_method)?;
+            emit_totals(
+                summary,
+                writer,
+                human_readable_mode,
+                dry_run,
+                show_copy_method,
+            )?;
         }
 
         return Ok(());
@@ -174,9 +187,22 @@ pub(crate) fn emit_transfer_summary(
     }
 
     if stats_on {
-        emit_stats(summary, writer, human_readable_mode, dry_run, stats_level, show_copy_method)?;
+        emit_stats(
+            summary,
+            writer,
+            human_readable_mode,
+            dry_run,
+            stats_level,
+            show_copy_method,
+        )?;
     } else if emit_trailer_totals {
-        emit_totals(summary, writer, human_readable_mode, dry_run, show_copy_method)?;
+        emit_totals(
+            summary,
+            writer,
+            human_readable_mode,
+            dry_run,
+            show_copy_method,
+        )?;
     }
 
     Ok(())

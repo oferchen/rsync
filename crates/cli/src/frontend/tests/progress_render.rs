@@ -86,7 +86,7 @@ fn emit_transfer_summary_with_progress_and_verbose_listing() {
         false,
         HumanReadableMode::Enabled,
         false,
-        true, // emit_flist_banner
+        true,  // emit_flist_banner
         false, // show_copy_method
         &mut rendered,
     )
