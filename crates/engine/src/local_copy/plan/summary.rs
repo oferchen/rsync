@@ -480,8 +480,13 @@ impl LocalCopySummary {
         let matched = file_size.saturating_sub(literal_bytes);
         self.matched_bytes = self.matched_bytes.saturating_add(matched);
         let transmitted = compressed.unwrap_or(literal_bytes);
+        // A local copy emulates the protocol sender: it writes the file data
+        // (counted as sent) but receives no data payload back. Counting the data
+        // as received too would halve the reported speedup vs upstream, where a
+        // first copy reads back only the generator's small replies (modeled as
+        // 0 here). upstream: main.c output_summary - speedup = total_size /
+        // (total_written + total_read), and a local sender's total_read is tiny.
         self.bytes_sent = self.bytes_sent.saturating_add(transmitted);
-        self.bytes_received = self.bytes_received.saturating_add(transmitted);
         if let Some(compressed_bytes) = compressed {
             self.compression_used = true;
             self.compressed_bytes = self.compressed_bytes.saturating_add(compressed_bytes);
