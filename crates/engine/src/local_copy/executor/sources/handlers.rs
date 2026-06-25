@@ -168,6 +168,16 @@ pub(super) fn handle_directory_copy(
         return Ok(());
     }
 
+    // upstream: main.c:778 get_local_name() - when `file_total > 1 ||
+    // trailing_slash` the destination is treated as a directory and the source
+    // directory name is kept as a path component. For a no-trailing-slash
+    // directory source `file_total > 1` holds exactly when the directory is
+    // non-empty; the orchestrator detects that single-source case, pre-creates
+    // the destination root (emitting `created directory <dest>` and counting
+    // it, as upstream do_mkdir + FLAG_DIR_CREATED does), and sets
+    // `destination_behaves_like_directory`. An empty source directory
+    // (file_total == 1) keeps the flag false and is materialised AS the
+    // destination (its own name dropped), matching `rsync -r empty n` -> `n/`.
     let target = if destination_behaves_like_directory || multiple_sources {
         // upstream: flist.c:1579-1603 + flist.c:738-754 - filename is
         // transcoded LOCAL -> wire -> REMOTE; for local-copy this

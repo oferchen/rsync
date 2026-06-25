@@ -358,19 +358,19 @@ fn copy_links_with_mixed_files_and_symlinks() {
         .expect("copy succeeds");
 
     // Regular file should be copied normally
-    let regular_meta = fs::symlink_metadata(dest.join("regular.txt")).expect("regular meta");
+    let regular_meta = fs::symlink_metadata(dest.join("source").join("regular.txt")).expect("regular meta");
     assert!(regular_meta.file_type().is_file());
-    assert_eq!(fs::read(dest.join("regular.txt")).expect("read"), b"regular");
+    assert_eq!(fs::read(dest.join("source").join("regular.txt")).expect("read"), b"regular");
 
     // Symlink should be followed and copied as a regular file
-    let link_meta = fs::symlink_metadata(dest.join("link.txt")).expect("link meta");
+    let link_meta = fs::symlink_metadata(dest.join("source").join("link.txt")).expect("link meta");
     assert!(link_meta.file_type().is_file());
     assert!(!link_meta.file_type().is_symlink());
-    assert_eq!(fs::read(dest.join("link.txt")).expect("read"), b"linked");
+    assert_eq!(fs::read(dest.join("source").join("link.txt")).expect("read"), b"linked");
 
     // Nested file should be copied
     assert_eq!(
-        fs::read(dest.join("subdir/nested.txt")).expect("read"),
+        fs::read(dest.join("source").join("subdir/nested.txt")).expect("read"),
         b"nested"
     );
 }
@@ -473,7 +473,7 @@ fn copy_links_does_not_follow_symlinks_in_tree_when_disabled() {
         .expect("copy succeeds");
 
     // Should be copied as a symlink
-    let link_meta = fs::symlink_metadata(dest.join("link")).expect("link meta");
+    let link_meta = fs::symlink_metadata(dest.join("source").join("link")).expect("link meta");
     assert!(link_meta.file_type().is_symlink());
     assert_eq!(summary.symlinks_copied(), 1);
 }
@@ -609,22 +609,22 @@ fn copy_links_nested_symlinks_in_directory_tree() {
         .expect("copy succeeds");
 
     // inner_link should be dereferenced to a regular file
-    let inner_meta = fs::symlink_metadata(dest.join("inner_link")).expect("inner meta");
+    let inner_meta = fs::symlink_metadata(dest.join("source").join("inner_link")).expect("inner meta");
     assert!(inner_meta.file_type().is_file());
     assert!(!inner_meta.file_type().is_symlink());
     assert_eq!(
-        fs::read(dest.join("inner_link")).expect("read inner"),
+        fs::read(dest.join("source").join("inner_link")).expect("read inner"),
         b"real content"
     );
 
     // dir_link should be dereferenced to a real directory
-    let dir_meta = fs::symlink_metadata(dest.join("dir_link")).expect("dir meta");
+    let dir_meta = fs::symlink_metadata(dest.join("source").join("dir_link")).expect("dir meta");
     assert!(dir_meta.file_type().is_dir());
     assert!(!dir_meta.file_type().is_symlink());
 
     // The contents of the external directory should be present
     assert_eq!(
-        fs::read(dest.join("dir_link/ext.txt")).expect("read ext"),
+        fs::read(dest.join("source").join("dir_link/ext.txt")).expect("read ext"),
         b"external"
     );
 }
@@ -709,13 +709,13 @@ fn copy_links_follows_symlink_to_fifo_in_directory() {
 
     // The regular file should be copied
     assert_eq!(
-        fs::read(dest.join("regular.txt")).expect("read regular"),
+        fs::read(dest.join("source").join("regular.txt")).expect("read regular"),
         b"regular file"
     );
 
     // The symlink to the FIFO should be dereferenced: the destination should
     // be a FIFO (not a symlink).
-    let fifo_meta = fs::symlink_metadata(dest.join("fifo_link")).expect("fifo meta");
+    let fifo_meta = fs::symlink_metadata(dest.join("source").join("fifo_link")).expect("fifo meta");
     assert!(!fifo_meta.file_type().is_symlink(), "should not be a symlink");
     {
         use std::os::unix::fs::FileTypeExt;
@@ -772,13 +772,13 @@ fn copy_links_follows_symlink_to_fifo_in_directory() {
 
     // The regular file should be copied
     assert_eq!(
-        fs::read(dest.join("regular.txt")).expect("read regular"),
+        fs::read(dest.join("source").join("regular.txt")).expect("read regular"),
         b"regular file"
     );
 
     // The symlink to the FIFO should be dereferenced: the destination should
     // be a FIFO (not a symlink).
-    let fifo_meta = fs::symlink_metadata(dest.join("fifo_link")).expect("fifo meta");
+    let fifo_meta = fs::symlink_metadata(dest.join("source").join("fifo_link")).expect("fifo meta");
     assert!(!fifo_meta.file_type().is_symlink(), "should not be a symlink");
     {
         use std::os::unix::fs::FileTypeExt;
@@ -863,11 +863,11 @@ fn copy_links_with_symlink_chain_in_directory_tree() {
 
     // Both symlinks should be dereferenced to regular files with the same content
     for name in &["link_a", "link_b"] {
-        let meta = fs::symlink_metadata(dest.join(name)).expect("meta");
+        let meta = fs::symlink_metadata(dest.join("source").join(name)).expect("meta");
         assert!(meta.file_type().is_file(), "{name} should be a regular file");
         assert!(!meta.file_type().is_symlink(), "{name} should not be a symlink");
         assert_eq!(
-            fs::read(dest.join(name)).expect("read"),
+            fs::read(dest.join("source").join(name)).expect("read"),
             b"real data",
             "{name} should have the content of the real file"
         );
@@ -875,7 +875,7 @@ fn copy_links_with_symlink_chain_in_directory_tree() {
 
     // The real file should also be present
     assert_eq!(
-        fs::read(dest.join("real.txt")).expect("read real"),
+        fs::read(dest.join("source").join("real.txt")).expect("read real"),
         b"real data"
     );
 }

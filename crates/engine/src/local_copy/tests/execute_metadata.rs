@@ -800,7 +800,7 @@ fn execute_directory_with_special_bits() {
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
 
-    let dest_metadata = fs::metadata(&dest_dir).expect("dest dir metadata");
+    let dest_metadata = fs::metadata(dest_dir.join("source")).expect("dest dir metadata");
     let dest_mode = dest_metadata.permissions().mode();
 
     // Verify directory special bits are preserved
@@ -851,22 +851,22 @@ fn execute_multiple_files_with_different_special_bits() {
         .expect("copy succeeds");
 
     // Verify each file's special bits
-    let setuid_dest = dest_dir.join("source/setuid.txt");
+    let setuid_dest = dest_dir.join("source").join("setuid.txt");
     let setuid_mode = fs::metadata(&setuid_dest).expect("setuid metadata").permissions().mode();
     assert_eq!(setuid_mode & 0o4000, 0o4000, "setuid bit preserved");
     assert_eq!(setuid_mode & 0o777, 0o755);
 
-    let setgid_dest = dest_dir.join("source/setgid.txt");
+    let setgid_dest = dest_dir.join("source").join("setgid.txt");
     let setgid_mode = fs::metadata(&setgid_dest).expect("setgid metadata").permissions().mode();
     assert_eq!(setgid_mode & 0o2000, 0o2000, "setgid bit preserved");
     assert_eq!(setgid_mode & 0o777, 0o755);
 
-    let sticky_dest = dest_dir.join("source/sticky.txt");
+    let sticky_dest = dest_dir.join("source").join("sticky.txt");
     let sticky_mode = fs::metadata(&sticky_dest).expect("sticky metadata").permissions().mode();
     assert_eq!(sticky_mode & 0o1000, 0o1000, "sticky bit preserved");
     assert_eq!(sticky_mode & 0o777, 0o777);
 
-    let all_dest = dest_dir.join("source/all.txt");
+    let all_dest = dest_dir.join("source").join("all.txt");
     let all_mode = fs::metadata(&all_dest).expect("all bits metadata").permissions().mode();
     assert_eq!(all_mode & 0o7777, 0o7777, "all bits preserved");
 

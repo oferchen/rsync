@@ -528,11 +528,11 @@ fn block_size_override_recursive_directory_copy() {
         "recursive delta should match common blocks"
     );
     assert_eq!(
-        fs::read(dest_root.join("source/a.bin")).expect("read a"),
+        fs::read(dest_root.join("source").join("a.bin")).expect("read a"),
         new_a
     );
     assert_eq!(
-        fs::read(dest_root.join("source/b.bin")).expect("read b"),
+        fs::read(dest_root.join("source").join("b.bin")).expect("read b"),
         new_b
     );
 }

@@ -788,9 +788,9 @@ fn usermap_applies_to_directory_tree() {
     assert!(summary.files_copied() >= 2); // At least the two files
 
     // Verify all files have mapped UID 2000
-    let dest_file1 = dest_dir.join("file1.txt");
-    let dest_file2 = dest_dir.join("subdir").join("file2.txt");
-    let dest_subdir = dest_dir.join("subdir");
+    let dest_file1 = dest_dir.join("source").join("file1.txt");
+    let dest_file2 = dest_dir.join("source").join("subdir").join("file2.txt");
+    let dest_subdir = dest_dir.join("source").join("subdir");
 
     assert_eq!(fs::metadata(&dest_file1).expect("file1 metadata").uid(), 2000);
     assert_eq!(fs::metadata(&dest_file2).expect("file2 metadata").uid(), 2000);
@@ -855,9 +855,9 @@ fn groupmap_applies_to_directory_tree() {
     assert!(summary.files_copied() >= 2); // At least the two files
 
     // Verify all files have mapped GID 3000
-    let dest_file1 = dest_dir.join("file1.txt");
-    let dest_file2 = dest_dir.join("subdir").join("file2.txt");
-    let dest_subdir = dest_dir.join("subdir");
+    let dest_file1 = dest_dir.join("source").join("file1.txt");
+    let dest_file2 = dest_dir.join("source").join("subdir").join("file2.txt");
+    let dest_subdir = dest_dir.join("source").join("subdir");
 
     assert_eq!(fs::metadata(&dest_file1).expect("file1 metadata").gid(), 3000);
     assert_eq!(fs::metadata(&dest_file2).expect("file2 metadata").gid(), 3000);

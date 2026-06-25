@@ -39,9 +39,9 @@ fn one_file_system_traverses_same_filesystem_directories() {
 
     // All files should be copied since they're on the same filesystem
     assert_eq!(summary.files_copied(), 3);
-    assert!(dest_root.join("dir1").join("file1.txt").exists());
-    assert!(dest_root.join("dir1").join("nested").join("deep").join("file2.txt").exists());
-    assert!(dest_root.join("dir2").join("file3.txt").exists());
+    assert!(dest_root.join("source").join("dir1").join("file1.txt").exists());
+    assert!(dest_root.join("source").join("dir1").join("nested").join("deep").join("file2.txt").exists());
+    assert!(dest_root.join("source").join("dir2").join("file3.txt").exists());
 }
 
 #[test]
@@ -88,9 +88,9 @@ fn one_file_system_skips_mount_point_directories() {
     .expect("copy executes");
 
     // Only the file from same filesystem should be copied
-    assert!(dest_root.join("same_fs").join("local.txt").exists());
-    assert!(!dest_root.join("mount_point").exists());
-    assert!(!dest_root.join("mount_point").join("mount_root.txt").exists());
+    assert!(dest_root.join("source").join("same_fs").join("local.txt").exists());
+    assert!(!dest_root.join("source").join("mount_point").exists());
+    assert!(!dest_root.join("source").join("mount_point").join("mount_root.txt").exists());
 
     // Verify that mount point was recorded as skipped
     let records = report.records();
@@ -138,10 +138,10 @@ fn one_file_system_transfers_files_on_same_filesystem() {
     .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 4);
-    assert_eq!(fs::read(dest_root.join("root.txt")).expect("read root"), b"root");
-    assert_eq!(fs::read(dest_root.join("level1").join("l1.txt")).expect("read l1"), b"level1");
-    assert_eq!(fs::read(dest_root.join("level1").join("level2").join("l2.txt")).expect("read l2"), b"level2");
-    assert_eq!(fs::read(dest_root.join("level1").join("level2").join("level3").join("l3.txt")).expect("read l3"), b"level3");
+    assert_eq!(fs::read(dest_root.join("source").join("root.txt")).expect("read root"), b"root");
+    assert_eq!(fs::read(dest_root.join("source").join("level1").join("l1.txt")).expect("read l1"), b"level1");
+    assert_eq!(fs::read(dest_root.join("source").join("level1").join("level2").join("l2.txt")).expect("read l2"), b"level2");
+    assert_eq!(fs::read(dest_root.join("source").join("level1").join("level2").join("level3").join("l3.txt")).expect("read l3"), b"level3");
 }
 
 #[test]
@@ -200,14 +200,14 @@ fn one_file_system_respects_flag_during_directory_walking() {
     .expect("copy executes");
 
     // Files on device 1 should be copied
-    assert!(dest_root.join("dir_a").join("file_a.txt").exists());
-    assert!(dest_root.join("dir_a").join("regular").join("reg_a.txt").exists());
-    assert!(dest_root.join("dir_b").join("file_b.txt").exists());
-    assert!(dest_root.join("dir_b").join("regular").join("reg_b.txt").exists());
+    assert!(dest_root.join("source").join("dir_a").join("file_a.txt").exists());
+    assert!(dest_root.join("source").join("dir_a").join("regular").join("reg_a.txt").exists());
+    assert!(dest_root.join("source").join("dir_b").join("file_b.txt").exists());
+    assert!(dest_root.join("source").join("dir_b").join("regular").join("reg_b.txt").exists());
 
     // Files on other devices should be skipped
-    assert!(!dest_root.join("dir_a").join("mount1").join("mount1_file.txt").exists());
-    assert!(!dest_root.join("dir_b").join("mount2").join("mount2_file.txt").exists());
+    assert!(!dest_root.join("source").join("dir_a").join("mount1").join("mount1_file.txt").exists());
+    assert!(!dest_root.join("source").join("dir_b").join("mount2").join("mount2_file.txt").exists());
 
     // Verify both mount points were skipped
     let records = report.records();
@@ -260,8 +260,8 @@ fn one_file_system_disabled_crosses_filesystem_boundaries() {
 
     // Both files should be copied when flag is disabled
     assert_eq!(summary.files_copied(), 2);
-    assert!(dest_root.join("same_fs").join("file1.txt").exists());
-    assert!(dest_root.join("other_fs").join("file2.txt").exists());
+    assert!(dest_root.join("source").join("same_fs").join("file1.txt").exists());
+    assert!(dest_root.join("source").join("other_fs").join("file2.txt").exists());
 }
 
 #[test]
@@ -318,13 +318,13 @@ fn one_file_system_handles_multiple_mount_points_in_single_directory() {
     .expect("copy executes");
 
     // Local files should be copied
-    assert!(dest_root.join("local1").join("f1.txt").exists());
-    assert!(dest_root.join("local2").join("f2.txt").exists());
-    assert!(dest_root.join("local3").join("f3.txt").exists());
+    assert!(dest_root.join("source").join("local1").join("f1.txt").exists());
+    assert!(dest_root.join("source").join("local2").join("f2.txt").exists());
+    assert!(dest_root.join("source").join("local3").join("f3.txt").exists());
 
     // Mount point files should not be copied
-    assert!(!dest_root.join("mount1").join("m1.txt").exists());
-    assert!(!dest_root.join("mount2").join("m2.txt").exists());
+    assert!(!dest_root.join("source").join("mount1").join("m1.txt").exists());
+    assert!(!dest_root.join("source").join("mount2").join("m2.txt").exists());
 
     // Verify skip events
     let records = report.records();
@@ -368,9 +368,9 @@ fn one_file_system_with_empty_directories_on_same_fs() {
     )
     .expect("copy succeeds");
 
-    assert!(dest_root.join("empty1").is_dir());
-    assert!(dest_root.join("subdir").join("empty2").is_dir());
-    assert!(dest_root.join("with_file").join("file.txt").exists());
+    assert!(dest_root.join("source").join("empty1").is_dir());
+    assert!(dest_root.join("source").join("subdir").join("empty2").is_dir());
+    assert!(dest_root.join("source").join("with_file").join("file.txt").exists());
     assert!(summary.directories_created() >= 3);
 }
 
@@ -470,8 +470,8 @@ fn one_file_system_with_filters_skips_mount_first() {
     .expect("copy executes");
 
     // Mount should be skipped before filter is evaluated
-    assert!(!dest_root.join("mount").exists());
-    assert!(dest_root.join("local.txt").exists());
+    assert!(!dest_root.join("source").join("mount").exists());
+    assert!(dest_root.join("source").join("local.txt").exists());
 
     let records = report.records();
     let mount_skipped = records.iter().any(|r| {
@@ -520,8 +520,8 @@ fn one_file_system_with_symlinks_follows_on_same_fs() {
     .expect("copy succeeds");
 
     // Both the file and symlink should be copied
-    assert!(dest_root.join("target").join("file.txt").exists());
-    assert!(dest_root.join("linkdir").join("link").exists());
+    assert!(dest_root.join("source").join("target").join("file.txt").exists());
+    assert!(dest_root.join("source").join("linkdir").join("link").exists());
     assert!(summary.files_copied() >= 1);
 }
 
@@ -614,8 +614,8 @@ fn double_one_file_system_allows_source_on_same_device_as_parent() {
 
     // All files should be copied since source is on same device as parent
     assert_eq!(summary.files_copied(), 2);
-    assert!(dest_root.join("file.txt").exists());
-    assert!(dest_root.join("sub").join("nested.txt").exists());
+    assert!(dest_root.join("source").join("file.txt").exists());
+    assert!(dest_root.join("source").join("sub").join("nested.txt").exists());
 }
 
 #[test]
@@ -657,7 +657,7 @@ fn single_x_does_not_skip_root_mount_point() {
 
     // With single -x, the root mount point source should NOT be skipped
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join("file.txt").exists());
+    assert!(dest_root.join("mounted_src").join("file.txt").exists());
 }
 
 #[test]
@@ -702,9 +702,9 @@ fn double_one_file_system_still_skips_subdirectory_mount_points() {
     .expect("copy executes");
 
     // File on same filesystem should be copied
-    assert!(dest_root.join("same_fs").join("local.txt").exists());
+    assert!(dest_root.join("source").join("same_fs").join("local.txt").exists());
     // Mount point subdirectory should be skipped
-    assert!(!dest_root.join("mount_point").join("other.txt").exists());
+    assert!(!dest_root.join("source").join("mount_point").join("other.txt").exists());
 
     // Verify skip was recorded
     let records = report.records();
@@ -751,8 +751,8 @@ fn level_zero_does_not_skip_any_mount_points() {
 
     // Everything should be copied
     assert_eq!(summary.files_copied(), 2);
-    assert!(dest_root.join("local.txt").exists());
-    assert!(dest_root.join("mount").join("other.txt").exists());
+    assert!(dest_root.join("source").join("local.txt").exists());
+    assert!(dest_root.join("source").join("mount").join("other.txt").exists());
 }
 
 /// Verifies that pruning a cross-device child directory emits the upstream

@@ -37,7 +37,7 @@ fn copy_file_with_single_space_in_name() {
 
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(
-        fs::read(dest_root.join(filename)).expect("read dest"),
+        fs::read(dest_root.join("source").join(filename)).expect("read dest"),
         b"space content"
     );
 }
@@ -63,7 +63,7 @@ fn copy_file_with_multiple_consecutive_spaces() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -87,7 +87,7 @@ fn copy_file_with_leading_space() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn copy_file_with_trailing_space() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -135,7 +135,7 @@ fn copy_file_named_only_spaces() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -164,7 +164,7 @@ fn copy_directory_with_spaces_in_name() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(dirname).join("inner file.txt").exists());
+    assert!(dest_root.join("source").join(dirname).join("inner file.txt").exists());
 }
 
 #[test]
@@ -188,7 +188,7 @@ fn copy_file_with_single_quotes() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -212,7 +212,7 @@ fn copy_file_with_double_quotes() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -236,7 +236,7 @@ fn copy_file_with_mixed_quotes() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -260,7 +260,7 @@ fn copy_file_with_consecutive_quotes() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -284,7 +284,7 @@ fn copy_file_with_backslash() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -308,7 +308,7 @@ fn copy_file_with_consecutive_backslashes() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -332,7 +332,7 @@ fn copy_file_with_trailing_backslash() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -361,7 +361,7 @@ fn copy_file_with_escape_like_sequences() {
 
     assert_eq!(summary.files_copied(), filenames.len() as u64);
     for filename in &filenames {
-        assert!(dest_root.join(filename).exists(), "should copy {filename}");
+        assert!(dest_root.join("source").join(filename).exists(), "should copy {filename}");
     }
 }
 
@@ -386,7 +386,7 @@ fn copy_file_with_asterisk() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -410,7 +410,7 @@ fn copy_file_with_question_mark() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -434,7 +434,7 @@ fn copy_file_named_asterisk_only() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -458,7 +458,7 @@ fn copy_file_with_glob_pattern() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -482,7 +482,7 @@ fn copy_file_with_square_brackets() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -506,7 +506,7 @@ fn copy_file_with_nested_brackets() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -530,7 +530,7 @@ fn copy_file_with_curly_braces() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -554,7 +554,7 @@ fn copy_file_with_nested_curly_braces() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -578,7 +578,7 @@ fn copy_file_with_angle_brackets() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -606,7 +606,7 @@ fn copy_file_with_redirection_like_name() {
 
     assert_eq!(summary.files_copied(), filenames.len() as u64);
     for filename in &filenames {
-        assert!(dest_root.join(filename).exists(), "should copy {filename}");
+        assert!(dest_root.join("source").join(filename).exists(), "should copy {filename}");
     }
 }
 
@@ -631,7 +631,7 @@ fn copy_file_with_pipe_character() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -655,7 +655,7 @@ fn copy_file_with_multiple_pipes() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -679,7 +679,7 @@ fn copy_file_with_semicolon() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -703,7 +703,7 @@ fn copy_file_with_colon() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -727,7 +727,7 @@ fn copy_file_with_time_like_colons() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -751,7 +751,7 @@ fn copy_file_with_ampersand() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -775,7 +775,7 @@ fn copy_file_with_double_ampersand() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -799,7 +799,7 @@ fn copy_file_with_dollar_sign() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -827,7 +827,7 @@ fn copy_file_with_variable_like_name() {
 
     assert_eq!(summary.files_copied(), filenames.len() as u64);
     for filename in &filenames {
-        assert!(dest_root.join(filename).exists(), "should copy {filename}");
+        assert!(dest_root.join("source").join(filename).exists(), "should copy {filename}");
     }
 }
 
@@ -852,7 +852,7 @@ fn copy_file_with_newline_in_name() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -876,7 +876,7 @@ fn copy_file_with_carriage_return() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -900,7 +900,7 @@ fn copy_file_with_crlf() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -925,7 +925,7 @@ fn copy_directory_with_newline() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(dirname).join("inner.txt").exists());
+    assert!(dest_root.join("source").join(dirname).join("inner.txt").exists());
 }
 
 #[test]
@@ -949,7 +949,7 @@ fn copy_file_with_tab_in_name() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -973,7 +973,7 @@ fn copy_file_with_leading_tab() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -997,7 +997,7 @@ fn copy_file_with_trailing_tab() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1021,7 +1021,7 @@ fn copy_file_with_consecutive_tabs() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1045,7 +1045,7 @@ fn copy_file_with_mixed_tabs_and_spaces() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1069,7 +1069,7 @@ fn copy_file_with_bell_character() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1093,7 +1093,7 @@ fn copy_file_with_backspace_character() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1117,7 +1117,7 @@ fn copy_file_with_escape_character() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1141,7 +1141,7 @@ fn copy_file_with_form_feed() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1165,7 +1165,7 @@ fn copy_file_with_vertical_tab() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1189,7 +1189,7 @@ fn copy_file_with_multiple_control_characters() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1213,7 +1213,7 @@ fn copy_file_with_del_character() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")))]
@@ -1238,7 +1238,7 @@ fn copy_file_with_high_ascii_128() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")))]
@@ -1263,7 +1263,7 @@ fn copy_file_with_high_ascii_255() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "tvos", target_os = "watchos")))]
@@ -1319,7 +1319,7 @@ fn copy_file_with_non_utf8_sequence() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1343,7 +1343,7 @@ fn copy_file_with_all_quotes_consecutive() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1367,7 +1367,7 @@ fn copy_file_with_all_brackets_consecutive() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1403,7 +1403,7 @@ fn copy_file_with_shell_injection_like_name() {
 
     assert_eq!(summary.files_copied(), filenames.len() as u64);
     for filename in &filenames {
-        assert!(dest_root.join(filename).exists(), "should copy {filename}");
+        assert!(dest_root.join("source").join(filename).exists(), "should copy {filename}");
     }
 }
 
@@ -1428,7 +1428,7 @@ fn copy_file_with_all_glob_characters() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1468,7 +1468,7 @@ fn copy_multiple_files_with_various_special_characters() {
 
     assert_eq!(summary.files_copied(), filenames.len() as u64);
     for filename in &filenames {
-        assert!(dest_root.join(filename).exists(), "should copy {filename}");
+        assert!(dest_root.join("source").join(filename).exists(), "should copy {filename}");
     }
 }
 
@@ -1500,6 +1500,7 @@ fn copy_deeply_nested_directories_with_special_characters() {
 
     assert_eq!(summary.files_copied(), 1);
     let dest_file = dest_root
+        .join("source")
         .join("dir with space")
         .join("dir'quote")
         .join("dir*glob")
@@ -1531,7 +1532,7 @@ fn copy_file_with_special_characters_preserves_content() {
 
     assert_eq!(summary.files_copied(), 1);
     assert_eq!(
-        fs::read(dest_root.join(filename)).expect("read dest"),
+        fs::read(dest_root.join("source").join(filename)).expect("read dest"),
         content
     );
 }
@@ -1558,7 +1559,7 @@ fn copy_file_with_special_characters_dry_run() {
 
     assert_eq!(summary.files_copied(), 1);
     assert!(
-        !dest_root.join(filename).exists(),
+        !dest_root.join("source").join(filename).exists(),
         "dry run should not create file"
     );
 }
@@ -1591,7 +1592,7 @@ fn copy_file_with_special_characters_with_times_preservation() {
 
     assert_eq!(summary.files_copied(), 1);
     let dest_mtime = FileTime::from_last_modification_time(
-        &fs::metadata(dest_root.join(filename)).expect("dest metadata"),
+        &fs::metadata(dest_root.join("source").join(filename)).expect("dest metadata"),
     );
     assert_eq!(dest_mtime, past_time);
 }
@@ -1617,7 +1618,7 @@ fn copy_file_with_at_sign() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1641,7 +1642,7 @@ fn copy_file_with_hash() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1665,7 +1666,7 @@ fn copy_file_with_percent() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1689,7 +1690,7 @@ fn copy_file_with_caret() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1739,7 +1740,7 @@ fn copy_file_with_backtick() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1763,7 +1764,7 @@ fn copy_file_with_exclamation() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1787,7 +1788,7 @@ fn copy_file_with_equals_sign() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1811,7 +1812,7 @@ fn copy_file_with_plus_sign() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1835,7 +1836,7 @@ fn copy_file_with_comma() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
@@ -1859,7 +1860,7 @@ fn copy_file_with_leading_dot() {
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);
-    assert!(dest_root.join(filename).exists());
+    assert!(dest_root.join("source").join(filename).exists());
 }
 
 #[test]
