@@ -1,5 +1,79 @@
 use std::time::Duration;
 
+/// I/O technology the local-copy executor used to materialise a whole-file
+/// copy. Tracked so the `Copy method` stats line can report which kernel
+/// acceleration ran. Upstream rsync has no equivalent - it always reconstructs
+/// files from the wire - so this is oc-rsync-specific and only populated by the
+/// local-copy fast paths, never by remote/protocol transfers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CopyMethodKind {
+    /// macOS `clonefile` copy-on-write clone.
+    Clonefile,
+    /// Linux `FICLONE` copy-on-write reflink.
+    Ficlone,
+    /// Linux `copy_file_range` in-kernel copy.
+    CopyFileRange,
+    /// Windows ReFS `FSCTL_DUPLICATE_EXTENTS_TO_FILE` block clone.
+    ReFsReflink,
+    /// Windows `CopyFileExW`.
+    CopyFileEx,
+    /// Linux io_uring registered-buffer data write.
+    IoUring,
+    /// Portable userspace read/write loop (or delta reconstruction).
+    Standard,
+}
+
+impl CopyMethodKind {
+    /// Every variant, in display order. Indexed by `self as usize`.
+    const ALL: [Self; 7] = [
+        Self::Clonefile,
+        Self::Ficlone,
+        Self::CopyFileRange,
+        Self::ReFsReflink,
+        Self::CopyFileEx,
+        Self::IoUring,
+        Self::Standard,
+    ];
+
+    /// Human-readable label for the `Copy method` stats line. CoW mechanisms
+    /// are annotated so the user can see no data was moved.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Clonefile => "clonefile (CoW)",
+            Self::Ficlone => "FICLONE (CoW)",
+            Self::CopyFileRange => "copy_file_range",
+            Self::ReFsReflink => "ReFS reflink (CoW)",
+            Self::CopyFileEx => "CopyFileExW",
+            Self::IoUring => "io_uring",
+            Self::Standard => "standard",
+        }
+    }
+
+    /// Whether this method is a kernel acceleration (anything but the portable
+    /// userspace path). Used to gate the stats line so a plain standard-only
+    /// copy stays byte-identical to upstream's `--stats` output.
+    #[must_use]
+    pub const fn is_accelerated(self) -> bool {
+        !matches!(self, Self::Standard)
+    }
+
+    /// Maps a `fast_io` platform-copy mechanism onto the tracked kind. The
+    /// non-zero-copy `copyfile`/`StandardCopy` results fold into `Standard`.
+    #[must_use]
+    pub fn from_platform(method: fast_io::CopyMethod) -> Self {
+        use fast_io::CopyMethod;
+        match method {
+            CopyMethod::Clonefile => Self::Clonefile,
+            CopyMethod::Ficlone => Self::Ficlone,
+            CopyMethod::CopyFileRange => Self::CopyFileRange,
+            CopyMethod::ReFsReflink => Self::ReFsReflink,
+            CopyMethod::CopyFileEx => Self::CopyFileEx,
+            CopyMethod::Copyfile | CopyMethod::StandardCopy => Self::Standard,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 /// Statistics describing the outcome of a [`crate::local_copy::LocalCopyPlan`] execution.
 ///
@@ -39,6 +113,9 @@ pub struct LocalCopySummary {
     file_list_generation: Duration,
     file_list_transfer: Duration,
     destination_root_created: bool,
+    // Per-method copy counts, indexed by `CopyMethodKind as usize`. Populated
+    // only by the local-copy fast paths; drives the `Copy method` stats line.
+    copy_methods: [u64; 7],
 }
 
 impl LocalCopySummary {
@@ -216,6 +293,37 @@ impl LocalCopySummary {
         self.file_list_size = self.file_list_size.saturating_add(entry_size as u64);
     }
 
+    /// Records that one whole-file copy used the given I/O technology. Called
+    /// by the local-copy fast paths alongside [`Self::record_file`].
+    pub(in crate::local_copy) fn record_copy_method(&mut self, kind: CopyMethodKind) {
+        let index = kind as usize;
+        self.copy_methods[index] = self.copy_methods[index].saturating_add(1);
+    }
+
+    /// Returns the per-method copy breakdown as `(label, count)` pairs, in
+    /// display order, omitting methods that were never used. Empty when no
+    /// local-copy fast path ran (e.g. a remote/protocol transfer).
+    #[must_use]
+    pub fn copy_method_breakdown(&self) -> Vec<(&'static str, u64)> {
+        CopyMethodKind::ALL
+            .iter()
+            .filter_map(|&kind| {
+                let count = self.copy_methods[kind as usize];
+                (count > 0).then_some((kind.label(), count))
+            })
+            .collect()
+    }
+
+    /// Whether any whole-file copy used a kernel acceleration (clonefile,
+    /// reflink, copy_file_range, io_uring, ...). Used to gate the `Copy method`
+    /// line so a standard-only copy keeps upstream-identical `--stats` output.
+    #[must_use]
+    pub fn used_copy_acceleration(&self) -> bool {
+        CopyMethodKind::ALL
+            .iter()
+            .any(|&kind| kind.is_accelerated() && self.copy_methods[kind as usize] > 0)
+    }
+
     /// Folds the file-list size into the `sent` byte total so a local copy
     /// reports the protocol-equivalent figure upstream prints.
     ///
@@ -356,6 +464,7 @@ impl LocalCopySummary {
             file_list_generation: Duration::ZERO,
             file_list_transfer: Duration::ZERO,
             destination_root_created: false,
+            copy_methods: [0; 7],
         }
     }
 
@@ -727,6 +836,59 @@ mod tests {
         // The file-list size is still reported independently; upstream prints
         // both `File list size` and `Total bytes sent`.
         assert_eq!(summary.file_list_size(), 188);
+    }
+
+    #[test]
+    fn copy_method_breakdown_counts_and_gates_acceleration() {
+        let mut summary = LocalCopySummary::default();
+        assert!(summary.copy_method_breakdown().is_empty());
+        assert!(!summary.used_copy_acceleration());
+
+        for _ in 0..400 {
+            summary.record_copy_method(CopyMethodKind::Clonefile);
+        }
+        summary.record_copy_method(CopyMethodKind::Standard);
+        summary.record_copy_method(CopyMethodKind::Standard);
+
+        assert_eq!(
+            summary.copy_method_breakdown(),
+            vec![("clonefile (CoW)", 400), ("standard", 2)]
+        );
+        // A clone is an acceleration, so the gate trips even though some files
+        // fell back to the standard path.
+        assert!(summary.used_copy_acceleration());
+    }
+
+    #[test]
+    fn copy_method_standard_only_does_not_gate_acceleration() {
+        // A standard-only local copy must not trip the gate, so its `--stats`
+        // output stays byte-identical to upstream (which has no Copy method line).
+        let mut summary = LocalCopySummary::default();
+        summary.record_copy_method(CopyMethodKind::Standard);
+        assert_eq!(summary.copy_method_breakdown(), vec![("standard", 1)]);
+        assert!(!summary.used_copy_acceleration());
+    }
+
+    #[test]
+    fn copy_method_from_platform_maps_zero_copy_and_fallbacks() {
+        use fast_io::CopyMethod;
+        assert_eq!(
+            CopyMethodKind::from_platform(CopyMethod::Clonefile),
+            CopyMethodKind::Clonefile
+        );
+        assert_eq!(
+            CopyMethodKind::from_platform(CopyMethod::CopyFileRange),
+            CopyMethodKind::CopyFileRange
+        );
+        // Non-zero-copy platform results fold into the standard bucket.
+        assert_eq!(
+            CopyMethodKind::from_platform(CopyMethod::StandardCopy),
+            CopyMethodKind::Standard
+        );
+        assert_eq!(
+            CopyMethodKind::from_platform(CopyMethod::Copyfile),
+            CopyMethodKind::Standard
+        );
     }
 
     #[test]

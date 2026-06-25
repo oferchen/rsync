@@ -17,8 +17,8 @@ use std::time::{Duration, Instant};
 use ::metadata::MetadataOptions;
 
 use crate::local_copy::{
-    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet, LocalCopyError,
-    LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord,
+    CopyContext, CopyMethodKind, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet,
+    LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord,
 };
 
 use super::super::TransferFlags;
@@ -119,6 +119,9 @@ pub(super) fn try_dispatch(
     context
         .summary_mut()
         .record_file(file_size, file_size, None);
+    context
+        .summary_mut()
+        .record_copy_method(CopyMethodKind::IoUring);
     context.summary_mut().record_elapsed(elapsed);
     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
     let total_bytes = Some(metadata_snapshot.len());

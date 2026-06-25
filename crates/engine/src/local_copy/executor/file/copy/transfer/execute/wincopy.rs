@@ -23,8 +23,8 @@ use logging::debug_log;
 use ::metadata::MetadataOptions;
 
 use crate::local_copy::{
-    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet, LocalCopyError,
-    LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord,
+    CopyContext, CopyMethodKind, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet,
+    LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord,
 };
 
 use super::super::TransferFlags;
@@ -92,30 +92,30 @@ pub(super) fn try_copy(
 
     let file_size = metadata.len();
 
-    let dispatched =
+    let dispatched_method =
         match context
             .options()
             .platform_copy()
             .copy_file(source, destination, file_size)
         {
             Ok(result) => match result.method {
-                CopyMethod::CopyFileEx | CopyMethod::ReFsReflink => true,
+                method @ (CopyMethod::CopyFileEx | CopyMethod::ReFsReflink) => Some(method),
                 _ => {
                     // StandardCopy (std::fs::copy fallback) does not exercise the
                     // Windows-optimal kernel path; let the executor's normal write
                     // strategy own the bytes so behaviour matches non-Windows.
                     let _ = std::fs::remove_file(destination);
-                    false
+                    None
                 }
             },
             Err(_) => {
                 let _ = std::fs::remove_file(destination);
-                false
+                None
             }
         };
-    if !dispatched {
+    let Some(dispatched_method) = dispatched_method else {
         return Ok(false);
-    }
+    };
 
     let start = Instant::now();
     debug_log!(
@@ -138,6 +138,9 @@ pub(super) fn try_copy(
     context
         .summary_mut()
         .record_file(file_size, file_size, None);
+    context
+        .summary_mut()
+        .record_copy_method(CopyMethodKind::from_platform(dispatched_method));
     context.summary_mut().record_elapsed(start.elapsed());
 
     // Normalize copied metadata to match what open()-created files have.

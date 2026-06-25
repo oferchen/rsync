@@ -445,6 +445,21 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
     let rate_display = format_summary_rate(rate, human_readable);
     let total_size_display = format_size(total_size, human_readable);
 
+    // oc-rsync extension: when a local copy used a kernel acceleration
+    // (clonefile/reflink/io_uring), report which technology moved the data so
+    // the byte totals make sense (a CoW clone copies no bytes). Gated on an
+    // accelerated method actually running, so protocol transfers - which always
+    // reconstruct from the wire (standard) - keep upstream-identical output.
+    if summary.used_copy_acceleration() {
+        let methods = summary
+            .copy_method_breakdown()
+            .into_iter()
+            .map(|(label, count)| format!("{label} x{count}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(stdout, "Copy method: {methods}")?;
+    }
+
     writeln!(
         stdout,
         "sent {sent_display} bytes  received {received_display} bytes  {rate_display} bytes/sec"
