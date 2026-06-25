@@ -53,7 +53,18 @@ pub enum ClientEventKind {
 }
 
 impl ClientEventKind {
-    /// Returns whether the event kind represents progress-worthy activity.
+    /// Returns whether the event kind is a file-list entry that counts toward
+    /// `--progress` accounting - i.e. whether it contributes to the
+    /// `to-chk=<remaining>/<total>` denominator.
+    ///
+    /// The generator walks every such entry, so `to-chk` counts down across all
+    /// of them regardless of whether each one is transferred. Whether a given
+    /// entry actually prints a per-file progress block and advances `xfr#` is
+    /// the narrower question answered by [`ClientEvent::is_uptodate`]: an
+    /// up-to-date (quick-check match) entry is still counted here but stays
+    /// silent under `--progress`/`-P`.
+    ///
+    /// upstream: progress.c rprint_progress
     pub const fn is_progress(&self) -> bool {
         matches!(
             self,
@@ -264,6 +275,40 @@ impl ClientEvent {
         self.change_set
     }
 
+    /// Returns whether this event describes an entry that is already up to date
+    /// at the destination: a quick-check metadata match, a `--copy-dest`
+    /// reconstruction, an already-correct hardlink alias, or an unchanged
+    /// directory/symlink reconstructed from a basis.
+    ///
+    /// Such entries count toward the `to-chk` file-list total but are never
+    /// transferred, so under `--progress`/`-P` they print no per-file block and
+    /// do not advance `xfr#` - matching upstream's silent second run. They
+    /// surface only with `-vv`/`-i`.
+    ///
+    /// upstream: hlink.c:218-224, generator.c:1010-1022/1145-1147,
+    /// rsync.c:672-676 - the generator records these as "is uptodate" without
+    /// opening a receiver progress block.
+    #[must_use]
+    pub fn is_uptodate(&self) -> bool {
+        if matches!(self.kind, ClientEventKind::MetadataReused) || self.hardlink_uptodate {
+            return true;
+        }
+        match self.kind {
+            ClientEventKind::ReferenceCopied => true,
+            ClientEventKind::DirectoryCreated | ClientEventKind::SymlinkCopied => {
+                !self.created && !self.change_set.has_any_change()
+            }
+            // A `--link-dest` symlink hard-linked from the basis is `hL` + blank
+            // and emits "%s is uptodate" like the other alt-dest matches.
+            ClientEventKind::HardLink => self
+                .metadata
+                .as_ref()
+                .map(ClientEntryMetadata::kind)
+                .is_some_and(|kind| matches!(kind, ClientEntryKind::Symlink)),
+            _ => false,
+        }
+    }
+
     /// Returns the root directory of the destination tree.
     #[must_use]
     pub fn destination_root(&self) -> &Path {
@@ -357,6 +402,9 @@ mod tests {
 
     #[test]
     fn client_event_kind_is_progress_returns_true_for_metadata_reused() {
+        // An up-to-date entry still counts toward the `to-chk` file-list total
+        // (it is a file the generator checked), so `is_progress` is true. Its
+        // per-file line/`xfr#` suppression is handled by `is_uptodate`, not here.
         assert!(ClientEventKind::MetadataReused.is_progress());
     }
 

@@ -203,7 +203,13 @@ where
 pub(crate) struct ClientProgressForwarder<'a> {
     observer: &'a mut dyn ClientProgressObserver,
     total: usize,
+    // Count of file-list entries processed so far, including up-to-date ones.
+    // Drives the `to-chk=<remaining>/<total>` numerator (remaining = total -
+    // emitted), so it must advance for every entry the generator checks.
     emitted: usize,
+    // Count of entries actually transferred. Drives `xfr#`, which upstream only
+    // advances for transferred files, never for up-to-date matches.
+    transferred: usize,
     overall_total_bytes: Option<u64>,
     overall_transferred: u64,
     overall_start: Instant,
@@ -239,6 +245,7 @@ impl<'a> ClientProgressForwarder<'a> {
             observer,
             total,
             emitted: 0,
+            transferred: 0,
             overall_total_bytes: (total_bytes > 0).then_some(total_bytes),
             overall_transferred: 0,
             overall_start: Instant::now(),
@@ -259,9 +266,20 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
             return;
         }
 
+        // Every checked file-list entry advances the `to-chk` position, even an
+        // up-to-date match the generator never transfers.
         self.emitted = self.emitted.saturating_add(1);
-        let index = self.emitted;
-        let remaining = self.total.saturating_sub(index);
+        let remaining = self.total.saturating_sub(self.emitted);
+
+        // upstream: an up-to-date entry prints no per-file progress block and
+        // does not advance `xfr#` - it is silent under `--progress`/`-P` (it
+        // surfaces only with `-vv`/`-i`), so a no-change run emits nothing.
+        if event.is_uptodate() {
+            return;
+        }
+
+        self.transferred = self.transferred.saturating_add(1);
+        let index = self.transferred;
 
         let total_bytes = if matches!(event.kind(), ClientEventKind::DataCopied) {
             event.total_bytes()
@@ -299,8 +317,10 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
             return;
         }
 
-        let index = (self.emitted + 1).min(self.total);
-        let remaining = self.total.saturating_sub(index);
+        // The in-flight file is the next transfer (`xfr#`), positioned one past
+        // the entries already checked (`to-chk`).
+        let index = (self.transferred + 1).min(self.total);
+        let remaining = self.total.saturating_sub(self.emitted + 1);
         let event = ClientEvent::from_progress(
             progress.relative_path(),
             progress.bytes_transferred(),
