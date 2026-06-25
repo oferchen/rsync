@@ -515,15 +515,40 @@ run_extended_scenario "whole-file" "-avW"
 # diverges, so a genuine oc-rsync regression would still surface. Same class of
 # Windows/MSYS2 limitation the "relative" scenario is skipped for above.
 if [[ "${host_os}" == "windows" && "${up_daemon_available}" == "true" ]]; then
+  # Root-cause instrumentation: capture the upstream daemon's own behaviour so we
+  # can prove WHERE the --inplace divergence lives (the upstream Windows receiver
+  # vs oc-rsync). All lines are prefixed DIAG-INPLACE for easy grepping in CI.
+  echo "DIAG-INPLACE: module dir = ${workdir}/data-up"
+  : > "${workdir}/up-rsyncd.log" 2>/dev/null || true
+
   reset_module_data "up"
-  # shellcheck disable=SC2086
-  "${UPSTREAM_RSYNC}" -av --inplace "${src}/" "${up_url}/" >/dev/null 2>&1 || true
+  echo "DIAG-INPLACE: --- baseline: upstream client -> upstream daemon (--inplace) ---"
+  "${UPSTREAM_RSYNC}" -av --inplace "${src}/" "${up_url}/" 2>&1 \
+    | sed 's/^/DIAG-INPLACE-up: /' || echo "DIAG-INPLACE: upstream client rc=$?"
+  find "${workdir}/data-up" -type f 2>/dev/null | sed 's/^/DIAG-INPLACE-up-file: /'
   if tree_diff "${src}" "${workdir}/data-up" >/dev/null 2>&1; then
-    # Upstream's own --inplace daemon push works here, so the oc-rsync leg is
-    # meaningful - run it normally and let a real divergence fail the build.
-    run_extended_scenario "inplace" "-av --inplace"
+    inplace_baseline="MATCH"
   else
+    inplace_baseline="DIVERGE"
+  fi
+  echo "DIAG-INPLACE-RESULT: upstream->upstream --inplace = ${inplace_baseline}"
+
+  reset_module_data "up"
+  echo "DIAG-INPLACE: --- oc-rsync client -> upstream daemon (--inplace -vvv) ---"
+  # shellcheck disable=SC2086
+  "${OC_RSYNC}" -av --inplace -vvv "${src}/" "${up_url}/" 2>&1 \
+    | sed 's/^/DIAG-INPLACE-oc: /' || echo "DIAG-INPLACE: oc client rc=$?"
+  find "${workdir}/data-up" -type f 2>/dev/null | sed 's/^/DIAG-INPLACE-oc-file: /'
+  echo "DIAG-INPLACE: --- upstream daemon log (both pushes) ---"
+  sed 's/^/DIAG-INPLACE-daemonlog: /' "${workdir}/up-rsyncd.log" 2>/dev/null || true
+
+  # Skip only when the upstream-only baseline also diverges (proving the upstream
+  # Windows receiver is at fault, not oc-rsync). Otherwise run the real leg so a
+  # genuine oc-rsync regression fails the build.
+  if [[ "${inplace_baseline}" == "DIVERGE" ]]; then
     echo "SKIP: inplace: oc-rsync -> upstream daemon (upstream Windows daemon --inplace receiver diverges in the upstream->upstream baseline too; not an oc-rsync defect)"
+  else
+    run_extended_scenario "inplace" "-av --inplace"
   fi
 else
   run_extended_scenario "inplace" "-av --inplace"
