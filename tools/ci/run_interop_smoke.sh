@@ -503,7 +503,31 @@ fi
 run_extended_scenario "whole-file" "-avW"
 
 # --- Scenario 15: inplace mode (--inplace) ------------------------------
-run_extended_scenario "inplace" "-av --inplace"
+# On Windows the upstream rsync daemon's --inplace receiver opens each
+# destination directly (receiver.c: do_open(fname, O_WRONLY|O_CREAT)) instead of
+# the open_tmpfile path the non-inplace scenarios take. Under the Git-bash/MSYS2
+# environment that direct open fails with ENOENT for every file, leaving the
+# module empty. oc-rsync's sender has no --inplace-specific code: it forwards
+# --inplace verbatim as a server arg and sends byte-identical flist + data to the
+# whole-file scenario (which passes here), so any divergence is in the upstream
+# Windows daemon receiver, not oc-rsync. Confirm that with an upstream-client ->
+# upstream-daemon baseline: only skip the oc-rsync leg when upstream itself also
+# diverges, so a genuine oc-rsync regression would still surface. Same class of
+# Windows/MSYS2 limitation the "relative" scenario is skipped for above.
+if [[ "${host_os}" == "windows" && "${up_daemon_available}" == "true" ]]; then
+  reset_module_data "up"
+  # shellcheck disable=SC2086
+  "${UPSTREAM_RSYNC}" -av --inplace "${src}/" "${up_url}/" >/dev/null 2>&1 || true
+  if tree_diff "${src}" "${workdir}/data-up" >/dev/null 2>&1; then
+    # Upstream's own --inplace daemon push works here, so the oc-rsync leg is
+    # meaningful - run it normally and let a real divergence fail the build.
+    run_extended_scenario "inplace" "-av --inplace"
+  else
+    echo "SKIP: inplace: oc-rsync -> upstream daemon (upstream Windows daemon --inplace receiver diverges in the upstream->upstream baseline too; not an oc-rsync defect)"
+  fi
+else
+  run_extended_scenario "inplace" "-av --inplace"
+fi
 
 # --- Scenario 16: numeric-ids (--numeric-ids) --------------------------
 run_extended_scenario "numeric-ids" "-av --numeric-ids"
