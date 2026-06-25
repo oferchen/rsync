@@ -22,6 +22,14 @@ slow-timeout = { period = "120s", terminate-after = 3 }
 filter = "package(daemon) | test(execute_sparse) | binary_id(~integration_daemon)"
 retries = 2
 
+# Retry policies for tests with inherent race conditions (port binding TOCTOU,
+# slow CI runner timing, transient Windows %TEMP% "Access is denied" on
+# NamedTempFile creation). Mirrors profile.ci so the Windows nextest cells -
+# which run under the default profile, not profile.ci - also retry these.
+[[profile.default.overrides]]
+filter = "package(daemon) | test(execute_sparse) | binary_id(~integration_daemon)"
+retries = 2
+
 # SSH integration tests must run serially - parallel SSH sessions on the CI
 # runner cause pipe corruption (garbled data, zero-length filenames, broken
 # connections). Retries handle transient SSH pipe failures.
