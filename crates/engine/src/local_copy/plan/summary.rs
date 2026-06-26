@@ -108,6 +108,9 @@ pub struct LocalCopySummary {
     compression_used: bool,
     total_source_bytes: u64,
     total_elapsed: Duration,
+    /// Wall-clock span of the whole transfer (not the sum of per-file copy
+    /// durations in `total_elapsed`). Used for the upstream-style transfer rate.
+    wall_clock_elapsed: Duration,
     bandwidth_sleep: Duration,
     file_list_size: u64,
     file_list_generation: Duration,
@@ -276,6 +279,21 @@ impl LocalCopySummary {
         self.total_elapsed
     }
 
+    /// Returns the wall-clock span of the whole transfer.
+    ///
+    /// Unlike [`Self::total_elapsed`] (the sum of per-file copy durations, which
+    /// is ~0 for CoW/clonefile), this is a single span suitable for computing a
+    /// transfer rate that mirrors upstream `main.c:418` `bytes_per_sec_human_dnum`.
+    #[must_use]
+    pub const fn wall_clock_elapsed(&self) -> Duration {
+        self.wall_clock_elapsed
+    }
+
+    /// Records the whole-transfer wall-clock span. Call once at finalize.
+    pub(in crate::local_copy) const fn record_wall_clock_elapsed(&mut self, elapsed: Duration) {
+        self.wall_clock_elapsed = elapsed;
+    }
+
     /// Returns the cumulative duration spent sleeping due to `--bwlimit` pacing.
     #[must_use]
     #[doc(alias = "--bwlimit")]
@@ -409,6 +427,7 @@ impl LocalCopySummary {
             total_source_bytes,
             items_deleted,
             total_elapsed: elapsed,
+            wall_clock_elapsed: elapsed,
             ..Default::default()
         }
     }
@@ -432,6 +451,7 @@ impl LocalCopySummary {
             bytes_sent,
             items_deleted,
             total_elapsed: elapsed,
+            wall_clock_elapsed: elapsed,
             ..Default::default()
         }
     }
@@ -469,6 +489,7 @@ impl LocalCopySummary {
             compression_used: false,
             total_source_bytes: 0,
             total_elapsed: Duration::ZERO,
+            wall_clock_elapsed: Duration::ZERO,
             bandwidth_sleep: Duration::ZERO,
             file_list_size: 0,
             file_list_generation: Duration::ZERO,
