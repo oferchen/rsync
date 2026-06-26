@@ -99,6 +99,35 @@ struct InfoFlagsResult {
     show_copy_method: bool,
 }
 
+/// Applies upstream's `--progress` ⇒ `--info=name` implication.
+///
+/// upstream: options.c:2351-2355 - when the `--progress`/`-P` flag set
+/// `do_progress` (and the run is not a server), an unset NAME level is bumped to
+/// 1 via `parse_output_words("name", DEFAULT_PRIORITY)`. That `DEFAULT_PRIORITY`
+/// assignment cannot override a USER_PRIORITY one, so an explicit `--info=name0`
+/// / `--info=none` (tracked here by `name_overridden`) blocks the bump.
+///
+/// `initial_progress` is the faithful `do_progress` proxy: it reflects the
+/// `--progress`/`-P` flag only, NOT `--info=progress2` (Overall), which sets the
+/// progress info level without setting `do_progress` - upstream prints no names
+/// for `--info=progress2`.
+fn imply_name_from_progress(
+    initial_progress: ProgressSetting,
+    name_level: NameOutputLevel,
+    name_overridden: bool,
+) -> NameOutputLevel {
+    if !matches!(
+        initial_progress,
+        ProgressSetting::Disabled | ProgressSetting::Unspecified
+    ) && matches!(name_level, NameOutputLevel::Disabled)
+        && !name_overridden
+    {
+        NameOutputLevel::UpdatedOnly
+    } else {
+        name_level
+    }
+}
+
 /// Parses --info flags and returns display settings.
 fn parse_info_settings<Out, Err>(
     stdout: &mut Out,
@@ -119,6 +148,7 @@ where
     let mut name_overridden = initial_name_overridden;
 
     if info_args.is_empty() {
+        let name_level = imply_name_from_progress(initial_progress, name_level, name_overridden);
         return Ok(InfoFlagsResult {
             progress_setting,
             stats_level,
@@ -164,6 +194,8 @@ where
             // upstream: options.c set_output_verbosity / parse_output_words
             settings.apply_to_thread_local();
 
+            let name_level =
+                imply_name_from_progress(initial_progress, name_level, name_overridden);
             Ok(InfoFlagsResult {
                 progress_setting,
                 stats_level,
