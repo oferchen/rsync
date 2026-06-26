@@ -242,6 +242,19 @@ pub const fn tcp_quickack_supported() -> bool {
     cfg!(target_os = "linux")
 }
 
+/// Re-arms `TCP_QUICKACK` on a stream that may not be a TCP socket.
+///
+/// `TCP_QUICKACK` is one-shot on Linux: the kernel re-enables delayed ACKs
+/// after the next ACK. Call this before each blocking read in a multi-round
+/// handshake so every round's ACK stays immediate. `None` (TLS, connect
+/// program, or stdio transports) and non-Linux platforms are no-ops,
+/// matching the best-effort apply pattern of the other helpers here.
+pub fn rearm_tcp_quickack(stream: Option<&TcpStream>) {
+    if let Some(stream) = stream {
+        let _ = set_tcp_quickack(stream);
+    }
+}
+
 /// Returns `true` when the running platform implements server-side
 /// `TCP_FASTOPEN`.
 #[must_use]
@@ -468,6 +481,20 @@ mod tests {
             Ok(false) => assert!(!tcp_quickack_supported()),
             Err(error) => panic!("unexpected error from TCP_QUICKACK: {error}"),
         }
+
+        drop(stream);
+        handle.join().expect("accept thread completes");
+    }
+
+    #[test]
+    fn rearm_tcp_quickack_is_noop_on_none_and_some() {
+        // None (non-TCP transports) must be a silent no-op.
+        rearm_tcp_quickack(None);
+
+        // Some(&stream) re-arms best-effort and must not panic regardless of
+        // platform support.
+        let (stream, handle) = connected_stream();
+        rearm_tcp_quickack(Some(&stream));
 
         drop(stream);
         handle.join().expect("accept thread completes");
