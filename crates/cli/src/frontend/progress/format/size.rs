@@ -3,25 +3,18 @@
 use core::client::HumanReadableMode;
 
 /// Formats a byte count using thousands separators when human-readable formatting is disabled. When
-/// enabled, the output uses decimal unit suffixes such as `K`, `M`, or `G` with two fractional
-/// digits. Combined mode includes the exact decimal value in parentheses when the two representations
-/// differ.
+/// enabled, the output uses unit suffixes such as `K`, `M`, or `G` with two fractional digits.
+/// `-h` (Enabled) divides by 1000; `-hh` (Combined) divides by 1024, mirroring upstream `do_big_num`.
 pub(crate) fn format_progress_bytes(bytes: u64, human_readable: HumanReadableMode) -> String {
     format_size(bytes, human_readable)
 }
 
 pub(crate) fn format_size(bytes: u64, human_readable: HumanReadableMode) -> String {
-    let decimal = format_decimal_bytes(bytes);
     if !human_readable.is_enabled() {
-        return decimal;
+        return format_decimal_bytes(bytes);
     }
 
-    let human = format_human_bytes(bytes);
-    if human_readable.includes_exact() && human != decimal {
-        format!("{human} ({decimal})")
-    } else {
-        human
-    }
+    format_human_bytes(bytes, human_readable.unit_base())
 }
 
 pub(crate) fn format_decimal_bytes(bytes: u64) -> String {
@@ -51,23 +44,26 @@ pub(crate) fn format_decimal_bytes(bytes: u64) -> String {
     String::from(std::str::from_utf8(&buf[pos..]).expect("ASCII-only content"))
 }
 
-pub(crate) fn format_human_bytes(bytes: u64) -> String {
-    if bytes < 1_000 {
+pub(crate) fn format_human_bytes(bytes: u64, base: f64) -> String {
+    // upstream: lib/compat.c:do_big_num - values below the multiplier are
+    // printed without a unit suffix; otherwise K/M/G/T/P with two fractional
+    // digits. `base` is 1000 for `-h` and 1024 for `-hh` (compat.c:183).
+    let bytes_f64 = bytes as f64;
+    if bytes_f64 < base {
         return bytes.to_string();
     }
 
-    const UNITS: &[(&str, f64)] = &[
-        ("P", 1_000_000_000_000_000.0),
-        ("T", 1_000_000_000_000.0),
-        ("G", 1_000_000_000.0),
-        ("M", 1_000_000.0),
-        ("K", 1_000.0),
+    let units = [
+        ("P", base.powi(5)),
+        ("T", base.powi(4)),
+        ("G", base.powi(3)),
+        ("M", base.powi(2)),
+        ("K", base),
     ];
 
-    let bytes_f64 = bytes as f64;
-    for (suffix, threshold) in UNITS {
-        if bytes_f64 >= *threshold {
-            let value = bytes_f64 / *threshold;
+    for (suffix, threshold) in units {
+        if bytes_f64 >= threshold {
+            let value = bytes_f64 / threshold;
             return format!("{value:.2}{suffix}");
         }
     }
@@ -114,32 +110,45 @@ mod tests {
         assert_eq!(format_decimal_bytes(u64::MAX), "18,446,744,073,709,551,615");
     }
 
+    // upstream: lib/compat.c:183 - `-h` (level 2) uses base 1000.
+    const BASE_1000: f64 = 1000.0;
+    // upstream: lib/compat.c:183 - `-hh` (level 3) uses base 1024.
+    const BASE_1024: f64 = 1024.0;
+
     #[test]
     fn format_human_bytes_small() {
-        assert_eq!(format_human_bytes(0), "0");
-        assert_eq!(format_human_bytes(999), "999");
+        assert_eq!(format_human_bytes(0, BASE_1000), "0");
+        assert_eq!(format_human_bytes(999, BASE_1000), "999");
     }
 
     #[test]
     fn format_human_bytes_kilo() {
-        assert_eq!(format_human_bytes(1_000), "1.00K");
-        assert_eq!(format_human_bytes(1_500), "1.50K");
+        assert_eq!(format_human_bytes(1_000, BASE_1000), "1.00K");
+        assert_eq!(format_human_bytes(1_500, BASE_1000), "1.50K");
     }
 
     #[test]
     fn format_human_bytes_mega() {
-        assert_eq!(format_human_bytes(1_000_000), "1.00M");
-        assert_eq!(format_human_bytes(2_500_000), "2.50M");
+        assert_eq!(format_human_bytes(1_000_000, BASE_1000), "1.00M");
+        assert_eq!(format_human_bytes(2_500_000, BASE_1000), "2.50M");
     }
 
     #[test]
     fn format_human_bytes_giga() {
-        assert_eq!(format_human_bytes(1_000_000_000), "1.00G");
+        assert_eq!(format_human_bytes(1_000_000_000, BASE_1000), "1.00G");
     }
 
     #[test]
     fn format_human_bytes_tera() {
-        assert_eq!(format_human_bytes(1_000_000_000_000), "1.00T");
+        assert_eq!(format_human_bytes(1_000_000_000_000, BASE_1000), "1.00T");
+    }
+
+    #[test]
+    fn format_human_bytes_base_1024() {
+        // -hh divides by 1024: 2,201,503 bytes -> 2.10M (not 2.20M at base 1000).
+        assert_eq!(format_human_bytes(2_201_503, BASE_1024), "2.10M");
+        assert_eq!(format_human_bytes(1_024, BASE_1024), "1.00K");
+        assert_eq!(format_human_bytes(1_048_576, BASE_1024), "1.00M");
     }
 
     #[test]

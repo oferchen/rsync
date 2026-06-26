@@ -149,7 +149,7 @@ fn three_h_flags_remain_combined_mode() {
 }
 
 #[test]
-fn combined_mode_includes_exact_values() {
+fn combined_mode_uses_base_1024_no_exact() {
     use tempfile::tempdir;
 
     let tmp = tempdir().expect("tempdir");
@@ -169,14 +169,16 @@ fn combined_mode_includes_exact_values() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stats output utf8");
+    // upstream: lib/compat.c:183 - `-hh` divides by 1024 (2048 / 1024 = 2.00K)
+    // and never appends an exact-value component.
     assert!(
-        rendered.contains("2.05K (2,048)"),
-        "expected combined format, got: {rendered}"
+        rendered.contains("2.00K") && !rendered.contains("(2,048)"),
+        "expected base-1024 format without exact component, got: {rendered}"
     );
 }
 
 #[test]
-fn combined_mode_shows_both_human_and_decimal() {
+fn combined_mode_long_form_uses_base_1024() {
     use tempfile::tempdir;
 
     let tmp = tempdir().expect("tempdir");
@@ -195,7 +197,12 @@ fn combined_mode_shows_both_human_and_decimal() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stats output utf8");
-    assert!(rendered.contains("1.54K (1,536)"));
+    // upstream: lib/compat.c:183 - `-hh` divides by 1024 (1536 / 1024 = 1.50K)
+    // and never appends an exact-value component.
+    assert!(
+        rendered.contains("1.50K") && !rendered.contains("(1,536)"),
+        "expected base-1024 format without exact component, got: {rendered}"
+    );
 }
 
 #[test]

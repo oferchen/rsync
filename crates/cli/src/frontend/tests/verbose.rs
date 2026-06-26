@@ -299,7 +299,9 @@ fn verbose_human_readable_combined_formats_sizes() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("verbose output utf8");
-    assert!(rendered.contains("1.54K (1,536) bytes"));
+    // upstream: `-hh` (--human-readable=2) divides by 1024 (1536/1024 = 1.50K)
+    // and never appends an exact-value component.
+    assert!(rendered.contains("1.50K bytes") && !rendered.contains("(1,536)"));
 }
 
 /// Verifies that -vv lists files using upstream's bare `%n%L` format
