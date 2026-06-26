@@ -6,7 +6,11 @@ use core::client::HumanReadableMode;
 
 pub(crate) fn format_summary_rate(rate: f64, human_readable: HumanReadableMode) -> String {
     if !human_readable.is_enabled() {
-        return format!("{rate:.2}");
+        // upstream: main.c output_summary() prints the bytes/sec field with
+        // comma_dnum(rate, 2), i.e. thousands-grouped with 2 decimals. Reuse
+        // the same grouping helper the --stats renderer uses so the two
+        // summary paths agree (e.g. "1,234,567.89", not "1234567.89").
+        return crate::stats_format::format_speed(rate);
     }
 
     // upstream: main.c:464 formats the bytes/sec rate with human_num, the same
@@ -141,6 +145,21 @@ mod tests {
     #[test]
     fn format_human_rate_small() {
         assert_eq!(format_human_rate(500.0, 1000.0), "500.00");
+    }
+
+    #[test]
+    fn summary_rate_groups_thousands_without_human_readable() {
+        // upstream output_summary() uses comma_dnum for the bytes/sec field, so
+        // the default (non -h) summary trailer must be thousands-grouped, the
+        // same as oc-rsync's own --stats path.
+        assert_eq!(
+            format_summary_rate(1_234_567.89, HumanReadableMode::Disabled),
+            "1,234,567.89"
+        );
+        assert_eq!(
+            format_summary_rate(512.0, HumanReadableMode::Disabled),
+            "512.00"
+        );
     }
 
     #[test]
