@@ -12,7 +12,10 @@
 
 use std::net::TcpStream;
 
-use fast_io::{DEFAULT_TCP_NOTSENT_LOWAT, set_tcp_notsent_lowat, tcp_notsent_lowat_supported};
+use fast_io::{
+    DEFAULT_TCP_NOTSENT_LOWAT, set_tcp_notsent_lowat, set_tcp_quickack,
+    tcp_notsent_lowat_supported, tcp_quickack_supported,
+};
 
 use crate::client::TcpFastOpenMode;
 
@@ -29,6 +32,11 @@ pub(crate) fn apply_client_tcp_perf_options(stream: &TcpStream, mode: TcpFastOpe
         // Errors are best-effort: `TCP_NOTSENT_LOWAT` is an optimisation
         // hint and a failing setsockopt is non-fatal.
         let _ = set_tcp_notsent_lowat(stream, DEFAULT_TCP_NOTSENT_LOWAT);
+    }
+    if tcp_quickack_supported() {
+        // One-shot hint to skip the delayed-ACK timer on the first ACK;
+        // best-effort, non-fatal.
+        let _ = set_tcp_quickack(stream);
     }
 }
 

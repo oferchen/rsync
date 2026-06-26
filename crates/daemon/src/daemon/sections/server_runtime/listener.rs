@@ -109,10 +109,7 @@ fn log_progress_summary(
     served: usize,
     start_time: SystemTime,
 ) {
-    let uptime_secs = start_time
-        .elapsed()
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let uptime_secs = start_time.elapsed().map(|d| d.as_secs()).unwrap_or(0);
 
     let hours = uptime_secs / 3600;
     let minutes = (uptime_secs % 3600) / 60;
@@ -282,7 +279,11 @@ fn warn_per_family_bind_failure(
     requested_addr: SocketAddr,
     error: &io::Error,
 ) {
-    let family = if requested_addr.is_ipv6() { "IPv6" } else { "IPv4" };
+    let family = if requested_addr.is_ipv6() {
+        "IPv6"
+    } else {
+        "IPv4"
+    };
     let payload = format!(
         "{family} bind for {requested_addr} failed: {error}; \
          continuing with remaining address families"
@@ -390,5 +391,8 @@ fn bind_listeners_per_family(
 fn apply_accepted_stream_tcp_notsent_lowat(stream: &TcpStream) {
     if fast_io::tcp_notsent_lowat_supported() {
         let _ = fast_io::set_tcp_notsent_lowat(stream, fast_io::DEFAULT_TCP_NOTSENT_LOWAT);
+    }
+    if fast_io::tcp_quickack_supported() {
+        let _ = fast_io::set_tcp_quickack(stream);
     }
 }

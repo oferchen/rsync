@@ -213,6 +213,35 @@ pub fn set_tcp_notsent_lowat(stream: &TcpStream, bytes: u32) -> io::Result<bool>
     }
 }
 
+/// Disables delayed ACKs for the next ACK on a connected stream
+/// (`TCP_QUICKACK`).
+///
+/// One-shot on Linux: the kernel re-enables delayed ACKs after a single ACK,
+/// so this is applied once post-handshake to shave a round trip off the early
+/// exchange. On platforms without `TCP_QUICKACK` the call is a no-op and
+/// returns `Ok(false)`.
+///
+/// upstream: not implemented; an oc-rsync-specific perf hint that is
+/// wire-compatible with upstream rsync.
+pub fn set_tcp_quickack(stream: &TcpStream) -> io::Result<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        set_socket_int_option(stream, libc::IPPROTO_TCP, libc::TCP_QUICKACK, 1)?;
+        Ok(true)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = stream;
+        Ok(false)
+    }
+}
+
+/// Returns `true` when the running platform implements `TCP_QUICKACK`.
+#[must_use]
+pub const fn tcp_quickack_supported() -> bool {
+    cfg!(target_os = "linux")
+}
+
 /// Returns `true` when the running platform implements server-side
 /// `TCP_FASTOPEN`.
 #[must_use]
@@ -424,6 +453,20 @@ mod tests {
             Ok(true) => assert!(tcp_notsent_lowat_supported()),
             Ok(false) => assert!(!tcp_notsent_lowat_supported()),
             Err(error) => panic!("unexpected error from TCP_NOTSENT_LOWAT: {error}"),
+        }
+
+        drop(stream);
+        handle.join().expect("accept thread completes");
+    }
+
+    #[test]
+    fn set_tcp_quickack_returns_supported_flag() {
+        let (stream, handle) = connected_stream();
+
+        match set_tcp_quickack(&stream) {
+            Ok(true) => assert!(tcp_quickack_supported()),
+            Ok(false) => assert!(!tcp_quickack_supported()),
+            Err(error) => panic!("unexpected error from TCP_QUICKACK: {error}"),
         }
 
         drop(stream);
