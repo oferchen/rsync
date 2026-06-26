@@ -153,15 +153,19 @@ fn link_dest_copies_file_not_in_link_dest() {
         .expect("copy succeeds");
 
     assert!(dest_file.exists(), "destination file should be created");
-    assert_eq!(
-        fs::read(&dest_file).expect("read dest"),
-        b"brand new"
-    );
+    assert_eq!(fs::read(&dest_file).expect("read dest"), b"brand new");
     assert_eq!(summary.files_copied(), 1);
-    assert_eq!(summary.hard_links_created(), 0, "no hard link should be created");
+    assert_eq!(
+        summary.hard_links_created(),
+        0,
+        "no hard link should be created"
+    );
 
     let link_dest_file = link_dest_dir.join("newfile.txt");
-    assert!(!link_dest_file.exists(), "link-dest should remain unchanged");
+    assert!(
+        !link_dest_file.exists(),
+        "link-dest should remain unchanged"
+    );
 }
 
 #[cfg(unix)]
@@ -333,11 +337,19 @@ fn link_dest_works_with_directory_recursion() {
     // file1 and file2 should be hard linked
     let dest_meta1 = fs::metadata(&dest_file1).expect("dest metadata 1");
     let link_meta1 = fs::metadata(&link_file1).expect("link-dest metadata 1");
-    assert_eq!(dest_meta1.ino(), link_meta1.ino(), "file1 should be hard linked");
+    assert_eq!(
+        dest_meta1.ino(),
+        link_meta1.ino(),
+        "file1 should be hard linked"
+    );
 
     let dest_meta2 = fs::metadata(&dest_file2).expect("dest metadata 2");
     let link_meta2 = fs::metadata(&link_file2).expect("link-dest metadata 2");
-    assert_eq!(dest_meta2.ino(), link_meta2.ino(), "file2 should be hard linked");
+    assert_eq!(
+        dest_meta2.ino(),
+        link_meta2.ino(),
+        "file2 should be hard linked"
+    );
 
     // file3 should NOT be hard linked (content differs)
     let dest_meta3 = fs::metadata(&dest_file3).expect("dest metadata 3");
@@ -352,8 +364,14 @@ fn link_dest_works_with_directory_recursion() {
         fs::read(&dest_file3).expect("read dest file3"),
         b"new content3 with different length"
     );
-    assert!(summary.hard_links_created() >= 2, "at least 2 hard links should be created");
-    assert!(summary.files_copied() >= 1, "at least 1 file should be copied");
+    assert!(
+        summary.hard_links_created() >= 2,
+        "at least 2 hard links should be created"
+    );
+    assert!(
+        summary.files_copied() >= 1,
+        "at least 1 file should be copied"
+    );
 }
 
 #[cfg(unix)]
@@ -380,8 +398,7 @@ fn link_dest_requires_times_option_for_comparison() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    let options = LocalCopyOptions::default()
-        .extend_link_dests([link_dest_dir]);
+    let options = LocalCopyOptions::default().extend_link_dests([link_dest_dir]);
     let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
         .expect("copy succeeds");
@@ -441,10 +458,7 @@ fn link_dest_with_size_difference() {
         link_dest_meta.ino(),
         "files with different sizes should not be hard linked"
     );
-    assert_eq!(
-        fs::read(&dest_file).expect("read dest"),
-        b"longer content"
-    );
+    assert_eq!(fs::read(&dest_file).expect("read dest"), b"longer content");
     assert_eq!(summary.files_copied(), 1);
 }
 
@@ -735,10 +749,7 @@ fn link_dest_replaces_existing_destination() {
         link_dest_meta.ino(),
         "destination should be replaced with hard link"
     );
-    assert_eq!(
-        fs::read(&dest_file).expect("read dest"),
-        b"correct content"
-    );
+    assert_eq!(fs::read(&dest_file).expect("read dest"), b"correct content");
     assert!(summary.hard_links_created() >= 1);
 }
 
@@ -922,10 +933,7 @@ fn link_dest_skips_symlink_in_reference() {
 
     // Should not hard link because link-dest entry is a symlink
     assert!(dest_file.exists());
-    assert_eq!(
-        fs::read(&dest_file).expect("read dest"),
-        b"real content"
-    );
+    assert_eq!(fs::read(&dest_file).expect("read dest"), b"real content");
     // File should be copied, not linked - verify content is correct
     // (files_copied counter may not increment for single-file operands)
 }
@@ -1027,10 +1035,7 @@ fn link_dest_with_inplace_copies_instead_of_linking() {
 
     // With --inplace, the file should still be created at destination
     assert!(dest_file.exists());
-    assert_eq!(
-        fs::read(&dest_file).expect("read dest"),
-        b"inplace content"
-    );
+    assert_eq!(fs::read(&dest_file).expect("read dest"), b"inplace content");
 
     // The link-dest file should remain unchanged
     assert_eq!(
@@ -1078,7 +1083,11 @@ fn link_dest_with_empty_reference_directory_falls_back_to_copy() {
         b"fallback content"
     );
     assert_eq!(summary.files_copied(), 1, "file should be copied as normal");
-    assert_eq!(summary.hard_links_created(), 0, "no hard links since reference is empty");
+    assert_eq!(
+        summary.hard_links_created(),
+        0,
+        "no hard links since reference is empty"
+    );
 }
 
 #[cfg(unix)]
@@ -1124,7 +1133,11 @@ fn link_dest_no_matching_files_copies_all() {
         fs::read(dest_dir.join("beta.txt")).expect("read beta"),
         b"beta"
     );
-    assert_eq!(summary.hard_links_created(), 0, "no matching files to hardlink");
+    assert_eq!(
+        summary.hard_links_created(),
+        0,
+        "no matching files to hardlink"
+    );
     assert!(summary.files_copied() >= 2, "all files should be copied");
 }
 
@@ -1173,11 +1186,65 @@ fn link_dest_permission_mismatch_with_perms_enabled() {
 
     // The file should be created (either linked or copied)
     assert!(dest_file.exists());
-    assert_eq!(
-        fs::read(&dest_file).expect("read dest"),
-        b"perm test"
-    );
+    assert_eq!(fs::read(&dest_file).expect("read dest"), b"perm test");
     // At least one transfer should happen
     let total = summary.files_copied() + summary.hard_links_created();
     assert!(total >= 1, "at least one transfer should occur");
+}
+
+#[cfg(all(unix, feature = "xattr"))]
+#[test]
+fn link_dest_match_reapplies_differing_xattrs() {
+    // upstream: generator.c try_dests_reg() - a --link-dest DATA match whose
+    // attributes differ still runs set_file_attrs, so the linked inode ends
+    // with the source's xattrs.
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    fs::create_dir_all(&source_dir).expect("create source");
+    let source_file = source_dir.join("file.txt");
+    fs::write(&source_file, b"identical content").expect("write source");
+    if xattr::set(&source_file, "user.k", b"v2").is_err() {
+        return; // xattrs unsupported on this filesystem
+    }
+
+    let link_dest_dir = temp.path().join("previous");
+    fs::create_dir_all(&link_dest_dir).expect("create link-dest");
+    let link_dest_file = link_dest_dir.join("file.txt");
+    fs::write(&link_dest_file, b"identical content").expect("write link-dest");
+    xattr::set(&link_dest_file, "user.k", b"v1").expect("set basis xattr");
+
+    // Same data + mtime so the basis is a DATA match.
+    let mtime = fs::metadata(&source_file)
+        .expect("meta")
+        .modified()
+        .expect("mtime");
+    let ftime = FileTime::from_system_time(mtime);
+    set_file_times(&link_dest_file, ftime, ftime).expect("sync timestamps");
+
+    let dest_dir = temp.path().join("dest");
+    fs::create_dir_all(&dest_dir).expect("create dest");
+    let dest_file = dest_dir.join("file.txt");
+    let operands = vec![
+        source_file.clone().into_os_string(),
+        dest_file.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .times(true)
+        .xattrs(true)
+        .extend_link_dests([link_dest_dir]);
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    // The source xattr (v2) wins, not the basis xattr (v1).
+    let got = xattr::get(&dest_file, "user.k")
+        .expect("read")
+        .expect("present");
+    assert_eq!(got, b"v2", "differing link-dest xattr must be corrected");
+
+    // Still hard-linked to the basis.
+    let dest_meta = fs::metadata(&dest_file).expect("dest meta");
+    let basis_meta = fs::metadata(&link_dest_file).expect("basis meta");
+    assert_eq!(dest_meta.ino(), basis_meta.ino(), "must remain hard-linked");
 }
