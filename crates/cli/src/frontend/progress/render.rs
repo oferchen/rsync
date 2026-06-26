@@ -224,18 +224,36 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
     stdout: &mut W,
     human_readable: HumanReadableMode,
 ) -> io::Result<bool> {
-    let progress_events: Vec<_> = events
+    // upstream: progress.c counts every checked file-list entry toward
+    // `to-chk=<remaining>/<total>`, but prints a per-file block and advances
+    // `xfr#` only for entries actually transferred. An up-to-date match
+    // (quick-check) is silent under `--progress`/`-P` (it surfaces only with
+    // `-vv`/`-i`), so a no-change run prints no per-file lines.
+    let flist_entries: Vec<_> = events
         .iter()
         .filter(|event| is_progress_event(event.kind()))
         .collect();
 
-    if progress_events.is_empty() {
+    // Denominator counts every checked entry; the numerator counts down only the
+    // transfers, so to-chk reaches 0 on the last transferred file even when an
+    // up-to-date entry (e.g. an unchanged parent dir) trails it in the list.
+    let total = flist_entries.len();
+    let transferred_total = flist_entries
+        .iter()
+        .filter(|event| !is_uptodate_event(event))
+        .count();
+    if transferred_total == 0 {
         return Ok(false);
     }
 
-    let total = progress_events.len();
+    let mut xfr_index = 0usize;
+    for event in flist_entries.into_iter() {
+        if is_uptodate_event(event) {
+            continue;
+        }
+        xfr_index += 1;
+        let remaining = transferred_total - xfr_index;
 
-    for (index, event) in progress_events.into_iter().enumerate() {
         writeln!(stdout, "{}", event.relative_path().display())?;
 
         let bytes = event.bytes_transferred();
@@ -254,8 +272,6 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
             format_progress_rate(bytes, event.elapsed(), human_readable)
         );
         let elapsed_field = format!("{:>10}", format_progress_elapsed(event.elapsed()));
-        let remaining = total - index - 1;
-        let xfr_index = index + 1;
 
         writeln!(
             stdout,
@@ -450,23 +466,7 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
 /// completes. The two processes pipeline so uptodate lines appear ahead of
 /// transferred-file lines in the observable client output.
 fn is_uptodate_event(event: &ClientEvent) -> bool {
-    if matches!(event.kind(), ClientEventKind::MetadataReused) || event.is_hardlink_uptodate() {
-        return true;
-    }
-    // upstream: generator.c:1019-1022 / 1145-1147 - a `--copy-dest` match emits
-    // its `"is uptodate"` notice from the generator, ahead of the receiver's
-    // bare-name lines. Regular files are `ReferenceCopied`; dirs and symlinks
-    // reconstructed from the basis carry a blank change set and no creation.
-    match event.kind() {
-        ClientEventKind::ReferenceCopied => true,
-        ClientEventKind::DirectoryCreated | ClientEventKind::SymlinkCopied => {
-            !event.was_created() && !event.change_set().has_any_change()
-        }
-        // A `--link-dest` symlink hard-linked from the basis is `hL` + blank and
-        // emits `"%s is uptodate"` like the other alt-dest matches.
-        ClientEventKind::HardLink => is_hardlinked_symlink_event(event),
-        _ => false,
-    }
+    event.is_uptodate()
 }
 
 /// Returns `true` for a HardLink event describing a hard-linked symlink (`hL`).

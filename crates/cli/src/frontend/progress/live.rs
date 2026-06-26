@@ -189,7 +189,15 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
         }
 
         let total = update.total().max(update.index());
-        let remaining = total.saturating_sub(update.index());
+        // Use the transfer-relative remaining computed by the forwarder rather
+        // than `total - index`: `total` counts every checked file-list entry
+        // (the to-chk denominator) while `index` is the transfer ordinal, so
+        // `total - index` never reaches 0 when up-to-date entries (which are
+        // counted in `total` but never transferred) trail the transfers. The
+        // forwarder's `remaining` counts down the transfers themselves, so
+        // to-chk reaches 0 on the last one. For remote transfers
+        // (`from_transfer_event`) this equals the old `total - index`.
+        let remaining = update.remaining().min(total);
 
         let write_result = match self.mode {
             ProgressMode::PerFile => (|| -> io::Result<()> {
