@@ -89,7 +89,8 @@ fn progress_human_readable_combined_formats_sizes() {
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("progress output utf8");
     let normalized = rendered.replace('\r', "\n");
-    assert!(normalized.contains("1.54K (1,536)"));
+    // upstream: `-hh` divides by 1024 (1536/1024 = 1.50K), no exact component.
+    assert!(normalized.contains("1.50K") && !normalized.contains("(1,536)"));
 }
 
 #[test]

@@ -69,7 +69,8 @@ fn stats_human_readable_combined_formats_totals() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stats output utf8");
-    assert!(rendered.contains("Total file size: 1.54K (1,536) bytes"));
+    // upstream: `-hh` divides by 1024 (1536/1024 = 1.50K), no exact component.
+    assert!(rendered.contains("Total file size: 1.50K bytes"));
     assert!(rendered.contains("Total bytes sent:"));
 }
 

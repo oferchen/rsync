@@ -5,18 +5,18 @@ use thiserror::Error;
 /// Controls how byte counters are rendered for user-facing output.
 ///
 /// Upstream `rsync` accepts optional levels for `--human-readable` that either
-/// disable humanisation entirely, enable suffix-based formatting, or emit both
-/// the humanised and exact decimal value.  The enum mirrors those levels so the
-/// CLI can propagate the caller's preference to both the local renderer and any
-/// fallback `rsync` invocations.
+/// disable humanisation entirely, enable base-1000 suffix formatting (`-h`), or
+/// switch to base-1024 suffix formatting (`-hh`). The enum mirrors those levels
+/// so the CLI can propagate the caller's preference to both the local renderer
+/// and any fallback `rsync` invocations. See [`Self::unit_base`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[doc(alias = "--human-readable")]
 pub enum HumanReadableMode {
     /// Disable human-readable formatting and display exact decimal values.
     Disabled,
-    /// Enable suffix-based formatting (e.g. `1.23K`, `4.56M`).
+    /// Enable base-1000 suffix formatting (e.g. `1.23K`, `4.56M`) for `-h`.
     Enabled,
-    /// Display both the human-readable value and the exact decimal value.
+    /// Enable base-1024 suffix formatting for `-hh`.
     Combined,
 }
 
@@ -49,11 +49,17 @@ impl HumanReadableMode {
         !matches!(self, Self::Disabled)
     }
 
-    /// Reports whether the exact decimal value should be included alongside the
-    /// human-readable representation.
+    /// The unit multiplier upstream `do_big_num` applies for K/M/G/T units.
+    ///
+    /// Mirrors `lib/compat.c:183`: `mult = human_flag == 2 ? 1000 : 1024`.
+    /// A single `-h` (level 2, [`Self::Enabled`]) uses base 1000; `-hh`
+    /// (level 3, [`Self::Combined`]) uses base 1024.
     #[must_use]
-    pub const fn includes_exact(self) -> bool {
-        matches!(self, Self::Combined)
+    pub const fn unit_base(self) -> f64 {
+        match self {
+            Self::Combined => 1024.0,
+            _ => 1000.0,
+        }
     }
 }
 
@@ -165,18 +171,11 @@ mod tests {
     }
 
     #[test]
-    fn includes_exact_disabled() {
-        assert!(!HumanReadableMode::Disabled.includes_exact());
-    }
-
-    #[test]
-    fn includes_exact_enabled() {
-        assert!(!HumanReadableMode::Enabled.includes_exact());
-    }
-
-    #[test]
-    fn includes_exact_combined() {
-        assert!(HumanReadableMode::Combined.includes_exact());
+    fn unit_base_levels() {
+        // upstream: lib/compat.c:183 - mult = human_flag == 2 ? 1000 : 1024.
+        assert_eq!(HumanReadableMode::Disabled.unit_base(), 1000.0);
+        assert_eq!(HumanReadableMode::Enabled.unit_base(), 1000.0);
+        assert_eq!(HumanReadableMode::Combined.unit_base(), 1024.0);
     }
 
     #[test]
