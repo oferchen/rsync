@@ -416,4 +416,71 @@ mod genr_debug_emission_tests {
             "Genr debug emissions must be gated; got: {msgs:?}"
         );
     }
+
+    fn init_flist_level1() {
+        let mut cfg = VerbosityConfig::default();
+        cfg.debug.flist = 1;
+        init(cfg);
+        let _ = drain_events();
+    }
+
+    fn flist_messages() -> Vec<String> {
+        drain_events()
+            .into_iter()
+            .filter_map(|event| match event {
+                DiagnosticEvent::Debug {
+                    flag: DebugFlag::Flist,
+                    message,
+                    ..
+                } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn delta_transmission_enabled_matches_upstream() {
+        // upstream: generator.c:2290-2295 - "delta-transmission enabled" when
+        // whole_file is off (the rolling-checksum delta path is used).
+        init_flist_level1();
+        debug_log!(Flist, 1, "delta-transmission {}", "enabled");
+        let msgs = flist_messages();
+        assert!(
+            msgs.iter().any(|m| m == "delta-transmission enabled"),
+            "missing upstream wording: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn delta_transmission_disabled_matches_upstream() {
+        // upstream: generator.c:2290-2295 - "delta-transmission disabled for
+        // local transfer or --whole-file" when whole_file is on.
+        init_flist_level1();
+        debug_log!(
+            Flist,
+            1,
+            "delta-transmission {}",
+            "disabled for local transfer or --whole-file"
+        );
+        let msgs = flist_messages();
+        assert!(
+            msgs.iter()
+                .any(|m| m == "delta-transmission disabled for local transfer or --whole-file"),
+            "missing upstream wording: {msgs:?}"
+        );
+    }
+
+    #[test]
+    fn delta_transmission_suppressed_when_disabled() {
+        // DEBUG_GTE(FLIST, 1) is first active at -vv; nothing emits by default.
+        let cfg = VerbosityConfig::default();
+        init(cfg);
+        let _ = drain_events();
+        debug_log!(Flist, 1, "delta-transmission enabled");
+        let msgs = flist_messages();
+        assert!(
+            msgs.is_empty(),
+            "Flist debug emissions must be gated; got: {msgs:?}"
+        );
+    }
 }

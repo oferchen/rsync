@@ -45,6 +45,21 @@ impl ReceiverContext {
         // setup_transfer).
         debug_log!(Genr, 1, "generator starting pid={}", std::process::id());
 
+        // upstream: generator.c:2290-2295 - the generator prints the
+        // delta-transmission status once, gated on DEBUG_GTE(FLIST, 1) (first
+        // active at -vv). whole_file is forced on for local transfers and
+        // --whole-file; otherwise the rolling-checksum delta path is used.
+        debug_log!(
+            Flist,
+            1,
+            "delta-transmission {}",
+            if self.config.flags.whole_file {
+                "disabled for local transfer or --whole-file"
+            } else {
+                "enabled"
+            }
+        );
+
         // Parallel receive-side delta apply is unconditionally compiled (PFF-7).
         debug_log!(Recv, 1, "parallel receive-delta path active");
 
