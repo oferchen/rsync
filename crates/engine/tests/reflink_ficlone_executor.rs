@@ -14,6 +14,7 @@
 use std::fs;
 use std::io::Write;
 
+use engine::local_copy::{LocalCopyExecution, LocalCopyOptions, LocalCopyPlan};
 use tempfile::tempdir;
 
 fn detect_reflink_support(dir: &std::path::Path) -> bool {
@@ -118,4 +119,40 @@ fn ficlone_idempotent_second_clone_replaces_destination() {
     fs::write(&src, b"second").expect("rewrite source");
     fast_io::try_ficlone(&src, &dst).expect("second FICLONE");
     assert_eq!(fs::read(&dst).expect("read2"), b"second");
+}
+
+#[test]
+fn executor_uses_ficlone_for_plain_archive_without_xattrs() {
+    let dir = tempdir().expect("tempdir");
+    if !detect_reflink_support(dir.path()) {
+        eprintln!(
+            "skipping plain-archive ficlone gate test - {:?} is not a reflink-capable filesystem",
+            dir.path()
+        );
+        return;
+    }
+
+    let src = dir.path().join("src.bin");
+    let dst = dir.path().join("dst.bin");
+    let payload: Vec<u8> = (0..256u32 * 1024).map(|i| (i & 0xff) as u8).collect();
+    fs::write(&src, &payload).expect("write source");
+
+    let operands = vec![src.into_os_string(), dst.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // Plain `-a` semantics: no .xattrs(true). Before the gate relaxation this
+    // fell back to a slow read/write copy because the gate required -X; now it
+    // must take the FICLONE fast path. The fresh-inode clone copies data only
+    // and never leaks source xattrs, so -X is not needed for correctness.
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+        .expect("copy succeeds");
+
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(fs::read(&dst).expect("read dst"), payload);
+    assert!(
+        summary.used_copy_acceleration(),
+        "plain -a copy on a reflink-capable fs must engage FICLONE, got methods {:?}",
+        summary.copy_method_breakdown()
+    );
 }
