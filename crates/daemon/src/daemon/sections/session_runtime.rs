@@ -231,14 +231,22 @@ fn handle_legacy_session(
     // DIS-4.a R2: write the cached newest-protocol greeting bytes directly,
     // skipping the per-accept `format!`/`push_str` chain.
     // upstream: clientserver.c:455 output_daemon_greeting
-    write_limited(reader.get_mut(), &mut limiter, cached_legacy_daemon_greeting())?;
+    write_limited(
+        reader.get_mut(),
+        &mut limiter,
+        cached_legacy_daemon_greeting(),
+    )?;
 
     let mut request = None;
     let mut refused_options = Vec::new();
     let mut negotiated_protocol = None;
     let mut early_input_data: Option<Vec<u8>> = None;
 
+    // TCP_QUICKACK is one-shot; re-arm before each handshake read so every
+    // round's ACK stays immediate across the multi-line greeting exchange.
+    fast_io::rearm_tcp_quickack(reader.get_ref().tcp_stream());
     while let Some(line) = read_trimmed_line(&mut reader)? {
+        fast_io::rearm_tcp_quickack(reader.get_ref().tcp_stream());
         match parse_legacy_daemon_message(&line) {
             Ok(LegacyDaemonMessage::Version(version)) => {
                 // Record the negotiated protocol version but do NOT send @RSYNCD: OK here.
@@ -354,10 +362,7 @@ const EARLY_INPUT_MAX_SIZE: usize = 5120;
 ///
 /// upstream: clientserver.c:1357-1364 - `rsync_module()` reads early input data
 /// and stores it for later delivery to the pre-xfer exec script.
-fn read_early_input(
-    line: &str,
-    reader: &mut impl Read,
-) -> io::Result<Option<Vec<u8>>> {
+fn read_early_input(line: &str, reader: &mut impl Read) -> io::Result<Option<Vec<u8>>> {
     let len_str = match line.strip_prefix(EARLY_INPUT_CMD) {
         Some(rest) => rest,
         None => return Ok(None),
@@ -734,4 +739,3 @@ mod session_runtime_tests {
         assert!(io_err.to_string().contains("Transferring"));
     }
 }
-
