@@ -34,6 +34,19 @@ pub fn sync_xattrs(
     Ok(())
 }
 
+/// Removes from `destination` every extended attribute that also exists on
+/// `source`.
+///
+/// On platforms without xattr support there are no attributes to strip, so
+/// this returns `Ok(())` without warning (no preservation was promised).
+pub fn strip_source_xattrs(
+    _source: &Path,
+    _destination: &Path,
+    _follow_symlinks: bool,
+) -> Result<(), MetadataError> {
+    Ok(())
+}
+
 /// Reads xattr data from a file and returns it as a wire-format `XattrList`.
 ///
 /// On platforms without xattr support, returns an empty list.
