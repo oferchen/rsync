@@ -247,6 +247,7 @@ include!("tests/chunks/daemon_itemize_pull.rs");
 include!("tests/chunks/daemon_delta_transfer.rs");
 // Daemon mode negotiation tests
 include!("tests/chunks/daemon_negotiation_module_listing.rs");
+include!("tests/chunks/daemon_module_implicit_list_only.rs");
 include!("tests/chunks/daemon_negotiation_empty_module_lists_modules.rs");
 include!("tests/chunks/daemon_negotiation_authentication.rs");
 include!("tests/chunks/daemon_negotiation_version.rs");
