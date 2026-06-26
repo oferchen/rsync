@@ -349,6 +349,15 @@ pub(crate) fn apply_common_server_flags(config: &ClientConfig, server_config: &m
     // `--info=name2` make the generator emit itemize rows for unchanged
     // entries too; the local receiver-generator needs the same gate.
     server_config.flags.info_flags.itemize_unchanged = config.itemize_unchanged();
+    // upstream: the in-process local receiver/generator (SSH pull/push) needs
+    // the client's verbose level so per-file `info_log!(Name)` rows and the
+    // `receiving incremental file list` banner fire - both gated on
+    // `flags.verbose && client_mode` (receiver pipeline.rs / setup.rs).
+    // `build_server_flag_string` never sends 'v' to the remote and this local
+    // ServerConfig is built from that same string, so `verbose` stays false
+    // without this. Mirrors the daemon path (daemon_transfer server_config.rs).
+    server_config.flags.verbose = config.verbosity() > 0;
+    server_config.flags.verbose_level = config.verbosity();
     // upstream: flist.c::iconv_for_local and options.c::recv_iconv_settings -
     // when --iconv is configured, the local process must transcode file-list
     // entries between the local and remote charsets. Without this bridge the
