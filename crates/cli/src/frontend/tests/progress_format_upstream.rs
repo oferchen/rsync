@@ -486,38 +486,44 @@ fn format_decimal_bytes_u64_max() {
     assert!(!result.is_empty());
 }
 
+// upstream: lib/compat.c:183 - `-h` (the default human level) divides by 1000.
+const BASE_1000: f64 = 1000.0;
+
 #[test]
 fn format_human_bytes_under_threshold() {
-    assert_eq!(format_human_bytes(0), "0");
-    assert_eq!(format_human_bytes(999), "999");
+    assert_eq!(format_human_bytes(0, BASE_1000), "0");
+    assert_eq!(format_human_bytes(999, BASE_1000), "999");
 }
 
 #[test]
 fn format_human_bytes_kilo_range() {
-    assert_eq!(format_human_bytes(1_000), "1.00K");
-    assert_eq!(format_human_bytes(1_500), "1.50K");
-    assert_eq!(format_human_bytes(999_999), "1000.00K");
+    assert_eq!(format_human_bytes(1_000, BASE_1000), "1.00K");
+    assert_eq!(format_human_bytes(1_500, BASE_1000), "1.50K");
+    assert_eq!(format_human_bytes(999_999, BASE_1000), "1000.00K");
 }
 
 #[test]
 fn format_human_bytes_mega_range() {
-    assert_eq!(format_human_bytes(1_000_000), "1.00M");
-    assert_eq!(format_human_bytes(2_500_000), "2.50M");
+    assert_eq!(format_human_bytes(1_000_000, BASE_1000), "1.00M");
+    assert_eq!(format_human_bytes(2_500_000, BASE_1000), "2.50M");
 }
 
 #[test]
 fn format_human_bytes_giga_range() {
-    assert_eq!(format_human_bytes(1_000_000_000), "1.00G");
+    assert_eq!(format_human_bytes(1_000_000_000, BASE_1000), "1.00G");
 }
 
 #[test]
 fn format_human_bytes_tera_range() {
-    assert_eq!(format_human_bytes(1_000_000_000_000), "1.00T");
+    assert_eq!(format_human_bytes(1_000_000_000_000, BASE_1000), "1.00T");
 }
 
 #[test]
 fn format_human_bytes_peta_range() {
-    assert_eq!(format_human_bytes(1_000_000_000_000_000), "1.00P");
+    assert_eq!(
+        format_human_bytes(1_000_000_000_000_000, BASE_1000),
+        "1.00P"
+    );
 }
 
 #[test]
