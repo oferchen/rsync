@@ -496,9 +496,13 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
         "sent {sent_display} bytes  received {received_display} bytes  {rate_display} bytes/sec"
     )?;
     let dry_run_suffix = if dry_run { " (DRY RUN)" } else { "" };
+    // upstream: main.c:466-468 - speedup uses comma_dnum(_, 2), i.e. thousands
+    // grouping. Reuse the same helper the --stats path uses (stats_format.rs)
+    // so both summary paths group identically.
+    let speedup_display = crate::stats_format::format_speedup(speedup);
     writeln!(
         stdout,
-        "total size is {total_size_display}  speedup is {speedup:.2}{dry_run_suffix}"
+        "total size is {total_size_display}  speedup is {speedup_display}{dry_run_suffix}"
     )
 }
 
