@@ -403,9 +403,11 @@ fn human_readable_combined_works_with_stats() {
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stats output utf8");
 
+    // upstream: lib/compat.c:183 - `-hh` divides by 1024 (8192/1024 = 8.00K)
+    // and never appends an exact-value component.
     assert!(
-        rendered.contains("8.19K (8,192)"),
-        "expected combined format in stats, got: {rendered}"
+        rendered.contains("8.00K") && !rendered.contains("(8,192)"),
+        "expected base-1024 format without exact component in stats, got: {rendered}"
     );
     assert!(rendered.contains("Number of files:"));
 }
@@ -432,9 +434,10 @@ fn human_readable_combined_works_with_progress() {
     let rendered = String::from_utf8(stdout).expect("progress output utf8");
 
     let normalized = rendered.replace('\r', "\n");
+    // upstream: `-hh` divides by 1024 (6144/1024 = 6.00K), no exact component.
     assert!(
-        normalized.contains("6.14K (6,144)"),
-        "expected combined format in progress, got: {rendered}"
+        normalized.contains("6.00K") && !normalized.contains("(6,144)"),
+        "expected base-1024 format without exact component in progress, got: {rendered}"
     );
 }
 
