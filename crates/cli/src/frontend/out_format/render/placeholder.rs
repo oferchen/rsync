@@ -9,7 +9,6 @@ use std::time::SystemTime;
 
 use crate::{LIST_TIMESTAMP_FORMAT, describe_event_kind, format_list_permissions, platform};
 use core::client::{ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind};
-use time::OffsetDateTime;
 
 use crate::frontend::out_format::tokens::{
     OutFormatContext, OutFormatPlaceholder, PlaceholderToken,
@@ -163,7 +162,7 @@ fn format_out_format_mtime(metadata: Option<&ClientEntryMetadata>) -> String {
     metadata
         .and_then(|meta| meta.modified())
         .and_then(|time| {
-            OffsetDateTime::from(time)
+            crate::frontend::local_time::to_local(time)
                 .format(LIST_TIMESTAMP_FORMAT)
                 .ok()
         })
@@ -210,7 +209,7 @@ fn resolve_group_name(gid: u32) -> String {
 
 /// Formats the current wall-clock time using the list timestamp format.
 fn format_current_timestamp() -> String {
-    let now = OffsetDateTime::from(SystemTime::now());
+    let now = crate::frontend::local_time::to_local(SystemTime::now());
     now.format(LIST_TIMESTAMP_FORMAT).map_or_else(
         |_| "1970/01/01-00:00:00".to_owned(),
         |text| text.replace(' ', "-"),

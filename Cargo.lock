@@ -704,6 +704,7 @@ dependencies = [
  "logging",
  "logging-sink",
  "metadata",
+ "platform",
  "predicates",
  "protocol",
  "rayon",
