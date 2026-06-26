@@ -67,6 +67,25 @@ impl LocalCopyError {
         })
     }
 
+    /// Constructs an error for an initial source `link_stat` that failed
+    /// because the source argument does not exist.
+    ///
+    /// This is deliberately distinct from [`LocalCopyError::io`]'s NotFound
+    /// mapping: a source argument that never existed fails at the initial stat
+    /// and exits 23 (`RERR_PARTIAL`) with a `link_stat "%s" failed` message,
+    /// whereas a file that vanishes mid-transfer exits 24 (`RERR_VANISHED`)
+    /// with "file has vanished".
+    ///
+    /// upstream: `flist.c send_file_list()` - a failed `link_stat` sets
+    /// `io_error |= IOERR_GENERAL`, yielding `exit_cleanup(RERR_PARTIAL)`.
+    #[must_use]
+    pub fn link_stat_failed(path: impl Into<PathBuf>, source: io::Error) -> Self {
+        Self::new(LocalCopyErrorKind::LinkStatFailed {
+            path: path.into(),
+            source,
+        })
+    }
+
     /// Constructs an error representing an inactivity timeout.
     #[must_use]
     pub const fn timeout(duration: Duration) -> Self {
@@ -101,6 +120,7 @@ impl LocalCopyError {
                     INVALID_OPERAND_EXIT_CODE
                 }
             }
+            LocalCopyErrorKind::LinkStatFailed { .. } => INVALID_OPERAND_EXIT_CODE,
             LocalCopyErrorKind::Timeout { .. } | LocalCopyErrorKind::StopAtReached { .. } => {
                 TIMEOUT_EXIT_CODE
             }
@@ -123,6 +143,7 @@ impl LocalCopyError {
                     "RERR_PARTIAL"
                 }
             }
+            LocalCopyErrorKind::LinkStatFailed { .. } => "RERR_PARTIAL",
             LocalCopyErrorKind::Timeout { .. } | LocalCopyErrorKind::StopAtReached { .. } => {
                 "RERR_TIMEOUT"
             }
@@ -183,6 +204,17 @@ pub enum LocalCopyErrorKind {
         /// Action being performed.
         action: &'static str,
         /// Path involved in the failure.
+        path: PathBuf,
+        /// Underlying error.
+        #[source]
+        source: io::Error,
+    },
+    /// The initial `link_stat` (symlink_metadata) of a source argument failed
+    /// because the path does not exist. Distinct from a mid-transfer vanish:
+    /// this is a hard error exiting 23 (`RERR_PARTIAL`), not 24.
+    #[error("link_stat \"{}\" failed: {source}", path.display())]
+    LinkStatFailed {
+        /// The source path that could not be stat'd.
         path: PathBuf,
         /// Underlying error.
         #[source]
@@ -530,5 +562,25 @@ mod tests {
         let error = LocalCopyError::io("read", PathBuf::from("/denied"), io_err);
         assert_eq!(error.exit_code(), INVALID_OPERAND_EXIT_CODE);
         assert_eq!(error.exit_code(), 23);
+    }
+
+    #[test]
+    fn link_stat_failed_is_partial_not_vanished() {
+        // A source argument that never existed fails its initial link_stat and
+        // must exit 23 (RERR_PARTIAL), unlike a file that vanishes mid-transfer
+        // (which the Io NotFound path maps to 24). It must also not be
+        // classified as a vanish, so the mid-transfer skip logic ignores it.
+        let io_err = io::Error::new(ErrorKind::NotFound, "no such file");
+        let error = LocalCopyError::link_stat_failed(PathBuf::from("/tmp/nope"), io_err);
+        assert_eq!(error.exit_code(), INVALID_OPERAND_EXIT_CODE);
+        assert_eq!(error.exit_code(), 23);
+        assert_eq!(error.code_name(), "RERR_PARTIAL");
+        assert!(!error.is_vanished_error());
+        assert!(!error.is_io_error());
+        assert!(
+            error
+                .to_string()
+                .starts_with("link_stat \"/tmp/nope\" failed")
+        );
     }
 }

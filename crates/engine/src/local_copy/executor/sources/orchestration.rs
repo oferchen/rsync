@@ -260,8 +260,11 @@ fn process_single_source(
         SourceMetadataResult::Found(m) => m,
         SourceMetadataResult::Handled => return Ok(()),
         SourceMetadataResult::NotFoundError(error) => {
-            return Err(LocalCopyError::io(
-                "access source",
+            // upstream: flist.c send_file_list() - a source argument that fails
+            // its initial link_stat is a hard error (exit 23, RERR_PARTIAL) with
+            // a `link_stat "%s" failed` message, distinct from a file that
+            // vanishes mid-transfer (exit 24, RERR_VANISHED, "file has vanished").
+            return Err(LocalCopyError::link_stat_failed(
                 source_path.to_path_buf(),
                 error,
             ));

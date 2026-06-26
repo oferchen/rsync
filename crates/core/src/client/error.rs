@@ -197,6 +197,17 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             path,
             source,
         } => io_error(action, &path, source),
+        LocalCopyErrorKind::LinkStatFailed { path, source } => {
+            // upstream: flist.c send_file_list() - a source argument that fails
+            // its initial link_stat is reported by the sender as
+            // `link_stat "%s" failed: %s` and exits RERR_PARTIAL (23). This is
+            // deliberately not routed through io_error(), whose NotFound branch
+            // maps to RERR_VANISHED (24) for files that vanish mid-transfer.
+            let code = ExitCode::PartialTransfer;
+            let text = format!("link_stat \"{}\" failed: {source}", path.display());
+            let message = rsync_error!(code.as_i32(), text).with_role(Role::Sender);
+            ClientError::with_code(code, message)
+        }
         LocalCopyErrorKind::Timeout { duration } => {
             let code = ExitCode::Timeout;
             let text = format!(
@@ -569,6 +580,23 @@ mod tests {
             let msg = error.to_string();
             assert!(msg.contains("file has vanished"));
             assert!(msg.contains("/test/file.txt"));
+        }
+
+        /// upstream: flist.c send_file_list() - a missing source *argument*
+        /// (NotFound at the initial link_stat) exits RERR_PARTIAL (23) with a
+        /// `link_stat "%s" failed` message, NOT the RERR_VANISHED (24)
+        /// "file has vanished" path used for mid-transfer disappearances.
+        #[test]
+        fn map_link_stat_failed_uses_partial_not_vanished() {
+            let io_err = io::Error::new(ErrorKind::NotFound, "No such file or directory");
+            let local_error =
+                LocalCopyError::link_stat_failed(Path::new("/tmp/nope").to_path_buf(), io_err);
+            let client_error = map_local_copy_error(local_error);
+
+            assert_eq!(client_error.code(), ExitCode::PartialTransfer);
+            let msg = client_error.to_string();
+            assert!(msg.contains("link_stat \"/tmp/nope\" failed"), "{msg}");
+            assert!(!msg.contains("file has vanished"), "{msg}");
         }
 
         #[test]
