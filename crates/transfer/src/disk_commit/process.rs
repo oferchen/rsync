@@ -356,11 +356,24 @@ fn open_output_file(
         Ok((file, TempFileGuard::new(begin.file_path.clone()), false))
     } else if begin.is_inplace {
         // upstream: receiver.c:855 - do_open(fname, O_WRONLY|O_CREAT, 0600)
-        let mut file = fs::OpenOptions::new()
+        let opened = fs::OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(false)
-            .open(&begin.file_path)?;
+            .open(&begin.file_path);
+        // upstream: receiver.c:978-986 - under the fs.protected_regular sysctl
+        // the kernel returns EACCES for an O_CREAT open of an existing file we
+        // do not own in a sticky, world-writable dir. The inplace target
+        // already exists, so retry without O_CREAT.
+        #[cfg(target_os = "linux")]
+        let opened = match opened {
+            Err(error) if error.raw_os_error() == Some(libc::EACCES) => fs::OpenOptions::new()
+                .write(true)
+                .truncate(false)
+                .open(&begin.file_path),
+            other => other,
+        };
+        let mut file = opened?;
         // upstream: receiver.c:307-308 - in append mode, seek past existing content
         if begin.append_offset > 0 {
             use std::io::Seek;
