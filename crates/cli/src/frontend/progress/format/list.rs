@@ -3,7 +3,6 @@
 use std::time::SystemTime;
 
 use core::client::{ClientEntryKind, ClientEntryMetadata, ClientEventKind};
-use time::OffsetDateTime;
 
 use crate::LIST_TIMESTAMP_FORMAT;
 
@@ -85,7 +84,8 @@ pub(crate) fn format_list_permissions(metadata: &ClientEntryMetadata) -> String 
 
 pub(crate) fn format_list_timestamp(modified: Option<SystemTime>) -> String {
     if let Some(time) = modified
-        && let Ok(datetime) = OffsetDateTime::from(time).format(LIST_TIMESTAMP_FORMAT)
+        && let Ok(datetime) =
+            crate::frontend::local_time::to_local(time).format(LIST_TIMESTAMP_FORMAT)
     {
         return datetime;
     }

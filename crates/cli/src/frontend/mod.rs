@@ -117,6 +117,7 @@ mod help;
 pub mod info_output;
 /// Upstream rsync `--itemize-changes` (`-i`) output format.
 pub mod itemize;
+mod local_time;
 mod lsm_status;
 mod out_format;
 pub(crate) mod password;
