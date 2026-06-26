@@ -23,9 +23,10 @@ fn display_without_trailing_separators(path: &Path) -> String {
 }
 
 use super::format::{
-    event_matches_name_level, format_list_permissions, format_list_size, format_list_timestamp,
-    format_progress_bytes, format_progress_elapsed, format_progress_percent, format_progress_rate,
-    format_size, format_stat_categories, format_summary_rate, is_progress_event, list_only_event,
+    LIST_SIZE_WIDTH, event_matches_name_level, format_list_permissions, format_list_size,
+    format_list_timestamp, format_progress_bytes, format_progress_elapsed, format_progress_percent,
+    format_progress_rate, format_size, format_stat_categories, format_summary_rate,
+    is_progress_event, list_only_event,
 };
 use super::mode::{NameOutputLevel, ProgressMode};
 use crate::{OutFormat, OutFormatContext, emit_out_format};
@@ -235,9 +236,10 @@ pub(crate) fn emit_list_only<W: Write + ?Sized>(
             let rendered = event.relative_path().to_string_lossy().into_owned();
             writeln!(
                 stdout,
-                "?????????? {:>15} {} {rendered}",
+                "?????????? {:>width$} {} {rendered}",
                 "?",
                 format_list_timestamp(None),
+                width = LIST_SIZE_WIDTH,
             )?;
         }
     }
