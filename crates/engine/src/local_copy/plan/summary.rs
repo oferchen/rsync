@@ -335,13 +335,23 @@ impl LocalCopySummary {
     /// the separately tracked file-list size in yields a comparable `sent`
     /// total (and a meaningful speedup) instead of `sent 0 bytes`.
     ///
-    /// Call exactly once when finalising a local-copy summary. The figure is an
-    /// approximation: a local copy transmits nothing, so it can never match
-    /// upstream's real socketpair byte counts exactly.
+    /// Resets the enumerated file-list size to zero for a local-copy summary.
     ///
-    /// upstream: main.c output_summary, io.c stats.total_written
-    pub fn fold_file_list_into_sent(&mut self) {
-        self.bytes_sent = self.bytes_sent.saturating_add(self.file_list_size);
+    /// Call exactly once when finalising a local copy. Upstream rsync reports
+    /// `File list size: 0` for local transfers, and its `Total bytes sent` is
+    /// dominated by the file *data*, not the file list (verified against
+    /// rsync 3.4.4: a 1 MiB local copy reports `sent 1,049,017` ~= the file
+    /// size, not the path lengths). oc-rsync already counts the literal data in
+    /// `bytes_sent` via `record_file`, so it must NOT fold the enumerated path
+    /// lengths on top - doing so inflated `sent` ~2x. Zeroing here matches
+    /// upstream's `File list size: 0` and leaves `bytes_sent` as the data-only
+    /// figure. A local copy transmits nothing over a wire, so the residual gap
+    /// versus upstream's socketpair framing bytes is irreducible and not
+    /// synthesised.
+    ///
+    /// upstream: main.c output_summary (`File list size: 0` for local copies)
+    pub fn clear_file_list_size(&mut self) {
+        self.file_list_size = 0;
     }
 
     /// Returns the time spent enumerating the file list.
@@ -824,23 +834,20 @@ mod tests {
     }
 
     #[test]
-    fn fold_file_list_into_sent_reports_flist_as_wire_sent() {
-        // A no-change local copy transmits no data, so `bytes_sent` stays 0
-        // while the file-list size accumulates. Upstream's `Total bytes sent`
-        // for the same copy is dominated by the serialised file list, so the
-        // fold must surface that figure as `sent` rather than leaving it 0.
+    fn clear_file_list_size_zeroes_flist_and_keeps_sent() {
+        // A local copy reports `File list size: 0` (upstream parity) and never
+        // folds enumerated path lengths into `sent`. A no-change copy transmits
+        // no data, so `bytes_sent` stays 0.
         let mut summary = LocalCopySummary::default();
         summary.record_file_list_entry(93);
         summary.record_file_list_entry(95);
         assert_eq!(summary.bytes_sent(), 0);
         assert_eq!(summary.file_list_size(), 188);
 
-        summary.fold_file_list_into_sent();
+        summary.clear_file_list_size();
 
-        assert_eq!(summary.bytes_sent(), 188);
-        // The file-list size is still reported independently; upstream prints
-        // both `File list size` and `Total bytes sent`.
-        assert_eq!(summary.file_list_size(), 188);
+        assert_eq!(summary.bytes_sent(), 0);
+        assert_eq!(summary.file_list_size(), 0);
     }
 
     #[test]
@@ -897,16 +904,18 @@ mod tests {
     }
 
     #[test]
-    fn fold_file_list_into_sent_keeps_literal_data() {
-        // When data is transmitted, the fold adds the file list on top of the
-        // literal bytes already counted, mirroring upstream's total_written.
+    fn clear_file_list_size_keeps_literal_data() {
+        // Clearing the flist size must leave already-counted literal data in
+        // `bytes_sent` untouched - that data-only figure is what upstream's
+        // `Total bytes sent` is built on for a local copy.
         let mut summary = LocalCopySummary::default();
         summary.record_file(1_000, 1_000, None);
         summary.record_file_list_entry(40);
         assert_eq!(summary.bytes_sent(), 1_000);
 
-        summary.fold_file_list_into_sent();
+        summary.clear_file_list_size();
 
-        assert_eq!(summary.bytes_sent(), 1_040);
+        assert_eq!(summary.bytes_sent(), 1_000);
+        assert_eq!(summary.file_list_size(), 0);
     }
 }

@@ -62,13 +62,13 @@ pub struct ClientSummary {
 impl ClientSummary {
     pub(crate) fn from_report(report: LocalCopyReport) -> Self {
         let (mut stats, records, destination_root) = report.into_parts();
-        // A local copy bypasses the wire protocol, so the executor only counts
-        // literal data in `bytes_sent`. Upstream runs the protocol over a
-        // socketpair even locally, making its `Total bytes sent` dominated by
-        // the serialised file list. Fold the file-list size in so a local copy
-        // reports a comparable `sent` total and a meaningful speedup instead of
-        // `sent 0 bytes`.
-        stats.fold_file_list_into_sent();
+        // A local copy bypasses the wire protocol, so `bytes_sent` holds only
+        // the literal file data the executor counted. Upstream reports
+        // `File list size: 0` for local copies and a `Total bytes sent`
+        // dominated by that file data (not the path lengths), so zero the
+        // enumerated flist size to match - folding it into `sent` inflated the
+        // figure ~2x.
+        stats.clear_file_list_size();
         let destination_root: Arc<Path> = Arc::from(destination_root);
         let events = records
             .into_iter()
