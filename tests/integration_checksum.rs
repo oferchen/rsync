@@ -174,16 +174,19 @@ fn checksum_skips_identical_files_with_verbose() {
     cmd.args([
         "--checksum",
         "-v",
+        "--stats",
         src_file.to_str().unwrap(),
         dest_file.to_str().unwrap(),
     ]);
     let output = cmd.assert_success();
 
-    // In verbose mode with identical checksums, no data should be transferred
-    // (rsync may still list the file, but stats should show 0 bytes sent)
+    // With identical checksums, no file is transferred. The `sent N bytes`
+    // trailer is not 0 here: like upstream, oc-rsync still sends the file list
+    // even when nothing is transferred. The stats block reports the transfer
+    // count directly.
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("sent 0 bytes") || stdout.contains("0 bytes/sec"),
+        stdout.contains("Number of regular files transferred: 0"),
         "Identical file should not transfer any data: {stdout}"
     );
 }

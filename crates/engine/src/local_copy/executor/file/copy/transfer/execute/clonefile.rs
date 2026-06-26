@@ -18,8 +18,8 @@ use logging::debug_log;
 use ::metadata::MetadataOptions;
 
 use crate::local_copy::{
-    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet, LocalCopyError,
-    LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord,
+    CopyContext, CopyMethodKind, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet,
+    LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord,
 };
 
 use super::super::TransferFlags;
@@ -101,26 +101,27 @@ pub(super) fn try_clone(
 ) -> Result<bool, LocalCopyError> {
     let file_size = metadata.len();
 
-    let cloned = match context
-        .options()
-        .platform_copy()
-        .copy_file(source, destination, file_size)
-    {
-        Ok(result) if result.is_zero_copy() => true,
-        Ok(_) => {
-            let _ = std::fs::remove_file(destination);
-            false
-        }
-        Err(_) => {
-            let _ = std::fs::remove_file(destination);
-            false
-        }
-    };
-    if !cloned {
+    let clone_method =
+        match context
+            .options()
+            .platform_copy()
+            .copy_file(source, destination, file_size)
+        {
+            Ok(result) if result.is_zero_copy() => Some(result.method),
+            Ok(_) => {
+                let _ = std::fs::remove_file(destination);
+                None
+            }
+            Err(_) => {
+                let _ = std::fs::remove_file(destination);
+                None
+            }
+        };
+    let Some(clone_method) = clone_method else {
         // clonefile failed (cross-device, non-APFS, etc.) - caller falls
         // through to normal copy path.
         return Ok(false);
-    }
+    };
 
     let start = Instant::now();
     debug_log!(
@@ -143,6 +144,9 @@ pub(super) fn try_clone(
     context
         .summary_mut()
         .record_file(file_size, file_size, None);
+    context
+        .summary_mut()
+        .record_copy_method(CopyMethodKind::from_platform(clone_method));
     context.summary_mut().record_elapsed(start.elapsed());
 
     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);

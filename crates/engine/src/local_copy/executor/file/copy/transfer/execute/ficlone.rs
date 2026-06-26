@@ -23,8 +23,8 @@ use logging::debug_log;
 use ::metadata::MetadataOptions;
 
 use crate::local_copy::{
-    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet, LocalCopyError,
-    LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord,
+    CopyContext, CopyMethodKind, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet,
+    LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord,
 };
 
 use super::super::TransferFlags;
@@ -130,6 +130,9 @@ pub(super) fn try_clone(
     context
         .summary_mut()
         .record_file(file_size, file_size, None);
+    context
+        .summary_mut()
+        .record_copy_method(CopyMethodKind::Ficlone);
     context.summary_mut().record_elapsed(start.elapsed());
 
     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);

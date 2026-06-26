@@ -84,8 +84,12 @@ fn verbose_transfer_emits_event_lines() {
     let rendered = String::from_utf8(stdout).expect("verbose output is UTF-8");
     assert!(rendered.contains("file.txt"));
     assert!(!rendered.contains("Total transferred"));
-    assert!(rendered.contains("sent 7 bytes  received 7 bytes"));
-    assert!(rendered.contains("total size is 7  speedup is 0.50"));
+    // `sent` is data + the file-list size (like upstream, which always sends
+    // the flist), so it is not exactly the 7-byte payload; only `total size`
+    // (the source size) is deterministic. Assert the trailer is present and
+    // reports the right total rather than pinning the flist-dependent bytes.
+    assert!(rendered.contains("sent ") && rendered.contains(" received "));
+    assert!(rendered.contains("total size is 7  speedup is"));
     assert_eq!(
         std::fs::read(destination).expect("read destination"),
         b"verbose"
@@ -242,9 +246,13 @@ fn verbose_human_readable_formats_sizes() {
     std::fs::write(&source, vec![0u8; 1_536]).expect("write source");
 
     let dest_default = tmp.path().join("default.bin");
+    // --stats so the deterministic `Total file size: 1,536 bytes` line is
+    // present: `Total bytes sent` now also includes the file-list size (like
+    // upstream), so it is no longer exactly the 1,536-byte payload.
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-vv"),
+        OsString::from("--stats"),
         source.clone().into_os_string(),
         dest_default.into_os_string(),
     ]);
@@ -258,6 +266,7 @@ fn verbose_human_readable_formats_sizes() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-vv"),
+        OsString::from("--stats"),
         OsString::from("--human-readable"),
         source.into_os_string(),
         dest_human.into_os_string(),
@@ -281,6 +290,7 @@ fn verbose_human_readable_combined_formats_sizes() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("-vv"),
+        OsString::from("--stats"),
         OsString::from("--human-readable=2"),
         source.into_os_string(),
         destination.into_os_string(),

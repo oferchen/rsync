@@ -132,6 +132,7 @@ fn size_only_verbose_no_transfer_for_same_size() {
     cmd.args([
         "--size-only",
         "-v",
+        "--stats",
         src_file.to_str().unwrap(),
         dest_file.to_str().unwrap(),
     ]);
@@ -144,13 +145,13 @@ fn size_only_verbose_no_transfer_for_same_size() {
         "File with same size should not be overwritten"
     );
 
-    // Verbose output should indicate no bytes were transferred.
-    // The file may still be listed (rsync lists checked files in verbose mode)
-    // but "sent 0 bytes" confirms no actual transfer occurred.
+    // The stats block confirms no file was transferred. (The `sent N bytes`
+    // trailer is not 0 here: like upstream, oc-rsync still sends the file list
+    // even when nothing is transferred, so `sent` reflects that flist size.)
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("sent 0 bytes") || stdout.contains("sent 0B"),
-        "Should show 0 bytes sent when sizes match: {stdout}"
+        stdout.contains("Number of regular files transferred: 0"),
+        "Should report 0 regular files transferred when sizes match: {stdout}"
     );
 }
 

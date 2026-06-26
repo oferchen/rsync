@@ -44,6 +44,9 @@ pub(crate) struct TransferExecutionInputs<'a> {
     pub(crate) verbosity: u8,
     pub(crate) list_only: bool,
     pub(crate) dry_run: bool,
+    /// `--info=copy`: opt-in to the oc-rsync `Copy method` line that reports
+    /// which local-copy I/O acceleration (clonefile/reflink/io_uring) ran.
+    pub(crate) show_copy_method: bool,
     pub(crate) out_format_template: Option<&'a crate::frontend::out_format::OutFormat>,
     pub(crate) name_level: NameOutputLevel,
     pub(crate) name_overridden: bool,
@@ -73,6 +76,7 @@ where
         verbosity,
         list_only,
         dry_run,
+        show_copy_method,
         out_format_template,
         name_level,
         name_overridden,
@@ -150,6 +154,7 @@ where
                     human_readable_mode,
                     suppress_updated_only_totals,
                     recursive,
+                    show_copy_method,
                     writer,
                 )
             }) {
@@ -258,6 +263,9 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         name_overridden,
         human_readable_mode,
         false,
+        false,
+        // The `Copy method` line is a stdout-only `--info=copy` nicety; keep it
+        // out of the log file.
         false,
         &mut log.file,
     )?;
