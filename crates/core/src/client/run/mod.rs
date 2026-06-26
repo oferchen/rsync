@@ -356,11 +356,12 @@ fn run_client_internal(
                 .map(ClientProgressForwarder::as_handler_mut),
         )
         .map(|mut summary| {
-            // A local copy bypasses the wire protocol, so the executor only
-            // counts literal data in bytes_sent. Fold the file-list size in to
-            // report a comparable `sent` total (mirrors `from_report`). This
-            // no-events path covers `--stats` without `-v`/`-P`.
-            summary.fold_file_list_into_sent();
+            // A local copy bypasses the wire protocol; `bytes_sent` holds only
+            // the literal file data. Match upstream's `File list size: 0` for
+            // local copies (mirrors `from_report`) instead of folding the
+            // enumerated path lengths into `sent`. Covers `--stats` without
+            // `-v`/`-P`.
+            summary.clear_file_list_size();
             ClientSummary::from_summary(summary)
         })
     };
