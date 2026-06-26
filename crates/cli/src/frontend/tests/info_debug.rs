@@ -56,6 +56,40 @@ fn info_none_disables_progress_output() {
 }
 
 #[test]
+fn progress_implies_name_shows_directory_names() {
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    std::fs::create_dir_all(src.join("sub")).expect("mkdir");
+    std::fs::write(src.join("sub/f.txt"), b"hi").expect("write source");
+    let dst = tmp.path().join("dst");
+
+    let mut src_arg = src.into_os_string();
+    src_arg.push("/");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--progress"),
+        OsString::from("-r"),
+        src_arg,
+        dst.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+    let rendered = String::from_utf8(stdout).expect("stdout utf8");
+    // upstream options.c:2351-2355: the `--progress`/`-P` flag sets do_progress,
+    // which bumps NAME to 1, so created directories print their name line even
+    // without `-v`. `--info=progress2` (Overall) does NOT set do_progress and
+    // stays name-free (info_progress2_enables_progress_output).
+    assert!(
+        rendered.contains("sub/"),
+        "bare --progress should print directory name line: {rendered:?}"
+    );
+}
+
+#[test]
 fn info_help_lists_supported_flags() {
     let (code, stdout, stderr) = run_with_args([OsStr::new(RSYNC), OsStr::new("--info=help")]);
 
