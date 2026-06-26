@@ -156,6 +156,37 @@ pub fn read_xattrs_for_wire(
     Ok(XattrList::with_entries(entries))
 }
 
+/// Removes from `destination` every extended attribute that also exists on
+/// `source`, mirroring upstream `-a` without `-X`: a freshly written
+/// destination carries none of the source's xattrs.
+///
+/// This is the post-clone correction for the macOS `clonefile` fast path,
+/// which copies all of the source's xattrs verbatim. When xattr preservation
+/// is disabled the destination must look as if it had been `open()`ed and
+/// written fresh, so the source-originated attributes are stripped. Only
+/// names present on `source` are removed, so attributes the filesystem
+/// applied to the new inode on its own (e.g. `com.apple.provenance`) are
+/// left untouched. Removing only names confirmed present on `destination`
+/// avoids spurious `ENOATTR` churn.
+pub fn strip_source_xattrs(
+    source: &Path,
+    destination: &Path,
+    follow_symlinks: bool,
+) -> Result<(), MetadataError> {
+    let source_attrs = list_attributes(source, follow_symlinks)?;
+    if source_attrs.is_empty() {
+        return Ok(());
+    }
+    let source_names: HashSet<Vec<u8>> = source_attrs.into_iter().collect();
+
+    for name in list_attributes(destination, follow_symlinks)? {
+        if source_names.contains(&name) {
+            remove_attribute(destination, &name, follow_symlinks)?;
+        }
+    }
+    Ok(())
+}
+
 /// Synchronises the extended attributes from `source` to `destination`.
 pub fn sync_xattrs(
     source: &Path,
@@ -382,6 +413,69 @@ mod tests {
         let attr_name = test_xattr_name("nonexistent");
         let result = read_attribute(&file, &attr_name, false).expect("read attr");
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn strip_source_xattrs_removes_shared_keeps_dest_only() {
+        let dir = tempdir().expect("create temp dir");
+        let source = dir.path().join("source.txt");
+        let dest = dir.path().join("dest.txt");
+        fs::write(&source, "src").expect("write source");
+        fs::write(&dest, "dst").expect("write dest");
+
+        if !xattrs_supported(&source) || !xattrs_supported(&dest) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        // Model the clonefile scenario: the destination carries the source's
+        // attribute (the clone copied it) plus one the filesystem applied on
+        // its own (modeled by a dest-only name, e.g. com.apple.provenance).
+        let shared = test_xattr_name("clone_leaked");
+        let dest_only = test_xattr_name("fs_applied");
+        write_attribute(&source, &shared, b"from-source", false).expect("write source attr");
+        write_attribute(&dest, &shared, b"from-source", false).expect("write dest shared");
+        write_attribute(&dest, &dest_only, b"fs", false).expect("write dest-only attr");
+
+        strip_source_xattrs(&source, &dest, false).expect("strip");
+
+        let dest_attrs = list_attributes(&dest, false).expect("list dest");
+        assert!(
+            !dest_attrs.contains(&shared),
+            "source-originated attribute must be stripped from the destination"
+        );
+        assert!(
+            dest_attrs.contains(&dest_only),
+            "filesystem-applied (dest-only) attribute must be preserved"
+        );
+        // The source is read-only input to the strip and must be untouched.
+        let source_attrs = list_attributes(&source, false).expect("list source");
+        assert!(source_attrs.contains(&shared), "source must be untouched");
+    }
+
+    #[test]
+    fn strip_source_xattrs_with_no_source_attrs_is_noop() {
+        let dir = tempdir().expect("create temp dir");
+        let source = dir.path().join("source.txt");
+        let dest = dir.path().join("dest.txt");
+        fs::write(&source, "src").expect("write source");
+        fs::write(&dest, "dst").expect("write dest");
+
+        if !xattrs_supported(&dest) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        let dest_only = test_xattr_name("keep_me");
+        write_attribute(&dest, &dest_only, b"v", false).expect("write dest attr");
+
+        strip_source_xattrs(&source, &dest, false).expect("strip with empty source");
+
+        let dest_attrs = list_attributes(&dest, false).expect("list dest");
+        assert!(
+            dest_attrs.contains(&dest_only),
+            "with no source attributes the destination is left untouched"
+        );
     }
 
     #[test]

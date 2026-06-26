@@ -56,16 +56,23 @@ pub(super) fn eligible(
         && !context.delay_updates_enabled()
         && context.temp_directory_path().is_none();
 
-    // Extended attributes: clonefile copies all xattrs verbatim, so skip
-    // when (a) xattr filters need selective copy, or (b) xattrs are disabled
-    // entirely (source xattrs would leak to destination).
+    // Extended attributes: clonefile copies all xattrs verbatim. We can still
+    // take the fast path when xattrs are disabled (`-a` without `-X`) by
+    // stripping the source-originated attributes from the clone afterwards
+    // (see try_clone). The one case we cannot reproduce with a blanket strip
+    // is a selective xattr `--filter`, so keep the slow path there.
+    //
+    // The ACL dimension (`-A`) is intentionally unchanged here: clonefile
+    // already copies source ACLs on the existing `-X`-on fast path regardless
+    // of `-A`, so relaxing `-X` does not introduce a new ACL behavior. The
+    // pre-existing ACL-leak-when-`-A`-off is tracked separately.
     let xattr_ok = {
         #[cfg(all(unix, feature = "xattr"))]
         {
             let has_filter_rules = context
                 .filter_program()
                 .is_some_and(|p| p.has_xattr_rules());
-            flags.xattrs_enabled() && !has_filter_rules
+            !has_filter_rules
         }
         #[cfg(not(all(unix, feature = "xattr")))]
         {
@@ -181,6 +188,19 @@ pub(super) fn try_clone(
     // upstream: rsync creates files via open() then applies metadata -
     // clonefile must produce identical results.
     normalize_cloned_metadata(destination, metadata, &metadata_options)?;
+
+    // clonefile() copies the source's extended attributes verbatim. When the
+    // user did not request xattr preservation (`-a` without `-X`), upstream
+    // rsync writes a fresh destination that carries none of them, so strip the
+    // source-originated attributes the clone introduced. finalize's sync_xattrs
+    // only runs when preservation is on, so this is the off-case correction.
+    // upstream: rsync's receiver open()s a new file and never copies xattrs
+    // without --xattrs.
+    #[cfg(all(unix, feature = "xattr"))]
+    if !flags.preserve_xattrs {
+        ::metadata::strip_source_xattrs(source, destination, false)
+            .map_err(crate::local_copy::metadata_sync::map_metadata_error)?;
+    }
 
     finalize_guard_and_metadata(
         context,
