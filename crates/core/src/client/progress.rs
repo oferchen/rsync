@@ -202,8 +202,18 @@ where
 
 pub(crate) struct ClientProgressForwarder<'a> {
     observer: &'a mut dyn ClientProgressObserver,
+    // Total file-list entries (the `to-chk=<remaining>/<total>` denominator),
+    // including up-to-date ones the generator checks but never transfers.
     total: usize,
-    emitted: usize,
+    // Number of entries that will actually be transferred. The `to-chk`
+    // remaining counts down from this, so the last transferred entry reaches 0
+    // even when up-to-date entries (e.g. an unchanged parent dir the local
+    // executor visits last) trail it in processing order.
+    transferred_total: usize,
+    // Running count of entries transferred. Drives `xfr#` and the remaining
+    // figure (transferred_total - transferred); only advances for real
+    // transfers, never for up-to-date matches.
+    transferred: usize,
     overall_total_bytes: Option<u64>,
     overall_transferred: u64,
     overall_start: Instant,
@@ -227,10 +237,17 @@ impl<'a> ClientProgressForwarder<'a> {
 
         let (summary, records, destination_root) = preview_report.into_parts();
         let destination_root: Arc<Path> = Arc::from(destination_root);
-        let total = records
+        let progress_events: Vec<_> = records
             .into_iter()
             .map(|record| ClientEvent::from_record_owned(record, Arc::clone(&destination_root)))
             .filter(|event| event.kind().is_progress())
+            .collect();
+        // Denominator counts every checked entry; the numerator base counts only
+        // those that will transfer, so to-chk reaches 0 on the last transfer.
+        let total = progress_events.len();
+        let transferred_total = progress_events
+            .iter()
+            .filter(|event| !event.is_uptodate())
             .count();
 
         let total_bytes = summary.total_source_bytes();
@@ -238,7 +255,8 @@ impl<'a> ClientProgressForwarder<'a> {
         Ok(Self {
             observer,
             total,
-            emitted: 0,
+            transferred_total,
+            transferred: 0,
             overall_total_bytes: (total_bytes > 0).then_some(total_bytes),
             overall_transferred: 0,
             overall_start: Instant::now(),
@@ -259,9 +277,16 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
             return;
         }
 
-        self.emitted = self.emitted.saturating_add(1);
-        let index = self.emitted;
-        let remaining = self.total.saturating_sub(index);
+        // upstream: an up-to-date entry prints no per-file progress block and
+        // does not advance `xfr#` - it is silent under `--progress`/`-P` (it
+        // surfaces only with `-vv`/`-i`), so a no-change run emits nothing.
+        if event.is_uptodate() {
+            return;
+        }
+
+        self.transferred = self.transferred.saturating_add(1);
+        let index = self.transferred;
+        let remaining = self.transferred_total.saturating_sub(self.transferred);
 
         let total_bytes = if matches!(event.kind(), ClientEventKind::DataCopied) {
             event.total_bytes()
@@ -299,8 +324,10 @@ impl<'a> LocalCopyRecordHandler for ClientProgressForwarder<'a> {
             return;
         }
 
-        let index = (self.emitted + 1).min(self.total);
-        let remaining = self.total.saturating_sub(index);
+        // The in-flight file is the next transfer (`xfr#`); to-chk counts the
+        // transfers still pending after it.
+        let index = (self.transferred + 1).min(self.transferred_total);
+        let remaining = self.transferred_total.saturating_sub(self.transferred + 1);
         let event = ClientEvent::from_progress(
             progress.relative_path(),
             progress.bytes_transferred(),
