@@ -358,7 +358,7 @@ fn live_progress_human_readable_formats_bytes() {
 }
 
 #[test]
-fn live_progress_combined_human_readable_shows_both_formats() {
+fn live_progress_combined_human_readable_uses_base_1024() {
     let (tmp, source_dir) = setup_single_file("combined.bin", 1_536);
     let dest_dir = tmp.path().join("dest");
 
@@ -369,10 +369,11 @@ fn live_progress_combined_human_readable_shows_both_formats() {
         HumanReadableMode::Combined,
     );
 
-    // Combined mode should show both human-readable and decimal
+    // upstream: lib/compat.c:183 - `-hh` (Combined) divides by 1024 and never
+    // appends an exact-value component: 1536 / 1024 = 1.50K.
     assert!(
-        output.contains("1,536"),
-        "combined mode should include decimal format: {output:?}"
+        output.contains("1.50K") && !output.contains("1,536"),
+        "combined mode should use base-1024 K suffix without decimal component: {output:?}"
     );
 }
 

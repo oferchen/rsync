@@ -269,7 +269,7 @@ fn list_only_output_lines_match_upstream_regex_pattern() {
     let rendered = String::from_utf8(stdout).expect("utf8 stdout");
     assert!(!rendered.is_empty(), "output should not be empty");
 
-    // Upstream rsync format: <type+perms 10 chars> <15-char size> <YYYY/MM/DD HH:MM:SS> <name>
+    // Upstream rsync format: <type+perms 10 chars> <14-char size> <YYYY/MM/DD HH:MM:SS> <name>
     // The fields are separated by single spaces.
     for line in rendered.lines() {
         let perm_field = &line[..10];
@@ -289,11 +289,11 @@ fn list_only_output_lines_match_upstream_regex_pattern() {
             "space after permissions in {line:?}"
         );
 
-        let size_field = &line[11..26];
+        let size_field = &line[11..25];
         assert_eq!(
             size_field.len(),
-            15,
-            "size field should be 15 chars: {line:?}"
+            14,
+            "size field should be 14 chars: {line:?}"
         );
         let size_trimmed = size_field.trim();
         assert!(
@@ -308,9 +308,9 @@ fn list_only_output_lines_match_upstream_regex_pattern() {
             "size field should be numeric with commas: {size_trimmed:?} in {line:?}"
         );
 
-        assert_eq!(line.as_bytes()[26], b' ', "space after size in {line:?}");
+        assert_eq!(line.as_bytes()[25], b' ', "space after size in {line:?}");
 
-        let timestamp_field = &line[27..46];
+        let timestamp_field = &line[26..45];
         assert_eq!(
             timestamp_field.len(),
             19,
@@ -343,11 +343,11 @@ fn list_only_output_lines_match_upstream_regex_pattern() {
         );
 
         assert_eq!(
-            line.as_bytes()[46],
+            line.as_bytes()[45],
             b' ',
             "space after timestamp in {line:?}"
         );
-        let name_field = &line[47..];
+        let name_field = &line[46..];
         assert!(
             !name_field.is_empty(),
             "name field should not be empty: {line:?}"
@@ -524,10 +524,10 @@ fn list_only_directory_permissions_start_with_d() {
     );
 }
 
-/// Verifies the size field is right-aligned in a fixed 15-character column.
+/// Verifies the size field is right-aligned in a fixed 14-character column.
 #[cfg(unix)]
 #[test]
-fn list_only_size_field_right_aligned_in_15_chars() {
+fn list_only_size_field_right_aligned_in_14_chars() {
     use filetime::{FileTime, set_file_times};
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
@@ -573,11 +573,11 @@ fn list_only_size_field_right_aligned_in_15_chars() {
     let rendered = String::from_utf8(stdout).expect("utf8 stdout");
 
     for line in rendered.lines() {
-        let size_field = &line[11..26];
+        let size_field = &line[11..25];
         assert_eq!(
             size_field.len(),
-            15,
-            "size field should always be 15 chars: {line:?}"
+            14,
+            "size field should always be 14 chars: {line:?}"
         );
 
         // Right-alignment leaves leading spaces and trailing digits/commas.
@@ -976,10 +976,10 @@ fn list_only_multiple_files_have_consistent_column_alignment() {
     );
 
     // All lines should have the same structure: permissions end at column 10,
-    // size occupies columns 11-25, timestamp at 27-45, name starts at 47
+    // size occupies columns 11-24, timestamp at 26-44, name starts at 46
     for line in &lines {
         assert!(
-            line.len() >= 47,
+            line.len() >= 46,
             "each line should be at least 47 chars: {line:?}"
         );
         assert!(
@@ -992,22 +992,22 @@ fn list_only_multiple_files_have_consistent_column_alignment() {
             "separator after perms in {line:?}"
         );
         assert_eq!(
-            &line[11..26].len(),
-            &15,
-            "size field should be 15 chars: {line:?}"
+            &line[11..25].len(),
+            &14,
+            "size field should be 14 chars: {line:?}"
         );
         assert_eq!(
-            line.as_bytes()[26],
+            line.as_bytes()[25],
             b' ',
             "separator after size in {line:?}"
         );
         assert_eq!(
-            &line[27..46].len(),
+            &line[26..45].len(),
             &19,
             "timestamp should be 19 chars: {line:?}"
         );
         assert_eq!(
-            line.as_bytes()[46],
+            line.as_bytes()[45],
             b' ',
             "separator before name in {line:?}"
         );
@@ -1202,7 +1202,7 @@ fn list_only_timestamp_matches_yyyy_mm_dd_hh_mm_ss_format() {
         .find(|line| line.ends_with("ts.txt"))
         .expect("timestamp test file entry present");
 
-    let timestamp_field = &file_line[27..46];
+    let timestamp_field = &file_line[26..45];
 
     assert!(
         timestamp_field[0..4].chars().all(|c| c.is_ascii_digit()),
