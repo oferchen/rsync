@@ -264,6 +264,12 @@ impl ClientSummary {
         self.stats.total_elapsed()
     }
 
+    /// Returns the whole-transfer wall-clock span (for the transfer rate).
+    #[must_use]
+    pub const fn wall_clock_elapsed(&self) -> Duration {
+        self.stats.wall_clock_elapsed()
+    }
+
     /// Returns the cumulative duration spent sleeping due to bandwidth throttling.
     #[must_use]
     #[doc(alias = "--bwlimit")]

@@ -47,6 +47,7 @@ pub(crate) fn copy_sources(
             )
         })?;
 
+    let run_start = Instant::now();
     let destination_root = plan.destination_spec().path().to_path_buf();
     let mut context = CopyContext::new(mode, options, handler, destination_root);
     context.set_multi_source(plan.sources().len() > 1);
@@ -211,7 +212,14 @@ pub(crate) fn copy_sources(
     };
 
     match result {
-        Ok(()) => Ok(context.into_outcome()),
+        Ok(()) => {
+            // upstream main.c:418: the transfer rate uses a single wall-clock
+            // span, not the sum of per-file copy durations (which is ~0 for CoW).
+            context
+                .summary_mut()
+                .record_wall_clock_elapsed(run_start.elapsed());
+            Ok(context.into_outcome())
+        }
         Err(error) => {
             context.rollback_on_error(&error);
             Err(error)
