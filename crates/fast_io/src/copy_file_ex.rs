@@ -97,14 +97,14 @@ pub fn try_copy_file_ex(src: &Path, dst: &Path) -> io::Result<u64> {
 /// - `src_wide` and `dst_wide` are null-terminated UTF-16 slices produced by
 ///   `OsStrExt::encode_wide` chained with `once(0)`.
 /// - Progress callback, user data, and cancel pointers are null (unused).
-/// - The `flags` parameter is either 0 or `COPY_FILE_NO_BUFFERING` (0x8).
+/// - The `flags` parameter is either 0 or `COPY_FILE_NO_BUFFERING` (0x1000).
 #[cfg(windows)]
 #[allow(unsafe_code)]
 mod ffi {
     use std::io;
 
-    /// Windows `COPY_FILE_NO_BUFFERING` flag value.
-    pub const COPY_FILE_NO_BUFFERING: u32 = 0x0000_0008;
+    /// Windows `COPY_FILE_NO_BUFFERING` flag value (winbase.h).
+    pub const COPY_FILE_NO_BUFFERING: u32 = 0x0000_1000;
 
     /// Call `CopyFileExW` with the given null-terminated wide-string paths.
     pub fn copy_file_ex_w(src_wide: &[u16], dst_wide: &[u16], flags: u32) -> io::Result<()> {

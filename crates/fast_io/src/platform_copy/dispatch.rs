@@ -230,7 +230,7 @@ pub(super) fn try_copy_file_ex(src: &Path, dst: &Path, use_no_buffering: bool) -
 
     /// `COPY_FILE_NO_BUFFERING` flag for `CopyFileExW` - bypasses system cache
     /// for large file copies, reducing memory pressure.
-    const COPY_FILE_NO_BUFFERING: u32 = 0x0000_0008;
+    const COPY_FILE_NO_BUFFERING: u32 = 0x0000_1000;
 
     let flags: u32 = if use_no_buffering {
         COPY_FILE_NO_BUFFERING
