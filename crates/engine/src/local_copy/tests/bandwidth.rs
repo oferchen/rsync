@@ -168,7 +168,8 @@ fn execute_with_compression_records_compressed_bytes() {
     let compressed = summary.compressed_bytes();
     assert!(compressed > 0);
     assert!(compressed <= summary.bytes_copied());
-    assert_eq!(summary.bytes_sent(), summary.bytes_received());
+    // A local copy records data as sent, not received (it emulates the sender).
+    assert_eq!(summary.bytes_received(), 0);
     assert_eq!(summary.bytes_sent(), compressed);
     assert_eq!(summary.bandwidth_sleep(), Duration::ZERO);
 }
