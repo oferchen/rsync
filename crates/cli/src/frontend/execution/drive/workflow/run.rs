@@ -674,6 +674,13 @@ where
         return code;
     }
 
+    // upstream: options.c:2194-2195 - `if (argc < 2 && !read_batch && !am_server)
+    // list_only |= 1;`. A single remote source with no destination (e.g.
+    // `host::module` or `rsync://host/module`) implies list-only mode: list the
+    // module's contents instead of erroring "need source and destination".
+    let list_only =
+        list_only || (transfer_operands.len() == 1 && read_batch.is_none() && is_daemon_transfer);
+
     // upstream: options.c:2187-2188 - relative_paths defaults to 1 when files_from
     let effective_relative = if files_from_active && relative.is_none() {
         Some(true)
