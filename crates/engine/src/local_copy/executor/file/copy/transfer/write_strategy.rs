@@ -138,12 +138,24 @@ pub(in crate::local_copy) fn open_destination_writer(
             // Inplace + delta must NOT truncate: the existing blocks are the
             // basis the delta reads from.
             let should_truncate = delta_signature.is_none();
-            fs::OpenOptions::new()
+            let opened = fs::OpenOptions::new()
                 .create(true)
                 .write(true)
                 .truncate(should_truncate)
-                .open(destination)
-                .map_err(|error| LocalCopyError::io("copy file", destination, error))
+                .open(destination);
+            // upstream: receiver.c:978-986 - under the fs.protected_regular
+            // sysctl the kernel returns EACCES for an O_CREAT open of an
+            // existing file we do not own in a sticky, world-writable dir. The
+            // file already exists on the inplace path, so retry without O_CREAT.
+            #[cfg(target_os = "linux")]
+            let opened = match opened {
+                Err(error) if error.raw_os_error() == Some(libc::EACCES) => fs::OpenOptions::new()
+                    .write(true)
+                    .truncate(should_truncate)
+                    .open(destination),
+                other => other,
+            };
+            opened.map_err(|error| LocalCopyError::io("copy file", destination, error))
         }
         WriteStrategy::Direct => {
             // upstream: receiver.c - direct write when no existing file to protect.
