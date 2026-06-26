@@ -67,15 +67,26 @@ pub fn run_daemon_transfer(
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
-    if args.len() < 2 {
+    // upstream: options.c:2194 - a single source with list_only set lists the
+    // module contents (`host::module` with no destination); only a genuinely
+    // empty operand list is an error.
+    if args.is_empty() || (args.len() < 2 && !config.list_only()) {
         return Err(invalid_argument_error(
             "need at least one source and one destination",
             1,
         ));
     }
 
-    let (sources, destination) = args.split_at(args.len() - 1);
-    let destination = &destination[0];
+    // For an implicit list-only transfer (single source, no dest) synthesize a
+    // dummy `.` destination; config.list_only() forces read-only/no-write so it
+    // is never materialized.
+    let dummy_dest = std::ffi::OsString::from(".");
+    let (sources, destination) = if args.len() < 2 {
+        (args, &dummy_dest)
+    } else {
+        let (sources, destination) = args.split_at(args.len() - 1);
+        (sources, &destination[0])
+    };
 
     let transfer_spec = determine_transfer_role(sources, destination)?;
     let role = transfer_spec.role();
@@ -258,15 +269,26 @@ pub fn run_daemon_over_remote_shell(
     batch_writer: Option<Arc<Mutex<BatchWriter>>>,
 ) -> Result<ClientSummary, ClientError> {
     let args = config.transfer_args();
-    if args.len() < 2 {
+    // upstream: options.c:2194 - a single source with list_only set lists the
+    // module contents (`host::module` with no destination); only a genuinely
+    // empty operand list is an error.
+    if args.is_empty() || (args.len() < 2 && !config.list_only()) {
         return Err(invalid_argument_error(
             "need at least one source and one destination",
             1,
         ));
     }
 
-    let (sources, destination) = args.split_at(args.len() - 1);
-    let destination = &destination[0];
+    // For an implicit list-only transfer (single source, no dest) synthesize a
+    // dummy `.` destination; config.list_only() forces read-only/no-write so it
+    // is never materialized.
+    let dummy_dest = std::ffi::OsString::from(".");
+    let (sources, destination) = if args.len() < 2 {
+        (args, &dummy_dest)
+    } else {
+        let (sources, destination) = args.split_at(args.len() - 1);
+        (sources, &destination[0])
+    };
 
     let transfer_spec = determine_transfer_role(sources, destination)?;
     let role = transfer_spec.role();
