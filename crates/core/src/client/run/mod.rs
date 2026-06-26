@@ -355,7 +355,14 @@ fn run_client_internal(
                 .as_mut()
                 .map(ClientProgressForwarder::as_handler_mut),
         )
-        .map(ClientSummary::from_summary)
+        .map(|mut summary| {
+            // A local copy bypasses the wire protocol, so the executor only
+            // counts literal data in bytes_sent. Fold the file-list size in to
+            // report a comparable `sent` total (mirrors `from_report`). This
+            // no-events path covers `--stats` without `-v`/`-P`.
+            summary.fold_file_list_into_sent();
+            ClientSummary::from_summary(summary)
+        })
     };
 
     let summary = summary.map_err(map_local_copy_error)?;

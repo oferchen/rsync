@@ -61,7 +61,14 @@ pub struct ClientSummary {
 
 impl ClientSummary {
     pub(crate) fn from_report(report: LocalCopyReport) -> Self {
-        let (stats, records, destination_root) = report.into_parts();
+        let (mut stats, records, destination_root) = report.into_parts();
+        // A local copy bypasses the wire protocol, so the executor only counts
+        // literal data in `bytes_sent`. Upstream runs the protocol over a
+        // socketpair even locally, making its `Total bytes sent` dominated by
+        // the serialised file list. Fold the file-list size in so a local copy
+        // reports a comparable `sent` total and a meaningful speedup instead of
+        // `sent 0 bytes`.
+        stats.fold_file_list_into_sent();
         let destination_root: Arc<Path> = Arc::from(destination_root);
         let events = records
             .into_iter()
@@ -268,6 +275,21 @@ impl ClientSummary {
     #[must_use]
     pub const fn file_list_size(&self) -> u64 {
         self.stats.file_list_size()
+    }
+
+    /// Returns the per-method whole-file copy breakdown as `(label, count)`
+    /// pairs (e.g. `("clonefile (CoW)", 400)`). Empty unless the local-copy
+    /// executor ran, so remote/protocol transfers report nothing.
+    #[must_use]
+    pub fn copy_method_breakdown(&self) -> Vec<(&'static str, u64)> {
+        self.stats.copy_method_breakdown()
+    }
+
+    /// Returns whether any whole-file copy used a kernel acceleration
+    /// (clonefile, reflink, io_uring, ...). Gates the `Copy method` stats line.
+    #[must_use]
+    pub fn used_copy_acceleration(&self) -> bool {
+        self.stats.used_copy_acceleration()
     }
 
     /// Returns the duration spent generating the in-memory file list.
