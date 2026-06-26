@@ -78,8 +78,7 @@ fn ficlone_concurrent_clones_are_independent_and_intact() {
                 let src = &sources[i];
                 let dst = &dests[i];
                 scope.spawn(move || {
-                    fast_io::try_ficlone(src, dst)
-                        .map_err(|e| format!("clone {i} failed: {e}"))
+                    fast_io::try_ficlone(src, dst).map_err(|e| format!("clone {i} failed: {e}"))
                 })
             })
             .collect();
