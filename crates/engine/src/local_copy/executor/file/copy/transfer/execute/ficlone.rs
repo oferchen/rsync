@@ -64,13 +64,20 @@ pub(super) fn eligible(
         && !context.delay_updates_enabled()
         && context.temp_directory_path().is_none();
 
+    // Unlike macOS clonefile, FICLONE clones data extents only into a fresh
+    // File::create() inode - it never copies the source's xattrs, so plain
+    // `-a` (no -X) is safe with no post-clone strip: the destination simply
+    // starts with none. When -X is set, finalize applies the source xattrs
+    // (it runs for this path with flags.preserve_xattrs). The one case a
+    // blanket clone cannot reproduce is a selective xattr `--filter`, which
+    // still takes the slow path so the filter can be honoured per-attribute.
     let xattr_ok = {
         #[cfg(all(unix, feature = "xattr"))]
         {
             let has_filter_rules = context
                 .filter_program()
                 .is_some_and(|p| p.has_xattr_rules());
-            flags.xattrs_enabled() && !has_filter_rules
+            !has_filter_rules
         }
         #[cfg(not(all(unix, feature = "xattr")))]
         {
