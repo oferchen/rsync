@@ -33,6 +33,9 @@ pub mod env;
 pub mod error;
 /// System group membership lookups.
 pub mod group;
+/// Per-instant local timezone offset (mirrors upstream `timestring()`'s
+/// `localtime_r`), used to render file modtimes in local time.
+pub mod local_time;
 /// Windows account name to RID resolution.
 pub mod name_resolution;
 /// Process privilege operations - chroot and uid/gid dropping.
