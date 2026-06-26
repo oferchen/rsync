@@ -148,9 +148,16 @@ pub fn run_daemon_transfer(
     // client side; client-side TFO is deferred to a follow-up). These are
     // wire-compatible with upstream and only affect kernel socket state.
     if let Some(tcp) = stream.as_tcp_stream() {
+        // Mirror `--bwlimit` as a kernel pacing hint (saturating to the
+        // SO_MAX_PACING_RATE u32 field); the userspace limiter stays
+        // authoritative.
+        let pacing = config
+            .bandwidth_limit()
+            .map(|limit| u32::try_from(limit.bytes_per_second().get()).unwrap_or(u32::MAX));
         crate::client::module_list::tcp_perf::apply_client_tcp_perf_options(
             tcp,
             config.tcp_fastopen(),
+            pacing,
         );
     }
 

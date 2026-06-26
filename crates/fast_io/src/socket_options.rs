@@ -255,6 +255,44 @@ pub fn rearm_tcp_quickack(stream: Option<&TcpStream>) {
     }
 }
 
+/// Caps the kernel send pace for a connected stream to `bytes_per_sec`
+/// (`SO_MAX_PACING_RATE`).
+///
+/// A complementary kernel hint to the userspace token-bucket bandwidth
+/// limiter: the limiter stays authoritative for correctness, while the
+/// kernel smooths bursts at the NIC. On platforms without
+/// `SO_MAX_PACING_RATE` the call is a no-op and returns `Ok(false)`.
+///
+/// `SO_MAX_PACING_RATE` is a `u32` kernel field; the value is passed
+/// through the `int`-sized setsockopt path, which copies the same four
+/// bytes the kernel reads, so rates above `i32::MAX` are wire-correct.
+///
+/// upstream: not implemented; an oc-rsync-specific perf hint that is
+/// wire-compatible with upstream rsync.
+pub fn set_so_max_pacing_rate(stream: &TcpStream, bytes_per_sec: u32) -> io::Result<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        set_socket_int_option(
+            stream,
+            libc::SOL_SOCKET,
+            libc::SO_MAX_PACING_RATE,
+            bytes_per_sec as i32,
+        )?;
+        Ok(true)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (stream, bytes_per_sec);
+        Ok(false)
+    }
+}
+
+/// Returns `true` when the running platform implements `SO_MAX_PACING_RATE`.
+#[must_use]
+pub const fn so_max_pacing_rate_supported() -> bool {
+    cfg!(target_os = "linux")
+}
+
 /// Returns `true` when the running platform implements server-side
 /// `TCP_FASTOPEN`.
 #[must_use]
@@ -480,6 +518,20 @@ mod tests {
             Ok(true) => assert!(tcp_quickack_supported()),
             Ok(false) => assert!(!tcp_quickack_supported()),
             Err(error) => panic!("unexpected error from TCP_QUICKACK: {error}"),
+        }
+
+        drop(stream);
+        handle.join().expect("accept thread completes");
+    }
+
+    #[test]
+    fn set_so_max_pacing_rate_returns_supported_flag() {
+        let (stream, handle) = connected_stream();
+
+        match set_so_max_pacing_rate(&stream, 1_000_000) {
+            Ok(true) => assert!(so_max_pacing_rate_supported()),
+            Ok(false) => assert!(!so_max_pacing_rate_supported()),
+            Err(error) => panic!("unexpected error from SO_MAX_PACING_RATE: {error}"),
         }
 
         drop(stream);

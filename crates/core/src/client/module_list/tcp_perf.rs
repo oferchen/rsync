@@ -13,8 +13,8 @@
 use std::net::TcpStream;
 
 use fast_io::{
-    DEFAULT_TCP_NOTSENT_LOWAT, set_tcp_notsent_lowat, set_tcp_quickack,
-    tcp_notsent_lowat_supported, tcp_quickack_supported,
+    DEFAULT_TCP_NOTSENT_LOWAT, set_so_max_pacing_rate, set_tcp_notsent_lowat, set_tcp_quickack,
+    so_max_pacing_rate_supported, tcp_notsent_lowat_supported, tcp_quickack_supported,
 };
 
 use crate::client::TcpFastOpenMode;
@@ -26,7 +26,16 @@ use crate::client::TcpFastOpenMode;
 /// which is incompatible with the standard `connect`/`write` flow used by
 /// the rsync client; client-side TFO is deferred to a follow-up that
 /// wires a `sendto` adapter.
-pub(crate) fn apply_client_tcp_perf_options(stream: &TcpStream, mode: TcpFastOpenMode) {
+///
+/// When `pacing_bytes_per_sec` is `Some` (the client `--bwlimit` rate),
+/// `SO_MAX_PACING_RATE` caps the kernel send pace to match. This is a
+/// complementary hint: the userspace token-bucket limiter remains
+/// authoritative for correctness while the kernel smooths bursts.
+pub(crate) fn apply_client_tcp_perf_options(
+    stream: &TcpStream,
+    mode: TcpFastOpenMode,
+    pacing_bytes_per_sec: Option<u32>,
+) {
     let _ = mode; // Reserved for future client-side TFO wiring.
     if tcp_notsent_lowat_supported() {
         // Errors are best-effort: `TCP_NOTSENT_LOWAT` is an optimisation
@@ -37,6 +46,12 @@ pub(crate) fn apply_client_tcp_perf_options(stream: &TcpStream, mode: TcpFastOpe
         // One-shot hint to skip the delayed-ACK timer on the first ACK;
         // best-effort, non-fatal.
         let _ = set_tcp_quickack(stream);
+    }
+    if let Some(rate) = pacing_bytes_per_sec {
+        if so_max_pacing_rate_supported() {
+            // Kernel pacing hint mirroring `--bwlimit`; best-effort, non-fatal.
+            let _ = set_so_max_pacing_rate(stream, rate);
+        }
     }
 }
 
@@ -61,7 +76,9 @@ mod tests {
             TcpFastOpenMode::On,
             TcpFastOpenMode::Off,
         ] {
-            apply_client_tcp_perf_options(&stream, mode);
+            // Exercise both the no-pacing and pacing-hint paths.
+            apply_client_tcp_perf_options(&stream, mode, None);
+            apply_client_tcp_perf_options(&stream, mode, Some(1_000_000));
         }
 
         drop(stream);
