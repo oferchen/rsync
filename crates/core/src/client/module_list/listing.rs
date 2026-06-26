@@ -278,9 +278,13 @@ pub fn run_module_list_with_password_and_options(
     let mut acknowledged = false;
     let mut pre_ack_messages = Vec::new();
 
+    // TCP_QUICKACK is one-shot; re-arm before each read so the client's ACKs
+    // to the daemon's module-listing lines stay immediate across the exchange.
+    fast_io::rearm_tcp_quickack(reader.get_ref().inner().as_tcp_stream());
     while let Some(line) = read_trimmed_line(&mut reader)
         .map_err(|error| socket_error("read from", addr.socket_addr_display(), error))?
     {
+        fast_io::rearm_tcp_quickack(reader.get_ref().inner().as_tcp_stream());
         if let Some(payload) = legacy_daemon_error_payload(&line) {
             return Err(daemon_error(payload, PARTIAL_TRANSFER_EXIT_CODE));
         }
