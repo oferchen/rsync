@@ -2678,7 +2678,7 @@ fn iconv_explicit_single_forwards_whole_spec() {
 // filename args when protect_args is off. These tests verify that oc-rsync
 // produces the same escaping, matching the lsh.sh `eval "$@"` contract.
 
-use super::builder::shell_safe_filename_arg;
+use super::builder::{shell_safe_filename_arg, shell_safe_filename_arg_with_tilde};
 
 #[test]
 fn shell_safe_simple_path_unchanged() {
@@ -2727,6 +2727,30 @@ fn shell_safe_escapes_tab() {
 fn shell_safe_leading_dash_gets_dot_slash() {
     // upstream: safe_arg prepends "./" to prevent option interpretation
     assert_eq!(shell_safe_filename_arg("-file"), "./-file");
+}
+
+#[test]
+fn shell_safe_leading_tilde_unescaped_when_not_requested() {
+    // The plain wrapper - and a push, where escape_leading_tilde is false -
+    // leaves a leading ~ untouched, matching upstream which lets the remote
+    // expand ~ on the destination.
+    assert_eq!(shell_safe_filename_arg("~foo"), "~foo");
+    assert_eq!(shell_safe_filename_arg_with_tilde("~foo", false), "~foo");
+}
+
+#[test]
+fn shell_safe_leading_tilde_escaped_when_requested() {
+    // upstream: options.c:2553-2558 / :2581 - on a pull the leading ~ of a
+    // bare-name source path is backslash-escaped to \~foo so the remote shell
+    // does not tilde-expand a path literally named ~foo.
+    assert_eq!(shell_safe_filename_arg_with_tilde("~foo", true), "\\~foo");
+}
+
+#[test]
+fn shell_safe_tilde_escape_only_affects_leading_tilde() {
+    // A ~ that is not the first character is ordinary (not a SHELL_CHARS
+    // member) and is left as-is even when tilde escaping is requested.
+    assert_eq!(shell_safe_filename_arg_with_tilde("a~b", true), "a~b");
 }
 
 #[test]

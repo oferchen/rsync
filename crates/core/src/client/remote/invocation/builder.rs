@@ -214,10 +214,27 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // the remote shell's eval naturally splits space-separated paths.
         let old_args_active = self.config.old_args().unwrap_or(false);
 
+        // upstream: options.c:2553-2558 escape_leading_tilde is set only when
+        // local is NOT the sender (a pull, so the remote paths are the source)
+        // and the sender's args are not trusted. The per-path shape test is
+        // applied below.
+        let am_sender = self.role == RemoteRole::Sender;
+        let escape_tilde_role = !am_sender && !self.config.trust_sender();
+
         for path in remote_paths {
             if escape_for_shell && !old_args_active {
                 // upstream: main.c:613 safe_arg(NULL, *remote_argv++)
-                args.push(OsString::from(shell_safe_filename_arg(path)));
+                // upstream: options.c:2555-2557 - escape a leading ~ for a
+                // relative path without a `/./` pivot, or a path with no `/`.
+                let escape_tilde = escape_tilde_role
+                    && ((self.config.relative_paths() && !path.contains("/./"))
+                        || !path.contains('/'));
+                let escaped = if escape_tilde {
+                    shell_safe_filename_arg_with_tilde(path, true)
+                } else {
+                    shell_safe_filename_arg(path)
+                };
+                args.push(OsString::from(escaped));
             } else {
                 args.push(OsString::from(*path));
             }
@@ -754,8 +771,24 @@ const WILD_CHARS: &str = "*?[]";
 /// This escaping is applied when `protect_args` is not active, matching the
 /// upstream condition `!protect_args && old_style_args < 2`.
 pub(super) fn shell_safe_filename_arg(arg: &str) -> String {
+    shell_safe_filename_arg_with_tilde(arg, false)
+}
+
+/// Backslash-escapes shell metacharacters in a filename argument, optionally
+/// escaping a leading `~`.
+///
+/// Behaves like [`shell_safe_filename_arg`]; when `escape_leading_tilde` is
+/// set and `arg` begins with `~`, a single backslash is prepended (`~foo` ->
+/// `\~foo`) so the remote shell does not tilde-expand a path literally named
+/// `~foo`. Mirrors upstream `options.c:2553-2558` / `:2581`, where the
+/// `escape_leading_tilde` flag is set only on a pull (`!am_sender`) for an
+/// untrusted sender and a relative/no-slash path; the caller computes that
+/// gate and passes the result here.
+pub(super) fn shell_safe_filename_arg_with_tilde(arg: &str, escape_leading_tilde: bool) -> String {
     let leading_dash = arg.starts_with('-');
-    let needs_escaping = leading_dash || arg.chars().any(|c| SHELL_CHARS.contains(c));
+    let leading_tilde = escape_leading_tilde && arg.starts_with('~');
+    let needs_escaping =
+        leading_dash || leading_tilde || arg.chars().any(|c| SHELL_CHARS.contains(c));
     if !needs_escaping {
         return arg.to_owned();
     }
@@ -764,6 +797,9 @@ pub(super) fn shell_safe_filename_arg(arg: &str) -> String {
 
     if leading_dash {
         out.push_str("./");
+    } else if leading_tilde {
+        // upstream: options.c:2581 - a single backslash before a leading ~.
+        out.push('\\');
     }
 
     let chars: Vec<char> = arg.chars().collect();
