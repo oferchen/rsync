@@ -50,15 +50,51 @@ pub(super) fn set_timestamp_like(
         }
     }
 
-    if follow_symlinks {
+    let result = if follow_symlinks {
         set_file_times(destination, accessed, modified)
-            .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?
     } else {
         set_symlink_file_times(destination, accessed, modified)
-            .map_err(|error| MetadataError::new("preserve timestamps", destination, error))?
+    };
+
+    if let Err(error) = result {
+        // upstream: util1.c set_times() is best-effort. Setting times on a
+        // special file (device/fifo/socket) via utimensat can fail with
+        // ENXIO/EROFS/EOPNOTSUPP on some kernels/filesystems (e.g. a char/block
+        // device node with no backing media); upstream does not treat that as
+        // fatal. Swallow those errnos for non-regular files only.
+        #[cfg(unix)]
+        if is_special_file(metadata) && is_tolerable_special_time_error(&error) {
+            return Ok(());
+        }
+        return Err(MetadataError::new(
+            "preserve timestamps",
+            destination,
+            error,
+        ));
     }
 
     Ok(())
+}
+
+/// Reports whether the metadata describes a device, FIFO, or socket - the
+/// special-file types for which timestamp application is best-effort.
+#[cfg(unix)]
+fn is_special_file(metadata: &fs::Metadata) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+    let file_type = metadata.file_type();
+    file_type.is_block_device()
+        || file_type.is_char_device()
+        || file_type.is_fifo()
+        || file_type.is_socket()
+}
+
+/// Errnos upstream tolerates when setting times on a special file.
+#[cfg(unix)]
+fn is_tolerable_special_time_error(error: &io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(libc::ENXIO) | Some(libc::EROFS) | Some(libc::EOPNOTSUPP)
+    )
 }
 
 /// fd-based variant of [`set_timestamp_like`] that uses `futimens` on the open fd.
@@ -430,4 +466,37 @@ fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
 #[cfg(not(target_os = "macos"))]
 fn set_crtime(_path: &Path, _secs: i64) -> Result<(), MetadataError> {
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod special_time_tests {
+    use super::{is_special_file, is_tolerable_special_time_error};
+    use std::io;
+
+    #[test]
+    fn tolerates_special_file_time_errnos() {
+        for errno in [libc::ENXIO, libc::EROFS, libc::EOPNOTSUPP] {
+            assert!(
+                is_tolerable_special_time_error(&io::Error::from_raw_os_error(errno)),
+                "errno {errno} should be tolerated for special files"
+            );
+        }
+        assert!(!is_tolerable_special_time_error(
+            &io::Error::from_raw_os_error(libc::EACCES)
+        ));
+        assert!(!is_tolerable_special_time_error(
+            &io::Error::from_raw_os_error(libc::ENOENT)
+        ));
+    }
+
+    #[test]
+    fn regular_file_is_not_special() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("regular.txt");
+        std::fs::write(&path, b"x").expect("write");
+        let meta = std::fs::metadata(&path).expect("metadata");
+        assert!(!is_special_file(&meta), "regular file must not be special");
+        let dir_meta = std::fs::metadata(tmp.path()).expect("dir metadata");
+        assert!(!is_special_file(&dir_meta), "directory must not be special");
+    }
 }
