@@ -193,6 +193,24 @@ pub(super) fn process_links(
             destination_previously_existed,
         );
         remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
+        // upstream: generator.c try_dests_reg() - a --link-dest match at
+        // match_level 2 (data matches, attrs differ) still runs set_file_attrs,
+        // reapplying metadata + xattrs so the linked basis ends with the
+        // source's attributes. apply is a no-op when values already match, so
+        // applying unconditionally on the match is safe.
+        apply_file_metadata_with_options(destination, metadata, &metadata_options)
+            .map_err(map_metadata_error)?;
+        #[cfg(all(unix, feature = "xattr"))]
+        sync_xattrs_if_requested(
+            preserve_xattrs,
+            mode,
+            source,
+            destination,
+            true,
+            context.filter_program(),
+        )?;
+        #[cfg(all(any(unix, windows), feature = "acl"))]
+        sync_acls_if_requested(preserve_acls, mode, source, destination, true)?;
         return Ok(LinkOutcome {
             copy_source_override: None,
             reference_basis: None,
