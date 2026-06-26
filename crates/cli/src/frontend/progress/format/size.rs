@@ -71,9 +71,18 @@ pub(crate) fn format_human_bytes(bytes: u64, base: f64) -> String {
     bytes.to_string()
 }
 
+/// Width of the size column in `--list-only` output.
+///
+/// upstream: generator.c:1159 `list_file_entry` - `size_width = human_readable
+/// ? 14 : 11`. `human_readable` defaults to 1 (options.c:111), so every oc
+/// rendering mode (all of which print thousands-separated values like upstream's
+/// default `human_num`) uses the 14-wide field; the 11-wide field only applies
+/// to upstream's `--no-human-readable`, which oc does not distinctly model.
+pub(crate) const LIST_SIZE_WIDTH: usize = 14;
+
 pub(crate) fn format_list_size(size: u64, human_readable: HumanReadableMode) -> String {
     let value = format_size(size, human_readable);
-    format!("{value:>15}")
+    format!("{value:>LIST_SIZE_WIDTH$}")
 }
 
 #[cfg(test)]
@@ -152,16 +161,17 @@ mod tests {
     }
 
     #[test]
-    fn format_list_size_pads_to_15() {
+    fn format_list_size_pads_to_14() {
+        // upstream: generator.c:1159 size_width = 14 (human_readable defaults to 1).
         let result = format_list_size(123, HumanReadableMode::Disabled);
-        assert_eq!(result.len(), 15);
+        assert_eq!(result.len(), 14);
         assert!(result.trim_start().starts_with("123"));
     }
 
     #[test]
     fn format_list_size_zero_pads_correctly() {
         let result = format_list_size(0, HumanReadableMode::Disabled);
-        assert_eq!(result.len(), 15);
+        assert_eq!(result.len(), 14);
         assert_eq!(result.trim(), "0");
         // Should be right-aligned: leading spaces then "0"
         assert!(result.ends_with('0'));
@@ -170,7 +180,7 @@ mod tests {
     #[test]
     fn format_list_size_large_value_with_separators() {
         let result = format_list_size(1_234_567, HumanReadableMode::Disabled);
-        assert_eq!(result.len(), 15);
+        assert_eq!(result.len(), 14);
         assert!(
             result.contains("1,234,567"),
             "large value should have thousands separators: {result:?}"
@@ -190,14 +200,14 @@ mod tests {
     fn format_list_size_human_readable_small() {
         // Values under 1000 should show plain digits
         let result = format_list_size(500, HumanReadableMode::Enabled);
-        assert_eq!(result.len(), 15);
+        assert_eq!(result.len(), 14);
         assert_eq!(result.trim(), "500");
     }
 
     #[test]
     fn format_list_size_human_readable_kilo() {
         let result = format_list_size(1_500, HumanReadableMode::Enabled);
-        assert_eq!(result.len(), 15);
+        assert_eq!(result.len(), 14);
         assert!(
             result.contains("1.50K"),
             "1500 bytes should show as 1.50K in human-readable: {result:?}"
@@ -207,7 +217,7 @@ mod tests {
     #[test]
     fn format_list_size_human_readable_mega() {
         let result = format_list_size(2_500_000, HumanReadableMode::Enabled);
-        assert_eq!(result.len(), 15);
+        assert_eq!(result.len(), 14);
         assert!(
             result.contains("2.50M"),
             "2.5M bytes should show as 2.50M in human-readable: {result:?}"
@@ -219,8 +229,8 @@ mod tests {
         let small = format_list_size(1, HumanReadableMode::Disabled);
         let large = format_list_size(1_000_000, HumanReadableMode::Disabled);
 
-        assert_eq!(small.len(), 15);
-        assert_eq!(large.len(), 15);
+        assert_eq!(small.len(), 14);
+        assert_eq!(large.len(), 14);
 
         let small_spaces = small.len() - small.trim_start().len();
         let large_spaces = large.len() - large.trim_start().len();
