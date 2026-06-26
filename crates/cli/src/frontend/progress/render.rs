@@ -457,13 +457,11 @@ pub(crate) fn emit_totals<W: Write + ?Sized>(
     let sent = summary.bytes_sent();
     let received = summary.bytes_received();
     let total_size = summary.total_source_bytes();
-    let elapsed = summary.total_elapsed();
-    let seconds = elapsed.as_secs_f64();
-    let rate = if seconds > 0.0 {
-        (sent + received) as f64 / seconds
-    } else {
-        0.0
-    };
+    // upstream main.c:418-423: rate = (written+read) / (0.5 + (endtime-starttime)),
+    // a single wall-clock span with a 0.5s floor - never the summed per-file copy
+    // durations (which are ~0 for CoW/clonefile and explode the rate).
+    let wall_seconds = summary.wall_clock_elapsed().as_secs_f64();
+    let rate = (sent + received) as f64 / (0.5 + wall_seconds);
     let transmitted = sent.saturating_add(received);
     let speedup = if transmitted > 0 {
         total_size as f64 / transmitted as f64
