@@ -338,7 +338,8 @@ pub use sendfile::send_file_to_fd_with_policy;
 pub use socket_options::{
     DEFAULT_TCP_FASTOPEN_QLEN, DEFAULT_TCP_NOTSENT_LOWAT, enable_tcp_fastopen_listener,
     enable_tcp_fastopen_raw, set_listener_int_option, set_socket_int_option, set_tcp_notsent_lowat,
-    tcp_fastopen_listener_supported, tcp_notsent_lowat_supported,
+    set_tcp_quickack, tcp_fastopen_listener_supported, tcp_notsent_lowat_supported,
+    tcp_quickack_supported,
 };
 #[cfg(target_os = "linux")]
 pub use splice::DEFAULT_PIPE_CAPACITY;
