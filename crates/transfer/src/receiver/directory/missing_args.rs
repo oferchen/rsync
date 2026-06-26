@@ -136,7 +136,11 @@ impl ReceiverContext {
             match result {
                 Ok(()) => {
                     if is_dir {
-                        info_log!(Del, 1, "deleting directory {}", target.display());
+                        // upstream: log.c:845 log_delete uses one "deleting %n"
+                        // form; %n (log.c:633-641) appends a trailing slash for
+                        // directories, so a dir prints "deleting sub/" - no word
+                        // "directory".
+                        info_log!(Del, 1, "deleting {}/", target.display());
                     } else {
                         info_log!(Del, 1, "deleting {}", target.display());
                     }
