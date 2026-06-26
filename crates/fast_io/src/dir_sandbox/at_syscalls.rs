@@ -3216,6 +3216,59 @@ mod tests {
         );
     }
 
+    /// Positive control for the receiver's hardened destination open
+    /// (`temp_guard.rs:236`, flags `O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW`).
+    /// The symlink-race guard (`O_NOFOLLOW`) must not break a normal upload:
+    /// a non-malicious leaf is created, written through the returned fd, and
+    /// the payload must land intact at the real path as a regular file (never
+    /// a symlink). This complements the negative
+    /// `sandbox_anchored_guard_resists_symlink_swap_on_parent` and the
+    /// upstream `bare-do-open-symlink-race.test` (which assert only the
+    /// rejection side). Mirrors upstream `syscall.c:do_open_at` line 750,
+    /// where `O_NOFOLLOW` is a no-op on a real leaf and the create succeeds.
+    #[test]
+    fn openat_via_sandbox_nofollow_create_lands_payload_at_real_path() {
+        use std::io::Write;
+
+        let (_keep, root) = canonical_tempdir();
+        let path = root.join("upload.bin");
+        let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+
+        let leaf = Path::new("upload.bin");
+        let mut file = openat_via_sandbox_or_fallback(
+            Some(&sandbox),
+            &root,
+            leaf,
+            &path,
+            libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW,
+            0o600,
+        )
+        .expect("hardened create must succeed for a normal (non-symlink) leaf");
+
+        let payload = b"hardened upload payload";
+        file.write_all(payload).expect("write through hardened fd");
+        file.flush().expect("flush");
+        drop(file);
+
+        // The bytes must land at the real path - not redirected through a
+        // symlink, and not silently dropped by the O_NOFOLLOW guard.
+        let meta = std::fs::symlink_metadata(&path).expect("stat real path");
+        assert!(
+            meta.file_type().is_file(),
+            "hardened create must land a regular file, got {:?}",
+            meta.file_type()
+        );
+        assert!(
+            !meta.file_type().is_symlink(),
+            "the real path must never be a symlink after a hardened create"
+        );
+        assert_eq!(
+            std::fs::read(&path).expect("read back real path"),
+            payload,
+            "payload written through the hardened fd must round-trip intact"
+        );
+    }
+
     #[test]
     fn openat_via_sandbox_fallback_for_multi_component() {
         let (_keep, root) = canonical_tempdir();
