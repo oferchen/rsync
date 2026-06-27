@@ -26,10 +26,12 @@ pub(crate) fn format_progress_elapsed(elapsed: Duration) -> String {
 }
 
 pub(crate) fn format_stat_categories(categories: &[(&str, u64)]) -> String {
+    // upstream: main.c output_summary() comma_num()s each breakdown sub-count
+    // too, e.g. `(reg: 1,500, dir: 1)`.
     let parts: Vec<String> = categories
         .iter()
         .filter(|(_, count)| *count > 0)
-        .map(|(label, count)| format!("{label}: {count}"))
+        .map(|(label, count)| format!("{label}: {}", super::size::format_decimal_bytes(*count)))
         .collect();
     if parts.is_empty() {
         String::new()
@@ -106,5 +108,12 @@ mod tests {
             format_stat_categories(categories),
             " (files: 5, symlinks: 3)"
         );
+    }
+
+    #[test]
+    fn format_stat_categories_groups_thousands_like_upstream() {
+        // upstream comma_num()s each sub-count: `(reg: 1,500, dir: 1)`.
+        let categories: &[(&str, u64)] = &[("reg", 1500), ("dir", 1)];
+        assert_eq!(format_stat_categories(categories), " (reg: 1,500, dir: 1)");
     }
 }
