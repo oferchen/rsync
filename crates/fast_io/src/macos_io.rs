@@ -417,6 +417,42 @@ pub fn apply_sequential_read_hint(_file: &std::fs::File, _size_hint: u64) -> boo
     false
 }
 
+/// Opens `path` read-only for a sequential single-pass scan.
+///
+/// On Windows the sequential-access caching hint
+/// (`FILE_FLAG_SEQUENTIAL_SCAN`) is a `CreateFile`-time flag that cannot be
+/// set on an already-open handle, so it must be applied here at open time;
+/// it tells the cache manager to bias read-ahead for forward streaming and
+/// to evict pages eagerly behind the read point. On every other platform
+/// this is a plain [`std::fs::File::open`] - macOS applies its post-open
+/// `F_NOCACHE` hint separately via [`apply_sequential_read_hint`], and Linux
+/// has no equivalent open-time flag.
+///
+/// # Errors
+///
+/// Returns any error from opening the file.
+#[cfg(windows)]
+pub fn open_sequential_read(path: &Path) -> io::Result<std::fs::File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_SEQUENTIAL_SCAN;
+
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_SEQUENTIAL_SCAN)
+        .open(crate::win_path::to_extended_path(path))
+}
+
+/// Opens `path` read-only (non-Windows: a plain open; the read-ahead hint, if
+/// any, is applied post-open by [`apply_sequential_read_hint`]).
+///
+/// # Errors
+///
+/// Returns any error from opening the file.
+#[cfg(not(windows))]
+pub fn open_sequential_read(path: &Path) -> io::Result<std::fs::File> {
+    std::fs::File::open(path)
+}
+
 /// Queries whether `F_NOCACHE` is currently set on a file descriptor.
 ///
 /// macOS does not provide a direct query API for `F_NOCACHE` - the `fcntl`
@@ -926,5 +962,22 @@ mod tests {
         drop(writer);
         let content = std::fs::read(&path).unwrap();
         assert_eq!(&content, b"firstsecondthird");
+    }
+
+    #[test]
+    fn open_sequential_read_returns_readable_file() {
+        // The sequential-scan open must behave as a normal read-only open on
+        // every platform: the Windows variant only adds a caching hint, never
+        // changes the bytes returned. (The Windows flag path itself is
+        // exercised by the Windows CI matrix.)
+        use std::io::Read;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("seq.bin");
+        std::fs::write(&path, b"sequential-scan-payload").unwrap();
+
+        let mut file = open_sequential_read(&path).expect("open_sequential_read");
+        let mut buf = Vec::new();
+        file.read_to_end(&mut buf).expect("read back");
+        assert_eq!(buf, b"sequential-scan-payload");
     }
 }

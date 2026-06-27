@@ -48,13 +48,14 @@ impl BufferedMap {
     ///
     /// Returns an error if the file cannot be opened or its size determined.
     pub fn open_with_window<P: AsRef<Path>>(path: P, window_size: usize) -> io::Result<Self> {
-        let file = File::open(path)?;
+        // The buffered map streams the basis sequentially through a sliding
+        // window. On Windows the sequential-scan caching hint is a CreateFile
+        // open-time flag, so open through the helper to apply it; on other
+        // platforms this is a plain open. macOS then layers its post-open
+        // F_NOCACHE hint below (advisory, no-op elsewhere).
+        let file = fast_io::open_sequential_read(path.as_ref())?;
         let size = file.metadata()?.len();
 
-        // The buffered map streams the basis sequentially through a sliding
-        // window, so on macOS hint F_NOCACHE for large files to keep the
-        // single-pass read from evicting the page-cache working set. Advisory
-        // and a no-op on other platforms.
         let _ = fast_io::apply_sequential_read_hint(&file, size);
 
         Ok(Self {
