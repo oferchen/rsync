@@ -383,6 +383,21 @@ impl MonotonicNdxWriter {
             last_positive: None,
         }
     }
+
+    /// Returns the wrapped codec so callers that must share the SAME wire NDX
+    /// diff-state (`prev_positive`/`prev_negative`) can route their writes
+    /// through it.
+    ///
+    /// Upstream `io.c::write_ndx` keeps a single connection-wide state for ALL
+    /// NDX writes - file indices, `NDX_FLIST_OFFSET` sub-list headers,
+    /// `NDX_FLIST_EOF`, and `NDX_DONE` alike. The negative-diff byte length and
+    /// decoded value depend on `prev_negative`, so the sub-list writer MUST NOT
+    /// keep an independent state or its offsets desync against the receiver's
+    /// unified read state. The monotonicity check is positive-only and the
+    /// sub-list writes are negative, so bypassing the wrapper here is wire-safe.
+    pub fn inner_mut(&mut self) -> &mut NdxCodecEnum {
+        &mut self.inner
+    }
 }
 
 impl NdxCodec for MonotonicNdxWriter {

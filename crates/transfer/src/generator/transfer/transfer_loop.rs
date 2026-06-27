@@ -95,7 +95,13 @@ impl GeneratorContext {
             .flist_writer_cache
             .take()
             .unwrap_or_else(|| self.build_flist_writer());
-        let mut flist_ndx_codec = create_ndx_codec(self.protocol.as_u8());
+        // INC_RECURSE sub-list NDX writes (NDX_FLIST_OFFSET headers,
+        // NDX_FLIST_EOF) MUST share the same wire diff-state as the
+        // file-transfer / goodbye writes. Upstream io.c::write_ndx keeps a
+        // single connection-wide prev_positive/prev_negative; a separate codec
+        // instance for sub-lists would diff-encode negative offsets against an
+        // independent prev_negative, desyncing the receiver's unified read
+        // state. Route sub-list writes through ndx_write_codec.inner_mut().
         let mut segments_sent: usize = 0;
         // upstream: sender.c:242-250 - tracks remaining flist-free NDX_DONEs.
         // With INC_RECURSE, the client sends one NDX_DONE per completed flist
@@ -128,7 +134,7 @@ impl GeneratorContext {
                         &mut *writer,
                         seg,
                         &mut flist_writer,
-                        &mut flist_ndx_codec,
+                        ndx_write_codec.inner_mut(),
                     )?;
                     segments_sent += 1;
                     flist_done_remaining += 1;
@@ -139,7 +145,7 @@ impl GeneratorContext {
                 // have been dispatched. Must happen inside the loop (not after) because
                 // the receiver waits for NDX_FLIST_EOF before sending NDX_DONE.
                 if !self.incremental.flist_eof_sent && scheduler.is_exhausted() {
-                    self.send_flist_eof(&mut *writer, &mut flist_ndx_codec, segments_sent)?;
+                    self.send_flist_eof(&mut *writer, ndx_write_codec.inner_mut(), segments_sent)?;
                 }
             }
 
@@ -567,7 +573,7 @@ impl GeneratorContext {
                         &mut *writer,
                         seg,
                         &mut flist_writer,
-                        &mut flist_ndx_codec,
+                        ndx_write_codec.inner_mut(),
                     )?;
                     segments_sent += 1;
                     flist_done_remaining += 1;
@@ -599,11 +605,11 @@ impl GeneratorContext {
                     &mut *writer,
                     seg,
                     &mut flist_writer,
-                    &mut flist_ndx_codec,
+                    ndx_write_codec.inner_mut(),
                 )?;
                 segments_sent += 1;
             }
-            self.send_flist_eof(&mut *writer, &mut flist_ndx_codec, segments_sent)?;
+            self.send_flist_eof(&mut *writer, ndx_write_codec.inner_mut(), segments_sent)?;
         }
 
         // Cache flist_writer back for potential reuse (e.g., phase 2).
