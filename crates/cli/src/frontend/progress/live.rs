@@ -210,7 +210,13 @@ impl<'a> ClientProgressObserver for LiveProgress<'a> {
                         writeln!(self.writer)?;
                         self.line_active = false;
                     }
-                    writeln!(self.writer, "{}", relative.display())?;
+                    // upstream: flist.c f_name() emits POSIX forward-slash
+                    // separators regardless of host OS. Normalize Windows
+                    // native backslashes at the rendering boundary.
+                    let name = relative.display().to_string();
+                    #[cfg(windows)]
+                    let name = name.replace('\\', "/");
+                    writeln!(self.writer, "{name}")?;
                     self.active_path = Some(relative.to_path_buf());
                 }
 
