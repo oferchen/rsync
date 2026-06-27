@@ -404,6 +404,24 @@ pub(super) fn apply_crtime_from_entry(
     set_crtime(destination, crtime_secs)
 }
 
+/// Converts a Unix-epoch second count to a Windows `FILETIME` tick count
+/// (100-ns intervals since 1601-01-01).
+///
+/// Returns `None` when the value predates the FILETIME epoch (a negative tick
+/// count) or when the multiply/add overflows `i64`, so callers can skip the
+/// `SetFileTime` call rather than write a bogus creation time. Defined for
+/// `test` on every platform so the conversion math is covered cross-platform,
+/// even though `set_crtime` only consumes it on Windows.
+#[cfg(any(windows, test))]
+fn unix_secs_to_filetime_ticks(secs: i64) -> Option<u64> {
+    /// 100-ns ticks between the FILETIME epoch (1601-01-01) and the Unix epoch.
+    const EPOCH_DIFFERENCE_100NS: i64 = 116_444_736_000_000_000;
+
+    secs.checked_mul(10_000_000)
+        .and_then(|t| t.checked_add(EPOCH_DIFFERENCE_100NS))
+        .and_then(|t| u64::try_from(t).ok())
+}
+
 /// Sets the creation time (birth time) of a file on macOS via `setattrlist(2)`.
 // upstream: rsync.c uses utimensat for mtime/atime; crtime uses setattrlist on macOS
 #[cfg(target_os = "macos")]
@@ -462,8 +480,96 @@ fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
     Ok(())
 }
 
-/// No-op stub for platforms where creation time cannot be set.
-#[cfg(not(target_os = "macos"))]
+/// Sets the creation time (birth time) of a file or directory on Windows via
+/// `SetFileTime`.
+///
+/// `SetFileTime`'s first time argument is the NTFS creation time. The handle is
+/// opened with the minimal `FILE_WRITE_ATTRIBUTES` access right plus
+/// `FILE_FLAG_BACKUP_SEMANTICS` so directories can be opened by the same call,
+/// mirroring the reparse-handle helper. `secs` is a Unix epoch second count; it
+/// is converted to a `FILETIME` (100-ns ticks since 1601-01-01). Pre-1601 or
+/// overflowing inputs leave the destination crtime untouched rather than write
+/// a bogus value.
+// upstream: rsync.c uses utimensat for mtime/atime; crtime uses SetFileTime on Windows
+#[cfg(windows)]
+#[allow(unsafe_code)]
+fn set_crtime(path: &Path, secs: i64) -> Result<(), MetadataError> {
+    use std::os::windows::ffi::OsStrExt;
+
+    use fast_io::to_extended_path;
+    use windows::Win32::Foundation::{CloseHandle, FILETIME, HANDLE};
+    use windows::Win32::Storage::FileSystem::{
+        CreateFileW, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+        SetFileTime,
+    };
+
+    /// `FILE_WRITE_ATTRIBUTES` access right (`winnt.h`). The `windows` crate
+    /// exposes this only via `FILE_ACCESS_RIGHTS`; pinning the value locally
+    /// keeps the call site small and version-independent.
+    const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+
+    let to_err = |e: std::io::Error| MetadataError::new("set creation time", path, e);
+
+    // Convert the Unix-epoch seconds to a FILETIME tick count up front; if the
+    // value predates 1601 or overflows, skip the call rather than corrupt the
+    // destination's creation time.
+    let ticks = match unix_secs_to_filetime_ticks(secs) {
+        Some(t) => t,
+        None => return Ok(()),
+    };
+    let creation = FILETIME {
+        dwLowDateTime: ticks as u32,
+        dwHighDateTime: (ticks >> 32) as u32,
+    };
+
+    /// RAII guard that closes the opened handle on drop.
+    struct OwnedHandle(HANDLE);
+    impl Drop for OwnedHandle {
+        fn drop(&mut self) {
+            // SAFETY: `self.0` was returned by `CreateFileW` below and is owned
+            // uniquely by this guard for its lifetime.
+            unsafe {
+                let _ = CloseHandle(self.0);
+            }
+        }
+    }
+
+    let wide: Vec<u16> = to_extended_path(path)
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    // SAFETY: `wide` is a NUL-terminated UTF-16 path owned for the duration of
+    // the call. `FILE_FLAG_BACKUP_SEMANTICS` is the documented flag that lets
+    // the same call open a directory as well as a file; no input/output
+    // buffers besides the path are passed.
+    let handle = unsafe {
+        CreateFileW(
+            windows::core::PCWSTR(wide.as_ptr()),
+            FILE_WRITE_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            None,
+        )
+    }
+    .map_err(|_| to_err(std::io::Error::last_os_error()))?;
+    let handle = OwnedHandle(handle);
+
+    // SAFETY: `handle.0` is a valid open handle with `FILE_WRITE_ATTRIBUTES`;
+    // `creation` outlives the call (it is dropped at function end, after this
+    // statement). The access- and write-time pointers are `None`, so only the
+    // creation time is modified.
+    unsafe { SetFileTime(handle.0, Some(&creation as *const FILETIME), None, None) }
+        .map_err(|_| to_err(std::io::Error::last_os_error()))?;
+    Ok(())
+}
+
+/// No-op stub for platforms where creation time cannot be set (Linux birthtime
+/// is generally not settable; other non-macOS, non-Windows targets lack an API).
+#[cfg(not(any(target_os = "macos", windows)))]
 fn set_crtime(_path: &Path, _secs: i64) -> Result<(), MetadataError> {
     Ok(())
 }
@@ -498,5 +604,46 @@ mod special_time_tests {
         assert!(!is_special_file(&meta), "regular file must not be special");
         let dir_meta = std::fs::metadata(tmp.path()).expect("dir metadata");
         assert!(!is_special_file(&dir_meta), "directory must not be special");
+    }
+}
+
+#[cfg(test)]
+mod crtime_conversion_tests {
+    use super::unix_secs_to_filetime_ticks;
+
+    // 100-ns ticks from 1601-01-01 to 1970-01-01, the value SetFileTime expects
+    // for a Unix-epoch-zero creation time.
+    const EPOCH_DIFFERENCE: u64 = 116_444_736_000_000_000;
+
+    #[test]
+    fn unix_epoch_maps_to_filetime_epoch_difference() {
+        assert_eq!(unix_secs_to_filetime_ticks(0), Some(EPOCH_DIFFERENCE));
+    }
+
+    #[test]
+    fn one_second_adds_ten_million_ticks() {
+        assert_eq!(
+            unix_secs_to_filetime_ticks(1),
+            Some(EPOCH_DIFFERENCE + 10_000_000)
+        );
+    }
+
+    #[test]
+    fn known_timestamp_round_trips() {
+        // 2001-09-09T01:46:40Z == 1_000_000_000 Unix seconds.
+        let ticks = unix_secs_to_filetime_ticks(1_000_000_000).expect("in range");
+        assert_eq!(ticks, EPOCH_DIFFERENCE + 1_000_000_000 * 10_000_000);
+    }
+
+    #[test]
+    fn pre_filetime_epoch_returns_none() {
+        // Far enough before 1970 to land before 1601 (the FILETIME epoch), so
+        // the tick count would be negative and must be rejected.
+        assert_eq!(unix_secs_to_filetime_ticks(-12_000_000_000), None);
+    }
+
+    #[test]
+    fn overflow_returns_none() {
+        assert_eq!(unix_secs_to_filetime_ticks(i64::MAX), None);
     }
 }
