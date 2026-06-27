@@ -31,8 +31,6 @@
 
 mod basis;
 mod directory;
-#[cfg(feature = "flat-flist")]
-pub mod entry_accessor;
 mod file_list;
 mod quick_check;
 mod stats;

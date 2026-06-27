@@ -16,13 +16,11 @@ targets = ["x86_64-unknown-linux-gnu"]
 [dependencies]
 globset = { workspace = true }
 logging = { path = "../logging" }
-protocol = { path = "../protocol", optional = true, default-features = false }
 thiserror = { workspace = true }
 tracing = { workspace = true, optional = true }
 
 [features]
 tracing = ["dep:tracing"]
-flat-flist = ["dep:protocol", "protocol/flat-flist"]
 
 [dev-dependencies]
 proptest = { workspace = true }
