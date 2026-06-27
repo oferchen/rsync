@@ -5,7 +5,9 @@ use std::time::Duration;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 
 use super::super::DaemonAddress;
-use crate::client::{AddressMode, ClientError, SOCKET_IO_EXIT_CODE, daemon_error, socket_error};
+use crate::client::{
+    AddressMode, ClientError, SOCKET_IO_EXIT_CODE, TcpFastOpenMode, daemon_error, socket_error,
+};
 
 /// Establishes a direct TCP connection to an rsync daemon.
 ///
@@ -18,12 +20,13 @@ pub(crate) fn connect_direct(
     io_timeout: Option<Duration>,
     address_mode: AddressMode,
     bind_address: Option<SocketAddr>,
+    tfo: TcpFastOpenMode,
 ) -> Result<TcpStream, ClientError> {
     let addresses = resolve_daemon_addresses(addr, address_mode)?;
     let mut last_error: Option<(SocketAddr, io::Error)> = None;
 
     for candidate in addresses {
-        match connect_with_optional_bind(candidate, bind_address, connect_timeout) {
+        match connect_with_optional_bind(candidate, bind_address, connect_timeout, tfo) {
             Ok(stream) => {
                 if let Some(duration) = io_timeout {
                     stream.set_read_timeout(Some(duration)).map_err(|error| {
@@ -111,12 +114,22 @@ pub(crate) fn resolve_daemon_addresses(
 ///
 /// When `bind_address` is provided its port is forced to `0` so the OS picks
 /// an ephemeral port. A `connect_timeout`, when given, is forwarded to the
-/// underlying socket.
+/// underlying socket. The connection is always built through a `socket2`
+/// socket so a `TCP_FASTOPEN_CONNECT` option can be set before `connect(2)`
+/// when `tfo` requests it.
 pub(crate) fn connect_with_optional_bind(
     target: SocketAddr,
     bind_address: Option<SocketAddr>,
     timeout: Option<Duration>,
+    tfo: TcpFastOpenMode,
 ) -> io::Result<TcpStream> {
+    let domain = if target.is_ipv4() {
+        Domain::IPV4
+    } else {
+        Domain::IPV6
+    };
+    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
+
     if let Some(bind) = bind_address {
         if target.is_ipv4() != bind.is_ipv4() {
             return Err(io::Error::new(
@@ -125,31 +138,44 @@ pub(crate) fn connect_with_optional_bind(
             ));
         }
 
-        let domain = if target.is_ipv4() {
-            Domain::IPV4
-        } else {
-            Domain::IPV6
-        };
-
-        let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
         let mut bind_addr = bind;
         match &mut bind_addr {
             SocketAddr::V4(addr) => addr.set_port(0),
             SocketAddr::V6(addr) => addr.set_port(0),
         }
         socket.bind(&SockAddr::from(bind_addr))?;
-
-        let target_addr = SockAddr::from(target);
-        if let Some(duration) = timeout {
-            socket.connect_timeout(&target_addr, duration)?;
-        } else {
-            socket.connect(&target_addr)?;
-        }
-
-        Ok(socket.into())
-    } else if let Some(duration) = timeout {
-        TcpStream::connect_timeout(&target, duration)
-    } else {
-        TcpStream::connect(target)
     }
+
+    // Request client-side TCP Fast Open before connect. On Linux this sets
+    // TCP_FASTOPEN_CONNECT so the kernel defers the SYN until the first write,
+    // folding the request into the handshake and saving a round trip. This
+    // supersedes the older MSG_FASTOPEN-on-sendto mechanism, which is why the
+    // standard connect/write flow below works unchanged. Best-effort: an
+    // unsupported or failing setsockopt leaves the connect to proceed normally.
+    apply_tcp_fastopen_connect(&socket, tfo);
+
+    let target_addr = SockAddr::from(target);
+    if let Some(duration) = timeout {
+        socket.connect_timeout(&target_addr, duration)?;
+    } else {
+        socket.connect(&target_addr)?;
+    }
+
+    Ok(socket.into())
+}
+
+/// Sets `TCP_FASTOPEN_CONNECT` on `socket` before connect when `tfo` enables
+/// it and the platform supports it. A no-op on platforms without client-side
+/// TFO (the strict-mode unsupported warning is surfaced at config time).
+fn apply_tcp_fastopen_connect(socket: &Socket, tfo: TcpFastOpenMode) {
+    if !tfo.is_enabled() || !fast_io::tcp_fastopen_connect_supported() {
+        return;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        let _ = fast_io::enable_tcp_fastopen_connect_raw(socket.as_raw_fd());
+    }
+    #[cfg(not(unix))]
+    let _ = socket;
 }

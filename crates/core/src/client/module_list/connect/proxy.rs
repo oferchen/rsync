@@ -9,7 +9,7 @@ use base64::engine::general_purpose::STANDARD;
 use super::direct::connect_with_optional_bind;
 use crate::client::module_list::parsing::{decode_host_component, hex_value, parse_bracketed_host};
 use crate::client::module_list::{DaemonAddress, types::SocketAddrDisplay};
-use crate::client::{ClientError, SOCKET_IO_EXIT_CODE, socket_error};
+use crate::client::{ClientError, SOCKET_IO_EXIT_CODE, TcpFastOpenMode, socket_error};
 use crate::message::Role;
 use crate::rsync_error;
 
@@ -19,6 +19,7 @@ pub(crate) fn connect_via_proxy(
     connect_timeout: Option<Duration>,
     io_timeout: Option<Duration>,
     bind_address: Option<SocketAddr>,
+    tfo: TcpFastOpenMode,
 ) -> Result<TcpStream, ClientError> {
     let target = (proxy.host.as_str(), proxy.port);
     let addrs = target
@@ -29,7 +30,7 @@ pub(crate) fn connect_via_proxy(
     let mut stream_result: Option<TcpStream> = None;
 
     for candidate in addrs {
-        match connect_with_optional_bind(candidate, bind_address, connect_timeout) {
+        match connect_with_optional_bind(candidate, bind_address, connect_timeout, tfo) {
             Ok(stream) => {
                 stream_result = Some(stream);
                 break;

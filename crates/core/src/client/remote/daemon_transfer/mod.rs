@@ -133,6 +133,7 @@ pub fn run_daemon_transfer(
         config.address_mode(),
         config.connect_program(),
         config.bind_address().map(|b| b.socket()),
+        config.tcp_fastopen(),
     )?;
 
     // upstream: clientserver.c - start_daemon_client() calls set_socket_options()
