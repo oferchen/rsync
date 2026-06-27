@@ -499,6 +499,7 @@ fn connect_direct_applies_io_timeout() {
         timeout,
         AddressMode::Default,
         None,
+        crate::client::TcpFastOpenMode::Auto,
     )
     .expect("connect directly");
 
@@ -543,8 +544,15 @@ fn connect_via_proxy_applies_io_timeout() {
     });
 
     let timeout = Some(Duration::from_secs(6));
-    let stream = connect_via_proxy(&target, &proxy, Some(Duration::from_secs(9)), timeout, None)
-        .expect("proxy connect");
+    let stream = connect_via_proxy(
+        &target,
+        &proxy,
+        Some(Duration::from_secs(9)),
+        timeout,
+        None,
+        crate::client::TcpFastOpenMode::Auto,
+    )
+    .expect("proxy connect");
 
     assert_eq!(stream.read_timeout().expect("read timeout"), timeout);
     assert_eq!(stream.write_timeout().expect("write timeout"), timeout);
