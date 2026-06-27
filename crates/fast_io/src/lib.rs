@@ -361,7 +361,7 @@ pub use vmsplice_writer::{VMSPLICE_MIN_CHUNK, VmspliceFileWriter};
 
 pub use macos_io::{
     F_NOCACHE_THRESHOLD, MAX_IOV_COUNT, MacosWriter, apply_sequential_read_hint, is_nocache_set,
-    set_nocache, writev_buffers,
+    open_sequential_read, set_nocache, writev_buffers,
 };
 
 pub use kqueue::{KEvent, KEventFilter, KqueueLoop, TimerSleeper, is_kqueue_available};
