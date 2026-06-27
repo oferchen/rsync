@@ -324,7 +324,7 @@ Start with `crates/transfer/src/lib.rs` for the overview, then:
 - Daemon entry: `crates/daemon/src/`
 - Config parsing (`oc-rsyncd.conf`): `crates/daemon/src/daemon/`
 - Authentication: `crates/core/src/auth/` and daemon auth module
-- TLS termination: behind `daemon-tls` feature flag
+- TLS termination: external (stunnel / reverse proxy); see `SECURITY.md`
 
 ### "I want to add platform-specific I/O optimizations"
 

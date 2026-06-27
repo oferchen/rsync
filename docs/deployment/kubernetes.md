@@ -241,8 +241,7 @@ The daemon manifest pairs the rootless `securityContext` with
 `--no-io-uring-sqpoll` so the io_uring fast path stays active without
 requesting `CAP_SYS_NICE`. Add a `NetworkPolicy` to restrict ingress to
 the client CIDR; external rsync over TLS belongs behind an stunnel
-sidecar (see [`daemon-tls.md`](daemon-tls.md) for native TLS or the
-external-terminator recipes).
+sidecar or another external TLS terminator.
 
 ## 5. Pod Security Standards / Pod Security Admission
 

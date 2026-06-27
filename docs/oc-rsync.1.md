@@ -947,26 +947,6 @@ NEON) are used where available, with automatic scalar fallbacks.
     *oc-rsyncd.conf*). Releases prior to **v0.6.2** have no admission cap
     and accept connections until the operating system runs out of resources.
 
-**--ssl-cert**=*FILE*
-:   Path to the PEM-encoded server certificate chain for the daemon's TLS
-    acceptor. The file must contain the server certificate followed by any
-    intermediate certificates (leaf-first). Overrides the **ssl cert**
-    directive in the daemon configuration file. Requires the **daemon-tls**
-    feature at build time.
-
-**--ssl-key**=*FILE*
-:   Path to the PEM-encoded private key for the daemon's TLS acceptor.
-    Accepts PKCS#8, PKCS#1 (RSA), and SEC1 (EC) key formats. Overrides the
-    **ssl key** directive in the daemon configuration file. Requires the
-    **daemon-tls** feature at build time.
-
-**--ssl-ca**=*FILE*
-:   Path to a PEM-encoded CA bundle for client certificate verification
-    (mutual TLS). When set, the daemon requires connecting clients to present
-    a valid certificate signed by one of the listed CAs. Overrides the
-    **ssl ca** directive in the daemon configuration file. Requires the
-    **daemon-tls** feature at build time.
-
 **--max-sessions**=*N*
 :   Cap the total number of sessions the daemon will serve before exiting.
     *N* must be a positive integer. After serving *N* sessions the daemon
@@ -1198,9 +1178,7 @@ and are not intended for direct use:
 
 **/etc/oc-rsyncd/oc-rsyncd.conf**
 :   Default daemon configuration file. Specifies modules, access control,
-    authentication, and other daemon parameters. When built with the
-    **daemon-tls** feature, the global directives **ssl cert**, **ssl key**,
-    and **ssl ca** configure native TLS termination.
+    authentication, and other daemon parameters.
 
 **oc-rsyncd.secrets**
 :   Daemon password file, referenced by the **secrets file** directive in
@@ -1270,25 +1248,19 @@ child, but it does not parse **~/.ssh/config** or **/etc/ssh/ssh_config**, so a
 **Compression yes** directive set there is invisible to the warning. If
 throughput looks CPU-bound on an SSH transfer, check those files as well.
 
-## Native TLS for daemon connections
+## TLS for daemon connections
 
-When built with the **daemon-tls** feature, the daemon accepts TLS connections
-directly via the **ssl cert**, **ssl key**, and optionally **ssl ca** directives
-in **oc-rsyncd.conf**. When **ssl cert** and **ssl key** are both configured,
-the daemon listens on port 874 (TLS) in addition to port 873 (cleartext).
+The daemon protocol is plaintext, matching upstream rsync: the daemon provides
+authentication (**auth users**) but not encryption. To encrypt daemon traffic,
+place the daemon behind an SSL proxy (**stunnel**, **HAProxy**, or **nginx**)
+that terminates TLS, binding the daemon to localhost so only the proxy reaches
+it - the same model as upstream **rsync-ssl**.
 
-When built with the **client-tls** feature, the **--ssl** flag connects to
-TLS-enabled daemons without external tooling. Default certificate verification
-uses the Mozilla root CA bundle; override with **--ssl-ca-cert**.
-
-Both features use rustls (pure Rust, no OpenSSL linking). Only TLS 1.2 and
-TLS 1.3 are supported. The TLS layer is transparent to the rsync wire protocol
-- daemon authentication (**auth users**), module access controls, and filter
-rules all function identically over TLS and cleartext.
-
-External TLS wrapping via **stunnel**, **HAProxy**, or **nginx** continues to
-work with any build. See **docs/user/daemon-tls-wrapping.md** for setup details
-covering both approaches.
+When built with the **client-tls** feature, the **--ssl** flag connects to such
+an SSL-proxied daemon without external client tooling. Default certificate
+verification uses the Mozilla root CA bundle; override with **--ssl-ca-cert**.
+client-tls uses rustls (pure Rust, no OpenSSL linking) and supports TLS 1.2 and
+TLS 1.3.
 
 ## SSH stderr socketpair channel
 
