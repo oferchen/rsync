@@ -169,6 +169,57 @@ fn dontcache_write(fd: RawFd, chunk: &[u8]) -> io::Result<usize> {
     Ok(ret as usize)
 }
 
+/// Returns whether the running kernel advertises `RWF_DONTCACHE` (Linux 6.14+).
+///
+/// The kernel release is read once via `uname(2)` and the verdict is cached for
+/// the lifetime of the process. A `true` result only means the version gate is
+/// met; per-file filesystem rejection is still handled by
+/// [`DontcacheFileWriter`]'s `dontcache_ok` fallback. Callers use this as a
+/// cheap up-front "is the flag worth attempting" check before selecting the
+/// writer, mirroring `is_io_uring_available`.
+#[cfg(all(target_os = "linux", feature = "dontcache"))]
+#[must_use]
+pub fn dontcache_supported() -> bool {
+    use crate::kernel_version::{DontcacheRequirement, VersionRequirement, parse_kernel_version};
+    use std::sync::OnceLock;
+
+    static SUPPORTED: OnceLock<bool> = OnceLock::new();
+    *SUPPORTED.get_or_init(|| {
+        kernel_release()
+            .as_deref()
+            .and_then(parse_kernel_version)
+            .is_some_and(|kv| DontcacheRequirement.is_supported(&kv))
+    })
+}
+
+/// Reads the kernel release string via `uname(2)` (e.g. `"6.14.0-generic"`).
+#[cfg(all(target_os = "linux", feature = "dontcache"))]
+#[allow(unsafe_code)]
+fn kernel_release() -> Option<String> {
+    use std::ffi::CStr;
+    // SAFETY: `utsname` is zero-initialised then fully populated by `uname`,
+    // which is sound for the POD struct. On success `release` is a
+    // NUL-terminated byte array that stays valid for the `CStr` borrow below.
+    unsafe {
+        let mut utsname: libc::utsname = std::mem::zeroed();
+        if libc::uname(&mut utsname) != 0 {
+            return None;
+        }
+        CStr::from_ptr(utsname.release.as_ptr())
+            .to_str()
+            .ok()
+            .map(String::from)
+    }
+}
+
+/// Stub: `RWF_DONTCACHE` exists only on Linux 6.14+ with the `dontcache`
+/// feature, so every other configuration reports it unsupported.
+#[cfg(not(all(target_os = "linux", feature = "dontcache")))]
+#[must_use]
+pub fn dontcache_supported() -> bool {
+    false
+}
+
 /// Stub for non-Linux platforms or when the `dontcache` feature is disabled.
 ///
 /// Every constructor and write method returns
@@ -271,6 +322,24 @@ mod linux_tests {
         assert_eq!(writer.write_chunk(&[]).expect("empty"), 0);
         drop(writer);
         assert!(read_back(&path).is_empty());
+    }
+
+    #[test]
+    fn dontcache_supported_matches_live_kernel_and_is_cached() {
+        use crate::kernel_version::{
+            DontcacheRequirement, VersionRequirement, parse_kernel_version,
+        };
+
+        // The probe must agree with the version gate computed from this host's
+        // live `uname(2)` release, so the result is correct on both new and
+        // old kernels without hard-coding a version into the test.
+        let expected = super::kernel_release()
+            .as_deref()
+            .and_then(parse_kernel_version)
+            .is_some_and(|kv| DontcacheRequirement.is_supported(&kv));
+        assert_eq!(dontcache_supported(), expected);
+        // OnceLock caches the verdict: a repeat call returns the same value.
+        assert_eq!(dontcache_supported(), expected);
     }
 }
 

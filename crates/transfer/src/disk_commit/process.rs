@@ -462,11 +462,14 @@ fn make_writer<'a>(
     // dontcache path: preferred over vmsplice when both are enabled. Lands
     // chunks via pwritev2(RWF_DONTCACHE) so bulk transfers do not evict the
     // page-cache working set, falling back per-chunk to a buffered write when
-    // the kernel/filesystem rejects the flag. Sparse and append require Seek,
-    // so they keep using Buffered.
+    // the filesystem rejects the flag. `dontcache_supported()` version-gates
+    // the selection up front (RWF_DONTCACHE needs Linux 6.14+) so older
+    // kernels skip straight to vmsplice/Buffered instead of burning a failed
+    // syscall per file. Sparse and append require Seek, so they keep using
+    // Buffered.
     #[cfg(all(target_os = "linux", feature = "dontcache"))]
     {
-        if !use_sparse && append_offset == 0 {
+        if !use_sparse && append_offset == 0 && fast_io::dontcache_supported() {
             return Ok(Writer::Dontcache(fast_io::DontcacheFileWriter::new(file)?));
         }
     }
