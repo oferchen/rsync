@@ -289,7 +289,12 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
         xfr_index += 1;
         let remaining = transferred_total - xfr_index;
 
-        writeln!(stdout, "{}", event.relative_path().display())?;
+        // upstream: flist.c f_name() emits POSIX forward-slash separators
+        // regardless of host OS. Normalize Windows native backslashes here.
+        let name = event.relative_path().display().to_string();
+        #[cfg(windows)]
+        let name = name.replace('\\', "/");
+        writeln!(stdout, "{name}")?;
 
         let bytes = event.bytes_transferred();
         // Field widths mirror upstream rsync's `rprint_progress` format string
