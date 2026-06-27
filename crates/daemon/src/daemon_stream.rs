@@ -1,15 +1,12 @@
-//! Unified stream abstraction for plain TCP, TLS-wrapped, and stdio daemon
-//! connections.
+//! Unified stream abstraction for plain TCP and stdio daemon connections.
 //!
-//! [`DaemonStream`] transparently handles plain `TcpStream`, TLS-encrypted
-//! connections (via rustls), and stdio-based connections behind a single type
-//! that implements `Read + Write`. This lets the daemon's session handler,
-//! greeting exchange, and module access code operate identically regardless
-//! of the transport.
+//! [`DaemonStream`] transparently handles plain `TcpStream` and stdio-based
+//! connections behind a single type that implements `Read + Write`. This lets
+//! the daemon's session handler, greeting exchange, and module access code
+//! operate identically regardless of the transport.
 //!
-//! The `Tls` variant is only available when the `daemon-tls` Cargo feature is
-//! enabled. The `Stdio` variant supports the `--server --daemon` remote-shell
-//! daemon mode where stdin/stdout are used instead of a TCP socket.
+//! The `Stdio` variant supports the `--server --daemon` remote-shell daemon
+//! mode where stdin/stdout are used instead of a TCP socket.
 //! upstream: main.c:1843-1844 - `if (am_server && am_daemon)
 //! return start_daemon(STDIN_FILENO, STDOUT_FILENO);`
 
@@ -37,8 +34,8 @@ impl StdioPair {
     }
 }
 
-/// A daemon connection that is either a plain TCP stream, a TLS-encrypted
-/// stream over TCP, or a stdio pair for remote-shell daemon mode.
+/// A daemon connection that is either a plain TCP stream or a stdio pair for
+/// remote-shell daemon mode.
 ///
 /// Implements `Read` and `Write` by delegating to the inner stream,
 /// making it a drop-in replacement for `TcpStream` in the daemon's
@@ -46,23 +43,11 @@ impl StdioPair {
 ///
 /// # Variants
 ///
-/// - `Plain` - unencrypted TCP, used when no TLS configuration is present.
-/// - `Tls` - encrypted via rustls `StreamOwned`, used when the daemon is
-///   started with `--ssl` / certificate configuration. Only available behind
-///   `#[cfg(feature = "daemon-tls")]`.
+/// - `Plain` - unencrypted TCP.
 /// - `Stdio` - stdin/stdout pair for `--server --daemon` remote-shell mode.
 pub enum DaemonStream {
     /// Unencrypted TCP connection.
     Plain(TcpStream),
-
-    /// TLS-encrypted connection over TCP.
-    ///
-    /// The `StreamOwned` manages the rustls session state and encrypts
-    /// all data transparently. It implements `Read + Write` by
-    /// performing TLS record framing under the hood.
-    #[cfg(feature = "daemon-tls")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "daemon-tls")))]
-    Tls(Box<rustls::StreamOwned<rustls::ServerConnection, TcpStream>>),
 
     /// Stdio-based connection for remote-shell daemon mode.
     ///
@@ -85,15 +70,11 @@ impl DaemonStream {
 
     /// Configures the read timeout on the underlying TCP socket.
     ///
-    /// Delegates to `TcpStream::set_read_timeout` regardless of whether
-    /// the connection is plain or TLS-wrapped - the timeout applies at the
-    /// OS socket level, beneath the TLS layer. No-op for stdio streams
+    /// Delegates to `TcpStream::set_read_timeout`. No-op for stdio streams
     /// (pipes do not support socket timeouts).
     pub fn set_read_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
         match self {
             Self::Plain(s) => s.set_read_timeout(dur),
-            #[cfg(feature = "daemon-tls")]
-            Self::Tls(s) => s.sock.set_read_timeout(dur),
             Self::Stdio(_) => Ok(()),
         }
     }
@@ -104,8 +85,6 @@ impl DaemonStream {
     pub fn set_write_timeout(&self, dur: Option<Duration>) -> io::Result<()> {
         match self {
             Self::Plain(s) => s.set_write_timeout(dur),
-            #[cfg(feature = "daemon-tls")]
-            Self::Tls(s) => s.sock.set_write_timeout(dur),
             Self::Stdio(_) => Ok(()),
         }
     }
@@ -116,23 +95,17 @@ impl DaemonStream {
     pub fn set_nodelay(&self, nodelay: bool) -> io::Result<()> {
         match self {
             Self::Plain(s) => s.set_nodelay(nodelay),
-            #[cfg(feature = "daemon-tls")]
-            Self::Tls(s) => s.sock.set_nodelay(nodelay),
             Self::Stdio(_) => Ok(()),
         }
     }
 
     /// Shuts down the read, write, or both halves of the connection.
     ///
-    /// For TLS streams this operates on the underlying TCP socket. The
-    /// TLS `close_notify` alert should be sent (via `flush` / drop)
-    /// before calling this. No-op for stdio streams (stdin/stdout are
-    /// closed when the process exits).
+    /// No-op for stdio streams (stdin/stdout are closed when the process
+    /// exits).
     pub fn shutdown(&self, how: Shutdown) -> io::Result<()> {
         match self {
             Self::Plain(s) => s.shutdown(how),
-            #[cfg(feature = "daemon-tls")]
-            Self::Tls(s) => s.sock.shutdown(how),
             Self::Stdio(_) => Ok(()),
         }
     }
@@ -143,19 +116,7 @@ impl DaemonStream {
     pub fn tcp_stream(&self) -> Option<&TcpStream> {
         match self {
             Self::Plain(s) => Some(s),
-            #[cfg(feature = "daemon-tls")]
-            Self::Tls(s) => Some(&s.sock),
             Self::Stdio(_) => None,
-        }
-    }
-
-    /// Returns `true` if this is a TLS-encrypted connection.
-    pub fn is_tls(&self) -> bool {
-        match self {
-            Self::Plain(_) => false,
-            #[cfg(feature = "daemon-tls")]
-            Self::Tls(_) => true,
-            Self::Stdio(_) => false,
         }
     }
 
@@ -166,11 +127,7 @@ impl DaemonStream {
 
     /// Consumes the `DaemonStream` and returns the inner `TcpStream`.
     ///
-    /// For the `Plain` variant this is a no-op unwrap. For `Tls`, this
-    /// extracts the underlying TCP socket from the `StreamOwned`,
-    /// discarding the TLS session state. The caller is responsible for
-    /// ensuring the TLS session has been properly shut down before
-    /// calling this.
+    /// For the `Plain` variant this is a no-op unwrap.
     ///
     /// # Panics
     ///
@@ -178,8 +135,6 @@ impl DaemonStream {
     pub fn into_tcp_stream(self) -> TcpStream {
         match self {
             Self::Plain(s) => s,
-            #[cfg(feature = "daemon-tls")]
-            Self::Tls(s) => s.sock,
             Self::Stdio(_) => panic!("cannot extract TcpStream from Stdio variant"),
         }
     }
@@ -189,8 +144,6 @@ impl Read for DaemonStream {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
             Self::Plain(s) => s.read(buf),
-            #[cfg(feature = "daemon-tls")]
-            Self::Tls(s) => s.read(buf),
             Self::Stdio(pair) => pair.reader.read(buf),
         }
     }
@@ -200,8 +153,6 @@ impl Write for DaemonStream {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
             Self::Plain(s) => s.write(buf),
-            #[cfg(feature = "daemon-tls")]
-            Self::Tls(s) => s.write(buf),
             Self::Stdio(pair) => pair.writer.write(buf),
         }
     }
@@ -209,8 +160,6 @@ impl Write for DaemonStream {
     fn flush(&mut self) -> io::Result<()> {
         match self {
             Self::Plain(s) => s.flush(),
-            #[cfg(feature = "daemon-tls")]
-            Self::Tls(s) => s.flush(),
             Self::Stdio(pair) => pair.writer.flush(),
         }
     }
@@ -220,8 +169,6 @@ impl std::fmt::Debug for DaemonStream {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Plain(s) => f.debug_tuple("DaemonStream::Plain").field(s).finish(),
-            #[cfg(feature = "daemon-tls")]
-            Self::Tls(_) => f.debug_tuple("DaemonStream::Tls").field(&"<tls>").finish(),
             Self::Stdio(_) => f
                 .debug_tuple("DaemonStream::Stdio")
                 .field(&"<stdio>")
@@ -275,13 +222,6 @@ mod tests {
     }
 
     #[test]
-    fn plain_is_not_tls() {
-        let (_client, server) = connected_pair();
-        let daemon = DaemonStream::plain(server);
-        assert!(!daemon.is_tls());
-    }
-
-    #[test]
     fn plain_tcp_stream_ref() {
         let (_client, server) = connected_pair();
         let addr = server.local_addr().unwrap();
@@ -329,26 +269,6 @@ mod tests {
         assert!(debug.contains("Plain"), "got: {debug}");
     }
 
-    #[cfg(feature = "daemon-tls")]
-    #[test]
-    fn tls_variant_is_tls() {
-        // Constructing a real TLS stream requires certificates; verified
-        // via the TLS handshake integration test below. This test just
-        // confirms the is_tls() discriminator when the feature is enabled.
-        let (_client, server) = connected_pair();
-        let daemon = DaemonStream::Plain(server);
-        assert!(!daemon.is_tls());
-    }
-
-    #[cfg(feature = "daemon-tls")]
-    #[test]
-    fn tls_debug_format() {
-        let (_client, server) = connected_pair();
-        let daemon = DaemonStream::Plain(server);
-        let debug = format!("{daemon:?}");
-        assert!(debug.contains("Plain"), "got: {debug}");
-    }
-
     #[test]
     fn stdio_read_write_roundtrip() {
         let input = b"hello from client";
@@ -364,13 +284,6 @@ mod tests {
         let response = b"hello from daemon";
         daemon.write_all(response).unwrap();
         daemon.flush().unwrap();
-    }
-
-    #[test]
-    fn stdio_is_not_tls() {
-        let pair = StdioPair::new(Box::new(io::Cursor::new(Vec::new())), Box::new(Vec::new()));
-        let daemon = DaemonStream::stdio(pair);
-        assert!(!daemon.is_tls());
     }
 
     #[test]

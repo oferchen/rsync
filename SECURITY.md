@@ -215,19 +215,15 @@ io_uring buffer-group IDs (`bgid`) live in a 16-bit namespace. The provided-buff
 
 If the SSH transport itself compresses the stream (`Compression yes` in `ssh_config` or a cipher with built-in compression), running `oc-rsync -z` will compress payloads twice. The amplification surface is small in practice but adds CPU and can mask compressor-specific bugs. Disable one layer; the canonical choice is to leave compression to rsync (`-z` / `--compress`) and disable it in SSH.
 
-### Daemon TLS
+### Daemon encryption
 
-When built with `--features daemon-tls`, the daemon terminates TLS natively via rustls. Configure `ssl cert`, `ssl key`, and optionally `ssl ca` (for mutual TLS) in `oc-rsyncd.conf`. The daemon listens for TLS on port 874 alongside the cleartext listener on port 873. Clients connect with `--ssl` (requires `--features client-tls`).
+The daemon protocol is plaintext, matching upstream rsync: the daemon provides authentication but not encryption. To expose a daemon over an untrusted network, deploy it behind one of:
 
-Default builds do not include TLS. To expose a non-TLS daemon over an untrusted network, deploy it behind one of:
-
+- **SSH tunnel** (`ssh -L` to a localhost-bound daemon), or use the ssh transport directly
 - **stunnel** in front of `rsync://`-style daemon traffic
-- **SSH tunnel** (`ssh -L` to a localhost-bound daemon)
-- **A reverse proxy** that performs TLS termination (e.g., HAProxy in TCP mode)
+- **A reverse proxy** that performs TLS termination (e.g., HAProxy in TCP mode, or nginx)
 
-When using external wrapping, bind the daemon to `127.0.0.1` (or a private VPC interface) and route external clients exclusively through the TLS terminator.
-
-See [`docs/user/daemon-tls-wrapping.md`](docs/user/daemon-tls-wrapping.md) for setup instructions covering both native and external TLS, and [`docs/deployment/daemon-tls.md`](docs/deployment/daemon-tls.md) for hardened systemd units and firewall rules.
+Bind the daemon to `127.0.0.1` (or a private VPC interface) and route external clients exclusively through the TLS terminator. Clients reach an SSL-proxied daemon with `--ssl` (requires `--features client-tls`), matching upstream `rsync-ssl`.
 
 ### Daemon module hardening
 

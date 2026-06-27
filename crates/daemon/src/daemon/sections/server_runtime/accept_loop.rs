@@ -366,8 +366,6 @@ fn serve_connections(
         bandwidth_burst,
         reverse_lookup,
         proxy_protocol,
-        #[cfg(feature = "daemon-tls")]
-        tls_acceptor: None,
     };
 
     if listeners.len() == 1 {
