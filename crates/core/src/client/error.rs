@@ -417,7 +417,7 @@ mod tests {
         assert!(!text.contains("os error"), "got: {text}");
 
         // Errors without an OS errno fall back to the Display string verbatim.
-        let custom = io::Error::new(ErrorKind::Other, "boom");
+        let custom = io::Error::other("boom");
         assert_eq!(upstream_io_error(&custom), "boom");
     }
 
