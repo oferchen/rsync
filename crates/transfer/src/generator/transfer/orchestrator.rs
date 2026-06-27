@@ -287,11 +287,18 @@ impl GeneratorContext {
             .advance_to(TransferPhase::Complete)
             .map_err(crate::fsm_error)?;
 
+        // upstream: handle_stats() reports stats.total_size, the sum of all
+        // flist file sizes (main.c:351 write_varlong30(f, stats.total_size, 3)).
+        let total_size = self.file_list.iter().map(|e| e.size()).sum();
+
         Ok(GeneratorStats {
             files_listed: file_count,
             files_transferred: transfer_result.files_transferred,
             bytes_sent: transfer_result.bytes_sent,
             bytes_read: self.timing.total_bytes_read,
+            matched_data: transfer_result.matched_data,
+            literal_data: transfer_result.literal_data,
+            total_size,
             flist_buildtime_ms: flist_buildtime,
             flist_xfertime_ms: flist_xfertime,
             flist_first_byte_latency: self.timing.flist_first_byte_latency,

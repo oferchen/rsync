@@ -25,6 +25,10 @@ pub(crate) struct TransferLoopResult {
     pub(crate) files_transferred: usize,
     /// Total bytes sent during transfer.
     pub(crate) bytes_sent: u64,
+    /// Bytes covered by block matches across all files (upstream: matched_data).
+    pub(crate) matched_data: u64,
+    /// Bytes sent as literal data across all files (upstream: literal_data).
+    pub(crate) literal_data: u64,
     /// NDX read codec state carried over for the goodbye handshake.
     pub(crate) ndx_read_codec: NdxCodecEnum,
     /// NDX write codec state carried over for the goodbye handshake.
@@ -51,6 +55,12 @@ pub struct GeneratorStats {
     pub bytes_sent: u64,
     /// Total bytes read from the receiver (signatures, NDX requests).
     pub bytes_read: u64,
+    /// Bytes covered by block matches (upstream: `stats.matched_data`).
+    pub matched_data: u64,
+    /// Bytes sent as literal data (upstream: `stats.literal_data`).
+    pub literal_data: u64,
+    /// Sum of all source file sizes in the flist (upstream: `stats.total_size`).
+    pub total_size: u64,
     /// File list build time in milliseconds (upstream: `stats.flist_buildtime`).
     pub flist_buildtime_ms: u64,
     /// File list transfer time in milliseconds (upstream: `stats.flist_xfertime`).

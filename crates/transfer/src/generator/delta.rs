@@ -406,6 +406,12 @@ pub(super) struct InlineChecksumResult {
     pub checksum_buf: [u8; ChecksumVerifier::MAX_DIGEST_LEN],
     /// Number of valid bytes in `checksum_buf`.
     pub checksum_len: usize,
+    /// Bytes covered by Copy tokens (block matches) on this file.
+    /// upstream: `match.c:118` `stats.matched_data += s2length`.
+    pub matched_data: u64,
+    /// Bytes sent as literal data on this file.
+    /// upstream: `match.c:330` `stats.literal_data += s->sums[j].len`.
+    pub literal_data: u64,
 }
 
 /// Writes delta tokens to the wire and computes the file checksum in a single pass.
@@ -445,6 +451,10 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
     };
     let mut source_offset: u64 = 0;
     let mut read_buf = Vec::new();
+    // upstream: match.c matched()/send_token() accumulate stats.matched_data
+    // and stats.literal_data as each token is emitted on the sender.
+    let mut matched_data: u64 = 0;
+    let mut literal_data: u64 = 0;
 
     match encoder {
         Some(encoder) => {
@@ -456,6 +466,7 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
                         verifier.update(data);
                         encoder.send_literal(writer, data)?;
                         source_offset += data.len() as u64;
+                        literal_data += data.len() as u64;
                     }
                     DeltaOp::Copy {
                         block_index,
@@ -476,6 +487,7 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
                             encoder.see_token(&read_buf)?;
                         }
                         source_offset += u64::from(*length);
+                        matched_data += u64::from(*length);
                     }
                 }
             }
@@ -495,6 +507,7 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
                         // match.c:matched() interleaves literal and block-match
                         // tokens against a single advancing file cursor.
                         source_offset += data.len() as u64;
+                        literal_data += data.len() as u64;
                     }
                     DeltaOp::Copy {
                         block_index,
@@ -512,6 +525,7 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
                         }
                         verifier.update(&read_buf);
                         source_offset += u64::from(*length);
+                        matched_data += u64::from(*length);
                     }
                 }
             }
@@ -525,6 +539,8 @@ pub(super) fn write_delta_with_inline_checksum<W: Write>(
     Ok(InlineChecksumResult {
         checksum_buf,
         checksum_len,
+        matched_data,
+        literal_data,
     })
 }
 
