@@ -158,3 +158,92 @@ pub(super) fn device_identifier(path: &Path, metadata: &fs::Metadata) -> Option<
         None
     }
 }
+
+/// Returns whether `source` and `destination` reside on the same filesystem.
+///
+/// Compares the device id of `source` against the device id of
+/// `destination`'s parent directory - the destination file itself may not
+/// exist yet, so its filesystem is the parent's. Returns `None` when either
+/// device id cannot be determined (e.g. the parent cannot be stat'd), letting
+/// callers fall back to attempting the operation. Used to gate reflink fast
+/// paths (`ioctl(FICLONE)`/`FICLONERANGE`) that only clone within a single
+/// filesystem and otherwise fail with `EXDEV`.
+#[cfg(target_os = "linux")]
+pub(super) fn same_filesystem(
+    source: &Path,
+    source_metadata: &fs::Metadata,
+    destination: &Path,
+) -> Option<bool> {
+    let source_dev = device_identifier(source, source_metadata)?;
+    let parent = destination.parent()?;
+    let parent_metadata = fs::symlink_metadata(parent).ok()?;
+    let dest_dev = device_identifier(parent, &parent_metadata)?;
+    Some(source_dev == dest_dev)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod same_filesystem_tests {
+    use super::{same_filesystem, with_device_id_override};
+    use tempfile::tempdir;
+
+    #[test]
+    fn reports_same_device_when_ids_match() {
+        // Source and destination parent both resolve to device 1: the helper
+        // must report Some(true) so the FICLONE fast path proceeds.
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("src");
+        let dest = temp.path().join("dst");
+        std::fs::write(&source, b"data").expect("write source");
+        let source_meta = std::fs::symlink_metadata(&source).expect("source metadata");
+
+        let verdict = with_device_id_override(
+            |_path, _meta| Some(1),
+            || same_filesystem(&source, &source_meta, &dest),
+        );
+        assert_eq!(verdict, Some(true));
+    }
+
+    #[test]
+    fn reports_cross_device_when_ids_differ() {
+        // Source resolves to device 1, the destination's parent to device 2:
+        // the helper must report Some(false) so the caller skips the doomed
+        // cross-filesystem FICLONE ioctl entirely.
+        let source_dir = tempdir().expect("source tempdir");
+        let dest_dir = tempdir().expect("dest tempdir");
+        let source = source_dir.path().join("src");
+        let dest = dest_dir.path().join("dst");
+        std::fs::write(&source, b"data").expect("write source");
+        let source_meta = std::fs::symlink_metadata(&source).expect("source metadata");
+
+        let dest_parent = dest_dir.path().to_path_buf();
+        let verdict = with_device_id_override(
+            move |path, _meta| {
+                if path == dest_parent.as_path() {
+                    Some(2)
+                } else {
+                    Some(1)
+                }
+            },
+            || same_filesystem(&source, &source_meta, &dest),
+        );
+        assert_eq!(verdict, Some(false));
+    }
+
+    #[test]
+    fn reports_none_when_destination_parent_missing() {
+        // A destination whose parent directory does not exist cannot be
+        // stat'd, so the helper returns None and the caller falls through to
+        // try_ficlone rather than wrongly skipping it.
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("src");
+        std::fs::write(&source, b"data").expect("write source");
+        let source_meta = std::fs::symlink_metadata(&source).expect("source metadata");
+        let dest = temp.path().join("missing").join("dst");
+
+        let verdict = with_device_id_override(
+            |_path, _meta| Some(1),
+            || same_filesystem(&source, &source_meta, &dest),
+        );
+        assert_eq!(verdict, None);
+    }
+}
