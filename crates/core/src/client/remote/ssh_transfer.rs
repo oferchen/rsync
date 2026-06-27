@@ -478,8 +478,12 @@ pub(super) fn convert_server_stats_to_summary(
             let s = LocalCopySummary::from_generator_stats(
                 generator_stats.files_listed,
                 generator_stats.files_transferred,
+                generator_stats.bytes_read,
                 generator_stats.bytes_sent,
+                generator_stats.total_size,
                 elapsed,
+                generator_stats.literal_data,
+                generator_stats.matched_data,
                 u64::from(generator_stats.delete_stats.total()),
             );
             (s, generator_stats.io_error, 0u32)

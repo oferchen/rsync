@@ -435,20 +435,30 @@ impl LocalCopySummary {
     /// Creates a summary from server-side generator statistics.
     ///
     /// This constructor is used when the local side acted as the generator/sender in a push transfer.
-    /// It maps the available generator statistics (files listed, files transferred, bytes sent)
-    /// to the corresponding LocalCopySummary fields.
+    /// It maps the generator statistics (files listed/transferred, bytes sent/received, and the
+    /// sender-accumulated matched/literal/total-size counters) to the corresponding
+    /// LocalCopySummary fields, mirroring [`Self::from_receiver_stats`] for the opposite direction.
     #[must_use]
+    #[allow(clippy::too_many_arguments)] // REASON: maps a wire-stats struct field-by-field
     pub fn from_generator_stats(
         files_listed: usize,
         files_transferred: usize,
+        bytes_received: u64,
         bytes_sent: u64,
+        total_source_bytes: u64,
         elapsed: Duration,
+        literal_data: u64,
+        matched_data: u64,
         items_deleted: u64,
     ) -> Self {
         Self {
             regular_files_total: files_listed as u64,
             files_copied: files_transferred as u64,
+            bytes_received,
             bytes_sent,
+            bytes_copied: literal_data,
+            matched_bytes: matched_data,
+            total_source_bytes,
             items_deleted,
             total_elapsed: elapsed,
             wall_clock_elapsed: elapsed,
@@ -671,8 +681,17 @@ mod tests {
     /// `--stats` renders "Number of deleted files: N" instead of zero.
     #[test]
     fn from_generator_stats_records_items_deleted() {
-        let summary =
-            LocalCopySummary::from_generator_stats(10, 5, 2048, Duration::from_secs(1), 7);
+        let summary = LocalCopySummary::from_generator_stats(
+            10,
+            5,
+            0,
+            2048,
+            0,
+            Duration::from_secs(1),
+            0,
+            0,
+            7,
+        );
         assert_eq!(summary.items_deleted(), 7);
     }
 
@@ -697,11 +716,23 @@ mod tests {
 
     #[test]
     fn from_generator_stats_sets_fields() {
-        let summary =
-            LocalCopySummary::from_generator_stats(200, 75, 2048, Duration::from_secs(3), 0);
+        let summary = LocalCopySummary::from_generator_stats(
+            200,
+            75,
+            1793,
+            2048,
+            204_800,
+            Duration::from_secs(3),
+            2800,
+            202_000,
+            0,
+        );
         assert_eq!(summary.regular_files_total(), 200);
         assert_eq!(summary.files_copied(), 75);
         assert_eq!(summary.bytes_sent(), 2048);
+        // #477: the sender-accumulated literal_data must reach the summary
+        // (previously dropped, so daemon/ssh-push --stats printed 0).
+        assert_eq!(summary.bytes_copied(), 2800);
         assert_eq!(summary.total_elapsed(), Duration::from_secs(3));
     }
 
