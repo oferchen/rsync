@@ -19,7 +19,12 @@
 #[allow(unsafe_code)]
 #[must_use]
 pub fn local_utc_offset_seconds(unix_secs: i64) -> i32 {
-    let t = unix_secs as libc::time_t;
+    // The target type is inferred from `localtime_r`'s `*const time_t`
+    // parameter below. Naming `libc::time_t` directly would trip the
+    // deprecation the libc crate attaches to that alias on musl (pending its
+    // 1.2.0 64-bit transition); inferring it keeps the correct per-target
+    // width (i32 or i64) without referencing the deprecated path.
+    let t = unix_secs as _;
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
     // SAFETY: `localtime_r` is POSIX-thread-safe; it writes the broken-down
     // local time into the caller-owned `tm` and returns its address (or NULL
