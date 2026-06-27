@@ -184,6 +184,21 @@ impl VersionRequirement for SendZcRequirement {
     }
 }
 
+/// `RWF_DONTCACHE` uncached buffered I/O (Linux 6.14+).
+pub struct DontcacheRequirement;
+
+impl VersionRequirement for DontcacheRequirement {
+    fn min_version(&self) -> KernelVersion {
+        KernelVersion {
+            major: 6,
+            minor: 14,
+        }
+    }
+    fn feature_name(&self) -> &str {
+        "RWF_DONTCACHE"
+    }
+}
+
 /// Logs the io_uring probe result at debug level.
 ///
 /// On Linux with the `io_uring` feature enabled, this queries the kernel
@@ -492,6 +507,26 @@ mod tests {
             minor: 19
         }));
         assert!(req.is_supported(&KernelVersion { major: 6, minor: 0 }));
+    }
+
+    #[test]
+    fn dontcache_requirement_needs_6_14() {
+        let req = DontcacheRequirement;
+        assert_eq!(
+            req.min_version(),
+            KernelVersion {
+                major: 6,
+                minor: 14
+            }
+        );
+        assert!(!req.is_supported(&KernelVersion {
+            major: 6,
+            minor: 13
+        }));
+        assert!(req.is_supported(&KernelVersion {
+            major: 6,
+            minor: 14
+        }));
     }
 
     #[test]
