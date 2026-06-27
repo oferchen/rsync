@@ -293,6 +293,120 @@ pub const fn so_max_pacing_rate_supported() -> bool {
     cfg!(target_os = "linux")
 }
 
+/// Toggles TCP output corking on a connected stream.
+///
+/// When `cork` is `true`, the kernel coalesces small writes into full
+/// segments (`TCP_CORK` on Linux, `TCP_NOPUSH` on macOS/FreeBSD) instead of
+/// emitting one segment per write. Pass `false` to uncork and flush any
+/// buffered partial segment. Callers MUST uncork on a flush boundary and on
+/// error so data is never held indefinitely. On platforms without a cork
+/// option the call is a no-op and returns `Ok(false)`.
+///
+/// upstream: not implemented; an oc-rsync-specific perf hint that is
+/// wire-compatible with upstream rsync.
+pub fn set_tcp_cork(stream: &TcpStream, cork: bool) -> io::Result<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        set_socket_int_option(stream, libc::IPPROTO_TCP, libc::TCP_CORK, i32::from(cork))?;
+        Ok(true)
+    }
+    #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+    {
+        set_socket_int_option(stream, libc::IPPROTO_TCP, libc::TCP_NOPUSH, i32::from(cork))?;
+        Ok(true)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
+    {
+        let _ = (stream, cork);
+        Ok(false)
+    }
+}
+
+/// Returns `true` when the running platform implements TCP output corking.
+#[must_use]
+pub const fn tcp_cork_supported() -> bool {
+    cfg!(any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "freebsd"
+    ))
+}
+
+/// Selects the TCP congestion-control algorithm for a connected stream
+/// (`TCP_CONGESTION`).
+///
+/// `algorithm` is a kernel CC name such as `"bbr"`, `"cubic"`, or `"reno"`;
+/// the value must appear in [`tcp_available_congestion_control`] or the
+/// kernel rejects it. Unlike the other helpers here, `TCP_CONGESTION` takes a
+/// string option value, not an `int`. On platforms without `TCP_CONGESTION`
+/// the call is a no-op and returns `Ok(false)`.
+///
+/// upstream: not implemented; an oc-rsync-specific perf hint that is
+/// wire-compatible with upstream rsync.
+pub fn set_tcp_congestion(stream: &TcpStream, algorithm: &str) -> io::Result<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        setsockopt_bytes_raw(
+            stream.as_raw_fd(),
+            libc::IPPROTO_TCP,
+            libc::TCP_CONGESTION,
+            algorithm.as_bytes(),
+        )?;
+        Ok(true)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (stream, algorithm);
+        Ok(false)
+    }
+}
+
+/// Returns the kernel's list of available TCP congestion-control algorithms.
+///
+/// Reads `/proc/sys/net/ipv4/tcp_available_congestion_control` on Linux (a
+/// space-separated list such as `reno cubic bbr`). Returns an empty vector on
+/// non-Linux platforms or if the sysctl is unreadable, so callers can fall
+/// back without distinguishing "unsupported" from "unavailable".
+#[must_use]
+pub fn tcp_available_congestion_control() -> Vec<String> {
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_to_string("/proc/sys/net/ipv4/tcp_available_congestion_control")
+            .map(|list| list.split_whitespace().map(str::to_owned).collect())
+            .unwrap_or_default()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Vec::new()
+    }
+}
+
+/// Returns `true` when the running platform supports setting `TCP_CONGESTION`.
+#[must_use]
+pub const fn tcp_congestion_supported() -> bool {
+    cfg!(target_os = "linux")
+}
+
+/// Returns `true` when the running platform implements `SO_REUSEPORT`.
+///
+/// `SO_REUSEPORT` lets multiple listener sockets bind the same address and
+/// port so the kernel load-balances incoming connections across them (Linux
+/// 3.9+, Android, the BSDs, macOS). Windows has no equivalent, so the daemon
+/// listener skips it there.
+#[must_use]
+pub const fn reuse_port_supported() -> bool {
+    cfg!(any(
+        target_os = "linux",
+        target_os = "android",
+        target_os = "freebsd",
+        target_os = "macos",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))
+}
+
 /// Returns `true` when the running platform implements server-side
 /// `TCP_FASTOPEN`.
 #[must_use]
@@ -325,6 +439,40 @@ fn setsockopt_int_raw(raw_fd: libc::c_int, level: i32, option: i32, value: i32) 
             option,
             std::ptr::from_ref(&value).cast::<libc::c_void>(),
             std::mem::size_of::<libc::c_int>() as libc::socklen_t,
+        )
+    };
+
+    if ret == -1 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
+// Sets a byte-string socket option (e.g. `TCP_CONGESTION`, which takes a CC
+// algorithm name rather than an `int`). Linux-only: the sole caller
+// `set_tcp_congestion` is gated to Linux, so guarding this here avoids an
+// unused-function warning on other platforms.
+#[cfg(target_os = "linux")]
+#[allow(unsafe_code)]
+fn setsockopt_bytes_raw(
+    raw_fd: libc::c_int,
+    level: i32,
+    option: i32,
+    value: &[u8],
+) -> io::Result<()> {
+    // SAFETY: `raw_fd` is a valid file descriptor borrowed from a live
+    // `TcpStream` for the duration of this synchronous call. `value` is a
+    // byte slice that outlives the syscall; `setsockopt` only reads
+    // `value.len()` bytes from `optval` and performs no aliasing or
+    // allocation.
+    let ret = unsafe {
+        libc::setsockopt(
+            raw_fd,
+            level,
+            option,
+            value.as_ptr().cast::<libc::c_void>(),
+            value.len() as libc::socklen_t,
         )
     };
 
@@ -536,6 +684,72 @@ mod tests {
 
         drop(stream);
         handle.join().expect("accept thread completes");
+    }
+
+    #[test]
+    fn set_tcp_cork_returns_supported_flag() {
+        let (stream, handle) = connected_stream();
+
+        // Cork on, then uncork (flush): both must succeed on cork-capable
+        // platforms and no-op elsewhere.
+        for cork in [true, false] {
+            match set_tcp_cork(&stream, cork) {
+                Ok(true) => assert!(tcp_cork_supported()),
+                Ok(false) => assert!(!tcp_cork_supported()),
+                Err(error) => panic!("unexpected error from TCP cork ({cork}): {error}"),
+            }
+        }
+
+        drop(stream);
+        handle.join().expect("accept thread completes");
+    }
+
+    #[test]
+    fn set_tcp_congestion_returns_supported_flag() {
+        let (stream, handle) = connected_stream();
+
+        // Use an algorithm the kernel reports as available so the set cannot
+        // fail with ENOENT; "reno" is always built in on Linux. On non-Linux
+        // the call is a no-op regardless of the name.
+        let available = tcp_available_congestion_control();
+        let algorithm = available.first().map_or("reno", String::as_str);
+
+        match set_tcp_congestion(&stream, algorithm) {
+            Ok(true) => assert!(tcp_congestion_supported()),
+            Ok(false) => assert!(!tcp_congestion_supported()),
+            Err(error) => panic!("unexpected error from TCP_CONGESTION ({algorithm}): {error}"),
+        }
+
+        drop(stream);
+        handle.join().expect("accept thread completes");
+    }
+
+    #[test]
+    fn tcp_available_congestion_control_matches_platform() {
+        let available = tcp_available_congestion_control();
+
+        if !tcp_congestion_supported() {
+            assert!(
+                available.is_empty(),
+                "non-Linux platforms must report no congestion-control algorithms"
+            );
+        }
+        // Entries read from /proc are always non-empty names.
+        assert!(available.iter().all(|algorithm| !algorithm.is_empty()));
+    }
+
+    #[test]
+    fn reuse_port_supported_is_self_consistent() {
+        let expected = cfg!(any(
+            target_os = "linux",
+            target_os = "android",
+            target_os = "freebsd",
+            target_os = "macos",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly"
+        ));
+        assert_eq!(reuse_port_supported(), expected);
     }
 
     #[test]

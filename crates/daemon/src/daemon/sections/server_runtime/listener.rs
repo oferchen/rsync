@@ -188,6 +188,16 @@ fn bind_with_backlog(
     // TIME_WAIT sockets to expire. Mirrors standard TcpListener::bind behaviour.
     socket.set_reuse_address(true)?;
 
+    // Enable SO_REUSEPORT where supported (NACC) so multiple listener sockets
+    // can share the bind address and the kernel load-balances accepts across
+    // them. Best-effort: a failure downgrades to the single-listener path
+    // rather than aborting the bind. socket2's setter is Unix-only; Windows
+    // has no equivalent, so the call is skipped there.
+    #[cfg(unix)]
+    if fast_io::reuse_port_supported() {
+        let _ = socket.set_reuse_port(true);
+    }
+
     // For IPv6 sockets, set IPV6_V6ONLY to avoid conflicts with the separate
     // IPv4 listener in dual-stack mode.
     if addr.is_ipv6() {
