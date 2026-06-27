@@ -7,7 +7,7 @@ use thiserror::Error;
 use crate::exit_code::{ErrorCodification, ExitCode, HasExitCode};
 use crate::message::{Message, Role};
 use crate::rsync_error;
-use engine::local_copy::{LocalCopyError, LocalCopyErrorKind};
+use engine::local_copy::{LocalCopyError, LocalCopyErrorKind, upstream_io_error};
 
 // upstream: errcode.h - Exit code definitions
 
@@ -244,23 +244,6 @@ pub(crate) fn compile_filter_error(pattern: &str, error: &dyn fmt::Display) -> C
     let text = format!("failed to compile filter pattern '{pattern}': {error}");
     let message = rsync_error!(code.as_i32(), text).with_role(Role::Client);
     ClientError::with_code(code, message)
-}
-
-/// Formats an [`io::Error`] the way upstream rsync's `rsyserr()` does:
-/// `"<strerror> (<errno>)"` (upstream `log.c:473` `": %s (%d)"`), rather than
-/// Rust's `std::io::Error` `Display`, which renders `" (os error <errno>)"`.
-/// Errors without an OS errno fall back to the `Display` string verbatim.
-fn upstream_io_error(error: &io::Error) -> String {
-    match error.raw_os_error() {
-        Some(code) => {
-            let full = error.to_string();
-            let strerror = full
-                .strip_suffix(&format!(" (os error {code})"))
-                .unwrap_or(full.as_str());
-            format!("{strerror} ({code})")
-        }
-        None => error.to_string(),
-    }
 }
 
 #[cold]
