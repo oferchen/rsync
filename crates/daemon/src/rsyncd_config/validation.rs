@@ -53,20 +53,6 @@ impl ConfigError {
         }
     }
 
-    /// Cross-field validation error not tied to a specific line.
-    ///
-    /// Used for post-parse checks that span multiple directives (e.g., `ssl cert`
-    /// requires `ssl key`).
-    #[cfg(feature = "daemon-tls")]
-    pub(crate) fn cross_field_error(path: &Path, message: impl Into<String>) -> Self {
-        Self {
-            kind: ErrorKind::Validation,
-            line: None,
-            message: message.into(),
-            path: Some(path.to_path_buf()),
-        }
-    }
-
     /// Returns the line number where the error occurred, if available.
     pub fn line(&self) -> Option<usize> {
         self.line

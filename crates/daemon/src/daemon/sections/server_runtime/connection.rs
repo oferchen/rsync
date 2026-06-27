@@ -28,10 +28,6 @@ struct AcceptLoopState<'a> {
     bandwidth_burst: Option<NonZeroU64>,
     reverse_lookup: bool,
     proxy_protocol: bool,
-    /// TLS acceptor for wrapping accepted TCP connections when the daemon is
-    /// configured with certificate material. `None` means plain TCP only.
-    #[cfg(feature = "daemon-tls")]
-    tls_acceptor: Option<crate::tls::TlsAcceptor>,
 }
 
 /// Checks signal flags and performs maintenance tasks between accept iterations.
@@ -279,34 +275,11 @@ fn apply_client_options(
     }
 }
 
-/// Wraps an accepted `TcpStream` into a [`DaemonStream`].
-///
-/// When the `daemon-tls` feature is enabled and a TLS acceptor is configured,
-/// the stream is wrapped through `tls::wrap_stream()` to perform the TLS
-/// handshake. If the handshake fails, the error is logged and `None` is
-/// returned so the accept loop can skip the connection.
-///
-/// When TLS is not configured (or the feature is disabled), the stream is
-/// wrapped as `DaemonStream::Plain`.
+/// Wraps an accepted `TcpStream` into a [`DaemonStream::Plain`].
 fn wrap_accepted_stream(
     tcp_stream: TcpStream,
-    #[allow(unused_variables)] state: &AcceptLoopState<'_>,
+    _state: &AcceptLoopState<'_>,
 ) -> Option<DaemonStream> {
-    #[cfg(feature = "daemon-tls")]
-    if let Some(ref acceptor) = state.tls_acceptor {
-        return match crate::tls::wrap_stream(acceptor, tcp_stream) {
-            Ok(tls_stream) => Some(DaemonStream::Tls(Box::new(tls_stream))),
-            Err(error) => {
-                if let Some(log) = state.log_sink.as_ref() {
-                    let text = format!("TLS handshake failed: {error}");
-                    let message = rsync_warning!(text).with_role(Role::Daemon);
-                    log_message(log, &message);
-                }
-                None
-            }
-        };
-    }
-
     Some(DaemonStream::plain(tcp_stream))
 }
 

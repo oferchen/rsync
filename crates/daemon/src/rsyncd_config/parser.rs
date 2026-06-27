@@ -110,9 +110,6 @@ impl<'a> Parser<'a> {
             modules.push(module);
         }
 
-        #[cfg(feature = "daemon-tls")]
-        self.validate_tls_config(&global)?;
-
         Ok(RsyncdConfig { global, modules })
     }
 
@@ -204,42 +201,6 @@ impl<'a> Parser<'a> {
                     ));
                 }
                 global.daemon_chroot = Some(PathBuf::from(trimmed));
-            }
-            #[cfg(feature = "daemon-tls")]
-            "ssl cert" => {
-                let trimmed = value.trim();
-                if trimmed.is_empty() {
-                    return Err(ConfigError::parse_error(
-                        self.path,
-                        self.line_number,
-                        "'ssl cert' must not be empty",
-                    ));
-                }
-                global.ssl_cert = Some(PathBuf::from(trimmed));
-            }
-            #[cfg(feature = "daemon-tls")]
-            "ssl key" => {
-                let trimmed = value.trim();
-                if trimmed.is_empty() {
-                    return Err(ConfigError::parse_error(
-                        self.path,
-                        self.line_number,
-                        "'ssl key' must not be empty",
-                    ));
-                }
-                global.ssl_key = Some(PathBuf::from(trimmed));
-            }
-            #[cfg(feature = "daemon-tls")]
-            "ssl ca" => {
-                let trimmed = value.trim();
-                if trimmed.is_empty() {
-                    return Err(ConfigError::parse_error(
-                        self.path,
-                        self.line_number,
-                        "'ssl ca' must not be empty",
-                    ));
-                }
-                global.ssl_ca = Some(PathBuf::from(trimmed));
             }
             _ => {
                 eprintln!(
@@ -487,36 +448,6 @@ impl<'a> Parser<'a> {
             .collect()
     }
 
-    /// Validates that `ssl cert` and `ssl key` are either both set or both absent.
-    ///
-    /// `ssl ca` is independently optional. Setting `ssl ca` without the cert/key
-    /// pair is also an error - a CA bundle is meaningless without a server identity.
-    #[cfg(feature = "daemon-tls")]
-    fn validate_tls_config(&self, global: &GlobalConfig) -> Result<(), ConfigError> {
-        let has_cert = global.ssl_cert.is_some();
-        let has_key = global.ssl_key.is_some();
-        let has_ca = global.ssl_ca.is_some();
-
-        if has_cert && !has_key {
-            return Err(ConfigError::cross_field_error(
-                self.path,
-                "'ssl cert' requires 'ssl key' to also be set",
-            ));
-        }
-        if has_key && !has_cert {
-            return Err(ConfigError::cross_field_error(
-                self.path,
-                "'ssl key' requires 'ssl cert' to also be set",
-            ));
-        }
-        if has_ca && !has_cert {
-            return Err(ConfigError::cross_field_error(
-                self.path,
-                "'ssl ca' requires 'ssl cert' and 'ssl key' to also be set",
-            ));
-        }
-        Ok(())
-    }
 }
 
 /// Builder for assembling a `ModuleConfig` from parsed key-value pairs.

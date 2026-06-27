@@ -729,8 +729,6 @@ fn test_accept_loop_state<'a>(
         bandwidth_burst: None,
         reverse_lookup: false,
         proxy_protocol: false,
-        #[cfg(feature = "daemon-tls")]
-        tls_acceptor: None,
     }
 }
 
