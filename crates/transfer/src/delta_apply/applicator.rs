@@ -378,6 +378,7 @@ impl<'a> DeltaApplicator<'a> {
                     dest_off,
                     bytes_to_copy,
                     &mut self.reflink_range,
+                    &mut self.same_fs,
                 )? {
                     self.output
                         .seek(SeekFrom::Start(dest_off + bytes_to_copy as u64))?;
@@ -491,6 +492,11 @@ impl<'a> DeltaApplicator<'a> {
     ///   [`REFLINK_BLOCK_ALIGNMENT`]. `FICLONERANGE` rejects unaligned
     ///   requests with `EINVAL`; checking up-front avoids burning one ioctl
     ///   per misaligned token.
+    /// - The basis and destination must share an `st_dev`. `FICLONERANGE`
+    ///   only reflinks within a single filesystem and fails with `EXDEV`
+    ///   across mounts; the shared [`SameFsCache`] (also consulted by the
+    ///   sibling `copy_file_range` path) lets us skip the doomed ioctl after
+    ///   resolving the device pair once per file.
     fn try_clone_basis_range(
         basis_file: &File,
         basis_off: u64,
@@ -498,6 +504,7 @@ impl<'a> DeltaApplicator<'a> {
         dest_off: u64,
         bytes_to_copy: usize,
         cache: &mut ReflinkRangeCache,
+        same_fs: &mut SameFsCache,
     ) -> io::Result<bool> {
         if *cache == ReflinkRangeCache::Declined {
             return Ok(false);
@@ -510,6 +517,12 @@ impl<'a> DeltaApplicator<'a> {
             || dest_off % REFLINK_BLOCK_ALIGNMENT != 0
             || len % REFLINK_BLOCK_ALIGNMENT != 0
         {
+            return Ok(false);
+        }
+        if *same_fs == SameFsCache::Unresolved {
+            *same_fs = Self::resolve_same_fs(basis_file, dest_file);
+        }
+        if *same_fs == SameFsCache::DifferentFs {
             return Ok(false);
         }
         let cloned =
@@ -862,6 +875,7 @@ mod tests {
         let basis = File::create(dir.path().join("basis")).expect("basis");
         let dest = File::create(dir.path().join("dest")).expect("dest");
         let mut cache = ReflinkRangeCache::Unresolved;
+        let mut same_fs = SameFsCache::Unresolved;
         let result = DeltaApplicator::try_clone_basis_range(
             &basis,
             0,
@@ -869,12 +883,16 @@ mod tests {
             0,
             (fast_io::CLONE_FILE_RANGE_MIN_BYTES - 1) as usize,
             &mut cache,
+            &mut same_fs,
         )
         .expect("declines silently");
         assert!(!result);
         // Predicate must NOT poison the cache when it declines purely on
         // size grounds - a subsequent large eligible token should still try.
         assert_eq!(cache, ReflinkRangeCache::Unresolved);
+        // The size check runs before the same-fs probe, so no device lookup
+        // should have happened.
+        assert_eq!(same_fs, SameFsCache::Unresolved);
     }
 
     /// REFLINK-4: misaligned basis offset declines without an ioctl.
@@ -886,6 +904,7 @@ mod tests {
         let basis = File::create(dir.path().join("basis")).expect("basis");
         let dest = File::create(dir.path().join("dest")).expect("dest");
         let mut cache = ReflinkRangeCache::Unresolved;
+        let mut same_fs = SameFsCache::Unresolved;
         let result = DeltaApplicator::try_clone_basis_range(
             &basis,
             1,
@@ -893,10 +912,12 @@ mod tests {
             0,
             REFLINK_BLOCK_ALIGNMENT as usize * 8,
             &mut cache,
+            &mut same_fs,
         )
         .expect("declines silently");
         assert!(!result);
         assert_eq!(cache, ReflinkRangeCache::Unresolved);
+        assert_eq!(same_fs, SameFsCache::Unresolved);
     }
 
     /// REFLINK-4: misaligned destination offset declines without an ioctl.
@@ -906,6 +927,7 @@ mod tests {
         let basis = File::create(dir.path().join("basis")).expect("basis");
         let dest = File::create(dir.path().join("dest")).expect("dest");
         let mut cache = ReflinkRangeCache::Unresolved;
+        let mut same_fs = SameFsCache::Unresolved;
         let result = DeltaApplicator::try_clone_basis_range(
             &basis,
             0,
@@ -913,10 +935,12 @@ mod tests {
             1024,
             REFLINK_BLOCK_ALIGNMENT as usize * 8,
             &mut cache,
+            &mut same_fs,
         )
         .expect("declines silently");
         assert!(!result);
         assert_eq!(cache, ReflinkRangeCache::Unresolved);
+        assert_eq!(same_fs, SameFsCache::Unresolved);
     }
 
     /// REFLINK-4: once the cache is `Declined` the predicate short-circuits
@@ -929,6 +953,7 @@ mod tests {
         let basis = File::create(dir.path().join("basis")).expect("basis");
         let dest = File::create(dir.path().join("dest")).expect("dest");
         let mut cache = ReflinkRangeCache::Declined;
+        let mut same_fs = SameFsCache::Unresolved;
         let result = DeltaApplicator::try_clone_basis_range(
             &basis,
             0,
@@ -936,9 +961,38 @@ mod tests {
             0,
             REFLINK_BLOCK_ALIGNMENT as usize * 16,
             &mut cache,
+            &mut same_fs,
         )
         .expect("declines silently");
         assert!(!result);
         assert_eq!(cache, ReflinkRangeCache::Declined);
+    }
+
+    /// REFLINK-3: a cross-filesystem basis/destination pair declines without
+    /// issuing the `FICLONERANGE` ioctl. The range here is aligned and large
+    /// enough to clear the size and alignment gates, so the decline can only
+    /// come from the same-fs guard. The reflink cache stays `Unresolved` -
+    /// the device mismatch is not a filesystem capability verdict, so a later
+    /// same-fs token must still be allowed to try.
+    #[test]
+    fn try_clone_basis_range_declines_on_different_filesystem() {
+        let dir = tempdir().expect("tempdir");
+        let basis = File::create(dir.path().join("basis")).expect("basis");
+        let dest = File::create(dir.path().join("dest")).expect("dest");
+        let mut cache = ReflinkRangeCache::Unresolved;
+        let mut same_fs = SameFsCache::DifferentFs;
+        let result = DeltaApplicator::try_clone_basis_range(
+            &basis,
+            0,
+            &dest,
+            0,
+            REFLINK_BLOCK_ALIGNMENT as usize * 16,
+            &mut cache,
+            &mut same_fs,
+        )
+        .expect("declines silently");
+        assert!(!result);
+        assert_eq!(cache, ReflinkRangeCache::Unresolved);
+        assert_eq!(same_fs, SameFsCache::DifferentFs);
     }
 }
