@@ -16,7 +16,7 @@
 #     for the daemon's Windows-service runtime-options path.
 #
 # Cross-OS feature rows in _test-features.yml (async, tracing,
-# concurrent-sessions, daemon-tls, iconv) compile -p daemon on
+# concurrent-sessions, iconv) compile -p daemon on
 # windows-latest but execute only the subset of tests enabled by the
 # named feature flag. The two default-features `#[cfg(windows)]` tests
 # above do not run under any required cell.
@@ -85,7 +85,7 @@ jobs:
       # Build the daemon crate first so the nextest step links against
       # an already-warm build artifact. Default features only; cross-OS
       # feature rows in _test-features.yml already cover async,
-      # tracing, concurrent-sessions, daemon-tls, and iconv variants.
+      # tracing, concurrent-sessions, and iconv variants.
       - name: Build daemon crate
         run: cargo build --locked -p daemon
 

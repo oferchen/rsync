@@ -27,7 +27,7 @@ All transfer modes (local, SSH, daemon), delta algorithm, metadata preservation,
 | **Checksums** | MD4, MD5, XXH3/XXH128 with SIMD (AVX2, SSE2, NEON) |
 | **Incremental recursion** | Pull and push directions, enabled by default |
 | **Batch** | `--write-batch` / `--read-batch` roundtrip |
-| **Daemon** | Negotiation, auth, modules, chroot, syslog, pre/post-xfer exec, native TLS (rustls) |
+| **Daemon** | Negotiation, auth, modules, chroot, syslog, pre/post-xfer exec |
 | **Filtering** | `--filter`, `--exclude`, `--include`, `.rsync-filter`, `--files-from` |
 | **Reference dirs** | `--compare-dest`, `--link-dest`, `--copy-dest` |
 | **Options** | `--delay-updates`, `--inplace`, `--partial`, `--iconv`, fuzzy matching |
