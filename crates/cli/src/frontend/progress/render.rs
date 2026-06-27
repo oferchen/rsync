@@ -652,11 +652,10 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
 
         match kind {
             ClientEventKind::SkippedExisting => {
-                writeln!(
-                    stdout,
-                    "skipping existing file \"{}\"",
-                    event.relative_path().display()
-                )?;
+                // upstream: generator.c:1409 - `rprintf(FINFO, "%s exists\n",
+                // fname)` for an --ignore-existing skip: the bare relative name
+                // followed by " exists", no descriptor and no quotes.
+                writeln!(stdout, "{} exists", event.relative_path().display())?;
                 continue;
             }
             ClientEventKind::SkippedMissingDestination => {

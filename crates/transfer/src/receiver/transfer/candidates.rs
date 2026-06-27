@@ -190,6 +190,15 @@ impl ReceiverContext {
             let entry = &self.file_list[idx];
             if let Some(ref meta) = dest_meta {
                 if ignore_existing {
+                    // upstream: generator.c:1409 - `if (ignore_existing > 0 &&
+                    // statret == 0 && (!is_dir || stype != FT_DIR)) { if
+                    // (INFO_GTE(SKIP, 1) ...) rprintf(FINFO, "%s exists\n",
+                    // fname); }`. An already-present file is skipped with a
+                    // SKIP-gated notice; existing directories stay silent.
+                    if !entry.is_dir() && logging::info_gte(logging::InfoFlag::Skip, 1) {
+                        let name = entry.path().to_string_lossy();
+                        let _ = self.emit_info_line(writer, &format!("{name} exists\n"));
+                    }
                     continue;
                 }
                 if update_only && dest_mtime_newer(meta, entry) {
