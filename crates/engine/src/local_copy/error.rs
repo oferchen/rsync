@@ -9,6 +9,24 @@ use super::filter_program::{
     VANISHED_EXIT_CODE,
 };
 
+/// Formats an [`io::Error`] the way upstream rsync's `rsyserr()` does:
+/// `"<strerror> (<errno>)"` (upstream `log.c:473` `": %s (%d)"`), rather than
+/// Rust's `std::io::Error` `Display`, which renders `" (os error <errno>)"`.
+/// Errors without an OS errno fall back to the `Display` string verbatim.
+#[must_use]
+pub fn upstream_io_error(error: &io::Error) -> String {
+    match error.raw_os_error() {
+        Some(code) => {
+            let full = error.to_string();
+            let strerror = full
+                .strip_suffix(&format!(" (os error {code})"))
+                .unwrap_or(full.as_str());
+            format!("{strerror} ({code})")
+        }
+        None => error.to_string(),
+    }
+}
+
 /// Error produced when planning or executing a local copy fails.
 ///
 /// # Exit Code Integration
@@ -224,7 +242,7 @@ pub enum LocalCopyErrorKind {
     /// does not exist. A hard error exiting 23 (`RERR_PARTIAL`), distinct from
     /// a mid-transfer vanish (exit 24); the caller continues with the remaining
     /// sources.
-    #[error("link_stat \"{}\" failed: {source}", path.display())]
+    #[error("link_stat \"{}\" failed: {}", path.display(), upstream_io_error(source))]
     LinkStatFailed {
         /// The source path that could not be stat'd.
         path: PathBuf,

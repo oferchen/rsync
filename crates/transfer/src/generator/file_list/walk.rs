@@ -118,10 +118,9 @@ impl GeneratorContext {
                         // FFV-4: emit the correct error message and error flag
                         // for a source that never existed at flist build time.
                         eprintln!(
-                            "rsync: [sender] link_stat \"{}\" failed: {} ({})",
+                            "rsync: [sender] link_stat \"{}\" failed: {}",
                             path.display(),
-                            e,
-                            e.raw_os_error().unwrap_or(0),
+                            engine::local_copy::upstream_io_error(&e),
                         );
                         self.add_io_error(io_error_flags::IOERR_GENERAL);
                         Ok(false)
@@ -260,10 +259,9 @@ impl GeneratorContext {
             Err(e) => {
                 // upstream: flist.c - rsyserr for make_file() failures
                 eprintln!(
-                    "rsync: [sender] make_file failed for \"{}\": {} ({})",
+                    "rsync: [sender] make_file failed for \"{}\": {}",
                     path.display(),
-                    e,
-                    e.raw_os_error().unwrap_or(0),
+                    engine::local_copy::upstream_io_error(&e),
                 );
                 self.add_io_error(io_error_flags::IOERR_GENERAL);
                 return Ok(());
@@ -286,10 +284,9 @@ impl GeneratorContext {
                 Err(e) => {
                     // upstream: flist.c:1842 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
                     eprintln!(
-                        "rsync: [sender] opendir \"{}\" failed: {} ({})",
+                        "rsync: [sender] opendir \"{}\" failed: {}",
                         path.display(),
-                        e,
-                        e.raw_os_error().unwrap_or(0),
+                        engine::local_copy::upstream_io_error(&e),
                     );
                     self.record_io_error(&e);
                     None
@@ -386,10 +383,9 @@ impl GeneratorContext {
             Err(e) => {
                 // upstream: flist.c:1842 - rsyserr(FERROR_XFER, errno, "opendir %s failed", ...)
                 eprintln!(
-                    "rsync: [sender] opendir \"{}\" failed: {} ({})",
+                    "rsync: [sender] opendir \"{}\" failed: {}",
                     dir_path.display(),
-                    e,
-                    e.raw_os_error().unwrap_or(0),
+                    engine::local_copy::upstream_io_error(&e),
                 );
                 self.record_io_error(&e);
                 Ok(())
@@ -415,10 +411,9 @@ impl GeneratorContext {
                 Err(e) => {
                     // upstream: flist.c:1888 - rsyserr(FERROR_XFER, errno, "readdir(%s)", ...)
                     eprintln!(
-                        "rsync: [sender] readdir(\"{}\"): {} ({})",
+                        "rsync: [sender] readdir(\"{}\"): {}",
                         dir_path.display(),
-                        e,
-                        e.raw_os_error().unwrap_or(0),
+                        engine::local_copy::upstream_io_error(&e),
                     );
                     self.record_io_error(&e);
                 }
@@ -498,10 +493,9 @@ impl GeneratorContext {
         } else {
             // upstream: flist.c:1810 - rsyserr(FERROR_XFER, errno, "link_stat %s failed", ...)
             eprintln!(
-                "rsync: [sender] link_stat \"{}\" failed: {} ({})",
+                "rsync: [sender] link_stat \"{}\" failed: {}",
                 path.display(),
-                e,
-                e.raw_os_error().unwrap_or(0),
+                engine::local_copy::upstream_io_error(e),
             );
         }
     }

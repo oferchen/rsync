@@ -98,7 +98,7 @@ pub use options::{
     ReferenceDirectoryKind,
 };
 
-pub use error::{LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind};
+pub use error::{LocalCopyArgumentError, LocalCopyError, LocalCopyErrorKind, upstream_io_error};
 
 #[cfg(test)]
 pub(crate) use plan::FilterOutcome;

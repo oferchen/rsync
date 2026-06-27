@@ -254,9 +254,8 @@ impl GeneratorContext {
             self.io_error |= super::io_error_flags::IOERR_GENERAL;
             // upstream: sender.c:362 - rsyserr(FERROR_XFER, errno, "send_files failed to open %s", ...)
             eprintln!(
-                "rsync: [sender] send_files failed to open \"{path_display}\": {} ({})",
-                error,
-                error.raw_os_error().unwrap_or(0),
+                "rsync: [sender] send_files failed to open \"{path_display}\": {}",
+                engine::local_copy::upstream_io_error(error),
             );
         }
         if self.protocol.supports_generator_messages() {
