@@ -337,8 +337,10 @@ pub use secure_dir::secure_open_dir;
 pub use sendfile::send_file_to_fd_with_policy;
 pub use socket_options::{
     DEFAULT_TCP_FASTOPEN_QLEN, DEFAULT_TCP_NOTSENT_LOWAT, enable_tcp_fastopen_listener,
-    enable_tcp_fastopen_raw, rearm_tcp_quickack, set_listener_int_option, set_so_max_pacing_rate,
-    set_socket_int_option, set_tcp_notsent_lowat, set_tcp_quickack, so_max_pacing_rate_supported,
+    enable_tcp_fastopen_raw, rearm_tcp_quickack, reuse_port_supported, set_listener_int_option,
+    set_so_max_pacing_rate, set_socket_int_option, set_tcp_congestion, set_tcp_cork,
+    set_tcp_notsent_lowat, set_tcp_quickack, so_max_pacing_rate_supported,
+    tcp_available_congestion_control, tcp_congestion_supported, tcp_cork_supported,
     tcp_fastopen_listener_supported, tcp_notsent_lowat_supported, tcp_quickack_supported,
 };
 #[cfg(target_os = "linux")]
