@@ -132,6 +132,14 @@ pub(super) fn open_daemon_stream_tls(
         )?,
     };
 
+    // Apply the NOTSENT_LOWAT send-buffer watermark on the raw TCP socket
+    // before wrapping it in TLS. The plain-TCP path sets this via
+    // apply_client_tcp_perf_options, but the TLS path bypassed it. rustls
+    // operates on the same fd transparently, so the kernel hint still governs
+    // the encrypted byte stream. Best-effort: a failure or an unsupported
+    // platform is a silent no-op (NBUF-3).
+    let _ = fast_io::set_tcp_notsent_lowat(&stream, fast_io::DEFAULT_TCP_NOTSENT_LOWAT);
+
     let tls_stream = connector
         .wrap(stream, addr.host())
         .map_err(|e| socket_error("TLS handshake with", addr.socket_addr_display(), e))?;
