@@ -161,17 +161,6 @@ impl DirTraversalCursor {
     pub fn is_exhausted(&self) -> bool {
         self.root_emitted && self.stack.is_empty()
     }
-
-    /// Returns a mutable reference to the child-directories map.
-    ///
-    /// Exposed for the `entry_accessor` module's generic
-    /// `observe_segment_generic` method which implements the same
-    /// child-recording logic using `FileEntryAccessor` instead of
-    /// concrete `FileEntry`.
-    #[cfg(feature = "flat-flist")]
-    pub(super) fn child_dirs_mut(&mut self) -> &mut HashMap<PathBuf, Vec<PathBuf>> {
-        &mut self.child_dirs
-    }
 }
 
 /// Sorts a list of paths in-place using `f_name_cmp` over a transient

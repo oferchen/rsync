@@ -80,8 +80,6 @@
 mod context;
 mod delta;
 mod diagnostics;
-#[cfg(feature = "flat-flist")]
-pub mod entry_accessor;
 mod file_list;
 mod filters;
 pub mod io_error_flags;
@@ -90,8 +88,6 @@ pub mod itemize;
 mod open_source;
 mod protocol_io;
 mod segments;
-#[cfg(feature = "flat-flist")]
-pub mod sender_accessor;
 mod stats;
 #[cfg(test)]
 mod tests;

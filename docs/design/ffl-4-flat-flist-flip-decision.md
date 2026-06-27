@@ -1,5 +1,11 @@
 # FFL-4: flat-flist default-on flip decision matrix
 
+> **STATUS 2026-06-27 - RESOLVED: Option C REVERT.** The 1M-file in-memory bench
+> measured flat at 1.255x WORSE RSS than legacy (95.8 vs 76.3 MiB; 48 B header,
+> not the projected 24 B). The -63% premise is invalidated, so the flat path was
+> removed and the legacy `Vec<FileEntry>` kept. Supersedes the "awaiting benches"
+> status below.
+
 Date: 2026-06-11
 Scope: deciding whether to flip `flat-flist` to a default Cargo feature, hold dual-keep,
 or revert the flat-side implementation entirely.
