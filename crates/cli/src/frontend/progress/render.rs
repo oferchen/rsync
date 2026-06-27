@@ -23,10 +23,10 @@ fn display_without_trailing_separators(path: &Path) -> String {
 }
 
 use super::format::{
-    LIST_SIZE_WIDTH, event_matches_name_level, format_list_permissions, format_list_size,
-    format_list_timestamp, format_progress_bytes, format_progress_elapsed, format_progress_percent,
-    format_progress_rate, format_size, format_stat_categories, format_summary_rate,
-    is_progress_event, list_only_event,
+    LIST_SIZE_WIDTH, event_matches_name_level, format_decimal_bytes, format_list_permissions,
+    format_list_size, format_list_timestamp, format_progress_bytes, format_progress_elapsed,
+    format_progress_percent, format_progress_rate, format_size, format_stat_categories,
+    format_summary_rate, is_progress_event, list_only_event,
 };
 use super::mode::{NameOutputLevel, ProgressMode};
 use crate::{OutFormat, OutFormatContext, emit_out_format};
@@ -413,13 +413,31 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
     let bytes_sent_display = format_size(bytes_sent, human_readable);
     let bytes_received_display = format_size(bytes_received, human_readable);
 
-    writeln!(stdout, "Number of files: {total_entries}{files_breakdown}")?;
+    // upstream: main.c output_summary() - every count is wrapped in
+    // comma_num(), e.g. `rprintf(FINFO, "Number of files: %s%s\n",
+    // comma_num(stats.num_files), ...)`. comma_num inserts thousands
+    // separators unconditionally (independent of -h), so a count >= 1000
+    // renders as `1,500`, not `1500`.
     writeln!(
         stdout,
-        "Number of created files: {created_total}{created_breakdown}"
+        "Number of files: {}{files_breakdown}",
+        format_decimal_bytes(total_entries)
     )?;
-    writeln!(stdout, "Number of deleted files: {deleted}")?;
-    writeln!(stdout, "Number of regular files transferred: {files}")?;
+    writeln!(
+        stdout,
+        "Number of created files: {}{created_breakdown}",
+        format_decimal_bytes(created_total)
+    )?;
+    writeln!(
+        stdout,
+        "Number of deleted files: {}",
+        format_decimal_bytes(deleted)
+    )?;
+    writeln!(
+        stdout,
+        "Number of regular files transferred: {}",
+        format_decimal_bytes(files)
+    )?;
     writeln!(stdout, "Total file size: {total_size_display} bytes")?;
     writeln!(
         stdout,
