@@ -129,7 +129,6 @@ impl GlobalConfig {
     pub fn daemon_chroot(&self) -> Option<&Path> {
         self.daemon_chroot.as_deref()
     }
-
 }
 
 /// Per-module configuration parameters from a `[name]` section in `rsyncd.conf`.

@@ -1143,4 +1143,3 @@ fn full_module_with_all_upstream_directives() {
     assert_eq!(m.module_syslog_facility(), Some("local5"));
     assert_eq!(m.module_syslog_tag(), Some("full-mod"));
 }
-

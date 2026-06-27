@@ -447,7 +447,6 @@ impl<'a> Parser<'a> {
             })
             .collect()
     }
-
 }
 
 /// Builder for assembling a `ModuleConfig` from parsed key-value pairs.
