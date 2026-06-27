@@ -160,6 +160,13 @@ pub(super) enum Writer<'a> {
     /// `docs/design/splice-vmsplice-zero-copy.md`.
     #[cfg(all(target_os = "linux", feature = "vmsplice"))]
     Vmsplice(fast_io::VmspliceFileWriter),
+    /// Uncached bulk writer that lands literal chunks via
+    /// `pwritev2(RWF_DONTCACHE)` (Linux + `dontcache` feature, non-sparse,
+    /// non-append) so large transfers do not evict the page-cache working set.
+    /// Per-chunk it falls back to a buffered write when the kernel or
+    /// filesystem rejects the flag. See `fast_io::DontcacheFileWriter`.
+    #[cfg(all(target_os = "linux", feature = "dontcache"))]
+    Dontcache(fast_io::DontcacheFileWriter),
 }
 
 impl<'a> Writer<'a> {
@@ -192,6 +199,11 @@ impl<'a> Writer<'a> {
                 debug_assert!(false, "sparse mode must select buffered writer");
                 unreachable!("sparse mode must select buffered writer")
             }
+            #[cfg(all(target_os = "linux", feature = "dontcache"))]
+            Writer::Dontcache(_) => {
+                debug_assert!(false, "sparse mode must select buffered writer");
+                unreachable!("sparse mode must select buffered writer")
+            }
         }
     }
 
@@ -207,6 +219,8 @@ impl<'a> Writer<'a> {
             Writer::Macos(w) => w.write_all(data),
             #[cfg(all(target_os = "linux", feature = "vmsplice"))]
             Writer::Vmsplice(w) => w.write_chunk(data).map(|_| ()),
+            #[cfg(all(target_os = "linux", feature = "dontcache"))]
+            Writer::Dontcache(w) => w.write_chunk(data).map(|_| ()),
         }
     }
 
@@ -257,6 +271,19 @@ impl<'a> Writer<'a> {
                     Ok(())
                 }
             }
+            #[cfg(all(target_os = "linux", feature = "dontcache"))]
+            Writer::Dontcache(w) => {
+                // pwritev2 writes go straight to the file fd, so there is no
+                // userspace buffer to flush. The fsync, when requested, syncs
+                // the file the writer owns.
+                if do_fsync {
+                    w.file().sync_all().map_err(|e| {
+                        io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e}"))
+                    })
+                } else {
+                    Ok(())
+                }
+            }
         }
     }
 
@@ -295,6 +322,8 @@ impl<'a> Writer<'a> {
             Writer::Macos(_) => Ok(()),
             #[cfg(all(target_os = "linux", feature = "vmsplice"))]
             Writer::Vmsplice(_) => Ok(()),
+            #[cfg(all(target_os = "linux", feature = "dontcache"))]
+            Writer::Dontcache(_) => Ok(()),
         }
     }
 }
