@@ -1,5 +1,11 @@
 # FFL-FLIP.6: dual-path removal roadmap (FFL-7 through FFL-15)
 
+> **STATUS 2026-06-27 - EXECUTED as REVERT (target inverted).** The 1M-file
+> bench measured flat at 1.255x WORSE RSS than legacy (95.8 vs 76.3 MiB); the
+> -63% projection is invalidated (header is 48 B, not 24 B). Per FFL-4 Option C,
+> the removal deleted the FLAT side, not legacy (PR removing `flat-flist`). The
+> FFL-7 cfg inventory was the deletion map.
+
 Task: FFL-FLIP.6 (#4013). Branch: `docs/ffl-flip-6-dual-path-removal-roadmap`.
 Status: ROADMAP - activates after FFL-FLIP.1/.2/.3 conclude GO.
 Scope: sequence the PR-by-PR removal of the `flat-flist` Cargo feature, the
