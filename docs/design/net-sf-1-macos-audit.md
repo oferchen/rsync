@@ -141,9 +141,9 @@ Confirm there is no separate "daemon-fast-path" file-serve loop that bypasses `t
 
 ## Risk: TLS interaction
 
-`sendfile` writes plaintext file bytes directly to the socket. It cannot compose with userspace TLS (rustls) because rustls owns the wire-encryption boundary above the socket; sending plaintext would silently corrupt the TLS stream. There is no macOS kTLS equivalent (see `docs/design/net-ktls-audit.md`).
+`sendfile` writes plaintext file bytes directly to the socket. It cannot compose with userspace TLS (rustls) because rustls owns the wire-encryption boundary above the socket; sending plaintext would silently corrupt the TLS stream. There is no macOS kTLS equivalent.
 
-Resolution: NET-SF.3 and NET-SF.4 must check `ConnectionConfig::tls_active` (or equivalent) and skip the zero-copy path when TLS is active. This is the same gate the Linux sendfile site would need once daemon-tls lands there.
+Resolution: NET-SF.3 and NET-SF.4 must check `ConnectionConfig::tls_active` (or equivalent) and skip the zero-copy path when client-side TLS is active.
 
 ## Sequencing decision for NET-SF.2
 
