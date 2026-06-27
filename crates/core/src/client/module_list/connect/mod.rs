@@ -10,7 +10,7 @@ use std::io::{self, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
-use super::super::{AddressMode, ClientError, TransferTimeout};
+use super::super::{AddressMode, ClientError, TcpFastOpenMode, TransferTimeout};
 use super::DaemonAddress;
 pub(crate) use direct::{connect_direct, resolve_daemon_addresses};
 pub(crate) use program::ConnectProgramConfig;
@@ -82,6 +82,7 @@ pub(crate) fn open_daemon_stream(
     address_mode: AddressMode,
     connect_program: Option<&OsStr>,
     bind_address: Option<SocketAddr>,
+    tfo: TcpFastOpenMode,
 ) -> Result<DaemonStream, ClientError> {
     if let Some(program) = program::load_daemon_connect_program(connect_program)? {
         return program::connect_via_program(addr, &program);
@@ -89,7 +90,7 @@ pub(crate) fn open_daemon_stream(
 
     let stream = match load_daemon_proxy()? {
         Some(proxy) => {
-            proxy::connect_via_proxy(addr, &proxy, connect_timeout, io_timeout, bind_address)?
+            proxy::connect_via_proxy(addr, &proxy, connect_timeout, io_timeout, bind_address, tfo)?
         }
         None => connect_direct(
             addr,
@@ -97,6 +98,7 @@ pub(crate) fn open_daemon_stream(
             io_timeout,
             address_mode,
             bind_address,
+            tfo,
         )?,
     };
 
@@ -115,13 +117,14 @@ pub(super) fn open_daemon_stream_tls(
     io_timeout: Option<Duration>,
     address_mode: AddressMode,
     bind_address: Option<SocketAddr>,
+    tfo: TcpFastOpenMode,
     connector: &tls::TlsConnector,
 ) -> Result<DaemonStream, ClientError> {
     use crate::client::socket_error;
 
     let stream = match load_daemon_proxy()? {
         Some(proxy) => {
-            proxy::connect_via_proxy(addr, &proxy, connect_timeout, io_timeout, bind_address)?
+            proxy::connect_via_proxy(addr, &proxy, connect_timeout, io_timeout, bind_address, tfo)?
         }
         None => connect_direct(
             addr,
@@ -129,6 +132,7 @@ pub(super) fn open_daemon_stream_tls(
             io_timeout,
             address_mode,
             bind_address,
+            tfo,
         )?,
     };
 

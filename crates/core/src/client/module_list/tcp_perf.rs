@@ -21,11 +21,11 @@ use crate::client::TcpFastOpenMode;
 
 /// Apply client-side perf options to a connected stream.
 ///
-/// Sets `TCP_NOTSENT_LOWAT` when the platform supports it. The Linux
-/// client-side TFO path requires `MSG_FASTOPEN` on the first `sendto(2)`,
-/// which is incompatible with the standard `connect`/`write` flow used by
-/// the rsync client; client-side TFO is deferred to a follow-up that
-/// wires a `sendto` adapter.
+/// Sets `TCP_NOTSENT_LOWAT` when the platform supports it. Client-side TFO is
+/// requested earlier, before `connect(2)`, via `TCP_FASTOPEN_CONNECT` in
+/// `connect_with_optional_bind`; that mechanism is compatible with the
+/// standard `connect`/`write` flow, so this post-connect helper does not act
+/// on `mode`.
 ///
 /// When `pacing_bytes_per_sec` is `Some` (the client `--bwlimit` rate),
 /// `SO_MAX_PACING_RATE` caps the kernel send pace to match. This is a
@@ -36,7 +36,7 @@ pub(crate) fn apply_client_tcp_perf_options(
     mode: TcpFastOpenMode,
     pacing_bytes_per_sec: Option<u32>,
 ) {
-    let _ = mode; // Reserved for future client-side TFO wiring.
+    let _ = mode; // TFO is applied pre-connect; this helper is post-connect.
     if tcp_notsent_lowat_supported() {
         // Errors are best-effort: `TCP_NOTSENT_LOWAT` is an optimisation
         // hint and a failing setsockopt is non-fatal.

@@ -215,6 +215,7 @@ pub fn run_module_list_with_password_and_options(
             effective_timeout,
             address_mode,
             options.bind_address(),
+            options.tcp_fastopen(),
             &connector,
         )?;
         return Err(daemon_error(
@@ -249,6 +250,7 @@ pub fn run_module_list_with_password_and_options(
             address_mode,
             options.connect_program(),
             options.bind_address(),
+            options.tcp_fastopen(),
         )?
     };
 
