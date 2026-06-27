@@ -64,6 +64,10 @@ impl GeneratorContext {
 
         let mut files_transferred = 0;
         let mut bytes_sent = 0u64;
+        // upstream: match.c stats.matched_data / stats.literal_data accumulated
+        // per token as the sender emits the delta stream.
+        let mut matched_data = 0u64;
+        let mut literal_data = 0u64;
         // upstream: io.c IO_BUFFER_SIZE (32KB)
         let mut stream_buf = Vec::with_capacity(32 * 1024);
 
@@ -461,6 +465,8 @@ impl GeneratorContext {
                         checksum_algorithm,
                     )?;
                     cw.write_all(&result.checksum_buf[..result.checksum_len])?;
+                    matched_data += result.matched_data;
+                    literal_data += result.literal_data;
                     cw.bytes_written()
                 };
                 bytes_sent += wire_bytes;
@@ -516,6 +522,10 @@ impl GeneratorContext {
                     cw.bytes_written()
                 };
                 bytes_sent += wire_bytes;
+                // Whole-file transfer: the entire body is sent as literal data
+                // (no block matches). upstream: match.c accounts the full file
+                // as literal_data when whole_file is in effect.
+                literal_data += file_size;
             }
             files_transferred += 1;
 
@@ -619,6 +629,8 @@ impl GeneratorContext {
         Ok(TransferLoopResult {
             files_transferred,
             bytes_sent,
+            matched_data,
+            literal_data,
             ndx_read_codec,
             ndx_write_codec,
         })
