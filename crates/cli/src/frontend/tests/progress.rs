@@ -31,6 +31,40 @@ fn progress_transfer_renders_progress_lines() {
 }
 
 #[test]
+fn progress_does_not_relist_names() {
+    // upstream prints each name exactly once, inline before its progress line.
+    // `--progress` (info=name1, verbosity 0) must NOT re-emit the whole name
+    // listing after the per-file progress block.
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let src = tmp.path().join("src");
+    let dst = tmp.path().join("dst");
+    std::fs::create_dir(&src).expect("mkdir src");
+    std::fs::write(src.join("alpha.txt"), b"a").expect("write alpha");
+    std::fs::write(src.join("bravo.txt"), b"b").expect("write bravo");
+
+    let mut src_arg = src.into_os_string();
+    src_arg.push("/");
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("-a"),
+        OsString::from("--progress"),
+        src_arg,
+        dst.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0, "{}", String::from_utf8_lossy(&stderr));
+    let out = String::from_utf8(stdout).expect("progress output is UTF-8");
+    assert_eq!(
+        out.matches("alpha.txt").count(),
+        1,
+        "each name must be printed once, not re-listed:\n{out}"
+    );
+    assert_eq!(out.matches("bravo.txt").count(), 1, "{out}");
+}
+
+#[test]
 fn progress_human_readable_formats_sizes() {
     use tempfile::tempdir;
 

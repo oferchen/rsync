@@ -138,12 +138,18 @@ pub(crate) fn emit_transfer_summary(
     };
 
     let name_enabled = !matches!(name_level, NameOutputLevel::Disabled);
+    // upstream: with --progress each name is printed exactly once, inline
+    // before its progress line (progress.c / rprintf name1 path). When the
+    // per-file progress block already rendered the names, suppress the verbose
+    // name listing so `--progress` (info=name1, verbosity 0) does not re-print
+    // the whole list - mirroring the `!progress_rendered` guard already applied
+    // to the verbosity>0 branch above.
     let emit_verbose_listing = out_format.is_none()
         && !events.is_empty()
         && ((verbosity > 0
             && (!name_overridden || name_enabled)
             && (!progress_rendered || verbosity > 1))
-            || (verbosity == 0 && name_enabled));
+            || (verbosity == 0 && name_enabled && !progress_rendered));
 
     if formatted_rendered && (emit_verbose_listing || stats_on || verbosity > 0) {
         writeln!(writer)?;
