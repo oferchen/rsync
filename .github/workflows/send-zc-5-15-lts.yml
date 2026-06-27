@@ -119,21 +119,22 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Build and run the binary with RUST_LOG to capture the io_uring probe.
-          # The --version output includes io_uring feature status.
-          VERSION_OUTPUT=$(cargo run --locked --features iouring-send-zc -- --version 2>&1 || true)
-          printf '%s\n' "$VERSION_OUTPUT"
+          # The `--io-uring-status` capability matrix is the canonical report
+          # of which io_uring cargo features the binary was built with (the
+          # plain `--version` banner only carries a one-line io_uring summary).
+          STATUS_OUTPUT=$(cargo run --locked --features iouring-send-zc -- --io-uring-status 2>&1 || true)
+          printf '%s\n' "$STATUS_OUTPUT"
 
           # Confirm the iouring-send-zc feature is compiled in.
-          if echo "$VERSION_OUTPUT" | grep -q "iouring-send-zc:.*on"; then
+          if echo "$STATUS_OUTPUT" | grep -q "iouring-send-zc:.*on"; then
             echo "iouring-send-zc feature: compiled in"
           else
-            echo "::error::iouring-send-zc feature not reported as 'on' in --version output"
+            echo "::error::iouring-send-zc feature not reported as 'on' in --io-uring-status output"
             exit 1
           fi
 
-          echo "version_output<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$VERSION_OUTPUT" >> "$GITHUB_OUTPUT"
+          echo "status_output<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$STATUS_OUTPUT" >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Run end-to-end local transfer with iouring-send-zc
