@@ -258,6 +258,24 @@ mod tests {
     }
 
     #[test]
+    fn notsent_lowat_applies_to_pre_tls_stream() {
+        // NBUF-3: the raw TCP fd about to be wrapped in TLS must accept the
+        // NOTSENT_LOWAT watermark the plain path also sets, so the encrypted
+        // stream gets the same send-buffer flow control. This mirrors the
+        // pre-wrap operation open_daemon_stream_tls performs.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let stream = TcpStream::connect(addr).unwrap();
+        let (_server, _) = listener.accept().unwrap();
+
+        match fast_io::set_tcp_notsent_lowat(&stream, fast_io::DEFAULT_TCP_NOTSENT_LOWAT) {
+            Ok(true) => assert!(fast_io::tcp_notsent_lowat_supported()),
+            Ok(false) => assert!(!fast_io::tcp_notsent_lowat_supported()),
+            Err(error) => panic!("unexpected error applying NOTSENT_LOWAT pre-TLS: {error}"),
+        }
+    }
+
+    #[test]
     fn build_root_store_with_default_mozilla_roots() {
         let store = build_root_store(None).unwrap();
         // The Mozilla root bundle has > 100 CAs
