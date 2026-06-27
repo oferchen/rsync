@@ -51,6 +51,12 @@ impl BufferedMap {
         let file = File::open(path)?;
         let size = file.metadata()?.len();
 
+        // The buffered map streams the basis sequentially through a sliding
+        // window, so on macOS hint F_NOCACHE for large files to keep the
+        // single-pass read from evicting the page-cache working set. Advisory
+        // and a no-op on other platforms.
+        let _ = fast_io::apply_sequential_read_hint(&file, size);
+
         Ok(Self {
             file,
             size,
@@ -77,6 +83,10 @@ impl BufferedMap {
     /// Returns an error if the file size cannot be determined.
     pub fn from_file_with_window(file: File, window_size: usize) -> io::Result<Self> {
         let size = file.metadata()?.len();
+
+        // See `open_with_window`: hint sequential single-pass reads so the
+        // basis stream does not pollute the page cache on macOS.
+        let _ = fast_io::apply_sequential_read_hint(&file, size);
 
         Ok(Self {
             file,
@@ -293,6 +303,37 @@ mod tests {
             msg.contains("128..192") && msg.contains("32"),
             "error message missing bounds detail: {msg}"
         );
+    }
+
+    /// UNCACHE-6: opening a file larger than the macOS `F_NOCACHE` threshold
+    /// applies the advisory sequential-read hint in the constructor. The hint
+    /// must not change the bytes the sliding window returns; this reads a
+    /// 2 MiB file end-to-end across multiple windows and asserts byte equality.
+    /// Runs on every platform (the hint is a no-op off macOS) so the
+    /// constructor wiring stays covered everywhere.
+    #[test]
+    fn large_file_reads_correctly_after_sequential_read_hint() {
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        // 2 MiB clears the 1 MiB F_NOCACHE threshold on macOS.
+        let len = 2 * 1024 * 1024usize;
+        let data: Vec<u8> = (0..len).map(|i| (i % 251) as u8).collect();
+        let mut tmp = NamedTempFile::new().unwrap();
+        tmp.write_all(&data).unwrap();
+        tmp.flush().unwrap();
+
+        let mut map = BufferedMap::open(tmp.path()).unwrap();
+
+        // Read the whole file in 64 KiB slices, sliding the window forward.
+        let chunk = 64 * 1024;
+        let mut offset = 0usize;
+        while offset < len {
+            let this = chunk.min(len - offset);
+            let got = MapStrategy::map_ptr(&mut map, offset as u64, this).unwrap();
+            assert_eq!(got, &data[offset..offset + this], "mismatch at {offset}");
+            offset += this;
+        }
     }
 
     /// Drives the overlap-shrink branch of `load_window` directly: when the
