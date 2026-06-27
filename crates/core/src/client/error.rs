@@ -204,7 +204,11 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             // whose NotFound branch maps to RERR_VANISHED (24) for files that
             // disappear mid-transfer.
             let code = ExitCode::PartialTransfer;
-            let text = format!("link_stat \"{}\" failed: {source}", path.display());
+            let text = format!(
+                "link_stat \"{}\" failed: {}",
+                path.display(),
+                upstream_io_error(&source)
+            );
             let message = rsync_error!(code.as_i32(), text).with_role(Role::Sender);
             ClientError::with_code(code, message)
         }
@@ -242,6 +246,23 @@ pub(crate) fn compile_filter_error(pattern: &str, error: &dyn fmt::Display) -> C
     ClientError::with_code(code, message)
 }
 
+/// Formats an [`io::Error`] the way upstream rsync's `rsyserr()` does:
+/// `"<strerror> (<errno>)"` (upstream `log.c:473` `": %s (%d)"`), rather than
+/// Rust's `std::io::Error` `Display`, which renders `" (os error <errno>)"`.
+/// Errors without an OS errno fall back to the `Display` string verbatim.
+fn upstream_io_error(error: &io::Error) -> String {
+    match error.raw_os_error() {
+        Some(code) => {
+            let full = error.to_string();
+            let strerror = full
+                .strip_suffix(&format!(" (os error {code})"))
+                .unwrap_or(full.as_str());
+            format!("{strerror} ({code})")
+        }
+        None => error.to_string(),
+    }
+}
+
 #[cold]
 pub(crate) fn io_error(action: &str, path: &Path, error: io::Error) -> ClientError {
     // upstream: main.c:1338-1345 - NotFound maps to RERR_VANISHED (24),
@@ -257,7 +278,10 @@ pub(crate) fn io_error(action: &str, path: &Path, error: io::Error) -> ClientErr
     let text = if error.kind() == io::ErrorKind::NotFound {
         format!("file has vanished: \"{path_display}\"")
     } else {
-        format!("failed to {action} '{path_display}': {error}")
+        format!(
+            "failed to {action} '{path_display}': {}",
+            upstream_io_error(&error)
+        )
     };
     let message = rsync_error!(code.as_i32(), text).with_role(Role::Client);
     ClientError::with_code(code, message)
@@ -269,7 +293,10 @@ pub(crate) fn destination_access_error(path: &Path, error: io::Error) -> ClientE
     // destination directory access errors.
     let code = ExitCode::FileSelect;
     let path_display = path.display();
-    let text = format!("failed to access destination directory '{path_display}': {error}");
+    let text = format!(
+        "failed to access destination directory '{path_display}': {}",
+        upstream_io_error(&error)
+    );
     let message = rsync_error!(code.as_i32(), text).with_role(Role::Client);
     ClientError::with_code(code, message)
 }
@@ -281,7 +308,7 @@ pub(crate) fn socket_error(
     error: io::Error,
 ) -> ClientError {
     let code = ExitCode::SocketIo;
-    let text = format!("failed to {action} {target}: {error}");
+    let text = format!("failed to {action} {target}: {}", upstream_io_error(&error));
     let message = rsync_error!(code.as_i32(), text).with_role(Role::Client);
     ClientError::with_code(code, message)
 }
@@ -396,6 +423,20 @@ impl From<LocalCopyError> for ClientError {
 mod tests {
     use super::*;
     use std::io::ErrorKind;
+
+    #[test]
+    fn upstream_io_error_uses_bare_errno_suffix() {
+        // upstream rsync renders "<strerror> (<errno>)" (log.c:473), not Rust's
+        // "<strerror> (os error <errno>)".
+        let err = io::Error::from_raw_os_error(2);
+        let text = upstream_io_error(&err);
+        assert!(text.ends_with(" (2)"), "got: {text}");
+        assert!(!text.contains("os error"), "got: {text}");
+
+        // Errors without an OS errno fall back to the Display string verbatim.
+        let custom = io::Error::new(ErrorKind::Other, "boom");
+        assert_eq!(upstream_io_error(&custom), "boom");
+    }
 
     mod exit_codes_tests {
         use super::*;
