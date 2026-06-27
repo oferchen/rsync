@@ -119,6 +119,22 @@ fn detect_io_uring_restriction_impl() -> IoUringRestriction {
     }
 }
 
+/// Compiled-in io_uring feature gates, as `(cargo-feature-name, enabled)`
+/// pairs.
+///
+/// `cfg!` expands to a boolean literal at compile time, so this is a genuine
+/// compile-time constant and the single source of truth for which io_uring
+/// features a binary was built with. The [`io_uring_capability_matrix`]
+/// renders it (and any external probe that needs the same answer reads from
+/// here), so the gate list can no longer drift across duplicated call sites.
+pub const IO_URING_FEATURE_GATES: &[(&str, bool)] = &[
+    ("io_uring", cfg!(feature = "io_uring")),
+    ("iouring-data-reads", cfg!(feature = "iouring-data-reads")),
+    ("iouring-data-writes", cfg!(feature = "iouring-data-writes")),
+    ("iouring-send-zc", cfg!(feature = "iouring-send-zc")),
+    ("sqpoll-mlock-basis", cfg!(feature = "sqpoll-mlock-basis")),
+];
+
 /// Prints a multi-line io_uring capability matrix to stdout.
 ///
 /// Designed for the `--io-uring-status` CLI flag. Reports:
@@ -202,49 +218,14 @@ pub fn io_uring_capability_matrix() -> String {
         ));
     }
 
-    // Feature gates
+    // Feature gates (rendered from the single IO_URING_FEATURE_GATES source).
     lines.push(String::new());
     lines.push("  feature gates:".to_string());
-    lines.push(format!(
-        "    io_uring:             {}",
-        if cfg!(feature = "io_uring") {
-            "on"
-        } else {
-            "off"
-        }
-    ));
-    lines.push(format!(
-        "    iouring-data-reads:   {}",
-        if cfg!(feature = "iouring-data-reads") {
-            "on"
-        } else {
-            "off"
-        }
-    ));
-    lines.push(format!(
-        "    iouring-data-writes:  {}",
-        if cfg!(feature = "iouring-data-writes") {
-            "on"
-        } else {
-            "off"
-        }
-    ));
-    lines.push(format!(
-        "    iouring-send-zc:      {}",
-        if cfg!(feature = "iouring-send-zc") {
-            "on"
-        } else {
-            "off"
-        }
-    ));
-    lines.push(format!(
-        "    sqpoll-mlock-basis:   {}",
-        if cfg!(feature = "sqpoll-mlock-basis") {
-            "on"
-        } else {
-            "off"
-        }
-    ));
+    for (name, enabled) in IO_URING_FEATURE_GATES {
+        let label = format!("{name}:");
+        let status = if *enabled { "on" } else { "off" };
+        lines.push(format!("    {label:<22}{status}"));
+    }
 
     // Fallback chain
     lines.push(String::new());
@@ -800,6 +781,30 @@ mod tests {
         assert!(matrix.contains("available:"));
         assert!(matrix.contains("feature gates:"));
         assert!(matrix.contains("active fallback chain:"));
+    }
+
+    #[test]
+    fn capability_matrix_renders_every_feature_gate() {
+        // The `--io-uring-status` output is the canonical place to confirm
+        // which io_uring features a binary was built with; every gate in the
+        // single source of truth must surface as a `name: on/off` line so
+        // external probes (e.g. the SEND_ZC CI check) can grep for it.
+        let matrix = io_uring_capability_matrix();
+        for (name, enabled) in IO_URING_FEATURE_GATES {
+            let expected = format!("{name}:");
+            assert!(
+                matrix.contains(&expected),
+                "matrix must list the {name} feature gate"
+            );
+            let status = if *enabled { "on" } else { "off" };
+            assert!(
+                matrix.lines().any(|line| {
+                    let line = line.trim_start();
+                    line.starts_with(&expected) && line.trim_end().ends_with(status)
+                }),
+                "{name} gate must render as `{name}: {status}`"
+            );
+        }
     }
 
     #[test]
