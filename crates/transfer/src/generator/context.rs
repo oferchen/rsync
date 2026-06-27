@@ -42,10 +42,6 @@ pub struct GeneratorContext {
     pub(crate) config: ServerConfig,
     /// List of files to send (contains relative paths for wire transmission).
     ///
-    /// Wraps both the legacy `Vec<FileEntry>` and (when the `flat-flist`
-    /// feature is enabled) the arena-backed `FlatFileList`, keeping both
-    /// in sync on every push. Read accessors delegate to the legacy Vec.
-    ///
     /// **Invariant**: `file_list` and `full_paths` must always have the same length.
     /// Use [`Self::push_file_item`] to add entries and [`Self::clear_file_list`] to clear.
     pub(crate) file_list: DualFileList,
