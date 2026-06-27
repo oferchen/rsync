@@ -306,7 +306,7 @@ impl GeneratorContext {
                 self.timing.total_bytes_read += 2;
             }
 
-            let (_fnamecmp_type, xname) = iflags.read_trailing(&mut *reader)?;
+            let (fnamecmp_type, xname) = iflags.read_trailing(&mut *reader)?;
             if iflags.has_basis_type() {
                 self.timing.total_bytes_read += 1;
             }
@@ -349,6 +349,8 @@ impl GeneratorContext {
                     &mut ndx_write_codec,
                     wire_ndx,
                     &iflags,
+                    fnamecmp_type,
+                    xname.as_deref(),
                     pending_xattr_response.as_mut(),
                 )?;
                 continue;
@@ -366,6 +368,8 @@ impl GeneratorContext {
                     &mut ndx_write_codec,
                     wire_ndx,
                     &iflags,
+                    fnamecmp_type,
+                    xname.as_deref(),
                     pending_xattr_response.as_mut(),
                 )?;
                 // upstream: sender.c:395 - log_item(FCLIENT, file, iflags, NULL)
@@ -431,6 +435,8 @@ impl GeneratorContext {
                     &mut ndx_write_codec,
                     wire_ndx,
                     &iflags,
+                    fnamecmp_type,
+                    xname.as_deref(),
                     &sum_head,
                     pending_xattr_response.as_mut(),
                 )?;
@@ -496,6 +502,8 @@ impl GeneratorContext {
                     &mut ndx_write_codec,
                     wire_ndx,
                     &iflags,
+                    fnamecmp_type,
+                    xname.as_deref(),
                     &sum_head,
                     pending_xattr_response.as_mut(),
                 )?;

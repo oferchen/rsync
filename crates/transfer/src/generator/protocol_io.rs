@@ -177,10 +177,20 @@ impl GeneratorContext {
         ndx_codec: &mut impl NdxCodec,
         ndx: i32,
         iflags: &ItemFlags,
+        fnamecmp_type: Option<protocol::FnameCmpType>,
+        xname: Option<&[u8]>,
         sum_head: &SumHead,
         xattr_response: Option<&mut protocol::xattr::XattrList>,
     ) -> io::Result<()> {
-        self.write_ndx_iflags_and_xattr_response(writer, ndx_codec, ndx, iflags, xattr_response)?;
+        self.write_ndx_iflags_and_xattr_response(
+            writer,
+            ndx_codec,
+            ndx,
+            iflags,
+            fnamecmp_type,
+            xname,
+            xattr_response,
+        )?;
         sum_head.write(writer)?;
         Ok(())
     }
@@ -206,11 +216,35 @@ impl GeneratorContext {
         ndx_codec: &mut impl NdxCodec,
         ndx: i32,
         iflags: &ItemFlags,
+        fnamecmp_type: Option<protocol::FnameCmpType>,
+        xname: Option<&[u8]>,
         xattr_response: Option<&mut protocol::xattr::XattrList>,
     ) -> io::Result<()> {
         ndx_codec.write_ndx(writer, ndx)?;
         if self.protocol.supports_iflags() {
-            writer.write_all(&iflags.significant_wire_bits().to_le_bytes())?;
+            // upstream: sender.c:184 - write_shortint(f_out, iflags) writes the
+            // FULL 16-bit iflags, including the ITEM_BASIS_TYPE_FOLLOWS /
+            // ITEM_XNAME_FOLLOWS framing bits. The receiver reads those bits to
+            // decide whether the trailing fnamecmp_type / xname fields follow;
+            // `significant_wire_bits` strips them (it exists for itemize display
+            // only), so the receiver stops expecting the trailing bytes and the
+            // wire desyncs - over a socket the goodbye then closes with unread
+            // data and the kernel RSTs the stream.
+            writer.write_all(&((iflags.raw() & 0xFFFF) as u16).to_le_bytes())?;
+        }
+        // upstream: sender.c:186-189 - write fnamecmp_type and the extended name
+        // immediately after iflags when their *_FOLLOWS bits are set.
+        if iflags.has_basis_type() {
+            if let Some(ft) = fnamecmp_type {
+                writer.write_all(&[ft.to_wire()])?;
+            }
+        }
+        if iflags.has_xname() {
+            // write_vstring: varint length prefix then the raw bytes. An empty
+            // xname (xlen == 0) still emits the 0-length varint.
+            let name = xname.unwrap_or(&[]);
+            protocol::write_varint(writer, name.len() as i32)?;
+            writer.write_all(name)?;
         }
         // upstream: sender.c:192-196 - send_xattr_request(fname, file, f_out)
         // is invoked from inside write_ndx_and_attrs() when ITEM_REPORT_XATTR
