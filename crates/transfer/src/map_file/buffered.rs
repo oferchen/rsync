@@ -308,8 +308,8 @@ mod tests {
     /// UNCACHE-6: opening a file larger than the macOS `F_NOCACHE` threshold
     /// applies the advisory sequential-read hint in the constructor. The hint
     /// must not change the bytes the sliding window returns; this reads a
-    /// >1 MiB file end-to-end across multiple windows and asserts byte
-    /// equality. Runs on every platform (the hint is a no-op off macOS) so the
+    /// 2 MiB file end-to-end across multiple windows and asserts byte equality.
+    /// Runs on every platform (the hint is a no-op off macOS) so the
     /// constructor wiring stays covered everywhere.
     #[test]
     fn large_file_reads_correctly_after_sequential_read_hint() {
