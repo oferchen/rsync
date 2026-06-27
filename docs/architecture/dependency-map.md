@@ -216,12 +216,6 @@ bin[embedded-ssh] -> core/embedded-ssh -> rsync_io/embedded-ssh (dep:russh, toki
 bin[async] -> daemon/async + core/async -> engine/async + transfer/async
 ```
 
-### flat-flist (REMOVED 2026-06-27)
-
-Reverted (FFL-4 Option C): a 1M-file bench measured the flat arena at 1.255x
-worse RSS than the legacy `Vec<FileEntry>`, invalidating the projected savings.
-The feature and its arena implementation were deleted; no feature edge remains.
-
 ### mmap-free-basis (experimental)
 ```
 bin[mmap-free-basis] -> engine/mmap-free-basis + fast_io/mmap-free-basis

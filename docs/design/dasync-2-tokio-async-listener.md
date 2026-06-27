@@ -230,35 +230,13 @@ to `SOMAXCONN` (4096 on stock Linux, tunable up to 65535).
 
 ## 5. Bridge to existing sync overlays
 
-### 5.1 TLS (feature `daemon-tls`, PR series TLS-7)
-
-The sync path wraps the std stream via `crate::tls::wrap_stream`
-*before* `spawn_connection_worker`
-(DASYNC.1 section 1.8 anchored at
-`crates/daemon/src/daemon/sections/server_runtime/connection.rs:291`).
-
-In the async bridge, the wrap happens *inside* the `spawn_blocking`
-closure, immediately after `DaemonStream::plain(std_stream)` is
-constructed. Rationale:
-
-- `rustls::ServerConnection::complete_io()` is a blocking handshake;
-  pushing it onto the runtime worker thread would head-of-line block
-  the accept loop, exactly the cliff DASYNC.1 documented at line 158-164.
-- The blocking pool is sized for this. A handshake takes ~3-5 ms; a
-  burst of 5K TLS clients fans into 5K blocking threads, each holding a
-  permit for the handshake plus the subsequent transfer.
-- The `tokio_rustls` crate exists for the async case but introduces a
-  second TLS code path. We defer that to a future task gated on
-  measured handshake-induced head-of-line blocking (none observed in
-  DASYNC.5 bench at 10K is the rollout criterion).
-
-### 5.2 LSM capabilities (LSM-CAP, PR #5598)
+### 5.1 LSM capabilities (LSM-CAP, PR #5598)
 
 Linux capability drop runs at process startup before the listener
 binds. Unchanged by DASYNC; both the sync and async entry points hit
 the same `bind_with_backlog` -> capability-drop sequence.
 
-### 5.3 LSM seccomp (LSM-SECCOMP, PR #5589)
+### 5.2 LSM seccomp (LSM-SECCOMP, PR #5589)
 
 The sync path applies seccomp at worker fork (in the spawned thread's
 prologue). In the tokio model, the worker is the `spawn_blocking`
@@ -266,13 +244,13 @@ closure, so the seccomp filter is installed at the top of the closure,
 before `handle_session` runs. Same syscall surface either way;
 filter rules require no change.
 
-### 5.4 Landlock (feature `landlock` on `fast_io`)
+### 5.3 Landlock (feature `landlock` on `fast_io`)
 
 Engaged inside the per-module transfer prologue (DASYNC.1 section 1.9
 at `transfer.rs:217 engage_landlock_sandbox()`). Below the bridge
 layer; no change.
 
-### 5.5 `--max-connections` admission
+### 5.4 `--max-connections` admission
 
 Moves from per-thread `ConnectionGuard` (sync path,
 DASYNC.1 section 1.10) to per-permit `OwnedSemaphorePermit` (async
@@ -364,9 +342,6 @@ async entry point:
 
 - `tests/admission_cap_async.rs` - exercise the `@ERROR:` refusal under
   N+1 concurrent connections.
-- `tests/tls_handshake_async.rs` (behind `daemon-tls` feature) - prove
-  the rustls handshake runs inside `spawn_blocking` without head-of-
-  line blocking the accept loop.
 - `tests/graceful_shutdown_async.rs` - assert in-flight workers
   complete after `shutdown.store(true)` and no permit is leaked.
 

@@ -212,7 +212,7 @@ container runs; .d is analysis + a results design doc.
 
 ## 10. Out of scope
 
-- TLS-wrapped transfers (`stunnel` / `daemon-tls`). The watermark
+- TLS-wrapped transfers (`stunnel` / external TLS proxy). The watermark
   applies to the underlying TCP socket regardless of TLS framing;
   TLS adds ~13 KiB per record overhead that's orthogonal to the
   lowat hypothesis. A TLS variant is a follow-up if NET-NSL.3.d
