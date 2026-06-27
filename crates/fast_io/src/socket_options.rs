@@ -161,6 +161,56 @@ pub fn enable_tcp_fastopen_listener(listener: &TcpListener, qlen: i32) -> io::Re
     }
 }
 
+/// Enables the client-side `TCP_FASTOPEN_CONNECT` option on a socket file
+/// descriptor before `connect(2)`.
+///
+/// Unlike the server-side [`enable_tcp_fastopen_raw`], this is set on the
+/// connecting socket. The Linux kernel (4.11+) then defers the SYN until the
+/// first `write(2)`/`send(2)`, folding the request payload into the initial
+/// handshake so the connect saves one round trip. The regular
+/// `connect`/`write` flow works unchanged; no `sendto(MSG_FASTOPEN)` adapter
+/// is required.
+///
+/// Returns `Ok(false)` on non-Linux platforms (the option does not exist;
+/// macOS uses `connectx`, which is wired separately). Errors from
+/// `setsockopt(2)` propagate unchanged.
+///
+/// upstream: not implemented; this is an oc-rsync-specific perf improvement
+/// that is wire-compatible with upstream rsync. TFO only affects the initial
+/// SYN exchange, not the rsync protocol that follows.
+#[cfg(unix)]
+pub fn enable_tcp_fastopen_connect_raw(raw_fd: std::os::fd::RawFd) -> io::Result<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        setsockopt_int_raw(raw_fd, libc::IPPROTO_TCP, libc::TCP_FASTOPEN_CONNECT, 1)?;
+        Ok(true)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = raw_fd;
+        Ok(false)
+    }
+}
+
+/// Windows stub for [`enable_tcp_fastopen_connect_raw`].
+///
+/// Windows TFO is opt-in through a separate `WSAIoctl`/overlapped path, so the
+/// connect-side option is reported as unsupported and the client falls back to
+/// a standard `connect`.
+#[cfg(windows)]
+pub fn enable_tcp_fastopen_connect_raw(
+    _raw_socket: std::os::windows::io::RawSocket,
+) -> io::Result<bool> {
+    Ok(false)
+}
+
+/// Returns `true` when the running platform implements client-side
+/// `TCP_FASTOPEN_CONNECT`.
+#[must_use]
+pub const fn tcp_fastopen_connect_supported() -> bool {
+    cfg!(target_os = "linux")
+}
+
 /// Sets the `TCP_NOTSENT_LOWAT` watermark on a connected stream.
 ///
 /// Caps the unsent bytes the kernel buffers in the socket send buffer.
@@ -547,6 +597,37 @@ mod tests {
                 assert!(
                     tcp_fastopen_listener_supported(),
                     "unexpected TFO error on unsupported platform: {error}"
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn enable_tcp_fastopen_connect_reports_supported_platforms() {
+        use std::os::fd::{FromRawFd, OwnedFd};
+
+        // TCP_FASTOPEN_CONNECT must be set before connect(2), so exercise it on
+        // a fresh unconnected TCP socket rather than a connected stream.
+        // SAFETY: socket(2) returns a fresh owned fd; wrap it in OwnedFd so it
+        // is closed when the test ends.
+        let raw = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+        assert!(raw >= 0, "socket(2) failed: {}", io::Error::last_os_error());
+        let owned = unsafe { OwnedFd::from_raw_fd(raw) };
+        use std::os::fd::AsRawFd;
+
+        let result = enable_tcp_fastopen_connect_raw(owned.as_raw_fd());
+
+        match result {
+            Ok(true) => assert!(tcp_fastopen_connect_supported()),
+            Ok(false) => assert!(!tcp_fastopen_connect_supported()),
+            Err(error) => {
+                // A Linux kernel with client TFO disabled
+                // (`/proc/sys/net/ipv4/tcp_fastopen` bit 0 unset) may return
+                // EOPNOTSUPP; only Linux exposes the option at all.
+                assert!(
+                    tcp_fastopen_connect_supported(),
+                    "unexpected TFO connect error on unsupported platform: {error}"
                 );
             }
         }
