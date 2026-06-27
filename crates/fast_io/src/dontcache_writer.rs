@@ -125,13 +125,12 @@ impl DontcacheFileWriter {
                     self.file.write_all(&chunk[n..])?;
                     return Ok(chunk.len());
                 }
+                // On Linux ENOTSUP and EOPNOTSUPP share the same value, so only
+                // ENOTSUP is listed to avoid an unreachable match arm.
                 Err(e)
                     if matches!(
                         e.raw_os_error(),
-                        Some(libc::EINVAL)
-                            | Some(libc::ENOTSUP)
-                            | Some(libc::EOPNOTSUPP)
-                            | Some(libc::ENOSYS)
+                        Some(libc::EINVAL) | Some(libc::ENOTSUP) | Some(libc::ENOSYS)
                     ) =>
                 {
                     // Kernel or filesystem does not support RWF_DONTCACHE.
