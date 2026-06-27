@@ -22,6 +22,7 @@ use logging::debug_log;
 
 use ::metadata::MetadataOptions;
 
+use crate::local_copy::overrides::same_filesystem;
 use crate::local_copy::{
     CopyContext, CopyMethodKind, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet,
     LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord,
@@ -110,6 +111,18 @@ pub(super) fn try_clone(
     flags: TransferFlags,
 ) -> Result<bool, LocalCopyError> {
     let file_size = metadata.len();
+
+    // REFLINK-2: skip the FICLONE ioctl when source and destination live on
+    // different filesystems. ioctl(FICLONE) only reflinks within one
+    // filesystem and fails with EXDEV across mounts - but not before
+    // File::create() has already materialised an empty destination inode that
+    // we then have to unlink. Comparing st_dev up front avoids that wasted
+    // create/ioctl/unlink round-trip on cross-filesystem copies. When the
+    // device ids cannot be determined the helper returns None and we fall
+    // through to let try_ficlone decide.
+    if same_filesystem(source, metadata, destination) == Some(false) {
+        return Ok(false);
+    }
 
     if fast_io::try_ficlone(source, destination).is_err() {
         let _ = std::fs::remove_file(destination);
