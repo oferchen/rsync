@@ -67,6 +67,26 @@ impl LocalCopyError {
         })
     }
 
+    /// Constructs an error for a source argument whose initial `link_stat`
+    /// failed because the path does not exist.
+    ///
+    /// Distinct from [`LocalCopyError::io`]'s NotFound mapping: a *source* (a
+    /// command-line operand or a `--files-from` entry) that is missing when the
+    /// sender stats it exits 23 (`RERR_PARTIAL`) with a `link_stat "%s" failed`
+    /// message, and the transfer continues with the remaining sources. Exit 24
+    /// (`RERR_VANISHED`, "file has vanished") is reserved for a file that
+    /// disappears mid-transfer after it was already in the file list.
+    ///
+    /// upstream: `flist.c send_file_list()` - a failed `link_stat` on an arg
+    /// sets `io_error |= IOERR_GENERAL`, yielding `exit_cleanup(RERR_PARTIAL)`.
+    #[must_use]
+    pub fn link_stat_failed(path: impl Into<PathBuf>, source: io::Error) -> Self {
+        Self::new(LocalCopyErrorKind::LinkStatFailed {
+            path: path.into(),
+            source,
+        })
+    }
+
     /// Constructs an error representing an inactivity timeout.
     #[must_use]
     pub const fn timeout(duration: Duration) -> Self {
@@ -101,6 +121,7 @@ impl LocalCopyError {
                     INVALID_OPERAND_EXIT_CODE
                 }
             }
+            LocalCopyErrorKind::LinkStatFailed { .. } => INVALID_OPERAND_EXIT_CODE,
             LocalCopyErrorKind::Timeout { .. } | LocalCopyErrorKind::StopAtReached { .. } => {
                 TIMEOUT_EXIT_CODE
             }
@@ -123,6 +144,7 @@ impl LocalCopyError {
                     "RERR_PARTIAL"
                 }
             }
+            LocalCopyErrorKind::LinkStatFailed { .. } => "RERR_PARTIAL",
             LocalCopyErrorKind::Timeout { .. } | LocalCopyErrorKind::StopAtReached { .. } => {
                 "RERR_TIMEOUT"
             }
@@ -155,6 +177,16 @@ impl LocalCopyError {
         )
     }
 
+    /// Reports whether this is a failed initial `link_stat` of a source
+    /// argument (a missing command-line operand or `--files-from` entry).
+    ///
+    /// Like a vanished file, the transfer continues with the remaining
+    /// sources, but the exit code is 23 (`RERR_PARTIAL`), not 24.
+    #[must_use]
+    pub const fn is_link_stat_failed(&self) -> bool {
+        matches!(self.kind, LocalCopyErrorKind::LinkStatFailed { .. })
+    }
+
     /// Provides access to the underlying error kind.
     #[must_use]
     pub const fn kind(&self) -> &LocalCopyErrorKind {
@@ -183,6 +215,18 @@ pub enum LocalCopyErrorKind {
         /// Action being performed.
         action: &'static str,
         /// Path involved in the failure.
+        path: PathBuf,
+        /// Underlying error.
+        #[source]
+        source: io::Error,
+    },
+    /// The initial `link_stat` of a source argument failed because the path
+    /// does not exist. A hard error exiting 23 (`RERR_PARTIAL`), distinct from
+    /// a mid-transfer vanish (exit 24); the caller continues with the remaining
+    /// sources.
+    #[error("link_stat \"{}\" failed: {source}", path.display())]
+    LinkStatFailed {
+        /// The source path that could not be stat'd.
         path: PathBuf,
         /// Underlying error.
         #[source]
@@ -530,5 +574,25 @@ mod tests {
         let error = LocalCopyError::io("read", PathBuf::from("/denied"), io_err);
         assert_eq!(error.exit_code(), INVALID_OPERAND_EXIT_CODE);
         assert_eq!(error.exit_code(), 23);
+    }
+
+    #[test]
+    fn link_stat_failed_is_partial_and_continues() {
+        // A missing source argument (command-line operand or --files-from
+        // entry) is a failed link_stat: exit 23 (RERR_PARTIAL), classified for
+        // continue-with-remaining but NOT as a mid-transfer vanish (24).
+        let io_err = io::Error::new(ErrorKind::NotFound, "no such file");
+        let error = LocalCopyError::link_stat_failed(PathBuf::from("/tmp/nope"), io_err);
+        assert_eq!(error.exit_code(), INVALID_OPERAND_EXIT_CODE);
+        assert_eq!(error.exit_code(), 23);
+        assert_eq!(error.code_name(), "RERR_PARTIAL");
+        assert!(error.is_link_stat_failed());
+        assert!(!error.is_vanished_error());
+        assert!(!error.is_io_error());
+        assert!(
+            error
+                .to_string()
+                .starts_with("link_stat \"/tmp/nope\" failed")
+        );
     }
 }

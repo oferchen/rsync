@@ -11,11 +11,12 @@
 use super::common::*;
 use super::*;
 
-/// When one of several explicit source paths has been deleted, the transfer
-/// should still copy the remaining files and exit with code 24 (vanished).
+/// When one of several explicit source paths is missing, the transfer should
+/// still copy the remaining files and exit 23 (RERR_PARTIAL) via the failed
+/// link_stat. Verified against upstream rsync 3.4.3.
 #[cfg(unix)]
 #[test]
-fn vanished_source_file_yields_exit_24_and_remaining_files_transfer() {
+fn missing_source_operand_yields_exit_23_and_remaining_files_transfer() {
     use tempfile::tempdir;
 
     let tmp = tempdir().expect("tempdir");
@@ -64,8 +65,11 @@ fn vanished_source_file_yields_exit_24_and_remaining_files_transfer() {
 
     std::fs::remove_file(&file_b).expect("remove bravo.txt");
 
-    // upstream: walk_path() sets IOERR_VANISHED for stat-ENOENT during the
-    // explicit-arg pass, surfacing as exit code 24.
+    // upstream: flist.c send_file_list() - a missing explicit source operand
+    // fails its link_stat, printing `link_stat "%s" failed` and setting
+    // IOERR_GENERAL (exit 23, RERR_PARTIAL); the remaining operands still
+    // transfer. Distinct from exit 24, which is reserved for a file that
+    // disappears mid-transfer after it was already in the file list.
     let (code, _stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         file_a.clone().into_os_string(),
@@ -77,13 +81,13 @@ fn vanished_source_file_yields_exit_24_and_remaining_files_transfer() {
     let stderr_text = String::from_utf8_lossy(&stderr);
 
     assert_eq!(
-        code, 24,
-        "expected exit code 24 (vanished), got {code}: {stderr_text}"
+        code, 23,
+        "expected exit code 23 (partial/link_stat), got {code}: {stderr_text}"
     );
 
     assert!(
-        stderr_text.contains("vanished"),
-        "stderr should mention vanished file: {stderr_text}"
+        stderr_text.contains("link_stat"),
+        "stderr should mention the failed link_stat: {stderr_text}"
     );
 
     assert_eq!(
@@ -142,11 +146,12 @@ fn recursive_transfer_without_vanished_files_exits_zero() {
     );
 }
 
-/// When a single explicit source path does not exist, the transfer should
-/// still report exit code 24 (not 23 or 3) because the path vanished.
+/// When a single explicit source path does not exist, the transfer exits 23
+/// (RERR_PARTIAL) via the failed link_stat (not 24 or 3). Verified against
+/// upstream rsync 3.4.3.
 #[cfg(unix)]
 #[test]
-fn single_vanished_source_yields_exit_24() {
+fn single_missing_source_yields_exit_23() {
     use tempfile::tempdir;
 
     let tmp = tempdir().expect("tempdir");
@@ -161,10 +166,10 @@ fn single_vanished_source_yields_exit_24() {
 
     let stderr_text = String::from_utf8_lossy(&stderr);
 
-    // upstream: a stat-ENOENT during file-list build yields "file has vanished"
-    // and exit 24; some build paths surface it as 23 (partial).
+    // upstream: flist.c send_file_list() - a missing source operand fails its
+    // link_stat and exits 23 (RERR_PARTIAL). Verified against upstream 3.4.3.
     assert!(
-        code == 24 || code == 23,
-        "expected exit code 24 (vanished) or 23 (partial), got {code}: {stderr_text}"
+        code == 23,
+        "expected exit code 23 (partial/link_stat), got {code}: {stderr_text}"
     );
 }

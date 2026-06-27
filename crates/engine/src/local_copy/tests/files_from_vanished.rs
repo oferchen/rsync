@@ -4,18 +4,19 @@
 // transfer, the engine produces the correct exit codes and behavior
 // for --ignore-missing-args and --delete-missing-args.
 
-// FFV-5: Vanished source file produces exit code 24 and warning.
+// FFV-5: Missing source operand produces exit code 23 (link_stat failed).
 //
-// When a source file disappears between plan creation and execution,
-// upstream rsync emits "file has vanished" and exits with
-// RERR_VANISHED (24). The remaining files in the transfer must still
-// be copied.
+// When a source file is absent at scan time, upstream rsync emits
+// `link_stat "%s" failed: ...`, sets IOERR_GENERAL and exits RERR_PARTIAL
+// (23) - NOT RERR_VANISHED (24), which is reserved for a file that vanishes
+// mid-transfer after it was already in the file list. The remaining source
+// files must still be copied. Verified against upstream rsync 3.4.3.
 //
 // Each source file is passed as an individual operand so the plan
 // records them explicitly. Directory operands defer enumeration to
 // execute() time, which would silently skip removed files.
 #[test]
-fn vanished_source_exits_with_vanished_code_and_copies_remaining() {
+fn missing_source_exits_with_partial_code_and_copies_remaining() {
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
@@ -43,17 +44,18 @@ fn vanished_source_exits_with_vanished_code_and_copies_remaining() {
 
     let result = plan.execute();
 
-    // Must fail with exit code 24 (RERR_VANISHED).
-    let err = result.expect_err("vanished file should produce an error");
+    // upstream: a missing source operand exits 23 (RERR_PARTIAL) via the
+    // failed link_stat, and the remaining sources still transfer.
+    let err = result.expect_err("missing source should produce an error");
     assert_eq!(
         err.exit_code(),
-        24,
-        "expected RERR_VANISHED (24), got {}",
+        23,
+        "expected RERR_PARTIAL (23), got {}",
         err.exit_code()
     );
     assert!(
-        err.is_vanished_error(),
-        "error should be classified as vanished"
+        err.is_link_stat_failed(),
+        "error should be classified as a failed link_stat"
     );
 
     // Surviving files must still be copied.
@@ -71,10 +73,10 @@ fn vanished_source_exits_with_vanished_code_and_copies_remaining() {
     );
 }
 
-// FFV-5 (single file variant): When the sole source file vanishes,
-// the error should still be RERR_VANISHED (24).
+// FFV-5 (single file variant): When the sole source file is missing at scan
+// time, upstream exits 23 (RERR_PARTIAL) via the failed link_stat, not 24.
 #[test]
-fn sole_vanished_source_exits_with_vanished_code() {
+fn sole_missing_source_exits_with_partial_code() {
     let temp = tempdir().expect("tempdir");
     let source_root = temp.path().join("source");
     fs::create_dir_all(&source_root).expect("create source");
@@ -93,8 +95,9 @@ fn sole_vanished_source_exits_with_vanished_code() {
 
     fs::remove_file(&source_file).expect("delete source");
 
-    let err = plan.execute().expect_err("vanished source should fail");
-    assert_eq!(err.exit_code(), 24, "sole vanished file: expected 24");
+    let err = plan.execute().expect_err("missing source should fail");
+    assert_eq!(err.exit_code(), 23, "sole missing source: expected 23");
+    assert!(err.is_link_stat_failed());
 }
 
 // FFV-6: --ignore-missing-args suppresses warning and exits 0.

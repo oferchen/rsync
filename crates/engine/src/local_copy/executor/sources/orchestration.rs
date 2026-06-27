@@ -158,6 +158,16 @@ pub(crate) fn copy_sources(
                         if first_io_error.is_none() {
                             first_io_error = Some(error);
                         }
+                    } else if error.is_link_stat_failed() {
+                        // upstream: flist.c send_file_list() - a missing source
+                        // argument prints `link_stat "%s" failed: %s` to stderr,
+                        // sets IOERR_GENERAL (exit 23), and the transfer
+                        // continues with the remaining sources.
+                        eprintln!("{error}");
+                        context.record_io_error();
+                        if first_io_error.is_none() {
+                            first_io_error = Some(error);
+                        }
                     } else if error.is_io_error() {
                         // upstream: rsync continues transferring remaining sources
                         // when individual entries fail with I/O errors, regardless
@@ -260,8 +270,13 @@ fn process_single_source(
         SourceMetadataResult::Found(m) => m,
         SourceMetadataResult::Handled => return Ok(()),
         SourceMetadataResult::NotFoundError(error) => {
-            return Err(LocalCopyError::io(
-                "access source",
+            // upstream: flist.c send_file_list() - a source argument (operand or
+            // --files-from entry) whose link_stat fails is reported as
+            // `link_stat "%s" failed`, sets IOERR_GENERAL (exit 23,
+            // RERR_PARTIAL), and the transfer continues with the remaining
+            // sources. Distinct from a file that vanishes mid-transfer (exit
+            // 24, "file has vanished").
+            return Err(LocalCopyError::link_stat_failed(
                 source_path.to_path_buf(),
                 error,
             ));
