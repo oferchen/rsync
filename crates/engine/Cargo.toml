@@ -101,12 +101,6 @@ lazy-metadata = []
 # Trade-offs: Minimal overhead on single-core systems
 parallel = []
 
-# RSS-A.7.h: FileEntryAccessor-generic delete helpers. Forwards to
-# `protocol/flat-flist` so the engine's delete pipeline can accept both
-# `FileEntry` and `FlatFileEntry` through the `FileEntryAccessor` trait.
-# Off by default; the legacy concrete path is byte-identical.
-flat-flist = ["protocol/flat-flist"]
-
 # DEL-2.c: parallel DeleteEmitter consumer behind a Cargo flag. Gates the
 # `delete::parallel_consumer` module that wraps `CohortBatcher` (DEL-2.b) and
 # the DEL-2.a `ReorderBuffer` with a Condvar-driven consumer thread that

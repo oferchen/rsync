@@ -111,11 +111,6 @@ pub mod debug_filter;
 mod decision;
 /// Generic filter evaluation for `FileEntryAccessor` implementors.
 ///
-/// Extends `FilterSet` and `FilterChain` with methods that accept any
-/// file-list entry type, eliminating manual `name()` / `is_dir()` extraction
-/// at every call site. Feature-gated behind `flat-flist`.
-#[cfg(feature = "flat-flist")]
-mod entry_filter;
 mod error;
 /// Merge-file reader and parser for filter rules.
 pub mod merge;

@@ -16,7 +16,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [features]
 # Compression algorithm features (match compress crate features)
-default = ["zlib-ng", "flat-flist"]
+default = ["zlib-ng"]
 lz4 = ["compress/lz4", "dep:lz4_flex"]
 zstd = ["compress/zstd", "dep:zstd"]
 # zlib-ng backend (C library with SIMD: SSE2, AVX2, NEON) - matches upstream rsync performance
@@ -31,14 +31,6 @@ async = ["bytes", "tokio", "tokio-util"]
 serde = ["dep:serde"]
 # Structured tracing for I/O operations
 tracing = ["dep:tracing"]
-# Flat file-list backing store with arena-allocated paths and compact headers.
-# Reduces RSS ~10x at 1M files vs legacy Vec<FileEntry>. Wire-compatible -
-# no wire-format changes. Builder (RSS-A.6) and all consumers (RSS-A.7)
-# migrated via FileEntryAccessor trait.
-flat-flist = []
-# Parallel FlatFileList builder using rayon per-thread-then-merge pattern
-# (RSS-A.11.c). Requires flat-flist.
-flat-flist-rayon = ["flat-flist", "dep:rayon"]
 
 [dependencies]
 bytes = { version = "1.9", optional = true }
@@ -57,12 +49,10 @@ zstd = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["io-util"], optional = true }
 tokio-util = { workspace = true, features = ["codec"], optional = true }
 tracing = { workspace = true, optional = true }
-rayon = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }
 proptest = { workspace = true }
-rayon = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt"] }
@@ -90,8 +80,3 @@ harness = false
 [[bench]]
 name = "flist_rss_regression"
 harness = false
-
-[[bench]]
-name = "flat_flist_rss"
-harness = false
-required-features = ["flat-flist"]

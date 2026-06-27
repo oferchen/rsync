@@ -21,7 +21,7 @@ deletion protection (protect/risk).
 
 ## Dependencies (upstream)
 
-`logging`, `globset`, optionally `protocol` (for flat-flist support)
+`logging`, `globset`
 
 ## Dependents (downstream)
 

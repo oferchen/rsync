@@ -70,11 +70,6 @@ lz4 = ["engine/lz4", "compress/lz4", "protocol/lz4"]
 zlib-ng = ["engine/zlib-ng", "compress/zlib-ng", "protocol/zlib-ng"]
 
 # ============================================================================
-# Arena-backed File List Migration
-# ============================================================================
-flat-flist = ["protocol/flat-flist"]
-
-# ============================================================================
 # Metadata Features
 # ============================================================================
 acl = ["metadata/acl", "engine/acl"]

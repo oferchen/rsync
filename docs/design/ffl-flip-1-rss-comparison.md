@@ -134,3 +134,23 @@ FFL-7..10 read-side cutover in one PR - matches
 - RSS-A.9.c comparison methodology: `docs/design/flat-flist-rss-comparison.md`
 - RSS-A.9.a fixture spec: `docs/design/flat-flist-rss-bench-fixture.md`
 - Dual-write overhead audit: `docs/audits/ffl-1-dualfilelist-overhead.md`
+
+## 10. MEASURED RESULT (2026-06-27) — projection INVALIDATED
+
+The 1M in-memory bench (`crates/protocol/benches/flat_flist_rss.rs::bench_rss_profile`,
+shared-path distribution, VmRSS via /proc/self/status) was finally executed:
+
+| Representation | Inline | Measured RSS @ 1M |
+|---|---|---|
+| Legacy `Vec<FileEntry>` | 80 B | 76.3 MiB |
+| Flat `FlatFileList` | 48 B header | 95.8 MiB |
+| Ratio (flat/legacy) | 1.67x smaller inline | **1.255x LARGER total** |
+
+The Section 2-3 projection assumed a 24-byte `FileEntryHeader`. The header is now
+**48 bytes**, and the path-arena interning of 1M unique basenames plus the extras
+arena make flat-only **25% larger** than legacy, not 63% smaller. The -63% RSS
+premise is empirically false at the current implementation.
+
+**Decision: REVERT (FFL-4 Option C).** Flat-only does not beat legacy, so keeping
+the dual path (or flipping to flat-only) cannot deliver the RSS win. Remove the
+flat path; keep the legacy `Vec<FileEntry>`.

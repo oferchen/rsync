@@ -35,8 +35,6 @@ mod dir_tree;
 mod dual;
 mod entry;
 mod flags;
-#[cfg(feature = "flat-flist")]
-mod flat;
 mod hardlink;
 mod incremental;
 mod intern;
@@ -57,16 +55,6 @@ pub use dir_tree::{DirTreeError, DirectoryTree};
 pub use dual::DualFileList;
 pub use entry::{FileEntry, FileType};
 pub use flags::{FileFlags, XMIT_HLINK_FIRST, XMIT_HLINKED, XMIT_SAME_RDEV_PRE28, XMIT_TOP_DIR};
-#[cfg(feature = "flat-flist")]
-pub use flat::{
-    EXTRA_ACL, EXTRA_ATIME, EXTRA_ATIME_NSEC, EXTRA_CHECKSUM, EXTRA_CRTIME, EXTRA_DEF_ACL,
-    EXTRA_GROUP_NAME, EXTRA_HARDLINK, EXTRA_LINK_TARGET, EXTRA_RDEV, EXTRA_USER_NAME, EXTRA_XATTR,
-    ExtrasArena, ExtrasError, ExtrasRef, FileEntryHeader, FlatExtras, FlatFileEntry, FlatFileList,
-    PRESENT_CONTENT_DIR, PRESENT_GID, PRESENT_LENGTH64, PRESENT_MTIME_NSEC, PRESENT_UID, PathArena,
-    PathHandle, Segment,
-};
-#[cfg(feature = "flat-flist-rayon")]
-pub use flat::{ParallelFlatFileListBuilder, extend_from};
 pub use hardlink::{
     DevIno, HardlinkEntry, HardlinkLookup, HardlinkTable, trace_found_flist_match,
     trace_hashtable_for_dev, trace_leader_is, trace_looking_for_leader, trace_virtual_first,
@@ -84,8 +72,6 @@ pub use sort::{
     CleanResult, apply_permutation_in_place, compare_file_entries, flist_clean,
     sort_and_clean_file_list, sort_file_list,
 };
-#[cfg(feature = "flat-flist")]
-pub use sort::{compare_entries_generic, sort_entries_generic};
 pub use state::{FileListCompressionState, FileListStats};
 pub use trace::{
     ProcessRole, output_flist, output_flist_entry, trace_clean_result, trace_file_count_progress,

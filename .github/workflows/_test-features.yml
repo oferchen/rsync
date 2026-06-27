@@ -153,9 +153,6 @@ jobs:
           - name: zlib-rs
             args: "-p compress -p protocol --no-default-features --features zlib-rs"
             apt: ""
-          - name: flat-flist
-            args: "-p protocol -p transfer -p filters --features flat-flist"
-            apt: ""
 
     env:
       CARGO_TERM_COLOR: always
