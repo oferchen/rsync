@@ -134,11 +134,6 @@ sd-notify = ["daemon/sd-notify"]
 # Daemon Features
 # ============================================================================
 
-# Native TLS termination for the daemon via rustls (alternative to stunnel sidecar).
-# Requirements: None (pure Rust, no system TLS dependency)
-# Benefits: Single-binary TLS termination, no stunnel/HAProxy sidecar needed
-# Trade-offs: Adds ~400KB to binary, requires PEM cert/key management
-daemon-tls = ["daemon/daemon-tls"]
 
 # TLS client support for rsync:// connections via --ssl (alternative to stunnel wrapper).
 # Uses rustls with webpki root certificates for server verification.

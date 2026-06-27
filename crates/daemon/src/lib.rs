@@ -186,10 +186,6 @@ mod error;
 /// Daemon configuration file parsing for `rsyncd.conf`.
 pub mod rsyncd_config;
 mod systemd;
-/// Native TLS termination via rustls for the daemon listener.
-#[cfg(feature = "daemon-tls")]
-#[cfg_attr(docsrs, doc(cfg(feature = "daemon-tls")))]
-pub mod tls;
 
 /// Test-only accessors for the LSM-SECCOMP worker filter.
 ///

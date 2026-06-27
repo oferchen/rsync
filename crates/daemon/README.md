@@ -30,7 +30,6 @@ configuration via `oc-rsyncd.conf`.
 
 ## Features
 
-- `daemon-tls` - native TLS termination via rustls (alternative to stunnel)
 - `sd-notify` - systemd readiness notification (Linux)
 - `async-daemon` - tokio accept loop with sync worker dispatch
 - `concurrent-sessions` - DashMap-backed session tracking

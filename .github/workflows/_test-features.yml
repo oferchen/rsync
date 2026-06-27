@@ -48,8 +48,6 @@ jobs:
             args: "-p logging -p protocol -p flist --features serde"
           - name: concurrent-sessions
             args: "-p daemon --features concurrent-sessions"
-          - name: daemon-tls
-            args: "-p daemon --features daemon-tls"
           - name: iconv
             args: "-p protocol -p transfer -p engine -p core -p cli -p daemon --features iconv"
 

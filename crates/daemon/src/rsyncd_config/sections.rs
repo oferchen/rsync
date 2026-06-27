@@ -37,24 +37,6 @@ pub struct GlobalConfig {
     ///
     /// upstream: daemon-parm.h - `daemon chroot` STRING, P_GLOBAL.
     pub(crate) daemon_chroot: Option<PathBuf>,
-    /// Path to the PEM-encoded TLS certificate chain file.
-    ///
-    /// upstream: stunnel-era `ssl cert` global directive. Must be set together
-    /// with `ssl_key`.
-    #[cfg(feature = "daemon-tls")]
-    pub(crate) ssl_cert: Option<PathBuf>,
-    /// Path to the PEM-encoded TLS private key file.
-    ///
-    /// upstream: stunnel-era `ssl key` global directive. Must be set together
-    /// with `ssl_cert`.
-    #[cfg(feature = "daemon-tls")]
-    pub(crate) ssl_key: Option<PathBuf>,
-    /// Path to the PEM-encoded CA certificate file for client verification.
-    ///
-    /// upstream: stunnel-era `ssl ca` global directive. Optional - when absent,
-    /// client certificates are not requested.
-    #[cfg(feature = "daemon-tls")]
-    pub(crate) ssl_ca: Option<PathBuf>,
 }
 
 impl GlobalConfig {
@@ -146,55 +128,6 @@ impl GlobalConfig {
     /// upstream: daemon-parm.h - `daemon chroot` STRING, P_GLOBAL.
     pub fn daemon_chroot(&self) -> Option<&Path> {
         self.daemon_chroot.as_deref()
-    }
-
-    /// Returns the path to the PEM-encoded TLS certificate chain file, if configured.
-    ///
-    /// upstream: stunnel-era `ssl cert` global directive. When set, `ssl_key`
-    /// must also be present.
-    #[cfg(feature = "daemon-tls")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "daemon-tls")))]
-    pub fn ssl_cert(&self) -> Option<&Path> {
-        self.ssl_cert.as_deref()
-    }
-
-    /// Returns the path to the PEM-encoded TLS private key file, if configured.
-    ///
-    /// upstream: stunnel-era `ssl key` global directive. When set, `ssl_cert`
-    /// must also be present.
-    #[cfg(feature = "daemon-tls")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "daemon-tls")))]
-    pub fn ssl_key(&self) -> Option<&Path> {
-        self.ssl_key.as_deref()
-    }
-
-    /// Returns the path to the PEM-encoded CA certificate file for client
-    /// verification, if configured.
-    ///
-    /// upstream: stunnel-era `ssl ca` global directive. Optional - only needed
-    /// for mutual TLS.
-    #[cfg(feature = "daemon-tls")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "daemon-tls")))]
-    pub fn ssl_ca(&self) -> Option<&Path> {
-        self.ssl_ca.as_deref()
-    }
-
-    /// Builds a `TlsConfig` from the parsed global
-    /// TLS directives, if both `ssl cert` and `ssl key` are configured.
-    ///
-    /// Returns `None` when TLS is not configured (neither directive is set).
-    /// The caller receives a ready-to-use `TlsConfig` that can be passed
-    /// directly to `build_tls_acceptor`.
-    #[cfg(feature = "daemon-tls")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "daemon-tls")))]
-    pub fn tls_config(&self) -> Option<crate::tls::TlsConfig> {
-        let cert_path = self.ssl_cert.clone()?;
-        let key_path = self.ssl_key.clone()?;
-        Some(crate::tls::TlsConfig {
-            cert_path,
-            key_path,
-            client_ca_path: self.ssl_ca.clone(),
-        })
     }
 }
 
