@@ -459,6 +459,17 @@ fn make_writer<'a>(
             )));
         }
     }
+    // dontcache path: preferred over vmsplice when both are enabled. Lands
+    // chunks via pwritev2(RWF_DONTCACHE) so bulk transfers do not evict the
+    // page-cache working set, falling back per-chunk to a buffered write when
+    // the kernel/filesystem rejects the flag. Sparse and append require Seek,
+    // so they keep using Buffered.
+    #[cfg(all(target_os = "linux", feature = "dontcache"))]
+    {
+        if !use_sparse && append_offset == 0 {
+            return Ok(Writer::Dontcache(fast_io::DontcacheFileWriter::new(file)?));
+        }
+    }
     // vmsplice path: only when neither io_uring nor IOCP claimed the file. It
     // gates per-chunk inside VmspliceFileWriter, falling back to plain write
     // for chunks below 64 KiB or with unaligned pointers - the design doc's

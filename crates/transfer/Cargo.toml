@@ -105,6 +105,13 @@ iocp = ["fast_io/iocp"]
 # docs/design/splice-vmsplice-zero-copy.md.
 vmsplice = ["fast_io/vmsplice"]
 
+# dontcache uncached bulk disk writer (Linux 6.14+). Selected by the
+# disk-commit thread when io_uring/IOCP are not in play and the write is
+# non-sparse/non-append; lands chunks via pwritev2(RWF_DONTCACHE) so large
+# transfers do not evict the page-cache working set, with a per-file buffered
+# fallback. Default off until eviction/throughput benchmarks justify promotion.
+dontcache = ["fast_io/dontcache"]
+
 
 # Per-thread slab pool for buffer returns - forwards to the engine crate.
 # Forwarded so `--all-features` enables it transitively on engine *and* exposes
