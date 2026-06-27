@@ -475,8 +475,7 @@ chasing down `README.md` and individual closure docs.
   compression is not detected (audit #4674). Pick one layer.
 - **Daemon TLS.** Native TLS is not built into the daemon. Deploy
   `oc-rsync --daemon` behind `stunnel`, `ssh -L`, or a reverse proxy
-  that terminates TLS. See `docs/deployment/daemon-tls.md` and
-  `SECURITY.md`.
+  that terminates TLS. See `SECURITY.md`.
 - **`.rsync-filter` per-directory inheritance.** Matches upstream for
   the common cases tested in the interop suite; exhaustive parity
   against upstream's filter-tree corner cases (deeply nested merges,

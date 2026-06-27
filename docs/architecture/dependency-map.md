@@ -184,11 +184,6 @@ bin[iocp] -> transfer/iocp -> fast_io/iocp
 bin[iocp] -> fast_io/iocp
 ```
 
-### daemon-tls (native TLS termination)
-```
-bin[daemon-tls] -> daemon/daemon-tls (dep:rustls, dep:rustls-pemfile)
-```
-
 ### client-tls (TLS for rsync:// connections)
 ```
 bin[client-tls] -> core/client-tls (dep:rustls, dep:rustls-pemfile, dep:webpki-roots)
