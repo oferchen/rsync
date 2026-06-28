@@ -67,6 +67,7 @@ struct GlobalParseState {
     daemon_uid: Option<(String, ConfigDirectiveOrigin)>,
     daemon_gid: Option<(String, ConfigDirectiveOrigin)>,
     listen_backlog: Option<(u32, ConfigDirectiveOrigin)>,
+    acceptor_threads: Option<(NonZeroU32, ConfigDirectiveOrigin)>,
     socket_options: Option<(String, ConfigDirectiveOrigin)>,
     proxy_protocol: Option<(bool, ConfigDirectiveOrigin)>,
     rsync_port: Option<(u16, ConfigDirectiveOrigin)>,
@@ -109,6 +110,7 @@ impl GlobalParseState {
             daemon_uid: None,
             daemon_gid: None,
             listen_backlog: None,
+            acceptor_threads: None,
             socket_options: None,
             proxy_protocol: None,
             rsync_port: None,
@@ -182,6 +184,7 @@ impl GlobalParseState {
             daemon_uid: self.daemon_uid,
             daemon_gid: self.daemon_gid,
             listen_backlog: self.listen_backlog,
+            acceptor_threads: self.acceptor_threads,
             socket_options: self.socket_options,
             proxy_protocol: self.proxy_protocol,
             rsync_port: self.rsync_port,
@@ -722,6 +725,45 @@ fn apply_global_directive(
                 }
             } else {
                 state.listen_backlog = Some((parsed, origin));
+            }
+        }
+        // oc-rsync extension - number of SO_REUSEPORT listener replicas to bind
+        // per address family (default 1). Has no upstream equivalent; changes
+        // only kernel socket behaviour, never the wire.
+        "acceptor threads" => {
+            let parsed: u32 = value.parse().map_err(|_| {
+                config_parse_error(
+                    path,
+                    line_number,
+                    format!("invalid integer value '{value}' for 'acceptor threads'"),
+                )
+            })?;
+            let threads = NonZeroU32::new(parsed).ok_or_else(|| {
+                config_parse_error(
+                    path,
+                    line_number,
+                    "'acceptor threads' must be at least 1".to_string(),
+                )
+            })?;
+
+            let origin = ConfigDirectiveOrigin {
+                path: canonical.to_path_buf(),
+                line: line_number,
+            };
+
+            if let Some((existing, existing_origin)) = &state.acceptor_threads {
+                if *existing != threads {
+                    let existing_line = existing_origin.line;
+                    return Err(config_parse_error(
+                        path,
+                        line_number,
+                        format!(
+                            "duplicate 'acceptor threads' directive in global section (previously defined on line {existing_line})"
+                        ),
+                    ));
+                }
+            } else {
+                state.acceptor_threads = Some((threads, origin));
             }
         }
         // upstream: daemon-parm.txt - port INTEGER, P_GLOBAL, default 0.
