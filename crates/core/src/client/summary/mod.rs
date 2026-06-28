@@ -90,6 +90,17 @@ impl ClientSummary {
         }
     }
 
+    /// Replaces the recorded events with the supplied list.
+    ///
+    /// Used by the daemon-pull `--list-only` path, where the receiver returns
+    /// captured flist entries (not engine `LocalCopyRecord`s) that the caller
+    /// converts into metadata-bearing events for rendering.
+    #[must_use]
+    pub(crate) fn with_events(mut self, events: Vec<ClientEvent>) -> Self {
+        self.events = events;
+        self
+    }
+
     /// Returns the list of recorded transfer actions.
     #[must_use]
     pub fn events(&self) -> &[ClientEvent] {

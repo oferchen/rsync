@@ -106,7 +106,19 @@ impl ReceiverContext {
 
         let deadline = crate::shared::TransferDeadline::from_system_time(self.config.stop_at);
 
+        // upstream: generator.c:1249 - list-only renders the flist without
+        // requesting any file data. Capture the entries and skip the per-file
+        // NDX loop entirely so no per-file request crosses the wire.
+        let list_only_entries = if self.config.flags.list_only {
+            self.collect_list_only_entries()
+        } else {
+            Vec::new()
+        };
+
         for (file_idx, file_entry) in self.file_list.iter().enumerate() {
+            if self.config.flags.list_only {
+                break;
+            }
             if let Some(ref dl) = deadline {
                 if dl.is_reached() {
                     break;
@@ -471,6 +483,7 @@ impl ReceiverContext {
             literal_data: 0,
             matched_data: 0,
             redo_count: 0,
+            list_only_entries,
         })
     }
 }

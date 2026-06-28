@@ -46,8 +46,9 @@ impl ReceiverContext {
         writer: &mut W,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
     ) -> io::Result<Vec<(PathBuf, String)>> {
-        // upstream: receiver.c:693 - dry_run skips all filesystem modifications
-        if self.config.flags.dry_run {
+        // upstream: receiver.c:693 - dry_run skips all filesystem modifications;
+        // list-only suppresses the receiver entirely (generator.c:1249).
+        if self.config.flags.skip_dest_writes() {
             return Ok(Vec::new());
         }
 
@@ -306,7 +307,7 @@ impl ReceiverContext {
     /// - `generator.c:1472-1475` - retry `mkdir` after `make_path()` when
     ///   `relative_paths` and initial `mkdir` returns `ENOENT`
     pub(in crate::receiver) fn ensure_relative_parents(&self, dest_dir: &Path) {
-        if !self.config.flags.relative || self.config.flags.dry_run {
+        if !self.config.flags.relative || self.config.flags.skip_dest_writes() {
             return;
         }
 
@@ -559,7 +560,7 @@ impl ReceiverContext {
     pub(in crate::receiver) fn touch_up_dirs(&self, dest_dir: &Path) {
         // upstream: generator.c:2398 - need_retouch_dir_times =
         // preserve_mtimes && !omit_dir_times
-        if !self.config.flags.times || self.config.flags.dry_run {
+        if !self.config.flags.times || self.config.flags.skip_dest_writes() {
             return;
         }
 

@@ -38,7 +38,7 @@ impl ReceiverContext {
         sandbox: Option<&fast_io::DirSandbox>,
         writer: &mut W,
     ) -> std::io::Result<()> {
-        if !self.config.flags.links || self.config.flags.dry_run {
+        if !self.config.flags.links || self.config.flags.skip_dest_writes() {
             return Ok(());
         }
 
@@ -274,7 +274,7 @@ impl ReceiverContext {
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
         writer: &mut W,
     ) -> std::io::Result<()> {
-        if !self.config.flags.hard_links || self.config.flags.dry_run {
+        if !self.config.flags.hard_links || self.config.flags.skip_dest_writes() {
             return Ok(());
         }
 

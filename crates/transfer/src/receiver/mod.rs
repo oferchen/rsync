@@ -65,7 +65,7 @@ use crate::transfer_state::TransferPipeline;
 
 pub use self::basis::{BasisFileConfig, BasisFileResult, find_basis_file_with_config};
 pub use self::file_list::IncrementalFileListReceiver;
-pub use self::stats::{SenderStats, TransferStats};
+pub use self::stats::{ListOnlyEntry, SenderStats, TransferStats};
 pub use self::wire::{
     SenderAttrs, SumHead, apply_xattr_abbreviation_values, write_signature_blocks,
     write_xattr_request,
