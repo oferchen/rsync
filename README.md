@@ -394,6 +394,18 @@ Operator-facing tuning guidance is in
 [`docs/operator-migration-guide-vNEXT.md`](./docs/operator-migration-guide-vNEXT.md)
 under *Receiver spill tunability*.
 
+#### Checksum parallelism: `OC_RSYNC_PARALLEL_CHECKSUM`
+
+Basis-file signature generation (the receiver's per-block rolling and strong
+checksums) is sequential by default. On a large basis with a compute-bound
+strong checksum, setting `OC_RSYNC_PARALLEL_CHECKSUM=1` spreads block hashing
+across the rayon thread pool (sized to `available_parallelism()`, overridable
+with `--rayon-threads`). The work is processed in bounded windows so resident
+memory stays capped regardless of basis size, and the emitted signature is
+byte-identical to the sequential path. Files below the parallel threshold stay
+sequential to avoid scheduling overhead. The variable is read once at startup;
+it is opt-in pending throughput/CPU bench validation before any default flip.
+
 #### Choosing features for your build
 
 ```bash

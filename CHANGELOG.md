@@ -7,6 +7,48 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 oc-rsync is wire-compatible with upstream rsync 3.4.3 (protocol 32). Release
 tags are mirrored on GitHub at <https://github.com/oferchen/rsync/releases>.
 
+## [Unreleased]
+
+### Features
+
+- Opt-in parallel basis-signature generation via `OC_RSYNC_PARALLEL_CHECKSUM=1`: bounded-memory windowed block hashing across the rayon pool, byte-identical to the sequential path (#6176, #6177)
+- Daemon listener replication with `acceptor threads = N` for `SO_REUSEPORT` scale-out (#6166)
+- Render `--list-only` atime/crtime columns under `-U` / `--crtimes` (#6162)
+- Implied `--list-only` recursive listing for a single daemon source with no destination (#6160)
+- Preserve creation time on Windows via `SetFileTime` (#6157)
+- Client-side TCP Fast Open at connect, gated on `--tcp-fastopen` (#6147, #6151)
+- Uncached bulk file writes via `RWF_DONTCACHE` wired into the receiver (#6148, #6149)
+- Sequential-read hint for the buffered basis map (#6150)
+- Mirror `--bwlimit` as an `SO_MAX_PACING_RATE` kernel pacing hint (#6128)
+- `TCP_QUICKACK` on client connect and daemon accept, re-armed across handshake reads (#6124, #6126)
+- `TCP_NOTSENT_LOWAT` on the client TLS connection (#6142)
+- `-vv` `delta-transmission enabled/disabled` status message (#6110)
+
+### Performance
+
+- Bounded-memory parallel signature generator (`generate_file_signature_windowed`) (#6176)
+- `RWF_DONTCACHE` basis-window reads on supported kernels (#6154, #6164)
+- Gate whole-file `FICLONE` and partial-range `FICLONERANGE` on same-filesystem (`st_dev`) before issuing the ioctl, skipping cross-filesystem reflink attempts (#6152, #6153, #6163)
+- `FILE_FLAG_SEQUENTIAL_SCAN` on Windows basis reads (#6156)
+- `FICLONE` fast path for plain `-a` (no `-X`) local copies (#6101)
+
+### Bug Fixes
+
+- Resolve ACL named-entry id/name instead of dropping unmapped entries to root (#6127)
+- Report sender-side `--stats` fields on daemon / SSH push (#6145)
+- Correct daemon-sender `INC_RECURSE` goodbye sequencing (#6158)
+- Exit 23 / `link_stat` for a missing source while continuing the transfer (#6132)
+- Match upstream `-hh` base 1024 and drop the exact-value parentheses (#6107)
+- Render listing / `--out-format` dates in local time (#6130)
+- Tolerate `ENXIO` / `EROFS` / `EOPNOTSUPP` when setting times on special files (#6113)
+- Reapply metadata and xattrs on a `--link-dest` data match (#6114)
+- Correct `COPY_FILE_NO_BUFFERING` flag value on Windows (#6121)
+- Normalize path separators to `/` and stop re-listing file names under `--progress` (#6136, #6138)
+- Comma-group file counts, byte rates, and speedup in the summary, matching upstream (#6119, #6123, #6129, #6135)
+- Emit upstream `<name> exists` for `--ignore-existing` skips (#6133)
+- Use a loopback TCP socketpair for `RSYNC_CONNECT_PROG` (#6159)
+- Match upstream errno suffix `(N)` in I/O error messages (#6146)
+
 ## [0.6.3] - 2026-06-05
 
 ### Security

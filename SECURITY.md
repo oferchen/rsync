@@ -211,6 +211,16 @@ These cover operationally relevant trade-offs in the current code base and how t
 
 io_uring buffer-group IDs (`bgid`) live in a 16-bit namespace. The provided-buffer ring helpers in `fast_io` cap allocation at this bound, and exhaustion returns an error rather than wrapping. Long-running daemons that churn ring groups should monitor for the bounded error and recycle.
 
+### Parallel checksum memory bound
+
+The opt-in parallel basis-signature path (`OC_RSYNC_PARALLEL_CHECKSUM=1`)
+processes block hashing in fixed-size windows rather than buffering the entire
+basis file in memory. Resident memory stays bounded regardless of basis size,
+so a very large basis cannot be used to exhaust receiver RAM through the
+parallel path, and the emitted signature is byte-identical to the default
+sequential generator. The feature is off by default; enabling it changes only
+throughput and memory-access patterns, not wire output or trust boundaries.
+
 ### SSH double compression
 
 If the SSH transport itself compresses the stream (`Compression yes` in `ssh_config` or a cipher with built-in compression), running `oc-rsync -z` will compress payloads twice. The amplification surface is small in practice but adds CPU and can mask compressor-specific bugs. Disable one layer; the canonical choice is to leave compression to rsync (`-z` / `--compress`) and disable it in SSH.
