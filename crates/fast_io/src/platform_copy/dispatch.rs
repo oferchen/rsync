@@ -18,11 +18,25 @@ use super::types::{CopyMethod, CopyResult};
 pub(super) fn platform_copy_impl(src: &Path, dst: &Path, size_hint: u64) -> io::Result<CopyResult> {
     use std::fs::File;
 
+    // REFLINK-2: skip the FICLONE attempt when the source and the
+    // destination's parent directory are known to be on different filesystem
+    // devices - the ioctl would only fail with EXDEV after we created (and
+    // would then have to remove) the destination. An unknown result (`None`,
+    // e.g. a stat error) still attempts the clone, which records the outcome.
+    let cross_device = dst
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .is_some_and(|parent| {
+            matches!(crate::same_fs::paths_same_device(src, parent), Some(false))
+        });
+
     // upstream: does not use FICLONE; this is an oc-rsync optimization.
-    match try_ficlone_impl(src, dst) {
-        Ok(()) => return Ok(CopyResult::new(0, CopyMethod::Ficlone)),
-        Err(_) => {
-            let _ = std::fs::remove_file(dst);
+    if !cross_device {
+        match try_ficlone_impl(src, dst) {
+            Ok(()) => return Ok(CopyResult::new(0, CopyMethod::Ficlone)),
+            Err(_) => {
+                let _ = std::fs::remove_file(dst);
+            }
         }
     }
 
