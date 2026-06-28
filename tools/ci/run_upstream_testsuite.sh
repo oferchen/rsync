@@ -208,6 +208,15 @@ run_one_test() {
             return 4
         fi
         echo "XFAIL   $testbase"
+        # Surface WHY the known failure still fails so a CI-only divergence
+        # (a test that passes on a dev host but fails on the runner) is
+        # diagnosable from the job log without re-running locally. Dump the
+        # tail of the captured test log, which holds the failing checkdiff.
+        if [[ -s "$log" ]]; then
+            echo "        --- last 40 lines of ${testbase}.log (XFAIL detail) ---"
+            tail -n 40 "$log" | sed 's/^/        /'
+            echo "        --- end ${testbase}.log ---"
+        fi
         return 3
     fi
 
