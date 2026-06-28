@@ -1402,4 +1402,40 @@ mod metrics_tests {
         buf.record_drain_batch(0);
         assert_eq!(buf.metrics().drain_batch_size_histogram.total_samples(), 0);
     }
+
+    #[test]
+    fn in_flight_window_tracks_furthest_ahead_arrival() {
+        let mut buf = ReorderBuffer::new(8);
+        assert_eq!(buf.in_flight_window(), 0, "empty buffer has no window");
+
+        // A single in-order arrival spans one slot.
+        buf.insert(0, "a").unwrap();
+        assert_eq!(buf.in_flight_window(), 1);
+
+        // A far-ahead out-of-order arrival stretches the window to its
+        // offset+1 even though only two slots are occupied - distinguishing
+        // the window from buffered_count (the spill-pressure signal ROB-2
+        // gates on).
+        buf.insert(3, "d").unwrap();
+        assert_eq!(buf.in_flight_window(), 4);
+        assert_eq!(buf.buffered_count(), 2);
+
+        // Filling an interior gap does not shrink the window.
+        buf.insert(1, "b").unwrap();
+        assert_eq!(buf.in_flight_window(), 4);
+    }
+
+    #[test]
+    fn in_flight_window_shrinks_as_items_are_yielded() {
+        let mut buf = ReorderBuffer::new(8);
+        buf.insert(0, "a").unwrap();
+        buf.insert(1, "b").unwrap();
+        assert_eq!(buf.in_flight_window(), 2);
+
+        // Draining the contiguous prefix advances the delivery cursor and
+        // collapses the window back toward zero.
+        let drained: Vec<_> = buf.drain_ready().collect();
+        assert_eq!(drained, vec!["a", "b"]);
+        assert_eq!(buf.in_flight_window(), 0);
+    }
 }
