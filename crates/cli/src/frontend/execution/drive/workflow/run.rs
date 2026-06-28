@@ -958,6 +958,10 @@ where
             dry_run,
             // `--info=copy` opts into the oc-rsync `Copy method` stats line.
             show_copy_method,
+            // `-U`/`--atimes` and `--crtimes` add the ATIME/CRTIME columns to
+            // `--list-only` output (upstream: generator.c list_file_entry()).
+            show_atimes: preserve_atimes,
+            show_crtimes: preserve_crtimes,
             out_format_template: out_format_template.as_ref(),
             name_level,
             name_overridden,

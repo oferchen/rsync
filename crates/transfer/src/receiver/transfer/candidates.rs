@@ -48,6 +48,14 @@ impl ReceiverContext {
                     size: entry.size(),
                     mtime: entry.mtime(),
                     mtime_nsec: entry.mtime_nsec(),
+                    // upstream: generator.c list_file_entry() renders F_ATIME(f)
+                    // and F_CRTIME(f) when the atimes/crtimes ndx columns are
+                    // active. The flist FileEntry carries no crtime nanosecond
+                    // component, so crtime_nsec is always 0.
+                    atime: entry.atime(),
+                    atime_nsec: entry.atime_nsec(),
+                    crtime: entry.crtime(),
+                    crtime_nsec: 0,
                     symlink_target: if is_symlink {
                         entry.link_target().cloned()
                     } else {

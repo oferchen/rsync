@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use engine::local_copy::{LocalCopyFileKind, LocalCopyMetadata};
+use transfer::ListOnlyEntry;
 
 /// Kind of entry described by [`ClientEntryMetadata`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -50,11 +51,28 @@ pub struct ClientEntryMetadata {
     kind: ClientEntryKind,
     length: u64,
     modified: Option<SystemTime>,
+    accessed: Option<SystemTime>,
+    created: Option<SystemTime>,
     mode: Option<u32>,
     uid: Option<u32>,
     gid: Option<u32>,
     nlink: Option<u64>,
     symlink_target: Option<PathBuf>,
+}
+
+/// Converts a whole-second + nanosecond timestamp into a [`SystemTime`].
+///
+/// Returns `None` for the zero timestamp (`secs == 0 && nsec == 0`), matching
+/// the `modified` field's handling so an unset epoch value renders blank rather
+/// than as `1970/01/01`. Negative seconds (pre-epoch) also yield `None`.
+fn secs_nsec_to_system_time(secs: i64, nsec: u32) -> Option<SystemTime> {
+    if secs > 0 || nsec > 0 {
+        u64::try_from(secs)
+            .ok()
+            .map(|secs| SystemTime::UNIX_EPOCH + Duration::new(secs, nsec))
+    } else {
+        None
+    }
 }
 
 impl ClientEntryMetadata {
@@ -81,6 +99,11 @@ impl ClientEntryMetadata {
             kind,
             length,
             modified,
+            // LocalCopyMetadata does not capture atime/crtime; local-copy
+            // list-only never renders the ATIME/CRTIME columns (those flow
+            // from the receiver flist path via `from_list_only_entry`).
+            accessed: None,
+            created: None,
             mode,
             uid,
             gid,
@@ -98,22 +121,17 @@ impl ClientEntryMetadata {
     ///
     /// # Upstream Reference
     ///
-    /// - `generator.c:1249` - `list_file_entry()` renders mode/size/mtime/name
+    /// - `generator.c:1249` - `list_file_entry()` renders mode/size/mtime/name,
+    ///   plus the `F_ATIME(f)` / `F_CRTIME(f)` columns when the atimes/crtimes
+    ///   ndx is active
     #[must_use]
-    pub fn from_list_only_entry(
-        mode: u32,
-        size: u64,
-        mtime: i64,
-        mtime_nsec: u32,
-        symlink_target: Option<PathBuf>,
-        is_symlink: bool,
-    ) -> Self {
-        let kind = if is_symlink {
+    pub fn from_list_only_entry(entry: &ListOnlyEntry) -> Self {
+        let kind = if entry.is_symlink {
             ClientEntryKind::Symlink
         } else {
             // upstream: list_file_entry() derives the type char from the mode
             // bits; mirror the POSIX S_IFMT classification here.
-            match mode & 0o170000 {
+            match entry.mode & 0o170000 {
                 0o040000 => ClientEntryKind::Directory,
                 0o120000 => ClientEntryKind::Symlink,
                 0o010000 => ClientEntryKind::Fifo,
@@ -124,22 +142,17 @@ impl ClientEntryMetadata {
                 _ => ClientEntryKind::Other,
             }
         };
-        let modified = if mtime > 0 || mtime_nsec > 0 {
-            u64::try_from(mtime)
-                .ok()
-                .map(|secs| SystemTime::UNIX_EPOCH + Duration::new(secs, mtime_nsec))
-        } else {
-            None
-        };
         Self {
             kind,
-            length: size,
-            modified,
-            mode: Some(mode),
+            length: entry.size,
+            modified: secs_nsec_to_system_time(entry.mtime, entry.mtime_nsec),
+            accessed: secs_nsec_to_system_time(entry.atime, entry.atime_nsec),
+            created: secs_nsec_to_system_time(entry.crtime, entry.crtime_nsec),
+            mode: Some(entry.mode),
             uid: None,
             gid: None,
             nlink: None,
-            symlink_target,
+            symlink_target: entry.symlink_target.clone(),
         }
     }
 
@@ -150,6 +163,8 @@ impl ClientEntryMetadata {
             kind,
             length: 0,
             modified: None,
+            accessed: None,
+            created: None,
             mode: None,
             uid: None,
             gid: None,
@@ -184,6 +199,24 @@ impl ClientEntryMetadata {
     /// Returns the recorded modification timestamp, when available.
     pub const fn modified(&self) -> Option<SystemTime> {
         self.modified
+    }
+
+    /// Returns the recorded access timestamp, when available.
+    ///
+    /// Populated for `--list-only` flist entries so the renderer can emit the
+    /// ATIME column under `-U`/`--atimes` (upstream: `generator.c`
+    /// `list_file_entry()` `F_ATIME(f)`).
+    pub const fn accessed(&self) -> Option<SystemTime> {
+        self.accessed
+    }
+
+    /// Returns the recorded creation (birth) timestamp, when available.
+    ///
+    /// Populated for `--list-only` flist entries so the renderer can emit the
+    /// CRTIME column under `--crtimes` (upstream: `generator.c`
+    /// `list_file_entry()` `F_CRTIME(f)`).
+    pub const fn created(&self) -> Option<SystemTime> {
+        self.created
     }
 
     /// Returns the Unix permission bits when available.

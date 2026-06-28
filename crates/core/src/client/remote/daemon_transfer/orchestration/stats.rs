@@ -28,14 +28,7 @@ pub(super) fn convert_server_stats_to_summary(
             .list_only_entries
             .iter()
             .map(|entry| {
-                let metadata = ClientEntryMetadata::from_list_only_entry(
-                    entry.mode,
-                    entry.size,
-                    entry.mtime,
-                    entry.mtime_nsec,
-                    entry.symlink_target.clone(),
-                    entry.is_symlink,
-                );
+                let metadata = ClientEntryMetadata::from_list_only_entry(entry);
                 ClientEvent::from_list_only_entry(entry.path.clone(), metadata)
             })
             .collect(),

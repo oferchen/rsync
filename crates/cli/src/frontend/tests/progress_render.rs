@@ -56,6 +56,8 @@ fn emit_transfer_summary_list_only_emits_listing_and_stats() {
         false,
         false, // emit_flist_banner (list_only path)
         false, // show_copy_method
+        false, // show_atimes
+        false, // show_crtimes
         &mut rendered,
     )
     .expect("render summary");
@@ -88,6 +90,8 @@ fn emit_transfer_summary_with_progress_and_verbose_listing() {
         false,
         true,  // emit_flist_banner
         false, // show_copy_method
+        false, // show_atimes
+        false, // show_crtimes
         &mut rendered,
     )
     .expect("render summary");
@@ -128,6 +132,8 @@ fn emit_transfer_summary_out_format_adds_separator_before_stats() {
         false,
         false, // emit_flist_banner (out_format path: starts_with assertion)
         false, // show_copy_method
+        false, // show_atimes
+        false, // show_crtimes
         &mut rendered,
     )
     .expect("render summary");
