@@ -48,6 +48,8 @@ pub(crate) fn emit_transfer_summary(
     suppress_updated_only_totals: bool,
     emit_flist_banner: bool,
     show_copy_method: bool,
+    show_atimes: bool,
+    show_crtimes: bool,
     writer: &mut dyn Write,
 ) -> io::Result<()> {
     let events = summary.events();
@@ -56,7 +58,13 @@ pub(crate) fn emit_transfer_summary(
     if list_only {
         let mut wrote_listing = false;
         if !events.is_empty() {
-            emit_list_only(events, writer, human_readable_mode)?;
+            emit_list_only(
+                events,
+                writer,
+                human_readable_mode,
+                show_atimes,
+                show_crtimes,
+            )?;
             wrote_listing = true;
         }
 
@@ -215,10 +223,31 @@ pub(crate) fn emit_transfer_summary(
     Ok(())
 }
 
+/// Renders an atime/crtime column field, right-justified in a width of
+/// `1 + len(timestamp)` so a populated value carries one leading space and a
+/// blank value fills the whole column with spaces.
+///
+/// upstream: generator.c list_file_entry() - the atime/crtime fields use the
+/// `%*s` positive width `1 + strlen(mtime_str)` (20 for a 19-char timestamp).
+fn format_list_time_column(time: Option<std::time::SystemTime>, blank: bool) -> String {
+    // The width tracks `format_list_timestamp`'s output length (19 chars
+    // "YYYY/MM/DD HH:MM:SS") plus one leading space, so it stays faithful even
+    // if the timestamp format changes.
+    let width = 1 + format_list_timestamp(Some(std::time::SystemTime::UNIX_EPOCH)).len();
+    let value = if blank || time.is_none() {
+        String::new()
+    } else {
+        format_list_timestamp(time)
+    };
+    format!("{value:>width$}")
+}
+
 pub(crate) fn emit_list_only<W: Write + ?Sized>(
     events: &[ClientEvent],
     stdout: &mut W,
     human_readable: HumanReadableMode,
+    show_atimes: bool,
+    show_crtimes: bool,
 ) -> io::Result<()> {
     for event in events {
         if !list_only_event(event.kind()) {
@@ -229,6 +258,19 @@ pub(crate) fn emit_list_only<W: Write + ?Sized>(
             let permissions = format_list_permissions(metadata);
             let size = format_list_size(metadata.length(), human_readable);
             let timestamp = format_list_timestamp(metadata.modified());
+            // upstream: generator.c list_file_entry() - the atime column is
+            // blanked for directories (`!S_ISDIR(f->mode)`), while the crtime
+            // column is shown for all entry types.
+            let atime_field = if show_atimes {
+                format_list_time_column(metadata.accessed(), metadata.kind().is_directory())
+            } else {
+                String::new()
+            };
+            let crtime_field = if show_crtimes {
+                format_list_time_column(metadata.created(), false)
+            } else {
+                String::new()
+            };
             let mut rendered = event.relative_path().to_string_lossy().into_owned();
             if metadata.kind().is_symlink()
                 && let Some(target) = metadata.symlink_target()
@@ -237,7 +279,10 @@ pub(crate) fn emit_list_only<W: Write + ?Sized>(
                 rendered.push_str(&target.to_string_lossy());
             }
 
-            writeln!(stdout, "{permissions} {size} {timestamp} {rendered}")?;
+            writeln!(
+                stdout,
+                "{permissions} {size} {timestamp}{atime_field}{crtime_field} {rendered}"
+            )?;
         } else {
             let rendered = event.relative_path().to_string_lossy().into_owned();
             writeln!(

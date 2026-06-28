@@ -28,6 +28,29 @@ pub struct ListOnlyEntry {
     pub mtime: i64,
     /// Sub-second component of the modification time, in nanoseconds.
     pub mtime_nsec: u32,
+    /// Access time in whole seconds since the Unix epoch.
+    ///
+    /// Rendered as the ATIME column when `-U`/`--atimes` is active.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c` `list_file_entry()` - `F_ATIME(f)` field
+    pub atime: i64,
+    /// Sub-second component of the access time, in nanoseconds.
+    pub atime_nsec: u32,
+    /// Creation (birth) time in whole seconds since the Unix epoch.
+    ///
+    /// Rendered as the CRTIME column when `--crtimes` is active.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c` `list_file_entry()` - `F_CRTIME(f)` field
+    pub crtime: i64,
+    /// Sub-second component of the creation time, in nanoseconds.
+    ///
+    /// Always `0`: the flist `FileEntry` does not carry a crtime nanosecond
+    /// component (only whole-second crtime is transmitted).
+    pub crtime_nsec: u32,
     /// Symlink target when the entry is a symbolic link.
     pub symlink_target: Option<PathBuf>,
     /// Whether the entry is a symbolic link.

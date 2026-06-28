@@ -1359,3 +1359,93 @@ fn list_only_mixed_file_types_in_single_listing() {
         "symlink should start with 'l': {link_line:?}"
     );
 }
+
+/// Verifies the ATIME/CRTIME columns rendered by `emit_list_only` when
+/// `-U`/`--atimes` and `--crtimes` are active.
+///
+/// upstream: generator.c list_file_entry() - the atime field is blanked for
+/// directories (`!S_ISDIR(f->mode)`) while the crtime field is shown for all
+/// entry types. Both fields are right-justified in a width of `1 +
+/// strlen(timestamp)` (20 for the 19-char "YYYY/MM/DD HH:MM:SS" form), so a
+/// value carries one leading space and a blank fills the whole column.
+#[test]
+fn list_only_renders_atime_and_crtime_columns() {
+    use core::client::{ClientEntryMetadata, ClientEvent, ListOnlyEntryFields};
+    use std::path::PathBuf;
+
+    use crate::frontend::progress::emit_list_only;
+
+    // A non-zero atime/crtime so the columns carry real timestamps.
+    const ATIME: i64 = 1_700_000_100;
+    const CRTIME: i64 = 1_700_000_200;
+
+    let file_meta = ClientEntryMetadata::from_list_only_entry(&ListOnlyEntryFields {
+        mode: 0o100_644,
+        size: 8,
+        mtime: 1_700_000_000,
+        mtime_nsec: 0,
+        atime: ATIME,
+        atime_nsec: 0,
+        crtime: CRTIME,
+        crtime_nsec: 0,
+        symlink_target: None,
+        is_symlink: false,
+    });
+    let file_event = ClientEvent::from_list_only_entry(PathBuf::from("file.txt"), file_meta);
+
+    let dir_meta = ClientEntryMetadata::from_list_only_entry(&ListOnlyEntryFields {
+        mode: 0o040_755,
+        size: 0,
+        mtime: 1_700_000_000,
+        mtime_nsec: 0,
+        atime: ATIME,
+        atime_nsec: 0,
+        crtime: CRTIME,
+        crtime_nsec: 0,
+        symlink_target: None,
+        is_symlink: false,
+    });
+    let dir_event = ClientEvent::from_list_only_entry(PathBuf::from("sub"), dir_meta);
+
+    let events = vec![file_event, dir_event];
+
+    let mut out = Vec::new();
+    emit_list_only(&events, &mut out, HumanReadableMode::Disabled, true, true).expect("render");
+    let rendered = String::from_utf8(out).expect("utf8");
+
+    let file_line = rendered
+        .lines()
+        .find(|l| l.contains("file.txt"))
+        .expect("file line present");
+    let dir_line = rendered
+        .lines()
+        .find(|l| l.ends_with("sub"))
+        .expect("dir line present");
+
+    let atime_str = format_list_timestamp(Some(
+        SystemTime::UNIX_EPOCH + Duration::from_secs(u64::try_from(ATIME).expect("positive")),
+    ));
+    let crtime_str = format_list_timestamp(Some(
+        SystemTime::UNIX_EPOCH + Duration::from_secs(u64::try_from(CRTIME).expect("positive")),
+    ));
+
+    // The file line shows both populated atime and crtime columns.
+    assert!(
+        file_line.contains(&atime_str),
+        "file line should carry the atime column: {file_line:?}"
+    );
+    assert!(
+        file_line.contains(&crtime_str),
+        "file line should carry the crtime column: {file_line:?}"
+    );
+
+    // The directory line blanks the atime column but still shows crtime.
+    assert!(
+        !dir_line.contains(&atime_str),
+        "directory atime column must be blank: {dir_line:?}"
+    );
+    assert!(
+        dir_line.contains(&crtime_str),
+        "directory crtime column must be shown: {dir_line:?}"
+    );
+}

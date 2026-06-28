@@ -20,4 +20,6 @@ pub(crate) use self::format::{
 pub(crate) use self::live::{LiveProgress, ProgressOutputConfig};
 pub(crate) use self::mode::ProgressMode;
 pub use self::mode::{NameOutputLevel, ProgressSetting, StderrMode}; // Changed to pub for test_utils
+#[cfg(test)]
+pub(crate) use self::render::emit_list_only;
 pub(crate) use self::render::emit_transfer_summary;
