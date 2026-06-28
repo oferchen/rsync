@@ -409,6 +409,53 @@ mod linux_tests {
         // OnceLock caches the verdict: a repeat call returns the same value.
         assert_eq!(dontcache_supported(), expected);
     }
+
+    /// Oracle: writes `chunks` through a plain buffered `std::io::Write` and
+    /// returns the resulting on-disk bytes - the "standard writer" baseline
+    /// the DONTCACHE writer must reproduce byte-for-byte.
+    fn standard_write(path: &std::path::Path, chunks: &[&[u8]]) -> Vec<u8> {
+        use std::io::Write;
+        let mut f = create(path);
+        for chunk in chunks {
+            f.write_all(chunk).expect("standard write_all");
+        }
+        f.flush().expect("standard flush");
+        drop(f);
+        read_back(path)
+    }
+
+    #[test]
+    fn dontcache_writer_byte_identical_to_standard_writer() {
+        // The DONTCACHE writer must produce exactly the same file contents as a
+        // plain buffered writer for the same input, whether the kernel honours
+        // RWF_DONTCACHE (Linux 6.14+) or falls back. The chunk set mixes a
+        // >1 MiB bulk chunk (exercises the positioned pwritev2 path) with a
+        // tiny chunk and a sub-page counter-pattern chunk.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let bulk = vec![0xABu8; 1024 * 1024 + 4096];
+        let tiny = vec![0x22u8; 64];
+        let pattern: Vec<u8> = (0..512u32 * 1024).map(|i| (i & 0xFF) as u8).collect();
+        let chunks: [&[u8]; 3] = [&bulk, &tiny, &pattern];
+
+        let expected = standard_write(&tmp.path().join("standard.bin"), &chunks);
+
+        let dc_path = tmp.path().join("dontcache.bin");
+        let mut writer = DontcacheFileWriter::new(create(&dc_path)).expect("writer");
+        for chunk in &chunks {
+            let n = writer.write_chunk(chunk).expect("write_chunk");
+            assert_eq!(n, chunk.len(), "write_chunk must report the full length");
+        }
+        // On Linux <6.14 or filesystems that reject the flag the writer falls
+        // back to buffered writes internally, so `dontcache_active()` may be
+        // false here; the bytes must be identical either way. Captured only for
+        // the diagnostic message.
+        let active = writer.dontcache_active();
+        drop(writer);
+
+        let actual = read_back(&dc_path);
+        assert_eq!(actual.len(), expected.len(), "length parity");
+        assert_eq!(actual, expected, "byte parity (dontcache_active={active})");
+    }
 }
 
 #[cfg(all(test, not(all(target_os = "linux", feature = "dontcache"))))]
