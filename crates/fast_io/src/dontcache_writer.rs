@@ -169,6 +169,67 @@ fn dontcache_write(fd: RawFd, chunk: &[u8]) -> io::Result<usize> {
     Ok(ret as usize)
 }
 
+/// Fills `dst` from `offset` using positioned `preadv2(RWF_DONTCACHE)` reads so
+/// the bytes are dropped from the page cache after the read.
+///
+/// Returns `Ok(true)` once `dst` is fully filled, `Ok(false)` if the very first
+/// read is rejected because the kernel or filesystem does not support
+/// `RWF_DONTCACHE` (the caller then falls back to a buffered read), and `Err`
+/// for a genuine I/O error or an unexpected short read after some bytes landed.
+/// Uses positioned reads, so the file's seek offset is left untouched.
+///
+/// Mirrors [`dontcache_write`] on the read side.
+#[cfg(all(target_os = "linux", feature = "dontcache"))]
+#[allow(unsafe_code)]
+pub fn dontcache_read_exact(file: &File, offset: u64, dst: &mut [u8]) -> io::Result<bool> {
+    use std::os::fd::AsRawFd;
+
+    let fd = file.as_raw_fd();
+    let mut filled = 0usize;
+    while filled < dst.len() {
+        let iov = libc::iovec {
+            iov_base: dst[filled..].as_mut_ptr() as *mut libc::c_void,
+            iov_len: dst.len() - filled,
+        };
+        // SAFETY: `fd` is a valid open descriptor owned by `file` for the call.
+        // `iov` points to `dst[filled..]`, a unique mutable slice of exactly
+        // `iov_len` bytes that preadv2 only writes into; iovcnt 1 matches the
+        // single iovec. The positioned offset leaves the file cursor untouched.
+        let ret = unsafe {
+            libc::preadv2(
+                fd,
+                &iov as *const libc::iovec,
+                1,
+                (offset + filled as u64) as libc::off_t,
+                libc::RWF_DONTCACHE,
+            )
+        };
+        if ret < 0 {
+            let e = io::Error::last_os_error();
+            // A first-read rejection means the flag is unsupported on this
+            // mount; signal a clean fallback. Once bytes have landed (a flag
+            // accepted then a later genuine error), surface the error.
+            if filled == 0
+                && matches!(
+                    e.raw_os_error(),
+                    Some(libc::EINVAL) | Some(libc::ENOTSUP) | Some(libc::ENOSYS)
+                )
+            {
+                return Ok(false);
+            }
+            return Err(e);
+        }
+        if ret == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "preadv2 returned 0 before the basis window was filled",
+            ));
+        }
+        filled += ret as usize;
+    }
+    Ok(true)
+}
+
 /// Returns whether the running kernel advertises `RWF_DONTCACHE` (Linux 6.14+).
 ///
 /// The kernel release is read once via `uname(2)` and the verdict is cached for
@@ -218,6 +279,13 @@ fn kernel_release() -> Option<String> {
 #[must_use]
 pub fn dontcache_supported() -> bool {
     false
+}
+
+/// Stub for non-Linux or when the `dontcache` feature is off: always reports
+/// that the caller should fall back to a buffered read.
+#[cfg(not(all(target_os = "linux", feature = "dontcache")))]
+pub fn dontcache_read_exact(_file: &File, _offset: u64, _dst: &mut [u8]) -> io::Result<bool> {
+    Ok(false)
 }
 
 /// Stub for non-Linux platforms or when the `dontcache` feature is disabled.
