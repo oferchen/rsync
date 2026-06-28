@@ -171,6 +171,7 @@ pub mod fuzzy {
 #[doc(hidden)]
 pub mod signature {
     //! Re-exports from the [`signature`] crate for backward compatibility.
+    pub use signature::parallel::{PARALLEL_THRESHOLD_BYTES, generate_file_signature_windowed};
     pub use signature::{
         FileSignature, SignatureAlgorithm, SignatureBlock, SignatureError, generate_file_signature,
     };

@@ -7,10 +7,14 @@
 use std::fs;
 use std::num::NonZeroU8;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
-use engine::delta::{SignatureLayoutParams, calculate_signature_layout};
+use engine::delta::{SignatureLayout, SignatureLayoutParams, calculate_signature_layout};
 use engine::fuzzy::{FuzzyMatcher, trace_fuzzy_basis_selected};
-use engine::signature::{FileSignature, generate_file_signature};
+use engine::signature::{
+    FileSignature, PARALLEL_THRESHOLD_BYTES, SignatureAlgorithm, SignatureError,
+    generate_file_signature, generate_file_signature_windowed,
+};
 use protocol::ProtocolVersion;
 
 use crate::config::ReferenceDirectory;
@@ -220,12 +224,56 @@ fn generate_basis_signature(
         Err(_) => return BasisFileResult::EMPTY,
     };
 
-    match generate_file_signature(basis_file, layout, config.checksum_algorithm) {
+    let parallel = parallel_checksum_enabled();
+    match compute_basis_signature(
+        basis_file,
+        basis_size,
+        layout,
+        config.checksum_algorithm,
+        parallel,
+    ) {
         Ok(sig) => BasisFileResult {
             signature: Some(sig),
             basis_path: Some(basis_path),
         },
         Err(_) => BasisFileResult::EMPTY,
+    }
+}
+
+/// Process-wide opt-in gate for parallel basis-signature generation.
+///
+/// Read once from `OC_RSYNC_PARALLEL_CHECKSUM` (truthy = `1` / `true` / `yes`,
+/// case-insensitive) via a [`OnceLock`], matching the other `OC_RSYNC_*`
+/// runtime probes. Default off: signature generation stays sequential and the
+/// wire output is byte-identical either way. This is the interim opt-in until a
+/// `--checksum-threads` flag plus adaptive backpressure land; gating keeps the
+/// parallel path out of default builds until it is bench-validated.
+fn parallel_checksum_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("OC_RSYNC_PARALLEL_CHECKSUM")
+            .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false)
+    })
+}
+
+/// Computes the basis signature, choosing the bounded-memory parallel windowed
+/// generator when `parallel` is set and the basis is large enough to amortise
+/// the rayon scheduling overhead (>= [`PARALLEL_THRESHOLD_BYTES`]). Output is
+/// byte-identical to the sequential path regardless of which branch is taken -
+/// per-block sums depend only on the block bytes, and both paths emit blocks in
+/// strict index order.
+fn compute_basis_signature<R: std::io::Read>(
+    reader: R,
+    basis_size: u64,
+    layout: SignatureLayout,
+    algorithm: SignatureAlgorithm,
+    parallel: bool,
+) -> Result<FileSignature, SignatureError> {
+    if parallel && basis_size >= PARALLEL_THRESHOLD_BYTES {
+        generate_file_signature_windowed(reader, layout, algorithm)
+    } else {
+        generate_file_signature(reader, layout, algorithm)
     }
 }
 
@@ -277,6 +325,44 @@ pub fn find_basis_file_with_config(config: &BasisFileConfig<'_>) -> BasisFileRes
 mod tests {
     use super::*;
     use std::io::Read;
+
+    #[test]
+    fn parallel_basis_signature_matches_sequential() {
+        // The opt-in parallel path's signature goes over the wire to the
+        // sender; any divergence from the sequential path would corrupt delta
+        // reconstruction. Size exceeds PARALLEL_THRESHOLD_BYTES so the parallel
+        // branch is actually exercised.
+        use std::io::Cursor;
+        let size = (PARALLEL_THRESHOLD_BYTES + 4096) as usize;
+        let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+        let layout = calculate_signature_layout(SignatureLayoutParams::new(
+            size as u64,
+            None,
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        ))
+        .expect("layout");
+        let sequential = compute_basis_signature(
+            Cursor::new(data.clone()),
+            size as u64,
+            layout,
+            SignatureAlgorithm::Md4,
+            false,
+        )
+        .expect("sequential signature");
+        let parallel = compute_basis_signature(
+            Cursor::new(data),
+            size as u64,
+            layout,
+            SignatureAlgorithm::Md4,
+            true,
+        )
+        .expect("parallel signature");
+        assert_eq!(
+            sequential, parallel,
+            "parallel basis signature diverged from sequential",
+        );
+    }
 
     /// Issue #715 regression (`symlink-dirlink-basis.test` test 1): when
     /// the destination directory is a symlink to a real directory, the
