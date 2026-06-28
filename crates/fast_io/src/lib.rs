@@ -104,6 +104,10 @@ pub mod kernel_version;
 /// the SEC-1.l audit) and do not depend on this module.
 #[cfg(unix)]
 pub mod linux_capabilities;
+/// Receiver-side socket-read seam: the `NetReader` abstraction and the
+/// `for_socket` factory that selects an accelerated socket reader by policy
+/// with a behaviour-preserving standard-read fallback.
+pub mod net_reader;
 /// Receiver-side basis open with `O_NOFOLLOW` on the basename, matching
 /// upstream rsync's `do_open_at()` dirname/basename split.
 pub mod nofollow_open;
