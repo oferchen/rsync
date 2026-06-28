@@ -51,7 +51,7 @@ io-uring = { version = "0.7", optional = true }
 landlock = { version = "0.4", optional = true }
 
 [features]
-default = ["io_uring", "iocp", "sqpoll-mlock-basis"]
+default = ["io_uring", "iocp", "sqpoll-mlock-basis", "iouring-send-zc"]
 
 # SQM-3: pin (`mlock(2)`) the mmap'd basis-file window before each SQPOLL
 # submission so the kthread cannot fault on a page the userspace task has

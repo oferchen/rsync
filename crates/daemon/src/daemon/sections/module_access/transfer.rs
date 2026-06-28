@@ -451,6 +451,80 @@ struct TransferStreams {
     supports_tcp_shutdown: bool,
 }
 
+/// Socket buffer size for the io_uring read/write paths, matching the
+/// `BufReader` capacity the transfer engine wraps the reader in.
+#[cfg(unix)]
+const SOCKET_IO_BUF: usize = 64 * 1024;
+
+/// Resolves the io_uring socket-I/O policy from the `OC_RSYNC_IOURING_NET`
+/// kill-switch, cached once via [`OnceLock`].
+///
+/// Default-on: returns [`IoUringPolicy::Auto`] (engage io_uring `RECV`/`SEND`
+/// when the kernel supports it, fall back otherwise). Setting the env var to
+/// `0`/`false`/`no`/`off` forces [`IoUringPolicy::Disabled`] - the standard
+/// blocking-socket path - so a regression can be bisected without a rebuild.
+/// upstream rsync has no io_uring; `Disabled` is byte-for-byte the legacy path.
+#[cfg(unix)]
+fn iouring_net_policy() -> fast_io::IoUringPolicy {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    let enabled = *ENABLED.get_or_init(|| {
+        std::env::var("OC_RSYNC_IOURING_NET")
+            .map(|v| {
+                !matches!(
+                    v.trim().to_ascii_lowercase().as_str(),
+                    "0" | "false" | "no" | "off"
+                )
+            })
+            .unwrap_or(true)
+    });
+    if enabled {
+        fast_io::IoUringPolicy::Auto
+    } else {
+        fast_io::IoUringPolicy::Disabled
+    }
+}
+
+/// Wraps an io_uring socket reader together with the owning `TcpStream`.
+///
+/// The io_uring reader borrows the raw fd (it stores only the integer and does
+/// not close it on drop), so the `TcpStream` must outlive it. Field order is
+/// significant: `inner` (the borrowing reader) drops before `_stream` (which
+/// closes the fd), so the fd is never used after close.
+#[cfg(unix)]
+struct OwnedSocketReader {
+    inner: Box<dyn fast_io::net_reader::NetReader>,
+    _stream: std::net::TcpStream,
+}
+
+#[cfg(unix)]
+impl Read for OwnedSocketReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.inner.read(buf)
+    }
+}
+
+/// Wraps an io_uring socket writer together with the owning `TcpStream`.
+///
+/// Mirrors [`OwnedSocketReader`]: the writer borrows the fd, so `_stream` must
+/// outlive `inner`, and the declared field order guarantees `inner` drops first.
+#[cfg(unix)]
+struct OwnedSocketWriter {
+    inner: fast_io::IoUringOrStdSocketWriter,
+    _stream: std::net::TcpStream,
+}
+
+#[cfg(unix)]
+impl Write for OwnedSocketWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 /// Sets up the transfer streams for the transfer engine.
 ///
 /// For TCP/TLS connections, configures TCP_NODELAY and clones the stream to get
@@ -504,9 +578,43 @@ fn setup_transfer_streams(
         }
     };
 
+    // On Linux with io_uring available, route the socket through the
+    // io_uring RECV/SEND factories (default-on, kill-switchable via
+    // OC_RSYNC_IOURING_NET). The factories borrow the fd, so each owning
+    // TcpStream is kept alive inside the adapter. On any factory error, or
+    // when the policy resolves to Disabled, the boxed std TcpStream is the
+    // byte-for-byte legacy path. On non-Unix targets the plain path is used.
+    #[cfg(unix)]
+    let (read, write): (Box<dyn Read + Send>, Box<dyn Write + Send>) = {
+        use std::os::fd::AsRawFd;
+        let policy = iouring_net_policy();
+        let read_fd = read_stream.as_raw_fd();
+        let write_fd = write_stream.as_raw_fd();
+        let read: Box<dyn Read + Send> =
+            match fast_io::net_reader::for_socket(read_fd, SOCKET_IO_BUF, policy) {
+                Ok(inner) => Box::new(OwnedSocketReader {
+                    inner,
+                    _stream: read_stream,
+                }),
+                Err(_) => Box::new(read_stream),
+            };
+        let write: Box<dyn Write + Send> =
+            match fast_io::socket_writer_from_fd(write_fd, SOCKET_IO_BUF, policy) {
+                Ok(inner) => Box::new(OwnedSocketWriter {
+                    inner,
+                    _stream: write_stream,
+                }),
+                Err(_) => Box::new(write_stream),
+            };
+        (read, write)
+    };
+    #[cfg(not(unix))]
+    let (read, write): (Box<dyn Read + Send>, Box<dyn Write + Send>) =
+        (Box::new(read_stream), Box::new(write_stream));
+
     Ok(Some(TransferStreams {
-        read: Box::new(read_stream),
-        write: Box::new(write_stream),
+        read,
+        write,
         supports_tcp_shutdown: true,
     }))
 }
@@ -563,11 +671,12 @@ fn execute_transfer(
         log_message(log, &message);
     }
 
-    // Use standard buffered I/O for daemon socket communication.
-    // io_uring SEND blocks in submit_and_wait() during bidirectional protocol
-    // exchanges (NDX_DONE, stats, goodbye) when TCP backpressure occurs,
-    // causing 10-second hangs. Standard I/O handles partial writes correctly,
-    // matching upstream rsync's socket I/O model.
+    // Socket read/write are routed through the io_uring RECV/SEND factories
+    // when available (see setup_transfer_streams); the SEND path is POLLOUT-
+    // gated with a linked timeout so a back-pressured send during the
+    // bidirectional teardown (NDX_DONE, stats, goodbye) surfaces WouldBlock and
+    // re-arms instead of hanging. OC_RSYNC_IOURING_NET=0 forces the standard
+    // blocking-socket path, which handles partial writes exactly like upstream.
     let result = run_server_with_handshake(
         config,
         handshake,
