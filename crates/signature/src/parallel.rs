@@ -228,6 +228,124 @@ pub fn generate_file_signature_auto<R: Read>(
     }
 }
 
+/// Bounded-memory parallel signature generation.
+///
+/// Reads the basis in windows of at most `window_blocks` blocks and computes
+/// each window's rolling and strong checksums across the rayon thread pool
+/// (sized to `available_parallelism()` unless `--rayon-threads` overrode the
+/// global pool). Unlike [`generate_file_signature_parallel`], which buffers the
+/// entire file in memory, this caps resident block buffers at roughly
+/// [`WINDOW_BYTE_BUDGET`] bytes regardless of basis size - so large files scale
+/// across cores without the peak-RSS cost of a full-file slurp.
+///
+/// Output is byte-identical to the sequential
+/// [`generate_file_signature`](crate::generate_file_signature): per-block
+/// rolling and strong sums depend only on that block's bytes (independent of
+/// how blocks are batched across threads), block indices are strictly
+/// increasing - preserved by `par_chunks().enumerate()` within each window and
+/// by appending windows in order - the final block is recorded at the layout
+/// remainder length, and trailing data past the expected block count is an
+/// error.
+///
+/// # Errors
+///
+/// Same as [`generate_file_signature_parallel`]: digest-length mismatch,
+/// too-many-blocks, trailing data, or any reader I/O error.
+#[cfg_attr(feature = "tracing", instrument(skip(reader), fields(algorithm = ?algorithm, block_count = layout.block_count()), name = "generate_signature_windowed"))]
+pub fn generate_file_signature_windowed<R: Read>(
+    mut reader: R,
+    layout: SignatureLayout,
+    algorithm: SignatureAlgorithm,
+) -> Result<FileSignature, SignatureError> {
+    let strong_len = usize::from(layout.strong_sum_length().get());
+    if strong_len > algorithm.digest_len() {
+        return Err(SignatureError::DigestLengthMismatch {
+            algorithm,
+            requested: NonZeroUsize::new(strong_len)
+                .expect("strong digest length requested by layout must be non-zero"),
+        });
+    }
+
+    let block_len = layout.block_length().get() as usize;
+    let expected_blocks = layout.block_count();
+    let expected_blocks_usize = usize::try_from(expected_blocks)
+        .map_err(|_| SignatureError::TooManyBlocks(expected_blocks))?;
+    if expected_blocks_usize == 0 {
+        return Ok(FileSignature::new(layout, Vec::new(), 0));
+    }
+
+    // One window must hold enough blocks to feed every worker a full SIMD
+    // batch, but a large block size must not blow up resident memory - so the
+    // window is also capped by a fixed byte budget.
+    let threads = rayon::current_num_threads().max(1);
+    let budget_blocks = (WINDOW_BYTE_BUDGET / block_len.max(1)).max(BATCH_SIZE);
+    let window_blocks = threads
+        .saturating_mul(BATCH_SIZE)
+        .max(BATCH_SIZE)
+        .min(budget_blocks)
+        .min(expected_blocks_usize);
+
+    let mut blocks: Vec<SignatureBlock> = Vec::with_capacity(expected_blocks_usize);
+    let mut total_bytes: u64 = 0;
+    let mut window_data: Vec<Vec<u8>> = Vec::with_capacity(window_blocks);
+    let mut base_index = 0usize;
+
+    while base_index < expected_blocks_usize {
+        let window_end = (base_index + window_blocks).min(expected_blocks_usize);
+        window_data.clear();
+        for block_index in base_index..window_end {
+            let is_last = block_index + 1 == expected_blocks_usize;
+            let target_len = if is_last && layout.remainder() != 0 {
+                layout.remainder() as usize
+            } else {
+                block_len
+            };
+            let mut buf = vec![0u8; target_len];
+            reader.read_exact(&mut buf)?;
+            total_bytes = total_bytes.saturating_add(target_len as u64);
+            window_data.push(buf);
+        }
+
+        // Compute the window's blocks across cores; chunk position assigns the
+        // global block index, so collect() yields them in order (mirrors
+        // generate_file_signature_parallel).
+        let window_out: Vec<SignatureBlock> = window_data
+            .par_chunks(BATCH_SIZE)
+            .enumerate()
+            .flat_map_iter(|(chunk_idx, chunk)| {
+                let chunk_base = base_index + chunk_idx * BATCH_SIZE;
+                let rolling: Vec<RollingDigest> =
+                    chunk.iter().map(|d| RollingDigest::from_bytes(d)).collect();
+                let slices: Vec<&[u8]> = chunk.iter().map(|v| v.as_slice()).collect();
+                let strong = algorithm.compute_truncated_batch(&slices, strong_len);
+                rolling
+                    .into_iter()
+                    .zip(strong)
+                    .enumerate()
+                    .map(move |(i, (r, s))| SignatureBlock::new((chunk_base + i) as u64, r, s))
+            })
+            .collect();
+        blocks.extend(window_out);
+        base_index = window_end;
+    }
+
+    let mut extra = [0u8; 1];
+    if reader.read(&mut extra)? != 0 {
+        return Err(SignatureError::TrailingData { bytes: 1 });
+    }
+
+    Ok(FileSignature::new(layout, blocks, total_bytes))
+}
+
+/// SIMD batch width shared by the parallel signature generators: the number of
+/// blocks `compute_truncated_batch` hashes per multi-lane call.
+const BATCH_SIZE: usize = 16;
+
+/// Upper bound on the resident block buffers held by
+/// [`generate_file_signature_windowed`] for a single window, irrespective of
+/// core count or block size. Caps peak RSS for large-basis parallel signatures.
+const WINDOW_BYTE_BUDGET: usize = 64 * 1024 * 1024;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,6 +363,51 @@ mod tests {
             NonZeroU8::new(checksum_len).expect("checksum length"),
         ))
         .expect("layout")
+    }
+
+    /// Deterministic, non-trivial bytes so each block hashes distinctly.
+    fn fill(len: usize) -> Vec<u8> {
+        (0..len).map(|i| (i % 251) as u8).collect()
+    }
+
+    #[test]
+    fn windowed_matches_sequential_across_sizes_and_algorithms() {
+        // Spans: empty, sub-block, exact single block, several blocks, a
+        // non-block-multiple (exercises the short final block), and >256 KB
+        // (the size where the production path would prefer parallel). The
+        // number of internal windows varies with the host core count, but the
+        // output must be byte-identical to the sequential generator regardless.
+        let sizes = [0u64, 7, 1024, 4096, 5000, 64 * 1024 + 123, 300 * 1024 + 7];
+        let algorithm = SignatureAlgorithm::Md4;
+        for &size in &sizes {
+            let data = fill(size as usize);
+            let sig_layout = layout(size, 16);
+            let sequential =
+                crate::generate_file_signature(Cursor::new(data.clone()), sig_layout, algorithm)
+                    .expect("sequential signature");
+            let windowed =
+                generate_file_signature_windowed(Cursor::new(data), sig_layout, algorithm)
+                    .expect("windowed signature");
+            assert_eq!(
+                sequential, windowed,
+                "windowed signature diverged from sequential at size={size}",
+            );
+        }
+    }
+
+    #[test]
+    fn windowed_rejects_trailing_data() {
+        // The layout describes 1024 bytes but the reader yields more; the
+        // trailing-data guard must fire exactly as the sequential path does.
+        let sig_layout = layout(1024, 16);
+        let oversized = fill(1024 + 16);
+        let err = generate_file_signature_windowed(
+            Cursor::new(oversized),
+            sig_layout,
+            SignatureAlgorithm::Md4,
+        )
+        .expect_err("trailing data must be rejected");
+        assert!(matches!(err, SignatureError::TrailingData { .. }));
     }
 
     #[test]
