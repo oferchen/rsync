@@ -2178,6 +2178,69 @@ mod config_parsing_tests {
         assert!(result.is_err());
     }
 
+    #[test]
+    fn parse_global_acceptor_threads() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("acceptor threads = 4\n[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).unwrap();
+        assert_eq!(result.acceptor_threads.unwrap().0.get(), 4);
+    }
+
+    #[test]
+    fn parse_global_acceptor_threads_default_is_none() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path()).unwrap();
+        assert!(result.acceptor_threads.is_none());
+    }
+
+    #[test]
+    fn parse_global_acceptor_threads_invalid() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("acceptor threads = abc\n[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_global_acceptor_threads_zero_rejected() {
+        // Zero replicas would bind no listeners; the directive must reject it.
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!("acceptor threads = 0\n[mod]\npath = {}\n", path.display());
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_global_acceptor_threads_duplicate_conflict() {
+        let dir = TempDir::new().expect("create temp dir");
+        let path = dir.path().join("data");
+        fs::create_dir(&path).expect("create dir");
+
+        let config = format!(
+            "acceptor threads = 2\nacceptor threads = 4\n[mod]\npath = {}\n",
+            path.display()
+        );
+        let file = write_config(&config);
+        let result = parse_config_modules(file.path());
+        assert!(result.is_err());
+    }
 
     #[test]
     fn parse_module_log_file_absolute() {
