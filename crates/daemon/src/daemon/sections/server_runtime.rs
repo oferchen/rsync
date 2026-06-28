@@ -16,6 +16,8 @@ include!("server_runtime/reload.rs");
 
 include!("server_runtime/connection.rs");
 
+include!("server_runtime/accept_engine.rs");
+
 include!("server_runtime/accept_loop.rs");
 
 #[cfg(test)]

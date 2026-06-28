@@ -299,233 +299,45 @@ fn update_connection_status_after_accept(state: &mut AcceptLoopState<'_>) {
     }
 }
 
-/// Runs the accept loop for a single TCP listener.
+/// Admits one accepted connection: applies socket options, enforces the
+/// concurrent-connection cap, and spawns a session worker.
 ///
-/// Uses non-blocking accept with periodic signal flag checks. This is the
-/// simpler path used when only one address family is bound (e.g., IPv4-only
-/// or IPv6-only).
-fn run_single_listener_loop(
-    listener: TcpListener,
-    local_addr: SocketAddr,
+/// Shared by every [`AcceptEngine`] so admission semantics (capacity refusal,
+/// worker spawn, session accounting) are identical regardless of how the
+/// connection was sourced. Returns `true` when the `--max-sessions` limit has
+/// been reached and the accept loop should stop.
+fn handle_accepted_connection(
+    tcp_stream: TcpStream,
+    raw_peer_addr: SocketAddr,
     state: &mut AcceptLoopState<'_>,
-) -> Result<(), DaemonError> {
-    listener
-        .set_nonblocking(true)
-        .map_err(|error| bind_error(local_addr, error))?;
+) -> bool {
+    apply_accepted_stream_tcp_notsent_lowat(&tcp_stream);
 
-    loop {
-        if let Some(true) = check_signals_and_maintain(state)? {
-            break;
-        }
+    let Some(mut stream) = wrap_accepted_stream(tcp_stream, state) else {
+        return false;
+    };
 
-        match listener.accept() {
-            Ok((tcp_stream, raw_peer_addr)) => {
-                if let Err(error) = tcp_stream.set_nonblocking(false) {
-                    if let Some(log) = state.log_sink.as_ref() {
-                        let text = format!(
-                            "failed to set accepted socket to blocking: {error}"
-                        );
-                        let message = rsync_warning!(text).with_role(Role::Daemon);
-                        log_message(log, &message);
-                    }
-                    continue;
-                }
+    apply_client_options(&stream, &state.client_socket_options, state.log_sink.as_ref());
 
-                apply_accepted_stream_tcp_notsent_lowat(&tcp_stream);
-
-                let Some(mut stream) = wrap_accepted_stream(tcp_stream, state) else {
-                    continue;
-                };
-
-                apply_client_options(&stream, &state.client_socket_options, state.log_sink.as_ref());
-
-                if refuse_if_at_capacity(&mut stream, raw_peer_addr, state) {
-                    drop(stream);
-                    continue;
-                }
-
-                let handle = spawn_connection_worker(stream, raw_peer_addr, state);
-                state.workers.push(handle);
-                state.served = state.served.saturating_add(1);
-
-                update_connection_status_after_accept(state);
-            }
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                // No pending connection - sleep briefly then re-check flags.
-                // The 50ms interval matches `run_dual_stack_loop` so first-
-                // connection latency on a quiet daemon is bounded by half the
-                // sleep interval rather than the (much coarser) 500ms signal
-                // poll. The longer SIGNAL_CHECK_INTERVAL is still honoured for
-                // the signal-flag inspection at the top of the loop body via
-                // `check_signals_and_maintain`, which is the only consumer
-                // that needs that resolution.
-                thread::sleep(Duration::from_millis(50));
-                continue;
-            }
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {
-                continue;
-            }
-            Err(error) => {
-                return Err(accept_error(local_addr, error));
-            }
-        }
-
-        if let Some(limit) = state.max_sessions
-            && state.served >= limit {
-                if let Err(error) = state.notifier.status("Draining worker threads") {
-                    log_sd_notify_failure(state.log_sink.as_ref(), "connection status update", &error);
-                }
-                break;
-            }
+    if refuse_if_at_capacity(&mut stream, raw_peer_addr, state) {
+        drop(stream);
+        return false;
     }
 
-    Ok(())
-}
+    let handle = spawn_connection_worker(stream, raw_peer_addr, state);
+    state.workers.push(handle);
+    state.served = state.served.saturating_add(1);
 
-/// Runs the accept loop for multiple TCP listeners (dual-stack mode).
-///
-/// Spawns an acceptor thread per listener and multiplexes accepted connections
-/// through an MPSC channel. Signal flags are shared with acceptor threads so
-/// shutdown propagates promptly.
-fn run_dual_stack_loop(
-    listeners: Vec<TcpListener>,
-    bound_addresses: &[SocketAddr],
-    state: &mut AcceptLoopState<'_>,
-) -> Result<(), DaemonError> {
-    use std::sync::mpsc;
+    update_connection_status_after_accept(state);
 
-    let (tx, rx) = mpsc::channel::<Result<(TcpStream, SocketAddr), (SocketAddr, io::Error)>>();
-    let shutdown = Arc::clone(&state.signal_flags.shutdown);
-    let graceful_exit = Arc::clone(&state.signal_flags.graceful_exit);
-
-    let mut acceptor_handles: Vec<thread::JoinHandle<()>> = Vec::with_capacity(listeners.len());
-    let total_acceptors = listeners.len();
-
-    for (listener, local_addr) in listeners.into_iter().zip(bound_addresses.iter().copied()) {
-        let tx = tx.clone();
-        let shutdown = Arc::clone(&shutdown);
-        let graceful_exit = Arc::clone(&graceful_exit);
-
-        // Set non-blocking so acceptor threads can check the shutdown flag
-        // without getting stuck in a blocking accept() call.
-        if let Err(error) = listener.set_nonblocking(true) {
-            return Err(bind_error(local_addr, error));
+    if let Some(limit) = state.max_sessions
+        && state.served >= limit
+    {
+        if let Err(error) = state.notifier.status("Draining worker threads") {
+            log_sd_notify_failure(state.log_sink.as_ref(), "connection status update", &error);
         }
-
-        let handle = thread::spawn(move || {
-            while !shutdown.load(Ordering::Relaxed)
-                && !graceful_exit.load(Ordering::Relaxed)
-            {
-                match listener.accept() {
-                    Ok((stream, peer_addr)) => {
-                        // BSD-derived kernels (macOS, FreeBSD) propagate the
-                        // listener's O_NONBLOCK flag to the accepted socket,
-                        // which would cause the legacy handshake reader to
-                        // fail with EAGAIN before the client writes its
-                        // greeting. Reset to blocking so the worker thread
-                        // sees the upstream-compatible synchronous I/O model.
-                        if let Err(error) = stream.set_nonblocking(false) {
-                            let _ = tx.send(Err((local_addr, error)));
-                            break;
-                        }
-                        if tx.send(Ok((stream, peer_addr))).is_err() {
-                            break;
-                        }
-                    }
-                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(50));
-                        continue;
-                    }
-                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {
-                        continue;
-                    }
-                    Err(error) => {
-                        let _ = tx.send(Err((local_addr, error)));
-                        break;
-                    }
-                }
-            }
-        });
-        acceptor_handles.push(handle);
+        return true;
     }
 
-    // Drop our copy of the sender so the channel closes when acceptors exit
-    drop(tx);
-
-    // Track how many per-family acceptors have failed. The dual-stack loop
-    // only escalates an accept error to a fatal daemon exit when every
-    // family has dropped out - a single family failing (the GitHub Actions
-    // exit-10 pattern: IPv6 `bind(2)` succeeds but `accept(2)` then
-    // returns a non-routable family) used to tear down the whole daemon
-    // and surface as `error in socket I/O (code 10)`. With this fix the
-    // surviving family keeps serving traffic and the failed family logs
-    // a warning, mirroring upstream `socket.c::start_accept_loop`
-    // semantics where one busted descriptor does not collapse the
-    // `select(2)` over the others.
-    let mut alive_acceptors = total_acceptors;
-
-    // Main loop: receive connections from any listener
-    loop {
-        if let Some(true) = check_signals_and_maintain(state)? {
-            break;
-        }
-
-        // Use recv_timeout to allow periodic worker reaping and signal checks
-        match rx.recv_timeout(Duration::from_millis(100)) {
-            Ok(Ok((tcp_stream, raw_peer_addr))) => {
-                apply_accepted_stream_tcp_notsent_lowat(&tcp_stream);
-
-                let Some(mut stream) = wrap_accepted_stream(tcp_stream, state) else {
-                    continue;
-                };
-
-                apply_client_options(&stream, &state.client_socket_options, state.log_sink.as_ref());
-
-                if refuse_if_at_capacity(&mut stream, raw_peer_addr, state) {
-                    drop(stream);
-                    continue;
-                }
-
-                let handle = spawn_connection_worker(stream, raw_peer_addr, state);
-                state.workers.push(handle);
-                state.served = state.served.saturating_add(1);
-
-                update_connection_status_after_accept(state);
-
-                if let Some(limit) = state.max_sessions
-                    && state.served >= limit {
-                        if let Err(error) = state.notifier.status("Draining worker threads") {
-                            log_sd_notify_failure(state.log_sink.as_ref(), "connection status update", &error);
-                        }
-                        shutdown.store(true, Ordering::Relaxed);
-                        break;
-                    }
-            }
-            Ok(Err((local_addr, error))) => {
-                alive_acceptors = alive_acceptors.saturating_sub(1);
-                if alive_acceptors == 0 {
-                    shutdown.store(true, Ordering::Relaxed);
-                    for handle in acceptor_handles {
-                        let _ = handle.join();
-                    }
-                    return Err(accept_error(local_addr, error));
-                }
-                warn_per_family_accept_failure(state.log_sink.as_ref(), local_addr, &error);
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                continue;
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                break;
-            }
-        }
-    }
-
-    // Signal acceptors to stop and wait for them
-    shutdown.store(true, Ordering::Relaxed);
-    for handle in acceptor_handles {
-        let _ = handle.join();
-    }
-
-    Ok(())
+    false
 }
