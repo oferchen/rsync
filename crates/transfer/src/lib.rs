@@ -174,7 +174,7 @@ pub use self::generator::{
     GeneratorContext, GeneratorStats, generate_delta_from_signature, io_error_flags,
 };
 pub use self::handshake::{HandshakeResult, perform_handshake, perform_legacy_handshake};
-pub use self::receiver::{ReceiverContext, SumHead, TransferStats};
+pub use self::receiver::{ListOnlyEntry, ReceiverContext, SumHead, TransferStats};
 pub use self::role::ServerRole;
 pub use self::shared::{ChecksumFactory, TransferDeadline};
 pub use self::temp_cleanup::cleanup_stale_temp_files;

@@ -62,7 +62,7 @@ impl ReceiverContext {
         if !self.config.file_selection.delete_missing_args {
             return Ok(());
         }
-        if self.config.flags.dry_run {
+        if self.config.flags.skip_dest_writes() {
             return Ok(());
         }
 

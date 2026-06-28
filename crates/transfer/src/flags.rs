@@ -64,6 +64,23 @@ pub struct ParsedServerFlags {
     pub delete: bool,
     /// Dry-run / no-transfer mode (`n` flag, upstream: `!do_xfers`).
     pub dry_run: bool,
+    /// List-only mode: render the received file list, suppress all destination
+    /// writes, and send no per-file NDX requests.
+    ///
+    /// Set when the client is invoked with a single source operand and no
+    /// destination (`rsync rsync://host/module`). Upstream derives this as the
+    /// implied `--list-only` and the generator iterates every flist entry
+    /// through `list_file_entry()` without requesting any file data.
+    ///
+    /// Not part of the compact flag string; set via long-form propagation. In
+    /// upstream `'n'` means dry-run, which (unlike list-only) still streams NDX
+    /// requests for every file.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2194` - `list_only` global / implied-list-only derivation
+    /// - `generator.c:1249` - `list_file_entry()` render gate
+    pub list_only: bool,
     /// Transfer directories without recursion (`d` flag, `--dirs`).
     pub dirs: bool,
     /// Whole file transfer, no delta (`W` flag, `--whole-file`).
@@ -180,6 +197,23 @@ pub struct InfoFlags {
 }
 
 impl ParsedServerFlags {
+    /// Returns whether the receiver must suppress all destination-side writes.
+    ///
+    /// True for both dry-run (`-n`) and list-only mode. Upstream gates every
+    /// filesystem mutation on `!dry_run` and additionally suppresses the
+    /// receiver entirely under `list_only` (the generator only renders the
+    /// flist). Both modes leave the destination untouched - no mkdir, no
+    /// metadata, no symlinks, no hardlinks, no data, no delayed updates.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `options.c:2194` - `list_only` implies no transfers
+    /// - `generator.c:1249` - `list_file_entry()` without per-file requests
+    #[must_use]
+    pub const fn skip_dest_writes(&self) -> bool {
+        self.dry_run || self.list_only
+    }
+
     /// Clears feature-gated flags that are not supported in this build.
     ///
     /// When the remote peer requests ACL preservation (`-A`) or extended

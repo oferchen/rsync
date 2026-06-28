@@ -211,6 +211,44 @@ impl ClientEvent {
         }
     }
 
+    /// Builds an event for a `--list-only` flist entry.
+    ///
+    /// The renderer (`emit_list_only`) prints the line from `relative_path` plus
+    /// the metadata snapshot; `kind` only gates inclusion via `list_only_event`.
+    /// Directories map to `DirectoryCreated`, symlinks to `SymlinkCopied`, and
+    /// every other entry to `DataCopied` - all three pass the inclusion gate.
+    /// No destination write occurs in list-only mode, so the destination paths
+    /// are left empty.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1249` - `list_file_entry()` per-entry render
+    #[must_use]
+    pub fn from_list_only_entry(relative_path: PathBuf, metadata: ClientEntryMetadata) -> Self {
+        let kind = match metadata.kind() {
+            ClientEntryKind::Directory => ClientEventKind::DirectoryCreated,
+            ClientEntryKind::Symlink => ClientEventKind::SymlinkCopied,
+            _ => ClientEventKind::DataCopied,
+        };
+        let is_directory = metadata.kind().is_directory();
+        let total_bytes = Some(metadata.length());
+        let destination_root: Arc<Path> = Arc::from(Path::new(""));
+        Self {
+            relative_path,
+            kind,
+            bytes_transferred: 0,
+            total_bytes,
+            elapsed: Duration::ZERO,
+            metadata: Some(metadata),
+            created: false,
+            destination_root,
+            destination_path: PathBuf::new(),
+            change_set: LocalCopyChangeSet::new(),
+            hardlink_uptodate: false,
+            is_directory,
+        }
+    }
+
     /// Returns the relative path affected by this event.
     #[must_use]
     pub fn relative_path(&self) -> &Path {

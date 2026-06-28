@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use crate::client::summary::ClientSummary;
+use crate::client::summary::{ClientEntryMetadata, ClientEvent, ClientSummary};
 
 /// Converts server-side statistics to a client summary.
 ///
@@ -19,6 +19,28 @@ pub(super) fn convert_server_stats_to_summary(
     use crate::server::ServerStats;
     use engine::local_copy::LocalCopySummary;
     use transfer::io_error_flags;
+
+    // upstream: generator.c:1249 - in list-only mode the receiver captures every
+    // flist entry's metadata instead of requesting file data; convert those into
+    // metadata-bearing events so the client can render the listing.
+    let list_only_events: Vec<ClientEvent> = match stats {
+        ServerStats::Receiver(ref transfer_stats) => transfer_stats
+            .list_only_entries
+            .iter()
+            .map(|entry| {
+                let metadata = ClientEntryMetadata::from_list_only_entry(
+                    entry.mode,
+                    entry.size,
+                    entry.mtime,
+                    entry.mtime_nsec,
+                    entry.symlink_target.clone(),
+                    entry.is_symlink,
+                );
+                ClientEvent::from_list_only_entry(entry.path.clone(), metadata)
+            })
+            .collect(),
+        ServerStats::Generator(_) => Vec::new(),
+    };
 
     let (local_summary, io_error, error_count) = match stats {
         ServerStats::Receiver(ref transfer_stats) => {
@@ -58,6 +80,9 @@ pub(super) fn convert_server_stats_to_summary(
     };
 
     let mut summary = ClientSummary::from_summary(local_summary);
+    if !list_only_events.is_empty() {
+        summary = summary.with_events(list_only_events);
+    }
 
     // upstream: log.c - log_exit() converts io_error bitfield to RERR_* codes.
     let exit_code = io_error_flags::to_exit_code(io_error);
