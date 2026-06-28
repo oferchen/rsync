@@ -48,7 +48,10 @@ fn bwlimit_1k_paces_within_tolerance() {
 
     let start = Instant::now();
     for _ in 0..4 {
-        limiter.register(512);
+        // `register` performs the pacing sleep internally; the returned
+        // `LimiterSleep` is only a timing record, so discard it explicitly
+        // (matching the priming call above) rather than tripping `must_use`.
+        let _ = limiter.register(512);
     }
     let elapsed = start.elapsed();
 
