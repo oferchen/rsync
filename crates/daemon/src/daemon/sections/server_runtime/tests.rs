@@ -1253,3 +1253,66 @@ fn warn_per_family_accept_failure_labels_ipv4() {
     let error = io::Error::other("test failure");
     warn_per_family_accept_failure(None, addr, &error);
 }
+
+#[test]
+fn single_listener_engine_poll_idle_when_no_connection() {
+    // A quiet daemon must yield control rather than error: the non-blocking
+    // accept returns WouldBlock, which the engine maps to AcceptOutcome::Idle
+    // after its bounded sleep so the accept loop can re-check signal flags.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let local = listener.local_addr().expect("local addr");
+    let mut engine = SingleListenerEngine::new(listener, local, None).expect("engine");
+
+    assert!(
+        matches!(engine.poll().expect("poll"), AcceptOutcome::Idle),
+        "poll with no pending connection must yield Idle"
+    );
+}
+
+#[test]
+fn single_listener_engine_poll_returns_connection_with_blocking_reset() {
+    // poll() must return Connection for an accepted client, and the accepted
+    // socket must be reset to BLOCKING mode. On BSD-derived kernels (macOS) the
+    // accepted socket inherits the listener's O_NONBLOCK; without the engine's
+    // set_nonblocking(false) reset, the blocking read below would fail with
+    // WouldBlock instead of waiting for the delayed client bytes. The 100ms
+    // write delay guarantees the data is not yet available when read_exact is
+    // called, so this discriminates blocking vs non-blocking on that host.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let local = listener.local_addr().expect("local addr");
+    let mut engine = SingleListenerEngine::new(listener, local, None).expect("engine");
+
+    let client = thread::spawn(move || {
+        let mut stream = TcpStream::connect(local).expect("connect");
+        thread::sleep(Duration::from_millis(100));
+        stream.write_all(b"hi").expect("client write");
+        // Hold the connection open until the server has read the bytes.
+        thread::sleep(Duration::from_millis(50));
+    });
+
+    let mut accepted = None;
+    for _ in 0..40 {
+        match engine.poll().expect("poll") {
+            AcceptOutcome::Connection(stream, peer) => {
+                accepted = Some((stream, peer));
+                break;
+            }
+            AcceptOutcome::Idle => continue,
+            AcceptOutcome::Closed => panic!("single-listener engine never reports Closed"),
+        }
+    }
+
+    let (mut stream, peer) = accepted.expect("a client connection was accepted");
+    assert!(peer.ip().is_loopback(), "peer must be loopback, got {peer}");
+
+    // Blocking read of the delayed client bytes: succeeds only if the accepted
+    // socket is in blocking mode. No read timeout is set, since that would mask
+    // the very non-blocking-vs-blocking distinction under test.
+    let mut buf = [0u8; 2];
+    stream
+        .read_exact(&mut buf)
+        .expect("blocking read of client bytes (accepted socket must be blocking)");
+    assert_eq!(&buf, b"hi");
+
+    let _ = client.join();
+}
