@@ -305,4 +305,129 @@ mod tests {
         assert!(!ClientEntryKind::Directory.is_symlink());
         assert!(!ClientEntryKind::Fifo.is_symlink());
     }
+
+    fn fields(mode: u32) -> ListOnlyEntryFields {
+        ListOnlyEntryFields {
+            mode,
+            size: 0,
+            mtime: 0,
+            mtime_nsec: 0,
+            atime: 0,
+            atime_nsec: 0,
+            crtime: 0,
+            crtime_nsec: 0,
+            symlink_target: None,
+            is_symlink: false,
+        }
+    }
+
+    #[test]
+    fn from_list_only_entry_classifies_each_ifmt_type() {
+        // upstream: list_file_entry() derives the type char from S_IFMT.
+        for (ifmt, expected) in [
+            (0o100000, ClientEntryKind::File),
+            (0o040000, ClientEntryKind::Directory),
+            (0o120000, ClientEntryKind::Symlink),
+            (0o010000, ClientEntryKind::Fifo),
+            (0o020000, ClientEntryKind::CharDevice),
+            (0o060000, ClientEntryKind::BlockDevice),
+            (0o140000, ClientEntryKind::Socket),
+        ] {
+            // Permission bits in the low octals must not affect classification.
+            let meta = ClientEntryMetadata::from_list_only_entry(&fields(ifmt | 0o644));
+            assert_eq!(meta.kind(), expected, "mode {ifmt:o}");
+            assert_eq!(meta.mode(), Some(ifmt | 0o644));
+        }
+    }
+
+    #[test]
+    fn from_list_only_entry_unknown_ifmt_is_other() {
+        // 0o050000 is not a defined S_IFMT type.
+        assert_eq!(
+            ClientEntryMetadata::from_list_only_entry(&fields(0o050000)).kind(),
+            ClientEntryKind::Other
+        );
+    }
+
+    #[test]
+    fn from_list_only_entry_is_symlink_flag_overrides_mode() {
+        // The receiver sets is_symlink from the flist regardless of mode bits;
+        // it must win even when the mode says regular file.
+        let mut f = fields(0o100644);
+        f.is_symlink = true;
+        assert_eq!(
+            ClientEntryMetadata::from_list_only_entry(&f).kind(),
+            ClientEntryKind::Symlink
+        );
+    }
+
+    #[test]
+    fn from_list_only_entry_propagates_size_and_target() {
+        let mut f = fields(0o120777);
+        f.size = 4096;
+        f.symlink_target = Some(PathBuf::from("../target"));
+        f.is_symlink = true;
+        let meta = ClientEntryMetadata::from_list_only_entry(&f);
+        assert_eq!(meta.length(), 4096);
+        assert_eq!(meta.symlink_target(), Some(Path::new("../target")));
+    }
+
+    #[test]
+    fn from_list_only_entry_blank_times_are_none() {
+        // Zero seconds + zero nsec must render blank, not 1970/01/01.
+        let meta = ClientEntryMetadata::from_list_only_entry(&fields(0o100644));
+        assert_eq!(meta.modified(), None);
+        assert_eq!(meta.accessed(), None);
+        assert_eq!(meta.created(), None);
+    }
+
+    #[test]
+    fn from_list_only_entry_populates_times_when_set() {
+        let mut f = fields(0o100644);
+        f.mtime = 1_000_000;
+        f.atime = 2_000_000;
+        f.crtime = 3_000_000;
+        let meta = ClientEntryMetadata::from_list_only_entry(&f);
+        assert_eq!(
+            meta.modified(),
+            Some(SystemTime::UNIX_EPOCH + Duration::new(1_000_000, 0))
+        );
+        assert_eq!(
+            meta.accessed(),
+            Some(SystemTime::UNIX_EPOCH + Duration::new(2_000_000, 0))
+        );
+        assert_eq!(
+            meta.created(),
+            Some(SystemTime::UNIX_EPOCH + Duration::new(3_000_000, 0))
+        );
+    }
+
+    #[test]
+    fn secs_nsec_zero_is_none() {
+        assert_eq!(secs_nsec_to_system_time(0, 0), None);
+    }
+
+    #[test]
+    fn secs_nsec_negative_seconds_is_none() {
+        // Pre-epoch timestamps are not representable here and render blank.
+        assert_eq!(secs_nsec_to_system_time(-1, 0), None);
+        assert_eq!(secs_nsec_to_system_time(-1, 500), None);
+    }
+
+    #[test]
+    fn secs_nsec_nanos_only_is_some() {
+        // A nonzero sub-second component alone is a valid post-epoch instant.
+        assert_eq!(
+            secs_nsec_to_system_time(0, 1),
+            Some(SystemTime::UNIX_EPOCH + Duration::new(0, 1))
+        );
+    }
+
+    #[test]
+    fn secs_nsec_positive_seconds_with_nanos() {
+        assert_eq!(
+            secs_nsec_to_system_time(42, 123),
+            Some(SystemTime::UNIX_EPOCH + Duration::new(42, 123))
+        );
+    }
 }
