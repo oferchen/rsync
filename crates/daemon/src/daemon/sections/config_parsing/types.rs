@@ -44,6 +44,9 @@ pub(crate) struct ParsedConfigModules {
     /// The value is a groupname string or numeric gid that gets resolved at runtime.
     daemon_gid: Option<(String, ConfigDirectiveOrigin)>,
     listen_backlog: Option<(u32, ConfigDirectiveOrigin)>,
+    /// Number of SO_REUSEPORT listener replicas per family from the
+    /// `acceptor threads` directive (oc-rsync extension, default 1).
+    acceptor_threads: Option<(NonZeroU32, ConfigDirectiveOrigin)>,
     /// Global socket options from the `socket options` directive.
     ///
     /// upstream: daemon-parm.txt - `socket options` STRING. Comma-separated list

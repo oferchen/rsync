@@ -81,6 +81,12 @@ impl RuntimeOptions {
             self.set_listen_backlog_from_config(backlog, &origin)?;
         }
 
+        // Config-only option (no CLI flag); duplicate detection already happened
+        // during directive parsing, so a direct assignment is sufficient.
+        if let Some((threads, _origin)) = parsed.acceptor_threads {
+            self.acceptor_threads = Some(threads);
+        }
+
         // upstream: clientserver.c - config `port` overrides the default
         // listening port unless CLI `--port` was already given.
         if let Some((port, _origin)) = parsed.rsync_port {
