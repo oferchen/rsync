@@ -3,14 +3,18 @@
 //! This module provides [`ConnectProgramConfig`] for executing custom connection
 //! programs, mirroring upstream rsync's `RSYNC_CONNECT_PROG` functionality.
 //!
-//! # Unix Socketpair Transport
+//! # Loopback TCP Socketpair Transport
 //!
-//! On Unix, the child process's stdin and stdout are connected via a Unix
-//! domain socketpair instead of OS pipes. This mirrors upstream rsync's
-//! `sock_exec()` in `socket.c:811-841`, which uses `socketpair_tcp()` so
-//! that the child's `STDIN_FILENO` passes the `getsockopt(SO_TYPE)` check
-//! in `is_a_socket()` (`socket.c:500`). Without this, daemon inetd
-//! detection fails because pipes are not sockets.
+//! On Unix, the child process's stdin and stdout are connected via a loopback
+//! TCP socketpair (AF_INET on `127.0.0.1`) instead of OS pipes, mirroring
+//! upstream rsync's `sock_exec()` in `socket.c:811-841`, which uses
+//! `socketpair_tcp()`. A socket (not a pipe) is required so the child's
+//! `STDIN_FILENO` passes the `getsockopt(SO_TYPE)` check in `is_a_socket()`
+//! (`socket.c:500`). The AF_INET loopback family (rather than an AF_UNIX
+//! socketpair) additionally gives a daemon reached this way a real `127.0.0.1`
+//! peer address via `getpeername()`, which it needs for `hosts allow` /
+//! `hosts deny` matching - an AF_UNIX peer carries no address and is rejected
+//! as `UNKNOWN`.
 //!
 //! On non-Unix platforms, standard pipes are used since inetd-style
 //! detection does not apply.
@@ -38,10 +42,13 @@ use std::process::{Child, Command, Stdio};
 use super::super::DaemonAddress;
 use crate::client::{ClientError, FEATURE_UNAVAILABLE_EXIT_CODE, daemon_error};
 
-/// Spawns a connect program with a Unix socketpair for stdin/stdout.
+/// Spawns a connect program with a loopback TCP socketpair for stdin/stdout.
 ///
-/// Uses `UnixStream::pair()` so the child's stdin fd is a socket, not a pipe.
-/// This ensures the daemon's `is_a_socket(STDIN_FILENO)` check succeeds.
+/// Uses [`socketpair_tcp`] (an AF_INET pair on `127.0.0.1`) so the child's
+/// stdin fd is a socket, not a pipe - satisfying the daemon's
+/// `is_a_socket(STDIN_FILENO)` inetd check while also presenting a real
+/// `127.0.0.1` peer address for the daemon's `hosts allow` / `hosts deny`
+/// matching.
 ///
 /// upstream: socket.c:811-841 - `sock_exec()` uses `socketpair_tcp()` and
 /// `dup2(fd[1], STDIN_FILENO)` / `dup2(fd[1], STDOUT_FILENO)` in the child.
@@ -50,8 +57,6 @@ pub(crate) fn connect_via_program(
     addr: &DaemonAddress,
     program: &ConnectProgramConfig,
 ) -> Result<super::DaemonStream, ClientError> {
-    use std::os::unix::net::UnixStream;
-
     let command = program
         .format_command(addr.host(), addr.port())
         .map_err(|error| daemon_error(error, FEATURE_UNAVAILABLE_EXIT_CODE))?;
@@ -61,10 +66,15 @@ pub(crate) fn connect_via_program(
         .cloned()
         .unwrap_or_else(|| OsString::from("sh"));
 
-    // upstream: socket.c:816 - socketpair_tcp(fd)
-    let (parent_sock, child_sock) = UnixStream::pair().map_err(|error| {
+    // upstream: socket.c:816 sock_exec() -> socket.c:744 socketpair_tcp(fd).
+    // A connected AF_INET pair on the loopback address, NOT a Unix-domain
+    // socketpair: both ends carry a real 127.0.0.1 peer address, so a daemon
+    // that derives the client address from getpeername() for `hosts allow` /
+    // `hosts deny` matching sees a valid IP instead of an unnamed AF_UNIX
+    // socket (which has no address and is rejected as "UNKNOWN").
+    let (parent_sock, child_sock) = socketpair_tcp().map_err(|error| {
         daemon_error(
-            format!("failed to create socketpair for RSYNC_CONNECT_PROG: {error}"),
+            format!("failed to create loopback socketpair for RSYNC_CONNECT_PROG: {error}"),
             FEATURE_UNAVAILABLE_EXIT_CODE,
         )
     })?;
@@ -106,6 +116,31 @@ pub(crate) fn connect_via_program(
     Ok(super::DaemonStream::program(
         ConnectProgramStream::from_socketpair(child, parent_sock),
     ))
+}
+
+/// Creates a connected AF_INET socket pair on the loopback address.
+///
+/// std equivalent of upstream rsync's `socketpair_tcp()` (`socket.c:744`):
+/// bind a listener on `127.0.0.1:0`, connect a second socket to it, and accept.
+/// Returns `(accepted, connected)` - two TCP streams that are peers of each
+/// other, both reporting a `127.0.0.1` peer address via `getpeername()`.
+///
+/// This is used in place of `UnixStream::pair()` so a connect-program daemon
+/// can derive the client address for `hosts allow` / `hosts deny` matching: an
+/// AF_UNIX socketpair has no peer address and is rejected as `UNKNOWN`, whereas
+/// the loopback pair presents `127.0.0.1`. The accepted/connected fds are
+/// ordinary blocking sockets, so no further setup is required (std's
+/// `TcpStream::connect` completes the handshake synchronously, unlike the
+/// non-blocking dance upstream performs in C).
+#[cfg(unix)]
+fn socketpair_tcp() -> io::Result<(std::net::TcpStream, std::net::TcpStream)> {
+    use std::net::{Ipv4Addr, TcpListener, TcpStream};
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+    let addr = listener.local_addr()?;
+    let connected = TcpStream::connect(addr)?;
+    let (accepted, _peer) = listener.accept()?;
+    Ok((accepted, connected))
 }
 
 /// Spawns a connect program with piped stdin/stdout (non-Unix fallback).
@@ -299,7 +334,7 @@ pub(crate) struct ConnectProgramStream {
 /// On non-Unix, separate pipe handles are used.
 #[cfg(unix)]
 enum ProgramTransport {
-    Socket(std::os::unix::net::UnixStream),
+    Socket(std::net::TcpStream),
     Pipe {
         stdin: std::process::ChildStdin,
         stdout: std::process::ChildStdout,
@@ -313,9 +348,9 @@ struct ProgramTransport {
 }
 
 impl ConnectProgramStream {
-    /// Creates a stream backed by a Unix socketpair.
+    /// Creates a stream backed by a loopback TCP socketpair.
     #[cfg(unix)]
-    fn from_socketpair(child: Child, parent_socket: std::os::unix::net::UnixStream) -> Self {
+    fn from_socketpair(child: Child, parent_socket: std::net::TcpStream) -> Self {
         Self {
             child: Some(child),
             transport: Some(ProgramTransport::Socket(parent_socket)),
@@ -408,7 +443,7 @@ pub(super) struct ConnectProgramParts {
 /// stdout pipe (for daemon-over-remote-shell).
 #[cfg(unix)]
 pub(in crate::client) enum ProgramReader {
-    Socket(std::os::unix::net::UnixStream),
+    Socket(std::net::TcpStream),
     Pipe(std::process::ChildStdout),
 }
 
@@ -428,7 +463,7 @@ impl Read for ProgramReader {
 /// stdin pipe (for daemon-over-remote-shell).
 #[cfg(unix)]
 pub(in crate::client) enum ProgramWriter {
-    Socket(std::os::unix::net::UnixStream),
+    Socket(std::net::TcpStream),
     Pipe(std::process::ChildStdin),
 }
 
@@ -749,10 +784,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn connect_program_into_parts_round_trip() {
-        use std::os::unix::net::UnixStream;
         use std::process::Command;
 
-        let (parent_sock, child_sock) = UnixStream::pair().unwrap();
+        let (parent_sock, child_sock) = socketpair_tcp().unwrap();
         let child_sock_dup = child_sock.try_clone().unwrap();
 
         let child_stdin = Stdio::from(std::os::fd::OwnedFd::from(child_sock));
