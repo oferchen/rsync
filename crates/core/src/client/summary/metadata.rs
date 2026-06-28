@@ -5,7 +5,7 @@
 //! are used by `ClientEvent` to report per-file details.
 
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use engine::local_copy::{LocalCopyFileKind, LocalCopyMetadata};
 
@@ -85,6 +85,60 @@ impl ClientEntryMetadata {
             uid,
             gid,
             nlink,
+            symlink_target,
+        }
+    }
+
+    /// Constructs metadata for a `--list-only` flist entry.
+    ///
+    /// The receiver captures each entry's raw mode/size/mtime/target while
+    /// rendering the file list (it never opens or stats the destination), so
+    /// this builds the snapshot directly from those fields. The `mtime` is in
+    /// whole seconds and `mtime_nsec` carries the sub-second component.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1249` - `list_file_entry()` renders mode/size/mtime/name
+    #[must_use]
+    pub fn from_list_only_entry(
+        mode: u32,
+        size: u64,
+        mtime: i64,
+        mtime_nsec: u32,
+        symlink_target: Option<PathBuf>,
+        is_symlink: bool,
+    ) -> Self {
+        let kind = if is_symlink {
+            ClientEntryKind::Symlink
+        } else {
+            // upstream: list_file_entry() derives the type char from the mode
+            // bits; mirror the POSIX S_IFMT classification here.
+            match mode & 0o170000 {
+                0o040000 => ClientEntryKind::Directory,
+                0o120000 => ClientEntryKind::Symlink,
+                0o010000 => ClientEntryKind::Fifo,
+                0o020000 => ClientEntryKind::CharDevice,
+                0o060000 => ClientEntryKind::BlockDevice,
+                0o140000 => ClientEntryKind::Socket,
+                0o100000 => ClientEntryKind::File,
+                _ => ClientEntryKind::Other,
+            }
+        };
+        let modified = if mtime > 0 || mtime_nsec > 0 {
+            u64::try_from(mtime)
+                .ok()
+                .map(|secs| SystemTime::UNIX_EPOCH + Duration::new(secs, mtime_nsec))
+        } else {
+            None
+        };
+        Self {
+            kind,
+            length: size,
+            modified,
+            mode: Some(mode),
+            uid: None,
+            gid: None,
+            nlink: None,
             symlink_target,
         }
     }

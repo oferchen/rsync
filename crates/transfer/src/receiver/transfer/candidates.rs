@@ -22,10 +22,43 @@ use crate::receiver::directory::FailedDirectories;
 use crate::receiver::quick_check::{
     dest_mtime_newer, is_hardlink_follower, quick_check_matches, try_reference_dest,
 };
-use crate::receiver::stats::TransferStats;
+use crate::receiver::stats::{ListOnlyEntry, TransferStats};
 use crate::receiver::{ReceiverContext, apply_acls_from_receiver_cache};
 
 impl ReceiverContext {
+    /// Snapshots every active file-list entry for `--list-only` rendering.
+    ///
+    /// In list-only mode the receiver issues no per-file NDX request; it simply
+    /// captures each entry's metadata so the client can print the upstream
+    /// listing line (perms / size / date / name). Every active entry is emitted:
+    /// directories (including the root `.`), symlinks, and regular/special files
+    /// alike.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1249` - `list_file_entry()` renders one line per entry
+    pub(in crate::receiver) fn collect_list_only_entries(&self) -> Vec<ListOnlyEntry> {
+        self.file_list
+            .iter()
+            .map(|entry| {
+                let is_symlink = entry.is_symlink();
+                ListOnlyEntry {
+                    path: entry.path().clone(),
+                    mode: entry.mode(),
+                    size: entry.size(),
+                    mtime: entry.mtime(),
+                    mtime_nsec: entry.mtime_nsec(),
+                    symlink_target: if is_symlink {
+                        entry.link_target().cloned()
+                    } else {
+                        None
+                    },
+                    is_symlink,
+                }
+            })
+            .collect()
+    }
+
     /// Builds the list of files that need transfer, applying quick-check to skip
     /// unchanged files and respecting size bounds and failed directory tracking.
     ///
@@ -123,8 +156,10 @@ impl ReceiverContext {
 
         // upstream: generator.c:1845 - dry_run (!do_xfers) skips stat and data
         // transfer but still builds the candidate list so NDX requests are sent
-        // to the sender, which logs each file name for verbose output.
-        if self.config.flags.dry_run {
+        // to the sender, which logs each file name for verbose output. List-only
+        // also skips the destination stat/quick-check; its caller never issues
+        // per-file NDX requests (the list_only branch in `run_pipelined`).
+        if self.config.flags.skip_dest_writes() {
             // upstream: generator.c:1925-1926 - dry-run still itemizes with
             // ITEM_TRANSFER; the dry-run loop writes the bare ITEM_TRANSFER
             // attrs over the wire and does not consume this precomputed value.

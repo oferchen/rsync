@@ -7,6 +7,33 @@ use std::path::PathBuf;
 
 use protocol::stats::DeleteStats;
 
+/// A single file-list entry captured for `--list-only` rendering.
+///
+/// In list-only mode the receiver renders the file list without requesting any
+/// file data. Each active flist entry is snapshotted here so the client can
+/// format the upstream listing line (perms / size / date / name).
+///
+/// # Upstream Reference
+///
+/// - `generator.c:1249` - `list_file_entry()` renders one line per flist entry
+#[derive(Debug, Clone)]
+pub struct ListOnlyEntry {
+    /// Relative path of the entry within the transferred tree.
+    pub path: PathBuf,
+    /// Full Unix mode bits (file type + permissions).
+    pub mode: u32,
+    /// Logical size in bytes.
+    pub size: u64,
+    /// Modification time in whole seconds since the Unix epoch.
+    pub mtime: i64,
+    /// Sub-second component of the modification time, in nanoseconds.
+    pub mtime_nsec: u32,
+    /// Symlink target when the entry is a symbolic link.
+    pub symlink_target: Option<PathBuf>,
+    /// Whether the entry is a symbolic link.
+    pub is_symlink: bool,
+}
+
 /// Statistics from a receiver transfer operation.
 ///
 /// Returned inside [`crate::ServerStats::Receiver`] after a successful receive.
@@ -103,6 +130,16 @@ pub struct TransferStats {
     /// - `receiver.c:970-974` - `send_msg_int(MSG_REDO, ndx)` queues for redo
     /// - `generator.c:2160-2199` - generator processes redo queue in phase 2
     pub redo_count: usize,
+
+    /// File-list entries captured for `--list-only` rendering.
+    ///
+    /// Populated only in list-only mode; empty otherwise. The client converts
+    /// these into metadata-bearing summary events so the listing can be printed.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `generator.c:1249` - `list_file_entry()` per-entry render
+    pub list_only_entries: Vec<ListOnlyEntry>,
 }
 
 /// Statistics received from the remote sender after transfer completion.

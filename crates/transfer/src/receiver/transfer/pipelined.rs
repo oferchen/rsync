@@ -107,8 +107,15 @@ impl ReceiverContext {
         let mut redo_count: usize = 0;
         let mut all_delayed_updates: Vec<(PathBuf, PathBuf)> = Vec::new();
 
-        // upstream: generator.c:1845 - dry_run sends NDX requests without data
-        if self.config.flags.dry_run {
+        // upstream: generator.c:1249 - list-only renders every flist entry via
+        // list_file_entry() and sends NO per-file NDX request. Only the existing
+        // post-loop phase markers (NDX_DONE) and the goodbye handshake cross the
+        // wire. This branch must precede the dry_run check: list-only is not
+        // dry-run (dry-run streams an NDX request per file).
+        if self.config.flags.list_only {
+            stats.list_only_entries = self.collect_list_only_entries();
+            writer.flush()?;
+        } else if self.config.flags.dry_run {
             self.run_dry_run_loop(reader, writer, &files_to_transfer)?;
         } else {
             let total_files = files_to_transfer.len();

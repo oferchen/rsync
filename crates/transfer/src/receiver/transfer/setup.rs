@@ -288,7 +288,7 @@ impl ReceiverContext {
             &dest_dir,
             file_count,
             trailing_slash,
-            self.config.flags.dry_run,
+            self.config.flags.skip_dest_writes(),
         )
         .map_err(|e| {
             io::Error::new(
@@ -345,7 +345,7 @@ impl ReceiverContext {
         // symlink and let strict mode silently succeed against the resolved
         // target. Local-mode and non-daemon SSH transfers are the
         // upstream-parity case (issue #715 `symlink-dirlink-basis`).
-        let dest_dir = if !self.config.flags.dry_run
+        let dest_dir = if !self.config.flags.skip_dest_writes()
             && !self.config.connection.is_daemon_connection
             && dest_dir
                 .symlink_metadata()
@@ -480,9 +480,9 @@ impl ReceiverContext {
         if file_count != 1 || trailing_slash {
             return dest_dir;
         }
-        if self.config.flags.dry_run {
-            // Dry-run never touches disk, so the directory-vs-file ambiguity
-            // does not change observable output. Keep behaviour stable.
+        if self.config.flags.skip_dest_writes() {
+            // Dry-run and list-only never touch disk, so the directory-vs-file
+            // ambiguity does not change observable output. Keep behaviour stable.
             return dest_dir;
         }
         // An existing directory at the operand keeps the directory branch

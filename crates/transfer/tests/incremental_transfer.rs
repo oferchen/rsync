@@ -34,6 +34,7 @@ fn transfer_stats_incremental_fields_exist() {
         literal_data: 0,
         matched_data: 0,
         redo_count: 0,
+        list_only_entries: vec![],
     };
 
     assert_eq!(stats.files_listed, 10);

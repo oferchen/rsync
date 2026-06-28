@@ -38,6 +38,12 @@ pub(crate) fn build_server_config_for_receiver(
     // client IS the receiver and --existing is a long-form-only flag absent from
     // the compact letter string, so carry it onto the local receiver config here.
     server_config.file_selection.existing_only = config.existing_only();
+    // upstream: options.c:2194 / generator.c:1249 - a single source operand with
+    // no destination implies --list-only. On a pull the local client IS the
+    // receiver and list_only is a long-form-only flag absent from the compact
+    // letter string, so carry it onto the local receiver config here. The
+    // receiver then renders the flist without issuing any per-file NDX request.
+    server_config.flags.list_only = config.list_only();
 
     flags::apply_common_server_flags(config, &mut server_config);
     Ok(server_config)
