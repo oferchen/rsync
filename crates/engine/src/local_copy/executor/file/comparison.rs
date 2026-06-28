@@ -10,7 +10,10 @@ use checksums::strong::Xxh64;
 
 use crate::delta::{DeltaSignatureIndex, SignatureLayoutParams, calculate_signature_layout};
 use crate::local_copy::{COPY_BUFFER_SIZE, LocalCopyError};
-use crate::signature::{SignatureAlgorithm, SignatureError, generate_file_signature};
+use crate::signature::{
+    PARALLEL_THRESHOLD_BYTES, SignatureAlgorithm, SignatureError, generate_file_signature,
+    generate_file_signature_windowed,
+};
 
 use protocol::ProtocolVersion;
 
@@ -84,17 +87,27 @@ pub(crate) fn build_delta_signature(
         return Ok(None);
     };
 
-    let signature = match generate_file_signature(
-        fs::File::open(destination).map_err(|error| {
-            LocalCopyError::io(
-                "read existing destination",
-                destination.to_path_buf(),
-                error,
-            )
-        })?,
-        layout,
-        SignatureAlgorithm::Md4,
-    ) {
+    let basis = fs::File::open(destination).map_err(|error| {
+        LocalCopyError::io(
+            "read existing destination",
+            destination.to_path_buf(),
+            error,
+        )
+    })?;
+
+    // Computing the basis block checksums (the delta signature) is the
+    // single-threaded hot path of a delta transfer: perf shows md4::compress
+    // plus generate_file_signature pinning one core. For a large basis, fan
+    // the per-block rolling+strong checksums across the rayon pool with the
+    // bounded-memory windowed generator. Its output is byte-identical to the
+    // sequential path; below the threshold the rayon overhead would dominate,
+    // so stay sequential there.
+    let signature_result = if length >= PARALLEL_THRESHOLD_BYTES {
+        generate_file_signature_windowed(basis, layout, SignatureAlgorithm::Md4)
+    } else {
+        generate_file_signature(basis, layout, SignatureAlgorithm::Md4)
+    };
+    let signature = match signature_result {
         Ok(signature) => signature,
         Err(SignatureError::Io(error)) => {
             return Err(LocalCopyError::io(
