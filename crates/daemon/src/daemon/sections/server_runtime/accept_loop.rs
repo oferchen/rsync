@@ -177,9 +177,9 @@ fn serve_connections(
 
     // When a pre-bound listener is injected (test infrastructure), use it
     // directly - skipping the bind step eliminates the TOCTOU race between
-    // port allocation and daemon bind. `listeners` is later drained via
-    // `listeners.remove(0)`; `bound_addresses` is only read by index.
-    let mut listeners: Vec<TcpListener>;
+    // port allocation and daemon bind. `listeners` is later moved into the
+    // accept engine; `bound_addresses` is only read by index.
+    let listeners: Vec<TcpListener>;
     let bound_addresses: Vec<SocketAddr>;
 
     if let Some(listener) = pre_bound_listener {
@@ -368,13 +368,11 @@ fn serve_connections(
         proxy_protocol,
     };
 
-    if listeners.len() == 1 {
-        let listener = listeners.remove(0);
-        let local_addr = bound_addresses[0];
-        run_single_listener_loop(listener, local_addr, &mut state)?;
-    } else {
-        run_dual_stack_loop(listeners, &bound_addresses, &mut state)?;
-    }
+    // Select the accept engine once from the bound listener topology, then run
+    // the shared accept loop. The engine hides the readiness mechanism
+    // (non-blocking accept vs acceptor-thread fan-in) behind a uniform poll.
+    let mut engine = build_accept_engine(listeners, &bound_addresses, &state)?;
+    run_accept_loop(engine.as_mut(), &mut state)?;
 
     let result = drain_workers(&mut state.workers);
 
