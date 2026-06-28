@@ -5,7 +5,9 @@
 
 use std::time::Duration;
 
-use crate::client::summary::{ClientEntryMetadata, ClientEvent, ClientSummary};
+use crate::client::summary::{
+    ClientEntryMetadata, ClientEvent, ClientSummary, ListOnlyEntryFields,
+};
 
 /// Converts server-side statistics to a client summary.
 ///
@@ -28,7 +30,18 @@ pub(super) fn convert_server_stats_to_summary(
             .list_only_entries
             .iter()
             .map(|entry| {
-                let metadata = ClientEntryMetadata::from_list_only_entry(entry);
+                let metadata = ClientEntryMetadata::from_list_only_entry(&ListOnlyEntryFields {
+                    mode: entry.mode,
+                    size: entry.size,
+                    mtime: entry.mtime,
+                    mtime_nsec: entry.mtime_nsec,
+                    atime: entry.atime,
+                    atime_nsec: entry.atime_nsec,
+                    crtime: entry.crtime,
+                    crtime_nsec: entry.crtime_nsec,
+                    symlink_target: entry.symlink_target.clone(),
+                    is_symlink: entry.is_symlink,
+                });
                 ClientEvent::from_list_only_entry(entry.path.clone(), metadata)
             })
             .collect(),

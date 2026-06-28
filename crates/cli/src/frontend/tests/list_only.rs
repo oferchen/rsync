@@ -1370,7 +1370,7 @@ fn list_only_mixed_file_types_in_single_listing() {
 /// value carries one leading space and a blank fills the whole column.
 #[test]
 fn list_only_renders_atime_and_crtime_columns() {
-    use core::client::{ClientEntryMetadata, ClientEvent};
+    use core::client::{ClientEntryMetadata, ClientEvent, ListOnlyEntryFields};
     use std::path::PathBuf;
 
     use crate::frontend::progress::emit_list_only;
@@ -1379,32 +1379,32 @@ fn list_only_renders_atime_and_crtime_columns() {
     const ATIME: i64 = 1_700_000_100;
     const CRTIME: i64 = 1_700_000_200;
 
-    let file_meta = ClientEntryMetadata::from_list_only_entry(
-        0o100_644,
-        8,
-        1_700_000_000,
-        0,
-        ATIME,
-        0,
-        CRTIME,
-        0,
-        None,
-        false,
-    );
+    let file_meta = ClientEntryMetadata::from_list_only_entry(&ListOnlyEntryFields {
+        mode: 0o100_644,
+        size: 8,
+        mtime: 1_700_000_000,
+        mtime_nsec: 0,
+        atime: ATIME,
+        atime_nsec: 0,
+        crtime: CRTIME,
+        crtime_nsec: 0,
+        symlink_target: None,
+        is_symlink: false,
+    });
     let file_event = ClientEvent::from_list_only_entry(PathBuf::from("file.txt"), file_meta);
 
-    let dir_meta = ClientEntryMetadata::from_list_only_entry(
-        0o040_755,
-        0,
-        1_700_000_000,
-        0,
-        ATIME,
-        0,
-        CRTIME,
-        0,
-        None,
-        false,
-    );
+    let dir_meta = ClientEntryMetadata::from_list_only_entry(&ListOnlyEntryFields {
+        mode: 0o040_755,
+        size: 0,
+        mtime: 1_700_000_000,
+        mtime_nsec: 0,
+        atime: ATIME,
+        atime_nsec: 0,
+        crtime: CRTIME,
+        crtime_nsec: 0,
+        symlink_target: None,
+        is_symlink: false,
+    });
     let dir_event = ClientEvent::from_list_only_entry(PathBuf::from("sub"), dir_meta);
 
     let events = vec![file_event, dir_event];

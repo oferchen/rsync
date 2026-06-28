@@ -8,7 +8,40 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use engine::local_copy::{LocalCopyFileKind, LocalCopyMetadata};
-use transfer::ListOnlyEntry;
+
+/// Raw flist-entry fields needed to render one `--list-only` row.
+///
+/// A parameter object for [`ClientEntryMetadata::from_list_only_entry`]: it
+/// keeps the constructor to a single argument and decouples the summary layer
+/// from the transfer crate's receiver type, so the renderer's unit tests can
+/// build it directly. Times are whole seconds plus a nanosecond component.
+///
+/// # Upstream Reference
+///
+/// - `generator.c:1249` - `list_file_entry()` renders mode/size/mtime/name plus
+///   the `F_ATIME(f)` / `F_CRTIME(f)` columns when the atimes/crtimes ndx is set
+pub struct ListOnlyEntryFields {
+    /// POSIX mode bits (type + permissions).
+    pub mode: u32,
+    /// File length in bytes.
+    pub size: u64,
+    /// Modification time, whole seconds since the Unix epoch.
+    pub mtime: i64,
+    /// Modification time sub-second component, nanoseconds.
+    pub mtime_nsec: u32,
+    /// Access time, whole seconds since the Unix epoch.
+    pub atime: i64,
+    /// Access time sub-second component, nanoseconds.
+    pub atime_nsec: u32,
+    /// Creation time, whole seconds since the Unix epoch.
+    pub crtime: i64,
+    /// Creation time sub-second component, nanoseconds.
+    pub crtime_nsec: u32,
+    /// Symlink target, when the entry is a symlink.
+    pub symlink_target: Option<PathBuf>,
+    /// Whether the entry is a symlink.
+    pub is_symlink: bool,
+}
 
 /// Kind of entry described by [`ClientEntryMetadata`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -125,7 +158,7 @@ impl ClientEntryMetadata {
     ///   plus the `F_ATIME(f)` / `F_CRTIME(f)` columns when the atimes/crtimes
     ///   ndx is active
     #[must_use]
-    pub fn from_list_only_entry(entry: &ListOnlyEntry) -> Self {
+    pub fn from_list_only_entry(entry: &ListOnlyEntryFields) -> Self {
         let kind = if entry.is_symlink {
             ClientEntryKind::Symlink
         } else {
