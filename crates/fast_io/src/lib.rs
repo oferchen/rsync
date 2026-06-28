@@ -356,7 +356,7 @@ pub use stdio_blocking::force_blocking_stdio;
 pub use stdio_shutdown::shutdown_stdio_write;
 // Non-unix `recv_fd_to_file` stub returns `Unsupported`; gate the public
 // re-export on unix to remove the dead surface area (see WIN-S.LAND.1.a).
-pub use dontcache_writer::{DontcacheFileWriter, dontcache_supported};
+pub use dontcache_writer::{DontcacheFileWriter, dontcache_read_exact, dontcache_supported};
 #[cfg(unix)]
 pub use splice::recv_fd_to_file;
 pub use vmsplice_writer::{VMSPLICE_MIN_CHUNK, VmspliceFileWriter};
