@@ -1015,6 +1015,7 @@ fn bind_listeners_per_family_falls_back_when_first_family_unreachable() {
         0,
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
+        1,
         None,
     )
     .expect("at least one family must bind");
@@ -1030,6 +1031,46 @@ fn bind_listeners_per_family_falls_back_when_first_family_unreachable() {
         bound_addresses[0].port() != 0,
         "kernel must assign an ephemeral port for the bound listener"
     );
+}
+
+#[test]
+fn bind_listeners_per_family_replicates_acceptor_threads() {
+    // acceptor_threads = N must bind N listener sockets for a reachable
+    // family. With port 0 each replica gets its own ephemeral port, which
+    // deterministically exercises the replication loop on every platform
+    // regardless of SO_REUSEPORT same-port semantics (the load-balancing
+    // benefit of binding to a fixed shared port is a kernel feature covered
+    // by the per-socket set_reuse_port call, not this counting test).
+    let reachable = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+    let bind_addresses = vec![reachable];
+
+    let (listeners, bound_addresses) = bind_listeners_per_family(
+        &bind_addresses,
+        0,
+        DEFAULT_LISTEN_BACKLOG,
+        TcpFastOpenMode::Off,
+        3,
+        None,
+    )
+    .expect("the reachable family must bind all replicas");
+
+    assert_eq!(
+        listeners.len(),
+        3,
+        "acceptor_threads=3 must bind three listener replicas"
+    );
+    assert_eq!(bound_addresses.len(), 3);
+    for addr in &bound_addresses {
+        assert_eq!(addr.ip(), reachable, "every replica binds the same family");
+        assert!(addr.port() != 0, "each replica must get a real ephemeral port");
+    }
+}
+
+#[test]
+fn default_acceptor_threads_is_one() {
+    // Absent an `acceptor threads` directive the daemon binds a single
+    // listener per family, preserving the historical pre-NACC-2 behaviour.
+    assert_eq!(RuntimeOptions::default().acceptor_threads(), 1);
 }
 
 #[test]
@@ -1051,6 +1092,7 @@ fn bind_listeners_per_family_fails_only_when_all_families_unreachable() {
         0,
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
+        1,
         None,
     )
     .expect_err("no family should bind");
@@ -1093,6 +1135,7 @@ fn bind_listeners_per_family_falls_back_from_ipv6_to_ipv4() {
         0,
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
+        1,
         None,
     )
     .expect("IPv4 fallback must bind when IPv6 is unreachable");
@@ -1129,6 +1172,7 @@ fn bind_listeners_per_family_single_family_propagates_error() {
         0,
         DEFAULT_LISTEN_BACKLOG,
         TcpFastOpenMode::Off,
+        1,
         None,
     )
     .expect_err("the single configured address must fail to bind");

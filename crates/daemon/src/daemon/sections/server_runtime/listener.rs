@@ -357,29 +357,58 @@ fn bind_listeners_per_family(
     port: u16,
     backlog: i32,
     tcp_fastopen: TcpFastOpenMode,
+    acceptor_threads: u32,
     log_sink: Option<&SharedLogSink>,
 ) -> Result<(Vec<TcpListener>, Vec<SocketAddr>), io::Error> {
-    let mut listeners = Vec::with_capacity(bind_addresses.len());
-    let mut bound_addresses = Vec::with_capacity(bind_addresses.len());
+    let replicas = acceptor_threads.max(1) as usize;
+    let mut listeners = Vec::with_capacity(bind_addresses.len() * replicas);
+    let mut bound_addresses = Vec::with_capacity(bind_addresses.len() * replicas);
     let dual_stack = bind_addresses.len() > 1;
     let mut last_error: Option<io::Error> = None;
 
     for addr in bind_addresses {
         let requested_addr = SocketAddr::new(*addr, port);
-        match bind_with_backlog(requested_addr, backlog, tcp_fastopen) {
-            Ok(listener) => {
-                let local_addr = listener.local_addr().unwrap_or(requested_addr);
-                bound_addresses.push(local_addr);
-                listeners.push(listener);
-            }
-            Err(error) => {
-                if dual_stack {
-                    warn_per_family_bind_failure(log_sink, requested_addr, &error);
-                    last_error = Some(error);
-                    continue;
+
+        // Bind up to `replicas` SO_REUSEPORT sockets for this family. The kernel
+        // load-balances accepted connections across them, each driven by its own
+        // acceptor thread. With replicas == 1 this is the historical
+        // single-listener-per-family behaviour.
+        let mut family_bound = 0usize;
+        let mut family_error: Option<io::Error> = None;
+        for _ in 0..replicas {
+            match bind_with_backlog(requested_addr, backlog, tcp_fastopen) {
+                Ok(listener) => {
+                    let local_addr = listener.local_addr().unwrap_or(requested_addr);
+                    bound_addresses.push(local_addr);
+                    listeners.push(listener);
+                    family_bound += 1;
                 }
-                return Err(error);
+                Err(error) => {
+                    family_error = Some(error);
+                    break;
+                }
             }
+        }
+
+        if family_bound == 0 {
+            // Whole family failed to bind even once - apply the existing
+            // per-family tolerance: warn and continue in dual-stack mode so a
+            // surviving family keeps the daemon up, else propagate.
+            let error = family_error.expect("a bind failure was recorded");
+            if dual_stack {
+                warn_per_family_bind_failure(log_sink, requested_addr, &error);
+                last_error = Some(error);
+                continue;
+            }
+            return Err(error);
+        }
+
+        // The family is serving with at least one replica. If a later replica
+        // failed, surface it as a warning but keep the bound replicas.
+        if family_bound < replicas
+            && let Some(error) = family_error
+        {
+            warn_per_family_bind_failure(log_sink, requested_addr, &error);
         }
     }
 

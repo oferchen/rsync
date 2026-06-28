@@ -15,6 +15,12 @@ impl RuntimeOptions {
         self.listen_backlog
     }
 
+    /// Returns the number of SO_REUSEPORT listener replicas to bind per
+    /// address family. Defaults to 1 (single listener) when unset.
+    pub(crate) fn acceptor_threads(&self) -> u32 {
+        self.acceptor_threads.map_or(1, NonZeroU32::get)
+    }
+
     /// Returns the configured socket options string.
     ///
     /// Upstream: `daemon-parm.txt` - `socket options` STRING. Comma-separated

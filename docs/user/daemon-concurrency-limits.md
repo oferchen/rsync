@@ -140,6 +140,39 @@ Pair `--max-connections` with the OS limits the daemon actually consumes:
   backlog headroom or new connections see `ECONNREFUSED` before the
   accept loop runs.
 
+## Spreading accept load: acceptor threads
+
+By default the daemon binds one listener socket per address family and runs
+a single accept loop over it. On a host fielding a high rate of short-lived
+connections, that one accept loop can become the bottleneck before any
+worker thread saturates.
+
+The `acceptor threads` global directive binds N `SO_REUSEPORT` listener
+replicas per family instead of one:
+
+```
+# /etc/oc-rsyncd.conf
+acceptor threads = 4
+```
+
+Each replica gets its own acceptor thread, and the kernel load-balances
+inbound connections across them. This is an oc-rsync extension with no
+upstream equivalent (upstream forks one child per accepted connection from
+a single listener) and changes only kernel socket behaviour, never the
+wire. The default of 1 preserves the historical single-listener model.
+
+Notes:
+
+- `SO_REUSEPORT` is a Linux/BSD feature. On platforms without it the
+  replicas still bind, but the kernel does not load-balance across them, so
+  values above 1 provide no benefit there.
+- Size N to the number of CPUs you want fielding accepts, not to
+  `--max-connections`. A handful (2-8) is typically enough; the accept path
+  is cheap once a connection lands on a worker thread.
+- The per-daemon `--max-connections` cap and its admission counter are
+  global across all acceptor threads, so adding replicas never loosens the
+  concurrency ceiling.
+
 ## Why not async
 
 A `tokio`-based runtime would lift the per-connection ceiling by an order
