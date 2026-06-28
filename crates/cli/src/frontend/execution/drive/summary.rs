@@ -47,6 +47,12 @@ pub(crate) struct TransferExecutionInputs<'a> {
     /// `--info=copy`: opt-in to the oc-rsync `Copy method` line that reports
     /// which local-copy I/O acceleration (clonefile/reflink/io_uring) ran.
     pub(crate) show_copy_method: bool,
+    /// `-U`/`--atimes`: render the ATIME column in `--list-only` output
+    /// (upstream: generator.c list_file_entry() atimes_ndx field).
+    pub(crate) show_atimes: bool,
+    /// `--crtimes`: render the CRTIME column in `--list-only` output
+    /// (upstream: generator.c list_file_entry() crtimes_ndx field).
+    pub(crate) show_crtimes: bool,
     pub(crate) out_format_template: Option<&'a crate::frontend::out_format::OutFormat>,
     pub(crate) name_level: NameOutputLevel,
     pub(crate) name_overridden: bool,
@@ -77,6 +83,8 @@ where
         list_only,
         dry_run,
         show_copy_method,
+        show_atimes,
+        show_crtimes,
         out_format_template,
         name_level,
         name_overridden,
@@ -155,6 +163,8 @@ where
                     suppress_updated_only_totals,
                     recursive,
                     show_copy_method,
+                    show_atimes,
+                    show_crtimes,
                     writer,
                 )
             }) {
@@ -178,6 +188,8 @@ where
                     human_readable_mode,
                     is_sender,
                     itemize_repeated,
+                    show_atimes,
+                    show_crtimes,
                 })
             {
                 let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
@@ -222,6 +234,10 @@ struct EmitLogOutputParams<'a> {
     /// `-ii` (the `-i` flag repeated) - upstream `stdout_format_has_i > 1`.
     /// Forces unchanged itemize rows in the log file as it does on stdout.
     itemize_repeated: bool,
+    /// `-U`/`--atimes`: render the ATIME column in `--list-only` log output.
+    show_atimes: bool,
+    /// `--crtimes`: render the CRTIME column in `--list-only` log output.
+    show_crtimes: bool,
 }
 
 /// Writes the transfer summary to the configured log file.
@@ -237,6 +253,8 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         human_readable_mode,
         is_sender,
         itemize_repeated,
+        show_atimes,
+        show_crtimes,
     } = params;
     // upstream: generator.c:582-583 - mirror the `INFO_GTE(NAME, 2)` arm of
     // the itemize emit gate in the log-file renderer so `-vv` / `--info=name2`
@@ -267,6 +285,8 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         // The `Copy method` line is a stdout-only `--info=copy` nicety; keep it
         // out of the log file.
         false,
+        show_atimes,
+        show_crtimes,
         &mut log.file,
     )?;
     log.file.flush()

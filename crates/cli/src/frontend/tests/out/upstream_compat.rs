@@ -240,6 +240,8 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         false,
         false, // emit_flist_banner
         false, // show_copy_method
+        false, // show_atimes
+        false, // show_crtimes
         &mut with_out_format,
     )
     .expect("render with out-format");
@@ -261,6 +263,8 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         false,
         false, // emit_flist_banner
         false, // show_copy_method
+        false, // show_atimes
+        false, // show_crtimes
         &mut without_out_format,
     )
     .expect("render without out-format");

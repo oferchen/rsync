@@ -72,6 +72,8 @@ fn render_stats_at_level(
         false,
         false, // emit_flist_banner
         false, // show_copy_method
+        false, // show_atimes
+        false, // show_crtimes
         &mut rendered,
     )
     .expect("render stats");
@@ -96,6 +98,8 @@ fn render_verbose(summary: &ClientSummary, verbosity: u8) -> String {
         false,
         true,  // emit_flist_banner
         false, // show_copy_method
+        false, // show_atimes
+        false, // show_crtimes
         &mut rendered,
     )
     .expect("render verbose");
@@ -479,6 +483,8 @@ fn parity_totals_only_without_stats_flag() {
         false,
         true,  // emit_flist_banner
         false, // show_copy_method
+        false, // show_atimes
+        false, // show_crtimes
         &mut rendered,
     )
     .expect("render");
@@ -721,6 +727,8 @@ fn parity_verbose_v2_emits_bare_name_per_upstream() {
         false,
         true,  // emit_flist_banner
         false, // show_copy_method
+        false, // show_atimes
+        false, // show_crtimes
         &mut rendered,
     )
     .expect("render");
