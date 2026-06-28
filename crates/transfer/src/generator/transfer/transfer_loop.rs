@@ -22,6 +22,7 @@ use super::super::delta::{
     write_delta_with_inline_checksum,
 };
 use super::super::item_flags::ItemFlags;
+use super::super::protocol_io::NdxAttrs;
 use super::super::{
     GeneratorContext, SegmentScheduler, TransferLoopResult, flush_with_count, is_early_close_error,
 };
@@ -329,10 +330,12 @@ impl GeneratorContext {
                 self.write_ndx_iflags_and_xattr_response(
                     &mut *writer,
                     &mut ndx_write_codec,
-                    wire_ndx,
-                    &iflags,
-                    fnamecmp_type,
-                    xname.as_deref(),
+                    &NdxAttrs {
+                        ndx: wire_ndx,
+                        iflags: &iflags,
+                        fnamecmp_type,
+                        xname: xname.as_deref(),
+                    },
                     pending_xattr_response.as_mut(),
                 )?;
                 continue;
@@ -348,10 +351,12 @@ impl GeneratorContext {
                 self.write_ndx_iflags_and_xattr_response(
                     &mut *writer,
                     &mut ndx_write_codec,
-                    wire_ndx,
-                    &iflags,
-                    fnamecmp_type,
-                    xname.as_deref(),
+                    &NdxAttrs {
+                        ndx: wire_ndx,
+                        iflags: &iflags,
+                        fnamecmp_type,
+                        xname: xname.as_deref(),
+                    },
                     pending_xattr_response.as_mut(),
                 )?;
                 // upstream: sender.c:395 - log_item(FCLIENT, file, iflags, NULL)
@@ -415,10 +420,12 @@ impl GeneratorContext {
                 self.write_ndx_and_attrs(
                     &mut *writer,
                     &mut ndx_write_codec,
-                    wire_ndx,
-                    &iflags,
-                    fnamecmp_type,
-                    xname.as_deref(),
+                    &NdxAttrs {
+                        ndx: wire_ndx,
+                        iflags: &iflags,
+                        fnamecmp_type,
+                        xname: xname.as_deref(),
+                    },
                     &sum_head,
                     pending_xattr_response.as_mut(),
                 )?;
@@ -482,10 +489,12 @@ impl GeneratorContext {
                 self.write_ndx_and_attrs(
                     &mut *writer,
                     &mut ndx_write_codec,
-                    wire_ndx,
-                    &iflags,
-                    fnamecmp_type,
-                    xname.as_deref(),
+                    &NdxAttrs {
+                        ndx: wire_ndx,
+                        iflags: &iflags,
+                        fnamecmp_type,
+                        xname: xname.as_deref(),
+                    },
                     &sum_head,
                     pending_xattr_response.as_mut(),
                 )?;

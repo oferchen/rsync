@@ -20,6 +20,26 @@ use protocol::wire::SignatureBlock;
 
 use super::GeneratorContext;
 use super::item_flags::ItemFlags;
+
+/// Per-file NDX + item-flags header that precedes a file's `sum_head` / delta
+/// payload on the wire.
+///
+/// Bundles the NDX with the iflags-gated trailing fields that always travel
+/// together (upstream `sender.c:180-189`): `fnamecmp_type` is emitted when
+/// `iflags.has_basis_type()` and `xname` when `iflags.has_xname()`. Grouping
+/// them as a single parameter object keeps the two writer methods below at a
+/// manageable arity and prevents the four fields from drifting apart at call
+/// sites.
+pub(super) struct NdxAttrs<'a> {
+    /// Wire NDX of the file (diff-encoded by the NDX codec).
+    pub ndx: i32,
+    /// 16-bit item flags; the `*_FOLLOWS` bits gate the two fields below.
+    pub iflags: &'a ItemFlags,
+    /// fnamecmp basis type, written only when `iflags.has_basis_type()`.
+    pub fnamecmp_type: Option<protocol::FnameCmpType>,
+    /// Extended name, written as a vstring only when `iflags.has_xname()`.
+    pub xname: Option<&'a [u8]>,
+}
 use crate::receiver::SumHead;
 
 impl GeneratorContext {
@@ -175,22 +195,11 @@ impl GeneratorContext {
         &self,
         writer: &mut W,
         ndx_codec: &mut impl NdxCodec,
-        ndx: i32,
-        iflags: &ItemFlags,
-        fnamecmp_type: Option<protocol::FnameCmpType>,
-        xname: Option<&[u8]>,
+        attrs: &NdxAttrs<'_>,
         sum_head: &SumHead,
         xattr_response: Option<&mut protocol::xattr::XattrList>,
     ) -> io::Result<()> {
-        self.write_ndx_iflags_and_xattr_response(
-            writer,
-            ndx_codec,
-            ndx,
-            iflags,
-            fnamecmp_type,
-            xname,
-            xattr_response,
-        )?;
+        self.write_ndx_iflags_and_xattr_response(writer, ndx_codec, attrs, xattr_response)?;
         sum_head.write(writer)?;
         Ok(())
     }
@@ -214,12 +223,15 @@ impl GeneratorContext {
         &self,
         writer: &mut W,
         ndx_codec: &mut impl NdxCodec,
-        ndx: i32,
-        iflags: &ItemFlags,
-        fnamecmp_type: Option<protocol::FnameCmpType>,
-        xname: Option<&[u8]>,
+        attrs: &NdxAttrs<'_>,
         xattr_response: Option<&mut protocol::xattr::XattrList>,
     ) -> io::Result<()> {
+        let NdxAttrs {
+            ndx,
+            iflags,
+            fnamecmp_type,
+            xname,
+        } = *attrs;
         ndx_codec.write_ndx(writer, ndx)?;
         if self.protocol.supports_iflags() {
             // upstream: sender.c:184 - write_shortint(f_out, iflags) writes the
