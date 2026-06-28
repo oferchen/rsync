@@ -20,6 +20,26 @@ use protocol::wire::SignatureBlock;
 
 use super::GeneratorContext;
 use super::item_flags::ItemFlags;
+
+/// Per-file NDX + item-flags header that precedes a file's `sum_head` / delta
+/// payload on the wire.
+///
+/// Bundles the NDX with the iflags-gated trailing fields that always travel
+/// together (upstream `sender.c:180-189`): `fnamecmp_type` is emitted when
+/// `iflags.has_basis_type()` and `xname` when `iflags.has_xname()`. Grouping
+/// them as a single parameter object keeps the two writer methods below at a
+/// manageable arity and prevents the four fields from drifting apart at call
+/// sites.
+pub(super) struct NdxAttrs<'a> {
+    /// Wire NDX of the file (diff-encoded by the NDX codec).
+    pub ndx: i32,
+    /// 16-bit item flags; the `*_FOLLOWS` bits gate the two fields below.
+    pub iflags: &'a ItemFlags,
+    /// fnamecmp basis type, written only when `iflags.has_basis_type()`.
+    pub fnamecmp_type: Option<protocol::FnameCmpType>,
+    /// Extended name, written as a vstring only when `iflags.has_xname()`.
+    pub xname: Option<&'a [u8]>,
+}
 use crate::receiver::SumHead;
 
 impl GeneratorContext {
@@ -175,12 +195,11 @@ impl GeneratorContext {
         &self,
         writer: &mut W,
         ndx_codec: &mut impl NdxCodec,
-        ndx: i32,
-        iflags: &ItemFlags,
+        attrs: &NdxAttrs<'_>,
         sum_head: &SumHead,
         xattr_response: Option<&mut protocol::xattr::XattrList>,
     ) -> io::Result<()> {
-        self.write_ndx_iflags_and_xattr_response(writer, ndx_codec, ndx, iflags, xattr_response)?;
+        self.write_ndx_iflags_and_xattr_response(writer, ndx_codec, attrs, xattr_response)?;
         sum_head.write(writer)?;
         Ok(())
     }
@@ -204,13 +223,40 @@ impl GeneratorContext {
         &self,
         writer: &mut W,
         ndx_codec: &mut impl NdxCodec,
-        ndx: i32,
-        iflags: &ItemFlags,
+        attrs: &NdxAttrs<'_>,
         xattr_response: Option<&mut protocol::xattr::XattrList>,
     ) -> io::Result<()> {
+        let NdxAttrs {
+            ndx,
+            iflags,
+            fnamecmp_type,
+            xname,
+        } = *attrs;
         ndx_codec.write_ndx(writer, ndx)?;
         if self.protocol.supports_iflags() {
-            writer.write_all(&iflags.significant_wire_bits().to_le_bytes())?;
+            // upstream: sender.c:184 - write_shortint(f_out, iflags) writes the
+            // FULL 16-bit iflags, including the ITEM_BASIS_TYPE_FOLLOWS /
+            // ITEM_XNAME_FOLLOWS framing bits. The receiver reads those bits to
+            // decide whether the trailing fnamecmp_type / xname fields follow;
+            // `significant_wire_bits` strips them (it exists for itemize display
+            // only), so the receiver stops expecting the trailing bytes and the
+            // wire desyncs - over a socket the goodbye then closes with unread
+            // data and the kernel RSTs the stream.
+            writer.write_all(&((iflags.raw() & 0xFFFF) as u16).to_le_bytes())?;
+        }
+        // upstream: sender.c:186-189 - write fnamecmp_type and the extended name
+        // immediately after iflags when their *_FOLLOWS bits are set.
+        if iflags.has_basis_type() {
+            if let Some(ft) = fnamecmp_type {
+                writer.write_all(&[ft.to_wire()])?;
+            }
+        }
+        if iflags.has_xname() {
+            // write_vstring: varint length prefix then the raw bytes. An empty
+            // xname (xlen == 0) still emits the 0-length varint.
+            let name = xname.unwrap_or(&[]);
+            protocol::write_varint(writer, name.len() as i32)?;
+            writer.write_all(name)?;
         }
         // upstream: sender.c:192-196 - send_xattr_request(fname, file, f_out)
         // is invoked from inside write_ndx_and_attrs() when ITEM_REPORT_XATTR
