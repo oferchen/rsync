@@ -35,6 +35,14 @@ pub struct DeltaGeneratorConfig<'a> {
     /// rolling and a strong checksum.
     pub sig_blocks: Vec<protocol::wire::signature::SignatureBlock>,
 
+    /// Size in bytes of the final partial block (0 when the basis length is a
+    /// whole multiple of `block_length`). Carried on the wire in the
+    /// `SumHead.remainder` field. The final block must be recorded at this
+    /// length, not at `block_length`, so a full-length source window cannot
+    /// falsely match the short final block - see
+    /// [`crate::generate_delta_from_signature`].
+    pub remainder: u32,
+
     /// Length of the strong checksum in bytes. Common values are 16 (MD5,
     /// MD4) or 20 (SHA-1); must be non-zero and bounded by the digest size
     /// of the negotiated checksum algorithm.
@@ -74,12 +82,20 @@ impl<'a> DeltaGeneratorConfig<'a> {
         Self {
             block_length,
             sig_blocks,
+            remainder: 0,
             strong_sum_length,
             protocol,
             negotiated_algorithms: None,
             compat_flags: None,
             checksum_seed: 0,
         }
+    }
+
+    /// Sets the final-partial-block length (`SumHead.remainder`).
+    #[must_use]
+    pub fn with_remainder(mut self, remainder: u32) -> Self {
+        self.remainder = remainder;
+        self
     }
 
     /// Attaches negotiated algorithms from protocol >= 30 capability exchange.

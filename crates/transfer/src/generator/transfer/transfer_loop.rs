@@ -409,6 +409,7 @@ impl GeneratorContext {
                 let config = DeltaGeneratorConfig {
                     block_length,
                     sig_blocks,
+                    remainder: sum_head.remainder,
                     strong_sum_length,
                     protocol: self.protocol,
                     negotiated_algorithms: self.negotiated_algorithms.as_ref(),

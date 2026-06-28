@@ -133,30 +133,48 @@ pub fn generate_delta_from_signature<R: Read>(
     })?;
 
     let block_count = config.sig_blocks.len() as u64;
+    let remainder = config.remainder;
 
-    // Reconstruct signature layout (remainder unknown, set to 0)
+    // Reconstruct the signature layout using the basis remainder carried on
+    // the wire (SumHead.remainder), so the final partial block is recorded at
+    // its true length rather than a full block.
     let layout = SignatureLayout::from_raw_parts(
         block_length_nz,
-        0, // remainder unknown from wire format
+        remainder,
         block_count,
         strong_sum_length_nz,
     );
 
-    // Convert wire blocks to engine signature blocks (consumes sig_blocks)
+    // Convert wire blocks to engine signature blocks (consumes sig_blocks).
+    //
+    // The final block is only `remainder` bytes when the basis length is not a
+    // whole multiple of `block_length`. Recording it at the full block length
+    // lets a full-length source window falsely match the short final block via
+    // a rolling-checksum + truncated-strong-checksum collision (the phase-1
+    // strong sum is only `s2length` bytes), which emits a wrong Copy token and
+    // corrupts the reconstructed tail. Stamp the true length so the matcher's
+    // window-length guard excludes the short final block from full-window
+    // matching, matching the native signature path (upstream: match.c:221
+    // `if (l != s->sums[i].len) continue`).
+    let last_index = block_count.saturating_sub(1);
     let engine_blocks: Vec<SignatureBlock> = config
         .sig_blocks
         .into_iter()
         .map(|wire_block| {
+            let block_len = if remainder != 0 && u64::from(wire_block.index) == last_index {
+                remainder as usize
+            } else {
+                config.block_length as usize
+            };
             SignatureBlock::from_raw_parts(
                 wire_block.index as u64,
-                RollingDigest::from_value(wire_block.rolling_sum, config.block_length as usize),
+                RollingDigest::from_value(wire_block.rolling_sum, block_len),
                 &wire_block.strong_sum,
             )
         })
         .collect();
 
-    // Calculate total bytes (approximation since we don't know exact remainder)
-    let total_bytes = (block_count.saturating_sub(1)) * u64::from(config.block_length);
+    let total_bytes = last_index * u64::from(config.block_length) + u64::from(remainder);
     let signature = FileSignature::from_raw_parts(layout, engine_blocks, total_bytes);
 
     // Select checksum algorithm using ChecksumFactory (handles negotiated vs default)
@@ -670,6 +688,90 @@ mod tests {
             &result.checksum_buf[..result.checksum_len],
             &expected_buf[..expected_len],
             "inline checksum must equal checksum of source bytes covered by the script",
+        );
+    }
+
+    #[test]
+    fn final_short_block_excluded_from_full_window_match() {
+        use checksums::RollingDigest;
+        use protocol::ProtocolVersion;
+        use protocol::wire::signature::SignatureBlock as WireSignatureBlock;
+        use std::io::Cursor;
+
+        // Regression for the SENDER final-short-block length guard. A basis of
+        // `block_length + remainder` bytes has a short final block of only
+        // `remainder` bytes. Reconstructing it at the full block length lets a
+        // full-length source window falsely match it (rolling-checksum plus a
+        // 2-byte truncated-strong collision), emitting a wrong Copy that
+        // references basis bytes past the short block and corrupts the tail.
+        // The fix records the final block at its true length so the matcher's
+        // window-length guard excludes it from full-window matching.
+        let block_length: u32 = 700;
+        let remainder: u32 = 344;
+        let s2length: u8 = 2;
+        let protocol = ProtocolVersion::NEWEST;
+
+        // Compute wire strong sums with the same algorithm the reconstruction
+        // will use, so a (would-be) match against block 1 is exact.
+        let algorithm =
+            ChecksumFactory::from_negotiation(None, protocol, 0, None).signature_algorithm();
+        let strong = |bytes: &[u8]| -> Vec<u8> {
+            algorithm
+                .compute_truncated(bytes, s2length as usize)
+                .as_slice()
+                .to_vec()
+        };
+
+        // Two distinct full-length windows so block 0 only matches `first`.
+        let first: Vec<u8> = (0..block_length).map(|i| (i % 251) as u8).collect();
+        let tail: Vec<u8> = (0..block_length)
+            .map(|i| ((i * 7 + 3) % 241) as u8)
+            .collect();
+
+        let sig_blocks = vec![
+            WireSignatureBlock {
+                index: 0,
+                rolling_sum: RollingDigest::from_bytes(&first).value(),
+                strong_sum: strong(&first),
+            },
+            WireSignatureBlock {
+                index: 1,
+                rolling_sum: RollingDigest::from_bytes(&tail).value(),
+                strong_sum: strong(&tail),
+            },
+        ];
+
+        let config = DeltaGeneratorConfig::new(block_length, sig_blocks, s2length, protocol)
+            .with_remainder(remainder);
+
+        // Source = first window ++ tail window. Block 0 must match `first` (the
+        // positive control proving the sum machinery is correct); block 1 (the
+        // short final block) must NOT be referenced from the full `tail` window.
+        let mut source = first.clone();
+        source.extend_from_slice(&tail);
+        let script = generate_delta_from_signature(Cursor::new(source), config)
+            .expect("delta generation should succeed");
+
+        let final_block_lo = u64::from(block_length);
+        let final_block_hi = final_block_lo + u64::from(remainder);
+        let mut block0_referenced = false;
+        for token in script.tokens() {
+            if let DeltaToken::Copy { index, len } = token {
+                let lo = index * u64::from(block_length);
+                let hi = lo + *len as u64;
+                assert!(
+                    hi <= final_block_lo || lo >= final_block_hi,
+                    "Copy references the short final block's basis region \
+                     [{final_block_lo}, {final_block_hi}) via [{lo}, {hi}) - tail corruption"
+                );
+                if lo < u64::from(block_length) {
+                    block0_referenced = true;
+                }
+            }
+        }
+        assert!(
+            block0_referenced,
+            "positive control: block 0 must be copied (proves the wire sums match)"
         );
     }
 }
