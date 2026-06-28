@@ -99,6 +99,17 @@ printf 'deep\n'  > "${src}/subdir/nested/deep.txt"
 # 256 KiB is enough to push past a single block without being slow.
 dd if=/dev/urandom of="${src}/random.bin" bs=1024 count=256 \
    >/dev/null 2>&1
+# Backdate the random file to a fixed old timestamp so its basis on the
+# receiver has a clearly-old mtime. Scenario 7 modifies a same-size copy in
+# place; without this, the modification and the basis can land in the same
+# wall-clock second on a fast machine, and rsync's quick-check (equal size +
+# same second-resolution mtime) skips the file - so the delta is never sent
+# and the receiver keeps the stale content. This is standard rsync behaviour:
+# upstream rsync 3.4.4 -> upstream 3.4.4 diverges identically in that case.
+# Backdating makes the later in-place edit land in a strictly newer second,
+# so the change is detected deterministically while still exercising the
+# default mtime quick-check + delta path.
+touch -t 202001010000 "${src}/random.bin"
 # Empty file edge case.
 : > "${src}/empty.txt"
 
