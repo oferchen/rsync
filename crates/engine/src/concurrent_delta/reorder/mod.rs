@@ -507,6 +507,21 @@ impl<T> ReorderBuffer<T> {
         self.capacity
     }
 
+    /// Returns the in-flight reorder window: the number of ring slots spanned
+    /// between the delivery cursor ([`next_expected`](Self::next_expected)) and
+    /// the furthest-ahead buffered item.
+    ///
+    /// This is how far out-of-order arrivals currently reach, distinct from
+    /// [`buffered_count`](Self::buffered_count) (how many slots are occupied).
+    /// A window approaching [`capacity`](Self::capacity) is what forces a
+    /// `force_insert` or a spill, so it is the leading indicator of spill
+    /// pressure - whereas the occupied count can stay low while the window
+    /// stretches under a single far-ahead arrival.
+    #[must_use]
+    pub const fn in_flight_window(&self) -> usize {
+        self.high_water_offset
+    }
+
     /// Returns a snapshot of diagnostic counters for the buffer.
     ///
     /// The returned [`Metrics`] captures the cumulative stall duration, the
