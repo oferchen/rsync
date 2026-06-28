@@ -546,9 +546,10 @@ impl<'a> DeltaApplicator<'a> {
     fn resolve_same_fs(basis: &File, dest: &File) -> SameFsCache {
         #[cfg(target_os = "linux")]
         {
-            use std::os::unix::fs::MetadataExt;
-            match (basis.metadata(), dest.metadata()) {
-                (Ok(b), Ok(d)) if b.dev() == d.dev() => SameFsCache::SameFs,
+            // REFLINK-1: shared st_dev comparison so the delta-apply
+            // FICLONERANGE gate and the whole-file FICLONE gate agree.
+            match fast_io::same_fs::files_same_device(basis, dest) {
+                Some(true) => SameFsCache::SameFs,
                 _ => SameFsCache::DifferentFs,
             }
         }
