@@ -9,10 +9,11 @@
 //! - **Level 3**: Detailed checksum information (potential matches, search params)
 //! - **Level 4**: Per-iteration offset tracking (very verbose)
 
-use std::io::{self, Read};
+use std::io::{self, Cursor, Read};
 
 use checksums::RollingChecksum;
 use logging::debug_log;
+use rayon::prelude::*;
 
 #[cfg(feature = "tracing")]
 use tracing::instrument;
@@ -32,6 +33,14 @@ const DEFAULT_BUFFER_LEN: usize = 128 * 1024;
 ///
 /// upstream: rsync.h:158, match.c:339
 const CHUNK_SIZE: usize = 32 * 1024;
+
+/// Minimum bytes per parallel range in [`DeltaGenerator::generate_chunked`].
+///
+/// Ranges below this size are not worth a rayon task: the per-range boundary
+/// loss (a straddling block degrades to literals) and task overhead would
+/// outweigh the scan parallelism. The effective floor is the larger of this
+/// and 64 basis blocks. See `docs/design/zsync-seq-match.md`.
+const MIN_PARALLEL_CHUNK_BYTES: usize = 1024 * 1024;
 
 /// Emits a coalesced `DeltaToken::Copy` covering an open seq-match run.
 ///
@@ -140,8 +149,29 @@ impl DeltaGenerator {
     /// See `match.c:hash_search()` for the matching algorithm.
     pub fn generate<R: Read>(
         &self,
+        reader: R,
+        index: &DeltaSignatureIndex,
+    ) -> io::Result<DeltaScript> {
+        #[cfg(any(test, feature = "bench-internal"))]
+        let prune_matched = self.prune_matched;
+        #[cfg(not(any(test, feature = "bench-internal")))]
+        let prune_matched = true;
+        self.generate_with_prune(reader, index, prune_matched)
+    }
+
+    /// Core single-stream delta scan, parameterized on whether the shared
+    /// `index` consumed-bitset pruning is engaged.
+    ///
+    /// Production [`Self::generate`] always prunes. [`Self::generate_chunked`]
+    /// passes `prune_matched = false`: with pruning off this routine performs
+    /// only read-only lookups on `index` (no [`DeltaSignatureIndex::mark_consumed`]
+    /// or [`DeltaSignatureIndex::reset_consumed`]), so a shared `&index` is safe
+    /// to scan from multiple rayon workers concurrently.
+    fn generate_with_prune<R: Read>(
+        &self,
         mut reader: R,
         index: &DeltaSignatureIndex,
+        prune_matched: bool,
     ) -> io::Result<DeltaScript> {
         let block_len = index.block_length();
         let mut window = RingBuffer::with_capacity(block_len);
@@ -171,10 +201,6 @@ impl DeltaGenerator {
         // basis indices; the bitmap leaves those siblings findable until each
         // is consumed independently. See docs/design/zsync-prune.md.
         let mut matched_blocks = MatchedBlocks::with_block_count(index.block_count());
-        #[cfg(any(test, feature = "bench-internal"))]
-        let prune_matched = self.prune_matched;
-        #[cfg(not(any(test, feature = "bench-internal")))]
-        let prune_matched = true;
         // ZSO-3: the shared consumed-bitset on `index` survives across
         // generator sessions when callers reuse the same index. Reset
         // it now so each `generate()` call starts with a fresh prune
@@ -460,6 +486,91 @@ impl DeltaGenerator {
 
         Ok(DeltaScript::new(tokens, total_bytes, literal_bytes))
     }
+
+    /// Generates a [`DeltaScript`] by scanning `source` in parallel across up
+    /// to `max_chunks` contiguous, non-overlapping ranges.
+    ///
+    /// The sender-side rolling scan is inherently sequential per byte, so the
+    /// only way to engage multiple cores is to split the source into disjoint
+    /// ranges and scan each against the shared, read-only signature `index`.
+    /// Each range scans with pruning disabled, which keeps the index purely
+    /// read-only (`AtomicU64` consumed-bitset is never touched), so the shared
+    /// `&index` is safe to scan from every rayon worker with no locking. Every
+    /// worker keeps its own window, rolling checksum, and token vector; there
+    /// is no shared mutable state and therefore no mutex on the hot path.
+    ///
+    /// # Correctness
+    ///
+    /// Concatenating the per-range token streams in source order reconstructs
+    /// `source` byte-for-byte: each range's tokens independently reconstruct
+    /// that range's bytes, and `DeltaToken::Copy { index, .. }` carries the
+    /// absolute basis block index, so it is position-independent across the
+    /// concatenation boundary. A basis block straddling a range boundary is
+    /// simply emitted as literal bytes by the adjoining ranges - a small
+    /// compression cost (bounded by `block_length` per boundary), never a
+    /// reconstruction error. For inputs too small to split usefully this
+    /// delegates to the sequential [`Self::generate`], which keeps pruning on.
+    ///
+    /// # Arguments
+    ///
+    /// * `source` - The full source buffer to delta-encode.
+    /// * `index` - Pre-built signature index from the basis file.
+    /// * `max_chunks` - Upper bound on parallel ranges (clamped to `>= 1`).
+    pub fn generate_chunked(
+        &self,
+        source: &[u8],
+        index: &DeltaSignatureIndex,
+        max_chunks: usize,
+    ) -> io::Result<DeltaScript> {
+        let block_len = index.block_length();
+        let n = source.len();
+
+        // Each range must be much larger than one block so the boundary
+        // degradation (a straddling block falls back to literals) stays in the
+        // noise. Require the larger of 1 MiB and 64 blocks per range.
+        let min_chunk = MIN_PARALLEL_CHUNK_BYTES
+            .max(block_len.saturating_mul(64))
+            .max(1);
+        let feasible = (n / min_chunk).max(1);
+        let chunks = feasible.min(max_chunks.max(1));
+
+        if chunks <= 1 {
+            // Too small to split usefully - keep the pruned sequential path.
+            return self.generate(Cursor::new(source), index);
+        }
+
+        // Partition into `chunks` contiguous, non-overlapping ranges.
+        let base = n / chunks;
+        let mut ranges = Vec::with_capacity(chunks);
+        let mut start = 0usize;
+        for i in 0..chunks {
+            let end = if i + 1 == chunks { n } else { start + base };
+            ranges.push((start, end));
+            start = end;
+        }
+
+        // Scan every range concurrently against the shared read-only index.
+        // rayon's ordered `collect` preserves source order, so no manual
+        // sequencing or locking is needed to reassemble the stream.
+        let scripts: Vec<io::Result<DeltaScript>> = ranges
+            .par_iter()
+            .map(|&(s, e)| self.generate_with_prune(Cursor::new(&source[s..e]), index, false))
+            .collect();
+
+        // Concatenate token streams in source order. Literal payloads are
+        // moved (not copied) out of each per-range script.
+        let mut tokens = Vec::new();
+        let mut total_bytes = 0u64;
+        let mut literal_bytes = 0u64;
+        for script in scripts {
+            let script = script?;
+            total_bytes += script.total_bytes();
+            literal_bytes += script.literal_bytes();
+            tokens.extend(script.into_tokens());
+        }
+
+        Ok(DeltaScript::new(tokens, total_bytes, literal_bytes))
+    }
 }
 
 impl Default for DeltaGenerator {
@@ -488,6 +599,28 @@ mod tests {
     };
     use std::io::Cursor;
     use std::num::NonZeroU8;
+
+    /// Deterministic pseudo-random byte stream (xorshift64) for parity tests.
+    /// Avoids `rand` and keeps inputs reproducible across runs.
+    fn pseudo_random(len: usize, seed: u64) -> Vec<u8> {
+        let mut state = seed | 1;
+        (0..len)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                (state & 0xff) as u8
+            })
+            .collect()
+    }
+
+    /// Reconstructs the source from `basis` by applying `script`.
+    fn reconstruct(basis: &[u8], index: &DeltaSignatureIndex, script: &DeltaScript) -> Vec<u8> {
+        let mut basis_cursor = Cursor::new(basis.to_vec());
+        let mut output = Vec::new();
+        apply_delta(&mut basis_cursor, &mut output, index, script).expect("apply");
+        output
+    }
 
     fn build_index(data: &[u8]) -> DeltaSignatureIndex {
         let params = SignatureLayoutParams::new(
@@ -699,5 +832,117 @@ mod tests {
         let mut output = Vec::new();
         apply_delta(&mut basis_cursor, &mut output, &index, &script).expect("apply");
         assert_eq!(output, input);
+    }
+
+    #[test]
+    fn generate_chunked_reconstructs_identical_source() {
+        let data = pseudo_random(4 * 1024 * 1024, 0x1234_5678);
+        let index = build_index(&data);
+        let generator = DeltaGenerator::new();
+
+        let sequential = generator
+            .generate(Cursor::new(&data[..]), &index)
+            .expect("sequential");
+        let chunked = generator
+            .generate_chunked(&data, &index, 8)
+            .expect("chunked");
+
+        // Both must reconstruct the source byte-for-byte even though the
+        // chunked token stream differs at range boundaries.
+        assert_eq!(reconstruct(&data, &index, &sequential), data);
+        assert_eq!(reconstruct(&data, &index, &chunked), data);
+        assert_eq!(chunked.total_bytes(), data.len() as u64);
+        assert_eq!(sequential.total_bytes(), data.len() as u64);
+    }
+
+    #[test]
+    fn generate_chunked_reconstructs_modified_source() {
+        let basis = pseudo_random(4 * 1024 * 1024, 0x0000_abcd);
+        let index = build_index(&basis);
+
+        let mut source = basis.clone();
+        // Scatter single-byte edits through chunk interiors and across a
+        // range boundary so each chunk holds a mix of copies and literals.
+        for off in [10_usize, 1_000_000, 2_500_000, source.len() - 50] {
+            source[off] ^= 0xff;
+        }
+        // Bracket with pure-literal regions the basis cannot match.
+        let mut full = b"PREFIX-LITERAL-REGION".to_vec();
+        full.extend_from_slice(&source);
+        full.extend_from_slice(b"SUFFIX-LITERAL-REGION");
+
+        let generator = DeltaGenerator::new();
+        let sequential = generator
+            .generate(Cursor::new(&full[..]), &index)
+            .expect("sequential");
+        let chunked = generator
+            .generate_chunked(&full, &index, 6)
+            .expect("chunked");
+
+        assert_eq!(reconstruct(&basis, &index, &sequential), full);
+        assert_eq!(reconstruct(&basis, &index, &chunked), full);
+        assert_eq!(chunked.total_bytes(), full.len() as u64);
+    }
+
+    #[test]
+    fn generate_chunked_handles_duplicate_basis_blocks() {
+        // 4 MiB of a repeated 64 KiB block: many basis indices share content,
+        // exercising the prune-off concurrent path where chunks independently
+        // match the same basis blocks without coordination.
+        let block = pseudo_random(64 * 1024, 0x0000_0099);
+        let mut basis = Vec::with_capacity(4 * 1024 * 1024);
+        for _ in 0..64 {
+            basis.extend_from_slice(&block);
+        }
+        let index = build_index(&basis);
+        let source = basis.clone();
+
+        let chunked = DeltaGenerator::new()
+            .generate_chunked(&source, &index, 8)
+            .expect("chunked");
+
+        assert_eq!(reconstruct(&basis, &index, &chunked), source);
+        assert_eq!(chunked.total_bytes(), source.len() as u64);
+    }
+
+    #[test]
+    fn generate_chunked_small_input_matches_sequential() {
+        let basis = pseudo_random(8192, 0x0000_0042);
+        let index = build_index(&basis);
+        let source = basis.clone();
+
+        let generator = DeltaGenerator::new();
+        let sequential = generator
+            .generate(Cursor::new(&source[..]), &index)
+            .expect("sequential");
+        let chunked = generator
+            .generate_chunked(&source, &index, 8)
+            .expect("chunked");
+
+        // Below the split threshold the chunked path delegates to the
+        // sequential scan, so the scripts must be byte-identical.
+        assert_eq!(sequential.tokens().len(), chunked.tokens().len());
+        assert_eq!(sequential.total_bytes(), chunked.total_bytes());
+        assert_eq!(sequential.literal_bytes(), chunked.literal_bytes());
+        assert_eq!(reconstruct(&basis, &index, &chunked), source);
+    }
+
+    #[test]
+    fn generate_chunked_max_chunks_one_is_sequential() {
+        let data = pseudo_random(4 * 1024 * 1024, 0x0000_5a5a);
+        let index = build_index(&data);
+        let generator = DeltaGenerator::new();
+
+        let sequential = generator
+            .generate(Cursor::new(&data[..]), &index)
+            .expect("sequential");
+        // max_chunks == 1 must force the sequential path verbatim.
+        let single = generator
+            .generate_chunked(&data, &index, 1)
+            .expect("single");
+
+        assert_eq!(sequential.tokens().len(), single.tokens().len());
+        assert_eq!(sequential.total_bytes(), single.total_bytes());
+        assert_eq!(sequential.literal_bytes(), single.literal_bytes());
     }
 }
