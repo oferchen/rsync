@@ -2216,6 +2216,7 @@ dependencies = [
  "proptest",
  "protocol",
  "rand 0.10.1",
+ "rayon",
  "rustc-hash 2.1.2",
  "signature 0.6.3",
  "tempfile",
