@@ -194,9 +194,23 @@ impl BufferedMap {
 
         let read_size = window_size - read_offset;
         if read_size > 0 {
-            self.file.seek(SeekFrom::Start(read_start))?;
-            self.file
-                .read_exact(&mut self.buffer[read_offset..window_size])?;
+            let dst = &mut self.buffer[read_offset..window_size];
+            // UNCACHE-5: on a kernel that advertises RWF_DONTCACHE (Linux 6.14+
+            // with the `dontcache` feature), read the basis window via
+            // positioned preadv2(RWF_DONTCACHE) so streaming a large basis file
+            // does not evict the resident working set from the page cache. The
+            // helper uses a positioned read (the file cursor is untouched) and
+            // returns false - falling through to the buffered seek+read - when
+            // the feature is off, the kernel is too old, or the filesystem
+            // rejects the flag.
+            let mut filled = false;
+            if fast_io::dontcache_supported() {
+                filled = fast_io::dontcache_read_exact(&self.file, read_start, dst)?;
+            }
+            if !filled {
+                self.file.seek(SeekFrom::Start(read_start))?;
+                self.file.read_exact(dst)?;
+            }
         }
 
         self.window_start = aligned_start;
