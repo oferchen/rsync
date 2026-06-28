@@ -22,6 +22,7 @@ use super::super::delta::{
     write_delta_with_inline_checksum,
 };
 use super::super::item_flags::ItemFlags;
+use super::super::protocol_io::NdxAttrs;
 use super::super::{
     GeneratorContext, SegmentScheduler, TransferLoopResult, flush_with_count, is_early_close_error,
 };
@@ -95,7 +96,13 @@ impl GeneratorContext {
             .flist_writer_cache
             .take()
             .unwrap_or_else(|| self.build_flist_writer());
-        let mut flist_ndx_codec = create_ndx_codec(self.protocol.as_u8());
+        // INC_RECURSE sub-list NDX writes (NDX_FLIST_OFFSET headers,
+        // NDX_FLIST_EOF) MUST share the same wire diff-state as the
+        // file-transfer / goodbye writes. Upstream io.c::write_ndx keeps a
+        // single connection-wide prev_positive/prev_negative; a separate codec
+        // instance for sub-lists would diff-encode negative offsets against an
+        // independent prev_negative, desyncing the receiver's unified read
+        // state. Route sub-list writes through ndx_write_codec.inner_mut().
         let mut segments_sent: usize = 0;
         // upstream: sender.c:242-250 - tracks remaining flist-free NDX_DONEs.
         // With INC_RECURSE, the client sends one NDX_DONE per completed flist
@@ -128,7 +135,7 @@ impl GeneratorContext {
                         &mut *writer,
                         seg,
                         &mut flist_writer,
-                        &mut flist_ndx_codec,
+                        ndx_write_codec.inner_mut(),
                     )?;
                     segments_sent += 1;
                     flist_done_remaining += 1;
@@ -139,7 +146,7 @@ impl GeneratorContext {
                 // have been dispatched. Must happen inside the loop (not after) because
                 // the receiver waits for NDX_FLIST_EOF before sending NDX_DONE.
                 if !self.incremental.flist_eof_sent && scheduler.is_exhausted() {
-                    self.send_flist_eof(&mut *writer, &mut flist_ndx_codec, segments_sent)?;
+                    self.send_flist_eof(&mut *writer, ndx_write_codec.inner_mut(), segments_sent)?;
                 }
             }
 
@@ -169,11 +176,34 @@ impl GeneratorContext {
                         // flist_free(first_flist) loop.
                         if inc_recurse && flist_done_remaining > 0 {
                             flist_done_remaining -= 1;
-                            // upstream: sender.c:244 - flist_free(first_flist)
-                            // Reclaim heap data from the oldest completed segment
-                            // to reduce RSS. Entries stay in place for NDX indexing
-                            // but their PathBuf/extras allocations are freed.
+                            // upstream: sender.c:243-244 -
+                            // file_old_total -= first_flist->used; flist_free(first_flist).
+                            // Reclaim heap data from the oldest completed segment to
+                            // reduce RSS. Entries stay in place for NDX indexing but
+                            // their PathBuf/extras allocations are freed.
                             self.reclaim_oldest_segment();
+
+                            // upstream: sender.c:249-253 - after freeing the oldest
+                            // flist, `if (first_flist)` is still true (another flist
+                            // remains in the list), so it writes NDX_DONE and continues
+                            // WITHOUT advancing phase. Reaching this branch at all means
+                            // `flist_done_remaining > 0`, i.e. at least one more flist is
+                            // still pending, so the echo is unconditional - exactly
+                            // upstream's `first_flist != NULL` test. The receiver sends
+                            // one NDX_DONE per flist completion (initial + each sub); the
+                            // FINAL flist's NDX_DONE arrives when `flist_done_remaining`
+                            // has already reached 0, skips this branch, and falls through
+                            // to the phase transition below (upstream's last
+                            // `flist_free` leaving `first_flist == NULL`).
+                            //
+                            // The previous `|| !flist_eof_sent` guard suppressed this
+                            // echo once NDX_FLIST_EOF had been sent, folding the
+                            // initial-flist completion into the phase path. That left
+                            // the daemon-sender one flist-free echo short of upstream on
+                            // any multi-flist (subdirectory) pull: the lock-step phase
+                            // counter ran one step ahead of the receiver, the goodbye
+                            // desynced, and the receiver reported "connection
+                            // unexpectedly closed (io.c 232)".
                             if let Err(e) = ndx_write_codec
                                 .write_ndx_done(&mut *writer)
                                 .and_then(|()| flush_with_count(&mut *writer))
@@ -183,47 +213,6 @@ impl GeneratorContext {
                                 }
                                 return Err(e);
                             }
-
-                            // upstream: sender.c:242-250 - when flist_free() frees
-                            // the last flist (first_flist becomes NULL), the sender
-                            // falls through to the phase transition immediately.
-                            // Without this, empty-dir pushes deadlock: the generator
-                            // frees all flists except the last (cur_flist ==
-                            // first_flist break), blocks waiting for receiver, which
-                            // blocks waiting for our phase-transition NDX_DONE.
-                            // Proactively transition when all flists are freed and
-                            // no more sub-lists are pending, BUT only when the flist
-                            // has no regular files. When files exist, the receiver
-                            // will request them and send the normal phase-transition
-                            // NDX_DONE afterward - no deadlock occurs.
-                            let has_no_files =
-                                !self.file_list.as_slice().iter().any(|e| e.is_file());
-                            if flist_done_remaining == 0
-                                && self.incremental.flist_eof_sent
-                                && has_no_files
-                            {
-                                debug_log!(
-                                    Send,
-                                    1,
-                                    "all flists freed with eof sent, \
-                                     proactive phase transition"
-                                );
-                                phase += 1;
-                                if phase > max_phase {
-                                    break;
-                                }
-                                debug_log!(Send, 1, "send_files phase={}", phase);
-                                if let Err(e) = ndx_write_codec
-                                    .write_ndx_done(&mut *writer)
-                                    .and_then(|()| flush_with_count(&mut *writer))
-                                {
-                                    if tolerant && is_early_close_error(&e) {
-                                        break;
-                                    }
-                                    return Err(e);
-                                }
-                            }
-
                             continue;
                         }
 
@@ -300,7 +289,7 @@ impl GeneratorContext {
                 self.timing.total_bytes_read += 2;
             }
 
-            let (_fnamecmp_type, xname) = iflags.read_trailing(&mut *reader)?;
+            let (fnamecmp_type, xname) = iflags.read_trailing(&mut *reader)?;
             if iflags.has_basis_type() {
                 self.timing.total_bytes_read += 1;
             }
@@ -341,8 +330,12 @@ impl GeneratorContext {
                 self.write_ndx_iflags_and_xattr_response(
                     &mut *writer,
                     &mut ndx_write_codec,
-                    wire_ndx,
-                    &iflags,
+                    &NdxAttrs {
+                        ndx: wire_ndx,
+                        iflags: &iflags,
+                        fnamecmp_type,
+                        xname: xname.as_deref(),
+                    },
                     pending_xattr_response.as_mut(),
                 )?;
                 continue;
@@ -358,8 +351,12 @@ impl GeneratorContext {
                 self.write_ndx_iflags_and_xattr_response(
                     &mut *writer,
                     &mut ndx_write_codec,
-                    wire_ndx,
-                    &iflags,
+                    &NdxAttrs {
+                        ndx: wire_ndx,
+                        iflags: &iflags,
+                        fnamecmp_type,
+                        xname: xname.as_deref(),
+                    },
                     pending_xattr_response.as_mut(),
                 )?;
                 // upstream: sender.c:395 - log_item(FCLIENT, file, iflags, NULL)
@@ -423,8 +420,12 @@ impl GeneratorContext {
                 self.write_ndx_and_attrs(
                     &mut *writer,
                     &mut ndx_write_codec,
-                    wire_ndx,
-                    &iflags,
+                    &NdxAttrs {
+                        ndx: wire_ndx,
+                        iflags: &iflags,
+                        fnamecmp_type,
+                        xname: xname.as_deref(),
+                    },
                     &sum_head,
                     pending_xattr_response.as_mut(),
                 )?;
@@ -488,8 +489,12 @@ impl GeneratorContext {
                 self.write_ndx_and_attrs(
                     &mut *writer,
                     &mut ndx_write_codec,
-                    wire_ndx,
-                    &iflags,
+                    &NdxAttrs {
+                        ndx: wire_ndx,
+                        iflags: &iflags,
+                        fnamecmp_type,
+                        xname: xname.as_deref(),
+                    },
                     &sum_head,
                     pending_xattr_response.as_mut(),
                 )?;
@@ -567,7 +572,7 @@ impl GeneratorContext {
                         &mut *writer,
                         seg,
                         &mut flist_writer,
-                        &mut flist_ndx_codec,
+                        ndx_write_codec.inner_mut(),
                     )?;
                     segments_sent += 1;
                     flist_done_remaining += 1;
@@ -599,11 +604,11 @@ impl GeneratorContext {
                     &mut *writer,
                     seg,
                     &mut flist_writer,
-                    &mut flist_ndx_codec,
+                    ndx_write_codec.inner_mut(),
                 )?;
                 segments_sent += 1;
             }
-            self.send_flist_eof(&mut *writer, &mut flist_ndx_codec, segments_sent)?;
+            self.send_flist_eof(&mut *writer, ndx_write_codec.inner_mut(), segments_sent)?;
         }
 
         // Cache flist_writer back for potential reuse (e.g., phase 2).
