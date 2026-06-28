@@ -66,18 +66,23 @@ fn scattered_edits(size: usize, seed: u64, change_count: usize) -> Vec<u8> {
 }
 
 fn bench_parallel_delta_scan(c: &mut Criterion) {
-    const SIZE: usize = 128 * 1024 * 1024; // 128 MiB
+    const SIZE: usize = 256 * 1024 * 1024; // 256 MiB
+
     let basis = pseudo_random(SIZE, 0x1234_5678);
     let index = build_index(&basis);
 
-    // 1% scattered edits: realistic delta, dominated by copy matches.
-    let source = scattered_edits(SIZE, 0x1234_5678, SIZE / 100);
+    // 64 scattered single-byte edits across 256 MiB: ~99.6% of basis blocks
+    // still match, so the scan is dominated by per-block rolling+MD4 work (the
+    // real sender cost) rather than a pathological all-literal byte walk. The
+    // edits must be far sparser than the block length, or every block is
+    // dirtied and nothing matches.
+    let source = scattered_edits(SIZE, 0x1234_5678, 64);
     let generator = DeltaGenerator::new();
 
-    let mut group = c.benchmark_group("parallel_delta_scan_128MiB_1pct");
+    let mut group = c.benchmark_group("parallel_delta_scan_256MiB_mostly_copy");
     group.throughput(Throughput::Bytes(SIZE as u64));
     group.sample_size(10);
-    group.measurement_time(std::time::Duration::from_secs(15));
+    group.measurement_time(std::time::Duration::from_secs(10));
 
     group.bench_function("sequential", |b| {
         b.iter(|| {
