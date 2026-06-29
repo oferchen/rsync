@@ -38,14 +38,14 @@ jobs:
           toolchain: stable
 
       - name: Cache APT packages
-        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f # v1.6.1
+        uses: awalsh128/cache-apt-pkgs-action@5513791f75b039e2a79653b1a92238d3fb8d99b4 # v1.6.2
         with:
           packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev libxxhash-dev
           version: v1
 
       - name: Cache upstream rsync source
         id: cache-upstream
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             target/interop/upstream-src/rsync-${{ env.UPSTREAM_RSYNC_VERSION }}
