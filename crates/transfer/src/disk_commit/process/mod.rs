@@ -30,9 +30,9 @@ pub(super) use self::file_ops::{process_file, process_whole_file};
 // the rename/cross-device/backup helpers and the writer selector directly.
 #[cfg(test)]
 use self::commit::{is_cross_device, make_backup, partial_dir_path, rename_with_io_uring_fallback};
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 use self::file_ops::make_writer;
 #[cfg(test)]
 use super::config::BackupConfig;
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 use super::writer::Writer;
