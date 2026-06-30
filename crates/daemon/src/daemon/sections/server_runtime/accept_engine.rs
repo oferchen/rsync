@@ -100,6 +100,53 @@ impl AcceptEngine for SingleListenerEngine {
     fn shutdown(&mut self) {}
 }
 
+/// Accepted-connection item handed from an acceptor thread to the poll loop:
+/// either a blocking [`TcpStream`] with its peer address, or a per-family
+/// accept error tagged with the local address that produced it.
+type AcceptItem = Result<(TcpStream, SocketAddr), (SocketAddr, io::Error)>;
+
+/// Bound on the dual-stack accept-relay channel.
+///
+/// Each queued item holds an accepted file descriptor, so an unbounded relay
+/// would let a connection flood accumulate thousands of open fds ahead of the
+/// `--max-connections` admission gate (which is only consulted *after* an item
+/// is dequeued), risking fd exhaustion. Bounding the relay caps in-flight
+/// accepted-but-unhandled connections; a full relay makes acceptors apply
+/// backpressure so the kernel listen backlog absorbs the burst instead. The
+/// single-listener engine accepts inline and needs no such queue, so this only
+/// applies to the dual-stack fan-in. Sized well above a typical listen backlog
+/// (128) to smooth legitimate bursts while staying clear of default fd limits.
+const ACCEPT_RELAY_CAPACITY: usize = 256;
+
+/// Relays one accepted item onto the bounded dual-stack channel, applying
+/// backpressure without losing shutdown responsiveness.
+///
+/// On a full relay the acceptor sleeps and retries so the kernel listen backlog
+/// absorbs the burst, rather than blocking inside `send()` where it could not
+/// observe the shutdown flag and would wedge `join()` at teardown. Returns
+/// `false` if the channel has closed, or if shutdown/graceful-exit was requested
+/// while waiting for capacity, signalling the acceptor thread to stop.
+fn relay_accept_item(
+    tx: &std::sync::mpsc::SyncSender<AcceptItem>,
+    mut item: AcceptItem,
+    shutdown: &AtomicBool,
+    graceful_exit: &AtomicBool,
+) -> bool {
+    loop {
+        match tx.try_send(item) {
+            Ok(()) => return true,
+            Err(std::sync::mpsc::TrySendError::Full(returned)) => {
+                if shutdown.load(Ordering::Relaxed) || graceful_exit.load(Ordering::Relaxed) {
+                    return false;
+                }
+                item = returned;
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(std::sync::mpsc::TrySendError::Disconnected(_)) => return false,
+        }
+    }
+}
+
 /// Dual-stack accept engine: one acceptor thread per listener, fanned into an
 /// MPSC channel.
 ///
@@ -112,7 +159,7 @@ impl AcceptEngine for SingleListenerEngine {
 /// upstream: socket.c `start_accept_loop()` - one busted descriptor does not
 /// collapse the `select(2)` over the others.
 struct MultiListenerEngine {
-    rx: std::sync::mpsc::Receiver<Result<(TcpStream, SocketAddr), (SocketAddr, io::Error)>>,
+    rx: std::sync::mpsc::Receiver<AcceptItem>,
     acceptor_handles: Vec<thread::JoinHandle<()>>,
     shutdown: Arc<AtomicBool>,
     alive_acceptors: usize,
@@ -126,7 +173,7 @@ impl MultiListenerEngine {
         bound_addresses: &[SocketAddr],
         state: &AcceptLoopState<'_>,
     ) -> Result<Self, DaemonError> {
-        let (tx, rx) = std::sync::mpsc::channel();
+        let (tx, rx) = std::sync::mpsc::sync_channel::<AcceptItem>(ACCEPT_RELAY_CAPACITY);
         let shutdown = Arc::clone(&state.signal_flags.shutdown);
         let graceful_exit = Arc::clone(&state.signal_flags.graceful_exit);
         let total_acceptors = listeners.len();
@@ -157,10 +204,12 @@ impl MultiListenerEngine {
                             // greeting. Reset to blocking so the worker thread
                             // sees the upstream-compatible synchronous I/O model.
                             if let Err(error) = stream.set_nonblocking(false) {
-                                let _ = tx.send(Err((local_addr, error)));
+                                let _ =
+                                    relay_accept_item(&tx, Err((local_addr, error)), &shutdown, &graceful_exit);
                                 break;
                             }
-                            if tx.send(Ok((stream, peer_addr))).is_err() {
+                            if !relay_accept_item(&tx, Ok((stream, peer_addr)), &shutdown, &graceful_exit)
+                            {
                                 break;
                             }
                         }
@@ -172,7 +221,12 @@ impl MultiListenerEngine {
                             continue;
                         }
                         Err(error) => {
-                            let _ = tx.send(Err((local_addr, error)));
+                            let _ = relay_accept_item(
+                                &tx,
+                                Err((local_addr, error)),
+                                &shutdown,
+                                &graceful_exit,
+                            );
                             break;
                         }
                     }
