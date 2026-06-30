@@ -82,3 +82,7 @@ harness = false
 [[bench]]
 name = "zsync_optimizations"
 harness = false
+
+[[bench]]
+name = "parallel_delta_scan"
+harness = false
