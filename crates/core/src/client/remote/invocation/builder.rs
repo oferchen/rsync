@@ -430,7 +430,14 @@ impl<'a> RemoteInvocationBuilder<'a> {
             args.push(OsString::from("--no-implied-dirs"));
         }
 
-        if self.config.fake_super() {
+        // upstream: options.c:2825,2852-2853 server_options() - the super flag
+        // is forwarded only inside the `if (am_sender)` block (so to a remote
+        // receiver), never to a remote sender. `RemoteRole::Receiver` means the
+        // local process is the sender (PUSH), matching upstream's `am_sender`
+        // branch. Forwarding `--fake-super` to a remote sender (PULL) would make
+        // the remote stat source paths under fake-super semantics, which
+        // upstream never does.
+        if self.config.fake_super() && self.role == RemoteRole::Receiver {
             args.push(OsString::from("--fake-super"));
         }
 
