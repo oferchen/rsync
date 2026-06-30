@@ -77,6 +77,41 @@ fn list_only_formats_directory_without_trailing_slash() {
     assert!(!directory_line.ends_with('/'));
 }
 
+/// `--list-only <dir>` with no `-r`/`-d` and no trailing slash must still list
+/// the directory operand's own entry, mirroring upstream's
+/// `xfer_dirs = list_only ? 1 : 0` default (options.c:2203). Without this,
+/// `xfer_dirs` stays 0 and `flist.c:2451` skips the bare directory, so the
+/// listing is empty - diverging from upstream which prints the `src` row.
+#[test]
+fn list_only_lists_bare_directory_without_recursion_or_slash() {
+    use std::fs;
+    use tempfile::tempdir;
+
+    let tmp = tempdir().expect("tempdir");
+    let source_dir = tmp.path().join("src");
+    fs::create_dir(&source_dir).expect("create src dir");
+    fs::write(source_dir.join("file.txt"), b"contents").expect("write source file");
+
+    let (code, stdout, stderr) = run_with_args([
+        OsString::from(RSYNC),
+        OsString::from("--list-only"),
+        source_dir.into_os_string(),
+    ]);
+
+    assert_eq!(code, 0);
+    assert!(stderr.is_empty());
+    let rendered = String::from_utf8(stdout).expect("utf8 stdout");
+
+    let directory_line = rendered
+        .lines()
+        .find(|line| line.ends_with("src"))
+        .expect("bare directory operand entry present");
+    assert!(directory_line.starts_with('d'));
+    assert!(!directory_line.ends_with('/'));
+    // Without -r the directory's children must not be listed.
+    assert!(!rendered.contains("file.txt"));
+}
+
 #[cfg(unix)]
 #[test]
 fn list_only_matches_rsync_format_for_regular_file() {
