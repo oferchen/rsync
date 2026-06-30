@@ -492,12 +492,16 @@ impl DeltaGenerator {
     ///
     /// The sender-side rolling scan is inherently sequential per byte, so the
     /// only way to engage multiple cores is to split the source into disjoint
-    /// ranges and scan each against the shared, read-only signature `index`.
-    /// Each range scans with pruning disabled, which keeps the index purely
-    /// read-only (`AtomicU64` consumed-bitset is never touched), so the shared
-    /// `&index` is safe to scan from every rayon worker with no locking. Every
-    /// worker keeps its own window, rolling checksum, and token vector; there
-    /// is no shared mutable state and therefore no mutex on the hot path.
+    /// ranges and scan each against the shared signature `index`. Each range
+    /// scans with pruning disabled, so no worker ever *writes* the index's
+    /// `consumed` bitset. We clear that bitset once up front (the matcher
+    /// consults it unconditionally, and a prior pruned [`Self::generate`] would
+    /// otherwise leave every block marked consumed, defeating all matching);
+    /// after that single reset it is immutable for the duration of the scan, so
+    /// the shared `&index` is safe to read from every rayon worker with no
+    /// locking. Every worker keeps its own window, rolling checksum, and token
+    /// vector; there is no shared mutable state and therefore no mutex on the
+    /// hot path.
     ///
     /// # Correctness
     ///
@@ -538,6 +542,13 @@ impl DeltaGenerator {
             // Too small to split usefully - keep the pruned sequential path.
             return self.generate(Cursor::new(source), index);
         }
+
+        // The matcher consults the shared `consumed` bitset on every probe,
+        // even though these chunks pass no per-chunk prune filter. A prior
+        // pruned generate() leaves blocks marked consumed; clear the bitset
+        // once so every chunk can match. Pruning is off per chunk, so no worker
+        // writes it back - it stays immutable across the concurrent scan.
+        index.reset_consumed();
 
         // Partition into `chunks` contiguous, non-overlapping ranges.
         let base = n / chunks;
@@ -944,5 +955,39 @@ mod tests {
         assert_eq!(sequential.tokens().len(), single.tokens().len());
         assert_eq!(sequential.total_bytes(), single.total_bytes());
         assert_eq!(sequential.literal_bytes(), single.literal_bytes());
+    }
+
+    #[test]
+    fn generate_chunked_matches_after_prior_pruned_generate() {
+        // Regression: the matcher consults the shared `consumed` bitset on
+        // every probe. A pruned generate() leaves blocks marked consumed; if
+        // generate_chunked does not reset the bitset, every block looks taken
+        // and the scan degrades to all-literal (correct output, but zero delta
+        // compression and pathologically slow). Reconstruction parity alone
+        // cannot catch this - assert effectiveness (most bytes are copied).
+        let data = pseudo_random(4 * 1024 * 1024, 0x0bad_f00d);
+        let index = build_index(&data);
+        let generator = DeltaGenerator::new();
+
+        // Prime the shared consumed-bitset with a pruned sequential generate.
+        let seq = generator
+            .generate(Cursor::new(&data[..]), &index)
+            .expect("seq");
+        assert!(
+            seq.literal_bytes() < data.len() as u64 / 4,
+            "sequential should mostly match identical data"
+        );
+
+        let chunked = generator
+            .generate_chunked(&data, &index, 4)
+            .expect("chunked");
+        assert_eq!(reconstruct(&data, &index, &chunked), data);
+        assert!(
+            chunked.literal_bytes() < data.len() as u64 / 4,
+            "chunked must still produce copies after a prior pruned generate; \
+             got literal_bytes={} of {}",
+            chunked.literal_bytes(),
+            data.len()
+        );
     }
 }
