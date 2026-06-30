@@ -277,7 +277,23 @@ fn run_client_internal(
         return Ok(summary);
     }
 
-    let plan = match LocalCopyPlan::from_operands(config.transfer_args()) {
+    // upstream: main.c:708 `get_local_name()` returns NULL when `list_only` is
+    // set, so a local listing needs no destination operand. oc-rsync's local
+    // plan always requires source+destination, so for `--list-only` with a
+    // single source we synthesize a placeholder destination. List-only output
+    // is rendered from the source flist in DryRun mode and never touches the
+    // destination, so the placeholder is inert.
+    let mut synthesized_operands: Option<Vec<std::ffi::OsString>> = None;
+    if config.list_only() && config.transfer_args().len() == 1 {
+        let mut operands = config.transfer_args().to_vec();
+        operands.push(std::ffi::OsString::from("."));
+        synthesized_operands = Some(operands);
+    }
+    let plan_operands = synthesized_operands
+        .as_deref()
+        .unwrap_or_else(|| config.transfer_args());
+
+    let plan = match LocalCopyPlan::from_operands(plan_operands) {
         Ok(plan) => plan,
         Err(error) => return Err(map_local_copy_error(error)),
     };
