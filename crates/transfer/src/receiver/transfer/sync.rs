@@ -16,9 +16,7 @@ use metadata::apply_metadata_with_cached_stat;
 
 use engine::CleanupManager;
 
-use crate::adaptive_buffer::adaptive_writer_capacity;
-use crate::delta_apply::{ChecksumVerifier, SparseWriteState};
-use crate::map_file::MapFile;
+use crate::delta_apply::ChecksumVerifier;
 use crate::receiver::basis::find_basis_file_with_config;
 use crate::receiver::quick_check::is_hardlink_follower;
 use crate::receiver::stats::TransferStats;
@@ -28,8 +26,7 @@ use crate::receiver::{PipelineSetup, ReceiverContext, apply_acls_from_receiver_c
 use crate::temp_guard::open_tmpfile;
 #[cfg(unix)]
 use crate::temp_guard::open_tmpfile_sandboxed;
-use crate::token_buffer::TokenBuffer;
-use crate::token_reader::{DeltaToken as TokenReaderDeltaToken, LiteralData, TokenReader};
+use crate::token_reader::TokenReader;
 
 impl ReceiverContext {
     /// Runs the receiver with synchronous (non-pipelined) transfer.
@@ -89,14 +86,6 @@ impl ReceiverContext {
 
         let mut ndx_write_codec = MonotonicNdxWriter::new(self.protocol.as_u8());
         let mut ndx_read_codec = create_ndx_codec(self.protocol.as_u8());
-
-        let mut checksum_verifier = ChecksumVerifier::new(
-            self.negotiated_algorithms.as_ref(),
-            self.protocol,
-            self.checksum_seed,
-            self.compat_flags.as_ref(),
-        );
-        let mut token_buffer = TokenBuffer::with_default_capacity();
 
         // upstream: token.c uses a single compression context across all files.
         // For zstd the DCtx must persist across file boundaries (continuous
@@ -228,53 +217,69 @@ impl ReceiverContext {
             #[cfg(not(unix))]
             let (file, mut temp_guard) = open_tmpfile(&file_path, self.config.temp_dir.as_deref())?;
             CleanupManager::global().register_temp_file(temp_guard.path().to_path_buf());
-            let target_size = file_entry.size();
-            let writer_capacity = adaptive_writer_capacity(target_size);
-            let mut output = std::io::BufWriter::with_capacity(writer_capacity, file);
-            let mut total_bytes: u64 = 0;
-            let mut literal_bytes: u64 = 0;
 
             let use_sparse = self.config.flags.sparse;
-            let mut sparse_state = if use_sparse {
-                Some(SparseWriteState::default())
-            } else {
-                None
-            };
 
-            let mut basis_map = if let Some(ref path) = basis_path_opt {
-                Some(MapFile::open(path).map_err(|e| {
-                    io::Error::new(
-                        e.kind(),
-                        format!(
-                            "failed to open basis file {path:?}: {e} {}{}",
-                            crate::role_trailer::error_location!(),
-                            crate::role_trailer::receiver()
-                        ),
-                    )
-                })?)
-            } else {
-                None
+            // Drive the per-file reconstruction through `DeltaApplicator`. It
+            // owns its basis handle (opened from the path), its own sparse
+            // state, token buffer, and per-file checksum verifier - the same
+            // mechanism the pipelined receiver uses. Behaviour is identical to
+            // the previous in-module `apply_delta_tokens` loop:
+            //   - literal/block-ref dispatch with `see_token` after every
+            //     block match keeps the `-z` inflate dictionary synced
+            //     (token.c:631);
+            //   - sparse mode runs the same `SparseWriteState`; the post-write
+            //     size check against `file_entry.size()` is performed below on
+            //     `result.final_pos`, byte-identical to the old standalone loop;
+            //   - `finish` reads + verifies the wire checksum exactly like the
+            //     old `End` branch, raising `InvalidData` on mismatch.
+            // The verifier MUST be a fresh per-file instance built the same way
+            // the session-shared one is (and the same way the old `End` branch
+            // reset it via `for_algorithm_seeded`): seed prepended only for
+            // legacy MD4, no seed for MD5/XXH*.
+            let file_verifier = ChecksumVerifier::new(
+                self.negotiated_algorithms.as_ref(),
+                self.protocol,
+                self.checksum_seed,
+                self.compat_flags.as_ref(),
+            );
+
+            // REFLINK: the receiver's `ServerConfig` does not carry a CoW
+            // policy - `--cow`/`--no-cow` is plumbed only through the
+            // local-copy client config (core::client), never to this
+            // wire-receive scope. Default to `Auto`; threading the flag here
+            // would require new ServerConfig plumbing across the daemon/server
+            // boundary, out of scope for this cutover.
+            let config = crate::delta_apply::DeltaApplyConfig {
+                sparse: use_sparse,
+                writer_kind: crate::delta_apply::BasisWriterKind::Standard,
+                cow_policy: fast_io::CowPolicy::Auto,
             };
 
             token_reader.reset();
 
-            apply_delta_tokens(
-                reader,
-                &mut output,
-                &mut sparse_state,
-                &mut basis_map,
+            let mut applicator = crate::delta_apply::DeltaApplicator::new(
+                file,
+                &config,
+                file_verifier,
                 signature_opt.as_ref(),
-                &mut token_reader,
-                &mut token_buffer,
-                &mut checksum_verifier,
-                self.checksum_seed,
-                &file_path,
-                &mut total_bytes,
-                &mut literal_bytes,
+                basis_path_opt.as_deref(),
             )?;
 
-            if let Some(ref mut sparse) = sparse_state {
-                let final_pos = sparse.finish(&mut output)?;
+            crate::delta_apply::apply_delta_stream(reader, &mut applicator, &mut token_reader)?;
+
+            // Pass `None` so `finish` records the sparse `final_pos` without
+            // emitting its own generic size-mismatch error; the receiver
+            // re-checks below to preserve the exact pre-change message text
+            // (file path + role trailer). `finish` still reads and verifies
+            // the wire checksum identically to the old `End` branch.
+            let (file, result) = applicator.finish(reader, None)?;
+
+            // Sparse mode: verify the materialized file length against the
+            // file-list entry size. Mirrors the original sync.rs:276-289 check
+            // byte-for-byte (same ErrorKind, same message). `final_pos` is the
+            // position `SparseWriteState::finish` returned inside `finish`.
+            if let Some(final_pos) = result.final_pos {
                 let expected_size = file_entry.size();
                 if final_pos != expected_size {
                     return Err(io::Error::new(
@@ -289,13 +294,11 @@ impl ReceiverContext {
                 }
             }
 
-            let file = output.into_inner().map_err(|e| {
-                io::Error::other(format!(
-                    "failed to flush output buffer for {file_path:?}: {e} {}{}",
-                    crate::role_trailer::error_location!(),
-                    crate::role_trailer::receiver(),
-                ))
-            })?;
+            // upstream: io.c:820 - only literal bytes traverse the read fd;
+            // matched-from-basis bytes never do. Preserve the exact stat
+            // mapping the old loop used (`literal_bytes` -> `bytes_received`).
+            let literal_bytes = result.literal_bytes;
+
             if self.config.write.fsync {
                 file.sync_all().map_err(|e| {
                     io::Error::new(
@@ -485,166 +488,5 @@ impl ReceiverContext {
             redo_count: 0,
             list_only_entries,
         })
-    }
-}
-
-/// Applies the stream of delta tokens for a single file.
-///
-/// Drives the token reader until `End`, dispatching `Literal` writes through
-/// the optional sparse-write path and resolving `BlockRef` tokens against the
-/// (optional) basis map. On `End` the receiver-side checksum is compared
-/// against the sender's; mismatch is a hard `InvalidData` error.
-///
-/// # Upstream Reference
-///
-/// - `match.c:hash_search()` - sender emits literal/block-ref tokens
-/// - `receiver.c:recv_token()` - receiver-side token consumption
-/// - `checksum.c:sum_init()` - per-file MD4 seed reset
-#[allow(clippy::too_many_arguments)]
-fn apply_delta_tokens<R: Read>(
-    reader: &mut crate::reader::ServerReader<R>,
-    output: &mut std::io::BufWriter<std::fs::File>,
-    sparse_state: &mut Option<SparseWriteState>,
-    basis_map: &mut Option<MapFile>,
-    signature_opt: Option<&engine::signature::FileSignature>,
-    token_reader: &mut TokenReader,
-    token_buffer: &mut TokenBuffer,
-    checksum_verifier: &mut ChecksumVerifier,
-    checksum_seed: i32,
-    file_path: &std::path::Path,
-    total_bytes: &mut u64,
-    literal_bytes: &mut u64,
-) -> io::Result<()> {
-    loop {
-        match token_reader.read_token(reader)? {
-            TokenReaderDeltaToken::End => {
-                let checksum_len = checksum_verifier.digest_len();
-                let mut expected_buf = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
-                reader.read_exact(&mut expected_buf[..checksum_len])?;
-
-                let algo = checksum_verifier.algorithm();
-                // upstream: checksum.c:sum_init() prepends seed for legacy MD4.
-                let old_verifier = std::mem::replace(
-                    checksum_verifier,
-                    ChecksumVerifier::for_algorithm_seeded(algo, checksum_seed),
-                );
-                let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
-                let computed_len = old_verifier.finalize_into(&mut computed);
-                if computed_len != checksum_len {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "checksum length mismatch for {file_path:?}: expected {checksum_len} bytes, got {computed_len} bytes {}{}",
-                            crate::role_trailer::error_location!(),
-                            crate::role_trailer::receiver(),
-                        ),
-                    ));
-                }
-                if computed[..computed_len] != expected_buf[..checksum_len] {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "checksum verification failed for {file_path:?}: expected {:02x?}, got {:02x?} {}{}",
-                            &expected_buf[..checksum_len],
-                            &computed[..computed_len],
-                            crate::role_trailer::error_location!(),
-                            crate::role_trailer::receiver(),
-                        ),
-                    ));
-                }
-                return Ok(());
-            }
-            TokenReaderDeltaToken::Literal(literal) => match literal {
-                LiteralData::Ready(data) => {
-                    let len = data.len();
-                    write_chunk(output, sparse_state, &data)?;
-                    checksum_verifier.update(&data);
-                    *total_bytes += len as u64;
-                    *literal_bytes += len as u64;
-                }
-                LiteralData::Pending(len) => {
-                    if let Some(data) = reader.try_borrow_exact(len)? {
-                        write_chunk(output, sparse_state, data)?;
-                        checksum_verifier.update(data);
-                    } else {
-                        token_buffer.resize_for(len);
-                        reader.read_exact(token_buffer.as_mut_slice())?;
-                        let data = token_buffer.as_slice();
-                        write_chunk(output, sparse_state, data)?;
-                        checksum_verifier.update(data);
-                    }
-                    *total_bytes += len as u64;
-                    *literal_bytes += len as u64;
-                }
-            },
-            TokenReaderDeltaToken::BlockRef(block_idx) => {
-                let (sig, map) = match (signature_opt, basis_map.as_mut()) {
-                    (Some(sig), Some(map)) => (sig, map),
-                    _ => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!(
-                                "block reference {block_idx} without basis file {}{}",
-                                crate::role_trailer::error_location!(),
-                                crate::role_trailer::receiver()
-                            ),
-                        ));
-                    }
-                };
-
-                let layout = sig.layout();
-                let block_count = layout.block_count() as usize;
-
-                if block_idx >= block_count {
-                    return Err(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!(
-                            "block index {block_idx} out of bounds (file has {block_count} blocks) {}{}",
-                            crate::role_trailer::error_location!(),
-                            crate::role_trailer::receiver(),
-                        ),
-                    ));
-                }
-
-                let block_len = layout.block_length().get() as u64;
-                let offset = block_idx as u64 * block_len;
-
-                let bytes_to_copy = if block_idx == block_count.saturating_sub(1) {
-                    let remainder = layout.remainder();
-                    if remainder > 0 {
-                        remainder as usize
-                    } else {
-                        block_len as usize
-                    }
-                } else {
-                    block_len as usize
-                };
-
-                let block_data = map.map_ptr(offset, bytes_to_copy)?;
-
-                write_chunk(output, sparse_state, block_data)?;
-                checksum_verifier.update(block_data);
-
-                // upstream: token.c:631 - see_deflate_token()
-                token_reader.see_token(block_data)?;
-
-                *total_bytes += bytes_to_copy as u64;
-            }
-        }
-    }
-}
-
-/// Writes a chunk either through the sparse-aware writer or straight to the
-/// underlying buffered output.
-fn write_chunk(
-    output: &mut std::io::BufWriter<std::fs::File>,
-    sparse_state: &mut Option<SparseWriteState>,
-    data: &[u8],
-) -> io::Result<()> {
-    if let Some(sparse) = sparse_state.as_mut() {
-        sparse.write(output, data)?;
-        Ok(())
-    } else {
-        output.write_all(data)
     }
 }

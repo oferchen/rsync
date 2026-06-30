@@ -127,6 +127,14 @@ pub struct DeltaApplyConfig {
     /// via `BufferedMap` to avoid handing `mmap`-backed pointers to the
     /// ring. See [`BasisWriterKind`] for the rationale.
     pub writer_kind: BasisWriterKind,
+    /// Copy-on-write policy for the `FICLONERANGE` partial-reflink fast path.
+    ///
+    /// Defaults to [`fast_io::CowPolicy::Auto`]. When set to
+    /// [`fast_io::CowPolicy::Disabled`] (the `--no-cow` flag) the applicator
+    /// skips `FICLONERANGE` entirely and falls through to `copy_file_range(2)`
+    /// or the read+write path, producing byte-identical output without
+    /// sharing extents.
+    pub cow_policy: fast_io::CowPolicy,
 }
 
 /// Result of applying a delta to a file.
@@ -194,6 +202,9 @@ pub struct DeltaApplicator<'a> {
     /// receiver does not pay one `ENOTSUP` ioctl per COPY token on
     /// non-reflink filesystems.
     reflink_range: ReflinkRangeCache,
+    /// Copy-on-write policy. When `Disabled`, the `FICLONERANGE` partial
+    /// clone path is skipped entirely (mirrors the `--no-cow` flag).
+    cow_policy: fast_io::CowPolicy,
     stats: DeltaApplyResult,
 }
 
@@ -253,6 +264,7 @@ impl<'a> DeltaApplicator<'a> {
             token_buffer: TokenBuffer::with_default_capacity(),
             same_fs: SameFsCache::Unresolved,
             reflink_range: ReflinkRangeCache::Unresolved,
+            cow_policy: config.cow_policy,
             stats: DeltaApplyResult::default(),
         })
     }
@@ -389,6 +401,7 @@ impl<'a> DeltaApplicator<'a> {
                     &self.output,
                     dest_off,
                     bytes_to_copy,
+                    self.cow_policy,
                     &mut self.reflink_range,
                     &mut self.same_fs,
                 )? {
@@ -495,6 +508,9 @@ impl<'a> DeltaApplicator<'a> {
     ///
     /// The gating rules are conservative:
     ///
+    /// - The [`fast_io::CowPolicy`] must not be `Disabled`. `--no-cow`
+    ///   suppresses every reflink attempt and falls straight through to
+    ///   `copy_file_range(2)`.
     /// - The cache must not be in the `Declined` state. After one negative
     ///   result we assume the filesystem does not support reflinks and stop
     ///   retrying.
@@ -515,9 +531,16 @@ impl<'a> DeltaApplicator<'a> {
         dest_file: &File,
         dest_off: u64,
         bytes_to_copy: usize,
+        cow_policy: fast_io::CowPolicy,
         cache: &mut ReflinkRangeCache,
         same_fs: &mut SameFsCache,
     ) -> io::Result<bool> {
+        // `--no-cow`: never attempt a reflink. Fall through to
+        // copy_file_range(2); leave the cache untouched so toggling the
+        // policy back on within the same applicator can still clone.
+        if cow_policy == fast_io::CowPolicy::Disabled {
+            return Ok(false);
+        }
         if *cache == ReflinkRangeCache::Declined {
             return Ok(false);
         }
@@ -743,11 +766,16 @@ impl<'a> DeltaApplicator<'a> {
     /// post-finish size check (`receiver/transfer/sync.rs:276-289`). The
     /// sparse final position is recorded in
     /// [`DeltaApplyResult::final_pos`] regardless.
+    ///
+    /// Returns the reconstructed output [`File`] alongside the result so the
+    /// caller can fsync and commit the very handle that received the data -
+    /// the live receiver path requires this handle for `--fsync` before the
+    /// temp-file rename.
     pub fn finish<R: Read>(
         mut self,
         reader: &mut R,
         expected_size: Option<u64>,
-    ) -> io::Result<DeltaApplyResult> {
+    ) -> io::Result<(File, DeltaApplyResult)> {
         if let Some(ref mut sparse) = self.sparse_state {
             let final_pos = sparse.finish(&mut self.output)?;
             self.stats.final_pos = Some(final_pos);
@@ -805,7 +833,7 @@ impl<'a> DeltaApplicator<'a> {
             self.stats.matched_bytes
         );
 
-        Ok(self.stats)
+        Ok((self.output, self.stats))
     }
 }
 
@@ -853,6 +881,7 @@ mod tests {
         let config = DeltaApplyConfig {
             sparse: true,
             writer_kind: BasisWriterKind::Standard,
+            cow_policy: fast_io::CowPolicy::Auto,
         };
         assert!(config.sparse);
     }
@@ -888,6 +917,7 @@ mod tests {
         let config = DeltaApplyConfig {
             sparse: false,
             writer_kind: BasisWriterKind::Standard,
+            cow_policy: fast_io::CowPolicy::Auto,
         };
         let verifier = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::MD5);
         let applicator =
@@ -913,6 +943,7 @@ mod tests {
         let config = DeltaApplyConfig {
             sparse: false,
             writer_kind: BasisWriterKind::IoUring,
+            cow_policy: fast_io::CowPolicy::Auto,
         };
         let verifier = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::MD5);
         let applicator =
@@ -937,6 +968,7 @@ mod tests {
         let config = DeltaApplyConfig {
             sparse: false,
             writer_kind: BasisWriterKind::IoUring,
+            cow_policy: fast_io::CowPolicy::Auto,
         };
         let verifier = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::MD5);
         let applicator =
@@ -1016,6 +1048,7 @@ mod tests {
             &dest,
             0,
             (fast_io::CLONE_FILE_RANGE_MIN_BYTES - 1) as usize,
+            fast_io::CowPolicy::Auto,
             &mut cache,
             &mut same_fs,
         )
@@ -1045,6 +1078,7 @@ mod tests {
             &dest,
             0,
             REFLINK_BLOCK_ALIGNMENT as usize * 8,
+            fast_io::CowPolicy::Auto,
             &mut cache,
             &mut same_fs,
         )
@@ -1068,6 +1102,7 @@ mod tests {
             &dest,
             1024,
             REFLINK_BLOCK_ALIGNMENT as usize * 8,
+            fast_io::CowPolicy::Auto,
             &mut cache,
             &mut same_fs,
         )
@@ -1094,6 +1129,7 @@ mod tests {
             &dest,
             0,
             REFLINK_BLOCK_ALIGNMENT as usize * 16,
+            fast_io::CowPolicy::Auto,
             &mut cache,
             &mut same_fs,
         )
@@ -1121,6 +1157,7 @@ mod tests {
             &dest,
             0,
             REFLINK_BLOCK_ALIGNMENT as usize * 16,
+            fast_io::CowPolicy::Auto,
             &mut cache,
             &mut same_fs,
         )

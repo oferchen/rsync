@@ -321,7 +321,10 @@ fn applicator_apply(
     let mut applicator = DeltaApplicator::new(out, &config, verifier, signature, basis_path)?;
     let mut cursor = Cursor::new(wire.to_vec());
     apply_delta_stream(&mut cursor, &mut applicator, token_reader)?;
-    applicator.finish(&mut cursor, expected_size)
+    // The output File is committed by re-opening the path below; the
+    // reconstructed handle is dropped (flushed) here.
+    let (_out, result) = applicator.finish(&mut cursor, expected_size)?;
+    Ok(result)
 }
 
 /// Core equivalence check for a plain (uncompressed) stream.
