@@ -328,45 +328,6 @@ impl ZeroCopySender {
         })
     }
 
-    /// Wraps an existing socket `fd` against a caller-supplied
-    /// `Arc<Mutex<IoUring>>` so multiple senders can share a single ring
-    /// (e.g., a session-wide [`SessionRingPool`](super::session_pool::SessionRingPool)
-    /// slot). The shared ring's submission queue is serialised on the
-    /// mutex; concurrent senders will block briefly.
-    ///
-    /// Registration of the per-sender buffer pool against the shared ring
-    /// is best-effort; failure leaves the sender on the unregistered
-    /// SEND_ZC path (still zero-copy at the socket layer).
-    ///
-    /// # Errors
-    ///
-    /// [`io::ErrorKind::Unsupported`] when `IORING_OP_SEND_ZC` is not
-    /// advertised by the running kernel.
-    pub fn from_shared_ring(fd: RawFd, ring: Arc<Mutex<RawIoUring>>) -> io::Result<Self> {
-        if !is_supported() {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "IORING_OP_SEND_ZC is not supported on this kernel",
-            ));
-        }
-        let buffers = {
-            let guard = ring
-                .lock()
-                .map_err(|_| io::Error::other("ZeroCopySender ring mutex poisoned"))?;
-            RegisteredBufferGroup::try_new(&guard, ZERO_COPY_SLOT_BYTES, ZERO_COPY_SLOT_COUNT)
-        };
-        let slot_bytes = buffers
-            .as_ref()
-            .map(RegisteredBufferGroup::buffer_size)
-            .unwrap_or(ZERO_COPY_SLOT_BYTES);
-        Ok(Self {
-            ring,
-            fd,
-            buffers,
-            slot_bytes,
-        })
-    }
-
     /// Submits `buf` via `IORING_OP_SEND_ZC` and waits for both the
     /// transfer and notification CQEs before returning.
     ///
