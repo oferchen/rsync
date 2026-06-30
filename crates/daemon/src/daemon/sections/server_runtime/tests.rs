@@ -1316,3 +1316,46 @@ fn single_listener_engine_poll_returns_connection_with_blocking_reset() {
 
     let _ = client.join();
 }
+
+#[test]
+fn relay_accept_item_delivers_when_capacity_available() {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<AcceptItem>(1);
+    let shutdown = AtomicBool::new(false);
+    let graceful = AtomicBool::new(false);
+    let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+
+    assert!(relay_accept_item(
+        &tx,
+        Err((addr, io::Error::other("boom"))),
+        &shutdown,
+        &graceful,
+    ));
+    assert!(rx.recv().is_ok());
+}
+
+#[test]
+fn relay_accept_item_bails_on_shutdown_when_full() {
+    // Capacity 1, never drained: the first item fills the relay.
+    let (tx, _rx) = std::sync::mpsc::sync_channel::<AcceptItem>(1);
+    let shutdown = AtomicBool::new(false);
+    let graceful = AtomicBool::new(false);
+    let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+
+    assert!(relay_accept_item(
+        &tx,
+        Err((addr, io::Error::other("first"))),
+        &shutdown,
+        &graceful,
+    ));
+
+    // The relay is now full. With shutdown requested, a second relay must
+    // return false promptly instead of blocking forever on the full channel,
+    // which is what keeps join() from wedging at teardown under backpressure.
+    shutdown.store(true, Ordering::Relaxed);
+    assert!(!relay_accept_item(
+        &tx,
+        Err((addr, io::Error::other("second"))),
+        &shutdown,
+        &graceful,
+    ));
+}
