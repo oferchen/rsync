@@ -803,14 +803,22 @@ fn includes_link_dest_via_reference_directories() {
 }
 
 #[test]
-fn includes_fake_super_long_arg() {
+fn forwards_fake_super_to_remote_receiver_only() {
+    // upstream: options.c:2825,2852-2853 - the super flag rides inside the
+    // `if (am_sender)` branch, so it is forwarded only to a remote receiver
+    // (local PUSH = RemoteRole::Receiver), never to a remote sender (PULL).
     let config = ClientConfig::builder().fake_super(true).build();
-    let builder = RemoteInvocationBuilder::new(&config, RemoteRole::Sender);
-    let args = builder.build("/path");
 
+    let to_receiver = RemoteInvocationBuilder::new(&config, RemoteRole::Receiver).build("/path");
     assert!(
-        args.iter().any(|a| a == "--fake-super"),
-        "expected --fake-super in args: {args:?}"
+        to_receiver.iter().any(|a| a == "--fake-super"),
+        "expected --fake-super forwarded to a remote receiver (push): {to_receiver:?}"
+    );
+
+    let to_sender = RemoteInvocationBuilder::new(&config, RemoteRole::Sender).build("/path");
+    assert!(
+        !to_sender.iter().any(|a| a == "--fake-super"),
+        "did not expect --fake-super forwarded to a remote sender (pull): {to_sender:?}"
     );
 }
 
@@ -2303,7 +2311,6 @@ fn all_flags_enabled_produces_valid_invocation() {
         "--existing",
         "--remove-source-files",
         "--no-implied-dirs",
-        "--fake-super",
         "--delay-updates",
         "--copy-devices",
         "--write-devices",
@@ -2317,6 +2324,14 @@ fn all_flags_enabled_produces_valid_invocation() {
             "all-flags test: missing {expected} in args: {args:?}"
         );
     }
+
+    // upstream: options.c:2825,2852-2853 - the super flag is forwarded only in
+    // the am_sender branch (to a remote receiver), so a remote-sender (pull)
+    // invocation never carries --fake-super even with fake_super(true).
+    assert!(
+        !args.iter().any(|a| a == "--fake-super"),
+        "all-flags test: --fake-super must not be forwarded to a remote sender: {args:?}"
+    );
 
     // upstream: options.c:2802 - explicit zlib is sent as --old-compress
     assert!(
