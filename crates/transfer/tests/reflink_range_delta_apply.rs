@@ -110,6 +110,7 @@ fn aligned_copy_token_at_offset_zero_matches_basis_block() {
     let config = DeltaApplyConfig {
         sparse: false,
         writer_kind: BasisWriterKind::Standard,
+        cow_policy: fast_io::CowPolicy::Auto,
     };
     let verifier = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::None);
     let mut applicator = DeltaApplicator::new(
@@ -158,6 +159,7 @@ fn sequential_aligned_copy_tokens_reconstruct_full_basis() {
     let config = DeltaApplyConfig {
         sparse: false,
         writer_kind: BasisWriterKind::Standard,
+        cow_policy: fast_io::CowPolicy::Auto,
     };
     let verifier = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::None);
     let mut applicator = DeltaApplicator::new(
@@ -201,6 +203,7 @@ fn literal_then_copy_falls_through_alignment_guard() {
     let config = DeltaApplyConfig {
         sparse: false,
         writer_kind: BasisWriterKind::Standard,
+        cow_policy: fast_io::CowPolicy::Auto,
     };
     let verifier = ChecksumVerifier::for_algorithm(protocol::ChecksumAlgorithm::None);
     let mut applicator = DeltaApplicator::new(
