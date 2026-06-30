@@ -6,7 +6,8 @@
 //! backend (io_uring `RECV` on Linux, IOCP `WSARecv` on Windows) can be
 //! selected without the caller naming the concrete reader.
 //!
-//! [`NetReader`] is the abstraction; [`for_socket`] is the factory. The
+//! [`NetReader`](crate::net_reader::NetReader) is the abstraction;
+//! [`for_socket`](crate::net_reader::for_socket) is the factory. The
 //! factory delegates to the already-tested [`crate::socket_reader_from_fd`],
 //! whose default arm is a behaviour-preserving standard blocking read, so
 //! wiring this seam in is a no-op until an accelerated policy is selected.
