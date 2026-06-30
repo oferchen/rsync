@@ -97,8 +97,11 @@ fn bench_parallel_delta_scan(c: &mut Criterion) {
             &max_chunks,
             |b, &max_chunks| {
                 b.iter(|| {
-                    let script =
-                        generator.generate_chunked(black_box(source.as_slice()), &index, max_chunks);
+                    let script = generator.generate_chunked(
+                        black_box(source.as_slice()),
+                        &index,
+                        max_chunks,
+                    );
                     black_box(script)
                 });
             },
