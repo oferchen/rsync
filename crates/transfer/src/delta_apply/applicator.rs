@@ -19,6 +19,7 @@ use crate::map_file::AdaptiveMapStrategy;
 use crate::map_file::BufferedMap;
 use crate::map_file::MapFile;
 use crate::token_buffer::TokenBuffer;
+use crate::token_reader::{DeltaToken, LiteralData, TokenReader};
 
 /// Same-fs detection cache for the IUD-10 `copy_file_range` fast path.
 ///
@@ -141,6 +142,17 @@ pub struct DeltaApplyResult {
     pub literal_tokens: u64,
     /// Number of block reference tokens processed.
     pub block_tokens: u64,
+    /// Final output position after [`DeltaApplicator::finish`].
+    ///
+    /// When sparse mode is active this is the position returned by
+    /// [`SparseWriteState::finish`] (the materialized file length including
+    /// the trailing seek+1-byte hole terminator). When sparse mode is off it
+    /// is `None`; the byte count is already tracked by `bytes_written`.
+    ///
+    /// Mirrors the post-finish size check in the live receiver path
+    /// (`receiver/transfer/sync.rs:276-289`), which compares this position
+    /// against the file-list entry size.
+    pub final_pos: Option<u64>,
 }
 
 /// Applies delta data to reconstruct a file.
@@ -568,27 +580,31 @@ impl<'a> DeltaApplicator<'a> {
         }
     }
 
-    /// Reads and applies a single token from the reader.
+    /// Reads and applies a single token from the wire via the shared
+    /// [`TokenReader`].
     ///
-    /// Returns `Ok(true)` if more tokens expected, `Ok(false)` at end.
+    /// Returns `Ok(true)` if more tokens are expected, `Ok(false)` at the
+    /// `End` marker. The `token_reader` handles BOTH the plain 4-byte-LE
+    /// framing AND the compressed (`-z`) DEFLATED_DATA framing, exactly like
+    /// the live receiver loop in `receiver/transfer/sync.rs:518-634`. After
+    /// every block reference the basis bytes are fed back into the
+    /// decompressor dictionary via [`TokenReader::see_token`] so the inflate
+    /// state stays synchronized with the sender's deflate state - the critical
+    /// step that plain raw-`i32` reads omit (upstream: `token.c:631`
+    /// `see_deflate_token()`; mirrors `sync.rs:629`).
     ///
-    /// Uses reusable `TokenBuffer` to avoid per-token heap allocations,
-    /// significantly reducing allocation overhead for token-heavy transfers.
-    pub fn apply_token<R: Read>(&mut self, reader: &mut R) -> io::Result<bool> {
-        let mut buf = [0u8; 4];
-        reader.read_exact(&mut buf)?;
-        let token = i32::from_le_bytes(buf);
-
-        debug_log!(
-            Deltasum,
-            4,
-            "recv token={} offset={}",
-            token,
-            self.stats.bytes_written
-        );
-
-        match token.cmp(&0) {
-            std::cmp::Ordering::Equal => {
+    /// Uses the applicator's reusable `TokenBuffer` for `Pending` literal
+    /// reads to avoid per-token heap allocations. The live path additionally
+    /// attempts a zero-copy `try_borrow_exact` on its concrete `ServerReader`;
+    /// that is a pure I/O optimization with byte-identical output, so the
+    /// generic `R: Read` path here always reads into the buffer.
+    pub fn apply_token<R: Read>(
+        &mut self,
+        reader: &mut R,
+        token_reader: &mut TokenReader,
+    ) -> io::Result<bool> {
+        match token_reader.read_token(reader)? {
+            DeltaToken::End => {
                 debug_log!(
                     Deltasum,
                     2,
@@ -597,45 +613,155 @@ impl<'a> DeltaApplicator<'a> {
                 );
                 Ok(false)
             }
-            std::cmp::Ordering::Greater => {
-                let len = token as usize;
-                self.token_buffer.resize_for(len);
-                reader.read_exact(self.token_buffer.as_mut_slice())?;
-
-                debug_log!(
-                    Deltasum,
-                    3,
-                    "recv literal data len={} offset={}",
-                    len,
-                    self.stats.bytes_written
-                );
-
-                let data = self.token_buffer.as_slice();
-                self.checksum_verifier.update(data);
-
-                if let Some(ref mut sparse) = self.sparse_state {
-                    sparse.write(&mut self.output, data)?;
-                } else {
-                    self.output.write_all(data)?;
-                }
-
-                self.stats.bytes_written += len as u64;
-                self.stats.literal_bytes += len as u64;
-                self.stats.literal_tokens += 1;
+            DeltaToken::Literal(LiteralData::Ready(data)) => {
+                self.apply_literal_bytes(&data)?;
                 Ok(true)
             }
-            std::cmp::Ordering::Less => {
-                let block_idx = -(token + 1) as usize;
+            DeltaToken::Literal(LiteralData::Pending(len)) => {
+                self.token_buffer.resize_for(len);
+                reader.read_exact(self.token_buffer.as_mut_slice())?;
+                // SAFETY: split the borrow so the literal write does not alias
+                // the buffer mutably; `apply_literal_bytes` only reads.
+                let len = self.token_buffer.len();
+                self.apply_literal_from_buffer(len)?;
+                Ok(true)
+            }
+            DeltaToken::BlockRef(block_idx) => {
                 self.apply_block_ref(block_idx)?;
+                // upstream: token.c:631 see_deflate_token() - keep the inflate
+                // dictionary synced with the sender after every block match.
+                // Mirrors the live receiver loop (sync.rs:629). Only the
+                // compressed reader needs the bytes; for the plain reader
+                // see_token is a no-op, so we avoid the extra basis map there.
+                if token_reader.is_compressed() {
+                    self.feed_see_token(block_idx, token_reader)?;
+                }
                 Ok(true)
             }
         }
     }
 
-    /// Finalizes delta application with checksum verification.
-    pub fn finish<R: Read>(mut self, reader: &mut R) -> io::Result<DeltaApplyResult> {
+    /// Writes an already-materialized literal slice (the compressed-token
+    /// `Ready` payload), feeding the checksum verifier and bumping counters.
+    fn apply_literal_bytes(&mut self, data: &[u8]) -> io::Result<()> {
+        let len = data.len();
+        debug_log!(
+            Deltasum,
+            3,
+            "recv literal data len={} offset={}",
+            len,
+            self.stats.bytes_written
+        );
+        self.checksum_verifier.update(data);
         if let Some(ref mut sparse) = self.sparse_state {
-            sparse.finish(&mut self.output)?;
+            sparse.write(&mut self.output, data)?;
+        } else {
+            self.output.write_all(data)?;
+        }
+        self.stats.bytes_written += len as u64;
+        self.stats.literal_bytes += len as u64;
+        self.stats.literal_tokens += 1;
+        Ok(())
+    }
+
+    /// Writes the first `len` bytes of the reusable token buffer as a literal.
+    ///
+    /// Kept separate from [`Self::apply_literal_bytes`] so the buffer borrow
+    /// does not collide with the `&mut self.output` / `&mut self.sparse_state`
+    /// borrows inside the write.
+    fn apply_literal_from_buffer(&mut self, len: usize) -> io::Result<()> {
+        debug_log!(
+            Deltasum,
+            3,
+            "recv literal data len={} offset={}",
+            len,
+            self.stats.bytes_written
+        );
+        // Borrow the verifier and output disjointly from the token buffer.
+        let Self {
+            token_buffer,
+            checksum_verifier,
+            sparse_state,
+            output,
+            stats,
+            ..
+        } = self;
+        let data = &token_buffer.as_slice()[..len];
+        checksum_verifier.update(data);
+        if let Some(sparse) = sparse_state.as_mut() {
+            sparse.write(output, data)?;
+        } else {
+            output.write_all(data)?;
+        }
+        stats.bytes_written += len as u64;
+        stats.literal_bytes += len as u64;
+        stats.literal_tokens += 1;
+        Ok(())
+    }
+
+    /// Maps the basis bytes for `block_idx` and feeds them into the
+    /// decompressor dictionary via [`TokenReader::see_token`].
+    ///
+    /// Mirrors the live receiver's `token_reader.see_token(block_data)` call
+    /// (sync.rs:629). The block index has already been bounds-checked by
+    /// [`Self::apply_block_ref`], so a missing basis here is an internal
+    /// invariant violation surfaced as `InvalidData`.
+    fn feed_see_token(
+        &mut self,
+        block_idx: usize,
+        token_reader: &mut TokenReader,
+    ) -> io::Result<()> {
+        let (Some(signature), Some(basis_map)) = (&self.basis_signature, self.basis_map.as_mut())
+        else {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("block reference {block_idx} without basis file"),
+            ));
+        };
+        let layout = signature.layout();
+        let block_len = layout.block_length().get() as u64;
+        let block_count = layout.block_count() as usize;
+        let offset = block_idx as u64 * block_len;
+        let bytes_to_copy = if block_idx == block_count.saturating_sub(1) {
+            let remainder = layout.remainder();
+            if remainder > 0 {
+                remainder as usize
+            } else {
+                block_len as usize
+            }
+        } else {
+            block_len as usize
+        };
+        let block_data = basis_map.map_ptr(offset, bytes_to_copy)?;
+        token_reader.see_token(block_data)
+    }
+
+    /// Finalizes delta application with checksum verification.
+    ///
+    /// When `expected_size` is `Some` and sparse mode is active, also verifies
+    /// the materialized file length matches, mirroring the live receiver's
+    /// post-finish size check (`receiver/transfer/sync.rs:276-289`). The
+    /// sparse final position is recorded in
+    /// [`DeltaApplyResult::final_pos`] regardless.
+    pub fn finish<R: Read>(
+        mut self,
+        reader: &mut R,
+        expected_size: Option<u64>,
+    ) -> io::Result<DeltaApplyResult> {
+        if let Some(ref mut sparse) = self.sparse_state {
+            let final_pos = sparse.finish(&mut self.output)?;
+            self.stats.final_pos = Some(final_pos);
+            if let Some(expected) = expected_size {
+                if final_pos != expected {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "sparse file size mismatch: expected {expected} bytes, \
+                             got {final_pos} bytes"
+                        ),
+                    ));
+                }
+            }
         }
 
         // upstream: sum_end(char *sum) writes into caller-provided buffer.
@@ -684,14 +810,21 @@ impl<'a> DeltaApplicator<'a> {
 }
 
 /// Reads all delta tokens and applies them.
+///
+/// The `token_reader` selects the wire framing (plain 4-byte-LE or compressed
+/// DEFLATED_DATA) and is threaded through every token so the compressed
+/// inflate dictionary stays synchronized via `see_token` after each block
+/// match. Mirrors the live receiver loop in
+/// `receiver/transfer/sync.rs:518-634`.
 pub fn apply_delta_stream<R: Read>(
     reader: &mut R,
     applicator: &mut DeltaApplicator<'_>,
+    token_reader: &mut TokenReader,
 ) -> io::Result<()> {
     // upstream: receiver.c:240 receive_data() logs the same start marker.
     debug_log!(Deltasum, 2, "recv delta stream start");
 
-    while applicator.apply_token(reader)? {}
+    while applicator.apply_token(reader, token_reader)? {}
     Ok(())
 }
 

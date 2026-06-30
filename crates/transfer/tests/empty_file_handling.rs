@@ -577,6 +577,7 @@ fn delta_apply_result_empty_transfer_stats() {
         matched_bytes: 0,
         literal_tokens: 1, // Even empty files have one (empty) literal token
         block_tokens: 0,
+        ..Default::default()
     };
 
     assert_eq!(result.bytes_written, 0);
