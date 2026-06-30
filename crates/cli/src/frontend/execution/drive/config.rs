@@ -195,10 +195,14 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         .dry_run(inputs.dry_run)
         .list_only(inputs.list_only)
         .recursive(inputs.recursive)
+        // upstream: options.c:2199-2203 - `else if (recurse) xfer_dirs = 1;
+        // else if (xfer_dirs < 0) xfer_dirs = list_only ? 1 : 0;`. When neither
+        // -r nor an explicit -d/--no-dirs is given, --list-only still transfers
+        // (lists) a bare directory operand's own entry.
         .dirs(if inputs.recursive {
             true
         } else {
-            inputs.dirs.unwrap_or(false)
+            inputs.dirs.unwrap_or(inputs.list_only)
         })
         .delete(
             inputs.delete_mode.is_enabled()
