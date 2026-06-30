@@ -11,7 +11,7 @@
 //! helpers so a TOCTOU symlink swap on a top-level entry cannot redirect
 //! the listing or the unlink to an attacker-chosen inode. Multi-component
 //! relative paths take the documented path-based fallback (see
-//! `crates/fast_io/src/dir_sandbox/at_syscalls.rs::single_component_leaf`).
+//! `crates/fast_io/src/dir_sandbox/at_syscalls/lstat.rs::single_component_leaf`).
 
 use std::io;
 use std::path::Path;
