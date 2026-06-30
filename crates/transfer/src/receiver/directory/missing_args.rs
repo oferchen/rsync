@@ -40,7 +40,7 @@ impl ReceiverContext {
     /// swap on a single-component leaf under the destination root cannot
     /// redirect the deletion to an attacker-chosen path. Multi-component
     /// relative paths take the documented path-based fallback inside the
-    /// helper (see `crates/fast_io/src/dir_sandbox/at_syscalls.rs`).
+    /// helper (see `crates/fast_io/src/dir_sandbox/at_syscalls/`).
     ///
     /// # No-op conditions
     ///
