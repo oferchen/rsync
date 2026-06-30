@@ -30,6 +30,7 @@ mod applicator;
 mod checksum;
 mod sparse;
 
+pub use crate::token_reader::{DeltaToken, LiteralData, TokenReader};
 pub use applicator::{
     BasisWriterKind, DeltaApplicator, DeltaApplyConfig, DeltaApplyResult, apply_delta_stream,
 };

@@ -26,7 +26,8 @@ use engine::signature::{FileSignature, SignatureBlock};
 use signature::SignatureLayout;
 use tempfile::tempdir;
 use transfer::delta_apply::{
-    BasisWriterKind, ChecksumVerifier, DeltaApplicator, DeltaApplyConfig, apply_delta_stream,
+    BasisWriterKind, ChecksumVerifier, DeltaApplicator, DeltaApplyConfig, TokenReader,
+    apply_delta_stream,
 };
 
 const BLOCK_LEN: u32 = 4096;
@@ -124,8 +125,10 @@ fn aligned_copy_token_at_offset_zero_matches_basis_block() {
     wire.extend_from_slice(&copy_token(0));
     wire.extend_from_slice(&END_TOKEN);
     let mut reader = Cursor::new(wire);
+    let mut token_reader = TokenReader::new(None).expect("plain token reader");
 
-    apply_delta_stream(&mut reader, &mut applicator).expect("apply delta stream");
+    apply_delta_stream(&mut reader, &mut applicator, &mut token_reader)
+        .expect("apply delta stream");
     // Drop the applicator (and its owned File) before reopening so any
     // buffered state is released. apply_delta_stream does not call finish().
     drop(applicator);
@@ -172,8 +175,10 @@ fn sequential_aligned_copy_tokens_reconstruct_full_basis() {
     }
     wire.extend_from_slice(&END_TOKEN);
     let mut reader = Cursor::new(wire);
+    let mut token_reader = TokenReader::new(None).expect("plain token reader");
 
-    apply_delta_stream(&mut reader, &mut applicator).expect("apply delta stream");
+    apply_delta_stream(&mut reader, &mut applicator, &mut token_reader)
+        .expect("apply delta stream");
     drop(applicator);
 
     let dest_path = basis_path.with_file_name("dest.bin");
@@ -215,8 +220,10 @@ fn literal_then_copy_falls_through_alignment_guard() {
     wire.extend_from_slice(&copy_token(0));
     wire.extend_from_slice(&END_TOKEN);
     let mut reader = Cursor::new(wire);
+    let mut token_reader = TokenReader::new(None).expect("plain token reader");
 
-    apply_delta_stream(&mut reader, &mut applicator).expect("apply delta stream");
+    apply_delta_stream(&mut reader, &mut applicator, &mut token_reader)
+        .expect("apply delta stream");
     drop(applicator);
 
     let dest_path = basis_path.with_file_name("dest.bin");
