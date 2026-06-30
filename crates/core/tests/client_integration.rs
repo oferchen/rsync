@@ -376,3 +376,60 @@ fn test_crtimes_preservation() {
         );
     });
 }
+
+// upstream: main.c:708 `get_local_name()` returns NULL when `list_only` is set,
+// so a local `--list-only` run needs no destination operand and exits 0 on
+// success. oc-rsync's local plan always requires source+destination, so a single
+// source operand previously errored with RERR_PARTIAL (23). A successful
+// `--list-only` with no errors must exit 0.
+#[test]
+fn list_only_single_source_succeeds_without_destination() {
+    run_with_timeout(LOCAL_TIMEOUT, || {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        touch(&source_root.join("a.txt"), b"hello");
+        touch(&source_root.join("nested/c.txt"), b"nested");
+
+        let source_a = source_root.join("a.txt");
+
+        let mut source_arg = source_root.into_os_string();
+        source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+        let config = ClientConfig::builder()
+            .transfer_args([source_arg])
+            .recursive(true)
+            .list_only(true)
+            .build();
+
+        // Success (Ok) maps to exit code 0; the missing-operands error would be
+        // RERR_PARTIAL (23). Asserting Ok pins the upstream-parity exit code:
+        // a clean `--list-only` with no destination must exit 0, not 23.
+        run_client(config).expect("list-only succeeds without a destination");
+
+        // List-only runs in dry-run mode; the source tree is only enumerated.
+        assert_eq!(fs::read(&source_a).unwrap(), b"hello", "source untouched");
+    });
+}
+
+// Guard the error path: a single source operand WITHOUT `--list-only` is still a
+// missing-destination error (RERR_PARTIAL, exit 23), exactly as before. The
+// list-only fix must not mask this.
+#[test]
+fn single_source_without_list_only_still_errors() {
+    run_with_timeout(LOCAL_TIMEOUT, || {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        touch(&source_root.join("a.txt"), b"hello");
+
+        let mut source_arg = source_root.into_os_string();
+        source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+        let config = ClientConfig::builder()
+            .transfer_args([source_arg])
+            .recursive(true)
+            .build();
+
+        let error = run_client(config).expect_err("missing destination must still error");
+        assert_eq!(error.exit_code(), 23, "missing operands stays RERR_PARTIAL");
+    });
+}
