@@ -78,10 +78,12 @@ fn random_bytes<const N: usize>() -> [u8; N] {
 /// Benchmarks AES-128-GCM encrypt and decrypt at the configured packet sizes.
 fn bench_aes_128_gcm(c: &mut Criterion) {
     let key_bytes: [u8; 16] = random_bytes();
-    let key = AesKey::<Aes128Gcm>::from_slice(&key_bytes);
+    let key_array = AesKey::<Aes128Gcm>::try_from(&key_bytes[..]).expect("aes-128 key length");
+    let key = &key_array;
     let cipher = Aes128Gcm::new(key);
     let nonce_bytes: [u8; 12] = random_bytes();
-    let nonce = AesNonce::from_slice(&nonce_bytes);
+    let nonce_array = AesNonce::try_from(&nonce_bytes[..]).expect("aes nonce length");
+    let nonce = &nonce_array;
 
     let mut encrypt = c.benchmark_group("aes_128_gcm/encrypt");
     for &size in PACKET_SIZES {
@@ -120,10 +122,12 @@ fn bench_aes_128_gcm(c: &mut Criterion) {
 /// Benchmarks AES-256-GCM encrypt and decrypt at the configured packet sizes.
 fn bench_aes_256_gcm(c: &mut Criterion) {
     let key_bytes: [u8; 32] = random_bytes();
-    let key = AesKey::<Aes256Gcm>::from_slice(&key_bytes);
+    let key_array = AesKey::<Aes256Gcm>::try_from(&key_bytes[..]).expect("aes-256 key length");
+    let key = &key_array;
     let cipher = Aes256Gcm::new(key);
     let nonce_bytes: [u8; 12] = random_bytes();
-    let nonce = AesNonce::from_slice(&nonce_bytes);
+    let nonce_array = AesNonce::try_from(&nonce_bytes[..]).expect("aes nonce length");
+    let nonce = &nonce_array;
 
     let mut encrypt = c.benchmark_group("aes_256_gcm/encrypt");
     for &size in PACKET_SIZES {
@@ -164,10 +168,12 @@ fn bench_aes_256_gcm(c: &mut Criterion) {
 /// AES.
 fn bench_chacha20_poly1305(c: &mut Criterion) {
     let key_bytes: [u8; 32] = random_bytes();
-    let key = ChaChaKey::from_slice(&key_bytes);
+    let key_array = ChaChaKey::try_from(&key_bytes[..]).expect("chacha key length");
+    let key = &key_array;
     let cipher = ChaCha20Poly1305::new(key);
     let nonce_bytes: [u8; 12] = random_bytes();
-    let nonce = ChaChaNonce::from_slice(&nonce_bytes);
+    let nonce_array = ChaChaNonce::try_from(&nonce_bytes[..]).expect("chacha nonce length");
+    let nonce = &nonce_array;
 
     let mut encrypt = c.benchmark_group("chacha20_poly1305/encrypt");
     for &size in PACKET_SIZES {
