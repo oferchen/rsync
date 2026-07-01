@@ -499,6 +499,108 @@ pub const fn so_max_pacing_rate_supported() -> bool {
     cfg!(target_os = "linux")
 }
 
+/// Enables kernel busy-polling on a connected stream (`SO_BUSY_POLL`).
+///
+/// `usecs` is the microsecond budget the kernel spins polling the NIC for new
+/// packets before yielding, trading CPU for lower receive latency. A value of
+/// zero disables busy-polling. On platforms without `SO_BUSY_POLL` the call is
+/// a no-op and returns `Ok(false)`.
+///
+/// `SO_BUSY_POLL` requires `CAP_NET_ADMIN` on many kernels. When the kernel
+/// rejects the option with `EPERM` (missing capability) or `ENOPROTOOPT`
+/// (busy-poll compiled out), this returns `Ok(false)` rather than an error,
+/// matching the best-effort apply pattern of the other helpers here. This is
+/// opt-in, default-off infrastructure and is not wired into the connect path.
+///
+/// upstream: not implemented; an oc-rsync-specific perf hint that is
+/// wire-compatible with upstream rsync.
+pub fn set_so_busy_poll(stream: &TcpStream, usecs: u32) -> io::Result<bool> {
+    #[cfg(target_os = "linux")]
+    {
+        match set_socket_int_option(stream, libc::SOL_SOCKET, libc::SO_BUSY_POLL, usecs as i32) {
+            Ok(()) => Ok(true),
+            Err(error)
+                if matches!(
+                    error.raw_os_error(),
+                    Some(libc::EPERM) | Some(libc::ENOPROTOOPT)
+                ) =>
+            {
+                // SO_BUSY_POLL needs CAP_NET_ADMIN on many kernels and may be
+                // compiled out; treat both as gracefully unsupported.
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (stream, usecs);
+        Ok(false)
+    }
+}
+
+/// Returns `true` when the running platform implements `SO_BUSY_POLL`.
+///
+/// Note that even where the option exists, applying it may still require
+/// `CAP_NET_ADMIN`; [`set_so_busy_poll`] tolerates that at runtime.
+#[must_use]
+pub const fn so_busy_poll_supported() -> bool {
+    cfg!(target_os = "linux")
+}
+
+/// Maximum socket buffer size accepted by [`set_socket_buffer_sizes`] (256 MiB).
+///
+/// Guards against absurd requests that would either fail the syscall or pin an
+/// unreasonable amount of kernel memory. Kernels apply their own `wmem_max` /
+/// `rmem_max` ceiling below this; the clamp only rejects nonsense inputs.
+pub const MAX_SOCKET_BUFFER_SIZE: usize = 256 * 1024 * 1024;
+
+/// Sets the send and/or receive socket buffer sizes on a connected stream
+/// (`SO_SNDBUF` / `SO_RCVBUF`).
+///
+/// Each size is opt-in: `Some(n)` issues a `setsockopt` for that direction,
+/// clamped to [`MAX_SOCKET_BUFFER_SIZE`]; `None` leaves the kernel default
+/// untouched and issues no syscall. When both are `None` this is a no-op.
+///
+/// The option is portable (Linux, macOS, Windows via std/libc). Kernels
+/// typically round up and often double the requested value, so a later
+/// read-back reports a size greater than or equal to the request.
+///
+/// This is opt-in infrastructure; it changes no default and performs no
+/// BDP-aware auto-sizing.
+///
+/// upstream: not implemented; an oc-rsync-specific perf hint that is
+/// wire-compatible with upstream rsync.
+///
+/// # Errors
+///
+/// Returns the OS error reported by `setsockopt(2)` (Unix) or Winsock
+/// (Windows) if a requested size is rejected.
+pub fn set_socket_buffer_sizes(
+    stream: &TcpStream,
+    sndbuf: Option<usize>,
+    rcvbuf: Option<usize>,
+) -> io::Result<()> {
+    #[cfg(unix)]
+    let (sndbuf_opt, rcvbuf_opt) = (libc::SO_SNDBUF, libc::SO_RCVBUF);
+    #[cfg(windows)]
+    let (sndbuf_opt, rcvbuf_opt) = (0x1001_i32, 0x1002_i32);
+    #[cfg(unix)]
+    let level = libc::SOL_SOCKET;
+    #[cfg(windows)]
+    let level = 0xFFFF_i32;
+
+    if let Some(size) = sndbuf {
+        let clamped = size.min(MAX_SOCKET_BUFFER_SIZE).min(i32::MAX as usize) as i32;
+        set_socket_int_option(stream, level, sndbuf_opt, clamped)?;
+    }
+    if let Some(size) = rcvbuf {
+        let clamped = size.min(MAX_SOCKET_BUFFER_SIZE).min(i32::MAX as usize) as i32;
+        set_socket_int_option(stream, level, rcvbuf_opt, clamped)?;
+    }
+    Ok(())
+}
+
 /// Toggles TCP output corking on a connected stream.
 ///
 /// When `cork` is `true`, the kernel coalesces small writes into full
@@ -846,6 +948,87 @@ mod tests {
                 Err(error) => panic!("unexpected error from TCP cork ({cork}): {error}"),
             }
         }
+
+        drop(stream);
+        handle.join().expect("accept thread completes");
+    }
+
+    #[test]
+    fn set_so_busy_poll_never_errors() {
+        let (stream, handle) = connected_stream();
+
+        // SO_BUSY_POLL needs CAP_NET_ADMIN on many kernels and is Linux-only;
+        // the helper must always resolve to Ok (true when applied, false when
+        // gracefully unsupported / permission-denied), never an error.
+        match set_so_busy_poll(&stream, 50) {
+            Ok(true) => assert!(so_busy_poll_supported()),
+            Ok(false) => {}
+            Err(error) => panic!("set_so_busy_poll must be best-effort, got: {error}"),
+        }
+
+        drop(stream);
+        handle.join().expect("accept thread completes");
+    }
+
+    #[cfg(unix)]
+    fn get_socket_int_option(stream: &TcpStream, level: i32, option: i32) -> i32 {
+        use std::os::fd::AsRawFd;
+
+        let mut value: libc::c_int = 0;
+        let mut len = std::mem::size_of::<libc::c_int>() as libc::socklen_t;
+        // SAFETY: `stream` is a live TcpStream for the duration of the call;
+        // `&mut value`/`&mut len` are valid stack pointers sized to match a
+        // `c_int` option. `getsockopt` only writes up to `len` bytes.
+        let ret = unsafe {
+            libc::getsockopt(
+                stream.as_raw_fd(),
+                level,
+                option,
+                std::ptr::from_mut(&mut value).cast::<libc::c_void>(),
+                &mut len,
+            )
+        };
+        assert_eq!(ret, 0, "getsockopt failed: {}", io::Error::last_os_error());
+        value
+    }
+
+    #[test]
+    fn set_socket_buffer_sizes_applies_requested_values() {
+        let (stream, handle) = connected_stream();
+
+        // None/None is a pure no-op and must succeed.
+        set_socket_buffer_sizes(&stream, None, None).expect("no-op succeeds");
+
+        let request = 256 * 1024;
+        set_socket_buffer_sizes(&stream, Some(request), Some(request)).expect("sizes set");
+
+        #[cfg(unix)]
+        {
+            // Kernels round up and often double the request, so assert the
+            // read-back is at least the requested size, not an exact match.
+            let snd = get_socket_int_option(&stream, libc::SOL_SOCKET, libc::SO_SNDBUF);
+            let rcv = get_socket_int_option(&stream, libc::SOL_SOCKET, libc::SO_RCVBUF);
+            assert!(
+                snd as usize >= request,
+                "SO_SNDBUF {snd} below requested {request}"
+            );
+            assert!(
+                rcv as usize >= request,
+                "SO_RCVBUF {rcv} below requested {request}"
+            );
+        }
+
+        drop(stream);
+        handle.join().expect("accept thread completes");
+    }
+
+    #[test]
+    fn set_socket_buffer_sizes_clamps_absurd_request() {
+        let (stream, handle) = connected_stream();
+
+        // A wildly oversized request is clamped to MAX_SOCKET_BUFFER_SIZE
+        // (and i32::MAX) so setsockopt still succeeds.
+        set_socket_buffer_sizes(&stream, Some(usize::MAX), None).expect("clamped request succeeds");
 
         drop(stream);
         handle.join().expect("accept thread completes");
