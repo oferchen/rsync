@@ -585,3 +585,5 @@ fix, not part of this receiver rung.
    CI-verified commit. A `block_on`-hosted sync fork adds zero async
    benefit (the ASY-3 shape already exists), and an unverified fork risks
    a wire/stats divergence - both worse than none per the stop clause.
+
+<!-- CI skip-path verification probe for required upstream-testsuite check. -->
