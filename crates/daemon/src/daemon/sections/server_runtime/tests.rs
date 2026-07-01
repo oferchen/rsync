@@ -1359,3 +1359,135 @@ fn relay_accept_item_bails_on_shutdown_when_full() {
         &graceful,
     ));
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn kqueue_engine_poll_idle_when_no_connection() {
+    // A quiet daemon must yield Idle (not error, not busy-spin): the kevent
+    // wait returns empty after its bounded timeout so the accept loop can
+    // re-check signal flags. Also exercises the real kqueue registration path.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let local = listener.local_addr().expect("local addr");
+    let mut engine =
+        KqueueAcceptEngine::new(vec![listener], &[local], None).expect("kqueue engine");
+
+    let start = std::time::Instant::now();
+    assert!(
+        matches!(engine.poll().expect("poll"), AcceptOutcome::Idle),
+        "poll with no pending connection must yield Idle"
+    );
+    // The wait must actually block for roughly the signal-check interval rather
+    // than spin: this is the anti-busy-wait guarantee.
+    assert!(
+        start.elapsed() >= Duration::from_millis(80),
+        "kevent wait must park for ~100ms, not busy-spin"
+    );
+    engine.shutdown();
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn kqueue_engine_poll_returns_connection_with_blocking_reset() {
+    // The kqueue engine must accept a real client via EVFILT_READ readiness and
+    // return it as a BLOCKING stream. On macOS the accepted socket inherits the
+    // listener's O_NONBLOCK; without the engine's set_nonblocking(false) reset,
+    // the delayed blocking read below would fail with WouldBlock. The 100ms
+    // write delay guarantees the data is not yet available at read_exact time,
+    // so this discriminates blocking vs non-blocking.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let local = listener.local_addr().expect("local addr");
+    let mut engine =
+        KqueueAcceptEngine::new(vec![listener], &[local], None).expect("kqueue engine");
+
+    let client = thread::spawn(move || {
+        let mut stream = TcpStream::connect(local).expect("connect");
+        thread::sleep(Duration::from_millis(100));
+        stream.write_all(b"hi").expect("client write");
+        thread::sleep(Duration::from_millis(50));
+    });
+
+    let mut accepted = None;
+    for _ in 0..40 {
+        match engine.poll().expect("poll") {
+            AcceptOutcome::Connection(stream, peer) => {
+                accepted = Some((stream, peer));
+                break;
+            }
+            AcceptOutcome::Idle => continue,
+            AcceptOutcome::Closed => panic!("kqueue engine never reports Closed"),
+        }
+    }
+
+    let (mut stream, peer) = accepted.expect("a client connection was accepted via kqueue");
+    assert!(peer.ip().is_loopback(), "peer must be loopback, got {peer}");
+
+    // Blocking read of the delayed client bytes: succeeds only if the accepted
+    // socket is in blocking mode. No read timeout is set so a non-blocking
+    // socket would surface as an error here.
+    let mut buf = [0u8; 2];
+    stream
+        .read_exact(&mut buf)
+        .expect("blocking read of client bytes (accepted socket must be blocking)");
+    assert_eq!(&buf, b"hi");
+
+    engine.shutdown();
+    let _ = client.join();
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn kqueue_engine_drains_burst_behind_one_notification() {
+    // Edge-triggered readiness (EV_CLEAR) fires once per readable transition, so
+    // several connections queued before a single kevent wake must all be
+    // drained rather than stranded. Connect three clients up front, then verify
+    // the engine hands back three distinct connections across successive polls.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let local = listener.local_addr().expect("local addr");
+
+    let mut clients = Vec::new();
+    for _ in 0..3 {
+        clients.push(TcpStream::connect(local).expect("connect"));
+    }
+    // Give the kernel a moment to enqueue all three on the listen backlog.
+    thread::sleep(Duration::from_millis(50));
+
+    let mut engine =
+        KqueueAcceptEngine::new(vec![listener], &[local], None).expect("kqueue engine");
+
+    let mut accepted = 0;
+    for _ in 0..40 {
+        match engine.poll().expect("poll") {
+            AcceptOutcome::Connection(_, peer) => {
+                assert!(peer.ip().is_loopback());
+                accepted += 1;
+                if accepted == 3 {
+                    break;
+                }
+            }
+            AcceptOutcome::Idle => continue,
+            AcceptOutcome::Closed => panic!("kqueue engine never reports Closed"),
+        }
+    }
+    assert_eq!(accepted, 3, "all queued connections must be drained, not dropped");
+
+    engine.shutdown();
+    drop(clients);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn kqueue_engine_shutdown_is_idempotent() {
+    // shutdown() must be safe to call more than once (the accept loop calls it
+    // on exit, and error paths may call it too). A second call finds the
+    // listeners already cleared and must not panic.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let local = listener.local_addr().expect("local addr");
+    let mut engine =
+        KqueueAcceptEngine::new(vec![listener], &[local], None).expect("kqueue engine");
+
+    engine.shutdown();
+    engine.shutdown();
+    // Polling after shutdown has no listeners; wait over an empty kqueue simply
+    // times out to Idle without error.
+    assert!(matches!(engine.poll().expect("poll"), AcceptOutcome::Idle));
+}

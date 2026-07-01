@@ -291,16 +291,219 @@ impl AcceptEngine for MultiListenerEngine {
     }
 }
 
+/// macOS `kqueue` accept engine: one `EVFILT_READ` registration per listener,
+/// readiness-driven `accept` with no per-iteration sleep.
+///
+/// Replaces the busy-wait shape of the portable engines (non-blocking `accept`
+/// plus a 50ms `WouldBlock` sleep) with a single `kevent(2)` wait over all
+/// listener fds. On a quiet daemon the thread parks in the kernel until a
+/// connection arrives or the 100ms signal-check timeout elapses, so
+/// first-connection latency drops from up to 50ms to a syscall round-trip while
+/// still bounding shutdown-flag inspection to the same 100ms cadence the
+/// dual-stack engine uses.
+///
+/// The listeners are set non-blocking and registered `EVFILT_READ | EV_CLEAR`
+/// (edge-triggered). Because edge-triggered readiness fires once per readable
+/// transition, each ready listener is drained with repeated `accept` calls until
+/// `WouldBlock`, so a burst that queues several connections behind one
+/// notification is never dropped. Surplus accepted streams are buffered and
+/// handed out one per [`poll`](AcceptEngine::poll), preserving the "one
+/// connection per poll" contract the shared loop body relies on.
+///
+/// Admission (`--max-connections`) and the N-listener fan-out are unchanged:
+/// this engine only sources accepted streams; the shared loop body still gates
+/// every returned connection through the process-global admission counter.
+///
+/// Selected by [`build_accept_engine`] on macOS with a graceful fallback to the
+/// portable engines if `kqueue(2)` setup fails, so a kqueue error never breaks
+/// connection service.
+#[cfg(target_os = "macos")]
+struct KqueueAcceptEngine {
+    /// Registered listeners keyed by their `EVFILT_READ` user-data index.
+    listeners: Vec<(TcpListener, SocketAddr)>,
+    /// kqueue event surface; dropped (closing its fd) on [`Self::shutdown`].
+    kq: fast_io::KqueueLoop,
+    /// Accepted streams drained from a readiness burst but not yet handed out.
+    pending: std::collections::VecDeque<(TcpStream, SocketAddr)>,
+    log_sink: Option<SharedLogSink>,
+}
+
+#[cfg(target_os = "macos")]
+impl KqueueAcceptEngine {
+    /// Signal-check cadence for the `kevent(2)` wait, matching the dual-stack
+    /// engine's `recv_timeout` interval so shutdown latency is identical.
+    const WAIT_TIMEOUT: Duration = Duration::from_millis(100);
+
+    /// Builds the engine, registering an `EVFILT_READ` event per listener.
+    ///
+    /// Returns an `io::Error` (not a [`DaemonError`]) so the caller can fall
+    /// back to the portable engines on any kqueue setup failure without
+    /// aborting daemon startup.
+    fn new(
+        listeners: Vec<TcpListener>,
+        bound_addresses: &[SocketAddr],
+        log_sink: Option<SharedLogSink>,
+    ) -> io::Result<Self> {
+        use std::os::unix::io::AsRawFd;
+
+        let kq = fast_io::KqueueLoop::new()?;
+        let mut registered: Vec<(TcpListener, SocketAddr)> = Vec::with_capacity(listeners.len());
+        for (index, (listener, local_addr)) in listeners
+            .into_iter()
+            .zip(bound_addresses.iter().copied())
+            .enumerate()
+        {
+            // Non-blocking so the drain-accept loop terminates on WouldBlock
+            // instead of blocking after the edge-triggered notification.
+            listener.set_nonblocking(true)?;
+            kq.submit_read(listener.as_raw_fd(), index as u64)?;
+            registered.push((listener, local_addr));
+        }
+        Ok(Self {
+            listeners: registered,
+            kq,
+            pending: std::collections::VecDeque::new(),
+            log_sink,
+        })
+    }
+
+    /// Drains all currently-pending connections from one ready listener.
+    ///
+    /// Edge-triggered readiness fires once per readable transition, so a single
+    /// notification may cover several queued connections. Accept until
+    /// `WouldBlock` to avoid stranding a connection behind the edge until the
+    /// next transition. Accepted streams are reset to blocking (BSD kernels
+    /// propagate the listener's `O_NONBLOCK` to the accepted socket) and pushed
+    /// onto the pending queue. Returns the local address paired with a fatal
+    /// accept error, or `None` when the listener drained cleanly.
+    fn drain_listener(&mut self, index: usize) -> Option<(SocketAddr, io::Error)> {
+        let (listener, local_addr) = &self.listeners[index];
+        let local_addr = *local_addr;
+        loop {
+            match listener.accept() {
+                Ok((stream, peer_addr)) => {
+                    if let Err(error) = stream.set_nonblocking(false) {
+                        if let Some(log) = self.log_sink.as_ref() {
+                            let text =
+                                format!("failed to set accepted socket to blocking: {error}");
+                            let message = rsync_warning!(text).with_role(Role::Daemon);
+                            log_message(log, &message);
+                        }
+                        continue;
+                    }
+                    self.pending.push_back((stream, peer_addr));
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return None,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Some((local_addr, error)),
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl AcceptEngine for KqueueAcceptEngine {
+    fn poll(&mut self) -> Result<AcceptOutcome, DaemonError> {
+        if let Some((stream, peer_addr)) = self.pending.pop_front() {
+            return Ok(AcceptOutcome::Connection(stream, peer_addr));
+        }
+
+        let events = match self.kq.wait(Some(Self::WAIT_TIMEOUT)) {
+            Ok(events) => events,
+            // EINTR is folded into an empty result by KqueueLoop::wait; any
+            // other kevent failure means the readiness surface is unusable.
+            // Surface it against the first listener so the loop body exits
+            // rather than spinning on a broken kqueue.
+            Err(error) => return Err(accept_error(self.listeners[0].1, error)),
+        };
+        if events.is_empty() {
+            // Timeout with no readiness: let the caller re-check signal flags.
+            return Ok(AcceptOutcome::Idle);
+        }
+
+        let mut fatal: Option<(SocketAddr, io::Error)> = None;
+        for event in events {
+            let index = event.user_data as usize;
+            if index >= self.listeners.len() {
+                continue;
+            }
+            if let Some(err) = self.drain_listener(index) {
+                fatal.get_or_insert(err);
+            }
+        }
+
+        if let Some((stream, peer_addr)) = self.pending.pop_front() {
+            return Ok(AcceptOutcome::Connection(stream, peer_addr));
+        }
+        if let Some((local_addr, error)) = fatal {
+            return Err(accept_error(local_addr, error));
+        }
+        Ok(AcceptOutcome::Idle)
+    }
+
+    fn shutdown(&mut self) {
+        // The KqueueLoop closes its fd on drop; there are no acceptor threads to
+        // join. Clearing the listeners drops their fds too, matching the
+        // portable engines' teardown. Idempotent: a second call finds both empty.
+        self.pending.clear();
+        self.listeners.clear();
+    }
+}
+
+/// Attempts to build the macOS kqueue accept engine.
+///
+/// Returns `Ok(Some(engine))` on success, `Ok(None)` if kqueue setup fails so
+/// the caller falls back to the portable engines, threading `listeners` back out
+/// unchanged on failure. Any kqueue error is non-fatal: connection service must
+/// continue through the blocking engine.
+#[cfg(target_os = "macos")]
+fn try_build_kqueue_engine(
+    listeners: Vec<TcpListener>,
+    bound_addresses: &[SocketAddr],
+    state: &AcceptLoopState<'_>,
+) -> Result<Box<dyn AcceptEngine>, Vec<TcpListener>> {
+    // Clone the listeners up front so a mid-registration failure can hand the
+    // originals back to the fallback path untouched.
+    let mut clones: Vec<TcpListener> = Vec::with_capacity(listeners.len());
+    for listener in &listeners {
+        match listener.try_clone() {
+            Ok(clone) => clones.push(clone),
+            Err(_) => return Err(listeners),
+        }
+    }
+    match KqueueAcceptEngine::new(clones, bound_addresses, state.log_sink.clone()) {
+        Ok(engine) => Ok(Box::new(engine)),
+        Err(error) => {
+            if let Some(log) = state.log_sink.as_ref() {
+                let text =
+                    format!("kqueue accept engine unavailable, using blocking accept: {error}");
+                let message = rsync_info!(text).with_role(Role::Daemon);
+                log_message(log, &message);
+            }
+            Err(listeners)
+        }
+    }
+}
+
 /// Builds the accept engine for the bound listener topology.
 ///
-/// A single bound listener uses [`SingleListenerEngine`]; multiple listeners
-/// (dual-stack) use [`MultiListenerEngine`]. The choice is made once here and
-/// never re-evaluated inside the loop.
+/// On macOS a [`KqueueAcceptEngine`] is tried first, falling back to the
+/// portable engines if `kqueue(2)` setup fails. Otherwise a single bound
+/// listener uses [`SingleListenerEngine`]; multiple listeners (dual-stack) use
+/// [`MultiListenerEngine`]. The choice is made once here and never re-evaluated
+/// inside the loop.
 fn build_accept_engine(
-    mut listeners: Vec<TcpListener>,
+    listeners: Vec<TcpListener>,
     bound_addresses: &[SocketAddr],
     state: &AcceptLoopState<'_>,
 ) -> Result<Box<dyn AcceptEngine>, DaemonError> {
+    #[cfg(target_os = "macos")]
+    let listeners = match try_build_kqueue_engine(listeners, bound_addresses, state) {
+        Ok(engine) => return Ok(engine),
+        Err(listeners) => listeners,
+    };
+
+    let mut listeners = listeners;
     if listeners.len() == 1 {
         let listener = listeners.remove(0);
         let engine =
