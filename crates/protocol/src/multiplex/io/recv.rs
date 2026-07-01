@@ -5,7 +5,7 @@ use logging::debug_log;
 use crate::envelope::{HEADER_LEN, MessageCode, MessageHeader};
 
 use super::super::frame::MessageFrame;
-use super::super::helpers::{map_envelope_error, read_payload, read_payload_into};
+use super::super::helpers::{decode_header, read_payload, read_payload_into};
 
 /// Receives the next multiplexed message from `reader`.
 ///
@@ -40,5 +40,5 @@ pub fn recv_msg_into<R: Read>(reader: &mut R, buffer: &mut Vec<u8>) -> io::Resul
 fn read_header<R: Read>(reader: &mut R) -> io::Result<MessageHeader> {
     let mut header_bytes = [0u8; HEADER_LEN];
     reader.read_exact(&mut header_bytes)?;
-    MessageHeader::decode(&header_bytes).map_err(map_envelope_error)
+    decode_header(&header_bytes)
 }

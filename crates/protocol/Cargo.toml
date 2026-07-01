@@ -26,7 +26,14 @@ zlib-rs = ["flate2/zlib-rs"]
 # Filename encoding conversion (iconv)
 iconv = ["encoding_rs"]
 # Async codec support using tokio-util
-async = ["bytes", "tokio", "tokio-util"]
+async = ["dep:bytes", "dep:tokio", "dep:tokio-util"]
+# EXPERIMENTAL (ASY, default-off): compiles the async multiplex read leaf
+# (`recv_msg_into_async`), the `.await`-driven counterpart to `recv_msg_into`.
+# Pulls only the minimal tokio I/O surface (`io-util`). Additive and unwired;
+# the sync path is unchanged when this is off. See
+# docs/design/asy-2-tokio-runtime-feature.md and
+# docs/design/asy-7-receiver-tokio-prototype.md.
+tokio-transfer = ["dep:tokio"]
 # Serialization support for protocol types
 serde = ["dep:serde"]
 # Structured tracing for I/O operations

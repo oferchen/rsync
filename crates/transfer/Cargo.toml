@@ -144,7 +144,7 @@ async = ["dep:tokio", "dep:tokio-util"]
 # on a tokio runtime and produces byte-identical wire output; per-boundary
 # `.await` conversion is deferred to ASY-7/8. See
 # docs/design/asy-3-async-boundary-spec.md.
-tokio-transfer = ["async"]
+tokio-transfer = ["async", "protocol/tokio-transfer"]
 
 # ============================================================================
 # Debugging Features

@@ -3,6 +3,18 @@ use std::io::{self, Read};
 
 use crate::envelope::{EnvelopeError, HEADER_LEN, MAX_PAYLOAD_LENGTH, MessageHeader};
 
+/// Decodes a fixed-size multiplex header from already-read bytes.
+///
+/// This is the single pure header-decode seam shared by every reader
+/// front-end (blocking `std::io::Read` and, under `tokio-transfer`, the async
+/// `tokio::io::AsyncRead` leaf). Sharing it guarantees the sync and async
+/// framing paths can never diverge on how the tag byte and length prefix are
+/// interpreted; the readers differ only in how the header bytes are pulled off
+/// the wire.
+pub(super) fn decode_header(header_bytes: &[u8; HEADER_LEN]) -> io::Result<MessageHeader> {
+    MessageHeader::decode(header_bytes).map_err(map_envelope_error)
+}
+
 #[cold]
 pub(super) fn map_envelope_error(err: EnvelopeError) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, err)
@@ -80,24 +92,38 @@ pub(super) fn read_payload<R: Read>(reader: &mut R, len: usize) -> io::Result<Ve
     Ok(payload)
 }
 
+/// Clears `buffer` and sizes it to exactly `len` bytes, ready to be filled.
+///
+/// Returns `true` when the caller must proceed to fill `buffer[0..len]` and
+/// `false` for the empty-payload fast path (buffer left empty). This is the
+/// shared buffer-preparation seam used by both the blocking and async payload
+/// readers so their reuse, allocation, and length semantics stay identical.
 #[allow(unsafe_code)]
+pub(super) fn prepare_payload_buffer(buffer: &mut Vec<u8>, len: usize) -> io::Result<bool> {
+    buffer.clear();
+
+    if len == 0 {
+        return Ok(false);
+    }
+
+    reserve_payload(buffer, len)?;
+    // SAFETY: `reserve_payload` ensures `capacity >= len`. Callers fill
+    // `buffer[0..len]` before any byte is exposed, and truncate to the
+    // only-written prefix on short read or error, so no uninitialized memory
+    // escapes.
+    unsafe { buffer.set_len(len) };
+
+    Ok(true)
+}
+
 pub(super) fn read_payload_into<R: Read>(
     reader: &mut R,
     buffer: &mut Vec<u8>,
     len: usize,
 ) -> io::Result<()> {
-    buffer.clear();
-
-    if len == 0 {
+    if !prepare_payload_buffer(buffer, len)? {
         return Ok(());
     }
-
-    reserve_payload(buffer, len)?;
-    // SAFETY: `reserve_payload` ensures `capacity >= len`. The read loop below
-    // fills `buffer[0..len]` before any byte is exposed. On short read or error,
-    // `buffer.truncate(read_total)` trims to only-written bytes, so no
-    // uninitialized memory escapes this function.
-    unsafe { buffer.set_len(len) };
 
     let mut read_total = 0;
     while read_total < len {
