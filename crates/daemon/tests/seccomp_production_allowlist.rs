@@ -68,7 +68,8 @@ fn production_allowlist_covers_a_clean_transfer_slice() {
         // 1. Install the production filter. Identical to what
         //    `engage_seccomp_sandbox` does at the daemon's post-fork
         //    point.
-        match apply_worker_seccomp_filter() {
+        // Non-hook module: the steady-state exec-free allowlist.
+        match apply_worker_seccomp_filter(false) {
             SeccompOutcome::Installed => {}
             SeccompOutcome::Unavailable => return 77, // skip
             SeccompOutcome::Error(_) => return 78,
@@ -149,9 +150,12 @@ fn getrandom_via_libc(buf: &mut [u8]) -> std::io::Result<()> {
 fn allowlist_is_a_concrete_set() {
     // Sanity: the production allowlist must round-trip through the same
     // public accessor the integration child uses.
-    let list = worker_seccomp_allowlist();
+    let list = worker_seccomp_allowlist(false);
     assert!(!list.is_empty());
     assert!(list.binary_search(&libc::SYS_openat).is_ok());
     assert!(list.binary_search(&libc::SYS_close).is_ok());
     assert!(list.binary_search(&libc::SYS_futex).is_ok());
+    // The steady-state (non-hook) allowlist must never permit exec.
+    assert!(list.binary_search(&libc::SYS_execve).is_err());
+    assert!(list.binary_search(&libc::SYS_execveat).is_err());
 }

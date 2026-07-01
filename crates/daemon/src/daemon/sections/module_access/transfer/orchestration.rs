@@ -279,7 +279,7 @@ fn process_approved_module(
     // process IS the worker (no parent to survive KillProcess). Failures
     // do not abort the connection - Landlock + SEC-1 `*at` remain the
     // primary defenses.
-    engage_seccomp_sandbox(ctx)?;
+    engage_seccomp_sandbox(ctx, module)?;
 
     let mut streams = match setup_transfer_streams(ctx)? {
         Some(s) => s,

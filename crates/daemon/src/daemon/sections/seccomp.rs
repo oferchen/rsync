@@ -56,8 +56,15 @@ pub enum SeccompOutcome {
 /// process-scoped seccomp filter would restrict post-transfer cleanup
 /// and the exit path. The caller (`engage_seccomp_sandbox`) enforces
 /// this by checking `DaemonStream::is_stdio()` before calling here.
+///
+/// `allow_exec` widens the allowlist to include `execve`/`execveat` for
+/// modules the operator configured with exec hooks (`early exec` /
+/// `pre-xfer exec` / `post-xfer exec`); without it a hook `execve` would be
+/// `SIGSYS`-killed under an active filter. Non-hook modules pass `false` and
+/// keep the exec-free allowlist. The caller derives this from
+/// `module_has_exec_hooks`.
 #[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
-pub fn apply_worker_seccomp_filter() -> SeccompOutcome {
+pub fn apply_worker_seccomp_filter(allow_exec: bool) -> SeccompOutcome {
     // Default ON when the daemon-seccomp feature is compiled in.
     // Operators can opt out with `OC_RSYNC_NO_SECCOMP=1` if a workload
     // triggers a missing syscall (diagnosed via the SIGSYS crash with
@@ -79,7 +86,7 @@ pub fn apply_worker_seccomp_filter() -> SeccompOutcome {
     };
 
     let mut rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
-    for sysno in worker_seccomp_allowlist() {
+    for sysno in worker_seccomp_allowlist(allow_exec) {
         rules.insert(sysno, Vec::new());
     }
 
@@ -115,7 +122,7 @@ pub fn apply_worker_seccomp_filter() -> SeccompOutcome {
 /// wire-in at `module_access/transfer.rs` does not need `#[cfg]`
 /// branches.
 #[cfg(not(all(target_os = "linux", feature = "daemon-seccomp")))]
-pub fn apply_worker_seccomp_filter() -> SeccompOutcome {
+pub fn apply_worker_seccomp_filter(_allow_exec: bool) -> SeccompOutcome {
     SeccompOutcome::Unavailable
 }
 
@@ -129,8 +136,17 @@ pub fn apply_worker_seccomp_filter() -> SeccompOutcome {
 /// - B: network and IPC for the wire protocol
 /// - C: process / scheduling / runtime primitives
 /// - D: io_uring (additive; harmless when the runtime path is inert)
+///
+/// `allow_exec` adds bucket E (`execve`/`execveat`) only for modules the
+/// operator configured with exec hooks. Non-hook modules pass `false`, so
+/// the steady-state worker still cannot `exec`; a compromised worker on a
+/// normal module is `SIGSYS`-killed if it attempts to spawn a shell. The
+/// hook exemption is scoped exactly like the Landlock and capability-drop
+/// skips (`module_has_exec_hooks`) - the operator explicitly opted into
+/// running helper scripts. upstream: rsync 3.4.4 has no seccomp code, so
+/// this narrowing (and its per-hook-module relaxation) is oc-only.
 #[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
-pub fn worker_seccomp_allowlist() -> Vec<i64> {
+pub fn worker_seccomp_allowlist(allow_exec: bool) -> Vec<i64> {
     let mut s: Vec<i64> = Vec::new();
 
     // Bucket A - file I/O on the module tree.
@@ -291,6 +307,16 @@ pub fn worker_seccomp_allowlist() -> Vec<i64> {
         libc::SYS_io_uring_register,
     ]);
 
+    // Bucket E - exec, added ONLY for modules with operator-configured exec
+    // hooks. The worker `fork`/`execve`s the hook helper (`early exec` /
+    // `pre-xfer exec` / `post-xfer exec`); without these entries an active
+    // filter would `SIGSYS`-kill the worker at the hook exec. Normal modules
+    // never reach this branch, so their allowlist stays exec-free.
+    if allow_exec {
+        s.push(libc::SYS_execve);
+        s.push(libc::SYS_execveat);
+    }
+
     s.sort_unstable();
     s.dedup();
     s
@@ -395,19 +421,48 @@ mod seccomp_tests {
 
     #[test]
     fn allowlist_is_non_empty_and_sorted() {
-        let list = worker_seccomp_allowlist();
-        assert!(!list.is_empty(), "allowlist must contain entries");
-        let mut sorted = list.clone();
-        sorted.sort_unstable();
-        assert_eq!(list, sorted, "allowlist must be sorted");
-        let mut dedup = list.clone();
-        dedup.dedup();
-        assert_eq!(list.len(), dedup.len(), "allowlist must be deduplicated");
+        for allow_exec in [false, true] {
+            let list = worker_seccomp_allowlist(allow_exec);
+            assert!(!list.is_empty(), "allowlist must contain entries");
+            let mut sorted = list.clone();
+            sorted.sort_unstable();
+            assert_eq!(list, sorted, "allowlist must be sorted");
+            let mut dedup = list.clone();
+            dedup.dedup();
+            assert_eq!(list.len(), dedup.len(), "allowlist must be deduplicated");
+        }
+    }
+
+    /// The exec syscalls are present in the allowlist only when a hook module
+    /// requests them (`allow_exec == true`); the steady-state worker allowlist
+    /// must never permit `execve`/`execveat`, so a compromised worker on a
+    /// normal module cannot spawn a shell.
+    #[test]
+    fn exec_syscalls_gated_on_hook_modules() {
+        let without = worker_seccomp_allowlist(false);
+        assert!(
+            without.binary_search(&libc::SYS_execve).is_err(),
+            "non-hook allowlist must not permit execve",
+        );
+        assert!(
+            without.binary_search(&libc::SYS_execveat).is_err(),
+            "non-hook allowlist must not permit execveat",
+        );
+
+        let with = worker_seccomp_allowlist(true);
+        assert!(
+            with.binary_search(&libc::SYS_execve).is_ok(),
+            "hook-module allowlist must permit execve",
+        );
+        assert!(
+            with.binary_search(&libc::SYS_execveat).is_ok(),
+            "hook-module allowlist must permit execveat",
+        );
     }
 
     #[test]
     fn allowlist_contains_steady_state_essentials() {
-        let list = worker_seccomp_allowlist();
+        let list = worker_seccomp_allowlist(false);
         for required in [
             libc::SYS_read,
             libc::SYS_write,
@@ -447,7 +502,7 @@ mod seccomp_tests {
             return;
         };
         let mut rules: BTreeMap<i64, Vec<SeccompRule>> = BTreeMap::new();
-        for sysno in worker_seccomp_allowlist() {
+        for sysno in worker_seccomp_allowlist(false) {
             rules.insert(sysno, Vec::new());
         }
         let filter = SeccompFilter::new(

@@ -258,13 +258,15 @@ fn validate_client_paths_in_module(
 /// we treat that as a regression because the SEC-1.p design requires the
 /// sandbox to be live on supporting kernels.
 ///
-/// When `pre_xfer_exec` or `post_xfer_exec` is configured, the sandbox is
-/// skipped: Landlock rulesets are inherited by child processes, so engaging
-/// the allowlist would block `exec()` of hook scripts that live outside the
-/// module path (the common case - e.g. `/usr/local/bin/notify.sh`). Per-module
-/// opt-out via configuration matches the operator's intent (they explicitly
-/// chose to run hooks) and preserves SEC-1 *at* helpers as the primary
-/// defense for those modules.
+/// When any exec hook (`early exec` / `pre-xfer exec` / `post-xfer exec`) is
+/// configured, the sandbox is skipped: Landlock rulesets are inherited by
+/// child processes, so engaging the allowlist would block `exec()` of hook
+/// scripts that live outside the module path (the common case - e.g.
+/// `/usr/local/bin/notify.sh`). Per-module opt-out via configuration matches
+/// the operator's intent (they explicitly chose to run hooks) and preserves
+/// SEC-1 *at* helpers as the primary defense for those modules. The
+/// hook-detection predicate (`module_has_exec_hooks`) is shared with the
+/// worker capability-drop skip in `capabilities.rs`.
 fn engage_landlock_sandbox(
     ctx: &mut ModuleRequestContext<'_>,
     module: &ModuleRuntime,
@@ -272,10 +274,10 @@ fn engage_landlock_sandbox(
 ) -> io::Result<bool> {
     use fast_io::landlock::{LandlockOutcome, is_supported, restrict_to_module_paths};
 
-    if module.pre_xfer_exec.is_some() || module.post_xfer_exec.is_some() {
+    if module_has_exec_hooks(module) {
         if let Some(log) = ctx.log_sink {
             let text = format!(
-                "module '{}': landlock=skipped reason=pre-xfer-exec or post-xfer-exec configured (would block hook exec)",
+                "module '{}': landlock=skipped reason=early/pre/post-xfer-exec configured (would block hook exec)",
                 ctx.request,
             );
             let message = rsync_info!(text).with_role(Role::Daemon);
@@ -375,7 +377,14 @@ fn engage_landlock_sandbox(
 /// daemon workers are disposable threads inside a long-lived process, so
 /// the filter dies with the thread and does not affect the daemon or any
 /// other connection.
-fn engage_seccomp_sandbox(ctx: &mut ModuleRequestContext<'_>) -> io::Result<()> {
+///
+/// For modules with operator-configured exec hooks (`module_has_exec_hooks`)
+/// the filter is widened to permit `execve`/`execveat` so the worker can
+/// spawn the hook helper; non-hook modules keep the exec-free allowlist.
+fn engage_seccomp_sandbox(
+    ctx: &mut ModuleRequestContext<'_>,
+    module: &ModuleRuntime,
+) -> io::Result<()> {
     // Stdio sessions: the process IS the worker. Applying seccomp here
     // would restrict the entire process (including post-transfer cleanup,
     // exit handlers, and the parent shell). Skip - Landlock + SEC-1 *at*
@@ -392,7 +401,11 @@ fn engage_seccomp_sandbox(ctx: &mut ModuleRequestContext<'_>) -> io::Result<()> 
         return Ok(());
     }
 
-    match apply_worker_seccomp_filter() {
+    // Widen the allowlist to allow the hook `execve` only when the operator
+    // configured an exec hook on this module - same scope as the Landlock
+    // and capability-drop skips above.
+    let allow_exec = module_has_exec_hooks(module);
+    match apply_worker_seccomp_filter(allow_exec) {
         #[cfg(all(target_os = "linux", feature = "daemon-seccomp"))]
         SeccompOutcome::Installed => {
             if let Some(log) = ctx.log_sink {

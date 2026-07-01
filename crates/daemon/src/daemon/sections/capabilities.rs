@@ -39,6 +39,30 @@ const CAP_FEATURE_AVAILABLE: bool = true;
 #[allow(dead_code)]
 const CAP_FEATURE_AVAILABLE: bool = false;
 
+/// Returns true when the operator configured this module with any exec hook
+/// (`early exec`, `pre-xfer exec`, or `post-xfer exec`).
+///
+/// Single source of truth for the "operator opted into running hooks"
+/// predicate. When true, the worker will `fork(2)`/`execve(2)` a helper
+/// script during the connection, so the hardening layers that would break
+/// that exec (worker capability drop, and - via the same condition -
+/// Landlock, which is inherited across `exec`) are relaxed for this module
+/// only. Modules without hooks keep the full defense-in-depth posture.
+///
+/// upstream: rsync 3.4.4 has no capability/seccomp/Landlock/prctl code at
+/// all - the exec hooks (`clientserver.c` `pre_exec_hook` / `post_exec_hook`
+/// / `early_exec`) run with the daemon's inherited privileges. This oc-only
+/// defense-in-depth must therefore exempt operator-configured hook modules to
+/// preserve upstream behavioural parity: a non-root daemon dropping worker
+/// capabilities would otherwise break the hook `execve`, which upstream never
+/// does. Mirrors the Landlock skip at `sandbox.rs` `engage_landlock_sandbox`,
+/// which reuses this same predicate.
+fn module_has_exec_hooks(module: &ModuleRuntime) -> bool {
+    module.early_exec.is_some()
+        || module.pre_xfer_exec.is_some()
+        || module.post_xfer_exec.is_some()
+}
+
 /// Pre-flight check: verify the daemon holds the capabilities its configuration
 /// requires.
 ///
@@ -207,6 +231,29 @@ fn drop_worker_capabilities(
 ) {
     use caps::{CapSet, Capability};
 
+    // Skip the per-worker drop when the operator configured an exec hook
+    // (`early exec` / `pre-xfer exec` / `post-xfer exec`) on this module.
+    // The worker will `fork`/`execve` a helper script, and stripping the
+    // capability set from a non-root worker breaks that exec (the observed
+    // failure: a non-root daemon serving a hook module drops the connection
+    // with code 12). This mirrors the Landlock skip at
+    // `engage_landlock_sandbox` (`sandbox.rs`) exactly: same predicate
+    // (`module_has_exec_hooks`), same rationale (the operator explicitly
+    // chose to run hooks). Non-hook modules keep the full capability drop.
+    // upstream: rsync 3.4.4 has no capability/prctl code; its hooks run with
+    // the daemon's inherited privileges, so this exemption preserves parity.
+    if module_has_exec_hooks(module) {
+        if let Some(log) = log_sink {
+            let text = format!(
+                "module '{}': skipping worker capability drop (pre/post/early-xfer exec configured - drop would break hook execve)",
+                module.name,
+            );
+            let message = rsync_info!(text).with_role(Role::Daemon);
+            log_message(log, &message);
+        }
+        return;
+    }
+
     // Skip the per-worker drop whenever the worker is still running as
     // root - either because the module is configured with `uid = 0`, or
     // because no per-module `uid` was set and the daemon-wide identity
@@ -344,6 +391,64 @@ mod capabilities_tests {
             ..Default::default()
         };
         ModuleRuntime::new(def, None)
+    }
+
+    /// Builds a non-root module (`uid = 1000`) carrying the requested hook so
+    /// the capability-drop exemption exercises the exact non-root path the
+    /// Linux daemon takes for an operator-configured hook module.
+    fn hook_module(field: &str) -> ModuleRuntime {
+        let mut def = ModuleDefinition {
+            name: "hookmod".to_owned(),
+            path: std::path::PathBuf::from("/tmp"),
+            uid: Some(1000),
+            ..Default::default()
+        };
+        match field {
+            "early" => def.early_exec = Some("/usr/local/bin/early.sh".to_owned()),
+            "pre" => def.pre_xfer_exec = Some("/usr/local/bin/pre.sh".to_owned()),
+            "post" => def.post_xfer_exec = Some("/usr/local/bin/post.sh".to_owned()),
+            other => panic!("unknown hook field {other}"),
+        }
+        ModuleRuntime::new(def, None)
+    }
+
+    /// A module without any exec hook must report `false` so it keeps the
+    /// full worker capability drop; a module with any of the three hook
+    /// directives must report `true` so the drop (and Landlock, and the
+    /// seccomp exec gate) are relaxed for it. This is the single predicate
+    /// all three hardening skips share.
+    #[test]
+    fn module_has_exec_hooks_matches_each_hook_directive() {
+        assert!(!module_has_exec_hooks(&module_with("plain", Some(1000))));
+        assert!(module_has_exec_hooks(&hook_module("early")));
+        assert!(module_has_exec_hooks(&hook_module("pre")));
+        assert!(module_has_exec_hooks(&hook_module("post")));
+    }
+
+    /// The worker capability drop must be skipped for a non-root hook module:
+    /// dropping the capability set would break the hook `fork`/`execve` and
+    /// crash the connection (code 12). The drop still runs for non-hook
+    /// modules. `drop_worker_capabilities` returns `()`, so this asserts the
+    /// predicate that gates the skip - the observable contract - and that the
+    /// call is panic-free on both paths in an unprivileged test process.
+    #[test]
+    fn capability_drop_skipped_only_for_hook_modules() {
+        let plain = module_with("plain", Some(1000));
+        assert!(
+            !module_has_exec_hooks(&plain),
+            "non-hook module must not be exempt from the capability drop",
+        );
+
+        for field in ["early", "pre", "post"] {
+            let module = hook_module(field);
+            assert!(
+                module_has_exec_hooks(&module),
+                "hook module ({field}) must be exempt from the capability drop",
+            );
+            // Both paths must be panic-free when called unprivileged.
+            drop_worker_capabilities(&module, None);
+        }
+        drop_worker_capabilities(&plain, None);
     }
 
     // CAP_FEATURE_AVAILABLE is a cfg-gated compile-time constant; the
