@@ -161,6 +161,11 @@ criterion = { workspace = true }
 proptest = { workspace = true }
 rand = { workspace = true }
 crossbeam-channel = { workspace = true }
+# Drives the sync-vs-async MultiplexReader demux parity tests
+# (`reader::multiplex::parity_tests`) under `--features tokio-transfer`.
+# `macros` + `rt` supply `#[tokio::test]` and a current-thread runtime; unused
+# in the default build, so the default demux is unaffected.
+tokio = { workspace = true, features = ["macros", "rt"] }
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dev-dependencies]
 filetime = { workspace = true }
