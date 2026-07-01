@@ -235,3 +235,97 @@ impl<R: Read> Read for ServerReader<R> {
         }
     }
 }
+
+/// Async twin of [`ServerReader`], gated on the `tokio-transfer` feature.
+///
+/// This is the `.await`-driven counterpart to the blocking [`ServerReader`]
+/// mode dispatch. It exists so the coupled receiver rung can assemble a genuine
+/// async reader chain up to [`MultiplexReader::read_async`]:
+///
+/// ```text
+/// AsyncTransport -> CountingReader (AsyncRead) -> tokio BufReader
+///                -> AsyncServerReader -> MultiplexReader::read_async
+/// ```
+///
+/// # Why a dedicated twin rather than generalising `ServerReader`
+///
+/// [`ServerReader`] is declared `ServerReader<R: Read>` and its `Compressed`
+/// variant is `CompressedReader<MultiplexReader<R>>`, which requires
+/// `R: Read`. An `AsyncRead` transport is not `Read`, so the same struct cannot
+/// hold both. This twin therefore carries only the two async-reachable modes -
+/// plain pass-through and multiplex demux - and drops no read logic: the demux
+/// itself lives in the shared, reader-free [`MultiplexReader`] core, and this
+/// type only selects the mode and awaits it.
+///
+/// The compression mode is intentionally absent: decompression runs through the
+/// synchronous decoder crates (`compress::zlib::CountingZlibDecoder` and
+/// friends), which have no `.await` variant, so a compressed async twin cannot
+/// be built byte-identically at this rung. It is deferred to the receiver-
+/// routing rung.
+///
+/// Additive and unwired: only the parity tests drive this type.
+#[cfg(feature = "tokio-transfer")]
+pub(crate) struct AsyncServerReader<R> {
+    inner: AsyncServerReaderInner<R>,
+}
+
+/// Async mode dispatch for [`AsyncServerReader`].
+///
+/// Mirrors the plain and multiplex arms of the blocking
+/// [`ServerReaderInner`]; the compressed arm is deferred (see the type docs).
+#[cfg(feature = "tokio-transfer")]
+enum AsyncServerReaderInner<R> {
+    /// Plain mode - await the inner transport directly, no demux.
+    Plain(R),
+    /// Multiplex mode - await MSG_DATA frames via the shared demux core.
+    Multiplex(MultiplexReader<R>),
+}
+
+#[cfg(feature = "tokio-transfer")]
+impl<R: tokio::io::AsyncRead + Unpin> AsyncServerReader<R> {
+    /// Creates a new plain-mode async reader.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn new_plain(reader: R) -> Self {
+        Self {
+            inner: AsyncServerReaderInner::Plain(reader),
+        }
+    }
+
+    /// Activates multiplex mode, wrapping the reader in the demultiplexer.
+    ///
+    /// Mirrors [`ServerReader::activate_multiplex`]: a plain reader becomes a
+    /// [`MultiplexReader`]; calling it twice is an error.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn activate_multiplex(self) -> io::Result<Self> {
+        match self.inner {
+            AsyncServerReaderInner::Plain(reader) => Ok(Self {
+                inner: AsyncServerReaderInner::Multiplex(MultiplexReader::new(reader)),
+            }),
+            AsyncServerReaderInner::Multiplex(_) => Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "multiplex already active",
+            )),
+        }
+    }
+
+    /// Returns true if multiplex mode is active.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn is_multiplexed(&self) -> bool {
+        matches!(self.inner, AsyncServerReaderInner::Multiplex(_))
+    }
+
+    /// Reads demultiplexed (or plain) data into `buf`, awaiting the transport.
+    ///
+    /// Byte-for-byte equivalent to [`ServerReader::read`] restricted to the
+    /// plain and multiplex modes: plain mode delegates to the inner async
+    /// transport's `read`, multiplex mode delegates to the shared
+    /// [`MultiplexReader::read_async`]. No demux logic is duplicated here.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) async fn read_async(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        use tokio::io::AsyncReadExt;
+        match &mut self.inner {
+            AsyncServerReaderInner::Plain(r) => r.read(buf).await,
+            AsyncServerReaderInner::Multiplex(r) => r.read_async(buf).await,
+        }
+    }
+}

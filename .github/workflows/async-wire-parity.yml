@@ -69,3 +69,10 @@ jobs:
             -p transfer \
             --features tokio-transfer \
             -E 'test(demux_parity) | test(read_async_delivers_data_via_real_sink)'
+
+      - name: Run sync vs async receiver reader-stack parity tests
+        run: |
+          cargo nextest run --locked \
+            -p transfer \
+            --features tokio-transfer \
+            -E 'test(reader_stack_parity)'

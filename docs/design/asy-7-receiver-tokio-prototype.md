@@ -334,3 +334,126 @@ real converted async receiver. Until then, shipping a tokio receiver
 means shipping either a `block_on`-hosted sync read (zero async benefit,
 the ASY-3 shape) or a divergent one (blocker D) - both worse than none.
 Per the ASY-7 charter stop clause, we stop.
+
+## 9. Third scoping (blockers A/D resolved) - STILL STOP
+
+Status: Re-scoped against master `9d7ea8196`, after the two hardest
+prerequisites landed:
+
+- **Prerequisite 1 / blocker A RESOLVED.** The async read leaves now
+  exist inside `protocol` (ASY-2 section 2.2 was amended to permit async
+  variants): `protocol::recv_msg_into_async`
+  (`crates/protocol/src/multiplex/io/async_recv.rs:40`,
+  `R: AsyncRead + Unpin`) and `CompressedTokenDecoder::recv_token_async`
+  (`crates/protocol/src/wire/compressed_token/decoder.rs:169`).
+- **Blocker D RESOLVED.** The async demux
+  `MultiplexReader::read_async_with<S: MuxSink>`
+  (`crates/transfer/src/reader/multiplex.rs:537`) reproduces the sync
+  demux's control-frame side effects in the same order via an injectable
+  `MuxSink`/`RealSink`, with a parity test
+  (`reader/multiplex_parity_tests.rs`).
+
+Outcome: **still STOP.** A byte-identical tokio receiver that genuinely
+`.await`s the socket is not shippable in a reviewable slice. No receiver
+`.rs` was converted. Default build and the ASY-3/ASY-4/demux foundation
+are untouched and remain byte-identical / default-off. Two blockers that
+resolving A/D did not remove hold; each is independently sufficient.
+
+### 9.1 Blocker B' - the async reader stack above the leaf does not exist
+
+`read_async` is only defined for `MultiplexReader<R>` where
+`R: AsyncRead + Unpin` (multiplex.rs:514). In production the multiplex
+inner `R` is `BufReader<CountingReader<Box<dyn Read>>>` - a
+`std::io::Read` stack, not `AsyncRead` - so `read_async` is uncallable on
+the real chain: there is no `AsyncRead`-typed reader to instantiate it
+over. The entire reader stack the receiver builds (lib.rs:535-538) is
+`std::io::Read`-typed and has **no async twin**:
+
+- `CountingReader` (`reader/counting.rs`) - counts raw wire bytes for the
+  `bytes_received` stat (lib.rs:535-536); no `AsyncRead` impl.
+- `std::io::BufReader` (64 KB, matches upstream `iobuf.in`) - a sync-only
+  type; the async path needs `tokio::io::BufReader` or none.
+- `ServerReader<R: Read>` (`reader/server.rs:15`) - the
+  Plain/Multiplex/Compressed state machine; no async read.
+- `CompressedReader` (the `ServerReaderInner::Compressed` layer) - no
+  async twin.
+
+Building the async path requires an end-to-end `AsyncRead`-typed reader
+chain (async CountingReader for byte-identical `bytes_received`, async
+ServerReader state machine, async CompressedReader) so `read_async` has a
+concrete socket-backed `R` to run over. That is a net-new reader stack,
+not a single-boundary swap. Grep confirms the only async-capable reader
+in `transfer` today is `MultiplexReader::read_async` plus a test-only
+`ChunkedReader`; every other layer is sync.
+
+### 9.2 Blocker C' - neither reachable receiver is a socket-backed tokio receiver
+
+Two receivers exist; neither is simultaneously (a) reachable through the
+tokio driver and (b) backed by a concrete async socket:
+
+- **CLI `--server` receiver** - the only caller of the tokio driver
+  (`core::session::run_server_stdio` ->
+  `transfer::run_server_with_handshake_on`,
+  `crates/core/src/session.rs:71`). But its transport is
+  `io::stdin().lock()` (`crates/cli/src/frontend/server/run.rs:57`) - a
+  **pipe**, which `AsyncTransport` structurally cannot wrap (ASY-4:
+  socket-backed only). Tokio-driven but no socket.
+- **Daemon module receiver** - runs in-process with a concrete
+  `TcpStream` clone available
+  (`daemon/.../transfer/streams.rs:50`, `tcp.try_clone()`), but it calls
+  the **sync** `run_server_with_handshake` directly (streams.rs:132),
+  never the tokio driver / `with_transfer_runtime`. The clone is boxed to
+  `Box<dyn Read + Send>` at streams.rs:69 before it reaches the server
+  body. Socket-backed but not tokio-driven, and type-erased at the
+  boundary.
+
+Routing the daemon receiver through the tokio driver AND threading the
+pre-erasure `TcpStream` (as `Option<TcpStream>`, NSV-1 shape) down to the
+receiver so `AsyncTransport::from_std_tcp` can adopt it is a `daemon` +
+`core` plumbing change, not a `transfer`-internal receiver rung. It also
+forks the daemon transfer entry (sync vs tokio) under `#[cfg]`.
+
+### 9.3 Blocker E - the fused read->SPSC frame and the 7-fn cfg-split
+
+Even with 9.1/9.2 solved, the coupled conversion still requires, in one
+change: async twins of the seven `R: Read` receiver functions
+(`ReceiverContext::run` -> `run_pipelined` -> `setup_transfer` ->
+`run_pipeline_loop_decoupled` -> `process_file_response_streaming` ->
+`TokenReader::read_token`, plus `ServerReader`/`MultiplexReader` reads),
+each `#[cfg]`-split sync/async; and a bridge for the fused read->send
+frame. `process_file_response_streaming`
+(`transfer_ops/streaming.rs:74`) reads a token (streaming.rs:138) and
+`file_tx.send(..)`s it to the disk-commit `std::thread` (streaming.rs:156)
+in the same synchronous frame, over a bounded spin-wait
+`spsc::channel` (`pipeline/spsc.rs`). The async twin must `.await` the
+read then hand the SPSC producer to a `spawn_blocking` island without
+reordering the in-order disk commits or the goodbye/flush sequence - a
+task boundary inside the previously-fused frame, re-establishing the
+flush-before-block invariant across it.
+
+### 9.4 Reviewable-slice verdict
+
+A byte-identical async daemon receiver is now *architecturally reachable*
+(A and D are resolved and the socket exists in-process), but not in a
+reviewable slice: it requires (1) a net-new end-to-end `AsyncRead` reader
+stack incl. a byte-exact async `bytes_received` counter (9.1), (2) a
+`daemon`+`core` re-route + `Option<TcpStream>` plumbing forking the
+daemon transfer entry (9.2), and (3) a 7-function sync/async `#[cfg]`
+fan-out plus an async-read -> `spawn_blocking`-SPSC bridge preserving
+in-order commit and flush-before-block (9.3). Landing that atomically is
+the only way to keep it byte-identical - a partial split leaves an async
+reader feeding a sync SPSC producer in one frame with no valid bridge
+(section 3.3), or an async `read_async` with no `AsyncRead` stack to run
+on (9.1). The known ASY-3/4 `bytes_received` 6-12 byte foundation quirk
+(section 8.5) would also be reproduced-and-amplified by an async
+`CountingReader` unless it counts byte-identically, so the stats-parity
+gate must be green on the new counter before the default can flip.
+
+Per the ASY-7 charter stop clause, we stop and report rather than ship
+either a `block_on`-hosted sync receiver (zero async benefit, the ASY-3
+shape already in place) or a receiver split across a boundary that
+diverges. The prerequisite ordering for the next rung is the three items
+in 9.4, landed as separate reviewable rungs (async reader stack; daemon
+tokio re-route + socket plumbing; the fused 7-fn conversion + SPSC
+bridge), in that dependency order, before an equivalence test can be
+written against a real converted async receiver.

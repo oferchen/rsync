@@ -26,11 +26,13 @@
 
 use std::io::{Cursor, Read};
 use std::pin::Pin;
+use std::sync::atomic::Ordering;
 use std::task::{Context, Poll};
 
 use tokio::io::{AsyncRead, ReadBuf};
 
 use super::{MultiplexReader, MuxSink};
+use crate::reader::{AsyncServerReader, CountingReader, ServerReader};
 
 /// A single observable event on the demux timeline.
 ///
@@ -241,6 +243,158 @@ async fn read_async_delivers_data_via_real_sink() {
     let mut buf = [0u8; 64];
     let n = mux.read_async(&mut buf).await.unwrap();
     assert_eq!(&buf[..n], b"payload-bytes");
+}
+
+/// A data-only wire stream: every frame is `MSG_DATA` so the demuxed output
+/// equals the concatenated payloads. Used by the full-stack counter-parity
+/// tests, where the assertion is on delivered bytes plus the raw wire byte
+/// count rather than side-effect ordering (covered by the demux-only tests).
+///
+/// The stream ends exactly at a frame boundary and the readers drain it to EOF,
+/// so both the sync `BufReader`-backed counter and the async counter observe the
+/// full wire length with no buffering prefetch skew.
+fn data_only_wire() -> (Vec<u8>, Vec<u8>) {
+    let payloads: [&[u8]; 5] = [
+        b"first-chunk",
+        b"",            // keep-alive empty frame - skipped, never data
+        &[0x5Au8; 200], // spans small read buffers
+        b"second",
+        &[0xC3u8; 40],
+    ];
+    let mut wire = Vec::new();
+    let mut expected = Vec::new();
+    for p in payloads {
+        protocol::send_msg(&mut wire, protocol::MessageCode::Data, p).unwrap();
+        expected.extend_from_slice(p);
+    }
+    (wire, expected)
+}
+
+/// Drives the full **sync** receiver reader stack over `wire`:
+/// `CountingReader` (raw byte counter, below buffering) -> `io::BufReader`
+/// -> `ServerReader` in multiplex mode. Returns the demuxed bytes and the final
+/// raw wire byte count from the counter.
+fn drive_sync_stack(wire: &[u8], read_len: usize) -> (Vec<u8>, u64) {
+    let counting = CountingReader::new(Cursor::new(wire.to_vec()));
+    let counter = counting.counter();
+    let buffered = std::io::BufReader::with_capacity(64 * 1024, counting);
+    let mut server = ServerReader::new_plain(buffered)
+        .activate_multiplex()
+        .expect("activate multiplex");
+
+    let mut data = Vec::new();
+    let mut buf = vec![0u8; read_len];
+    loop {
+        match server.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => data.extend_from_slice(&buf[..n]),
+            Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(err) => panic!("sync stack read failed: {err}"),
+        }
+    }
+    (data, counter.load(Ordering::Relaxed))
+}
+
+/// Drives the full **async** receiver reader stack over `reader`:
+/// `CountingReader` (AsyncRead, raw byte counter) -> `tokio::io::BufReader`
+/// -> `AsyncServerReader` in multiplex mode -> `MultiplexReader::read_async`.
+/// Returns the demuxed bytes and the final raw wire byte count from the counter.
+async fn drive_async_stack<R: AsyncRead + Unpin>(reader: R, read_len: usize) -> (Vec<u8>, u64) {
+    let counting = CountingReader::new(reader);
+    let counter = counting.counter();
+    let buffered = tokio::io::BufReader::with_capacity(64 * 1024, counting);
+    let mut server = AsyncServerReader::new_plain(buffered)
+        .activate_multiplex()
+        .expect("activate multiplex");
+    assert!(
+        server.is_multiplexed(),
+        "async stack must be in multiplex mode after activation"
+    );
+
+    let mut data = Vec::new();
+    let mut buf = vec![0u8; read_len];
+    loop {
+        match server.read_async(&mut buf).await {
+            Ok(0) => break,
+            Ok(n) => data.extend_from_slice(&buf[..n]),
+            Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(err) => panic!("async stack read failed: {err}"),
+        }
+    }
+    (data, counter.load(Ordering::Relaxed))
+}
+
+/// End-to-end sync-vs-async parity for the assembled receiver reader stack:
+/// identical delivered bytes AND identical final `bytes_received` counts, across
+/// read-buffer sizes. Proves the async twin stack
+/// (`CountingReader`/`AsyncServerReader`/`read_async`) is byte-identical to the
+/// sync stack and that the async counter is byte-exact.
+#[tokio::test(flavor = "current_thread")]
+async fn reader_stack_parity_whole_stream() {
+    let (wire, expected) = data_only_wire();
+    for read_len in READ_LENS {
+        let (sync_data, sync_count) = drive_sync_stack(&wire, read_len);
+        let (async_data, async_count) =
+            drive_async_stack(Cursor::new(wire.clone()), read_len).await;
+
+        assert_eq!(
+            sync_data, expected,
+            "sync stack delivered wrong bytes at read_len {read_len}"
+        );
+        assert_eq!(
+            async_data, sync_data,
+            "async stack DATA diverged from sync at read_len {read_len}"
+        );
+        assert_eq!(
+            async_count, sync_count,
+            "async byte counter diverged from sync at read_len {read_len} \
+             (sync={sync_count}, async={async_count})"
+        );
+        // Both drained the whole stream, so the counter equals the wire length
+        // exactly: no buffering prefetch skew, the known feature-on quirk absent.
+        assert_eq!(
+            async_count,
+            wire.len() as u64,
+            "async byte count must equal exact wire length at read_len {read_len}"
+        );
+    }
+}
+
+/// Same end-to-end stack parity, but the async transport yields bytes in tiny
+/// chunks so every frame is reassembled across many `.await` points. The counter
+/// must still land byte-exact regardless of how the transport fragments reads.
+#[tokio::test(flavor = "current_thread")]
+async fn reader_stack_parity_chunked_delivery() {
+    let (wire, expected) = data_only_wire();
+    for read_len in READ_LENS {
+        let (sync_data, sync_count) = drive_sync_stack(&wire, read_len);
+        for chunk in [1usize, 2, 3, 7, 13] {
+            let reader = ChunkedReader {
+                inner: Cursor::new(wire.clone()),
+                chunk,
+            };
+            let (async_data, async_count) = drive_async_stack(reader, read_len).await;
+
+            assert_eq!(
+                async_data, expected,
+                "async stack DATA diverged with chunk {chunk}, read_len {read_len}"
+            );
+            assert_eq!(
+                async_data, sync_data,
+                "async stack DATA diverged from sync with chunk {chunk}, read_len {read_len}"
+            );
+            assert_eq!(
+                async_count, sync_count,
+                "async byte counter diverged from sync with chunk {chunk}, read_len {read_len}"
+            );
+            assert_eq!(
+                async_count,
+                wire.len() as u64,
+                "async byte count must equal exact wire length with chunk {chunk}, \
+                 read_len {read_len}"
+            );
+        }
+    }
 }
 
 #[tokio::test(flavor = "current_thread")]
