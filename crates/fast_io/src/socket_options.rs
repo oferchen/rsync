@@ -211,6 +211,162 @@ pub const fn tcp_fastopen_connect_supported() -> bool {
     cfg!(target_os = "linux")
 }
 
+/// Returns `true` when the running platform implements client-side TCP Fast
+/// Open through the Darwin `connectx(2)` path.
+///
+/// Darwin has no `TCP_FASTOPEN_CONNECT` socket option; instead the connect
+/// itself is issued via `connectx` with `CONNECT_RESUME_ON_READ_WRITE`, which
+/// defers the SYN until the first `write(2)` and folds the request payload
+/// into the handshake. This mirrors the Linux `TCP_FASTOPEN_CONNECT` gate in
+/// [`tcp_fastopen_connect_supported`], but keyed on macOS.
+#[must_use]
+pub const fn connectx_fastopen_supported() -> bool {
+    cfg!(target_os = "macos")
+}
+
+/// Issues a client-side TCP Fast Open connect to `target` on the Darwin
+/// `connectx(2)` path.
+///
+/// This is the macOS analogue of the Linux `TCP_FASTOPEN_CONNECT` socket
+/// option set in [`enable_tcp_fastopen_connect_raw`]: instead of a
+/// `setsockopt` that makes a later `connect(2)` defer the SYN, Darwin folds
+/// the request into `connectx` itself. Called with `SAE_ASSOCID_ANY`, the
+/// `CONNECT_RESUME_ON_READ_WRITE` flag, and no `iovec` payload, so the SYN is
+/// deferred to the first `write(2)`/`send(2)` and the standard connect/write
+/// flow that follows works unchanged - exactly like the Linux path.
+///
+/// `raw_fd` must be an unconnected TCP stream socket of the same address
+/// family as `target`. Returns `Ok(true)` once the kernel accepts the
+/// (deferred) connect. A non-blocking or in-progress result (`EINPROGRESS`)
+/// is reported as success because the SYN is intentionally deferred. Any
+/// other `connectx` failure propagates as the OS error so the caller can fall
+/// back to a normal blocking `connect(2)`; TFO is a latency optimisation and
+/// must never break connectivity.
+///
+/// Returns `Ok(false)` on non-macOS platforms (the `connectx` syscall does
+/// not exist there).
+///
+/// upstream: not implemented; this is an oc-rsync-specific perf improvement
+/// that is wire-compatible with upstream rsync. TFO only affects the initial
+/// SYN exchange, not the rsync protocol that follows.
+#[cfg(unix)]
+pub fn connectx_fastopen_raw(
+    raw_fd: std::os::fd::RawFd,
+    target: &std::net::SocketAddr,
+) -> io::Result<bool> {
+    #[cfg(target_os = "macos")]
+    {
+        connectx_fastopen_darwin(raw_fd, target)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (raw_fd, target);
+        Ok(false)
+    }
+}
+
+/// Windows stub for [`connectx_fastopen_raw`]. `connectx` is Darwin-only, so
+/// Windows always reports the path as unavailable and the caller performs a
+/// standard `connect`.
+#[cfg(windows)]
+pub fn connectx_fastopen_raw(
+    _raw_socket: std::os::windows::io::RawSocket,
+    _target: &std::net::SocketAddr,
+) -> io::Result<bool> {
+    Ok(false)
+}
+
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+fn connectx_fastopen_darwin(
+    raw_fd: std::os::fd::RawFd,
+    target: &std::net::SocketAddr,
+) -> io::Result<bool> {
+    use std::net::SocketAddr;
+
+    // Materialise the destination into a `sockaddr_storage` so the pointer
+    // handed to `connectx` outlives the syscall. `connectx` only reads the
+    // destination address bytes; it never retains the pointer.
+    // SAFETY: an all-zero `sockaddr_storage` is a valid initialised value; the
+    // family-specific fields are written below before the address is used.
+    let mut storage: libc::sockaddr_storage = unsafe { std::mem::zeroed() };
+    let dstaddrlen: libc::socklen_t = match target {
+        SocketAddr::V4(v4) => {
+            let sin = std::ptr::from_mut(&mut storage).cast::<libc::sockaddr_in>();
+            // SAFETY: `storage` is a zeroed `sockaddr_storage` large enough to
+            // hold a `sockaddr_in`; writing through the reinterpreted pointer
+            // stays within its allocation.
+            unsafe {
+                (*sin).sin_len = std::mem::size_of::<libc::sockaddr_in>() as u8;
+                (*sin).sin_family = libc::AF_INET as libc::sa_family_t;
+                (*sin).sin_port = v4.port().to_be();
+                (*sin).sin_addr = libc::in_addr {
+                    s_addr: u32::from_ne_bytes(v4.ip().octets()),
+                };
+            }
+            std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t
+        }
+        SocketAddr::V6(v6) => {
+            let sin6 = std::ptr::from_mut(&mut storage).cast::<libc::sockaddr_in6>();
+            // SAFETY: `storage` is a zeroed `sockaddr_storage` large enough to
+            // hold a `sockaddr_in6`; writing through the reinterpreted pointer
+            // stays within its allocation.
+            unsafe {
+                (*sin6).sin6_len = std::mem::size_of::<libc::sockaddr_in6>() as u8;
+                (*sin6).sin6_family = libc::AF_INET6 as libc::sa_family_t;
+                (*sin6).sin6_port = v6.port().to_be();
+                (*sin6).sin6_flowinfo = v6.flowinfo();
+                (*sin6).sin6_addr = libc::in6_addr {
+                    s6_addr: v6.ip().octets(),
+                };
+                (*sin6).sin6_scope_id = v6.scope_id();
+            }
+            std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t
+        }
+    };
+
+    let endpoints = libc::sa_endpoints_t {
+        sae_srcif: 0,
+        sae_srcaddr: std::ptr::null(),
+        sae_srcaddrlen: 0,
+        sae_dstaddr: std::ptr::from_ref(&storage).cast::<libc::sockaddr>(),
+        sae_dstaddrlen: dstaddrlen,
+    };
+
+    // SAFETY: `raw_fd` is a valid, unconnected TCP socket borrowed for the
+    // duration of this synchronous call. `endpoints` and the `sockaddr_storage`
+    // it points at live on this stack frame and outlive the syscall. No `iovec`
+    // payload is supplied (null/0), so `CONNECT_RESUME_ON_READ_WRITE` defers the
+    // SYN to the first write; the out-params are null because the association
+    // and connection ids are unused. `connectx` reads the inputs and writes
+    // nothing back through the null pointers.
+    let ret = unsafe {
+        libc::connectx(
+            raw_fd,
+            std::ptr::from_ref(&endpoints),
+            libc::SAE_ASSOCID_ANY,
+            libc::CONNECT_RESUME_ON_READ_WRITE,
+            std::ptr::null(),
+            0,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+
+    if ret == -1 {
+        let err = io::Error::last_os_error();
+        // A deferred Fast Open connect legitimately reports EINPROGRESS: the
+        // SYN is held back until the first write, so treat it as success.
+        if err.raw_os_error() == Some(libc::EINPROGRESS) {
+            Ok(true)
+        } else {
+            Err(err)
+        }
+    } else {
+        Ok(true)
+    }
+}
+
 /// Sets the `TCP_NOTSENT_LOWAT` watermark on a connected stream.
 ///
 /// Caps the unsent bytes the kernel buffers in the socket send buffer.
@@ -721,5 +877,74 @@ mod tests {
 
         drop(stream);
         handle.join().expect("accept thread completes");
+    }
+
+    #[test]
+    fn connectx_fastopen_supported_matches_platform() {
+        assert_eq!(connectx_fastopen_supported(), cfg!(target_os = "macos"));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    #[cfg(unix)]
+    #[test]
+    fn connectx_fastopen_is_noop_off_darwin() {
+        use std::net::SocketAddr;
+        use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+
+        // SAFETY: socket(2) returns a fresh owned fd; OwnedFd closes it on drop.
+        let raw = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+        assert!(raw >= 0, "socket(2) failed: {}", io::Error::last_os_error());
+        let owned = unsafe { OwnedFd::from_raw_fd(raw) };
+        let target: SocketAddr = "127.0.0.1:0".parse().expect("addr");
+
+        // connectx does not exist off Darwin, so the wrapper reports the path
+        // as unavailable rather than erroring.
+        assert!(
+            !connectx_fastopen_raw(owned.as_raw_fd(), &target).expect("no error off Darwin"),
+            "connectx wrapper must be a no-op off Darwin"
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn connectx_fastopen_connects_and_data_flows() {
+        use std::io::{Read, Write};
+        use std::net::TcpStream;
+        use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+
+        assert!(connectx_fastopen_supported());
+
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("listener");
+        let addr = listener.local_addr().expect("addr");
+        let accept = std::thread::spawn(move || {
+            let (mut peer, _) = listener.accept().expect("accept");
+            let mut buf = [0u8; 5];
+            peer.read_exact(&mut buf).expect("server reads payload");
+            assert_eq!(&buf, b"hello");
+            peer.write_all(b"world").expect("server echoes");
+        });
+
+        // SAFETY: socket(2) returns a fresh owned fd; OwnedFd closes it on drop.
+        let raw = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+        assert!(raw >= 0, "socket(2) failed: {}", io::Error::last_os_error());
+        let owned = unsafe { OwnedFd::from_raw_fd(raw) };
+
+        // The Darwin Fast Open connect defers the SYN to the first write.
+        let connected =
+            connectx_fastopen_raw(owned.as_raw_fd(), &addr).expect("connectx succeeds on macOS");
+        assert!(connected, "connectx should report the socket connected");
+
+        // SAFETY: `owned` is a live, connected TCP socket fd; hand ownership to
+        // the std stream so it manages the lifetime from here.
+        let mut stream = unsafe { TcpStream::from_raw_fd(owned.into_raw_fd()) };
+
+        // The first write carries the deferred SYN payload; data must flow.
+        stream.write_all(b"hello").expect("client write");
+        let mut reply = [0u8; 5];
+        stream.read_exact(&mut reply).expect("client reads echo");
+        assert_eq!(&reply, b"world");
+
+        drop(stream);
+        accept.join().expect("accept thread completes");
     }
 }
