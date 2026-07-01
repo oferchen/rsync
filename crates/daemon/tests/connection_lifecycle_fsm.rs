@@ -42,14 +42,28 @@ fn spawn_daemon(
     thread::JoinHandle<Result<(), daemon::DaemonError>>,
     SignalFlags,
 ) {
+    spawn_daemon_with_args(listener, port, &[])
+}
+
+/// Spawns a daemon with additional CLI arguments beyond `--no-detach --port`.
+fn spawn_daemon_with_args(
+    listener: TcpListener,
+    port: u16,
+    extra_args: &[&str],
+) -> (
+    thread::JoinHandle<Result<(), daemon::DaemonError>>,
+    SignalFlags,
+) {
     let flags = SignalFlags::new();
+    let mut args = vec![
+        "--no-detach".to_string(),
+        "--port".to_string(),
+        port.to_string(),
+    ];
+    args.extend(extra_args.iter().map(|a| (*a).to_string()));
     let config = DaemonConfig::builder()
         .disable_default_paths()
-        .arguments([
-            "--no-detach".to_string(),
-            "--port".to_string(),
-            port.to_string(),
-        ])
+        .arguments(args)
         .pre_bound_listener(listener)
         .signal_flags(flags.clone())
         .build();
@@ -293,6 +307,78 @@ fn lifecycle_multiple_sequential_connections() {
     assert!(
         result.is_ok(),
         "daemon should handle multiple sequential connections: {result:?}"
+    );
+}
+
+/// Rapid sequential connections under `--max-connections` must never be
+/// spuriously refused: the active count must return to zero between fully
+/// completed sessions.
+///
+/// Guards the macOS interop `max connections (N) reached` failure class,
+/// where connection-slot accounting drifts out of lockstep with the accept
+/// engine. The engine used on macOS is selected by `build_accept_engine`
+/// (the kqueue engine here); this exercises it end-to-end through the real
+/// `run_daemon` accept loop.
+///
+/// Drives 12 fully-completed sequential lifecycles against a daemon capped at
+/// 4 connections. Each session runs to `@RSYNCD: EXIT`, so no two are
+/// concurrent and the active count returns to zero between them. Every
+/// connection must therefore receive the `@RSYNCD:` greeting; a
+/// `@ERROR: max connections` first line would prove a leaked slot.
+#[test]
+fn lifecycle_max_connections_sequential_no_leak() {
+    const CAP: usize = 4;
+    const ITERATIONS: usize = CAP * 3; // Well past the cap: N+2 and then some.
+
+    let (port, listener) = allocate_listener();
+    let (handle, flags) = spawn_daemon_with_args(listener, port, &["--max-connections", "4"]);
+
+    for i in 0..ITERATIONS {
+        let stream = connect_with_timeout(port);
+        let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+        let mut writer = stream;
+
+        // First line MUST be the greeting. A `@ERROR: max connections ...`
+        // line here means a slot from an already-completed sequential session
+        // was never released - the exact regression under test.
+        let first = read_greeting(&mut reader);
+        assert!(
+            first.starts_with("@RSYNCD:") && !first.contains("max connections"),
+            "connection {i}: expected @RSYNCD greeting, got refusal/other: {first:?}"
+        );
+
+        // Drive the full lifecycle to completion so the worker finishes and
+        // drops its ConnectionGuard before the next iteration connects.
+        send_version(&mut writer);
+        let module = format!("no_such_module_{i}\n");
+        writer.write_all(module.as_bytes()).expect("send module");
+        writer.flush().expect("flush module");
+
+        let mut saw_exit = false;
+        loop {
+            let mut line = String::new();
+            match reader.read_line(&mut line) {
+                Ok(0) => break,
+                Err(_) => break,
+                Ok(_) => {}
+            }
+            if line.trim() == "@RSYNCD: EXIT" {
+                saw_exit = true;
+                break;
+            }
+        }
+        assert!(saw_exit, "connection {i}: daemon should send @RSYNCD: EXIT");
+
+        drop(writer);
+        drop(reader);
+    }
+
+    flags.shutdown.store(true, Ordering::Relaxed);
+    let result = handle.join().expect("daemon thread");
+    assert!(
+        result.is_ok(),
+        "daemon should serve all sequential connections without leaking a \
+         max-connections slot: {result:?}"
     );
 }
 

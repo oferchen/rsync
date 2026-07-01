@@ -158,6 +158,27 @@ impl KqueueLoop {
         self.submit_event(fd, KEventFilter::Read, user_data)
     }
 
+    /// Registers a **level-triggered** `EVFILT_READ` readiness event.
+    ///
+    /// Uses `EV_ADD` without `EV_CLEAR`, so the event keeps re-firing on
+    /// every [`wait`](Self::wait) while any readability remains (matching
+    /// the Linux non-`EPOLLET` shape). This is the correct mode for
+    /// consumers that intentionally handle **one** ready item per wake and
+    /// rely on the next `wait` to re-surface a still-pending backlog - for
+    /// example a listener fd where the accept loop takes a single
+    /// connection per poll and must not lose queued connections behind a
+    /// consumed edge.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `io::Error` if `kevent(2)` rejects the registration.
+    pub fn submit_read_level(&self, fd: RawFd, user_data: u64) -> io::Result<()> {
+        let change = make_kevent(fd, KEventFilter::Read.as_raw(), libc::EV_ADD, user_data);
+        let rc = self.kevent_call(Some(&change), None, None)?;
+        debug_assert_eq!(rc, 0, "registration kevent returns 0 with empty eventlist");
+        Ok(())
+    }
+
     /// Registers an `EVFILT_WRITE` readiness event for the given fd.
     ///
     /// See [`submit_read`](Self::submit_read) for semantics. This is

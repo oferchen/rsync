@@ -108,6 +108,18 @@ impl KqueueLoop {
     /// # Errors
     ///
     /// Returns an `io::Error` with kind [`io::ErrorKind::Unsupported`].
+    pub fn submit_read_level(&self, _fd: RawFd, _user_data: u64) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "kqueue is only available on macOS",
+        ))
+    }
+
+    /// Stub - always returns `Unsupported`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an `io::Error` with kind [`io::ErrorKind::Unsupported`].
     pub fn submit_write(&self, _fd: RawFd, _user_data: u64) -> io::Result<()> {
         Err(io::Error::new(
             io::ErrorKind::Unsupported,
