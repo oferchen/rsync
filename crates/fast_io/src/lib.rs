@@ -186,6 +186,8 @@ pub mod syscall_batch;
 pub mod vmsplice_writer;
 /// Windows extended-length path (`\\?\`) prefixing helper.
 pub mod win_path;
+/// NTFS sparse-file marking (`FSCTL_SET_SPARSE`) with a non-Windows no-op stub.
+pub mod win_sparse;
 /// Delete-on-close temporary file creation for Windows via `FileDispositionInfo`.
 pub mod win_tmpfile;
 
@@ -402,6 +404,7 @@ pub use temp_file_strategy::{
     DefaultTempFileStrategy, NamedTempFileStrategy, TempFileHandle, TempFileKind, TempFileStrategy,
 };
 pub use win_path::to_extended_path;
+pub use win_sparse::mark_file_sparse;
 pub use win_tmpfile::{
     WinDeleteOnCloseSupport, WinTempFileResult, WindowsTempFile, clear_delete_on_close,
     commit_delete_on_close, delete_on_close_available, open_delete_on_close_tmpfile,

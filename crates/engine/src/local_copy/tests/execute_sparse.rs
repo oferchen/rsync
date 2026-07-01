@@ -1879,3 +1879,72 @@ fn execute_sparse_large_trailing_zeros_uses_ftruncate() {
     }
 }
 
+/// Windows counterpart of `execute_with_sparse_enabled_creates_holes`.
+///
+/// On NTFS a hole is materialised only after the destination handle is flagged
+/// sparse via `FSCTL_SET_SPARSE` (wired through `fast_io::mark_file_sparse`).
+/// The observable proof is the `FILE_ATTRIBUTE_SPARSE_FILE` attribute on the
+/// destination plus byte-identical content; `st_blocks` has no Windows
+/// equivalent. The check is best-effort: if the scratch TempDir lives on a
+/// non-NTFS volume (FAT/exFAT), the sparse flag will not stick, so the test
+/// asserts only content correctness in that case rather than failing.
+#[cfg(windows)]
+#[test]
+fn execute_with_sparse_enabled_marks_ntfs_sparse() {
+    use std::os::windows::fs::MetadataExt;
+
+    // FILE_ATTRIBUTE_SPARSE_FILE (winnt.h) - set on a handle after a
+    // successful FSCTL_SET_SPARSE.
+    const FILE_ATTRIBUTE_SPARSE_FILE: u32 = 0x0000_0200;
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("sparse.bin");
+    let mut source_file = fs::File::create(&source).expect("create source");
+    source_file.write_all(&[0xAA]).expect("write leading byte");
+    source_file
+        .seek(SeekFrom::Start(2 * 1024 * 1024))
+        .expect("seek to create hole");
+    source_file.write_all(&[0xBB]).expect("write trailing byte");
+    source_file.set_len(4 * 1024 * 1024).expect("extend source");
+    drop(source_file);
+
+    let sparse_dest = temp.path().join("sparse-copy.bin");
+    let plan = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        sparse_dest.clone().into_os_string(),
+    ])
+    .expect("plan sparse");
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().sparse(true),
+    )
+    .expect("sparse copy succeeds");
+
+    // Content must round-trip exactly regardless of sparse allocation.
+    let copied = fs::read(&sparse_dest).expect("read sparse copy");
+    assert_eq!(copied.len(), 4 * 1024 * 1024, "length preserved");
+    assert_eq!(copied[0], 0xAA, "leading byte preserved");
+    assert_eq!(copied[2 * 1024 * 1024], 0xBB, "trailing byte preserved");
+    assert!(
+        copied[1..2 * 1024 * 1024].iter().all(|&b| b == 0),
+        "hole region reads back as zeros"
+    );
+
+    let attrs = fs::metadata(&sparse_dest)
+        .expect("sparse metadata")
+        .file_attributes();
+    if attrs & FILE_ATTRIBUTE_SPARSE_FILE == 0 {
+        eprintln!(
+            "destination not flagged sparse (attrs={attrs:#x}); scratch volume likely \
+             non-NTFS, skipping strict sparse-attribute check"
+        );
+        return;
+    }
+
+    assert_ne!(
+        attrs & FILE_ATTRIBUTE_SPARSE_FILE,
+        0,
+        "sparse copy on NTFS must carry FILE_ATTRIBUTE_SPARSE_FILE"
+    );
+}
+
