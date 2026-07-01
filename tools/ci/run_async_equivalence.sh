@@ -59,7 +59,7 @@ if [ -n "${OC_RSYNC_OFF_BIN:-}" ]; then
     log "using pre-built default binary: ${off_bin}"
 else
     log "building default (feature-off) binary"
-    ( cd "${workspace_root}" && "${cargo_bin}" build --release --bin oc-rsync )
+    ( cd "${workspace_root}" && "${cargo_bin}" build --locked --release --bin oc-rsync )
     off_bin="${workspace_root}/target/release/oc-rsync"
     cp "${off_bin}" "${build_dir}/oc-rsync-off"
     off_bin="${build_dir}/oc-rsync-off"
@@ -70,7 +70,7 @@ if [ -n "${OC_RSYNC_ON_BIN:-}" ]; then
     log "using pre-built tokio-transfer binary: ${on_bin}"
 else
     log "building tokio-transfer (feature-on) binary"
-    ( cd "${workspace_root}" && "${cargo_bin}" build --release --bin oc-rsync --features tokio-transfer )
+    ( cd "${workspace_root}" && "${cargo_bin}" build --locked --release --bin oc-rsync --features tokio-transfer )
     on_bin="${workspace_root}/target/release/oc-rsync"
     cp "${on_bin}" "${build_dir}/oc-rsync-on"
     on_bin="${build_dir}/oc-rsync-on"
