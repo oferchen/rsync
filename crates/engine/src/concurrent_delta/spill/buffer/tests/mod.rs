@@ -10,6 +10,7 @@ use std::io::{self, Read, Write};
 
 use super::super::{SpillCodec, SpillableReorderBuffer};
 
+mod adaptive;
 mod basic;
 mod compression;
 mod enospc_degradation;

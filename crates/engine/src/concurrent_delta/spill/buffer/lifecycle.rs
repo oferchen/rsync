@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
-use super::super::super::reorder::ReorderBuffer;
+use super::super::super::adaptive::{AdaptiveCapacityPolicy, ReorderStats};
+use super::super::super::reorder::{Metrics, ReorderBuffer};
 use super::super::{
     DEFAULT_SPILL_THRESHOLD, SpillCodec, SpillCompression, SpillGranularity, SpillReclaim,
     SpillStats,
@@ -90,6 +91,46 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
             in_memory_only: false,
             spill_warned: false,
         })
+    }
+
+    /// Creates a spillable reorder buffer whose in-memory ring is governed by
+    /// an [`AdaptiveCapacityPolicy`] instead of a fixed capacity.
+    ///
+    /// This is strictly opt-in: the fixed-capacity [`new`](Self::new) path is
+    /// unchanged and remains the default everywhere. When selected, the inner
+    /// ring starts at `policy.min` slots and resizes between `policy.min` and
+    /// `policy.max` under the policy's grow / shrink rules while the spill
+    /// threshold continues to bound the on-disk overflow independently.
+    ///
+    /// Selecting concrete policy bounds (`min` / `max` / `growth_factor`) is a
+    /// tuning decision that depends on workload benchmarks; this constructor
+    /// only wires the mechanism and leaves those values to the caller.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `policy.min` is zero (validated by the policy constructor).
+    #[must_use]
+    pub fn with_adaptive_policy(policy: AdaptiveCapacityPolicy, threshold: usize) -> Self {
+        Self {
+            inner: ReorderBuffer::with_adaptive_policy(policy),
+            memory_used: 0,
+            threshold,
+            spill_index: BTreeMap::new(),
+            batch_members: BTreeMap::new(),
+            spill_file: None,
+            spill_dir: None,
+            spill_write_pos: 0,
+            granularity: SpillGranularity::default(),
+            spill_count: 0,
+            spill_activations: 0,
+            reload_count: 0,
+            dir_recreate_count: 0,
+            compression: SpillCompression::None,
+            reclaim: SpillReclaim::default(),
+            memory_pressure_bytes: None,
+            in_memory_only: false,
+            spill_warned: false,
+        }
     }
 
     /// Overrides the per-spill-event record granularity.
@@ -215,6 +256,46 @@ impl<T: SpillCodec> SpillableReorderBuffer<T> {
     #[must_use]
     pub fn capacity(&self) -> usize {
         self.inner.capacity()
+    }
+
+    /// Returns the in-flight reorder window of the in-memory ring: how far
+    /// ahead of the delivery cursor the furthest buffered item currently
+    /// reaches.
+    ///
+    /// Forwarded from
+    /// [`ReorderBuffer::in_flight_window`](super::super::super::reorder::ReorderBuffer::in_flight_window).
+    /// This reflects only the in-memory ring window - the leading indicator of
+    /// spill pressure - and is distinct from [`buffered_count`](Self::buffered_count),
+    /// which also counts spilled items. A window approaching
+    /// [`capacity`](Self::capacity) is what forces the next spill event.
+    #[must_use]
+    pub fn in_flight_window(&self) -> usize {
+        self.inner.in_flight_window()
+    }
+
+    /// Returns a snapshot of the in-memory ring's diagnostic counters.
+    ///
+    /// Forwarded from
+    /// [`ReorderBuffer::metrics`](super::super::super::reorder::ReorderBuffer::metrics),
+    /// this exposes the ring's stall duration, instantaneous depth, and the
+    /// high-water mark of buffered items so operators can observe reorder
+    /// pressure on the spill path without instrumenting the hot path. Spilled
+    /// items are surfaced separately via [`spill_stats`](Self::spill_stats).
+    #[must_use]
+    pub fn metrics(&self) -> Metrics {
+        self.inner.metrics()
+    }
+
+    /// Returns the in-memory ring's adaptive capacity counters.
+    ///
+    /// Forwarded from
+    /// [`ReorderBuffer::stats`](super::super::super::reorder::ReorderBuffer::stats).
+    /// Grow / shrink event totals are zero unless the buffer was constructed
+    /// via [`with_adaptive_policy`](Self::with_adaptive_policy); `capacity`
+    /// always reflects the current ring capacity.
+    #[must_use]
+    pub fn reorder_stats(&self) -> ReorderStats {
+        self.inner.stats()
     }
 
     /// Returns a shared handle to the inner [`ReorderBuffer`]'s cumulative
