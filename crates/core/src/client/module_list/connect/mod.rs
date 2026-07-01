@@ -92,7 +92,11 @@ impl CorkedTcpWriter {
     fn uncork(&mut self) -> io::Result<()> {
         if self.corked {
             self.corked = false;
-            fast_io::set_tcp_cork(&self.stream, false)?;
+            // Best-effort: clearing the cork on a torn-down socket can fail
+            // (e.g. macOS TCP_NOPUSH returns EINVAL after the peer FIN). The
+            // cork is moot once the socket is gone and the flag is already
+            // cleared, so never surface an uncork error to the write path.
+            let _ = fast_io::set_tcp_cork(&self.stream, false);
         }
         Ok(())
     }
