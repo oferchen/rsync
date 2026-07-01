@@ -72,6 +72,12 @@ pub mod async_dispatch;
 #[cfg(feature = "async")]
 pub mod async_pipeline;
 
+// ASY-3: tokio-hosted server driver. Gated on `tokio-transfer` (which implies
+// `async`), it hosts the sync server body on a tokio runtime and is wired into
+// the `core` session shim. Default-off; the threaded path is unchanged.
+#[cfg(feature = "tokio-transfer")]
+pub mod tokio_driver;
+
 pub use job::{FileJob, FileList, MAX_RETRY_COUNT, TransferFlags};
 pub use pending::PendingTransfer;
 pub use state::PipelineState;
