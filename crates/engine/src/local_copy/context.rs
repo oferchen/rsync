@@ -542,27 +542,43 @@ struct DirectoryFilterHandles {
     dynamic: Rc<RefCell<Vec<DynamicDirMergeFrame>>>,
 }
 
-/// Whole-stack snapshot of the source-visible per-directory filter state.
+#[cfg(test)]
+thread_local! {
+    /// Test-only counter of per-directory-merge filter files loaded by
+    /// [`CopyContext::enter_directory_for_path`]. Lets the PEX equivalence test
+    /// (#333) assert the destination-deletion scan performs O(depth) filter
+    /// loads across a deep walk - one lookup per directory entered - rather than
+    /// the O(depth^2) re-load a whole-ancestor rebuild would incur.
+    pub(crate) static FILTER_FILE_LOAD_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Records one per-directory-merge filter-file load for the test-only counter.
+#[cfg(test)]
+#[inline]
+pub(crate) fn record_filter_file_load() {
+    FILTER_FILE_LOAD_COUNT.with(|count| count.set(count.get() + 1));
+}
+
+/// No-op on non-test builds; the counter is compiled out entirely.
+#[cfg(not(test))]
+#[inline]
+fn record_filter_file_load() {}
+
+/// Captured pre-clear contents of a single static filter layer index, saved so
+/// a destination-deletion scan's guard can restore inherited entries that a
+/// `clear` directive wiped.
 ///
-/// Captured before a destination-side deletion scan loads its `dir-merge`
-/// files and restored verbatim when the scan's guard drops, so the
-/// destination load can never perturb the source-side filter evaluation.
-///
-/// upstream: delete.c:65-115 `delete_in_dir()` runs the destination
-/// per-directory filter push/pop (`push_local_filters`/`pop_local_filters`)
-/// against a separate `delete_filt` chain seeded from `change_local_filter_dir`;
-/// the receiver's destination scan never mutates the sender's `filter_list`.
-/// We mirror that isolation by snapshotting and restoring the source-visible
-/// stacks around the destination scan rather than relying on a per-index pop,
-/// which cannot balance the nested `dir-merge` directives a destination merge
-/// file may register (exclude.c:801 `push_local_filters` seeds `lp->head` from
-/// rules an arbitrary number of indices deep).
-struct FilterStateSnapshot {
-    layers: FilterSegmentLayers,
-    marker_layers: ExcludeIfPresentLayers,
-    ephemeral: FilterSegmentStack,
-    marker_ephemeral: ExcludeIfPresentStack,
-    dynamic: Vec<DynamicDirMergeFrame>,
+/// upstream: exclude.c:801 `push_local_filters` seeds `lp->head` from inherited
+/// rules an arbitrary number of indices deep; a `clear` directive in a
+/// destination merge file discards those inherited entries at `index`, which the
+/// guard's per-index pop cannot rebuild. Recording the wiped vectors before the
+/// clear and restoring them after the pop leaves the source-visible state
+/// byte-identical, mirroring delete.c's isolated `delete_filt` chain without
+/// cloning the whole source-side stack (PEX, #333).
+struct ClearedLayerRestore {
+    index: usize,
+    layer: Vec<FilterSegment>,
+    markers: Vec<ExcludeIfPresentRule>,
 }
 
 /// RAII guard that reverts per-directory filter rules when dropped.
@@ -571,9 +587,11 @@ struct FilterStateSnapshot {
 /// On drop, all rules pushed for the directory are popped, restoring the
 /// filter state to what it was before entering the directory.
 ///
-/// When `restore` is set (destination-deletion scans), the guard restores the
-/// captured [`FilterStateSnapshot`] wholesale instead of running the per-index
-/// pop logic, guaranteeing source-side state is left untouched.
+/// When `cleared_restores` is non-empty (destination-deletion scans that hit a
+/// `clear` directive), the guard restores those specific wiped layer indices
+/// AFTER the per-index pop, so the inherited entries a `clear` discarded are
+/// rebuilt and source-side state is left byte-identical - without cloning the
+/// entire ancestor stack.
 pub(crate) struct DirectoryFilterGuard {
     handles: DirectoryFilterHandles,
     indices: Vec<usize>,
@@ -581,7 +599,7 @@ pub(crate) struct DirectoryFilterGuard {
     ephemeral_active: bool,
     dynamic_active: bool,
     excluded: bool,
-    restore: Option<FilterStateSnapshot>,
+    cleared_restores: Vec<ClearedLayerRestore>,
 }
 
 impl DirectoryFilterGuard {
@@ -600,7 +618,7 @@ impl DirectoryFilterGuard {
             ephemeral_active,
             dynamic_active,
             excluded,
-            restore: None,
+            cleared_restores: Vec::new(),
         }
     }
 
@@ -609,26 +627,31 @@ impl DirectoryFilterGuard {
         self.excluded
     }
 
-    /// Arms the guard to restore the captured source-visible filter state on
-    /// drop instead of running the per-index pop logic. Used by the
-    /// destination-deletion path so the destination merge load is isolated from
-    /// source-side evaluation.
-    fn arm_restore(&mut self, snapshot: FilterStateSnapshot) {
-        self.restore = Some(snapshot);
+    /// Attaches the pre-clear layer contents captured during a
+    /// destination-deletion load so drop can restore them after the per-index
+    /// pop. Empty on the source-side path.
+    fn with_cleared_restores(mut self, cleared_restores: Vec<ClearedLayerRestore>) -> Self {
+        self.cleared_restores = cleared_restores;
+        self
+    }
+
+    /// Number of static layer indices this guard will restore on drop because a
+    /// destination-side `clear` directive wiped their inherited entries.
+    ///
+    /// Test-only observability for the PEX incremental-stack invariant (#333):
+    /// the per-visit restore work is proportional to the `clear` directives in
+    /// the destination directory, NOT to the traversal depth. A deep tree with
+    /// no `clear` therefore captures zero restore data, proving the destination
+    /// scan no longer clones the whole ancestor stack (the former O(depth^2)
+    /// per-walk cost).
+    #[cfg(test)]
+    pub(crate) fn cleared_restore_len(&self) -> usize {
+        self.cleared_restores.len()
     }
 }
 
 impl Drop for DirectoryFilterGuard {
     fn drop(&mut self) {
-        if let Some(snapshot) = self.restore.take() {
-            *self.handles.layers.borrow_mut() = snapshot.layers;
-            *self.handles.marker_layers.borrow_mut() = snapshot.marker_layers;
-            *self.handles.ephemeral.borrow_mut() = snapshot.ephemeral;
-            *self.handles.marker_ephemeral.borrow_mut() = snapshot.marker_ephemeral;
-            *self.handles.dynamic.borrow_mut() = snapshot.dynamic;
-            return;
-        }
-
         if self.dynamic_active {
             let mut stack = self.handles.dynamic.borrow_mut();
             stack.pop();
@@ -657,6 +680,23 @@ impl Drop for DirectoryFilterGuard {
             for index in self.indices.drain(..).rev() {
                 if let Some(layer) = layers.get_mut(index) {
                     layer.pop();
+                }
+            }
+        }
+
+        // PEX (#333): a destination-deletion `clear` directive wiped these
+        // inherited layer indices, which the per-index pops above cannot
+        // rebuild. Restore the captured pre-clear vectors LAST so the
+        // source-visible state matches exactly what it was before the load.
+        if !self.cleared_restores.is_empty() {
+            let mut layers = self.handles.layers.borrow_mut();
+            let mut marker_layers = self.handles.marker_layers.borrow_mut();
+            for restore in self.cleared_restores.drain(..) {
+                if let Some(layer) = layers.get_mut(restore.index) {
+                    *layer = restore.layer;
+                }
+                if let Some(markers) = marker_layers.get_mut(restore.index) {
+                    *markers = restore.markers;
                 }
             }
         }
