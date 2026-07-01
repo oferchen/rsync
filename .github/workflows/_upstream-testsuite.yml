@@ -1,54 +1,33 @@
 name: Upstream Testsuite
 
 on:
-  push:
-    branches: [ master, main ]
-    paths:
-      - 'crates/**'
-      - 'src/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'tools/ci/run_upstream_testsuite.sh'
-      - 'tools/ci/upstream_testsuite_known_failures.conf'
-      - '.github/workflows/upstream-testsuite.yml'
-  pull_request:
-    paths:
-      - 'crates/**'
-      - 'src/**'
-      - 'Cargo.toml'
-      - 'Cargo.lock'
-      - 'tools/ci/run_upstream_testsuite.sh'
-      - 'tools/ci/upstream_testsuite_known_failures.conf'
-      - '.github/workflows/upstream-testsuite.yml'
-  workflow_dispatch:
-
-concurrency:
-  group: upstream-testsuite-${{ github.ref }}
-  cancel-in-progress: true
+  workflow_call:
+    inputs:
+      cache_version:
+        description: 'Cache version for invalidation'
+        type: string
+        default: 'v1'
+      upstream_rsync_version:
+        description: 'Upstream rsync version for cache key'
+        type: string
+        default: '3.4.4'
 
 permissions:
   contents: read
-
-env:
-  CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: "0"
-  RUSTFLAGS: "-D warnings"
-  RUST_BACKTRACE: "full"
-  CACHE_VERSION: ${{ vars.CACHE_VERSION || 'v1' }}
-  UPSTREAM_RSYNC_VERSION: "3.4.4"
 
 jobs:
   upstream-testsuite:
     name: upstream testsuite
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    # Not a required check - there are known failures. The runner script
-    # exits non-zero only on UNEXPECTED failures (tests not in
-    # known_failures.conf) or UNEXPECTED passes (tests in known_failures.conf
-    # that start passing). Both conditions surface regressions worth
-    # investigating, but should not block PRs while the failure list
-    # stabilizes.
-    continue-on-error: true
+
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+      RUSTFLAGS: "-D warnings"
+      RUST_BACKTRACE: "full"
+      CACHE_VERSION: ${{ inputs.cache_version }}
+      UPSTREAM_RSYNC_VERSION: ${{ inputs.upstream_rsync_version }}
 
     steps:
       - name: Checkout
@@ -95,9 +74,7 @@ jobs:
         # No step-level continue-on-error: a non-zero exit from the harness
         # (UNEXPECTED FAIL outside known_failures.conf or UPASS regression)
         # MUST surface to the job conclusion so PRs that claim to fix an
-        # upstream test can be validated against the per-test result. The
-        # job-level continue-on-error (above) keeps this from blocking
-        # branch protection while the failure list stabilizes.
+        # upstream test can be validated against the per-test result.
 
       - name: Generate job summary
         if: always()

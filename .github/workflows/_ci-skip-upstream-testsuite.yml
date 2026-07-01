@@ -1,0 +1,14 @@
+name: CI skip upstream testsuite
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  upstream-testsuite:
+    name: upstream testsuite
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Skipped — no relevant changes"
