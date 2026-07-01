@@ -17,6 +17,7 @@ on:
       - '.github/workflows/_interop.yml'
       - '.github/workflows/_interop-macos.yml'
       - '.github/workflows/_interop-windows.yml'
+      - '.github/workflows/_upstream-testsuite.yml'
       - 'docker/**'
       - 'Cross.toml'
   pull_request:
@@ -34,6 +35,7 @@ on:
       - '.github/workflows/_interop.yml'
       - '.github/workflows/_interop-macos.yml'
       - '.github/workflows/_interop-windows.yml'
+      - '.github/workflows/_upstream-testsuite.yml'
       - 'docker/**'
       - 'Cross.toml'
   workflow_dispatch:
@@ -626,6 +628,24 @@ jobs:
     with:
       cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
       timeout_minutes: 30
+
+  # ===========================================================================
+  # Upstream Testsuite - Drive upstream rsync's own testsuite/*.test corpus
+  # against oc-rsync (reusable workflow)
+  # ---------------------------------------------------------------------------
+  # Required check. The harness exits non-zero only on UNEXPECTED failures
+  # (tests not in tools/ci/upstream_testsuite_known_failures.conf) or
+  # UNEXPECTED passes (known-failure tests that start passing); both surface
+  # regressions worth blocking on. The ci-skip umbrella emits the matching
+  # `upstream-testsuite / upstream testsuite` context on doc-only PRs so this
+  # required check never deadlocks.
+  # ===========================================================================
+  upstream-testsuite:
+    needs: lint
+    uses: ./.github/workflows/_upstream-testsuite.yml
+    with:
+      cache_version: ${{ vars.CACHE_VERSION || 'v1' }}
+      upstream_rsync_version: ${{ vars.UPSTREAM_RSYNC_VERSION || '3.4.4' }}
 
   # ===========================================================================
   # DG-3.e: concurrent_register_and_dispatch stress (#2694)

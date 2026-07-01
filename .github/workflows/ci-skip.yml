@@ -72,3 +72,6 @@ jobs:
   interop-windows:
     name: interop (Windows, best-effort)
     uses: ./.github/workflows/_ci-skip-interop-windows.yml
+
+  upstream-testsuite:
+    uses: ./.github/workflows/_ci-skip-upstream-testsuite.yml
