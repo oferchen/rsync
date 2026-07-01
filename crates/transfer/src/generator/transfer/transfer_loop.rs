@@ -476,10 +476,10 @@ impl GeneratorContext {
                 // Use unbuffered reader: stream_whole_file_transfer manages its
                 // own 256 KB staging buffer with read_exact, so a BufReader would
                 // only add an extra memcpy per byte through its internal buffer.
-                let source: Box<dyn Read> = match self
+                let (source, src_fd): (Box<dyn Read>, Option<_>) = match self
                     .open_source_unbuffered(source_path, file_size)
                 {
-                    Ok(r) => r,
+                    Ok(pair) => pair,
                     Err(e) => {
                         self.record_open_failure(&mut *writer, wire_ndx, &e, &source_path_display)?;
                         continue;
@@ -509,6 +509,23 @@ impl GeneratorContext {
                 // size would over-report by the compression ratio under -z/-zz
                 // and trip the daemon-gzip "did -zz engage?" assertion on
                 // whole-file pushes.
+                // NSV-1: build the SERVE fd pair. The concrete source `File` fd
+                // is surfaced by `open_source_unbuffered`; the destination socket
+                // fd is not yet reachable because the daemon erases its
+                // `TcpStream` to `dyn Write` before it reaches this crate, so
+                // `dst_fd` is `None` for now (wired by a later rung). The pair is
+                // plumbed but unused, so the transfer stays byte-for-byte
+                // identical.
+                #[cfg(unix)]
+                let serve_fds = src_fd.map(|fd| super::super::delta::ServeFds {
+                    src_fd: fd,
+                    dst_fd: None,
+                });
+                #[cfg(not(unix))]
+                let serve_fds = {
+                    let _ = src_fd;
+                    None::<super::super::delta::ServeFds>
+                };
                 let wire_bytes = {
                     let mut cw = crate::writer::CountingWriter::new(&mut *writer);
                     let result = stream_whole_file_transfer(
@@ -522,6 +539,7 @@ impl GeneratorContext {
                             None
                         },
                         &mut stream_buf,
+                        serve_fds,
                     )?;
                     cw.write_all(&result.checksum_buf[..result.checksum_len])?;
                     cw.bytes_written()
