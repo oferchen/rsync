@@ -107,12 +107,12 @@ jobs:
       # script does not rebuild (a second `cargo build` would clobber the first).
       - name: Build default (feature-off) binary
         run: |
-          cargo build --release --bin oc-rsync
+          cargo build --locked --release --bin oc-rsync
           cp target/release/oc-rsync "${RUNNER_TEMP}/oc-rsync-off"
 
       - name: Build tokio-transfer (feature-on) binary
         run: |
-          cargo build --release --bin oc-rsync --features tokio-transfer
+          cargo build --locked --release --bin oc-rsync --features tokio-transfer
           cp target/release/oc-rsync "${RUNNER_TEMP}/oc-rsync-on"
 
       # Real local transfers (daemon PUSH/PULL through the tokio-driven module
