@@ -1,6 +1,56 @@
 use std::io::{self, Read, Write};
 use std::sync::{Arc, Mutex};
 
+#[cfg(all(test, feature = "tokio-transfer"))]
+#[path = "multiplex_parity_tests.rs"]
+mod parity_tests;
+
+/// Sink for the inline, wire-visible side effects that frame dispatch performs.
+///
+/// Upstream rsync's `log.c:rwrite()` writes `MSG_INFO`/`MSG_CLIENT` to stdout
+/// (with a flush) and every `MSG_*ERROR*`/`MSG_WARNING` category to stderr, in
+/// line with the demultiplexed data stream. The ordering of these writes
+/// *relative to* delivered `MSG_DATA` payloads is observable on the wire/output,
+/// so it must be identical no matter which driver (blocking or `.await`) pulls
+/// the frame off the socket.
+///
+/// The dispatch core ([`MultiplexReader::dispatch_message_with`]) reads no wire
+/// and routes every side effect through this trait, so the sync and async
+/// drivers share one dispatch path and can never diverge on effect ordering.
+/// Production uses [`RealSink`], which reproduces the previous inline
+/// `print!`/`eprint!`/`stdout().flush()` byte-for-byte. Tests can substitute a
+/// capturing sink to assert the ordered effect sequence.
+pub(super) trait MuxSink {
+    /// Emits an `MSG_INFO`/`MSG_CLIENT` payload to stdout and flushes.
+    ///
+    /// upstream: `log.c:rwrite()` - FINFO and FCLIENT go to stdout.
+    fn info(&mut self, msg: &str);
+
+    /// Emits an `MSG_WARNING`/`MSG_LOG`/`MSG_*ERROR*` payload to stderr.
+    ///
+    /// upstream: `log.c:rwrite()` - FWARNING/FLOG/FERROR* go to stderr.
+    fn error(&mut self, msg: &str);
+}
+
+/// Production [`MuxSink`] that writes to the real stdout/stderr.
+///
+/// Byte-for-byte identical to the previous inline dispatch side effects:
+/// `print!("{msg}")` + `io::stdout().flush()` for info, `eprint!("{msg}")` for
+/// error. This is the only sink used outside tests, so the default build's
+/// demux output is unchanged.
+pub(super) struct RealSink;
+
+impl MuxSink for RealSink {
+    fn info(&mut self, msg: &str) {
+        print!("{msg}");
+        let _ = io::stdout().flush();
+    }
+
+    fn error(&mut self, msg: &str) {
+        eprint!("{msg}");
+    }
+}
+
 /// Reader that automatically demultiplexes incoming messages.
 ///
 /// Reads multiplex frames from the wire and extracts MSG_DATA payloads.
@@ -67,7 +117,7 @@ pub(super) const RERR_PARTIAL: i32 = 23;
 /// be up to 64KB - a smaller staging buffer forces extra reads per frame.
 const MULTIPLEX_READER_BUFFER_CAPACITY: usize = 64 * 1024;
 
-impl<R: Read> MultiplexReader<R> {
+impl<R> MultiplexReader<R> {
     pub(super) fn new(inner: R) -> Self {
         Self {
             inner,
@@ -208,24 +258,47 @@ impl<R: Read> MultiplexReader<R> {
         }
     }
 
-    /// Dispatches a non-data message code to the appropriate handler.
+    /// Dispatches a non-data message code using the production [`RealSink`].
+    ///
+    /// Byte-identical to the previous inline dispatch: routes `MSG_INFO`/
+    /// `MSG_CLIENT` to stdout+flush and every error/warning category to stderr.
+    /// This is the entry point for the blocking `Read` driver.
     ///
     /// Returns `true` for `MSG_DATA` (caller should break the read loop),
     /// `false` for all other message types (caller should continue reading).
     fn dispatch_message(&mut self, code: protocol::MessageCode) -> bool {
+        self.dispatch_message_with(code, &mut RealSink)
+    }
+
+    /// Dispatches a non-data message code to the appropriate handler, routing
+    /// every wire-visible side effect through `sink`.
+    ///
+    /// This is the shared, reader-free dispatch core. It mutates only in-memory
+    /// state (`buffer`, the `io_error`/`no_send`/`redo`/`xfer_error`/exit
+    /// accumulators) and emits side effects exclusively via `sink`, in exactly
+    /// the same order relative to the caller's data delivery. The blocking and
+    /// `.await` drivers both call it at the identical point (immediately after a
+    /// frame read), so they can never diverge on effect ordering.
+    ///
+    /// Returns `true` for `MSG_DATA` (caller should break the read loop),
+    /// `false` for all other message types (caller should continue reading).
+    fn dispatch_message_with<S: MuxSink>(
+        &mut self,
+        code: protocol::MessageCode,
+        sink: &mut S,
+    ) -> bool {
         match code {
             protocol::MessageCode::Data => return true,
             protocol::MessageCode::Info | protocol::MessageCode::Client => {
                 // upstream: log.c:rwrite() - FINFO and FCLIENT go to stdout
                 if let Ok(msg) = std::str::from_utf8(&self.buffer) {
-                    print!("{msg}");
-                    let _ = io::stdout().flush();
+                    sink.info(msg);
                 }
             }
             protocol::MessageCode::Warning | protocol::MessageCode::Log => {
                 // upstream: log.c:rwrite() - FWARNING to stderr, FLOG to daemon log
                 if let Ok(msg) = std::str::from_utf8(&self.buffer) {
-                    eprint!("{msg}");
+                    sink.error(msg);
                 }
             }
             protocol::MessageCode::Error
@@ -233,7 +306,7 @@ impl<R: Read> MultiplexReader<R> {
             | protocol::MessageCode::ErrorUtf8 => {
                 // upstream: log.c:rwrite() - FERROR* to stderr
                 if let Ok(msg) = std::str::from_utf8(&self.buffer) {
-                    eprint!("{msg}");
+                    sink.error(msg);
                 }
             }
             protocol::MessageCode::ErrorXfer => {
@@ -242,7 +315,7 @@ impl<R: Read> MultiplexReader<R> {
                 // can distinguish daemon filter refusals from real errors.
                 self.xfer_error_count += 1;
                 if let Ok(msg) = std::str::from_utf8(&self.buffer) {
-                    eprint!("{msg}");
+                    sink.error(msg);
                 }
             }
             protocol::MessageCode::ErrorExit => {
@@ -336,28 +409,63 @@ impl<R: Read> MultiplexReader<R> {
     }
 }
 
+impl<R> MultiplexReader<R> {
+    /// Tees `bytes` to the batch recorder when one is attached.
+    ///
+    /// upstream: io.c:read_buf() - post-demux data is teed to batch_fd
+    /// unconditionally. Shared by every read path so the blocking and `.await`
+    /// drivers record identical batch output.
+    fn tee_batch(&self, bytes: &[u8]) -> io::Result<()> {
+        if let Some(ref recorder) = self.batch_recorder {
+            let mut rec = recorder
+                .lock()
+                .map_err(|_| io::Error::other("batch recorder lock poisoned"))?;
+            rec.write_all(bytes)?;
+        }
+        Ok(())
+    }
+
+    /// Drains bytes already buffered from a prior frame into `buf`.
+    ///
+    /// Reader-free: copies from the internal frame buffer starting at `pos`,
+    /// advances `pos`, resets the buffer when drained, and tees the copied
+    /// bytes to the batch recorder. Returns the number of bytes copied. Both
+    /// the blocking and `.await` drivers call this first, so buffered-data
+    /// delivery is byte-identical.
+    fn drain_buffered(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let available = self.buffer.len() - self.pos;
+        let to_copy = available.min(buf.len());
+        buf[..to_copy].copy_from_slice(&self.buffer[self.pos..self.pos + to_copy]);
+        self.pos += to_copy;
+
+        if self.pos >= self.buffer.len() {
+            self.buffer.clear();
+            self.pos = 0;
+        }
+
+        self.tee_batch(&buf[..to_copy])?;
+        Ok(to_copy)
+    }
+
+    /// Places a freshly demuxed `MSG_DATA` frame into `buf`.
+    ///
+    /// Reader-free: copies the head of the frame buffer into `buf`, records the
+    /// consumed length in `pos` (leaving any overflow for the next `read`), and
+    /// tees the copied bytes to the batch recorder. Returns the number of bytes
+    /// copied. Shared by both drivers so newly-read data delivery is identical.
+    fn place_frame(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let to_copy = self.buffer.len().min(buf.len());
+        buf[..to_copy].copy_from_slice(&self.buffer[..to_copy]);
+        self.pos = to_copy;
+        self.tee_batch(&buf[..to_copy])?;
+        Ok(to_copy)
+    }
+}
+
 impl<R: Read> Read for MultiplexReader<R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.pos < self.buffer.len() {
-            let available = self.buffer.len() - self.pos;
-            let to_copy = available.min(buf.len());
-            buf[..to_copy].copy_from_slice(&self.buffer[self.pos..self.pos + to_copy]);
-            self.pos += to_copy;
-
-            if self.pos >= self.buffer.len() {
-                self.buffer.clear();
-                self.pos = 0;
-            }
-
-            // upstream: io.c:read_buf() - tee post-demux data to batch_fd
-            if let Some(ref recorder) = self.batch_recorder {
-                let mut rec = recorder
-                    .lock()
-                    .map_err(|_| io::Error::other("batch recorder lock poisoned"))?;
-                rec.write_all(&buf[..to_copy])?;
-            }
-
-            return Ok(to_copy);
+            return self.drain_buffered(buf);
         }
 
         // Loop until we get a MSG_DATA message
@@ -375,19 +483,82 @@ impl<R: Read> Read for MultiplexReader<R> {
                 if self.buffer.is_empty() {
                     continue;
                 }
-                let to_copy = self.buffer.len().min(buf.len());
-                buf[..to_copy].copy_from_slice(&self.buffer[..to_copy]);
-                self.pos = to_copy;
+                return self.place_frame(buf);
+            }
+            self.check_error_exit()?;
+        }
+    }
+}
 
-                // upstream: io.c:read_buf() - tee post-demux data to batch_fd
-                if let Some(ref recorder) = self.batch_recorder {
-                    let mut rec = recorder
-                        .lock()
-                        .map_err(|_| io::Error::other("batch recorder lock poisoned"))?;
-                    rec.write_all(&buf[..to_copy])?;
+/// Async `.await`-driven demux, gated on the `tokio-transfer` feature.
+///
+/// This is the `.await` counterpart to the blocking [`Read`] impl above. It
+/// exists so a genuine receiver-side `.await` can pull multiplex frames off a
+/// [`tokio::io::AsyncRead`] socket without a blocking read, per the ASY-7
+/// receiver-prototype scoping (`docs/design/asy-7-receiver-tokio-prototype.md`).
+///
+/// The only difference from the sync driver is the frame read: it awaits
+/// [`protocol::recv_msg_into_async`] instead of blocking on
+/// [`protocol::recv_msg_into`]. Every non-read step - the demux loop shape, the
+/// empty-frame skip, the buffer-drain/place copies, the batch tee, the
+/// `check_error_exit` abort, and (crucially) the inline print/flush side effects
+/// via [`MultiplexReader::dispatch_message_with`] - is the exact same shared,
+/// reader-free code the sync driver runs. Because the dispatch core fires each
+/// side effect at the identical point relative to data delivery, the async
+/// output is byte-identical to the sync output, effect ordering included.
+///
+/// Additive and unwired: this driver is not connected to the receiver hot path
+/// yet (that routing is the next rung). It is exercised only by the sync-vs-
+/// async parity tests.
+#[cfg(feature = "tokio-transfer")]
+impl<R: tokio::io::AsyncRead + Unpin> MultiplexReader<R> {
+    /// Reads demultiplexed data into `buf`, awaiting the underlying socket.
+    ///
+    /// Byte-for-byte equivalent to [`Read::read`] with the production
+    /// [`RealSink`] side effects. See the impl-level docs for the parity
+    /// guarantee.
+    ///
+    /// Unwired pending the receiver-routing rung; only tests drive it, so it is
+    /// dead code in non-test builds.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) async fn read_async(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.read_async_with(buf, &mut RealSink).await
+    }
+
+    /// Reads demultiplexed data into `buf`, routing side effects through `sink`.
+    ///
+    /// Identical demux logic to [`Read::read`]; only the frame read is awaited
+    /// and the side-effect sink is injectable so parity tests can capture the
+    /// ordered effect sequence. Production callers use [`read_async`], which
+    /// supplies [`RealSink`].
+    ///
+    /// [`read_async`]: MultiplexReader::read_async
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(super) async fn read_async_with<S: MuxSink>(
+        &mut self,
+        buf: &mut [u8],
+        sink: &mut S,
+    ) -> io::Result<usize> {
+        if self.pos < self.buffer.len() {
+            return self.drain_buffered(buf);
+        }
+
+        // Loop until we get a MSG_DATA message
+        loop {
+            self.buffer.clear();
+            self.pos = 0;
+
+            let code = protocol::recv_msg_into_async(&mut self.inner, &mut self.buffer).await?;
+
+            if self.dispatch_message_with(code, sink) {
+                // upstream: io.c io_start_multiplex_out() sends a length-0
+                // MSG_DATA frame as a multiplex activation marker. Returning
+                // Ok(0) signals EOF, so we must skip empty data frames and
+                // continue to the next message - matching the sync driver.
+                if self.buffer.is_empty() {
+                    continue;
                 }
-
-                return Ok(to_copy);
+                return self.place_frame(buf);
             }
             self.check_error_exit()?;
         }

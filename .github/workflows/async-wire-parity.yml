@@ -62,3 +62,10 @@ jobs:
             -p protocol \
             --features tokio-transfer,zstd,lz4 \
             -E 'test(recv_msg_parity) | test(token_parity)'
+
+      - name: Run sync vs async MultiplexReader demux parity tests
+        run: |
+          cargo nextest run --locked \
+            -p transfer \
+            --features tokio-transfer \
+            -E 'test(demux_parity) | test(read_async_delivers_data_via_real_sink)'
