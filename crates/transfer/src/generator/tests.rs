@@ -785,6 +785,7 @@ fn stream_whole_file_produces_correct_wire_format() {
         ChecksumAlgorithm::MD5,
         None,
         &mut buf,
+        None,
     )
     .unwrap();
 
@@ -811,6 +812,7 @@ fn stream_whole_file_handles_empty_file() {
         ChecksumAlgorithm::MD5,
         None,
         &mut buf,
+        None,
     )
     .unwrap();
 
@@ -840,6 +842,7 @@ fn stream_whole_file_computes_correct_checksum() {
         ChecksumAlgorithm::MD5,
         None,
         &mut buf,
+        None,
     )
     .unwrap();
 
@@ -877,6 +880,7 @@ fn stream_whole_file_reuses_buffer() {
         ChecksumAlgorithm::None,
         None,
         &mut buf,
+        None,
     )
     .unwrap();
 
@@ -894,6 +898,7 @@ fn stream_whole_file_reuses_buffer() {
         ChecksumAlgorithm::None,
         None,
         &mut buf,
+        None,
     )
     .unwrap();
 
@@ -922,6 +927,7 @@ fn stream_whole_file_none_checksum() {
         ChecksumAlgorithm::None,
         None,
         &mut buf,
+        None,
     )
     .unwrap();
 

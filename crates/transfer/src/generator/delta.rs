@@ -75,6 +75,39 @@ pub(super) fn create_token_encoder(
 /// with a basis file are strongly preferred to reduce bandwidth.
 pub(super) const LARGE_FILE_WARNING_THRESHOLD: u64 = 8 * 1024 * 1024 * 1024; // 8 GB
 
+/// Concrete source-file and destination-socket descriptors for the SERVE path.
+///
+/// NSV-1 plumbing: threads the raw source `File` descriptor and, when available,
+/// the raw destination socket descriptor down to [`stream_whole_file_transfer`]
+/// so a later applicability gate (NSV-3) and platform sender (NSV-6..10) can
+/// engage a zero-copy file->socket path (sendfile / TransmitFile / splice).
+///
+/// Passed as `Option<ServeFds>`: `None` for transports without a usable fd pair
+/// (SSH pipe, stdio, TLS) or callers that never touch a socket (tests). When the
+/// source is a plain `File` but the socket fd is not reachable through the writer
+/// abstraction, `dst_fd` is `None` and the source fd is still surfaced so the
+/// future gate can decide.
+///
+/// This struct is purely additive: the current transfer never reads these fds,
+/// so wire bytes, stats, and output are byte-for-byte unchanged. The fields are
+/// intentionally unread until the NSV-3 zero-copy gate consumes them.
+#[allow(dead_code)]
+pub(super) struct ServeFds {
+    /// Raw descriptor of the concrete source `File`, when the source is a plain
+    /// file (not an io_uring reader or a `BufReader`).
+    #[cfg(unix)]
+    pub src_fd: std::os::fd::RawFd,
+    /// Raw descriptor of the destination socket, when the writer wraps a
+    /// concrete `TcpStream`. `None` for pipe/stdio/TLS writers or any writer
+    /// that erases its fd behind `dyn Write`.
+    #[cfg(unix)]
+    pub dst_fd: Option<std::os::fd::RawFd>,
+    /// Windows placeholder so the struct stays constructible on all platforms
+    /// while zero-copy remains Unix-only for now (NSV-6..10 add TransmitFile).
+    #[cfg(not(unix))]
+    pub _unsupported: (),
+}
+
 /// Result of streaming a whole file to the wire.
 ///
 /// Returned by [`stream_whole_file_transfer`] with the whole-file checksum that
@@ -215,7 +248,18 @@ pub(super) fn stream_whole_file_transfer<R: Read, W: Write>(
     checksum_algorithm: ChecksumAlgorithm,
     encoder: Option<&mut CompressedTokenEncoder>,
     buf: &mut Vec<u8>,
+    serve_fds: Option<ServeFds>,
 ) -> io::Result<StreamResult> {
+    // NSV-1: `serve_fds` carries the concrete source-file and destination-socket
+    // descriptors for the daemon SERVE path. It is plumbed but unused here. A
+    // future zero-copy gate (NSV-3) will branch at this point: when `serve_fds`
+    // yields both a source fd and a socket fd, no compression/checksum-only
+    // constraints apply, and the platform supports it, dispatch to a
+    // sendfile/TransmitFile/splice sender (NSV-6..10) instead of the read->hash->
+    // write loop below. Until then the bytes flow through the existing path
+    // unchanged, so wire output and stats are byte-for-byte identical.
+    let _ = &serve_fds;
+
     if file_size > LARGE_FILE_WARNING_THRESHOLD {
         debug_log!(
             Send,
