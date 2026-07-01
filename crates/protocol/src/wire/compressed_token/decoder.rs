@@ -151,11 +151,31 @@ impl CompressedTokenDecoder {
     #[must_use]
     pub fn initialized(&self) -> bool {
         match &self.inner {
-            DecoderInner::Zlib(dec) => dec.initialized,
+            DecoderInner::Zlib(dec) => dec.initialized(),
             #[cfg(feature = "zstd")]
-            DecoderInner::Zstd(dec) => dec.initialized,
+            DecoderInner::Zstd(dec) => dec.initialized(),
             #[cfg(feature = "lz4")]
-            DecoderInner::Lz4(dec) => dec.initialized,
+            DecoderInner::Lz4(dec) => dec.initialized(),
+        }
+    }
+
+    /// Receives the next token from the stream, awaiting the underlying
+    /// [`AsyncRead`](tokio::io::AsyncRead) rather than blocking.
+    ///
+    /// Byte-for-byte equivalent to [`recv_token`](Self::recv_token): it drives
+    /// the same per-algorithm sans-io decode state machine, differing only in
+    /// how bytes are pulled off the wire (`.await` versus a blocking read).
+    #[cfg(feature = "tokio-transfer")]
+    pub async fn recv_token_async<R>(&mut self, reader: &mut R) -> io::Result<CompressedToken>
+    where
+        R: tokio::io::AsyncRead + Unpin + ?Sized,
+    {
+        match &mut self.inner {
+            DecoderInner::Zlib(dec) => dec.recv_token_async(reader).await,
+            #[cfg(feature = "zstd")]
+            DecoderInner::Zstd(dec) => dec.recv_token_async(reader).await,
+            #[cfg(feature = "lz4")]
+            DecoderInner::Lz4(dec) => dec.recv_token_async(reader).await,
         }
     }
 }

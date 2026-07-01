@@ -56,9 +56,9 @@ jobs:
         with:
           tool: cargo-nextest
 
-      - name: Run sync vs async wire-byte parity test
+      - name: Run sync vs async wire-byte parity tests
         run: |
           cargo nextest run --locked \
             -p protocol \
-            --features tokio-transfer \
-            -E 'test(recv_msg_parity)'
+            --features tokio-transfer,zstd,lz4 \
+            -E 'test(recv_msg_parity) | test(token_parity)'
