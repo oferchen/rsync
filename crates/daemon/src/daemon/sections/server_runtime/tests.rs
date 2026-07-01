@@ -1436,11 +1436,12 @@ fn kqueue_engine_poll_returns_connection_with_blocking_reset() {
 
 #[cfg(target_os = "macos")]
 #[test]
-fn kqueue_engine_drains_burst_behind_one_notification() {
-    // Edge-triggered readiness (EV_CLEAR) fires once per readable transition, so
-    // several connections queued before a single kevent wake must all be
-    // drained rather than stranded. Connect three clients up front, then verify
-    // the engine hands back three distinct connections across successive polls.
+fn kqueue_engine_level_triggered_backlog_is_not_stranded() {
+    // Level-triggered readiness must re-surface a queued backlog on successive
+    // polls even though the engine takes only ONE connection per poll. Connect
+    // three clients up front, then verify the engine hands back all three
+    // distinct connections across successive polls (none stranded behind a
+    // consumed edge - the failure mode an EV_CLEAR registration would cause).
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
     let local = listener.local_addr().expect("local addr");
 
@@ -1468,7 +1469,63 @@ fn kqueue_engine_drains_burst_behind_one_notification() {
             AcceptOutcome::Closed => panic!("kqueue engine never reports Closed"),
         }
     }
-    assert_eq!(accepted, 3, "all queued connections must be drained, not dropped");
+    assert_eq!(accepted, 3, "all queued connections must be delivered, not stranded");
+
+    engine.shutdown();
+    drop(clients);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn kqueue_engine_needs_one_poll_per_queued_connection() {
+    // Admission-lockstep invariant: the engine must NOT drain and buffer a
+    // ready backlog inside a single poll. The shared accept loop reaps finished
+    // worker threads (dropping their connection guards) once per iteration,
+    // immediately before it polls; if one poll returned several connections
+    // their admissions would run back-to-back with no intervening reap. Yielding
+    // one connection per poll keeps the `max connections` accounting in lockstep
+    // with the loop's reap cadence, matching the single-listener engine.
+    //
+    // This is observable: with three clients queued up front, delivering all
+    // three requires (at least) three separate `poll()` calls that each return a
+    // `Connection`. A drain-and-buffer engine would satisfy the 2nd and 3rd from
+    // an internal queue without a fresh readiness wait; this test asserts the
+    // externally-visible contract that each connection costs its own poll.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let local = listener.local_addr().expect("local addr");
+
+    let mut clients = Vec::new();
+    for _ in 0..3 {
+        clients.push(TcpStream::connect(local).expect("connect"));
+    }
+    thread::sleep(Duration::from_millis(50));
+
+    let mut engine =
+        KqueueAcceptEngine::new(vec![listener], &[local], None).expect("kqueue engine");
+
+    // Count how many polls returned a Connection. Each poll returns at most one
+    // (the engine returns on the first successful accept), so three queued
+    // clients require three connection-returning polls.
+    let mut connection_polls = 0;
+    for _ in 0..40 {
+        match engine.poll().expect("poll") {
+            AcceptOutcome::Connection(_, peer) => {
+                assert!(peer.ip().is_loopback());
+                connection_polls += 1;
+                if connection_polls == 3 {
+                    break;
+                }
+            }
+            AcceptOutcome::Idle => continue,
+            AcceptOutcome::Closed => panic!("kqueue engine never reports Closed"),
+        }
+    }
+
+    assert_eq!(
+        connection_polls, 3,
+        "each queued connection must be delivered by its own poll so admission \
+         stays in lockstep with per-iteration worker reaping"
+    );
 
     engine.shutdown();
     drop(clients);

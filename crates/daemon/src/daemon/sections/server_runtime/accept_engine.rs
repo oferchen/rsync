@@ -292,7 +292,7 @@ impl AcceptEngine for MultiListenerEngine {
 }
 
 /// macOS `kqueue` accept engine: one `EVFILT_READ` registration per listener,
-/// readiness-driven `accept` with no per-iteration sleep.
+/// readiness-driven `accept` that yields exactly one connection per poll.
 ///
 /// Replaces the busy-wait shape of the portable engines (non-blocking `accept`
 /// plus a 50ms `WouldBlock` sleep) with a single `kevent(2)` wait over all
@@ -302,29 +302,48 @@ impl AcceptEngine for MultiListenerEngine {
 /// still bounding shutdown-flag inspection to the same 100ms cadence the
 /// dual-stack engine uses.
 ///
-/// The listeners are set non-blocking and registered `EVFILT_READ | EV_CLEAR`
-/// (edge-triggered). Because edge-triggered readiness fires once per readable
-/// transition, each ready listener is drained with repeated `accept` calls until
-/// `WouldBlock`, so a burst that queues several connections behind one
-/// notification is never dropped. Surplus accepted streams are buffered and
-/// handed out one per [`poll`](AcceptEngine::poll), preserving the "one
-/// connection per poll" contract the shared loop body relies on.
+/// # One connection per poll (admission correctness)
 ///
-/// Admission (`--max-connections`) and the N-listener fan-out are unchanged:
-/// this engine only sources accepted streams; the shared loop body still gates
-/// every returned connection through the process-global admission counter.
+/// The engine returns **exactly one** accepted connection per
+/// [`poll`](AcceptEngine::poll), matching the single-listener engine's
+/// one-at-a-time contract. This is load-bearing for `--max-connections`
+/// accounting: the shared accept loop reaps finished worker threads (dropping
+/// their [`ConnectionGuard`]s) only once per loop iteration, *before* it polls.
+/// An engine that drained and buffered several ready connections in one poll
+/// would hand them to the admission path back-to-back with no intervening reap,
+/// so guards from just-completed sequential transfers - still held while their
+/// worker threads finish teardown after the client has disconnected - would
+/// accumulate and spuriously trip the cap under rapid sequential load. Yielding
+/// one per poll routes every connection through the loop body's reap cadence,
+/// keeping the process-global counter in lockstep exactly as the portable
+/// engines do.
+///
+/// # Level-triggered readiness
+///
+/// Listeners are registered `EVFILT_READ` **without** `EV_CLEAR`
+/// (level-triggered) via [`submit_read_level`]. Because only one connection is
+/// taken per wake, a backlog that queues several connections must re-fire on the
+/// next `wait`; an edge-triggered (`EV_CLEAR`) registration would consume the
+/// edge after the first accept and strand the remainder until a *new* connection
+/// arrived. Level-triggered readiness re-surfaces the pending backlog on every
+/// poll, so no queued connection is ever lost.
+///
+/// Admission (`--max-connections`) and the N-listener fan-out are otherwise
+/// unchanged: this engine only sources accepted streams; the shared loop body
+/// still gates every returned connection through the process-global admission
+/// counter.
 ///
 /// Selected by [`build_accept_engine`] on macOS with a graceful fallback to the
 /// portable engines if `kqueue(2)` setup fails, so a kqueue error never breaks
 /// connection service.
+///
+/// [`submit_read_level`]: fast_io::KqueueLoop::submit_read_level
 #[cfg(target_os = "macos")]
 struct KqueueAcceptEngine {
     /// Registered listeners keyed by their `EVFILT_READ` user-data index.
     listeners: Vec<(TcpListener, SocketAddr)>,
     /// kqueue event surface; dropped (closing its fd) on [`Self::shutdown`].
     kq: fast_io::KqueueLoop,
-    /// Accepted streams drained from a readiness burst but not yet handed out.
-    pending: std::collections::VecDeque<(TcpStream, SocketAddr)>,
     log_sink: Option<SharedLogSink>,
 }
 
@@ -334,7 +353,8 @@ impl KqueueAcceptEngine {
     /// engine's `recv_timeout` interval so shutdown latency is identical.
     const WAIT_TIMEOUT: Duration = Duration::from_millis(100);
 
-    /// Builds the engine, registering an `EVFILT_READ` event per listener.
+    /// Builds the engine, registering a level-triggered `EVFILT_READ` event per
+    /// listener.
     ///
     /// Returns an `io::Error` (not a [`DaemonError`]) so the caller can fall
     /// back to the portable engines on any kqueue setup failure without
@@ -353,30 +373,33 @@ impl KqueueAcceptEngine {
             .zip(bound_addresses.iter().copied())
             .enumerate()
         {
-            // Non-blocking so the drain-accept loop terminates on WouldBlock
-            // instead of blocking after the edge-triggered notification.
+            // Non-blocking so the single accept below returns WouldBlock (rather
+            // than blocking) if the readiness was spurious or already consumed.
             listener.set_nonblocking(true)?;
-            kq.submit_read(listener.as_raw_fd(), index as u64)?;
+            // Level-triggered: a pending backlog re-fires on the next wait, so
+            // taking one connection per poll never strands queued connections.
+            kq.submit_read_level(listener.as_raw_fd(), index as u64)?;
             registered.push((listener, local_addr));
         }
         Ok(Self {
             listeners: registered,
             kq,
-            pending: std::collections::VecDeque::new(),
             log_sink,
         })
     }
 
-    /// Drains all currently-pending connections from one ready listener.
+    /// Accepts exactly one connection from a ready listener.
     ///
-    /// Edge-triggered readiness fires once per readable transition, so a single
-    /// notification may cover several queued connections. Accept until
-    /// `WouldBlock` to avoid stranding a connection behind the edge until the
-    /// next transition. Accepted streams are reset to blocking (BSD kernels
-    /// propagate the listener's `O_NONBLOCK` to the accepted socket) and pushed
-    /// onto the pending queue. Returns the local address paired with a fatal
-    /// accept error, or `None` when the listener drained cleanly.
-    fn drain_listener(&mut self, index: usize) -> Option<(SocketAddr, io::Error)> {
+    /// Returns the accepted (blocking) stream on success, `Ok(None)` if the
+    /// readiness was spurious / already consumed (`WouldBlock`) or the accepted
+    /// socket could not be reset to blocking, or the fatal accept error paired
+    /// with the listener's local address. Accepted streams are reset to blocking
+    /// because BSD kernels propagate the listener's `O_NONBLOCK` to the accepted
+    /// socket, which would otherwise break the synchronous handshake reader.
+    fn accept_one(
+        &self,
+        index: usize,
+    ) -> Result<Option<(TcpStream, SocketAddr)>, (SocketAddr, io::Error)> {
         let (listener, local_addr) = &self.listeners[index];
         let local_addr = *local_addr;
         loop {
@@ -389,13 +412,13 @@ impl KqueueAcceptEngine {
                             let message = rsync_warning!(text).with_role(Role::Daemon);
                             log_message(log, &message);
                         }
-                        continue;
+                        return Ok(None);
                     }
-                    self.pending.push_back((stream, peer_addr));
+                    return Ok(Some((stream, peer_addr)));
                 }
-                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return None,
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => return Ok(None),
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-                Err(error) => return Some((local_addr, error)),
+                Err(error) => return Err((local_addr, error)),
             }
         }
     }
@@ -404,10 +427,6 @@ impl KqueueAcceptEngine {
 #[cfg(target_os = "macos")]
 impl AcceptEngine for KqueueAcceptEngine {
     fn poll(&mut self) -> Result<AcceptOutcome, DaemonError> {
-        if let Some((stream, peer_addr)) = self.pending.pop_front() {
-            return Ok(AcceptOutcome::Connection(stream, peer_addr));
-        }
-
         let events = match self.kq.wait(Some(Self::WAIT_TIMEOUT)) {
             Ok(events) => events,
             // EINTR is folded into an empty result by KqueueLoop::wait; any
@@ -421,20 +440,26 @@ impl AcceptEngine for KqueueAcceptEngine {
             return Ok(AcceptOutcome::Idle);
         }
 
+        // Take exactly one connection this poll so every admission is preceded
+        // by the loop body's worker-reap step. Level-triggered readiness re-
+        // fires the remaining backlog on the next poll, so nothing is stranded.
         let mut fatal: Option<(SocketAddr, io::Error)> = None;
         for event in events {
             let index = event.user_data as usize;
             if index >= self.listeners.len() {
                 continue;
             }
-            if let Some(err) = self.drain_listener(index) {
-                fatal.get_or_insert(err);
+            match self.accept_one(index) {
+                Ok(Some((stream, peer_addr))) => {
+                    return Ok(AcceptOutcome::Connection(stream, peer_addr));
+                }
+                Ok(None) => continue,
+                Err(err) => {
+                    fatal.get_or_insert(err);
+                }
             }
         }
 
-        if let Some((stream, peer_addr)) = self.pending.pop_front() {
-            return Ok(AcceptOutcome::Connection(stream, peer_addr));
-        }
         if let Some((local_addr, error)) = fatal {
             return Err(accept_error(local_addr, error));
         }
@@ -444,8 +469,7 @@ impl AcceptEngine for KqueueAcceptEngine {
     fn shutdown(&mut self) {
         // The KqueueLoop closes its fd on drop; there are no acceptor threads to
         // join. Clearing the listeners drops their fds too, matching the
-        // portable engines' teardown. Idempotent: a second call finds both empty.
-        self.pending.clear();
+        // portable engines' teardown. Idempotent: a second call finds it empty.
         self.listeners.clear();
     }
 }
