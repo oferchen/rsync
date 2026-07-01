@@ -15,6 +15,7 @@ mod values;
 #[cfg(test)]
 mod tests;
 
+pub use coerce::ChecksumThreadsSetting;
 pub use entry::parse_args;
 
 use super::{BandwidthArgument, ParsedArgs, detect_program_name, env_protect_args_default};

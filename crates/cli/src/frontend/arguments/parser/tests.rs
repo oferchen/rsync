@@ -950,3 +950,33 @@ fn filter_short_arg_packed_inside_flag_cluster() {
     assert_eq!(parsed.filters, vec![std::ffi::OsString::from(":C")]);
     assert!(parsed.archive);
 }
+
+#[test]
+fn checksum_threads_defaults_to_none() {
+    let parsed = parse_test_args(["src/", "dst/"]).expect("parse without flag");
+    assert_eq!(parsed.checksum_threads, None);
+}
+
+#[test]
+fn checksum_threads_accepts_auto_zero_one_and_n() {
+    use crate::frontend::arguments::ChecksumThreadsSetting;
+    for (arg, expected) in [
+        ("auto", ChecksumThreadsSetting::Auto),
+        ("AUTO", ChecksumThreadsSetting::Auto),
+        ("0", ChecksumThreadsSetting::Auto),
+        ("1", ChecksumThreadsSetting::Sequential),
+        ("8", ChecksumThreadsSetting::Capped(8)),
+    ] {
+        let parsed = parse_test_args([&format!("--checksum-threads={arg}"), "src/", "dst/"])
+            .unwrap_or_else(|e| panic!("parse --checksum-threads={arg}: {e}"));
+        assert_eq!(parsed.checksum_threads, Some(expected), "value {arg}");
+    }
+}
+
+#[test]
+fn checksum_threads_rejects_invalid_and_out_of_range() {
+    for arg in ["nope", "-1", "2048", ""] {
+        let result = parse_test_args([&format!("--checksum-threads={arg}"), "src/", "dst/"]);
+        assert!(result.is_err(), "value {arg:?} must be rejected");
+    }
+}

@@ -444,6 +444,20 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .value_parser(OsStringValueParser::new()),
             )
             .arg(
+                Arg::new("checksum-threads")
+                    .long("checksum-threads")
+                    .value_name("N")
+                    .help(
+                        "Parallelise basis-signature checksum hashing. \
+                         auto/0 = use available cores above the size threshold \
+                         (default); 1 = force sequential; N = parallel, capping \
+                         the rayon pool to N (1-1024). Local-only; never sent to \
+                         the remote and never changes wire bytes.",
+                    )
+                    .num_args(1)
+                    .value_parser(OsStringValueParser::new()),
+            )
+            .arg(
                 Arg::new("tokio-threads")
                     .long("tokio-threads")
                     .value_name("N")

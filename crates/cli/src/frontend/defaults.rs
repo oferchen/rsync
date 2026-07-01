@@ -29,7 +29,7 @@ pub(super) const SUPPORTED_OPTIONS_LIST: &str = concat!(
     "--chown, --usermap, --groupmap, --chmod, --executability/-E, --perms/-p, --no-perms, --times/-t, --no-times, ",
     "--atimes/-U, --no-atimes, --crtimes/-N, --no-crtimes, --omit-dir-times, --no-omit-dir-times, --omit-link-times, --no-omit-link-times, ",
     "--acls/-A, --no-acls, --xattrs/-X, --no-xattrs, ",
-    "--numeric-ids, --no-numeric-ids, --rayon-threads, --tokio-threads"
+    "--numeric-ids, --no-numeric-ids, --rayon-threads, --checksum-threads, --tokio-threads"
 );
 
 /// Format string used for `--itemize-changes` output.

@@ -46,6 +46,54 @@ pub(super) fn parse_thread_count(
     }
 }
 
+/// Resolved `--checksum-threads` request.
+///
+/// Local-only performance knob controlling parallel basis-signature hashing.
+/// Never forwarded to the remote server and never changes wire bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChecksumThreadsSetting {
+    /// `auto` / `0`: parallel above the size threshold using available cores.
+    Auto,
+    /// `1`: force sequential hashing.
+    Sequential,
+    /// `N > 1`: parallel, capping the rayon pool to `N` threads.
+    Capped(u32),
+}
+
+/// Parses the `--checksum-threads` value.
+///
+/// Accepts `auto` (case-insensitive), `0` (both meaning parallel-auto), `1`
+/// (force sequential), or `N` in `2..=1024` (parallel, cap the rayon pool to
+/// `N`). Returns `Ok(None)` when the flag was not supplied, leaving the
+/// bench-validated default (parallel-auto) in place.
+pub(super) fn parse_checksum_threads(
+    matches: &mut clap::ArgMatches,
+) -> Result<Option<ChecksumThreadsSetting>, clap::Error> {
+    let Some(value) = matches.remove_one::<OsString>("checksum-threads") else {
+        return Ok(None);
+    };
+    let raw = value.to_string_lossy();
+    let trimmed = raw.trim();
+    if trimmed.eq_ignore_ascii_case("auto") {
+        return Ok(Some(ChecksumThreadsSetting::Auto));
+    }
+    let invalid = || {
+        clap::Error::raw(
+            clap::error::ErrorKind::ValueValidation,
+            format!(
+                "invalid --checksum-threads value '{raw}': must be 'auto', 0 \
+                 (parallel), 1 (sequential), or 2-{MAX_THREAD_COUNT} (cap)\n"
+            ),
+        )
+    };
+    match trimmed.parse::<u32>() {
+        Ok(0) => Ok(Some(ChecksumThreadsSetting::Auto)),
+        Ok(1) => Ok(Some(ChecksumThreadsSetting::Sequential)),
+        Ok(n) if n <= MAX_THREAD_COUNT => Ok(Some(ChecksumThreadsSetting::Capped(n))),
+        _ => Err(invalid()),
+    }
+}
+
 /// Parses the `--spill-threshold-bytes` value into a positive byte count.
 ///
 /// Accepts a positive integer with an optional case-insensitive K/M/G/T/P/E

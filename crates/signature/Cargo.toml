@@ -36,3 +36,8 @@ parallel = []
 
 [dev-dependencies]
 tempfile = { workspace = true }
+criterion = { workspace = true }
+
+[[bench]]
+name = "signature_parallel"
+harness = false
