@@ -59,11 +59,13 @@ impl<'a> CopyContext<'a> {
         source: &Path,
         relative_dir: Option<&Path>,
     ) -> Result<DirectoryFilterGuard, LocalCopyError> {
-        self.enter_directory_for_path(source, relative_dir, true)
+        self.enter_directory_for_path(source, relative_dir, true, false)
     }
 
     /// Loads per-dir-merge filter files from the destination directory before a
-    /// deletion scan.
+    /// deletion scan, pushing exactly this directory's rules onto the shared
+    /// per-directory filter stacks and returning a guard that pops them (and
+    /// restores any inherited entries a `clear` directive wiped) on drop.
     ///
     /// upstream: delete.c:63 - `delete_dir_contents()` calls
     /// `push_local_filters(fname, dlen)` with the destination directory so the
@@ -71,40 +73,37 @@ impl<'a> CopyContext<'a> {
     /// scanned for extraneous entries. The returned guard pops the loaded rules
     /// when it drops, mirroring the matching `pop_local_filters()` call on
     /// `delete.c:115`.
+    ///
+    /// # Incremental isolation (PEX, #333)
+    ///
+    /// The destination scan runs while the source-visible per-directory filter
+    /// stacks are already populated to the current traversal depth. Rather than
+    /// cloning the entire ancestor stack before the load and restoring it
+    /// verbatim afterwards (O(depth) per visit, O(depth^2) across the walk),
+    /// this pushes ONLY this directory's destination merge rules and undoes
+    /// exactly that delta on drop:
+    ///
+    /// - the single dynamic frame, the single ephemeral frame, and every
+    ///   `layers[index].push` / `marker_layers[index].extend` are balanced by
+    ///   [`DirectoryFilterGuard`]'s normal per-index pop (identical to the
+    ///   source-side guard);
+    /// - the ONLY unbalanced mutation is a `clear` directive
+    ///   (`clear_inherited`) calling `layers[index].clear()` /
+    ///   `marker_layers[index].clear()`, which discards inherited entries the
+    ///   per-index pop cannot restore (exclude.c:801 keeps inherited rules in
+    ///   `lp->head` an arbitrary number of indices deep). Those wiped vectors
+    ///   are captured before the clear and restored after the pop, so the
+    ///   source-visible state is left byte-identical to before the load.
+    ///
+    /// This mirrors upstream's persistent `delete_filt` chain (`change_local_
+    /// filter_dir` pops filters at depth > current, then pushes this dir's
+    /// local filters) without ever cloning the source-side chain.
     pub(crate) fn enter_destination_for_deletion(
         &self,
         destination: &Path,
         relative_dir: Option<&Path>,
     ) -> Result<DirectoryFilterGuard, LocalCopyError> {
-        // upstream: delete.c:65-115 `delete_in_dir()` pushes the destination
-        // directory's per-dir merge files onto a separate `delete_filt` chain
-        // (seeded by `change_local_filter_dir`) and pops them afterwards, so the
-        // destination scan never perturbs the sender's `filter_list`. Our merge
-        // stacks are shared between source planning (`allows`) and the deletion
-        // scan (`allows_deletion`), and a destination merge file can register
-        // nested `dir-merge` directives whose loaded segments the per-index pop
-        // logic cannot fully balance (exclude.c:801 seeds `lp->head` from rules
-        // an arbitrary number of indices deep). Snapshot the whole source-visible
-        // state before the destination load and restore it verbatim on guard
-        // drop. The loaded frame stays live for the duration of the scan so
-        // `allows_deletion` still honours destination-side per-dir protect rules
-        // (the data-loss guardrail), then the source plan is restored exactly.
-        let snapshot = self.snapshot_filter_state();
-        let mut guard = self.enter_directory_for_path(destination, relative_dir, false)?;
-        guard.arm_restore(snapshot);
-        Ok(guard)
-    }
-
-    /// Captures the current source-visible per-directory filter state so a
-    /// destination-deletion scan can be reverted exactly when its guard drops.
-    fn snapshot_filter_state(&self) -> FilterStateSnapshot {
-        FilterStateSnapshot {
-            layers: self.dir_merge_layers.borrow().clone(),
-            marker_layers: self.dir_merge_marker_layers.borrow().clone(),
-            ephemeral: self.dir_merge_ephemeral.borrow().clone(),
-            marker_ephemeral: self.dir_merge_marker_ephemeral.borrow().clone(),
-            dynamic: self.dynamic_dir_merge_stack.borrow().clone(),
-        }
+        self.enter_directory_for_path(destination, relative_dir, false, true)
     }
 
     fn enter_directory_for_path(
@@ -112,6 +111,7 @@ impl<'a> CopyContext<'a> {
         directory: &Path,
         relative_dir: Option<&Path>,
         check_directory_excluded: bool,
+        capture_cleared_layers: bool,
     ) -> Result<DirectoryFilterGuard, LocalCopyError> {
         let source = directory;
         let Some(program) = &self.filter_program else {
@@ -134,6 +134,13 @@ impl<'a> CopyContext<'a> {
 
         let mut added_indices = Vec::new();
         let mut marker_counts = Vec::new();
+        // PEX (#333): when the caller is the destination-deletion scan, record
+        // the pre-clear contents of any `layers[index]` / `marker_layers[index]`
+        // a `clear` directive is about to wipe, so the guard can restore the
+        // inherited entries the per-index pop cannot rebuild. Empty (and never
+        // populated) on the source-side path, whose nested guards restore state
+        // by unwinding in child-before-parent order.
+        let mut cleared_layers: Vec<ClearedLayerRestore> = Vec::new();
         let mut layers = self.dir_merge_layers.borrow_mut();
         let mut marker_layers = self.dir_merge_marker_layers.borrow_mut();
         let mut ephemeral_stack = self.dir_merge_ephemeral.borrow_mut();
@@ -187,6 +194,7 @@ impl<'a> CopyContext<'a> {
                 continue;
             }
 
+            record_filter_file_load();
             let mut visited = Vec::new();
             let mut entries = match load_dir_merge_rules_recursive(
                 candidate.as_path(),
@@ -243,6 +251,21 @@ impl<'a> CopyContext<'a> {
             // If the filter file had a clear directive, we should clear inherited rules
             // from parent directories before adding any new rules from this directory.
             if clear_inherited && rule.options().inherit_rules() {
+                // PEX (#333): capture the inherited entries this clear discards
+                // BEFORE wiping them, but only once per index and only for the
+                // destination-deletion scan. The captured vectors are restored
+                // after the guard's per-index pop so source-visible state is
+                // left byte-identical (the per-index pop alone cannot rebuild
+                // cleared inherited entries - exclude.c:801).
+                if capture_cleared_layers
+                    && !cleared_layers.iter().any(|restore| restore.index == index)
+                {
+                    cleared_layers.push(ClearedLayerRestore {
+                        index,
+                        layer: layers[index].clone(),
+                        markers: marker_layers[index].clone(),
+                    });
+                }
                 layers[index].clear();
                 marker_layers[index].clear();
                 // Remove any indices we may have added for parent directories
@@ -329,14 +352,10 @@ impl<'a> CopyContext<'a> {
             marker_ephemeral: Rc::clone(&self.dir_merge_marker_ephemeral),
             dynamic: Rc::clone(&self.dynamic_dir_merge_stack),
         };
-        Ok(DirectoryFilterGuard::new(
-            handles,
-            added_indices,
-            marker_counts,
-            true,
-            true,
-            excluded,
-        ))
+        Ok(
+            DirectoryFilterGuard::new(handles, added_indices, marker_counts, true, true, excluded)
+                .with_cleared_restores(cleared_layers),
+        )
     }
 
     /// Resolves a single nested `dir-merge` rule against `source` and loads its
@@ -364,6 +383,7 @@ impl<'a> CopyContext<'a> {
             return Ok(None);
         }
 
+        record_filter_file_load();
         let mut visited = Vec::new();
         let mut entries = load_dir_merge_rules_recursive(
             candidate.as_path(),
