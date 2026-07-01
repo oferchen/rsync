@@ -19,7 +19,7 @@ use core::client::{
     AddressMode, DeleteMode, HumanReadableMode, StrongChecksumChoice, TcpFastOpenMode,
 };
 
-use super::coerce::{parse_spill_threshold_bytes, parse_thread_count};
+use super::coerce::{parse_checksum_threads, parse_spill_threshold_bytes, parse_thread_count};
 use super::cow::{last_occurrence, parse_reflink_mode, resolve_cow_policy};
 use super::flags::{tri_state_flag_negative_first, tri_state_flag_positive_first};
 use super::values::join_os_values;
@@ -207,6 +207,7 @@ where
 
     let rayon_threads = parse_thread_count(&mut matches, "rayon-threads")?;
     let tokio_threads = parse_thread_count(&mut matches, "tokio-threads")?;
+    let checksum_threads = parse_checksum_threads(&mut matches)?;
 
     let spill_dir = matches
         .remove_one::<OsString>("spill-dir")
@@ -957,6 +958,7 @@ where
         adaptive_concurrency,
         rayon_threads,
         tokio_threads,
+        checksum_threads,
         spill_dir,
         spill_threshold_bytes,
         no_spill,

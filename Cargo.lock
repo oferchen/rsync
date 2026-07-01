@@ -3534,6 +3534,7 @@ name = "signature"
 version = "0.6.3"
 dependencies = [
  "checksums",
+ "criterion",
  "protocol",
  "rayon",
  "tempfile",

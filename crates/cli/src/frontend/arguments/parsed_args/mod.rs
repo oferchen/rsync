@@ -632,6 +632,13 @@ pub struct ParsedArgs {
     /// enabled at build time; otherwise the value is parsed and discarded.
     pub tokio_threads: Option<u32>,
 
+    /// `--checksum-threads` - control parallel basis-signature hashing.
+    ///
+    /// `None` leaves the bench-validated default (parallel above the size
+    /// threshold). Local-only performance knob; never forwarded to the remote
+    /// server and never changes wire bytes.
+    pub checksum_threads: Option<super::ChecksumThreadsSetting>,
+
     /// `--spill-dir` - override the reorder-buffer spill directory.
     ///
     /// Overrides the `OC_RSYNC_SPILL_DIR` environment variable and the

@@ -14,7 +14,7 @@ use crate::frontend::execution::drive::{config, filters, metadata, options, summ
 use crate::frontend::outbuf::parse_outbuf_mode;
 use crate::frontend::progress::{ProgressOutputConfig, StderrMode};
 use crate::frontend::{
-    arguments::{ParsedArgs, StopRequest},
+    arguments::{ChecksumThreadsSetting, ParsedArgs, StopRequest},
     execution::{
         chown::ParsedChown, extract_operands, load_file_list_operands, operand_is_remote,
         parse_chown_argument, resolve_file_list_entries, resolve_files_from_source,
@@ -228,6 +228,7 @@ where
         jump_host,
         rayon_threads,
         tokio_threads,
+        checksum_threads,
         spill_dir,
         spill_threshold_bytes,
         no_spill,
@@ -275,7 +276,37 @@ where
 
     let rayon_thread_count = rayon_threads.and_then(|n| NonZeroUsize::new(n as usize));
     let tokio_thread_count = tokio_threads.and_then(|n| NonZeroUsize::new(n as usize));
-    if let Some(threads) = rayon_thread_count {
+
+    // Resolve `--checksum-threads` into the receiver's basis-signature policy
+    // and, for the capped form, an implied rayon pool size. This is an
+    // oc-only local performance knob: it is never forwarded to the remote
+    // server and never changes wire bytes (the signature is byte-identical
+    // regardless of thread count).
+    let checksum_rayon_cap = match checksum_threads {
+        Some(ChecksumThreadsSetting::Auto) => {
+            core::server::receiver::set_checksum_threads_policy(
+                core::server::receiver::ChecksumThreadsPolicy::Auto,
+            );
+            None
+        }
+        Some(ChecksumThreadsSetting::Sequential) => {
+            core::server::receiver::set_checksum_threads_policy(
+                core::server::receiver::ChecksumThreadsPolicy::Sequential,
+            );
+            None
+        }
+        Some(ChecksumThreadsSetting::Capped(n)) => {
+            core::server::receiver::set_checksum_threads_policy(
+                core::server::receiver::ChecksumThreadsPolicy::Auto,
+            );
+            NonZeroUsize::new(n as usize)
+        }
+        None => None,
+    };
+
+    // `--rayon-threads` takes precedence over the `--checksum-threads=N` cap
+    // when both are supplied; either way the global pool is installed once.
+    if let Some(threads) = rayon_thread_count.or(checksum_rayon_cap) {
         super::super::thread_tunables::install_rayon_thread_count(threads, stderr);
     }
 

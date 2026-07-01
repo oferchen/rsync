@@ -240,20 +240,67 @@ fn generate_basis_signature(
     }
 }
 
-/// Process-wide opt-in gate for parallel basis-signature generation.
+/// Process-wide policy set by the `--checksum-threads` CLI flag, overriding the
+/// bench-validated default (parallel-on above the threshold).
 ///
-/// Read once from `OC_RSYNC_PARALLEL_CHECKSUM` (truthy = `1` / `true` / `yes`,
-/// case-insensitive) via a [`OnceLock`], matching the other `OC_RSYNC_*`
-/// runtime probes. Default off: signature generation stays sequential and the
-/// wire output is byte-identical either way. This is the interim opt-in until a
-/// `--checksum-threads` flag plus adaptive backpressure land; gating keeps the
-/// parallel path out of default builds until it is bench-validated.
+/// Installed once at CLI startup via [`set_checksum_threads_policy`]. Because
+/// the basis signature is wire-visible and byte-identical regardless of thread
+/// count, this is a pure local performance knob - it is never forwarded to the
+/// upstream server as an argument, exactly like `--rayon-threads`.
+static CHECKSUM_THREADS_POLICY: OnceLock<ChecksumThreadsPolicy> = OnceLock::new();
+
+/// Resolved `--checksum-threads` behaviour for basis-signature hashing.
+///
+/// `auto`/`0` fans per-block checksums across the rayon pool for baseses at or
+/// above [`PARALLEL_THRESHOLD_BYTES`]; `1` forces the sequential path; `N > 1`
+/// is parallel with the rayon pool capped to `N` (the cap is applied by the CLI
+/// via the shared `--rayon-threads` mechanism, so this variant only records the
+/// parallel intent here).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChecksumThreadsPolicy {
+    /// Parallel above the threshold using the available rayon pool.
+    Auto,
+    /// Force sequential hashing regardless of basis size.
+    Sequential,
+}
+
+impl ChecksumThreadsPolicy {
+    /// Whether this policy selects the parallel windowed generator.
+    #[must_use]
+    const fn is_parallel(self) -> bool {
+        matches!(self, Self::Auto)
+    }
+}
+
+/// Installs the process-wide `--checksum-threads` policy.
+///
+/// Called once from CLI startup before any transfer begins. Later calls are
+/// ignored (the first policy wins), matching the write-once semantics of the
+/// other startup thread tunables.
+pub fn set_checksum_threads_policy(policy: ChecksumThreadsPolicy) {
+    let _ = CHECKSUM_THREADS_POLICY.set(policy);
+}
+
+/// Resolves whether the parallel windowed generator should be used.
+///
+/// Precedence: an explicit `--checksum-threads` policy wins; otherwise the
+/// `OC_RSYNC_PARALLEL_CHECKSUM` env var is consulted as a documented override
+/// (`0`/`false`/`no` forces sequential); absent both, the bench-validated
+/// default is parallel-on. The wire output is byte-identical either way.
 fn parallel_checksum_enabled() -> bool {
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
+    if let Some(policy) = CHECKSUM_THREADS_POLICY.get() {
+        return policy.is_parallel();
+    }
+    static ENV_DEFAULT: OnceLock<bool> = OnceLock::new();
+    *ENV_DEFAULT.get_or_init(|| {
         std::env::var("OC_RSYNC_PARALLEL_CHECKSUM")
-            .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
-            .unwrap_or(false)
+            .map(|v| {
+                !matches!(
+                    v.trim().to_ascii_lowercase().as_str(),
+                    "0" | "false" | "no" | "off"
+                )
+            })
+            .unwrap_or(true)
     })
 }
 
@@ -361,6 +408,57 @@ mod tests {
         assert_eq!(
             sequential, parallel,
             "parallel basis signature diverged from sequential",
+        );
+    }
+
+    #[test]
+    fn checksum_threads_policy_maps_to_parallel_flag() {
+        // The `--checksum-threads` policy must map to exactly the parallel
+        // gate: auto -> parallel, sequential -> sequential. A regression here
+        // would silently (dis)engage the parallel windowed generator.
+        assert!(ChecksumThreadsPolicy::Auto.is_parallel());
+        assert!(!ChecksumThreadsPolicy::Sequential.is_parallel());
+    }
+
+    #[test]
+    fn checksum_threads_policy_paths_are_byte_identical() {
+        // The `--checksum-threads` flag selects between the parallel windowed
+        // generator (Auto) and the sequential generator (Sequential). Because
+        // the basis signature is wire-visible, both policies MUST yield a
+        // byte-identical FileSignature - otherwise the flag would corrupt
+        // delta reconstruction depending on thread count. Size exceeds the
+        // threshold so Auto actually engages the parallel branch.
+        use std::io::Cursor;
+        let size = (PARALLEL_THRESHOLD_BYTES * 4 + 4096) as usize;
+        let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+        let layout = calculate_signature_layout(SignatureLayoutParams::new(
+            size as u64,
+            None,
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        ))
+        .expect("layout");
+
+        let auto = compute_basis_signature(
+            Cursor::new(data.clone()),
+            size as u64,
+            layout,
+            SignatureAlgorithm::Md4,
+            ChecksumThreadsPolicy::Auto.is_parallel(),
+        )
+        .expect("auto signature");
+        let sequential = compute_basis_signature(
+            Cursor::new(data),
+            size as u64,
+            layout,
+            SignatureAlgorithm::Md4,
+            ChecksumThreadsPolicy::Sequential.is_parallel(),
+        )
+        .expect("sequential signature");
+
+        assert_eq!(
+            auto, sequential,
+            "--checksum-threads parallel and sequential paths must be byte-identical",
         );
     }
 
