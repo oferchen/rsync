@@ -26,6 +26,17 @@ use crate::config::ServerConfig;
 use crate::handshake::HandshakeResult;
 use crate::transfer_state::TransferPipeline;
 
+/// Concrete source-file descriptor surfaced by `open_source_unbuffered`.
+///
+/// NSV-1: `RawFd` on Unix so the daemon SERVE path can later engage a zero-copy
+/// file->socket sender. `!()` collapses to unit on non-unix where no fd exists;
+/// the value is always `None` there.
+#[cfg(unix)]
+pub(crate) type SourceFd = std::os::fd::RawFd;
+/// Non-unix placeholder for the source descriptor (never populated).
+#[cfg(not(unix))]
+pub(crate) type SourceFd = ();
+
 /// Context for the generator role during a transfer.
 ///
 /// Holds protocol state, configuration, file list, and filter rules needed
@@ -487,11 +498,19 @@ impl GeneratorContext {
     ///
     /// The io_uring fast path is unchanged - it already returns a reader with
     /// its own internal buffering strategy.
+    ///
+    /// # NSV-1
+    ///
+    /// Returns the reader together with the concrete source `RawFd` when the
+    /// fallback path opens a plain `File` (Unix only). The io_uring fast path
+    /// yields `None` for the fd because its reader owns the descriptor behind an
+    /// abstraction; a later zero-copy SERVE gate applies only to the plain-file
+    /// case. The fd is purely informational here - the byte stream is identical.
     pub(crate) fn open_source_unbuffered(
         &self,
         path: &std::path::Path,
         file_size: u64,
-    ) -> std::io::Result<Box<dyn std::io::Read>> {
+    ) -> std::io::Result<(Box<dyn std::io::Read>, Option<SourceFd>)> {
         // 1 MB threshold: io_uring ring creation has fixed overhead that only
         // pays off for larger reads where batched syscalls reduce total cost.
         const IO_URING_READ_THRESHOLD: u64 = 1024 * 1024;
@@ -507,7 +526,7 @@ impl GeneratorContext {
                 self.config.write.io_uring_policy,
                 self.config.write.io_uring_depth,
             ) {
-                Ok(r) => return Ok(Box::new(r)),
+                Ok(r) => return Ok((Box::new(r), None)),
                 Err(_) => {
                     // Fall through to raw File on io_uring failure
                 }
@@ -515,7 +534,11 @@ impl GeneratorContext {
         }
 
         let f = open_source::open_source_with_noatime(path, use_noatime)?;
-        Ok(Box::new(f))
+        #[cfg(unix)]
+        let src_fd = Some(std::os::fd::AsRawFd::as_raw_fd(&f));
+        #[cfg(not(unix))]
+        let src_fd = None;
+        Ok((Box::new(f), src_fd))
     }
 
     /// Returns the upstream `missing_args` mode for ENOENT handling.
