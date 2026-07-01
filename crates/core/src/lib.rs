@@ -29,6 +29,15 @@ pub mod message;
 /// Implements the `--rsh`/`-e` option handling from upstream `options.c`
 /// and the shell execution logic from `main.c:do_cmd()`.
 pub mod remote_shell;
+/// Session-level transfer pipeline driver selection and tokio runtime
+/// ownership shim.
+///
+/// Exposes `session::run_server_stdio`, a driver-agnostic facade over the
+/// server entry point. When the `tokio-transfer` feature is off it forwards to
+/// the threaded `transfer::run_server_stdio` with zero tokio in the path;
+/// when on, it owns the tokio runtime and drives the transfer future. The
+/// public signature is identical in both cases.
+pub mod session;
 /// Server orchestration helpers consumed by CLI and embedding entry points.
 ///
 /// Re-exported from the [`transfer`] crate for backward compatibility.

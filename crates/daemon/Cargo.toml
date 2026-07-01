@@ -25,6 +25,12 @@ async = ["dep:tokio", "core/async"]
 # `docs/design/daemon-async-accept-sync-workers.md` and the concrete
 # implementation steps in `docs/design/daemon-tokio-async-listener-impl.md`.
 async-daemon = ["dep:tokio"]
+# EXPERIMENTAL (ASY-3, default-off): lets the hybrid async listener hand
+# accepted connections to the tokio transfer driver. Implies `async-daemon`
+# (tokio accept loop) and forwards `core/tokio-transfer` so the per-connection
+# server body can run on the runtime. Default-off until the ASY-12 gate. See
+# docs/design/asy-2-tokio-runtime-feature.md section 5.
+tokio-transfer = ["async-daemon", "core/tokio-transfer"]
 # Concurrent session tracking - enables efficient shared state for multi-session daemons
 concurrent-sessions = ["dep:dashmap"]
 # Extended attributes (xattr) preservation during transfers

@@ -198,6 +198,12 @@ pub use pipeline::{
 pub use progress::{ItemizeCallback, TransferProgressCallback, TransferProgressEvent};
 pub use transfer_state::{InvalidTransition, TransferPhase, TransferPipeline};
 
+// ASY-3: tokio-hosted server driver entry point. Re-exported so `core`'s
+// session shim can call it without reaching into the private `pipeline` module.
+// Default-off behind `tokio-transfer`; the threaded path never references it.
+#[cfg(feature = "tokio-transfer")]
+pub use pipeline::tokio_driver::run_server_with_handshake_on;
+
 /// Batch recording configuration for protocol stream teeing.
 ///
 /// When provided to `run_server_with_handshake`, enables post-demux (reader) or

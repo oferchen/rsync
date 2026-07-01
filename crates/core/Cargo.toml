@@ -95,6 +95,14 @@ embedded-ssh = ["dep:tokio", "rsync_io/embedded-ssh"]
 # Async runtime support - enables tokio-based async I/O for core operations
 async = ["dep:tokio", "engine/async", "transfer/async"]
 
+# EXPERIMENTAL (ASY-3, default-off): adds the runtime-ownership shim in the
+# core client facade. Implies `async` and pulls tokio + the transfer-side
+# tokio driver. The shim probes `Handle::try_current()`, adopting an existing
+# runtime or building a session-scoped current-thread runtime and
+# `block_on`-ing the transfer future. No tokio type appears in any public
+# `core` signature. See docs/design/asy-2-tokio-runtime-feature.md section 5.
+tokio-transfer = ["async", "dep:tokio", "transfer/tokio-transfer"]
+
 
 # DEPRECATED (ISI.h): sender INC_RECURSE is now default-on. Marker
 # retained for one release until ISI.i.2 retires the feature flag.

@@ -138,6 +138,14 @@ sender-inc-recurse = []
 # Async runtime support - enables tokio-based async pipeline for transfers
 async = ["dep:tokio", "dep:tokio-util"]
 
+# EXPERIMENTAL (ASY-3, default-off): compiles the tokio-hosted transfer
+# driver (`pipeline::tokio_driver`). Implies `async` (which pulls tokio +
+# tokio-util). For this rung the driver hosts the existing sync server body
+# on a tokio runtime and produces byte-identical wire output; per-boundary
+# `.await` conversion is deferred to ASY-7/8. See
+# docs/design/asy-3-async-boundary-spec.md.
+tokio-transfer = ["async"]
+
 # ============================================================================
 # Debugging Features
 # ============================================================================

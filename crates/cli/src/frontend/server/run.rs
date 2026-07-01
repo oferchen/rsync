@@ -25,7 +25,12 @@ where
     Out: Write,
     Err: Write,
 {
-    use core::server::{ServerConfig, ServerRole, run_server_stdio};
+    // Route through the session-level driver facade so the `tokio-transfer`
+    // feature can select the tokio-hosted driver. The signature and result are
+    // identical to `core::server::run_server_stdio`; only the driver changes.
+    // Default builds forward straight to the threaded path (ASY-3).
+    use core::server::{ServerConfig, ServerRole};
+    use core::session::run_server_stdio;
 
     let program_brand =
         super::super::detect_program_name(args.first().map(OsString::as_os_str)).brand();

@@ -127,6 +127,19 @@ embedded-ssh = ["core/embedded-ssh"]
 # Async runtime support - enables tokio-based async I/O throughout the codebase
 async = ["daemon/async", "core/async"]
 
+# EXPERIMENTAL (ASY-3, default-off): hosts the transfer pipeline on a tokio
+# runtime instead of the threaded scheduler. Implies `async`. The threaded
+# production path is unchanged when this is off; when on, the tokio driver
+# runs the same sync pipeline body inside a runtime and MUST produce
+# byte-identical wire output. Not stabilized until the ASY-12 bench gate.
+# See docs/design/asy-2-tokio-runtime-feature.md and asy-3-async-boundary-spec.md.
+tokio-transfer = [
+    "async",
+    "core/tokio-transfer",
+    "transfer/tokio-transfer",
+    "daemon/tokio-transfer",
+]
+
 # systemd sd-notify integration for daemon
 sd-notify = ["daemon/sd-notify"]
 
