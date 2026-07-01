@@ -78,6 +78,13 @@ pub mod async_pipeline;
 #[cfg(feature = "tokio-transfer")]
 pub mod tokio_driver;
 
+// ASY-4: async transport wrapper seam. Gated on `tokio-transfer`. An additive,
+// unwired `AsyncRead + AsyncWrite` adapter over the socket-backed transport
+// that the coupled ASY-7-redo receiver rung consumes. Not wired into the
+// receiver read path, demux, SPSC bridge, or `core::session`; default-off.
+#[cfg(feature = "tokio-transfer")]
+pub(crate) mod async_transport;
+
 pub use job::{FileJob, FileList, MAX_RETRY_COUNT, TransferFlags};
 pub use pending::PendingTransfer;
 pub use state::PipelineState;
