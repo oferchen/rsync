@@ -50,6 +50,13 @@ io-uring = { version = "0.7", optional = true }
 # downgrade picks the highest ABI the running kernel exposes.
 landlock = { version = "0.4", optional = true }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# Optional: Objective-C block support for the Grand Central Dispatch
+# `dispatch_io` async file I/O primitives (macos-gcd feature). Only pulled in
+# on macOS and only when the feature is enabled; `block2` builds an ABI-correct
+# heap block that `dispatch_io_read`/`dispatch_io_write` invoke on completion.
+block2 = { version = "0.6", optional = true }
+
 [features]
 default = ["io_uring", "iocp", "sqpoll-mlock-basis"]
 
@@ -124,6 +131,16 @@ vmsplice = []
 # `write(2)` on kernels or filesystems that reject the flag.
 dontcache = []
 
+# macos-gcd: macOS-only Grand Central Dispatch `dispatch_io` async file I/O
+# primitives (MFAST-1). Activates `fast_io::gcd` with `GcdQueue`, `GcdReader`,
+# and `GcdWriter`: safe wrappers that drive `dispatch_io_read`/`dispatch_io_write`
+# to completion and bridge the async completion back to the crate's blocking,
+# threaded call model via a condvar. Default off; pulls in the `block2` crate
+# for the completion block. These are the primitives only - no transfer path
+# consumes them yet (that is MFAST-3/4/5). On non-macOS targets the feature is
+# inert (the module is not compiled).
+macos-gcd = ["dep:block2"]
+
 # EXPERIMENTAL: SMR-3c - per-file adaptive basis-read dispatch with throughput
 # feedback. Tracks rolling EWMA throughput of the mmap and io_uring backends
 # per process and picks whichever has won lately. Falls back to the SMR-3b
@@ -171,6 +188,7 @@ iouring-data-writes = ["io_uring"]
 # until SMR-1 hardware numbers validate Option 1. See the same document for
 # the rationale and the trigger table that gates a future default flip.
 mmap-free-basis = []
+block2 = ["dep:block2"]
 
 [target.'cfg(windows)'.dependencies]
 # CopyFileExW for Windows-optimized file copy with no-buffering support;
