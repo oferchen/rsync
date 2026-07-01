@@ -154,6 +154,16 @@ pub(crate) fn connect_with_optional_bind(
     // unsupported or failing setsockopt leaves the connect to proceed normally.
     apply_tcp_fastopen_connect(&socket, tfo);
 
+    // macOS has no TCP_FASTOPEN_CONNECT socket option; the SYN is deferred via
+    // connectx(CONNECT_RESUME_ON_READ_WRITE) instead. Mirror the Linux gate on
+    // the same `tfo` flag, at this same chokepoint. If the connectx path
+    // succeeds the socket is already (deferred-)connected, so skip the normal
+    // connect below. Any failure falls through to a standard blocking connect:
+    // TFO is a latency optimisation and must never break connectivity.
+    if try_connectx_fastopen(&socket, target, tfo) {
+        return Ok(socket.into());
+    }
+
     let target_addr = SockAddr::from(target);
     if let Some(duration) = timeout {
         socket.connect_timeout(&target_addr, duration)?;
@@ -178,4 +188,30 @@ fn apply_tcp_fastopen_connect(socket: &Socket, tfo: TcpFastOpenMode) {
     }
     #[cfg(not(unix))]
     let _ = socket;
+}
+
+/// Issues the macOS `connectx(2)` Fast Open connect when `tfo` enables it and
+/// the platform supports it. Returns `true` when the socket has been
+/// (deferred-)connected via connectx so the caller can skip the standard
+/// `connect(2)`. Returns `false` when TFO is disabled, the platform lacks
+/// connectx (Linux/Windows/others), or connectx failed - in which case the
+/// caller falls back to a normal blocking connect. This mirrors the Linux
+/// `apply_tcp_fastopen_connect` gate on the same `tfo` flag.
+fn try_connectx_fastopen(socket: &Socket, target: SocketAddr, tfo: TcpFastOpenMode) -> bool {
+    if !tfo.is_enabled() || !fast_io::connectx_fastopen_supported() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        matches!(
+            fast_io::connectx_fastopen_raw(socket.as_raw_fd(), &target),
+            Ok(true)
+        )
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (socket, target);
+        false
+    }
 }
