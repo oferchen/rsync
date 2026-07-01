@@ -275,6 +275,18 @@ pub mod kqueue;
 #[path = "kqueue_stub.rs"]
 pub mod kqueue;
 
+/// macOS Grand Central Dispatch (`dispatch_io`) async file I/O primitives
+/// (MFAST-1, `macos-gcd` feature).
+///
+/// Exposes `GcdQueue`, `GcdReader`, and `GcdWriter`: safe wrappers that drive
+/// `dispatch_io_read`/`dispatch_io_write` to completion and bridge the async
+/// completion back to the crate's blocking, threaded call model. Compiled only
+/// on macOS with the `macos-gcd` feature enabled; the feature is default-off
+/// and the module is simply absent otherwise (no transfer path consumes these
+/// primitives yet - that is MFAST-3/4/5).
+#[cfg(all(target_os = "macos", feature = "macos-gcd"))]
+pub mod gcd;
+
 mod io_uring_common;
 mod io_uring_depth;
 mod io_uring_ops;
@@ -313,6 +325,9 @@ pub use platform_sendfile::{
     WindowsTransmitFile, platform_default,
 };
 pub use traits::{FileReader, FileWriter};
+
+#[cfg(all(target_os = "macos", feature = "macos-gcd"))]
+pub use gcd::{GcdQueue, GcdReader, GcdWriter};
 
 #[cfg(unix)]
 pub use dir_sandbox::{
