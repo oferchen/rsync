@@ -135,6 +135,7 @@ async = ["daemon/async", "core/async"]
 # See docs/design/asy-2-tokio-runtime-feature.md and asy-3-async-boundary-spec.md.
 tokio-transfer = [
     "async",
+    "protocol/tokio-transfer",
     "core/tokio-transfer",
     "transfer/tokio-transfer",
     "daemon/tokio-transfer",

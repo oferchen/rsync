@@ -37,15 +37,63 @@ scheduling with tokio. It depends on `async` (which provides the
 
 | Crate       | Feature added       | Forwards to                                | Notes |
 |-------------|---------------------|--------------------------------------------|-------|
-| root `bin`  | `tokio-transfer`    | `core/tokio-transfer`, `transfer/tokio-transfer`, `daemon/tokio-transfer` | Top-level switch. Implies `async`. |
+| root `bin`  | `tokio-transfer`    | `protocol/tokio-transfer`, `core/tokio-transfer`, `transfer/tokio-transfer`, `daemon/tokio-transfer` | Top-level switch. Implies `async`. |
 | `core`      | `tokio-transfer`    | `transfer/tokio-transfer`, `dep:tokio`     | Adds the runtime-ownership shim inside `core::session()`. |
-| `transfer`  | `tokio-transfer`    | `dep:tokio`, `dep:tokio-util`, `async`     | Compiles the tokio receiver/generator paths. |
+| `transfer`  | `tokio-transfer`    | `dep:tokio`, `dep:tokio-util`, `async`, `protocol/tokio-transfer` | Compiles the tokio receiver/generator paths and the async multiplex read leaf. |
+| `protocol`  | `tokio-transfer`    | `dep:tokio` (`io-util` only)               | See the 2026-07-01 amendment below. Optional async multiplex read leaf (`recv_msg_into_async`); no other change when off. |
 | `daemon`    | `tokio-transfer`    | `async-daemon`, `core/tokio-transfer`      | Lets the hybrid listener hand connections directly to the tokio receiver instead of `spawn_blocking`. |
 
-Crates NOT touched: `engine`, `fast_io`, `signature`, `protocol`,
+Crates NOT touched: `engine`, `fast_io`, `signature`,
 `filters`, `metadata`, `checksums`, `compress`. They stay sync and are
 called from `spawn_blocking` islands. ASY-9 decides whether
-delta-apply ever becomes async natively.
+delta-apply ever becomes async natively. (`protocol` is amended below;
+`compress` follows in a later rung.)
+
+## 2.3 Amendment (2026-07-01): async read/write leaves in protocol/compress
+
+The original §2.2 placed `protocol` and `compress` in the "not touched"
+set, on the assumption that a `transfer`-only rung could reach every
+async boundary. **The ASY-7 receiver scoping result
+(`docs/design/asy-7-receiver-tokio-prototype.md`) disproves that
+assumption.** ASY-7 §2-3 traced boundary #4 (the receiver's delta-token
+wire read) to its leaf and found the real socket-read leaf is
+`protocol::recv_msg_into` (`crates/protocol/src/multiplex/io/recv.rs`),
+reached through `MultiplexReader::read`. A genuine `.await` on that read
+cannot exist while the leaf itself is a synchronous `fn`: Rust cannot
+`.await` from a sync function, and hosting the sync leaf under
+`block_on` yields zero async benefit (ASY-7 §3.1, §3.4). The boundary is
+therefore not separable inside `transfer` alone - the leaf lives in
+`protocol`.
+
+**Amendment.** Behind the default-off `tokio-transfer` feature,
+`protocol` (and later `compress`) MAY expose async leaf variants that
+read from `tokio::io::AsyncRead` / write to `tokio::io::AsyncWrite`,
+alongside - never replacing - the existing sync leaves. Constraints:
+
+- **Additive and default-off.** With `tokio-transfer` off, `protocol`
+  pulls no tokio dependency and is byte-identical to today. The sync
+  leaves (`recv_msg`, `recv_msg_into`, `send_msg`, ...) are unchanged.
+- **No forked parser.** The async leaf and the sync leaf share the pure
+  framing/decode logic (header decode, payload buffer preparation,
+  truncation errors) via one internal seam, so they can never diverge on
+  wire interpretation. The variants differ only in how bytes are pulled
+  (`.await` vs blocking).
+- **Unsafe-free.** `protocol` keeps `#![deny(unsafe_code)]`; the async
+  path is all safe (`AsyncReadExt`).
+- **Unwired until its consuming rung.** The first leaf
+  (`recv_msg_into_async`, this amendment) is not connected to
+  `MultiplexReader` or the receiver; it is the reviewable primitive that
+  the coupled ASY-7-redo rung (ASY-7 §5) will consume once the demux,
+  SPSC->mpsc swap, and disk-task restructure land together.
+- **Parity is enforced in CI.** The `async-wire-parity` gate feeds
+  identical wire bytes to both the sync and async leaves and asserts
+  byte-identical parsed output frame-for-frame, including chunked
+  delivery across `.await` points.
+
+`compress`'s async token leaf (`decoder.recv_token` over an async
+reader) and the multiplex demux itself follow the same pattern in later
+rungs; this amendment establishes the precedent and the shared-seam
+discipline.
 
 ## 3. Default state and rollout path
 

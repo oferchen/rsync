@@ -185,6 +185,9 @@ pub use legacy::{
 #[cfg(feature = "async")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async")))]
 pub use multiplex::MultiplexCodec;
+#[cfg(feature = "tokio-transfer")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tokio-transfer")))]
+pub use multiplex::recv_msg_into_async;
 pub use multiplex::{
     BorrowedMessageFrame, BorrowedMessageFrames, MessageFrame, MplexReader, MplexWriter, recv_msg,
     recv_msg_into, send_frame, send_keepalive, send_msg, send_msgs_vectored,
