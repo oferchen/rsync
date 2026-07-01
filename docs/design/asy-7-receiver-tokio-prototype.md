@@ -457,3 +457,112 @@ in 9.4, landed as separate reviewable rungs (async reader stack; daemon
 tokio re-route + socket plumbing; the fused 7-fn conversion + SPSC
 bridge), in that dependency order, before an equivalence test can be
 written against a real converted async receiver.
+
+## 10. Fourth scoping (prerequisites 1+2 landed) - STOP on verifiability
+
+Status: Re-scoped against master `c81687a3d`, after the first two of the
+three 9.4 prerequisites landed as their own rungs:
+
+- **Prerequisite 1 (async reader stack) RESOLVED.** The full
+  `AsyncRead` reader stack now exists and is byte-parity-tested at every
+  layer: `AsyncTransport` (`pipeline/async_transport.rs`) ->
+  `CountingReader` async twin with a byte-exact `bytes_received` counter
+  (`reader/counting.rs:80`) -> `AsyncServerReader` plain+multiplex
+  (`reader/server.rs:285`) -> `MultiplexReader::read_async`
+  (`reader/multiplex.rs:524`) -> `TokenReader` compressed leaf
+  `recv_token_async` (zlib/zstd/lz4,
+  `protocol/src/wire/compressed_token/decoder.rs:169`).
+- **Prerequisite 2 (daemon tokio re-route + socket plumbing) RESOLVED.**
+  The socket-backed daemon receiver is routed through the tokio driver
+  (`run_daemon_transfer` -> `with_daemon_transfer_runtime` ->
+  `run_server_with_handshake_on`) and the concrete `TcpStream` is
+  threaded to that entry as `TransferStreams.async_socket:
+  Option<TcpStream>`
+  (`daemon/.../transfer/streams.rs`), currently dropped at scope end and
+  awaiting adoption as an `AsyncTransport`.
+
+The deadlock concern is also cleared on inspection: the disk-commit
+consumer is a dedicated `std::thread`
+(`disk_commit/thread.rs:60`, `thread::Builder::new().spawn`), not a
+tokio task, so it drains the spin-wait `spsc::channel` independently of
+the reader's runtime. An async reader can therefore call the existing
+sync `spsc::Sender::send` directly (a non-`.await` spin op) without a
+runtime-cooperation deadlock; the "SPSC -> spawn_blocking" rebuild that
+9.3 anticipated is not structurally required for correctness.
+
+Outcome: **STOP** - not on architecture (9.4 already found it
+*architecturally reachable*), but on **verifiable byte-identity for this
+rung, in this environment.** No receiver `.rs` was converted. Default
+build and the ASY-1/3/4 + reader-stack foundation are untouched and
+remain byte-identical / default-off. Two independent reasons hold; each
+is sufficient under the charter's "byte-identical or nothing" clause.
+
+### 10.1 The conversion is an atomic ~20-30-function fork, not a 7-fn split
+
+9.3's "seven `R: Read` functions" undercounts the real fan-out. A
+receiver that genuinely `.await`s a real daemon-PUSH read requires async
+twins, in one commit, of the entire receiver driver, because the read is
+fused to wire-observable side effects inside single loop iterations:
+
+- `run_server_with_handshake_on` (build the async reader stack from
+  `async_socket` instead of `ServerReader<BufReader<CountingReader<Box<
+  dyn Read>>>>`);
+- `ReceiverContext::run` -> `run_pipelined` **and**
+  `run_pipelined_incremental` -> `setup_transfer` ->
+  `run_pipeline_loop_decoupled` -> `process_file_response_streaming` ->
+  `process_remaining_tokens` + `literal_to_buf` + `read_response_header`
+  + `SenderAttrs::read_with_codec_xattr` -> `TokenReader::read_token`;
+- the wire-reading `phases.rs` twins (`exchange_phase_done`,
+  `read_expected_ndx_done`, `handle_goodbye`, `receive_stats`,
+  `finalize_transfer`) and the setup-phase filter-list read.
+
+`run_pipeline_loop_decoupled` (`receiver/transfer/pipeline.rs`, 250+
+lines) is the crux: it interleaves rayon `par_iter` signature
+computation, `send_file_request`, the `flushed_pending`-gated
+`writer.flush()` (the flush-before-block invariant), the SPSC disk
+sends, `emit_itemize` (MSG_INFO ordering), and progress callbacks - all
+in one loop iteration whose ordering is wire-observable. Splitting the
+awaited read out of that frame without reordering any of those effects
+across the new await points is the whole change; there is no smaller
+slice that both genuinely awaits a real read and stays byte-identical.
+An empirical check confirms **zero** async twins exist anywhere under
+`receiver/` or `transfer_ops/` today: the async building blocks stop at
+the reader-stack layer, so this rung is the entire driver fork.
+
+### 10.2 Byte-identity is unverifiable in this environment for this rung
+
+The charter's PROOF obligations are the async-vs-sync daemon-PUSH
+equivalence test plus the transfer/daemon/protocol regression suites and
+the golden-wire gate. On this host the `cargo nextest` listing phase
+hangs (project policy: tests are CI-only; see the repo's local-hang
+note), so the mandated equivalence test and the regression gates cannot
+be run locally. Landing a ~20-30-function async fork of the most
+wire-sensitive receiver code and asserting byte-identity **without**
+running its test gate would violate "byte-identical or nothing" and the
+fail-loud rule.
+
+A second, concrete divergence blocks it independently: the ASY-3/4
+foundation carries a still-open, un-root-caused `--stats` "Total bytes
+received" quirk (section 8.5: feature-on vs feature-off differs by a
+deterministic 6-12 bytes). This rung would put the async `CountingReader`
+on the real receiver path for the first time, directly exposing that
+un-zeroed `bytes_received` delta on a real transfer - exactly the "NEW
+stats divergence (beyond the byte-exact counter)" the charter names as a
+STOP trigger. 9.4 already flagged that the stats-parity gate must be
+green on the new counter before this can land; that gate is a foundation
+fix, not part of this receiver rung.
+
+### 10.3 What must land before the conversion can be shipped
+
+1. **Zero the ASY-3/4 `bytes_received` foundation quirk** (section 8.5)
+   and prove the async `CountingReader` counts byte-identically on a real
+   transfer, so the stats-parity invariant holds before the async counter
+   goes on the hot path.
+2. **A CI-run equivalence gate** (extend `async-wire-parity.yml`) that
+   exercises a real local daemon-module PUSH with `tokio-transfer` on vs
+   off and byte-diffs dest tree + `--stats` + exit, so the atomic
+   driver-fork can be verified where nextest actually runs.
+3. Only then land the atomic async driver fork (10.1) as one reviewable,
+   CI-verified commit. A `block_on`-hosted sync fork adds zero async
+   benefit (the ASY-3 shape already exists), and an unverified fork risks
+   a wire/stats divergence - both worse than none per the stop clause.
