@@ -1891,6 +1891,7 @@ fn execute_sparse_large_trailing_zeros_uses_ftruncate() {
 #[cfg(windows)]
 #[test]
 fn execute_with_sparse_enabled_marks_ntfs_sparse() {
+    use std::io::{Seek, SeekFrom};
     use std::os::windows::fs::MetadataExt;
 
     // FILE_ATTRIBUTE_SPARSE_FILE (winnt.h) - set on a handle after a
