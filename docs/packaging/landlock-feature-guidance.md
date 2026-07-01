@@ -4,13 +4,15 @@ Audience: Linux distribution maintainers packaging `oc-rsync` (Arch, Debian, Fed
 
 ## TL;DR
 
-Linux distros SHOULD enable `--features landlock` when packaging oc-rsync, even on older distro kernels. The runtime probe plus best-effort ABI downgrade handle pre-5.13 kernels gracefully (no enforcement, no error, single startup log line). There is no "minimum kernel" gate beyond what the rest of oc-rsync already requires. Builds that opt out simply lose a defense-in-depth layer; the SEC-1 `*at` syscall chain remains the sole defense in that case.
+Landlock is compiled into every Linux `oc-rsync` build automatically; packagers need NO build flag. The daemon and the `--server` receiver forward the `fast_io` `landlock` feature unconditionally on Linux, so the sandbox ships in every Linux binary. The runtime probe plus best-effort ABI downgrade handle pre-5.13 kernels gracefully (no enforcement, no error, single startup log line). There is no "minimum kernel" gate beyond what the rest of oc-rsync already requires. Builds that opt out simply lose a defense-in-depth layer; the SEC-1 `*at` syscall chain remains the sole defense in that case.
 
 ## Build command for distro packagers
 
 ```sh
-cargo build --release --bin oc-rsync --features landlock --locked
+cargo build --release --bin oc-rsync --locked
 ```
+
+There is no `landlock` cargo feature on the `oc-rsync` binary crate; passing `--features landlock` fails. Landlock is already compiled in on Linux.
 
 `--locked` keeps the resolved `Cargo.lock` set; combine with `cargo vendor` if the distro forbids fetching crates at build time.
 
@@ -27,7 +29,7 @@ Best-effort downgrade is unconditional: the same binary requests v3 on every ker
 
 ## Per-distro guidance
 
-Copy-pasteable recommendations. "Enable" means add `--features landlock` to the cargo build invocation in the distro spec / PKGBUILD / debian rules file.
+Landlock is compiled in automatically for every Linux target; no per-distro build flag is needed. The entries below note the Landlock ABI / enforcement level each distro's default kernel achieves.
 
 ### Debian
 
@@ -82,14 +84,15 @@ None. Landlock is part of the kernel; there is no userspace daemon, helper binar
 
 ## Disabling the feature
 
-If a distro policy forbids the dependency or the kernel target is too old to be worth the runtime probe, build without the feature:
+If a distro policy forbids the dependency or the kernel target is too old to be worth the runtime probe, build without Landlock by removing `features = ["landlock"]` from the `fast_io` dependency in both `crates/daemon/Cargo.toml` and `crates/cli/Cargo.toml` (both under `[target.'cfg(target_os = "linux")'.dependencies]`):
 
-```sh
-cargo build --release --bin oc-rsync --no-default-features \
-    --features "io_uring,iocp" --locked
+```toml
+# crates/daemon/Cargo.toml and crates/cli/Cargo.toml
+[target.'cfg(target_os = "linux")'.dependencies]
+fast_io = { path = "../fast_io" }   # was: features = ["landlock"]
 ```
 
-Adjust the explicit feature list to whatever else the distro normally enables. The SEC-1 `*at` syscall chain remains the sole defense in that case; the daemon is still hardened against the CVE-2026-29518 / CVE-2026-43619 TOCTOU symlink race class, just without the kernel-enforced second layer.
+Root `--no-default-features` / `--features` does not affect Landlock, because `landlock` is not a root feature; it is forwarded unconditionally through the two crate dependencies above. The SEC-1 `*at` syscall chain remains the sole defense in that case; the daemon is still hardened against the CVE-2026-29518 / CVE-2026-43619 TOCTOU symlink race class, just without the kernel-enforced second layer.
 
 ## AppArmor + SELinux templates
 
@@ -136,10 +139,18 @@ oc-rsync --daemon --no-detach --log-file=- 2>&1 | \
 
 `daemon-seccomp` adds a kernel-enforced syscall allowlist on top of Landlock. Where Landlock denies a path-based syscall with `EACCES`, seccomp denies an unlisted syscall with `SIGSYS` before the kernel ever consults the LSM stack. The two layers compose: a regression that bypasses `*at` helpers still hits Landlock; one that skips Landlock still hits seccomp.
 
-```sh
-cargo build --release --bin oc-rsync \
-    --features "landlock,daemon-seccomp" --locked
+`daemon-seccomp` is a feature of the `daemon` crate. Enable it by adding it to the daemon dependency in the workspace root `Cargo.toml`, then run a plain build:
+
+```toml
+# root Cargo.toml
+daemon = { path = "crates/daemon", default-features = false, features = ["daemon-seccomp"] }
 ```
+
+```sh
+cargo build --release --bin oc-rsync --locked
+```
+
+Landlock is already compiled in (no `landlock` flag), and there is no root-level `landlock` / `daemon-seccomp` feature; passing either to `--features` on the `oc-rsync` binary fails.
 
 - Opt-in only until the 14-day bake window in `docs/design/lsm-seccomp-allowlist.md` completes. Default builds remain seccomp-free; distros that want the extra layer enable both flags.
 - Default action is `KILL_PROCESS`: an unlisted syscall delivers `SIGSYS` synchronously and terminates the worker. The parent `accept(2)` loop survives, so the daemon keeps serving other clients.
