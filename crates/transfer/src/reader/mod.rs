@@ -15,3 +15,7 @@ mod tests;
 pub(crate) use counting::CountingReader;
 pub(crate) use multiplex::MultiplexReader;
 pub use server::ServerReader;
+
+#[cfg(feature = "tokio-transfer")]
+#[cfg_attr(not(test), allow(unused_imports))]
+pub(crate) use server::AsyncServerReader;
