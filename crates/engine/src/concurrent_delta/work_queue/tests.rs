@@ -943,6 +943,140 @@ fn receiver_drop_unblocks_full_queue_producer() {
     );
 }
 
+#[test]
+fn bounded_dynamic_honors_initial_min_max() {
+    let dq = bounded_dynamic(4, 2, 16).expect("valid bounds");
+    // The semaphore starts at `initial`.
+    assert_eq!(dq.semaphore.current_cap(), 4);
+    // The sender reports the same current admission ceiling.
+    assert_eq!(dq.sender.current_capacity(), 4);
+    // The configured resize range is reported for later controller clamping.
+    assert_eq!(dq.sender.capacity_bounds(), Some((2, 16)));
+}
+
+#[test]
+fn fixed_bound_has_no_capacity_range() {
+    let (tx, _rx) = bounded_with_capacity(3);
+    assert_eq!(tx.capacity_bounds(), None);
+}
+
+#[test]
+fn bounded_dynamic_grow_shrink_reflects_in_permits() {
+    let dq = bounded_dynamic(2, 1, 8).expect("valid bounds");
+    // Exhaust the initial two permits.
+    assert!(dq.semaphore.try_acquire());
+    assert!(dq.semaphore.try_acquire());
+    assert!(!dq.semaphore.try_acquire(), "at initial capacity");
+
+    // Growing the ceiling admits more in-flight work immediately, and the
+    // sender observes the new ceiling.
+    dq.semaphore.resize(4).expect("grow within max");
+    assert_eq!(dq.sender.current_capacity(), 4);
+    assert!(dq.semaphore.try_acquire());
+    assert!(dq.semaphore.try_acquire());
+    assert!(!dq.semaphore.try_acquire(), "at grown capacity");
+
+    // Shrinking withholds future admissions without revoking held permits.
+    dq.semaphore.resize(1).expect("shrink within min");
+    assert_eq!(dq.sender.current_capacity(), 1);
+    assert_eq!(dq.semaphore.in_flight(), 4);
+    dq.semaphore.release();
+    dq.semaphore.release();
+    dq.semaphore.release();
+    // Still one over the shrunk ceiling of 1.
+    assert!(!dq.semaphore.try_acquire());
+    dq.semaphore.release();
+    assert_eq!(dq.semaphore.in_flight(), 0);
+    assert!(dq.semaphore.try_acquire());
+}
+
+#[test]
+fn bounded_dynamic_send_recv_round_trip() {
+    let dq = bounded_dynamic(4, 2, 8).expect("valid bounds");
+    let DynamicWorkQueue {
+        sender, receiver, ..
+    } = dq;
+    sender
+        .send(DeltaWork::whole_file(7, PathBuf::from("/dst"), 128))
+        .unwrap();
+    drop(sender);
+    let items: Vec<_> = receiver.into_iter().collect();
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].ndx().get(), 7);
+}
+
+#[test]
+fn bounded_dynamic_semaphore_gates_admission() {
+    // Initial capacity 1: with the semaphore held, a send must block until a
+    // permit frees up. This exercises the dynamic admission path end to end.
+    let dq = bounded_dynamic(1, 1, 4).expect("valid bounds");
+    let DynamicWorkQueue {
+        sender,
+        receiver,
+        semaphore,
+    } = dq;
+
+    // Hold the only permit so the sender must block inside `send`.
+    semaphore.acquire();
+
+    let sent = Arc::new(AtomicUsize::new(0));
+    let sent_clone = Arc::clone(&sent);
+    let producer = thread::spawn(move || {
+        sender
+            .send(DeltaWork::whole_file(1, PathBuf::from("/dst"), 0))
+            .unwrap();
+        sent_clone.fetch_add(1, Ordering::Release);
+        sender
+    });
+
+    // The producer is blocked on the semaphore, not yet sent.
+    thread::sleep(Duration::from_millis(50));
+    assert_eq!(
+        sent.load(Ordering::Acquire),
+        0,
+        "send admitted without a permit"
+    );
+
+    // Free the permit; the send proceeds.
+    semaphore.release();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let sender = producer.join().expect("producer panicked");
+    assert!(Instant::now() < deadline, "send hung after permit release");
+    assert_eq!(sent.load(Ordering::Acquire), 1);
+
+    drop(sender);
+    let items: Vec<u32> = receiver.into_iter().map(|w| w.ndx().get()).collect();
+    assert_eq!(items, vec![1]);
+}
+
+#[test]
+fn bounded_dynamic_rejects_inconsistent_bounds() {
+    // min > max.
+    assert!(bounded_dynamic(4, 8, 4).is_err());
+    // initial below min.
+    assert!(bounded_dynamic(1, 2, 8).is_err());
+    // initial above max.
+    assert!(bounded_dynamic(9, 2, 8).is_err());
+    // Zero (below the semaphore's global floor) is rejected.
+    assert!(bounded_dynamic(0, 0, 8).is_err());
+}
+
+#[test]
+fn fixed_bound_send_is_unaffected() {
+    // The fixed-bound path performs no semaphore accounting: `current_capacity`
+    // reports the channel bound and admission blocks only when the channel is
+    // full, exactly as before the capacity-source abstraction.
+    let (tx, rx) = bounded_with_capacity(3);
+    assert_eq!(tx.current_capacity(), 3);
+    for i in 0..3u32 {
+        tx.send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 0))
+            .unwrap();
+    }
+    drop(tx);
+    let items: Vec<u32> = rx.into_iter().map(|w| w.ndx().get()).collect();
+    assert_eq!(items, vec![0, 1, 2]);
+}
+
 proptest! {
     /// Property test: `drain_parallel` preserves input ordering under contention.
     ///

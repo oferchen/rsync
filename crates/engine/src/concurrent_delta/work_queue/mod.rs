@@ -100,6 +100,7 @@
 mod adaptive_semaphore;
 mod bounded;
 mod capacity;
+mod capacity_source;
 mod drain;
 mod iter;
 pub mod limiter;
@@ -109,7 +110,10 @@ mod multi_producer;
 pub use adaptive_semaphore::{
     AdaptiveSemaphore, MAX_CAPACITY, MIN_CAPACITY, ResizeError, SemStats,
 };
-pub use bounded::{SendError, WorkQueueReceiver, WorkQueueSender, bounded, bounded_with_capacity};
+pub use bounded::{
+    DynamicWorkQueue, SendError, WorkQueueReceiver, WorkQueueSender, bounded, bounded_dynamic,
+    bounded_with_capacity,
+};
 pub use capacity::{adaptive_queue_depth, default_capacity};
 pub use iter::WorkQueueIter;
 pub use limiter::{AimdLimiter, LimiterConfig, OverloadReason, Ticket};
