@@ -182,10 +182,15 @@ ASY-7 cannot be a single receiver-read rung. The dependency order is:
 
 ## 6. Result
 
-No code changed. Default build and the ASY-3 `tokio-transfer`
-foundation are untouched and remain byte-identical / default-off. The
-receiver network-read boundary is deferred pending ASY-4 and a
-re-chartered coupled ASY-7 per section 5.
+No receiver code changed. Default build and the ASY-3/ASY-4
+`tokio-transfer` foundation are untouched and remain byte-identical /
+default-off. The single-boundary conversion is deferred pending ASY-4
+(now BUILT) and a re-chartered coupled ASY-7 per section 5.
+
+The re-chartered coupled rung was subsequently scoped and also stopped;
+section 8 records that outcome, the four hard blockers, and the
+prerequisite ordering the coupled conversion actually needs before any
+async receiver code can land byte-identically.
 
 ## 7. Cross-references
 
@@ -196,3 +201,136 @@ re-chartered coupled ASY-7 per section 5.
   question 2 (the ASY-4 transport wrapper this rung depends on).
 - `docs/design/asy-3-async-boundary-spec.md` - per-boundary contracts;
   boundaries 4, 6, 7, 9 and section 3 rows 5/7.
+
+## 8. Coupled rung (ASY-7-redo) scoping outcome - STOP
+
+Status: The re-chartered coupled rung (section 5.2: convert boundary 4
+read + 6/7 SPSC->mpsc + the async half of 9 disk task together, with the
+`R: Read` chain `#[cfg]`-split sync/async) was scoped against the master
+tree after ASY-4 (`c41ac883c`). Outcome: **still STOP.** A byte-identical
+tokio receiver that genuinely `.await`s the socket is not shippable at
+this rung. No receiver `.rs` was converted. The default build and the
+ASY-3/ASY-4 foundation are untouched and remain byte-identical /
+default-off.
+
+The single-boundary analysis (section 3) already stopped; coupling the
+three boundaries does not remove the blockers - it surfaces a fourth.
+Four independent blockers hold; any one is sufficient to stop.
+
+### 8.1 Blocker A - the async read requires touching `protocol` (design-forbidden)
+
+The receiver's two leaf reads both live in the `protocol` crate:
+
+- the multiplex demux drives `protocol::recv_msg_into`
+  (`crates/protocol/src/multiplex/io/recv.rs:31`), which calls
+  `read_header` / `read_payload_into` -> `reader.read_exact`;
+- the compressed-token path drives
+  `CompressedTokenDecoder::recv_token<R: Read>`
+  (`crates/protocol/src/wire/compressed_token/decoder.rs:114`), an inflate
+  state machine wholly inside `protocol`.
+
+A genuine `.await` on the socket requires `async fn` variants of both,
+inside `protocol` (and the `compress`-backed inflate). ASY-2 section 2.2
+lists `protocol` among the crates that **stay sync and are called from
+`spawn_blocking` islands** ("Crates NOT touched: engine, fast_io,
+signature, protocol, ..."). Converting the read at the `transfer` layer
+only (per this rung's charter) cannot reach the leaf: the leaf is one
+crate down, behind a boundary the design forbids crossing.
+
+### 8.2 Blocker B - the transport is type-erased before the receiver
+
+The ASY-4 seam (`AsyncTransport::from_std_tcp`,
+`crates/transfer/src/pipeline/async_transport.rs`) needs a concrete
+`std::net::TcpStream`. By the time control reaches the receiver, the
+transport is `stdin: &mut dyn Read` (`run_server_with_handshake`,
+`crates/transfer/src/lib.rs:342`; `run_server_stdio`,
+`crates/core/src/session.rs:60`). The socket / pipe fd is erased. On the
+chartered PULL path the transport is an SSH/rsh **pipe**, which
+`AsyncTransport` structurally cannot wrap (ASY-4 doc: "applies only to
+socket-backed transports"). There is no concrete async socket to adopt at
+the receiver read boundary.
+
+### 8.3 Blocker C - the chartered PULL receiver bypasses the tokio seam
+
+The only tokio-driven entry is `core::session::run_server_stdio`
+(session.rs:60), which wraps the **`--server` process**. In a PULL
+(remote src -> local dst) the `--server` is the **generator/sender**; the
+oc **receiver is the local client**, which runs
+`crate::server::run_server_with_handshake` directly
+(`crates/core/src/client/remote/ssh_transfer/drive.rs:292`) and never
+touches the tokio session driver. So the rung's premise - "a PULL
+transfer (server=generator, oc receiver) with tokio-transfer on actually
+reads async" - is architecturally unreachable through the current seam.
+The tokio driver can host a receiver only in a **PUSH** (local src ->
+remote dst, remote `--server` = receiver, run.rs:280); even there the
+read chain is the same sync `protocol`-leaf chain (blockers A/B).
+
+### 8.4 Blocker D - demux side-effect ordering
+
+`MultiplexReader::dispatch_message`
+(`crates/transfer/src/reader/multiplex.rs:215`) performs inline
+`print!` (FINFO/FCLIENT), `eprint!` (FWARNING/FERROR*),
+`io::stdout().flush()`, and error-exit propagation between frames. Any
+split that separates an async socket read from this sync demux (e.g. an
+async prefetch task feeding a `spawn_blocking` demux) reorders those
+side effects relative to disk-commit and writer flushes - the ASY-1
+"Preserved" #1 wire/output-parity break flagged in sections 3.2 and 4.
+
+### 8.5 What was verified empirically
+
+The ASY-3 tokio driver hosts the **sync** server body under
+`Handle::block_on` (`pipeline/tokio_driver.rs:81`), so it is expected to
+be dest-identical - and is, confirmed by a real oc-rsync self-transfer
+(`--rsh` lsh, pinned `--checksum-seed=1234`, mixed corpus: whole-file +
+delta-candidate + `-z` compressed + multi-file + nested + empty):
+
+- **PULL** (feature-on client+server vs feature-off): `diff -r` of the
+  two dest trees is empty; per-file SHA-1 identical across all files;
+  `--stats` identical on file count, total file size, literal, matched.
+- **PUSH** (feature-off client -> feature-on `--server` receiver vs
+  feature-off `--server` receiver): `diff -r` of dest trees empty. This
+  is a real receiver running on the tokio runtime, dest-byte-identical to
+  the threaded receiver.
+
+One pre-existing caveat, orthogonal to this rung: the feature-on build's
+`--stats` "Total bytes received" differs from feature-off by a small
+fixed amount (6-12 bytes, deterministic on each side). It is **not** a
+receiver-data-path difference (dest trees and payload are byte-identical)
+and it reproduces with the feature-on *client* even when that client's
+receiver does not use the tokio driver, so it is a build-level
+`bytes_received` counting artifact in the ASY-3/ASY-4 foundation
+(unrelated to any receiver conversion, which this rung did not do). It is
+recorded here so the ASY-12 stats-parity gate accounts for it before
+flipping the default; it must be root-caused and zeroed as part of the
+foundation, not this rung.
+
+### 8.6 Prerequisite ordering the coupled rung actually needs
+
+The section 5 ordering is necessary but insufficient; the true blocking
+prerequisites are:
+
+1. **An async read leaf that does not touch `protocol`.** Either (a)
+   relocate `recv_msg_into` + the compressed-token inflate behind an
+   async-capable seam that ASY-2 permits, or (b) explicitly amend ASY-2
+   section 2.2 to allow async variants inside `protocol`/`compress`
+   (a design change requiring sign-off, not an implementation rung). The
+   `spawn_blocking`-prefetch alternative (an async task feeding a sync
+   demux) is barred by blocker D (side-effect reordering) and section 3.4.
+2. **A concrete async socket at the receiver boundary.** Thread the
+   `Option<TcpStream>` (NSV-1 shape) down to the receiver so the daemon
+   `rsync://` path can adopt `AsyncTransport`; the SSH/rsh pipe path has
+   no socket and stays sync by design. This is a plumbing change from
+   `core` through `run_server_with_handshake`, not a receiver-internal
+   change.
+3. **A receiver reachable through the tokio seam for the intended
+   direction.** For the chartered PULL, the local-client receiver must be
+   routed through a tokio-driven entry (today it is not). This is a
+   `core` client-transport change (`ssh_transfer::drive`), out of scope
+   for a `transfer`-only receiver rung.
+
+Only after (1)-(3) land can the `R: Read` chain be `#[cfg]`-split to an
+async variant and the equivalence test (section 5.3) be written against a
+real converted async receiver. Until then, shipping a tokio receiver
+means shipping either a `block_on`-hosted sync read (zero async benefit,
+the ASY-3 shape) or a divergent one (blocker D) - both worse than none.
+Per the ASY-7 charter stop clause, we stop.
