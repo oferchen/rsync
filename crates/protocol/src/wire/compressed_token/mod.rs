@@ -40,14 +40,19 @@ mod decoder;
 mod encoder;
 #[cfg(feature = "lz4")]
 mod lz4_codec;
+mod step;
 mod zlib_codec;
 #[cfg(feature = "zstd")]
 mod zstd_codec;
 
+#[cfg(all(test, feature = "tokio-transfer"))]
+mod parity_tests;
 #[cfg(test)]
 mod tests;
 
-use std::io::{self, Read, Write};
+#[cfg(test)]
+use std::io::Read;
+use std::io::{self, Write};
 
 pub use self::decoder::CompressedTokenDecoder;
 pub use self::encoder::CompressedTokenEncoder;
@@ -185,6 +190,10 @@ fn write_deflated_data_pieces<W: Write>(writer: &mut W, data: &[u8]) -> io::Resu
 ///
 /// * `reader` - The input stream to read the second byte from
 /// * `first_byte` - The first byte of the header (already read)
+///
+/// Retained for the codec test suites; the decoders now decode the length
+/// inline in the sans-io state machine (see `step.rs`).
+#[cfg(test)]
 #[inline]
 fn read_deflated_data_length<R: Read>(reader: &mut R, first_byte: u8) -> io::Result<usize> {
     let high = (first_byte & 0x3F) as usize;

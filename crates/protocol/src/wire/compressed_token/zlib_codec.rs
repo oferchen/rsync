@@ -11,9 +11,12 @@ use std::io::{self, Read, Write};
 use compress::zlib::CompressionLevel;
 use flate2::{Compress, Compression, Decompress, FlushCompress, FlushDecompress};
 
+#[cfg(feature = "tokio-transfer")]
+use super::step::drive_async;
+use super::step::{DeflateSink, TokenDecodeCore, drive_sync};
 use super::{
-    CHUNK_SIZE, CompressedToken, DEFLATED_DATA, END_FLAG, MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL,
-    TOKENRUN_LONG, TOKENRUN_REL, read_deflated_data_length, write_deflated_data_pieces,
+    CHUNK_SIZE, CompressedToken, END_FLAG, MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL, TOKENRUN_LONG,
+    TOKENRUN_REL, write_deflated_data_pieces,
 };
 
 /// Maximum aggregate size of accumulated compressed data in a single
@@ -295,23 +298,107 @@ impl ZlibTokenEncoder {
     }
 }
 
+/// Zlib decompression sink: the algorithm-specific half of the sans-io decoder.
+///
+/// Owns the persistent inflate stream, the reusable output scratch, and the
+/// consecutive-DEFLATED_DATA accumulation buffer. The shared
+/// [`TokenDecodeCore`] drives all wire framing and delegates only block
+/// accumulation and decompression here.
+///
+/// Reference: upstream token.c:recv_deflated_token()
+struct ZlibDeflate {
+    decompressor: Decompress,
+    output_buf: Vec<u8>,
+    compressed_input_buf: Vec<u8>,
+}
+
+impl ZlibDeflate {
+    fn new() -> Self {
+        Self {
+            decompressor: Decompress::new(false),
+            output_buf: vec![0u8; CHUNK_SIZE * 2],
+            compressed_input_buf: Vec::with_capacity(MAX_DATA_COUNT + 4),
+        }
+    }
+}
+
+impl DeflateSink for ZlibDeflate {
+    fn accumulates(&self) -> bool {
+        true
+    }
+
+    fn begin_block(&mut self, payload: &[u8]) {
+        self.compressed_input_buf.clear();
+        self.compressed_input_buf.extend_from_slice(payload);
+    }
+
+    fn push_block(&mut self, payload: &[u8]) -> io::Result<()> {
+        // upstream: token.c defence-in-depth - bound accumulated compressed
+        // data (3.4.3). The cap guards the consecutive follow-on blocks; the
+        // first block (begin_block) is not capped, matching upstream.
+        if self.compressed_input_buf.len() + payload.len() > MAX_ACCUMULATED_COMPRESSED_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "accumulated compressed data exceeds {MAX_ACCUMULATED_COMPRESSED_BYTES} byte cap",
+                ),
+            ));
+        }
+        self.compressed_input_buf.extend_from_slice(payload);
+        Ok(())
+    }
+
+    fn decompress_into(&mut self, output: &mut Vec<u8>) -> io::Result<()> {
+        // Restore sync marker stripped by encoder.
+        self.compressed_input_buf
+            .extend_from_slice(&[0x00, 0x00, 0xFF, 0xFF]);
+
+        let mut input = &self.compressed_input_buf[..];
+
+        loop {
+            let before_in = self.decompressor.total_in();
+            let before_out = self.decompressor.total_out();
+
+            self.decompressor
+                .decompress(input, &mut self.output_buf, FlushDecompress::Sync)
+                .map_err(|e| io::Error::other(e.to_string()))?;
+
+            let consumed = (self.decompressor.total_in() - before_in) as usize;
+            let produced = (self.decompressor.total_out() - before_out) as usize;
+
+            if produced > 0 {
+                output.extend_from_slice(&self.output_buf[..produced]);
+            }
+
+            if consumed > 0 {
+                input = &input[consumed..];
+            }
+
+            if input.is_empty() || (consumed == 0 && produced == 0) {
+                break;
+            }
+        }
+
+        Ok(())
+    }
+}
+
 /// Zlib decoder state for receiving compressed tokens.
 ///
 /// Manages a persistent inflate stream for decompressing literal data.
 /// Restores the sync marker stripped by the encoder.
 ///
+/// The decode/decompress logic lives in a sans-io state machine
+/// ([`TokenDecodeCore`] + [`ZlibDeflate`]); [`recv_token`](Self::recv_token) is
+/// a thin blocking driver over it, and [`recv_token_async`](Self::recv_token_async)
+/// is the `.await` counterpart. Both share the exact same state machine, so
+/// they stay byte-identical.
+///
 /// Reference: upstream token.c:recv_deflated_token()
 pub(super) struct ZlibTokenDecoder {
-    decompress_buf: Vec<u8>,
-    decompress_pos: usize,
-    decompressor: Decompress,
-    output_buf: Vec<u8>,
-    compressed_input_buf: Vec<u8>,
-    rx_token: i32,
-    rx_run: i32,
-    pub(super) initialized: bool,
+    core: TokenDecodeCore,
+    deflate: ZlibDeflate,
     is_zlibx: bool,
-    saved_flag: Option<u8>,
 }
 
 impl Default for ZlibTokenDecoder {
@@ -323,195 +410,38 @@ impl Default for ZlibTokenDecoder {
 impl ZlibTokenDecoder {
     pub(super) fn new() -> Self {
         Self {
-            decompress_buf: Vec::new(),
-            decompress_pos: 0,
-            decompressor: Decompress::new(false),
-            output_buf: vec![0u8; CHUNK_SIZE * 2],
-            compressed_input_buf: Vec::with_capacity(MAX_DATA_COUNT + 4),
-            rx_token: 0,
-            rx_run: 0,
-            initialized: false,
+            core: TokenDecodeCore::new(true),
+            deflate: ZlibDeflate::new(),
             is_zlibx: false,
-            saved_flag: None,
         }
     }
 
     pub(super) fn reset(&mut self) {
-        self.decompress_buf.clear();
-        self.decompress_pos = 0;
-        self.decompressor.reset(false);
-        self.compressed_input_buf.clear();
-        self.rx_token = 0;
-        self.rx_run = 0;
-        self.initialized = false;
-        self.saved_flag = None;
+        self.core.reset();
+        self.core.initialized = false;
+        self.deflate.decompressor.reset(false);
+        self.deflate.compressed_input_buf.clear();
     }
 
     pub(super) fn recv_token<R: Read>(&mut self, reader: &mut R) -> io::Result<CompressedToken> {
-        if !self.initialized {
-            self.initialized = true;
-        }
+        drive_sync(&mut self.core, &mut self.deflate, reader)
+    }
 
-        if self.decompress_pos < self.decompress_buf.len() {
-            let remaining = &self.decompress_buf[self.decompress_pos..];
-            let chunk_len = remaining.len().min(CHUNK_SIZE);
-            let data = remaining[..chunk_len].to_vec();
-            self.decompress_pos += chunk_len;
-            return Ok(CompressedToken::Literal(data));
-        }
+    /// Async counterpart to [`recv_token`](Self::recv_token), backed by the same
+    /// sans-io state machine. Only the byte fetch differs (`.await` vs blocking).
+    #[cfg(feature = "tokio-transfer")]
+    pub(super) async fn recv_token_async<R>(
+        &mut self,
+        reader: &mut R,
+    ) -> io::Result<CompressedToken>
+    where
+        R: tokio::io::AsyncRead + Unpin + ?Sized,
+    {
+        drive_async(&mut self.core, &mut self.deflate, reader).await
+    }
 
-        // Emit pending run tokens
-        // upstream: token.c defence-in-depth (3.4.3) - checked increment
-        // prevents rx_token from wrapping past i32::MAX during long runs.
-        if self.rx_run > 0 {
-            self.rx_run -= 1;
-            self.rx_token = self.rx_token.checked_add(1).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "token index overflow in compressed stream run",
-                )
-            })?;
-            return Ok(CompressedToken::BlockMatch(self.rx_token as u32));
-        }
-
-        let flag = if let Some(f) = self.saved_flag.take() {
-            f
-        } else {
-            let mut buf = [0u8; 1];
-            reader.read_exact(&mut buf)?;
-            buf[0]
-        };
-
-        if (flag & 0xC0) == DEFLATED_DATA {
-            self.compressed_input_buf.clear();
-            let len = read_deflated_data_length(reader, flag)?;
-            let start = self.compressed_input_buf.len();
-            self.compressed_input_buf.resize(start + len, 0);
-            reader.read_exact(&mut self.compressed_input_buf[start..start + len])?;
-
-            // Accumulate consecutive DEFLATED_DATA blocks
-            // upstream: token.c defence-in-depth - bound accumulated compressed data (3.4.3)
-            loop {
-                let mut peek = [0u8; 1];
-                reader.read_exact(&mut peek)?;
-                let next_flag = peek[0];
-
-                if (next_flag & 0xC0) == DEFLATED_DATA {
-                    let next_len = read_deflated_data_length(reader, next_flag)?;
-                    if self.compressed_input_buf.len() + next_len > MAX_ACCUMULATED_COMPRESSED_BYTES
-                    {
-                        return Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!(
-                                "accumulated compressed data exceeds {MAX_ACCUMULATED_COMPRESSED_BYTES} byte cap",
-                            ),
-                        ));
-                    }
-                    let s = self.compressed_input_buf.len();
-                    self.compressed_input_buf.resize(s + next_len, 0);
-                    reader.read_exact(&mut self.compressed_input_buf[s..s + next_len])?;
-                } else {
-                    self.saved_flag = Some(next_flag);
-                    break;
-                }
-            }
-
-            // Restore sync marker stripped by encoder
-            self.compressed_input_buf
-                .extend_from_slice(&[0x00, 0x00, 0xFF, 0xFF]);
-
-            self.decompress_buf.clear();
-            let mut input = &self.compressed_input_buf[..];
-
-            loop {
-                let before_in = self.decompressor.total_in();
-                let before_out = self.decompressor.total_out();
-
-                let decompress_result = self.decompressor.decompress(
-                    input,
-                    &mut self.output_buf,
-                    FlushDecompress::Sync,
-                );
-                decompress_result.map_err(|e| io::Error::other(e.to_string()))?;
-
-                let consumed = (self.decompressor.total_in() - before_in) as usize;
-                let produced = (self.decompressor.total_out() - before_out) as usize;
-
-                if produced > 0 {
-                    self.decompress_buf
-                        .extend_from_slice(&self.output_buf[..produced]);
-                }
-
-                if consumed > 0 {
-                    input = &input[consumed..];
-                }
-
-                if input.is_empty() || (consumed == 0 && produced == 0) {
-                    break;
-                }
-            }
-
-            self.decompress_pos = 0;
-
-            if !self.decompress_buf.is_empty() {
-                let chunk_len = self.decompress_buf.len().min(CHUNK_SIZE);
-                let data = self.decompress_buf[..chunk_len].to_vec();
-                self.decompress_pos = chunk_len;
-                return Ok(CompressedToken::Literal(data));
-            }
-
-            return self.recv_token(reader);
-        }
-
-        if flag == END_FLAG {
-            return Ok(CompressedToken::End);
-        }
-
-        if flag & TOKEN_REL != 0 {
-            let rel = (flag & 0x3F) as i32;
-            // upstream: token.c defence-in-depth (3.4.3) - checked addition
-            // prevents rx_token from wrapping past i32::MAX via repeated
-            // TOKEN_REL accumulation from a malicious sender.
-            self.rx_token = self.rx_token.checked_add(rel).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "token index overflow in compressed stream",
-                )
-            })?;
-
-            if (flag >> 6) & 1 != 0 {
-                let mut run_buf = [0u8; 2];
-                reader.read_exact(&mut run_buf)?;
-                self.rx_run = u16::from_le_bytes(run_buf) as i32;
-            }
-
-            Ok(CompressedToken::BlockMatch(self.rx_token as u32))
-        } else if flag & 0xE0 == TOKEN_LONG {
-            let mut buf = [0u8; 4];
-            reader.read_exact(&mut buf)?;
-            self.rx_token = i32::from_le_bytes(buf);
-            // upstream: token.c:595-598 (3.4.2) - reject negative absolute
-            // token to prevent block-index wrap into the valid range.
-            if self.rx_token < 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid token number in compressed stream",
-                ));
-            }
-
-            if flag & 1 != 0 {
-                let mut run_buf = [0u8; 2];
-                reader.read_exact(&mut run_buf)?;
-                self.rx_run = u16::from_le_bytes(run_buf) as i32;
-            }
-
-            Ok(CompressedToken::BlockMatch(self.rx_token as u32))
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid compressed token flag: 0x{flag:02X}"),
-            ))
-        }
+    pub(super) fn initialized(&self) -> bool {
+        self.core.initialized
     }
 
     /// Feeds block data into the decompressor's dictionary.
@@ -551,18 +481,19 @@ impl ZlibTokenDecoder {
             // header + payload together without intermediate flush boundaries.
             let mut input = &combined[..];
             loop {
-                let before_in = self.decompressor.total_in();
-                let before_out = self.decompressor.total_out();
+                let before_in = self.deflate.decompressor.total_in();
+                let before_out = self.deflate.decompressor.total_out();
 
-                self.decompressor
-                    .decompress(input, &mut self.output_buf, FlushDecompress::Sync)
+                self.deflate
+                    .decompressor
+                    .decompress(input, &mut self.deflate.output_buf, FlushDecompress::Sync)
                     .map_err(|e| io::Error::other(e.to_string()))?;
 
-                let consumed = (self.decompressor.total_in() - before_in) as usize;
+                let consumed = (self.deflate.decompressor.total_in() - before_in) as usize;
                 if consumed > 0 {
                     input = &input[consumed..];
                 }
-                let produced = (self.decompressor.total_out() - before_out) as usize;
+                let produced = (self.deflate.decompressor.total_out() - before_out) as usize;
 
                 if input.is_empty() || (consumed == 0 && produced == 0) {
                     break;
