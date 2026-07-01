@@ -292,17 +292,28 @@ delta-candidate + `-z` compressed + multi-file + nested + empty):
   is a real receiver running on the tokio runtime, dest-byte-identical to
   the threaded receiver.
 
-One pre-existing caveat, orthogonal to this rung: the feature-on build's
-`--stats` "Total bytes received" differs from feature-off by a small
-fixed amount (6-12 bytes, deterministic on each side). It is **not** a
-receiver-data-path difference (dest trees and payload are byte-identical)
-and it reproduces with the feature-on *client* even when that client's
-receiver does not use the tokio driver, so it is a build-level
-`bytes_received` counting artifact in the ASY-3/ASY-4 foundation
-(unrelated to any receiver conversion, which this rung did not do). It is
-recorded here so the ASY-12 stats-parity gate accounts for it before
-flipping the default; it must be root-caused and zeroed as part of the
-foundation, not this rung.
+One pre-existing caveat, orthogonal to this rung: earlier scoping (against
+`9d7ea8196` / `c81687a3d`) observed the feature-on build's `--stats` "Total
+bytes received" differing from feature-off by a small fixed amount (6-12
+bytes, deterministic on each side), recorded here so the stats-parity gate
+would account for it before flipping the default.
+
+**Update (master `795593f0c`): the quirk no longer reproduces.** Re-running
+the exact reproduction with a default binary and a `--features tokio-transfer`
+binary across every reachable wire path - SSH/rsh PUSH and PULL (all four
+client/server feature combinations, pinned via `--rsync-path`), daemon-module
+PUSH and PULL through the tokio-driven module receiver, both compressed (`-az`)
+and uncompressed (`-a`) - yields byte-identical `--stats` "Total bytes
+received" and byte-identical dest trees on all legs. The delta is zero; there
+is no counting site to change. The most likely cause of the original delta was
+resolved incidentally by the reader-stack prerequisite rungs (the async
+`CountingReader` and its byte-exact accounting, `reader/counting.rs:80`) landed
+after the earlier scoping. Rather than patch a quirk that no longer exists,
+the invariant is now **CI-enforced** by `tools/ci/run_async_equivalence.sh`
+(wired into `.github/workflows/async-wire-parity.yml`), which byte-diffs a real
+default-vs-tokio-transfer transfer and fails on any dest-tree, `--stats`, or
+exit-code divergence. This makes the stats-parity invariant a standing gate the
+atomic receiver fork must keep green, exactly as §10.3 item 2 requires.
 
 ### 8.6 Prerequisite ordering the coupled rung actually needs
 
@@ -554,14 +565,22 @@ fix, not part of this receiver rung.
 
 ### 10.3 What must land before the conversion can be shipped
 
-1. **Zero the ASY-3/4 `bytes_received` foundation quirk** (section 8.5)
-   and prove the async `CountingReader` counts byte-identically on a real
-   transfer, so the stats-parity invariant holds before the async counter
-   goes on the hot path.
+1. **Zero the ASY-3/4 `bytes_received` foundation quirk** (section 8.5) -
+   **DONE.** The delta is already zero at master `795593f0c` (section 8.5
+   update); the empirical re-run shows byte-identical `bytes_received` and
+   dest trees on every SSH/rsh and daemon leg, compressed and uncompressed.
+   No counting site needed changing.
 2. **A CI-run equivalence gate** (extend `async-wire-parity.yml`) that
    exercises a real local daemon-module PUSH with `tokio-transfer` on vs
    off and byte-diffs dest tree + `--stats` + exit, so the atomic
-   driver-fork can be verified where nextest actually runs.
+   driver-fork can be verified where nextest actually runs - **DONE.**
+   `tools/ci/run_async_equivalence.sh` runs daemon PUSH/PULL (tokio-driven
+   module receiver) plus compressed/whole-file legs twice, once per feature
+   state, and fails on any dest-tree, `--stats`, or exit-code divergence; a
+   new `async-equivalence` job in `.github/workflows/async-wire-parity.yml`
+   runs it on the Linux runner. Verified locally: identical binaries pass,
+   an injected 6-byte `bytes_received` delta and an injected dest-tree delta
+   both fail the gate with a clear diff.
 3. Only then land the atomic async driver fork (10.1) as one reviewable,
    CI-verified commit. A `block_on`-hosted sync fork adds zero async
    benefit (the ASY-3 shape already exists), and an unverified fork risks

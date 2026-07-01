@@ -7,12 +7,18 @@ on:
       - 'crates/transfer/**'
       - 'crates/protocol/**'
       - 'crates/rsync_io/**'
+      - 'crates/core/**'
+      - 'crates/daemon/**'
+      - 'tools/ci/run_async_equivalence.sh'
       - '.github/workflows/async-wire-parity.yml'
   pull_request:
     paths:
       - 'crates/transfer/**'
       - 'crates/protocol/**'
       - 'crates/rsync_io/**'
+      - 'crates/core/**'
+      - 'crates/daemon/**'
+      - 'tools/ci/run_async_equivalence.sh'
       - '.github/workflows/async-wire-parity.yml'
   workflow_dispatch:
 
@@ -76,3 +82,44 @@ jobs:
             -p transfer \
             --features tokio-transfer \
             -E 'test(reader_stack_parity)'
+
+  async-equivalence:
+    name: async-vs-default transfer equivalence (stable)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: async-equivalence
+
+      # Build each feature state once, staging the binaries so the equivalence
+      # script does not rebuild (a second `cargo build` would clobber the first).
+      - name: Build default (feature-off) binary
+        run: |
+          cargo build --release --bin oc-rsync
+          cp target/release/oc-rsync "${RUNNER_TEMP}/oc-rsync-off"
+
+      - name: Build tokio-transfer (feature-on) binary
+        run: |
+          cargo build --release --bin oc-rsync --features tokio-transfer
+          cp target/release/oc-rsync "${RUNNER_TEMP}/oc-rsync-on"
+
+      # Real local transfers (daemon PUSH/PULL through the tokio-driven module
+      # receiver, plus compressed/whole-file legs) byte-diffed between the two
+      # feature states. Fails on any dest-tree, --stats, or exit-code divergence.
+      - name: Run async-vs-default equivalence gate
+        run: |
+          OC_RSYNC_OFF_BIN="${RUNNER_TEMP}/oc-rsync-off" \
+          OC_RSYNC_ON_BIN="${RUNNER_TEMP}/oc-rsync-on" \
+          bash tools/ci/run_async_equivalence.sh
