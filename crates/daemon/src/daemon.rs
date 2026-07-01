@@ -50,10 +50,16 @@ use core::{
     message::{Message, Role},
     rsync_error, rsync_info, rsync_warning,
     server::{
-        HandshakeResult, ReferenceDirectory, ReferenceDirectoryKind, ServerConfig, ServerRole,
-        run_server_with_handshake,
+        HandshakeResult, ReferenceDirectory, ReferenceDirectoryKind, ServerConfig, ServerResult,
+        ServerRole, run_server_with_handshake,
     },
 };
+// ASY sub-rung 2: tokio-driver entry for the socket-backed daemon receiver.
+// Default-off; the threaded path never references it. See
+// `crates/transfer/src/pipeline/tokio_driver.rs` and
+// `docs/design/asy-2-tokio-runtime-feature.md` section 5.
+#[cfg(feature = "tokio-transfer")]
+use core::server::run_server_with_handshake_on;
 use logging_sink::MessageSink;
 use protocol::{
     LEGACY_DAEMON_PREFIX_LEN, LegacyDaemonMessage, MessageCode, MessageFrame, ProtocolVersion,

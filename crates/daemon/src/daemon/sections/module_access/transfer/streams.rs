@@ -10,6 +10,16 @@ struct TransferStreams {
     write: Box<dyn Write + Send>,
     /// Whether the write side supports TCP shutdown (false for stdio/pipes).
     supports_tcp_shutdown: bool,
+    /// Pre-erasure socket clone for the tokio driver (ASY sub-rung 2).
+    ///
+    /// For the daemon module transfer over a real socket this carries an extra
+    /// `try_clone()`d `TcpStream` (a plain dup'd fd) so the tokio receiver can
+    /// wrap it as an `AsyncTransport` in sub-rung 3. It is only threaded here;
+    /// this rung does not construct the wrapper or touch the socket flags, so
+    /// the sync `read`/`write` clones stay byte-identical. Stdio/pipe transports
+    /// keep `None` and remain on the sync path.
+    #[cfg(feature = "tokio-transfer")]
+    async_socket: Option<TcpStream>,
 }
 
 /// Sets up the transfer streams for the transfer engine.
@@ -40,6 +50,9 @@ fn setup_transfer_streams(
             read: Box::new(stdin),
             write: Box::new(stdout),
             supports_tcp_shutdown: false,
+            // Stdio/pipe transports have no socket to hand the tokio driver.
+            #[cfg(feature = "tokio-transfer")]
+            async_socket: None,
         }));
     }
 
@@ -65,10 +78,20 @@ fn setup_transfer_streams(
         }
     };
 
+    // ASY sub-rung 2: an extra socket clone the tokio driver can adopt as an
+    // `AsyncTransport` in sub-rung 3. This is a plain `try_clone()` (a dup'd fd)
+    // with no flag change - the socket stays blocking here, so the sync
+    // `read_stream`/`write_stream` above are byte-identical. A clone failure is
+    // non-fatal: fall back to `None` so the receiver stays on the sync path.
+    #[cfg(feature = "tokio-transfer")]
+    let async_socket = tcp.try_clone().ok();
+
     Ok(Some(TransferStreams {
         read: Box::new(read_stream),
         write: Box::new(write_stream),
         supports_tcp_shutdown: true,
+        #[cfg(feature = "tokio-transfer")]
+        async_socket,
     }))
 }
 
@@ -94,6 +117,104 @@ fn build_handshake_result(
     }
 }
 
+/// Runs the daemon server body, selecting the pipeline entry per feature.
+///
+/// Default build (no `tokio-transfer`): calls the threaded
+/// [`run_server_with_handshake`] directly - byte-for-byte the pre-ASY path.
+///
+/// `tokio-transfer` on: when a real socket clone is available (the daemon
+/// module transfer), routes through the tokio driver
+/// [`run_server_with_handshake_on`] instead. The driver `host_sync_on`-hosts the
+/// **same** synchronous server body on a current-thread runtime, so every wire
+/// byte, flush ordering, and goodbye handshake is identical to the direct call
+/// (ASY sub-rung 2 is routing + socket plumbing only; the read chain stays
+/// sync until sub-rung 3). The `async_socket` clone is dropped at the end of
+/// this scope in this rung - it is threaded here so sub-rung 3 can adopt it as
+/// an `AsyncTransport`. When no socket is available (stdio/pipe), stays on the
+/// sync entry.
+#[cfg(not(feature = "tokio-transfer"))]
+fn run_daemon_transfer(
+    config: ServerConfig,
+    handshake: HandshakeResult,
+    read_stream: &mut dyn Read,
+    write_stream: &mut dyn Write,
+) -> ServerResult {
+    run_server_with_handshake(
+        config,
+        handshake,
+        read_stream,
+        write_stream,
+        None,
+        None,
+        None,
+    )
+}
+
+/// See the `not(tokio-transfer)` twin above. Routes the socket-backed daemon
+/// receiver through the tokio driver when a socket and runtime are available.
+#[cfg(feature = "tokio-transfer")]
+fn run_daemon_transfer(
+    config: ServerConfig,
+    handshake: HandshakeResult,
+    read_stream: &mut dyn Read,
+    write_stream: &mut dyn Write,
+    async_socket: Option<TcpStream>,
+) -> ServerResult {
+    match async_socket {
+        // Socket-backed daemon module transfer: route through the tokio driver.
+        // The driver hosts the sync server body via `host_sync_on`, so output is
+        // byte-identical to the direct call. The socket clone is held for the
+        // duration of the transfer so its fd stays valid, and dropped at scope
+        // end (sub-rung 3 adopts it as an `AsyncTransport` instead of dropping).
+        Some(socket) => with_daemon_transfer_runtime(|handle| {
+            let result = run_server_with_handshake_on(
+                handle,
+                config,
+                handshake,
+                read_stream,
+                write_stream,
+                None,
+                None,
+                None,
+            );
+            drop(socket);
+            result
+        }),
+        // No socket (stdio/pipe): stay on the sync entry, unchanged.
+        None => run_server_with_handshake(
+            config,
+            handshake,
+            read_stream,
+            write_stream,
+            None,
+            None,
+            None,
+        ),
+    }
+}
+
+/// Runs `f` with a tokio runtime handle for the daemon transfer path.
+///
+/// Mirrors `core::session::with_transfer_runtime`: adopts an ambient runtime
+/// when one exists (the hybrid async listener dispatches workers via
+/// `spawn_blocking`, so `Handle::current()` resolves inside a worker) and
+/// otherwise builds a session-scoped current-thread runtime. A current-thread
+/// runtime runs the future on the calling thread, so the borrowed sync
+/// transports stay valid and wire ordering matches the threaded path.
+#[cfg(feature = "tokio-transfer")]
+fn with_daemon_transfer_runtime<R>(f: impl FnOnce(&tokio::runtime::Handle) -> R) -> R {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => f(&handle),
+        Err(_) => {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("failed to build session-scoped tokio runtime");
+            f(runtime.handle())
+        }
+    }
+}
+
 /// Executes the server transfer and logs the result.
 ///
 /// When the module has `transfer_logging` enabled and a log sink is available,
@@ -101,6 +222,9 @@ fn build_handshake_result(
 /// string (or `DEFAULT_LOG_FORMAT` as fallback).
 ///
 /// Returns the transfer exit status: `0` on success, non-zero on failure.
+// The `tokio-transfer` build adds the pre-erasure socket handle as a 9th
+// parameter; the allow is feature-gated so the default 8-arg build is untouched.
+#[cfg_attr(feature = "tokio-transfer", allow(clippy::too_many_arguments))]
 fn execute_transfer(
     ctx: &ModuleRequestContext<'_>,
     config: ServerConfig,
@@ -110,6 +234,7 @@ fn execute_transfer(
     role: ServerRole,
     final_protocol: ProtocolVersion,
     module: &ModuleRuntime,
+    #[cfg(feature = "tokio-transfer")] async_socket: Option<TcpStream>,
 ) -> i32 {
     if let Some(log) = ctx.log_sink {
         let text = format!(
@@ -129,14 +254,13 @@ fn execute_transfer(
     // exchanges (NDX_DONE, stats, goodbye) when TCP backpressure occurs,
     // causing 10-second hangs. Standard I/O handles partial writes correctly,
     // matching upstream rsync's socket I/O model.
-    let result = run_server_with_handshake(
+    let result = run_daemon_transfer(
         config,
         handshake,
         read_stream,
         write_stream,
-        None,
-        None,
-        None,
+        #[cfg(feature = "tokio-transfer")]
+        async_socket,
     );
 
     match result {
