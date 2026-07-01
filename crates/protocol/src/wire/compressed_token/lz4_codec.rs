@@ -27,9 +27,12 @@ use std::io::{self, Read, Write};
 
 use lz4_flex::block;
 
+#[cfg(feature = "tokio-transfer")]
+use super::step::drive_async;
+use super::step::{DeflateSink, TokenDecodeCore, drive_sync};
 use super::{
-    CHUNK_SIZE, CompressedToken, DEFLATED_DATA, END_FLAG, MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL,
-    TOKENRUN_LONG, TOKENRUN_REL, read_deflated_data_length, write_deflated_data_header,
+    CHUNK_SIZE, CompressedToken, END_FLAG, MAX_DATA_COUNT, TOKEN_LONG, TOKEN_REL, TOKENRUN_LONG,
+    TOKENRUN_REL, write_deflated_data_header,
 };
 
 /// LZ4 encoder state for sending compressed tokens.
@@ -238,146 +241,98 @@ impl Lz4TokenEncoder {
 ///
 /// Reference: upstream token.c:recv_compressed_token() (SUPPORT_LZ4)
 pub(super) struct Lz4TokenDecoder {
-    /// Buffer for decompressed output.
-    decompress_buf: Vec<u8>,
-    /// Current position in decompress buffer.
-    decompress_pos: usize,
+    /// Shared sans-io decode state machine (framing, run index, output).
+    core: TokenDecodeCore,
+    /// Algorithm-specific decompression half.
+    deflate: Lz4Deflate,
+}
+
+/// LZ4 decompression sink: the algorithm-specific half of the sans-io decoder.
+///
+/// Each DEFLATED_DATA block is decompressed independently via
+/// `LZ4_decompress_safe`; no persistent state between blocks.
+///
+/// upstream: token.c:recv_compressed_token() (SUPPORT_LZ4)
+struct Lz4Deflate {
+    /// Scratch buffer for decompressed output.
+    scratch: Vec<u8>,
     /// Reusable buffer for compressed input data read from the wire.
     compressed_input_buf: Vec<u8>,
-    /// Current token index.
-    rx_token: i32,
-    /// Remaining tokens in current run.
-    rx_run: i32,
-    pub(super) initialized: bool,
+}
+
+impl DeflateSink for Lz4Deflate {
+    fn accumulates(&self) -> bool {
+        false
+    }
+
+    fn begin_block(&mut self, payload: &[u8]) {
+        self.compressed_input_buf.clear();
+        self.compressed_input_buf.extend_from_slice(payload);
+    }
+
+    fn push_block(&mut self, payload: &[u8]) -> io::Result<()> {
+        // Never called: lz4 does not accumulate consecutive blocks.
+        self.compressed_input_buf.extend_from_slice(payload);
+        Ok(())
+    }
+
+    fn decompress_into(&mut self, output: &mut Vec<u8>) -> io::Result<()> {
+        // upstream: token.c line 1008 - LZ4_decompress_safe
+        let decompressed_len =
+            block::decompress_into(&self.compressed_input_buf, &mut self.scratch).map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("LZ4 decompression failed: {e}"),
+                )
+            })?;
+        output.extend_from_slice(&self.scratch[..decompressed_len]);
+        Ok(())
+    }
 }
 
 impl Lz4TokenDecoder {
     pub(super) fn new() -> Self {
         let size = lz4_flex::block::get_maximum_output_size(CHUNK_SIZE).max(MAX_DATA_COUNT + 2);
         Self {
-            decompress_buf: vec![0u8; size],
-            decompress_pos: 0,
-            compressed_input_buf: Vec::with_capacity(MAX_DATA_COUNT),
-            rx_token: 0,
-            rx_run: 0,
-            initialized: false,
+            // LZ4 emits each decompressed block whole (not CHUNK_SIZE-chunked).
+            core: TokenDecodeCore::new(false),
+            deflate: Lz4Deflate {
+                scratch: vec![0u8; size],
+                compressed_input_buf: Vec::with_capacity(MAX_DATA_COUNT),
+            },
         }
     }
 
     pub(super) fn reset(&mut self) {
-        self.decompress_pos = 0;
-        self.compressed_input_buf.clear();
-        self.rx_token = 0;
-        self.rx_run = 0;
-        self.initialized = false;
+        self.core.reset();
+        self.core.initialized = false;
+        self.deflate.compressed_input_buf.clear();
+    }
+
+    pub(super) fn initialized(&self) -> bool {
+        self.core.initialized
     }
 
     /// Receives the next token from an LZ4-compressed stream.
     ///
-    /// Each DEFLATED_DATA block is decompressed independently via
-    /// `LZ4_decompress_safe`. No persistent state between blocks.
+    /// A thin blocking driver over the shared sans-io decode state machine.
     ///
     /// upstream: token.c:recv_compressed_token() lines 965-1026 (SUPPORT_LZ4)
     pub(super) fn recv_token<R: Read>(&mut self, reader: &mut R) -> io::Result<CompressedToken> {
-        if !self.initialized {
-            self.initialized = true;
-        }
+        drive_sync(&mut self.core, &mut self.deflate, reader)
+    }
 
-        // Emit pending run tokens
-        // upstream: token.c defence-in-depth (3.4.3) - checked increment
-        // prevents rx_token from wrapping past i32::MAX during long runs.
-        if self.rx_run > 0 {
-            self.rx_run -= 1;
-            self.rx_token = self.rx_token.checked_add(1).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "token index overflow in compressed stream run",
-                )
-            })?;
-            return Ok(CompressedToken::BlockMatch(self.rx_token as u32));
-        }
-
-        // Read next flag
-        let mut flag_buf = [0u8; 1];
-        reader.read_exact(&mut flag_buf)?;
-        let flag = flag_buf[0];
-
-        if (flag & 0xC0) == DEFLATED_DATA {
-            // upstream: token.c lines 979-984
-            let len = read_deflated_data_length(reader, flag)?;
-            self.compressed_input_buf.clear();
-            self.compressed_input_buf.resize(len, 0);
-            reader.read_exact(&mut self.compressed_input_buf)?;
-
-            // upstream: token.c line 1008 - LZ4_decompress_safe
-            let decompressed_len =
-                block::decompress_into(&self.compressed_input_buf, &mut self.decompress_buf)
-                    .map_err(|e| {
-                        io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            format!("LZ4 decompression failed: {e}"),
-                        )
-                    })?;
-
-            if decompressed_len > 0 {
-                let data = self.decompress_buf[..decompressed_len].to_vec();
-                return Ok(CompressedToken::Literal(data));
-            }
-
-            // No output produced, try next token
-            return self.recv_token(reader);
-        }
-
-        if flag == END_FLAG {
-            return Ok(CompressedToken::End);
-        }
-
-        // Token parsing - identical to zlib/zstd
-        if flag & TOKEN_REL != 0 {
-            let rel = (flag & 0x3F) as i32;
-            // upstream: token.c defence-in-depth (3.4.3) - checked addition
-            // prevents rx_token from wrapping past i32::MAX via repeated
-            // TOKEN_REL accumulation from a malicious sender.
-            self.rx_token = self.rx_token.checked_add(rel).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "token index overflow in compressed stream",
-                )
-            })?;
-
-            if (flag >> 6) & 1 != 0 {
-                let mut run_buf = [0u8; 2];
-                reader.read_exact(&mut run_buf)?;
-                self.rx_run = u16::from_le_bytes(run_buf) as i32;
-            }
-
-            Ok(CompressedToken::BlockMatch(self.rx_token as u32))
-        } else if flag & 0xE0 == TOKEN_LONG {
-            let mut buf = [0u8; 4];
-            reader.read_exact(&mut buf)?;
-            self.rx_token = i32::from_le_bytes(buf);
-            // upstream: token.c:844-847 (3.4.2) - reject negative absolute
-            // token to prevent block-index wrap into the valid range.
-            if self.rx_token < 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "invalid token number in compressed stream",
-                ));
-            }
-
-            if flag & 1 != 0 {
-                let mut run_buf = [0u8; 2];
-                reader.read_exact(&mut run_buf)?;
-                self.rx_run = u16::from_le_bytes(run_buf) as i32;
-            }
-
-            Ok(CompressedToken::BlockMatch(self.rx_token as u32))
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid compressed token flag: 0x{flag:02X}"),
-            ))
-        }
+    /// Async counterpart to [`recv_token`](Self::recv_token), backed by the same
+    /// sans-io state machine.
+    #[cfg(feature = "tokio-transfer")]
+    pub(super) async fn recv_token_async<R>(
+        &mut self,
+        reader: &mut R,
+    ) -> io::Result<CompressedToken>
+    where
+        R: tokio::io::AsyncRead + Unpin + ?Sized,
+    {
+        drive_async(&mut self.core, &mut self.deflate, reader).await
     }
 
     /// Noop for LZ4 - no dictionary synchronization needed.
@@ -388,6 +343,7 @@ impl Lz4TokenDecoder {
 
 #[cfg(test)]
 mod tests {
+    use super::super::{DEFLATED_DATA, read_deflated_data_length};
     use super::*;
     use std::io::Cursor;
 
