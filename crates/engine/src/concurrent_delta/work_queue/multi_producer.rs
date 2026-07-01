@@ -18,6 +18,7 @@ impl Clone for WorkQueueSender {
     fn clone(&self) -> Self {
         Self {
             tx: self.tx.clone(),
+            capacity: self.capacity.clone(),
         }
     }
 }
