@@ -585,3 +585,121 @@ fix, not part of this receiver rung.
    CI-verified commit. A `block_on`-hosted sync fork adds zero async
    benefit (the ASY-3 shape already exists), and an unverified fork risks
    a wire/stats divergence - both worse than none per the stop clause.
+
+## 11. Fifth scoping (prereqs 1+2 DONE, gate live) - STOP on read-surface coverage
+
+Status: Re-scoped against master `15f2425a9`, after the two §10.3 prerequisites
+landed (the `bytes_received` foundation quirk is zeroed; the CI-run
+`async-equivalence` gate is live: `.github/workflows/async-wire-parity.yml` +
+`tools/ci/run_async_equivalence.sh`, byte-diffing a real feature-off-vs-on
+daemon PUSH/PULL across five legs). The charter's two named prior blockers
+(verifiability, `bytes_received`) are indeed resolved.
+
+Outcome: **STOP.** The atomic async receiver fork is still not shippable
+byte-identically as a consume-the-merged-blocks rung, because the merged async
+building blocks cover only the **delta-token demux path**, not the full set of
+wire reads the daemon PUSH receiver executes. A byte-identical async receiver
+requires net-new async twins across `protocol` + `transfer` that are not part
+of the building-block set the charter says to consume. Per the charter's
+"byte-identical or nothing" / "a divergent tokio receiver is worse than none"
+clause, we stop and report the exact remaining coupling rather than ship a fork
+that either diverges or falls back to `block_on` (zero async benefit).
+
+### 11.1 What the merged blocks cover (and what they do not)
+
+Verified present and byte-parity-tested (the delta-token path):
+
+- async transport (`AsyncTransport::from_std_tcp`,
+  `pipeline/async_transport.rs`);
+- async byte-exact `CountingReader` (`reader/counting.rs:80`);
+- async multiplex demux `MultiplexReader::read_async` /
+  `read_async_with<S: MuxSink>` with ordered control-frame side effects
+  (`reader/multiplex.rs:514`);
+- `AsyncServerReader` **plain + multiplex only** (`reader/server.rs:284`);
+- async leaf reads inside `protocol`: `recv_msg_into_async`
+  (`multiplex/io/async_recv.rs:40`) and `CompressedTokenDecoder::recv_token_async`
+  (zlib/zstd/lz4, `wire/compressed_token/decoder.rs:169`).
+
+The compressed leaf being present at the `protocol` layer is a real advance
+over the section 9.1 blocker: `recv_token_async<R: AsyncRead>` drives the
+sans-io inflate directly, so the compressed token path does **not** need a
+`spawn_blocking` island - it awaits. Good.
+
+But the daemon PUSH receiver's read chain reads far more than delta tokens off
+the same demuxed stream, and **none** of those reads have an async twin
+(grep across `receiver/`, `transfer_ops/`, `protocol/`, and the `flist` crate
+returns zero `*_async` twins for them):
+
+- the **file-list reader** - `receive_file_list` /
+  `receive_extra_file_lists` (`receiver/file_list/receive.rs`) delegate to
+  `protocol::flist::read::read_entry_with_flist<R: Read>`
+  (`protocol/src/flist/read/mod.rs:491`), a large sync `R: Read` decoder in
+  `protocol`. This runs in `setup_transfer` **before** any token read and is
+  the bulk of the wire read on a multi-file transfer;
+- `read_filter_list<R: Read>` (setup, demuxed) - no async twin;
+- `SenderAttrs::read_with_codec_xattr` (`receiver/wire.rs:217`, seven
+  `read_exact`/`read_ndx`/vstring sites per file) and `SumHead::read` - the
+  per-file response header, no async twin;
+- the `NdxCodec::read_ndx` path (`read_response_header`, `phases.rs`
+  NDX_DONE, goodbye) - no async twin;
+- `receive_stats` (five varint `read_stat`s, `phases.rs:208`) and
+  `DeleteStats::read_from` (`phases.rs`) - no async twin.
+
+So the async surface stops at the token demux. Everything the receiver reads
+around the token loop - flist, filter list, per-file attrs, sum_head, NDX
+markers, stats, delete-stats - is still sync `R: Read` with no `.await`
+variant.
+
+### 11.2 Why this is a hard STOP for a byte-identical rung
+
+A real daemon PUSH receiver that genuinely `.await`s its socket must `.await`
+**every** read on the demuxed stream, not just the token reads, because they
+all share one reader and one framing cursor. Splitting the chain so that flist
+/ attrs / stats reads run sync (`block_on` or a `spawn_blocking` island) while
+only the token reads `.await` puts a sync `R: Read` consumer and an async
+`AsyncRead` consumer on the **same** `MultiplexReader` buffer/`pos` cursor
+across a task boundary - the section 3.3 "no valid bridge" hazard, now for the
+framing cursor rather than the SPSC. It also reorders the demux control-frame
+side effects (blocker D) relative to the sync reads. Either way the wire /
+`--stats` output can diverge, and the live `async-equivalence` gate would (
+correctly) go red - which is exactly the STOP trigger the charter names.
+
+The only byte-identical shape is the atomic fork of §10.1, but §10.1's
+"~20-30 functions" undercounts again: it must **also** include async twins of
+the entire flist read subsystem (`read_entry_with_flist` and its callers in
+`protocol` + `receiver/file_list/`), `read_filter_list`, `read_with_codec_xattr`,
+`SumHead::read`, the `NdxCodec::read_ndx` family, `read_stat`, and
+`DeleteStats::read_from`. Those are net-new async code in `protocol` and the
+`flist` path, not a consumption of the merged blocks, and adding async variants
+inside `protocol`'s flist reader is a further ASY-2 section 2.2 design
+amendment beyond the two already granted (`recv_msg_into_async`,
+`recv_token_async`).
+
+### 11.3 What must land before this rung is a consume-only fork
+
+The building-block set must first grow async twins for the non-token reads,
+each byte-parity-tested against its sync twin, landed as their own reviewable
+rungs (mirroring how the token demux path was built), before the atomic
+receiver fork can be a pure consumption of merged blocks:
+
+1. async `read_ndx` / `read_stat` on the `NdxCodec` / stats codec
+   (`protocol`), + `SumHead::read_async`, + `DeleteStats::read_from_async`;
+2. async `SenderAttrs::read_with_codec_xattr` twin (`receiver/wire.rs`),
+   consuming (1);
+3. async `read_filter_list` (`protocol::filters`) + async
+   `read_entry_with_flist` and its `receiver/file_list/` callers - the flist
+   read subsystem, the largest piece, requiring an ASY-2 section 2.2
+   amendment for the `protocol` flist reader;
+4. `AsyncServerReader` gaining a `tokio::io::AsyncRead` impl (today it exposes
+   only an inherent `read_async` method), so `recv_token_async<R: AsyncRead>`,
+   `recv_msg_into_async`, and the flist/attrs async readers can all take the
+   one demuxed async reader as their `R` uniformly.
+
+Only after 1-4 exist can the receiver driver's ~20-30 functions be
+`#[cfg]`-split to await a real read across the **whole** chain (flist through
+goodbye), wired to the daemon `async_socket` (`streams.rs`, currently threaded
+and dropped), with the SPSC->disk bridge left as the existing sync spin-send
+(the disk consumer is a dedicated `std::thread`, so no runtime-cooperation
+deadlock - that part of the charter analysis holds). Shipping the fork before
+1-4 means either a divergent split (11.2) or a `block_on` fallback (zero async
+benefit) - both worse than none. Per the charter stop clause, we stop.
