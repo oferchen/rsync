@@ -153,12 +153,23 @@ than one rung and belongs to ASY-4 (transport wrapper) landing first.
 
 ASY-7 cannot be a single receiver-read rung. The dependency order is:
 
-1. **ASY-4 transport wrapper (prerequisite).** Build the
-   `tokio::io::AsyncRead`/`AsyncWrite` shim over the receiver transport
-   (design doc referenced by ASY-2 open-question 2, not yet written),
-   including how the multiplex demux, decompression, and control-frame
-   dispatch move onto async - or a prefetch-into-buffer adapter with a
-   documented flush-before-block guard.
+1. **ASY-4 transport wrapper (prerequisite - BUILT).** The
+   `tokio::io::AsyncRead`/`AsyncWrite` shim over the socket-backed
+   transport now exists as
+   `crates/transfer/src/pipeline/async_transport.rs`
+   (`pub(crate) AsyncTransport`, gated on `tokio-transfer`, default-off).
+   It wraps a `std::net::TcpStream` via `TcpStream::from_std` after
+   flipping the socket non-blocking in `from_std_tcp`, and applies only
+   to socket-backed transports (daemon `rsync://` /
+   `DaemonStream::Plain`); pipe-backed SSH / stdio transports
+   (`DaemonStream::Stdio`) have no socket and stay on the sync path,
+   mirroring the NSV-1 `Option<fd>` shape. The adapter is additive and
+   **unwired**: it is not connected to the receiver read path, the
+   multiplex demux, the SPSC bridge, or `core::session`. The remaining
+   ASY-4 work that this rung still needs - moving the multiplex demux,
+   decompression, and control-frame dispatch onto async, or a
+   prefetch-into-buffer adapter with a documented flush-before-block
+   guard - is deferred to the coupled ASY-7-redo rung below.
 2. **Re-charter ASY-7 as a coupled rung**, converting boundaries 4
    (read), 6+7 (SPSC -> mpsc), and the async half of 9 (disk task)
    together, because section 3.3 shows they share a stack frame. The
