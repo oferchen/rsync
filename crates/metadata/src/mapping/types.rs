@@ -77,6 +77,11 @@ impl MappingMatcher {
     /// `name_lookup` is invoked lazily and only by name-based variants
     /// ([`Self::ExactName`], [`Self::Pattern`]). Numeric and wildcard-all
     /// variants never trigger a name resolution.
+    ///
+    /// A missing name (the nameless id, e.g. root when the sender omits the
+    /// id-0 name) is normalized to the empty string before comparison, so an
+    /// empty-name matcher matches it. upstream: uidlist.c:recv_add_id -
+    /// `if (!name) name = ""` before the strcmp/wildmatch.
     pub(crate) fn matches<F>(&self, identifier: u32, mut name_lookup: F) -> io::Result<bool>
     where
         F: FnMut() -> io::Result<Option<String>>,
@@ -84,19 +89,9 @@ impl MappingMatcher {
         Ok(match self {
             Self::Any => true,
             Self::IdRange { start, end } => (identifier >= *start) && (identifier <= *end),
-            Self::ExactName(expected) => {
-                if let Some(name) = name_lookup()? {
-                    name == *expected
-                } else {
-                    false
-                }
-            }
+            Self::ExactName(expected) => name_lookup()?.unwrap_or_default() == *expected,
             Self::Pattern(pattern) => {
-                if let Some(name) = name_lookup()? {
-                    wildcard_matches(pattern, &name)
-                } else {
-                    false
-                }
+                wildcard_matches(pattern, &name_lookup()?.unwrap_or_default())
             }
         })
     }
