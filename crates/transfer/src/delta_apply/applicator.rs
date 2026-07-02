@@ -856,6 +856,84 @@ pub fn apply_delta_stream<R: Read>(
     Ok(())
 }
 
+/// Drains a file's delta stream with no output and no basis, then consumes the
+/// trailing whole-file checksum.
+///
+/// This is the receiver's DISCARD path: the temp file could not be created
+/// (e.g. a read-only destination directory yielded `EACCES`), yet the sender
+/// has already committed to streaming an ordinary delta for this file. The
+/// bytes MUST be read off the wire in full or the protocol desyncs and every
+/// subsequent file (and the goodbye handshake) is corrupted. Nothing is
+/// written and no basis is mapped.
+///
+/// Token handling mirrors upstream `receive_data()` when `fd == -1` and
+/// `mapbuf == NULL`:
+///
+/// - Literal tokens: the data bytes are read off the wire and dropped without
+///   writing (`receiver.c:407` `write_file` is guarded by `fd != -1`). On the
+///   compressed path the decoder returns the already-decompressed payload, so
+///   reading the token keeps the inflate stream in sync.
+/// - Block-match tokens: absorbed benignly by advancing the notional offset,
+///   with NO basis read and NO `see_token` dictionary feed - exactly the
+///   `if (!mapbuf) { ...; offset += len; continue; }` branch at
+///   `receiver.c:444-451`. That branch runs BEFORE the `if (mapbuf)` guard that
+///   would otherwise call `see_token`/`sum_update` (`receiver.c:461-466`), so
+///   the discard path never feeds the dictionary either. A pre-fix upstream
+///   version dereferenced `full_fname(fname)` with `fname == NULL` here and
+///   crashed the receiver on an otherwise normal transfer (the
+///   "nulldereference" the upstream test guards); we simply absorb the match.
+///
+/// After the `End` token, the sender always writes the whole-file checksum
+/// (`xfer_sum_len` bytes); upstream's `receive_data()` reads it unconditionally
+/// at `receiver.c:515` regardless of `fd`. `checksum_len` MUST equal the
+/// negotiated digest length ([`ChecksumVerifier::digest_len`]).
+///
+/// # Upstream Reference
+///
+/// - `receiver.c:524-527` - `discard_receive_data()` calls
+///   `receive_data(f_in, NULL, -1, 0, NULL, -1, file, 0)`.
+/// - `receiver.c:999-1006` - `open_tmpfile` failure -> `discard_receive_data`
+///   + `continue` (no propagation out of the receive loop).
+/// - `receiver.c:444-451` - block-match-with-no-basis absorb (`offset += len`).
+/// - `receiver.c:515` - trailing `read_buf(f_in, sender_file_sum, xfer_sum_len)`.
+pub fn discard_delta_stream<R: Read>(
+    reader: &mut R,
+    token_reader: &mut TokenReader,
+    checksum_len: usize,
+) -> io::Result<()> {
+    debug_log!(Deltasum, 2, "recv delta stream discard start");
+
+    let mut scratch = Vec::new();
+    loop {
+        match token_reader.read_token(reader)? {
+            DeltaToken::End => break,
+            // Compressed literal: decoder already consumed + decompressed the
+            // wire bytes; drop the payload.
+            DeltaToken::Literal(LiteralData::Ready(_)) => {}
+            // Plain literal: read the raw bytes off the wire and drop them.
+            // upstream: receiver.c:407 write_file is skipped when fd == -1.
+            DeltaToken::Literal(LiteralData::Pending(len)) => {
+                if scratch.len() < len {
+                    scratch.resize(len, 0);
+                }
+                reader.read_exact(&mut scratch[..len])?;
+            }
+            // Block match with no basis: absorb without reading a basis block
+            // and without feeding see_token. upstream: receiver.c:444-451.
+            DeltaToken::BlockRef(_) => {}
+        }
+    }
+
+    // upstream: receiver.c:515 - the sender always trails the delta with the
+    // whole-file checksum; consume it so the stream stays aligned for the next
+    // NDX / goodbye. On the discard path there is nothing to verify against.
+    let mut sink = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    reader.read_exact(&mut sink[..checksum_len])?;
+
+    debug_log!(Deltasum, 2, "recv delta stream discard complete");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1165,5 +1243,106 @@ mod tests {
         assert!(!result);
         assert_eq!(cache, ReflinkRangeCache::Unresolved);
         assert_eq!(same_fs, SameFsCache::DifferentFs);
+    }
+
+    /// Encodes a plain (uncompressed) delta: literal token, match token, End,
+    /// then the trailing whole-file checksum. Mirrors the sender's wire layout
+    /// (`encode_plain` + `append_checksum` in the equivalence test).
+    fn plain_delta_with_match(digest_len: usize) -> Vec<u8> {
+        let mut wire = Vec::new();
+        // Literal token: positive length, then that many data bytes.
+        let literal = b"abc";
+        wire.extend_from_slice(&(literal.len() as i32).to_le_bytes());
+        wire.extend_from_slice(literal);
+        // Block-match token for basis index 0: encoded as -(idx + 1).
+        let match_idx: i32 = 0;
+        wire.extend_from_slice(&(-(match_idx + 1)).to_le_bytes());
+        // End marker.
+        wire.extend_from_slice(&0_i32.to_le_bytes());
+        // Trailing whole-file checksum (arbitrary bytes; discard never verifies).
+        wire.extend(std::iter::repeat_n(0xEE_u8, digest_len));
+        wire
+    }
+
+    /// The discard path MUST consume the ENTIRE per-file frame - every delta
+    /// token AND the trailing checksum. If a single byte is left behind, the
+    /// next NDX read parses leftover delta bytes as a frame header and the
+    /// whole session desyncs (upstream: `discard_receive_data` at
+    /// receiver.c:524 exists precisely to keep the stream aligned when the
+    /// receiver never writes the file). This test pins that WHY: after a
+    /// discard the reader is positioned exactly at end-of-frame, with no
+    /// trailing bytes and no error - even when the delta contains a
+    /// block-match token with no basis (receiver.c:444-451).
+    #[test]
+    fn discard_drains_plain_delta_with_match_token_to_exact_end() {
+        let digest_len = 16;
+        let frame = plain_delta_with_match(digest_len);
+        // A sentinel NDX follows the frame; discard must NOT touch it.
+        let mut wire = frame.clone();
+        let sentinel = 0x1234_5678_u32.to_le_bytes();
+        wire.extend_from_slice(&sentinel);
+
+        let mut cursor = io::Cursor::new(wire);
+        let mut token_reader = TokenReader::new(None).expect("plain reader");
+
+        discard_delta_stream(&mut cursor, &mut token_reader, digest_len).expect("drains cleanly");
+
+        // The cursor is positioned exactly after the frame: the next 4 bytes
+        // are the untouched sentinel NDX, proving no desync.
+        assert_eq!(cursor.position(), frame.len() as u64);
+        let mut next = [0u8; 4];
+        cursor.read_exact(&mut next).expect("sentinel intact");
+        assert_eq!(next, sentinel);
+    }
+
+    /// A truncated frame (delta drained but trailing checksum missing) must
+    /// surface as an error, not silently succeed - a short read here means the
+    /// peer died mid-frame and the caller must abort rather than proceed to the
+    /// next NDX on a broken stream.
+    #[test]
+    fn discard_errors_when_trailing_checksum_is_missing() {
+        let digest_len = 16;
+        let mut wire = Vec::new();
+        let match_idx: i32 = 0;
+        wire.extend_from_slice(&(-(match_idx + 1)).to_le_bytes()); // match token
+        wire.extend_from_slice(&0_i32.to_le_bytes()); // End
+        // Deliberately omit the trailing checksum bytes.
+
+        let mut cursor = io::Cursor::new(wire);
+        let mut token_reader = TokenReader::new(None).expect("plain reader");
+
+        let err = discard_delta_stream(&mut cursor, &mut token_reader, digest_len)
+            .expect_err("truncated frame must error");
+        assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    /// End-to-end intent of the temp-create-fail path: after the receiver
+    /// drains a discarded delta it records IOERR_GENERAL, which MUST map to
+    /// exit 23 (RERR_PARTIAL) - matching upstream's
+    /// FERROR_XFER -> got_xfer_error -> _exit(RERR_PARTIAL) (log.c:311,
+    /// main.c:1630). This pins WHY the receiver sets the flag rather than
+    /// aborting: the transfer is partial, not fatal (exit 12), and the drained
+    /// stream keeps every subsequent file intact.
+    #[test]
+    fn discarded_file_maps_to_partial_transfer_exit_23() {
+        use crate::generator::io_error_flags::{IOERR_GENERAL, to_exit_code};
+
+        let digest_len = 16;
+        let frame = plain_delta_with_match(digest_len);
+        let mut cursor = io::Cursor::new(frame.clone());
+        let mut token_reader = TokenReader::new(None).expect("plain reader");
+
+        // Draining must succeed (no crash, no propagated open error).
+        discard_delta_stream(&mut cursor, &mut token_reader, digest_len).expect("drains cleanly");
+        assert_eq!(cursor.position(), frame.len() as u64);
+
+        // The receiver ORs IOERR_GENERAL for the failed file; that bit is the
+        // exit-code signal.
+        let io_error = IOERR_GENERAL;
+        assert_eq!(
+            to_exit_code(io_error),
+            23,
+            "temp-create failure must yield RERR_PARTIAL (exit 23), not fatal (12)"
+        );
     }
 }

@@ -208,14 +208,54 @@ impl ReceiverContext {
             // carrier so a TOCTOU swap on the temp parent cannot redirect
             // the create or the unlink-on-error.
             #[cfg(unix)]
-            let (file, mut temp_guard) = open_tmpfile_sandboxed(
+            let open_result = open_tmpfile_sandboxed(
                 &file_path,
                 self.config.temp_dir.as_deref(),
                 sandbox.as_ref(),
                 Some(dest_dir.as_path()),
-            )?;
+            );
             #[cfg(not(unix))]
-            let (file, mut temp_guard) = open_tmpfile(&file_path, self.config.temp_dir.as_deref())?;
+            let open_result = open_tmpfile(&file_path, self.config.temp_dir.as_deref());
+
+            // upstream: receiver.c:999-1006 - when open_tmpfile() returns fd == -1
+            // (e.g. EACCES from a read-only destination directory) the receiver
+            // does NOT abort the receive loop. It logs the error, calls
+            // discard_receive_data() to drain this file's delta off the wire, and
+            // continues to the next NDX. Propagating the error here instead would
+            // leave the delta stream undrained -> the next NDX read parses delta
+            // bytes as a frame header -> protocol desync (exit 12 / crash). We
+            // mirror the discard path: drain the tokens + trailing checksum, mark
+            // the transfer partial (IOERR_GENERAL -> RERR_PARTIAL, exit 23, same
+            // as upstream's FERROR_XFER -> got_xfer_error -> _exit(RERR_PARTIAL)),
+            // and move on.
+            let (file, mut temp_guard) = match open_result {
+                Ok(pair) => pair,
+                Err(open_err) => {
+                    // The checksum length matches what receive_data() would read
+                    // for this file's trailing whole-file sum (receiver.c:515).
+                    let checksum_len = ChecksumVerifier::new(
+                        self.negotiated_algorithms.as_ref(),
+                        self.protocol,
+                        self.checksum_seed,
+                        self.compat_flags.as_ref(),
+                    )
+                    .digest_len();
+
+                    token_reader.reset();
+                    crate::delta_apply::discard_delta_stream(
+                        reader,
+                        &mut token_reader,
+                        checksum_len,
+                    )?;
+
+                    metadata_errors
+                        .push((file_path.clone(), format!("mkstemp failed: {open_err}")));
+                    // upstream: FERROR_XFER on the open failure sets
+                    // got_xfer_error, which main.c maps to _exit(RERR_PARTIAL).
+                    self.flist_io_error |= crate::generator::io_error_flags::IOERR_GENERAL;
+                    continue;
+                }
+            };
             CleanupManager::global().register_temp_file(temp_guard.path().to_path_buf());
 
             let use_sparse = self.config.flags.sparse;
