@@ -1,0 +1,106 @@
+# Nightly tracker for the upstream rsync 3.5.0dev target (RsyncProject master).
+#
+# WHY: oc-rsync shadows the latest upstream rsync. rsync 3.5.0 releases
+# 2026-07-15. Until then, master (version.h == "3.5.0dev") is a moving target
+# whose testsuite migrated from shell *.test scripts to Python (runtests.py +
+# testsuite/*_test.py). This workflow runs that evolving suite against oc-rsync
+# every night so the full, growing divergence set is visible BEFORE release -
+# without gating any PR.
+#
+# NON-REQUIRED / INFORMATIONAL:
+#   - Triggers: nightly schedule + manual dispatch only (never on push/PR).
+#   - Not referenced by ci.yml / ci-skip.yml and not in branch protection.
+#   - A 3.5.0dev build break or test failure here MUST NOT affect any PR: the
+#     job surfaces the divergence (step-summary table + non-zero run status)
+#     but is best-effort tracking, not a gate.
+#
+# The REQUIRED gate stays on the pinned 3.4.4 release tarball
+# (.github/workflows/_upstream-testsuite.yml, context
+# "upstream-testsuite / upstream testsuite"). This workflow does not touch it.
+#
+# RELEASE-DAY PLAN (2026-07-15): once 3.5.0 ships, bump the REQUIRED gate's
+# pin 3.4.4 -> 3.5.0, vendor the 3.5.0 testsuite as a release tarball, and
+# retire this git-ref tracker (or repoint it at the next dev branch).
+
+name: Track 3.5.0dev Testsuite
+
+on:
+  schedule:
+    # 06:00 UTC nightly - off-peak, after the day's PR activity settles.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: 'RsyncProject ref to track (branch, tag, or sha)'
+        type: string
+        default: 'master'
+
+permissions:
+  contents: read
+
+jobs:
+  track-3-5-0dev:
+    name: 3.5.0dev testsuite (informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Best-effort tracker: never let a 3.5.0dev break look like a repo failure
+    # that someone must firefight. The step summary + run status carry the
+    # signal; this flag keeps the job green so it stays purely informational.
+    continue-on-error: true
+
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+      RUST_BACKTRACE: "full"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: track-3-5-0dev-cargo
+          key: track-3-5-0dev-testsuite
+          cache-on-failure: true
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f # v1.6.1
+        with:
+          # Same autotools/dev set as the 3.4.4 gate, plus python3 for
+          # runtests.py (the git-ref suite is Python) and git for the clone.
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev libxxhash-dev python3 git
+          version: v1
+
+      - name: Build oc-rsync (release)
+        run: cargo build --locked --release --bin oc-rsync
+
+      - name: Run 3.5.0dev testsuite (git-ref mode)
+        id: testsuite
+        env:
+          OC_RSYNC_BIN: target/release/oc-rsync
+          UPSTREAM_REF: ${{ github.event.inputs.upstream_ref || 'master' }}
+        run: |
+          set -uo pipefail
+          mkdir -p target/interop
+          # Best-effort: capture the driver's exit but do not fail the step -
+          # continue-on-error at the job level already keeps this informational,
+          # and we still want the artifact + summary to publish on divergence.
+          bash tools/ci/run_upstream_testsuite.sh 2>&1 \
+            | tee target/interop/track-3.5.0dev-output.log || true
+
+      - name: Upload testsuite logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: track-3.5.0dev-testsuite-logs
+          path: |
+            target/interop/upstream-testsuite/
+            target/interop/track-3.5.0dev-output.log
+          if-no-files-found: ignore
+          retention-days: 14
