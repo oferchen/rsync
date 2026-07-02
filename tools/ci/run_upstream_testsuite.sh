@@ -368,6 +368,24 @@ emit_gha_step_summary() {
     } >>"$summary_file"
 }
 
+# True (0) iff every component of the absolute path $1 has its o+x bit set, so
+# a CAP_DAC_OVERRIDE-dropped root or a dropped uid can traverse it. Unknown
+# (stat unavailable) counts as not-traversable - we only claim traversable when
+# we can prove it.
+path_world_traversable() {
+    local target=$1 p="" comp mode
+    local -a parts
+    IFS='/' read -r -a parts <<<"${target#/}"
+    for comp in "${parts[@]}"; do
+        [[ -z "$comp" ]] && continue
+        p="${p}/${comp}"
+        mode=$(stat -c '%a' "$p" 2>/dev/null || stat -f '%Lp' "$p" 2>/dev/null || echo "")
+        [[ -n "$mode" ]] || return 1
+        (( (0"$mode" & 1) != 0 )) || return 1
+    done
+    return 0
+}
+
 # Publish the oc-rsync binary to a world-traversable path and echo that path.
 #
 # WHY (root leg, setpriv): the 3.5.0dev fake-super/uid tests run rsync via
@@ -392,23 +410,7 @@ publish_oc_rsync_bin() {
     local dir
     for dir in /usr/local/bin /usr/bin; do
         [[ -d "$dir" && -w "$dir" ]] || continue
-        # Every path component of $dir must be o+x for a cap-dropped/dropped-uid
-        # exec to traverse it. Standard FHS dirs are 0755, but verify rather
-        # than assume - a hardened runner could differ.
-        local p="" comp mode ok=1
-        local -a parts
-        IFS='/' read -r -a parts <<<"${dir#/}"
-        for comp in "${parts[@]}"; do
-            p="${p}/${comp}"
-            mode=$(stat -c '%a' "$p" 2>/dev/null || stat -f '%Lp' "$p" 2>/dev/null || echo "")
-            # Require the "other execute" bit (0o1) on every component. If stat
-            # is unavailable we cannot prove traversability, so treat as not-ok.
-            if [[ -z "$mode" ]] || (( (0"$mode" & 1) == 0 )); then
-                ok=0
-                break
-            fi
-        done
-        [[ "$ok" -eq 1 ]] || continue
+        path_world_traversable "$dir" || continue
         local dst="${dir}/oc-rsync"
         if cp -f "$src" "$dst" 2>/dev/null && chmod 0755 "$dst" 2>/dev/null; then
             echo "$dst"
@@ -417,6 +419,31 @@ publish_oc_rsync_bin() {
     done
     # No writable world-traversable dir: keep the original path.
     echo "$src"
+    return 0
+}
+
+# Echo a world-traversable base dir to host the runtests.py scratch tree, or
+# the given fallback when none is usable.
+#
+# WHY (root leg, mount namespace): partial_nowrite_test.py, when running as
+# root on Linux, unshares a mount namespace and mounts a fresh tmpfs OVER the
+# first non-root, non-world-x parent of cwd (chown_target). On the runner that
+# parent is /home/runner, so the tmpfs SHADOWS everything beneath it - including
+# a scratch tree under target/interop (which lives under /home/runner). The
+# test's from-dir then vanishes inside the namespace and rsync fails link_stat
+# with ENOENT, a pure harness artifact. Hosting the scratch OUTSIDE the shadowed
+# parent (e.g. /tmp, mode 1777, all components world-x, never chown_target since
+# it is world-x) keeps the from/to/chk dirs visible after the tmpfs mount.
+world_traversable_scratch_base() {
+    local fallback=$1
+    local base
+    for base in "${TMPDIR:-}" /tmp; do
+        [[ -n "$base" && -d "$base" && -w "$base" ]] || continue
+        path_world_traversable "$base" || continue
+        echo "$base"
+        return 0
+    done
+    echo "$fallback"
     return 0
 }
 
@@ -497,10 +524,19 @@ run_git_ref_mode() {
         --srcdir="$upstream_src_dir"
         --timeout="$testrun_timeout"
     )
-    local scratch_home="${log_root}/scratch-${mode_tag}-${transport_tag}"
+    # Host the scratch tree under a world-traversable base OUTSIDE the parent
+    # that partial_nowrite_test.py shadows with a tmpfs (see
+    # world_traversable_scratch_base). Falls back to $log_root off-CI, so local
+    # runs (no root leg, no mount namespace) are unchanged.
+    local scratch_base
+    scratch_base=$(world_traversable_scratch_base "$log_root")
+    local scratch_home="${scratch_base}/oc-rsync-uts-scratch-${mode_tag}-${transport_tag}"
     chmod -R u+rwX "$scratch_home" 2>/dev/null || true
     rm -rf "$scratch_home"
     mkdir -p "$scratch_home"
+    if [[ "$scratch_base" != "$log_root" ]]; then
+        echo "==> Scratch tree under ${scratch_home} (outside the tmpfs-shadowed HOME)" >&2
+    fi
 
     local rc=0
     (
