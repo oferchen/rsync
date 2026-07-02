@@ -20,7 +20,8 @@ use protocol::flist::FileEntry;
 
 use crate::receiver::directory::FailedDirectories;
 use crate::receiver::quick_check::{
-    dest_mtime_newer, is_hardlink_follower, quick_check_matches, try_reference_dest,
+    dest_mtime_newer, dest_type_matches_source, is_hardlink_follower, quick_check_matches,
+    try_reference_dest,
 };
 use crate::receiver::stats::{ListOnlyEntry, TransferStats};
 use crate::receiver::{ReceiverContext, apply_acls_from_receiver_cache};
@@ -247,7 +248,16 @@ impl ReceiverContext {
                     }
                     continue;
                 }
-                if update_only && dest_mtime_newer(meta, entry) {
+                if update_only
+                    && dest_type_matches_source(&file_path, entry)
+                    && dest_mtime_newer(meta, entry)
+                {
+                    // upstream: generator.c:1721 - the `-u` skip is guarded by
+                    // `stype == ftype`, so a newer destination only suppresses
+                    // the transfer when it is the SAME file type as the source.
+                    // A type mismatch (e.g. dest symlink vs source regular file)
+                    // always transfers regardless of mtime.
+                    //
                     // upstream: generator.c:1723-1724 - `if (INFO_GTE(SKIP, 1))
                     // rprintf(FINFO, "%s is newer\n", fname)`. Report the skip on
                     // the same sink as itemize so the ordering matches upstream.

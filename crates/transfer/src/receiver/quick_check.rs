@@ -135,6 +135,77 @@ pub(super) fn dest_mtime_newer(dest_meta: &fs::Metadata, source_entry: &FileEntr
     }
 }
 
+/// Collapses a file type into upstream rsync's `get_file_type()` category.
+///
+/// Upstream classifies modes into `FT_REG`, `FT_DIR`, `FT_SYMLINK`,
+/// `FT_SPECIAL` (fifo/socket) and `FT_DEVICE` (block/char). The `--update`
+/// same-type guard compares these collapsed categories, so block vs char
+/// devices both count as `FT_DEVICE` and fifo vs socket both count as
+/// `FT_SPECIAL`.
+///
+/// upstream: generator.c:608 - `get_file_type()`.
+fn file_type_category(mode: u32) -> Option<u8> {
+    use protocol::flist::FileType;
+    FileType::from_mode(mode).map(|ft| match ft {
+        FileType::Regular => 1,                            // FT_REG
+        FileType::Directory => 2,                          // FT_DIR
+        FileType::Symlink => 3,                            // FT_SYMLINK
+        FileType::Fifo | FileType::Socket => 4,            // FT_SPECIAL
+        FileType::BlockDevice | FileType::CharDevice => 5, // FT_DEVICE
+    })
+}
+
+/// Returns `true` when the destination's actual file type matches the source
+/// entry's type, per upstream's collapsed `get_file_type()` categories.
+///
+/// The destination is inspected with `symlink_metadata` (lstat), mirroring
+/// upstream's `link_stat`, so a destination symlink is classified as a symlink
+/// rather than as its target. Used by the `--update` skip so a newer
+/// destination only suppresses the transfer when it is the same type as the
+/// source; a type mismatch (e.g. dest symlink vs source regular file) always
+/// transfers.
+///
+/// upstream: generator.c:1721 - `update_only > 0 && statret == 0
+/// && stype == ftype && file->modtime - sx.st.st_mtime < modify_window`.
+pub(super) fn dest_type_matches_source(dest_path: &Path, source_entry: &FileEntry) -> bool {
+    let Some(source_category) = file_type_category(source_entry.mode()) else {
+        return false;
+    };
+    match fs::symlink_metadata(dest_path) {
+        Ok(dest_meta) => {
+            let dest_mode = mode_from_metadata(&dest_meta);
+            file_type_category(dest_mode) == Some(source_category)
+        }
+        // No lstat result means the dest vanished; upstream treats a failed
+        // stat as statret != 0, which never enters the same-type skip.
+        Err(_) => false,
+    }
+}
+
+/// Extracts the raw `st_mode` bits from filesystem metadata.
+///
+/// On unix the mode is read directly. On other platforms only the coarse file
+/// type (regular / dir / symlink) is available, so it is reconstructed into the
+/// matching `S_IFMT` bits.
+fn mode_from_metadata(meta: &fs::Metadata) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        meta.mode()
+    }
+    #[cfg(not(unix))]
+    {
+        let ft = meta.file_type();
+        if ft.is_symlink() {
+            0o120000 // S_IFLNK
+        } else if ft.is_dir() {
+            0o040000 // S_IFDIR
+        } else {
+            0o100000 // S_IFREG
+        }
+    }
+}
+
 /// Checks reference directories for a file that matches the source entry.
 ///
 /// When the destination file does not exist, this function iterates through
@@ -718,6 +789,90 @@ mod symlink_basis_tests {
         assert_eq!(
             fs::read(dest_dir.join("payload.bin")).expect("dest file"),
             b"basis payload"
+        );
+    }
+}
+
+/// Regression tests pinning the `--update` (`-u`) same-type skip guard.
+///
+/// upstream: generator.c:1721 - the "newer dest -> skip" logic is guarded by
+/// `stype == ftype`, so a newer destination only suppresses the transfer when
+/// it is the SAME file type as the source. A type mismatch (e.g. a newer dest
+/// symlink over a source regular file) always transfers regardless of mtime.
+/// These tests encode WHY: without the guard, `-u` silently kept a stale
+/// symlink and dropped the source's real content.
+#[cfg(unix)]
+#[cfg(test)]
+mod update_type_guard_tests {
+    use std::fs;
+    use std::os::unix::fs::symlink;
+
+    use protocol::flist::FileEntry;
+
+    use super::dest_type_matches_source;
+
+    /// A source regular file over a destination symlink is a type MISMATCH, so
+    /// the `-u` skip must not fire (upstream `stype != ftype`): transfer wins.
+    #[test]
+    fn regular_source_over_symlink_dest_is_mismatch() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dest = dir.path().join("item");
+        let target = dir.path().join("target.bin");
+        fs::write(&target, b"target payload").expect("write target");
+        symlink(&target, &dest).expect("create dest symlink");
+
+        let entry = FileEntry::new_file("item".into(), 42, 0o644);
+        assert!(
+            !dest_type_matches_source(&dest, &entry),
+            "dest symlink vs source regular file must be a type mismatch"
+        );
+    }
+
+    /// A source regular file over a destination regular file is the SAME type,
+    /// so the guard permits the `-u` newer-dest skip (upstream `stype ==
+    /// ftype`): mtime alone then decides.
+    #[test]
+    fn regular_source_over_regular_dest_matches() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dest = dir.path().join("item");
+        fs::write(&dest, b"dest payload").expect("write dest");
+
+        let entry = FileEntry::new_file("item".into(), 42, 0o644);
+        assert!(
+            dest_type_matches_source(&dest, &entry),
+            "dest regular vs source regular must match so mtime can skip"
+        );
+    }
+
+    /// The destination is inspected with lstat: a symlink pointing at a regular
+    /// file is still classified as a symlink, not its target's type.
+    #[test]
+    fn symlink_dest_is_not_followed_for_type() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dest = dir.path().join("item");
+        let target = dir.path().join("real.bin");
+        fs::write(&target, b"real payload").expect("write target");
+        symlink(&target, &dest).expect("create dest symlink");
+
+        // Source is also a symlink -> same type, guard matches.
+        let sym_entry = FileEntry::new_symlink("item".into(), target.clone());
+        assert!(
+            dest_type_matches_source(&dest, &sym_entry),
+            "symlink dest vs symlink source must match (lstat, not followed)"
+        );
+    }
+
+    /// A vanished destination yields no lstat, which upstream treats as
+    /// `statret != 0` -> never the same-type skip.
+    #[test]
+    fn missing_dest_is_not_a_match() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dest = dir.path().join("does-not-exist");
+
+        let entry = FileEntry::new_file("does-not-exist".into(), 42, 0o644);
+        assert!(
+            !dest_type_matches_source(&dest, &entry),
+            "missing dest must not count as a same-type match"
         );
     }
 }
