@@ -5,6 +5,7 @@
 fn remove_source_files_removes_successfully_transferred_file() {
     let ctx = test_helpers::setup_copy_test();
     fs::write(ctx.source.join("file.txt"), b"content").expect("write file");
+    fs::create_dir_all(&ctx.dest).expect("create dest");
 
     let operands = vec![
         ctx.source.join("file.txt").into_os_string(),

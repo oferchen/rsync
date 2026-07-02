@@ -646,8 +646,12 @@ fn execute_empty_file_to_empty_file_skipped_with_times() {
     assert_eq!(summary.regular_files_matched(), 1);
 }
 
+// upstream: main.c:736 get_local_name() - a single empty-file transfer to
+// `.../newdir/dest.txt` where `newdir/` is absent must fail with ENOENT and
+// create nothing without --mkpath, exactly like a non-empty file. Empty files
+// bypass the delta path but not the dest-parent gate.
 #[test]
-fn execute_creates_empty_file_in_nonexistent_directory() {
+fn execute_empty_file_in_nonexistent_directory_errors_without_mkpath() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("empty.txt");
     let destination = temp.path().join("newdir/dest.txt");
@@ -660,10 +664,42 @@ fn execute_creates_empty_file_in_nonexistent_directory() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // Should fail without --create-directories equivalent
-    // (Default behavior should create parent directories for single file copy)
-    let summary = plan
+    let error = plan
         .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+        .expect_err("missing dest-arg parent should error without --mkpath");
+
+    match error.kind() {
+        LocalCopyErrorKind::Io { action, source, .. } => {
+            assert_eq!(*action, "create parent directory");
+            assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+        }
+        other => panic!("unexpected error kind: {other:?}"),
+    }
+    assert!(!destination.parent().expect("parent").exists());
+    assert!(!destination.exists());
+}
+
+// upstream: --mkpath materialises the missing dest-arg parent even for an empty
+// source file.
+#[test]
+fn execute_empty_file_in_nonexistent_directory_with_mkpath() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("empty.txt");
+    let destination = temp.path().join("newdir/dest.txt");
+
+    fs::write(&source, b"").expect("write empty source");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().mkpath(true),
+        )
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);

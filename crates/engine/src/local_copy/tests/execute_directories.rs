@@ -446,8 +446,13 @@ fn execute_dry_run_without_implied_dirs_skips_parent_check() {
     assert!(!destination.exists());
 }
 
+// upstream: main.c:736 get_local_name() - --implied-dirs (archive default) does
+// NOT auto-create the destination arg's own missing leading prefix; only
+// --mkpath does. A single-file transfer to `.../missing/dest.txt` where
+// `missing/` is absent must fail with ENOENT and create nothing, exactly like
+// --no-implied-dirs (the prefix is strictly above the destination root).
 #[test]
-fn execute_with_implied_dirs_creates_missing_parents() {
+fn execute_with_implied_dirs_still_requires_dest_arg_parent() {
     let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("missing").join("dest.txt");
@@ -459,10 +464,19 @@ fn execute_with_implied_dirs_creates_missing_parents() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    plan.execute().expect("copy succeeds");
+    let error = plan
+        .execute()
+        .expect_err("missing dest-arg parent should error without --mkpath");
 
-    assert!(destination.exists());
-    assert_eq!(fs::read(&destination).expect("read dest"), b"data");
+    match error.kind() {
+        LocalCopyErrorKind::Io { action, source, .. } => {
+            assert_eq!(*action, "create parent directory");
+            assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+        }
+        other => panic!("unexpected error kind: {other:?}"),
+    }
+    assert!(!destination.parent().expect("parent").exists());
+    assert!(!destination.exists());
 }
 
 #[test]
