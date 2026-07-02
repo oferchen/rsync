@@ -40,13 +40,27 @@ permissions:
 
 jobs:
   track-3-5-0dev:
-    name: 3.5.0dev testsuite (informational)
+    # Full coverage of the 3.5.0dev suite is a privilege x transport matrix:
+    #   privilege=nonroot  - runs as the runner user; root-only tests SKIP.
+    #   privilege=root     - runs under sudo; chown/devices/xattrs/dir-sgid/
+    #                        protected-regular RUN (upstream passwordless sudo).
+    #   transport=pipe     - daemon tests use the secure stdio-pipe default.
+    #   transport=tcp      - --use-tcp: real loopback rsyncd, un-skips
+    #                        daemon-chroot-acl + proxy-response-line-too-long.
+    # All four legs are surfaced independently so a divergence is attributable
+    # to a specific (privilege, transport) cell.
+    name: 3.5.0dev testsuite (${{ matrix.privilege }}/${{ matrix.transport }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # Best-effort tracker: never let a 3.5.0dev break look like a repo failure
     # that someone must firefight. The step summary + run status carry the
-    # signal; this flag keeps the job green so it stays purely informational.
+    # signal; this flag keeps every leg green so it stays purely informational.
     continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        privilege: [nonroot, root]
+        transport: [pipe, tcp]
 
     env:
       CARGO_TERM_COLOR: always
@@ -65,6 +79,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
+          # Share the compiled oc-rsync across all four legs (identical build).
           shared-key: track-3-5-0dev-cargo
           key: track-3-5-0dev-testsuite
           cache-on-failure: true
@@ -85,20 +100,43 @@ jobs:
         env:
           OC_RSYNC_BIN: target/release/oc-rsync
           UPSTREAM_REF: ${{ github.event.inputs.upstream_ref || 'master' }}
+          # transport=tcp -> --use-tcp (real loopback rsyncd); pipe -> default.
+          USE_TCP: ${{ matrix.transport == 'tcp' && 'yes' || 'no' }}
         run: |
           set -uo pipefail
           mkdir -p target/interop
+          # Root leg: re-exec the harness under sudo (the runner has
+          # passwordless sudo) so chown/devices/xattrs/dir-sgid/protected-
+          # regular actually RUN instead of self-skipping. Forward the env the
+          # harness reads - a bare `sudo` scrubs it. Non-root leg runs plainly.
+          runner=(bash tools/ci/run_upstream_testsuite.sh)
+          if [[ "${{ matrix.privilege }}" == "root" ]]; then
+            runner=(sudo env
+              "PATH=$PATH"
+              "OC_RSYNC_BIN=$OC_RSYNC_BIN"
+              "UPSTREAM_REF=$UPSTREAM_REF"
+              "USE_TCP=$USE_TCP"
+              "GITHUB_ACTIONS=${GITHUB_ACTIONS:-}"
+              "GITHUB_STEP_SUMMARY=${GITHUB_STEP_SUMMARY:-}"
+              bash tools/ci/run_upstream_testsuite.sh)
+          fi
           # Best-effort: capture the driver's exit but do not fail the step -
           # continue-on-error at the job level already keeps this informational,
           # and we still want the artifact + summary to publish on divergence.
-          bash tools/ci/run_upstream_testsuite.sh 2>&1 \
+          "${runner[@]}" 2>&1 \
             | tee target/interop/track-3.5.0dev-output.log || true
+          # The root leg leaves root-owned files under target/interop (the
+          # runtests.py scratch + logs). Hand them back to the runner user so
+          # the upload-artifact step and post-job cache can read/clean them.
+          if [[ "${{ matrix.privilege }}" == "root" ]]; then
+            sudo chown -R "$(id -u):$(id -g)" target/interop 2>/dev/null || true
+          fi
 
       - name: Upload testsuite logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: track-3.5.0dev-testsuite-logs
+          name: track-3.5.0dev-testsuite-logs-${{ matrix.privilege }}-${{ matrix.transport }}
           path: |
             target/interop/upstream-testsuite/
             target/interop/track-3.5.0dev-output.log
