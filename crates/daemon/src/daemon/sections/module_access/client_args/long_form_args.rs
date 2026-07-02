@@ -210,6 +210,13 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
                             config.deletion.max_delete = Some(n as u64);
                         }
                     }
+                // upstream: options.c - server_options() forwards `--modify-window=NUM`.
+                // The daemon receiver's quick-check honours it via same_time() so
+                // files within the window are not needlessly re-transferred.
+                } else if let Some(val) = arg.strip_prefix("--modify-window=") {
+                    if let Ok(n) = val.trim_start_matches('+').parse::<u64>() {
+                        config.file_selection.modify_window = n;
+                    }
                 // Fallback: =value format for reference directories and backup options.
                 // Handles both upstream (two-arg) and legacy (=value) formats.
                 } else if let Some(dir) = arg.strip_prefix("--backup-dir=") {
