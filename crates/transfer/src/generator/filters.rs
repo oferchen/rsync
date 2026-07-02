@@ -587,7 +587,14 @@ pub(super) fn read_files_from_local_path(path: &str, from0: bool) -> io::Result<
         // The local file is already in the server's local charset; upstream
         // reads it without RL_CONVERT (compat.c:799-806 only sets
         // filesfrom_convert when the file is being forwarded over the wire).
-        protocol::read_files_from_stream(&mut reader, None)
+        //
+        // upstream: flist.c:2249 sets RL_DUMP_COMMENTS independent of eol_nulls
+        // (it is gated only on reading_remotely), and io.c:1276 read_line()
+        // strips leading '#'/';' comment lines even with NUL delimiters. A
+        // local file open is not "reading remotely", so comments are stripped.
+        let mut filenames = protocol::read_files_from_stream(&mut reader, None)?;
+        filenames.retain(|name| !name.starts_with('#') && !name.starts_with(';'));
+        Ok(filenames)
     } else {
         // Line-delimited: read lines, skip comments and empty lines.
         let mut filenames = Vec::new();
@@ -602,8 +609,9 @@ pub(super) fn read_files_from_local_path(path: &str, from0: bool) -> io::Result<
             if trimmed.is_empty() {
                 continue;
             }
-            // upstream: flist.c:2266 - comments with '#' or ';' prefix
-            // only when not using --from0
+            // upstream: io.c:1276 - RL_DUMP_COMMENTS strips leading '#'/';'
+            // comment lines for local files (flist.c:2249, reading_remotely
+            // false), regardless of eol_nulls.
             if trimmed.starts_with('#') || trimmed.starts_with(';') {
                 continue;
             }
