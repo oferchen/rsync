@@ -93,29 +93,6 @@ fn apply_symbolic_clause(mut mode: u32, clause: &SymbolicClause, is_dir: bool) -
             bits = 0;
         }
 
-        let mut copied = 0u32;
-        if clause.perms.copy_user {
-            copied |= copy_from(Dest::User, dest, before);
-        }
-        if clause.perms.copy_group {
-            copied |= copy_from(Dest::Group, dest, before);
-        }
-        if clause.perms.copy_other {
-            copied |= copy_from(Dest::Other, dest, before);
-        }
-
-        match clause.op {
-            Operation::Add => {
-                bits |= copied & mask;
-            }
-            Operation::Remove => {
-                bits &= !(copied & mask);
-            }
-            Operation::Assign => {
-                bits = copied & mask;
-            }
-        }
-
         let add_bits = permission_bits(&clause.perms, dest, is_dir, before) & umask_mask;
         match clause.op {
             Operation::Add | Operation::Assign => {
@@ -205,14 +182,6 @@ impl Dest {
         }
     }
 
-    const fn shift(self) -> u8 {
-        match self {
-            Self::User => 6,
-            Self::Group => 3,
-            Self::Other => 0,
-        }
-    }
-
     const fn read_mask(self) -> u32 {
         match self {
             Self::User => 0o400,
@@ -262,22 +231,6 @@ const fn permission_bits(spec: &PermSpec, dest: Dest, is_dir: bool, before: u32)
 }
 
 #[cfg(unix)]
-const fn copy_from(source: Dest, dest: Dest, before: u32) -> u32 {
-    let src_mask = source.permission_mask();
-    let src_bits = before & src_mask;
-    let shift = source.shift() as i8 - dest.shift() as i8;
-
-    let shifted = if shift == 0 {
-        src_bits
-    } else if shift > 0 {
-        src_bits >> shift as u32
-    } else {
-        src_bits << (-shift) as u32
-    };
-
-    shifted & dest.permission_mask()
-}
-
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
@@ -287,13 +240,6 @@ mod tests {
         assert_eq!(Dest::User.permission_mask(), 0o700);
         assert_eq!(Dest::Group.permission_mask(), 0o070);
         assert_eq!(Dest::Other.permission_mask(), 0o007);
-    }
-
-    #[test]
-    fn dest_shifts() {
-        assert_eq!(Dest::User.shift(), 6);
-        assert_eq!(Dest::Group.shift(), 3);
-        assert_eq!(Dest::Other.shift(), 0);
     }
 
     #[test]
@@ -315,34 +261,6 @@ mod tests {
         assert_eq!(Dest::User.exec_mask(), 0o100);
         assert_eq!(Dest::Group.exec_mask(), 0o010);
         assert_eq!(Dest::Other.exec_mask(), 0o001);
-    }
-
-    #[test]
-    fn copy_from_user_to_group() {
-        let mode = 0o750;
-        let result = copy_from(Dest::User, Dest::Group, mode);
-        assert_eq!(result, 0o070);
-    }
-
-    #[test]
-    fn copy_from_user_to_other() {
-        let mode = 0o700;
-        let result = copy_from(Dest::User, Dest::Other, mode);
-        assert_eq!(result, 0o007);
-    }
-
-    #[test]
-    fn copy_from_group_to_user() {
-        let mode = 0o070;
-        let result = copy_from(Dest::Group, Dest::User, mode);
-        assert_eq!(result, 0o700);
-    }
-
-    #[test]
-    fn copy_from_same_dest() {
-        let mode = 0o750;
-        let result = copy_from(Dest::User, Dest::User, mode);
-        assert_eq!(result, 0o700);
     }
 
     #[test]
@@ -385,9 +303,6 @@ mod tests {
             setuid: false,
             setgid: false,
             sticky: false,
-            copy_user: false,
-            copy_group: false,
-            copy_other: false,
         };
         assert_eq!(permission_bits(&spec, Dest::User, false, 0), 0o400);
         assert_eq!(permission_bits(&spec, Dest::Group, false, 0), 0o040);
@@ -404,9 +319,6 @@ mod tests {
             setuid: false,
             setgid: false,
             sticky: false,
-            copy_user: false,
-            copy_group: false,
-            copy_other: false,
         };
         assert_eq!(permission_bits(&spec, Dest::User, false, 0), 0o700);
     }
@@ -421,9 +333,6 @@ mod tests {
             setuid: false,
             setgid: false,
             sticky: false,
-            copy_user: false,
-            copy_group: false,
-            copy_other: false,
         };
         assert_eq!(permission_bits(&spec, Dest::User, true, 0), 0o100);
     }
@@ -438,9 +347,6 @@ mod tests {
             setuid: false,
             setgid: false,
             sticky: false,
-            copy_user: false,
-            copy_group: false,
-            copy_other: false,
         };
         assert_eq!(permission_bits(&spec, Dest::User, false, 0o111), 0o100);
     }
@@ -455,9 +361,6 @@ mod tests {
             setuid: false,
             setgid: false,
             sticky: false,
-            copy_user: false,
-            copy_group: false,
-            copy_other: false,
         };
         assert_eq!(permission_bits(&spec, Dest::User, false, 0o644), 0);
     }

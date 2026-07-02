@@ -182,34 +182,22 @@ mod basic_symbolic_syntax {
         assert!(!modifiers.is_empty());
     }
 
+    // upstream: chmod.c:parse_chmod() has no GNU-style "copy permissions"
+    // form. A who-class letter in the RHS (STATE_2ND_HALF) is STATE_ERROR, so
+    // `g=u`, `o=g`, `o=u` are all rejected.
     #[test]
-    fn copy_user_to_group() {
-        let modifiers = ChmodModifiers::parse("g=u").expect("parse g=u");
-        assert!(!modifiers.is_empty());
+    fn who_letter_in_rhs_rejected() {
+        assert!(ChmodModifiers::parse("g=u").is_err());
+        assert!(ChmodModifiers::parse("o=g").is_err());
+        assert!(ChmodModifiers::parse("o=u").is_err());
     }
 
+    // upstream: who-class and permission letters are lowercase only (except
+    // `X`). Uppercase who/perm letters route to STATE_ERROR.
     #[test]
-    fn copy_group_to_other() {
-        let modifiers = ChmodModifiers::parse("o=g").expect("parse o=g");
-        assert!(!modifiers.is_empty());
-    }
-
-    #[test]
-    fn copy_user_to_other() {
-        let modifiers = ChmodModifiers::parse("o=u").expect("parse o=u");
-        assert!(!modifiers.is_empty());
-    }
-
-    #[test]
-    fn uppercase_who_specifiers() {
-        let modifiers = ChmodModifiers::parse("U+R").expect("parse U+R");
-        assert!(!modifiers.is_empty());
-    }
-
-    #[test]
-    fn mixed_case() {
-        let modifiers = ChmodModifiers::parse("Ug+Rw").expect("parse Ug+Rw");
-        assert!(!modifiers.is_empty());
+    fn uppercase_who_or_perm_rejected() {
+        assert!(ChmodModifiers::parse("U+R").is_err());
+        assert!(ChmodModifiers::parse("Ug+Rw").is_err());
     }
 }
 
@@ -647,29 +635,11 @@ mod apply_mode {
     }
 
     #[test]
-    fn copy_user_to_group_and_other() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let file_path = temp.path().join("test.txt");
-        std::fs::write(&file_path, b"content").expect("write file");
-
-        let file_type = get_file_type(&file_path);
-        let modifiers = ChmodModifiers::parse("g=u,o=u").expect("parse");
-
-        let result = modifiers.apply(0o700, file_type);
-        assert_eq!(result & 0o777, 0o777);
-    }
-
-    #[test]
-    fn copy_group_to_other() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let file_path = temp.path().join("test.txt");
-        std::fs::write(&file_path, b"content").expect("write file");
-
-        let file_type = get_file_type(&file_path);
-        let modifiers = ChmodModifiers::parse("o=g").expect("parse");
-
-        let result = modifiers.apply(0o750, file_type);
-        assert_eq!(result & 0o007, 0o005);
+    fn who_letter_copy_form_rejected_at_parse() {
+        // upstream: chmod.c:parse_chmod() rejects `g=u`/`o=u`/`o=g`; there is
+        // no runtime copy behaviour to exercise because parsing fails first.
+        assert!(ChmodModifiers::parse("g=u,o=u").is_err());
+        assert!(ChmodModifiers::parse("o=g").is_err());
     }
 
     #[test]
