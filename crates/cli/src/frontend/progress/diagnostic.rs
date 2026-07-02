@@ -74,12 +74,17 @@ pub fn render_diagnostic_events<O: Write, E: Write>(
                 message,
             } => {
                 // upstream: log.c:rwrite() prints debug messages verbatim via
-                // rprintf(FINFO/FCLIENT, ...) with no flag-category bracket.
-                // The message already carries any role prefix (e.g. "[sender]")
-                // where upstream emits one, so rendering the DebugFlag name here
-                // would diverge from upstream byte-for-byte (breaks --debug=FUZZY
-                // parsers that grep the exact selection line).
-                writeln!(err, "{message}")?;
+                // rprintf(FINFO, ...) with no flag-category bracket. FINFO
+                // routes to the client's stdout (the same stream as info
+                // events) unless msgs-to-stderr is in effect, so debug lines
+                // like "fuzzy basis selected ..." land on stdout where the
+                // fuzzy testsuite greps them. The message already carries any
+                // role prefix (e.g. "[sender]") where upstream emits one.
+                if msgs2stderr {
+                    writeln!(err, "{message}")?;
+                } else {
+                    writeln!(out, "{message}")?;
+                }
             }
         }
     }
@@ -178,9 +183,12 @@ mod tests {
         render_diagnostic_events(&events, &mut stdout, &mut stderr, true).unwrap();
 
         assert!(stdout.is_empty());
+        // With msgs-to-stderr, both info and debug route to stderr; debug
+        // renders verbatim with no flag-category bracket (upstream fidelity).
         let stderr_output = String::from_utf8(stderr).unwrap();
         assert!(stderr_output.contains("info message\n"));
-        assert!(stderr_output.contains("[Filter] debug message\n"));
+        assert!(stderr_output.contains("debug message\n"));
+        assert!(!stderr_output.contains("[Filter]"));
     }
 
     #[test]
@@ -208,14 +216,12 @@ mod tests {
 
         render_diagnostic_events(&events, &mut stdout, &mut stderr, false).unwrap();
 
+        // upstream: FINFO info AND debug messages both route to the client's
+        // stdout, verbatim, with no flag-category bracket prefix
+        // (log.c:rwrite via rprintf(FINFO, ...)). Order is preserved.
         let stdout_output = String::from_utf8(stdout).unwrap();
-        assert!(stdout_output.contains("first\n"));
-        assert!(stdout_output.contains("third\n"));
-
-        // upstream: debug messages render verbatim, with no flag-category
-        // bracket prefix (log.c:rwrite via rprintf(FINFO, ...)).
-        let stderr_output = String::from_utf8(stderr).unwrap();
-        assert_eq!(stderr_output, "second\n");
+        assert_eq!(stdout_output, "first\nsecond\nthird\n");
+        assert!(stderr.is_empty());
     }
 
     #[test]
@@ -228,12 +234,13 @@ mod tests {
 
         flush_diagnostics(&mut stdout, &mut stderr, false).unwrap();
 
+        // Without msgs-to-stderr, both info and debug land on stdout; debug
+        // renders verbatim with no flag-category bracket (upstream fidelity).
         let stdout_output = String::from_utf8(stdout).unwrap();
         assert!(stdout_output.contains("test info"));
-
-        let stderr_output = String::from_utf8(stderr).unwrap();
-        assert!(stderr_output.contains("test debug"));
-        assert!(!stderr_output.contains("[Filter]"));
+        assert!(stdout_output.contains("test debug"));
+        assert!(!stdout_output.contains("[Filter]"));
+        assert!(stderr.is_empty());
 
         let mut stdout2 = Vec::new();
         let mut stderr2 = Vec::new();
