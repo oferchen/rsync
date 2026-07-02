@@ -225,8 +225,8 @@ impl ChallengeGenerator {
 ///
 /// # Security
 ///
-/// On Unix systems, the secrets file must have mode 0600 (readable only by owner).
-/// This is enforced by [`SecretsFile::from_file`].
+/// On Unix systems, the secrets file must not be other-accessible (mode `& 06`);
+/// group access such as mode 0640 is allowed. Enforced by [`SecretsFile::from_file`].
 #[derive(Debug, Clone)]
 pub struct SecretsFile {
     entries: HashMap<String, String>,
@@ -293,9 +293,10 @@ impl SecretsFile {
     ///
     /// # Security
     ///
-    /// On Unix systems, this function checks that the file has mode 0600
-    /// (readable and writable only by owner). World-readable or group-readable
-    /// secrets files are rejected to prevent password disclosure.
+    /// On Unix systems, this function rejects a secrets file that is
+    /// accessible to others (mode `& 06`). Group access is permitted, so
+    /// mode 0640 is accepted. This prevents password disclosure to
+    /// unprivileged users while matching upstream rsync semantics.
     ///
     /// On Windows, permission checks are skipped (matching upstream rsync).
     ///
@@ -351,12 +352,12 @@ impl SecretsFile {
 
     /// Checks that the secrets file has correct permissions.
     ///
-    /// On Unix: File must be mode 0600 (owner read/write only)
-    /// On Windows: No checks performed
+    /// On Unix: File must not be accessible to others (no group requirement,
+    /// so mode 0640 is allowed). On Windows: No checks performed.
     ///
     /// # Errors
     ///
-    /// Returns an error if the file is world-readable or group-readable on Unix.
+    /// Returns an error if the file is other-readable or other-writable on Unix.
     #[cfg(unix)]
     pub fn check_permissions(path: &Path) -> io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
@@ -365,12 +366,13 @@ impl SecretsFile {
         let permissions = metadata.permissions();
         let mode = permissions.mode();
 
-        // Check for world-readable (bit 2) or group-readable (bit 5)
-        if (mode & 0o044) != 0 {
+        // upstream: authenticate.c:120 check_secret() rejects only when OTHER
+        // has access ((st.st_mode & 06) != 0); group-readable (0640) is allowed.
+        if (mode & 0o6) != 0 {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
                 format!(
-                    "secrets file '{}' must not be readable by group or others (mode {:o})",
+                    "secrets file '{}' must not be other-accessible (mode {:o})",
                     path.display(),
                     mode & 0o777
                 ),
