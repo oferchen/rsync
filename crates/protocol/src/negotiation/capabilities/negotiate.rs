@@ -40,6 +40,14 @@ pub struct NegotiationConfig {
     /// When set, the compression vstring exchange is skipped and this algorithm
     /// is used directly - matching upstream `compat.c:543`.
     pub compression_override: Option<CompressionAlgorithm>,
+    /// User-specified compression level (`--compress-level=N`), or
+    /// [`CLVL_NOT_SPECIFIED`] when the flag was not given.
+    ///
+    /// Rendered verbatim in the `parse_compress_choice` NSTR summary line
+    /// (`compat.c:214-219`), mirroring upstream's raw `do_compression_level`
+    /// value which stays `CLVL_NOT_SPECIFIED` (`INT_MIN`) unless
+    /// `--compress-level` was passed (`options.c:88,767`).
+    pub compression_level: i32,
 }
 
 /// Outcome of the protocol 30+ capability negotiation.
@@ -138,6 +146,7 @@ pub fn negotiate_capabilities(
             is_server,
             checksum_override: None,
             compression_override: None,
+            compression_level: CLVL_NOT_SPECIFIED,
         },
     )
 }
@@ -173,6 +182,7 @@ pub fn negotiate_capabilities_with_override(
         is_server,
         checksum_override,
         compression_override,
+        compression_level,
     } = *config;
     // Protocol < 30 doesn't support negotiation, use defaults
     if protocol.uses_fixed_encoding() {
@@ -341,9 +351,9 @@ pub fn negotiate_capabilities_with_override(
     // do_compression_level verbatim, which is CLVL_NOT_SPECIFIED
     // (INT_MIN) when the user did not pass --compress-level. The whole
     // emission is gated on `do_compression != CPRES_NONE || level !=
-    // CLVL_NOT_SPECIFIED`; the negotiator does not own a user-supplied
-    // level, so it always passes CLVL_NOT_SPECIFIED and only emits when
-    // compression is active.
+    // CLVL_NOT_SPECIFIED`; here compression is active so we render the
+    // user-supplied `compression_level` (CLVL_NOT_SPECIFIED when the flag
+    // was absent) exactly as upstream does.
     if compression != CompressionAlgorithm::None {
         let compression_negotiated =
             compression_override.is_none() && remote_compression_list.is_some();
@@ -351,7 +361,7 @@ pub fn negotiate_capabilities_with_override(
             side,
             compression_negotiated,
             compression.as_str(),
-            CLVL_NOT_SPECIFIED,
+            compression_level,
         );
     }
     Ok(NegotiationResult {

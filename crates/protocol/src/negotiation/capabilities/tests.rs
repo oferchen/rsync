@@ -285,6 +285,61 @@ fn test_negotiate_nstr_summary_matches_upstream_wording_client() {
     );
 }
 
+/// Confirms an explicit `--compress-level=N` renders `(level N)` in the
+/// compress summary instead of the `CLVL_NOT_SPECIFIED` sentinel. Regression
+/// for the previously hardcoded level argument. upstream: compat.c:215-218 -
+/// `do_compression_level` is printed verbatim, so a user-supplied 9 must
+/// render as `(level 9)`.
+#[test]
+fn test_negotiate_nstr_compress_summary_renders_explicit_level() {
+    use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+
+    let mut cfg = VerbosityConfig::default();
+    cfg.debug.nstr = 1;
+    init(cfg);
+    let _ = drain_events();
+
+    let protocol = ProtocolVersion::try_from(32).unwrap();
+    let client_response = b"\x03md5\x04zlib";
+    let mut stdin = &client_response[..];
+    let mut stdout = Vec::new();
+
+    let _ = negotiate_capabilities_with_override(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        &NegotiationConfig {
+            do_negotiation: true,
+            send_compression: true,
+            is_daemon_mode: false,
+            is_server: false,
+            checksum_override: None,
+            compression_override: None,
+            compression_level: 9,
+        },
+    )
+    .unwrap();
+
+    let messages: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Debug {
+                flag: DebugFlag::Nstr,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == "Client negotiated compress: zlib (level 9)"),
+        "compress summary must render the explicit level: {messages:?}"
+    );
+}
+
 /// Confirms `--checksum-choice` suppresses the `" negotiated"` qualifier
 /// in the per-side summary, mirroring upstream's
 /// `valid_checksums.negotiated_nni == NULL` branch (checksum.c:209).
@@ -314,6 +369,7 @@ fn test_negotiate_nstr_summary_omits_negotiated_when_forced() {
             is_server: false,
             checksum_override: Some(ChecksumAlgorithm::MD5),
             compression_override: None,
+            compression_level: crate::nstr::CLVL_NOT_SPECIFIED,
         },
     )
     .unwrap();
@@ -2750,6 +2806,7 @@ fn compression_override_used_on_legacy_protocol() {
             is_server: true,
             checksum_override: None,
             compression_override: Some(CompressionAlgorithm::Zstd),
+            compression_level: crate::nstr::CLVL_NOT_SPECIFIED,
         },
     )
     .unwrap();
@@ -2777,6 +2834,7 @@ fn compression_override_used_without_negotiation() {
             is_server: true,
             checksum_override: None,
             compression_override: Some(CompressionAlgorithm::LZ4),
+            compression_level: crate::nstr::CLVL_NOT_SPECIFIED,
         },
     )
     .unwrap();
@@ -2804,6 +2862,7 @@ fn compression_override_none_falls_through_to_normal_negotiation() {
             is_server: true,
             checksum_override: None,
             compression_override: None,
+            compression_level: crate::nstr::CLVL_NOT_SPECIFIED,
         },
     )
     .unwrap();
