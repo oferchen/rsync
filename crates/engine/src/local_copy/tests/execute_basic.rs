@@ -784,8 +784,12 @@ fn execute_copies_file_to_nonexistent_destination() {
     assert_eq!(fs::read(&destination).expect("read dest"), b"content");
 }
 
+// upstream: main.c:738 make_path(dest_path, MKP_DROP_NAME) - creating a missing
+// intermediate prefix of the destination ARGUMENT requires --mkpath. Under
+// default options the transfer fails (see the negative control in
+// execute_no_implied_dirs.rs); with --mkpath the leading dirs are materialised.
 #[test]
-fn execute_creates_intermediate_directories_when_needed() {
+fn execute_creates_intermediate_directories_with_mkpath() {
     let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("nested").join("path").join("dest.txt");
@@ -799,7 +803,10 @@ fn execute_creates_intermediate_directories_when_needed() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     let summary = plan
-        .execute_with_options(LocalCopyExecution::Apply, LocalCopyOptions::default())
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default().mkpath(true),
+        )
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 1);

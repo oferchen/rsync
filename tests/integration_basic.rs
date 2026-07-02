@@ -410,14 +410,40 @@ fn error_on_nonexistent_source() {
     cmd.assert_failure();
 }
 
+// upstream: main.c:736 get_local_name() - without --mkpath a missing leading
+// prefix of the destination argument is never auto-created; the transfer fails
+// (change_dir ENOENT, exit 3) and nothing is written. Verified against upstream
+// rsync 3.4.x: `rsync source.txt newdir/dest.txt` with newdir absent exits 3.
 #[test]
-fn create_missing_destination_directory() {
+fn missing_destination_parent_without_mkpath_fails() {
     let test_dir = TestDir::new().expect("create test dir");
     let src_file = test_dir.write_file("source.txt", b"content").unwrap();
     let dest_file = test_dir.path().join("newdir/dest.txt");
 
     let mut cmd = RsyncCommand::new();
     cmd.args([src_file.to_str().unwrap(), dest_file.to_str().unwrap()]);
+    cmd.assert_failure();
+
+    assert!(
+        !test_dir.path().join("newdir").exists(),
+        "missing destination parent must not be auto-created without --mkpath"
+    );
+}
+
+// upstream: main.c:736 - with --mkpath the destination argument's missing
+// leading directories are materialized via make_path() before the transfer.
+#[test]
+fn create_missing_destination_directory_with_mkpath() {
+    let test_dir = TestDir::new().expect("create test dir");
+    let src_file = test_dir.write_file("source.txt", b"content").unwrap();
+    let dest_file = test_dir.path().join("newdir/dest.txt");
+
+    let mut cmd = RsyncCommand::new();
+    cmd.args([
+        "--mkpath",
+        src_file.to_str().unwrap(),
+        dest_file.to_str().unwrap(),
+    ]);
     cmd.assert_success();
 
     assert_eq!(fs::read(&dest_file).unwrap(), b"content");

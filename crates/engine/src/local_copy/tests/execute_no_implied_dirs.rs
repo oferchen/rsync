@@ -535,8 +535,53 @@ fn relative_no_implied_dirs_creates_leading_dirs_with_default_mode() {
     );
 }
 
+// upstream: main.c:736 get_local_name() - without --mkpath a missing leading
+// prefix of the destination ARGUMENT is never auto-created; the transfer fails
+// with ENOENT. Archive defaults enable --implied-dirs, which only governs
+// source-relative subdirs created UNDER an existing destination root, NOT the
+// destination arg's own missing parent. This is the negative control the
+// upstream `mkpath` conformance test relies on: a transfer WITHOUT --mkpath
+// must NOT create the missing intermediate path.
 #[test]
-fn implied_dirs_default_creates_parents_automatically() {
+fn default_does_not_create_missing_dest_arg_parent() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("file.txt");
+    fs::write(&source, b"content").expect("write source");
+
+    // `a` is the top of the destination arg's own missing leading prefix
+    // (strictly above the destination root `.../a/b/c/file.txt`).
+    let missing_prefix = temp.path().join("a");
+    let destination = temp.path().join("a").join("b").join("c").join("file.txt");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    // Default options (archive-like: implied_dirs enabled, mkpath disabled).
+    let error = plan
+        .execute()
+        .expect_err("transfer must fail without --mkpath when parent is missing");
+
+    match error.kind() {
+        LocalCopyErrorKind::Io { action, source, .. } => {
+            assert_eq!(*action, "create parent directory");
+            assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
+        }
+        other => panic!("unexpected error kind: {other:?}"),
+    }
+
+    // Nothing may be created along the missing prefix.
+    assert!(!missing_prefix.exists());
+    assert!(!destination.exists());
+}
+
+// upstream: main.c:738 make_path(dest_path, MKP_DROP_NAME) - --mkpath creates
+// the destination arg's leading directories (dropping the final name) and the
+// transfer then proceeds. Mirrors the `mkpath` conformance test's positive leg.
+#[test]
+fn mkpath_creates_missing_dest_arg_parent() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("file.txt");
     fs::write(&source, b"content").expect("write source");
@@ -549,8 +594,12 @@ fn implied_dirs_default_creates_parents_automatically() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // Default should have implied_dirs enabled
-    let summary = plan.execute().expect("copy succeeds with default options");
+    // Default implied_dirs stays enabled; --mkpath is what unlocks dest-arg
+    // prefix creation.
+    let options = LocalCopyOptions::default().mkpath(true);
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds with mkpath");
 
     assert!(destination.exists());
     assert_eq!(fs::read(&destination).expect("read"), b"content");
