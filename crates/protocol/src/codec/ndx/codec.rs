@@ -470,6 +470,68 @@ impl NdxCodec for NdxCodecEnum {
     }
 }
 
+#[cfg(feature = "tokio-transfer")]
+impl NdxCodecEnum {
+    /// Reads one NDX value off an [`AsyncRead`](tokio::io::AsyncRead) through a
+    /// shared carry-over buffer, awaiting the wire, gated on `tokio-transfer`.
+    ///
+    /// This is the flist-reader twin of [`read_ndx_async`](Self::read_ndx_async):
+    /// where `read_ndx_async` reads NDX bytes directly off the stream, this drains
+    /// from a caller-owned `carry` buffer first so the INC_RECURSE segment loop can
+    /// hand bytes the *entry* decoder already read past its last entry (which are
+    /// the next segment's NDX header) straight into the NDX decode. Sharing the one
+    /// `carry` with [`read_entry_with_flist_async`](crate::flist::read_entry_with_flist_async)
+    /// is what keeps the async segment framing byte-identical to the sync path - a
+    /// direct-off-stream NDX read would lose those already-buffered bytes.
+    ///
+    /// Byte-for-byte equivalent to [`NdxCodec::read_ndx`]: it drives the identical
+    /// sync `read_ndx` speculatively over the growing in-memory buffer. The codec's
+    /// delta state (`prev_positive` / `prev_negative`) is snapshotted via `Clone`
+    /// before each attempt and restored when the buffer is too short, so a chunked,
+    /// retried read produces the same value and the same state transition as a
+    /// single blocking read. On return, only the NDX bytes are drained from the
+    /// front of `carry`; leftover bytes (belonging to the following flist entry)
+    /// remain for the next reader.
+    pub async fn read_ndx_from_carry_async<R>(
+        &mut self,
+        src: &mut R,
+        carry: &mut Vec<u8>,
+    ) -> io::Result<i32>
+    where
+        R: tokio::io::AsyncRead + Unpin + ?Sized,
+    {
+        use std::io::Cursor;
+        use tokio::io::AsyncReadExt;
+
+        let mut read_buf = [0u8; 64];
+        loop {
+            if !carry.is_empty() {
+                let snapshot = self.clone();
+                let mut cursor = Cursor::new(&carry[..]);
+                match self.read_ndx(&mut cursor) {
+                    Ok(ndx) => {
+                        let consumed = cursor.position() as usize;
+                        carry.drain(..consumed);
+                        return Ok(ndx);
+                    }
+                    Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                        *self = snapshot;
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
+            let n = src.read(&mut read_buf).await?;
+            if n == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "NDX header truncated: stream ended mid-value",
+                ));
+            }
+            carry.extend_from_slice(&read_buf[..n]);
+        }
+    }
+}
+
 /// Creates an NDX codec appropriate for the given protocol version.
 ///
 /// Returns [`NdxCodecEnum::Legacy`] for protocol < 30 and

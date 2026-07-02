@@ -8,12 +8,19 @@
 //!
 //! See `flist.c:recv_file_entry()` for the canonical wire format decoding.
 
+#[cfg(feature = "tokio-transfer")]
+mod async_read;
 mod extras;
 mod flags;
 mod metadata;
 mod name;
+mod step;
 #[cfg(test)]
 mod tests;
+
+#[cfg(feature = "tokio-transfer")]
+pub use async_read::read_entry_with_flist_async;
+pub use step::EntryStep;
 
 use std::io::{self, Read};
 use std::path::Path;

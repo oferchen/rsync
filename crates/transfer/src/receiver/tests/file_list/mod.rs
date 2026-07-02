@@ -25,6 +25,8 @@
 //!   `--iconv` ordering invariant (file_list stays in sender wire-emit
 //!   order, never re-sorted on local-charset bytes).
 
+#[cfg(feature = "tokio-transfer")]
+mod async_parity;
 mod delete_pipeline_hook;
 mod filter_chain;
 #[cfg(feature = "iconv")]
