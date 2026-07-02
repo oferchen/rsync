@@ -206,6 +206,8 @@ pub use varint::{
     read_varlong, read_varlong30, write_int, write_longint, write_varint, write_varint30_int,
     write_varlong, write_varlong30,
 };
+#[cfg(feature = "tokio-transfer")]
+pub use varint::{read_int_async, read_longint_async, read_varint_async, read_varlong_async};
 pub use version::{
     ParseProtocolVersionError, ParseProtocolVersionErrorKind, ProtocolCapabilities,
     ProtocolVersion, ProtocolVersionAdvertisement, SUPPORTED_PROTOCOL_BITMAP,

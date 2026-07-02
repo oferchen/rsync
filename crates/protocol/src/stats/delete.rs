@@ -119,6 +119,39 @@ impl DeleteStats {
             specials,
         })
     }
+
+    /// Async twin of [`read_from`](Self::read_from).
+    ///
+    /// Reads the same five varints (`.await`-driven) in the same order and
+    /// applies the identical [`read_capped_del_stat`] validation, so it yields
+    /// the same `DeleteStats` and consumes the same bytes for the same wire
+    /// input. Gated on `tokio-transfer`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading from the stream fails or if any field
+    /// exceeds `MAX_WIRE_DEL_STAT`.
+    #[cfg(feature = "tokio-transfer")]
+    pub async fn read_from_async<R>(reader: &mut R) -> io::Result<Self>
+    where
+        R: tokio::io::AsyncRead + Unpin + ?Sized,
+    {
+        use crate::varint::read_varint_async;
+
+        let files = read_capped_del_stat(read_varint_async(reader).await?, "files")?;
+        let dirs = read_capped_del_stat(read_varint_async(reader).await?, "dirs")?;
+        let symlinks = read_capped_del_stat(read_varint_async(reader).await?, "symlinks")?;
+        let devices = read_capped_del_stat(read_varint_async(reader).await?, "devices")?;
+        let specials = read_capped_del_stat(read_varint_async(reader).await?, "specials")?;
+
+        Ok(Self {
+            files,
+            dirs,
+            symlinks,
+            devices,
+            specials,
+        })
+    }
 }
 
 /// Validates and converts a varint-decoded delete-stat field.

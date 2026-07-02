@@ -8,6 +8,60 @@ use std::io::{self, Read, Write};
 
 use super::constants::NDX_DONE;
 
+/// Classification of the leading byte of a modern (protocol 30+) NDX value.
+///
+/// Shared by the sync and async modern-codec read leaves so the branch on the
+/// first byte can never diverge between them.
+enum NdxLead {
+    /// Leading `0x00`: `NDX_DONE` sentinel, no further bytes.
+    Done,
+    /// Leading `0xFF`: a negative index; the diff/tag byte follows.
+    Negative,
+    /// Any other leading byte: a positive index whose diff/tag is this byte.
+    Positive,
+}
+
+/// Classifies the leading byte of a modern NDX value.
+///
+/// Upstream `io.c:2290-2299` - `read_ndx()` first-byte dispatch.
+#[inline]
+fn classify_ndx_lead(lead: u8) -> NdxLead {
+    if lead == 0xFF {
+        NdxLead::Negative
+    } else if lead == 0 {
+        NdxLead::Done
+    } else {
+        NdxLead::Positive
+    }
+}
+
+/// Reconstructs the full 4-byte modern NDX value from the `0xFE`/high-bit form.
+///
+/// `tag` is the byte whose high bit was set; `b0`, `b1`, `b2` are the three
+/// following bytes. Upstream `io.c:2307-2311`.
+#[inline]
+fn decode_ndx_extended_full(tag: u8, b0: u8, b1: u8, b2: u8) -> i32 {
+    let high = (tag & !0x80) as i32;
+    (high << 24) | (b0 as i32) | ((b1 as i32) << 8) | ((b2 as i32) << 16)
+}
+
+/// Reconstructs a modern NDX value from the `0xFE` 2-byte diff form.
+///
+/// Upstream `io.c:2312-2314`.
+#[inline]
+fn decode_ndx_extended_diff(hi: u8, lo: u8, prev_val: i32) -> i32 {
+    let diff = ((hi as i32) << 8) | (lo as i32);
+    prev_val + diff
+}
+
+/// Reconstructs a modern NDX value from the single-byte short-diff form.
+///
+/// Upstream `io.c:2316`.
+#[inline]
+fn decode_ndx_short(diff_byte: u8, prev_val: i32) -> i32 {
+    prev_val + diff_byte as i32
+}
+
 /// Strategy trait for NDX encoding/decoding.
 ///
 /// Implementations provide protocol-version-specific wire formats for file
@@ -90,6 +144,19 @@ impl LegacyNdxCodec {
         );
         Self { protocol_version }
     }
+
+    /// Async twin of the legacy-codec `read_ndx` (a plain 4-byte LE integer).
+    #[cfg(feature = "tokio-transfer")]
+    async fn read_ndx_async<R>(&mut self, reader: &mut R) -> io::Result<i32>
+    where
+        R: tokio::io::AsyncRead + Unpin + ?Sized,
+    {
+        use tokio::io::AsyncReadExt;
+
+        let mut buf = [0u8; 4];
+        reader.read_exact(&mut buf).await?;
+        Ok(i32::from_le_bytes(buf))
+    }
 }
 
 impl NdxCodec for LegacyNdxCodec {
@@ -154,6 +221,75 @@ impl ModernNdxCodec {
             prev_positive: -1,
             prev_negative: 1,
         }
+    }
+
+    /// Returns the delta base for the given sign, matching the sync/async reads.
+    #[inline]
+    fn prev_val(&self, is_negative: bool) -> i32 {
+        if is_negative {
+            self.prev_negative
+        } else {
+            self.prev_positive
+        }
+    }
+
+    /// Commits a freshly decoded magnitude, updating delta state and returning
+    /// the signed NDX. Shared by the sync and async modern-codec reads so the
+    /// state mutation can never diverge.
+    #[inline]
+    fn commit_ndx(&mut self, is_negative: bool, num: i32) -> i32 {
+        if is_negative {
+            self.prev_negative = num;
+            -num
+        } else {
+            self.prev_positive = num;
+            num
+        }
+    }
+
+    /// Async twin of the modern-codec `read_ndx`.
+    ///
+    /// Reads the identical byte sequence (`.await`-driven) and drives the same
+    /// shared decode helpers (`classify_ndx_lead`, `decode_ndx_*`,
+    /// [`commit_ndx`](Self::commit_ndx)) as the sync leaf, so it returns the
+    /// same value and consumes the same bytes for the same wire input.
+    #[cfg(feature = "tokio-transfer")]
+    async fn read_ndx_async<R>(&mut self, reader: &mut R) -> io::Result<i32>
+    where
+        R: tokio::io::AsyncRead + Unpin + ?Sized,
+    {
+        use tokio::io::AsyncReadExt;
+
+        let mut b = [0u8; 4];
+        reader.read_exact(&mut b[..1]).await?;
+
+        let is_negative = match classify_ndx_lead(b[0]) {
+            NdxLead::Done => return Ok(NDX_DONE),
+            NdxLead::Negative => {
+                reader.read_exact(&mut b[..1]).await?;
+                true
+            }
+            NdxLead::Positive => false,
+        };
+
+        let prev_val = self.prev_val(is_negative);
+
+        let num = if b[0] == 0xFE {
+            reader.read_exact(&mut b[..1]).await?;
+            if b[0] & 0x80 != 0 {
+                let high = b[0];
+                reader.read_exact(&mut b[..3]).await?;
+                decode_ndx_extended_full(high, b[0], b[1], b[2])
+            } else {
+                let hi = b[0];
+                reader.read_exact(&mut b[1..2]).await?;
+                decode_ndx_extended_diff(hi, b[1], prev_val)
+            }
+        } else {
+            decode_ndx_short(b[0], prev_val)
+        };
+
+        Ok(self.commit_ndx(is_negative, num))
     }
 }
 
@@ -221,20 +357,16 @@ impl NdxCodec for ModernNdxCodec {
         let mut b = [0u8; 4];
         reader.read_exact(&mut b[..1])?;
 
-        let is_negative = if b[0] == 0xFF {
-            reader.read_exact(&mut b[..1])?;
-            true
-        } else if b[0] == 0 {
-            return Ok(NDX_DONE);
-        } else {
-            false
+        let is_negative = match classify_ndx_lead(b[0]) {
+            NdxLead::Done => return Ok(NDX_DONE),
+            NdxLead::Negative => {
+                reader.read_exact(&mut b[..1])?;
+                true
+            }
+            NdxLead::Positive => false,
         };
 
-        let prev_val = if is_negative {
-            self.prev_negative
-        } else {
-            self.prev_positive
-        };
+        let prev_val = self.prev_val(is_negative);
 
         let num = if b[0] == 0xFE {
             // Extended encoding
@@ -243,26 +375,19 @@ impl NdxCodec for ModernNdxCodec {
             if b[0] & 0x80 != 0 {
                 // 4-byte full value
                 // Upstream io.c:2307-2311
-                let high = (b[0] & !0x80) as i32;
+                let high = b[0];
                 reader.read_exact(&mut b[..3])?;
-                (high << 24) | (b[0] as i32) | ((b[1] as i32) << 8) | ((b[2] as i32) << 16)
+                decode_ndx_extended_full(high, b[0], b[1], b[2])
             } else {
+                let hi = b[0];
                 reader.read_exact(&mut b[1..2])?;
-                let diff = ((b[0] as i32) << 8) | (b[1] as i32);
-                prev_val + diff
+                decode_ndx_extended_diff(hi, b[1], prev_val)
             }
         } else {
-            let diff = b[0] as i32;
-            prev_val + diff
+            decode_ndx_short(b[0], prev_val)
         };
 
-        if is_negative {
-            self.prev_negative = num;
-        } else {
-            self.prev_positive = num;
-        }
-
-        if is_negative { Ok(-num) } else { Ok(num) }
+        Ok(self.commit_ndx(is_negative, num))
     }
 
     fn protocol_version(&self) -> u8 {
@@ -295,6 +420,22 @@ impl NdxCodecEnum {
             Self::Legacy(LegacyNdxCodec::new(protocol_version))
         } else {
             Self::Modern(ModernNdxCodec::new(protocol_version))
+        }
+    }
+
+    /// Async twin of `read_ndx`, dispatching to the legacy or modern async leaf.
+    ///
+    /// Byte-identical to [`NdxCodec::read_ndx`] on this enum for the same wire
+    /// bytes: it forwards to the same variant's async read, which shares the
+    /// sync leaf's decode helpers.
+    #[cfg(feature = "tokio-transfer")]
+    pub async fn read_ndx_async<R>(&mut self, reader: &mut R) -> io::Result<i32>
+    where
+        R: tokio::io::AsyncRead + Unpin + ?Sized,
+    {
+        match self {
+            Self::Legacy(codec) => codec.read_ndx_async(reader).await,
+            Self::Modern(codec) => codec.read_ndx_async(reader).await,
         }
     }
 }
@@ -397,6 +538,18 @@ impl MonotonicNdxWriter {
     /// sub-list writes are negative, so bypassing the wrapper here is wire-safe.
     pub fn inner_mut(&mut self) -> &mut NdxCodecEnum {
         &mut self.inner
+    }
+
+    /// Async twin of `read_ndx`, forwarding to the wrapped codec's async read.
+    ///
+    /// The monotonicity check is a write-side, debug-only guard, so the read
+    /// path is a straight delegate - byte-identical to the sync `read_ndx`.
+    #[cfg(feature = "tokio-transfer")]
+    pub async fn read_ndx_async<R>(&mut self, reader: &mut R) -> io::Result<i32>
+    where
+        R: tokio::io::AsyncRead + Unpin + ?Sized,
+    {
+        self.inner.read_ndx_async(reader).await
     }
 }
 

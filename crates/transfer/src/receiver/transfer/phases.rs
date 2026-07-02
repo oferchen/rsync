@@ -232,6 +232,48 @@ impl ReceiverContext {
         })
     }
 
+    /// Async twin of [`receive_stats`](Self::receive_stats).
+    ///
+    /// Reads the same three (or five, for protocol >= 31) stat values via the
+    /// protocol codec's async `read_stat_async` - the `.await` counterpart of
+    /// the sync `read_stat` used above, sharing the same longint/varlong
+    /// primitives. It yields the same `SenderStats` and consumes the same bytes
+    /// as the sync leaf. Gated on `tokio-transfer`; additive and unwired.
+    ///
+    /// Unwired: the atomic receiver fork (the coupled ASY-7 redo) consumes this
+    /// leaf later; until then it is exercised only by the parity tests.
+    #[cfg(feature = "tokio-transfer")]
+    #[allow(dead_code)]
+    pub(in crate::receiver) async fn receive_stats_async<R>(
+        &self,
+        reader: &mut R,
+    ) -> io::Result<SenderStats>
+    where
+        R: tokio::io::AsyncRead + Unpin + ?Sized,
+    {
+        let stats_codec = create_protocol_codec(self.protocol.as_u8());
+
+        let total_read = stats_codec.read_stat_async(reader).await? as u64;
+        let total_written = stats_codec.read_stat_async(reader).await? as u64;
+        let total_size = stats_codec.read_stat_async(reader).await? as u64;
+
+        let (flist_buildtime_ms, flist_xfertime_ms) = if self.protocol.supports_flist_times() {
+            let buildtime = stats_codec.read_stat_async(reader).await? as u64;
+            let xfertime = stats_codec.read_stat_async(reader).await? as u64;
+            (Some(buildtime), Some(xfertime))
+        } else {
+            (None, None)
+        };
+
+        Ok(SenderStats {
+            total_read,
+            total_written,
+            total_size,
+            flist_buildtime_ms,
+            flist_xfertime_ms,
+        })
+    }
+
     /// Exchanges phase transitions, receives stats, and handles goodbye handshake.
     ///
     /// This is the common finalization sequence shared by all transfer modes.
@@ -482,5 +524,144 @@ mod genr_debug_emission_tests {
             msgs.is_empty(),
             "Flist debug emissions must be gated; got: {msgs:?}"
         );
+    }
+}
+
+#[cfg(all(test, feature = "tokio-transfer"))]
+mod receive_stats_parity_tests {
+    //! Sync vs async wire-byte parity for [`receive_stats`] /
+    //! [`receive_stats_async`].
+    //!
+    //! Encodes the sender-stats fields with the protocol codec, then decodes
+    //! the identical bytes with the blocking [`receive_stats`] and the
+    //! `.await`-driven [`receive_stats_async`], asserting every field matches
+    //! and that both consume the same number of bytes - including when the
+    //! wire is delivered one byte at a time across await points.
+
+    use std::ffi::OsString;
+    use std::io::Cursor;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+
+    use protocol::ProtocolVersion;
+    use protocol::codec::{ProtocolCodec, create_protocol_codec};
+    use tokio::io::{AsyncRead, ReadBuf};
+
+    use crate::config::ServerConfig;
+    use crate::handshake::HandshakeResult;
+    use crate::receiver::ReceiverContext;
+    use crate::role::ServerRole;
+
+    struct ChunkedReader {
+        inner: Cursor<Vec<u8>>,
+        chunk: usize,
+    }
+
+    impl ChunkedReader {
+        fn new(bytes: Vec<u8>, chunk: usize) -> Self {
+            Self {
+                inner: Cursor::new(bytes),
+                chunk: chunk.max(1),
+            }
+        }
+
+        fn consumed(&self) -> u64 {
+            self.inner.position()
+        }
+    }
+
+    impl AsyncRead for ChunkedReader {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            let limit = self.chunk.min(buf.remaining());
+            if limit == 0 {
+                return Poll::Ready(Ok(()));
+            }
+            let mut scratch = vec![0u8; limit];
+            let mut scratch_buf = ReadBuf::new(&mut scratch);
+            match Pin::new(&mut self.inner).poll_read(cx, &mut scratch_buf) {
+                Poll::Ready(Ok(())) => {
+                    buf.put_slice(scratch_buf.filled());
+                    Poll::Ready(Ok(()))
+                }
+                other => other,
+            }
+        }
+    }
+
+    fn handshake_for(protocol_version: u8) -> HandshakeResult {
+        HandshakeResult {
+            protocol: ProtocolVersion::try_from(protocol_version).unwrap(),
+            buffered: Vec::new(),
+            compat_exchanged: false,
+            client_args: None,
+            io_timeout: None,
+            negotiated_algorithms: None,
+            compat_flags: None,
+            checksum_seed: 0,
+        }
+    }
+
+    fn receiver_for(protocol_version: u8) -> ReceiverContext {
+        let handshake = handshake_for(protocol_version);
+        let config = ServerConfig {
+            role: ServerRole::Receiver,
+            protocol: ProtocolVersion::try_from(protocol_version).unwrap(),
+            flag_string: "-logDtpre.".to_owned(),
+            args: vec![OsString::from(".")],
+            ..Default::default()
+        };
+        ReceiverContext::new_for_test(&handshake, config)
+    }
+
+    /// Encodes the sender-stats fields the way upstream `handle_stats` does:
+    /// total_read, total_written, total_size, then (protocol >= 29) the two
+    /// flist times, each via the protocol codec's `write_stat`.
+    fn encode_stats(protocol_version: u8, values: &[i64]) -> Vec<u8> {
+        let codec = create_protocol_codec(protocol_version);
+        let mut wire = Vec::new();
+        for &v in values {
+            codec.write_stat(&mut wire, v).unwrap();
+        }
+        wire
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn receive_stats_async_matches_sync() {
+        // Protocol 32 sends 5 stat fields (>= 29 adds the two flist times);
+        // protocol 28 sends only the first 3.
+        for (protocol, fields) in [
+            (28u8, vec![10_000i64, 512, 1_048_576]),
+            (32u8, vec![10_000i64, 512, 1_048_576, 7, 3]),
+        ] {
+            let wire = encode_stats(protocol, &fields);
+            let receiver = receiver_for(protocol);
+
+            let mut sync_cur = Cursor::new(wire.clone());
+            let sync_stats = receiver.receive_stats(&mut sync_cur).unwrap();
+            let sync_consumed = sync_cur.position();
+
+            for chunk in [1usize, 2, 3, 7, 13] {
+                let mut reader = ChunkedReader::new(wire.clone(), chunk);
+                let async_stats = receiver.receive_stats_async(&mut reader).await.unwrap();
+
+                assert_eq!(async_stats.total_read, sync_stats.total_read);
+                assert_eq!(async_stats.total_written, sync_stats.total_written);
+                assert_eq!(async_stats.total_size, sync_stats.total_size);
+                assert_eq!(
+                    async_stats.flist_buildtime_ms,
+                    sync_stats.flist_buildtime_ms
+                );
+                assert_eq!(async_stats.flist_xfertime_ms, sync_stats.flist_xfertime_ms);
+                assert_eq!(
+                    reader.consumed(),
+                    sync_consumed,
+                    "async receive_stats consumed a different byte count (protocol {protocol}, chunk {chunk})"
+                );
+            }
+        }
     }
 }

@@ -63,6 +63,30 @@ impl ProtocolCodec for ProtocolCodecEnum {
     delegate_codec!(read read_long_name_len -> io::Result<usize>);
 }
 
+impl ProtocolCodecEnum {
+    /// Async twin of [`ProtocolCodec::read_stat`] for this enum.
+    ///
+    /// `read_stat` delegates to `read_file_size`, whose two variants are exact
+    /// aliases of shared varint primitives: the legacy codec's fixed longint is
+    /// [`read_longint`](crate::read_longint), and the modern codec's
+    /// `varlong(min_bytes=3)` is [`read_varlong`](crate::read_varlong). This
+    /// async twin dispatches to the `.await` versions of those same primitives,
+    /// so it yields the same value and consumes the same bytes as the sync
+    /// `read_stat`. Gated on `tokio-transfer`.
+    #[cfg(feature = "tokio-transfer")]
+    pub async fn read_stat_async<R>(&self, reader: &mut R) -> io::Result<i64>
+    where
+        R: tokio::io::AsyncRead + Unpin + ?Sized,
+    {
+        use crate::varint::{read_longint_async, read_varlong_async};
+
+        match self {
+            Self::Legacy(_) => read_longint_async(reader).await,
+            Self::Modern(_) => read_varlong_async(reader, 3).await,
+        }
+    }
+}
+
 /// Creates the appropriate protocol codec for the given version.
 ///
 /// - Protocol 28-29: Returns [`LegacyProtocolCodec`] wrapped in [`ProtocolCodecEnum::Legacy`]
