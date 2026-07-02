@@ -156,6 +156,18 @@ impl LocalCopyOptions {
         self
     }
 
+    /// Sets the fuzzy basis matching level (0 = off, 1 = `--fuzzy`, 2 = `-yy`).
+    ///
+    /// When non-zero and the exact destination file is absent, the executor
+    /// scans the destination directory for a similarly-named basis file to use
+    /// for delta transfer. Mirrors upstream `fuzzy_basis` in `options.c`.
+    #[must_use]
+    #[doc(alias = "--fuzzy")]
+    pub const fn fuzzy_level(mut self, level: u8) -> Self {
+        self.fuzzy_level = level;
+        self
+    }
+
     /// Prunes directories that would otherwise be empty after filtering.
     #[must_use]
     #[doc(alias = "--prune-empty-dirs")]
@@ -351,6 +363,14 @@ impl LocalCopyOptions {
     #[doc(alias = "--mkpath")]
     pub const fn mkpath_enabled(&self) -> bool {
         self.mkpath
+    }
+
+    /// Returns the fuzzy basis matching level (0 = off, 1 = `--fuzzy`,
+    /// 2 = `-yy`). Mirrors upstream `fuzzy_basis` in `options.c`.
+    #[must_use]
+    #[doc(alias = "--fuzzy")]
+    pub const fn fuzzy_level_enabled(&self) -> u8 {
+        self.fuzzy_level
     }
 
     /// Returns whether empty directories should be pruned after filtering.

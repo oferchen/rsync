@@ -697,6 +697,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .dirs(config.dirs())
             .implied_dirs(config.implied_dirs())
             .mkpath(config.mkpath())
+            .fuzzy_level(config.fuzzy_level())
             .prune_empty_dirs(config.prune_empty_dirs())
             .inplace(config.inplace())
             .append(config.append())

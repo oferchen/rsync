@@ -210,6 +210,12 @@ pub struct LocalCopyOptions {
     pub(super) force_replacements: bool,
     pub(super) implied_dirs: bool,
     pub(super) mkpath: bool,
+    /// Fuzzy basis matching level (0 = off, 1 = `--fuzzy`, 2 = `-yy`).
+    ///
+    /// When non-zero and the exact destination file is absent, the local-copy
+    /// executor scans the destination directory for a similarly-named file to
+    /// use as the delta basis. Mirrors upstream `fuzzy_basis` in `options.c`.
+    pub(super) fuzzy_level: u8,
     pub(super) prune_empty_dirs: bool,
     pub(super) timeout: Option<Duration>,
     pub(super) contimeout: Option<Duration>,
@@ -339,6 +345,7 @@ impl LocalCopyOptions {
             force_replacements: false,
             implied_dirs: true,
             mkpath: false,
+            fuzzy_level: 0,
             prune_empty_dirs: false,
             timeout: None,
             contimeout: None,

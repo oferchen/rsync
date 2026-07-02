@@ -186,6 +186,7 @@ impl LocalCopyOptionsBuilder {
             force_replacements: self.force_replacements,
             implied_dirs: self.implied_dirs,
             mkpath: self.mkpath,
+            fuzzy_level: self.fuzzy_level,
             prune_empty_dirs: self.prune_empty_dirs,
             timeout: self.timeout,
             contimeout: self.contimeout,
