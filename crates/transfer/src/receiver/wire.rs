@@ -116,16 +116,44 @@ impl SumHead {
         Ok(())
     }
 
-    /// Reads a sum_head from the wire in rsync format.
-    pub fn read<R: Read>(reader: &mut R) -> io::Result<Self> {
-        let mut buf = [0u8; 16];
-        reader.read_exact(&mut buf)?;
-        Ok(Self {
+    /// Decodes a sum_head from its 16-byte little-endian wire representation.
+    ///
+    /// Shared by the sync [`read`](Self::read) and async
+    /// [`read_async`](Self::read_async) leaves so the field decode can never
+    /// diverge between them.
+    #[must_use]
+    fn from_wire_bytes(buf: &[u8; 16]) -> Self {
+        Self {
             count: i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as u32,
             blength: i32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]) as u32,
             s2length: i32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]) as u32,
             remainder: i32::from_le_bytes([buf[12], buf[13], buf[14], buf[15]]) as u32,
-        })
+        }
+    }
+
+    /// Reads a sum_head from the wire in rsync format.
+    pub fn read<R: Read>(reader: &mut R) -> io::Result<Self> {
+        let mut buf = [0u8; 16];
+        reader.read_exact(&mut buf)?;
+        Ok(Self::from_wire_bytes(&buf))
+    }
+
+    /// Async twin of [`read`](Self::read).
+    ///
+    /// Reads the same 16 bytes (`.await`-driven) and decodes them through the
+    /// shared [`from_wire_bytes`](Self::from_wire_bytes) core, so it yields the
+    /// same `SumHead` and consumes the same bytes as the sync leaf. Gated on
+    /// `tokio-transfer`.
+    #[cfg(feature = "tokio-transfer")]
+    pub async fn read_async<R>(reader: &mut R) -> io::Result<Self>
+    where
+        R: tokio::io::AsyncRead + Unpin + ?Sized,
+    {
+        use tokio::io::AsyncReadExt;
+
+        let mut buf = [0u8; 16];
+        reader.read_exact(&mut buf).await?;
+        Ok(Self::from_wire_bytes(&buf))
     }
 }
 
