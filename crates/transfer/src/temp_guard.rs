@@ -182,27 +182,17 @@ fn open_tmpfile_inner(
             }
             Err(ref e) if e.kind() == io::ErrorKind::AlreadyExists => continue,
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
-                // upstream: receiver.c:766 - mkdir_defmode(dn) before do_mkstemp().
-                // SEC-1.r accepted residual: multi-component parent recovery
-                // cannot anchor on a single dirfd without an `mkpath_via_sandbox`
-                // helper; fall back to the path-based create_dir_all walk.
-                if let Some(parent) = concrete_path.parent() {
-                    fs::create_dir_all(parent)?;
-                    if let Ok(file) = try_create_new(
-                        &concrete_path,
-                        #[cfg(unix)]
-                        sandbox,
-                        #[cfg(unix)]
-                        dest_dir,
-                    ) {
-                        #[cfg(unix)]
-                        let guard =
-                            TempFileGuard::with_anchor(concrete_path.clone(), sandbox, dest_dir);
-                        #[cfg(not(unix))]
-                        let guard = TempFileGuard::new(concrete_path);
-                        return Ok((file, guard));
-                    }
-                }
+                // upstream: receiver.c:283-293 - the ENOENT-recovery that
+                // called `make_path(fnametmp, ...)` before re-`do_mkstemp()`
+                // is compiled out (`#if 0`). Upstream never creates a missing
+                // parent chain at temp-file open time; a missing destination
+                // ancestor is a hard error (`mkstemp %s failed`). In-tree
+                // subdirectories are created up-front by the receiver's
+                // directory pass (generator.c:1317-1326 / create_directories),
+                // and the dest-arg path is created only under `--mkpath` in
+                // `ensure_dest_root_exists` (upstream main.c:736). Auto-creating
+                // here would resurrect the no-`--mkpath` deep-path bug, so we
+                // surface the ENOENT verbatim to match upstream.
                 return Err(io::Error::new(e.kind(), e.to_string()));
             }
             Err(e) => return Err(e),

@@ -162,6 +162,13 @@ pub(super) struct ServerLongFlags {
     /// upstream: options.c:2891-2892 - `server_options()` emits
     /// `--delay-updates` alongside `--partial-dir` when both are active.
     pub(super) delay_updates: bool,
+    /// Whether `--mkpath` was forwarded by the client (upstream: `--mkpath`).
+    ///
+    /// upstream: options.c:2996-2997 - `if (mkpath_dest_arg && am_sender)
+    /// args[ac++] = "--mkpath"`. Long-form only. Gates the receiver's
+    /// dest-arg path creation (`main.c:736` `make_path` vs `main.c:788`
+    /// single `do_mkdir`).
+    pub(super) mkpath: bool,
 }
 
 /// Parses all long-form flags from the server argument list.
@@ -208,6 +215,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         log_format: None,
         partial_dir: None,
         delay_updates: false,
+        mkpath: false,
     };
 
     let mut idx = 0;
@@ -266,6 +274,11 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
             }
             // upstream: options.c:2891-2892 - emitted alongside --partial-dir.
             "--delay-updates" => flags.delay_updates = true,
+            // upstream: options.c:2996-2997 - --mkpath forwarded to the server
+            // receiver when the client is the sender (push). --no-mkpath is the
+            // negation (options.c:834). Gates dest-arg path creation below.
+            "--mkpath" => flags.mkpath = true,
+            "--no-mkpath" | "--old-dirs" => flags.mkpath = false,
             _ => {
                 // upstream: options.c::server_options() emits a handful of
                 // path-bearing long flags (`--copy-dest`, `--link-dest`,
@@ -447,6 +460,9 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
             | "--delay-updates"
             | "--partial-dir"
             | "--backup"
+            | "--mkpath"
+            | "--no-mkpath"
+            | "--old-dirs"
     ) || arg == "-s"
         || arg == "--new-compress"
         || arg == "--old-compress"

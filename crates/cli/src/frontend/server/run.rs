@@ -185,6 +185,12 @@ where
     // consumed by the sender's `successful_send()` after each transferred
     // file is acknowledged.
     config.flags.remove_source_files = long_flags.remove_source_files;
+    // upstream: options.c:2996-2997 - `--mkpath` is forwarded long-form to the
+    // server receiver on a push. The receiver gates dest-arg path creation on
+    // this flag: without it, a missing ancestor chain is an error
+    // (`main.c:788` single `do_mkdir`); with it, the whole chain is created
+    // (`main.c:736` `make_path`).
+    config.flags.mkpath = long_flags.mkpath;
     // upstream: options.c:2046-2048 - do_stats sets info_levels[INFO_STATS] >= 2.
     // The server-side flag must be set so the generator emits NDX_DEL_STATS
     // during the goodbye phase (generator.c:2377,2422).

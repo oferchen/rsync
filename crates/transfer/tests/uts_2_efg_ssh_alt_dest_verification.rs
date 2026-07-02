@@ -88,7 +88,7 @@ fn uts_2_e_pre_flight_runs_under_server_dispatch() {
     // file_total > 1 emulates the alt-dest interop scenario (push of a
     // multi-file source tree). trailing_slash=false matches the upstream
     // test argv shape (`/dest_root` without a trailing slash).
-    let created = ensure_dest_root_exists(&dest_root, 3, false, false)
+    let created = ensure_dest_root_exists(&dest_root, 3, false, false, false)
         .expect("--server receiver pre-flight must succeed");
 
     assert!(
@@ -122,7 +122,10 @@ fn uts_2_e_pre_flight_runs_under_server_dispatch() {
 #[test]
 fn uts_2_f_ssh_alt_dest_auto_creates_missing_dest_root() {
     let tmp = tempdir().expect("tempdir");
-    let dest_root = tmp.path().join("missing/dest/root");
+    // Single missing leaf whose parent (tmp) already exists: upstream
+    // `main.c:788` `do_mkdir(dest_path)` creates exactly one level and fails
+    // with ENOENT on a deeper missing chain unless `--mkpath` was forwarded.
+    let dest_root = tmp.path().join("missing_dest_root");
     let copy_dest_basis = tmp.path().join("basis_for_copy_dest");
 
     // The copy-dest basis is materialized by the operator separately;
@@ -139,8 +142,9 @@ fn uts_2_f_ssh_alt_dest_auto_creates_missing_dest_root() {
     );
 
     // Multi-file transfer (file_total > 1) tripping the pre-flight, no
-    // trailing slash, not dry-run. This is the alt-dest interop argv shape.
-    let created = ensure_dest_root_exists(&dest_root, 5, false, false)
+    // trailing slash, not dry-run, no --mkpath. This is the alt-dest interop
+    // argv shape.
+    let created = ensure_dest_root_exists(&dest_root, 5, false, false, false)
         .expect("alt-dest --copy-dest pre-flight must auto-create the dest");
 
     assert!(
@@ -149,8 +153,8 @@ fn uts_2_f_ssh_alt_dest_auto_creates_missing_dest_root() {
     );
     assert!(
         dest_root.is_dir(),
-        "the deeply nested dest path must exist as a directory \
-         after the pre-flight (create_dir_all semantics)"
+        "the single missing dest-root level must exist as a directory \
+         after the pre-flight (do_mkdir semantics)"
     );
     // The alt-dest basis is untouched - the pre-flight only owns the
     // dest, mirroring upstream's separation between get_local_name and
@@ -195,7 +199,7 @@ fn uts_2_g_wire_byte_parity_mkdir_is_receiver_local() {
     let wire_capture: Cursor<Vec<u8>> = Cursor::new(Vec::new());
     let captured_len_before = wire_capture.get_ref().len();
 
-    let created = ensure_dest_root_exists(&dest_root, 4, false, false)
+    let created = ensure_dest_root_exists(&dest_root, 4, false, false, false)
         .expect("helper must succeed without touching any wire writer");
 
     let captured_len_after = wire_capture.get_ref().len();
