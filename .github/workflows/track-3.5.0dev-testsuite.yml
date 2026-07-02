@@ -21,6 +21,31 @@
 # RELEASE-DAY PLAN (2026-07-15): once 3.5.0 ships, bump the REQUIRED gate's
 # pin 3.4.4 -> 3.5.0, vendor the 3.5.0 testsuite as a release tarball, and
 # retire this git-ref tracker (or repoint it at the next dev branch).
+#
+# HARNESS-CALIBRATION FOLLOW-UP (not yet done; the raw leg counts are NOT yet
+# trustworthy as an oc-divergence number). The 3.5.0dev suite is the Python
+# *_test.py framework (rsyncfns.py + exitcodes.py), which drives rsync
+# differently from the 3.4.4 shell suite. A plain
+# `runtests.py --rsync-bin=oc-rsync` mis-drives a subset of it, so some FAILs
+# are harness gaps, NOT oc divergences. Known gaps to calibrate before the
+# tracker's number is authoritative:
+#   1. setpriv exec: fake-super/uid tests (e.g. partial_nowrite_test.py) run
+#      rsync via `setpriv`, which fails with "failed to execute .../oc-rsync:
+#      No such file or directory" (setpriv's dropped exec context can't resolve
+#      the binary/interp). The pre-transfer setup then never runs, cascading a
+#      Python FileNotFoundError that fails partial + partial_nowrite for a
+#      harness reason. Needs an rsync-on-PATH shim or a setpriv-visible binary.
+#   2. Per-test setup ordering in rsyncfns.py differs from the shell fns; some
+#      tests expect a FROMDIR the setpriv step was meant to populate.
+#   3. Root-owned scratch: root legs leave root-owned files; already chown'd
+#      back in the workflow, but the Python cleanup path (EACCES scandir on a
+#      mode-0 xattrs/to) still needs a permission-safe teardown inside the
+#      framework, not just around it.
+# Until these land, treat the tracker as a divergence *screen*: a test that
+# fails under BOTH pipe and tcp AND with a clear oc error (e.g. ownership-depth
+# `--groupmap=:1` rejected, mkpath auto-creating a path without --mkpath,
+# compress-options missing the --debug=NSTR line) is a real candidate; a test
+# failing via setpriv/FileNotFound/EACCES is a harness gap to fix here first.
 
 name: Track 3.5.0dev Testsuite
 
