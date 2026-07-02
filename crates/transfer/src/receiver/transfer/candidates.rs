@@ -21,7 +21,7 @@ use protocol::flist::FileEntry;
 use crate::receiver::directory::FailedDirectories;
 use crate::receiver::quick_check::{
     dest_mtime_newer, dest_type_matches_source, is_hardlink_follower, quick_check_matches,
-    try_reference_dest,
+    same_time, try_reference_dest,
 };
 use crate::receiver::stats::{ListOnlyEntry, TransferStats};
 use crate::receiver::{ReceiverContext, apply_acls_from_receiver_cache};
@@ -163,15 +163,20 @@ impl ReceiverContext {
             })
             .collect();
 
-        // upstream: generator.c:1845 - dry_run (!do_xfers) skips stat and data
-        // transfer but still builds the candidate list so NDX requests are sent
-        // to the sender, which logs each file name for verbose output. List-only
-        // also skips the destination stat/quick-check; its caller never issues
-        // per-file NDX requests (the list_only branch in `run_pipelined`).
-        if self.config.flags.skip_dest_writes() {
-            // upstream: generator.c:1925-1926 - dry-run still itemizes with
-            // ITEM_TRANSFER; the dry-run loop writes the bare ITEM_TRANSFER
-            // attrs over the wire and does not consume this precomputed value.
+        // upstream: generator.c:1249 - list_only renders every flist entry via
+        // list_file_entry() and issues NO per-file NDX request or destination
+        // stat/quick-check. Only list-only takes this short-circuit; dry-run
+        // (`-n`) is NOT list-only. Upstream still stats the destination and
+        // runs quick_check_ok() for `-n` (generator.c:1818, gated only by
+        // `dry_run > 1` at generator.c:1290 when the parent dir is missing), so
+        // a within-`--modify-window` mtime is treated as unchanged and itemized
+        // with iflags=0 rather than `>f`. Falling through to the quick-check
+        // path below preserves that parity; `dry_run` merely suppresses the
+        // filesystem mutations (see the `dry_run` guards further down).
+        if self.config.flags.list_only {
+            // upstream: generator.c:1925-1926 - list-only itemizes with the bare
+            // ITEM_TRANSFER; the caller renders the flist and never consumes
+            // this precomputed value.
             return candidates
                 .into_iter()
                 .map(|(idx, entry)| {
@@ -203,12 +208,19 @@ impl ReceiverContext {
         // per-file method dispatch for the common no-itemize case.
         let emit_itemize = self.should_emit_itemize();
 
+        // upstream: generator.c:1814 - set_file_attrs() on a quick-check match
+        // is a no-op under dry_run (do_xfers == 0), so an up-to-date file's
+        // itemize row is still rendered but no ownership/permission/ACL/xattr
+        // change is written. Zeroing these gates keeps the no-change path
+        // itemize-only under `-n` while leaving the real-transfer path intact.
+        let dry_run = self.config.flags.dry_run;
+
         // Pre-compute whether ACLs and xattrs are enabled. When disabled
         // (the common case), the per-file function call overhead is avoided
         // entirely in the no-change path. At 100K files this eliminates
         // 100K-200K function calls that would each immediately return None/Ok.
-        let has_acls = acl_cache.is_some() && self.config.flags.acls;
-        let has_xattrs = self.config.flags.xattrs;
+        let has_acls = !dry_run && acl_cache.is_some() && self.config.flags.acls;
+        let has_xattrs = !dry_run && self.config.flags.xattrs;
         let has_reference_dirs = !self.config.reference_directories.is_empty();
 
         // Phase B: Parallel stat - preserve PathBufs for reuse in Phase C and
@@ -231,7 +243,9 @@ impl ReceiverContext {
 
         // Phase C: Sequential post-processing with stat results.
         // Pre-size for the expected minority that need transfer.
-        let needs_metadata_apply = metadata_opts.requires_apply();
+        // upstream: generator.c:1814 - dry_run suppresses set_file_attrs(), so
+        // the no-change path itemizes without mutating destination metadata.
+        let needs_metadata_apply = !dry_run && metadata_opts.requires_apply();
         let mut files_to_transfer = Vec::with_capacity(stat_results.len() / 4 + 1);
         for (idx, file_path, dest_meta) in stat_results {
             let entry = &self.file_list[idx];
@@ -311,6 +325,7 @@ impl ReceiverContext {
                         always_checksum,
                         modify_window,
                         self.config.flags.copy_links,
+                        dry_run,
                         metadata_opts,
                         metadata_errors,
                         acl_cache,
@@ -372,13 +387,19 @@ impl ReceiverContext {
         if entry.is_file() && entry.size() != dest_meta.len() {
             iflags |= ItemFlags::ITEM_REPORT_SIZE;
         }
-        // upstream: generator.c:519-523 - keep_time ? mtime_differs(&st, file).
+        // upstream: generator.c:526 - keep_time ? mtime_differs(&st, file).
         // For regular files keep_time == preserve_mtimes (`--times`).
+        // `mtime_differs()` is `!same_time()`, so an mtime within the
+        // `--modify-window` tolerance does NOT set the time-report bit - the
+        // itemize row shows `.` in the time column rather than `t`, matching
+        // the quick-check's up-to-date decision. Window 0 reduces to exact
+        // whole-second equality.
+        let modify_window = self.config.file_selection.modify_window;
         if self.config.flags.times {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::MetadataExt;
-                if dest_meta.mtime() != entry.mtime() {
+                if !same_time(dest_meta.mtime(), entry.mtime(), modify_window) {
                     iflags |= ItemFlags::ITEM_REPORT_TIME;
                 }
             }
@@ -389,7 +410,11 @@ impl ReceiverContext {
                     .ok()
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| d.as_secs() as i64);
-                if dest_secs != Some(entry.mtime()) {
+                let differs = match dest_secs {
+                    Some(secs) => !same_time(secs, entry.mtime(), modify_window),
+                    None => true,
+                };
+                if differs {
                     iflags |= ItemFlags::ITEM_REPORT_TIME;
                 }
             }

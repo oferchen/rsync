@@ -45,8 +45,9 @@ pub(super) fn is_hardlink_follower(entry: &FileEntry) -> bool {
 ///   `f2_sec > f1_sec ? f2_sec - f1_sec <= modify_window : f1_sec - f2_sec <=
 ///   modify_window`, i.e. `|a_sec - b_sec| <= window`.
 ///
-/// upstream: util1.c:1478 same_time() (via generator.c:quick_check_ok()).
-fn same_time(a_sec: i64, b_sec: i64, window: u64) -> bool {
+/// upstream: util1.c:1478 same_time() (via generator.c:quick_check_ok() and
+/// generator.c:526 itemize() -> mtime_differs()).
+pub(super) fn same_time(a_sec: i64, b_sec: i64, window: u64) -> bool {
     if window == 0 {
         return a_sec == b_sec;
     }
@@ -235,6 +236,9 @@ fn mode_from_metadata(meta: &fs::Metadata) -> u32 {
 /// - `generator.c:983` - match_level 3 with `COMPARE_DEST` returns -2 (skip)
 /// - `generator.c:991` - match_level 3 with `LINK_DEST` calls `hard_link_one()`
 /// - `generator.c:1021` - match_level >= 2 with `COPY_DEST` copies locally
+/// - `generator.c:1033` - `copy_altdest_file()` is gated on `!dry_run`; under
+///   `-n` the file still counts as handled (up-to-date) but no local copy or
+///   hard link is written to the destination.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn try_reference_dest(
     entry: &FileEntry,
@@ -245,6 +249,7 @@ pub(super) fn try_reference_dest(
     always_checksum: Option<protocol::ChecksumAlgorithm>,
     modify_window: u64,
     copy_links: bool,
+    dry_run: bool,
     metadata_opts: &MetadataOptions,
     metadata_errors: &mut Vec<(PathBuf, String)>,
     acl_cache: Option<&AclCache>,
@@ -290,6 +295,12 @@ pub(super) fn try_reference_dest(
                 return true;
             }
             ReferenceDirectoryKind::Link => {
+                // upstream: generator.c:1033 - the local copy/link is gated on
+                // `!dry_run`. Under `-n` the reference match still marks the
+                // file as handled (no transfer) without touching the dest.
+                if dry_run {
+                    return true;
+                }
                 // upstream: generator.c:991 - hard_link_one()
                 if let Some(parent) = dest_path.parent() {
                     let _ = fs::create_dir_all(parent);
@@ -316,6 +327,11 @@ pub(super) fn try_reference_dest(
                 }
             }
             ReferenceDirectoryKind::Copy => {
+                // upstream: generator.c:1033 - `copy_altdest_file()` runs only
+                // when `!dry_run`; `-n` marks the file handled without copying.
+                if dry_run {
+                    return true;
+                }
                 // upstream: generator.c:1021 - copy_altdest_file()
                 if let Some(parent) = dest_path.parent() {
                     let _ = fs::create_dir_all(parent);
@@ -542,6 +558,7 @@ mod info_copy_emission_tests {
             None,
             0,
             false,
+            false,
             &metadata_opts,
             &mut metadata_errors,
             None,
@@ -601,6 +618,7 @@ mod info_copy_emission_tests {
             true,
             None,
             0,
+            false,
             false,
             &metadata_opts,
             &mut metadata_errors,
@@ -693,6 +711,7 @@ mod symlink_basis_tests {
             None,
             0,
             copy_links,
+            false,
             &metadata_opts,
             &mut metadata_errors,
             None,
