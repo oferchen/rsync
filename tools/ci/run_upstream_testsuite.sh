@@ -368,6 +368,85 @@ emit_gha_step_summary() {
     } >>"$summary_file"
 }
 
+# True (0) iff every component of the absolute path $1 has its o+x bit set, so
+# a CAP_DAC_OVERRIDE-dropped root or a dropped uid can traverse it. Unknown
+# (stat unavailable) counts as not-traversable - we only claim traversable when
+# we can prove it.
+path_world_traversable() {
+    local target=$1 p="" comp mode
+    local -a parts
+    IFS='/' read -r -a parts <<<"${target#/}"
+    for comp in "${parts[@]}"; do
+        [[ -z "$comp" ]] && continue
+        p="${p}/${comp}"
+        mode=$(stat -c '%a' "$p" 2>/dev/null || stat -f '%Lp' "$p" 2>/dev/null || echo "")
+        [[ -n "$mode" ]] || return 1
+        (( (0"$mode" & 1) != 0 )) || return 1
+    done
+    return 0
+}
+
+# Publish the oc-rsync binary to a world-traversable path and echo that path.
+#
+# WHY (root leg, setpriv): the 3.5.0dev fake-super/uid tests run rsync via
+# setpriv with CAP_DAC_OVERRIDE dropped (partial_nowrite_test.py:65
+# "setpriv --inh-caps -all --bounding-set -all"). The default binary lives at
+# $GITHUB_WORKSPACE/target/release/oc-rsync, i.e. under /home/runner, which is
+# mode 0750 and owned by the runner user. Without CAP_DAC_OVERRIDE even root
+# cannot TRAVERSE /home/runner, so execve() of that path returns ENOENT and
+# setpriv prints "failed to execute .../oc-rsync: No such file or directory".
+# The Python harness then throws FileNotFoundError on the test's from-dir and
+# the failure cascades. The test's own mount-namespace remount only covers the
+# cwd (the upstream source tree), not target/release, so the binary stays
+# unreachable. Copying it to a path whose every component is o+x (e.g.
+# /usr/local/bin, all 0755 on the runner) removes the traversal barrier for
+# both the cap-dropped root leg and any dropped-uid exec. Prefer copying the
+# binary OUT of the runner HOME over chmod'ing HOME itself.
+#
+# Falls back to the original path when no world-traversable install dir is
+# writable (local dev), so non-CI runs are unchanged.
+publish_oc_rsync_bin() {
+    local src=$1
+    local dir
+    for dir in /usr/local/bin /usr/bin; do
+        [[ -d "$dir" && -w "$dir" ]] || continue
+        path_world_traversable "$dir" || continue
+        local dst="${dir}/oc-rsync"
+        if cp -f "$src" "$dst" 2>/dev/null && chmod 0755 "$dst" 2>/dev/null; then
+            echo "$dst"
+            return 0
+        fi
+    done
+    # No writable world-traversable dir: keep the original path.
+    echo "$src"
+    return 0
+}
+
+# Echo a world-traversable base dir to host the runtests.py scratch tree, or
+# the given fallback when none is usable.
+#
+# WHY (root leg, mount namespace): partial_nowrite_test.py, when running as
+# root on Linux, unshares a mount namespace and mounts a fresh tmpfs OVER the
+# first non-root, non-world-x parent of cwd (chown_target). On the runner that
+# parent is /home/runner, so the tmpfs SHADOWS everything beneath it - including
+# a scratch tree under target/interop (which lives under /home/runner). The
+# test's from-dir then vanishes inside the namespace and rsync fails link_stat
+# with ENOENT, a pure harness artifact. Hosting the scratch OUTSIDE the shadowed
+# parent (e.g. /tmp, mode 1777, all components world-x, never chown_target since
+# it is world-x) keeps the from/to/chk dirs visible after the tmpfs mount.
+world_traversable_scratch_base() {
+    local fallback=$1
+    local base
+    for base in "${TMPDIR:-}" /tmp; do
+        [[ -n "$base" && -d "$base" && -w "$base" ]] || continue
+        path_world_traversable "$base" || continue
+        echo "$base"
+        return 0
+    done
+    echo "$fallback"
+    return 0
+}
+
 # Git-ref mode driver: delegate to upstream's own runtests.py.
 #
 # The 3.5.0dev testsuite is Python (runtests.py + testsuite/*_test.py), so we
@@ -403,6 +482,16 @@ run_git_ref_mode() {
     mkdir -p "$log_root"
     local output_log="${log_root}/runtests-output.log"
 
+    # Point --rsync-bin at a world-traversable copy of the binary so the root
+    # leg's setpriv (CAP_DAC_OVERRIDE-dropped) exec can reach it - see
+    # publish_oc_rsync_bin(). Non-CI runs where no such dir is writable fall
+    # back to the original path, so behaviour there is unchanged.
+    local rsync_bin_published
+    rsync_bin_published=$(publish_oc_rsync_bin "$oc_rsync_bin")
+    if [[ "$rsync_bin_published" != "$oc_rsync_bin" ]]; then
+        echo "==> Published oc-rsync to ${rsync_bin_published} (setpriv-reachable)" >&2
+    fi
+
     # Permission-safe scratch cleanup. A test that leaves a mode-0 directory
     # behind (e.g. xattrs/, recv-discard-nullderef/) makes a plain `rm -rf`
     # throw for the non-root runner, and runtests.py's per-test prep_scratch
@@ -430,15 +519,24 @@ run_git_ref_mode() {
         runtests_argv+=(--use-tcp)
     fi
     runtests_argv+=(
-        --rsync-bin="$oc_rsync_bin"
+        --rsync-bin="$rsync_bin_published"
         --tooldir="$upstream_src_dir"
         --srcdir="$upstream_src_dir"
         --timeout="$testrun_timeout"
     )
-    local scratch_home="${log_root}/scratch-${mode_tag}-${transport_tag}"
+    # Host the scratch tree under a world-traversable base OUTSIDE the parent
+    # that partial_nowrite_test.py shadows with a tmpfs (see
+    # world_traversable_scratch_base). Falls back to $log_root off-CI, so local
+    # runs (no root leg, no mount namespace) are unchanged.
+    local scratch_base
+    scratch_base=$(world_traversable_scratch_base "$log_root")
+    local scratch_home="${scratch_base}/oc-rsync-uts-scratch-${mode_tag}-${transport_tag}"
     chmod -R u+rwX "$scratch_home" 2>/dev/null || true
     rm -rf "$scratch_home"
     mkdir -p "$scratch_home"
+    if [[ "$scratch_base" != "$log_root" ]]; then
+        echo "==> Scratch tree under ${scratch_home} (outside the tmpfs-shadowed HOME)" >&2
+    fi
 
     local rc=0
     (
