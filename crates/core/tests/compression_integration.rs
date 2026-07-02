@@ -242,3 +242,115 @@ fn test_large_file_with_compression() {
         assert_eq!(summary.bytes_copied() as usize, data.len());
     });
 }
+
+/// Collects `--debug=NSTR` messages emitted during `f`, initialising the
+/// thread-local logger at NSTR level 1 first. The local-copy path reads this
+/// same thread-local config, so the summary emitters fire on this thread.
+fn nstr_messages_during<F: FnOnce()>(f: F) -> Vec<String> {
+    use logging::{DebugFlag, DiagnosticEvent, VerbosityConfig, drain_events, init};
+
+    let mut cfg = VerbosityConfig::default();
+    cfg.debug.nstr = 1;
+    init(cfg);
+    let _ = drain_events();
+
+    f();
+
+    drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Debug {
+                flag: DebugFlag::Nstr,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A local `-z --debug=NSTR` copy must emit the upstream `checksum:` and
+/// `compress: <name> (level N)` NSTR summary lines even though the wire
+/// negotiator never runs for a local copy. upstream: checksum.c:206-211 and
+/// compat.c:213-219 - the forked local_child server prints these.
+#[test]
+fn local_copy_emits_nstr_summaries_under_debug_nstr() {
+    run_with_timeout(LOCAL_TIMEOUT, || {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        let dest_root = temp.path().join("dest");
+        fs::create_dir_all(&source_root).expect("source root");
+        fs::create_dir_all(&dest_root).expect("dest root");
+
+        touch(
+            &source_root.join("data.txt"),
+            &create_compressible_data(4096),
+        );
+        let mut source_arg = source_root.into_os_string();
+        source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+        let messages = nstr_messages_during(|| {
+            let config = ClientConfig::builder()
+                .transfer_args([source_arg, dest_root.into_os_string()])
+                .compress(true)
+                .build();
+            core::client::run_client(config).expect("run client");
+        });
+
+        // Checksum summary always fires. oc's default strong checksum choice
+        // (`Auto`) resolves locally to MD5, so that is the reported name -
+        // matching the algorithm the local delta path actually uses.
+        assert!(
+            messages.iter().any(|m| m == "Client checksum: md5"),
+            "expected NSTR checksum summary for local copy: {messages:?}"
+        );
+        // Compress fires because -z is active; no --compress-level means the
+        // upstream CLVL_NOT_SPECIFIED sentinel renders in the (level N) clause.
+        let expected = format!(
+            "Client compress: {} (level {})",
+            compress::algorithm::CompressionAlgorithm::default_algorithm().name(),
+            i32::MIN
+        );
+        assert!(
+            messages.contains(&expected),
+            "expected NSTR compress summary for local copy: {messages:?}"
+        );
+    });
+}
+
+/// `--compress-level=9` must render `(level 9)` in the local-copy NSTR compress
+/// summary, exercising the threaded level instead of the sentinel.
+#[test]
+fn local_copy_nstr_compress_summary_renders_explicit_level() {
+    run_with_timeout(LOCAL_TIMEOUT, || {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        let dest_root = temp.path().join("dest");
+        fs::create_dir_all(&source_root).expect("source root");
+        fs::create_dir_all(&dest_root).expect("dest root");
+
+        touch(
+            &source_root.join("data.txt"),
+            &create_compressible_data(4096),
+        );
+        let mut source_arg = source_root.into_os_string();
+        source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+        let level = compress::zlib::CompressionLevel::from_numeric(9).expect("level 9");
+        let messages = nstr_messages_during(|| {
+            let config = ClientConfig::builder()
+                .transfer_args([source_arg, dest_root.into_os_string()])
+                .compress(true)
+                .compression_level(Some(level))
+                .build();
+            core::client::run_client(config).expect("run client");
+        });
+
+        assert!(
+            messages
+                .iter()
+                .any(|m| m.starts_with("Client compress: ") && m.ends_with("(level 9)")),
+            "expected compress summary to render level 9: {messages:?}"
+        );
+    });
+}

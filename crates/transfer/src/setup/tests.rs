@@ -75,6 +75,7 @@ fn ssh_server_flag_string_limits_compat_flags() {
         is_daemon_mode: false,
         do_compression: false,
         compress_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: true,
     };
@@ -110,6 +111,7 @@ fn ssh_server_flag_string_enables_advertised_caps() {
         is_daemon_mode: false,
         do_compression: false,
         compress_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: true,
     };
@@ -142,6 +144,7 @@ fn ssh_server_no_flag_string_uses_defaults() {
         is_daemon_mode: false,
         do_compression: false,
         compress_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
     };
@@ -276,6 +279,7 @@ fn setup_protocol_below_30_returns_none_for_algorithms_and_compat() {
         is_daemon_mode: false,
         do_compression: false,
         compress_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -315,6 +319,7 @@ fn setup_protocol_skip_compat_exchange_skips_flags() {
         is_daemon_mode: false,
         do_compression: false,
         compress_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -357,6 +362,7 @@ fn setup_protocol_server_writes_compat_flags_and_seed() {
         is_daemon_mode: true, // server advertises, client reads
         do_compression: false,
         compress_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -412,6 +418,7 @@ fn setup_protocol_client_reads_compat_flags_from_server() {
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -455,6 +462,7 @@ fn setup_protocol_server_generates_deterministic_seeds() {
         is_daemon_mode: false,
         do_compression: false,
         compress_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -504,6 +512,7 @@ fn setup_protocol_ssh_mode_bidirectional_exchange() {
         is_daemon_mode: false,
         do_compression: false,
         compress_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -547,6 +556,7 @@ fn setup_protocol_client_args_affects_compat_flags() {
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -578,6 +588,7 @@ fn setup_protocol_client_args_affects_compat_flags() {
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -621,6 +632,7 @@ fn setup_protocol_protocol_30_minimum_for_compat_exchange() {
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -1008,6 +1020,7 @@ fn setup_protocol_server_v_flag_uses_single_byte_encoding() {
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -1054,6 +1067,7 @@ fn setup_protocol_server_v_flag_enables_negotiation() {
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -1086,6 +1100,7 @@ fn setup_protocol_server_v_flag_with_both_v_and_uppercase_v() {
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
     };
@@ -1105,6 +1120,7 @@ fn setup_protocol_server_v_flag_with_both_v_and_uppercase_v() {
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
     };
@@ -1299,6 +1315,7 @@ fn setup_protocol_with_mock_negotiator_server_mode() {
         is_daemon_mode: true,
         do_compression: false,
         compress_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -1344,6 +1361,7 @@ fn setup_protocol_with_mock_negotiator_client_mode() {
         is_daemon_mode: false,
         do_compression: false,
         compress_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: None,
         allow_inc_recurse: false,
     };
@@ -1638,6 +1656,7 @@ fn compress_choice_override_skips_vstring_and_uses_algorithm() {
         is_daemon_mode: true,
         do_compression: true,
         compress_choice: Some(protocol::CompressionAlgorithm::Zstd),
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
     };
@@ -1672,6 +1691,7 @@ fn compress_choice_none_allows_normal_negotiation() {
         is_daemon_mode: true,
         do_compression: true,
         compress_choice: None,
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
     };
@@ -1706,6 +1726,7 @@ fn compress_choice_zlib_override_on_legacy_protocol() {
         is_daemon_mode: false,
         do_compression: true,
         compress_choice: Some(protocol::CompressionAlgorithm::ZlibX),
+        compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
         checksum_seed: Some(42),
         allow_inc_recurse: false,
     };

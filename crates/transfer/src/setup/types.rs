@@ -88,6 +88,15 @@ pub struct ProtocolSetupConfig<'a> {
     /// compression vstrings when `do_compression && !compress_choice`.
     pub compress_choice: Option<CompressionAlgorithm>,
 
+    /// User-specified compression level (`--compress-level=N`), or
+    /// [`protocol::nstr::CLVL_NOT_SPECIFIED`] when the flag was not given.
+    ///
+    /// Threaded into the capability negotiator so the `parse_compress_choice`
+    /// NSTR summary renders the real level. Mirrors upstream's raw
+    /// `do_compression_level` (`options.c:88`), which stays `CLVL_NOT_SPECIFIED`
+    /// unless `--compress-level` was passed.
+    pub compression_level: i32,
+
     /// Optional user-specified checksum seed from `--checksum-seed=NUM`.
     ///
     /// When `Some(seed)`, the server uses this fixed seed instead of generating
@@ -139,6 +148,7 @@ impl<'a> ProtocolSetupConfig<'a> {
             is_daemon_mode: false,
             do_compression: false,
             compress_choice: None,
+            compression_level: protocol::nstr::CLVL_NOT_SPECIFIED,
             checksum_seed: None,
             allow_inc_recurse: false,
         }
@@ -176,6 +186,13 @@ impl<'a> ProtocolSetupConfig<'a> {
     #[must_use]
     pub const fn with_compression(mut self, compress: bool) -> Self {
         self.do_compression = compress;
+        self
+    }
+
+    /// Sets [`Self::compression_level`].
+    #[must_use]
+    pub const fn with_compression_level(mut self, level: i32) -> Self {
+        self.compression_level = level;
         self
     }
 

@@ -248,6 +248,20 @@ pub enum ServerStats {
 /// On failure, contains the [`io::Error`] that caused the transfer to abort.
 pub type ServerResult = io::Result<ServerStats>;
 
+/// Maps a user-supplied [`compress::zlib::CompressionLevel`] to the raw i32
+/// upstream stores in `do_compression_level` and renders in the NSTR compress
+/// summary. upstream: token.c:init_compression_level() - zlib range 0..=9.
+fn compression_level_to_i32(level: compress::zlib::CompressionLevel) -> i32 {
+    use compress::zlib::CompressionLevel;
+    match level {
+        CompressionLevel::None => 0,
+        CompressionLevel::Fast => 1,
+        CompressionLevel::Default => 6,
+        CompressionLevel::Best => 9,
+        CompressionLevel::Precise(n) => i32::from(n.get()),
+    }
+}
+
 /// Determines whether the output stream should use multiplexed framing.
 ///
 /// Upstream rsync activates multiplex output differently depending on
@@ -449,6 +463,14 @@ pub fn run_server_with_handshake<W: Write>(
         None
     };
 
+    // upstream: options.c:88,767 - do_compression_level is CLVL_NOT_SPECIFIED
+    // unless the user passed --compress-level=N. The NSTR compress summary
+    // renders it verbatim, so map an absent override to CLVL_NOT_SPECIFIED.
+    let compression_level = config
+        .connection
+        .compression_level
+        .map_or(protocol::nstr::CLVL_NOT_SPECIFIED, compression_level_to_i32);
+
     let setup_config = setup::ProtocolSetupConfig {
         protocol: handshake.protocol,
         skip_compat_exchange: handshake.compat_exchanged,
@@ -458,6 +480,7 @@ pub fn run_server_with_handshake<W: Write>(
         is_daemon_mode,
         do_compression,
         compress_choice: compress_choice_algo,
+        compression_level,
         checksum_seed: config.checksum_seed,
         allow_inc_recurse,
     };
