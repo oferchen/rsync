@@ -722,6 +722,123 @@ mod tests {
         drop(pr);
     }
 
+    /// Pipelined-path mirror of #6249's synchronous discard test: a receiver
+    /// whose temp-file create fails mid-transfer on a MULTI-CHUNK delta must not
+    /// desync the disk-thread result stream. The network thread has already
+    /// lifted the whole delta off the wire and enqueued it as `Begin` + several
+    /// `Chunk`s + `Commit`; when `open_tmpfile()` fails, the disk thread must
+    /// drain those queued messages (the channel analog of upstream
+    /// `discard_receive_data`, receiver.c:999-1006) rather than returning
+    /// immediately and mis-parsing the next `Chunk` as a "message without
+    /// Begin". The file is marked failed and folded to a per-file partial
+    /// (IOERR_GENERAL -> RERR_PARTIAL, exit 23), never a fatal desync (exit 12).
+    ///
+    /// A MATCH-token delta on the wire becomes basis-copied `Chunk`s on this
+    /// channel, so multiple chunks reproduce the exact desync a MATCH delta
+    /// would trigger. Before the fix the orphaned `Chunk`/`Commit` messages
+    /// produced a spurious second error; a single clean recoverable error here
+    /// proves the drain works.
+    #[cfg(unix)]
+    #[test]
+    fn multi_chunk_temp_create_failure_drains_without_desync_exit_23() {
+        use crate::generator::io_error_flags::{IOERR_GENERAL, to_exit_code};
+        use std::os::unix::fs::PermissionsExt;
+
+        // Root bypasses the read-only dir bit, so the create would succeed.
+        if std::env::var("USER").is_ok_and(|u| u == "root") {
+            return;
+        }
+
+        let dir = test_support::create_tempdir();
+        let readonly_dir = dir.path().join("readonly");
+        std::fs::create_dir(&readonly_dir).unwrap();
+        std::fs::set_permissions(&readonly_dir, PermissionsExt::from_mode(0o555)).unwrap();
+
+        let file_path = readonly_dir.join("multi.dat");
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
+
+        // Drive the non-coalesced path: an explicit Begin followed by several
+        // Chunks and a Commit - exactly what the network thread emits for a
+        // delta that reduces to multiple (basis-copied) chunks.
+        pr.file_sender()
+            .send(FileMessage::Begin(Box::new(BeginMessage {
+                file_path: file_path.clone(),
+                target_size: 9,
+                file_entry_index: 0,
+                checksum_verifier: None,
+                is_device_target: false,
+                is_inplace: false,
+                append_offset: 0,
+                xattr_list: None,
+            })))
+            .unwrap();
+        pr.file_sender()
+            .send(FileMessage::Chunk(b"aaa".to_vec()))
+            .unwrap();
+        pr.file_sender()
+            .send(FileMessage::Chunk(b"bbb".to_vec()))
+            .unwrap();
+        pr.file_sender()
+            .send(FileMessage::Chunk(b"ccc".to_vec()))
+            .unwrap();
+        pr.file_sender().send(FileMessage::Commit).unwrap();
+
+        pr.note_commit_sent([0u8; ChecksumVerifier::MAX_DIGEST_LEN], 0, file_path, 0);
+
+        // Exactly ONE recoverable error - no spurious second error from
+        // orphaned Chunk/Commit messages, no propagated fatal Err (exit 12).
+        let (bytes, errors) = pr
+            .drain_all_results()
+            .expect("temp-create failure must be recoverable, not a fatal desync");
+        assert_eq!(bytes, 0, "no bytes written for the failed file");
+        assert_eq!(
+            errors.len(),
+            1,
+            "the drained multi-chunk file yields exactly one per-file error"
+        );
+        assert_eq!(pr.permission_error_count(), 1);
+
+        // The failed file sets IOERR_GENERAL, which maps to RERR_PARTIAL (23),
+        // matching upstream's FERROR_XFER -> got_xfer_error -> _exit(RERR_PARTIAL).
+        assert_eq!(
+            to_exit_code(IOERR_GENERAL),
+            23,
+            "temp-create failure must yield RERR_PARTIAL (exit 23), not fatal (12)"
+        );
+
+        // The disk thread survived the drain and processes the next file
+        // cleanly - proof the result stream is still aligned.
+        let ok_path = dir.path().join("after.dat");
+        pr.file_sender()
+            .send(FileMessage::WholeFile {
+                begin: Box::new(BeginMessage {
+                    file_path: ok_path.clone(),
+                    target_size: 4,
+                    file_entry_index: 1,
+                    checksum_verifier: None,
+                    is_device_target: false,
+                    is_inplace: false,
+                    append_offset: 0,
+                    xattr_list: None,
+                }),
+                data: b"next".to_vec(),
+            })
+            .unwrap();
+        pr.note_commit_sent(
+            [0u8; ChecksumVerifier::MAX_DIGEST_LEN],
+            0,
+            ok_path.clone(),
+            1,
+        );
+        let (bytes2, errors2) = pr.drain_all_results().unwrap();
+        assert_eq!(bytes2, 4, "the following file transfers normally");
+        assert!(errors2.is_empty());
+        assert_eq!(std::fs::read(&ok_path).unwrap(), b"next");
+
+        let _ = std::fs::set_permissions(&readonly_dir, PermissionsExt::from_mode(0o755));
+        drop(pr);
+    }
+
     #[test]
     fn permission_error_count_starts_at_zero() {
         let pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
