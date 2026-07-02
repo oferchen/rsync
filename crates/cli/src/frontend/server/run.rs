@@ -402,6 +402,21 @@ fn apply_value_flags<Err: Write>(
         }
     }
 
+    // upstream: options.c - server_options() forwards `--modify-window=NUM`.
+    // The receiver's quick-check honours it via same_time() so files within
+    // the window are not needlessly re-transferred over the network.
+    if let Some(window_str) = &long_flags.modify_window {
+        match super::super::execution::parse_modify_window_argument(std::ffi::OsStr::new(
+            window_str,
+        )) {
+            Ok(window) => config.file_selection.modify_window = window,
+            Err(msg) => {
+                write_server_error(stderr, brand, msg.text().to_owned());
+                return Err(1);
+            }
+        }
+    }
+
     // upstream: options.c:1943-1950 - server-side `--max-alloc` is parsed and
     // applied to the local allocator. We forward it from the client and
     // enforce the cap on the server's buffer pool.

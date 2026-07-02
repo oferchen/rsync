@@ -186,6 +186,9 @@ impl ReceiverContext {
 
         let preserve_times = self.config.flags.times && !self.config.flags.ignore_times;
         let size_only = self.config.file_selection.size_only;
+        // upstream: generator.c:quick_check_ok() -> same_time() honours the
+        // `--modify-window` tolerance for every transfer, not just local copies.
+        let modify_window = self.config.file_selection.modify_window;
         let ignore_existing = self.config.file_selection.ignore_existing;
         let existing_only = self.config.file_selection.existing_only;
         let update_only = self.config.flags.update;
@@ -261,6 +264,7 @@ impl ReceiverContext {
                     preserve_times,
                     size_only,
                     always_checksum,
+                    modify_window,
                 ) {
                     // upstream: generator.c:1816 - itemize() with iflags=0 for an
                     // up-to-date file; the attr-comparison may still surface a
@@ -295,6 +299,7 @@ impl ReceiverContext {
                         preserve_times,
                         size_only,
                         always_checksum,
+                        modify_window,
                         self.config.flags.copy_links,
                         metadata_opts,
                         metadata_errors,

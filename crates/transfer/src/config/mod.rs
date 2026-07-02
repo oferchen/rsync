@@ -197,6 +197,13 @@ pub struct FileSelectionConfig {
     pub existing_only: bool,
     /// Compare only file sizes, ignoring modification times (`--size-only`).
     pub size_only: bool,
+    /// Modification-time comparison tolerance in whole seconds (`--modify-window`).
+    ///
+    /// When zero (the default) the quick-check requires exact whole-second
+    /// mtime equality. When positive, two mtimes are treated as equal if their
+    /// whole-second delta does not exceed this value, matching upstream
+    /// `util1.c:same_time()` consulted via `generator.c:quick_check_ok()`.
+    pub modify_window: u64,
     /// Path for `--files-from` when the server reads the file list directly.
     pub files_from_path: Option<String>,
     /// Use NUL bytes as delimiters for `--files-from` input (`--from0`).

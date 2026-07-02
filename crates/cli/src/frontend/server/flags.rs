@@ -72,6 +72,13 @@ pub(super) struct ServerLongFlags {
     pub(super) from0: bool,
     pub(super) inplace: bool,
     pub(super) size_only: bool,
+    /// Modification-time window in whole seconds (upstream: `--modify-window=NUM`).
+    ///
+    /// upstream: options.c - `server_options()` emits `--modify-window=%d`
+    /// whenever the client set a non-default `modify_window`. The receiver's
+    /// quick-check consults this via `same_time()` so files within the window
+    /// are not needlessly re-transferred.
+    pub(super) modify_window: Option<String>,
     /// Numeric IDs only (upstream: `--numeric-ids`, long-form only).
     pub(super) numeric_ids: bool,
     /// Delete extraneous files (upstream: `--delete-*` variants, long-form only).
@@ -185,6 +192,7 @@ pub(super) fn parse_server_long_flags(args: &[OsString]) -> ServerLongFlags {
         from0: false,
         inplace: false,
         size_only: false,
+        modify_window: None,
         numeric_ids: false,
         delete: false,
         remove_source_files: false,
@@ -339,6 +347,9 @@ fn parse_value_bearing_flag(s: &str, flags: &mut ServerLongFlags) {
         flags.checksum_seed = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--checksum-choice=") {
         flags.checksum_choice = Some(value.to_owned());
+    } else if let Some(value) = s.strip_prefix("--modify-window=") {
+        // upstream: options.c - server_options() emits `--modify-window=%d`.
+        flags.modify_window = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--min-size=") {
         flags.min_size = Some(value.to_owned());
     } else if let Some(value) = s.strip_prefix("--max-size=") {
@@ -446,6 +457,7 @@ pub(super) fn is_known_server_long_flag(arg: &str) -> bool {
         || arg.starts_with("--compare-dest=")
         || arg.starts_with("--copy-dest=")
         || arg.starts_with("--link-dest=")
+        || arg.starts_with("--modify-window=")
         || arg.starts_with("--min-size=")
         || arg.starts_with("--max-size=")
         || arg.starts_with("--max-alloc=")

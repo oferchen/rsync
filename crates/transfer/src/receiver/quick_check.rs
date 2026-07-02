@@ -33,6 +33,26 @@ pub(super) fn is_hardlink_follower(entry: &FileEntry) -> bool {
     entry.hlinked() && !entry.hlink_first()
 }
 
+/// Returns `true` when two whole-second mtimes are the "same" under
+/// `--modify-window`, a direct port of upstream `util1.c:1478 same_time()`.
+///
+/// The receiver compares `time_t` seconds (`st_mtime` vs the file-list entry's
+/// `modtime`), so nanoseconds never enter this predicate - upstream likewise
+/// ignores them for the window check ("time windows don't care about that").
+///
+/// - `window == 0`: the seconds must be exactly equal (`f1_sec == f2_sec`).
+/// - `window > 0`: a SYMMETRIC whole-second tolerance applies, matching upstream
+///   `f2_sec > f1_sec ? f2_sec - f1_sec <= modify_window : f1_sec - f2_sec <=
+///   modify_window`, i.e. `|a_sec - b_sec| <= window`.
+///
+/// upstream: util1.c:1478 same_time() (via generator.c:quick_check_ok()).
+fn same_time(a_sec: i64, b_sec: i64, window: u64) -> bool {
+    if window == 0 {
+        return a_sec == b_sec;
+    }
+    a_sec.abs_diff(b_sec) <= window
+}
+
 /// Pure-function quick-check: compares destination stat against source entry.
 ///
 /// Returns `true` when the destination file matches the source entry (skip transfer).
@@ -42,7 +62,7 @@ pub(super) fn is_hardlink_follower(entry: &FileEntry) -> bool {
 /// 2. `always_checksum` - compute file checksum and compare (ignores mtime)
 /// 3. `size_only` - size matched, skip transfer
 /// 4. `!preserve_times` (implies `ignore_times`) - force transfer
-/// 5. mtime comparison
+/// 5. mtime comparison, tolerating `--modify-window` seconds of drift
 pub(super) fn quick_check_matches(
     entry: &FileEntry,
     dest_path: &Path,
@@ -50,6 +70,7 @@ pub(super) fn quick_check_matches(
     preserve_times: bool,
     size_only: bool,
     always_checksum: Option<protocol::ChecksumAlgorithm>,
+    modify_window: u64,
 ) -> bool {
     // upstream: generator.c:621 - size check first
     if dest_meta.len() != entry.size() {
@@ -73,10 +94,12 @@ pub(super) fn quick_check_matches(
     if !preserve_times {
         return false;
     }
+    // upstream: generator.c:645 - `mtime_differs()` -> `same_time()` applies the
+    // `--modify-window` tolerance symmetrically on whole seconds.
     #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
-        dest_meta.mtime() == entry.mtime()
+        same_time(dest_meta.mtime(), entry.mtime(), modify_window)
     }
     #[cfg(not(unix))]
     {
@@ -84,7 +107,9 @@ pub(super) fn quick_check_matches(
             .modified()
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or(false, |d| d.as_secs() as i64 == entry.mtime())
+            .map_or(false, |d| {
+                same_time(d.as_secs() as i64, entry.mtime(), modify_window)
+            })
     }
 }
 
@@ -147,6 +172,7 @@ pub(super) fn try_reference_dest(
     preserve_times: bool,
     size_only: bool,
     always_checksum: Option<protocol::ChecksumAlgorithm>,
+    modify_window: u64,
     copy_links: bool,
     metadata_opts: &MetadataOptions,
     metadata_errors: &mut Vec<(PathBuf, String)>,
@@ -181,6 +207,7 @@ pub(super) fn try_reference_dest(
             preserve_times,
             size_only,
             always_checksum,
+            modify_window,
         ) {
             continue;
         }
@@ -442,6 +469,7 @@ mod info_copy_emission_tests {
             false,
             true,
             None,
+            0,
             false,
             &metadata_opts,
             &mut metadata_errors,
@@ -501,6 +529,7 @@ mod info_copy_emission_tests {
             false,
             true,
             None,
+            0,
             false,
             &metadata_opts,
             &mut metadata_errors,
@@ -591,6 +620,7 @@ mod symlink_basis_tests {
             false,
             true,
             None,
+            0,
             copy_links,
             &metadata_opts,
             &mut metadata_errors,
@@ -688,6 +718,104 @@ mod symlink_basis_tests {
         assert_eq!(
             fs::read(dest_dir.join("payload.bin")).expect("dest file"),
             b"basis payload"
+        );
+    }
+}
+
+/// Regression tests pinning `--modify-window` in the receiver quick-check.
+///
+/// upstream: generator.c:quick_check_ok() consults `mtime_differs()` ->
+/// `util1.c:1478 same_time()` for EVERY transfer, so a remote/daemon pull or
+/// push must tolerate `--modify-window` seconds of whole-second mtime drift
+/// exactly like the local-copy path. Without threading the window into the
+/// receiver, a content-identical file whose mtime differs by <= window is
+/// needlessly re-transferred.
+#[cfg(unix)]
+#[cfg(test)]
+mod modify_window_tests {
+    use std::fs;
+    use std::os::unix::fs::MetadataExt;
+
+    use filetime::{FileTime, set_file_mtime};
+    use protocol::flist::FileEntry;
+
+    use super::quick_check_matches;
+
+    /// Builds a dest file at `dest_secs` and a source entry claiming `src_secs`,
+    /// both the same size, then runs the quick-check with `preserve_times=true`,
+    /// `size_only=false`, no checksum, at the given `window`.
+    fn run_window(src_secs: i64, dest_secs: i64, window: u64) -> bool {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let dest_path = dir.path().join("payload.bin");
+        let payload = b"identical content";
+        fs::write(&dest_path, payload).expect("write dest");
+        set_file_mtime(&dest_path, FileTime::from_unix_time(dest_secs, 0)).expect("set dest mtime");
+
+        // Read back the on-disk mtime so the assertion reflects what the
+        // filesystem actually stored (the quick-check reads dest_meta.mtime()).
+        let dest_meta = fs::metadata(&dest_path).expect("dest meta");
+        assert_eq!(
+            dest_meta.mtime(),
+            dest_secs,
+            "dest mtime not set as expected"
+        );
+
+        let mut entry = FileEntry::new_file("payload.bin".into(), payload.len() as u64, 0o644);
+        entry.set_mtime(src_secs, 0);
+
+        quick_check_matches(&entry, &dest_path, &dest_meta, true, false, None, window)
+    }
+
+    /// A destination whose mtime is within `--modify-window=2` of the source
+    /// (2s apart) is treated as up-to-date and SKIPPED, mirroring same_time()'s
+    /// symmetric whole-second tolerance. This is the network-receiver bug fix:
+    /// previously the exact `==` compare re-transferred it.
+    #[test]
+    fn within_window_two_is_skipped() {
+        let base = 1_700_000_000;
+        // Both directions of drift must skip (same_time is symmetric).
+        assert!(
+            run_window(base, base + 2, 2),
+            "dest +2s within window must skip"
+        );
+        assert!(
+            run_window(base, base - 2, 2),
+            "dest -2s within window must skip"
+        );
+        assert!(
+            run_window(base, base + 1, 2),
+            "dest +1s within window must skip"
+        );
+    }
+
+    /// A destination 3s away from the source exceeds `--modify-window=2`, so
+    /// same_time() reports the files as different and the receiver transfers.
+    #[test]
+    fn beyond_window_two_is_transferred() {
+        let base = 1_700_000_000;
+        assert!(
+            !run_window(base, base + 3, 2),
+            "dest +3s beyond window must transfer"
+        );
+        assert!(
+            !run_window(base, base - 3, 2),
+            "dest -3s beyond window must transfer"
+        );
+    }
+
+    /// With `--modify-window=0` the quick-check requires exact whole-second
+    /// equality (same_time() reduces to `f1_sec == f2_sec`): equal mtimes skip,
+    /// a one-second delta re-transfers.
+    #[test]
+    fn zero_window_requires_exact_seconds() {
+        let base = 1_700_000_000;
+        assert!(
+            run_window(base, base, 0),
+            "equal mtimes at window 0 must skip"
+        );
+        assert!(
+            !run_window(base, base + 1, 0),
+            "1s delta at window 0 must transfer"
         );
     }
 }
