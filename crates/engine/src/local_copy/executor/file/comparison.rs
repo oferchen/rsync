@@ -215,29 +215,34 @@ fn unix_seconds(time: SystemTime) -> i64 {
     }
 }
 
-/// Returns `true` when two timestamps differ by no more than `window`.
+/// Returns `true` when two timestamps are the "same" under `--modify-window`.
 ///
-/// With a zero window the comparison is at whole-second granularity: the
-/// sub-second component of each timestamp is discarded before comparing. This
-/// mirrors upstream, which stores the source `modtime` as a `time_t` and whose
-/// `same_time()` helper reduces to `f1_sec == f2_sec` when `modify_window == 0`,
-/// so a destination that only differs in the fractional second is still treated
-/// as up-to-date by the quick check.
+/// This is a direct port of upstream `util1.c:same_time()`, which the generator
+/// consults through `unchanged_file()` for the quick-check skip decision. Both
+/// timestamps are first truncated to whole seconds (mirroring the `time_t`
+/// storage of `st_mtime` / `file->modtime`), then:
 ///
-/// With a non-zero window the original full-resolution duration comparison is
-/// retained so sub-second `--modify-window` tolerances continue to apply.
+/// - `window == 0`: the seconds must be exactly equal (`f1_sec == f2_sec`), so a
+///   destination that only differs in the fractional second is still up-to-date.
+/// - `window > 0`: a SYMMETRIC whole-second tolerance applies, matching upstream
+///   `f2_sec > f1_sec ? f2_sec - f1_sec <= modify_window : f1_sec - f2_sec <=
+///   modify_window` -- i.e. `|a_sec - b_sec| <= window_secs`. Nanoseconds do not
+///   figure into the window check ("time windows don't care about that").
 ///
-/// upstream: generator.c:unchanged_file() -> same_time() - whole-second
-/// comparison when `modify_window == 0`.
+/// upstream: util1.c:1478 same_time() (via generator.c unchanged_file()).
 pub(crate) fn system_time_within_window(a: SystemTime, b: SystemTime, window: Duration) -> bool {
+    // Truncate to whole seconds, exactly as upstream compares `time_t` values.
+    let a_sec = unix_seconds(a);
+    let b_sec = unix_seconds(b);
+
     if window.is_zero() {
-        return unix_seconds(a) == unix_seconds(b);
+        // upstream: same_time() returns `f1_sec == f2_sec` when modify_window == 0.
+        return a_sec == b_sec;
     }
 
-    match a.duration_since(b) {
-        Ok(diff) => diff <= window,
-        Err(_) => matches!(b.duration_since(a), Ok(diff) if diff <= window),
-    }
+    // upstream: same_time() applies a symmetric window on whole seconds --
+    // nanoseconds are deliberately ignored (util1.c:1484).
+    a_sec.abs_diff(b_sec) <= window.as_secs()
 }
 
 enum LockstepCheck {
@@ -506,6 +511,61 @@ mod tests {
             next_second,
             Duration::ZERO
         ));
+    }
+
+    #[test]
+    fn system_time_window_is_symmetric_on_whole_seconds() {
+        // WHY: upstream util1.c:1478 same_time() treats two mtimes as equal when
+        // their whole-second delta is within `--modify-window`, and the window is
+        // SYMMETRIC (|a_sec - b_sec| <= window) regardless of which side is newer.
+        // A window of 2 must treat mtimes exactly 2s apart as the same file in
+        // BOTH directions, so the quick check does not needlessly re-transfer a
+        // content-identical file. This is the divergence being fixed: the previous
+        // implementation compared full-resolution durations, so a source at .0s and
+        // a destination at +2.9s (whole-second delta 2, within window) was wrongly
+        // seen as 2.9s apart and re-transferred.
+        let window = Duration::from_secs(2);
+        let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let plus_two = base + Duration::from_secs(2);
+        let minus_two = base - Duration::from_secs(2);
+
+        assert!(system_time_within_window(base, plus_two, window));
+        assert!(system_time_within_window(plus_two, base, window));
+        assert!(system_time_within_window(base, minus_two, window));
+        assert!(system_time_within_window(minus_two, base, window));
+
+        // Sub-second parts must not tip a within-window pair over the edge:
+        // upstream ignores nanoseconds for the window check (util1.c:1484). Source
+        // at .0s vs destination at +2.9s is a whole-second delta of 2 -> same.
+        let base_frac = base + Duration::from_millis(0);
+        let plus_two_frac = base + Duration::new(2, 900_000_000);
+        assert!(system_time_within_window(base_frac, plus_two_frac, window));
+    }
+
+    #[test]
+    fn system_time_window_three_seconds_apart_differ_at_window_two() {
+        // WHY: with `--modify-window=2`, a whole-second delta of 3 exceeds the
+        // tolerance, so upstream same_time() returns 0 (different) and the file
+        // must be re-transferred. Guards against an off-by-one that would swallow
+        // a genuinely stale destination.
+        let window = Duration::from_secs(2);
+        let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let plus_three = base + Duration::from_secs(3);
+
+        assert!(!system_time_within_window(base, plus_three, window));
+        assert!(!system_time_within_window(plus_three, base, window));
+    }
+
+    #[test]
+    fn system_time_zero_window_one_second_apart_differ() {
+        // WHY: `--modify-window=0` requires exact whole-second equality
+        // (same_time() reduces to `f1_sec == f2_sec`), so mtimes one second apart
+        // are different and the destination is re-transferred.
+        let base = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let plus_one = base + Duration::from_secs(1);
+
+        assert!(!system_time_within_window(base, plus_one, Duration::ZERO));
+        assert!(!system_time_within_window(plus_one, base, Duration::ZERO));
     }
 
     #[test]
