@@ -3262,6 +3262,21 @@ mod files_from {
     }
 
     #[test]
+    fn read_files_from_local_path_nul_delimited_strips_comments() {
+        // upstream: flist.c:2249 sets RL_DUMP_COMMENTS for local files
+        // independent of eol_nulls; io.c:1276 strips leading '#'/';' comment
+        // lines even under --from0. Comment entries are dropped, normals kept.
+        let temp_dir = TempDir::new().unwrap();
+        let list_file = temp_dir.path().join("list0.txt");
+        std::fs::write(&list_file, b"#comment\0x.txt\0;skip\0y.txt\0\0").unwrap();
+
+        let result =
+            super::super::filters::read_files_from_local_path(&list_file.to_string_lossy(), true)
+                .unwrap();
+        assert_eq!(result, vec!["x.txt", "y.txt"]);
+    }
+
+    #[test]
     fn read_files_from_local_path_skips_empty_and_comments() {
         let temp_dir = TempDir::new().unwrap();
         let list_file = temp_dir.path().join("list.txt");
