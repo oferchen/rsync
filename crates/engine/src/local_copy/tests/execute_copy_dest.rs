@@ -725,6 +725,7 @@ fn copy_dest_identical_file_records_reference_copy_with_blank_attrs() {
     let destination_dir = temp.path().join("dest");
     fs::create_dir_all(&source_dir).expect("create source dir");
     fs::create_dir_all(&copy_dest_dir).expect("create copy_dest dir");
+    fs::create_dir_all(&destination_dir).expect("create dest dir");
 
     let source_file = source_dir.join("file.txt");
     let copy_dest_file = copy_dest_dir.join("file.txt");
