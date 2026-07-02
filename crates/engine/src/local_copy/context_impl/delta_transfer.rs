@@ -392,6 +392,21 @@ impl<'a> CopyContext<'a> {
 
         self.capture_batch_block_match(&matched, destination)?;
 
+        // REFLINK-3/4: attempt a same-filesystem FICLONERANGE reflink before
+        // falling back to the read+write copy loop. On a CoW filesystem this
+        // shares the basis extents into the destination with zero data copied.
+        // Skipped for sparse output (the reflink cannot reproduce the sparse
+        // writer's hole layout) and when `--no-cow` disables reflink. When the
+        // clone is unavailable (cross-fs, unaligned, unsupported fs) the helper
+        // reports `false` and we fall through to the byte copy. Byte-identical
+        // output either way - this is a local-only acceleration with no wire
+        // impact.
+        if !sparse.enabled
+            && self.try_reflink_matched_block(existing, writer, offset, block_length, destination)?
+        {
+            return Ok(());
+        }
+
         existing.seek(SeekFrom::Start(offset)).map_err(|error| {
             LocalCopyError::io(
                 "read existing destination",
@@ -436,5 +451,75 @@ impl<'a> CopyContext<'a> {
         }
 
         Ok(())
+    }
+
+    /// Attempts to reflink `existing[offset..offset+len]` into the writer at
+    /// its current position via Linux `FICLONERANGE`.
+    ///
+    /// Returns `Ok(true)` when the range clone succeeded and the writer's file
+    /// position has been advanced past the cloned range (so subsequent
+    /// sequential writes land correctly). Returns `Ok(false)` when the clone
+    /// was declined - `--no-cow` in effect, the operands are on different
+    /// filesystems (REFLINK-3), the range is below the worthwhile threshold,
+    /// or the ioctl reported that the filesystem / alignment cannot satisfy the
+    /// clone - so the caller falls back to the read+write copy.
+    ///
+    /// # Correctness
+    ///
+    /// The destination position is `writer.stream_position()`. On success the
+    /// clone copies no bytes but does not move the file offset, so we seek the
+    /// writer forward by `len` to match what an equivalent `write_all` would
+    /// have left behind. Cross-filesystem clones are never issued: `st_dev` of
+    /// the basis and destination are compared up front, and `FICLONERANGE`'s
+    /// own `EXDEV`/`EINVAL`/`EOPNOTSUPP` results are mapped to a graceful
+    /// fallback by the `fast_io` wrapper. The transfer never fails on a clone
+    /// error.
+    fn try_reflink_matched_block(
+        &self,
+        existing: &fs::File,
+        writer: &mut fs::File,
+        offset: u64,
+        len: usize,
+        destination: &Path,
+    ) -> Result<bool, LocalCopyError> {
+        // REFLINK-4: honour the `--cow` / `--no-cow` policy that also gates the
+        // whole-file FICLONE fast path.
+        if !self.reflink_enabled() {
+            return Ok(false);
+        }
+
+        let len = len as u64;
+        if len < fast_io::CLONE_FILE_RANGE_MIN_BYTES {
+            return Ok(false);
+        }
+
+        // REFLINK-3: never issue FICLONERANGE across filesystems. The ioctl
+        // returns EXDEV cross-mount; comparing st_dev up front avoids the
+        // wasted syscall. `None` (device id unavailable) falls through to let
+        // the ioctl decide rather than forcing the slow path.
+        if fast_io::same_fs::files_same_device(existing, writer) == Some(false) {
+            return Ok(false);
+        }
+
+        let dst_offset = writer.stream_position().map_err(|error| {
+            LocalCopyError::io("seek destination file", destination.to_path_buf(), error)
+        })?;
+
+        let cloned = fast_io::try_clone_file_range(existing, offset, writer, dst_offset, len)
+            .map_err(|error| LocalCopyError::io("clone basis range", destination, error))?;
+
+        if !cloned {
+            return Ok(false);
+        }
+
+        // FICLONERANGE leaves the writer's file offset unchanged; advance it so
+        // the next sequential write continues after the cloned range.
+        writer
+            .seek(SeekFrom::Start(dst_offset.saturating_add(len)))
+            .map_err(|error| {
+                LocalCopyError::io("seek destination file", destination.to_path_buf(), error)
+            })?;
+
+        Ok(true)
     }
 }
