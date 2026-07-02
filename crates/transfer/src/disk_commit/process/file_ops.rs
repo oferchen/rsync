@@ -42,7 +42,27 @@ pub(in crate::disk_commit) fn process_file(
     disk_batch: Option<&mut fast_io::IoUringDiskBatch>,
     iocp_batch: Option<&mut fast_io::IocpDiskBatch>,
 ) -> io::Result<CommitResult> {
-    let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
+    // upstream: receiver.c:999-1006 - when open_tmpfile() fails (e.g. EACCES
+    // from a read-only destination directory) the receiver does NOT abort the
+    // receive loop. It logs the error, calls discard_receive_data() to drain
+    // this file's delta, and continues to the next file. On the pipelined path
+    // the network thread has already lifted this file's entire delta off the
+    // wire into channel messages, so the wire itself cannot desync here - but
+    // the leftover Chunk/Commit messages for this file are still queued.
+    // Returning the open error immediately would leave those messages in the
+    // channel; the disk loop would then read the next Chunk and mis-parse it as
+    // a "message without Begin", corrupting the result stream. We instead drain
+    // this file's queued messages (the channel analog of discard_receive_data)
+    // and then surface the original open error. `drain_all_results` maps a
+    // permission failure to a per-file partial (IOERR_GENERAL -> RERR_PARTIAL,
+    // exit 23) with the upstream sender warning, exactly like the synchronous
+    // receiver (receiver/transfer/sync.rs via delta_apply::discard_delta_stream).
+    let (file, mut cleanup_guard, needs_rename) = match open_output_file(&begin, config) {
+        Ok(triple) => triple,
+        Err(open_err) => {
+            return discard_file_on_open_failure(file_rx, buf_return_tx, open_err);
+        }
+    };
     if needs_rename {
         CleanupManager::global().register_temp_file(cleanup_guard.path().to_path_buf());
     }
@@ -244,6 +264,11 @@ pub(in crate::disk_commit) fn process_whole_file(
     disk_batch: Option<&mut fast_io::IoUringDiskBatch>,
     iocp_batch: Option<&mut fast_io::IocpDiskBatch>,
 ) -> io::Result<CommitResult> {
+    // upstream: receiver.c:999-1006 - open failure is a benign per-file partial,
+    // not a fatal abort. The coalesced WholeFile carries its data inline, so
+    // there are no queued channel messages to drain (unlike process_file); the
+    // open error surfaces directly and drain_all_results maps a permission
+    // failure to RERR_PARTIAL (exit 23).
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
     if needs_rename {
         CleanupManager::global().register_temp_file(cleanup_guard.path().to_path_buf());
@@ -321,6 +346,64 @@ pub(in crate::disk_commit) fn process_whole_file(
         delayed_path: outcome.delayed_path,
         backup_notice: outcome.backup_notice,
     })
+}
+
+/// Drains a chunked file's queued channel messages after its output could not
+/// be opened, then surfaces the original open error.
+///
+/// The network thread has already lifted this file's entire delta off the wire
+/// and enqueued it as `Chunk` messages terminated by `Commit`. With no open
+/// output the disk thread cannot write them, so it recycles each chunk buffer
+/// and drops the bytes until the terminating message - the channel analog of
+/// upstream `discard_receive_data()`. This keeps the disk loop from reading the
+/// next queued `Chunk` and mis-parsing it as a "message without Begin".
+///
+/// Reaching `Commit` yields the original `open_err`, which the main-thread
+/// [`crate::pipeline::receiver::PipelinedReceiver`] maps to a per-file partial
+/// (permission failure -> IOERR_GENERAL -> RERR_PARTIAL, exit 23) with the
+/// upstream sender warning, matching the synchronous receiver
+/// (`receiver/transfer/sync.rs` via `delta_apply::discard_delta_stream`). If the
+/// channel instead delivers `Shutdown`/`Abort`/disconnect first, that terminal
+/// signal is propagated so the disk loop exits, exactly as the write path does.
+///
+/// upstream: receiver.c:999-1006 - discard this file's data and continue.
+fn discard_file_on_open_failure(
+    file_rx: &spsc::Receiver<FileMessage>,
+    buf_return_tx: &spsc::Sender<Vec<u8>>,
+    open_err: io::Error,
+) -> io::Result<CommitResult> {
+    loop {
+        match file_rx.recv() {
+            Ok(FileMessage::Chunk(data)) => {
+                // Recycle the buffer for the network thread; drop the bytes.
+                let _ = buf_return_tx.send(data);
+            }
+            Ok(FileMessage::Commit) => {
+                return Err(open_err);
+            }
+            Ok(FileMessage::Abort { reason }) => {
+                return Err(io::Error::other(reason));
+            }
+            Ok(FileMessage::Shutdown) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "disk thread: shutdown received while discarding file",
+                ));
+            }
+            Ok(FileMessage::Begin(_) | FileMessage::WholeFile { .. }) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "disk thread: received Begin while discarding another file",
+                ));
+            }
+            Err(_) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "disk thread: channel disconnected while discarding file",
+                ));
+            }
+        }
+    }
 }
 
 /// Opens the output file using device write, inplace, or temp+rename strategy.
