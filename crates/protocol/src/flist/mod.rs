@@ -67,7 +67,9 @@ pub use incremental::{
 };
 pub use intern::PathInterner;
 pub use name_cmp::{f_name_cmp, f_name_cmp_components, name_cmp_eq};
-pub use read::{FileListReader, read_file_entry};
+#[cfg(feature = "tokio-transfer")]
+pub use read::read_entry_with_flist_async;
+pub use read::{EntryStep, FileListReader, read_file_entry};
 pub use sort::{
     CleanResult, apply_permutation_in_place, compare_file_entries, flist_clean,
     sort_and_clean_file_list, sort_file_list,

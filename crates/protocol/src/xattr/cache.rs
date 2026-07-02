@@ -27,7 +27,7 @@ use crate::xattr::{MAX_FULL_DATUM, MAX_XATTR_DIGEST_LEN, RSYNC_PREFIX, XattrEntr
 /// Mirrors upstream's `rsync_xal_l` item list. Each file entry references
 /// an xattr set by index into this cache, avoiding duplicate storage of
 /// identical xattr sets across multiple files.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct XattrCache {
     /// Stored xattr lists, indexed by position.
     lists: Vec<XattrList>,

@@ -19,6 +19,8 @@ mod id_lists;
 mod incremental;
 mod prune;
 mod receive;
+#[cfg(feature = "tokio-transfer")]
+mod receive_async;
 mod sanitize;
 
 pub use incremental::IncrementalFileListReceiver;
