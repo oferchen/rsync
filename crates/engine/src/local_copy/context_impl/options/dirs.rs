@@ -163,8 +163,13 @@ impl<'a> CopyContext<'a> {
                         self.replace_parent_entry_dry_run(parent, &existing, allow_creation)
                     }
                 }
+                // upstream: generator.c:1329-1333 - a missing leading parent
+                // is materialized on demand (make_path) when creation is
+                // allowed, or under `relative_paths && !implied_dirs`; in
+                // dry-run mode the real mkdir is elided, so mirror the real
+                // run's acceptance of the missing parent in both cases.
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    if allow_creation {
+                    if allow_creation || self.relative_paths_enabled() {
                         Ok(())
                     } else {
                         Err(LocalCopyError::io(
@@ -225,6 +230,31 @@ impl<'a> CopyContext<'a> {
                         }
                     } else {
                         self.replace_parent_entry_forbidden(parent, &existing)
+                    }
+                }
+                // upstream: generator.c:1329-1333 - with `--no-implied-dirs`
+                // the implied parent dirs are absent from the flist, but under
+                // `relative_paths && !implied_dirs` recv_generator() still
+                // materializes a missing leading dir on demand via
+                // `make_path(fname, MKP_DROP_NAME | ...)`. The dir is created
+                // with default attributes (no source-attr mirroring); that
+                // suppression happens in retouch_relative_implied_dirs, which
+                // is already gated on implied_dirs_enabled(). Outside
+                // --relative mode there are no implied dirs, so a missing
+                // parent remains an error, matching upstream.
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    if self.relative_paths_enabled() {
+                        fs::create_dir_all(parent).map_err(|error| {
+                            LocalCopyError::io("create parent directory", parent, error)
+                        })?;
+                        self.register_progress();
+                        Ok(())
+                    } else {
+                        Err(LocalCopyError::io(
+                            "create parent directory",
+                            parent.to_path_buf(),
+                            error,
+                        ))
                     }
                 }
                 Err(error) => Err(LocalCopyError::io(
