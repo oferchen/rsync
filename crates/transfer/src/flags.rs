@@ -167,6 +167,16 @@ pub struct ParsedServerFlags {
     /// - `options.c:765` - `remove_source_files` global definition
     pub remove_source_files: bool,
 
+    /// Create missing destination path components (long-form `--mkpath`).
+    ///
+    /// Not part of the compact flag string; forwarded by the sending client
+    /// only (upstream `options.c:2996-2997` - `if (mkpath_dest_arg &&
+    /// am_sender) args[ac++] = "--mkpath"`). Gates the receiver's dest-arg
+    /// path creation: without it, upstream `main.c:788` does a single
+    /// `do_mkdir(dest_path)` (which fails when an ancestor is missing); with
+    /// it, `main.c:736` calls `make_path()` to create the whole chain.
+    pub mkpath: bool,
+
     /// Info flags after the first `.` separator.
     pub info_flags: InfoFlags,
 }

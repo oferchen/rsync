@@ -293,6 +293,7 @@ impl ReceiverContext {
             file_count,
             trailing_slash,
             self.config.flags.skip_dest_writes(),
+            self.config.flags.mkpath,
         )
         .map_err(|e| {
             io::Error::new(

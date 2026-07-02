@@ -110,6 +110,15 @@ fn apply_long_form_args(client_args: &[String], config: &mut ServerConfig) -> Op
             "--fsync" => {
                 config.write.fsync = true;
             }
+            // upstream: options.c:2996-2997 - --mkpath forwarded to the daemon
+            // receiver on a push. Gates dest-arg path creation (main.c:736
+            // make_path vs main.c:788 single do_mkdir).
+            "--mkpath" => {
+                config.flags.mkpath = true;
+            }
+            "--no-mkpath" | "--old-dirs" => {
+                config.flags.mkpath = false;
+            }
             // upstream: options.c:2849 - backup
             "--backup" => {
                 config.flags.backup = true;
