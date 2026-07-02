@@ -237,24 +237,26 @@ fn from0_reader_accepts_missing_trailing_separator() {
 }
 
 #[test]
-fn from0_disables_comment_handling() {
+fn from0_strips_comment_lines() {
     let tmp = test_support::create_tempdir();
     let list_path = tmp.path().join("from0_comments.list");
 
-    // With --from0, # and ; should not be treated as comments
+    // upstream: --from0 still strips leading #/; comment lines. RL_DUMP_COMMENTS
+    // is gated on reading_remotely, not eol_nulls (flist.c:2249); read_line drops
+    // #/; regardless of RL_EOL_NULLS (io.c:1276).
     let mut bytes = Vec::new();
-    bytes.extend_from_slice(b"#notacomment");
+    bytes.extend_from_slice(b"#comment");
     bytes.push(0);
-    bytes.extend_from_slice(b";alsonotacomment");
+    bytes.extend_from_slice(b";comment");
+    bytes.push(0);
+    bytes.extend_from_slice(b"realfile");
     bytes.push(0);
     std::fs::write(&list_path, bytes).expect("write list");
 
     let entries =
         load_file_list_operands(&[list_path.into_os_string()], true).expect("load entries");
 
-    assert_eq!(entries.len(), 2);
-    assert_eq!(entries[0], "#notacomment");
-    assert_eq!(entries[1], ";alsonotacomment");
+    assert_eq!(entries, vec!["realfile"]);
 }
 
 #[test]
