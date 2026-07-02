@@ -33,6 +33,19 @@ impl<'a> CopyContext<'a> {
         self.options.whole_file_enabled()
     }
 
+    /// Returns whether the active copy-on-write policy permits reflink
+    /// acceleration in the delta COPY-token path.
+    ///
+    /// REFLINK-4: `--no-cow` / `--reflink=never` installs a platform-copy
+    /// strategy whose `supports_reflink()` is `false`, and `--cow` /
+    /// `--reflink=always|auto` leaves a strategy that reports `true`. The
+    /// delta path consults this before attempting `FICLONERANGE`, so the same
+    /// flag that gates whole-file `FICLONE` (REFLINK-2) also gates range
+    /// clones.
+    pub(super) fn reflink_enabled(&self) -> bool {
+        self.options.platform_copy().supports_reflink()
+    }
+
     pub(super) const fn open_noatime_enabled(&self) -> bool {
         self.options.open_noatime_enabled()
     }
