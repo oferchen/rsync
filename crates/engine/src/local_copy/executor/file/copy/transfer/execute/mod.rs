@@ -751,11 +751,22 @@ fn find_fuzzy_basis(
         return None;
     }
 
-    // upstream: generator.c:1787 - announce the selected basis at FUZZY,1. The
-    // target display mirrors upstream's `fname` (the relative transfer path)
-    // when available, falling back to the destination path.
-    let target_display = relative.unwrap_or(destination).display().to_string();
-    trace_fuzzy_basis_selected(&target_display, &candidate.path.display().to_string());
+    // upstream: generator.c:1787-1793 - announce the selected basis at FUZZY,1
+    // as `"fuzzy basis selected for %s: %s"`, where the target is `fname` (the
+    // relative transfer path) and the basis is `f_name(fuzzy_file)` - the
+    // basis's relative flist name, not an absolute filesystem path. The basis
+    // shares the target's directory, so its relative name is the target's
+    // parent joined with the candidate basename.
+    let target_rel = relative.unwrap_or(destination);
+    let target_display = target_rel.display().to_string();
+    let basis_display = match (target_rel.parent(), candidate.path.file_name()) {
+        (Some(parent), Some(basis_name)) if !parent.as_os_str().is_empty() => {
+            parent.join(basis_name).display().to_string()
+        }
+        (_, Some(basis_name)) => Path::new(basis_name).display().to_string(),
+        (_, None) => candidate.path.display().to_string(),
+    };
+    trace_fuzzy_basis_selected(&target_display, &basis_display);
 
     Some((candidate.path, meta))
 }

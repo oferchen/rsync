@@ -69,11 +69,17 @@ pub fn render_diagnostic_events<O: Write, E: Write>(
                 }
             }
             DiagnosticEvent::Debug {
-                flag,
+                flag: _,
                 level: _,
                 message,
             } => {
-                writeln!(err, "[{flag:?}] {message}")?;
+                // upstream: log.c:rwrite() prints debug messages verbatim via
+                // rprintf(FINFO/FCLIENT, ...) with no flag-category bracket.
+                // The message already carries any role prefix (e.g. "[sender]")
+                // where upstream emits one, so rendering the DebugFlag name here
+                // would diverge from upstream byte-for-byte (breaks --debug=FUZZY
+                // parsers that grep the exact selection line).
+                writeln!(err, "{message}")?;
             }
         }
     }
@@ -206,8 +212,10 @@ mod tests {
         assert!(stdout_output.contains("first\n"));
         assert!(stdout_output.contains("third\n"));
 
+        // upstream: debug messages render verbatim, with no flag-category
+        // bracket prefix (log.c:rwrite via rprintf(FINFO, ...)).
         let stderr_output = String::from_utf8(stderr).unwrap();
-        assert_eq!(stderr_output, "[Io] second\n");
+        assert_eq!(stderr_output, "second\n");
     }
 
     #[test]
@@ -224,7 +232,8 @@ mod tests {
         assert!(stdout_output.contains("test info"));
 
         let stderr_output = String::from_utf8(stderr).unwrap();
-        assert!(stderr_output.contains("[Filter] test debug"));
+        assert!(stderr_output.contains("test debug"));
+        assert!(!stderr_output.contains("[Filter]"));
 
         let mut stdout2 = Vec::new();
         let mut stderr2 = Vec::new();
