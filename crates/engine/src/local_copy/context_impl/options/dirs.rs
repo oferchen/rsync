@@ -50,6 +50,19 @@ impl<'a> CopyContext<'a> {
         self.options.omit_link_times_enabled()
     }
 
+    /// Returns `true` when `parent` is a proper descendant of the destination
+    /// root - i.e. an in-tree parent produced by tree reconstruction during a
+    /// recursive/relative transfer, not the destination argument's own path.
+    ///
+    /// upstream: main.c:735-749 - only the destination ARGUMENT's missing path
+    /// (the root itself, `parent == destination_root`, or an ancestor of it) is
+    /// gated on `--mkpath`; parents strictly under an existing destination root
+    /// are always created for the tree (generator.c recv_generator).
+    fn parent_is_within_destination_root(&self, parent: &Path) -> bool {
+        let root = self.destination_root();
+        parent != root && parent.starts_with(root)
+    }
+
     fn parent_relative_to_destination<'p>(&self, parent: &'p Path) -> Option<&'p Path> {
         parent
             .strip_prefix(self.destination_root())
@@ -142,7 +155,26 @@ impl<'a> CopyContext<'a> {
             return Ok(());
         }
 
-        let allow_creation = self.implied_dirs_enabled() || self.mkpath_enabled();
+        // Distinguish two kinds of missing parent, mirroring upstream:
+        //
+        // 1. An IN-TREE parent (a proper descendant of the destination root) is
+        //    just tree reconstruction for a recursive/relative transfer -
+        //    e.g. `dst/a/b/` for `src/a/b/file` under an existing `dst/`. These
+        //    are governed by `--implied-dirs` (default on) and always created
+        //    for the tree (generator.c recv_generator per-file parents).
+        // 2. The DESTINATION ARGUMENT's own missing path (the root itself or an
+        //    ancestor of it) is created only when `--mkpath` is set. This is the
+        //    analogue of upstream's up-front `make_path(dest_arg)`.
+        //    upstream: main.c:735-749 - `if (mkpath_dest_arg && statret < 0 &&
+        //    (cp || file_total > 1)) make_path(dest_path, ...)`. Without
+        //    `--mkpath`, a file-to-file copy into a missing deep parent chain
+        //    must fail and create nothing.
+        let in_tree_parent = self.parent_is_within_destination_root(parent);
+        let allow_creation = if in_tree_parent {
+            self.implied_dirs_enabled() || self.mkpath_enabled()
+        } else {
+            self.mkpath_enabled()
+        };
         let keep_dirlinks = self.keep_dirlinks_enabled();
 
         let result = if self.mode.is_dry_run() {
