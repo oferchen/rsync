@@ -146,3 +146,96 @@ jobs:
             target/interop/upstream-testsuite-output.log
           if-no-files-found: ignore
           retention-days: 14
+
+  # ===========================================================================
+  # Root leg (informational). The non-root job above is the REQUIRED gate; it
+  # stays untouched so its `upstream testsuite` check context and green status
+  # are preserved. This job re-runs the SAME 3.4.4 shell suite under sudo so
+  # the root-only tests (chown/devices/xattrs/dir-sgid/protected-regular) that
+  # self-skip as the runner user actually RUN. It is `continue-on-error` so a
+  # root-only divergence surfaces here (job summary + non-green leg) without
+  # wedging the required gate. Promote to required only after a CI run proves
+  # it green. The 3.4.4 shell suite has no --use-tcp support (that is a
+  # runtests.py flag added on master), so this gate is privilege-only; the
+  # transport dimension applies solely to the 3.5.0dev tracker.
+  # ===========================================================================
+  upstream-testsuite-root:
+    name: upstream testsuite (root, informational)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    continue-on-error: true
+
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: "0"
+      RUSTFLAGS: "-D warnings"
+      RUST_BACKTRACE: "full"
+      CACHE_VERSION: ${{ inputs.cache_version }}
+      UPSTREAM_RSYNC_VERSION: ${{ inputs.upstream_rsync_version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-${{ runner.os }}-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: upstream-testsuite-root
+          cache-on-failure: true
+
+      - name: Cache APT packages
+        uses: awalsh128/cache-apt-pkgs-action@681749ae568c81c2037cb9185e38b709b261bd2f # v1.6.1
+        with:
+          packages: build-essential pkg-config zlib1g-dev curl autoconf automake libtool libacl1-dev libattr1-dev libzstd-dev liblz4-dev libxxhash-dev
+          version: ${{ env.CACHE_VERSION }}
+
+      - name: Cache upstream rsync source
+        id: cache-upstream
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            target/interop/upstream-src/rsync-${{ env.UPSTREAM_RSYNC_VERSION }}
+          key: upstream-testsuite-src-${{ env.UPSTREAM_RSYNC_VERSION }}-${{ hashFiles('tools/ci/run_upstream_testsuite.sh') }}-${{ runner.os }}
+
+      - name: Build oc-rsync (release)
+        uses: ./.github/actions/build-oc-rsync
+
+      - name: Run upstream testsuite (root)
+        id: testsuite
+        env:
+          OC_RSYNC_BIN: target/release/oc-rsync
+          UPSTREAM_VERSION: ${{ env.UPSTREAM_RSYNC_VERSION }}
+        run: |
+          set -uo pipefail
+          mkdir -p target/interop
+          # Passwordless sudo re-exec so root-only tests RUN. Forward the env
+          # the harness reads (a bare `sudo` scrubs it) plus the GHA summary
+          # sink. Informational: never fail the step - the job status carries
+          # the signal and continue-on-error keeps the leg green.
+          sudo env \
+            "PATH=$PATH" \
+            "OC_RSYNC_BIN=$OC_RSYNC_BIN" \
+            "UPSTREAM_VERSION=$UPSTREAM_VERSION" \
+            "GITHUB_ACTIONS=${GITHUB_ACTIONS:-}" \
+            "GITHUB_STEP_SUMMARY=${GITHUB_STEP_SUMMARY:-}" \
+            bash tools/ci/run_upstream_testsuite.sh 2>&1 \
+            | tee target/interop/upstream-testsuite-root-output.log || true
+          # Reclaim root-owned scratch/logs for the upload + post-job cache.
+          sudo chown -R "$(id -u):$(id -g)" target/interop 2>/dev/null || true
+
+      - name: Upload testsuite logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: upstream-testsuite-root-logs
+          path: |
+            target/interop/upstream-testsuite/
+            target/interop/upstream-testsuite-root-output.log
+          if-no-files-found: ignore
+          retention-days: 14
