@@ -142,8 +142,11 @@ mod tests {
         assert!(stderr.is_empty());
     }
 
+    /// upstream: log.c:rwrite - a debug message (FINFO) renders verbatim on
+    /// the client's stdout, with no flag-category bracket. This is the stream
+    /// the fuzzy testsuite greps for "fuzzy basis selected ...".
     #[test]
-    fn test_debug_event_renders_to_stderr_with_flag() {
+    fn test_debug_event_renders_to_stdout_verbatim() {
         let events = vec![DiagnosticEvent::Debug {
             flag: DebugFlag::Filter,
             level: 1,
@@ -155,11 +158,11 @@ mod tests {
 
         render_diagnostic_events(&events, &mut stdout, &mut stderr, false).unwrap();
 
-        assert!(stdout.is_empty());
         assert_eq!(
-            String::from_utf8(stderr).unwrap(),
-            "[Filter] excluding file foo.txt\n"
+            String::from_utf8(stdout).unwrap(),
+            "excluding file foo.txt\n"
         );
+        assert!(stderr.is_empty());
     }
 
     #[test]
