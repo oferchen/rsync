@@ -83,6 +83,13 @@ jobs:
             --features tokio-transfer \
             -E 'test(reader_stack_parity)'
 
+      - name: Run sync vs async AsyncServerReader AsyncRead-impl parity tests
+        run: |
+          cargo nextest run --locked \
+            -p transfer \
+            --features tokio-transfer \
+            -E 'test(asyncread_impl)'
+
   async-equivalence:
     name: async-vs-default transfer equivalence (stable)
     runs-on: ubuntu-latest
