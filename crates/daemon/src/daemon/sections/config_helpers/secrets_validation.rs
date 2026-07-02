@@ -58,7 +58,8 @@ fn validate_secrets_file_from_env(
 
 /// Ensures a file has proper secrets file permissions.
 ///
-/// Verifies the file is a regular file and (on Unix) has mode 0600.
+/// Verifies the file is a regular file and (on Unix) is not other-accessible.
+/// Group access (e.g. mode 0640) is allowed, matching upstream.
 fn ensure_secrets_file(path: &Path, metadata: &fs::Metadata) -> Result<(), String> {
     if !metadata.is_file() {
         return Err(format!(
@@ -70,9 +71,11 @@ fn ensure_secrets_file(path: &Path, metadata: &fs::Metadata) -> Result<(), Strin
     #[cfg(unix)]
     {
         let mode = metadata.permissions().mode();
-        if mode & 0o077 != 0 {
+        // upstream: authenticate.c:120 check_secret() rejects only when OTHER
+        // has access ((st.st_mode & 06) != 0); group-readable (0640) is allowed.
+        if mode & 0o6 != 0 {
             return Err(format!(
-                "secrets file '{}' must not be accessible to group or others (expected permissions 0600)",
+                "secrets file '{}' must not be other-accessible",
                 path.display()
             ));
         }
