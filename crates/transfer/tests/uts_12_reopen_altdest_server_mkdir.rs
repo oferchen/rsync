@@ -56,7 +56,12 @@ use transfer::receiver::ensure_dest_root_exists;
 fn alt_dest_server_chain_creates_missing_dest_root() {
     let tmp = tempdir().expect("tempdir");
     let alt_basis = tmp.path().join("alt3");
-    let dest_root = tmp.path().join("missing/dest/root");
+    // Single missing leaf whose parent already exists: upstream `main.c:788`
+    // does a single `do_mkdir(dest_path)`, which creates one level. A deeper
+    // chain (`missing/dest/root`) would fail without `--mkpath` (verified
+    // against upstream 3.4.4: `mkdir ... failed: No such file or directory`),
+    // so the pre-flight only owns the final component here.
+    let dest_root = tmp.path().join("to");
 
     // Operator-seeded alt-dest basis: upstream's main.c:798-806 only
     // checks that the basis path resolves. The pre-flight owns the
@@ -81,8 +86,9 @@ fn alt_dest_server_chain_creates_missing_dest_root() {
     let file_total = 5; // multi-file alt-dest source tree
     let trailing_slash = true; // upstream argv carries `/tmp/to/`
     let dry_run = false;
+    let mkpath = false; // upstream forwards --mkpath only on client request
 
-    let created = ensure_dest_root_exists(&dest_root, file_total, trailing_slash, dry_run)
+    let created = ensure_dest_root_exists(&dest_root, file_total, trailing_slash, dry_run, mkpath)
         .expect("alt-dest --copy-dest pre-flight must auto-create the dest");
 
     assert!(
@@ -92,8 +98,8 @@ fn alt_dest_server_chain_creates_missing_dest_root() {
     );
     assert!(
         dest_root.is_dir(),
-        "the dest root (multiple directory components deep) must exist \
-         as a directory after the pre-flight (create_dir_all semantics)"
+        "the single missing dest-root level must exist as a directory \
+         after the pre-flight (do_mkdir semantics)"
     );
     assert!(
         alt_basis.join("seed.txt").exists(),
@@ -116,7 +122,7 @@ fn single_file_without_trailing_slash_does_not_mkdir_destroot() {
     let dest_root = tmp.path().join("would-be-file");
 
     let created =
-        ensure_dest_root_exists(&dest_root, 1, false, false).expect("helper must succeed");
+        ensure_dest_root_exists(&dest_root, 1, false, false, false).expect("helper must succeed");
 
     assert!(
         !created,
@@ -142,7 +148,7 @@ fn dest_existing_as_file_returns_typed_error() {
     let dest_file = tmp.path().join("not-a-directory");
     fs::write(&dest_file, b"existing file").expect("seed dest as a file");
 
-    let err = ensure_dest_root_exists(&dest_file, 3, true, false)
+    let err = ensure_dest_root_exists(&dest_file, 3, true, false, false)
         .expect_err("dest existing as a regular file must be rejected");
 
     assert_eq!(

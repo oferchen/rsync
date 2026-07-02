@@ -359,6 +359,14 @@ pub(super) fn build_full_daemon_args(
         args.push("--remove-source-files".to_owned());
     }
 
+    // upstream: options.c:2996-2997 - `if (mkpath_dest_arg && am_sender)`.
+    // The dest-arg path creation is receiver-side, so forward `--mkpath` only
+    // on a push (local client is the sender). `!is_sender` mirrors upstream's
+    // `am_sender` here (see the module note above).
+    if config.mkpath() && !is_sender {
+        args.push("--mkpath".to_owned());
+    }
+
     // upstream: options.c:2944-2962 - server_options() forwards the
     // files-from arg only when the remote peer reads the list. `is_sender`
     // here means the daemon is the sender (PULL), so the local side pushes

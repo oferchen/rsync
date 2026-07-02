@@ -448,6 +448,17 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // `--omit-dir-times` to a remote sender (pull), which then stats it as a
         // source path.
 
+        // upstream: options.c:2996-2997 - `if (mkpath_dest_arg && am_sender)
+        // args[ac++] = "--mkpath"`. The dest-arg path creation is a
+        // receiver-side concern, so the option is forwarded only when the
+        // local process is the sender (a PUSH to a remote receiver).
+        // `RemoteRole::Sender` here means the remote peer acts as the
+        // receiver (this builder pushes `--sender` for the opposite role),
+        // matching upstream's `am_sender` branch (see `am_sender` above).
+        if self.config.mkpath() && self.role == RemoteRole::Sender {
+            args.push(OsString::from("--mkpath"));
+        }
+
         if self.config.delay_updates() {
             args.push(OsString::from("--delay-updates"));
         }

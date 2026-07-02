@@ -28,7 +28,7 @@ fn creates_dest_root_for_multi_file_transfer() {
     let dest = tmp.path().join("new_dest");
     assert!(!dest.exists());
 
-    let created = ensure_dest_root_exists(&dest, 4, false, false).expect("ensure ok");
+    let created = ensure_dest_root_exists(&dest, 4, false, false, false).expect("ensure ok");
 
     assert!(created, "should report newly created");
     assert!(dest.is_dir(), "destination root must exist as a directory");
@@ -42,7 +42,7 @@ fn creates_dest_root_for_trailing_slash_single_file() {
     let dest = tmp.path().join("with_slash");
     assert!(!dest.exists());
 
-    let created = ensure_dest_root_exists(&dest, 1, true, false).expect("ensure ok");
+    let created = ensure_dest_root_exists(&dest, 1, true, false, false).expect("ensure ok");
 
     assert!(created, "trailing slash forces creation");
     assert!(dest.is_dir());
@@ -57,8 +57,8 @@ fn skips_create_for_single_file_without_trailing_slash() {
     let dest = tmp.path().join("single_file_dest");
     assert!(!dest.exists());
 
-    let created =
-        ensure_dest_root_exists(&dest, 1, false, false).expect("single-file path must not error");
+    let created = ensure_dest_root_exists(&dest, 1, false, false, false)
+        .expect("single-file path must not error");
 
     assert!(!created, "single-file transfer must not create the root");
     assert!(
@@ -75,7 +75,7 @@ fn pre_existing_directory_is_noop() {
     let dest = tmp.path().join("already_there");
     fs::create_dir(&dest).expect("seed dest");
 
-    let created = ensure_dest_root_exists(&dest, 7, false, false).expect("ensure ok");
+    let created = ensure_dest_root_exists(&dest, 7, false, false, false).expect("ensure ok");
 
     assert!(!created, "no creation when dest already exists");
     assert!(dest.is_dir());
@@ -89,23 +89,61 @@ fn dry_run_never_creates_dest_root() {
     let dest = tmp.path().join("dry_run_dest");
     assert!(!dest.exists());
 
-    let created = ensure_dest_root_exists(&dest, 100, true, true).expect("dry_run ok");
+    let created = ensure_dest_root_exists(&dest, 100, true, true, false).expect("dry_run ok");
 
     assert!(!created);
     assert!(!dest.exists(), "dry-run must not create the destination");
 }
 
-/// Walks a multi-component path that lives several levels below an existing
-/// directory: `--server` invocations from the upstream alt-dest harness pass
-/// destinations like `out/sub/leaf/` whose ancestors do not yet exist. The
-/// helper relies on `create_dir_all` so the entire chain materializes.
+/// A multi-component destination whose ancestors do not exist must fail
+/// WITHOUT `--mkpath`: upstream `main.c:788` does a single
+/// `do_mkdir(dest_path)` that returns `ENOENT` when the parent chain is
+/// missing. Auto-creating the whole chain here (the old `create_dir_all`
+/// behavior) diverged from upstream by materializing a deep destination path
+/// that the user never asked for. Regression guard for the wire-receiver
+/// no-`--mkpath` deep-path bug.
 #[test]
-fn creates_nested_dest_root() {
+fn deep_missing_dest_root_without_mkpath_errors() {
     let tmp = tempdir().expect("tempdir");
     let dest = tmp.path().join("a/b/c/d");
     assert!(!dest.exists());
 
-    let created = ensure_dest_root_exists(&dest, 3, false, false).expect("ensure ok");
+    let err = ensure_dest_root_exists(&dest, 3, false, false, false)
+        .expect_err("missing ancestor chain must error without --mkpath");
+
+    assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
+    assert!(
+        !tmp.path().join("a").exists(),
+        "no part of the missing chain may be created without --mkpath"
+    );
+}
+
+/// WITH `--mkpath`, the same multi-component destination materializes the
+/// whole missing chain, mirroring upstream `main.c:736`
+/// `make_path(dest_path, ...)`.
+#[test]
+fn deep_missing_dest_root_with_mkpath_creates_chain() {
+    let tmp = tempdir().expect("tempdir");
+    let dest = tmp.path().join("a/b/c/d");
+    assert!(!dest.exists());
+
+    let created = ensure_dest_root_exists(&dest, 3, false, false, true).expect("mkpath ensure ok");
+
+    assert!(created);
+    assert!(dest.is_dir());
+}
+
+/// A single-level destination whose parent already exists is created even
+/// without `--mkpath`: upstream `main.c:788` `do_mkdir(dest_path)` succeeds
+/// when only the final component is missing. This is the common recursive
+/// `rsync -a src/ newdst/` shape and must never regress.
+#[test]
+fn single_level_dest_root_without_mkpath_creates() {
+    let tmp = tempdir().expect("tempdir");
+    let dest = tmp.path().join("newdst");
+    assert!(!dest.exists());
+
+    let created = ensure_dest_root_exists(&dest, 3, false, false, false).expect("ensure ok");
 
     assert!(created);
     assert!(dest.is_dir());
@@ -143,7 +181,7 @@ fn rejects_broken_symlink_dest_root() {
     );
     assert!(!outside_target.exists(), "target must remain dangling");
 
-    let err = ensure_dest_root_exists(&dest, 3, false, false)
+    let err = ensure_dest_root_exists(&dest, 3, false, false, false)
         .expect_err("dangling-symlink dest root must surface NotFound");
 
     assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
@@ -175,7 +213,7 @@ fn accepts_symlink_to_existing_directory() {
     let dest = tmp.path().join("dest_root");
     symlink(&real_dir, &dest).expect("symlink dest -> real_dir");
 
-    let created = ensure_dest_root_exists(&dest, 5, false, false)
+    let created = ensure_dest_root_exists(&dest, 5, false, false, false)
         .expect("symlink-to-dir dest must be accepted");
 
     assert!(
@@ -215,7 +253,7 @@ fn accepts_symlink_to_existing_directory_outside_parent() {
     let dest = module_root.path().join("dest_root");
     symlink(&outside_dir, &dest).expect("dest -> outside dir");
 
-    let created = ensure_dest_root_exists(&dest, 8, true, false)
+    let created = ensure_dest_root_exists(&dest, 8, true, false, false)
         .expect("symlink-to-dir-outside-parent dest must be accepted");
 
     assert!(!created, "no creation when dest resolves to existing dir");
@@ -231,7 +269,7 @@ fn rejects_existing_non_directory_at_dest_root() {
     let dest = tmp.path().join("existing_file");
     fs::write(&dest, b"x").expect("seed file");
 
-    let err = ensure_dest_root_exists(&dest, 5, true, false)
+    let err = ensure_dest_root_exists(&dest, 5, true, false, false)
         .expect_err("non-directory dest root must error");
 
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
@@ -254,7 +292,7 @@ fn rejects_chained_dangling_symlink_dest_root() {
     // link_a -> link_b (which does not exist)
     symlink(&intermediate, &dangling_link).expect("symlink link_a -> link_b");
 
-    let err = ensure_dest_root_exists(&dangling_link, 3, false, false)
+    let err = ensure_dest_root_exists(&dangling_link, 3, false, false, false)
         .expect_err("dangling-chain symlink dest must error");
     assert_eq!(err.kind(), std::io::ErrorKind::NotFound);
     assert!(
