@@ -34,6 +34,8 @@
 //!   bitfield that relies on this codec.
 
 mod decode;
+#[cfg(feature = "tokio-transfer")]
+mod decode_async;
 mod encode;
 mod table;
 
@@ -44,6 +46,8 @@ pub use decode::{
     decode_varint, read_int, read_longint, read_varint, read_varint30_int, read_varlong,
     read_varlong30,
 };
+#[cfg(feature = "tokio-transfer")]
+pub use decode_async::{read_int_async, read_longint_async, read_varint_async, read_varlong_async};
 pub use encode::{
     encode_varint_to_vec, write_int, write_longint, write_varint, write_varint30_int,
     write_varlong, write_varlong30,
