@@ -195,7 +195,7 @@ block2 = ["dep:block2"]
 # Win32_Networking_WinSock added for WSARecv/WSASend in iocp::socket (#1928);
 # Win32_System_Pipes added for CreatePipe-based tests of anonymous-handle
 # rejection in writer_from_file (#1929).
-windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Networking_WinSock", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Memory", "Win32_System_Pipes", "Win32_System_SystemInformation", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
 
 
 [dev-dependencies]

@@ -37,6 +37,14 @@ impl<'a> CopyContext<'a> {
         // through the copy path by treating the run as non-inplace.
         let inplace_mode = self.inplace_enabled() && !basis_separate_from_writer;
 
+        // On NTFS the sparse zero-run seeks below only deallocate blocks once
+        // the handle is flagged sparse via FSCTL_SET_SPARSE. Elsewhere this is a
+        // no-op (holes are implicit). Best-effort: a non-NTFS volume or a
+        // refused control code falls back to a dense write, never an error.
+        if sparse {
+            let _ = fast_io::mark_file_sparse(writer);
+        }
+
         let mut destination_reader =
             Some(fs::File::open(destination).map_err(|error| {
                 LocalCopyError::io(

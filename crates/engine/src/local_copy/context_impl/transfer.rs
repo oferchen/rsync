@@ -660,6 +660,11 @@ impl<'a> CopyContext<'a> {
     ) -> Result<FileCopyOutcome, LocalCopyError> {
         let mut total_bytes: u64 = 0;
         let mut literal_bytes: u64 = 0;
+        // On NTFS, seek-past-zero + set_len only yields a sparse file when the
+        // handle is first flagged sparse via FSCTL_SET_SPARSE. Elsewhere this
+        // is a no-op (holes are implicit). Best-effort: a non-NTFS volume or a
+        // refused control code falls back to a dense write, never an error.
+        let _ = fast_io::mark_file_sparse(writer);
         let mut sparse_writer = SparseWriter::new(&mut *writer);
         let mut compressor = self.start_compressor(compress, source)?;
         let mut compressed_progress: u64 = 0;
