@@ -169,6 +169,29 @@ setup_test_env() {
         ECHO_N ECHO_C ECHO_T
 }
 
+# Backdate the mtime of the upstream source root so tests that reference the
+# cwd's parent directory ("..") get a stable, old timestamp.
+#
+# The tests run with cwd = $upstream_src_dir, so ".." resolves to
+# $upstream_src_root. delay-updates.test does
+#   touch -r .. "$todir/foo"
+# to age the destination file, then writes a fresh source file and expects the
+# two mtimes to differ so the quick-check (same size + same mtime => skip)
+# forces a transfer. On a cold CI run the tarball is extracted moments before
+# the tests execute, so $upstream_src_root's mtime lands in the same wall-clock
+# second as the freshly written source file. The mtimes then collide, the
+# quick-check skips the transfer, the stale destination is left in place, and
+# the test's dir/file diff fails. Warm-cache runs use an already-old source
+# root and pass, which is exactly the observed intermittency. Pinning the mtime
+# to a fixed epoch makes ".." deterministically old. Nothing writes directly
+# into $upstream_src_root during a run (scratch lives under $log_root), so the
+# stamp survives the whole test loop. Both oc-rsync and upstream rsync 3.4.4
+# skip under the collision, so this is a harness-timing fix, not a behavioural
+# divergence.
+stabilize_srcroot_mtime() {
+    touch -t 200001010000 "$upstream_src_root" 2>/dev/null || true
+}
+
 prep_scratch() {
     local sd=$1
     [[ -d "$sd" ]] && chmod -R u+rwX "$sd" 2>/dev/null && rm -rf "$sd"
@@ -303,6 +326,7 @@ main() {
     ensure_upstream_src
     build_upstream_helpers
     setup_test_env
+    stabilize_srcroot_mtime
 
     rm -rf "$log_root"
     mkdir -p "$log_root"
