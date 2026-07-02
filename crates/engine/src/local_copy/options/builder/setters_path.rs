@@ -172,6 +172,13 @@ impl LocalCopyOptionsBuilder {
         self
     }
 
+    /// Sets the fuzzy basis matching level (0 = off, 1 = `--fuzzy`, 2 = `-yy`).
+    #[must_use]
+    pub fn fuzzy_level(mut self, level: u8) -> Self {
+        self.fuzzy_level = level;
+        self
+    }
+
     /// Enables prune-empty-dirs mode.
     #[must_use]
     pub fn prune_empty_dirs(mut self, enabled: bool) -> Self {

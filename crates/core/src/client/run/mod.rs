@@ -320,6 +320,14 @@ fn run_client_internal(
         filters::compile_filter_program(config.filter_rules(), config.delete_excluded())?;
     let mut options = build_local_copy_options(&config, filter_program);
 
+    // A local copy bypasses the wire, so the capability negotiator - the only
+    // place trace_checksum_summary/trace_compress_summary fire on the wire path
+    // - never runs. Upstream forks a real local_child server (main.c:649-654)
+    // whose parse_checksum_choice/parse_compress_choice still emit the NSTR
+    // summary lines, so reproduce them here from the resolved algorithms.
+    // upstream: checksum.c:206-211, compat.c:213-219 (DEBUG_GTE(NSTR, 1) client).
+    emit_local_copy_nstr_summaries(&config);
+
     let batch_writer_for_options = if let Some(ref writer) = batch_writer {
         batch::write_batch_header(writer, &config)?;
         Some(writer.clone())
@@ -436,6 +444,77 @@ fn apply_max_alloc(config: &ClientConfig) {
     // initialised the pool; their configuration wins to avoid silently
     // overriding their settings.
     let _ = init_global_buffer_pool(cfg);
+}
+
+/// Maps the engine's strong-checksum choice to the NSTR wire name upstream
+/// prints in the `parse_checksum_choice` summary. Names match
+/// `protocol::ChecksumAlgorithm::as_str` / upstream `valid_checksums_items[]`
+/// (checksum.c:49-64).
+const fn signature_checksum_nstr_name(
+    algorithm: engine::signature::SignatureAlgorithm,
+) -> &'static str {
+    use engine::signature::SignatureAlgorithm;
+    match algorithm {
+        SignatureAlgorithm::Md4 | SignatureAlgorithm::Md4Seeded { .. } => "md4",
+        SignatureAlgorithm::Md5 { .. } => "md5",
+        SignatureAlgorithm::Sha1 => "sha1",
+        SignatureAlgorithm::Xxh64 { .. } => "xxh64",
+        SignatureAlgorithm::Xxh3 { .. } => "xxh3",
+        SignatureAlgorithm::Xxh3_128 { .. } => "xxh128",
+    }
+}
+
+/// Emits the `--debug=NSTR` checksum and compress summary lines for a local
+/// copy, mirroring what upstream's forked `local_child` server prints via
+/// `parse_checksum_choice` / `parse_compress_choice`.
+///
+/// The local path performs no vstring negotiation, so the `" negotiated"`
+/// qualifier stays blank (upstream leaves `negotiated_nni` NULL when the
+/// algorithm is not chosen through `negotiate_the_strings()`). The trace
+/// helpers self-gate on the NSTR debug level, so this is a no-op unless
+/// `--debug=NSTR` is active.
+///
+/// upstream: checksum.c:206-211 (`"%s%s checksum: %s"`),
+/// compat.c:213-219 (`"%s%s compress: %s (level %d)"`), both at
+/// `DEBUG_GTE(NSTR, am_server ? 3 : 1)` - the client side is level 1.
+fn emit_local_copy_nstr_summaries(config: &ClientConfig) {
+    use protocol::nstr::{
+        CLVL_NOT_SPECIFIED, NstrSide, trace_checksum_summary, trace_compress_summary,
+    };
+
+    trace_checksum_summary(
+        NstrSide::Client,
+        false,
+        signature_checksum_nstr_name(config.checksum_signature_algorithm()),
+    );
+
+    // upstream: compat.c:214-215 - the compress summary only fires when
+    // `do_compression != CPRES_NONE || level != CLVL_NOT_SPECIFIED`.
+    let level = config
+        .compression_level()
+        .map_or(CLVL_NOT_SPECIFIED, compression_level_to_nstr);
+    if config.compress() || level != CLVL_NOT_SPECIFIED {
+        trace_compress_summary(
+            NstrSide::Client,
+            false,
+            config.compression_algorithm().name(),
+            level,
+        );
+    }
+}
+
+/// Maps a user-supplied `--compress-level` to the raw i32 upstream renders in
+/// the NSTR compress summary. upstream: token.c:init_compression_level() -
+/// zlib range 0..=9.
+fn compression_level_to_nstr(level: compress::zlib::CompressionLevel) -> i32 {
+    use compress::zlib::CompressionLevel;
+    match level {
+        CompressionLevel::None => 0,
+        CompressionLevel::Fast => 1,
+        CompressionLevel::Default => 6,
+        CompressionLevel::Best => 9,
+        CompressionLevel::Precise(n) => i32::from(n.get()),
+    }
 }
 
 /// Builder for [`LocalCopyOptions`] derived from a [`ClientConfig`] and
@@ -697,6 +776,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .dirs(config.dirs())
             .implied_dirs(config.implied_dirs())
             .mkpath(config.mkpath())
+            .fuzzy_level(config.fuzzy_level())
             .prune_empty_dirs(config.prune_empty_dirs())
             .inplace(config.inplace())
             .append(config.append())

@@ -133,6 +133,7 @@ pub struct LocalCopyOptionsBuilder {
     pub(super) force_replacements: bool,
     pub(super) implied_dirs: bool,
     pub(super) mkpath: bool,
+    pub(super) fuzzy_level: u8,
     pub(super) prune_empty_dirs: bool,
 
     pub(super) timeout: Option<Duration>,
@@ -260,6 +261,7 @@ impl LocalCopyOptionsBuilder {
             force_replacements: false,
             implied_dirs: true,
             mkpath: false,
+            fuzzy_level: 0,
             prune_empty_dirs: false,
             timeout: None,
             contimeout: None,

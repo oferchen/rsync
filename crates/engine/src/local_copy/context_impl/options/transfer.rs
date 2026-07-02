@@ -117,6 +117,10 @@ impl<'a> CopyContext<'a> {
         self.options.block_size_override()
     }
 
+    pub(super) const fn fuzzy_level_enabled(&self) -> u8 {
+        self.options.fuzzy_level_enabled()
+    }
+
     pub(super) const fn checksum_enabled(&self) -> bool {
         self.options.checksum_enabled()
     }

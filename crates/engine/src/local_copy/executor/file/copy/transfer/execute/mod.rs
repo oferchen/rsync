@@ -32,6 +32,7 @@ use logging::{debug_log, info_log};
 
 use ::metadata::MetadataOptions;
 
+use crate::fuzzy::{FuzzyMatcher, trace_fuzzy_basis_selected};
 use crate::local_copy::{
     CopyContext, CopyMethodKind, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet,
     LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord,
@@ -116,6 +117,18 @@ pub(in crate::local_copy) fn execute_transfer(
         }
     }
 
+    // When the exact destination is absent and --fuzzy is active, look for a
+    // similarly-named file in the destination directory to serve as the delta
+    // basis. upstream: generator.c:1767-1795 - when `statret != 0 &&
+    // fuzzy_basis`, `find_fuzzy()` selects the closest-named candidate and the
+    // generator uses it as `fnamecmp` (the delta basis) instead of sending the
+    // whole file.
+    let fuzzy_basis = if !whole_file_enabled && existing_metadata.is_none() {
+        find_fuzzy_basis(context, destination, relative, file_type, file_size)
+    } else {
+        None
+    };
+
     // Build delta signature BEFORE backup renames the destination away.
     // upstream: receiver.c - the basis file must be read while it still exists
     // at the destination path. If backup runs first, the rename causes ENOENT
@@ -125,7 +138,12 @@ pub(in crate::local_copy) fn execute_transfer(
             Some(existing) if existing.is_file() => {
                 build_delta_signature(destination, existing, context.block_size_override())?
             }
-            _ => None,
+            _ => match fuzzy_basis {
+                Some((ref path, ref meta)) => {
+                    build_delta_signature(path, meta, context.block_size_override())?
+                }
+                None => None,
+            },
         }
     } else {
         None
@@ -137,7 +155,12 @@ pub(in crate::local_copy) fn execute_transfer(
     // upstream: receiver.c - the basis fd is opened before make_backup() runs;
     // here we track the new path because we cannot hold the fd across the
     // temp-file/inplace writer setup.
-    let mut delta_basis_override: Option<PathBuf> = None;
+    //
+    // A fuzzy basis is likewise a file separate from the (absent) destination:
+    // the writer creates a fresh destination while matched blocks are read from
+    // the fuzzy candidate, so seed the override with its path.
+    let mut delta_basis_override: Option<PathBuf> =
+        fuzzy_basis.as_ref().map(|(path, _)| path.clone());
     if let Some(existing) = existing_metadata {
         context.backup_existing_entry(destination, relative, existing.file_type())?;
         // When backup renamed the basis file and delta transfer will need it,
@@ -693,4 +716,46 @@ pub(in crate::local_copy) fn execute_transfer(
     )?;
 
     Ok(())
+}
+
+/// Finds a fuzzy delta basis for `destination` when the exact destination is
+/// absent and `--fuzzy` is active.
+///
+/// Scans the destination directory for the closest similarly-named regular
+/// file, reusing the shared [`FuzzyMatcher`] scorer. On a hit, emits the
+/// `--debug=FUZZY` selection line and returns the candidate's path and
+/// metadata so the caller can build a delta signature against it.
+///
+/// upstream: generator.c:1767-1795 - `find_fuzzy()` selects the basis and the
+/// generator announces `"fuzzy basis selected for %s: %s"` at
+/// `DEBUG_GTE(FUZZY, 1)` before using it as `fnamecmp`.
+fn find_fuzzy_basis(
+    context: &CopyContext,
+    destination: &Path,
+    relative: Option<&Path>,
+    file_type: fs::FileType,
+    file_size: u64,
+) -> Option<(PathBuf, fs::Metadata)> {
+    if context.fuzzy_level_enabled() == 0 || !file_type.is_file() {
+        return None;
+    }
+
+    let target_name = destination.file_name()?;
+    let dest_dir = destination.parent()?;
+
+    let matcher = FuzzyMatcher::with_level(context.fuzzy_level_enabled());
+    let candidate = matcher.find_fuzzy_basis(target_name, dest_dir, file_size)?;
+
+    let meta = fs::symlink_metadata(&candidate.path).ok()?;
+    if !meta.is_file() {
+        return None;
+    }
+
+    // upstream: generator.c:1787 - announce the selected basis at FUZZY,1. The
+    // target display mirrors upstream's `fname` (the relative transfer path)
+    // when available, falling back to the destination path.
+    let target_display = relative.unwrap_or(destination).display().to_string();
+    trace_fuzzy_basis_selected(&target_display, &candidate.path.display().to_string());
+
+    Some((candidate.path, meta))
 }

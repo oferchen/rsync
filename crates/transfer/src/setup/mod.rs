@@ -150,6 +150,7 @@ pub fn setup_protocol_with<'a>(
                     is_server: config.is_server,
                     checksum_override: None,
                     compression_override: config.compress_choice,
+                    compression_level: config.compression_level,
                 },
             )?;
 
