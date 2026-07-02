@@ -41,7 +41,7 @@ fn transfer_request_with_from0_reads_null_separated_list() {
 }
 
 #[test]
-fn transfer_request_with_from0_preserves_comment_prefix_entries() {
+fn transfer_request_with_from0_strips_comment_prefix_entries() {
     use tempfile::tempdir;
 
     let tmp = tempdir().expect("tempdir");
@@ -59,7 +59,7 @@ fn transfer_request_with_from0_preserves_comment_prefix_entries() {
     let dest_dir = tmp.path().join("files-from0-comments-dest");
     std::fs::create_dir(&dest_dir).expect("create dest");
 
-    let (code, stdout, stderr) = run_with_args([
+    let (code, _stdout, _stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--from0"),
         OsString::from(format!("--files-from={}", list_path.display())),
@@ -67,13 +67,9 @@ fn transfer_request_with_from0_preserves_comment_prefix_entries() {
         dest_dir.clone().into_os_string(),
     ]);
 
+    // upstream: a leading `#` marks a comment line in a --files-from list even
+    // under --from0 (read_line RL_DUMP_COMMENTS, io.c:1276), so the only entry
+    // is stripped and nothing is transferred.
     assert_eq!(code, 0);
-    assert!(stdout.is_empty());
-    assert!(stderr.is_empty());
-
-    let copied = dest_dir.join("#commented.txt");
-    assert_eq!(
-        std::fs::read(&copied).expect("read copied"),
-        b"from0-comment"
-    );
+    assert!(!dest_dir.join("#commented.txt").exists());
 }

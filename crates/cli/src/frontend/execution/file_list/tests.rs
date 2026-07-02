@@ -144,17 +144,19 @@ fn read_file_list_zero_terminated_no_trailing_null() {
 }
 
 #[test]
-fn read_file_list_zero_terminated_allows_hash_and_semicolon() {
-    // upstream: --from0 disables comment handling, so `#` / `;` are literal.
-    let input = b"#not-a-comment\0;also-not-a-comment\0";
+fn read_file_list_zero_terminated_strips_hash_and_semicolon_comments() {
+    // upstream: flist.c:2249 sets RL_DUMP_COMMENTS independent of eol_nulls,
+    // and io.c:1276 read_line() strips leading '#'/';' comment lines even with
+    // NUL delimiters. Comment entries are dropped; normal entries are kept.
+    let input = b"#comment\0keep.txt\0;also-comment\0other.txt\0";
     let mut reader = Cursor::new(input);
     let mut entries = Vec::new();
 
     read_file_list_from_reader(&mut reader, true, &mut entries).unwrap();
 
     assert_eq!(entries.len(), 2);
-    assert_eq!(entries[0], "#not-a-comment");
-    assert_eq!(entries[1], ";also-not-a-comment");
+    assert_eq!(entries[0], "keep.txt");
+    assert_eq!(entries[1], "other.txt");
 }
 
 #[test]
