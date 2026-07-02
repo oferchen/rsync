@@ -21,6 +21,31 @@
 # RELEASE-DAY PLAN (2026-07-15): once 3.5.0 ships, bump the REQUIRED gate's
 # pin 3.4.4 -> 3.5.0, vendor the 3.5.0 testsuite as a release tarball, and
 # retire this git-ref tracker (or repoint it at the next dev branch).
+#
+# HARNESS-CALIBRATION FOLLOW-UP (not yet done; the raw leg counts are NOT yet
+# trustworthy as an oc-divergence number). The 3.5.0dev suite is the Python
+# *_test.py framework (rsyncfns.py + exitcodes.py), which drives rsync
+# differently from the 3.4.4 shell suite. A plain
+# `runtests.py --rsync-bin=oc-rsync` mis-drives a subset of it, so some FAILs
+# are harness gaps, NOT oc divergences. Known gaps to calibrate before the
+# tracker's number is authoritative:
+#   1. setpriv exec: fake-super/uid tests (e.g. partial_nowrite_test.py) run
+#      rsync via `setpriv`, which fails with "failed to execute .../oc-rsync:
+#      No such file or directory" (setpriv's dropped exec context can't resolve
+#      the binary/interp). The pre-transfer setup then never runs, cascading a
+#      Python FileNotFoundError that fails partial + partial_nowrite for a
+#      harness reason. Needs an rsync-on-PATH shim or a setpriv-visible binary.
+#   2. Per-test setup ordering in rsyncfns.py differs from the shell fns; some
+#      tests expect a FROMDIR the setpriv step was meant to populate.
+#   3. Root-owned scratch: root legs leave root-owned files; already chown'd
+#      back in the workflow, but the Python cleanup path (EACCES scandir on a
+#      mode-0 xattrs/to) still needs a permission-safe teardown inside the
+#      framework, not just around it.
+# Until these land, treat the tracker as a divergence *screen*: a test that
+# fails under BOTH pipe and tcp AND with a clear oc error (e.g. ownership-depth
+# `--groupmap=:1` rejected, mkpath auto-creating a path without --mkpath,
+# compress-options missing the --debug=NSTR line) is a real candidate; a test
+# failing via setpriv/FileNotFound/EACCES is a harness gap to fix here first.
 
 name: Track 3.5.0dev Testsuite
 
@@ -40,13 +65,27 @@ permissions:
 
 jobs:
   track-3-5-0dev:
-    name: 3.5.0dev testsuite (informational)
+    # Full coverage of the 3.5.0dev suite is a privilege x transport matrix:
+    #   privilege=nonroot  - runs as the runner user; root-only tests SKIP.
+    #   privilege=root     - runs under sudo; chown/devices/xattrs/dir-sgid/
+    #                        protected-regular RUN (upstream passwordless sudo).
+    #   transport=pipe     - daemon tests use the secure stdio-pipe default.
+    #   transport=tcp      - --use-tcp: real loopback rsyncd, un-skips
+    #                        daemon-chroot-acl + proxy-response-line-too-long.
+    # All four legs are surfaced independently so a divergence is attributable
+    # to a specific (privilege, transport) cell.
+    name: 3.5.0dev testsuite (${{ matrix.privilege }}/${{ matrix.transport }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
     # Best-effort tracker: never let a 3.5.0dev break look like a repo failure
     # that someone must firefight. The step summary + run status carry the
-    # signal; this flag keeps the job green so it stays purely informational.
+    # signal; this flag keeps every leg green so it stays purely informational.
     continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        privilege: [nonroot, root]
+        transport: [pipe, tcp]
 
     env:
       CARGO_TERM_COLOR: always
@@ -65,6 +104,7 @@ jobs:
       - name: Rust cache
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
+          # Share the compiled oc-rsync across all four legs (identical build).
           shared-key: track-3-5-0dev-cargo
           key: track-3-5-0dev-testsuite
           cache-on-failure: true
@@ -85,20 +125,43 @@ jobs:
         env:
           OC_RSYNC_BIN: target/release/oc-rsync
           UPSTREAM_REF: ${{ github.event.inputs.upstream_ref || 'master' }}
+          # transport=tcp -> --use-tcp (real loopback rsyncd); pipe -> default.
+          USE_TCP: ${{ matrix.transport == 'tcp' && 'yes' || 'no' }}
         run: |
           set -uo pipefail
           mkdir -p target/interop
+          # Root leg: re-exec the harness under sudo (the runner has
+          # passwordless sudo) so chown/devices/xattrs/dir-sgid/protected-
+          # regular actually RUN instead of self-skipping. Forward the env the
+          # harness reads - a bare `sudo` scrubs it. Non-root leg runs plainly.
+          runner=(bash tools/ci/run_upstream_testsuite.sh)
+          if [[ "${{ matrix.privilege }}" == "root" ]]; then
+            runner=(sudo env
+              "PATH=$PATH"
+              "OC_RSYNC_BIN=$OC_RSYNC_BIN"
+              "UPSTREAM_REF=$UPSTREAM_REF"
+              "USE_TCP=$USE_TCP"
+              "GITHUB_ACTIONS=${GITHUB_ACTIONS:-}"
+              "GITHUB_STEP_SUMMARY=${GITHUB_STEP_SUMMARY:-}"
+              bash tools/ci/run_upstream_testsuite.sh)
+          fi
           # Best-effort: capture the driver's exit but do not fail the step -
           # continue-on-error at the job level already keeps this informational,
           # and we still want the artifact + summary to publish on divergence.
-          bash tools/ci/run_upstream_testsuite.sh 2>&1 \
+          "${runner[@]}" 2>&1 \
             | tee target/interop/track-3.5.0dev-output.log || true
+          # The root leg leaves root-owned files under target/interop (the
+          # runtests.py scratch + logs). Hand them back to the runner user so
+          # the upload-artifact step and post-job cache can read/clean them.
+          if [[ "${{ matrix.privilege }}" == "root" ]]; then
+            sudo chown -R "$(id -u):$(id -g)" target/interop 2>/dev/null || true
+          fi
 
       - name: Upload testsuite logs
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: track-3.5.0dev-testsuite-logs
+          name: track-3.5.0dev-testsuite-logs-${{ matrix.privilege }}-${{ matrix.transport }}
           path: |
             target/interop/upstream-testsuite/
             target/interop/track-3.5.0dev-output.log

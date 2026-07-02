@@ -403,16 +403,56 @@ run_git_ref_mode() {
     mkdir -p "$log_root"
     local output_log="${log_root}/runtests-output.log"
 
+    # Permission-safe scratch cleanup. A test that leaves a mode-0 directory
+    # behind (e.g. xattrs/, recv-discard-nullderef/) makes a plain `rm -rf`
+    # throw for the non-root runner, and runtests.py's per-test prep_scratch
+    # PermissionErrors then cascade into every later test - inflating the FAIL
+    # count with pure environment noise. Drive the scratch tree from a
+    # dedicated, mode-tagged directory under $log_root (never a bind mount) and
+    # force-clear it so a poisoned tree from a prior leg can never wedge this
+    # one. `chmod -R u+rwX` restores owner traversal on any 0-mode dir before
+    # the delete; both run under the current euid (root in the sudo leg, the
+    # runner user otherwise), so the owner always holds the bit.
+    local mode_tag="nonroot"
+    [[ "${EUID:-$(id -u)}" -eq 0 ]] && mode_tag="root"
+    # Build the runtests.py argv. Include the base program so the array is
+    # never empty - portable across bash 3.2 (macOS), which errors on an
+    # empty "${arr[@]}" expansion under `set -u`.
+    local transport_tag="pipe"
+    local -a runtests_argv
+    runtests_argv=(python3 ./runtests.py)
+    if [[ "${USE_TCP:-no}" == "yes" ]]; then
+        # --use-tcp runs daemon/proxy tests against a real loopback rsyncd
+        # (RSYNC_TEST_USE_TCP=1) instead of degrading/SKIPping under the secure
+        # stdio-pipe default. Un-skips daemon-chroot-acl + proxy-response-line-
+        # too-long. Binds 127.0.0.1:<high-port>, needs no privilege.
+        transport_tag="tcp"
+        runtests_argv+=(--use-tcp)
+    fi
+    runtests_argv+=(
+        --rsync-bin="$oc_rsync_bin"
+        --tooldir="$upstream_src_dir"
+        --srcdir="$upstream_src_dir"
+        --timeout="$testrun_timeout"
+    )
+    local scratch_home="${log_root}/scratch-${mode_tag}-${transport_tag}"
+    chmod -R u+rwX "$scratch_home" 2>/dev/null || true
+    rm -rf "$scratch_home"
+    mkdir -p "$scratch_home"
+
     local rc=0
     (
         cd "$upstream_src_dir"
-        python3 ./runtests.py \
-            --rsync-bin="$oc_rsync_bin" \
-            --tooldir="$upstream_src_dir" \
-            --srcdir="$upstream_src_dir" \
-            --timeout="$testrun_timeout"
+        # scratchbase -> runtests.py places $scratchbase/testtmp here, off the
+        # source tree, so the cleanup above owns the whole scratch lifecycle.
+        scratchbase="$scratch_home" "${runtests_argv[@]}"
     ) 2>&1 | tee "$output_log"
     rc=${PIPESTATUS[0]}
+
+    # Force-clear the scratch tree again so the NEXT leg (or a re-run on the
+    # same self-hosted runner) never inherits a mode-0 dir from this leg.
+    chmod -R u+rwX "$scratch_home" 2>/dev/null || true
+    rm -rf "$scratch_home" 2>/dev/null || true
 
     emit_git_ref_step_summary "$output_log" "$rc"
     return "$rc"
