@@ -95,6 +95,60 @@ reader) and the multiplex demux itself follow the same pattern in later
 rungs; this amendment establishes the precedent and the shared-seam
 discipline.
 
+## 2.4 Amendment (2026-07-02): async file-list read leaf in protocol
+
+The 2026-07-01 amendment (§2.3) sanctioned async read leaves in
+`protocol` for the multiplex frame boundary (`recv_msg_into_async`). The
+receiver's file-list read is the *other* large wire read the ASY-7
+receiver fork needs (ASY-7 §11.3, item 3): on multi-file transfers the
+file list is the bulk of the pre-token-loop wire read, and the whole
+path (`FileListReader::read_entry_with_flist` plus `receive_file_list` /
+`receive_extra_file_lists`) is `R: std::io::Read` with no async twin.
+The flist reader lives in `protocol::flist`, which §2.2 restricted from
+async leaves.
+
+**Amendment.** Behind the default-off `tokio-transfer` feature,
+`protocol::flist` MAY expose an async file-list read leaf
+(`read_entry_with_flist_async`) alongside - never replacing - the sync
+reader, under the same discipline as §2.3:
+
+- **Additive and default-off.** With `tokio-transfer` off, the sync flist
+  reader is byte-identical to today and pulls no tokio dependency.
+- **No forked parser.** The async and sync readers share the *identical*
+  entry decode through one sans-io seam. The file-list entry decode is
+  deeply read/decode-interleaved (flag-dependent field shapes plus
+  prev-entry-relative deltas), so rather than flatten it into a `Need(n)`
+  state machine (which would fork the byte-critical decode across the
+  `flags`/`name`/`metadata`/`extras` leaves and the varint/codec/acl/
+  xattr readers), the seam runs the existing sync
+  `read_entry_with_flist` speculatively over an in-memory cursor: it
+  snapshots the fields the decode mutates per entry (compression state,
+  ACL/xattr caches, io-error, stats), and on a mid-entry
+  `UnexpectedEof` restores the snapshot and asks the driver for more
+  bytes. A retry is therefore indistinguishable from a single decode that
+  saw all the bytes at once, which is what guarantees byte-identical
+  `FileEntry` output regardless of chunking. Both drivers (blocking and
+  `.await`) advance the same core; the decode logic is never duplicated.
+  This mirrors the sans-io token decoder (`wire/compressed_token/step.rs`)
+  and the `recv_msg_into_async` precedent.
+- **Unsafe-free.** `protocol` keeps `#![deny(unsafe_code)]`; the async
+  path is all safe (`AsyncReadExt`).
+- **Unwired until its consuming rung.** The leaf and the `transfer`-side
+  twins (`receive_file_list_async` / `receive_extra_file_lists_async`)
+  are not connected to the receiver hot path; the atomic receiver fork
+  (ASY-7 §5) consumes them later.
+- **Parity is enforced in CI.** The `async-wire-parity` gate feeds an
+  identical flist byte stream (mixed corpus: files, dirs, symlinks,
+  name-compression, uid/gid, plus INC_RECURSE multi-segment) to the sync
+  and async readers and asserts identical `FileEntry` sequences and
+  identical bytes-consumed, including chunked delivery ({1,2,3,7,13}
+  bytes) across `.await` points.
+
+The NDX segment-framing read that precedes each INC_RECURSE sub-list
+(`NdxCodecEnum::read_ndx`) gains an async twin (`read_ndx_async`) under
+the same speculative-snapshot discipline, so the extra-list driver can
+`.await` the whole segment loop without forking the NDX decode.
+
 ## 3. Default state and rollout path
 
 **Default: off** in all crates, including the root `[features]` table.

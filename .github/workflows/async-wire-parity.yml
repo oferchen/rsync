@@ -76,6 +76,13 @@ jobs:
             --features tokio-transfer,zstd,lz4 \
             -E 'test(read_leaf_parity)'
 
+      - name: Run sync vs async file-list reader parity tests
+        run: |
+          cargo nextest run --locked \
+            -p protocol \
+            --features tokio-transfer,zstd,lz4 \
+            -E 'test(async_flist_matches_sync)'
+
       - name: Run sync vs async MultiplexReader demux parity tests
         run: |
           cargo nextest run --locked \
@@ -103,6 +110,13 @@ jobs:
             -p transfer \
             --features tokio-transfer \
             -E 'test(sum_head_read_async_matches_sync) | test(receive_stats_async_matches_sync)'
+
+      - name: Run sync vs async receiver file-list reception parity tests
+        run: |
+          cargo nextest run --locked \
+            -p transfer \
+            --features tokio-transfer \
+            -E 'test(receive_file_list_async_matches_sync) | test(receive_extra_file_lists_async_matches_sync)'
 
   async-equivalence:
     name: async-vs-default transfer equivalence (stable)
