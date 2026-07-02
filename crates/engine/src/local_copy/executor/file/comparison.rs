@@ -30,14 +30,53 @@ pub(crate) const DEFAULT_XXH64_DEDUP_SIZE_LIMIT: u64 = 8 * 1024 * 1024;
 /// Fixed value chosen to avoid collisions with rsync block-checksum seeds.
 const XXH64_DEDUP_SEED: u64 = 0x6F632D72_73796E63; // "oc-rsync"
 
+/// Returns `true` when a source and destination are the same rsync file type
+/// for the purposes of the `--update` skip decision.
+///
+/// Mirrors upstream `generator.c:608 get_file_type()`, which buckets modes into
+/// regular / symlink / directory / special / device / unsupported. The
+/// `--update` skip only fires when both sides land in the same bucket
+/// (`stype == ftype`), so e.g. a regular-file source over a symlink destination
+/// is never skipped even when the symlink is newer.
+///
+/// The destination metadata must come from an lstat (`symlink_metadata`) so a
+/// symlink destination reports as a symlink rather than its target's type,
+/// matching upstream's `link_stat` of the destination.
+fn same_file_type(source: &fs::Metadata, destination: &fs::Metadata) -> bool {
+    let src = source.file_type();
+    let dst = destination.file_type();
+    // upstream: get_file_type() collapses everything that is not a regular
+    // file, symlink, or directory into the SPECIAL/DEVICE/UNSUPPORTED buckets.
+    // For local copies the only source types that reach this comparison are
+    // regular files, symlinks, and directories, so an exact match on those
+    // three (with "other" collapsed) reproduces `stype == ftype`.
+    if src.is_file() {
+        return dst.is_file();
+    }
+    if src.is_symlink() {
+        return dst.is_symlink();
+    }
+    if src.is_dir() {
+        return dst.is_dir();
+    }
+    // Both sides are some non-regular, non-symlink, non-directory type.
+    !dst.is_file() && !dst.is_symlink() && !dst.is_dir()
+}
+
 /// Returns `true` when `--update` should skip this file because the
 /// destination is not older than the source by more than `modify_window`.
 ///
-/// Mirrors upstream `generator.c:2502`:
+/// Mirrors upstream `generator.c:1721`:
 /// ```c
-/// if (update_only > 0 && statret == 0
+/// if (update_only > 0 && statret == 0 && stype == ftype
 ///     && file->modtime - sx.st.st_mtime < modify_window)
 /// ```
+///
+/// The `stype == ftype` clause is essential: `--update` only skips when the
+/// destination is the same file type as the source. A destination of a
+/// different type (e.g. a symlink where the source is a regular file, or a
+/// directory where the source is a file) is always updated, even when its
+/// mtime is newer.
 ///
 /// With `modify_window == 0` (the default), the destination must be strictly
 /// newer to trigger a skip. With `modify_window > 0`, timestamps within the
@@ -48,6 +87,11 @@ pub(crate) fn destination_is_newer(
     destination: &fs::Metadata,
     modify_window: Duration,
 ) -> bool {
+    // upstream: generator.c:1721 - the `stype == ftype` guard means a
+    // type-mismatched destination is never skipped by `--update`.
+    if !same_file_type(source, destination) {
+        return false;
+    }
     match (source.modified(), destination.modified()) {
         (Ok(src), Ok(dst)) => match src.duration_since(dst) {
             // Source is newer than destination. Skip only when the
@@ -589,6 +633,35 @@ mod tests {
         };
 
         assert!(should_skip_copy(comparison));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn destination_is_not_newer_when_dest_is_symlink_over_regular_source() {
+        // upstream: generator.c:1721 requires `stype == ftype` for the --update
+        // skip. A newer destination SYMLINK must never cause a regular-file
+        // source to be skipped, because a file-format difference is always
+        // important enough to update. This is the exact `update` testsuite
+        // assertion "-u skipped a source file over a newer destination symlink".
+        let temp = create_tempdir();
+        let source = temp.path().join("foo");
+        let destination = temp.path().join("foo_link");
+        fs::write(&source, b"regular source file\n").expect("write source");
+        std::os::unix::fs::symlink("/should/not/exist", &destination)
+            .expect("create dangling symlink");
+
+        // Make the symlink strictly newer than the source.
+        let src_time = FileTime::from_unix_time(1_700_000_000, 0);
+        let newer = FileTime::from_unix_time(1_700_000_100, 0);
+        set_file_mtime(&source, src_time).expect("set source mtime");
+        filetime::set_symlink_file_times(&destination, newer, newer).expect("set symlink mtime");
+
+        let src_meta = fs::metadata(&source).expect("source metadata");
+        let dst_meta = fs::symlink_metadata(&destination).expect("dest lstat");
+        assert!(dst_meta.file_type().is_symlink());
+
+        // Even though the symlink is newer, the type mismatch forces an update.
+        assert!(!destination_is_newer(&src_meta, &dst_meta, Duration::ZERO));
     }
 
     #[test]
