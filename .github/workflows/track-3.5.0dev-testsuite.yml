@@ -35,10 +35,16 @@
 #      git-ref driver now publishes oc-rsync to a world-traversable path
 #      (/usr/local/bin, all components o+x) and points --rsync-bin there - see
 #      publish_oc_rsync_bin() in tools/ci/run_upstream_testsuite.sh.
-#   2. Root-owned scratch: root legs leave root-owned files; the git-ref driver
-#      runs the scratch tree under $log_root with a chmod -R u+rwX + rm -rf
-#      teardown before AND after each leg, so a mode-0 dir (xattrs/, recv-
-#      discard-nullderef/) can't wedge the next leg's cleanup.
+#   2. tmpfs-shadowed scratch (FIXED): the same root test unshares a mount
+#      namespace and mounts a fresh tmpfs OVER /home/runner (the first non-root,
+#      non-world-x parent of cwd), shadowing a scratch tree under target/interop
+#      so the from-dir vanishes and rsync fails link_stat with ENOENT. The
+#      git-ref driver now hosts the runtests.py scratch under a world-traversable
+#      base outside that parent (/tmp) - see world_traversable_scratch_base().
+#   3. Root-owned scratch: root legs leave root-owned files; the git-ref driver
+#      runs the scratch tree with a chmod -R u+rwX + rm -rf teardown before AND
+#      after each leg, so a mode-0 dir (xattrs/, recv-discard-nullderef/) can't
+#      wedge the next leg's cleanup.
 # Remaining raw FAILs that survive calibration and show a clear oc error (e.g.
 # ownership-depth `--groupmap=:1` rejected, mkpath auto-creating a path without
 # --mkpath, compress-options missing the --debug=NSTR line) are the genuine
