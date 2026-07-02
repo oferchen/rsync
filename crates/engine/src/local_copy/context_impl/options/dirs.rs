@@ -142,7 +142,18 @@ impl<'a> CopyContext<'a> {
             return Ok(());
         }
 
-        let allow_creation = self.implied_dirs_enabled() || self.mkpath_enabled();
+        // upstream: main.c:736 get_local_name() - the destination argument's own
+        // missing leading directories are only materialised when --mkpath is set
+        // (`make_path(dest_path, ...)`); without it a missing parent prefix makes
+        // the transfer fail (ENOENT) rather than being auto-created. Source-relative
+        // subdirs created UNDER an existing destination root during recursion are a
+        // separate concern governed by --implied-dirs (main.c:794 do_mkdir of the
+        // dest root + generator.c dir creation). Distinguish the two by whether the
+        // parent lies at/below the destination root: a parent strictly above the
+        // root is the destination arg's leading prefix and needs --mkpath.
+        let parent_within_root = parent.starts_with(self.destination_root());
+        let allow_creation =
+            self.mkpath_enabled() || (self.implied_dirs_enabled() && parent_within_root);
         let keep_dirlinks = self.keep_dirlinks_enabled();
 
         let result = if self.mode.is_dry_run() {
