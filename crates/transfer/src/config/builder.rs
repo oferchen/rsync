@@ -428,6 +428,12 @@ impl ServerConfigBuilder {
         self
     }
 
+    /// Sets the `--modify-window` mtime comparison tolerance in whole seconds.
+    pub fn modify_window(&mut self, seconds: u64) -> &mut Self {
+        self.file_selection.modify_window = seconds;
+        self
+    }
+
     /// Sets the `--files-from` path for direct server-side reading.
     pub fn files_from_path(&mut self, path: Option<String>) -> &mut Self {
         self.file_selection.files_from_path = path;
