@@ -278,8 +278,53 @@ enum AsyncServerReaderInner<R> {
     /// Plain mode - await the inner transport directly, no demux.
     Plain(R),
     /// Multiplex mode - await MSG_DATA frames via the shared demux core.
-    Multiplex(MultiplexReader<R>),
+    ///
+    /// Wrapped in a [`MuxState`] so the [`tokio::io::AsyncRead`] impl can hold an
+    /// in-flight demux future across a `Poll::Pending` without losing frame
+    /// bytes already pulled off the transport (see the `poll_read` docs). The
+    /// inherent [`AsyncServerReader::read_async`] path, which `.await`s to
+    /// completion in one call, only ever sees the [`MuxState::Idle`] reader.
+    Multiplex(MuxState<R>),
 }
+
+/// Read state for the multiplex arm of [`AsyncServerReader`].
+///
+/// The blocking [`ServerReader`] holds a bare [`MultiplexReader`] because its
+/// `Read::read` runs to completion in one call. A `poll_read`, by contrast, can
+/// return [`Poll::Pending`](std::task::Poll::Pending) mid-frame, so the
+/// in-flight demux future - which owns the reader plus any bytes already pulled
+/// off the transport for the current frame header/payload - must persist across
+/// polls. Dropping and recreating it would silently discard those consumed bytes
+/// and corrupt the stream. This state enum keeps that future alive between polls
+/// and hands the reader back once the frame completes.
+///
+/// No demux logic is duplicated: the `Reading` future simply awaits the shared
+/// [`MultiplexReader::read_async`], the exact `.await` core the inherent
+/// [`AsyncServerReader::read_async`] uses.
+#[cfg(feature = "tokio-transfer")]
+enum MuxState<R> {
+    /// No read in flight - the demultiplexer is available to start one.
+    Idle(MultiplexReader<R>),
+    /// A read is in flight. The boxed future owns the [`MultiplexReader`] plus a
+    /// staging buffer and resolves to both (so the reader returns to `Idle`)
+    /// alongside the demuxed byte count. Boxing erases the future type so the
+    /// state can be stored in the struct across polls.
+    Reading(MuxReadFuture<R>),
+    /// Transient placeholder held only while ownership moves between `Idle` and
+    /// `Reading`. Never observed by a subsequent poll: every transition that
+    /// takes the state restores a real variant before `poll_read` returns.
+    Transitioning,
+}
+
+/// Boxed in-flight multiplex read future.
+///
+/// Resolves to the reclaimed [`MultiplexReader`], its staging buffer (returned
+/// so the allocation can be reused), and the demuxed byte count (or error). See
+/// [`MuxState::Reading`].
+#[cfg(feature = "tokio-transfer")]
+type MuxReadFuture<R> = std::pin::Pin<
+    Box<dyn std::future::Future<Output = (MultiplexReader<R>, Vec<u8>, io::Result<usize>)> + Send>,
+>;
 
 #[cfg(feature = "tokio-transfer")]
 impl<R: tokio::io::AsyncRead + Unpin> AsyncServerReader<R> {
@@ -299,7 +344,9 @@ impl<R: tokio::io::AsyncRead + Unpin> AsyncServerReader<R> {
     pub(crate) fn activate_multiplex(self) -> io::Result<Self> {
         match self.inner {
             AsyncServerReaderInner::Plain(reader) => Ok(Self {
-                inner: AsyncServerReaderInner::Multiplex(MultiplexReader::new(reader)),
+                inner: AsyncServerReaderInner::Multiplex(MuxState::Idle(MultiplexReader::new(
+                    reader,
+                ))),
             }),
             AsyncServerReaderInner::Multiplex(_) => Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
@@ -320,12 +367,137 @@ impl<R: tokio::io::AsyncRead + Unpin> AsyncServerReader<R> {
     /// plain and multiplex modes: plain mode delegates to the inner async
     /// transport's `read`, multiplex mode delegates to the shared
     /// [`MultiplexReader::read_async`]. No demux logic is duplicated here.
+    ///
+    /// This inherent path `.await`s to completion in a single call, so it only
+    /// ever observes the [`MuxState::Idle`] reader; a `Reading`/`Transitioning`
+    /// state can arise only inside a [`tokio::io::AsyncRead::poll_read`] cycle,
+    /// which never overlaps a `read_async` call.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) async fn read_async(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         use tokio::io::AsyncReadExt;
         match &mut self.inner {
             AsyncServerReaderInner::Plain(r) => r.read(buf).await,
-            AsyncServerReaderInner::Multiplex(r) => r.read_async(buf).await,
+            AsyncServerReaderInner::Multiplex(MuxState::Idle(r)) => r.read_async(buf).await,
+            AsyncServerReaderInner::Multiplex(_) => Err(io::Error::other(
+                "read_async called while a poll_read demux future was in flight",
+            )),
+        }
+    }
+}
+
+/// Real [`tokio::io::AsyncRead`] for the async server reader, gated on the
+/// `tokio-transfer` feature.
+///
+/// This is the poll-based counterpart to the inherent
+/// [`AsyncServerReader::read_async`]: it yields the exact same demuxed byte
+/// stream (plain pass-through, or MSG_DATA payloads via the shared
+/// [`MultiplexReader`] demux core), so the follow-up async read leaves
+/// (flist / attrs / stats / NDX) can all read from one uniform
+/// `R: AsyncRead` source rather than reaching for the inherent method.
+///
+/// # Sharing the demux core - no duplication
+///
+/// The multiplex arm does not reimplement any framing, dispatch, buffering, or
+/// batch-tee logic. It drives the same [`MultiplexReader::read_async`] `.await`
+/// core the inherent `read_async` uses, which itself runs the shared,
+/// reader-free [`dispatch_message_with`](MultiplexReader) core. MSG_* side
+/// effects (stdout/stderr print + flush) therefore fire in the identical order
+/// relative to delivered data as the sync [`ServerReader`] and the inherent
+/// async path.
+///
+/// # `Poll::Pending` safety (the correctness crux)
+///
+/// A `poll_read` can suspend in the middle of a frame - after the demux future
+/// has already consumed part of a header or payload off the transport. Those
+/// bytes live inside the future's state, so the future must survive across
+/// polls. Recreating it on the next poll would re-read from the middle of the
+/// stream and corrupt it. The [`MuxState`] holds the in-flight future between
+/// polls (owning the reader) and reclaims the reader into `Idle` only once the
+/// frame completes, so a suspended read resumes exactly where it left off.
+///
+/// Because the future owns the reader, this impl requires `R: Send + 'static`,
+/// which the intended receiver transport stack (`tokio::io::BufReader` over the
+/// counting reader over the async transport) satisfies.
+///
+/// Additive and unwired: only the parity tests drive this impl.
+#[cfg(feature = "tokio-transfer")]
+impl<R> tokio::io::AsyncRead for AsyncServerReader<R>
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<io::Result<()>> {
+        match &mut self.get_mut().inner {
+            // Plain mode: delegate straight to the inner transport. Byte-for-byte
+            // the `read_async` plain arm, just expressed in poll form.
+            AsyncServerReaderInner::Plain(r) => std::pin::Pin::new(r).poll_read(cx, buf),
+            AsyncServerReaderInner::Multiplex(state) => poll_read_multiplex(state, cx, buf),
+        }
+    }
+}
+
+/// Drives one multiplex demux step for [`AsyncServerReader::poll_read`].
+///
+/// Starts (or resumes) the in-flight [`MultiplexReader::read_async`] future held
+/// by `state`, copying its demuxed bytes into `buf` on completion. See the
+/// `AsyncRead` impl docs for the `Poll::Pending` safety argument.
+#[cfg(feature = "tokio-transfer")]
+fn poll_read_multiplex<R>(
+    state: &mut MuxState<R>,
+    cx: &mut std::task::Context<'_>,
+    buf: &mut tokio::io::ReadBuf<'_>,
+) -> std::task::Poll<io::Result<()>>
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    use std::task::Poll;
+
+    // A zero-capacity target reads nothing and consumes no wire, matching the
+    // sync `Read::read` contract for an empty buffer.
+    if buf.remaining() == 0 {
+        return Poll::Ready(Ok(()));
+    }
+
+    // Begin a read if idle: move the reader into a future that owns it plus a
+    // staging buffer sized to the caller's free space, so the demux fills at
+    // most `buf.remaining()` bytes - the identical per-call chunking the sync
+    // and inherent-async drivers produce for the same buffer size.
+    let mut fut = match std::mem::replace(state, MuxState::Transitioning) {
+        MuxState::Idle(mut reader) => {
+            let cap = buf.remaining();
+            Box::pin(async move {
+                let mut scratch = vec![0u8; cap];
+                let result = reader.read_async(&mut scratch).await;
+                (reader, scratch, result)
+            }) as MuxReadFuture<R>
+        }
+        MuxState::Reading(fut) => fut,
+        MuxState::Transitioning => {
+            // Only reachable if a prior poll panicked mid-transition. The
+            // reader is gone, so the stream cannot continue safely.
+            return Poll::Ready(Err(io::Error::other(
+                "multiplex reader lost during a suspended poll_read",
+            )));
+        }
+    };
+
+    match fut.as_mut().poll(cx) {
+        Poll::Pending => {
+            *state = MuxState::Reading(fut);
+            Poll::Pending
+        }
+        Poll::Ready((reader, scratch, result)) => {
+            *state = MuxState::Idle(reader);
+            match result {
+                Ok(n) => {
+                    buf.put_slice(&scratch[..n]);
+                    Poll::Ready(Ok(()))
+                }
+                Err(err) => Poll::Ready(Err(err)),
+            }
         }
     }
 }

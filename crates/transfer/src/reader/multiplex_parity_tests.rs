@@ -423,3 +423,114 @@ async fn demux_parity_chunked_delivery() {
         }
     }
 }
+
+/// Drives the multiplex-mode [`AsyncServerReader`] purely through its
+/// [`tokio::io::AsyncRead`] impl (`read().await`, never the inherent
+/// `read_async`), returning the demuxed bytes. This is the entry point the
+/// follow-up async read leaves will use: a uniform `R: AsyncRead` source.
+///
+/// `read_len` is the caller buffer size, exercised small so multi-frame data is
+/// split across `poll_read` calls exactly as the sync `ServerReader` splits it.
+async fn drive_asyncread_impl<R: AsyncRead + Unpin + Send + 'static>(
+    reader: R,
+    read_len: usize,
+) -> Vec<u8> {
+    use tokio::io::AsyncReadExt;
+    let mut server = AsyncServerReader::new_plain(reader)
+        .activate_multiplex()
+        .expect("activate multiplex");
+
+    let mut data = Vec::new();
+    let mut buf = vec![0u8; read_len];
+    loop {
+        // `AsyncRead::read` returns Ok(0) on EOF; the demux surfaces a truncated
+        // trailing frame as UnexpectedEof, identical to the sync driver, so both
+        // terminators preserve parity.
+        match server.read(&mut buf).await {
+            Ok(0) => break,
+            Ok(n) => data.extend_from_slice(&buf[..n]),
+            Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(err) => panic!("AsyncRead impl read failed: {err}"),
+        }
+    }
+    data
+}
+
+/// The new [`tokio::io::AsyncRead`] impl for [`AsyncServerReader`] must yield the
+/// exact same demuxed bytes the sync [`ServerReader`] yields for the same wire,
+/// across read-buffer sizes. This is the poll-driven half of the parity gate: it
+/// proves the `poll_read` core delivers the identical stream the inherent
+/// `read_async` and blocking `Read` paths do.
+#[tokio::test(flavor = "current_thread")]
+async fn asyncread_impl_parity_whole_stream() {
+    let (wire, expected) = data_only_wire();
+    for read_len in READ_LENS {
+        let (sync_data, _sync_count) = drive_sync_stack(&wire, read_len);
+        let async_data = drive_asyncread_impl(Cursor::new(wire.clone()), read_len).await;
+
+        assert_eq!(
+            sync_data, expected,
+            "sync stack delivered wrong bytes at read_len {read_len}"
+        );
+        assert_eq!(
+            async_data, sync_data,
+            "AsyncRead impl DATA diverged from sync at read_len {read_len}"
+        );
+    }
+}
+
+/// Same byte-identity guarantee for the `AsyncRead` impl, but the transport
+/// yields bytes in tiny chunks so frames reassemble across many `poll_read`
+/// calls - and, on a real socket, across `Poll::Pending` returns. This is the
+/// load-bearing test for the impl's Pending-safety: the in-flight demux future
+/// must survive fragmentation without dropping or reordering bytes.
+#[tokio::test(flavor = "current_thread")]
+async fn asyncread_impl_parity_chunked_delivery() {
+    let (wire, expected) = data_only_wire();
+    for read_len in READ_LENS {
+        let (sync_data, _sync_count) = drive_sync_stack(&wire, read_len);
+        for chunk in [1usize, 2, 3, 7, 13] {
+            let reader = ChunkedReader {
+                inner: Cursor::new(wire.clone()),
+                chunk,
+            };
+            let async_data = drive_asyncread_impl(reader, read_len).await;
+            assert_eq!(
+                async_data, expected,
+                "AsyncRead impl DATA diverged with chunk {chunk}, read_len {read_len}"
+            );
+            assert_eq!(
+                async_data, sync_data,
+                "AsyncRead impl DATA diverged from sync with chunk {chunk}, read_len {read_len}"
+            );
+        }
+    }
+}
+
+/// The `AsyncRead` impl in plain (non-multiplex) mode is a pure pass-through: it
+/// must deliver the raw transport bytes unchanged, matching the sync
+/// [`ServerReader`] plain path. Covers the `Plain` arm of `poll_read` alongside
+/// the multiplex arm exercised by the other tests.
+#[tokio::test(flavor = "current_thread")]
+async fn asyncread_impl_plain_passthrough() {
+    use tokio::io::AsyncReadExt;
+    let raw: Vec<u8> = (0..=255u8).cycle().take(1000).collect();
+    for read_len in READ_LENS {
+        let mut server = AsyncServerReader::new_plain(Cursor::new(raw.clone()));
+        assert!(!server.is_multiplexed(), "plain mode before activation");
+
+        let mut data = Vec::new();
+        let mut buf = vec![0u8; read_len];
+        loop {
+            match server.read(&mut buf).await {
+                Ok(0) => break,
+                Ok(n) => data.extend_from_slice(&buf[..n]),
+                Err(err) => panic!("plain AsyncRead read failed: {err}"),
+            }
+        }
+        assert_eq!(
+            data, raw,
+            "plain-mode AsyncRead pass-through diverged at read_len {read_len}"
+        );
+    }
+}
