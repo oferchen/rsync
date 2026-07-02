@@ -4,11 +4,13 @@
 //!
 //! The upstream rsync CLI allows multiple `--chmod=SPEC` occurrences where each
 //! specification may contain comma-separated numeric or symbolic clauses. This
-//! module mirrors the clause grammar and applies modifiers to permission modes
-//! with behaviour identical to GNU `chmod`, including conditional execute bits
-//! and copy directives (for example `g=u`). The [`ChmodModifiers`] type wraps
-//! the parsed clauses and exposes [`ChmodModifiers::apply`] so higher layers can
-//! evaluate modifiers after the standard metadata preservation step.
+//! module mirrors upstream rsync's `chmod.c:parse_chmod()` grammar exactly,
+//! including conditional execute bits (`X`) and the set-id/sticky bits. Unlike
+//! GNU `chmod`, rsync has no "copy permissions" form: who-class letters
+//! (`u`/`g`/`o`/`a`) are only valid before the operator, so a spec like `g=ur`
+//! is rejected. The [`ChmodModifiers`] type wraps the parsed clauses and
+//! exposes [`ChmodModifiers::apply`] so higher layers can evaluate modifiers
+//! after the standard metadata preservation step.
 
 mod apply;
 mod parse;

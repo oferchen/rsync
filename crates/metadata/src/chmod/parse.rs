@@ -32,13 +32,16 @@ fn parse_clause(text: &str) -> Result<Clause, ChmodError> {
     let mut chars = text.chars().peekable();
     let mut target = TargetSelector::All;
 
+    // upstream: chmod.c:parse_chmod() STATE_1ST_HALF - only uppercase `D`
+    // (dirs-only) and `F` (files-only) are target flags. Lowercase `d`/`f`
+    // are not accepted; upstream routes them to STATE_ERROR.
     loop {
         match chars.peek().copied() {
-            Some('D') | Some('d') => {
+            Some('D') => {
                 target = TargetSelector::Directories;
                 chars.next();
             }
-            Some('F') | Some('f') => {
+            Some('F') => {
                 target = TargetSelector::Files;
                 chars.next();
             }
@@ -60,24 +63,27 @@ fn parse_clause(text: &str) -> Result<Clause, ChmodError> {
     let mut who = WhoMask::new(false, false, false);
     let mut consumed_who = false;
 
+    // upstream: chmod.c:parse_chmod() STATE_1ST_HALF - the who-class letters
+    // are lowercase only (`u`, `g`, `o`, `a`). Uppercase variants are not
+    // accepted and fall through to STATE_ERROR.
     loop {
         match chars.peek().copied() {
-            Some('u') | Some('U') => {
+            Some('u') => {
                 who.user = true;
                 consumed_who = true;
                 chars.next();
             }
-            Some('g') | Some('G') => {
+            Some('g') => {
                 who.group = true;
                 consumed_who = true;
                 chars.next();
             }
-            Some('o') | Some('O') => {
+            Some('o') => {
                 who.other = true;
                 consumed_who = true;
                 chars.next();
             }
-            Some('a') | Some('A') => {
+            Some('a') => {
                 who = WhoMask::new(true, true, true);
                 consumed_who = true;
                 chars.next();
@@ -139,20 +145,22 @@ fn parse_perm_spec(perms: &str, op: Operation) -> Result<PermSpec, ChmodError> {
         ));
     }
 
+    // upstream: chmod.c:parse_chmod() STATE_2ND_HALF - the permission letters
+    // are exactly `r`, `w`, `x`, `X`, `s`, `t`. Anything else (including the
+    // who-class letters `u`/`g`/`o`/`a` and uppercase `R`/`W`/`S`/`T`) is
+    // rejected via STATE_ERROR. rsync has no GNU-style "copy permissions"
+    // form, so `g=ur` must be an error rather than a copy directive.
     for ch in perms.chars() {
         match ch {
-            'r' | 'R' => spec.read = true,
-            'w' | 'W' => spec.write = true,
+            'r' => spec.read = true,
+            'w' => spec.write = true,
             'x' => spec.exec = true,
             'X' => spec.exec_if_conditional = true,
-            's' | 'S' => {
+            's' => {
                 spec.setuid = true;
                 spec.setgid = true;
             }
-            't' | 'T' => spec.sticky = true,
-            'u' | 'U' => spec.copy_user = true,
-            'g' | 'G' => spec.copy_group = true,
-            'o' | 'O' => spec.copy_other = true,
+            't' => spec.sticky = true,
             _ => return Err(ChmodError::new(format!("unsupported chmod token '{ch}'"))),
         }
     }
@@ -451,21 +459,13 @@ mod tests {
     }
 
     #[test]
-    fn parse_perm_spec_copy_user() {
-        let spec = parse_perm_spec("u", Operation::Add).unwrap();
-        assert!(spec.copy_user);
-    }
-
-    #[test]
-    fn parse_perm_spec_copy_group() {
-        let spec = parse_perm_spec("g", Operation::Add).unwrap();
-        assert!(spec.copy_group);
-    }
-
-    #[test]
-    fn parse_perm_spec_copy_other() {
-        let spec = parse_perm_spec("o", Operation::Add).unwrap();
-        assert!(spec.copy_other);
+    fn parse_perm_spec_who_letters_rejected() {
+        // upstream: chmod.c:parse_chmod() STATE_2ND_HALF rejects the who-class
+        // letters u/g/o/a as permission bits. rsync has no GNU "copy" form.
+        assert!(parse_perm_spec("u", Operation::Add).is_err());
+        assert!(parse_perm_spec("g", Operation::Add).is_err());
+        assert!(parse_perm_spec("o", Operation::Add).is_err());
+        assert!(parse_perm_spec("a", Operation::Add).is_err());
     }
 
     #[test]
@@ -477,11 +477,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_perm_spec_uppercase() {
-        let spec = parse_perm_spec("RWX", Operation::Add).unwrap();
-        assert!(spec.read);
-        assert!(spec.write);
-        // Upstream maps capital X to "conditional exec", never plain exec.
+    fn parse_perm_spec_uppercase_rwst_rejected() {
+        // upstream: chmod.c:parse_chmod() STATE_2ND_HALF only accepts uppercase
+        // `X`; uppercase R/W/S/T are not permission letters and error out.
+        assert!(parse_perm_spec("R", Operation::Add).is_err());
+        assert!(parse_perm_spec("W", Operation::Add).is_err());
+        assert!(parse_perm_spec("S", Operation::Add).is_err());
+        assert!(parse_perm_spec("T", Operation::Add).is_err());
+        // `X` remains valid (conditional exec).
+        let spec = parse_perm_spec("X", Operation::Add).unwrap();
         assert!(spec.exec_if_conditional);
     }
 
@@ -692,5 +696,34 @@ mod tests {
             }
             _ => panic!("expected symbolic clause"),
         }
+    }
+
+    #[test]
+    fn upstream_g_eq_ur_is_rejected() {
+        // upstream: chmod.c:parse_chmod() STATE_2ND_HALF sees `u` after `g=`
+        // and transitions to STATE_ERROR, so parse_chmod returns NULL. rsync
+        // rejects `g=ur`; oc-rsync must not silently accept it as a copy form.
+        assert!(parse_spec("g=ur").is_err());
+        // Equivalent who-letter-in-RHS mixes are likewise rejected.
+        assert!(parse_spec("u+g").is_err());
+        assert!(parse_spec("o=g").is_err());
+        assert!(parse_spec("a=u").is_err());
+    }
+
+    #[test]
+    fn upstream_valid_symbolic_forms_still_parse() {
+        // Guard against over-rejection: the canonical valid specs from
+        // chmod-option.test must continue to parse cleanly.
+        for spec in ["Fugo=rwx", "g-w", "Dg+s", "u+rwx", "Fo-x", "ug-s", "a+rX"] {
+            parse_spec(spec).unwrap_or_else(|_| panic!("`{spec}` must parse"));
+        }
+    }
+
+    #[test]
+    fn upstream_lowercase_target_flags_rejected() {
+        // upstream: only uppercase `D`/`F` are target flags; lowercase `d`/`f`
+        // are not who-class letters, digits, or operators -> STATE_ERROR.
+        assert!(parse_spec("d755").is_err());
+        assert!(parse_spec("fu+x").is_err());
     }
 }
