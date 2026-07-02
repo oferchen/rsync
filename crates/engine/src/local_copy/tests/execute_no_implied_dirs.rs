@@ -106,27 +106,22 @@ fn no_implied_dirs_works_with_relative_paths() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // With --relative and --no-implied-dirs, intermediate directories should not be created
+    // With --relative and --no-implied-dirs the implied leading dirs are still
+    // materialized on demand (upstream generator.c:1329-1333 make_path), but
+    // without the source's attributes. The deep file must transfer.
     let options = LocalCopyOptions::default()
         .relative_paths(true)
         .implied_dirs(false);
 
-    let error = plan
+    let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
-        .expect_err("should fail without parent directories in relative mode");
+        .expect("relative --no-implied-dirs creates leading dirs on demand");
 
-    match error.kind() {
-        LocalCopyErrorKind::Io { action, .. } => {
-            assert!(
-                *action == "create parent directory" || *action == "create directory",
-                "expected directory creation error, got: {action}"
-            );
-        }
-        other => panic!("unexpected error kind: {other:?}"),
-    }
-
-    // The deep structure should not have been created
-    assert!(!dest_root.join("dir1").join("dir2").exists());
+    assert!(dest_root.join("dir1").join("dir2").exists());
+    let copied = dest_root.join("dir1").join("dir2").join("file.txt");
+    assert!(copied.exists());
+    assert_eq!(fs::read(&copied).expect("read file"), b"content");
+    assert_eq!(summary.files_copied(), 1);
 }
 
 #[test]
@@ -234,20 +229,18 @@ fn no_implied_dirs_with_relative_and_deep_file() {
         .relative_paths(true)
         .implied_dirs(false);
 
-    let error = plan
+    // upstream generator.c:1329-1333: relative + --no-implied-dirs still
+    // make_path()s the missing leading dirs (a/b/c) with default attrs and
+    // transfers the deep file. This is exactly the relative-implied testsuite
+    // scenario that previously errored with "file has vanished".
+    let summary = plan
         .execute_with_options(LocalCopyExecution::Apply, options)
-        .expect_err("should fail without intermediate directories");
+        .expect("relative --no-implied-dirs materializes deep parents");
 
-    // Should fail trying to create parent directory
-    match error.kind() {
-        LocalCopyErrorKind::Io { action, .. } => {
-            assert!(
-                *action == "create parent directory" || *action == "create directory",
-                "expected directory creation error, got: {action}"
-            );
-        }
-        other => panic!("unexpected error kind: {other:?}"),
-    }
+    let copied = dest_root.join("a").join("b").join("c").join("file.txt");
+    assert!(copied.exists());
+    assert_eq!(fs::read(&copied).expect("read file"), b"content");
+    assert_eq!(summary.files_copied(), 1);
 }
 
 #[test]
@@ -485,6 +478,61 @@ fn no_implied_dirs_collection_reports_correct_events() {
         .any(|r| matches!(r.action(),
             LocalCopyAction::DataCopied |
             LocalCopyAction::MetadataReused)));
+}
+
+// Mirrors the upstream `relative-implied` testsuite `--no-implied-dirs` half:
+// `-aR --no-implied-dirs b/c/file dst/` must transfer dst/b/c/file, creating
+// the implied leading dirs with the default mode (umask-masked 0755) rather
+// than the source dir's distinctive 0750. Previously oc-rsync errored with
+// "file has vanished". upstream: generator.c:1329-1333 make_path().
+#[cfg(unix)]
+#[test]
+fn relative_no_implied_dirs_creates_leading_dirs_with_default_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let base = temp.path().join("rbase").join("a");
+    let deep = base.join("b").join("c");
+    fs::create_dir_all(&deep).expect("create deep source");
+    // Distinctive mode on the implied dir `b`, mirroring the testsuite.
+    fs::set_permissions(base.join("b"), fs::Permissions::from_mode(0o750))
+        .expect("chmod implied dir");
+    fs::write(deep.join("file"), b"data\n").expect("write file");
+
+    let dest_root = temp.path().join("to");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+
+    // Operand `b/c/file` relative to `rbase/a` via the `./` anchor.
+    let mut source_operand = base.into_os_string();
+    source_operand.push("/./b/c/file");
+
+    let operands = vec![source_operand, dest_root.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .relative_paths(true)
+        .implied_dirs(false)
+        .permissions(true);
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("relative-implied --no-implied-dirs half succeeds");
+
+    let copied = dest_root.join("b").join("c").join("file");
+    assert!(copied.exists());
+    assert_eq!(fs::read(&copied).expect("read"), b"data\n");
+    assert_eq!(summary.files_copied(), 1);
+
+    // The implied dir `b` must carry the DEFAULT mode, not the source's 0750.
+    let b_mode = fs::metadata(dest_root.join("b"))
+        .expect("stat implied dir")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_ne!(
+        b_mode, 0o750,
+        "--no-implied-dirs must not mirror the source's 0750 onto the implied dir"
+    );
 }
 
 #[test]

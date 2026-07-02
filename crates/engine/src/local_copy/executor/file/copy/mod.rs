@@ -134,11 +134,9 @@ pub(crate) fn copy_file(
         return Ok(true);
     }
 
-    // Dry-run check must precede parent directory preparation. When
-    // --no-implied-dirs is active, prepare_parent_directory fails with NotFound
-    // for missing parents. That NotFound error is misclassified as "file has
-    // vanished" by the caller. In dry-run mode no filesystem mutations occur,
-    // so preparing the parent is unnecessary.
+    // Dry-run check must precede parent directory preparation: in dry-run mode
+    // no filesystem mutations occur, so materializing the parent is
+    // unnecessary and would create real directories.
     if mode.is_dry_run() {
         dry_run::handle_dry_run(
             context,
