@@ -368,6 +368,58 @@ emit_gha_step_summary() {
     } >>"$summary_file"
 }
 
+# Publish the oc-rsync binary to a world-traversable path and echo that path.
+#
+# WHY (root leg, setpriv): the 3.5.0dev fake-super/uid tests run rsync via
+# setpriv with CAP_DAC_OVERRIDE dropped (partial_nowrite_test.py:65
+# "setpriv --inh-caps -all --bounding-set -all"). The default binary lives at
+# $GITHUB_WORKSPACE/target/release/oc-rsync, i.e. under /home/runner, which is
+# mode 0750 and owned by the runner user. Without CAP_DAC_OVERRIDE even root
+# cannot TRAVERSE /home/runner, so execve() of that path returns ENOENT and
+# setpriv prints "failed to execute .../oc-rsync: No such file or directory".
+# The Python harness then throws FileNotFoundError on the test's from-dir and
+# the failure cascades. The test's own mount-namespace remount only covers the
+# cwd (the upstream source tree), not target/release, so the binary stays
+# unreachable. Copying it to a path whose every component is o+x (e.g.
+# /usr/local/bin, all 0755 on the runner) removes the traversal barrier for
+# both the cap-dropped root leg and any dropped-uid exec. Prefer copying the
+# binary OUT of the runner HOME over chmod'ing HOME itself.
+#
+# Falls back to the original path when no world-traversable install dir is
+# writable (local dev), so non-CI runs are unchanged.
+publish_oc_rsync_bin() {
+    local src=$1
+    local dir
+    for dir in /usr/local/bin /usr/bin; do
+        [[ -d "$dir" && -w "$dir" ]] || continue
+        # Every path component of $dir must be o+x for a cap-dropped/dropped-uid
+        # exec to traverse it. Standard FHS dirs are 0755, but verify rather
+        # than assume - a hardened runner could differ.
+        local p="" comp mode ok=1
+        local -a parts
+        IFS='/' read -r -a parts <<<"${dir#/}"
+        for comp in "${parts[@]}"; do
+            p="${p}/${comp}"
+            mode=$(stat -c '%a' "$p" 2>/dev/null || stat -f '%Lp' "$p" 2>/dev/null || echo "")
+            # Require the "other execute" bit (0o1) on every component. If stat
+            # is unavailable we cannot prove traversability, so treat as not-ok.
+            if [[ -z "$mode" ]] || (( (0"$mode" & 1) == 0 )); then
+                ok=0
+                break
+            fi
+        done
+        [[ "$ok" -eq 1 ]] || continue
+        local dst="${dir}/oc-rsync"
+        if cp -f "$src" "$dst" 2>/dev/null && chmod 0755 "$dst" 2>/dev/null; then
+            echo "$dst"
+            return 0
+        fi
+    done
+    # No writable world-traversable dir: keep the original path.
+    echo "$src"
+    return 0
+}
+
 # Git-ref mode driver: delegate to upstream's own runtests.py.
 #
 # The 3.5.0dev testsuite is Python (runtests.py + testsuite/*_test.py), so we
@@ -403,6 +455,16 @@ run_git_ref_mode() {
     mkdir -p "$log_root"
     local output_log="${log_root}/runtests-output.log"
 
+    # Point --rsync-bin at a world-traversable copy of the binary so the root
+    # leg's setpriv (CAP_DAC_OVERRIDE-dropped) exec can reach it - see
+    # publish_oc_rsync_bin(). Non-CI runs where no such dir is writable fall
+    # back to the original path, so behaviour there is unchanged.
+    local rsync_bin_published
+    rsync_bin_published=$(publish_oc_rsync_bin "$oc_rsync_bin")
+    if [[ "$rsync_bin_published" != "$oc_rsync_bin" ]]; then
+        echo "==> Published oc-rsync to ${rsync_bin_published} (setpriv-reachable)" >&2
+    fi
+
     # Permission-safe scratch cleanup. A test that leaves a mode-0 directory
     # behind (e.g. xattrs/, recv-discard-nullderef/) makes a plain `rm -rf`
     # throw for the non-root runner, and runtests.py's per-test prep_scratch
@@ -430,7 +492,7 @@ run_git_ref_mode() {
         runtests_argv+=(--use-tcp)
     fi
     runtests_argv+=(
-        --rsync-bin="$oc_rsync_bin"
+        --rsync-bin="$rsync_bin_published"
         --tooldir="$upstream_src_dir"
         --srcdir="$upstream_src_dir"
         --timeout="$testrun_timeout"
