@@ -18,9 +18,14 @@ use super::types::{MappingKind, MappingMatcher, MappingParseError, MappingTarget
 /// - Glob patterns containing `*`, `?`, or `[`
 /// - Otherwise, treated as an exact name string
 ///
-/// An empty source is rejected with a [`MappingParseError`].
+/// An empty source (e.g., `:1`) is accepted as an exact-empty-name matcher,
+/// which maps the nameless id (root, when the sender omits the id-0 name).
+/// upstream: uidlist.c:parse_name_map - an empty from-part is not numeric and
+/// not a wildcard, so it falls through to the `NFLAGS_NAME_MATCH` branch with
+/// `noiu.name = ""`, matching the nameless id (recv_add_id normalizes a missing
+/// name to "" before the strcmp).
 pub(crate) fn parse_matcher(
-    kind: MappingKind,
+    _kind: MappingKind,
     source: &str,
     _entry: &str,
 ) -> Result<MappingMatcher, MappingParseError> {
@@ -34,13 +39,6 @@ pub(crate) fn parse_matcher(
 
     if source.chars().any(|ch| matches!(ch, '*' | '?' | '[')) {
         return Ok(MappingMatcher::Pattern(source.to_owned()));
-    }
-
-    if source.is_empty() {
-        return Err(MappingParseError::new(
-            kind,
-            format!("{} entries must specify a source selector", kind.flag()),
-        ));
     }
 
     Ok(MappingMatcher::ExactName(source.to_owned()))

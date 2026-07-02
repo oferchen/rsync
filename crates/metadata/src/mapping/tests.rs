@@ -172,9 +172,11 @@ fn parse_multiple_rules() {
 }
 
 #[test]
-fn parse_empty_source_fails() {
-    let error = NameMapping::parse(MappingKind::User, ":100").unwrap_err();
-    assert!(error.to_string().contains("must specify a source"));
+fn parse_empty_source_maps_nameless_id() {
+    // upstream uidlist.c:parse_name_map accepts an empty from-part as the
+    // empty-name (nameless id) matcher; ":100" maps the nameless user to 100.
+    let mapping = NameMapping::parse(MappingKind::User, ":100").expect("parse mapping");
+    assert_eq!(mapping.len(), 1);
 }
 
 #[test]
@@ -582,9 +584,43 @@ fn parse_matcher_exact_name() {
 }
 
 #[test]
-fn parse_matcher_empty_fails() {
-    let error = parse_matcher(MappingKind::User, "", ":0").unwrap_err();
-    assert!(error.to_string().contains("must specify a source"));
+fn parse_matcher_empty_source_is_empty_exact_name() {
+    // upstream: uidlist.c:parse_name_map accepts an empty from-part (e.g. the
+    // `:1` in `--groupmap=:1`). It is neither numeric nor a wildcard, so it
+    // falls through to the `NFLAGS_NAME_MATCH` branch with `noiu.name = ""`,
+    // i.e. an exact-empty-name matcher. Rejecting it would diverge from
+    // upstream and break mapping of the nameless id.
+    let user = parse_matcher(MappingKind::User, "", ":1").unwrap();
+    assert_eq!(user, MappingMatcher::ExactName(String::new()));
+    let group = parse_matcher(MappingKind::Group, "", ":1").unwrap();
+    assert_eq!(group, MappingMatcher::ExactName(String::new()));
+}
+
+#[test]
+fn empty_source_matcher_maps_nameless_id() {
+    // upstream: uidlist.c:recv_add_id normalizes a missing name to "" before
+    // the strcmp, so the empty-name matcher matches the nameless id (root when
+    // the sender omits the id-0 name). The lookup returning `None` (no name)
+    // must therefore match `ExactName("")`, and any non-empty exact name must
+    // not.
+    let matcher = MappingMatcher::ExactName(String::new());
+    assert!(matcher.matches(0, || Ok(None)).unwrap());
+    assert!(matcher.matches(0, || Ok(Some(String::new()))).unwrap());
+    assert!(!matcher.matches(0, || Ok(Some("root".to_owned()))).unwrap());
+
+    // A non-empty exact name must not match the nameless id.
+    let named = MappingMatcher::ExactName("root".to_owned());
+    assert!(!named.matches(0, || Ok(None)).unwrap());
+}
+
+#[test]
+fn empty_source_groupmap_parses_and_targets_gid() {
+    // `--groupmap=:1` means "map the nameless (root) group to gid 1".
+    let mapping = NameMapping::parse(MappingKind::Group, ":1").unwrap();
+    assert_eq!(mapping.len(), 1);
+    let rule = &mapping.rules[0];
+    assert_eq!(rule.matcher, MappingMatcher::ExactName(String::new()));
+    assert_eq!(rule.target, MappingTarget::Id(1));
 }
 
 #[test]
