@@ -61,19 +61,12 @@ fn conditional_execute_bit_behaviour_matches_rsync() {
     assert_eq!(dir_mode & 0o777, 0o711);
 }
 
-#[cfg(unix)]
+/// upstream: chmod.c:parse_chmod() rejects who-class letters (u/g/o/a) in the
+/// permission RHS (STATE_2ND_HALF -> STATE_ERROR). rsync has no GNU-style
+/// "copy permissions" form, so `g=u,o=g` must fail to parse.
 #[test]
-fn user_group_copy_clauses_are_respected() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let file_path = temp.path().join("data.bin");
-    std::fs::write(&file_path, b"payload").expect("write file");
-    let file_type = std::fs::metadata(&file_path)
-        .expect("file metadata")
-        .file_type();
-
-    let modifiers = ChmodModifiers::parse("g=u,o=g").expect("parse");
-    let mode = modifiers.apply(0o640, file_type);
-    assert_eq!(mode & 0o777, 0o666);
+fn user_group_copy_clauses_are_rejected() {
+    assert!(ChmodModifiers::parse("g=u,o=g").is_err());
 }
 
 /// Verifies that `D+w` (no explicit who) applies umask masking.

@@ -77,9 +77,6 @@ pub(crate) struct PermSpec {
     pub(crate) setuid: bool,
     pub(crate) setgid: bool,
     pub(crate) sticky: bool,
-    pub(crate) copy_user: bool,
-    pub(crate) copy_group: bool,
-    pub(crate) copy_other: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -211,9 +208,6 @@ mod tests {
         assert!(!spec.setuid);
         assert!(!spec.setgid);
         assert!(!spec.sticky);
-        assert!(!spec.copy_user);
-        assert!(!spec.copy_group);
-        assert!(!spec.copy_other);
     }
 
     #[test]
