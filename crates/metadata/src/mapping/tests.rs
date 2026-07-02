@@ -172,9 +172,11 @@ fn parse_multiple_rules() {
 }
 
 #[test]
-fn parse_empty_source_fails() {
-    let error = NameMapping::parse(MappingKind::User, ":100").unwrap_err();
-    assert!(error.to_string().contains("must specify a source"));
+fn parse_empty_source_maps_nameless_id() {
+    // upstream uidlist.c:parse_name_map accepts an empty from-part as the
+    // empty-name (nameless id) matcher; ":100" maps the nameless user to 100.
+    let mapping = NameMapping::parse(MappingKind::User, ":100").expect("parse mapping");
+    assert_eq!(mapping.len(), 1);
 }
 
 #[test]
