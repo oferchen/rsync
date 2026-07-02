@@ -665,8 +665,14 @@ fn modify_window_recursive_mixed_timestamps() {
     );
 }
 
+/// upstream `util1.c:same_time()` compares `time_t` (whole-second) values and
+/// deliberately ignores nanoseconds for the window check ("time windows don't
+/// care about that"). `--modify-window` is parsed as whole seconds upstream
+/// (`int modify_window`), so two mtimes in the same second are always treated
+/// as equal regardless of their fractional part. A +100ms sub-second delta
+/// therefore reduces to the same second and the file is skipped.
 #[test]
-fn modify_window_subsecond_precision_within_window() {
+fn modify_window_subsecond_same_second_skips() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
@@ -674,7 +680,7 @@ fn modify_window_subsecond_precision_within_window() {
     fs::write(&source, b"content").expect("write source");
     fs::write(&destination, b"content").expect("write dest");
 
-    // Differ by 100 milliseconds
+    // Differ by 100 milliseconds within the same whole second.
     let base_time = FileTime::from_unix_time(1_700_000_000, 0);
     let subsec_diff = FileTime::from_unix_time(1_700_000_000, 100_000_000); // +100ms
     set_file_times(&source, base_time, base_time).expect("set source times");
@@ -686,51 +692,14 @@ fn modify_window_subsecond_precision_within_window() {
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
-    // 1-second window should tolerate 100ms difference
     let summary = plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().with_modify_window(Duration::from_millis(500)),
+            LocalCopyOptions::default().with_modify_window(Duration::from_secs(1)),
         )
         .expect("copy succeeds");
 
     assert_eq!(summary.files_copied(), 0);
-}
-
-#[test]
-fn modify_window_subsecond_precision_outside_window() {
-    let temp = tempdir().expect("tempdir");
-    let source = temp.path().join("source.txt");
-    let destination = temp.path().join("dest.txt");
-
-    fs::write(&source, b"new content").expect("write source");
-    fs::write(&destination, b"old content").expect("write dest");
-
-    // Differ by 600 milliseconds
-    let base_time = FileTime::from_unix_time(1_700_000_000, 0);
-    let subsec_diff = FileTime::from_unix_time(1_700_000_000, 600_000_000); // +600ms
-    set_file_times(&source, subsec_diff, subsec_diff).expect("set source times");
-    set_file_times(&destination, base_time, base_time).expect("set dest times");
-
-    let operands = vec![
-        source.into_os_string(),
-        destination.clone().into_os_string(),
-    ];
-    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-
-    // 500ms window should NOT tolerate 600ms difference
-    let summary = plan
-        .execute_with_options(
-            LocalCopyExecution::Apply,
-            LocalCopyOptions::default().with_modify_window(Duration::from_millis(500)),
-        )
-        .expect("copy succeeds");
-
-    assert_eq!(summary.files_copied(), 1);
-    assert_eq!(
-        fs::read(&destination).expect("read dest"),
-        b"new content"
-    );
 }
 
 #[test]
