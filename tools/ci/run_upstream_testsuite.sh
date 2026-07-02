@@ -18,13 +18,42 @@
 #   WHICHTESTS=00-hello.test tools/ci/...sh           # run a single test
 #   UPSTREAM_VERSION=3.4.4 tools/ci/...sh             # pin upstream version
 #   PRESERVE_SCRATCH=yes tools/ci/...sh               # keep per-test scratch dirs
+#
+# Git-ref mode (tracks the moving 3.5.0dev target - RsyncProject master):
+#   UPSTREAM_VERSION=master tools/ci/...sh            # git-clone + build master
+#   UPSTREAM_REF=<sha-or-tag> tools/ci/...sh          # any RsyncProject ref
+#   UPSTREAM_GIT_URL=<url> UPSTREAM_REF=... tools/ci/...sh
+#
+# Git-ref mode is additive and OFF by default: the release-tarball path above
+# is 100% unchanged unless UPSTREAM_REF is set or UPSTREAM_VERSION=master. In
+# git-ref mode the upstream source is a git checkout, not a release tarball,
+# and (since the 3.4.x -> 3.5.0dev migration) upstream's testsuite is Python
+# (runtests.py + testsuite/*_test.py), not the shell *.test scripts of 3.4.x.
+# We therefore delegate to upstream's own runtests.py with --rsync-bin set to
+# oc-rsync - the master analog of pointing $RSYNC at oc-rsync in the tarball
+# path - rather than driving *.test scripts ourselves. See run_git_ref_mode().
 
 set -euo pipefail
 
 workspace_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 upstream_version="${UPSTREAM_VERSION:-3.4.4}"
+# Git-ref mode is selected by an explicit UPSTREAM_REF, or by the sentinel
+# UPSTREAM_VERSION=master. Default (empty UPSTREAM_REF, numeric version) keeps
+# the release-tarball path untouched.
+upstream_git_url="${UPSTREAM_GIT_URL:-https://github.com/RsyncProject/rsync}"
+upstream_ref="${UPSTREAM_REF:-}"
+if [[ -z "$upstream_ref" && "$upstream_version" == "master" ]]; then
+    upstream_ref="master"
+fi
+git_ref_mode="no"
+[[ -n "$upstream_ref" ]] && git_ref_mode="yes"
 upstream_src_root="${workspace_root}/target/interop/upstream-src"
-upstream_src_dir="${upstream_src_root}/rsync-${upstream_version}"
+if [[ "$git_ref_mode" == "yes" ]]; then
+    # A ref may be a sha/tag/branch; sanitize it into a safe directory name.
+    upstream_src_dir="${upstream_src_root}/rsync-git-${upstream_ref//[^A-Za-z0-9._-]/_}"
+else
+    upstream_src_dir="${upstream_src_root}/rsync-${upstream_version}"
+fi
 oc_rsync_bin="${OC_RSYNC_BIN:-${workspace_root}/target/release/oc-rsync}"
 # Resolve to absolute path - test scripts cd into the upstream source tree,
 # so a relative OC_RSYNC_BIN would break.
@@ -78,6 +107,24 @@ ensure_oc_rsync() {
 
 ensure_upstream_src() {
     if [[ -d "$upstream_src_dir" && -f "${upstream_src_dir}/configure" ]]; then
+        return
+    fi
+    if [[ "$git_ref_mode" == "yes" ]]; then
+        # Git-ref mode: clone a RsyncProject ref instead of a release tarball.
+        # A fresh checkout ships a stub ./configure that bootstraps
+        # configure.sh via prepare-source (needs autoconf/autoheader), so the
+        # downstream build_upstream_helpers() path is unchanged.
+        echo "==> Cloning ${upstream_git_url} @ ${upstream_ref} ..." >&2
+        mkdir -p "$upstream_src_root"
+        rm -rf "$upstream_src_dir"
+        if git ls-remote --exit-code "$upstream_git_url" "$upstream_ref" >/dev/null 2>&1; then
+            git clone --depth 1 --branch "$upstream_ref" \
+                "$upstream_git_url" "$upstream_src_dir"
+        else
+            # Ref is a commit sha (not a branch/tag): clone then fetch it.
+            git clone "$upstream_git_url" "$upstream_src_dir"
+            (cd "$upstream_src_dir" && git checkout --detach "$upstream_ref")
+        fi
         return
     fi
     echo "==> Fetching upstream rsync ${upstream_version} source..." >&2
@@ -298,7 +345,114 @@ emit_gha_step_summary() {
     } >>"$summary_file"
 }
 
+# Git-ref mode driver: delegate to upstream's own runtests.py.
+#
+# The 3.5.0dev testsuite is Python (runtests.py + testsuite/*_test.py), so we
+# do NOT iterate *.test scripts as the tarball path does. Instead we build the
+# upstream helper programs the suite needs (`make check-progs` == the `all`
+# target plus CHECK_PROGS/CHECK_SYMLINKS, per upstream Makefile.in:381) and
+# then invoke upstream's runtests.py with --rsync-bin pointed at oc-rsync. That
+# flag is the master analog of exporting $RSYNC=oc-rsync in the tarball path.
+#
+# runtests.py prints one "PASS/FAIL/SKIP/XFAIL <testbase>" line per test and a
+# trailing "overall result is N" (N = failure count). This is informational
+# tracking of a moving target, so there is no known-failures gate: we surface
+# every divergence (the FAIL/XFAIL set) and propagate runtests.py's own exit
+# code, which the nightly workflow reports without blocking any PR.
+run_git_ref_mode() {
+    ensure_oc_rsync
+    ensure_upstream_src
+
+    echo "==> Building upstream (git ${upstream_ref}) + testsuite helpers..." >&2
+    (
+        cd "$upstream_src_dir"
+        if [[ ! -f configure.sh ]]; then
+            ./configure --disable-debug --disable-md2man --disable-iconv \
+                --disable-zstd --disable-lz4 >configure.log 2>&1 \
+                || { tail -80 configure.log; exit 1; }
+        fi
+        # check-progs builds `all` + CHECK_PROGS + CHECK_SYMLINKS: exactly the
+        # tools runtests.py needs (upstream Makefile.in:381).
+        make check-progs >make.log 2>&1 || { tail -120 make.log; exit 1; }
+    )
+
+    rm -rf "$log_root"
+    mkdir -p "$log_root"
+    local output_log="${log_root}/runtests-output.log"
+
+    local rc=0
+    (
+        cd "$upstream_src_dir"
+        python3 ./runtests.py \
+            --rsync-bin="$oc_rsync_bin" \
+            --tooldir="$upstream_src_dir" \
+            --srcdir="$upstream_src_dir" \
+            --timeout="$testrun_timeout"
+    ) 2>&1 | tee "$output_log"
+    rc=${PIPESTATUS[0]}
+
+    emit_git_ref_step_summary "$output_log" "$rc"
+    return "$rc"
+}
+
+# Write a $GITHUB_STEP_SUMMARY table for a git-ref (runtests.py) run: PASS/FAIL/
+# SKIP/XFAIL counts plus the FAIL/XFAIL test names. GHA-only; no-op locally.
+emit_git_ref_step_summary() {
+    local output_log=$1 rc=$2
+    local summary_file=${GITHUB_STEP_SUMMARY:-}
+    [[ -z "$summary_file" ]] && return 0
+    [[ -f "$output_log" ]] || return 0
+
+    local p f s x
+    p=$(grep -c '^PASS ' "$output_log" || true)
+    f=$(grep -c '^FAIL ' "$output_log" || true)
+    s=$(grep -c '^SKIP ' "$output_log" || true)
+    x=$(grep -c '^XFAIL ' "$output_log" || true)
+
+    {
+        echo "## 3.5.0dev testsuite (RsyncProject ${upstream_ref})"
+        echo
+        echo "Informational tracker of the moving upstream target."
+        echo "runtests.py overall exit code: \`${rc}\`"
+        echo
+        echo "| Result | Count |"
+        echo "|--------|------:|"
+        echo "| PASS   | $p |"
+        echo "| FAIL   | $f |"
+        echo "| XFAIL  | $x |"
+        echo "| SKIP   | $s |"
+        echo
+        local fails
+        fails=$(grep -E '^FAIL ' "$output_log" | awk '{print $2}' || true)
+        if [[ -n "$fails" ]]; then
+            echo "### Failures (divergence set)"
+            echo
+            local t
+            while IFS= read -r t; do
+                [[ -n "$t" ]] && echo "- \`$t\`"
+            done <<<"$fails"
+            echo
+        fi
+        local xfails
+        xfails=$(grep -E '^XFAIL ' "$output_log" | awk '{print $2}' || true)
+        if [[ -n "$xfails" ]]; then
+            echo "### Expected failures (XFAIL)"
+            echo
+            local t
+            while IFS= read -r t; do
+                [[ -n "$t" ]] && echo "- \`$t\`"
+            done <<<"$xfails"
+            echo
+        fi
+    } >>"$summary_file"
+}
+
 main() {
+    if [[ "$git_ref_mode" == "yes" ]]; then
+        run_git_ref_mode
+        exit $?
+    fi
+
     ensure_oc_rsync
     ensure_upstream_src
     build_upstream_helpers
