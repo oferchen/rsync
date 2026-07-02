@@ -392,7 +392,15 @@ fn apply_delete_side_effects(
             record_directory_subtree(context, &mut subtree_path, &mut subtree_relative)?;
         }
 
-        if !context.mode().is_dry_run() {
+        // upstream: delete.c:165 - back up an extraneous file before deletion
+        // only when `backup_dir || !is_backup_file(fbuf)`. A name that already
+        // ends in the backup suffix is unlinked directly (no re-backup to
+        // `<name><suffix><suffix>`); the emitter below performs that unlink.
+        if !context.mode().is_dry_run()
+            && context
+                .options()
+                .should_backup_before_delete(entry.name.as_os_str())
+        {
             context.backup_existing_entry(&path, Some(entry_relative.as_path()), file_type)?;
         }
         // upstream: log.c:log_delete emits exactly ONE line - the itemize

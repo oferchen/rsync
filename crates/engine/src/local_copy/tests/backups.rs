@@ -2220,3 +2220,55 @@ fn backup_dir_replaces_preexisting_directory_at_target() {
         "deleted file must not remain in destination"
     );
 }
+
+/// upstream: delete.c:165 - under `--backup` with no `--backup-dir`, an
+/// extraneous file is backed up to `<name>~` before removal, but a name that
+/// already ends in the backup suffix is unlinked directly (no re-backup to
+/// `<name>~~`). Mirrors the `is_backup_file` leg of the upstream `delete-deep`
+/// testsuite case.
+#[test]
+fn backup_delete_skips_already_suffixed_extraneous_file() {
+    let ctx = test_helpers::setup_copy_test();
+    fs::create_dir_all(&ctx.dest).expect("create dest");
+
+    // Source keeps one file so the destination directory is not empty.
+    fs::write(ctx.source.join("keep.txt"), b"keep").expect("write keep");
+
+    let dest_root = ctx.dest.join("source");
+    fs::create_dir_all(&dest_root).expect("create dest root");
+    fs::write(dest_root.join("keep.txt"), b"keep").expect("write dest keep");
+    // Plain extraneous file -> backed up to plain~.
+    fs::write(dest_root.join("plain"), b"extraneous").expect("write plain");
+    // Already-suffixed extraneous file -> unlinked directly, never re-backed-up.
+    fs::write(dest_root.join("stale~"), b"already a backup").expect("write stale~");
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().delete(true).backup(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy with --delete --backup succeeds");
+
+    // Plain file removed and backed up.
+    assert!(
+        !dest_root.join("plain").exists(),
+        "extraneous plain file must be removed"
+    );
+    assert!(
+        dest_root.join("plain~").exists(),
+        "extraneous plain file must be backed up to plain~"
+    );
+
+    // Suffixed file removed, with no double-suffix backup created.
+    assert!(
+        !dest_root.join("stale~").exists(),
+        "already-suffixed extraneous file must be removed"
+    );
+    assert!(
+        !dest_root.join("stale~~").exists(),
+        "already-suffixed file must be unlinked, not re-backed-up to stale~~"
+    );
+}
