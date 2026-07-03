@@ -112,6 +112,14 @@ vmsplice = ["fast_io/vmsplice"]
 # fallback. Default off until eviction/throughput benchmarks justify promotion.
 dontcache = ["fast_io/dontcache"]
 
+# Basis read-ahead prefetch (Unix). Warms upcoming delta basis files into the
+# page cache via posix_fadvise(WILLNEED) on a background worker, so the
+# decoupled receiver stops blocking serially on basis reads. Pure timing hint:
+# wire output stays byte-identical. Default off; even when compiled in it stays
+# inert unless runtime-activated via OC_RSYNC_BASIS_READAHEAD=1, and is disabled
+# for --inplace / --append. See docs/design/basis-readahead.md (follow-up).
+basis-readahead = []
+
 
 # Per-thread slab pool for buffer returns - forwards to the engine crate.
 # Forwarded so `--all-features` enables it transitively on engine *and* exposes

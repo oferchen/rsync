@@ -104,6 +104,13 @@ copy_file_range = ["fast_io/copy_file_range"]
 # `docs/design/mmap-vs-sqpoll-conflict-resolution.md` for the rationale.
 mmap-free-basis = ["engine/mmap-free-basis", "fast_io/mmap-free-basis"]
 
+# EXPERIMENTAL (default-off): basis read-ahead prefetch for the decoupled
+# receiver. Forwards to `transfer/basis-readahead`, which warms upcoming delta
+# basis files into the page cache via posix_fadvise(WILLNEED). Kept out of
+# default features; a bench build enables it and activates it at runtime with
+# OC_RSYNC_BASIS_READAHEAD=1. Pure timing hint - wire output is byte-identical.
+basis-readahead = ["transfer/basis-readahead"]
+
 # ============================================================================
 # OpenSSL Features
 # ============================================================================

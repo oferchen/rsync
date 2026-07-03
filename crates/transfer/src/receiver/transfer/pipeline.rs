@@ -107,6 +107,17 @@ impl ReceiverContext {
         let mut file_iter = files_to_transfer.into_iter();
         let mut pending_files_info: VecDeque<(usize, PathBuf, &FileEntry, u32)> =
             VecDeque::with_capacity(pipeline.window_size());
+
+        // Basis read-ahead prefetch (default-off, feature-gated). Selecting the
+        // prefetcher never changes wire output: `posix_fadvise(WILLNEED)` is a
+        // pure page-cache timing hint. Disabled for --inplace / --append (a
+        // file's write mutates a later file's basis) and on the redo pass
+        // (redo requests carry no basis).
+        let prefetcher =
+            crate::basis_prefetch::select_prefetcher(crate::basis_prefetch::PrefetchDisableList {
+                inplace: request_config.inplace,
+                append: request_config.append,
+            });
         let mut files_transferred = 0usize;
         let mut bytes_received = 0u64;
         let mut total_literal_bytes = 0u64;
@@ -240,6 +251,22 @@ impl ReceiverContext {
                                 })
                                 .collect()
                         };
+
+                        // Basis read-ahead: warm the resolved basis paths for the
+                        // look-ahead window (this batch) so the disk-commit stage
+                        // finds their pages in cache instead of blocking on serial
+                        // reads. Uses BasisFileResult::basis_path (the RESOLVED
+                        // path - fuzzy/reference-dir aware), not a naive dest/name.
+                        // No-op (NullPrefetcher) on the default build. Bounded to
+                        // PREFETCH_DEPTH entries to match the channel depth.
+                        for basis_result in sig_results
+                            .iter()
+                            .take(crate::basis_prefetch::PREFETCH_DEPTH)
+                        {
+                            if let Some(ref basis_path) = basis_result.basis_path {
+                                prefetcher.prefetch(basis_path);
+                            }
+                        }
 
                         // Send requests sequentially (wire order matters).
                         for ((file_idx, file_entry, file_path, base_iflags), basis_result) in

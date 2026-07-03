@@ -194,6 +194,9 @@ pub mod win_tmpfile;
 /// macOS-optimized file writer using `F_NOCACHE` and `writev`.
 pub mod macos_io;
 
+/// Kernel read-ahead hint (`POSIX_FADV_WILLNEED`) for basis-file prefetch.
+pub mod willneed;
+
 /// Memory-mapped file reader for efficient large file access.
 #[cfg(unix)]
 pub mod mmap_reader;

@@ -120,6 +120,7 @@ pub(crate) fn is_early_close_error(e: &io::Error) -> bool {
     generator::is_early_close_error(e)
 }
 
+pub mod basis_prefetch;
 mod compressed_reader;
 mod compressed_writer;
 pub mod config;
