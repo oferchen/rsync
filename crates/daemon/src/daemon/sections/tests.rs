@@ -453,6 +453,66 @@ fn refused_client_arg_pure_negation_allowlist_passes_av() {
 }
 
 #[test]
+fn refused_client_arg_delete_rule_refuses_timing_variant() {
+    // Regression for the upstream `daemon-refuse` testsuite: a module with
+    // `refuse options = delete` must reject a client `-a --delete` even though
+    // the client encodes it on the wire as `--delete-during`.
+    //
+    // upstream: options.c:2238 - `if (refused_delete && (delete_mode || ...))`
+    // refuses the transfer whenever any delete-timing variant is active, and
+    // reports the canonical `--delete` regardless of which variant arrived.
+    let module = ModuleDefinition {
+        refuse_options: vec!["delete".to_owned()],
+        ..Default::default()
+    };
+    for variant in [
+        "--delete",
+        "--delete-during",
+        "--delete-before",
+        "--delete-after",
+        "--delete-delay",
+        "--delete-excluded",
+        "--del",
+        "--delete-missing-args",
+    ] {
+        let args = vec!["--server".to_owned(), variant.to_owned()];
+        assert_eq!(
+            refused_client_arg(&module, &args),
+            Some("--delete".to_owned()),
+            "expected {variant} to be refused as --delete",
+        );
+    }
+}
+
+#[test]
+fn refused_client_arg_delete_rule_allows_non_delete_transfer() {
+    // A `refuse options = delete` module must still accept a plain push that
+    // carries no delete flag. upstream: options.c:2238 only fires when
+    // `delete_mode` (or `missing_args == 2`) is set.
+    let module = ModuleDefinition {
+        refuse_options: vec!["delete".to_owned()],
+        ..Default::default()
+    };
+    let args = vec!["--server".to_owned(), "-vlogDtpr".to_owned()];
+    assert_eq!(refused_client_arg(&module, &args), None);
+}
+
+#[test]
+fn refused_client_arg_delete_negation_clears_semantic_refusal() {
+    // `refuse options = !delete` un-refuses the `delete` entry, so the
+    // semantic delete-mode pass must not fire. With no other refuse rule a
+    // bare `--delete` transfer is allowed. upstream: options.c:977-991 - the
+    // negated rule flips the `delete` descrip back to accepted, clearing
+    // `refused_delete`, so options.c:2238 never triggers.
+    let module = ModuleDefinition {
+        refuse_options: vec!["!delete".to_owned()],
+        ..Default::default()
+    };
+    let args = vec!["--server".to_owned(), "--delete".to_owned()];
+    assert_eq!(refused_client_arg(&module, &args), None);
+}
+
+#[test]
 fn refused_client_arg_archive_rule_refuses_implied_short_letters() {
     // upstream: options.c:904-906 - the `archive` rule rewrites itself to the
     // character class `[ardlptgoD]`. A module configured with
