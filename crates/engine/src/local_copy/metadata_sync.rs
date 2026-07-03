@@ -133,11 +133,19 @@ pub(crate) fn store_effective_fake_super_if_requested(
         return Ok(());
     }
 
-    let stat = ::metadata::effective_source_stat(source, metadata);
+    let mut stat = ::metadata::effective_source_stat(source, metadata);
 
-    // Skip the rewrite when the destination already carries the target stat,
-    // mirroring upstream's "no-op when the current xattr matches" fast path.
+    // The permission-apply step already deflected the destination's stored mode
+    // to the chmod-applied `new_mode` (upstream set_stat_xattr's fmode). Keep it:
+    // `effective_source_stat` only carries the *source* mode, which ignores any
+    // `--chmod` tweak, so overwriting it here would revert `--fake-super
+    // --chmod=...` to the untweaked source mode. Forward only uid/gid/rdev.
+    // upstream: xattrs.c:set_stat_xattr() stores mode = new_mode (post dest_mode
+    // + tweak_mode), not the raw source mode.
     if let Ok(Some(existing)) = ::metadata::load_fake_super(destination) {
+        if options.chmod().is_some() {
+            stat.mode = existing.mode;
+        }
         if existing == stat {
             return Ok(());
         }

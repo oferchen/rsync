@@ -1064,6 +1064,85 @@ fn fake_super_does_not_chown_destination() {
     }
 }
 
+// upstream: xattrs.c:set_stat_xattr() under am_root<0 - a `--fake-super
+// --chmod=a=` directory keeps a self-accessible real mode (0700) while the
+// intended mode (040000) lands in the `user.rsync.%stat` xattr. Without the
+// deflection the local-copy path chmods the real dir to 000 and every later
+// open of it fails, mirroring the `xattrs` conformance-test failure.
+#[cfg(all(unix, feature = "xattr"))]
+#[test]
+fn fake_super_chmod_deflects_directory_real_mode() {
+    use crate::chmod::ChmodModifiers;
+    use crate::fake_super::load_fake_super;
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let src = temp.path().join("src_dir");
+    let dst = temp.path().join("dst_dir");
+    fs::create_dir(&src).expect("create src dir");
+    fs::create_dir(&dst).expect("create dst dir");
+    fs::set_permissions(&src, fs::Permissions::from_mode(0o700)).expect("chmod src");
+
+    let src_meta = fs::symlink_metadata(&src).expect("stat src");
+    let opts = MetadataOptions::new()
+        .fake_super(true)
+        .preserve_owner(true)
+        .preserve_group(true)
+        .preserve_permissions(true)
+        .with_chmod(Some(ChmodModifiers::parse("a=").expect("parse a=")));
+
+    apply_directory_metadata_with_options(&dst, &src_meta, opts).expect("apply dir metadata");
+
+    // The real directory mode must stay self-accessible (0700), never 000.
+    let real = fs::metadata(&dst).expect("stat dst").mode() & 0o777;
+    if let Ok(Some(stat)) = load_fake_super(&dst) {
+        // Filesystem supports xattrs: assert the full upstream contract.
+        assert_eq!(real, 0o700, "real dir mode must be deflected to 0700");
+        assert_eq!(
+            stat.mode, 0o040_000,
+            "xattr must record the chmod-applied mode (040000), not the source mode"
+        );
+    } else {
+        // No xattr backing (e.g. tmpfs sans user_xattr): still must be readable.
+        assert_eq!(real, 0o700, "real dir mode must be deflected to 0700");
+    }
+}
+
+// upstream: xattrs.c:1220 - regular files are deflected to 0600 (not 0700).
+#[cfg(all(unix, feature = "xattr"))]
+#[test]
+fn fake_super_chmod_deflects_regular_file_real_mode() {
+    use crate::chmod::ChmodModifiers;
+    use crate::fake_super::load_fake_super;
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let src = temp.path().join("src.txt");
+    let dst = temp.path().join("dst.txt");
+    fs::write(&src, b"data").expect("write src");
+    fs::write(&dst, b"data").expect("write dst");
+    fs::set_permissions(&src, fs::Permissions::from_mode(0o644)).expect("chmod src");
+
+    let src_meta = fs::symlink_metadata(&src).expect("stat src");
+    let opts = MetadataOptions::new()
+        .fake_super(true)
+        .preserve_owner(true)
+        .preserve_group(true)
+        .preserve_permissions(true)
+        .with_chmod(Some(ChmodModifiers::parse("a=").expect("parse a=")));
+
+    apply_file_metadata_with_options(&dst, &src_meta, &opts).expect("apply file metadata");
+
+    let real = fs::metadata(&dst).expect("stat dst").mode() & 0o777;
+    assert_eq!(real, 0o600, "real file mode must be deflected to 0600");
+    if let Ok(Some(stat)) = load_fake_super(&dst) {
+        assert_eq!(
+            stat.mode, 0o100_000,
+            "xattr must record the chmod-applied file mode (100000)"
+        );
+    }
+}
+
 #[cfg(all(unix, feature = "xattr"))]
 #[test]
 fn fake_super_skips_rewrite_when_xattr_already_matches() {
