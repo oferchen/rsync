@@ -12,7 +12,73 @@ use std::path::Path;
 
 use crate::local_copy::{CopyContext, DeleteTiming, LocalCopyError, delete_extraneous_entries};
 
-/// Handles the deletion phase after transfer, based on the configured timing.
+/// Resolves the effective delete timing for the current directory.
+///
+/// upstream: generator.c shares a single flist across sources so
+/// `delete_during` never unlinks an entry that a later source will recreate.
+/// oc-rsync reads each source directory live, so when more than one source is
+/// in play a `--delete-during` sweep is downgraded to a deferred (`After`)
+/// sweep whose keep-lists are merged across sources in `defer_deletion`.
+fn effective_delete_timing(
+    context: &CopyContext,
+    delete_timing: Option<DeleteTiming>,
+) -> DeleteTiming {
+    let timing = delete_timing.unwrap_or(DeleteTiming::During);
+    if matches!(timing, DeleteTiming::During) && context.multi_source() {
+        DeleteTiming::After
+    } else {
+        timing
+    }
+}
+
+/// Deletes extraneous destination entries for `--delete-during` before the
+/// directory's own children are transferred.
+///
+/// upstream: generator.c:1532-1537 - for a non-INC_RECURSE `delete_during`
+/// run, the generator calls `delete_in_dir()` while itemizing the directory
+/// entry itself, i.e. immediately before it recurses into and processes that
+/// directory's children. The extraneous-entry `*deleting` rows therefore
+/// precede the transfer rows for surviving/new entries in the same directory.
+/// Running the sweep after the child loop (as a post-transfer step) would
+/// invert that order. Deferred timings (`--delete-delay`, `--delete-after`,
+/// and the multi-source `During`->`After` downgrade) are handled after the
+/// loop by [`handle_post_transfer_deletions`].
+#[inline]
+pub(super) fn apply_during_transfer_deletions(
+    context: &mut CopyContext,
+    destination: &Path,
+    relative: Option<&Path>,
+    deletion_enabled: bool,
+    delete_timing: Option<DeleteTiming>,
+    keep_names: &[Cow<'_, OsStr>],
+) -> Result<(), LocalCopyError> {
+    if !deletion_enabled {
+        return Ok(());
+    }
+
+    // When I/O errors occurred and --ignore-errors is not set, suppress
+    // deletions to prevent data loss (upstream rsync behavior).
+    if !context.deletions_allowed() {
+        return Ok(());
+    }
+
+    if matches!(
+        effective_delete_timing(context, delete_timing),
+        DeleteTiming::During
+    ) {
+        delete_extraneous_entries(context, destination, relative, keep_names)?;
+    }
+
+    Ok(())
+}
+
+/// Handles the deferred deletion phases after transfer.
+///
+/// Only `--delete-delay`, `--delete-after`, and the multi-source
+/// `During`->`After` downgrade reach a delete here; immediate `--delete-during`
+/// sweeps are performed before the child loop by
+/// [`apply_during_transfer_deletions`]. `--delete-before` was already handled
+/// by `apply_pre_transfer_deletions`.
 #[inline]
 pub(super) fn handle_post_transfer_deletions(
     context: &mut CopyContext,
@@ -32,21 +98,10 @@ pub(super) fn handle_post_transfer_deletions(
         return Ok(());
     }
 
-    let mut timing = delete_timing.unwrap_or(DeleteTiming::During);
-    // upstream: generator.c shares a single flist across sources so
-    // `delete_during` never unlinks an entry that a later source will recreate.
-    // We share the flist via deferred sweeps when more than one source is in
-    // play, merging per-source keep lists in `defer_deletion`.
-    if matches!(timing, DeleteTiming::During) && context.multi_source() {
-        timing = DeleteTiming::After;
-    }
-
-    match timing {
-        DeleteTiming::Before => {
-            // Already handled by apply_pre_transfer_deletions
-        }
-        DeleteTiming::During => {
-            delete_extraneous_entries(context, destination, relative, keep_names)?;
+    match effective_delete_timing(context, delete_timing) {
+        DeleteTiming::Before | DeleteTiming::During => {
+            // Before: already handled by apply_pre_transfer_deletions.
+            // During: already handled by apply_during_transfer_deletions.
         }
         DeleteTiming::Delay | DeleteTiming::After => {
             // Clone names for deferred processing (data must outlive the plan)
