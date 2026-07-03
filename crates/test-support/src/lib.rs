@@ -5,8 +5,13 @@
 //! This crate provides helpers that multiple test suites need, avoiding
 //! duplicated retry logic and setup boilerplate across crates.
 
+pub mod skip;
 pub mod upstream_compat;
 
+pub use skip::{
+    locate_command_on_path, locate_workspace_binary, require_binary, require_command_on_path,
+    require_unix,
+};
 pub use upstream_compat::{
     UpstreamRsync, UpstreamVersion, locate_upstream_rsync, require_upstream_rsync,
     upstream_compat_enabled,
