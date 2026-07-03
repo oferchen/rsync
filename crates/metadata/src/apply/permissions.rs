@@ -309,8 +309,7 @@ fn apply_fake_super_mode(
     const ACCESSPERMS: u32 = 0o777;
     const S_IFMT: u32 = 0o170000;
 
-    // The intended stored mode carries the S_IFMT type bits so a later fake-super
-    // read can rebuild both the type and the full perms.
+    // Recover the S_IFMT type bits (fmode may arrive with or without them).
     let type_bits = if fmode & S_IFMT != 0 {
         fmode & S_IFMT
     } else if is_dir {
