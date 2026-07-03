@@ -835,6 +835,154 @@ impl<'a> DeltaApplicator<'a> {
 
         Ok((self.output, self.stats))
     }
+
+    /// Async twin of [`apply_token`](Self::apply_token).
+    ///
+    /// Reads and applies the next delta token off an
+    /// [`AsyncRead`](tokio::io::AsyncRead) rather than blocking. Only the wire
+    /// reads are `.await`ed: the async delta-token leaf
+    /// ([`TokenReader::read_token_async`]) and, for a plain pending literal, the
+    /// raw payload `read_exact`. Every byte the token turns into - the literal
+    /// write, the basis block copy, the checksum-verifier update, the sparse
+    /// bookkeeping, and the `see_token` dictionary feed - runs through the exact
+    /// same synchronous helpers the sync path uses ([`Self::apply_literal_bytes`],
+    /// [`Self::apply_literal_from_buffer`], [`Self::apply_block_ref`],
+    /// [`Self::feed_see_token`]). For the same wire bytes it therefore produces a
+    /// byte-identical destination file, an identical [`DeltaApplyResult`], and
+    /// leaves the reader positioned exactly where the sync leaf would - including
+    /// when the source delivers bytes one at a time across `.await` points.
+    ///
+    /// Returns `true` while more tokens remain and `false` on the `End` token,
+    /// matching [`Self::apply_token`].
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:240` - `receive_data()` (the sync twin mirrors this)
+    #[cfg(feature = "tokio-transfer")]
+    pub async fn apply_token_async<R>(
+        &mut self,
+        reader: &mut R,
+        token_reader: &mut TokenReader,
+    ) -> io::Result<bool>
+    where
+        R: tokio::io::AsyncRead + Unpin + ?Sized,
+    {
+        use tokio::io::AsyncReadExt;
+
+        match token_reader.read_token_async(reader).await? {
+            DeltaToken::End => {
+                debug_log!(
+                    Deltasum,
+                    2,
+                    "recv data complete, final offset={}",
+                    self.stats.bytes_written
+                );
+                Ok(false)
+            }
+            DeltaToken::Literal(LiteralData::Ready(data)) => {
+                self.apply_literal_bytes(&data)?;
+                Ok(true)
+            }
+            DeltaToken::Literal(LiteralData::Pending(len)) => {
+                self.token_buffer.resize_for(len);
+                reader.read_exact(self.token_buffer.as_mut_slice()).await?;
+                let len = self.token_buffer.len();
+                self.apply_literal_from_buffer(len)?;
+                Ok(true)
+            }
+            DeltaToken::BlockRef(block_idx) => {
+                self.apply_block_ref(block_idx)?;
+                // upstream: token.c:631 see_deflate_token() - keep the inflate
+                // dictionary synced after every block match. Mirrors the sync
+                // apply_token: only the compressed reader needs the bytes.
+                if token_reader.is_compressed() {
+                    self.feed_see_token(block_idx, token_reader)?;
+                }
+                Ok(true)
+            }
+        }
+    }
+
+    /// Async twin of [`finish`](Self::finish).
+    ///
+    /// Finalizes the sparse write, reads the trailing whole-file checksum off an
+    /// [`AsyncRead`](tokio::io::AsyncRead), and verifies it. Only the trailing
+    /// checksum `read_exact` is `.await`ed; the sparse finish, the size check,
+    /// and the digest comparison are the identical synchronous logic the sync
+    /// [`finish`](Self::finish) runs. For the same wire bytes it verifies the
+    /// same digest against the same computed checksum and returns the same
+    /// `(File, DeltaApplyResult)`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:515` - trailing `read_buf(f_in, sender_file_sum, ...)`
+    #[cfg(feature = "tokio-transfer")]
+    pub async fn finish_async<R>(
+        mut self,
+        reader: &mut R,
+        expected_size: Option<u64>,
+    ) -> io::Result<(File, DeltaApplyResult)>
+    where
+        R: tokio::io::AsyncRead + Unpin + ?Sized,
+    {
+        use tokio::io::AsyncReadExt;
+
+        if let Some(ref mut sparse) = self.sparse_state {
+            let final_pos = sparse.finish(&mut self.output)?;
+            self.stats.final_pos = Some(final_pos);
+            if let Some(expected) = expected_size {
+                if final_pos != expected {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "sparse file size mismatch: expected {expected} bytes, \
+                             got {final_pos} bytes"
+                        ),
+                    ));
+                }
+            }
+        }
+
+        let expected_len = self.checksum_verifier.digest_len();
+        let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        reader.read_exact(&mut expected[..expected_len]).await?;
+
+        let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+        let computed_len = self.checksum_verifier.finalize_into(&mut computed);
+
+        debug_log!(
+            Deltasum,
+            3,
+            "recv checksum verify expected={:02x?} computed={:02x?}",
+            &expected[..computed_len.min(4)],
+            &computed[..computed_len.min(4)]
+        );
+
+        if computed[..computed_len] != expected[..expected_len] {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "checksum verification failed: expected {:02x?}, got {:02x?}",
+                    &expected[..expected_len],
+                    &computed[..computed_len]
+                ),
+            ));
+        }
+
+        debug_log!(
+            Deltasum,
+            1,
+            "recv: {} tokens ({} literal, {} block), {} bytes total ({} literal, {} matched)",
+            self.stats.literal_tokens + self.stats.block_tokens,
+            self.stats.literal_tokens,
+            self.stats.block_tokens,
+            self.stats.bytes_written,
+            self.stats.literal_bytes,
+            self.stats.matched_bytes
+        );
+
+        Ok((self.output, self.stats))
+    }
 }
 
 /// Reads all delta tokens and applies them.
@@ -853,6 +1001,41 @@ pub fn apply_delta_stream<R: Read>(
     debug_log!(Deltasum, 2, "recv delta stream start");
 
     while applicator.apply_token(reader, token_reader)? {}
+    Ok(())
+}
+
+/// Async twin of [`apply_delta_stream`].
+///
+/// Reads and applies all delta tokens off an [`AsyncRead`](tokio::io::AsyncRead)
+/// via [`DeltaApplicator::apply_token_async`], reconstructing the destination
+/// file exactly as the sync [`apply_delta_stream`] does. The caller finalizes
+/// with [`DeltaApplicator::finish_async`] to consume and verify the trailing
+/// whole-file checksum. Only the wire reads are `.await`ed; the reconstruction
+/// (literal writes, basis block copies, checksum-verifier updates, sparse
+/// bookkeeping, `see_token` dictionary feed) runs through the same synchronous
+/// applicator helpers, so for the same wire bytes the async path produces a
+/// byte-identical destination file and an identical [`DeltaApplyResult`].
+///
+/// This is the composable async RECONSTRUCT loop the tokio receiver uses on the
+/// normal receive path (the `.await` counterpart of the `receiver.c:240`
+/// `receive_data()` call), the reconstructing peer of the discard-path
+/// [`discard_delta_stream_async`]. Gated on `tokio-transfer`.
+///
+/// # Upstream Reference
+///
+/// - `receiver.c:240` - `receive_data()` (the sync twin mirrors this)
+#[cfg(feature = "tokio-transfer")]
+pub async fn apply_delta_stream_async<R>(
+    reader: &mut R,
+    applicator: &mut DeltaApplicator<'_>,
+    token_reader: &mut TokenReader,
+) -> io::Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin + ?Sized,
+{
+    debug_log!(Deltasum, 2, "recv delta stream start");
+
+    while applicator.apply_token_async(reader, token_reader).await? {}
     Ok(())
 }
 
