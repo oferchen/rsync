@@ -1417,9 +1417,68 @@ fn render_percent_b_shows_bytes_transferred() {
         true,
         Some(ClientEntryKind::File),
         LocalCopyChangeSet::new(),
+    )
+    .with_bytes_transferred_for_test(5043);
+    // Local copy => sender; %b reports the file-data bytes written.
+    // upstream log.c:672-684, verified against rsync 3.4.4 (`%b`=5043).
+    let ctx = OutFormatContext::with_is_sender(true);
+    assert_eq!(render_format_with_context("%b", &event, &ctx), "5043\n");
+}
+
+#[test]
+fn render_percent_b_and_c_differ_by_direction_on_sender() {
+    // upstream log.c:672-684 - on the sender `%b` = file data written,
+    // `%c` = the 16-byte sum_head read back. Verified against rsync 3.4.4:
+    // a local push of a 5000-byte file prints `%b`=5043 `%c`=16.
+    let event = make_event(
+        ClientEventKind::DataCopied,
+        true,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new(),
+    )
+    .with_bytes_transferred_for_test(5043);
+    let ctx = OutFormatContext::with_is_sender(true);
+    assert_eq!(render_format_with_context("%b", &event, &ctx), "5043\n");
+    assert_eq!(render_format_with_context("%c", &event, &ctx), "16\n");
+    assert_ne!(
+        render_format_with_context("%b", &event, &ctx),
+        render_format_with_context("%c", &event, &ctx),
+        "%b and %c must not collapse to the same value on the sender",
     );
-    // ClientEvent::for_test seeds bytes_transferred=0.
-    assert_eq!(render_format("%b", &event), "0\n");
+}
+
+#[test]
+fn render_percent_b_and_c_swap_counters_on_receiver() {
+    // upstream log.c:672-684 - on the receiver the (!!am_sender) ^ (*p == 'c')
+    // selector maps the file-data bytes to the read counter and the sum_head to
+    // the write counter, so `%b` still reports the file data and `%c` the
+    // 16-byte header - the semantic value is role-independent.
+    let event = make_event(
+        ClientEventKind::DataCopied,
+        true,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new(),
+    )
+    .with_bytes_transferred_for_test(5043);
+    let ctx = OutFormatContext::with_is_sender(false);
+    assert_eq!(render_format_with_context("%b", &event, &ctx), "5043\n");
+    assert_eq!(render_format_with_context("%c", &event, &ctx), "16\n");
+}
+
+#[test]
+fn render_percent_b_and_c_zero_for_non_transfer() {
+    // upstream log.c:674-675 - `!(iflags & ITEM_TRANSFER)` forces both to 0.
+    // A metadata-only reuse is not a transfer, so neither escape counts bytes.
+    let event = make_event(
+        ClientEventKind::MetadataReused,
+        false,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new(),
+    )
+    .with_bytes_transferred_for_test(5043);
+    let ctx = OutFormatContext::with_is_sender(true);
+    assert_eq!(render_format_with_context("%b", &event, &ctx), "0\n");
+    assert_eq!(render_format_with_context("%c", &event, &ctx), "0\n");
 }
 
 #[test]

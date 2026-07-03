@@ -113,14 +113,28 @@ fn out_format_renders_checksum_bytes_for_data_copy_events() {
         .find(|event| matches!(event.kind(), ClientEventKind::DataCopied))
         .expect("data copy event present");
 
-    let mut output = Vec::new();
-    parse_out_format(OsStr::new("%c"))
-        .expect("parse %c")
-        .render(event, &OutFormatContext::default(), &mut output)
-        .expect("render %c");
-
-    let rendered = String::from_utf8(output).expect("utf8");
-    assert_eq!(rendered.trim_end(), contents.len().to_string());
+    // upstream log.c:672-684 - on a transferred file `%c` reports the
+    // checksum-direction bytes, i.e. the 16-byte sum_head, NOT the file-data
+    // bytes. `%b` reports the file data. Verified against rsync 3.4.4: a local
+    // copy prints `%c`=16 for any transferred file regardless of size.
+    let render = |token: &str| {
+        let mut output = Vec::new();
+        parse_out_format(OsStr::new(token))
+            .expect("parse token")
+            .render(event, &OutFormatContext::default(), &mut output)
+            .expect("render token");
+        String::from_utf8(output)
+            .expect("utf8")
+            .trim_end()
+            .to_owned()
+    };
+    assert_eq!(render("%c"), "16");
+    assert_ne!(
+        render("%c"),
+        contents.len().to_string(),
+        "%c must not collapse onto the file-data byte count",
+    );
+    assert_ne!(render("%b"), render("%c"));
 }
 
 #[test]

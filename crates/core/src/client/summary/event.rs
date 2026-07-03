@@ -401,6 +401,18 @@ impl ClientEvent {
         self
     }
 
+    /// Seeds the per-event transferred-byte count for testing purposes.
+    ///
+    /// Mirrors the `bytes_transferred` field populated by the local-copy engine
+    /// so renderer tests can exercise the `%b` / `%c` direction split without
+    /// running a transfer.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn with_bytes_transferred_for_test(mut self, bytes: u64) -> Self {
+        self.bytes_transferred = bytes;
+        self
+    }
+
     /// Constructs a [`ClientEntryMetadata`] for testing purposes.
     #[doc(hidden)]
     pub fn test_metadata(kind: ClientEntryKind) -> ClientEntryMetadata {
