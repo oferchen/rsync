@@ -188,6 +188,14 @@ pub fn strip_source_xattrs(
 }
 
 /// Synchronises the extended attributes from `source` to `destination`.
+///
+/// The rsync-internal `rsync.%*` attributes (the fake-super `%stat`/`%aacl`/
+/// `%dacl` channel) are excluded from both the copy and the delete pass: a
+/// local single-`-X` copy is upstream's `am_sender && preserve_xattrs < 2`
+/// case, which never transfers them as -X data. Excluding them from the delete
+/// pass also protects the `%stat` that the fake-super metadata step writes on
+/// the destination independently of the xattr transfer.
+// upstream: xattrs.c:259-267 rsync_xal_get() - rsync.%FOO skipped for the sender.
 pub fn sync_xattrs(
     source: &Path,
     destination: &Path,
@@ -198,8 +206,14 @@ pub fn sync_xattrs(
     let mut retained: HashSet<Vec<u8>> = HashSet::with_capacity(source_attrs.len());
 
     for name in &source_attrs {
+        let name_str = String::from_utf8_lossy(name);
+        // upstream: xattrs.c:261 - rsync's own metadata channel is never copied.
+        if protocol::xattr::is_rsync_internal(&name_str) {
+            retained.insert(name.clone());
+            continue;
+        }
         retained.insert(name.clone());
-        let allow = filter.is_none_or(|predicate| predicate(&String::from_utf8_lossy(name)));
+        let allow = filter.is_none_or(|predicate| predicate(&name_str));
 
         if !allow {
             continue;
@@ -218,7 +232,14 @@ pub fn sync_xattrs(
             continue;
         }
 
-        let allow = filter.is_none_or(|predicate| predicate(&String::from_utf8_lossy(name)));
+        let name_str = String::from_utf8_lossy(name);
+        // Never delete rsync's own metadata channel (fake-super %stat/%aacl/%dacl):
+        // it is managed separately and is not part of the -X data set.
+        if protocol::xattr::is_rsync_internal(&name_str) {
+            continue;
+        }
+
+        let allow = filter.is_none_or(|predicate| predicate(&name_str));
 
         if allow {
             remove_attribute(destination, name, follow_symlinks)?;
@@ -577,6 +598,50 @@ mod tests {
             read_attribute(&destination, &attr2, false)
                 .expect("read")
                 .is_none()
+        );
+    }
+
+    // upstream: xattrs.c:259-267 - the rsync.%stat fake-super channel is never
+    // part of the -X data set. It must not be copied from the source, and a
+    // fake-super-written %stat already on the destination must survive the
+    // delete pass. Regression guard for the `xattrs` conformance test's
+    // `--fake-super --chmod=a=` leg.
+    #[test]
+    fn sync_xattrs_leaves_rsync_internal_stat_untouched() {
+        let dir = tempdir().expect("create temp dir");
+        let source = dir.path().join("source.txt");
+        let destination = dir.path().join("dest.txt");
+        fs::write(&source, "source").expect("write source");
+        fs::write(&destination, "dest").expect("write dest");
+
+        if !xattrs_supported(&source) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        let stat_name: Vec<u8> = if cfg!(target_os = "linux") {
+            b"user.rsync.%stat".to_vec()
+        } else {
+            b"rsync.%stat".to_vec()
+        };
+
+        // Source carries a stale %stat; destination carries the fake-super one.
+        if write_attribute(&source, &stat_name, b"100644 0,0 1:1", false).is_err() {
+            eprintln!("rsync.%stat namespace not writable, skipping");
+            return;
+        }
+        write_attribute(&destination, &stat_name, b"100000 0,0 2:2", false)
+            .expect("write dest %stat");
+
+        sync_xattrs(&source, &destination, false, None).expect("sync");
+
+        // The destination's fake-super %stat must be preserved verbatim - not
+        // overwritten by the source copy nor deleted by the removal pass.
+        assert_eq!(
+            read_attribute(&destination, &stat_name, false)
+                .expect("read")
+                .expect("dest %stat survives"),
+            b"100000 0,0 2:2",
         );
     }
 

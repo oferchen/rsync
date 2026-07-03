@@ -190,8 +190,11 @@ pub fn wire_to_local(wire_name: &[u8], am_root: bool) -> Option<Vec<u8>> {
 /// Checks if an xattr name is an rsync internal attribute.
 ///
 /// Rsync internal attributes use the pattern `rsync.%suffix` or `user.rsync.%suffix`.
-/// These are used for storing metadata like stat info and ACLs.
-fn is_rsync_internal(name: &str) -> bool {
+/// These are used for storing metadata like stat info and ACLs (the fake-super
+/// `%stat`/`%aacl`/`%dacl` channel). Upstream never transfers them as -X data:
+/// the sender skips them (`xattrs.c:261-267`, `am_sender && preserve_xattrs < 2`),
+/// so a local copy must exclude them from both the copy and the delete pass.
+pub fn is_rsync_internal(name: &str) -> bool {
     // Check for user.rsync.% pattern (Linux)
     if let Some(suffix) = name.strip_prefix("user.rsync.") {
         return suffix.starts_with('%');
