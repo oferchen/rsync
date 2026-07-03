@@ -20,7 +20,9 @@ pub use backup_trace::{
 };
 #[cfg(test)]
 pub(crate) use comparison::files_checksum_match;
-pub(crate) use comparison::{CopyComparison, DEFAULT_XXH64_DEDUP_SIZE_LIMIT, should_skip_copy};
+pub(crate) use comparison::{
+    CopyComparison, DEFAULT_XXH64_DEDUP_SIZE_LIMIT, should_skip_copy, system_time_within_window,
+};
 pub(crate) use copy::copy_file;
 #[cfg(test)]
 pub(crate) use copy::take_fsync_call_count;

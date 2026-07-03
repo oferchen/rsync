@@ -274,6 +274,7 @@ pub(super) fn process_links(
                         false
                     }
                 },
+                context.options().modify_window(),
             );
             // upstream: hlink.c:218-222 + generator.c:528-530 - the hardlink
             // leader-reuse path emits `itemize(..., ITEM_LOCAL_CHANGE, ...)`,
@@ -437,6 +438,7 @@ pub(super) fn process_links(
                     false
                 }
             },
+            context.options().modify_window(),
         );
         // upstream: generator.c:528-530 - ITEM_REPORT_TIME fires for the
         // hardlink-create path when the source mtime differs from the
@@ -537,6 +539,7 @@ pub(super) fn process_links(
                             false
                         }
                     },
+                    context.options().modify_window(),
                 );
                 context.record(
                     LocalCopyRecord::new(

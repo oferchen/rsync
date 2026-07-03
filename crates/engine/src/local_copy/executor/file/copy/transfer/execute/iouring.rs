@@ -133,6 +133,7 @@ pub(super) fn try_dispatch(
         true,
         flags.xattrs_enabled(),
         flags.acls_enabled(),
+        context.options().modify_window(),
     );
     context.record(
         LocalCopyRecord::new(
