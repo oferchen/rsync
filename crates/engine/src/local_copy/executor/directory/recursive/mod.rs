@@ -27,7 +27,9 @@ use crate::local_copy::{
 
 pub(crate) use batch::capture_batch_file_entry;
 pub(crate) use checksum::prefetch_directory_checksums;
-use deletion::{handle_empty_directory_pruning, handle_post_transfer_deletions};
+use deletion::{
+    apply_during_transfer_deletions, handle_empty_directory_pruning, handle_post_transfer_deletions,
+};
 use destination::{check_destination_state, record_skipped_missing_destination};
 use dir_metadata::{apply_final_directory_metadata, record_directory_completion};
 use entry::process_planned_entry;
@@ -437,6 +439,32 @@ fn copy_directory_recursive_inner(
 
     let plan = plan_directory_entries(context, &entries, relative, root_device)?;
     apply_pre_transfer_deletions(context, destination, relative, &plan)?;
+    // upstream: generator.c:1532-1537 - a non-INC_RECURSE `--delete-during`
+    // sweep runs while the generator itemizes the directory entry, before it
+    // recurses into that directory's children. Emit those `*deleting` rows
+    // ahead of the child transfer rows to match upstream's per-directory
+    // ordering; deferred timings are handled after the child loop.
+    // upstream: main.c:1356 - a `--max-delete` limit does NOT abort the
+    // transfer; the generator stops deleting, finishes every transfer, and
+    // reports the limit at cleanup (exit 25). Because the during-sweep now runs
+    // before this directory's child loop, capture a limit error and re-raise it
+    // only after the children (and metadata) are processed, so pending copies
+    // are not skipped. Any other error still propagates immediately.
+    let mut deferred_delete_limit_error: Option<LocalCopyError> = None;
+    match apply_during_transfer_deletions(
+        context,
+        destination,
+        relative,
+        plan.deletion_enabled,
+        plan.delete_timing,
+        &plan.keep_names,
+    ) {
+        Ok(()) => {}
+        Err(error) if error.is_delete_limit_error() => {
+            deferred_delete_limit_error = Some(error);
+        }
+        Err(error) => return Err(error),
+    }
 
     {
         let cache = prefetch_directory_checksums(context, &plan, destination);
@@ -484,6 +512,15 @@ fn copy_directory_recursive_inner(
                     first_entry_io_error = Some(error);
                 }
             }
+            Err(error) if error.is_delete_limit_error() => {
+                // upstream: main.c:1356 - a --max-delete limit hit while
+                // recursing into a child directory must not abort the parent's
+                // remaining transfers. Defer it, letting the sibling entries
+                // finish, then re-raise at the end of this directory.
+                if deferred_delete_limit_error.is_none() {
+                    deferred_delete_limit_error = Some(error);
+                }
+            }
             Err(error) => return Err(error),
         }
     }
@@ -501,6 +538,11 @@ fn copy_directory_recursive_inner(
 
     if prune_enabled && !kept_any {
         handle_empty_directory_pruning(context, destination, created_directory_on_disk)?;
+        // upstream: the --max-delete limit (exit 25) outranks a partial/IO error
+        // (exit 23/24); raise it first, mirroring the old post-loop ordering.
+        if let Some(error) = deferred_delete_limit_error {
+            return Err(error);
+        }
         if let Some(error) = first_entry_io_error {
             return Err(error);
         }
@@ -526,6 +568,14 @@ fn copy_directory_recursive_inner(
             #[cfg(all(any(unix, windows), feature = "acl"))]
             preserve_acls,
         )?;
+    }
+
+    // upstream: the --max-delete limit (exit 25) is reported after the transfer
+    // and metadata finalization complete, and outranks a partial/IO error
+    // (exit 23/24). Raise the deferred limit error first to preserve the old
+    // post-loop ordering now that the delete-during sweep runs before the loop.
+    if let Some(error) = deferred_delete_limit_error {
+        return Err(error);
     }
 
     // If there were I/O errors during entry processing, propagate the first

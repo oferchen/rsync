@@ -598,3 +598,76 @@ fn delete_after_works_with_dry_run() {
     }
 }
 
+/// `--delete-during` must delete a directory's extraneous entries BEFORE it
+/// transfers that same directory's surviving/new children, matching upstream's
+/// per-directory ordering.
+///
+/// upstream: generator.c:1532-1537 - for a non-INC_RECURSE `delete_during` run
+/// the generator calls `delete_in_dir()` while itemizing the directory entry
+/// itself, so the `*deleting` rows for a directory precede the transfer rows
+/// for its children. Verified byte-for-byte against rsync 3.4.4:
+///
+/// ```text
+/// *deleting   sub/stale.txt
+/// >f+++++++++ sub/new.txt
+/// ```
+///
+/// This pins the ordering so a regression that moves the during-sweep back
+/// after the child loop (which would invert it to copy-then-delete, matching
+/// `--delete-after` instead) fails here. It matters because the interleaved
+/// itemize stream is what a downstream consumer (or a diff against upstream)
+/// observes, and because deleting first frees inodes/space before the new
+/// files land.
+#[test]
+fn delete_during_deletes_directory_before_transferring_its_children() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    let sub = source.join("sub");
+    fs::create_dir_all(&sub).expect("create source sub");
+    fs::write(sub.join("new.txt"), b"new").expect("write new");
+
+    let dest = temp.path().join("dest");
+    let dest_sub = dest.join("sub");
+    fs::create_dir_all(&dest_sub).expect("create dest sub");
+    // An extraneous entry in the same directory a new file will land in.
+    fs::write(dest_sub.join("stale.txt"), b"stale").expect("write stale");
+
+    let mut source_operand = source.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .delete(true) // delete-during is the default timing
+        .collect_events(true);
+
+    let report = plan
+        .execute_with_report(LocalCopyExecution::Apply, options)
+        .expect("copy with delete-during succeeds");
+
+    assert!(dest_sub.join("new.txt").exists(), "new file must land");
+    assert!(
+        !dest_sub.join("stale.txt").exists(),
+        "extraneous file must be deleted"
+    );
+
+    let records = report.records();
+    let delete_index = records.iter().position(|record| {
+        record.action() == &LocalCopyAction::EntryDeleted
+            && record.relative_path().ends_with("stale.txt")
+    });
+    let copy_index = records.iter().position(|record| {
+        record.action() == &LocalCopyAction::DataCopied
+            && record.relative_path().ends_with("new.txt")
+    });
+
+    let delete_index = delete_index.expect("stale.txt deletion must be recorded");
+    let copy_index = copy_index.expect("new.txt copy must be recorded");
+    assert!(
+        delete_index < copy_index,
+        "delete-during must delete sub/stale.txt before copying sub/new.txt \
+         (delete idx {delete_index}, copy idx {copy_index})"
+    );
+}
+

@@ -242,33 +242,39 @@ fn ignore_errors_option_independent_of_delete_timing() {
 #[cfg(unix)]
 #[test]
 fn delete_suppressed_when_io_errors_and_ignore_errors_not_set() {
-    // This test simulates what happens when a source file cannot be read:
-    // - The transfer encounters an I/O error
-    // - Without --ignore-errors, deletions should be suppressed
+    // upstream: generator.c:298 - `delete_in_dir` skips ALL file deletion once
+    // `io_error & IOERR_GENERAL` is set and `--ignore-errors` is off, printing
+    // "IO error encountered -- skipping file deletion". The general IO error is
+    // raised while BUILDING the file list (e.g. an unreadable directory whose
+    // `opendir`/`readdir` fails), i.e. before the delete pass of any sibling
+    // directory runs. An unreadable regular *file* does NOT set this flag - that
+    // surfaces later in `send_files` (exit 23) after the delete passes already
+    // ran, so upstream still deletes in that case (verified against rsync 3.4.4).
     //
-    // We create a source file that is unreadable (permission denied) to
-    // trigger the I/O error during transfer.
+    // Since oc-rsync's `--delete-during` now unlinks a directory's extraneous
+    // entries BEFORE transferring that directory's children (matching upstream's
+    // per-directory ordering), the suppression must be driven by the earlier
+    // directory-read error. An unreadable subdirectory sorts before the
+    // extraneous entry's directory and records the IO error first, so the later
+    // directory's during-sweep is suppressed and its extra file survives.
     use std::os::unix::fs::PermissionsExt;
 
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source");
     let dest = temp.path().join("dest");
-    fs::create_dir_all(&source).expect("create source");
-    fs::create_dir_all(&dest).expect("create dest");
+    fs::create_dir_all(source.join("baddir")).expect("create baddir");
+    fs::create_dir_all(source.join("zsub")).expect("create zsub");
+    fs::create_dir_all(dest.join("zsub")).expect("create dest zsub");
 
-    // Create a readable source file
-    fs::write(source.join("good.txt"), b"good").expect("write good");
-    // Create an unreadable source file to trigger I/O error
-    fs::write(source.join("bad.txt"), b"bad").expect("write bad");
-    fs::set_permissions(
-        source.join("bad.txt"),
-        fs::Permissions::from_mode(0o000),
-    )
-    .expect("make unreadable");
+    fs::write(source.join("baddir/inner.txt"), b"inner").expect("write inner");
+    fs::write(source.join("zsub/keep.txt"), b"keep").expect("write keep");
+    fs::write(dest.join("zsub/keep.txt"), b"keep").expect("write dest keep");
+    // Extraneous entry in a directory processed AFTER the failing one.
+    fs::write(dest.join("zsub/extra.txt"), b"should survive").expect("write extra");
 
-    // Dest has an extra file that would be deleted
-    fs::write(dest.join("good.txt"), b"old good").expect("write old good");
-    fs::write(dest.join("extra.txt"), b"should survive").expect("write extra");
+    // Make the directory unreadable so the flist build hits a general IO error.
+    fs::set_permissions(source.join("baddir"), fs::Permissions::from_mode(0o000))
+        .expect("make baddir unreadable");
 
     let mut source_operand = source.clone().into_os_string();
     source_operand.push(std::path::MAIN_SEPARATOR.to_string());
@@ -276,25 +282,22 @@ fn delete_suppressed_when_io_errors_and_ignore_errors_not_set() {
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
 
     // --delete WITHOUT --ignore-errors
-    let options = LocalCopyOptions::default().delete(true);
+    let options = LocalCopyOptions::default().recursive(true).delete(true);
 
-    // The copy should fail due to the I/O error
+    // The copy should fail due to the I/O error.
     let result = plan.execute_with_options(LocalCopyExecution::Apply, options);
 
-    // Restore permissions for cleanup
-    let _ = fs::set_permissions(
-        source.join("bad.txt"),
-        fs::Permissions::from_mode(0o644),
-    );
+    // Restore permissions for cleanup.
+    let _ = fs::set_permissions(source.join("baddir"), fs::Permissions::from_mode(0o755));
 
-    // The extra file in dest should survive because deletions are suppressed
-    // when I/O errors occur (unless --ignore-errors is set)
+    // The extra file in the later directory must survive because the general IO
+    // error suppresses deletion (upstream generator.c:298).
     assert!(
-        dest.join("extra.txt").exists(),
-        "extra.txt should survive when I/O errors occur without --ignore-errors"
+        dest.join("zsub/extra.txt").exists(),
+        "zsub/extra.txt must survive when a directory-read IO error suppresses deletion"
     );
 
-    // The operation should have reported an error
+    // The operation should have reported an error.
     assert!(result.is_err(), "copy should report I/O error");
 }
 
