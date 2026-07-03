@@ -304,12 +304,25 @@ fn local_copy_emits_nstr_summaries_under_debug_nstr() {
             messages.iter().any(|m| m == "Client checksum: md5"),
             "expected NSTR checksum summary for local copy: {messages:?}"
         );
-        // Compress fires because -z is active; no --compress-level means the
-        // upstream CLVL_NOT_SPECIFIED sentinel renders in the (level N) clause.
+        // Compress fires because -z is active. upstream calls
+        // init_compression_level() before the compat.c:216 print, so when no
+        // --compress-level is given the (level N) clause shows the algorithm's
+        // resolved default (zstd -> 3, zlib -> 6) - never the raw
+        // CLVL_NOT_SPECIFIED sentinel. upstream: token.c:55-105.
+        use compress::algorithm::{
+            CompressionAlgorithm, ZLIB_DEFAULT_LEVEL, ZSTD_DEFAULT_LEVEL,
+        };
+        let default_algo = CompressionAlgorithm::default_algorithm();
+        let default_level = match default_algo {
+            CompressionAlgorithm::Zlib => ZLIB_DEFAULT_LEVEL,
+            #[cfg(feature = "zstd")]
+            CompressionAlgorithm::Zstd => ZSTD_DEFAULT_LEVEL,
+            #[cfg(feature = "lz4")]
+            CompressionAlgorithm::Lz4 => 0,
+        };
         let expected = format!(
-            "Client compress: {} (level {})",
-            compress::algorithm::CompressionAlgorithm::default_algorithm().name(),
-            i32::MIN
+            "Client compress: {} (level {default_level})",
+            default_algo.name(),
         );
         assert!(
             messages.contains(&expected),
@@ -351,6 +364,50 @@ fn local_copy_nstr_compress_summary_renders_explicit_level() {
                 .iter()
                 .any(|m| m.starts_with("Client compress: ") && m.ends_with("(level 9)")),
             "expected compress summary to render level 9: {messages:?}"
+        );
+    });
+}
+
+/// `--compress-choice=zlibx` must report `zlibx` (not `zlib`) in the local-copy
+/// NSTR compress summary. The algorithm enum folds `zlibx` onto `Zlib`, so the
+/// raw choice name is preserved separately; upstream prints the verbatim
+/// `compress_choice` string (compat.c:208-219). Because zlibx shares zlib's
+/// codec, the resolved default level is 6 (token.c:62-70).
+#[test]
+fn local_copy_nstr_compress_summary_preserves_zlibx_name() {
+    run_with_timeout(LOCAL_TIMEOUT, || {
+        let temp = tempdir().expect("tempdir");
+        let source_root = temp.path().join("source");
+        let dest_root = temp.path().join("dest");
+        fs::create_dir_all(&source_root).expect("source root");
+        fs::create_dir_all(&dest_root).expect("dest root");
+
+        touch(
+            &source_root.join("data.txt"),
+            &create_compressible_data(4096),
+        );
+        let mut source_arg = source_root.into_os_string();
+        source_arg.push(std::path::MAIN_SEPARATOR.to_string());
+
+        let messages = nstr_messages_during(|| {
+            let config = ClientConfig::builder()
+                .transfer_args([source_arg, dest_root.into_os_string()])
+                .compress(true)
+                .compression_algorithm(compress::algorithm::CompressionAlgorithm::Zlib)
+                .compress_choice_name(Some("zlibx".to_owned()))
+                .build();
+            core::client::run_client(config).expect("run client");
+        });
+
+        assert!(
+            messages.contains(&"Client compress: zlibx (level 6)".to_owned()),
+            "expected zlibx (not zlib) in compress summary: {messages:?}"
+        );
+        assert!(
+            !messages
+                .iter()
+                .any(|m| m.starts_with("Client compress: zlib (")),
+            "zlibx must not collapse to the zlib name: {messages:?}"
         );
     });
 }

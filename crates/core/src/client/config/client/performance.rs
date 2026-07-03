@@ -23,6 +23,18 @@ impl ClientConfig {
         self.compression_algorithm
     }
 
+    /// Returns the raw `--compress-choice` name typed by the user, if any.
+    ///
+    /// Preserves the verbatim string (e.g. `"zlibx"`) that
+    /// [`CompressionAlgorithm`] cannot round-trip, so the local-copy
+    /// `--debug=NSTR` compress summary can reproduce upstream's output
+    /// byte-for-byte (`compat.c:206-219`).
+    #[must_use]
+    #[doc(alias = "--compress-choice")]
+    pub fn compress_choice_name(&self) -> Option<&str> {
+        self.compress_choice_name.as_deref()
+    }
+
     /// Returns whether the user explicitly specified `--compress-choice`.
     ///
     /// When `true`, the algorithm was set via `--compress-choice=ALGO`,

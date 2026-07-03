@@ -478,9 +478,7 @@ const fn signature_checksum_nstr_name(
 /// compat.c:213-219 (`"%s%s compress: %s (level %d)"`), both at
 /// `DEBUG_GTE(NSTR, am_server ? 3 : 1)` - the client side is level 1.
 fn emit_local_copy_nstr_summaries(config: &ClientConfig) {
-    use protocol::nstr::{
-        CLVL_NOT_SPECIFIED, NstrSide, trace_checksum_summary, trace_compress_summary,
-    };
+    use protocol::nstr::{NstrSide, trace_checksum_summary, trace_compress_summary};
 
     trace_checksum_summary(
         NstrSide::Client,
@@ -488,24 +486,66 @@ fn emit_local_copy_nstr_summaries(config: &ClientConfig) {
         signature_checksum_nstr_name(config.checksum_signature_algorithm()),
     );
 
-    // upstream: compat.c:214-215 - the compress summary only fires when
-    // `do_compression != CPRES_NONE || level != CLVL_NOT_SPECIFIED`.
-    let level = config
-        .compression_level()
-        .map_or(CLVL_NOT_SPECIFIED, compression_level_to_nstr);
-    if config.compress() || level != CLVL_NOT_SPECIFIED {
-        trace_compress_summary(
-            NstrSide::Client,
-            false,
-            config.compression_algorithm().name(),
-            level,
-        );
+    // upstream: compat.c:200-201 calls init_compression_level() before the
+    // debug print whenever `do_compression != CPRES_NONE`, and compat.c:215
+    // only emits the line when `do_compression != CPRES_NONE ||
+    // do_compression_level != CLVL_NOT_SPECIFIED`. A local copy performs no
+    // compression, so the line fires solely when the user enabled it.
+    if !config.compress() {
+        return;
+    }
+
+    let algorithm = config.compression_algorithm();
+    // upstream prints the verbatim `compress_choice` string (compat.c:208-211,
+    // 216-219); the algorithm enum folds `zlibx` onto `Zlib`, so prefer the
+    // preserved raw name and fall back to the enum name for the default case.
+    let name = config
+        .compress_choice_name()
+        .unwrap_or_else(|| algorithm.name());
+    let level = resolve_nstr_compress_level(algorithm, config.compression_level());
+    trace_compress_summary(NstrSide::Client, false, name, level);
+}
+
+/// Resolves the compress level rendered in the `--debug=NSTR` summary,
+/// mirroring upstream `token.c:init_compression_level()`.
+///
+/// upstream (`token.c:55-105`): when the user did not pass `--compress-level`
+/// (`CLVL_NOT_SPECIFIED`), the level becomes the algorithm's `def_level` -
+/// `6` for zlib/zlibx, `ZSTD_CLEVEL_DEFAULT` (3) for zstd, and `0` for lz4.
+/// A user-supplied level is clamped into the algorithm's valid range. The
+/// forked local-copy server runs this before the compat.c:216 print, so the
+/// summary never shows the raw `CLVL_NOT_SPECIFIED` sentinel.
+fn resolve_nstr_compress_level(
+    algorithm: compress::algorithm::CompressionAlgorithm,
+    override_level: Option<compress::zlib::CompressionLevel>,
+) -> i32 {
+    use compress::algorithm::{CompressionAlgorithm, ZLIB_DEFAULT_LEVEL};
+
+    match algorithm {
+        CompressionAlgorithm::Zlib => {
+            // upstream: token.c:62-70 - zlib/zlibx range 1..=9, def_level 6.
+            override_level
+                .map_or(ZLIB_DEFAULT_LEVEL, compression_level_to_nstr)
+                .clamp(1, 9)
+        }
+        #[cfg(feature = "zstd")]
+        CompressionAlgorithm::Zstd => {
+            // upstream: token.c:72-79 - def_level ZSTD_CLEVEL_DEFAULT (3).
+            override_level.map_or(
+                compress::algorithm::ZSTD_DEFAULT_LEVEL,
+                compression_level_to_nstr,
+            )
+        }
+        #[cfg(feature = "lz4")]
+        CompressionAlgorithm::Lz4 => {
+            // upstream: token.c:81-87 - lz4 def_level 0, min/max 0.
+            0
+        }
     }
 }
 
 /// Maps a user-supplied `--compress-level` to the raw i32 upstream renders in
-/// the NSTR compress summary. upstream: token.c:init_compression_level() -
-/// zlib range 0..=9.
+/// the NSTR compress summary. upstream: token.c:init_compression_level().
 fn compression_level_to_nstr(level: compress::zlib::CompressionLevel) -> i32 {
     use compress::zlib::CompressionLevel;
     match level {
