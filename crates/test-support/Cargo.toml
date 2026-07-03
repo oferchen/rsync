@@ -11,3 +11,10 @@ description = "Shared test utilities for the oc-rsync workspace"
 
 [dependencies]
 tempfile = { workspace = true }
+
+# Rust port of upstream `support/lsh.sh`. Built as a workspace binary so tests
+# can resolve its path via `CARGO_BIN_EXE_lsh-stub` and drive oc-rsync's
+# remote-shell code paths locally (design section 5).
+[[bin]]
+name = "lsh-stub"
+path = "src/bin/lsh-stub.rs"
