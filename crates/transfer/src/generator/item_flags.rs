@@ -172,16 +172,31 @@ impl ItemFlags {
 
     /// Reads optional trailing fields based on flags.
     ///
-    /// Returns `(fnamecmp_type, xname)` where each is present only if indicated by flags.
-    /// The `fnamecmp_type` is decoded into a typed `FnameCmpType` enum that mirrors
-    /// upstream `FNAMECMP_*` constants from `rsync.h`.
+    /// Returns `(fnamecmp_type, xname, trailing_bytes)` where each field is
+    /// present only if indicated by flags and `trailing_bytes` is the exact
+    /// number of wire bytes consumed (basis-type byte plus the xname vstring
+    /// prefix and payload). The `fnamecmp_type` is decoded into a typed
+    /// `FnameCmpType` enum that mirrors upstream `FNAMECMP_*` constants from
+    /// `rsync.h`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:403-418` - `read_ndx_and_attrs()` reads the basis-type byte,
+    ///   then the xname via `read_vstring(f_in, buf, MAXPATHLEN)`.
+    /// - `io.c:2004-2020` - `read_vstring()`: the length prefix is a 1- or
+    ///   2-byte vstring (NOT a varint). The high bit of the first byte flags a
+    ///   second byte and `len = (first & ~0x80) * 0x100 + second`. A length of
+    ///   `>= MAXPATHLEN` (4096) is a protocol error, not a value to truncate.
     pub fn read_trailing<R: Read>(
         &self,
         reader: &mut R,
-    ) -> io::Result<(Option<protocol::FnameCmpType>, Option<Vec<u8>>)> {
+    ) -> io::Result<(Option<protocol::FnameCmpType>, Option<Vec<u8>>, u64)> {
+        let mut trailing_bytes: u64 = 0;
+
         let fnamecmp_type = if self.has_basis_type() {
             let mut byte = [0u8; 1];
             reader.read_exact(&mut byte)?;
+            trailing_bytes += 1;
             Some(protocol::FnameCmpType::from_wire(byte[0]).ok_or_else(|| {
                 io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -198,11 +213,39 @@ impl ItemFlags {
         };
 
         let xname = if self.has_xname() {
-            let xlen = protocol::read_varint(reader)? as usize;
+            // upstream: io.c:2004 read_vstring() - a 1- or 2-byte length prefix,
+            // not a varint. Using read_varint here desyncs the wire stream for
+            // any xname whose length prefix differs between the two encodings.
+            let mut first = [0u8; 1];
+            reader.read_exact(&mut first)?;
+            trailing_bytes += 1;
+            let xlen = if first[0] & 0x80 != 0 {
+                let mut second = [0u8; 1];
+                reader.read_exact(&mut second)?;
+                trailing_bytes += 1;
+                ((first[0] & 0x7F) as usize) * 0x100 + second[0] as usize
+            } else {
+                first[0] as usize
+            };
+
+            // upstream: io.c:2010-2014 - `len >= bufsize` (MAXPATHLEN) aborts
+            // with RERR_PROTOCOL. Truncating instead would leave the unread
+            // tail on the wire and desync every subsequent read.
+            if xlen >= MAX_XNAME_VSTRING_LEN {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "over-long xname vstring received ({xlen} >= {MAX_XNAME_VSTRING_LEN}) {}{}",
+                        error_location!(),
+                        crate::role_trailer::sender()
+                    ),
+                ));
+            }
+
             if xlen > 0 {
-                let actual_len = xlen.min(4096);
-                let mut xname_buf = vec![0u8; actual_len];
+                let mut xname_buf = vec![0u8; xlen];
                 reader.read_exact(&mut xname_buf)?;
+                trailing_bytes += xlen as u64;
                 Some(xname_buf)
             } else {
                 None
@@ -211,6 +254,11 @@ impl ItemFlags {
             None
         };
 
-        Ok((fnamecmp_type, xname))
+        Ok((fnamecmp_type, xname, trailing_bytes))
     }
 }
+
+/// Upstream `MAXPATHLEN` ceiling passed to `read_vstring()` for the xname
+/// field (`rsync.c:408`). A vstring whose length reaches this bound is a
+/// protocol error (`io.c:2010-2014`).
+const MAX_XNAME_VSTRING_LEN: usize = 4096;
