@@ -333,18 +333,27 @@ fn empty_flag_rejected() {
     assert!(result.is_err());
 }
 
-/// Verifies flag names are case-sensitive (lowercase required).
+/// Verifies flag names match case-insensitively.
+///
+/// upstream: options.c:parse_output_words() compares names with strncasecmp,
+/// so `--debug=RECV`, `--debug=Recv`, and `--debug=recv` are equivalent.
+/// Users and the fuzzy testsuite pass upper-case tokens like `--debug=FUZZY`.
 #[test]
-fn flag_names_case_sensitive() {
+fn flag_names_case_insensitive() {
     init(VerbosityConfig::default());
 
-    // Lowercase should work
     apply_debug_flag("recv").unwrap();
     assert!(debug_gte(DebugFlag::Recv, 1));
 
-    // Uppercase should fail (config.rs expects lowercase)
-    let result = apply_debug_flag("RECV");
-    assert!(result.is_err());
+    // Upper-case names resolve to the same flag.
+    init(VerbosityConfig::default());
+    apply_debug_flag("RECV").unwrap();
+    assert!(debug_gte(DebugFlag::Recv, 1));
+
+    // Mixed case with a level suffix also works.
+    init(VerbosityConfig::default());
+    apply_debug_flag("Fuzzy2").unwrap();
+    assert!(debug_gte(DebugFlag::Fuzzy, 2));
 }
 
 /// Verifies level 0 disables a flag.
