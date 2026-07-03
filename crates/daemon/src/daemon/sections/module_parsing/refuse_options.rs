@@ -213,6 +213,23 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
         return None;
     }
 
+    // upstream: options.c:2215-2241 - a `refuse options = delete` rule matches
+    // the single `delete` popt entry, but the enforcement at options.c:2238 is
+    // semantic: `if (refused_delete && (delete_mode || missing_args == 2))`.
+    // Every delete-timing variant (`--delete-before/during/after/delay`),
+    // `--delete-excluded`, `--del`, and `--delete-missing-args` sets
+    // `delete_mode` (options.c:2215-2229), so refusing `delete` refuses them
+    // all. The lexical per-arg scan below only matches e.g. `delete-during`
+    // against a `delete*` glob, never the bare `delete` rule, so this semantic
+    // pass catches the timing variants the client actually sends on the wire
+    // (oc emits `--delete-during` for a plain `-a --delete`). The reported
+    // option is always `--delete`, matching `create_refuse_error(refused_delete)`.
+    if is_option_refused(&module.refuse_options, "delete", None)
+        && client_args.iter().any(|arg| enables_delete_mode(arg))
+    {
+        return Some("--delete".to_owned());
+    }
+
     for arg in client_args {
         let trimmed = arg.trim_start();
         if let Some(rest) = trimmed.strip_prefix("--") {
@@ -252,6 +269,31 @@ fn refused_client_arg(module: &ModuleDefinition, client_args: &[String]) -> Opti
         }
     }
     None
+}
+
+/// Reports whether a client argument turns on the delete machinery, so a
+/// `refuse options = delete` rule can reject it regardless of which timing
+/// variant the client sent.
+///
+/// upstream: options.c:2215-2229 - `--delete`, `--del`, every
+/// `--delete-WHEN` variant, and `--delete-excluded` all set `delete_mode`;
+/// `--delete-missing-args` sets `missing_args = 2`. options.c:2238 then
+/// refuses the transfer whenever `refused_delete` is set and any of those is
+/// active. `--delete-missing-args` also needs the `missing_args == 2` guard
+/// there, which matches this option once it has been requested.
+fn enables_delete_mode(arg: &str) -> bool {
+    let canonical = canonical_option(arg);
+    matches!(
+        canonical.as_str(),
+        "del"
+            | "delete"
+            | "delete-before"
+            | "delete-during"
+            | "delete-delay"
+            | "delete-after"
+            | "delete-excluded"
+            | "delete-missing-args"
+    )
 }
 
 /// Evaluates a canonical option (long name + optional short letter) against an
