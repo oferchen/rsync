@@ -238,6 +238,106 @@ mod protect_args_daemon_tests {
         );
     }
 
+    // upstream: options.c:2866-2869 - --delete-missing-args is always
+    // forwarded to the daemon because deleting a missing arg needs both
+    // sides to cooperate: the sender emits the mode-0 sentinel and the
+    // receiver must have missing_args==2 to accept it (flist.c:884) and
+    // run delete_item (generator.c:1360). Without this the daemon rejects
+    // the mode-0 entry with "invalid file mode 00" (upstream #910) or,
+    // against an oc daemon, silently keeps the stale destination path.
+    #[test]
+    fn build_full_args_forwards_delete_missing_args_on_push() {
+        let config = ClientConfig::builder().delete_missing_args(true).build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        // is_sender=false => daemon is receiver (client push).
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        assert!(
+            args.iter().any(|a| a == "--delete-missing-args"),
+            "push must forward --delete-missing-args so the daemon accepts \
+             the mode-0 sentinel and deletes the missing arg: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_full_args_forwards_delete_missing_args_on_pull() {
+        let config = ClientConfig::builder().delete_missing_args(true).build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        // is_sender=true => daemon is sender (client pull). Both sides still
+        // need the flag, so it is forwarded regardless of direction.
+        let args = build_full_daemon_args(&config, &request, protocol, true);
+
+        assert!(
+            args.iter().any(|a| a == "--delete-missing-args"),
+            "pull must also forward --delete-missing-args (both sides cooperate): {args:?}"
+        );
+    }
+
+    // upstream: options.c:2870-2871 - --ignore-missing-args is forwarded
+    // only when the local side is the receiver (`!am_sender`); a sender can
+    // honour ignore by itself and never tells the receiver. Here
+    // is_sender=true means the daemon is the sender, so the local side is
+    // the receiver and the flag must be forwarded.
+    #[test]
+    fn build_full_args_forwards_ignore_missing_args_only_on_pull() {
+        let config = ClientConfig::builder().ignore_missing_args(true).build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+
+        // Pull (daemon is sender, local side is receiver): forwarded.
+        let pull = build_full_daemon_args(&config, &request, protocol, true);
+        assert!(
+            pull.iter().any(|a| a == "--ignore-missing-args"),
+            "pull (local receiver) must forward --ignore-missing-args: {pull:?}"
+        );
+
+        // Push (daemon is receiver, local side is sender): NOT forwarded,
+        // the sender handles the missing arg locally.
+        let push = build_full_daemon_args(&config, &request, protocol, false);
+        assert!(
+            !push.iter().any(|a| a == "--ignore-missing-args"),
+            "push (local sender) must not forward --ignore-missing-args: {push:?}"
+        );
+    }
+
+    // Mutual exclusivity: with both flags set the builder emits only the
+    // delete form (upstream options.c:2867's `if/else if` gives
+    // --delete-missing-args precedence, matching options.c:2236-2237 where
+    // missing_args==3 is simplified to 2).
+    #[test]
+    fn build_full_args_delete_wins_over_ignore_missing_args() {
+        let config = ClientConfig::builder()
+            .delete_missing_args(true)
+            .ignore_missing_args(true)
+            .build();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        assert!(args.iter().any(|a| a == "--delete-missing-args"));
+        assert!(
+            !args.iter().any(|a| a == "--ignore-missing-args"),
+            "delete-missing-args must take precedence: {args:?}"
+        );
+    }
+
+    #[test]
+    fn build_full_args_omits_missing_args_by_default() {
+        let config = ClientConfig::default();
+        let request = test_daemon_request();
+        let protocol = ProtocolVersion::try_from(32u8).unwrap();
+        let args = build_full_daemon_args(&config, &request, protocol, false);
+
+        assert!(
+            !args
+                .iter()
+                .any(|a| a == "--delete-missing-args" || a == "--ignore-missing-args"),
+            "no missing-args flag by default: {args:?}"
+        );
+    }
+
     #[test]
     fn build_full_args_includes_multiple_reference_dirs() {
         let config = ClientConfig::builder()

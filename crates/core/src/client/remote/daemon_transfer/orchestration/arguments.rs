@@ -331,6 +331,18 @@ pub(super) fn build_full_daemon_args(
         }
     }
 
+    // upstream: options.c:2866-2871 - --delete-missing-args needs the
+    // cooperation of both sides, so it is always forwarded to the server.
+    // --ignore-missing-args is forwarded only when the local side is the
+    // receiver (`!am_sender`); a sender handles ignore by itself. Here
+    // `we_are_sender == !is_sender` mirrors upstream `am_sender`, so the
+    // ignore branch fires when the daemon is the sender (`is_sender`).
+    if config.delete_missing_args() {
+        args.push("--delete-missing-args".to_owned());
+    } else if config.ignore_missing_args() && !we_are_sender {
+        args.push("--ignore-missing-args".to_owned());
+    }
+
     // upstream: options.c:2933-2942
     if config.append() {
         args.push("--append".to_owned());
