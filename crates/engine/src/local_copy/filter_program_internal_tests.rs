@@ -68,12 +68,15 @@ fn filter_segment_apply_updates_transfer_and_deletion_outcomes() {
     segment
         .push_rule(FilterRule::include("keep.txt"))
         .expect("include rule added");
-    segment
-        .push_rule(FilterRule::protect("protected/**"))
-        .expect("protect rule added");
+    // Risk (more specific) precedes protect (broad): upstream check_filter()
+    // returns on the first matching rule (exclude.c:1058-1061), so the override
+    // sub-path is un-protected while the broad protect still guards its siblings.
     segment
         .push_rule(FilterRule::risk("protected/override/**"))
         .expect("risk rule added");
+    segment
+        .push_rule(FilterRule::protect("protected/**"))
+        .expect("protect rule added");
 
     let mut allowed = FilterOutcome::default();
     segment.apply(
@@ -102,13 +105,17 @@ fn filter_segment_apply_updates_transfer_and_deletion_outcomes() {
     );
     assert!(!deletion.allows_deletion());
 
+    // Each path is evaluated with a fresh outcome (program.rs builds one per
+    // path); the override sub-path matches the risk rule first and stays
+    // deletable, independent of the earlier protected/data.bin evaluation.
+    let mut override_outcome = FilterOutcome::default();
     segment.apply(
         Path::new("protected/override/data.bin"),
         false,
-        &mut deletion,
+        &mut override_outcome,
         FilterContext::Deletion,
     );
-    assert!(deletion.allows_deletion());
+    assert!(override_outcome.allows_deletion());
 }
 
 #[test]

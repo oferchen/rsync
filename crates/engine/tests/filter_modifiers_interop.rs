@@ -156,7 +156,6 @@ fn protect_keeps_extraneous_dest_file_from_delete() {
 /// evaluator is fixed to break on the first matching protect/risk rule. It must
 /// not be changed to assert oc's current (wrong) last-match behaviour.
 #[test]
-#[ignore = "oc protect/risk evaluator is last-match-wins; upstream is first-match-wins (segments.rs)"]
 fn risk_re_exposes_protected_dest_file_to_delete() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("src");
