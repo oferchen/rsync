@@ -15,6 +15,7 @@ use crate::local_copy::{
 };
 
 use super::super::append::{AppendMode, determine_append_mode};
+use super::super::comparison::{CopyComparison, should_skip_copy};
 
 /// Aggregated parameters for simulating a file copy in dry-run mode.
 pub(super) struct DryRunRequest<'a> {
@@ -78,6 +79,36 @@ pub(super) fn handle_dry_run(
             Some(metadata_snapshot),
         ));
         return Ok(());
+    }
+
+    // upstream: generator.c:526,645 - the generator runs the quick check
+    // (unchanged_file()/itemize()) in dry-run exactly as in a real run: a
+    // destination whose size matches and whose mtime is within `--modify-window`
+    // of the source is up-to-date, so no transfer is itemized. Mirror the
+    // real-run `try_skip_up_to_date` path here; without it the dry-run always
+    // reports a `>f` transfer and `--modify-window` never absorbs a small mtime
+    // drift.
+    if let Some(existing) = existing_metadata {
+        let prefetched_match = if context.checksum_enabled() {
+            context.lookup_checksum(source)
+        } else {
+            None
+        };
+        if should_skip_copy(CopyComparison {
+            source_path: source,
+            source: metadata,
+            destination_path: destination,
+            destination: existing,
+            size_only: context.size_only_enabled(),
+            ignore_times: context.ignore_times_enabled(),
+            checksum: context.checksum_enabled(),
+            checksum_algorithm: context.options().checksum_algorithm(),
+            modify_window: context.options().modify_window(),
+            prefetched_match,
+        }) {
+            record_dry_run_skip(context, metadata, destination, record_path, existing);
+            return Ok(());
+        }
     }
 
     // upstream: generator.c:1469-1483 - in dry-run mode the generator still
@@ -152,6 +183,49 @@ pub(super) fn handle_dry_run(
     );
     remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
     Ok(())
+}
+
+/// Records a dry-run quick-check skip for an up-to-date destination.
+///
+/// Mirrors the real-run `record_metadata_only_skip` bookkeeping (hard-link
+/// registration, matched-file counter, `MetadataReused` event) but performs no
+/// filesystem mutation, since dry-run does no I/O. The change set is computed
+/// against the existing destination and honours `--modify-window`, so a file
+/// whose only drift is a sub-window mtime difference produces a blank itemize
+/// (suppressed at plain `-i`), matching upstream generator.c:526.
+fn record_dry_run_skip(
+    context: &mut CopyContext,
+    metadata: &fs::Metadata,
+    destination: &Path,
+    record_path: &Path,
+    existing: &fs::Metadata,
+) {
+    let metadata_options = context.metadata_options();
+    context.record_hard_link(metadata, destination);
+    context.summary_mut().record_regular_file_matched();
+    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+    let total_bytes = Some(metadata_snapshot.len());
+    let change_set = LocalCopyChangeSet::for_file(
+        metadata,
+        Some(existing),
+        &metadata_options,
+        true,
+        false,
+        false,
+        false,
+        context.options().modify_window(),
+    );
+    context.record(
+        LocalCopyRecord::new(
+            record_path.to_path_buf(),
+            LocalCopyAction::MetadataReused,
+            0,
+            total_bytes,
+            Duration::default(),
+            Some(metadata_snapshot),
+        )
+        .with_change_set(change_set),
+    );
 }
 
 /// Records the dry-run itemize for a regular file that would be satisfied by a
@@ -257,6 +331,7 @@ fn simulate_reference_match(
         false,
         false,
         false,
+        context.options().modify_window(),
     );
     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
     context.record(

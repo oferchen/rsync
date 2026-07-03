@@ -20,7 +20,7 @@ pub(crate) use directory::{
 pub(crate) use file::take_fsync_call_count;
 pub(crate) use file::{
     CopyComparison, DEFAULT_XXH64_DEDUP_SIZE_LIMIT, SparseWriteState, copy_entry_to_backup,
-    copy_file, should_skip_copy, write_sparse_chunk,
+    copy_file, should_skip_copy, system_time_within_window, write_sparse_chunk,
 };
 pub use file::{
     DestinationWriteGuard, PartialFileManager, PartialMode, SparseDetectStrategy, SparseDetector,

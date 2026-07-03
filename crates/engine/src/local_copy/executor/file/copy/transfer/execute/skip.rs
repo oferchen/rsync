@@ -170,6 +170,7 @@ pub(super) fn record_metadata_only_skip(
         false,
         flags.xattrs_enabled(),
         flags.acls_enabled(),
+        context.options().modify_window(),
     );
     context.record(
         LocalCopyRecord::new(

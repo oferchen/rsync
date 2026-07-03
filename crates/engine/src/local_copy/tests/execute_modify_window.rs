@@ -843,6 +843,87 @@ fn modify_window_dry_run_reports_correctly() {
     );
 }
 
+/// A dry-run itemize must apply `--modify-window` to the quick check exactly
+/// as a real run does. Upstream `generator.c:526,645` runs `same_time()` in
+/// both modes, so a destination whose only drift is a sub-window mtime
+/// difference is up-to-date and is NOT reported as a transfer. This is the
+/// exact scenario the upstream `compare` testsuite exercises with
+/// `run_rsync('-ain', '--modify-window=2', ...)`: a 1s-newer destination must
+/// be absorbed by a 2s window, leaving nothing itemized.
+///
+/// Regression guard: before the fix, `handle_dry_run` never ran the quick
+/// check, so it always recorded a transfer regardless of the window.
+#[test]
+fn modify_window_dry_run_absorbs_within_window_mtime_drift() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    // Identical content and size; the only difference is a 1s mtime drift.
+    let content = b"identical content";
+    fs::write(&source, content).expect("write source");
+    fs::write(&destination, content).expect("write dest");
+
+    let base_time = FileTime::from_unix_time(1_700_000_000, 0);
+    let one_second_newer = FileTime::from_unix_time(1_700_000_001, 0);
+    set_file_times(&source, base_time, base_time).expect("set source times");
+    set_file_times(&destination, one_second_newer, one_second_newer).expect("set dest times");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::DryRun,
+            LocalCopyOptions::default().with_modify_window(Duration::from_secs(2)),
+        )
+        .expect("dry run succeeds");
+
+    // The 1s drift is within the 2s window, so the dry-run must NOT itemize a
+    // transfer: the file is counted as up-to-date, matching upstream `-ain`.
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_total(), 1);
+}
+
+/// Contrast for the dry-run within-window case: with the DEFAULT zero window,
+/// the same 1s drift IS reported as a transfer, matching upstream `-ain`
+/// without `--modify-window`. This is the first leg of the upstream `compare`
+/// test (a 1s change must be itemized without a window).
+#[test]
+fn modify_window_dry_run_zero_window_itemizes_one_second_drift() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.txt");
+    let destination = temp.path().join("dest.txt");
+
+    let content = b"identical content";
+    fs::write(&source, content).expect("write source");
+    fs::write(&destination, content).expect("write dest");
+
+    let base_time = FileTime::from_unix_time(1_700_000_000, 0);
+    let one_second_newer = FileTime::from_unix_time(1_700_000_001, 0);
+    set_file_times(&source, base_time, base_time).expect("set source times");
+    set_file_times(&destination, one_second_newer, one_second_newer).expect("set dest times");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::DryRun,
+            LocalCopyOptions::default(),
+        )
+        .expect("dry run succeeds");
+
+    // Zero window: a whole-second mtime difference is reported as a transfer.
+    assert_eq!(summary.files_copied(), 1);
+}
+
 /// This test documents the behavior of --modify-window matching upstream rsync.
 ///
 /// From rsync(1) man page:

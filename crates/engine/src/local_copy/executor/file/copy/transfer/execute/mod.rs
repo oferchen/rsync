@@ -667,6 +667,7 @@ pub(in crate::local_copy) fn execute_transfer(
         flags.xattrs_enabled(),
         flags.acls_enabled(),
         flags.checksum_enabled,
+        context.options().modify_window(),
     );
     let action = if is_reference_copy {
         LocalCopyAction::ReferenceCopied

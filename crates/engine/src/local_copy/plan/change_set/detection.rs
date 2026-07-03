@@ -1,7 +1,9 @@
 use std::fs;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use ::metadata::MetadataOptions;
+
+use crate::local_copy::executor::system_time_within_window;
 
 use super::{LocalCopyChangeSet, TimeChange};
 
@@ -23,6 +25,7 @@ impl LocalCopyChangeSet {
         wrote_data: bool,
         xattrs_enabled: bool,
         acls_enabled: bool,
+        modify_window: Duration,
     ) -> Self {
         Self::for_file_with_checksum(
             metadata,
@@ -33,6 +36,7 @@ impl LocalCopyChangeSet {
             xattrs_enabled,
             acls_enabled,
             false,
+            modify_window,
         )
     }
 
@@ -54,6 +58,7 @@ impl LocalCopyChangeSet {
         xattrs_enabled: bool,
         acls_enabled: bool,
         checksum_enabled: bool,
+        modify_window: Duration,
     ) -> Self {
         let mut change_set = Self::new();
 
@@ -75,6 +80,7 @@ impl LocalCopyChangeSet {
             existing,
             destination_previously_existed,
             wrote_data,
+            modify_window,
         ));
 
         // upstream: generator.c:542-549 - `#ifndef CAN_CHMOD_SYMLINK` skips
@@ -238,6 +244,7 @@ fn determine_time_change(
     existing: Option<&fs::Metadata>,
     destination_previously_existed: bool,
     wrote_data: bool,
+    modify_window: Duration,
 ) -> Option<TimeChange> {
     if metadata_options.times() {
         if !destination_previously_existed {
@@ -247,8 +254,16 @@ fn determine_time_change(
         let new_mtime = metadata_modified_time(metadata);
         let old_mtime = existing.and_then(metadata_modified_time);
 
+        // upstream: generator.c:526 - the ITEM_REPORT_TIME bit is set via
+        // `!same_time(file->modtime, 0, &sxp->st)`. same_time() (util1.c:1478)
+        // treats two mtimes as equal when their whole-second delta is within
+        // `--modify-window`, so a sub-window drift must NOT light the `t` glyph.
         match (new_mtime, old_mtime) {
-            (Some(new_value), Some(old_value)) if new_value == old_value => None,
+            (Some(new_value), Some(old_value))
+                if system_time_within_window(new_value, old_value, modify_window) =>
+            {
+                None
+            }
             _ => Some(TimeChange::Modified),
         }
     } else if wrote_data || !destination_previously_existed {
