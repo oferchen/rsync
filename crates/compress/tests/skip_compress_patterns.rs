@@ -18,177 +18,60 @@ use compress::skip_compress::{
 mod default_skip_list {
     use super::*;
 
+    /// The complete upstream `DEFAULT_DONT_COMPRESS` suffix set from
+    /// `default-dont-compress.h` (leading `*.` stripped). The default skip list
+    /// must equal this set exactly - any drift changes which files get
+    /// compressed on the wire relative to upstream rsync.
+    const UPSTREAM_DONT_COMPRESS: &[&str] = &[
+        "3g2", "3gp", "7z", "aac", "ace", "apk", "avi", "bz2", "deb", "dmg", "ear", "f4v", "flac",
+        "flv", "gpg", "gz", "iso", "jar", "jpeg", "jpg", "lrz", "lz", "lz4", "lzma", "lzo", "m1a",
+        "m1v", "m2a", "m2ts", "m2v", "m4a", "m4b", "m4p", "m4r", "m4v", "mka", "mkv", "mov", "mp1",
+        "mp2", "mp3", "mp4", "mpa", "mpeg", "mpg", "mpv", "mts", "odb", "odf", "odg", "odi", "odm",
+        "odp", "ods", "odt", "oga", "ogg", "ogm", "ogv", "ogx", "opus", "otg", "oth", "otp", "ots",
+        "ott", "oxt", "png", "qt", "rar", "rpm", "rz", "rzip", "spx", "squashfs", "sxc", "sxd",
+        "sxg", "sxm", "sxw", "sz", "tbz", "tbz2", "tgz", "tlz", "ts", "txz", "tzo", "vob", "war",
+        "webm", "webp", "xz", "z", "zip", "zst",
+    ];
+
     #[test]
-    fn default_list_includes_all_image_formats() {
+    fn default_list_contains_every_upstream_suffix() {
         let decider = CompressionDecider::with_default_skip_list();
         let extensions = decider.skip_extensions();
-
-        let images = [
-            "jpg", "jpeg", "jpe", "png", "gif", "webp", "heic", "heif", "avif",
-        ];
-        for ext in images {
+        for ext in UPSTREAM_DONT_COMPRESS {
             assert!(
-                extensions.contains(ext),
-                "Default skip list should contain image extension: {ext}"
-            );
-        }
-
-        let more_images = ["tif", "tiff", "bmp", "ico", "svg", "svgz", "psd"];
-        for ext in more_images {
-            assert!(
-                extensions.contains(ext),
-                "Default skip list should contain extended image extension: {ext}"
-            );
-        }
-
-        let raw_formats = ["raw", "arw", "cr2", "nef", "orf", "sr2"];
-        for ext in raw_formats {
-            assert!(
-                extensions.contains(ext),
-                "Default skip list should contain RAW image extension: {ext}"
+                extensions.contains(*ext),
+                "Default skip list is missing upstream suffix: {ext}"
             );
         }
     }
 
     #[test]
-    fn default_list_includes_all_video_formats() {
+    fn default_list_has_no_non_upstream_suffixes() {
         let decider = CompressionDecider::with_default_skip_list();
-        let extensions = decider.skip_extensions();
-
-        let videos = [
-            "mp4", "m4v", "mkv", "avi", "mov", "wmv", "flv", "webm", "mpeg", "mpg", "vob", "ogv",
-            "3gp", "3g2", "ts", "mts", "m2ts",
-        ];
-        for ext in videos {
-            assert!(
-                extensions.contains(ext),
-                "Default skip list should contain video extension: {ext}"
-            );
-        }
-    }
-
-    #[test]
-    fn default_list_includes_all_audio_formats() {
-        let decider = CompressionDecider::with_default_skip_list();
-        let extensions = decider.skip_extensions();
-
-        let audio = [
-            "mp3", "m4a", "aac", "ogg", "oga", "opus", "flac", "wma", "wav", "aiff", "ape", "mka",
-            "ac3", "dts",
-        ];
-        for ext in audio {
-            assert!(
-                extensions.contains(ext),
-                "Default skip list should contain audio extension: {ext}"
-            );
-        }
-    }
-
-    #[test]
-    fn default_list_includes_all_archive_formats() {
-        let decider = CompressionDecider::with_default_skip_list();
-        let extensions = decider.skip_extensions();
-
-        let archives = [
-            "zip", "gz", "gzip", "bz2", "bzip2", "xz", "lzma", "7z", "rar",
-        ];
-        for ext in archives {
-            assert!(
-                extensions.contains(ext),
-                "Default skip list should contain archive extension: {ext}"
-            );
-        }
-
-        let modern = ["zst", "zstd", "lz4", "lzo"];
-        for ext in modern {
-            assert!(
-                extensions.contains(ext),
-                "Default skip list should contain modern compression extension: {ext}"
-            );
-        }
-
-        let legacy = ["z", "cab", "arj", "lzh"];
-        for ext in legacy {
-            assert!(
-                extensions.contains(ext),
-                "Default skip list should contain legacy compression extension: {ext}"
-            );
-        }
-
-        let compound = ["tar.gz", "tar.bz2", "tar.xz", "tgz", "tbz", "tbz2", "txz"];
-        for ext in compound {
-            assert!(
-                extensions.contains(ext),
-                "Default skip list should contain compound archive extension: {ext}"
-            );
-        }
-    }
-
-    #[test]
-    fn default_list_includes_package_formats() {
-        let decider = CompressionDecider::with_default_skip_list();
-        let extensions = decider.skip_extensions();
-
-        let packages = [
-            "deb", "rpm", "apk", "jar", "war", "ear", "egg", "whl", "gem", "nupkg", "snap", "appx",
-            "msix",
-        ];
-        for ext in packages {
-            assert!(
-                extensions.contains(ext),
-                "Default skip list should contain package extension: {ext}"
-            );
-        }
-    }
-
-    #[test]
-    fn default_list_includes_document_formats() {
-        let decider = CompressionDecider::with_default_skip_list();
-        let extensions = decider.skip_extensions();
-
-        let docs = ["pdf", "epub", "mobi", "azw", "azw3"];
-        for ext in docs {
-            assert!(
-                extensions.contains(ext),
-                "Default skip list should contain document extension: {ext}"
-            );
-        }
-
-        // Office formats wrap their content in deflate/zip - skip recompression.
-        let office = ["docx", "xlsx", "pptx", "odt", "ods", "odp"];
-        for ext in office {
-            assert!(
-                extensions.contains(ext),
-                "Default skip list should contain Office extension: {ext}"
-            );
-        }
-    }
-
-    #[test]
-    fn default_list_includes_disk_images() {
-        let decider = CompressionDecider::with_default_skip_list();
-        let extensions = decider.skip_extensions();
-
-        let disk_images = ["iso", "img", "dmg", "vhd", "vhdx", "vmdk", "qcow", "qcow2"];
-        for ext in disk_images {
-            assert!(
-                extensions.contains(ext),
-                "Default skip list should contain disk image extension: {ext}"
-            );
-        }
-    }
-
-    #[test]
-    fn default_skip_list_is_not_empty() {
-        let decider = CompressionDecider::with_default_skip_list();
-        assert!(
-            !decider.skip_extensions().is_empty(),
-            "Default skip list should contain extensions"
+        assert_eq!(
+            decider.skip_extensions().len(),
+            UPSTREAM_DONT_COMPRESS.len(),
+            "Default skip list must equal upstream DEFAULT_DONT_COMPRESS exactly"
         );
-        assert!(
-            decider.skip_extensions().len() > 50,
-            "Default skip list should have a substantial number of extensions"
-        );
+    }
+
+    #[test]
+    fn default_list_excludes_suffixes_upstream_compresses() {
+        let decider = CompressionDecider::with_default_skip_list();
+        let extensions = decider.skip_extensions();
+        // These were invented by oc-rsync but upstream compresses them.
+        let non_upstream = [
+            "gif", "heic", "heif", "avif", "tif", "tiff", "bmp", "ico", "svg", "psd", "raw", "cr2",
+            "wmv", "wma", "wav", "aiff", "ape", "ac3", "dts", "gzip", "bzip2", "cab", "arj", "lzh",
+            "egg", "whl", "gem", "nupkg", "snap", "pdf", "epub", "mobi", "docx", "xlsx", "pptx",
+            "img", "vhd", "vmdk", "qcow", "qcow2",
+        ];
+        for ext in non_upstream {
+            assert!(
+                !extensions.contains(ext),
+                "Default skip list must not contain non-upstream suffix: {ext}"
+            );
+        }
     }
 }
 
@@ -202,7 +85,6 @@ mod pattern_matching {
         let skip_files = [
             "photo.jpg",
             "image.png",
-            "animation.gif",
             "picture.webp",
             "movie.mp4",
             "clip.mkv",
@@ -214,9 +96,6 @@ mod pattern_matching {
             "data.gz",
             "backup.tar.gz",
             "files.7z",
-            "document.pdf",
-            "book.epub",
-            "report.docx",
             "package.deb",
             "application.rpm",
             "library.jar",
@@ -245,6 +124,10 @@ mod pattern_matching {
             "config.json",
             "data.csv",
             "log.txt",
+            // Suffixes upstream compresses (not in DEFAULT_DONT_COMPRESS).
+            "animation.gif",
+            "document.pdf",
+            "report.docx",
         ];
 
         for file in unknown_files {
@@ -268,7 +151,6 @@ mod pattern_matching {
             ("VIDEO.MKV", CompressionDecision::Skip),
             ("AUDIO.mp3", CompressionDecision::Skip),
             ("Archive.ZIP", CompressionDecision::Skip),
-            ("Document.PDF", CompressionDecision::Skip),
             ("BACKUP.TAR.GZ", CompressionDecision::Skip),
         ];
 
@@ -311,7 +193,7 @@ mod pattern_matching {
             "/var/backups/archive.tar.gz",
             "../relative/path/video.mp4",
             "./current/dir/audio.mp3",
-            "nested/directory/structure/document.pdf",
+            "nested/directory/structure/package.rpm",
         ];
 
         for file in files_with_paths {
@@ -1231,7 +1113,8 @@ mod integration {
             ("vacation/IMG_1234.jpg", CompressionDecision::Skip),
             ("videos/movie.mp4", CompressionDecision::Skip),
             ("music/song.mp3", CompressionDecision::Skip),
-            ("documents/report.pdf", CompressionDecision::Skip),
+            // Upstream does not skip .pdf; it is compressed (auto-detected).
+            ("documents/report.pdf", CompressionDecision::AutoDetect),
             ("backups/data.tar.gz", CompressionDecision::Skip),
             ("source/main.rs", CompressionDecision::AutoDetect),
             ("logs/application.log", CompressionDecision::AutoDetect),
