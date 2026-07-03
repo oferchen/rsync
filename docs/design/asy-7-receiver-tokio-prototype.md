@@ -586,4 +586,49 @@ fix, not part of this receiver rung.
    benefit (the ASY-3 shape already exists), and an unverified fork risks
    a wire/stats divergence - both worse than none per the stop clause.
 
+## 11. Finalization async twins landed (prerequisite for the atomic fork)
+
+Status: The receiver's end-of-transfer wire twins - the last pieces of the
+async building-block surface named in section 10.1 as still missing - now
+exist alongside the earlier reader-stack, file-list, per-file, and
+sender-stats twins:
+
+- `ReceiverContext::read_expected_ndx_done_async` - `.await` NDX_DONE (-1)
+  validation via `NdxCodecEnum::read_ndx_async`.
+- `ReceiverContext::exchange_phase_done_async` - the phase-done exchange
+  with `.await` on the sender's echoed NDX_DONE reads; the request-half
+  `write_ndx_done`/`flush`, the phase-counter walk, and the
+  `reclaim_oldest_segment` bookkeeping stay the identical sync logic.
+- `ReceiverContext::handle_goodbye_async` - the goodbye handshake with
+  `.await` on the echo NDX read and the `NDX_DEL_STATS` drain
+  (`DeleteStats::read_from_async`); the send-half stays sync.
+- `ReceiverContext::finalize_transfer_async` - composes the three twins
+  plus the already-landed `receive_stats_async` into the async
+  finalization tail, mirroring `finalize_transfer` byte-for-byte with
+  `.await` only on the wire reads.
+
+All four are `#[cfg(feature = "tokio-transfer")]`, additive, and have no
+non-test caller: like `receive_file_async`, they are the leaves the
+deferred atomic receiver fork (section 10.1) will call after its per-file
+loop, in place of the sync `finalize_transfer`. They keep the request/send
+half synchronous exactly as the per-file leg does, so no async NDX-write
+codec is required. Equivalence is pinned by
+`finalize_parity_tests` in `receiver/transfer/phases.rs`: the sender-side
+finalization wire is built with the sync codec, then driven through both
+`finalize_transfer` and `finalize_transfer_async` (including one byte per
+poll) with byte-consumption + send-half parity asserted, plus an
+error-parity case (a non-NDX_DONE in place of a phase echo rejects
+identically). Default build untouched; `cargo clippy -p transfer` (no
+feature) and a `x86_64-pc-windows-gnu` cross-build of the feature both
+pass - the twins introduce no unix-only type, so the `DirSandbox`/`RawFd`
+gating hazard that a prior async leg tripped does not apply here.
+
+This leaves exactly one code rung before the atomic driver fork: nothing.
+The async building-block surface (reader stack, file list, per-file
+reconstruct+commit, sender stats, phase-done, goodbye, finalization) is
+complete. What remains is (1) the atomic ~20-30-function receiver driver
+fork of section 10.1 - which stays STOP until it can be CI-verified
+byte-identical per section 10.2 - and (2) ASY-4 (the thread-pool-vs-async
+benchmark, no code). No other async twin is missing.
+
 <!-- CI skip-path verification probe for required upstream-testsuite check. -->
