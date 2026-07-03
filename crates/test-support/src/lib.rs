@@ -5,9 +5,13 @@
 //! This crate provides helpers that multiple test suites need, avoiding
 //! duplicated retry logic and setup boilerplate across crates.
 
+pub mod cli;
+pub mod lsh;
 pub mod skip;
 pub mod upstream_compat;
 
+pub use cli::{CliOutput, OcRsyncCliRunner, RunnerError};
+pub use lsh::{LSH_STUB_BIN, LshError, LshRunnerStub};
 pub use skip::{
     locate_command_on_path, locate_workspace_binary, require_binary, require_command_on_path,
     require_unix,
