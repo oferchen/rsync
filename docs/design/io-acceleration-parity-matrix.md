@@ -75,7 +75,7 @@ is plain blocking `TcpStream`.
 | splice file->pipe->socket | net-send direction ABSENT (splice module is recv->disk) | n/a | n/a | - | - | recv-side `recv_fd_to_file` is BUILT-UNWIRED |
 | `MSG_ZEROCOPY` | ABSENT | n/a | n/a | - | - | no `SO_ZEROCOPY` anywhere |
 | `TransmitFile` | n/a | n/a | BUILT-UNWIRED | `transmitfile` | no | reachable only via unwired `PlatformSendFile` |
-| kTLS TX | ABSENT | ABSENT | ABSENT | - | - | future-work comment only |
+| kTLS TX | ABSENT | ABSENT | ABSENT | - | - | not applicable - oc has no in-binary TLS |
 
 ## Network recv
 
@@ -110,7 +110,7 @@ This is the most production-complete category.
 | `SO_REUSEPORT` | WIRED | WIRED | n/a | runtime | n/a | yes - `daemon/.../listener.rs` (`reuse_port_supported()` + `set_reuse_port`) |
 | `TCP_QUICKACK` | WIRED | n/a (Linux-only) | n/a | runtime | n/a | yes - client + daemon after connect/accept, re-armed in handshake |
 | TCP Fast Open (server + connect) | WIRED | n/a (server: Linux/FreeBSD) | STUBBED | runtime | n/a | yes - server `listener.rs`, client `connect/direct.rs` |
-| `TCP_NOTSENT_LOWAT` | WIRED | WIRED | n/a | runtime | n/a | yes - client `connect/mod.rs` + `connect/tls.rs`, daemon `listener.rs` |
+| `TCP_NOTSENT_LOWAT` | WIRED | WIRED | n/a | runtime | n/a | yes - client `connect/mod.rs`, daemon `listener.rs` |
 | `TCP_CORK` / `TCP_NOPUSH` (`set_tcp_cork`) | BUILT-UNWIRED | BUILT-UNWIRED | STUBBED | runtime | n/a | no prod caller (tests only) |
 | `SO_MAX_PACING_RATE` | WIRED | n/a (Linux-only) | n/a | runtime | n/a | yes - `module_list/tcp_perf.rs`, pacing = bwlimit |
 | TCP congestion / BBR (`TCP_CONGESTION`) | ABSENT | ABSENT | ABSENT | - | - | - |
