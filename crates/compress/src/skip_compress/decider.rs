@@ -17,7 +17,7 @@ use std::path::Path;
 
 use crate::zlib::{CompressionLevel, CountingZlibEncoder};
 
-use super::defaults::{self, COMPOUND_EXTENSIONS};
+use super::defaults;
 use super::magic::KNOWN_SIGNATURES;
 use super::types::{CompressionDecision, FileCategory, Suffix};
 use super::{DEFAULT_COMPRESSION_THRESHOLD, DEFAULT_SAMPLE_SIZE};
@@ -228,19 +228,14 @@ impl CompressionDecider {
         Ok(ratio < self.compression_threshold)
     }
 
-    /// Extracts and normalizes the file extension from a path.
+    /// Extracts and normalizes the file's final suffix.
+    ///
+    /// Mirrors upstream `token.c:set_compression()`, which matches only the
+    /// substring after the last `.` in the basename (`strrchr(fname, '.')`) and
+    /// treats a leading-dot dotfile (`.bashrc`) as having no suffix. Rust's
+    /// `Path::extension()` follows the same rules: `foo.tar.gz` yields `gz`, and
+    /// `.hidden` yields `None`.
     pub(crate) fn extract_extension(path: &Path) -> Option<Suffix> {
-        let file_name = path.file_name()?.to_str()?;
-        let lower = file_name.to_ascii_lowercase();
-
-        // Compound suffixes (`.tar.gz`) must match the full filename to win
-        // over the trailing simple extension (`gz`).
-        for compound in COMPOUND_EXTENSIONS {
-            if lower.ends_with(compound) {
-                return Some(Suffix::new(compound.trim_start_matches('.')));
-            }
-        }
-
         path.extension()
             .and_then(|ext| ext.to_str())
             .map(Suffix::new)

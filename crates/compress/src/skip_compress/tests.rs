@@ -9,12 +9,11 @@ use super::*;
 fn default_skip_list_includes_common_formats() {
     let decider = CompressionDecider::with_default_skip_list();
 
+    // Only suffixes present in upstream DEFAULT_DONT_COMPRESS may appear here.
     assert!(decider.skip_extensions().contains("jpg"));
     assert!(decider.skip_extensions().contains("jpeg"));
     assert!(decider.skip_extensions().contains("png"));
-    assert!(decider.skip_extensions().contains("gif"));
     assert!(decider.skip_extensions().contains("webp"));
-    assert!(decider.skip_extensions().contains("heic"));
 
     assert!(decider.skip_extensions().contains("mp4"));
     assert!(decider.skip_extensions().contains("mkv"));
@@ -36,7 +35,10 @@ fn default_skip_list_includes_common_formats() {
     assert!(decider.skip_extensions().contains("rar"));
     assert!(decider.skip_extensions().contains("zst"));
 
-    assert!(decider.skip_extensions().contains("pdf"));
+    // Suffixes upstream compresses must NOT be in the default skip set.
+    assert!(!decider.skip_extensions().contains("gif"));
+    assert!(!decider.skip_extensions().contains("heic"));
+    assert!(!decider.skip_extensions().contains("pdf"));
 }
 
 #[test]
@@ -219,18 +221,29 @@ fn extract_extension_simple() {
 }
 
 #[test]
-fn extract_extension_compound() {
+fn extract_extension_uses_last_suffix_only() {
+    // upstream token.c matches strrchr(fname, '.'): the last suffix wins, so
+    // `archive.tar.gz` matches via `gz`, not a compound `tar.gz`.
     assert_eq!(
         CompressionDecider::extract_extension(Path::new("archive.tar.gz"))
             .unwrap()
             .as_str(),
-        "tar.gz"
+        "gz"
     );
     assert_eq!(
         CompressionDecider::extract_extension(Path::new("backup.tar.bz2"))
             .unwrap()
             .as_str(),
-        "tar.bz2"
+        "bz2"
+    );
+}
+
+#[test]
+fn extract_extension_dotfile_has_no_suffix() {
+    // upstream guards `s == fname`: a leading-dot dotfile has no suffix.
+    assert_eq!(
+        CompressionDecider::extract_extension(Path::new(".bashrc")),
+        None
     );
 }
 

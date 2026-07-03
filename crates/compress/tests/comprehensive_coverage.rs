@@ -364,7 +364,8 @@ mod skip_compress {
         let decider = CompressionDecider::with_default_skip_list();
         let extensions = decider.skip_extensions();
 
-        let image_exts = ["jpg", "jpeg", "png", "gif", "webp", "heic"];
+        // Only upstream DEFAULT_DONT_COMPRESS suffixes (no gif/heic/pdf).
+        let image_exts = ["jpg", "jpeg", "png", "webp"];
         for ext in image_exts {
             assert!(extensions.contains(ext), "Missing image extension: {ext}");
         }
@@ -384,7 +385,9 @@ mod skip_compress {
             assert!(extensions.contains(ext), "Missing archive extension: {ext}");
         }
 
-        assert!(extensions.contains("pdf"));
+        assert!(!extensions.contains("gif"));
+        assert!(!extensions.contains("heic"));
+        assert!(!extensions.contains("pdf"));
     }
 
     #[test]
@@ -396,7 +399,7 @@ mod skip_compress {
             "video.mp4",
             "audio.mp3",
             "archive.zip",
-            "document.pdf",
+            "backup.tar.gz",
         ];
         for file in skip_files {
             assert_eq!(
