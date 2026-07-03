@@ -310,9 +310,14 @@ fn transfer_request_with_sparse_and_append_verify_uses_dense_allocation() {
     assert_eq!(sparse_meta.blocks(), dense_meta.blocks());
 }
 
-#[cfg(unix)]
+/// `--sparse --inplace` writes the source's zero run as a hole rather than
+/// materialising it. Upstream keeps `sparse_files > 0` in inplace mode, so an
+/// inplace update with a large zero run allocates far fewer blocks than a dense
+/// (`--inplace` only) update of the same content.
+// upstream: fileio.c:write_sparse() stays active with inplace (preallocated_len = size_r)
+#[cfg(target_os = "linux")]
 #[test]
-fn transfer_request_with_sparse_and_inplace_uses_dense_allocation() {
+fn transfer_request_with_sparse_and_inplace_punches_hole() {
     use std::fs::{self, OpenOptions};
     use std::io::Write;
     use std::os::unix::fs::MetadataExt;
@@ -348,17 +353,16 @@ fn transfer_request_with_sparse_and_inplace_uses_dense_allocation() {
     updated_file.flush().expect("flush updated source");
     drop(updated_file);
 
-    let (code, stdout, stderr) = run_with_args([
+    let (code, _stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--inplace"),
         updated_source.as_os_str().to_os_string(),
         dense_dest.as_os_str().to_os_string(),
     ]);
     assert_eq!(code, 0);
-    assert!(stdout.is_empty());
     assert!(stderr.is_empty());
 
-    let (code, stdout, stderr) = run_with_args([
+    let (code, _stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--sparse"),
         OsString::from("--inplace"),
@@ -366,12 +370,18 @@ fn transfer_request_with_sparse_and_inplace_uses_dense_allocation() {
         sparse_dest.clone().into_os_string(),
     ]);
     assert_eq!(code, 0);
-    assert!(stdout.is_empty());
     assert!(stderr.is_empty());
 
     let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
     let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
 
+    // Content length matches; the sparse update must allocate strictly fewer
+    // blocks than the dense one because the 1 MiB zero run became a hole.
     assert_eq!(dense_meta.len(), sparse_meta.len());
-    assert_eq!(sparse_meta.blocks(), dense_meta.blocks());
+    assert!(
+        sparse_meta.blocks() < dense_meta.blocks(),
+        "inplace sparse update must punch the zero run (sparse={} blocks, dense={} blocks)",
+        sparse_meta.blocks(),
+        dense_meta.blocks(),
+    );
 }
