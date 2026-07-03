@@ -43,8 +43,8 @@ mod table;
 mod tests;
 
 pub use decode::{
-    decode_varint, read_int, read_longint, read_varint, read_varint30_int, read_varlong,
-    read_varlong30,
+    decode_varint, read_int, read_longint, read_varint, read_varint_bounded, read_varint_size,
+    read_varint30_int, read_varlong, read_varlong30,
 };
 #[cfg(feature = "tokio-transfer")]
 pub use decode_async::{read_int_async, read_longint_async, read_varint_async, read_varlong_async};

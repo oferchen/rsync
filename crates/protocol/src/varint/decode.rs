@@ -78,6 +78,63 @@ pub fn read_varint<R: Read + ?Sized>(reader: &mut R) -> io::Result<i32> {
     Ok(value)
 }
 
+/// Reads a varint and validates it falls within the inclusive range `[lo, hi]`.
+///
+/// Mirrors upstream `io.c:read_varint_bounded()`. Upstream aborts the transfer
+/// with `RERR_PROTOCOL` on an out-of-range wire value; here the equivalent is a
+/// typed [`io::ErrorKind::InvalidData`], which higher layers map to the same
+/// protocol error. `what` names the field for the diagnostic, matching the
+/// upstream message so both peers surface an equivalent explanation.
+///
+/// # Errors
+///
+/// Returns [`io::ErrorKind::InvalidData`] when the decoded value is `< lo` or
+/// `> hi`, and propagates the read errors of [`read_varint`] on a truncated or
+/// overflowing encoding.
+#[inline]
+pub fn read_varint_bounded<R: Read + ?Sized>(
+    reader: &mut R,
+    lo: i32,
+    hi: i32,
+    what: &str,
+) -> io::Result<i32> {
+    let v = read_varint(reader)?;
+    if v < lo || v > hi {
+        return Err(invalid_data(&format!(
+            "wire value {what} out of range: {v} not in [{lo},{hi}]"
+        )));
+    }
+    Ok(v)
+}
+
+/// Reads a varint destined for a `usize`, rejecting negatives and values above
+/// `max`.
+///
+/// Mirrors upstream `io.c:read_varint_size()`, which guards `usize` conversions
+/// so a negative wire value cannot wrap to `~SIZE_MAX`. Callers reading a
+/// length or count from the wire should use this instead of casting the result
+/// of [`read_varint`] directly. Upstream aborts with `RERR_PROTOCOL` on a bad
+/// value; the Rust equivalent is a typed [`io::ErrorKind::InvalidData`].
+///
+/// # Errors
+///
+/// Returns [`io::ErrorKind::InvalidData`] when the decoded value is negative or
+/// exceeds `max`, and propagates the read errors of [`read_varint`].
+#[inline]
+pub fn read_varint_size<R: Read + ?Sized>(
+    reader: &mut R,
+    max: usize,
+    what: &str,
+) -> io::Result<usize> {
+    let v = read_varint(reader)?;
+    if v < 0 || (v as usize) > max {
+        return Err(invalid_data(&format!(
+            "wire size {what} out of range: {v} > {max}"
+        )));
+    }
+    Ok(v as usize)
+}
+
 /// Reads a variable-length 64-bit integer using rsync's varlong format.
 ///
 /// This is the inverse of [`super::write_varlong`], mirroring upstream's
