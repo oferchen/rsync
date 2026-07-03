@@ -2,6 +2,7 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr};
 use std::num::{NonZeroU32, NonZeroU64};
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 
 use super::*;
 // Host pattern types are defined in the parent daemon module (via include!() of config_helpers.rs).
@@ -351,6 +352,68 @@ fn module_connection_guard_unlimited() {
     let guard = ModuleConnectionGuard::unlimited();
     assert!(guard.module.is_none());
     assert!(guard.lock_guard.is_none());
+}
+
+#[test]
+fn aborted_transfer_releases_connection_slot() {
+    // Regression for #504 (the deadlock-holds-slot symptom of #503).
+    //
+    // A daemon transfer holds its connection slot via the RAII
+    // `ModuleConnectionGuard` acquired in `process_approved_module`. When a
+    // transfer fails or aborts, the guard drops on unwind and must release the
+    // slot so the module keeps accepting new connections. Before #503 was
+    // fixed, a deadlocked connection thread never unwound, so its guard never
+    // dropped: four wedged connections exhausted a `max connections = 4`
+    // module. This test pins the invariant that a slot acquired and then
+    // released (the drop that a failed/aborted transfer performs) frees the
+    // module for a fresh connection - so even N aborted transfers never wedge
+    // the module at its limit.
+    let limit = NonZeroU32::new(4).unwrap();
+    let def = ModuleDefinition {
+        name: "abort_release".to_owned(),
+        max_connections: Some(limit),
+        ..Default::default()
+    };
+    let runtime: ModuleRuntime = def.into();
+
+    // Simulate five sequential failed/aborted transfers on a 4-slot module.
+    // Each acquisition must succeed because the previous guard was dropped
+    // (as it would be when a transfer returns Err or the thread unwinds).
+    for _ in 0..5 {
+        let guard = runtime
+            .try_acquire_connection()
+            .expect("slot must be free after the prior aborted transfer released it");
+        assert_eq!(runtime.active_connections.load(Ordering::Acquire), 1);
+        // Dropping the guard is exactly what a failed/aborted transfer does.
+        drop(guard);
+        assert_eq!(
+            runtime.active_connections.load(Ordering::Acquire),
+            0,
+            "aborted transfer must release its connection slot"
+        );
+    }
+
+    // Fill every slot, confirm the limit is enforced, then release one and
+    // confirm a new connection is admitted - the module never stays wedged.
+    let mut guards = Vec::new();
+    for _ in 0..limit.get() {
+        guards.push(
+            runtime
+                .try_acquire_connection()
+                .expect("slots below the limit must be acquirable"),
+        );
+    }
+    assert!(
+        matches!(
+            runtime.try_acquire_connection(),
+            Err(ModuleConnectionError::Limit(_))
+        ),
+        "the module must refuse once the limit is reached"
+    );
+    guards.pop();
+    runtime
+        .try_acquire_connection()
+        .expect("releasing a slot must let a new connection in");
 }
 
 #[test]

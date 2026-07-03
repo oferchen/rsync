@@ -400,6 +400,18 @@ fn process_approved_module(
         async_socket,
     );
 
+    // #503: stop and join the background delta-drain thread before the TCP
+    // goodbye drain below reads the socket via a different clone. The engine's
+    // own goodbye handshake completed inside `execute_transfer` (it read
+    // through the `DrainingReader`), so stopping here only halts draining of
+    // any post-goodbye trailing bytes, which the drain-until-EOF loop below
+    // discards anyway. Joining before that loop prevents two readers competing
+    // for the same socket. `Drop` on `streams` is a backstop for early-return
+    // paths above that never reach this point.
+    if let Some(drain) = streams.drain_handle.take() {
+        drain.stop();
+    }
+
     // Graceful TCP shutdown: drain peer's goodbye, then linger + close.
     //
     // Background:

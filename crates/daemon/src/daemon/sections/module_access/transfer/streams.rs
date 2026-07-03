@@ -10,6 +10,16 @@ struct TransferStreams {
     write: Box<dyn Write + Send>,
     /// Whether the write side supports TCP shutdown (false for stdio/pipes).
     supports_tcp_shutdown: bool,
+    /// Stop handle for the daemon-TCP background drain thread (#503).
+    ///
+    /// Present only for the socket path, where `read` wraps a
+    /// [`DrainingReader`] whose background thread continuously drains the
+    /// peer's send buffer during the delta phase to prevent the full-duplex
+    /// write-write deadlock. `None` for stdio/pipe transports, which read the
+    /// socket directly and cannot wedge. The caller stops this handle after
+    /// the transfer engine returns and before the goodbye drain reads the
+    /// socket via another clone.
+    drain_handle: Option<DrainHandle>,
     /// Pre-erasure socket clone for the tokio driver (ASY sub-rung 2).
     ///
     /// For the daemon module transfer over a real socket this carries an extra
@@ -50,6 +60,11 @@ fn setup_transfer_streams(
             read: Box::new(stdin),
             write: Box::new(stdout),
             supports_tcp_shutdown: false,
+            // Stdio/pipe transports have independent read/write pipe buffers
+            // and a peer in a separate process, so they cannot hit the
+            // single-socket write-write deadlock (#503). Read the pipe
+            // directly - no drain thread.
+            drain_handle: None,
             // Stdio/pipe transports have no socket to hand the tokio driver.
             #[cfg(feature = "tokio-transfer")]
             async_socket: None,
@@ -86,10 +101,21 @@ fn setup_transfer_streams(
     #[cfg(feature = "tokio-transfer")]
     let async_socket = tcp.try_clone().ok();
 
+    // #503: wrap the read-clone fd in a `DrainingReader` so a background thread
+    // continuously drains the peer's send buffer during the delta phase. This
+    // is the daemon-TCP-only anti-deadlock mechanism (design doc Approach C):
+    // it keeps the peer's writes flowing so neither direction wedges on a full
+    // socket buffer. The wrapper is a transparent byte pipe, so every wire byte
+    // and the multiplex framing are unchanged. The `DrainHandle` is stopped by
+    // the orchestrator before the goodbye drain reads the socket via another
+    // clone.
+    let (draining_reader, drain_handle) = DrainingReader::new(read_stream);
+
     Ok(Some(TransferStreams {
-        read: Box::new(read_stream),
+        read: Box::new(draining_reader),
         write: Box::new(write_stream),
         supports_tcp_shutdown: true,
+        drain_handle: Some(drain_handle),
         #[cfg(feature = "tokio-transfer")]
         async_socket,
     }))
