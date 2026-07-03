@@ -98,6 +98,14 @@ pub struct LocalCopySummary {
     devices_created: u64,
     fifos_created: u64,
     items_deleted: u64,
+    // Per-type deletion counts, mirroring upstream's `stats.deleted_*` fields
+    // (main.c write_del_stats/read_del_stats). `items_deleted` is the total;
+    // these break it down for the `Number of deleted files: N (reg: .., dir: ..)`
+    // line rendered by `output_itemized_counts`.
+    deleted_dirs: u64,
+    deleted_symlinks: u64,
+    deleted_devices: u64,
+    deleted_specials: u64,
     sources_removed: u64,
     transferred_file_size: u64,
     bytes_copied: u64,
@@ -216,6 +224,43 @@ impl LocalCopySummary {
     #[must_use]
     pub const fn items_deleted(&self) -> u64 {
         self.items_deleted
+    }
+
+    /// Returns the number of directories removed because of `--delete`.
+    #[must_use]
+    pub const fn deleted_dirs(&self) -> u64 {
+        self.deleted_dirs
+    }
+
+    /// Returns the number of symlinks removed because of `--delete`.
+    #[must_use]
+    pub const fn deleted_symlinks(&self) -> u64 {
+        self.deleted_symlinks
+    }
+
+    /// Returns the number of device nodes removed because of `--delete`.
+    #[must_use]
+    pub const fn deleted_devices(&self) -> u64 {
+        self.deleted_devices
+    }
+
+    /// Returns the number of special files (FIFOs, sockets) removed because of `--delete`.
+    #[must_use]
+    pub const fn deleted_specials(&self) -> u64 {
+        self.deleted_specials
+    }
+
+    /// Returns the number of regular files removed because of `--delete`.
+    ///
+    /// Derived as the total minus the typed sub-counts, mirroring upstream's
+    /// `output_itemized_counts` which computes `counts[0] -= counts[1..]`.
+    #[must_use]
+    pub const fn deleted_regular_files(&self) -> u64 {
+        self.items_deleted
+            .saturating_sub(self.deleted_dirs)
+            .saturating_sub(self.deleted_symlinks)
+            .saturating_sub(self.deleted_devices)
+            .saturating_sub(self.deleted_specials)
     }
 
     /// Returns the number of source entries removed due to `--remove-source-files`.
@@ -415,7 +460,7 @@ impl LocalCopySummary {
         elapsed: Duration,
         literal_data: u64,
         matched_data: u64,
-        items_deleted: u64,
+        delete_stats: protocol::DeleteStats,
     ) -> Self {
         Self {
             regular_files_total: files_listed as u64,
@@ -425,7 +470,11 @@ impl LocalCopySummary {
             bytes_copied: literal_data,
             matched_bytes: matched_data,
             total_source_bytes,
-            items_deleted,
+            items_deleted: u64::from(delete_stats.total()),
+            deleted_dirs: u64::from(delete_stats.dirs),
+            deleted_symlinks: u64::from(delete_stats.symlinks),
+            deleted_devices: u64::from(delete_stats.devices),
+            deleted_specials: u64::from(delete_stats.specials),
             total_elapsed: elapsed,
             wall_clock_elapsed: elapsed,
             ..Default::default()
@@ -449,7 +498,7 @@ impl LocalCopySummary {
         elapsed: Duration,
         literal_data: u64,
         matched_data: u64,
-        items_deleted: u64,
+        delete_stats: protocol::DeleteStats,
     ) -> Self {
         Self {
             regular_files_total: files_listed as u64,
@@ -459,7 +508,11 @@ impl LocalCopySummary {
             bytes_copied: literal_data,
             matched_bytes: matched_data,
             total_source_bytes,
-            items_deleted,
+            items_deleted: u64::from(delete_stats.total()),
+            deleted_dirs: u64::from(delete_stats.dirs),
+            deleted_symlinks: u64::from(delete_stats.symlinks),
+            deleted_devices: u64::from(delete_stats.devices),
+            deleted_specials: u64::from(delete_stats.specials),
             total_elapsed: elapsed,
             wall_clock_elapsed: elapsed,
             ..Default::default()
@@ -491,6 +544,10 @@ impl LocalCopySummary {
             devices_created: 0,
             fifos_created: 0,
             items_deleted: 0,
+            deleted_dirs: 0,
+            deleted_symlinks: 0,
+            deleted_devices: 0,
+            deleted_specials: 0,
             sources_removed: 0,
             transferred_file_size: 0,
             bytes_copied: 0,
@@ -611,8 +668,26 @@ impl LocalCopySummary {
         self.fifos_total = self.fifos_total.saturating_add(1);
     }
 
-    pub(in crate::local_copy) const fn record_deletion(&mut self) {
+    /// Records one `--delete` removal, bumping the total and the per-type
+    /// sub-count for the entry's kind. Mirrors upstream's `stats.deleted_*`
+    /// counters (main.c write_del_stats) so `Number of deleted files` renders
+    /// the `(reg: .., dir: ..)` breakdown via `output_itemized_counts`.
+    pub(in crate::local_copy) fn record_deletion(&mut self, file_type: std::fs::FileType) {
         self.items_deleted = self.items_deleted.saturating_add(1);
+        if file_type.is_dir() {
+            self.deleted_dirs = self.deleted_dirs.saturating_add(1);
+        } else if file_type.is_symlink() {
+            self.deleted_symlinks = self.deleted_symlinks.saturating_add(1);
+        } else if !file_type.is_file() {
+            // Block/char devices vs FIFOs/sockets: upstream splits these into
+            // `dev` and `special` (main.c write_del_stats). Reuse the shared
+            // platform-specific classifier used elsewhere in the executor.
+            if super::super::is_device(file_type) {
+                self.deleted_devices = self.deleted_devices.saturating_add(1);
+            } else {
+                self.deleted_specials = self.deleted_specials.saturating_add(1);
+            }
+        }
     }
 
     pub(in crate::local_copy) const fn record_source_removed(&mut self) {
@@ -646,7 +721,7 @@ mod tests {
             Duration::from_secs(5),
             0,
             0,
-            0,
+            protocol::DeleteStats::new(),
         );
         assert_eq!(summary.regular_files_total(), 100);
         assert_eq!(summary.files_copied(), 50);
@@ -667,7 +742,7 @@ mod tests {
             Duration::from_secs(2),
             800,
             1200,
-            0,
+            protocol::DeleteStats::new(),
         );
         assert_eq!(summary.bytes_copied(), 800);
         assert_eq!(summary.matched_bytes(), 1200);
@@ -677,10 +752,18 @@ mod tests {
 
     /// Mirrors the daemon-upload + `--delete` path: the daemon receiver
     /// sweeps the destination and sends `NDX_DEL_STATS` back to the client
-    /// sender. The client's `LocalCopySummary` must surface the count so
-    /// `--stats` renders "Number of deleted files: N" instead of zero.
+    /// sender. The client's `LocalCopySummary` must surface both the total
+    /// and the per-type breakdown so `--stats` renders the upstream
+    /// "Number of deleted files: N (reg: .., dir: ..)" line, not just `N`.
     #[test]
     fn from_generator_stats_records_items_deleted() {
+        let delete_stats = protocol::DeleteStats {
+            files: 4,
+            dirs: 2,
+            symlinks: 1,
+            devices: 0,
+            specials: 0,
+        };
         let summary = LocalCopySummary::from_generator_stats(
             10,
             5,
@@ -690,16 +773,28 @@ mod tests {
             Duration::from_secs(1),
             0,
             0,
-            7,
+            delete_stats,
         );
         assert_eq!(summary.items_deleted(), 7);
+        // reg is derived as total - (dir+link+dev+special), mirroring upstream
+        // output_itemized_counts (main.c) - a stale flat count would break this.
+        assert_eq!(summary.deleted_regular_files(), 4);
+        assert_eq!(summary.deleted_dirs(), 2);
+        assert_eq!(summary.deleted_symlinks(), 1);
     }
 
     /// Mirrors the daemon-pull + `--delete` path: the local receiver
     /// performs the delete sweep and records the count locally; the
-    /// summary must surface the same counter.
+    /// summary must surface the same total plus per-type breakdown.
     #[test]
     fn from_receiver_stats_records_items_deleted() {
+        let delete_stats = protocol::DeleteStats {
+            files: 2,
+            dirs: 1,
+            symlinks: 0,
+            devices: 0,
+            specials: 0,
+        };
         let summary = LocalCopySummary::from_receiver_stats(
             10,
             5,
@@ -709,9 +804,11 @@ mod tests {
             Duration::from_secs(2),
             0,
             0,
-            3,
+            delete_stats,
         );
         assert_eq!(summary.items_deleted(), 3);
+        assert_eq!(summary.deleted_regular_files(), 2);
+        assert_eq!(summary.deleted_dirs(), 1);
     }
 
     #[test]
@@ -725,7 +822,7 @@ mod tests {
             Duration::from_secs(3),
             2800,
             202_000,
-            0,
+            protocol::DeleteStats::new(),
         );
         assert_eq!(summary.regular_files_total(), 200);
         assert_eq!(summary.files_copied(), 75);
@@ -840,12 +937,22 @@ mod tests {
 
     #[test]
     fn record_deletion_and_source_removal() {
+        let dir = tempfile::tempdir().unwrap();
+        let file_path = dir.path().join("f");
+        std::fs::write(&file_path, b"x").unwrap();
+        let file_type = std::fs::symlink_metadata(&file_path).unwrap().file_type();
+        let dir_type = std::fs::symlink_metadata(dir.path()).unwrap().file_type();
+
         let mut summary = LocalCopySummary::default();
-        summary.record_deletion();
-        summary.record_deletion();
+        summary.record_deletion(file_type);
+        summary.record_deletion(dir_type);
         summary.record_source_removed();
 
         assert_eq!(summary.items_deleted(), 2);
+        // Per-type classification must split the two deletions so the
+        // rendered breakdown mirrors upstream's `(reg: 1, dir: 1)`.
+        assert_eq!(summary.deleted_regular_files(), 1);
+        assert_eq!(summary.deleted_dirs(), 1);
         assert_eq!(summary.sources_removed(), 1);
     }
 

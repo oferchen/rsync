@@ -210,6 +210,36 @@ impl ClientSummary {
         self.stats.items_deleted()
     }
 
+    /// Returns the number of regular files removed because of `--delete`.
+    #[must_use]
+    pub const fn deleted_regular_files(&self) -> u64 {
+        self.stats.deleted_regular_files()
+    }
+
+    /// Returns the number of directories removed because of `--delete`.
+    #[must_use]
+    pub const fn deleted_dirs(&self) -> u64 {
+        self.stats.deleted_dirs()
+    }
+
+    /// Returns the number of symlinks removed because of `--delete`.
+    #[must_use]
+    pub const fn deleted_symlinks(&self) -> u64 {
+        self.stats.deleted_symlinks()
+    }
+
+    /// Returns the number of device nodes removed because of `--delete`.
+    #[must_use]
+    pub const fn deleted_devices(&self) -> u64 {
+        self.stats.deleted_devices()
+    }
+
+    /// Returns the number of special files removed because of `--delete`.
+    #[must_use]
+    pub const fn deleted_specials(&self) -> u64 {
+        self.stats.deleted_specials()
+    }
+
     /// Returns the aggregate number of bytes copied.
     #[must_use]
     pub const fn bytes_copied(&self) -> u64 {

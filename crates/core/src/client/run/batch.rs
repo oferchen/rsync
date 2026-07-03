@@ -369,7 +369,7 @@ fn replay_batch(
         std::time::Duration::ZERO,
         total_size,
         0,
-        0,
+        protocol::DeleteStats::new(),
     );
     Ok(ClientSummary::from_summary(summary))
 }
