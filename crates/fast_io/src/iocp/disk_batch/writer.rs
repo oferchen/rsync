@@ -22,7 +22,9 @@ use crate::iocp::config::IocpConfig;
 use crate::iocp::overlapped::OverlappedOp;
 
 use super::buffer::BOUNCE_COPIES_AVOIDED;
-use super::completion::{drain_completions, take_injected_write_error};
+use super::completion::{
+    drain_all_ignoring_completion_errors, drain_completions, take_injected_write_error,
+};
 
 /// Reopens an existing file handle with `FILE_FLAG_OVERLAPPED` so it can be
 /// associated with a completion port.
@@ -113,18 +115,27 @@ pub(super) fn submit_write_batch(
     let mut in_flight: Vec<Pin<Box<OverlappedOp>>> = Vec::with_capacity(max_in_flight);
 
     while next_chunk_start < total || !in_flight.is_empty() {
-        // Fill the in-flight queue up to the configured limit. A submission
-        // failure here (synchronous `WriteFile` error or fault-injected
-        // ERROR_DISK_FULL) must not discard already-drained progress, so we
-        // bail out via the explicit Err path that leaves the caller's
-        // running counter intact.
+        // Fill the in-flight queue up to the configured limit.
         while in_flight.len() < max_in_flight && next_chunk_start < total {
             let len = chunk_size.min(total - next_chunk_start);
             let chunk = &data[next_chunk_start..next_chunk_start + len];
             let offset = base_offset + next_chunk_start as u64;
             let op = match submit_one_write(handle, offset, chunk, use_aligned) {
                 Ok(op) => op,
-                Err(e) => return Err(e),
+                Err(e) => {
+                    // This submission failed synchronously and never queued,
+                    // but earlier iterations pushed ops the kernel has already
+                    // accepted (ERROR_IO_PENDING). Those ops own pinned
+                    // buffers the kernel may still be writing into. Dropping
+                    // `in_flight` now would free them under the kernel - a
+                    // use-after-free with late completions dereferencing freed
+                    // OVERLAPPED structs. Reap every outstanding completion
+                    // first (crediting the durable prefix), then surface the
+                    // original submission error.
+                    *bytes_written_out +=
+                        drain_all_ignoring_completion_errors(port, in_flight.len());
+                    return Err(e);
+                }
             };
             in_flight.push(op);
             next_chunk_start += len;
@@ -170,6 +181,9 @@ pub(super) fn submit_write_batch(
         });
 
         if zero_byte_completion {
+            // Reap the ops still outstanding after this partial drain before
+            // dropping their pinned buffers under the kernel.
+            *bytes_written_out += drain_all_ignoring_completion_errors(port, in_flight.len());
             return Err(io::Error::new(
                 io::ErrorKind::WriteZero,
                 "overlapped write returned zero bytes",
@@ -177,7 +191,16 @@ pub(super) fn submit_write_batch(
         }
 
         for (offset, remaining) in resubmissions {
-            let op = submit_one_write(handle, offset, &remaining, use_aligned)?;
+            let op = match submit_one_write(handle, offset, &remaining, use_aligned) {
+                Ok(op) => op,
+                Err(e) => {
+                    // A resubmission failed synchronously while earlier ops
+                    // remain in flight; drain them before dropping the boxes.
+                    *bytes_written_out +=
+                        drain_all_ignoring_completion_errors(port, in_flight.len());
+                    return Err(e);
+                }
+            };
             in_flight.push(op);
         }
     }

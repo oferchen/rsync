@@ -161,6 +161,81 @@ pub(super) fn drain_completions(
     }
 }
 
+/// Reaps exactly `outstanding` completion packets from the port, tolerating
+/// faulted completions, and returns the total bytes transferred across every
+/// reaped op.
+///
+/// Used only on the submission-error cleanup path: once one submission has
+/// failed synchronously the batch is doomed, but every op still in flight has
+/// already been accepted by the kernel and will post exactly one completion
+/// packet. Those packets must be reaped before the pinned `OverlappedOp`
+/// boxes are dropped, otherwise the kernel may still be writing into a freed
+/// buffer (use-after-free). Unlike [`drain_completions`], a faulted NTSTATUS
+/// on a completion is not propagated - it merely marks that op as done so the
+/// loop keeps waiting for the remaining outstanding ops. The caller returns
+/// the original submission error, so swallowing per-completion faults here
+/// does not hide the failure; it only guarantees the buffers outlive the
+/// kernel's writes. The returned byte count preserves partial progress the
+/// same way the success path does.
+pub(super) fn drain_all_ignoring_completion_errors(
+    port: &CompletionPort,
+    mut outstanding: usize,
+) -> usize {
+    let mut bytes = 0usize;
+    while outstanding > 0 {
+        let batch = outstanding.min(COMPLETION_DRAIN_BATCH);
+        let mut entries: Vec<OVERLAPPED_ENTRY> = vec![zeroed_entry(); batch];
+        let mut removed: u32 = 0;
+        // SAFETY: `port.handle()` is owned by `port` and lives for the
+        // duration of the call; `entries` backs `batch` slots.
+        #[allow(unsafe_code)]
+        let ok = unsafe {
+            GetQueuedCompletionStatusEx(
+                port.handle(),
+                entries.as_mut_ptr(),
+                batch as u32,
+                &mut removed,
+                DRAIN_TIMEOUT_MS,
+                FALSE,
+            )
+        };
+
+        if ok == FALSE {
+            let err = io::Error::last_os_error();
+            // Spurious wake without entries: retry until the outstanding ops
+            // report. Any other failure means the port itself is unusable, so
+            // there is no way left to observe the remaining completions; stop
+            // to avoid spinning forever. This matches the pre-existing posture
+            // of the success path, where `drain_completions` also returns on
+            // such an error and the caller drops the in-flight queue.
+            if matches!(err.raw_os_error(), Some(c) if c as u32 == WAIT_TIMEOUT) {
+                continue;
+            }
+            break;
+        }
+
+        let reaped = removed as usize;
+        if reaped == 0 {
+            continue;
+        }
+        for entry in entries.iter().take(reaped) {
+            if entry.lpOverlapped.is_null() {
+                continue;
+            }
+            // SAFETY: entry.lpOverlapped points at an OVERLAPPED we submitted;
+            // its pinned op is still alive in the caller's in-flight queue.
+            #[allow(unsafe_code)]
+            let internal = unsafe { (*entry.lpOverlapped).Internal };
+            // Only credit bytes for completions that landed without a fault.
+            if internal == 0 {
+                bytes += entry.dwNumberOfBytesTransferred as usize;
+            }
+        }
+        outstanding = outstanding.saturating_sub(reaped);
+    }
+    bytes
+}
+
 /// Translates the small set of NTSTATUS codes that overlapped file I/O can
 /// produce into Win32 DOS error codes.
 fn ntstatus_to_dos_error(status: u32) -> u32 {

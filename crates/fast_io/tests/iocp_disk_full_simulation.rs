@@ -307,3 +307,77 @@ fn nth_submission_disk_full_skips_earlier_writes() {
         "pre-fault chunk content must match the source bytes"
     );
 }
+
+/// Regression for the mid-batch submission-error use-after-free (#488): with
+/// more than one op allowed in flight, a synchronous submit fault must drain
+/// the in-flight ops the kernel already accepted before their pinned
+/// OVERLAPPED buffers are dropped. Dropping them under an outstanding
+/// `WriteFile` would let the kernel write into freed memory and post late
+/// completions against freed OVERLAPPED structs.
+///
+/// The invariant this test encodes: the doomed batch must (a) surface the
+/// injected disk-full error, (b) not hang waiting on completions it dropped,
+/// (c) drop cleanly, and (d) leave only whole, source-matching chunks on
+/// disk. It intentionally uses `concurrent_ops = 2` so `in_flight` holds an
+/// outstanding op at the moment the fault fires - the single-op tests above
+/// never populate the drain-on-error path because at most one op is ever in
+/// flight.
+#[test]
+fn multi_in_flight_disk_full_drains_before_drop() {
+    if !is_iocp_available() {
+        eprintln!("skipping: IOCP unavailable on this host");
+        return;
+    }
+    let _guard = InjectionGuard;
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("multi_in_flight.bin");
+    let file = open_writable(&path);
+
+    // 4 KB chunks, up to two in flight, 16 KB payload => four submissions.
+    // Faulting the third leaves at least one earlier op outstanding when the
+    // error path drains.
+    let config = IocpConfig {
+        buffer_size: 4096,
+        concurrent_ops: 2,
+        ..IocpConfig::default()
+    };
+    let mut batch = IocpDiskBatch::new(&config).unwrap();
+    batch.begin_file(file).unwrap();
+
+    let chunk = 4096usize;
+    let payload: Vec<u8> = (0..4 * chunk).map(|i| (i & 0xFF) as u8).collect();
+    batch.write_data(&payload).unwrap();
+
+    inject_next_write_error_for_test(3, ERROR_DISK_FULL as i32);
+    let err = batch
+        .flush()
+        .expect_err("mid-batch submission fault must surface ERROR_DISK_FULL");
+    assert_eq!(err.kind(), io::ErrorKind::StorageFull);
+    assert_eq!(err.raw_os_error(), Some(ERROR_DISK_FULL as i32));
+
+    // Clean drop: a UAF or an un-drained op would surface as a hang, a panic
+    // in Drop, or heap corruption here.
+    drop(batch);
+
+    // Only whole, durable chunks may remain, and their bytes must match the
+    // source prefix. The exact count is not asserted because completion
+    // ordering with two ops in flight is not deterministic; the durable
+    // prefix is always a whole number of chunks of the original data.
+    let on_disk = std::fs::read(&path).unwrap();
+    assert_eq!(
+        on_disk.len() % chunk,
+        0,
+        "only whole chunks may reach disk before the fault, got {} bytes",
+        on_disk.len()
+    );
+    assert!(
+        on_disk.len() <= payload.len(),
+        "on-disk size must not exceed the payload"
+    );
+    assert_eq!(
+        on_disk.as_slice(),
+        &payload[..on_disk.len()],
+        "durable prefix must match the source bytes exactly"
+    );
+}
