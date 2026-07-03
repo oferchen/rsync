@@ -25,8 +25,8 @@ impl UserMapping {
     }
 
     /// Applies the mapping to the supplied UID.
-    pub(crate) fn map_uid(&self, uid: RawUid) -> io::Result<Option<RawUid>> {
-        self.0.map_uid(uid)
+    pub(crate) fn map_uid(&self, uid: RawUid, numeric_ids: bool) -> io::Result<Option<RawUid>> {
+        self.0.map_uid(uid, numeric_ids)
     }
 
     /// Reports whether the mapping contains any rules.
@@ -58,8 +58,8 @@ impl GroupMapping {
     }
 
     /// Applies the mapping to the supplied GID.
-    pub(crate) fn map_gid(&self, gid: RawGid) -> io::Result<Option<RawGid>> {
-        self.0.map_gid(gid)
+    pub(crate) fn map_gid(&self, gid: RawGid, numeric_ids: bool) -> io::Result<Option<RawGid>> {
+        self.0.map_gid(gid, numeric_ids)
     }
 
     /// Reports whether the mapping contains any rules.
