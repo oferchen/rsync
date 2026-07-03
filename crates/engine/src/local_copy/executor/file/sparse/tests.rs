@@ -700,8 +700,12 @@ fn sparse_state_finish_reports_logical_length() {
     assert_eq!(final_pos, 1024);
 }
 
-/// Multiple interior zero runs within a preallocated extent are each punched
-/// out, deallocating their reserved blocks.
+/// A zero run spanning full sparse segments inside a preallocated extent is
+/// punched out across multiple flush cycles, deallocating its reserved blocks.
+///
+/// The run straddles several `SPARSE_WRITE_SIZE` (32 KiB) segments so each
+/// segment's leading/trailing zero detection carries the run forward and the
+/// accumulated hole is punched (mirroring upstream `write_sparse` chunking).
 #[cfg(target_os = "linux")]
 #[test]
 fn sparse_state_multiple_flush_cycles_punch() {
@@ -711,12 +715,18 @@ fn sparse_state_multiple_flush_cycles_punch() {
     let mut file = NamedTempFile::new().expect("temp file");
     let path = file.path().to_path_buf();
 
-    // Reserve a 16 KiB extent.
+    // head data, a 256 KiB hole spanning many 32 KiB segments, tail data.
+    let head = 4096usize;
+    let hole = 256 * 1024usize;
+    let tail = 4096usize;
+    let total = (head + hole + tail) as u64;
+
+    // Reserve the whole extent.
     rustix::fs::fallocate(
         file.as_file().as_fd(),
         rustix::fs::FallocateFlags::empty(),
         0,
-        16384,
+        total,
     )
     .expect("fallocate");
     let prealloc = file.as_file().metadata().expect("meta").blocks() * 512;
@@ -724,28 +734,26 @@ fn sparse_state_multiple_flush_cycles_punch() {
     let mut state = SparseWriteState::default();
     state.set_preallocated_len(prealloc);
 
-    // Build a buffer with two large interior zero runs surrounded by data.
-    let mut buf = vec![0xCCu8; 16384];
-    for byte in buf.iter_mut().take(4096).skip(1024) {
-        *byte = 0;
+    let mut buf = vec![0u8; head + hole + tail];
+    for byte in buf.iter_mut().take(head) {
+        *byte = 0xCC;
     }
-    for byte in buf.iter_mut().take(12288).skip(8192) {
-        *byte = 0;
+    for byte in buf.iter_mut().skip(head + hole) {
+        *byte = 0xDD;
     }
 
     write_sparse_chunk(file.as_file_mut(), &mut state, &buf, &path).expect("write");
     let final_pos = state.finish(file.as_file_mut(), &path).expect("finish");
-    assert_eq!(final_pos, 16384);
+    assert_eq!(final_pos, total);
     file.as_file_mut().set_len(final_pos).expect("set_len");
 
     // Content survives.
     file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
-    let mut readback = vec![0u8; 16384];
+    let mut readback = vec![0u8; head + hole + tail];
     file.as_file_mut().read_exact(&mut readback).expect("read");
     assert_eq!(readback, buf);
 
-    // The two zero runs were punched: allocation drops below the reserved
-    // extent.
+    // The zero run was punched: allocation drops below the reserved extent.
     let allocated = file.as_file().metadata().expect("meta").blocks() * 512;
     assert!(
         allocated < prealloc,
