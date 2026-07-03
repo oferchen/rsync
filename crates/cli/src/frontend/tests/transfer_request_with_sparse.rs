@@ -104,34 +104,30 @@ fn transfer_request_with_sparse_copies_all_zero_source_without_extra_blocks() {
     );
 }
 
-#[cfg(unix)]
+/// `--sparse --preallocate` reserves the destination extent, then punches the
+/// source's zero run back out. Upstream keeps `sparse_files > 0` under
+/// `--preallocate` and `do_fallocate()` reports the preallocated length so
+/// `write_sparse()` punches the interior hole (rather than leaving the reserved
+/// blocks allocated).
+// upstream: fileio.c:95 write_sparse() -> do_punch_hole within preallocated_len
+#[cfg(target_os = "linux")]
 #[test]
-fn transfer_request_with_sparse_and_preallocate_allocates_dense() {
+fn transfer_request_with_sparse_and_preallocate_punches_hole() {
     use std::os::unix::fs::MetadataExt;
     use tempfile::tempdir;
 
     let tmp = tempdir().expect("tempdir");
     let source = tmp.path().join("source.bin");
     let mut source_file = std::fs::File::create(&source).expect("create source");
-    source_file.write_all(&[0x10]).expect("write leading byte");
+    source_file.write_all(&[0x10; 4096]).expect("write head");
     source_file
-        .seek(SeekFrom::Start(1024 * 1024))
-        .expect("seek to hole");
-    source_file.write_all(&[0x20]).expect("write trailing byte");
-    source_file.set_len(3 * 1024 * 1024).expect("extend source");
+        .write_all(&vec![0u8; 2 * 1024 * 1024])
+        .expect("write hole");
+    source_file.write_all(&[0x20; 4096]).expect("write tail");
+    let apparent = source_file.metadata().expect("meta").len();
+    drop(source_file);
 
-    let dense_dest = tmp.path().join("dense.bin");
     let prealloc_dest = tmp.path().join("sparse-prealloc.bin");
-
-    let (code, stdout, stderr) = run_with_args([
-        OsString::from(RSYNC),
-        source.clone().into_os_string(),
-        dense_dest.clone().into_os_string(),
-    ]);
-    assert_eq!(code, 0);
-    assert!(stdout.is_empty());
-    assert!(stderr.is_empty());
-
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--sparse"),
@@ -143,11 +139,13 @@ fn transfer_request_with_sparse_and_preallocate_allocates_dense() {
     assert!(stdout.is_empty());
     assert!(stderr.is_empty());
 
-    let dense_meta = std::fs::metadata(&dense_dest).expect("dense metadata");
     let prealloc_meta = std::fs::metadata(&prealloc_dest).expect("prealloc metadata");
-
-    assert_eq!(dense_meta.len(), prealloc_meta.len());
-    assert_eq!(prealloc_meta.blocks(), dense_meta.blocks());
+    assert_eq!(prealloc_meta.len(), apparent, "content length preserved");
+    assert!(
+        prealloc_meta.blocks() * 512 < apparent,
+        "preallocated zero run must be punched (allocated {}, size {apparent})",
+        prealloc_meta.blocks() * 512,
+    );
 }
 
 #[cfg(unix)]
