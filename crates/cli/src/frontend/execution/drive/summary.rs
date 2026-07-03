@@ -196,7 +196,12 @@ where
                     writeln!(writer, "warning: failed to append to log file: {error}")
                 });
             }
-            0
+            // upstream: log.c:log_exit() maps the accumulated io_error /
+            // got_xfer_error into RERR_* exit codes. A transfer can complete
+            // its summary yet still owe a non-zero code (e.g. a receiver that
+            // discarded a file because its output mkstemp() failed reports exit
+            // 23 via MSG_ERROR_XFER). Honour it here instead of forcing 0.
+            summary.io_error_exit_code().unwrap_or(0)
         }
         Err(error) => {
             if let Some(observer) = live_progress
