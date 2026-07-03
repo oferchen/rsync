@@ -313,6 +313,13 @@ Upstream `lsh.sh` is invoked by `oc-rsync` itself via `Command::new(env::var("RS
 
 ## 6. `DirDiff`
 
+Status: implemented in `crates/test-support/src/dir_diff.rs`. The landed
+surface uses standard-library traversal (deterministic sorted order) rather
+than `walkdir`, keeping `test-support` dependency-free. Content, mode, owner,
+mtime, and literal symlink-target comparison are wired; `check_atime`,
+`check_xattr`, and `check_acl` return `DirDiffError::Unsupported` instead of
+silently passing until a backend lands.
+
 ### 6.1 Responsibilities
 
 Recursively compare two directory trees with byte-equality + mode + owner + (optional) atime/mtime/xattr/acl. Mirrors upstream's `rsync_ls_lR` + `diff -r` pair.
