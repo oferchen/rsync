@@ -1107,3 +1107,138 @@ fn dry_run_with_no_implied_dirs_and_missing_parent_succeeds() {
         "dry run must not create directories"
     );
 }
+
+/// Regression test for the file-to-file-mkpath-dry-run conformance test:
+/// a dry-run onto an existing but differing destination must itemize the same
+/// attribute change as the real run. Before the fix the dry-run DataCopied
+/// record carried an empty change set (rendering `>f.........`), while the real
+/// run reported the size/time drift (`>f.st......`).
+///
+/// upstream: generator.c:1942-1960 - the generator itemizes against the
+/// existing destination even under dry-run, so `-ni` matches `-i`.
+#[test]
+fn dry_run_existing_differing_dest_itemizes_size_and_time_change() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("src");
+    let dry_dest = temp.path().join("dry_dst");
+    let real_dest = temp.path().join("real_dst");
+    // Source is larger than the destinations so the size column must change.
+    fs::write(&source, b"brand new content\n").expect("write source");
+    let epoch = FileTime::from_unix_time(0, 0);
+    for dest in [&dry_dest, &real_dest] {
+        fs::write(dest, b"old\n").expect("write dest");
+        set_file_mtime(dest, epoch).expect("backdate dest mtime");
+    }
+
+    let change_set_for = |dest: &std::path::Path, mode: LocalCopyExecution| {
+        let operands = vec![
+            source.clone().into_os_string(),
+            dest.to_path_buf().into_os_string(),
+        ];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        // `-a` implies preserved times, matching the conformance invocation.
+        let options = LocalCopyOptions::default().times(true).collect_events(true);
+        let report = plan
+            .execute_with_report(mode, options)
+            .expect("execution succeeds");
+        report
+            .records()
+            .iter()
+            .find(|record| matches!(record.action(), LocalCopyAction::DataCopied))
+            .expect("DataCopied record present")
+            .change_set()
+    };
+
+    let dry = change_set_for(&dry_dest, LocalCopyExecution::DryRun);
+    let real = change_set_for(&real_dest, LocalCopyExecution::Apply);
+
+    // The dry-run itemize must exactly match the real run.
+    assert_eq!(
+        dry, real,
+        "dry-run change set must match the real run for an existing differing destination"
+    );
+    // And it must report the actual size + time drift, not a blank change set.
+    assert!(dry.size_changed(), "size column must be reported (s)");
+    assert!(
+        dry.time_change().is_some(),
+        "time column must be reported (t)"
+    );
+    // Dry-run must not touch the destination.
+    assert_eq!(fs::read(&dry_dest).expect("read"), b"old\n");
+}
+
+/// Regression test for the `compare` conformance test: a dry-run must run the
+/// same quick-check as a real run, so an up-to-date destination (matching size
+/// and mtime, or an mtime difference absorbed by `--modify-window`) is skipped
+/// and reported as `MetadataReused` rather than a spurious `DataCopied`.
+///
+/// upstream: generator.c:unchanged_file() drives the quick-check regardless of
+/// dry_run; util1.c:same_time() applies the `--modify-window` tolerance.
+#[test]
+fn dry_run_skips_up_to_date_and_window_absorbed_destinations() {
+    let record_for = |mtime_offset: i64, window_secs: u64| {
+        let temp = tempdir().expect("tempdir");
+        let source = temp.path().join("src");
+        let destination = temp.path().join("dst");
+        let content = b"identical content\n";
+        fs::write(&source, content).expect("write source");
+        fs::write(&destination, content).expect("write dest");
+        let base = FileTime::from_unix_time(1_000_000_000, 0);
+        set_file_mtime(&destination, base).expect("set dest mtime");
+        set_file_mtime(
+            &source,
+            FileTime::from_unix_time(1_000_000_000 + mtime_offset, 0),
+        )
+        .expect("set source mtime");
+
+        let operands = vec![source.into_os_string(), destination.into_os_string()];
+        let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+        let mut options = LocalCopyOptions::default().times(true).collect_events(true);
+        if window_secs > 0 {
+            options = options.with_modify_window(Duration::from_secs(window_secs));
+        }
+        let report = plan
+            .execute_with_report(LocalCopyExecution::DryRun, options)
+            .expect("dry run succeeds");
+        let record = report
+            .records()
+            .iter()
+            .find(|record| {
+                matches!(
+                    record.action(),
+                    LocalCopyAction::MetadataReused | LocalCopyAction::DataCopied
+                )
+            })
+            .expect("file record present");
+        (record.action().clone(), record.change_set())
+    };
+
+    // Identical size + mtime: quick-check skips (no transfer, no `>f` line).
+    let (identical, _) = record_for(0, 0);
+    assert_eq!(
+        identical,
+        LocalCopyAction::MetadataReused,
+        "an up-to-date destination must be skipped in dry-run"
+    );
+    // 1s newer source, no window: quick-check transfers (itemized).
+    let (no_window, _) = record_for(1, 0);
+    assert_eq!(
+        no_window,
+        LocalCopyAction::DataCopied,
+        "a 1s mtime change must itemize a transfer without --modify-window"
+    );
+    // 1s newer source, --modify-window=2: the difference is absorbed, so the
+    // file is skipped AND the itemize reports no time change (no `t` glyph),
+    // matching upstream same_time(). A phantom `.f..t......` line would leak
+    // through the `compare` conformance test's `'f3' not in stdout` check.
+    let (windowed, windowed_change) = record_for(1, 2);
+    assert_eq!(
+        windowed,
+        LocalCopyAction::MetadataReused,
+        "--modify-window=2 must absorb a 1s mtime difference in dry-run"
+    );
+    assert!(
+        windowed_change.time_change().is_none(),
+        "a window-absorbed mtime difference must not report a time change"
+    );
+}

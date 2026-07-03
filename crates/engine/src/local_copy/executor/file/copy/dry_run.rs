@@ -168,6 +168,32 @@ pub(super) fn handle_dry_run(
     context
         .summary_mut()
         .record_file(file_size, bytes_transferred, None);
+
+    // upstream: generator.c:1942-1960 - a dry-run still itemizes the file
+    // against the existing destination via itemize()/report_flags, so an
+    // existing but differing dest reports the real attribute drift (e.g.
+    // `>f.st......`) rather than a blank `>f.........`. Mirror the real-run
+    // change set from execute/mod.rs so `-ni` matches `-i` byte-for-byte.
+    let wrote_data = bytes_transferred > 0;
+    #[cfg(all(unix, feature = "xattr"))]
+    let xattrs_enabled = context.xattrs_enabled();
+    #[cfg(not(all(unix, feature = "xattr")))]
+    let xattrs_enabled = false;
+    #[cfg(all(any(unix, windows), feature = "acl"))]
+    let acls_enabled = context.acls_enabled();
+    #[cfg(not(all(any(unix, windows), feature = "acl")))]
+    let acls_enabled = false;
+    let change_set = LocalCopyChangeSet::for_file_with_checksum(
+        metadata,
+        existing_metadata,
+        &context.metadata_options(),
+        destination_previously_existed,
+        wrote_data,
+        xattrs_enabled,
+        acls_enabled,
+        context.checksum_enabled(),
+        context.options().modify_window(),
+    );
     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
     let total_bytes = Some(metadata_snapshot.len());
     context.record(
@@ -179,6 +205,7 @@ pub(super) fn handle_dry_run(
             Duration::default(),
             Some(metadata_snapshot),
         )
+        .with_change_set(change_set)
         .with_creation(!destination_previously_existed),
     );
     remove_source_entry_if_requested(context, source, Some(record_path), file_type)?;
