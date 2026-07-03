@@ -389,6 +389,15 @@ impl<'a> CopyContext<'a> {
         #[cfg(not(any(all(unix, feature = "xattr"), all(any(unix, windows), feature = "acl"))))]
         let _ = mode;
 
+        // upstream: xattrs.c:set_stat_xattr() reads the *source* stat via
+        // x_lstat() (get_stat_xattr layered over lstat), so a placeholder that
+        // already carries a `user.rsync.%stat` xattr forwards those recorded
+        // uid/gid/mode/rdev instead of the placeholder's own on-disk values.
+        // `set_owner_like` only saw the placeholder's `fs::Metadata`, so rewrite
+        // the destination xattr here from the effective source stat.
+        #[cfg(all(unix, feature = "xattr"))]
+        store_effective_fake_super_if_requested(&metadata_options, source, destination, metadata)?;
+
         self.record_hard_link(metadata, destination);
         remove_source_entry_if_requested(self, source, relative, file_type)?;
 

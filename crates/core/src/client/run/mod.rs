@@ -710,6 +710,11 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .with_owner_override(config.owner_override())
             .group(config.preserve_group())
             .with_group_override(config.group_override())
+            // upstream: options.c set_fake_super() -> am_root = -1; the local-copy
+            // executor stores ownership/device/mode in the user.rsync.%stat xattr
+            // instead of chown/mknod. Without this the flag was a silent no-op on
+            // the local path and every fake-super round-trip lost its metadata.
+            .fake_super(config.fake_super())
             .with_copy_as(copy_as_ids)
             .with_chmod(config.chmod().cloned())
             .executability(config.preserve_executability())

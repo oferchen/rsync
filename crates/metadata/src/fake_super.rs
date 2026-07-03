@@ -223,6 +223,33 @@ pub fn remove_fake_super(path: &Path) -> io::Result<()> {
     }
 }
 
+/// Computes the *effective* fake-super stat for a source file.
+///
+/// Under `--fake-super`, a source placeholder file may already carry a
+/// `user.rsync.%stat` xattr recorded by an earlier fake-super receive. When
+/// present it holds the real mode/uid/gid/rdev the placeholder stands in for,
+/// so it - not the placeholder's own `fs::Metadata` - is the source of truth
+/// for what to preserve onto the destination. When absent (a first-time
+/// fake-super send of a real file), fall back to [`FakeSuperStat::from_metadata`].
+///
+/// This mirrors upstream rsync's `x_lstat()`, which layers `get_stat_xattr()`
+/// over the raw `lstat()` so the placeholder appears to have the recorded
+/// ownership/type on every subsequent read.
+// upstream: xattrs.c:get_stat_xattr() consumed via x_lstat()
+#[cfg(all(unix, feature = "xattr"))]
+pub fn effective_source_stat(source: &Path, metadata: &Metadata) -> FakeSuperStat {
+    match load_fake_super(source) {
+        Ok(Some(stat)) => stat,
+        _ => FakeSuperStat::from_metadata(metadata),
+    }
+}
+
+/// Non-xattr fallback: the effective stat is always derived from `fs::Metadata`.
+#[cfg(not(all(unix, feature = "xattr")))]
+pub fn effective_source_stat(_source: &Path, metadata: &Metadata) -> FakeSuperStat {
+    FakeSuperStat::from_metadata(metadata)
+}
+
 /// Checks if the file mode indicates a device file.
 #[cfg(unix)]
 const fn is_device_file(mode: u32) -> bool {
@@ -442,6 +469,55 @@ mod tests {
         assert!(!is_device_file(0o120777)); // Symlink
         assert!(is_device_file(0o60660)); // Block device
         assert!(is_device_file(0o20666)); // Char device
+    }
+
+    // Verifies the local-copy fake-super source read: a placeholder that
+    // already carries a `user.rsync.%stat` xattr must forward the RECORDED
+    // uid/gid/mode/rdev, not the placeholder's own on-disk stat. This is the
+    // exact round-trip a `--fake-super` local copy of a previously-received
+    // placeholder must preserve. upstream: xattrs.c:get_stat_xattr().
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn effective_source_stat_prefers_recorded_xattr() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("placeholder");
+        std::fs::write(&path, b"placeholder body").expect("write");
+
+        let recorded = FakeSuperStat {
+            mode: 0o60644,
+            uid: 5000,
+            gid: 5002,
+            rdev: Some((42, 69)),
+        };
+        // Skip when the FS can't hold user xattrs (e.g. tmpfs without support).
+        if store_fake_super(&path, &recorded).is_err() {
+            return;
+        }
+
+        let meta = std::fs::metadata(&path).expect("metadata");
+        let effective = effective_source_stat(&path, &meta);
+        assert_eq!(
+            effective, recorded,
+            "recorded %stat must win over the placeholder's real stat"
+        );
+    }
+
+    // Without a recorded xattr, the effective stat falls back to the file's
+    // real `fs::Metadata` (first-time fake-super send of a real file).
+    #[cfg(all(unix, feature = "xattr"))]
+    #[test]
+    fn effective_source_stat_falls_back_to_metadata() {
+        use std::os::unix::fs::MetadataExt;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("real");
+        std::fs::write(&path, b"real body").expect("write");
+
+        let meta = std::fs::metadata(&path).expect("metadata");
+        let effective = effective_source_stat(&path, &meta);
+        assert_eq!(effective, FakeSuperStat::from_metadata(&meta));
+        assert_eq!(effective.uid, meta.uid());
+        assert_eq!(effective.gid, meta.gid());
     }
 
     #[cfg(not(all(unix, feature = "xattr")))]
