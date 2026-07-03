@@ -105,6 +105,7 @@ pub(in crate::receiver) struct AsyncFileContext<'a> {
     pub(in crate::receiver) checksum_length: std::num::NonZeroU8,
     pub(in crate::receiver) checksum_algorithm: signature::SignatureAlgorithm,
     pub(in crate::receiver) acl_cache: Option<&'a std::sync::Arc<AclCache>>,
+    #[cfg(unix)]
     pub(in crate::receiver) sandbox: Option<&'a std::sync::Arc<fast_io::DirSandbox>>,
 }
 
@@ -584,6 +585,7 @@ mod tests {
                     seed_config: checksums::strong::Md5Seed::none(),
                 },
                 acl_cache: None,
+                #[cfg(unix)]
                 sandbox: None,
             };
 
@@ -666,6 +668,7 @@ mod tests {
                 seed_config: checksums::strong::Md5Seed::none(),
             },
             acl_cache: None,
+            #[cfg(unix)]
             sandbox: None,
         };
 
