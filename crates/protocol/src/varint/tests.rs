@@ -1988,3 +1988,69 @@ fn decode_bytes_consumed_at_boundaries() {
         );
     }
 }
+
+fn encoded(value: i32) -> Vec<u8> {
+    let mut buf = Vec::new();
+    encode_varint_to_vec(value, &mut buf);
+    buf
+}
+
+#[test]
+fn read_varint_bounded_accepts_in_range() {
+    // Boundaries (lo and hi) are inclusive, matching upstream's `< lo || > hi`.
+    for (value, lo, hi) in [(0, 0, 0), (5, 0, 10), (10, 0, 10), (-3, -5, 5)] {
+        let mut cursor = Cursor::new(encoded(value));
+        let got =
+            read_varint_bounded(&mut cursor, lo, hi, "test").expect("in-range value should decode");
+        assert_eq!(got, value);
+    }
+}
+
+#[test]
+fn read_varint_bounded_rejects_below_and_above() {
+    // A value one past either boundary is a protocol error (InvalidData). This
+    // is the parity guarantee vs upstream io.c:read_varint_bounded, which aborts
+    // with RERR_PROTOCOL; callers must not receive an out-of-range value.
+    for (value, lo, hi) in [(-1, 0, 10), (11, 0, 10)] {
+        let mut cursor = Cursor::new(encoded(value));
+        let err = read_varint_bounded(&mut cursor, lo, hi, "flag")
+            .expect_err("out-of-range value must be rejected");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+}
+
+#[test]
+fn read_varint_size_accepts_non_negative_within_max() {
+    for (value, max) in [(0usize, 0usize), (7, 100), (100, 100)] {
+        let mut cursor = Cursor::new(encoded(value as i32));
+        let got = read_varint_size(&mut cursor, max, "len").expect("valid size should decode");
+        assert_eq!(got, value);
+    }
+}
+
+#[test]
+fn read_varint_size_rejects_negative() {
+    // A negative wire value would wrap to ~SIZE_MAX on a raw cast; upstream
+    // io.c:read_varint_size guards this. The guard must fire before any cast.
+    let mut cursor = Cursor::new(encoded(-1));
+    let err =
+        read_varint_size(&mut cursor, 1024, "xattr").expect_err("negative size must be rejected");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+}
+
+#[test]
+fn read_varint_size_rejects_above_max() {
+    let mut cursor = Cursor::new(encoded(2048));
+    let err = read_varint_size(&mut cursor, 1024, "xattr")
+        .expect_err("size exceeding max must be rejected");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+}
+
+#[test]
+fn read_varint_size_propagates_truncated_read() {
+    // No wire bytes at all: the underlying read_varint EOF must surface, not a
+    // range error, so callers can distinguish a short stream from a bad value.
+    let mut cursor = Cursor::new(Vec::new());
+    let err = read_varint_size(&mut cursor, 1024, "len").expect_err("truncated input must error");
+    assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+}
