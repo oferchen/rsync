@@ -49,6 +49,8 @@ pub(crate) struct ConfigInputs {
     pub(crate) compress: bool,
     pub(crate) compression_level_override: Option<compress::zlib::CompressionLevel>,
     pub(crate) compression_algorithm: Option<CompressionAlgorithm>,
+    /// Raw `--compress-choice` name preserved for the `--debug=NSTR` summary.
+    pub(crate) compress_choice_name: Option<String>,
     pub(crate) compression_threads: Option<NonZeroU8>,
     pub(crate) open_noatime: bool,
     pub(crate) owner: bool,
@@ -338,6 +340,10 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
 
     if let Some(algorithm) = inputs.compression_algorithm {
         builder = builder.compression_algorithm(algorithm);
+    }
+
+    if inputs.compress_choice_name.is_some() {
+        builder = builder.compress_choice_name(inputs.compress_choice_name.take());
     }
 
     if let Some(choice) = inputs.checksum_choice {

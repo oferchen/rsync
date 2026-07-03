@@ -347,11 +347,20 @@ impl VersionInfoReport {
         entries: &[Cow<'static, str>],
     ) -> fmt::Result {
         write!(writer, ",\n  \"{name}\": [\n   ")?;
-        for (i, entry) in entries.iter().enumerate() {
-            if i > 0 {
+        // upstream: usage.c:242-243 - `if (*tok != '(')` ignores the parenthetical
+        // library-alias tokens (e.g. "(xxhash)") in the JSON output; they appear
+        // only in the human-readable list. Emitting them as array entries would
+        // advertise a bogus `--checksum-choice` value.
+        let mut emitted = 0usize;
+        for entry in entries.iter() {
+            if entry.starts_with('(') {
+                continue;
+            }
+            if emitted > 0 {
                 write!(writer, ",")?;
             }
             write!(writer, " \"{entry}\"")?;
+            emitted += 1;
         }
         write!(writer, "\n  ]")
     }
@@ -483,7 +492,10 @@ pub(crate) fn default_checksum_algorithms() -> Vec<Cow<'static, str>> {
         Cow::Borrowed("xxh128"),
         Cow::Borrowed("xxh3"),
         Cow::Borrowed("xxh64"),
-        Cow::Borrowed("(xxhash-rust)"),
+        // upstream: usage.c:225 / compat.c:462 - the `(xxhash)` alias marks the
+        // xxh* group's backing library in the human-readable list. It is
+        // filtered out of the JSON `checksum_list` (see `write_json_list`).
+        Cow::Borrowed("(xxhash)"),
         Cow::Borrowed("md5"),
         Cow::Borrowed("md4"),
         Cow::Borrowed("sha1"),
@@ -775,6 +787,40 @@ mod tests {
         let report = VersionInfoReport::default();
         let output = report.human_readable();
         assert!(output.contains("Checksum list:"));
+    }
+
+    #[test]
+    fn human_readable_checksum_list_keeps_xxhash_alias() {
+        // upstream: usage.c:225 renders the `(xxhash)` library alias in the
+        // human-readable Checksum list.
+        let report = VersionInfoReport::default();
+        let output = report.human_readable();
+        assert!(
+            output.contains("(xxhash)"),
+            "human Checksum list must keep the (xxhash) alias: {output}"
+        );
+    }
+
+    #[test]
+    fn machine_readable_checksum_list_omits_parenthetical_aliases() {
+        // upstream: usage.c:242-243 filters `(...)` alias tokens out of the JSON
+        // checksum_list, since they are not valid `--checksum-choice` values.
+        let report = VersionInfoReport::default();
+        let json = report.machine_readable();
+        let list_start = json
+            .find("\"checksum_list\"")
+            .expect("checksum_list present");
+        let list_end = json[list_start..]
+            .find(']')
+            .map(|off| list_start + off)
+            .expect("checksum_list closes");
+        let list = &json[list_start..list_end];
+        assert!(
+            !list.contains('('),
+            "JSON checksum_list must not contain alias tokens: {list}"
+        );
+        assert!(list.contains("\"xxh128\""), "xxh128 must remain: {list}");
+        assert!(list.contains("\"md5\""), "md5 must remain: {list}");
     }
 
     #[test]
