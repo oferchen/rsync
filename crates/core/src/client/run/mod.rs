@@ -541,6 +541,15 @@ fn resolve_nstr_compress_level(
             // upstream: token.c:81-87 - lz4 def_level 0, min/max 0.
             0
         }
+        // Feature-unification guard: another crate may enable `compress`'s
+        // zstd/lz4 features (exposing those variants) while `core` is built
+        // without them, removing the cfg-gated arms above. Fall back to the
+        // zlib default so the match stays exhaustive in every feature combo.
+        // Unreachable under the default build where those arms are present.
+        #[allow(unreachable_patterns)]
+        _ => override_level
+            .map_or(ZLIB_DEFAULT_LEVEL, compression_level_to_nstr)
+            .clamp(1, 9),
     }
 }
 
