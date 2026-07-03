@@ -610,7 +610,7 @@ pub(super) fn delete_missing_source_entry(
     let record_path = non_empty_path(relative.as_path());
 
     if context.mode().is_dry_run() {
-        context.summary_mut().record_deletion();
+        context.summary_mut().record_deletion(file_type);
         if let Some(path) = record_path {
             context.record(LocalCopyRecord::new(
                 path.to_path_buf(),
@@ -634,7 +634,7 @@ pub(super) fn delete_missing_source_entry(
 
     match removal {
         Ok(()) => {
-            context.summary_mut().record_deletion();
+            context.summary_mut().record_deletion(file_type);
             if let Some(path) = record_path {
                 context.record(LocalCopyRecord::new(
                     path.to_path_buf(),

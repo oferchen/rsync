@@ -415,7 +415,7 @@ fn apply_delete_side_effects(
                 info_log!(Del, 1, "deleting {}", entry_relative.display());
             }
         }
-        context.summary_mut().record_deletion();
+        context.summary_mut().record_deletion(file_type);
         context.record(
             LocalCopyRecord::new(
                 entry_relative,
@@ -484,7 +484,7 @@ fn record_directory_subtree(
                 info_log!(Del, 1, "deleting {}", relative_buf.display());
             }
         }
-        context.summary_mut().record_deletion();
+        context.summary_mut().record_deletion(file_type);
         context.record(
             LocalCopyRecord::new(
                 relative_buf.clone(),
