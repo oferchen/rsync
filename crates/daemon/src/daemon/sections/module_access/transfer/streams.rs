@@ -24,7 +24,7 @@ struct TransferStreams {
 
 /// Sets up the transfer streams for the transfer engine.
 ///
-/// For TCP/TLS connections, configures TCP_NODELAY and clones the stream to get
+/// For TCP connections, configures TCP_NODELAY and clones the stream to get
 /// independent read/write handles. For stdio connections (remote-shell daemon
 /// mode), opens fresh stdin/stdout handles since the original pair is consumed
 /// by the BufReader.

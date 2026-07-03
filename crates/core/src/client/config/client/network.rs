@@ -179,16 +179,6 @@ impl ClientConfig {
     pub const fn protocol_version(&self) -> Option<protocol::ProtocolVersion> {
         self.protocol_version
     }
-
-    /// Returns the client-side TLS configuration for daemon connections.
-    ///
-    /// When `Some`, the client wraps its TCP connection in a TLS session
-    /// before performing the `@RSYNCD:` handshake. Returns `None` until
-    /// the `--ssl` CLI flag is wired through `ClientConfigBuilder` (TLS-10).
-    #[cfg(feature = "client-tls")]
-    pub(crate) fn tls_config(&self) -> Option<&crate::client::module_list::TlsClientConfig> {
-        None // wired when --ssl CLI flag is added for client mode
-    }
 }
 
 #[cfg(test)]

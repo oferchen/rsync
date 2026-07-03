@@ -879,17 +879,6 @@ NEON) are used where available, with automatic scalar fallbacks.
 :   Force AES-GCM ciphers for SSH connections. Provides hardware-accelerated
     encryption on CPUs with AES-NI or ARMv8 crypto extensions.
 
-**--ssl**
-:   Connect to an rsync daemon over TLS instead of cleartext. Changes the
-    default port from 873 to 874. The server certificate is verified against
-    the Mozilla root CA bundle; use **--ssl-ca-cert** to specify a custom CA.
-    Requires the **client-tls** feature at build time.
-
-**--ssl-ca-cert**=*FILE*
-:   Use *FILE* as the PEM-encoded CA bundle for server certificate
-    verification when connecting with **--ssl**. Overrides the built-in
-    Mozilla root CAs. Useful with private CAs or self-signed certificates.
-
 **--password-file**=*FILE*
 :   Read daemon passwords from *FILE* when contacting rsync:// daemons.
 
@@ -1254,13 +1243,9 @@ The daemon protocol is plaintext, matching upstream rsync: the daemon provides
 authentication (**auth users**) but not encryption. To encrypt daemon traffic,
 place the daemon behind an SSL proxy (**stunnel**, **HAProxy**, or **nginx**)
 that terminates TLS, binding the daemon to localhost so only the proxy reaches
-it - the same model as upstream **rsync-ssl**.
-
-When built with the **client-tls** feature, the **--ssl** flag connects to such
-an SSL-proxied daemon without external client tooling. Default certificate
-verification uses the Mozilla root CA bundle; override with **--ssl-ca-cert**.
-client-tls uses rustls (pure Rust, no OpenSSL linking) and supports TLS 1.2 and
-TLS 1.3.
+it - the same model as upstream **rsync-ssl**. Point the client at the proxy
+with an external wrapper such as **rsync-ssl** or **stunnel**; oc-rsync has no
+in-binary TLS, matching upstream rsync.
 
 ## SSH stderr socketpair channel
 

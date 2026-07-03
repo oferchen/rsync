@@ -43,9 +43,6 @@ filetime = { workspace = true }
 branding = { path = "../branding" }
 tokio = { workspace = true, optional = true }
 zeroize = { workspace = true }
-rustls = { workspace = true, optional = true }
-rustls-pemfile = { version = "2", optional = true }
-webpki-roots = { version = "1.0", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 checksums = { path = "../checksums" }
@@ -115,11 +112,6 @@ async-ssh = ["dep:tokio", "rsync_io/async-ssh"]
 
 # systemd sd-notify integration
 sd-notify = []
-
-# TLS client support for rsync:// connections via --ssl. Uses rustls with
-# webpki root certificates for server verification. Opt-in; default builds
-# remain TLS-free on the client side.
-client-tls = ["dep:rustls", "dep:rustls-pemfile", "dep:webpki-roots"]
 
 # ============================================================================
 # Debugging Features
