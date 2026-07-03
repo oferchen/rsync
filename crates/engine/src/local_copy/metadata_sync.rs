@@ -106,6 +106,52 @@ pub(crate) fn sync_nfsv4_acls_if_requested(
     Ok(())
 }
 
+/// Stores the effective fake-super `user.rsync.%stat` xattr on the destination.
+///
+/// Under `--fake-super` the source may be a placeholder whose real
+/// mode/uid/gid/rdev live in its own `user.rsync.%stat` xattr (written by an
+/// earlier fake-super receive). The metadata-apply step only saw the
+/// placeholder's raw `fs::Metadata`, so it stored the wrong ownership. Rewrite
+/// the destination xattr from [`::metadata::effective_source_stat`], which
+/// prefers the source's recorded stat and falls back to its `fs::Metadata`.
+///
+/// No-op unless `--fake-super` is active together with ownership preservation,
+/// matching `metadata::apply::ownership::set_owner_like`'s fake-super gate.
+// upstream: xattrs.c:set_stat_xattr() driven by x_lstat()/get_stat_xattr()
+#[cfg(all(unix, feature = "xattr"))]
+pub(crate) fn store_effective_fake_super_if_requested(
+    options: &::metadata::MetadataOptions,
+    source: &Path,
+    destination: &Path,
+    metadata: &std::fs::Metadata,
+) -> Result<(), LocalCopyError> {
+    let ownership_requested = options.owner()
+        || options.group()
+        || options.owner_override().is_some()
+        || options.group_override().is_some();
+    if !options.fake_super_enabled() || !ownership_requested {
+        return Ok(());
+    }
+
+    let stat = ::metadata::effective_source_stat(source, metadata);
+
+    // Skip the rewrite when the destination already carries the target stat,
+    // mirroring upstream's "no-op when the current xattr matches" fast path.
+    if let Ok(Some(existing)) = ::metadata::load_fake_super(destination) {
+        if existing == stat {
+            return Ok(());
+        }
+    }
+
+    ::metadata::store_fake_super(destination, &stat).map_err(|error| {
+        LocalCopyError::io(
+            "store fake-super metadata",
+            destination.to_path_buf(),
+            error,
+        )
+    })
+}
+
 /// Converts a [`MetadataError`] into a [`LocalCopyError`].
 pub(crate) fn map_metadata_error(error: MetadataError) -> LocalCopyError {
     let (context, path, source) = error.into_parts();
