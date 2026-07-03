@@ -165,6 +165,7 @@ pub(super) fn try_clone(
         true,
         flags.xattrs_enabled(),
         flags.acls_enabled(),
+        context.options().modify_window(),
     );
     context.record(
         LocalCopyRecord::new(

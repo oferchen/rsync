@@ -546,9 +546,13 @@ fn execute_skip_checksum_large_files_single_byte_difference() {
     );
 }
 
-/// Dry run with checksum reports all files as would-copy without modifying files.
-/// Note: dry run does not evaluate should_skip_copy (checksum/size_only/mtime),
-/// so all existing-dest files are reported as DataCopied rather than matched.
+/// Dry run with `--checksum` runs the same quick check as a real run, so a
+/// content-identical destination is reported as matched (not transferred) while
+/// a differing file is reported as a would-be-copy.
+///
+/// upstream: generator.c:645 - `unchanged_file()` (which honours `--checksum`)
+/// runs in dry-run just as in a real run, so `rsync -nc` itemizes only the file
+/// whose checksum differs.
 #[test]
 fn execute_skip_checksum_dry_run_reports_correctly() {
     let temp = create_tempdir();
@@ -577,10 +581,10 @@ fn execute_skip_checksum_dry_run_reports_correctly() {
         )
         .expect("dry run succeeds");
 
-    // Dry run does not perform should_skip_copy analysis; all files are
-    // reported as would-be-copied (DataCopied).
-    assert_eq!(summary.files_copied(), 2);
-    assert_eq!(summary.regular_files_matched(), 0);
+    // The checksum quick check runs in dry-run: only the differing file is a
+    // would-be-copy; the content-identical file is matched.
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(summary.regular_files_matched(), 1);
     // Files unchanged in dry run
     assert_eq!(fs::read(dest_root.join("same.txt")).expect("read"), b"identical");
     assert_eq!(fs::read(dest_root.join("diff.txt")).expect("read"), b"dest_vvv");
@@ -990,15 +994,19 @@ fn execute_with_size_only_copies_smaller_file() {
     assert_eq!(fs::read(&destination).expect("read"), b"tiny");
 }
 
-/// Size-only in dry run mode reports would-copy without modifying files.
-/// Note: dry run does not evaluate should_skip_copy (checksum/size_only/mtime),
-/// so same-size files are still reported as DataCopied rather than matched.
+/// Size-only in dry run runs the same quick check as a real run: a same-size
+/// destination is matched (not transferred) even when its content differs.
+///
+/// upstream: generator.c:645 - `unchanged_file()` under `--size-only` compares
+/// only file sizes, and the generator runs it in dry-run just as in a real run,
+/// so `rsync -n --size-only` reports nothing for a same-size destination.
 #[test]
 fn execute_skip_size_only_dry_run() {
     let temp = create_tempdir();
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
 
+    // Same size (3 bytes), different content: --size-only treats them as equal.
     fs::write(&source, b"abc").expect("write source");
     fs::write(&destination, b"xyz").expect("write dest");
 
@@ -1015,10 +1023,10 @@ fn execute_skip_size_only_dry_run() {
         )
         .expect("dry run succeeds");
 
-    // Dry run does not perform should_skip_copy analysis; file is
-    // reported as would-be-copied (DataCopied).
-    assert_eq!(summary.files_copied(), 1);
-    assert_eq!(summary.regular_files_matched(), 0);
+    // The size-only quick check runs in dry-run: the same-size file is matched,
+    // not reported as a would-be-copy.
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_matched(), 1);
     // Content unchanged in dry run
     assert_eq!(fs::read(&destination).expect("read"), b"xyz");
 }

@@ -1,4 +1,5 @@
 use std::fs;
+use std::time::Duration;
 
 use ::metadata::MetadataOptions;
 
@@ -252,9 +253,14 @@ fn for_file_new_destination_sets_size_changed() {
     let options = MetadataOptions::new();
 
     let change_set = LocalCopyChangeSet::for_file(
-        &metadata, None, // no existing
-        &options, false, // destination did not previously exist
-        false, false, false,
+        &metadata,
+        None, // no existing
+        &options,
+        false, // destination did not previously exist
+        false,
+        false,
+        false,
+        Duration::ZERO,
     );
 
     assert!(change_set.size_changed());
@@ -277,6 +283,7 @@ fn for_file_wrote_data_sets_checksum_changed() {
         false,
         false,
         true, // checksum mode active (gates position-2 `c` glyph per upstream generator.c:1942)
+        Duration::ZERO,
     );
 
     assert!(change_set.checksum_changed());
@@ -298,6 +305,7 @@ fn for_file_xattrs_enabled_sets_xattr_changed() {
         false,
         true, // xattrs enabled
         false,
+        Duration::ZERO,
     );
 
     assert!(change_set.xattr_changed());
@@ -319,6 +327,7 @@ fn for_file_acls_enabled_sets_acl_changed() {
         false,
         false,
         true, // acls enabled
+        Duration::ZERO,
     );
 
     assert!(change_set.acl_changed());
@@ -340,6 +349,7 @@ fn for_file_no_changes_same_metadata() {
         false, // no data written
         false,
         false,
+        Duration::ZERO,
     );
 
     assert!(!change_set.checksum_changed());
@@ -365,6 +375,7 @@ fn for_file_size_difference_detected() {
         false,
         false,
         false,
+        Duration::ZERO,
     );
 
     assert!(change_set.size_changed());
@@ -379,8 +390,14 @@ fn for_file_times_preserved_new_destination() {
     let options = MetadataOptions::new().preserve_times(true);
 
     let change_set = LocalCopyChangeSet::for_file(
-        &metadata, None, &options, false, // new destination
-        false, false, false,
+        &metadata,
+        None,
+        &options,
+        false, // new destination
+        false,
+        false,
+        false,
+        Duration::ZERO,
     );
 
     assert_eq!(change_set.time_change(), Some(TimeChange::Modified));
@@ -402,6 +419,7 @@ fn for_file_times_not_preserved_wrote_data() {
         true, // wrote data
         false,
         false,
+        Duration::ZERO,
     );
 
     assert_eq!(change_set.time_change(), Some(TimeChange::TransferTime));
@@ -416,8 +434,14 @@ fn for_file_times_not_preserved_new_destination() {
     let options = MetadataOptions::new().preserve_times(false);
 
     let change_set = LocalCopyChangeSet::for_file(
-        &metadata, None, &options, false, // new destination
-        false, false, false,
+        &metadata,
+        None,
+        &options,
+        false, // new destination
+        false,
+        false,
+        false,
+        Duration::ZERO,
     );
 
     assert_eq!(change_set.time_change(), Some(TimeChange::TransferTime));
@@ -439,9 +463,60 @@ fn for_file_times_not_changed_existing_no_write() {
         false, // no write
         false,
         false,
+        Duration::ZERO,
     );
 
     assert!(change_set.time_change().is_none());
+}
+
+/// upstream: generator.c:526 - the ITEM_REPORT_TIME (`t`) glyph is gated by
+/// `!same_time(...)`, which honours `--modify-window`. A same-size file whose
+/// mtime drifts by less than the window must therefore leave the time slot
+/// blank so the itemize line is suppressed. Guards the itemize path exercised
+/// by the upstream `compare` testsuite (`-ain --modify-window=2`).
+#[test]
+fn for_file_within_window_mtime_drift_reports_no_time_change() {
+    use filetime::{FileTime, set_file_mtime};
+
+    let temp = tempfile::tempdir().expect("tempdir");
+    let existing_path = temp.path().join("existing.txt");
+    fs::write(&existing_path, b"same size").expect("write existing");
+    set_file_mtime(&existing_path, FileTime::from_unix_time(1_700_000_001, 0))
+        .expect("set existing mtime");
+    let existing = fs::metadata(&existing_path).expect("metadata");
+
+    let new_path = temp.path().join("new.txt");
+    fs::write(&new_path, b"same size").expect("write new");
+    set_file_mtime(&new_path, FileTime::from_unix_time(1_700_000_000, 0)).expect("set new mtime");
+    let metadata = fs::metadata(&new_path).expect("metadata");
+
+    let options = MetadataOptions::new().preserve_times(true);
+    // 1s drift, 2s window -> within tolerance -> no `t` glyph.
+    let within = LocalCopyChangeSet::for_file(
+        &metadata,
+        Some(&existing),
+        &options,
+        true,
+        false,
+        false,
+        false,
+        Duration::from_secs(2),
+    );
+    assert!(within.time_change().is_none());
+    assert!(!within.has_any_change());
+
+    // Same drift with a zero window still lights the `t` glyph.
+    let exact = LocalCopyChangeSet::for_file(
+        &metadata,
+        Some(&existing),
+        &options,
+        true,
+        false,
+        false,
+        false,
+        Duration::ZERO,
+    );
+    assert_eq!(exact.time_change(), Some(TimeChange::Modified));
 }
 
 #[test]
@@ -469,6 +544,7 @@ fn change_set_detects_size_and_time_changes() {
         true,
         false,
         false,
+        Duration::ZERO,
     );
 
     assert!(change_set.size_changed());
@@ -514,6 +590,7 @@ fn change_set_detects_permission_changes_for_existing_destination() {
         false,
         false,
         false,
+        Duration::ZERO,
     );
 
     assert!(change_set.permissions_changed());
@@ -549,6 +626,7 @@ fn change_set_detects_owner_override_mismatch() {
         false,
         false,
         false,
+        Duration::ZERO,
     );
 
     assert!(change_set.owner_changed());
@@ -582,6 +660,7 @@ fn change_set_detects_group_override_mismatch() {
         false,
         false,
         false,
+        Duration::ZERO,
     );
 
     assert!(change_set.group_changed());

@@ -311,6 +311,7 @@ pub(crate) fn copy_symlink(
             false,
             false,
             false,
+            context.options().modify_window(),
         );
         context.summary_mut().record_symlink();
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, Some(target));
@@ -379,6 +380,7 @@ pub(crate) fn copy_symlink(
                 false,
                 false,
                 false,
+                context.options().modify_window(),
             );
             context.record(
                 LocalCopyRecord::new(
@@ -630,6 +632,7 @@ pub(crate) fn copy_symlink(
                         false,
                         false,
                         false,
+                        context.options().modify_window(),
                     );
                     record = record.with_change_set(change_set);
                 }
@@ -743,6 +746,7 @@ pub(crate) fn copy_symlink(
                 false,
                 false,
                 false,
+                context.options().modify_window(),
             );
             record = record.with_change_set(change_set);
         }

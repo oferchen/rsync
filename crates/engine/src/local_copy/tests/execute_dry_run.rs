@@ -897,7 +897,7 @@ fn dry_run_large_file_reports_correct_byte_count() {
 
 
 #[test]
-fn dry_run_reports_matched_file_as_would_copy() {
+fn dry_run_reports_up_to_date_file_as_unchanged() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source.txt");
     let destination = temp.path().join("dest.txt");
@@ -924,10 +924,12 @@ fn dry_run_reports_matched_file_as_would_copy() {
         )
         .expect("dry run succeeds");
 
-    // In dry-run mode the engine reports the file as would-be-copied
-    // because the skip-comparison check is not performed in the dry-run
-    // path.  The destination file must remain unchanged.
-    assert_eq!(summary.files_copied(), 1);
+    // upstream: generator.c:526,645 - the generator runs the quick check in
+    // dry-run exactly as in a real run, so a same-size, same-mtime destination
+    // is up-to-date and NOT reported as a transfer (rsync -n prints nothing for
+    // it). The destination must remain unchanged.
+    assert_eq!(summary.files_copied(), 0);
+    assert_eq!(summary.regular_files_total(), 1);
     assert_eq!(
         fs::read(&destination).expect("read dest"),
         content,
