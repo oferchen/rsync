@@ -100,6 +100,15 @@ pub struct ClientConfig {
     /// `options.c:2800-2805` only sends `--compress-choice` / `--new-compress`
     /// / `--old-compress` when the user explicitly selected an algorithm.
     pub(super) explicit_compress_choice: bool,
+    /// Raw `--compress-choice` name as typed by the user (e.g. `"zlibx"`).
+    ///
+    /// [`CompressionAlgorithm`] folds `zlibx` into `Zlib` because the two
+    /// share the deflate codec, so the enum alone cannot reproduce upstream's
+    /// verbatim `compress_choice` name in the `--debug=NSTR` summary. Upstream
+    /// prints the user-supplied string (`compat.c:206-219`), so this preserves
+    /// it. `None` means the algorithm was the negotiated/default choice, in
+    /// which case the summary derives the name from the algorithm.
+    pub(super) compress_choice_name: Option<String>,
     pub(super) compression_level: Option<CompressionLevel>,
     pub(super) compression_setting: CompressionSetting,
     /// Worker thread count requested via `--compress-threads=N` (zstd's
@@ -315,6 +324,7 @@ impl Default for ClientConfig {
             compress: false,
             compression_algorithm: CompressionAlgorithm::default_algorithm(),
             explicit_compress_choice: false,
+            compress_choice_name: None,
             compression_level: None,
             compression_setting: CompressionSetting::default(),
             compression_threads: None,
