@@ -155,7 +155,24 @@ impl DrainingReader {
                                 return;
                             }
                         }
-                        Err(ref e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                        // A read timeout (set on the socket by the caller so a
+                        // blocking `read()` cannot pin the thread past `stop()`)
+                        // or an interrupted syscall is not a wire error: loop
+                        // back to re-check the stop flag and keep draining. This
+                        // is what makes `stop_and_join()` reliably unblock the
+                        // thread on every platform, including Windows, where a
+                        // permanently-blocking `read()` would otherwise never
+                        // observe the stop flag and `join()` would hang.
+                        Err(ref e)
+                            if matches!(
+                                e.kind(),
+                                io::ErrorKind::Interrupted
+                                    | io::ErrorKind::WouldBlock
+                                    | io::ErrorKind::TimedOut
+                            ) =>
+                        {
+                            continue
+                        }
                         Err(e) => {
                             let _ = tx.send(DrainItem::End(Err(e)));
                             return;
@@ -327,5 +344,40 @@ mod draining_reader_tests {
         // Subsequent reads keep returning EOF.
         let mut extra = [0u8; 4];
         assert_eq!(reader.read(&mut extra).expect("post-eof read"), 0);
+    }
+
+    #[test]
+    fn stop_joins_promptly_when_peer_is_silent() {
+        // Regression (#503, Windows CI): a silent peer that connects but never
+        // sends and never closes leaves the drain thread parked in a blocking
+        // `read()`. With a read timeout on the socket, the loop wakes, observes
+        // the stop flag, and exits, so `stop()`'s join returns instead of
+        // hanging forever. This is the exact deadlock the daemon negotiation
+        // tests hit on Windows, where a blocking `read()` only unblocks on peer
+        // close. The join must complete well within the read timeout budget.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+        // Accept and then sit silent, holding the connection open (no data,
+        // no FIN) until the test drops it.
+        let silent_peer = thread::spawn(move || {
+            let (server, _) = listener.accept().expect("accept");
+            // Park the accepted socket alive; the reader must not depend on a
+            // FIN to stop its drain thread.
+            thread::sleep(std::time::Duration::from_secs(2));
+            drop(server);
+        });
+        let sock = TcpStream::connect(addr).expect("connect loopback");
+        sock.set_read_timeout(Some(std::time::Duration::from_millis(200)))
+            .expect("set read timeout");
+        let (reader, handle) = DrainingReader::new(sock);
+
+        let start = std::time::Instant::now();
+        handle.stop();
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(1),
+            "stop() must join the drain thread promptly even with a silent peer"
+        );
+        drop(reader);
+        let _ = silent_peer.join();
     }
 }

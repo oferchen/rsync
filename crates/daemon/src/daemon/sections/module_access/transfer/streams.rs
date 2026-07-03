@@ -109,6 +109,17 @@ fn setup_transfer_streams(
     // and the multiplex framing are unchanged. The `DrainHandle` is stopped by
     // the orchestrator before the goodbye drain reads the socket via another
     // clone.
+    //
+    // Bound the drain thread's blocking `read()` with a short socket read
+    // timeout so `DrainHandle::stop()` can reliably wake and join the thread on
+    // every platform. Without it, a thread parked in a blocking `read()` never
+    // observes the stop flag until the peer closes the socket; on Windows that
+    // wedges `join()` indefinitely. The drain loop treats a timeout as "re-check
+    // the stop flag and keep reading", so this does not drop any wire bytes and
+    // the byte-pipe semantics are unchanged. Mirrors the bounded goodbye-drain
+    // read timeout the orchestrator already uses on this same socket. A failure
+    // to set the timeout is non-fatal: fall back to the untimed blocking read.
+    let _ = read_stream.set_read_timeout(Some(Duration::from_millis(200)));
     let (draining_reader, drain_handle) = DrainingReader::new(read_stream);
 
     Ok(Some(TransferStreams {
