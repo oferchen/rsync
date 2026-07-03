@@ -66,16 +66,13 @@ pub(super) fn render_placeholder_value(
             Some(format_numeric_value(length as i64, &spec.format))
         }
         OutFormatPlaceholder::BytesTransferred => Some(format_numeric_value(
-            event.bytes_transferred() as i64,
+            transfer_byte_count(event, context.is_sender, false) as i64,
             &spec.format,
         )),
-        OutFormatPlaceholder::ChecksumBytes => {
-            let checksum_bytes = match event.kind() {
-                ClientEventKind::DataCopied => event.bytes_transferred(),
-                _ => 0,
-            };
-            Some(format_numeric_value(checksum_bytes as i64, &spec.format))
-        }
+        OutFormatPlaceholder::ChecksumBytes => Some(format_numeric_value(
+            transfer_byte_count(event, context.is_sender, true) as i64,
+            &spec.format,
+        )),
         OutFormatPlaceholder::Operation => Some(describe_event_kind(event.kind()).to_owned()),
         OutFormatPlaceholder::ModifyTime => Some(format_out_format_mtime(event.metadata())),
         OutFormatPlaceholder::PermissionString => {
@@ -122,6 +119,50 @@ pub(super) fn render_placeholder_value(
             'P',
         )),
         OutFormatPlaceholder::FullChecksum => Some(format_full_checksum(event)),
+    }
+}
+
+/// Wire size of the `sum_head` a receiver sends per transferred file: four
+/// 32-bit little-endian fields (count, blength, s2length, remainder). In the
+/// local-copy path transfers are always whole-file, so the header is empty
+/// (count=0) and its size is the constant 16 bytes the sender reads back.
+///
+/// upstream: rsync.h:200 `struct sum_struct`; match.c:380 `write_sum_head()`.
+const SUM_HEAD_WIRE_BYTES: u64 = 16;
+
+/// Resolves the byte count for `%b` / `%c`, selecting the direction the way
+/// upstream does.
+///
+/// upstream: log.c:672-684 - `%b` and `%c` are the two per-file wire byte
+/// deltas. When the entry was not transferred (`!(iflags & ITEM_TRANSFER)`)
+/// both render 0. Otherwise `(!!am_sender) ^ (*p == 'c')` selects between the
+/// bytes written (`total_data_written - initial_data_written`) and the bytes
+/// read (`total_data_read - initial_data_read`). On the sender the written
+/// direction carries the file data and the read direction carries the checksum
+/// header echoed back; on the receiver they swap onto the opposite physical
+/// counters. The net semantic is role-independent: `%b` always reports the
+/// file-data bytes and `%c` always reports the checksum-header bytes.
+///
+/// oc-rsync's local-copy engine records the file-data bytes as
+/// `bytes_transferred`; the checksum direction is the whole-file empty
+/// [`SUM_HEAD_WIRE_BYTES`] header. `want_checksum` picks between the two, and
+/// the `is_sender` XOR reproduces upstream's counter mapping so `%b`/`%c`
+/// remain correct for either transfer role.
+fn transfer_byte_count(event: &ClientEvent, is_sender: bool, want_checksum: bool) -> u64 {
+    if !matches!(event.kind(), ClientEventKind::DataCopied) {
+        return 0;
+    }
+    // upstream `(!!am_sender) ^ (*p == 'c')`: true -> the bytes-written counter,
+    // false -> the bytes-read counter. On the sender the written counter holds
+    // the file data (read holds the checksum header); on the receiver the roles
+    // of the two physical counters swap. Map each selected counter back to the
+    // quantity oc-rsync tracks per file so the printed value matches upstream.
+    let selects_written = is_sender ^ want_checksum;
+    let written_is_data = is_sender;
+    if selects_written == written_is_data {
+        event.bytes_transferred()
+    } else {
+        SUM_HEAD_WIRE_BYTES
     }
 }
 
