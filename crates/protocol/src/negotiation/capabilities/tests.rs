@@ -169,14 +169,31 @@ fn test_vstring_max_nstr_strlen_limit_rejects_oversized() {
 
 #[test]
 fn test_vstring_max_nstr_strlen_limit_accepts_boundary() {
-    // A string of exactly 256 bytes should be accepted.
-    let boundary = "x".repeat(256);
+    // The largest accepted vstring is MAX_NSTR_STRLEN - 1 == 255 bytes:
+    // upstream io.c:2011 rejects `len >= bufsize` (bufsize == 256), reserving
+    // one byte for the NUL terminator.
+    let boundary = "x".repeat(255);
     let mut buffer = Vec::new();
     write_vstring(&mut buffer, &boundary).unwrap();
 
     let mut reader = &buffer[..];
     let received = read_vstring(&mut reader).unwrap();
     assert_eq!(received, boundary);
+}
+
+#[test]
+fn test_vstring_at_bufsize_is_rejected() {
+    // len == MAX_NSTR_STRLEN (256) must be refused: upstream `len >= bufsize`.
+    let at_limit = "x".repeat(256);
+    let mut buffer = Vec::new();
+    write_vstring(&mut buffer, &at_limit).unwrap();
+
+    let mut reader = &buffer[..];
+    let result = read_vstring(&mut reader);
+    assert!(
+        result.is_err(),
+        "256-byte vstring must be rejected to match upstream `len >= bufsize`"
+    );
 }
 
 /// Confirms `--debug=nstr` emits the exact wording used by upstream rsync
@@ -1399,6 +1416,9 @@ fn phase2_11_vstring_2byte_length_255() {
 }
 
 /// Tests value 256 (crosses into second high byte).
+///
+/// The write side must still emit the 2-byte header `0x81 0x00`, but the read
+/// side rejects it: upstream io.c:2011 refuses `len >= bufsize` (256).
 #[test]
 fn phase2_11_vstring_2byte_length_256() {
     let test_str = "f".repeat(256);
@@ -1410,15 +1430,20 @@ fn phase2_11_vstring_2byte_length_256() {
     assert_eq!(buffer[1], 0x00);
 
     let mut reader = &buffer[..];
-    let received = read_vstring(&mut reader).unwrap();
-    assert_eq!(received, test_str);
+    let result = read_vstring(&mut reader);
+    assert!(
+        result.is_err(),
+        "256-byte vstring must be rejected (upstream `len >= bufsize`)"
+    );
 }
 
 /// Tests sample values across the 2-byte range.
 #[test]
 fn phase2_11_vstring_2byte_sample_values() {
-    // Values capped at MAX_NSTR_STRLEN=256; larger lengths need write-only tests.
-    let lengths = [128, 200, 255, 256];
+    // Values that round-trip use the 2-byte format and stay within the
+    // accepted range (<= MAX_NSTR_STRLEN - 1 == 255). 256 is write-only since
+    // read rejects it (upstream `len >= bufsize`).
+    let lengths = [128, 200, 255];
     for len in lengths {
         let test_str = "g".repeat(len);
         let mut buffer = Vec::new();
@@ -1444,11 +1469,12 @@ fn phase2_11_vstring_2byte_sample_values() {
 /// Tests decoding raw 2-byte length sequences.
 #[test]
 fn phase2_11_vstring_2byte_decode_raw() {
-    // Test specific 2-byte encoded lengths (all within MAX_NSTR_STRLEN=256)
+    // Test specific 2-byte encoded lengths (all within the accepted range,
+    // <= MAX_NSTR_STRLEN - 1 == 255).
     let cases = [
         (128, 0x80u8, 0x80u8), // 128 = 0x0080
         (200, 0x80, 0xC8),     // 200 = 0x00C8
-        (256, 0x81, 0x00),     // 256 = 0x0100
+        (255, 0x80, 0xFF),     // 255 = 0x00FF (largest accepted)
     ];
 
     for (len, high, low) in cases {
@@ -1554,16 +1580,27 @@ fn phase2_12_vstring_sanity_limit_exceeded() {
     assert!(err.to_string().contains("vstring too long"));
 }
 
-/// Tests exactly at sanity limit (MAX_NSTR_STRLEN = 256 bytes).
+/// Tests exactly at the upstream reject boundary (len == MAX_NSTR_STRLEN = 256).
+///
+/// upstream: io.c:2011 `if (len >= bufsize)` with `bufsize == MAX_NSTR_STRLEN`
+/// (256, compat.c:99) - upstream reserves one byte for the NUL terminator, so a
+/// 256-byte payload is refused with `RERR_UNSUPPORTED`. oc-rsync must reject it
+/// too; accepting it would desync negotiation against a real rsync peer.
 #[test]
-fn phase2_12_vstring_at_sanity_limit() {
+fn phase2_12_vstring_at_sanity_limit_rejected() {
     let test_str = "m".repeat(256);
     let mut buffer = Vec::new();
     write_vstring(&mut buffer, &test_str).unwrap();
 
     let mut reader = &buffer[..];
-    let received = read_vstring(&mut reader).unwrap();
-    assert_eq!(received, test_str);
+    let result = read_vstring(&mut reader);
+    assert!(
+        result.is_err(),
+        "len == MAX_NSTR_STRLEN (256) must be rejected to match upstream `len >= bufsize`"
+    );
+    let err = result.unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("vstring too long"));
 }
 
 /// Tests just below sanity limit (MAX_NSTR_STRLEN - 1 = 255 bytes).
@@ -1595,11 +1632,15 @@ fn phase2_12_vstring_above_sanity_limit() {
     );
 }
 
-/// Tests typical upstream limit (256 bytes, MAX_NSTR_STRLEN).
+/// Tests the largest accepted vstring (MAX_NSTR_STRLEN - 1 = 255 bytes).
+///
+/// upstream: io.c:2011 `if (len >= bufsize)` with `bufsize == 256` accepts up to
+/// 255 data bytes (one byte reserved for the NUL terminator). This is the
+/// boundary a real rsync peer will round-trip, so oc-rsync must accept it.
 #[test]
-fn phase2_12_vstring_upstream_typical_limit() {
-    // upstream: compat.c:91 #define MAX_NSTR_STRLEN 256
-    let test_str = "p".repeat(256);
+fn phase2_12_vstring_upstream_max_accepted() {
+    // upstream: compat.c:99 #define MAX_NSTR_STRLEN 256 -> max data len 255.
+    let test_str = "p".repeat(255);
     let mut buffer = Vec::new();
     write_vstring(&mut buffer, &test_str).unwrap();
 
@@ -1643,8 +1684,7 @@ fn phase2_12_vstring_encoding_transitions() {
         1,   // Single char
         127, // Max 1-byte
         128, // Min 2-byte
-        255, // Just under MAX_NSTR_STRLEN
-        256, // At MAX_NSTR_STRLEN (upstream hard limit)
+        255, // Max accepted (MAX_NSTR_STRLEN - 1); upstream `len >= bufsize`.
     ];
 
     for len in boundaries {
