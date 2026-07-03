@@ -11,6 +11,74 @@ use protocol::codec::NdxCodec;
 use protocol::read_varint;
 use protocol::xattr::{MAX_WIRE_XATTR_VALUE_LEN, XattrList};
 
+/// Upstream MAXPATHLEN ceiling for an xname vstring (io.c:1944-1960).
+const MAX_XNAME_LEN: usize = 4096;
+
+/// Validates and wraps a sender-echoed basis-type byte.
+///
+/// Shared by the sync [`SenderAttrs::read_with_codec_xattr`] and async
+/// [`SenderAttrs::read_with_codec_xattr_async`] leaves so the `fnamecmp_type`
+/// validation can never diverge between them. Upstream `rsync.c:read_ndx_and_attrs`
+/// reads a single byte and maps it through `FnameCmpType`.
+fn parse_fnamecmp_type(byte: u8) -> io::Result<protocol::FnameCmpType> {
+    protocol::FnameCmpType::from_wire(byte).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "invalid fnamecmp type: 0x{:02X} {}{}",
+                byte,
+                crate::role_trailer::error_location!(),
+                crate::role_trailer::receiver()
+            ),
+        )
+    })
+}
+
+/// Decodes an xname vstring length from its 1- or 2-byte prefix.
+///
+/// If the high bit of `len_byte` is set the length spans two bytes
+/// (`(len_byte & 0x7F) * 256 + second`); otherwise it is `len_byte`. Shared by
+/// the sync and async leaves so the vstring framing stays identical. Upstream
+/// `io.c:1944-1960` `read_vstring()`.
+#[inline]
+fn xname_len_from_bytes(len_byte: u8, second: Option<u8>) -> usize {
+    if len_byte & 0x80 != 0 {
+        ((len_byte & 0x7F) as usize) * 256 + second.unwrap_or(0) as usize
+    } else {
+        len_byte as usize
+    }
+}
+
+/// Rejects an oversized xname length with the same typed error on both leaves.
+#[inline]
+fn check_xname_len(xname_len: usize) -> io::Result<()> {
+    if xname_len > MAX_XNAME_LEN {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "xname length {xname_len} exceeds maximum {MAX_XNAME_LEN} {}{}",
+                crate::role_trailer::error_location!(),
+                crate::role_trailer::receiver()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+/// Decides whether the sender-response frame carries xattr abbreviation data.
+///
+/// Mirrors upstream `receiver.c:609-611`: read when xattrs are preserved and
+/// `ITEM_REPORT_XATTR` is set, unless the xattr hardlink optimization elides it
+/// for a local-change rename. Shared by the sync and async leaves.
+#[inline]
+fn want_xattr_read(preserve_xattrs: bool, iflags: u16, want_xattr_optim: bool) -> bool {
+    preserve_xattrs
+        && (iflags & SenderAttrs::ITEM_REPORT_XATTR != 0)
+        && !(want_xattr_optim
+            && (iflags & SenderAttrs::ITEM_XNAME_FOLLOWS != 0)
+            && (iflags & SenderAttrs::ITEM_LOCAL_CHANGE != 0))
+}
+
 /// Signature header for delta transfer.
 ///
 /// Represents the `sum_head` structure from upstream rsync's rsync.h.
@@ -266,17 +334,7 @@ impl SenderAttrs {
         let fnamecmp_type = if iflags & Self::ITEM_BASIS_TYPE_FOLLOWS != 0 {
             let mut byte = [0u8; 1];
             reader.read_exact(&mut byte)?;
-            Some(protocol::FnameCmpType::from_wire(byte[0]).ok_or_else(|| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "invalid fnamecmp type: 0x{:02X} {}{}",
-                        byte[0],
-                        crate::role_trailer::error_location!(),
-                        crate::role_trailer::receiver()
-                    ),
-                )
-            })?)
+            Some(parse_fnamecmp_type(byte[0])?)
         } else {
             None
         };
@@ -289,22 +347,11 @@ impl SenderAttrs {
             let xname_len = if len_byte[0] & 0x80 != 0 {
                 let mut second_byte = [0u8; 1];
                 reader.read_exact(&mut second_byte)?;
-                ((len_byte[0] & 0x7F) as usize) * 256 + second_byte[0] as usize
+                xname_len_from_bytes(len_byte[0], Some(second_byte[0]))
             } else {
-                len_byte[0] as usize
+                xname_len_from_bytes(len_byte[0], None)
             };
-            // Upstream MAXPATHLEN is typically 4096; reject excessively long names
-            const MAX_XNAME_LEN: usize = 4096;
-            if xname_len > MAX_XNAME_LEN {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "xname length {xname_len} exceeds maximum {MAX_XNAME_LEN} {}{}",
-                        crate::role_trailer::error_location!(),
-                        crate::role_trailer::receiver()
-                    ),
-                ));
-            }
+            check_xname_len(xname_len)?;
             if xname_len > 0 {
                 let mut xname_buf = vec![0u8; xname_len];
                 reader.read_exact(&mut xname_buf)?;
@@ -319,13 +366,99 @@ impl SenderAttrs {
         // upstream: receiver.c:609-611 - read xattr data when ITEM_REPORT_XATTR is set
         // Condition mirrors upstream: preserve_xattrs && iflags & ITEM_REPORT_XATTR && do_xfers
         // && !(want_xattr_optim && BITS_SET(iflags, ITEM_XNAME_FOLLOWS|ITEM_LOCAL_CHANGE))
-        let xattr_values = if preserve_xattrs
-            && (iflags & Self::ITEM_REPORT_XATTR != 0)
-            && !(want_xattr_optim
-                && (iflags & Self::ITEM_XNAME_FOLLOWS != 0)
-                && (iflags & Self::ITEM_LOCAL_CHANGE != 0))
-        {
+        let xattr_values = if want_xattr_read(preserve_xattrs, iflags, want_xattr_optim) {
             read_xattr_abbreviation_data(reader)?
+        } else {
+            Vec::new()
+        };
+
+        Ok((
+            ndx,
+            Self {
+                iflags,
+                fnamecmp_type,
+                xname,
+                xattr_values,
+            },
+        ))
+    }
+
+    /// Async twin of [`read_with_codec_xattr`](Self::read_with_codec_xattr).
+    ///
+    /// Reads the receiver's per-file sender-response header
+    /// (NDX + iflags + optional basis-type / xname / xattr-abbreviation data)
+    /// off an [`AsyncRead`](tokio::io::AsyncRead), driving the same
+    /// [`NdxCodecEnum::read_ndx_async`] and [`read_varint_async`] leaves plus
+    /// the shared sans-io decode helpers ([`parse_fnamecmp_type`],
+    /// [`xname_len_from_bytes`], [`check_xname_len`], [`want_xattr_read`]) as
+    /// the sync leaf. For the same wire bytes it yields the same
+    /// `(ndx, SenderAttrs)` and consumes the same bytes as the sync path,
+    /// including when the source delivers bytes one at a time across `.await`
+    /// points. Gated on `tokio-transfer`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `rsync.c:383` - `read_ndx_and_attrs()` (the sync twin mirrors this)
+    #[cfg(feature = "tokio-transfer")]
+    pub async fn read_with_codec_xattr_async<R>(
+        reader: &mut R,
+        ndx_codec: &mut protocol::codec::NdxCodecEnum,
+        preserve_xattrs: bool,
+        want_xattr_optim: bool,
+    ) -> io::Result<(i32, Self)>
+    where
+        R: tokio::io::AsyncRead + Unpin + ?Sized,
+    {
+        use tokio::io::AsyncReadExt;
+
+        // Read NDX using protocol-aware codec (handles delta encoding for protocol 30+)
+        let ndx = ndx_codec.read_ndx_async(reader).await?;
+
+        let protocol_version = ndx_codec.protocol_version();
+
+        // For protocol >= 29, read iflags (shortint = 2 bytes LE)
+        let iflags = if protocol_version >= 29 {
+            let mut iflags_buf = [0u8; 2];
+            reader.read_exact(&mut iflags_buf).await?;
+            u16::from_le_bytes(iflags_buf)
+        } else {
+            Self::ITEM_TRANSFER // Default for older protocols
+        };
+
+        // Read optional fields based on iflags
+        let fnamecmp_type = if iflags & Self::ITEM_BASIS_TYPE_FOLLOWS != 0 {
+            let mut byte = [0u8; 1];
+            reader.read_exact(&mut byte).await?;
+            Some(parse_fnamecmp_type(byte[0])?)
+        } else {
+            None
+        };
+
+        let xname = if iflags & Self::ITEM_XNAME_FOLLOWS != 0 {
+            // upstream io.c:1944-1960 read_vstring()
+            let mut len_byte = [0u8; 1];
+            reader.read_exact(&mut len_byte).await?;
+            let xname_len = if len_byte[0] & 0x80 != 0 {
+                let mut second_byte = [0u8; 1];
+                reader.read_exact(&mut second_byte).await?;
+                xname_len_from_bytes(len_byte[0], Some(second_byte[0]))
+            } else {
+                xname_len_from_bytes(len_byte[0], None)
+            };
+            check_xname_len(xname_len)?;
+            if xname_len > 0 {
+                let mut xname_buf = vec![0u8; xname_len];
+                reader.read_exact(&mut xname_buf).await?;
+                Some(xname_buf)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let xattr_values = if want_xattr_read(preserve_xattrs, iflags, want_xattr_optim) {
+            read_xattr_abbreviation_data_async(reader).await?
         } else {
             Vec::new()
         };
@@ -481,41 +614,91 @@ fn read_xattr_abbreviation_data<R: Read>(reader: &mut R) -> io::Result<Vec<(i32,
         if rel_pos == 0 {
             break;
         }
-        // upstream: xattrs.c:700-705 - reject signed overflow before
-        // num += rel_pos to stop a hostile peer wrapping num to an arbitrary
-        // value.
-        let num = prior_req.checked_add(rel_pos).ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "xattr rel_pos accumulation overflow {}{}",
-                    crate::role_trailer::error_location!(),
-                    crate::role_trailer::receiver()
-                ),
-            )
-        })?;
+        let num = accumulate_xattr_num(prior_req, rel_pos)?;
         prior_req = num;
 
-        // upstream: xattrs.c:752 -
-        //   rxa->datum_len = read_varint_size(f_in, MAX_WIRE_XATTR_DATALEN, ...)
-        // We use the stricter oc-rsync ceiling (`MAX_WIRE_XATTR_VALUE_LEN`,
-        // 64 MiB) so a corrupt or hostile frame at this offset surfaces as a
-        // typed error instead of an unbounded allocation or a varint overflow
-        // panic.
         let raw_len = read_varint(reader)?;
-        if raw_len < 0 || raw_len as usize > MAX_WIRE_XATTR_VALUE_LEN {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "xattr datum_len {raw_len} exceeds maximum {MAX_WIRE_XATTR_VALUE_LEN} {}{}",
-                    crate::role_trailer::error_location!(),
-                    crate::role_trailer::receiver()
-                ),
-            ));
-        }
-        let datum_len = raw_len as usize;
+        let datum_len = check_xattr_datum_len(raw_len)?;
         let mut value = vec![0u8; datum_len];
         reader.read_exact(&mut value)?;
+
+        values.push((num, value));
+    }
+
+    Ok(values)
+}
+
+/// Accumulates the 1-based xattr entry number, rejecting signed overflow.
+///
+/// Shared by the sync and async xattr readers. Upstream `xattrs.c:700-705`
+/// rejects overflow before `num += rel_pos` to stop a hostile peer wrapping
+/// `num` to an arbitrary value.
+#[inline]
+fn accumulate_xattr_num(prior_req: i32, rel_pos: i32) -> io::Result<i32> {
+    prior_req.checked_add(rel_pos).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "xattr rel_pos accumulation overflow {}{}",
+                crate::role_trailer::error_location!(),
+                crate::role_trailer::receiver()
+            ),
+        )
+    })
+}
+
+/// Validates a raw xattr datum length against the receiver-side ceiling.
+///
+/// Shared by the sync and async xattr readers. Upstream `xattrs.c:752` reads
+/// `datum_len` via `read_varint_size(..., MAX_WIRE_XATTR_DATALEN, ...)`; we use
+/// the stricter oc-rsync ceiling (`MAX_WIRE_XATTR_VALUE_LEN`, 64 MiB) so a
+/// corrupt or hostile frame surfaces as a typed error instead of an unbounded
+/// allocation or a varint overflow panic.
+#[inline]
+fn check_xattr_datum_len(raw_len: i32) -> io::Result<usize> {
+    if raw_len < 0 || raw_len as usize > MAX_WIRE_XATTR_VALUE_LEN {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "xattr datum_len {raw_len} exceeds maximum {MAX_WIRE_XATTR_VALUE_LEN} {}{}",
+                crate::role_trailer::error_location!(),
+                crate::role_trailer::receiver()
+            ),
+        ));
+    }
+    Ok(raw_len as usize)
+}
+
+/// Async twin of [`read_xattr_abbreviation_data`].
+///
+/// Reads the identical `(rel_pos, datum_len, value)` sequence (`.await`-driven)
+/// through the same shared bounds helpers ([`accumulate_xattr_num`],
+/// [`check_xattr_datum_len`]) and [`read_varint_async`], so it returns the same
+/// `(num, value)` pairs and consumes the same bytes as the sync leaf. Gated on
+/// `tokio-transfer`.
+#[cfg(feature = "tokio-transfer")]
+async fn read_xattr_abbreviation_data_async<R>(reader: &mut R) -> io::Result<Vec<(i32, Vec<u8>)>>
+where
+    R: tokio::io::AsyncRead + Unpin + ?Sized,
+{
+    use protocol::read_varint_async;
+    use tokio::io::AsyncReadExt;
+
+    let mut values = Vec::new();
+    let mut prior_req = 0i32;
+
+    loop {
+        let rel_pos = read_varint_async(reader).await?;
+        if rel_pos == 0 {
+            break;
+        }
+        let num = accumulate_xattr_num(prior_req, rel_pos)?;
+        prior_req = num;
+
+        let raw_len = read_varint_async(reader).await?;
+        let datum_len = check_xattr_datum_len(raw_len)?;
+        let mut value = vec![0u8; datum_len];
+        reader.read_exact(&mut value).await?;
 
         values.push((num, value));
     }
