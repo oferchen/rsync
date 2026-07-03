@@ -127,6 +127,8 @@ fn parse_rule_line_expanded(
 
     if mods.word_split && !pattern.is_empty() {
         validate_side_modifiers(action_char, &mods, line, source_path, line_num)?;
+        // These prefixes are never merge-file rules, so `e` is always invalid.
+        validate_exclude_self_modifier(false, &mods, line, source_path, line_num)?;
         let patterns: Vec<&str> = pattern.split_whitespace().collect();
         if patterns.is_empty() {
             return Err(MergeFileError::parse_error(
@@ -174,10 +176,14 @@ fn parse_rule_line_expanded(
 /// | `s` | `sender_only` | Apply on sender side only |
 /// | `r` | `receiver_only` | Apply on receiver side only |
 /// | `x` | `xattr_only` | Match xattr names only |
-/// | `e` | `exclude_only` | Force rule to exclude |
+/// | `e` | `exclude_self` | Exclude the merge file's own name (merge rules only) |
 /// | `n` | `no_inherit` | Don't inherit parent rules (merge) |
 /// | `w` | `word_split` | Split pattern on whitespace |
 /// | `C` | `cvs_mode` | Add CVS exclusion patterns |
+///
+/// upstream: exclude.c:1256-1259 - the `e` modifier maps to
+/// `FILTRULE_EXCLUDE_SELF` and is valid only on a merge-file rule
+/// (`FILTRULE_MERGE_FILE`); on any other rule upstream jumps to `invalid`.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct RuleModifiers {
     pub(crate) negate: bool,
@@ -185,7 +191,7 @@ pub(crate) struct RuleModifiers {
     pub(crate) sender_only: bool,
     pub(crate) receiver_only: bool,
     pub(crate) xattr_only: bool,
-    pub(crate) exclude_only: bool,
+    pub(crate) exclude_self: bool,
     pub(crate) no_inherit: bool,
     pub(crate) word_split: bool,
     pub(crate) cvs_mode: bool,
@@ -203,7 +209,6 @@ impl RuleModifiers {
             .with_negate(self.negate)
             .with_perishable(self.perishable)
             .with_xattr_only(self.xattr_only)
-            .with_exclude_only(self.exclude_only)
             .with_no_inherit(no_inherit)
             .with_cvs_mode(self.cvs_mode);
 
@@ -253,6 +258,34 @@ fn validate_side_modifiers(
     Ok(())
 }
 
+/// Rejects the `e` (exclude-self) modifier on a non-merge rule.
+///
+/// Upstream only permits `e` on a merge-file rule (`.`/`:`/`merge`/`dir-merge`),
+/// where it sets `FILTRULE_EXCLUDE_SELF` so the merge file's own basename is
+/// excluded. On an include/exclude/protect/risk/hide/show rule upstream jumps to
+/// the `invalid` label and reports a parse error; oc-rsync previously accepted
+/// it silently and stored it in a flag no matching logic read, so the modifier
+/// was a no-op that diverged from upstream on malformed input.
+///
+/// upstream: exclude.c:1256-1259 - `case 'e': if (!(rule->rflags &
+/// FILTRULE_MERGE_FILE)) goto invalid;`
+fn validate_exclude_self_modifier(
+    is_merge: bool,
+    mods: &RuleModifiers,
+    line: &str,
+    source_path: &Path,
+    line_num: usize,
+) -> Result<(), MergeFileError> {
+    if mods.exclude_self && !is_merge {
+        return Err(MergeFileError::parse_error(
+            source_path,
+            line_num,
+            format!("invalid modifier 'e' on non-merge filter rule: {line}"),
+        ));
+    }
+    Ok(())
+}
+
 /// Parses modifiers from a string following the action character.
 ///
 /// Returns the parsed modifiers and the remaining string (pattern).
@@ -269,7 +302,7 @@ pub(crate) fn parse_modifiers(s: &str) -> (RuleModifiers, &str) {
             's' => mods.sender_only = true,
             'r' => mods.receiver_only = true,
             'x' => mods.xattr_only = true,
-            'e' => mods.exclude_only = true,
+            'e' => mods.exclude_self = true,
             'n' => mods.no_inherit = true,
             'w' => mods.word_split = true,
             'C' => mods.cvs_mode = true,
@@ -318,6 +351,14 @@ impl ShortFormAction {
     const fn supports_mods(self) -> bool {
         !matches!(self, Self::Merge)
     }
+
+    /// Whether this action is a merge-file rule (`.`/`:`/`merge`/`dir-merge`).
+    ///
+    /// upstream: `FILTRULE_MERGE_FILE` covers both plain and per-directory
+    /// merges; the `e` modifier is permitted only on these.
+    const fn is_merge(self) -> bool {
+        matches!(self, Self::Merge | Self::DirMerge)
+    }
 }
 
 /// Tries to parse a short-form rule (single character prefix like `+`, `-`, `P`).
@@ -360,12 +401,14 @@ fn try_parse_short_form(
         // unrecognised here and falls through to long-form parsing.
         if mods.cvs_mode && matches!(action, ShortFormAction::Merge | ShortFormAction::DirMerge) {
             validate_side_modifiers(prefix_char, &mods, line, source_path, line_num)?;
+            validate_exclude_self_modifier(action.is_merge(), &mods, line, source_path, line_num)?;
             let rule = action.to_rule(".cvsignore");
             return Ok(Some(mods.apply(rule)));
         }
         return Ok(None);
     }
     validate_side_modifiers(prefix_char, &mods, line, source_path, line_num)?;
+    validate_exclude_self_modifier(action.is_merge(), &mods, line, source_path, line_num)?;
 
     let rule = action.to_rule(pattern);
     Ok(Some(if action.supports_mods() {

@@ -22,7 +22,7 @@
 //! - `s` - Sender-side only
 //! - `r` - Receiver-side only
 //! - `x` - Xattr filtering only
-//! - `e` - Exclude-only (forces rule to act as exclude)
+//! - `e` - Exclude-self (merge rules only: exclude the merge file's own name)
 //! - `n` - No-inherit (for merge rules, don't inherit parent rules)
 //! - `w` - Word-split (split pattern on whitespace into multiple rules)
 //! - `C` - CVS mode (add CVS exclusion patterns)
