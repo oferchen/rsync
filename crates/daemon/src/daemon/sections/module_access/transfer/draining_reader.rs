@@ -26,13 +26,23 @@
 // only on the daemon-TCP path; SSH/stdio and local transports keep reading the
 // socket directly and are byte-identical to before.
 //
+// The drain thread runs its read-clone fd in non-blocking mode and polls: an
+// empty socket returns `WouldBlock`, on which the loop re-checks the stop flag
+// and sleeps a couple of milliseconds before retrying. This bounds the
+// stop-flag wake latency on every platform without depending on read-timeout
+// wakeups, which on the daemon's cloned Windows socket fd did not reliably wake
+// a blocked `read()` and wedged `join()` in CI.
+//
 // Shutdown ordering (design doc section 5.2): the drain thread must be stopped
 // and joined before the orchestration TCP goodbye drain runs, because that
 // drain reads a *different* clone of the same socket. The caller holds a
 // `DrainHandle` and calls `stop()` after the transfer engine returns and before
 // the goodbye drain. `Drop` also stops-and-joins as a backstop on every exit
 // path (success, error, early return), so the thread can never outlive the
-// transfer.
+// transfer. Non-blocking mode is a property of the shared socket object (both
+// clones observe it), so the drain thread restores blocking mode on exit -
+// before `stop_and_join()` returns - leaving the goodbye-drain clone a normal
+// blocking socket.
 //
 // upstream: io.c:882-889 perform_io() drains readable multiplex messages
 // whenever it is about to write, keeping the peer's send buffer emptied.
@@ -44,12 +54,44 @@
 /// Size of each socket read the drain thread performs.
 const DRAIN_CHUNK_SIZE: usize = 64 * 1024;
 
+/// Poll interval when the non-blocking drain read has no data ready.
+///
+/// The drain thread runs the read handle in non-blocking mode: an empty socket
+/// returns `WouldBlock` immediately instead of parking the thread. On that
+/// signal the loop re-checks the stop flag and, if still running, sleeps this
+/// long before retrying. This bounds `stop_and_join()`'s wake latency to at
+/// most one interval on every platform, without relying on read-timeout
+/// wakeups (which do not fire reliably on the daemon's cloned Windows socket
+/// fd - the failure mode that wedged `join()` in CI). At ~2 ms the poll adds
+/// negligible latency to real draining (bursty + write-side-flow-bounded) and
+/// is dwarfed by the transfer's own I/O.
+const DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(2);
+
 /// One item handed from the drain thread to the consumer: either a chunk of
 /// wire bytes, or the terminal read result (EOF or error) once the socket
 /// stops yielding data.
 enum DrainItem {
     Data(Vec<u8>),
     End(io::Result<()>),
+}
+
+/// A socket the drain thread reads in non-blocking mode.
+///
+/// The drain loop must be able to switch its read handle to non-blocking so an
+/// empty socket returns `WouldBlock` immediately instead of parking the thread
+/// past `stop()`. This trait exposes just that capability on top of `Read`, so
+/// `DrainingReader::new` stays generic (production wraps a cloned `TcpStream`;
+/// tests wrap a loopback `TcpStream`) while still guaranteeing the poll-loop
+/// contract at the type level.
+trait DrainSource: Read + Send {
+    /// Switches the underlying fd between non-blocking and blocking mode.
+    fn set_drain_nonblocking(&self, nonblocking: bool) -> io::Result<()>;
+}
+
+impl DrainSource for TcpStream {
+    fn set_drain_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
+        self.set_nonblocking(nonblocking)
+    }
 }
 
 /// A blocking `Read` adapter backed by a background socket-drain thread.
@@ -122,7 +164,7 @@ impl DrainingReader {
     /// receiver only ever has a bounded window of outstanding file requests, so
     /// the peer can only stream a bounded amount of delta data ahead of what
     /// the consumer drains.
-    fn new<R: Read + Send + 'static>(mut source: R) -> (Self, DrainHandle) {
+    fn new<R: DrainSource + 'static>(source: R) -> (Self, DrainHandle) {
         let (tx, rx): (
             std::sync::mpsc::Sender<DrainItem>,
             std::sync::mpsc::Receiver<DrainItem>,
@@ -133,18 +175,41 @@ impl DrainingReader {
         });
         let thread_inner = Arc::clone(&inner);
 
+        // Put the drain fd in non-blocking mode so `read()` returns `WouldBlock`
+        // on an empty socket instead of parking the thread. This is what lets
+        // the loop notice the stop flag within one `DRAIN_POLL_INTERVAL` on
+        // every platform - no reliance on read-timeout wakeups, which do not
+        // fire reliably on the daemon's cloned Windows socket fd and previously
+        // wedged `join()` in CI. A failure to set non-blocking is non-fatal:
+        // the loop still functions (it may just block on `read()` until data or
+        // FIN), matching the earlier best-effort read-timeout handling.
+        //
+        // On both Unix (`ioctl` FIONBIO / `SO_NONBLOCK`) and Windows
+        // (`ioctlsocket` FIONBIO), non-blocking mode is a property of the shared
+        // socket object, so it is also observed by the daemon's OTHER clone of
+        // this socket - the `DaemonStream` the orchestrator's goodbye drain
+        // reads. The drain thread therefore restores BLOCKING mode on exit
+        // (below), before `stop_and_join()` returns, so the goodbye drain sees a
+        // normal blocking socket and its bounded read-timeout loop behaves as
+        // before. `stop()` joins the thread, so the restore is complete before
+        // the goodbye drain runs.
+        let _ = source.set_drain_nonblocking(true);
+
         let handle = thread::Builder::new()
             .name("daemon-delta-drain".to_owned())
             .spawn(move || {
+                let mut source = source;
                 let mut buf = vec![0u8; DRAIN_CHUNK_SIZE];
-                loop {
+                // Run the drain loop, then unconditionally restore blocking mode
+                // on the shared socket so the goodbye-drain clone is unaffected.
+                'drain: loop {
                     if thread_inner.stop.load(Ordering::Acquire) {
-                        return;
+                        break 'drain;
                     }
                     match source.read(&mut buf) {
                         Ok(0) => {
                             let _ = tx.send(DrainItem::End(Ok(())));
-                            return;
+                            break 'drain;
                         }
                         Ok(n) => {
                             // Unbounded send never blocks, so the thread loops
@@ -152,17 +217,18 @@ impl DrainingReader {
                             // receive buffer drained. A send error means the
                             // consumer dropped the receiver (transfer over).
                             if tx.send(DrainItem::Data(buf[..n].to_vec())).is_err() {
-                                return;
+                                break 'drain;
                             }
                         }
-                        // A read timeout (set on the socket by the caller so a
-                        // blocking `read()` cannot pin the thread past `stop()`)
-                        // or an interrupted syscall is not a wire error: loop
-                        // back to re-check the stop flag and keep draining. This
-                        // is what makes `stop_and_join()` reliably unblock the
-                        // thread on every platform, including Windows, where a
-                        // permanently-blocking `read()` would otherwise never
-                        // observe the stop flag and `join()` would hang.
+                        // Non-blocking read with no data ready (`WouldBlock`),
+                        // or an interrupted syscall: not a wire error. Re-check
+                        // the stop flag, then sleep one poll interval before
+                        // retrying. This bounds the stop-flag observation
+                        // latency on every platform without depending on
+                        // read-timeout semantics, so `stop_and_join()` always
+                        // unblocks the thread within ~one interval. `TimedOut`
+                        // is tolerated too as a backstop for any handle still
+                        // carrying a stale read timeout.
                         Err(ref e)
                             if matches!(
                                 e.kind(),
@@ -171,14 +237,22 @@ impl DrainingReader {
                                     | io::ErrorKind::TimedOut
                             ) =>
                         {
-                            continue
+                            if thread_inner.stop.load(Ordering::Acquire) {
+                                break 'drain;
+                            }
+                            thread::sleep(DRAIN_POLL_INTERVAL);
+                            continue;
                         }
                         Err(e) => {
                             let _ = tx.send(DrainItem::End(Err(e)));
-                            return;
+                            break 'drain;
                         }
                     }
                 }
+                // Restore blocking mode on the shared socket before the thread
+                // exits (and thus before `stop_and_join()` returns), so the
+                // separate goodbye-drain clone reads a blocking socket.
+                let _ = source.set_drain_nonblocking(false);
             })
             .expect("failed to spawn daemon delta-drain thread");
 
@@ -349,12 +423,17 @@ mod draining_reader_tests {
     #[test]
     fn stop_joins_promptly_when_peer_is_silent() {
         // Regression (#503, Windows CI): a silent peer that connects but never
-        // sends and never closes leaves the drain thread parked in a blocking
-        // `read()`. With a read timeout on the socket, the loop wakes, observes
-        // the stop flag, and exits, so `stop()`'s join returns instead of
-        // hanging forever. This is the exact deadlock the daemon negotiation
-        // tests hit on Windows, where a blocking `read()` only unblocks on peer
-        // close. The join must complete well within the read timeout budget.
+        // sends and never closes must NOT leave the drain thread parked. The
+        // non-blocking poll loop returns `WouldBlock` on the empty socket and
+        // checks the stop flag every poll interval, so `stop()`'s join returns
+        // promptly instead of hanging forever. This is the exact deadlock the
+        // daemon negotiation tests hit on Windows, where a blocking `read()`
+        // (even with a read timeout on the cloned fd) never observed the stop
+        // flag. The join must complete well within a second.
+        //
+        // The socket is deliberately left in default (blocking) mode here to
+        // prove the fix does not depend on the caller pre-arming a read timeout
+        // or non-blocking flag: `DrainingReader::new` sets non-blocking itself.
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
         let addr = listener.local_addr().expect("local addr");
         // Accept and then sit silent, holding the connection open (no data,
@@ -366,9 +445,10 @@ mod draining_reader_tests {
             thread::sleep(std::time::Duration::from_secs(2));
             drop(server);
         });
+        // Left in default blocking mode on purpose: the drain thread flips it
+        // to non-blocking itself, so the prompt join must not depend on any
+        // caller-side timeout or flag.
         let sock = TcpStream::connect(addr).expect("connect loopback");
-        sock.set_read_timeout(Some(std::time::Duration::from_millis(200)))
-            .expect("set read timeout");
         let (reader, handle) = DrainingReader::new(sock);
 
         let start = std::time::Instant::now();
@@ -379,5 +459,98 @@ mod draining_reader_tests {
         );
         drop(reader);
         let _ = silent_peer.join();
+    }
+
+    #[test]
+    fn replays_all_buffered_bytes_before_stop() {
+        // Queue-drain invariant (mirrors upstream perform_io io.c:882): every
+        // byte the drain thread pulled off the socket must be replayed to the
+        // consumer in order, even after `stop()` halts further draining. The
+        // consumer reads the full transfer payload through the reader, then
+        // stops the handle; no byte the thread already buffered may be lost.
+        let payload: Vec<u8> = (0..40_000u32).map(|i| (i % 249) as u8).collect();
+        let sock = spawn_socket_feeder(payload.clone(), 3000);
+        let (mut reader, handle) = DrainingReader::new(sock);
+
+        // Drain the entire payload through the reader (it arrives via the
+        // background thread's queue), then stop.
+        let mut received = Vec::with_capacity(payload.len());
+        reader.read_to_end(&mut received).expect("read to end");
+        handle.stop();
+
+        assert_eq!(
+            received, payload,
+            "every drained byte must replay to the consumer in order, no goodbye-byte loss"
+        );
+    }
+
+    #[test]
+    fn goodbye_clone_reads_after_drain_stops() {
+        // The goodbye drain reads the socket via a SEPARATE clone
+        // (`ctx.reader`'s `DaemonStream`), not the drain clone. Putting the
+        // drain clone in non-blocking mode must not disturb bytes that arrive
+        // for the goodbye reader on another clone of the same connection. Here
+        // the drain thread consumes the first burst; after `stop()`, a second
+        // clone reads a trailing "goodbye" burst intact.
+        //
+        // The peer is sequenced (send first burst, wait for a go-ahead, then
+        // send goodbye) so the drain thread cannot race the goodbye bytes into
+        // its own queue - matching the real daemon order where `stop()` runs
+        // after the engine's goodbye and before the goodbye-drain clone reads.
+        use std::sync::mpsc::channel;
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+        let first: Vec<u8> = (0..8_000u32).map(|i| (i % 251) as u8).collect();
+        let goodbye: Vec<u8> = vec![0xABu8; 512];
+        let first_for_peer = first.clone();
+        let goodbye_for_peer = goodbye.clone();
+        let (go_tx, go_rx) = channel::<()>();
+        let peer = thread::spawn(move || {
+            let (mut server, _) = listener.accept().expect("accept");
+            server.write_all(&first_for_peer).expect("write first burst");
+            server.flush().expect("flush first");
+            // Wait until the consumer has drained the first burst and stopped
+            // the drain thread before writing the trailing goodbye bytes.
+            let _ = go_rx.recv();
+            server.write_all(&goodbye_for_peer).expect("write goodbye");
+            server.flush().expect("flush goodbye");
+            thread::sleep(std::time::Duration::from_millis(50));
+            drop(server);
+        });
+
+        let drain_sock = TcpStream::connect(addr).expect("connect loopback");
+        // The goodbye reader is a separate clone of the same socket, exactly as
+        // the daemon splits `read_stream` (drain) from `ctx.reader` (goodbye).
+        let mut goodbye_reader = drain_sock.try_clone().expect("clone for goodbye");
+        let (mut reader, handle) = DrainingReader::new(drain_sock);
+
+        // Consume the first burst through the drain reader.
+        let mut got_first = vec![0u8; first.len()];
+        reader.read_exact(&mut got_first).expect("read first burst");
+        assert_eq!(got_first, first, "drain reader must replay the first burst intact");
+
+        // Stop the drain thread (drain clone stays non-blocking, then dropped),
+        // then let the peer send its trailing goodbye bytes.
+        handle.stop();
+        drop(reader);
+        go_tx.send(()).expect("signal peer to send goodbye");
+
+        // The separate goodbye clone must read the trailing bytes; the
+        // non-blocking flag on the drain clone must not have stolen or reordered
+        // them. Give the goodbye clone a bounded read timeout so the test cannot
+        // hang if the invariant is violated.
+        goodbye_reader
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .expect("set goodbye read timeout");
+        let mut got_goodbye = Vec::new();
+        goodbye_reader
+            .read_to_end(&mut got_goodbye)
+            .expect("read goodbye burst");
+        assert_eq!(
+            got_goodbye, goodbye,
+            "the separate goodbye clone must read the trailing bytes intact after drain stop"
+        );
+
+        let _ = peer.join();
     }
 }
