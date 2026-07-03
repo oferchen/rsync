@@ -493,16 +493,31 @@ pub(super) fn write_vstring(writer: &mut dyn Write, s: &str) -> io::Result<()> {
 
 /// Reads a vstring (variable-length string) using upstream rsync's format.
 ///
-/// Format (upstream io.c:1944-1961 read_vstring):
+/// Format (upstream io.c:2004-2021 read_vstring):
 /// - Read first byte
 /// - If high bit set: len = (first & 0x7F) * 256 + read_another_byte
 /// - Otherwise: len = first byte
 /// - Then read `len` bytes of string data
 ///
 /// This is DIFFERENT from varint encoding!
+///
+/// # Length limit
+///
+/// Upstream `recv_negotiate_str` (compat.c:369-407) always calls
+/// `read_vstring(f_in, tmpbuf, MAX_NSTR_STRLEN)` with `bufsize` equal to
+/// `MAX_NSTR_STRLEN` (256, compat.c:99). `read_vstring` rejects the frame with
+/// `if (len >= bufsize)` because it appends a NUL terminator at `buf[len]`, so
+/// the largest payload a real peer accepts is `MAX_NSTR_STRLEN - 1 == 255`
+/// bytes. A 256-byte list is refused (`RERR_UNSUPPORTED`). Mirroring the
+/// `>=`/`-1` boundary exactly keeps both peers agreeing on which negotiation
+/// streams are valid; a `>` comparison here would let oc-rsync accept a
+/// 256-byte list that upstream aborts on, desyncing the negotiation.
 pub(super) fn read_vstring(reader: &mut dyn Read) -> io::Result<String> {
-    // upstream: compat.c:91 #define MAX_NSTR_STRLEN 256
+    // upstream: compat.c:99 #define MAX_NSTR_STRLEN 256; the caller's bufsize.
     const MAX_NSTR_STRLEN: usize = 256;
+    // upstream: io.c:2011 `if (len >= bufsize)` - one byte is reserved for the
+    // NUL terminator, so the accepted data length maxes out at bufsize - 1.
+    const MAX_VSTRING_LEN: usize = MAX_NSTR_STRLEN - 1;
 
     let mut first = [0u8; 1];
     reader.read_exact(&mut first)?;
@@ -518,11 +533,11 @@ pub(super) fn read_vstring(reader: &mut dyn Read) -> io::Result<String> {
         first[0] as usize
     };
 
-    // Sanity check: must not exceed upstream's hard limit.
-    if len > MAX_NSTR_STRLEN {
+    // upstream: io.c:2011-2015 - reject `len >= bufsize` (over-long vstring).
+    if len > MAX_VSTRING_LEN {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("vstring too long: {len} bytes (max {MAX_NSTR_STRLEN})"),
+            format!("vstring too long: {len} bytes (max {MAX_VSTRING_LEN})"),
         ));
     }
 
