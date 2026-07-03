@@ -298,19 +298,20 @@ fn assert_destination_pruned(dest: &Path) {
     );
 }
 
-/// Assert that `stdout` contains exactly `Number of deleted files: 1`.
+/// Assert that `stdout` reports `Number of deleted files: N (reg: N)`.
 ///
-/// The `--stats` formatter (`crates/cli/src/frontend/stats_format.rs`)
-/// renders the counter with thousands separators - at N=1 there is no
-/// separator so the literal "1" is the exact byte we expect. This is
-/// the user-visible surface of the `NDX_DEL_STATS` wire frame: a
-/// regression that dropped the frame or zeroed the counters would
-/// print "Number of deleted files: 0" here.
+/// Both scenarios delete a single extraneous *regular* file, so upstream's
+/// `output_itemized_counts` (main.c) prints the total plus the per-type
+/// breakdown `(reg: N)`. This is the user-visible surface of the
+/// `NDX_DEL_STATS` wire frame (5 per-type varints): a regression that dropped
+/// the frame or zeroed the counters would print "Number of deleted files: 0",
+/// and one that collapsed the per-type counts to a bare total would drop the
+/// `(reg: N)` suffix.
 fn assert_delete_count(stdout: &str, stderr: &str, expected: u32) {
-    let needle = format!("Number of deleted files: {expected}");
+    let needle = format!("Number of deleted files: {expected} (reg: {expected})");
     assert!(
         stdout.contains(&needle),
-        "missing `{needle}` line in --stats output (NDX_DEL_STATS goodbye-phase frame missing or zeroed)\n\
+        "missing `{needle}` line in --stats output (NDX_DEL_STATS goodbye-phase frame missing, zeroed, or per-type breakdown dropped)\n\
          stdout:\n{stdout}\nstderr:\n{stderr}",
     );
 }

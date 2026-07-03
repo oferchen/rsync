@@ -38,7 +38,7 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
                 elapsed,
                 transfer_stats.literal_data,
                 transfer_stats.matched_data,
-                u64::from(transfer_stats.delete_stats.total()),
+                transfer_stats.delete_stats,
             );
             (s, transfer_stats.io_error, transfer_stats.error_count)
         }
@@ -54,7 +54,7 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
                 elapsed,
                 generator_stats.literal_data,
                 generator_stats.matched_data,
-                u64::from(generator_stats.delete_stats.total()),
+                generator_stats.delete_stats,
             );
             (s, generator_stats.io_error, 0u32)
         }

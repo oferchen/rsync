@@ -794,7 +794,7 @@ impl<'a> CopyContext<'a> {
         let file_type = metadata.file_type();
 
         if self.mode.is_dry_run() {
-            self.summary_mut().record_deletion();
+            self.summary_mut().record_deletion(file_type);
             if let Some(path) = relative {
                 self.record(LocalCopyRecord::new(
                     path.to_path_buf(),
@@ -835,7 +835,7 @@ impl<'a> CopyContext<'a> {
             }
         }
 
-        self.summary_mut().record_deletion();
+        self.summary_mut().record_deletion(file_type);
         if let Some(path) = relative {
             self.record(LocalCopyRecord::new(
                 path.to_path_buf(),

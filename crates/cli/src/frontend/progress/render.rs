@@ -425,6 +425,16 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
     let fifos = summary.fifos_created();
     let fifos_total = summary.fifos_total();
     let deleted = summary.items_deleted();
+    // upstream: main.c output_itemized_counts("Number of deleted files", ...)
+    // prints the total plus a per-type breakdown (reg/dir/link/dev/special),
+    // where reg = total - (dir + link + dev + special).
+    let deleted_breakdown = format_stat_categories(&[
+        ("reg", summary.deleted_regular_files()),
+        ("dir", summary.deleted_dirs()),
+        ("link", summary.deleted_symlinks()),
+        ("dev", summary.deleted_devices()),
+        ("special", summary.deleted_specials()),
+    ]);
     let literal_bytes = summary.bytes_copied();
     let transferred_size = summary.transferred_file_size();
     let bytes_sent = summary.bytes_sent();
@@ -486,7 +496,7 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
     )?;
     writeln!(
         stdout,
-        "Number of deleted files: {}",
+        "Number of deleted files: {}{deleted_breakdown}",
         format_decimal_bytes(deleted)
     )?;
     writeln!(
