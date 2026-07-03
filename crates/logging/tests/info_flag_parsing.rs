@@ -499,7 +499,7 @@ fn zero_level_explicit() {
 fn flag_name_case_insensitive() {
     let mut config = VerbosityConfig::default();
     parse_info_flags(&mut config, "COPY").unwrap();
-    assert!(info_gte(InfoFlag::Copy, 1));
+    assert_eq!(config.info.copy, 1);
 }
 
 /// Verifies proper case works.
