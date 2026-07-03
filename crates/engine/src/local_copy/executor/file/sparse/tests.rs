@@ -365,55 +365,90 @@ fn write_zeros_fallback_handles_large_length() {
     assert_eq!(metadata.len(), len);
 }
 
+/// A preallocated destination must have its interior zero run punched into a
+/// hole. With `preallocated_len` covering the whole file, `write_sparse_chunk`
+/// mirrors upstream `write_sparse()`'s `do_punch_hole` branch so the reserved
+/// blocks under the zero run are deallocated rather than left allocated.
+// upstream: fileio.c:95 - do_punch_hole(f, sparse_past_write, sparse_seek)
+#[cfg(target_os = "linux")]
 #[test]
-fn sparse_state_flush_with_punch_hole() {
+fn sparse_chunk_punches_hole_within_preallocated_extent() {
+    use rustix::fd::AsFd;
+    use std::os::unix::fs::MetadataExt;
+
     let mut file = NamedTempFile::new().expect("temp file");
     let path = file.path().to_path_buf();
 
-    // Pre-allocate with non-zero data
-    let data = vec![0xBBu8; 8192];
-    file.as_file_mut().write_all(&data).expect("write");
-    file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
+    // Reserve blocks for a 3 MiB file, then feed head/hole/tail through the
+    // sparse writer with the preallocated length recorded.
+    let head = 4096usize;
+    let hole = 2 * 1024 * 1024usize;
+    let tail = 4096usize;
+    let total = (head + hole + tail) as u64;
+
+    rustix::fs::fallocate(
+        file.as_file().as_fd(),
+        rustix::fs::FallocateFlags::empty(),
+        0,
+        total,
+    )
+    .expect("fallocate");
+    let prealloc = file.as_file().metadata().expect("meta").blocks() * 512;
+    assert!(prealloc >= total, "extent should be fully reserved");
 
     let mut state = SparseWriteState::default();
-    state.set_zero_run_start(1000);
-    state.accumulate(2000);
+    state.set_preallocated_len(prealloc);
 
-    state
-        .flush_with_punch_hole(file.as_file_mut(), &path)
-        .expect("flush with punch");
+    let mut buf = vec![0u8; head + hole + tail];
+    for byte in buf.iter_mut().take(head) {
+        *byte = 0xAB;
+    }
+    for byte in buf.iter_mut().skip(head + hole) {
+        *byte = 0xCD;
+    }
 
-    // Verify the hole was punched
-    file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
-    let mut buffer = vec![0u8; 8192];
-    file.as_file_mut().read_exact(&mut buffer).expect("read");
+    write_sparse_chunk(file.as_file_mut(), &mut state, &buf, &path).expect("write sparse");
+    let final_pos = state.finish(file.as_file_mut(), &path).expect("finish");
+    assert_eq!(final_pos, total);
+    file.as_file_mut().set_len(final_pos).expect("set_len");
 
-    // Before the hole: unchanged
-    assert!(buffer[..1000].iter().all(|&b| b == 0xBB));
-    // The hole: zeros
-    assert!(buffer[1000..3000].iter().all(|&b| b == 0));
-    // After the hole: unchanged
-    assert!(buffer[3000..].iter().all(|&b| b == 0xBB));
+    // The middle zero run must be punched out: allocation drops well below the
+    // apparent size (only the head/tail data blocks remain).
+    let allocated = file.as_file().metadata().expect("meta").blocks() * 512;
+    assert!(
+        allocated < total,
+        "preallocated extent's zero run was not punched (allocated {allocated} for {total})"
+    );
 }
 
+/// Outside a preallocated extent (`preallocated_len == 0`) the writer seeks
+/// over zero runs to form a natural hole, matching upstream's
+/// `sparse_past_write >= preallocated_len` lseek branch.
+// upstream: fileio.c:93 - do_lseek(f, sparse_seek, SEEK_CUR)
 #[test]
-fn sparse_state_finish_with_punch_hole() {
+fn sparse_chunk_seeks_over_run_without_preallocation() {
     let mut file = NamedTempFile::new().expect("temp file");
     let path = file.path().to_path_buf();
 
-    // Pre-allocate
-    file.as_file_mut().set_len(4096).expect("set length");
-
     let mut state = SparseWriteState::default();
-    state.set_zero_run_start(500);
-    state.accumulate(1000);
+    // preallocated_len defaults to 0: every run is seeked over.
 
-    let final_pos = state
-        .finish_with_punch_hole(file.as_file_mut(), &path)
-        .expect("finish with punch");
+    let mut buf = vec![0u8; 4096];
+    buf[0] = 0x11;
+    // 2048 zeros, then a trailing data byte.
+    buf[4095] = 0x22;
 
-    // Position should be at end of punched hole
-    assert_eq!(final_pos, 1500);
+    write_sparse_chunk(file.as_file_mut(), &mut state, &buf, &path).expect("write sparse");
+    let final_pos = state.finish(file.as_file_mut(), &path).expect("finish");
+    assert_eq!(final_pos, 4096);
+    file.as_file_mut().set_len(final_pos).expect("set_len");
+
+    file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
+    let mut readback = vec![0u8; 4096];
+    file.as_file_mut().read_exact(&mut readback).expect("read");
+    assert_eq!(readback[0], 0x11);
+    assert!(readback[1..4095].iter().all(|&b| b == 0));
+    assert_eq!(readback[4095], 0x22);
 }
 
 #[test]
@@ -635,7 +670,6 @@ fn sparse_state_replace_vs_accumulate() {
     let mut state = SparseWriteState::default();
 
     // Accumulate some zeros
-    state.set_zero_run_start(100);
     state.accumulate(500);
     assert_eq!(state.pending_zeros(), 500);
 
@@ -648,66 +682,75 @@ fn sparse_state_replace_vs_accumulate() {
     assert_eq!(state.pending_zeros(), 300);
 }
 
+/// Without a preallocated extent, `write_sparse_chunk` seeks over interior zero
+/// runs and `finish` reports the full logical length for `set_len`.
 #[test]
-fn sparse_state_zero_run_start_tracking() {
-    let mut state = SparseWriteState::default();
-
-    state.set_zero_run_start(1000);
-    state.accumulate(500);
-
-    // Zero run start should be preserved
+fn sparse_state_finish_reports_logical_length() {
     let mut file = NamedTempFile::new().expect("temp file");
     let path = file.path().to_path_buf();
-    file.as_file_mut().set_len(8192).expect("set length");
 
-    let final_pos = state
-        .finish_with_punch_hole(file.as_file_mut(), &path)
-        .expect("finish");
+    let mut state = SparseWriteState::default();
 
-    // Final position should be start + accumulated
-    assert_eq!(final_pos, 1500);
+    // data, 500-byte hole, data - the hole is seeked over.
+    let mut buf = vec![0u8; 1024];
+    buf[0] = 0x11;
+    buf[1023] = 0x22;
+    write_sparse_chunk(file.as_file_mut(), &mut state, &buf, &path).expect("write");
+    let final_pos = state.finish(file.as_file_mut(), &path).expect("finish");
+    assert_eq!(final_pos, 1024);
 }
 
+/// Multiple interior zero runs within a preallocated extent are each punched
+/// out, deallocating their reserved blocks.
+#[cfg(target_os = "linux")]
 #[test]
-fn sparse_state_multiple_flush_cycles() {
+fn sparse_state_multiple_flush_cycles_punch() {
+    use rustix::fd::AsFd;
+    use std::os::unix::fs::MetadataExt;
+
     let mut file = NamedTempFile::new().expect("temp file");
     let path = file.path().to_path_buf();
 
-    // Pre-allocate
-    let data = vec![0xCCu8; 16384];
-    file.as_file_mut().write_all(&data).expect("write");
-    file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
+    // Reserve a 16 KiB extent.
+    rustix::fs::fallocate(
+        file.as_file().as_fd(),
+        rustix::fs::FallocateFlags::empty(),
+        0,
+        16384,
+    )
+    .expect("fallocate");
+    let prealloc = file.as_file().metadata().expect("meta").blocks() * 512;
 
     let mut state = SparseWriteState::default();
+    state.set_preallocated_len(prealloc);
 
-    // First flush cycle
-    state.set_zero_run_start(1000);
-    state.accumulate(500);
-    state
-        .flush_with_punch_hole(file.as_file_mut(), &path)
-        .expect("first flush");
-    assert_eq!(state.pending_zeros(), 0);
+    // Build a buffer with two large interior zero runs surrounded by data.
+    let mut buf = vec![0xCCu8; 16384];
+    for byte in buf.iter_mut().take(4096).skip(1024) {
+        *byte = 0;
+    }
+    for byte in buf.iter_mut().take(12288).skip(8192) {
+        *byte = 0;
+    }
 
-    // Second flush cycle
-    state.set_zero_run_start(5000);
-    state.accumulate(1000);
-    state
-        .flush_with_punch_hole(file.as_file_mut(), &path)
-        .expect("second flush");
-    assert_eq!(state.pending_zeros(), 0);
+    write_sparse_chunk(file.as_file_mut(), &mut state, &buf, &path).expect("write");
+    let final_pos = state.finish(file.as_file_mut(), &path).expect("finish");
+    assert_eq!(final_pos, 16384);
+    file.as_file_mut().set_len(final_pos).expect("set_len");
 
-    // Verify both holes were punched
+    // Content survives.
     file.as_file_mut().seek(SeekFrom::Start(0)).expect("rewind");
-    let mut buffer = vec![0u8; 16384];
-    file.as_file_mut().read_exact(&mut buffer).expect("read");
+    let mut readback = vec![0u8; 16384];
+    file.as_file_mut().read_exact(&mut readback).expect("read");
+    assert_eq!(readback, buf);
 
-    // First hole: 1000-1500
-    assert!(buffer[..1000].iter().all(|&b| b == 0xCC));
-    assert!(buffer[1000..1500].iter().all(|&b| b == 0));
-    assert!(buffer[1500..5000].iter().all(|&b| b == 0xCC));
-    // Second hole: 5000-6000
-    assert!(buffer[5000..6000].iter().all(|&b| b == 0));
-    assert!(buffer[6000..].iter().all(|&b| b == 0xCC));
+    // The two zero runs were punched: allocation drops below the reserved
+    // extent.
+    let allocated = file.as_file().metadata().expect("meta").blocks() * 512;
+    assert!(
+        allocated < prealloc,
+        "interior zero runs should be punched (allocated {allocated}, reserved {prealloc})"
+    );
 }
 
 #[test]
@@ -810,23 +853,6 @@ fn sparse_state_flush_with_zero_pending_is_noop() {
         .expect("flush zero pending");
 
     // Position should be unchanged
-    let pos = file.as_file_mut().stream_position().expect("position");
-    assert_eq!(pos, 4);
-}
-
-#[test]
-fn sparse_state_flush_with_punch_hole_zero_pending_is_noop() {
-    let mut file = NamedTempFile::new().expect("temp file");
-    let path = file.path().to_path_buf();
-
-    file.as_file_mut().write_all(b"data").expect("write");
-
-    let mut state = SparseWriteState::default();
-
-    state
-        .flush_with_punch_hole(file.as_file_mut(), &path)
-        .expect("flush punch hole zero pending");
-
     let pos = file.as_file_mut().stream_position().expect("position");
     assert_eq!(pos, 4);
 }
@@ -1191,25 +1217,6 @@ fn sparse_state_finish_no_pending() {
         .expect("finish no pending");
 
     assert_eq!(final_pos, 4);
-}
-
-#[test]
-fn sparse_state_finish_with_punch_hole_returns_position() {
-    let mut file = NamedTempFile::new().expect("temp file");
-    let path = file.path().to_path_buf();
-
-    // Pre-allocate
-    file.as_file_mut().set_len(10000).expect("set length");
-
-    let mut state = SparseWriteState::default();
-    state.set_zero_run_start(1000);
-    state.accumulate(500);
-
-    let final_pos = state
-        .finish_with_punch_hole(file.as_file_mut(), &path)
-        .expect("finish punch");
-
-    assert_eq!(final_pos, 1500);
 }
 
 #[test]

@@ -18,6 +18,7 @@ impl<'a> CopyContext<'a> {
         index: &DeltaSignatureIndex,
         total_size: u64,
         initial_bytes: u64,
+        preallocated_len: u64,
         start: Instant,
         basis_separate_from_writer: bool,
     ) -> Result<FileCopyOutcome, LocalCopyError> {
@@ -58,6 +59,7 @@ impl<'a> CopyContext<'a> {
         let mut total_bytes = 0u64;
         let mut literal_bytes = 0u64;
         let mut sparse_state = SparseWriteState::default();
+        sparse_state.set_preallocated_len(preallocated_len);
         let mut window: VecDeque<u8> = VecDeque::with_capacity(index.block_length());
         let mut pending_literals = Vec::with_capacity(index.block_length());
         let mut scratch = Vec::with_capacity(index.block_length());
