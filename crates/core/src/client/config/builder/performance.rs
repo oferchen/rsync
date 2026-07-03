@@ -50,6 +50,19 @@ impl ClientConfigBuilder {
         self
     }
 
+    /// Preserves the raw `--compress-choice` name as typed by the user.
+    ///
+    /// [`CompressionAlgorithm`] collapses `zlibx` onto `Zlib` (shared deflate
+    /// codec), so the enum cannot round-trip the exact name upstream prints in
+    /// its `--debug=NSTR` compress summary (`compat.c:206-219`). This retains
+    /// the verbatim string so the local-copy summary matches upstream.
+    #[must_use]
+    #[doc(alias = "--compress-choice")]
+    pub fn compress_choice_name(mut self, name: Option<String>) -> Self {
+        self.compress_choice_name = name;
+        self
+    }
+
     /// Sets the compression level that should apply when compression is enabled.
     #[must_use]
     #[doc(alias = "--compress-level")]

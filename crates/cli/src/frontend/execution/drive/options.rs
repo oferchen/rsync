@@ -76,6 +76,9 @@ pub(crate) struct DerivedSettings {
     pub(crate) skip_compress_list: Option<SkipCompressList>,
     pub(crate) compression_setting: CompressionSetting,
     pub(crate) compression_algorithm: Option<CompressionAlgorithm>,
+    /// Raw `--compress-choice` name preserved for the `--debug=NSTR` summary
+    /// (e.g. `"zlibx"`, which the algorithm enum folds onto `Zlib`).
+    pub(crate) compress_choice_name: Option<String>,
     pub(crate) compression_threads: Option<NonZeroU8>,
     pub(crate) log_file_path: Option<OsString>,
     pub(crate) log_file_template: Option<OutFormat>,
@@ -358,6 +361,11 @@ struct CompressionResult {
     skip_compress_list: Option<SkipCompressList>,
     compression_setting: CompressionSetting,
     compression_algorithm: Option<CompressionAlgorithm>,
+    /// Raw `--compress-choice` name (trimmed, lowercased) preserved for the
+    /// `--debug=NSTR` summary. `CompressionAlgorithm` folds `zlibx` onto
+    /// `Zlib`, so this retains the exact token upstream prints
+    /// (`compat.c:206-219`).
+    compress_choice_name: Option<String>,
     compression_threads: Option<NonZeroU8>,
 }
 
@@ -384,6 +392,7 @@ where
     let mut compress = compress_flag;
     let mut compression_level_override = None;
     let mut compression_algorithm = None;
+    let mut compress_choice_name = None;
 
     let mut compress_level_setting = match compress_level {
         Some(value) => match parse_compress_level(value.as_os_str()) {
@@ -402,6 +411,10 @@ where
             }
             Ok(Some(algorithm)) => {
                 compression_algorithm = Some(algorithm);
+                // upstream: compat.c:216-219 prints the user's verbatim
+                // compress_choice; retain the trimmed/lowercased token so
+                // `zlibx` survives (it folds onto `Zlib` in the enum).
+                compress_choice_name = Some(choice.to_string_lossy().trim().to_ascii_lowercase());
                 if !no_compress {
                     compress = true;
                 }
@@ -434,6 +447,7 @@ where
         compression_level_override = None;
         compress_level_setting = Some(CompressLevelArg::Disable);
         compression_algorithm = None;
+        compress_choice_name = None;
     }
 
     let skip_compress_list = if let Some(value) = skip_compress.as_ref() {
@@ -476,6 +490,7 @@ where
         skip_compress_list,
         compression_setting,
         compression_algorithm,
+        compress_choice_name,
         compression_threads,
     })
 }
@@ -633,6 +648,7 @@ where
         skip_compress_list: compression.skip_compress_list,
         compression_setting: compression.compression_setting,
         compression_algorithm: compression.compression_algorithm,
+        compress_choice_name: compression.compress_choice_name,
         compression_threads: compression.compression_threads,
         log_file_path: log.log_file_path,
         log_file_template: log.log_file_template,
