@@ -67,14 +67,19 @@ fn is_already_hardlinked(destination: &Path, target: &Path) -> bool {
 /// onto the shared basis inode. When `false` (match_level 2, attrs differ),
 /// the caller reapplies metadata like upstream's `try_a_copy` + set_file_attrs.
 ///
-/// Compares only the attributes `unchanged_attrs` inspects for a regular file:
-/// permission bits (`perms_differ`), owner/group (`ownership_differs`), and
-/// mtime (`any_time_differs`), each gated on the corresponding preserve option.
-// upstream: generator.c:418-502 perms_differ / ownership_differs / any_time_differs
+/// Compares the attributes `unchanged_attrs` inspects for a regular file:
+/// permission bits (`perms_differ`), owner/group (`ownership_differs`), mtime
+/// (`any_time_differs`), and, when `-X` is active, the transferable extended
+/// attributes (`xattrs_differ`), each gated on the corresponding preserve
+/// option. `source` is the source path (for the xattr read) and `source_meta`
+/// its stat.
+// upstream: generator.c:468-502 unchanged_attrs - perms/ownership/time/xattr
 fn link_dest_attrs_unchanged(
     basis: &Path,
-    source: &fs::Metadata,
+    source: &Path,
+    source_meta: &fs::Metadata,
     options: &MetadataOptions,
+    preserve_xattrs: bool,
 ) -> bool {
     #[cfg(unix)]
     {
@@ -93,26 +98,32 @@ fn link_dest_attrs_unchanged(
             return false;
         }
 
-        if options.permissions() && (source.mode() & 0o7777) != (basis_meta.mode() & 0o7777) {
+        if options.permissions() && (source_meta.mode() & 0o7777) != (basis_meta.mode() & 0o7777) {
             return false;
         }
-        if options.owner() && source.uid() != basis_meta.uid() {
+        if options.owner() && source_meta.uid() != basis_meta.uid() {
             return false;
         }
-        if options.group() && source.gid() != basis_meta.gid() {
+        if options.group() && source_meta.gid() != basis_meta.gid() {
             return false;
         }
         if options.times()
-            && FileTime::from_last_modification_time(source)
+            && FileTime::from_last_modification_time(source_meta)
                 != FileTime::from_last_modification_time(&basis_meta)
         {
+            return false;
+        }
+        // upstream: generator.c:501 - xattrs_differ() makes a changed xattr a
+        // match_level-2 (attr change) result, forcing the copy + set_file_attrs
+        // that reapplies the source's xattrs onto the destination.
+        if preserve_xattrs && !::metadata::xattrs_match(source, basis, true).unwrap_or(false) {
             return false;
         }
         true
     }
     #[cfg(not(unix))]
     {
-        let _ = (basis, source, options);
+        let _ = (basis, source, source_meta, options, preserve_xattrs);
         false
     }
 }
@@ -259,7 +270,23 @@ pub(super) fn process_links(
         // `user.rsync.%stat` xattr onto the shared basis inode that upstream
         // never creates. At match_level 2 (attrs differ) upstream does rewrite,
         // so gate the reapply on whether the basis attributes already match.
-        let attrs_match = link_dest_attrs_unchanged(&link_target, metadata, &metadata_options);
+        let preserve_xattrs_flag = {
+            #[cfg(all(unix, feature = "xattr"))]
+            {
+                preserve_xattrs
+            }
+            #[cfg(not(all(unix, feature = "xattr")))]
+            {
+                false
+            }
+        };
+        let attrs_match = link_dest_attrs_unchanged(
+            &link_target,
+            source,
+            metadata,
+            &metadata_options,
+            preserve_xattrs_flag,
+        );
         if !attrs_match || metadata_options.atimes() {
             apply_file_metadata_with_options(destination, metadata, &metadata_options)
                 .map_err(map_metadata_error)?;

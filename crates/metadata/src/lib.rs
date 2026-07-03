@@ -251,11 +251,13 @@ pub use special::{
 };
 
 #[cfg(all(feature = "xattr", any(unix, windows)))]
-pub use xattr::{apply_xattrs_from_list, read_xattrs_for_wire, strip_source_xattrs, sync_xattrs};
+pub use xattr::{
+    apply_xattrs_from_list, read_xattrs_for_wire, strip_source_xattrs, sync_xattrs, xattrs_match,
+};
 
 #[cfg(not(all(feature = "xattr", any(unix, windows))))]
 pub use xattr_stub::{
-    apply_xattrs_from_list, read_xattrs_for_wire, strip_source_xattrs, sync_xattrs,
+    apply_xattrs_from_list, read_xattrs_for_wire, strip_source_xattrs, sync_xattrs, xattrs_match,
 };
 
 pub use copy_as::{CopyAsGuard, CopyAsIds, parse_copy_as_spec, switch_effective_ids};

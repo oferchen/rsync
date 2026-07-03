@@ -187,6 +187,43 @@ pub fn strip_source_xattrs(
     Ok(())
 }
 
+/// Reports whether the transferable extended attributes of `a` and `b` match.
+///
+/// Mirrors upstream `xattrs.c:xattrs_differ()` (consumed by `unchanged_attrs`):
+/// only the attributes that participate in an `-X` transfer are compared - the
+/// rsync-internal `rsync.%*` channel and namespaces the current privilege level
+/// cannot access are excluded (`list_attributes` already applies the namespace
+/// filter). Used by the `--link-dest` match-level check to decide whether a
+/// basis file's xattrs already equal the source's.
+// upstream: xattrs.c xattrs_differ() via generator.c:468 unchanged_attrs()
+pub fn xattrs_match(a: &Path, b: &Path, follow_symlinks: bool) -> Result<bool, MetadataError> {
+    let mut a_map: std::collections::BTreeMap<Vec<u8>, Vec<u8>> = std::collections::BTreeMap::new();
+    for name in list_attributes(a, follow_symlinks)? {
+        if protocol::xattr::is_rsync_internal(&String::from_utf8_lossy(&name)) {
+            continue;
+        }
+        if let Some(value) = read_attribute(a, &name, follow_symlinks)? {
+            a_map.insert(name, value);
+        }
+    }
+
+    let mut b_count = 0usize;
+    for name in list_attributes(b, follow_symlinks)? {
+        if protocol::xattr::is_rsync_internal(&String::from_utf8_lossy(&name)) {
+            continue;
+        }
+        let Some(value) = read_attribute(b, &name, follow_symlinks)? else {
+            continue;
+        };
+        match a_map.get(&name) {
+            Some(a_value) if *a_value == value => b_count += 1,
+            _ => return Ok(false),
+        }
+    }
+
+    Ok(b_count == a_map.len())
+}
+
 /// Synchronises the extended attributes from `source` to `destination`.
 ///
 /// The rsync-internal `rsync.%*` attributes (the fake-super `%stat`/`%aacl`/
@@ -562,6 +599,44 @@ mod tests {
                 .expect("attr2"),
             b"value2"
         );
+    }
+
+    // upstream: xattrs.c xattrs_differ() - a changed value or a missing/extra
+    // transferable attr means the pair differs; the rsync.%* channel is ignored.
+    #[test]
+    fn xattrs_match_detects_value_and_membership_differences() {
+        let dir = tempdir().expect("create temp dir");
+        let a = dir.path().join("a.txt");
+        let b = dir.path().join("b.txt");
+        fs::write(&a, "a").expect("write a");
+        fs::write(&b, "b").expect("write b");
+
+        if !xattrs_supported(&a) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        let name = test_xattr_name("nice");
+        write_attribute(&a, &name, b"this is nice, but different", false).expect("write a nice");
+        write_attribute(&b, &name, b"this is nice", false).expect("write b nice");
+        assert!(!xattrs_match(&a, &b, false).expect("compare differing values"));
+
+        // Equal values -> match.
+        write_attribute(&b, &name, b"this is nice, but different", false).expect("update b nice");
+        assert!(xattrs_match(&a, &b, false).expect("compare equal values"));
+
+        // An extra rsync-internal attr on either side is ignored.
+        let stat_name: Vec<u8> = if cfg!(target_os = "linux") {
+            b"user.rsync.%stat".to_vec()
+        } else {
+            b"rsync.%stat".to_vec()
+        };
+        if write_attribute(&b, &stat_name, b"100644 0,0 1:1", false).is_ok() {
+            assert!(
+                xattrs_match(&a, &b, false).expect("compare ignoring %stat"),
+                "rsync.%stat must not affect the xattr match"
+            );
+        }
     }
 
     #[test]

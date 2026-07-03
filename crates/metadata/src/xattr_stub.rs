@@ -34,6 +34,14 @@ pub fn sync_xattrs(
     Ok(())
 }
 
+/// Reports whether the transferable xattrs of two paths match.
+///
+/// On platforms without xattr support there are no attributes to compare, so
+/// this trivially reports a match.
+pub fn xattrs_match(_a: &Path, _b: &Path, _follow_symlinks: bool) -> Result<bool, MetadataError> {
+    Ok(true)
+}
+
 /// Removes from `destination` every extended attribute that also exists on
 /// `source`.
 ///
