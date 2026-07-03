@@ -68,6 +68,19 @@ impl WhoMask {
     }
 }
 
+/// Source category for a chmod permission-copy directive (`g=u`, `o=g`, ...).
+///
+/// upstream: chmod.c:parse_chmod() STATE_2ND_HALF sets `copybits` to `0100`,
+/// `0010`, or `0001` when the right-hand side is a single `u`, `g`, or `o`
+/// who-letter. The permissions of that category are then copied to the
+/// left-hand who-classes by `mode_copy_bits()`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CopySource {
+    User,
+    Group,
+    Other,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct PermSpec {
     pub(crate) read: bool,
@@ -77,6 +90,10 @@ pub(crate) struct PermSpec {
     pub(crate) setuid: bool,
     pub(crate) setgid: bool,
     pub(crate) sticky: bool,
+    /// When set, the right-hand side is a who-letter copy source rather than
+    /// literal `rwxXst` bits. Mutually exclusive with all bit flags above.
+    /// upstream: chmod.c `copybits`.
+    pub(crate) copy_source: Option<CopySource>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

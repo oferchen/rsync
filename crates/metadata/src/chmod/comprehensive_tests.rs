@@ -182,14 +182,16 @@ mod basic_symbolic_syntax {
         assert!(!modifiers.is_empty());
     }
 
-    // upstream: chmod.c:parse_chmod() has no GNU-style "copy permissions"
-    // form. A who-class letter in the RHS (STATE_2ND_HALF) is STATE_ERROR, so
-    // `g=u`, `o=g`, `o=u` are all rejected.
+    // upstream: chmod.c:parse_chmod() STATE_2ND_HALF accepts a single
+    // who-class letter in the RHS as a permission-copy source (`copybits`), so
+    // `g=u`, `o=g`, `o=u` all parse. Mixing a copy source with literal bits
+    // (`g=ur`) is STATE_ERROR.
     #[test]
-    fn who_letter_in_rhs_rejected() {
-        assert!(ChmodModifiers::parse("g=u").is_err());
-        assert!(ChmodModifiers::parse("o=g").is_err());
-        assert!(ChmodModifiers::parse("o=u").is_err());
+    fn who_letter_copy_source_in_rhs_parses() {
+        assert!(ChmodModifiers::parse("g=u").is_ok());
+        assert!(ChmodModifiers::parse("o=g").is_ok());
+        assert!(ChmodModifiers::parse("o=u").is_ok());
+        assert!(ChmodModifiers::parse("g=ur").is_err());
     }
 
     // upstream: who-class and permission letters are lowercase only (except
@@ -635,11 +637,23 @@ mod apply_mode {
     }
 
     #[test]
-    fn who_letter_copy_form_rejected_at_parse() {
-        // upstream: chmod.c:parse_chmod() rejects `g=u`/`o=u`/`o=g`; there is
-        // no runtime copy behaviour to exercise because parsing fails first.
-        assert!(ChmodModifiers::parse("g=u,o=u").is_err());
-        assert!(ChmodModifiers::parse("o=g").is_err());
+    fn who_letter_copy_form_applies_source_permissions() {
+        // upstream: chmod.c mode_copy_bits() - `u=g` sets the user triad from
+        // the group triad; `o=u` copies the user triad onto other and (via the
+        // `=` op) clears the destination's special bit. Values mirror the
+        // upstream chmod-option.test permcopy checks.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let file_path = temp.path().join("permcopy.txt");
+        std::fs::write(&file_path, b"payload").expect("write file");
+        let file_type = get_file_type(&file_path);
+
+        // 0o4755: user := group (r-x); setuid cleared by `=`. -> 0o555.
+        let modifiers = ChmodModifiers::parse("u=g").expect("parse");
+        assert_eq!(modifiers.apply(0o4755, file_type) & 0o7777, 0o555);
+
+        // 0o2755: group := user (rwx); setgid cleared by `=`. -> 0o775.
+        let modifiers = ChmodModifiers::parse("g=u").expect("parse");
+        assert_eq!(modifiers.apply(0o2755, file_type) & 0o7777, 0o775);
     }
 
     #[test]

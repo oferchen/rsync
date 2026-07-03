@@ -7,7 +7,7 @@
 use super::spec::Clause;
 
 #[cfg(unix)]
-use super::spec::{ClauseKind, Operation, PermSpec, SymbolicClause};
+use super::spec::{ClauseKind, CopySource, Operation, PermSpec, SymbolicClause};
 
 #[cfg(unix)]
 pub(crate) fn apply_clauses(
@@ -68,6 +68,21 @@ fn cached_umask() -> u32 {
     })
 }
 
+/// Extracts a copy source's three rwx permission bits, normalised to the low
+/// three bits (`0b_rwx`).
+///
+/// upstream: chmod.c mode_copy_bits() shifts the selected category down by 6
+/// (user), 3 (group), or 0 (other) and masks with `7`.
+#[cfg(unix)]
+const fn copy_source_bits(mode: u32, src: CopySource) -> u32 {
+    let shifted = match src {
+        CopySource::User => mode >> 6,
+        CopySource::Group => mode >> 3,
+        CopySource::Other => mode,
+    };
+    shifted & 0o7
+}
+
 #[cfg(unix)]
 fn apply_symbolic_clause(mut mode: u32, clause: &SymbolicClause, is_dir: bool) -> u32 {
     let before = mode;
@@ -81,6 +96,15 @@ fn apply_symbolic_clause(mut mode: u32, clause: &SymbolicClause, is_dir: bool) -
         0o777
     };
 
+    // upstream: chmod.c mode_copy_bits() - a copy directive (`g=u`) reads the
+    // source category's rwx bits from the *original* mode and replicates them
+    // into every destination who-class. The source bits are sampled once,
+    // before any destination is mutated.
+    let copy_src_bits = clause
+        .perms
+        .copy_source
+        .map(|src| copy_source_bits(before, src));
+
     for dest in [Dest::User, Dest::Group, Dest::Other] {
         if !dest.includes(clause) {
             continue;
@@ -93,7 +117,10 @@ fn apply_symbolic_clause(mut mode: u32, clause: &SymbolicClause, is_dir: bool) -
             bits = 0;
         }
 
-        let add_bits = permission_bits(&clause.perms, dest, is_dir, before) & umask_mask;
+        let add_bits = match copy_src_bits {
+            Some(src_bits) => (dest.spread_exec(src_bits) & mask) & umask_mask,
+            None => permission_bits(&clause.perms, dest, is_dir, before) & umask_mask,
+        };
         match clause.op {
             Operation::Add | Operation::Assign => {
                 bits |= add_bits & mask;
@@ -205,6 +232,17 @@ impl Dest {
             Self::Other => 0o001,
         }
     }
+
+    /// Shifts a normalised low-three-bit rwx value (`0b_rwx`) into this
+    /// destination's permission triad. upstream: chmod.c mode_copy_bits()
+    /// multiplies `copy_bits` by `copy_dst` (0100/0010/0001).
+    const fn spread_exec(self, low_bits: u32) -> u32 {
+        match self {
+            Self::User => low_bits << 6,
+            Self::Group => low_bits << 3,
+            Self::Other => low_bits,
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -303,6 +341,7 @@ mod tests {
             setuid: false,
             setgid: false,
             sticky: false,
+            copy_source: None,
         };
         assert_eq!(permission_bits(&spec, Dest::User, false, 0), 0o400);
         assert_eq!(permission_bits(&spec, Dest::Group, false, 0), 0o040);
@@ -319,6 +358,7 @@ mod tests {
             setuid: false,
             setgid: false,
             sticky: false,
+            copy_source: None,
         };
         assert_eq!(permission_bits(&spec, Dest::User, false, 0), 0o700);
     }
@@ -333,6 +373,7 @@ mod tests {
             setuid: false,
             setgid: false,
             sticky: false,
+            copy_source: None,
         };
         assert_eq!(permission_bits(&spec, Dest::User, true, 0), 0o100);
     }
@@ -347,6 +388,7 @@ mod tests {
             setuid: false,
             setgid: false,
             sticky: false,
+            copy_source: None,
         };
         assert_eq!(permission_bits(&spec, Dest::User, false, 0o111), 0o100);
     }
@@ -361,6 +403,7 @@ mod tests {
             setuid: false,
             setgid: false,
             sticky: false,
+            copy_source: None,
         };
         assert_eq!(permission_bits(&spec, Dest::User, false, 0o644), 0);
     }
