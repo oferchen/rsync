@@ -31,6 +31,8 @@ mod checksum;
 mod sparse;
 
 pub use crate::token_reader::{DeltaToken, LiteralData, TokenReader};
+#[cfg(feature = "tokio-transfer")]
+pub use applicator::discard_delta_stream_async;
 pub use applicator::{
     BasisWriterKind, DeltaApplicator, DeltaApplyConfig, DeltaApplyResult, apply_delta_stream,
     discard_delta_stream,
