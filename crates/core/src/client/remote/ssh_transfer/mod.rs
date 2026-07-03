@@ -36,7 +36,7 @@ mod server_config;
 pub use drive::run_ssh_transfer;
 pub(super) use exit_status::{format_stderr_context, map_child_exit_status};
 
-#[cfg(feature = "async-ssh")]
+#[cfg(any(feature = "async-ssh", feature = "embedded-ssh"))]
 pub(super) use exit_status::convert_server_stats_to_summary;
 #[cfg(feature = "async-ssh")]
 pub(super) use parse::{parse_remote_operands, parse_single_remote};
