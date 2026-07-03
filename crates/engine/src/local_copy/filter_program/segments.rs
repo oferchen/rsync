@@ -122,6 +122,13 @@ impl FilterSegment {
         }
 
         for rule in &self.protect_risk {
+            // upstream check_filter() (exclude.c:1058-1061) returns on the first
+            // matching rule, so the first protect/risk decision wins. Stop once a
+            // protect/risk rule has applied rather than letting a later rule
+            // overwrite it (last-match-wins).
+            if outcome.protection_decided() {
+                break;
+            }
             if matches!(context, FilterContext::Deletion) && rule.perishable {
                 continue;
             }
@@ -217,6 +224,7 @@ pub(crate) struct FilterOutcome {
     transfer_allowed: bool,
     transfer_decided: bool,
     protected: bool,
+    protection_decided: bool,
     excluded_for_delete_excluded: bool,
 }
 
@@ -226,6 +234,7 @@ impl FilterOutcome {
             transfer_allowed: true,
             transfer_decided: false,
             protected: false,
+            protection_decided: false,
             excluded_for_delete_excluded: false,
         }
     }
@@ -246,6 +255,10 @@ impl FilterOutcome {
         self.transfer_decided
     }
 
+    const fn protection_decided(self) -> bool {
+        self.protection_decided
+    }
+
     const fn decide_transfer(&mut self) {
         self.transfer_decided = true;
     }
@@ -256,10 +269,12 @@ impl FilterOutcome {
 
     const fn protect(&mut self) {
         self.protected = true;
+        self.protection_decided = true;
     }
 
     const fn unprotect(&mut self) {
         self.protected = false;
+        self.protection_decided = true;
     }
 
     const fn set_delete_excluded(&mut self, excluded: bool) {
