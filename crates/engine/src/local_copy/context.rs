@@ -20,6 +20,8 @@ use super::filter_program::{
     directory_has_marker,
 };
 
+#[cfg(all(unix, feature = "xattr"))]
+use super::store_effective_fake_super_if_requested;
 #[cfg(all(any(unix, windows), feature = "acl"))]
 use super::sync_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]

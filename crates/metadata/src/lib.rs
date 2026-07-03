@@ -261,7 +261,8 @@ pub use xattr_stub::{
 pub use copy_as::{CopyAsGuard, CopyAsIds, parse_copy_as_spec, switch_effective_ids};
 
 pub use fake_super::{
-    FAKE_SUPER_XATTR, FakeSuperStat, load_fake_super, remove_fake_super, store_fake_super,
+    FAKE_SUPER_XATTR, FakeSuperStat, effective_source_stat, load_fake_super, remove_fake_super,
+    store_fake_super,
 };
 
 pub use symlink_munge::{SYMLINK_MUNGE_PREFIX, munge_symlink, unmunge_symlink};

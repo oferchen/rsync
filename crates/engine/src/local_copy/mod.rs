@@ -136,6 +136,9 @@ pub(crate) use metadata_sync::map_metadata_error;
 pub(crate) use metadata_sync::sync_acls_if_requested;
 
 #[cfg(all(unix, feature = "xattr"))]
+pub(crate) use metadata_sync::store_effective_fake_super_if_requested;
+
+#[cfg(all(unix, feature = "xattr"))]
 pub(crate) use metadata_sync::sync_xattrs_if_requested;
 
 #[cfg(all(unix, feature = "xattr"))]
