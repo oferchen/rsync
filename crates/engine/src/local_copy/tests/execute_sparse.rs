@@ -63,9 +63,65 @@ fn execute_with_sparse_enabled_creates_holes() {
     );
 }
 
-#[cfg(unix)]
+/// `--preallocate --sparse` must reserve the destination extent and then punch
+/// the source's zero run back out, so the on-disk allocation stays sparse.
+///
+/// Mirrors upstream `preallocate_test.py`'s `--preallocate --sparse` leg:
+/// `do_fallocate()` reports the preallocated length and `write_sparse()` uses
+/// `do_punch_hole()` for the zero run inside that extent.
+// upstream: fileio.c:95 write_sparse() -> do_punch_hole within preallocated_len
+#[cfg(target_os = "linux")]
 #[test]
-fn execute_inplace_disables_sparse_writes() {
+fn execute_preallocate_sparse_punches_hole() {
+    use std::os::unix::fs::MetadataExt;
+
+    let temp = tempdir().expect("tempdir");
+    let src_dir = temp.path().join("src");
+    fs::create_dir_all(&src_dir).expect("mkdir src");
+    let source = src_dir.join("holey.bin");
+    let mut source_file = fs::File::create(&source).expect("create source");
+    source_file.write_all(&[0xAB; 4096]).expect("head");
+    source_file
+        .write_all(&vec![0u8; 2 * 1024 * 1024])
+        .expect("hole");
+    source_file.write_all(&[0xCD; 4096]).expect("tail");
+    drop(source_file);
+    let apparent = fs::metadata(&source).expect("meta").len();
+
+    let dest = temp.path().join("dst.bin");
+    let plan = LocalCopyPlan::from_operands(&[
+        source.into_os_string(),
+        dest.clone().into_os_string(),
+    ])
+    .expect("plan");
+    plan.execute_with_options(
+        LocalCopyExecution::Apply,
+        LocalCopyOptions::default().preallocate(true).sparse(true),
+    )
+    .expect("preallocate + sparse copy succeeds");
+
+    let meta = fs::metadata(&dest).expect("dest metadata");
+    assert_eq!(meta.len(), apparent, "content length preserved");
+    assert!(
+        meta.blocks() * 512 < apparent,
+        "preallocated extent's zero run must be punched (allocated {}, size {})",
+        meta.blocks() * 512,
+        apparent,
+    );
+}
+
+/// `--inplace --sparse` must punch out a zero run introduced by the update,
+/// deallocating the blocks the pre-existing dense destination held there.
+///
+/// This mirrors upstream `preallocate_test.py`'s `--inplace --sparse` leg:
+/// upstream keeps `sparse_files > 0` in inplace mode and sets
+/// `preallocated_len = size_r` so `write_sparse()` punches the hole in place
+/// (receiver.c:334, fileio.c:sparse_end updating_basis_or_equiv branch).
+// upstream: fileio.c:47 sparse_end() updating_basis_or_equiv -> do_punch_hole
+#[cfg(target_os = "linux")]
+#[test]
+fn execute_inplace_sparse_punches_hole() {
+    use std::os::unix::fs::MetadataExt;
 
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("source-inplace.bin");
@@ -82,34 +138,19 @@ fn execute_inplace_disables_sparse_writes() {
         .expect("extend source");
     drop(source_file);
 
-    let dense_dest = temp.path().join("dense-inplace.bin");
     let sparse_dest = temp.path().join("sparse-inplace.bin");
+    // Dense destination fully populated so the hole must be actively punched.
     let initial = vec![0xCC; 4 * 1024 * 1024];
-    fs::write(&dense_dest, &initial).expect("initialise dense destination");
     fs::write(&sparse_dest, &initial).expect("initialise sparse destination");
 
-    // Backdate destinations so rsync's quick-check detects them as stale
+    // Backdate the destination so rsync's quick-check detects it as stale.
     let past = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
-    fs::File::open(&dense_dest)
-        .unwrap()
-        .set_modified(past)
-        .unwrap();
     fs::File::open(&sparse_dest)
         .unwrap()
         .set_modified(past)
         .unwrap();
 
-    let dense_plan = LocalCopyPlan::from_operands(&[
-        source.clone().into_os_string(),
-        dense_dest.clone().into_os_string(),
-    ])
-    .expect("plan dense");
-    dense_plan
-        .execute_with_options(
-            LocalCopyExecution::Apply,
-            LocalCopyOptions::default().inplace(true),
-        )
-        .expect("dense inplace copy succeeds");
+    let before_blocks = fs::metadata(&sparse_dest).expect("meta").blocks();
 
     let sparse_plan = LocalCopyPlan::from_operands(&[
         source.into_os_string(),
@@ -119,29 +160,34 @@ fn execute_inplace_disables_sparse_writes() {
     sparse_plan
         .execute_with_options(
             LocalCopyExecution::Apply,
-            LocalCopyOptions::default().sparse(true).inplace(true),
+            LocalCopyOptions::default()
+                .sparse(true)
+                .inplace(true)
+                .whole_file(false),
         )
         .expect("sparse inplace copy succeeds");
 
-    let dense_meta = fs::metadata(&dense_dest).expect("dense metadata");
     let sparse_meta = fs::metadata(&sparse_dest).expect("sparse metadata");
 
-    assert_eq!(dense_meta.len(), sparse_meta.len());
-    assert_eq!(
-        fs::read(&dense_dest).expect("read dense destination"),
-        fs::read(&sparse_dest).expect("read sparse destination"),
-    );
+    // Content must match the source byte-for-byte.
+    assert_eq!(sparse_meta.len(), 4 * 1024 * 1024);
+    let readback = fs::read(&sparse_dest).expect("read sparse destination");
+    assert_eq!(readback[0], 0x11);
+    assert_eq!(readback[2 * 1024 * 1024], 0x22);
+    assert!(readback[1..2 * 1024 * 1024].iter().all(|&b| b == 0));
 
-    use std::os::unix::fs::MetadataExt;
-    let dense_blocks = dense_meta.blocks();
-    let sparse_blocks = sparse_meta.blocks();
-    // Allow a small tolerance for filesystem allocation differences (delayed
-    // allocation, alignment, etc.) - the key property is that inplace mode
-    // does not create large sparse holes.
-    let tolerance = (dense_blocks / 10).max(8);
+    // The 2 MiB zero run must be punched: allocation drops well below the
+    // original dense allocation and below the apparent file size.
+    let after_blocks = sparse_meta.blocks();
     assert!(
-        sparse_blocks + tolerance >= dense_blocks,
-        "in-place sparse copy should not create holes (sparse blocks: {sparse_blocks}, dense blocks: {dense_blocks})",
+        after_blocks < before_blocks,
+        "in-place sparse update should punch the hole (before: {before_blocks} blocks, after: {after_blocks})",
+    );
+    assert!(
+        after_blocks * 512 < sparse_meta.len(),
+        "punched file should allocate less than its apparent size (allocated {}, size {})",
+        after_blocks * 512,
+        sparse_meta.len(),
     );
 }
 

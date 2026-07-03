@@ -18,6 +18,7 @@ impl<'a> CopyContext<'a> {
         index: &DeltaSignatureIndex,
         total_size: u64,
         initial_bytes: u64,
+        preallocated_len: u64,
         start: Instant,
         basis_separate_from_writer: bool,
     ) -> Result<FileCopyOutcome, LocalCopyError> {
@@ -58,6 +59,7 @@ impl<'a> CopyContext<'a> {
         let mut total_bytes = 0u64;
         let mut literal_bytes = 0u64;
         let mut sparse_state = SparseWriteState::default();
+        sparse_state.set_preallocated_len(preallocated_len);
         let mut window: VecDeque<u8> = VecDeque::with_capacity(index.block_length());
         let mut pending_literals = Vec::with_capacity(index.block_length());
         let mut scratch = Vec::with_capacity(index.block_length());
@@ -258,7 +260,17 @@ impl<'a> CopyContext<'a> {
         }
 
         if sparse {
-            let final_position = sparse_state.finish(writer, destination)?;
+            // upstream: fileio.c:sparse_end() flushes the trailing zero run then
+            // ftruncates to the file's true size. In inplace mode matched blocks
+            // are skipped without advancing the writer, so the final length is
+            // the delta loop's output_position rather than the sparse writer's
+            // stream position; a fresh sparse copy uses the flushed logical end.
+            let sparse_end = sparse_state.finish(writer, destination)?;
+            let final_position = if inplace_mode {
+                output_position
+            } else {
+                sparse_end
+            };
             writer.set_len(final_position).map_err(|error| {
                 LocalCopyError::io(
                     "truncate destination file",

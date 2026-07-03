@@ -165,15 +165,13 @@ pub(crate) fn copy_file(
         return Ok(true);
     }
 
-    // Upstream rsync disables sparse writes whenever `--preallocate` is active
-    // because the preallocation request must materialise every range in the
-    // destination file.  It also turns off sparse handling for append and
-    // in-place modes so the receiver does not punch holes into the portion of
-    // the file that was already present.  Mirror that behaviour here.
-    let use_sparse_writes = context.sparse_enabled()
-        && !context.preallocate_enabled()
-        && !context.append_enabled()
-        && !context.inplace_enabled();
+    // upstream: receiver.c:receive_data() keeps sparse writes active alongside
+    // `--preallocate` and `--inplace`: write_sparse() punches holes inside the
+    // preallocated / existing extent (guided by preallocated_len) instead of
+    // seeking, so those modes still produce sparse output. Append mode is the
+    // exception - upstream flips `sparse_files` off during the append pass
+    // (receiver.c:761,771) so the pre-existing prefix is never hole-punched.
+    let use_sparse_writes = context.sparse_enabled() && !context.append_enabled();
     let partial_enabled = context.partial_enabled();
     let inplace_enabled = context.inplace_enabled();
     let checksum_enabled = context.checksum_enabled();

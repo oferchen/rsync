@@ -23,16 +23,22 @@ use crate::local_copy::LocalCopyError;
 ///
 /// Skips preallocation when disabled, when `total_len` is zero, or when the
 /// file already has at least `total_len` bytes allocated.
-// upstream: receiver.c:recv_files() - preallocate_file()
+///
+/// Returns the preallocated length: the number of bytes now allocated on disk
+/// for the destination (`st_blocks * 512`), or `0` when preallocation was
+/// skipped. This mirrors upstream `do_fallocate()`, whose return value flows
+/// into `preallocated_len` so the sparse writer knows how much of the file has
+/// reserved blocks that must be punched (rather than seeked) to become holes.
+// upstream: receiver.c:319 - preallocated_len = do_fallocate(fd, 0, total_size)
 pub(crate) fn maybe_preallocate_destination(
     file: &mut fs::File,
     path: &Path,
     total_len: u64,
     existing_bytes: u64,
     enabled: bool,
-) -> Result<(), LocalCopyError> {
+) -> Result<u64, LocalCopyError> {
     if !enabled || total_len == 0 || total_len <= existing_bytes {
-        return Ok(());
+        return Ok(0);
     }
 
     preallocate_destination_file(file, path, total_len)
@@ -42,11 +48,11 @@ fn preallocate_destination_file(
     file: &mut fs::File,
     path: &Path,
     total_len: u64,
-) -> Result<(), LocalCopyError> {
+) -> Result<u64, LocalCopyError> {
     #[cfg(unix)]
     {
         if total_len == 0 {
-            return Ok(());
+            return Ok(0);
         }
 
         if total_len > i64::MAX as u64 {
@@ -61,11 +67,18 @@ fn preallocate_destination_file(
         }
 
         let fd = file.as_fd();
+        // upstream: syscall.c:do_fallocate() issues a plain fallocate (opts == 0
+        // when FALLOC_FL_KEEP_SIZE is unavailable) and then returns the actual
+        // allocated length from fstat so the caller can punch holes within the
+        // reserved extent rather than seeking over (and leaving) it.
         match fallocate(fd, FallocateFlags::empty(), 0, total_len) {
-            Ok(()) => Ok(()),
-            Err(Errno::OPNOTSUPP | Errno::NOSYS | Errno::INVAL) => file
-                .set_len(total_len)
-                .map_err(|error| LocalCopyError::io("preallocate destination file", path, error)),
+            Ok(()) => Ok(allocated_bytes(file).unwrap_or(total_len)),
+            Err(Errno::OPNOTSUPP | Errno::NOSYS | Errno::INVAL) => {
+                file.set_len(total_len).map_err(|error| {
+                    LocalCopyError::io("preallocate destination file", path, error)
+                })?;
+                Ok(allocated_bytes(file).unwrap_or(total_len))
+            }
             Err(errno) => Err(LocalCopyError::io(
                 "preallocate destination file",
                 path.to_path_buf(),
@@ -77,12 +90,21 @@ fn preallocate_destination_file(
     #[cfg(not(unix))]
     {
         if total_len == 0 {
-            return Ok(());
+            return Ok(0);
         }
 
         file.set_len(total_len)
-            .map_err(|error| LocalCopyError::io("preallocate destination file", path, error))
+            .map_err(|error| LocalCopyError::io("preallocate destination file", path, error))?;
+        Ok(total_len)
     }
+}
+
+/// Returns the number of bytes currently allocated on disk for `file`
+/// (`st_blocks * 512`), mirroring upstream `st.st_blocks * S_BLKSIZE`.
+#[cfg(unix)]
+fn allocated_bytes(file: &fs::File) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt;
+    file.metadata().ok().map(|meta| meta.blocks() * 512)
 }
 
 #[cfg(test)]
@@ -247,6 +269,38 @@ mod tests {
             expected_min_blocks,
             metadata.blocks()
         );
+    }
+
+    /// Verify that `maybe_preallocate_destination` returns the allocated length
+    /// so the sparse writer can punch holes inside the reserved extent. Mirrors
+    /// upstream `preallocated_len = do_fallocate(...)`.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn maybe_preallocate_returns_allocated_length() {
+        let temp = tempdir().expect("tempdir");
+        let path = temp.path().join("prealloc_len.bin");
+        let mut file = fs::File::create(&path).expect("create file");
+
+        let one_mib = 1024 * 1024;
+        let prealloc =
+            maybe_preallocate_destination(&mut file, &path, one_mib, 0, true).expect("preallocate");
+        // The reported allocated length must cover the whole requested extent.
+        assert!(
+            prealloc >= one_mib,
+            "expected preallocated length >= {one_mib}, got {prealloc}"
+        );
+
+        // Disabled preallocation reports zero (no reserved extent to punch).
+        let mut skip = fs::File::create(temp.path().join("skip.bin")).expect("create file");
+        let skipped = maybe_preallocate_destination(
+            &mut skip,
+            &temp.path().join("skip.bin"),
+            one_mib,
+            0,
+            false,
+        )
+        .expect("skip");
+        assert_eq!(skipped, 0, "disabled preallocation should report 0 length");
     }
 
     /// Verify that disabled preallocation does not allocate extra blocks.

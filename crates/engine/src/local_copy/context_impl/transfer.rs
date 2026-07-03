@@ -508,6 +508,7 @@ impl<'a> CopyContext<'a> {
         delta: Option<&DeltaSignatureIndex>,
         total_size: u64,
         initial_bytes: u64,
+        preallocated_len: u64,
         start: Instant,
         basis_separate_from_writer: bool,
     ) -> Result<FileCopyOutcome, LocalCopyError> {
@@ -524,6 +525,7 @@ impl<'a> CopyContext<'a> {
                 index,
                 total_size,
                 initial_bytes,
+                preallocated_len,
                 start,
                 basis_separate_from_writer,
             );
@@ -555,7 +557,7 @@ impl<'a> CopyContext<'a> {
         if sparse {
             return self.copy_file_contents_sparse(
                 reader, writer, buffer, compress, source, destination, relative,
-                total_size, initial_bytes, expected_remaining, start,
+                total_size, initial_bytes, expected_remaining, preallocated_len, start,
             );
         }
 
@@ -637,12 +639,13 @@ impl<'a> CopyContext<'a> {
         Ok(outcome)
     }
 
-    /// Sparse variant of `copy_file_contents` using the `SparseWriter` decorator.
+    /// Sparse variant of `copy_file_contents`.
     ///
-    /// Wraps the destination writer in a `SparseWriter` that transparently
-    /// converts zero runs into seeks, producing sparse files on supported
-    /// filesystems. The decorator is consumed at finalization, returning
-    /// the final stream position for `set_len`.
+    /// Streams the source through the preallocation-aware [`SparseWriteState`]:
+    /// zero runs beyond any preallocated extent become seeks (natural holes),
+    /// while zero runs inside a preallocated extent are punched out so the
+    /// reserved blocks are actually deallocated.
+    // upstream: fileio.c:write_sparse()
     #[allow(clippy::too_many_arguments)]
     fn copy_file_contents_sparse(
         &mut self,
@@ -656,6 +659,7 @@ impl<'a> CopyContext<'a> {
         total_size: u64,
         initial_bytes: u64,
         expected_remaining: u64,
+        preallocated_len: u64,
         start: Instant,
     ) -> Result<FileCopyOutcome, LocalCopyError> {
         let mut total_bytes: u64 = 0;
@@ -665,7 +669,8 @@ impl<'a> CopyContext<'a> {
         // is a no-op (holes are implicit). Best-effort: a non-NTFS volume or a
         // refused control code falls back to a dense write, never an error.
         let _ = fast_io::mark_file_sparse(writer);
-        let mut sparse_writer = SparseWriter::new(&mut *writer);
+        let mut sparse_state = SparseWriteState::default();
+        sparse_state.set_preallocated_len(preallocated_len);
         let mut compressor = self.start_compressor(compress, source)?;
         let mut compressed_progress: u64 = 0;
         const TIMEOUT_CHECK_INTERVAL: u64 = 1024 * 1024;
@@ -692,9 +697,7 @@ impl<'a> CopyContext<'a> {
                 break;
             }
 
-            sparse_writer.write_all(&buffer[..read]).map_err(|error| {
-                LocalCopyError::io("copy file", destination, error)
-            })?;
+            write_sparse_chunk(writer, &mut sparse_state, &buffer[..read], destination)?;
 
             self.register_progress();
 
@@ -724,11 +727,8 @@ impl<'a> CopyContext<'a> {
             }
         }
 
-        let (inner, final_position, _stats) =
-            sparse_writer.finish_and_position().map_err(|error| {
-                LocalCopyError::io("finish sparse writer", destination.to_path_buf(), error)
-            })?;
-        inner.set_len(final_position).map_err(|error| {
+        let final_position = sparse_state.finish(writer, destination)?;
+        writer.set_len(final_position).map_err(|error| {
             LocalCopyError::io(
                 "truncate destination file",
                 destination.to_path_buf(),
