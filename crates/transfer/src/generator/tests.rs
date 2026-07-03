@@ -1014,10 +1014,11 @@ fn item_flags_read_trailing_no_fields() {
     let mut cursor = Cursor::new(&data[..]);
 
     let flags = ItemFlags::from_raw(0x8000); // Just ITEM_TRANSFER
-    let (ftype, xname) = flags.read_trailing(&mut cursor).unwrap();
+    let (ftype, xname, consumed) = flags.read_trailing(&mut cursor).unwrap();
 
     assert!(ftype.is_none());
     assert!(xname.is_none());
+    assert_eq!(consumed, 0);
 }
 
 #[test]
@@ -1027,10 +1028,101 @@ fn item_flags_read_trailing_basis_type() {
     let mut cursor = Cursor::new(&data[..]);
 
     let flags = ItemFlags::from_raw(0x0800); // ITEM_BASIS_TYPE_FOLLOWS
-    let (ftype, xname) = flags.read_trailing(&mut cursor).unwrap();
+    let (ftype, xname, consumed) = flags.read_trailing(&mut cursor).unwrap();
 
     assert_eq!(ftype, Some(protocol::FnameCmpType::BasisDir(0x42)));
     assert!(xname.is_none());
+    assert_eq!(consumed, 1);
+}
+
+/// Encodes an xname length exactly as upstream `write_vstring()` (io.c:2022):
+/// one byte for `len <= 0x7F`, otherwise `[len/0x100 + 0x80, len & 0xFF]`.
+fn encode_xname_vstring(payload: &[u8]) -> Vec<u8> {
+    let len = payload.len();
+    let mut out = Vec::with_capacity(len + 2);
+    if len > 0x7F {
+        out.push((len / 0x100) as u8 + 0x80);
+    }
+    out.push((len & 0xFF) as u8);
+    out.extend_from_slice(payload);
+    out
+}
+
+#[test]
+fn item_flags_read_trailing_short_xname_matches_upstream_vstring() {
+    // A short xname (len <= 0x7F) is a single length byte followed by the
+    // payload. The generator/sender must decode the vstring prefix, not a
+    // varint - upstream io.c:2004 read_vstring().
+    let payload = b"basis.old";
+    let wire = encode_xname_vstring(payload);
+    let mut cursor = Cursor::new(&wire[..]);
+
+    let flags = ItemFlags::from_raw(ItemFlags::ITEM_XNAME_FOLLOWS);
+    let (ftype, xname, consumed) = flags.read_trailing(&mut cursor).unwrap();
+
+    assert!(ftype.is_none());
+    assert_eq!(xname.as_deref(), Some(&payload[..]));
+    // 1 prefix byte + payload; the cursor must be fully drained so the next
+    // wire read (sum_head) stays aligned.
+    assert_eq!(consumed, 1 + payload.len() as u64);
+    assert_eq!(cursor.position() as usize, wire.len());
+}
+
+#[test]
+fn item_flags_read_trailing_long_xname_uses_two_byte_prefix() {
+    // A 200-byte xname exercises the 2-byte vstring prefix. read_varint would
+    // decode [0x80, 0xC8] as a completely different length and desync the
+    // stream; the vstring decode yields exactly 200. upstream io.c:2007-2008.
+    let payload = vec![b'x'; 200];
+    let wire = encode_xname_vstring(&payload);
+    // Sanity: upstream 2-byte framing for len=200 is [0x80, 0xC8].
+    assert_eq!(wire[0], 0x80);
+    assert_eq!(wire[1], 0xC8);
+
+    let mut cursor = Cursor::new(&wire[..]);
+    let flags = ItemFlags::from_raw(ItemFlags::ITEM_XNAME_FOLLOWS);
+    let (_ftype, xname, consumed) = flags.read_trailing(&mut cursor).unwrap();
+
+    assert_eq!(xname.as_deref(), Some(&payload[..]));
+    assert_eq!(consumed, 2 + payload.len() as u64);
+    assert_eq!(cursor.position() as usize, wire.len());
+}
+
+#[test]
+fn item_flags_read_trailing_rejects_over_long_xname() {
+    // upstream io.c:2010-2014: a vstring length of >= MAXPATHLEN (4096) is a
+    // protocol error. Truncating would leave the tail on the wire and desync
+    // every subsequent read, so read_trailing must surface an error instead.
+    // len = 4096 -> two-byte prefix [0x90, 0x00].
+    let wire = [0x90u8, 0x00];
+    let mut cursor = Cursor::new(&wire[..]);
+
+    let flags = ItemFlags::from_raw(ItemFlags::ITEM_XNAME_FOLLOWS);
+    let err = flags
+        .read_trailing(&mut cursor)
+        .expect_err("over-long xname must be rejected, not truncated");
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    assert!(err.to_string().contains("over-long xname vstring"));
+}
+
+#[test]
+fn item_flags_read_trailing_basis_type_and_xname() {
+    // Combined ITEM_BASIS_TYPE_FOLLOWS + ITEM_XNAME_FOLLOWS: one basis-type
+    // byte precedes the xname vstring. upstream rsync.c:403-408 reads them in
+    // that order.
+    let payload = b"fuzzy";
+    let mut wire = vec![0x42];
+    wire.extend_from_slice(&encode_xname_vstring(payload));
+    let mut cursor = Cursor::new(&wire[..]);
+
+    let flags =
+        ItemFlags::from_raw(ItemFlags::ITEM_BASIS_TYPE_FOLLOWS | ItemFlags::ITEM_XNAME_FOLLOWS);
+    let (ftype, xname, consumed) = flags.read_trailing(&mut cursor).unwrap();
+
+    assert_eq!(ftype, Some(protocol::FnameCmpType::BasisDir(0x42)));
+    assert_eq!(xname.as_deref(), Some(&payload[..]));
+    assert_eq!(consumed, 1 + 1 + payload.len() as u64);
+    assert_eq!(cursor.position() as usize, wire.len());
 }
 
 #[test]
