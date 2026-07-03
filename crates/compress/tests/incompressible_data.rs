@@ -609,15 +609,9 @@ mod skip_compress_functionality {
     fn skip_compress_detects_image_extensions() {
         let decider = CompressionDecider::with_default_skip_list();
 
-        let image_files = [
-            "photo.jpg",
-            "image.jpeg",
-            "picture.png",
-            "animation.gif",
-            "modern.webp",
-            "phone.heic",
-            "raw.cr2",
-        ];
+        // Only suffixes in upstream DEFAULT_DONT_COMPRESS are skipped by
+        // extension. gif/heic/cr2 are NOT upstream suffixes.
+        let image_files = ["photo.jpg", "image.jpeg", "picture.png", "modern.webp"];
 
         for file in image_files {
             let decision = decider.should_compress(Path::new(file), None);
@@ -625,6 +619,15 @@ mod skip_compress_functionality {
                 decision,
                 CompressionDecision::Skip,
                 "{file} should be skipped"
+            );
+        }
+
+        for file in ["animation.gif", "phone.heic", "raw.cr2"] {
+            let decision = decider.should_compress(Path::new(file), None);
+            assert_eq!(
+                decision,
+                CompressionDecision::AutoDetect,
+                "{file} is not an upstream skip suffix and must not skip by extension"
             );
         }
     }
@@ -701,9 +704,12 @@ mod skip_compress_functionality {
     }
 
     #[test]
-    fn skip_compress_detects_document_extensions() {
+    fn skip_compress_does_not_skip_document_extensions() {
         let decider = CompressionDecider::with_default_skip_list();
 
+        // Upstream DEFAULT_DONT_COMPRESS does not list document formats, so they
+        // are compressed (subject to content auto-detection), not skipped by
+        // extension. This matches upstream rsync's default behavior.
         let document_files = [
             "report.pdf",
             "document.docx",
@@ -716,8 +722,8 @@ mod skip_compress_functionality {
             let decision = decider.should_compress(Path::new(file), None);
             assert_eq!(
                 decision,
-                CompressionDecision::Skip,
-                "{file} should be skipped"
+                CompressionDecision::AutoDetect,
+                "{file} is not an upstream skip suffix and must not skip by extension"
             );
         }
     }
@@ -806,7 +812,7 @@ mod skip_compress_functionality {
             "VIDEO.MP4",
             "AUDIO.MP3",
             "ARCHIVE.ZIP",
-            "DOCUMENT.PDF",
+            "FILE.7Z",
         ];
 
         for file in uppercase_files {
@@ -823,7 +829,7 @@ mod skip_compress_functionality {
             "Video.Mp4",
             "Audio.Mp3",
             "Archive.ZiP",
-            "Document.PdF",
+            "File.7z",
         ];
 
         for file in mixed_case_files {

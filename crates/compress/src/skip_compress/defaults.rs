@@ -1,83 +1,44 @@
-//! Default skip-compress extension lists.
+//! Default skip-compress suffix list.
 //!
-//! These lists mirror upstream rsync's built-in set of file extensions that
-//! typically don't benefit from compression during transfer.
+//! This list mirrors upstream rsync's built-in `DEFAULT_DONT_COMPRESS` set of
+//! file suffixes that typically don't benefit from compression during transfer.
 //!
-//! upstream: `loadparm.c:lp_dont_compress()` provides the default suffix list
-//! that `token.c:init_set_compression()` loads into the suffix tree.
+//! upstream: `default-dont-compress.h` defines `DEFAULT_DONT_COMPRESS`, which
+//! `token.c:init_set_compression()` loads into the suffix tree via
+//! `loadparm.c:lp_dont_compress()`. Each upstream entry is a `*.suffix` glob
+//! whose match key is the substring after the final `.` (upstream matches with
+//! `strrchr(fname, '.')`, i.e. the last suffix only - there is no compound
+//! `.tar.gz` handling).
 
 use std::collections::HashSet;
 
 use super::Suffix;
 
-/// Known compound extensions checked before simple extension lookup.
+/// Upstream default suffixes that skip compression.
 ///
-/// These multi-part suffixes (e.g., `tar.gz`) must be matched against the full
-/// filename to avoid false positives from the final extension alone.
-pub const COMPOUND_EXTENSIONS: &[&str] = &[".tar.gz", ".tar.bz2", ".tar.xz", ".tar.zst"];
-
-/// Image file extensions that are already compressed.
-const IMAGE_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "jpe", "png", "gif", "webp", "heic", "heif", "avif", "tif", "tiff", "bmp",
-    "ico", "svg", "svgz", "psd", "raw", "arw", "cr2", "nef", "orf", "sr2",
+/// This is the exact set from upstream `default-dont-compress.h`
+/// (`DEFAULT_DONT_COMPRESS`), stored without the leading `*.` and lowercased to
+/// match upstream's case-insensitive suffix comparison.
+const DEFAULT_DONT_COMPRESS: &[&str] = &[
+    "3g2", "3gp", "7z", "aac", "ace", "apk", "avi", "bz2", "deb", "dmg", "ear", "f4v", "flac",
+    "flv", "gpg", "gz", "iso", "jar", "jpeg", "jpg", "lrz", "lz", "lz4", "lzma", "lzo", "m1a",
+    "m1v", "m2a", "m2ts", "m2v", "m4a", "m4b", "m4p", "m4r", "m4v", "mka", "mkv", "mov", "mp1",
+    "mp2", "mp3", "mp4", "mpa", "mpeg", "mpg", "mpv", "mts", "odb", "odf", "odg", "odi", "odm",
+    "odp", "ods", "odt", "oga", "ogg", "ogm", "ogv", "ogx", "opus", "otg", "oth", "otp", "ots",
+    "ott", "oxt", "png", "qt", "rar", "rpm", "rz", "rzip", "spx", "squashfs", "sxc", "sxd", "sxg",
+    "sxm", "sxw", "sz", "tbz", "tbz2", "tgz", "tlz", "ts", "txz", "tzo", "vob", "war", "webm",
+    "webp", "xz", "z", "zip", "zst",
 ];
 
-/// Video file extensions that are already compressed.
-const VIDEO_EXTENSIONS: &[&str] = &[
-    "mp4", "m4v", "mkv", "avi", "mov", "wmv", "flv", "webm", "mpeg", "mpg", "vob", "ogv", "3gp",
-    "3g2", "ts", "mts", "m2ts",
-];
-
-/// Audio file extensions that are already compressed.
-const AUDIO_EXTENSIONS: &[&str] = &[
-    "mp3", "m4a", "aac", "ogg", "oga", "opus", "flac", "wma", "wav", "aiff", "ape", "mka", "ac3",
-    "dts",
-];
-
-/// Archive and compressed file extensions.
-const ARCHIVE_EXTENSIONS: &[&str] = &[
-    "zip", "gz", "gzip", "bz2", "bzip2", "xz", "lzma", "7z", "rar", "zst", "zstd", "lz4", "lzo",
-    "z", "cab", "arj", "lzh", "tar.gz", "tar.bz2", "tar.xz", "tar.zst", "tgz", "tbz", "tbz2",
-    "txz",
-];
-
-/// Package format extensions (pre-compressed).
-const PACKAGE_EXTENSIONS: &[&str] = &[
-    "deb", "rpm", "apk", "jar", "war", "ear", "egg", "whl", "gem", "nupkg", "snap", "appx", "msix",
-];
-
-/// Document format extensions (often pre-compressed internally).
-const DOCUMENT_EXTENSIONS: &[&str] = &[
-    "pdf", "epub", "mobi", "azw", "azw3", "docx", "xlsx", "pptx", "odt", "ods", "odp",
-];
-
-/// Disk image extensions (often compressed or encrypted).
-const DISK_IMAGE_EXTENSIONS: &[&str] =
-    &["iso", "img", "dmg", "vhd", "vhdx", "vmdk", "qcow", "qcow2"];
-
-/// All default extension groups in declaration order.
-const ALL_GROUPS: &[&[&str]] = &[
-    IMAGE_EXTENSIONS,
-    VIDEO_EXTENSIONS,
-    AUDIO_EXTENSIONS,
-    ARCHIVE_EXTENSIONS,
-    PACKAGE_EXTENSIONS,
-    DOCUMENT_EXTENSIONS,
-    DISK_IMAGE_EXTENSIONS,
-];
-
-/// Returns the complete default set of skip-compress extensions.
+/// Returns the complete default set of skip-compress suffixes.
 ///
-/// Each entry is a `Suffix` in canonical lowercase form. The list mirrors
-/// upstream rsync's built-in skip-compress defaults.
+/// Each entry is a `Suffix` in canonical lowercase form. The list is the exact
+/// upstream `DEFAULT_DONT_COMPRESS` set.
 #[must_use]
 pub fn default_skip_extensions() -> HashSet<Suffix> {
-    let total: usize = ALL_GROUPS.iter().map(|g| g.len()).sum();
-    let mut set = HashSet::with_capacity(total);
-    for group in ALL_GROUPS {
-        for ext in *group {
-            set.insert(Suffix::new(ext));
-        }
+    let mut set = HashSet::with_capacity(DEFAULT_DONT_COMPRESS.len());
+    for ext in DEFAULT_DONT_COMPRESS {
+        set.insert(Suffix::new(ext));
     }
     set
 }
@@ -86,24 +47,47 @@ pub fn default_skip_extensions() -> HashSet<Suffix> {
 mod tests {
     use super::*;
 
+    /// The default set must contain exactly the upstream `DEFAULT_DONT_COMPRESS`
+    /// suffixes. A count drift here means the list diverged from upstream, which
+    /// changes which files get compressed on the wire vs upstream rsync.
     #[test]
-    fn default_set_is_non_empty() {
+    fn default_set_matches_upstream_count() {
         let exts = default_skip_extensions();
-        assert!(exts.len() > 80, "expected at least 80 default extensions");
+        assert_eq!(
+            exts.len(),
+            DEFAULT_DONT_COMPRESS.len(),
+            "default skip set must equal upstream DEFAULT_DONT_COMPRESS ({} suffixes)",
+            DEFAULT_DONT_COMPRESS.len(),
+        );
     }
 
+    /// Every upstream suffix must be present. Guards against silently dropping a
+    /// suffix upstream skips (which would compress an already-compressed file).
     #[test]
-    fn default_set_contains_common_formats() {
+    fn default_set_contains_every_upstream_suffix() {
         let exts = default_skip_extensions();
-        for expected in &["jpg", "mp4", "mp3", "zip", "pdf", "iso"] {
-            assert!(exts.contains(*expected), "missing extension: {expected}");
+        for expected in DEFAULT_DONT_COMPRESS {
+            assert!(
+                exts.contains(*expected),
+                "missing upstream suffix: {expected}"
+            );
         }
     }
 
+    /// Suffixes that upstream does NOT list must not be skipped. oc-rsync
+    /// previously invented entries (e.g. `pdf`, `docx`, `heic`, `wav`) that
+    /// upstream compresses; skipping them diverges from upstream on the wire.
     #[test]
-    fn compound_extensions_included() {
+    fn default_set_excludes_non_upstream_suffixes() {
         let exts = default_skip_extensions();
-        assert!(exts.contains("tar.gz"));
-        assert!(exts.contains("tar.bz2"));
+        for unexpected in &[
+            "pdf", "docx", "xlsx", "pptx", "epub", "heic", "heif", "avif", "tiff", "bmp", "wav",
+            "wma", "aiff", "gzip", "bzip2", "img", "vhd", "vmdk", "qcow2", "cab", "whl", "gem",
+        ] {
+            assert!(
+                !exts.contains(*unexpected),
+                "suffix {unexpected} is not in upstream DEFAULT_DONT_COMPRESS and must not be skipped",
+            );
+        }
     }
 }
