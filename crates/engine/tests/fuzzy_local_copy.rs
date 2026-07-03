@@ -130,14 +130,16 @@ fn fuzzy_selects_near_identical_basis_for_delta() {
         "fuzzy delta must reconstruct the source exactly"
     );
 
-    // upstream: generator.c:1787 - FUZZY,1 selection line naming target + basis.
+    // upstream: generator.c:1787-1793 - the FUZZY,1 line names the target and
+    // basis by their relative flist names (basenames here), byte-for-byte:
+    // "fuzzy basis selected for %s: %s". The fuzzy testsuite greps this exact
+    // string, so the basis must be the basename `report_2023.csv`, not an
+    // absolute destination path.
     let msgs = fuzzy_messages();
     assert!(
-        msgs.iter().any(
-            |m| m.starts_with("fuzzy basis selected for report_2024.csv:")
-                && m.contains("report_2023.csv")
-        ),
-        "expected FUZZY,1 selection line for the chosen basis, got {msgs:?}"
+        msgs.iter()
+            .any(|m| m == "fuzzy basis selected for report_2024.csv: report_2023.csv"),
+        "expected exact FUZZY,1 selection line for the chosen basis, got {msgs:?}"
     );
 }
 

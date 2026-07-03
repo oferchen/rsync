@@ -202,7 +202,11 @@ impl VerbosityConfig {
     pub fn apply_info_flag(&mut self, token: &str) -> Result<(), String> {
         let (name, level) = parse_flag_token(token)?;
 
-        let flag = match name {
+        // upstream: options.c:parse_output_words() matches names with
+        // strncasecmp, so `--info=NAME` is case-insensitive (users and the
+        // testsuite pass upper-case tokens like `--debug=FUZZY`).
+        let name = name.to_ascii_lowercase();
+        let flag = match name.as_str() {
             "backup" => InfoFlag::Backup,
             "copy" => InfoFlag::Copy,
             "del" => InfoFlag::Del,
@@ -232,7 +236,11 @@ impl VerbosityConfig {
     pub fn apply_debug_flag(&mut self, token: &str) -> Result<(), String> {
         let (name, level) = parse_flag_token(token)?;
 
-        let flag = match name {
+        // upstream: options.c:parse_output_words() matches names with
+        // strncasecmp, so `--debug=NAME` is case-insensitive (users and the
+        // testsuite pass upper-case tokens like `--debug=FUZZY`).
+        let name = name.to_ascii_lowercase();
+        let flag = match name.as_str() {
             "acl" => DebugFlag::Acl,
             "backup" => DebugFlag::Backup,
             "bind" => DebugFlag::Bind,
@@ -546,6 +554,38 @@ mod tests {
 
         config.apply_debug_flag("time").unwrap();
         assert_eq!(config.debug.time, 1);
+    }
+
+    /// upstream: options.c:parse_output_words() matches flag names with
+    /// strncasecmp, so `--debug=FUZZY` (as typed by users and the fuzzy
+    /// testsuite) must enable the flag exactly like `--debug=fuzzy`. A
+    /// case-sensitive matcher silently dropped upper-case tokens, leaving
+    /// `debug.fuzzy = 0` and suppressing the "fuzzy basis selected" line.
+    #[test]
+    fn apply_debug_flag_is_case_insensitive() {
+        let mut config = VerbosityConfig::default();
+
+        config.apply_debug_flag("FUZZY").unwrap();
+        assert_eq!(config.debug.fuzzy, 1);
+
+        // Level suffixes still parse against an upper-case name.
+        config.apply_debug_flag("Fuzzy2").unwrap();
+        assert_eq!(config.debug.fuzzy, 2);
+
+        config.apply_debug_flag("DELTASUM").unwrap();
+        assert_eq!(config.debug.deltasum, 1);
+    }
+
+    /// Info flags share the same case-insensitive matching contract.
+    #[test]
+    fn apply_info_flag_is_case_insensitive() {
+        let mut config = VerbosityConfig::default();
+
+        config.apply_info_flag("COPY").unwrap();
+        assert_eq!(config.info.copy, 1);
+
+        config.apply_info_flag("Progress").unwrap();
+        assert_eq!(config.info.progress, 1);
     }
 
     #[test]

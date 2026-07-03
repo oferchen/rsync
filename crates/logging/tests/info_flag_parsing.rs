@@ -491,15 +491,15 @@ fn zero_level_explicit() {
     assert_eq!(config.info.copy, 0);
 }
 
-/// Verifies flag names are case-sensitive (should fail).
+/// Verifies flag names match case-insensitively.
+///
+/// upstream: options.c:parse_output_words() uses strncasecmp, so `--info=COPY`
+/// resolves to the same flag as `--info=copy`.
 #[test]
-fn flag_name_case_sensitive() {
+fn flag_name_case_insensitive() {
     let mut config = VerbosityConfig::default();
-    let result = parse_info_flags(&mut config, "COPY");
-
-    // Flag names are case-sensitive, so "COPY" should be unknown
-    assert!(result.is_err());
-    assert!(result.unwrap_err().contains("unknown info flag"));
+    parse_info_flags(&mut config, "COPY").unwrap();
+    assert_eq!(config.info.copy, 1);
 }
 
 /// Verifies proper case works.
