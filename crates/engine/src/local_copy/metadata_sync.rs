@@ -133,15 +133,20 @@ pub(crate) fn store_effective_fake_super_if_requested(
         return Ok(());
     }
 
-    let mut stat = ::metadata::effective_source_stat(source, metadata);
+    // Only forward a placeholder's recorded stat. When the source carries its
+    // own `user.rsync.%stat` (an earlier fake-super receive), it - not the
+    // placeholder's raw perms - is the source of truth for uid/gid/mode/rdev.
+    // For a real-file source, the ownership + permission apply steps already
+    // wrote or removed the destination `%stat` following upstream's
+    // set_stat_xattr write-or-remove rule, so re-storing here would resurrect a
+    // shim upstream deliberately dropped for a faithful same-owner copy.
+    // upstream: xattrs.c:get_stat_xattr() consumed via x_lstat().
+    let Ok(Some(mut stat)) = ::metadata::load_fake_super(source) else {
+        return Ok(());
+    };
 
-    // The permission-apply step already deflected the destination's stored mode
-    // to the chmod-applied `new_mode` (upstream set_stat_xattr's fmode). Keep it:
-    // `effective_source_stat` only carries the *source* mode, which ignores any
-    // `--chmod` tweak, so overwriting it here would revert `--fake-super
-    // --chmod=...` to the untweaked source mode. Forward only uid/gid/rdev.
-    // upstream: xattrs.c:set_stat_xattr() stores mode = new_mode (post dest_mode
-    // + tweak_mode), not the raw source mode.
+    // A `--chmod` tweak makes the destination's deflected mode (written by the
+    // permission step) authoritative; keep it rather than the placeholder's.
     if let Ok(Some(existing)) = ::metadata::load_fake_super(destination) {
         if options.chmod().is_some() {
             stat.mode = existing.mode;
@@ -151,6 +156,7 @@ pub(crate) fn store_effective_fake_super_if_requested(
         }
     }
 
+    let _ = metadata;
     ::metadata::store_fake_super(destination, &stat).map_err(|error| {
         LocalCopyError::io(
             "store fake-super metadata",

@@ -1143,6 +1143,42 @@ fn fake_super_chmod_deflects_regular_file_real_mode() {
     }
 }
 
+// upstream: xattrs.c:1225-1237 - when the real mode/uid/gid already faithfully
+// represent the intended values (a plain 0755 dir owned by the copying user),
+// set_stat_xattr writes no shim and removes any stale %stat. An unprivileged
+// same-owner fake-super copy of such a directory must leave no %stat behind.
+#[cfg(all(unix, feature = "xattr"))]
+#[test]
+fn fake_super_faithful_directory_writes_no_stat_xattr() {
+    use crate::fake_super::load_fake_super;
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = tempdir().expect("tempdir");
+    let src = temp.path().join("src_dir");
+    let dst = temp.path().join("dst_dir");
+    fs::create_dir(&src).expect("create src dir");
+    fs::create_dir(&dst).expect("create dst dir");
+    fs::set_permissions(&src, fs::Permissions::from_mode(0o755)).expect("chmod src");
+
+    let src_meta = fs::symlink_metadata(&src).expect("stat src");
+    let opts = MetadataOptions::new()
+        .fake_super(true)
+        .preserve_owner(true)
+        .preserve_group(true)
+        .preserve_permissions(true);
+
+    apply_directory_metadata_with_options(&dst, &src_meta, opts).expect("apply dir metadata");
+
+    // Same-owner 0755 dir: the real 0755 mode already conveys the intent, so no
+    // %stat shim is written (matching upstream's write-or-remove rule).
+    assert!(
+        matches!(load_fake_super(&dst), Ok(None)),
+        "faithful same-owner dir must carry no rsync.%stat xattr"
+    );
+    let real = fs::metadata(&dst).expect("stat dst").mode() & 0o777;
+    assert_eq!(real, 0o755, "real dir mode preserved");
+}
+
 #[cfg(all(unix, feature = "xattr"))]
 #[test]
 fn fake_super_skips_rewrite_when_xattr_already_matches() {

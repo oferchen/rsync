@@ -282,19 +282,22 @@ pub(super) fn permissions_match(target_mode: u32, existing: &fs::Metadata) -> bo
 /// Applies the fake-super permission deflection for a computed mode.
 ///
 /// Mirrors upstream `xattrs.c:set_stat_xattr()` under `am_root < 0`: the file's
-/// intended mode (`fmode`, the full `S_IFMT` + chmod-applied mode) is recorded
-/// in the `user.rsync.%stat` xattr, and the *real* on-disk mode is forced to a
-/// self-accessible value - `(fmode & ACCESSPERMS) | (S_ISDIR ? 0700 : 0600)` -
-/// so the destination stays readable/writable during and after the transfer.
-/// Special bits (setuid/setgid/sticky) are dropped from the real mode; they
-/// survive only in the xattr. The normal chmod-to-`fmode` is skipped
-/// (upstream `rsync.c:660` - `ret = am_root < 0 ? 0 : do_chmod_at(...)`).
+/// intended mode (`fmode`, the full `S_IFMT` + chmod-applied mode) is compared
+/// against the *real* on-disk mode forced to a self-accessible value -
+/// `(fmode & ACCESSPERMS) | (S_ISDIR ? 0700 : 0600)` - so the destination stays
+/// readable/writable during and after the transfer. Special bits
+/// (setuid/setgid/sticky) are dropped from the real mode; they survive only in
+/// the xattr. The normal chmod-to-`fmode` is skipped (upstream `rsync.c:660`).
 ///
-/// The ownership step already wrote uid/gid (and a first-guess mode) into the
-/// xattr, so this reloads and rewrites only the mode field to `fmode`, leaving
-/// the recorded uid/gid/rdev intact.
-// upstream: xattrs.c:1188 set_stat_xattr() - mode = (fmode & ACCESSPERMS)
-//           | (S_ISDIR(fst.st_mode) ? 0700 : 0600); real chmod skipped.
+/// The `user.rsync.%stat` xattr is only written when the real
+/// mode/uid/gid/rdev cannot faithfully represent the intended values - i.e.
+/// when `real_mode != fmode` (special bits or perms were dropped) or the
+/// destination's on-disk owner/group differ from the intended ones. When the
+/// real attributes already match, upstream writes no shim and removes any stale
+/// `%stat` (`xattrs.c:1225-1237`), so an unprivileged same-owner copy of a
+/// plain 0755 dir / 0644 file leaves no `%stat` behind.
+// upstream: xattrs.c:1188-1237 set_stat_xattr() - mode = (fmode & ACCESSPERMS)
+//           | (S_ISDIR ? 0700 : 0600); write-or-remove based on faithfulness.
 #[cfg(unix)]
 fn apply_fake_super_mode(
     destination: &Path,
@@ -304,35 +307,64 @@ fn apply_fake_super_mode(
     existing: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
     const ACCESSPERMS: u32 = 0o777;
+    const S_IFMT: u32 = 0o170000;
+
+    // The intended stored mode carries the S_IFMT type bits so a later fake-super
+    // read can rebuild both the type and the full perms.
+    let type_bits = if fmode & S_IFMT != 0 {
+        fmode & S_IFMT
+    } else if is_dir {
+        0o040000
+    } else {
+        0o100000
+    };
 
     // upstream: xattrs.c:1219-1220 - enable full owner access, dump special bits.
-    let real_mode = (fmode & ACCESSPERMS) | if is_dir { 0o700 } else { 0o600 };
+    let real_mode = type_bits | (fmode & ACCESSPERMS) | if is_dir { 0o700 } else { 0o600 };
 
     #[cfg(feature = "xattr")]
     {
-        use crate::fake_super::{load_fake_super, store_fake_super};
+        use crate::fake_super::{load_fake_super, remove_fake_super, store_fake_super};
+        use std::os::unix::fs::MetadataExt;
 
-        const S_IFMT: u32 = 0o170000;
-        // The mode stored in the xattr is `fmode` with its S_IFMT type bits so a
-        // later fake-super read can rebuild both the type and the full perms.
-        let type_bits = fmode & S_IFMT;
-        let target_mode = if type_bits != 0 {
-            fmode
-        } else if is_dir {
-            0o040000 | (fmode & 0o7777)
-        } else {
-            0o100000 | (fmode & 0o7777)
-        };
+        // The intended stored mode carries the S_IFMT type bits so a later
+        // fake-super read can rebuild both the type and the full perms.
+        let stored_mode = type_bits | (fmode & 0o7777);
 
-        // Reload the uid/gid/rdev the ownership step recorded and correct only
-        // the mode field to the chmod-applied `fmode`.
-        if let Ok(Some(mut stat)) = load_fake_super(destination)
-            && stat.mode != target_mode
-        {
-            stat.mode = target_mode;
-            store_fake_super(destination, &stat).map_err(|error| {
-                MetadataError::new("store fake-super metadata", destination, error)
+        // The ownership step recorded the intended uid/gid/rdev; reload them.
+        let recorded = load_fake_super(destination).ok().flatten();
+        let (want_uid, want_gid, want_rdev) = recorded
+            .as_ref()
+            .map(|s| (s.uid, s.gid, s.rdev))
+            .unwrap_or((0, 0, None));
+
+        // upstream: xattrs.c:1225-1229 - the shim is redundant when the real
+        // (mode & type)==stored mode and the on-disk owner/group already equal
+        // the intended values (rdev is 0 for non-devices). Compare against the
+        // destination's actual on-disk owner/group.
+        let dest_meta = fs::symlink_metadata(destination).ok();
+        let (real_uid, real_gid) = dest_meta
+            .as_ref()
+            .map(|m| (m.uid(), m.gid()))
+            .unwrap_or((want_uid, want_gid));
+
+        let faithful = (real_mode & (S_IFMT | 0o7777)) == stored_mode
+            && real_uid == want_uid
+            && real_gid == want_gid
+            && want_rdev.is_none();
+
+        if faithful {
+            // upstream: xattrs.c:1227-1233 - drop any stale %stat and skip write.
+            remove_fake_super(destination).map_err(|error| {
+                MetadataError::new("remove fake-super metadata", destination, error)
             })?;
+        } else if let Some(mut stat) = recorded {
+            if stat.mode != stored_mode {
+                stat.mode = stored_mode;
+                store_fake_super(destination, &stat).map_err(|error| {
+                    MetadataError::new("store fake-super metadata", destination, error)
+                })?;
+            }
         }
     }
 
@@ -343,7 +375,12 @@ fn apply_fake_super_mode(
     }
 
     // upstream: syscall.c:do_chmod_at() applied to the deflected real mode.
-    chmod_path_honoring_keep_dirlinks(destination, real_mode, options, "preserve permissions")
+    chmod_path_honoring_keep_dirlinks(
+        destination,
+        real_mode & 0o7777,
+        options,
+        "preserve permissions",
+    )
 }
 
 /// Applies permissions with optional chmod modifiers (path-based).
