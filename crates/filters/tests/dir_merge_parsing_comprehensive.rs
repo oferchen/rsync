@@ -58,16 +58,36 @@ fn dir_merge_both_sides_explicit() {
 }
 
 #[test]
-fn dir_merge_exclude_only_modifier() {
+fn dir_merge_exclude_self_modifier() {
     let dir = TempDir::new().unwrap();
     let rules_path = dir.path().join("rules.txt");
 
-    // Dir-merge with exclude-only modifier
+    // The `e` modifier (FILTRULE_EXCLUDE_SELF) is valid on a dir-merge rule.
+    // upstream: exclude.c:1256-1259 - `e` requires FILTRULE_MERGE_FILE and makes
+    // the merge file's own name be excluded; exclude-self plumbing is applied at
+    // the chain layer, so parsing simply yields a well-formed dir-merge rule.
     fs::write(&rules_path, ":e .rsync-filter\n").unwrap();
 
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 1);
-    assert!(rules[0].is_exclude_only());
+    assert_eq!(rules[0].action(), FilterAction::DirMerge);
+    assert_eq!(rules[0].pattern(), ".rsync-filter");
+}
+
+#[test]
+fn exclude_self_modifier_rejected_on_plain_rule() {
+    let dir = TempDir::new().unwrap();
+    let rules_path = dir.path().join("rules.txt");
+
+    // upstream: exclude.c:1256-1258 - `e` on a non-merge rule jumps to `invalid`.
+    // oc-rsync previously accepted `-e pattern` silently; pin the rejection.
+    fs::write(&rules_path, "-e *.bak\n").unwrap();
+
+    let err = filters::merge::read_rules(&rules_path).unwrap_err();
+    assert!(
+        err.to_string().contains("invalid modifier 'e'"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]

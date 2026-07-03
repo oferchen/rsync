@@ -384,18 +384,56 @@ fn parse_modifiers_all_flags() {
     assert!(mods.sender_only);
     assert!(mods.receiver_only);
     assert!(mods.xattr_only);
-    assert!(mods.exclude_only);
+    assert!(mods.exclude_self);
     assert!(mods.no_inherit);
     assert!(mods.cvs_mode);
     assert_eq!(pattern, "pattern");
 }
 
+/// The `e` modifier is `FILTRULE_EXCLUDE_SELF`, valid only on a merge-file
+/// rule. On an ordinary exclude/include/etc. rule upstream jumps to `invalid`
+/// (exclude.c:1256-1259). oc-rsync previously accepted `-e *.bak` silently and
+/// stored a flag no matching logic read, so a malformed rule became a no-op
+/// instead of the parse error upstream reports. This test pins the rejection so
+/// the two tools agree on what is a syntax error.
 #[test]
-fn parse_exclude_only_modifier() {
-    let rules = parse_rules("-e *.bak", Path::new("test")).unwrap();
+fn parse_exclude_self_modifier_rejected_on_non_merge_rule() {
+    let err = parse_rules("-e *.bak", Path::new("test")).unwrap_err();
+    assert!(
+        err.to_string().contains("invalid modifier 'e'"),
+        "unexpected error: {err}"
+    );
+}
+
+/// `e` word-split combinations on a non-merge rule are equally invalid: the
+/// modifier is rejected before the pattern is expanded.
+#[test]
+fn parse_exclude_self_modifier_rejected_with_word_split() {
+    let err = parse_rules("-ew foo bar", Path::new("test")).unwrap_err();
+    assert!(
+        err.to_string().contains("invalid modifier 'e'"),
+        "unexpected error: {err}"
+    );
+}
+
+/// `e` is accepted on a dir-merge rule (upstream sets `FILTRULE_EXCLUDE_SELF`
+/// there). The rule parses successfully as a dir-merge; exclude-self plumbing
+/// is applied at the chain layer via `DirMergeConfig::with_exclude_self`.
+#[test]
+fn parse_exclude_self_modifier_accepted_on_dir_merge_rule() {
+    let rules = parse_rules(":e .rsync-filter", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].action(), FilterAction::Exclude);
-    assert!(rules[0].is_exclude_only());
+    assert_eq!(rules[0].action(), FilterAction::DirMerge);
+    assert_eq!(rules[0].pattern(), ".rsync-filter");
+}
+
+/// `e` is likewise accepted on a plain merge rule.
+#[test]
+fn parse_exclude_self_modifier_accepted_on_merge_rule() {
+    let rules = parse_rules(".e rules.txt", Path::new("test")).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].action(), FilterAction::Merge);
+    assert_eq!(rules[0].pattern(), "rules.txt");
 }
 
 #[test]

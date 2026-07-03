@@ -255,10 +255,17 @@ mod exclude_rules {
     }
 
     #[test]
-    fn exclude_with_exclude_only_modifier() {
-        let rules = parse_rules("-e *.log", Path::new("test")).unwrap();
-        assert_eq!(rules.len(), 1);
-        assert!(rules[0].is_exclude_only());
+    fn exclude_with_exclude_self_modifier_is_rejected() {
+        // upstream: exclude.c:1256-1258 - the `e` (FILTRULE_EXCLUDE_SELF)
+        // modifier requires FILTRULE_MERGE_FILE; on a plain exclude rule
+        // upstream jumps to `invalid`. oc-rsync previously accepted `-e *.log`
+        // and stored a flag no matching logic read, silently diverging from
+        // upstream on malformed input.
+        let err = parse_rules("-e *.log", Path::new("test")).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid modifier 'e'"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
