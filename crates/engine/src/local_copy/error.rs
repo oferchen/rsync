@@ -195,6 +195,18 @@ impl LocalCopyError {
         )
     }
 
+    /// Reports whether this error is the `--max-delete` limit being reached.
+    ///
+    /// Upstream rsync does not abort the transfer when the limit is hit: it
+    /// stops performing further deletions, finishes the transfer, and only
+    /// reports the limit at cleanup (`main.c:1356`, exit code 25). The
+    /// delete-during path defers this error to the end of the directory so a
+    /// mid-transfer `--delete-during` sweep does not skip pending copies.
+    #[must_use]
+    pub const fn is_delete_limit_error(&self) -> bool {
+        matches!(self.kind, LocalCopyErrorKind::DeleteLimitExceeded { .. })
+    }
+
     /// Reports whether this is a failed initial `link_stat` of a source
     /// argument (a missing command-line operand or `--files-from` entry).
     ///
