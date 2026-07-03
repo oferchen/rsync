@@ -95,7 +95,18 @@ impl NameMapping {
     /// Rules are evaluated in declaration order - first match wins. The
     /// associated name is looked up at most once per call and cached across
     /// rule evaluations to avoid redundant system calls.
-    pub(super) fn resolve_rule(&self, identifier: u32) -> io::Result<Option<&MappingRule>> {
+    ///
+    /// When `numeric_ids` is set, the receiver treats every id as nameless:
+    /// upstream never transmits id names in that mode, so `recv_add_id` matches
+    /// against an empty name. We therefore skip the local name lookup and
+    /// present an empty name, which lets an empty-name matcher (e.g. `:1`)
+    /// match every id while named/wildcard matchers match nothing.
+    /// upstream: uidlist.c:parse_name_map/recv_add_id under `numeric_ids`.
+    pub(super) fn resolve_rule(
+        &self,
+        identifier: u32,
+        numeric_ids: bool,
+    ) -> io::Result<Option<&MappingRule>> {
         if self.rules.is_empty() {
             return Ok(None);
         }
@@ -103,6 +114,9 @@ impl NameMapping {
         let mut cached_name: Option<Option<String>> = None;
         for rule in &self.rules {
             let matches = rule.matcher.matches(identifier, || {
+                if numeric_ids {
+                    return Ok(None);
+                }
                 if cached_name.is_none() {
                     cached_name = Some(self.lookup_name(identifier)?);
                 }
@@ -148,15 +162,15 @@ impl NameMapping {
     }
 
     /// Applies the mapping rules to a UID, returning the mapped UID if a rule matches.
-    pub(super) fn map_uid(&self, uid: RawUid) -> io::Result<Option<RawUid>> {
-        self.resolve_rule(uid)?
+    pub(super) fn map_uid(&self, uid: RawUid, numeric_ids: bool) -> io::Result<Option<RawUid>> {
+        self.resolve_rule(uid, numeric_ids)?
             .map(|rule| rule.target.resolve_uid())
             .transpose()
     }
 
     /// Applies the mapping rules to a GID, returning the mapped GID if a rule matches.
-    pub(super) fn map_gid(&self, gid: RawGid) -> io::Result<Option<RawGid>> {
-        self.resolve_rule(gid)?
+    pub(super) fn map_gid(&self, gid: RawGid, numeric_ids: bool) -> io::Result<Option<RawGid>> {
+        self.resolve_rule(gid, numeric_ids)?
             .map(|rule| rule.target.resolve_gid())
             .transpose()
     }

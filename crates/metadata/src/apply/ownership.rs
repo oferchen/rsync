@@ -133,7 +133,7 @@ pub(super) fn resolve_ownership(
         let mut raw_uid = metadata.uid() as RawUid;
         if let Some(mapping) = options.user_mapping()
             && let Some(mapped) = mapping
-                .map_uid(raw_uid)
+                .map_uid(raw_uid, options.numeric_ids_enabled())
                 .map_err(|error| MetadataError::new("apply user mapping", destination, error))?
         {
             raw_uid = mapped;
@@ -148,7 +148,7 @@ pub(super) fn resolve_ownership(
         let mut raw_gid = metadata.gid() as RawGid;
         if let Some(mapping) = options.group_mapping()
             && let Some(mapped) = mapping
-                .map_gid(raw_gid)
+                .map_gid(raw_gid, options.numeric_ids_enabled())
                 .map_err(|error| MetadataError::new("apply group mapping", destination, error))?
         {
             raw_gid = mapped;
@@ -352,7 +352,7 @@ pub(super) fn apply_ownership_from_entry(
         gate_preserved_owner(entry.uid().and_then(|uid| {
             let mut mapped_uid = uid as RawUid;
             if let Some(mapping) = options.user_mapping()
-                && let Ok(Some(mapped)) = mapping.map_uid(mapped_uid)
+                && let Ok(Some(mapped)) = mapping.map_uid(mapped_uid, options.numeric_ids_enabled())
             {
                 mapped_uid = mapped;
             }
@@ -368,7 +368,7 @@ pub(super) fn apply_ownership_from_entry(
         gate_preserved_group(entry.gid().and_then(|gid| {
             let mut mapped_gid = gid as RawGid;
             if let Some(mapping) = options.group_mapping()
-                && let Ok(Some(mapped)) = mapping.map_gid(mapped_gid)
+                && let Ok(Some(mapped)) = mapping.map_gid(mapped_gid, options.numeric_ids_enabled())
             {
                 mapped_gid = mapped;
             }
@@ -441,7 +441,7 @@ pub(super) fn apply_symlink_ownership_from_entry(
         gate_preserved_owner(entry.uid().and_then(|uid| {
             let mut mapped_uid = uid as RawUid;
             if let Some(mapping) = options.user_mapping()
-                && let Ok(Some(mapped)) = mapping.map_uid(mapped_uid)
+                && let Ok(Some(mapped)) = mapping.map_uid(mapped_uid, options.numeric_ids_enabled())
             {
                 mapped_uid = mapped;
             }
@@ -457,7 +457,7 @@ pub(super) fn apply_symlink_ownership_from_entry(
         gate_preserved_group(entry.gid().and_then(|gid| {
             let mut mapped_gid = gid as RawGid;
             if let Some(mapping) = options.group_mapping()
-                && let Ok(Some(mapped)) = mapping.map_gid(mapped_gid)
+                && let Ok(Some(mapped)) = mapping.map_gid(mapped_gid, options.numeric_ids_enabled())
             {
                 mapped_gid = mapped;
             }

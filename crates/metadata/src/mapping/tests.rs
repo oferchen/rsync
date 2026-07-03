@@ -624,6 +624,28 @@ fn empty_source_groupmap_parses_and_targets_gid() {
 }
 
 #[test]
+fn numeric_ids_makes_empty_name_matcher_match_every_id() {
+    // upstream: uidlist.c under `--numeric-ids` the sender transmits no id
+    // names, so recv_add_id matches every id against the empty name. An
+    // empty-name matcher (e.g. `--groupmap=:4`, as exercised by the
+    // ownership-depth testsuite `--numeric-ids --groupmap=:sec` leg) therefore
+    // remaps a named local id like gid 1000 to the target.
+    let mapping = NameMapping::parse(MappingKind::Group, ":4").unwrap();
+
+    // With numeric ids the name lookup is bypassed (treated as nameless), so a
+    // named id still matches the empty-name matcher and remaps to gid 4. This
+    // path performs no system lookup, so the assertion is host-independent.
+    let rule = mapping.resolve_rule(1000, true).unwrap();
+    assert_eq!(rule.map(|r| &r.target), Some(&MappingTarget::Id(4)));
+
+    // A named matcher never matches under numeric ids, since every id is
+    // treated as nameless. upstream: the sender omits names, so a NAME_MATCH
+    // node cannot match. Uses gid 1000 with a name-based matcher.
+    let named = NameMapping::parse(MappingKind::Group, "staff:4").unwrap();
+    assert!(named.resolve_rule(1000, true).unwrap().is_none());
+}
+
+#[test]
 fn parse_target_numeric() {
     let target = parse_target(MappingKind::User, "100", "x:100").unwrap();
     assert!(matches!(target, MappingTarget::Id(100)));
