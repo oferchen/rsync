@@ -260,7 +260,17 @@ impl<'a> CopyContext<'a> {
         }
 
         if sparse {
-            let final_position = sparse_state.finish(writer, destination)?;
+            // upstream: fileio.c:sparse_end() flushes the trailing zero run then
+            // ftruncates to the file's true size. In inplace mode matched blocks
+            // are skipped without advancing the writer, so the final length is
+            // the delta loop's output_position rather than the sparse writer's
+            // stream position; a fresh sparse copy uses the flushed logical end.
+            let sparse_end = sparse_state.finish(writer, destination)?;
+            let final_position = if inplace_mode {
+                output_position
+            } else {
+                sparse_end
+            };
             writer.set_len(final_position).map_err(|error| {
                 LocalCopyError::io(
                     "truncate destination file",
