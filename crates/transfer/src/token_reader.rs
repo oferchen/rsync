@@ -162,6 +162,50 @@ impl TokenReader {
         }
     }
 
+    /// Async twin of [`read_token`](Self::read_token).
+    ///
+    /// Reads the next delta token off an [`AsyncRead`](tokio::io::AsyncRead)
+    /// rather than blocking. For the plain path it reads the same 4-byte
+    /// little-endian token and applies the identical `> 0` / `< 0` / `== 0`
+    /// dispatch as the sync leaf. For the compressed path it drives
+    /// [`CompressedTokenDecoder::recv_token_async`], the `.await` twin of the
+    /// blocking `recv_token`, so both paths consume the same wire bytes and
+    /// yield the same [`DeltaToken`] as the sync leaf - including when the
+    /// source delivers bytes one at a time across `.await` points. Gated on
+    /// `tokio-transfer`.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `token.c:271` - `recv_token()` dispatch (the sync twin mirrors this)
+    #[cfg(feature = "tokio-transfer")]
+    pub async fn read_token_async<R>(&mut self, reader: &mut R) -> io::Result<DeltaToken>
+    where
+        R: tokio::io::AsyncRead + Unpin + ?Sized,
+    {
+        use tokio::io::AsyncReadExt;
+
+        match self {
+            Self::Plain => {
+                let mut buf = [0u8; 4];
+                reader.read_exact(&mut buf).await?;
+                let token = i32::from_le_bytes(buf);
+
+                match token.cmp(&0) {
+                    std::cmp::Ordering::Equal => Ok(DeltaToken::End),
+                    std::cmp::Ordering::Greater => {
+                        Ok(DeltaToken::Literal(LiteralData::Pending(token as usize)))
+                    }
+                    std::cmp::Ordering::Less => Ok(DeltaToken::BlockRef(-(token + 1) as usize)),
+                }
+            }
+            Self::Compressed(decoder) => match decoder.recv_token_async(reader).await? {
+                CompressedToken::Literal(data) => Ok(DeltaToken::Literal(LiteralData::Ready(data))),
+                CompressedToken::BlockMatch(idx) => Ok(DeltaToken::BlockRef(idx as usize)),
+                CompressedToken::End => Ok(DeltaToken::End),
+            },
+        }
+    }
+
     /// Feeds block data into the decompressor's dictionary after a block match.
     ///
     /// Only needed for compressed mode - keeps the decompressor's dictionary

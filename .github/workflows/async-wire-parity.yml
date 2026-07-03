@@ -125,6 +125,13 @@ jobs:
             --features tokio-transfer \
             -E 'test(sender_attrs_read_async_matches_sync)'
 
+      - name: Run sync vs async per-file delta-drain (discard) parity tests
+        run: |
+          cargo nextest run --locked \
+            -p transfer \
+            --features tokio-transfer,zstd,lz4 \
+            -E 'test(discard_delta_stream_async_matches_sync)'
+
   async-equivalence:
     name: async-vs-default transfer equivalence (stable)
     runs-on: ubuntu-latest

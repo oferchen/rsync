@@ -934,6 +934,74 @@ pub fn discard_delta_stream<R: Read>(
     Ok(())
 }
 
+/// Async twin of [`discard_delta_stream`].
+///
+/// Drains one file's delta stream off an [`AsyncRead`](tokio::io::AsyncRead)
+/// and consumes the trailing whole-file checksum, awaiting the wire rather than
+/// blocking. It composes the async delta-token leaf
+/// ([`TokenReader::read_token_async`]) with `.await`-driven literal and
+/// checksum reads, so for the same wire bytes it consumes exactly the same
+/// bytes and leaves the stream aligned identically to the sync leaf -
+/// including when the source delivers bytes one at a time across `.await`
+/// points. This is the composable async drain the tokio receiver uses on the
+/// discard path (temp-open failure), the `.await` counterpart of the
+/// `receiver.c:524-527` `discard_receive_data()` call. Gated on
+/// `tokio-transfer`.
+///
+/// Token handling is byte-for-byte identical to [`discard_delta_stream`]:
+/// compressed literals are already decompressed by the decoder and dropped,
+/// plain literals are read off the wire and dropped, and block-match tokens are
+/// absorbed with no basis read and no `see_token` dictionary feed (upstream
+/// `receiver.c:444-451`). `checksum_len` MUST equal the negotiated digest
+/// length ([`ChecksumVerifier::digest_len`]).
+///
+/// # Upstream Reference
+///
+/// - `receiver.c:524-527` - `discard_receive_data()` (the sync twin mirrors this)
+#[cfg(feature = "tokio-transfer")]
+pub async fn discard_delta_stream_async<R>(
+    reader: &mut R,
+    token_reader: &mut TokenReader,
+    checksum_len: usize,
+) -> io::Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin + ?Sized,
+{
+    use tokio::io::AsyncReadExt;
+
+    debug_log!(Deltasum, 2, "recv delta stream discard start");
+
+    let mut scratch = Vec::new();
+    loop {
+        match token_reader.read_token_async(reader).await? {
+            DeltaToken::End => break,
+            // Compressed literal: decoder already consumed + decompressed the
+            // wire bytes; drop the payload.
+            DeltaToken::Literal(LiteralData::Ready(_)) => {}
+            // Plain literal: read the raw bytes off the wire and drop them.
+            // upstream: receiver.c:407 write_file is skipped when fd == -1.
+            DeltaToken::Literal(LiteralData::Pending(len)) => {
+                if scratch.len() < len {
+                    scratch.resize(len, 0);
+                }
+                reader.read_exact(&mut scratch[..len]).await?;
+            }
+            // Block match with no basis: absorb without reading a basis block
+            // and without feeding see_token. upstream: receiver.c:444-451.
+            DeltaToken::BlockRef(_) => {}
+        }
+    }
+
+    // upstream: receiver.c:515 - the sender always trails the delta with the
+    // whole-file checksum; consume it so the stream stays aligned for the next
+    // NDX / goodbye. On the discard path there is nothing to verify against.
+    let mut sink = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
+    reader.read_exact(&mut sink[..checksum_len]).await?;
+
+    debug_log!(Deltasum, 2, "recv delta stream discard complete");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1344,5 +1412,142 @@ mod tests {
             23,
             "temp-create failure must yield RERR_PARTIAL (exit 23), not fatal (12)"
         );
+    }
+
+    /// Encodes a compressed (`-z` zlib) delta: a literal, a block match, and the
+    /// End marker via the on-wire `CompressedTokenEncoder`, followed by the
+    /// trailing whole-file checksum. The discard path decodes but drops the
+    /// literal payload, so a compressed frame exercises the async decoder's
+    /// `.await`-driven inflate against the sync path.
+    #[cfg(feature = "tokio-transfer")]
+    fn compressed_delta_with_match(digest_len: usize) -> Vec<u8> {
+        use protocol::wire::CompressedTokenEncoder;
+
+        let mut wire = Vec::new();
+        let mut encoder = CompressedTokenEncoder::default();
+        encoder
+            .send_literal(&mut wire, b"hello compressed")
+            .unwrap();
+        encoder.send_block_match(&mut wire, 0).unwrap();
+        encoder.finish(&mut wire).unwrap();
+        wire.extend(std::iter::repeat_n(0xEE_u8, digest_len));
+        wire
+    }
+
+    /// Async-vs-sync parity for the per-file delta DISCARD drain.
+    ///
+    /// The async [`discard_delta_stream_async`] composes the async delta-token
+    /// leaf ([`TokenReader::read_token_async`]) with `.await`-driven literal and
+    /// checksum reads. It MUST consume EXACTLY the same wire bytes as the sync
+    /// [`discard_delta_stream`] and leave the stream aligned identically - a
+    /// leftover byte would make the next NDX read parse delta bytes as a frame
+    /// header and desync the whole session (upstream: `discard_receive_data` at
+    /// receiver.c:524 exists precisely to keep the stream aligned). This pins
+    /// that WHY: for the same frame the two leaves position the reader at the
+    /// identical offset, on both the plain and the compressed (`-z`) path, and
+    /// on the compressed path even when the wire is delivered one byte at a time
+    /// across `.await` points - the case that would break a naive async decoder
+    /// that assumed a full token arrives in a single poll.
+    #[cfg(feature = "tokio-transfer")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn discard_delta_stream_async_matches_sync() {
+        use std::pin::Pin;
+        use std::task::{Context, Poll};
+        use tokio::io::{AsyncRead, ReadBuf};
+
+        // A ChunkedReader delivers at most `chunk` bytes per poll, so a chunk of
+        // 1 forces every async read to cross an await boundary mid-token.
+        struct ChunkedReader {
+            inner: io::Cursor<Vec<u8>>,
+            chunk: usize,
+        }
+
+        impl AsyncRead for ChunkedReader {
+            fn poll_read(
+                mut self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+                buf: &mut ReadBuf<'_>,
+            ) -> Poll<io::Result<()>> {
+                let limit = self.chunk.min(buf.remaining());
+                if limit == 0 {
+                    return Poll::Ready(Ok(()));
+                }
+                let pos = self.inner.position() as usize;
+                let data = self.inner.get_ref();
+                let end = (pos + limit).min(data.len());
+                let slice = data[pos..end].to_vec();
+                buf.put_slice(&slice);
+                self.inner.set_position(end as u64);
+                Poll::Ready(Ok(()))
+            }
+        }
+
+        let digest_len = 16;
+        // A sentinel after the frame proves the drain stops exactly at the
+        // frame boundary and does not over-read.
+        let sentinel = [0x11u8, 0x22, 0x33, 0x44];
+
+        let plain = TokenReader::new(None).map(|_| plain_delta_with_match(digest_len));
+        let compressed = compressed_delta_with_match(digest_len);
+
+        for (label, frame, compression) in [
+            (
+                "plain",
+                plain.expect("plain reader init"),
+                Option::<protocol::CompressionAlgorithm>::None,
+            ),
+            (
+                "compressed",
+                compressed,
+                Some(protocol::CompressionAlgorithm::Zlib),
+            ),
+        ] {
+            let mut framed = frame.clone();
+            framed.extend_from_slice(&sentinel);
+
+            // Sync baseline: drain, then read the sentinel to prove alignment.
+            let mut sync_cur = io::Cursor::new(framed.clone());
+            let mut sync_reader = TokenReader::new(compression).expect("sync reader");
+            discard_delta_stream(&mut sync_cur, &mut sync_reader, digest_len)
+                .unwrap_or_else(|e| panic!("{label}: sync drains cleanly: {e}"));
+            let sync_consumed = sync_cur.position();
+            let mut sync_next = [0u8; 4];
+            sync_cur
+                .read_exact(&mut sync_next)
+                .expect("sync sentinel intact");
+            assert_eq!(sync_next, sentinel, "{label}: sync leaves sentinel intact");
+            assert_eq!(
+                sync_consumed,
+                frame.len() as u64,
+                "{label}: sync consumes exactly the frame"
+            );
+
+            // Async twin across a range of chunk sizes, including byte-at-a-time.
+            for chunk in [1usize, 2, 3, 5, 7, frame.len().max(1)] {
+                let mut reader = ChunkedReader {
+                    inner: io::Cursor::new(framed.clone()),
+                    chunk: chunk.max(1),
+                };
+                let mut async_reader = TokenReader::new(compression).expect("async reader");
+                discard_delta_stream_async(&mut reader, &mut async_reader, digest_len)
+                    .await
+                    .unwrap_or_else(|e| panic!("{label}/chunk={chunk}: async drains cleanly: {e}"));
+                let async_consumed = reader.inner.position();
+                assert_eq!(
+                    async_consumed, sync_consumed,
+                    "{label}/chunk={chunk}: async consumes the same bytes as sync"
+                );
+
+                // The sentinel must still be readable at the same position.
+                let mut async_next = [0u8; 4];
+                let pos = reader.inner.position() as usize;
+                let data = reader.inner.get_ref();
+                async_next.copy_from_slice(&data[pos..pos + 4]);
+                assert_eq!(
+                    async_next, sentinel,
+                    "{label}/chunk={chunk}: async leaves sentinel intact"
+                );
+            }
+        }
     }
 }
