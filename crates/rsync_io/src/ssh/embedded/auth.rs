@@ -399,16 +399,14 @@ mod tests {
         assert!(msg.contains("password"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn load_identity_key_symlink_to_missing_returns_none() {
         let dir = tempfile::tempdir().expect("tempdir");
         let link_path = dir.path().join("broken_link");
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink("/nonexistent/target", &link_path).expect("symlink");
-            let result = load_identity_key(&link_path);
-            assert!(result.is_none());
-        }
+        std::os::unix::fs::symlink("/nonexistent/target", &link_path).expect("symlink");
+        let result = load_identity_key(&link_path);
+        assert!(result.is_none());
     }
 
     #[test]
