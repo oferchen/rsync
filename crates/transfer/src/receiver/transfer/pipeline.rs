@@ -342,8 +342,14 @@ impl ReceiverContext {
 
                 // Route accumulated warnings through the multiplexed writer
                 // instead of eprintln (which deadlocks in daemon handler threads).
-                for warning in pipelined_receiver.drain_warnings() {
-                    let _ = writer.send_msg_info(warning.as_bytes());
+                // Fatal transfer errors ride MSG_ERROR_XFER so the peer sets
+                // got_xfer_error (exit 23); everything else is MSG_INFO.
+                for (code, warning) in pipelined_receiver.drain_warnings() {
+                    let _ = if code == protocol::MessageCode::ErrorXfer {
+                        writer.send_msg_error_xfer(warning.as_bytes())
+                    } else {
+                        writer.send_msg_info(warning.as_bytes())
+                    };
                 }
 
                 // upstream: io.c:820 stats.total_read only counts bytes read
@@ -395,8 +401,14 @@ impl ReceiverContext {
             metadata_errors.extend(disk_meta_errors);
 
             // Route accumulated warnings through the multiplexed writer.
-            for warning in pipelined_receiver.drain_warnings() {
-                let _ = writer.send_msg_info(warning.as_bytes());
+            // Fatal transfer errors ride MSG_ERROR_XFER so the peer sets
+            // got_xfer_error (exit 23); everything else is MSG_INFO.
+            for (code, warning) in pipelined_receiver.drain_warnings() {
+                let _ = if code == protocol::MessageCode::ErrorXfer {
+                    writer.send_msg_error_xfer(warning.as_bytes())
+                } else {
+                    writer.send_msg_info(warning.as_bytes())
+                };
             }
 
             let redo_indices = pipelined_receiver.take_redo_indices();

@@ -82,6 +82,15 @@ impl ReceiverContext {
 
         let mut failed_dir_paths: std::collections::HashSet<PathBuf> =
             std::collections::HashSet::new();
+        // upstream: generator.c:1374-1378 - directories skipped under
+        // --existing (ignore_non_existing) are NOT errors: upstream sets
+        // skip_dir / FLAG_MISSING_DIR and never touches io_error. Track them
+        // apart from `failed_dir_paths` (real mkdir EACCES failures) so the
+        // itemize/metadata passes below skip them without folding a spurious
+        // "failed to create directory" into `dir_creation_errors` (which would
+        // wrongly set IOERR_GENERAL -> RERR_PARTIAL/exit 23).
+        let mut skipped_existing_dirs: std::collections::HashSet<PathBuf> =
+            std::collections::HashSet::new();
         // Track whether each directory was freshly created (true) or already
         // existed (false). Drives the iflags passed to `emit_itemize` so the
         // receiver matches upstream `generator.c:1480-1483`: a new dir emits
@@ -119,8 +128,9 @@ impl ReceiverContext {
             dir_was_new.push(is_new);
             if is_new && existing_only {
                 // upstream: generator.c:1374-1378 - "not creating new directory".
-                // Reuse the failed-dir set so the itemize and metadata passes
-                // below skip this directory (it was never created on disk).
+                // Record in the skip set (not `failed_dir_paths`) so the
+                // itemize and metadata passes below skip this directory without
+                // treating the benign --existing skip as a mkdir failure.
                 if self.config.flags.verbose && self.config.connection.client_mode {
                     info_log!(
                         Skip,
@@ -129,7 +139,7 @@ impl ReceiverContext {
                         dir_path.display()
                     );
                 }
-                failed_dir_paths.insert(dir_path.clone());
+                skipped_existing_dirs.insert(dir_path.clone());
                 continue;
             }
             if is_new {
@@ -208,7 +218,7 @@ impl ReceiverContext {
         // records instead of MSG_INFO frames).
         if self.should_emit_itemize() {
             for ((idx, _, dir_path), is_new) in dir_entries.iter().zip(dir_was_new.iter()) {
-                if failed_dir_paths.contains(dir_path) {
+                if failed_dir_paths.contains(dir_path) || skipped_existing_dirs.contains(dir_path) {
                     continue;
                 }
                 let entry = &self.file_list[*idx];
@@ -236,7 +246,9 @@ impl ReceiverContext {
         let metadata_opts_clone = metadata_opts.clone();
         let entry_snapshots: Vec<(PathBuf, FileEntry, Option<XattrList>)> = dir_entries
             .into_iter()
-            .filter(|(_, _, dir_path)| !failed_dir_paths.contains(dir_path))
+            .filter(|(_, _, dir_path)| {
+                !failed_dir_paths.contains(dir_path) && !skipped_existing_dirs.contains(dir_path)
+            })
             .map(|(idx, _, dir_path)| {
                 let entry = &self.file_list[idx];
                 let xattr_list = self.resolve_xattr_list(entry);
@@ -688,6 +700,53 @@ mod touch_up_dirs_tests {
             args: vec![OsString::from(".")],
             ..Default::default()
         }
+    }
+
+    /// A directory skipped under `--existing` (`ignore_non_existing`) must not
+    /// be reported as a "failed to create directory" error. Upstream sets
+    /// `skip_dir` / `FLAG_MISSING_DIR` and never touches `io_error`
+    /// (generator.c:1374-1378), so the non-incremental `create_directories`
+    /// pass on a remote pull must return an empty error vec for such a dir.
+    ///
+    /// This is the load-bearing regression: folding the benign skip into the
+    /// error set set `IOERR_GENERAL`, which surfaced as `RERR_PARTIAL` (exit
+    /// 23) once the client honoured the receiver's `io_error`. That broke a
+    /// plain `--existing --include='*/' --exclude='*'` pull, which must exit 0
+    /// exactly like upstream.
+    #[test]
+    fn create_directories_existing_only_missing_dir_is_not_an_error() {
+        let dir = test_support::create_tempdir();
+        let dest = dir.path();
+
+        let mut config = config_with_times(false);
+        config.file_selection.existing_only = true;
+
+        let hs = handshake();
+        let mut ctx = ReceiverContext::new_for_test(&hs, config);
+        ctx.file_list = vec![FileEntry::new_directory("missing".into(), 0o755)];
+
+        let opts = metadata::MetadataOptions::default();
+        let mut writer = crate::writer::ServerWriter::new_plain(Vec::new());
+        let errors = ctx
+            .create_directories(
+                dest,
+                &opts,
+                None,
+                &mut writer,
+                #[cfg(unix)]
+                None,
+            )
+            .expect("create_directories succeeds");
+
+        assert!(
+            errors.is_empty(),
+            "--existing skip of a missing directory must not produce an error \
+             (would set IOERR_GENERAL -> exit 23): {errors:?}"
+        );
+        assert!(
+            !dest.join("missing").exists(),
+            "--existing must not create the missing directory"
+        );
     }
 
     /// After writing files into a directory, the OS clobbers the directory
