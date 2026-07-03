@@ -225,19 +225,92 @@ fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), 
     };
 
     let mode_bits = permissions_mode(context, destination, metadata.permissions().mode() & 0o777)?;
-    // On Apple platforms, `libc::mode_t` is currently a type alias for `u16`,
-    // so this cast is infallible and does not require a checked conversion.
-    let mode: libc::mode_t = mode_bits as libc::mode_t;
 
     if is_socket {
-        // On Apple platforms, create a socket node via mknod with S_IFSOCK.
-        let full_mode = libc::S_IFSOCK | mode;
-        apple_fs::mknod(destination, full_mode, 0)
-            .map_err(|error| MetadataError::new(context, destination, error))
+        create_socket_via_bind(context, destination, mode_bits)
     } else {
+        // On Apple platforms, `libc::mode_t` is currently a type alias for
+        // `u16`, so this cast is infallible and needs no checked conversion.
+        let mode: libc::mode_t = mode_bits as libc::mode_t;
         apple_fs::mkfifo(destination, mode)
             .map_err(|error| MetadataError::new(context, destination, error))
     }
+}
+
+/// Materialises a Unix-domain socket node by binding to `destination`.
+///
+/// macOS and the BSDs do not define `MKNOD_CREATES_SOCKETS`, so `mknod(2)`
+/// with `S_IFSOCK` fails there (typically `EOPNOTSUPP`). Upstream rsync
+/// creates the socket node the same way this helper does: open an
+/// `AF_UNIX`/`SOCK_STREAM` socket, unlink any stale entry, `bind(2)` it to the
+/// path, close it, then `chmod(2)` to apply the requested permission bits.
+///
+/// The bind path is bounded by `sizeof(sun_path)` (104 bytes on Apple); an
+/// over-long path surfaces as an `ENAMETOOLONG` error rather than silently
+/// truncating, matching upstream's `strlcpy` length check.
+// upstream: syscall.c:489-513 do_mknod() - !MKNOD_CREATES_SOCKETS socket branch
+#[cfg(all(
+    unix,
+    any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos"
+    )
+))]
+fn create_socket_via_bind(
+    context: &'static str,
+    destination: &Path,
+    mode_bits: u16,
+) -> Result<(), MetadataError> {
+    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::net::UnixListener;
+
+    // upstream: unlink(pathname) tolerating ENOENT before bind().
+    if let Err(error) = fs::remove_file(destination)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        return Err(MetadataError::new(context, destination, error));
+    }
+
+    // `UnixListener::bind` performs socket(PF_UNIX, SOCK_STREAM, 0) + bind(2),
+    // leaving a socket node on the filesystem once the listener is dropped.
+    let listener = UnixListener::bind(destination)
+        .map_err(|error| socket_bind_error(context, destination, error))?;
+    drop(listener);
+
+    // upstream applies the requested mode via do_chmod() after bind().
+    fs::set_permissions(
+        destination,
+        fs::Permissions::from_mode(u32::from(mode_bits)),
+    )
+    .map_err(|error| MetadataError::new(context, destination, error))
+}
+
+/// Maps a `bind(2)` failure to a `MetadataError`, translating the
+/// path-length error the OS reports (`EINVAL` on Apple when `sun_path`
+/// overflows) into the `ENAMETOOLONG` upstream surfaces for the same case.
+#[cfg(all(
+    unix,
+    any(
+        target_os = "ios",
+        target_os = "macos",
+        target_os = "tvos",
+        target_os = "watchos"
+    )
+))]
+fn socket_bind_error(context: &'static str, destination: &Path, error: io::Error) -> MetadataError {
+    let sun_path_cap = std::mem::size_of::<libc::sockaddr_un>()
+        - std::mem::offset_of!(libc::sockaddr_un, sun_path);
+    // Account for the trailing NUL byte, matching upstream's `>= sizeof` guard.
+    if destination.as_os_str().len() >= sun_path_cap {
+        return MetadataError::new(
+            context,
+            destination,
+            io::Error::from_raw_os_error(libc::ENAMETOOLONG),
+        );
+    }
+    MetadataError::new(context, destination, error)
 }
 
 #[cfg(all(
@@ -424,6 +497,58 @@ mod tests {
             created,
             "created permissions must not exceed requested"
         );
+    }
+
+    // On Apple targets, `mknod(2)` with `S_IFSOCK` is unsupported, so a
+    // socket destination must be materialised via socket()+bind()+chmod,
+    // mirroring upstream's !MKNOD_CREATES_SOCKETS branch (syscall.c:489-513).
+    // The result must be a real socket node carrying the requested mode, and
+    // a stale entry at the destination must be replaced rather than error.
+    #[cfg(all(
+        unix,
+        any(
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "tvos",
+            target_os = "watchos"
+        )
+    ))]
+    #[test]
+    fn create_socket_binds_node_with_permissions() {
+        use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+        use std::os::unix::net::UnixListener;
+
+        let temp = tempdir().expect("create tempdir");
+
+        // Derive metadata from a genuine socket so `is_socket()` is true.
+        let source_path = temp.path().join("source.sock");
+        let source_listener = UnixListener::bind(&source_path).expect("bind source socket");
+        let mut perms = fs::symlink_metadata(&source_path)
+            .expect("source metadata")
+            .permissions();
+        perms.set_mode(0o640);
+        fs::set_permissions(&source_path, perms).expect("set source permissions");
+        let metadata = fs::symlink_metadata(&source_path).expect("source metadata after chmod");
+        assert!(metadata.file_type().is_socket());
+
+        // A pre-existing entry at the destination must be replaced.
+        let socket_path = temp.path().join("dest.sock");
+        fs::write(&socket_path, b"stale").expect("write stale destination");
+
+        create_fifo(&socket_path, &metadata).expect("create socket");
+
+        let created = fs::symlink_metadata(&socket_path).expect("dest metadata");
+        assert!(
+            created.file_type().is_socket(),
+            "destination must be a socket node, not a regular file"
+        );
+        assert_eq!(
+            created.permissions().mode() & 0o777,
+            0o640,
+            "socket must carry the requested permission bits"
+        );
+
+        drop(source_listener);
     }
 
     #[cfg(unix)]
