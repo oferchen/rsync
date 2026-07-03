@@ -289,13 +289,11 @@ impl GeneratorContext {
                 self.timing.total_bytes_read += 2;
             }
 
-            let (fnamecmp_type, xname) = iflags.read_trailing(&mut *reader)?;
-            if iflags.has_basis_type() {
-                self.timing.total_bytes_read += 1;
-            }
-            if let Some(ref xname_data) = xname {
-                self.timing.total_bytes_read += 4 + xname_data.len() as u64;
-            }
+            let (fnamecmp_type, xname, trailing_bytes) = iflags.read_trailing(&mut *reader)?;
+            // upstream: rsync.c:403-418 - the basis-type byte plus the xname
+            // vstring (1- or 2-byte prefix + payload). read_trailing reports the
+            // exact wire bytes consumed so this count never drifts from the wire.
+            self.timing.total_bytes_read += trailing_bytes;
 
             // upstream: sender.c:280-284 - drain the generator's xattr request
             // when preserve_xattrs && ITEM_REPORT_XATTR is set. The generator
