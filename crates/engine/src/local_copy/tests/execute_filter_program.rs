@@ -721,12 +721,14 @@ fn filter_segment_protect_blocks_deletion_but_allows_transfer() {
 #[test]
 fn filter_segment_risk_removes_protection() {
     let mut segment = FilterSegment::default();
-    segment
-        .push_rule(FilterRule::protect("data/**"))
-        .expect("protect data/**");
+    // Risk (specific) before protect (broad): upstream check_filter() first-match
+    // (exclude.c:1058-1061) un-protects data/temp/** while data/** stays guarded.
     segment
         .push_rule(FilterRule::risk("data/temp/**"))
         .expect("risk data/temp/**");
+    segment
+        .push_rule(FilterRule::protect("data/**"))
+        .expect("protect data/**");
 
     // data/important.db is protected.
     let mut protected_outcome = FilterOutcome::default();
