@@ -139,6 +139,13 @@ jobs:
             --features tokio-transfer,zstd,lz4 \
             -E 'test(async_reconstruct)'
 
+      - name: Run live async receiver per-file leg vs sync reconstruct parity tests
+        run: |
+          cargo nextest run --locked \
+            -p transfer \
+            --features tokio-transfer,zstd,lz4 \
+            -E 'test(async_receiver)'
+
   async-equivalence:
     name: async-vs-default transfer equivalence (stable)
     runs-on: ubuntu-latest
