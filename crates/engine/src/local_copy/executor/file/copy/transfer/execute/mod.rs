@@ -468,13 +468,26 @@ pub(in crate::local_copy) fn execute_transfer(
     let preallocate_target = guard
         .as_ref()
         .map_or(destination, |existing_guard| existing_guard.staging_path());
-    maybe_preallocate_destination(
+    // upstream: receiver.c:319 - preallocated_len records how much of the file
+    // has reserved blocks so a later sparse zero run inside that extent is
+    // punched into a hole rather than seeked over (which would leave the
+    // preallocated blocks allocated).
+    let mut preallocated_len = maybe_preallocate_destination(
         &mut writer,
         preallocate_target,
         file_size,
         append_offset,
         context.preallocate_enabled(),
     )?;
+    // upstream: receiver.c:326-336 - when not preallocating but writing inplace,
+    // the existing destination extent (`size_r`) is already allocated, so a new
+    // interior zero run must be punched rather than seeked. A whole-file inplace
+    // copy truncates to zero first, leaving preallocated_len at 0.
+    if preallocated_len == 0 && inplace_enabled && !whole_file_enabled {
+        if let Some(existing) = existing_metadata {
+            preallocated_len = existing.len();
+        }
+    }
 
     let mut pool_guard = if context.use_buffer_pool() {
         Some(
@@ -535,6 +548,7 @@ pub(in crate::local_copy) fn execute_transfer(
         delta_signature.as_ref(),
         file_size,
         append_offset,
+        preallocated_len,
         start,
         basis_separate_from_writer,
     );
