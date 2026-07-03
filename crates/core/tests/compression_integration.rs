@@ -309,9 +309,7 @@ fn local_copy_emits_nstr_summaries_under_debug_nstr() {
         // --compress-level is given the (level N) clause shows the algorithm's
         // resolved default (zstd -> 3, zlib -> 6) - never the raw
         // CLVL_NOT_SPECIFIED sentinel. upstream: token.c:55-105.
-        use compress::algorithm::{
-            CompressionAlgorithm, ZLIB_DEFAULT_LEVEL, ZSTD_DEFAULT_LEVEL,
-        };
+        use compress::algorithm::{CompressionAlgorithm, ZLIB_DEFAULT_LEVEL, ZSTD_DEFAULT_LEVEL};
         let default_algo = CompressionAlgorithm::default_algorithm();
         let default_level = match default_algo {
             CompressionAlgorithm::Zlib => ZLIB_DEFAULT_LEVEL,
