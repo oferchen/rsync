@@ -279,6 +279,109 @@ pub(super) fn permissions_match(target_mode: u32, existing: &fs::Metadata) -> bo
     (existing.permissions().mode() & 0o7777) == (target_mode & 0o7777)
 }
 
+/// Applies the fake-super permission deflection for a computed mode.
+///
+/// Mirrors upstream `xattrs.c:set_stat_xattr()` under `am_root < 0`: the file's
+/// intended mode (`fmode`, the full `S_IFMT` + chmod-applied mode) is compared
+/// against the *real* on-disk mode forced to a self-accessible value -
+/// `(fmode & ACCESSPERMS) | (S_ISDIR ? 0700 : 0600)` - so the destination stays
+/// readable/writable during and after the transfer. Special bits
+/// (setuid/setgid/sticky) are dropped from the real mode; they survive only in
+/// the xattr. The normal chmod-to-`fmode` is skipped (upstream `rsync.c:660`).
+///
+/// The `user.rsync.%stat` xattr is only written when the real
+/// mode/uid/gid/rdev cannot faithfully represent the intended values - i.e.
+/// when `real_mode != fmode` (special bits or perms were dropped) or the
+/// destination's on-disk owner/group differ from the intended ones. When the
+/// real attributes already match, upstream writes no shim and removes any stale
+/// `%stat` (`xattrs.c:1225-1237`), so an unprivileged same-owner copy of a
+/// plain 0755 dir / 0644 file leaves no `%stat` behind.
+// upstream: xattrs.c:1188-1237 set_stat_xattr() - mode = (fmode & ACCESSPERMS)
+//           | (S_ISDIR ? 0700 : 0600); write-or-remove based on faithfulness.
+#[cfg(unix)]
+fn apply_fake_super_mode(
+    destination: &Path,
+    fmode: u32,
+    is_dir: bool,
+    options: &MetadataOptions,
+    existing: Option<&fs::Metadata>,
+) -> Result<(), MetadataError> {
+    const ACCESSPERMS: u32 = 0o777;
+    const S_IFMT: u32 = 0o170000;
+
+    // Recover the S_IFMT type bits (fmode may arrive with or without them).
+    let type_bits = if fmode & S_IFMT != 0 {
+        fmode & S_IFMT
+    } else if is_dir {
+        0o040000
+    } else {
+        0o100000
+    };
+
+    // upstream: xattrs.c:1219-1220 - enable full owner access, dump special bits.
+    let real_mode = type_bits | (fmode & ACCESSPERMS) | if is_dir { 0o700 } else { 0o600 };
+
+    #[cfg(feature = "xattr")]
+    {
+        use crate::fake_super::{load_fake_super, remove_fake_super, store_fake_super};
+        use std::os::unix::fs::MetadataExt;
+
+        // The intended stored mode carries the S_IFMT type bits so a later
+        // fake-super read can rebuild both the type and the full perms.
+        let stored_mode = type_bits | (fmode & 0o7777);
+
+        // The ownership step recorded the intended uid/gid/rdev; reload them.
+        let recorded = load_fake_super(destination).ok().flatten();
+        let (want_uid, want_gid, want_rdev) = recorded
+            .as_ref()
+            .map(|s| (s.uid, s.gid, s.rdev))
+            .unwrap_or((0, 0, None));
+
+        // upstream: xattrs.c:1225-1229 - the shim is redundant when the real
+        // (mode & type)==stored mode and the on-disk owner/group already equal
+        // the intended values (rdev is 0 for non-devices). Compare against the
+        // destination's actual on-disk owner/group.
+        let dest_meta = fs::symlink_metadata(destination).ok();
+        let (real_uid, real_gid) = dest_meta
+            .as_ref()
+            .map(|m| (m.uid(), m.gid()))
+            .unwrap_or((want_uid, want_gid));
+
+        let faithful = (real_mode & (S_IFMT | 0o7777)) == stored_mode
+            && real_uid == want_uid
+            && real_gid == want_gid
+            && want_rdev.is_none();
+
+        if faithful {
+            // upstream: xattrs.c:1227-1233 - drop any stale %stat and skip write.
+            remove_fake_super(destination).map_err(|error| {
+                MetadataError::new("remove fake-super metadata", destination, error)
+            })?;
+        } else if let Some(mut stat) = recorded {
+            if stat.mode != stored_mode {
+                stat.mode = stored_mode;
+                store_fake_super(destination, &stat).map_err(|error| {
+                    MetadataError::new("store fake-super metadata", destination, error)
+                })?;
+            }
+        }
+    }
+
+    if let Some(existing) = existing
+        && permissions_match(real_mode, existing)
+    {
+        return Ok(());
+    }
+
+    // upstream: syscall.c:do_chmod_at() applied to the deflected real mode.
+    chmod_path_honoring_keep_dirlinks(
+        destination,
+        real_mode & 0o7777,
+        options,
+        "preserve permissions",
+    )
+}
+
 /// Applies permissions with optional chmod modifiers (path-based).
 ///
 /// When chmod modifiers are configured, applies them on top of the base mode.
@@ -291,6 +394,21 @@ pub(super) fn apply_permissions_with_chmod(
     options: &MetadataOptions,
     existing: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
+    // upstream: rsync.c:577-578 set_file_attrs() - under fake-super (am_root<0)
+    // the intended mode is deflected into the xattr and the real mode is forced
+    // self-accessible; the normal chmod is skipped.
+    #[cfg(unix)]
+    if options.fake_super_enabled() {
+        let fmode = intended_fake_super_mode(destination, metadata, options, existing)?;
+        return apply_fake_super_mode(
+            destination,
+            fmode,
+            metadata.file_type().is_dir(),
+            options,
+            existing,
+        );
+    }
+
     #[cfg(unix)]
     {
         if let Some(modifiers) = options.chmod() {
@@ -352,6 +470,22 @@ pub(super) fn apply_permissions_with_chmod_fd(
     existing: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
     use std::os::unix::fs::PermissionsExt;
+
+    // upstream: rsync.c:577-578 set_file_attrs() - fake-super deflects the mode
+    // into the xattr and forces a self-accessible real mode; the open fd (which
+    // could be a regular-file placeholder) is not used for the chmod so the
+    // deflection stays path-based, matching set_stat_xattr().
+    if options.fake_super_enabled() {
+        let _ = fd;
+        let fmode = intended_fake_super_mode(destination, metadata, options, existing)?;
+        return apply_fake_super_mode(
+            destination,
+            fmode,
+            metadata.file_type().is_dir(),
+            options,
+            existing,
+        );
+    }
 
     if let Some(modifiers) = options.chmod() {
         let mut mode = base_mode_for_permissions(destination, metadata, options, existing)?;
@@ -463,6 +597,46 @@ fn chmod_path_honoring_keep_dirlinks(
             .map_err(|error| MetadataError::new(action, destination, error))?;
     }
     Ok(())
+}
+
+/// Computes the intended full mode (`S_IFMT` + perms) that upstream's
+/// `set_file_attrs()` would chmod a non-fake-super destination to.
+///
+/// This is the `new_mode` fed to `set_stat_xattr()` under `am_root < 0`: the
+/// `dest_mode()` result with any `--chmod` / daemon-chmod tweak applied on top.
+/// When `--perms` is active the source mode passes through; otherwise the
+/// umask/exec `dest_mode()` reduction (via [`base_mode_for_permissions`] and
+/// [`compute_dest_mode`]) supplies the baseline. Chmod modifiers, when present,
+/// are layered last so the recorded xattr reflects the same mode a privileged
+/// transfer would have applied on disk.
+// upstream: rsync.c:495-519 set_file_attrs() new_mode / dest_mode + tweak_mode
+#[cfg(unix)]
+fn intended_fake_super_mode(
+    destination: &Path,
+    metadata: &fs::Metadata,
+    options: &MetadataOptions,
+    existing: Option<&fs::Metadata>,
+) -> Result<u32, MetadataError> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let base = if options.permissions() || options.chmod().is_some() {
+        base_mode_for_permissions(destination, metadata, options, existing)?
+    } else {
+        let source_mode = metadata.permissions().mode();
+        compute_dest_mode(
+            source_mode,
+            options.destination_is_new(),
+            existing,
+            destination.parent(),
+        )
+        .unwrap_or(source_mode)
+    };
+
+    let mode = match options.chmod() {
+        Some(modifiers) => modifiers.apply(base, metadata.file_type()),
+        None => base,
+    };
+    Ok(mode)
 }
 
 /// Determines the base mode before chmod modifiers are applied.
