@@ -14,6 +14,8 @@
 //! - `pipeline` - the inner `run_pipeline_loop_decoupled` plus dry-run loop.
 
 mod candidates;
+#[cfg(feature = "tokio-transfer")]
+mod file_async;
 mod phases;
 mod pipeline;
 mod pipelined;
