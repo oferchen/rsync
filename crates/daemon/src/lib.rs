@@ -180,7 +180,7 @@ mod config;
 /// Typed daemon connection lifecycle state machine.
 pub mod connection;
 mod daemon;
-/// Unified stream abstraction for plain TCP and TLS-wrapped connections.
+/// Unified stream abstraction for plain TCP and stdio connections.
 pub mod daemon_stream;
 mod error;
 /// Daemon configuration file parsing for `rsyncd.conf`.

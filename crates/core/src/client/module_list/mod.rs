@@ -46,9 +46,6 @@ pub(super) use crate::auth::{DaemonAuthDigest, compute_daemon_auth_response};
 pub(super) use auth::{
     DaemonAuthContext, SensitiveBytes, load_daemon_password, send_daemon_auth_credentials,
 };
-#[cfg(feature = "client-tls")]
-#[allow(unused_imports)] // REASON: convenience re-export for sibling modules
-pub(super) use connect::tls::{TlsClientConfig, TlsConnector, TlsStream};
 #[allow(unused_imports)] // REASON: convenience re-export for sibling modules
 pub(super) use connect::{
     ConnectProgramConfig, DaemonStream, DaemonStreamGuard, DaemonStreamReader, DaemonStreamWriter,

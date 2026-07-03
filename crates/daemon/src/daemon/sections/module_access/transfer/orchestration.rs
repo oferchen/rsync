@@ -467,7 +467,7 @@ fn process_approved_module(
         // window matches upstream's expected goodbye round-trip latency.
         // Catastrophic-failure fallback: even if the UTS-V3.A
         // `shutdown_send_side` barrier below cannot be reached (e.g. the
-        // TcpStream accessor is unavailable on a TLS-wrapped path),
+        // TcpStream accessor is unavailable on a non-socket path),
         // SO_LINGER still bounds the kernel-level drain.
         if let Some(tcp) = stream.tcp_stream() {
             let sock = socket2::SockRef::from(tcp);

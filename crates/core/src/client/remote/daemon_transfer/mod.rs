@@ -162,18 +162,6 @@ pub fn run_daemon_transfer(
         );
     }
 
-    // When the client requests TLS, wrap the TCP stream before the daemon
-    // handshake. Full TLS transfer wiring is deferred to TLS-11; for now
-    // the presence of a TLS config triggers an early error so the code
-    // path is exercised by the compiler.
-    #[cfg(feature = "client-tls")]
-    if let Some(_tls_cfg) = config.tls_config() {
-        return Err(invalid_argument_error(
-            "client-side TLS transfers not yet supported",
-            2,
-        ));
-    }
-
     // upstream: io.c - select_timeout() uses io_timeout for all transfer I/O.
     // Configure TCP_NODELAY and transfer-phase timeouts before splitting.
     // For TCP, settings apply to both halves (shared underlying socket).

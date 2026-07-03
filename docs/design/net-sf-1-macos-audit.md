@@ -75,7 +75,7 @@ This recovery contract is what the existing `sendfile_macos::PartialSend` payloa
 - Destination is **always a stream socket**. File→file, file→pipe (`SOCK_DGRAM` or anonymous pipe), and file→TTY all fail. The dispatch path must verify the destination shape or be prepared to soft-fall-back on `ENOTSOCK`.
 - Darwin contends a vnode lock for the source for the duration of each call. Long single-call transfers serialise other readers on the same inode. The wrapper already caps each call at ~2 GiB (`SENDFILE_CHUNK_SIZE` in `crates/fast_io/src/sendfile/macos.rs:17`) which keeps that lock window bounded.
 - Zero-copy pages stay pinned in the unified buffer cache until the kernel hands them to the network layer. Under sustained back-pressure this delays page reclaim and can elevate `vm_pageout` activity. The mitigation is the same `*len`-based partial-send loop the wrapper already drives.
-- `kTLS`-equivalent does not exist on macOS. `sendfile` cannot compose with userspace TLS (rustls) - there is no kernel offload to hand the encrypted payload to. NET-SF.3/.4 must gate the call on "plaintext daemon socket or plaintext SSH stdio passthrough", not the userspace-TLS daemon path.
+- No TLS-compose concern. oc-rsync has no in-binary TLS (TLS is external via stunnel, exactly like upstream), so the daemon/SSH socket oc writes to always carries plaintext and `sendfile` composes with it directly - there is no userspace encryption boundary above the socket to corrupt.
 
 ## Existing site inventory
 
@@ -100,7 +100,7 @@ So NET-SF.2 is **not** "implement the wrapper" (already done); it is "polish edg
 
 Any call site must satisfy these preconditions before invoking `sendfile`:
 
-1. **Destination is a `SOCK_STREAM` fd.** Daemon and SSH-via-stdio both qualify after the transport handshake. The userspace-TLS daemon path (`daemon::tls`) does **not** qualify - rustls owns the wire encryption above the socket. Gate on `ZeroCopyPolicy::Auto/Enabled` AND "transport is plain socket".
+1. **Destination is a `SOCK_STREAM` fd.** Daemon and SSH-via-stdio both qualify after the transport handshake. oc writes plaintext to that fd (any TLS fronting is an external stunnel/proxy terminating below oc), so there is no encryption boundary to corrupt. Gate on `ZeroCopyPolicy::Auto/Enabled`.
 2. **Source is a regular `File`.** Memory-mapped reads, anonymous pipes, and device files must fall through. The sender already opens the source with `File::open` (`crates/transfer/src/reader/`), so this holds for the literal-block path.
 3. **Multiplex writer is flushed.** The wrapper bypasses the user-space buffer entirely. Any pending multiplex frames must hit the wire before `sendfile` runs, otherwise the peer sees out-of-order bytes. This is the same flush discipline upstream rsync uses in `io.c:io_start_buffering_out` callers.
 4. **Length is known up front.** The wrapper does not accept "send until EOF". The sender already knows the literal-block length at decode time.
@@ -135,15 +135,13 @@ The literal-block emitter writes raw bytes; there is no per-block multiplex fram
 
 ### NET-SF.4 (daemon wire-in)
 
-Target site: the daemon's per-file serve loop. The daemon currently dispatches file serving through the same `transfer::sender` path used for SSH, so NET-SF.3 covers the daemon case implicitly - **as long as** the daemon socket is plain. The userspace-TLS daemon path (`daemon::tls`) must opt out.
+Target site: the daemon's per-file serve loop. The daemon currently dispatches file serving through the same `transfer::sender` path used for SSH, so NET-SF.3 covers the daemon case implicitly. The daemon socket is always plaintext (oc has no in-binary TLS), so no encryption gate is needed.
 
 Confirm there is no separate "daemon-fast-path" file-serve loop that bypasses `transfer::sender`. If one exists (e.g. a future static-file optimisation), it gets its own NET-SF.4-scoped call site mirroring NET-SF.3.
 
-## Risk: TLS interaction
+## Note: no in-binary TLS
 
-`sendfile` writes plaintext file bytes directly to the socket. It cannot compose with userspace TLS (rustls) because rustls owns the wire-encryption boundary above the socket; sending plaintext would silently corrupt the TLS stream. There is no macOS kTLS equivalent.
-
-Resolution: NET-SF.3 and NET-SF.4 must check `ConnectionConfig::tls_active` (or equivalent) and skip the zero-copy path when client-side TLS is active.
+`sendfile` writes plaintext file bytes directly to the socket. This is always safe in oc-rsync because oc has **no in-binary TLS** - TLS, when used, is terminated by an external stunnel/proxy below oc (exactly as with upstream rsync's `rsync-ssl`), so the fd oc holds always carries plaintext. There is no userspace encryption boundary to corrupt, and thus no TLS gate to add.
 
 ## Sequencing decision for NET-SF.2
 

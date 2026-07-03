@@ -279,16 +279,6 @@ impl ModuleListOptions {
     pub const fn bind_address(&self) -> Option<SocketAddr> {
         self.bind_address
     }
-
-    /// Returns the client-side TLS configuration for daemon listings.
-    ///
-    /// When `Some`, the listing wraps its TCP connection in a TLS session
-    /// before negotiating with the daemon. Returns `None` until the
-    /// `--ssl` CLI flag is wired through (TLS-10).
-    #[cfg(feature = "client-tls")]
-    pub(crate) fn tls_config(&self) -> Option<&super::connect::tls::TlsClientConfig> {
-        None // wired when --ssl CLI flag is added for client mode
-    }
 }
 
 impl Default for ModuleListOptions {
