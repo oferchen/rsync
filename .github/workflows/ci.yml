@@ -543,6 +543,26 @@ jobs:
           sudo apt-get clean || true
           df -h /
 
+      # Pre-warm the toolchain download with a short-timeout retry loop so a
+      # transient rustup fetch failure (DNS hang or TCP connect timeout to the
+      # static.rust-lang.org CDN edge) self-heals fast instead of failing the
+      # job. Each attempt is wall-clock capped so a hung connect is killed and
+      # retried rather than eating the job budget. dtolnay/rust-toolchain below
+      # then hits the local cache. 2 retries is plenty; more is wasted time.
+      - name: Pre-install toolchain (short-timeout retry on transient fetch)
+        run: |
+          for attempt in 1 2 3; do
+            if timeout 90 rustup toolchain install "${{ matrix.toolchain }}" \
+                --profile minimal --no-self-update \
+                --target x86_64-unknown-linux-musl; then
+              exit 0
+            fi
+            echo "::warning::rustup toolchain install attempt ${attempt}/3 failed or timed out; retrying"
+            sleep 5
+          done
+          echo "::error::rustup toolchain install failed after 2 retries"
+          exit 1
+
       - name: Install Rust (${{ matrix.toolchain }})
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
         with:
