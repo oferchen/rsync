@@ -17,6 +17,8 @@ use std::io;
 use std::path::PathBuf;
 use std::thread::JoinHandle;
 
+use protocol::MessageCode;
+
 use crate::pipeline::spsc::{self, TryRecvError};
 
 use crate::delta_apply::ChecksumVerifier;
@@ -69,8 +71,12 @@ pub struct PipelinedReceiver {
     /// permission failures. Collected here instead of using `eprintln!` to
     /// avoid deadlocking on the global stderr mutex in daemon handler threads.
     /// The caller retrieves these via [`Self::drain_warnings`] and routes
-    /// them through the multiplexed protocol writer.
-    warnings: Vec<String>,
+    /// them through the multiplexed protocol writer. Each entry carries the
+    /// upstream `rwrite()` message code so a fatal transfer error
+    /// (`MSG_ERROR_XFER`) is not downgraded to an informational message: the
+    /// peer sets `got_xfer_error` on `MSG_ERROR_XFER` receipt, yielding exit
+    /// 23 (`RERR_PARTIAL`).
+    warnings: Vec<(MessageCode, String)>,
     /// Files staged to `.~tmp~` partial dir when `--delay-updates` is active.
     /// Each entry is `(staging_path, final_path)`. The receiver performs a
     /// bulk rename sweep at the phase 2 boundary.
@@ -176,12 +182,18 @@ impl PipelinedReceiver {
                     let pending = self.expected_checksums.pop_front();
                     if is_permission_error(&e) {
                         let path = pending.map(|p| p.file_path).unwrap_or_default();
-                        // upstream: sender.c:362 - rsyserr(FERROR_XFER, errno,
-                        // "send_files failed to open %s", full_fname(...)); full_fname()
-                        // wraps the path in double quotes (util1.c:1228).
-                        self.warnings.push(format!(
-                            "rsync: [sender] send_files failed to open \"{}\": Permission denied (13)",
-                            path.display(),
+                        // upstream: receiver.c:297 - rsyserr(FERROR_XFER, errno,
+                        // "mkstemp %s failed", full_fname(fnametmp)); full_fname()
+                        // wraps the path in double quotes (util1.c:1228). Emitting
+                        // this as FERROR_XFER (not FINFO) makes the peer's rwrite()
+                        // set got_xfer_error, so the run exits 23 (RERR_PARTIAL)
+                        // instead of 0 when the output mkstemp() was denied.
+                        self.warnings.push((
+                            MessageCode::ErrorXfer,
+                            format!(
+                                "rsync: [receiver] mkstemp \"{}\" failed: Permission denied (13)",
+                                path.display(),
+                            ),
                         ));
                         meta_errors.push((path, e.to_string()));
                         self.permission_error_count += 1;
@@ -237,12 +249,18 @@ impl PipelinedReceiver {
                     let pending = self.expected_checksums.pop_front();
                     if is_permission_error(&e) {
                         let path = pending.map(|p| p.file_path).unwrap_or_default();
-                        // upstream: sender.c:362 - rsyserr(FERROR_XFER, errno,
-                        // "send_files failed to open %s", full_fname(...)); full_fname()
-                        // wraps the path in double quotes (util1.c:1228).
-                        self.warnings.push(format!(
-                            "rsync: [sender] send_files failed to open \"{}\": Permission denied (13)",
-                            path.display(),
+                        // upstream: receiver.c:297 - rsyserr(FERROR_XFER, errno,
+                        // "mkstemp %s failed", full_fname(fnametmp)); full_fname()
+                        // wraps the path in double quotes (util1.c:1228). Emitting
+                        // this as FERROR_XFER (not FINFO) makes the peer's rwrite()
+                        // set got_xfer_error, so the run exits 23 (RERR_PARTIAL)
+                        // instead of 0 when the output mkstemp() was denied.
+                        self.warnings.push((
+                            MessageCode::ErrorXfer,
+                            format!(
+                                "rsync: [receiver] mkstemp \"{}\" failed: Permission denied (13)",
+                                path.display(),
+                            ),
                         ));
                         meta_errors.push((path, e.to_string()));
                         self.permission_error_count += 1;
@@ -296,18 +314,24 @@ impl PipelinedReceiver {
                     // upstream: receiver.c:965-968 -
                     // "WARNING: %s failed verification -- update %s%s.\n"
                     // with keptstr="discarded", redostr=" (will try again)".
-                    self.warnings.push(format!(
-                        "WARNING: {} failed verification -- update discarded (will try again).",
-                        pending.file_path.display(),
+                    self.warnings.push((
+                        MessageCode::Warning,
+                        format!(
+                            "WARNING: {} failed verification -- update discarded (will try again).",
+                            pending.file_path.display(),
+                        ),
                     ));
                     self.redo_indices.push(pending.file_index);
                     return Ok(());
                 }
                 // upstream: receiver.c:957-968 - phase-2 redo path (FERROR_XFER):
                 // "ERROR: %s failed verification -- update %s.\n" with keptstr="discarded".
-                self.warnings.push(format!(
-                    "ERROR: {} failed verification -- update discarded.",
-                    pending.file_path.display(),
+                self.warnings.push((
+                    MessageCode::ErrorXfer,
+                    format!(
+                        "ERROR: {} failed verification -- update discarded.",
+                        pending.file_path.display(),
+                    ),
                 ));
                 // In phase 2, upstream logs the error but continues the transfer.
                 return Ok(());
@@ -405,10 +429,12 @@ impl PipelinedReceiver {
     ///
     /// Implicitly drains remaining results. Returns the final accumulated
     /// (bytes_written, metadata_errors).
-    /// Drains accumulated warning messages from checksum verification and
-    /// permission failures. Returns them so the caller can route them through
-    /// the multiplexed protocol writer.
-    pub fn drain_warnings(&mut self) -> Vec<String> {
+    /// Drains accumulated warning/error messages from checksum verification and
+    /// permission failures. Each is paired with the upstream `rwrite()` message
+    /// code so the caller routes it through the matching multiplex frame:
+    /// `MSG_ERROR_XFER` for fatal transfer errors (setting the peer's
+    /// `got_xfer_error`), `MSG_INFO`/`MSG_WARNING` otherwise.
+    pub fn drain_warnings(&mut self) -> Vec<(MessageCode, String)> {
         std::mem::take(&mut self.warnings)
     }
 
@@ -843,6 +869,67 @@ mod tests {
     fn permission_error_count_starts_at_zero() {
         let pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
         assert_eq!(pr.permission_error_count(), 0);
+        drop(pr);
+    }
+
+    /// A failed output `mkstemp()` must surface as a `MSG_ERROR_XFER` warning,
+    /// not `MSG_INFO`. The distinction is load-bearing: the peer's `rwrite()`
+    /// only sets `got_xfer_error` (yielding exit 23, `RERR_PARTIAL`) on
+    /// `FERROR_XFER` receipt (upstream log.c:311). Routing this as `MSG_INFO`
+    /// would let a client-sender push against a read-only destination exit 0,
+    /// silently masking that no file was transferred.
+    #[cfg(unix)]
+    #[test]
+    fn output_open_failure_drains_as_error_xfer_warning() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Root bypasses the read-only dir bit, so mkstemp would succeed.
+        if std::env::var("USER").is_ok_and(|u| u == "root") {
+            return;
+        }
+
+        let dir = test_support::create_tempdir();
+        let readonly_dir = dir.path().join("readonly");
+        std::fs::create_dir(&readonly_dir).unwrap();
+        std::fs::set_permissions(&readonly_dir, PermissionsExt::from_mode(0o555)).unwrap();
+
+        let file_path = readonly_dir.join("denied.dat");
+        let mut pr = PipelinedReceiver::new(DiskCommitConfig::default()).unwrap();
+
+        pr.file_sender()
+            .send(FileMessage::WholeFile {
+                begin: Box::new(BeginMessage {
+                    file_path: file_path.clone(),
+                    target_size: 9,
+                    file_entry_index: 0,
+                    checksum_verifier: None,
+                    is_device_target: false,
+                    is_inplace: false,
+                    append_offset: 0,
+                    xattr_list: None,
+                }),
+                data: b"test data".to_vec(),
+            })
+            .unwrap();
+        pr.note_commit_sent([0u8; ChecksumVerifier::MAX_DIGEST_LEN], 0, file_path, 0);
+
+        let (_bytes, errors) = pr.drain_all_results().unwrap();
+        assert_eq!(errors.len(), 1, "one recoverable per-file error");
+
+        let warnings = pr.drain_warnings();
+        assert_eq!(warnings.len(), 1, "one warning queued for the failed open");
+        assert_eq!(
+            warnings[0].0,
+            MessageCode::ErrorXfer,
+            "output-open failure must be MSG_ERROR_XFER so the peer exits 23"
+        );
+        assert!(
+            warnings[0].1.contains("mkstemp"),
+            "message should mirror upstream receiver.c:297 \"mkstemp %s failed\": {}",
+            warnings[0].1
+        );
+
+        let _ = std::fs::set_permissions(&readonly_dir, PermissionsExt::from_mode(0o755));
         drop(pr);
     }
 
