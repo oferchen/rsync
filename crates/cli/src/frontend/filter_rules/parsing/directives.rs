@@ -80,7 +80,7 @@ pub(super) fn parse_dir_merge_alias(trimmed: &str) -> Option<Result<FilterDirect
             .trim_start_matches(|ch: char| ch == '_' || ch.is_ascii_whitespace());
     }
 
-    let (mut options, assume_cvsignore) = match parse_merge_modifiers(modifiers, trimmed, true) {
+    let (options, assume_cvsignore) = match parse_merge_modifiers(modifiers, trimmed, true) {
         Ok(result) => result,
         Err(error) => return Some(Err(error)),
     };
@@ -95,13 +95,18 @@ pub(super) fn parse_dir_merge_alias(trimmed: &str) -> Option<Result<FilterDirect
         }
     }
 
-    // upstream: exclude.c - a leading '/' on the merge filename means the
-    // file is only looked for in the transfer root directory (anchor_root).
-    // Strip the '/' so Path::join() produces a relative path, and set the
-    // anchor_root flag on options instead.
+    // upstream: exclude.c:599-617 parse_merge_name - a leading '/' on the merge
+    // FILENAME only affects where the merge file is looked up (an ancestor
+    // parent_dirscan); the '/' is stripped from the name and does NOT anchor
+    // the rules loaded from the file. Rule anchoring to the merge directory
+    // happens per-rule in add_rule (exclude.c:200-207) only when the RULE
+    // pattern itself starts with '/'. Setting anchor_root here would wrongly
+    // root-anchor every rule (e.g. `- secret*` in `d1/d2/.rsync-filter` would
+    // become `/d1/d2/secret*` and stop matching `d1/d2/d3/secret.deeper`).
+    // The '/' modifier (dir-merge,/ file) is the real anchor_root source and is
+    // handled in parse_merge_modifiers.
     if let Some(stripped) = path_text.strip_prefix('/') {
         path_text = stripped;
-        options = options.anchor_root(true);
     }
 
     Some(Ok(FilterDirective::Rule(FilterRuleSpec::dir_merge(
