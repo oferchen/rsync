@@ -40,10 +40,32 @@
 //! `mpsc::channel(64)` queues in both directions, so a stalled async reader
 //! will eventually block sync writers and vice versa. This matches how the
 //! existing system-SSH transport behaves under load.
+//!
+//! # Runtime liveness
+//!
+//! The channel-based variant is driven by a background tokio task spawned in
+//! [`into_sync_halves`]. That task owns the inbound `data_tx` sender; the sync
+//! [`SyncReader`] blocks on the matching receiver. Liveness therefore hinges
+//! on the pump task:
+//!
+//! - **Task exits / panics / runtime is dropped**: the captured `data_tx` is
+//!   dropped along with the task, so the blocking `recv` observes
+//!   all-senders-dropped and the [`SyncReader`] surfaces a clean EOF
+//!   (`Ok(0)`) rather than hanging. The outbound [`SyncWriter`] symmetrically
+//!   observes a closed receiver and surfaces [`io::ErrorKind::BrokenPipe`].
+//! - **Task wedged but alive** (deadlocked while still holding `data_tx`):
+//!   the sender is never dropped, so an unbounded blocking `recv` would hang
+//!   the sync side forever. [`SyncReader::read_with_timeout`] bounds this
+//!   residual case: a wedged runtime surfaces as an
+//!   [`io::ErrorKind::TimedOut`] transport error instead of a silent hang.
+//!   The infallible [`io::Read`] impl keeps the unbounded happy-path
+//!   behaviour; callers that need a liveness guarantee opt into the bounded
+//!   helper.
 
 use std::io;
 use std::pin::Pin;
 use std::sync::mpsc as std_mpsc;
+use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::runtime::{Builder, Runtime};
@@ -160,6 +182,60 @@ impl SyncReader {
             buffered: Vec::new(),
             offset: 0,
         }
+    }
+
+    /// Reads the next chunk of channel data, bounded by `budget`.
+    ///
+    /// This is the liveness-guarded counterpart to the infallible
+    /// [`io::Read`] impl. The plain `read` blocks on `recv` until the pump
+    /// task delivers data or drops its sender; that is correct when the pump
+    /// task is guaranteed to make progress or exit. When the async runtime
+    /// can wedge while still holding the inbound sender (a deadlocked-but-
+    /// alive pump task), `recv` would block forever. This method instead
+    /// waits at most `budget` and maps a wedged runtime to a clean
+    /// [`io::ErrorKind::TimedOut`] transport error.
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(n)` with `n` bytes written into `buf` when a chunk is available
+    ///   (draining any internally buffered remainder first, exactly like
+    ///   [`io::Read::read`]).
+    /// - `Ok(0)` when the pump task has dropped its sender (channel EOF),
+    ///   which also covers a panicked task or a dropped runtime.
+    /// - `Err(io::ErrorKind::TimedOut)` when no chunk and no disconnect are
+    ///   observed within `budget`, signalling a wedged runtime rather than a
+    ///   silent hang.
+    ///
+    /// A buffered remainder from a previous oversized chunk is served without
+    /// touching the channel, so `budget` only bounds the wait for fresh data.
+    pub fn read_with_timeout(&mut self, buf: &mut [u8], budget: Duration) -> io::Result<usize> {
+        if self.offset >= self.buffered.len() {
+            match self.rx.recv_timeout(budget) {
+                Ok(chunk) => {
+                    if chunk.is_empty() {
+                        return Ok(0);
+                    }
+                    self.buffered = chunk;
+                    self.offset = 0;
+                }
+                Err(std_mpsc::RecvTimeoutError::Disconnected) => return Ok(0),
+                Err(std_mpsc::RecvTimeoutError::Timeout) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        format!("sync bridge read stalled after {budget:?}"),
+                    ));
+                }
+            }
+        }
+        let available = &self.buffered[self.offset..];
+        let n = available.len().min(buf.len());
+        buf[..n].copy_from_slice(&available[..n]);
+        self.offset += n;
+        if self.offset >= self.buffered.len() {
+            self.buffered.clear();
+            self.offset = 0;
+        }
+        Ok(n)
     }
 }
 
@@ -364,7 +440,7 @@ pub fn into_sync_halves_with_capacity(
 mod tests {
     use super::*;
     use std::io::{Read, Write};
-    use std::time::Duration;
+    use std::time::Instant;
     use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
 
     /// `SyncAsyncBridge` round-trips bytes by driving an async echo task on
@@ -450,6 +526,79 @@ mod tests {
         let mut reader = SyncReader::new(rx);
         let mut buf = [0u8; 4];
         assert_eq!(reader.read(&mut buf).unwrap(), 0);
+    }
+
+    /// A dropped pump runtime (all senders gone) surfaces as a clean EOF
+    /// through the bounded helper too, not a `TimedOut` error and not a hang.
+    /// This models a panicked or dropped async runtime: the captured sender
+    /// dies with the task, so `recv_timeout` observes `Disconnected`.
+    #[test]
+    fn read_with_timeout_dropped_runtime_is_eof() {
+        let (tx, rx) = std_mpsc::sync_channel::<Vec<u8>>(1);
+        // Simulate the pump task dropping its sender on runtime death.
+        drop(tx);
+        let mut reader = SyncReader::new(rx);
+        let mut buf = [0u8; 8];
+        let start = Instant::now();
+        let n = reader
+            .read_with_timeout(&mut buf, Duration::from_secs(5))
+            .expect("dropped sender must surface as EOF, not error");
+        assert_eq!(n, 0, "dropped sender is EOF");
+        assert!(
+            start.elapsed() < Duration::from_secs(1),
+            "EOF must return promptly, not wait out the budget",
+        );
+    }
+
+    /// A wedged-but-alive runtime (sender held open, no data delivered)
+    /// surfaces as a bounded `TimedOut` transport error instead of hanging
+    /// the sync side forever.
+    #[test]
+    fn read_with_timeout_wedged_runtime_times_out() {
+        // Keep `tx` alive for the whole test so the receiver never observes
+        // a disconnect - this is the simulated deadlock.
+        let (_tx, rx) = std_mpsc::sync_channel::<Vec<u8>>(1);
+        let mut reader = SyncReader::new(rx);
+        let mut buf = [0u8; 8];
+
+        let budget = Duration::from_millis(50);
+        let start = Instant::now();
+        let err = reader
+            .read_with_timeout(&mut buf, budget)
+            .expect_err("wedged runtime must surface a timeout error");
+        let elapsed = start.elapsed();
+
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+        assert!(
+            elapsed >= budget,
+            "returned before budget elapsed: {elapsed:?} < {budget:?}",
+        );
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "took longer than the upper bound: {elapsed:?}",
+        );
+    }
+
+    /// The bounded helper returns available data promptly and drains
+    /// oversized chunks across calls, matching the infallible `read` path.
+    #[test]
+    fn read_with_timeout_drains_buffered_chunk() {
+        let (tx, rx) = std_mpsc::sync_channel::<Vec<u8>>(2);
+        tx.send(b"hello world".to_vec()).unwrap();
+        drop(tx);
+        let mut reader = SyncReader::new(rx);
+
+        let mut buf = [0u8; 5];
+        let n = reader
+            .read_with_timeout(&mut buf, Duration::from_secs(5))
+            .unwrap();
+        assert_eq!(&buf[..n], b"hello");
+
+        // Remainder is served from the internal buffer without touching the
+        // channel, so a zero budget still returns it.
+        let mut rest = [0u8; 6];
+        let n = reader.read_with_timeout(&mut rest, Duration::ZERO).unwrap();
+        assert_eq!(&rest[..n], b" world");
     }
 
     /// `SyncWriter` returns `BrokenPipe` once the downstream receiver is
