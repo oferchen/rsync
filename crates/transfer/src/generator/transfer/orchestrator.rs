@@ -287,6 +287,16 @@ impl GeneratorContext {
             .advance_to(TransferPhase::Complete)
             .map_err(crate::fsm_error)?;
 
+        // upstream: log.c:311 - each MSG_ERROR_XFER the peer sends sets
+        // got_xfer_error on receipt; main.c:1635 then _exit(RERR_PARTIAL).
+        // The receiver emits MSG_ERROR_XFER when it cannot open a file's output
+        // (e.g. mkstemp() denied by a read-only destination dir) and discards
+        // the delta. Fold that into io_error so this sender/generator reports
+        // exit 23 instead of a false success.
+        if reader.xfer_error_count() > 0 {
+            self.add_io_error(super::super::io_error_flags::IOERR_GENERAL);
+        }
+
         // upstream: handle_stats() reports stats.total_size, the sum of all
         // flist file sizes (main.c:351 write_varlong30(f, stats.total_size, 3)).
         let total_size = self.file_list.iter().map(|e| e.size()).sum();

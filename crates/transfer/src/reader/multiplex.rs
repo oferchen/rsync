@@ -141,6 +141,20 @@ impl<R> MultiplexReader<R> {
         std::mem::take(&mut self.io_error)
     }
 
+    /// Returns the count of `MSG_ERROR_XFER` frames received so far.
+    ///
+    /// A non-zero count is upstream's `got_xfer_error`: the peer reported a
+    /// per-file transfer error (e.g. a failed output `mkstemp()`), so the run
+    /// must terminate with `RERR_PARTIAL` (exit 23) rather than success.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `log.c:311`: receipt of `FERROR_XFER` sets `got_xfer_error = 1`
+    /// - `main.c:1635`: `if (got_xfer_error) _exit(RERR_PARTIAL);`
+    pub(super) fn xfer_error_count(&self) -> u32 {
+        self.xfer_error_count
+    }
+
     /// Returns and drains the accumulated `MSG_NO_SEND` file indices.
     ///
     /// # Upstream Reference

@@ -179,6 +179,25 @@ impl<R: Read> ServerReader<R> {
         }
     }
 
+    /// Returns the count of `MSG_ERROR_XFER` frames received from the peer.
+    ///
+    /// A non-zero count is upstream's `got_xfer_error`: the peer reported a
+    /// per-file transfer error (e.g. a failed output `mkstemp()` on the
+    /// receiver), so the run must exit with `RERR_PARTIAL` (23). Plain-mode
+    /// readers never carry multiplexed frames and return 0.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `log.c:311`: receipt of `FERROR_XFER` sets `got_xfer_error = 1`
+    /// - `main.c:1635`: `if (got_xfer_error) _exit(RERR_PARTIAL);`
+    pub fn xfer_error_count(&mut self) -> u32 {
+        match &mut self.inner {
+            ServerReaderInner::Multiplex(mux) => mux.xfer_error_count(),
+            ServerReaderInner::Compressed(compressed) => compressed.get_mut().xfer_error_count(),
+            ServerReaderInner::Plain(_) => 0,
+        }
+    }
+
     /// Returns and drains accumulated `MSG_NO_SEND` file indices from the sender.
     ///
     /// When the sender cannot open a file it was asked to transfer, it sends

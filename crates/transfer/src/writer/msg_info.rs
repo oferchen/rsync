@@ -29,6 +29,24 @@ pub trait MsgInfoSender {
     fn send_msg_info(&mut self, _data: &[u8]) -> io::Result<()> {
         Ok(())
     }
+
+    /// Sends a `MSG_ERROR_XFER` frame through the multiplexed output stream.
+    ///
+    /// Mirrors upstream `rsyserr(FERROR_XFER, ...)`: the peer's `rwrite()`
+    /// sets `got_xfer_error = 1` on receipt, so the transfer terminates with
+    /// `RERR_PARTIAL` (exit 23) rather than success. Used by the receiver to
+    /// report per-file transfer errors (e.g. a failed output `mkstemp()`) that
+    /// force the incoming delta to be discarded.
+    ///
+    /// The default implementation is a no-op, matching [`Self::send_msg_info`].
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `receiver.c:297` - `rsyserr(FERROR_XFER, errno, "mkstemp %s failed", ...)`
+    /// - `log.c:311` - receipt of `FERROR_XFER` sets `got_xfer_error = 1`
+    fn send_msg_error_xfer(&mut self, _data: &[u8]) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 impl<W: Write> MsgInfoSender for ServerWriter<W> {
@@ -41,16 +59,32 @@ impl<W: Write> MsgInfoSender for ServerWriter<W> {
             Ok(())
         }
     }
+
+    fn send_msg_error_xfer(&mut self, data: &[u8]) -> io::Result<()> {
+        if self.is_multiplexed() {
+            self.send_message(MessageCode::ErrorXfer, data)
+        } else {
+            Ok(())
+        }
+    }
 }
 
 impl<T: MsgInfoSender + ?Sized> MsgInfoSender for &mut T {
     fn send_msg_info(&mut self, data: &[u8]) -> io::Result<()> {
         (**self).send_msg_info(data)
     }
+
+    fn send_msg_error_xfer(&mut self, data: &[u8]) -> io::Result<()> {
+        (**self).send_msg_error_xfer(data)
+    }
 }
 
 impl<W: MsgInfoSender> MsgInfoSender for CountingWriter<W> {
     fn send_msg_info(&mut self, data: &[u8]) -> io::Result<()> {
         self.inner_ref_mut().send_msg_info(data)
+    }
+
+    fn send_msg_error_xfer(&mut self, data: &[u8]) -> io::Result<()> {
+        self.inner_ref_mut().send_msg_error_xfer(data)
     }
 }
