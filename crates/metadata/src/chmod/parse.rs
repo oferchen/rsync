@@ -7,8 +7,8 @@
 use super::{
     ChmodError,
     spec::{
-        Clause, ClauseKind, NumericClause, Operation, PermSpec, SymbolicClause, TargetSelector,
-        WhoMask,
+        Clause, ClauseKind, CopySource, NumericClause, Operation, PermSpec, SymbolicClause,
+        TargetSelector, WhoMask,
     },
 };
 
@@ -145,22 +145,49 @@ fn parse_perm_spec(perms: &str, op: Operation) -> Result<PermSpec, ChmodError> {
         ));
     }
 
-    // upstream: chmod.c:parse_chmod() STATE_2ND_HALF - the permission letters
-    // are exactly `r`, `w`, `x`, `X`, `s`, `t`. Anything else (including the
-    // who-class letters `u`/`g`/`o`/`a` and uppercase `R`/`W`/`S`/`T`) is
-    // rejected via STATE_ERROR. rsync has no GNU-style "copy permissions"
-    // form, so `g=ur` must be an error rather than a copy directive.
+    // upstream: chmod.c:parse_chmod() STATE_2ND_HALF. Two mutually exclusive
+    // right-hand-side forms exist:
+    //   1. literal permission letters `r`, `w`, `x`, `X`, `s`, `t`;
+    //   2. a single who-letter `u`, `g`, or `o` selecting a "copy permissions"
+    //      source (e.g. `g=u` copies the user bits onto the group).
+    // The two forms cannot be mixed: once literal bits (`what`/`topoct`) are
+    // set, a following who-letter is an error, and once a copy source
+    // (`copybits`) is set, any further letter is an error. Uppercase
+    // `R`/`W`/`S`/`T` are never permission letters. This mirrors the
+    // STATE_ERROR transitions guarded by the `copybits`/`what`/`topoct`
+    // checks in the C source.
+    let mut has_perm_bits = false;
     for ch in perms.chars() {
         match ch {
-            'r' => spec.read = true,
-            'w' => spec.write = true,
-            'x' => spec.exec = true,
-            'X' => spec.exec_if_conditional = true,
-            's' => {
-                spec.setuid = true;
-                spec.setgid = true;
+            'r' | 'w' | 'x' | 'X' | 's' | 't' => {
+                if spec.copy_source.is_some() {
+                    return Err(ChmodError::new(format!("unsupported chmod token '{ch}'")));
+                }
+                match ch {
+                    'r' => spec.read = true,
+                    'w' => spec.write = true,
+                    'x' => spec.exec = true,
+                    'X' => spec.exec_if_conditional = true,
+                    's' => {
+                        spec.setuid = true;
+                        spec.setgid = true;
+                    }
+                    't' => spec.sticky = true,
+                    _ => unreachable!(),
+                }
+                has_perm_bits = true;
             }
-            't' => spec.sticky = true,
+            'u' | 'g' | 'o' => {
+                if has_perm_bits || spec.copy_source.is_some() {
+                    return Err(ChmodError::new(format!("unsupported chmod token '{ch}'")));
+                }
+                spec.copy_source = Some(match ch {
+                    'u' => CopySource::User,
+                    'g' => CopySource::Group,
+                    'o' => CopySource::Other,
+                    _ => unreachable!(),
+                });
+            }
             _ => return Err(ChmodError::new(format!("unsupported chmod token '{ch}'"))),
         }
     }
@@ -459,13 +486,32 @@ mod tests {
     }
 
     #[test]
-    fn parse_perm_spec_who_letters_rejected() {
-        // upstream: chmod.c:parse_chmod() STATE_2ND_HALF rejects the who-class
-        // letters u/g/o/a as permission bits. rsync has no GNU "copy" form.
-        assert!(parse_perm_spec("u", Operation::Add).is_err());
-        assert!(parse_perm_spec("g", Operation::Add).is_err());
-        assert!(parse_perm_spec("o", Operation::Add).is_err());
+    fn parse_perm_spec_copy_source_letters() {
+        // upstream: chmod.c:parse_chmod() STATE_2ND_HALF accepts a single
+        // `u`/`g`/`o` who-letter on the RHS as a permission-copy source
+        // (`copybits`). `a` is not a valid copy source and errors out.
+        assert_eq!(
+            parse_perm_spec("u", Operation::Add).unwrap().copy_source,
+            Some(CopySource::User)
+        );
+        assert_eq!(
+            parse_perm_spec("g", Operation::Add).unwrap().copy_source,
+            Some(CopySource::Group)
+        );
+        assert_eq!(
+            parse_perm_spec("o", Operation::Add).unwrap().copy_source,
+            Some(CopySource::Other)
+        );
         assert!(parse_perm_spec("a", Operation::Add).is_err());
+    }
+
+    #[test]
+    fn parse_perm_spec_copy_source_cannot_mix_with_bits() {
+        // upstream: once `copybits` is set, any further letter -> STATE_ERROR;
+        // and once literal bits (`what`) are set, a who-letter -> STATE_ERROR.
+        assert!(parse_perm_spec("ur", Operation::Assign).is_err());
+        assert!(parse_perm_spec("ru", Operation::Assign).is_err());
+        assert!(parse_perm_spec("ug", Operation::Assign).is_err());
     }
 
     #[test]
@@ -700,14 +746,22 @@ mod tests {
 
     #[test]
     fn upstream_g_eq_ur_is_rejected() {
-        // upstream: chmod.c:parse_chmod() STATE_2ND_HALF sees `u` after `g=`
-        // and transitions to STATE_ERROR, so parse_chmod returns NULL. rsync
-        // rejects `g=ur`; oc-rsync must not silently accept it as a copy form.
+        // upstream: chmod.c:parse_chmod() STATE_2ND_HALF sets `copybits` on the
+        // `u`, then sees `r` while `copybits` is set and transitions to
+        // STATE_ERROR (a copy source cannot be combined with literal bits).
+        // rsync rejects `g=ur` and the `u+ur` variant with exit 1.
         assert!(parse_spec("g=ur").is_err());
-        // Equivalent who-letter-in-RHS mixes are likewise rejected.
-        assert!(parse_spec("u+g").is_err());
-        assert!(parse_spec("o=g").is_err());
-        assert!(parse_spec("a=u").is_err());
+        assert!(parse_spec("u+ur").is_err());
+    }
+
+    #[test]
+    fn upstream_who_letter_copy_forms_parse() {
+        // upstream: `g=u`, `o=g`, `a=u`, `u+g` are all valid permission-copy
+        // directives accepted by parse_chmod (verified against rsync 3.4.x
+        // which exits 0 for each).
+        for spec in ["g=u", "o=g", "a=u", "u+g", "g=o,o=", "g-o", "o=u"] {
+            parse_spec(spec).unwrap_or_else(|_| panic!("`{spec}` must parse"));
+        }
     }
 
     #[test]
