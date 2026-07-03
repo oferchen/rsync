@@ -118,6 +118,13 @@ jobs:
             --features tokio-transfer \
             -E 'test(receive_file_list_async_matches_sync) | test(receive_extra_file_lists_async_matches_sync)'
 
+      - name: Run sync vs async sender-attrs (read_ndx_and_attrs) parity tests
+        run: |
+          cargo nextest run --locked \
+            -p transfer \
+            --features tokio-transfer \
+            -E 'test(sender_attrs_read_async_matches_sync)'
+
   async-equivalence:
     name: async-vs-default transfer equivalence (stable)
     runs-on: ubuntu-latest
