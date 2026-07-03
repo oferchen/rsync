@@ -6,7 +6,7 @@
 //! functions ([`crate::sendfile::send_file_to_fd`] on unix,
 //! `crate::iocp::try_transmit_file` on Windows). The seam exists so
 //! follow-on work can plug in alternative implementations (test doubles,
-//! a Windows `TransmitFile` probe, future kTLS / SEND_ZC dispatch) at the
+//! a Windows `TransmitFile` probe, a future SEND_ZC dispatch) at the
 //! call site without touching the producers.
 //!
 //! # Scope

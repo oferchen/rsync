@@ -452,8 +452,8 @@ pub const fn tcp_quickack_supported() -> bool {
 ///
 /// `TCP_QUICKACK` is one-shot on Linux: the kernel re-enables delayed ACKs
 /// after the next ACK. Call this before each blocking read in a multi-round
-/// handshake so every round's ACK stays immediate. `None` (TLS, connect
-/// program, or stdio transports) and non-Linux platforms are no-ops,
+/// handshake so every round's ACK stays immediate. `None` (connect
+/// program or stdio transports) and non-Linux platforms are no-ops,
 /// matching the best-effort apply pattern of the other helpers here.
 pub fn rearm_tcp_quickack(stream: Option<&TcpStream>) {
     if let Some(stream) = stream {

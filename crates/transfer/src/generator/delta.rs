@@ -83,7 +83,7 @@ pub(super) const LARGE_FILE_WARNING_THRESHOLD: u64 = 8 * 1024 * 1024 * 1024; // 
 /// engage a zero-copy file->socket path (sendfile / TransmitFile / splice).
 ///
 /// Passed as `Option<ServeFds>`: `None` for transports without a usable fd pair
-/// (SSH pipe, stdio, TLS) or callers that never touch a socket (tests). When the
+/// (SSH pipe or stdio) or callers that never touch a socket (tests). When the
 /// source is a plain `File` but the socket fd is not reachable through the writer
 /// abstraction, `dst_fd` is `None` and the source fd is still surfaced so the
 /// future gate can decide.
@@ -98,7 +98,7 @@ pub(super) struct ServeFds {
     #[cfg(unix)]
     pub src_fd: std::os::fd::RawFd,
     /// Raw descriptor of the destination socket, when the writer wraps a
-    /// concrete `TcpStream`. `None` for pipe/stdio/TLS writers or any writer
+    /// concrete `TcpStream`. `None` for pipe/stdio writers or any writer
     /// that erases its fd behind `dyn Write`.
     #[cfg(unix)]
     pub dst_fd: Option<std::os::fd::RawFd>,

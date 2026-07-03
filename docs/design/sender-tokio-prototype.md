@@ -24,9 +24,8 @@ Covers:
   async.
 - Sender-side INC_RECURSE segment scheduling under tokio.
 
-Out of scope: daemon TLS handshake, SSH transport layer (covered by
-ASY-3 boundary 12), receiver-side changes (ASY-7.a), and the ASY-12
-flip-to-on gate.
+Out of scope: SSH transport layer (covered by ASY-3 boundary 12),
+receiver-side changes (ASY-7.a), and the ASY-12 flip-to-on gate.
 
 ## 2. Current sender architecture
 

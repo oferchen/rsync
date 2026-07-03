@@ -2,8 +2,6 @@ mod direct;
 mod program;
 mod proxy;
 mod rsh;
-#[cfg(feature = "client-tls")]
-pub(crate) mod tls;
 
 use std::ffi::OsStr;
 use std::io::{self, IoSlice, Read, Write};
@@ -168,8 +166,7 @@ impl Write for DaemonStreamWriter {
 /// Opens a plain TCP connection to a daemon.
 ///
 /// Respects `RSYNC_CONNECT_PROG` and `RSYNC_PROXY` environment
-/// variables. For TLS-wrapped connections, use
-/// [`open_daemon_stream_tls`] instead.
+/// variables.
 pub(crate) fn open_daemon_stream(
     addr: &DaemonAddress,
     connect_timeout: Option<Duration>,
@@ -200,52 +197,6 @@ pub(crate) fn open_daemon_stream(
     Ok(DaemonStream::tcp(stream))
 }
 
-/// Opens a connection to a daemon and wraps it in TLS.
-///
-/// Establishes the TCP connection identically to [`open_daemon_stream`],
-/// then performs a TLS handshake using the provided connector. The
-/// hostname from `addr` is passed as the SNI server name.
-#[cfg(feature = "client-tls")]
-pub(super) fn open_daemon_stream_tls(
-    addr: &DaemonAddress,
-    connect_timeout: Option<Duration>,
-    io_timeout: Option<Duration>,
-    address_mode: AddressMode,
-    bind_address: Option<SocketAddr>,
-    tfo: TcpFastOpenMode,
-    connector: &tls::TlsConnector,
-) -> Result<DaemonStream, ClientError> {
-    use crate::client::socket_error;
-
-    let stream = match load_daemon_proxy()? {
-        Some(proxy) => {
-            proxy::connect_via_proxy(addr, &proxy, connect_timeout, io_timeout, bind_address, tfo)?
-        }
-        None => connect_direct(
-            addr,
-            connect_timeout,
-            io_timeout,
-            address_mode,
-            bind_address,
-            tfo,
-        )?,
-    };
-
-    // Apply the NOTSENT_LOWAT send-buffer watermark on the raw TCP socket
-    // before wrapping it in TLS. The plain-TCP path sets this via
-    // apply_client_tcp_perf_options, but the TLS path bypassed it. rustls
-    // operates on the same fd transparently, so the kernel hint still governs
-    // the encrypted byte stream. Best-effort: a failure or an unsupported
-    // platform is a silent no-op (NBUF-3).
-    let _ = fast_io::set_tcp_notsent_lowat(&stream, fast_io::DEFAULT_TCP_NOTSENT_LOWAT);
-
-    let tls_stream = connector
-        .wrap(stream, addr.host())
-        .map_err(|e| socket_error("TLS handshake with", addr.socket_addr_display(), e))?;
-
-    Ok(DaemonStream::Tls(Box::new(tls_stream)))
-}
-
 pub(crate) const fn resolve_connect_timeout(
     connect_timeout: TransferTimeout,
     fallback: TransferTimeout,
@@ -264,19 +215,13 @@ pub(crate) const fn resolve_connect_timeout(
 
 /// Bidirectional stream to an rsync daemon.
 ///
-/// Abstracts over the underlying transport: plain TCP, a connect program
-/// (`RSYNC_CONNECT_PROG`), or a TLS-wrapped TCP connection (when the
-/// `client-tls` feature is enabled).
+/// Abstracts over the underlying transport: plain TCP or a connect program
+/// (`RSYNC_CONNECT_PROG`).
 pub(crate) enum DaemonStream {
     /// Plain TCP connection.
     Tcp(TcpStream),
     /// Connection via an external connect program.
     Program(ConnectProgramStream),
-    /// TLS-wrapped TCP connection (requires `client-tls` feature).
-    ///
-    /// Boxed to avoid inflating the enum size for the common non-TLS path.
-    #[cfg(feature = "client-tls")]
-    Tls(Box<tls::TlsStream>),
 }
 
 impl DaemonStream {
@@ -303,13 +248,11 @@ impl DaemonStream {
 
     /// Returns a reference to the underlying `TcpStream` if this is a TCP
     /// connection. Used for applying socket-level options that only apply
-    /// to real sockets (not connect programs or TLS).
+    /// to real sockets (not connect programs).
     pub(crate) fn as_tcp_stream(&self) -> Option<&TcpStream> {
         match self {
             Self::Tcp(stream) => Some(stream),
             Self::Program(_) => None,
-            #[cfg(feature = "client-tls")]
-            Self::Tls(_) => None,
         }
     }
 
@@ -343,18 +286,13 @@ impl DaemonStream {
                     DaemonStreamGuard::Child(parts.child),
                 ))
             }
-            #[cfg(feature = "client-tls")]
-            Self::Tls(_) => Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "TLS stream split not yet supported",
-            )),
         }
     }
 
     /// Configures TCP-specific socket options for the transfer phase.
     ///
     /// Sets TCP_NODELAY and applies read/write timeouts. No-op for
-    /// non-TCP transports (connect programs, TLS).
+    /// non-TCP transports (connect programs).
     pub(crate) fn configure_transfer_options(
         &self,
         nodelay: bool,
@@ -396,8 +334,6 @@ impl Read for DaemonStream {
         match self {
             Self::Tcp(stream) => stream.read(buf),
             Self::Program(stream) => stream.read(buf),
-            #[cfg(feature = "client-tls")]
-            Self::Tls(stream) => stream.read(buf),
         }
     }
 }
@@ -407,8 +343,6 @@ impl Write for DaemonStream {
         match self {
             Self::Tcp(stream) => stream.write(buf),
             Self::Program(stream) => stream.write(buf),
-            #[cfg(feature = "client-tls")]
-            Self::Tls(stream) => stream.write(buf),
         }
     }
 
@@ -416,8 +350,6 @@ impl Write for DaemonStream {
         match self {
             Self::Tcp(stream) => stream.flush(),
             Self::Program(stream) => stream.flush(),
-            #[cfg(feature = "client-tls")]
-            Self::Tls(stream) => stream.flush(),
         }
     }
 }

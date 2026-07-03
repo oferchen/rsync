@@ -184,11 +184,6 @@ bin[iocp] -> transfer/iocp -> fast_io/iocp
 bin[iocp] -> fast_io/iocp
 ```
 
-### client-tls (TLS for rsync:// connections)
-```
-bin[client-tls] -> core/client-tls (dep:rustls, dep:rustls-pemfile, dep:webpki-roots)
-```
-
 ### zstd / lz4 / zlib-ng (compression)
 ```
 bin[zstd] -> core/zstd -> engine/zstd + compress/zstd + transfer/zstd + protocol/zstd
