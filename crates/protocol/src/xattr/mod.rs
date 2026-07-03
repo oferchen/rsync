@@ -40,7 +40,7 @@ mod wire;
 pub use cache::XattrCache;
 pub use entry::{XattrEntry, XattrState};
 pub use list::XattrList;
-pub use prefix::{local_to_wire, wire_to_local};
+pub use prefix::{is_rsync_internal, local_to_wire, wire_to_local};
 pub use wire::{
     RecvXattrResult, XattrDefinition, XattrSet, checksum_matches, read_xattr_definitions,
     recv_xattr, recv_xattr_request, recv_xattr_values, send_sender_xattr_response, send_xattr,

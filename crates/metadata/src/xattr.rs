@@ -187,7 +187,52 @@ pub fn strip_source_xattrs(
     Ok(())
 }
 
+/// Reports whether the transferable extended attributes of `a` and `b` match.
+///
+/// Mirrors upstream `xattrs.c:xattrs_differ()` (consumed by `unchanged_attrs`):
+/// only the attributes that participate in an `-X` transfer are compared - the
+/// rsync-internal `rsync.%*` channel and namespaces the current privilege level
+/// cannot access are excluded (`list_attributes` already applies the namespace
+/// filter). Used by the `--link-dest` match-level check to decide whether a
+/// basis file's xattrs already equal the source's.
+// upstream: xattrs.c xattrs_differ() via generator.c:468 unchanged_attrs()
+pub fn xattrs_match(a: &Path, b: &Path, follow_symlinks: bool) -> Result<bool, MetadataError> {
+    let mut a_map: std::collections::BTreeMap<Vec<u8>, Vec<u8>> = std::collections::BTreeMap::new();
+    for name in list_attributes(a, follow_symlinks)? {
+        if protocol::xattr::is_rsync_internal(&String::from_utf8_lossy(&name)) {
+            continue;
+        }
+        if let Some(value) = read_attribute(a, &name, follow_symlinks)? {
+            a_map.insert(name, value);
+        }
+    }
+
+    let mut b_count = 0usize;
+    for name in list_attributes(b, follow_symlinks)? {
+        if protocol::xattr::is_rsync_internal(&String::from_utf8_lossy(&name)) {
+            continue;
+        }
+        let Some(value) = read_attribute(b, &name, follow_symlinks)? else {
+            continue;
+        };
+        match a_map.get(&name) {
+            Some(a_value) if *a_value == value => b_count += 1,
+            _ => return Ok(false),
+        }
+    }
+
+    Ok(b_count == a_map.len())
+}
+
 /// Synchronises the extended attributes from `source` to `destination`.
+///
+/// The rsync-internal `rsync.%*` attributes (the fake-super `%stat`/`%aacl`/
+/// `%dacl` channel) are excluded from both the copy and the delete pass: a
+/// local single-`-X` copy is upstream's `am_sender && preserve_xattrs < 2`
+/// case, which never transfers them as -X data. Excluding them from the delete
+/// pass also protects the `%stat` that the fake-super metadata step writes on
+/// the destination independently of the xattr transfer.
+// upstream: xattrs.c:259-267 rsync_xal_get() - rsync.%FOO skipped for the sender.
 pub fn sync_xattrs(
     source: &Path,
     destination: &Path,
@@ -198,8 +243,14 @@ pub fn sync_xattrs(
     let mut retained: HashSet<Vec<u8>> = HashSet::with_capacity(source_attrs.len());
 
     for name in &source_attrs {
+        let name_str = String::from_utf8_lossy(name);
+        // upstream: xattrs.c:261 - rsync's own metadata channel is never copied.
+        if protocol::xattr::is_rsync_internal(&name_str) {
+            retained.insert(name.clone());
+            continue;
+        }
         retained.insert(name.clone());
-        let allow = filter.is_none_or(|predicate| predicate(&String::from_utf8_lossy(name)));
+        let allow = filter.is_none_or(|predicate| predicate(&name_str));
 
         if !allow {
             continue;
@@ -218,7 +269,14 @@ pub fn sync_xattrs(
             continue;
         }
 
-        let allow = filter.is_none_or(|predicate| predicate(&String::from_utf8_lossy(name)));
+        let name_str = String::from_utf8_lossy(name);
+        // Never delete rsync's own metadata channel (fake-super %stat/%aacl/%dacl):
+        // it is managed separately and is not part of the -X data set.
+        if protocol::xattr::is_rsync_internal(&name_str) {
+            continue;
+        }
+
+        let allow = filter.is_none_or(|predicate| predicate(&name_str));
 
         if allow {
             remove_attribute(destination, name, follow_symlinks)?;
@@ -543,6 +601,44 @@ mod tests {
         );
     }
 
+    // upstream: xattrs.c xattrs_differ() - a changed value or a missing/extra
+    // transferable attr means the pair differs; the rsync.%* channel is ignored.
+    #[test]
+    fn xattrs_match_detects_value_and_membership_differences() {
+        let dir = tempdir().expect("create temp dir");
+        let a = dir.path().join("a.txt");
+        let b = dir.path().join("b.txt");
+        fs::write(&a, "a").expect("write a");
+        fs::write(&b, "b").expect("write b");
+
+        if !xattrs_supported(&a) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        let name = test_xattr_name("nice");
+        write_attribute(&a, &name, b"this is nice, but different", false).expect("write a nice");
+        write_attribute(&b, &name, b"this is nice", false).expect("write b nice");
+        assert!(!xattrs_match(&a, &b, false).expect("compare differing values"));
+
+        // Equal values -> match.
+        write_attribute(&b, &name, b"this is nice, but different", false).expect("update b nice");
+        assert!(xattrs_match(&a, &b, false).expect("compare equal values"));
+
+        // An extra rsync-internal attr on either side is ignored.
+        let stat_name: Vec<u8> = if cfg!(target_os = "linux") {
+            b"user.rsync.%stat".to_vec()
+        } else {
+            b"rsync.%stat".to_vec()
+        };
+        if write_attribute(&b, &stat_name, b"100644 0,0 1:1", false).is_ok() {
+            assert!(
+                xattrs_match(&a, &b, false).expect("compare ignoring %stat"),
+                "rsync.%stat must not affect the xattr match"
+            );
+        }
+    }
+
     #[test]
     fn sync_xattrs_removes_extra_dest_attributes() {
         let dir = tempdir().expect("create temp dir");
@@ -577,6 +673,50 @@ mod tests {
             read_attribute(&destination, &attr2, false)
                 .expect("read")
                 .is_none()
+        );
+    }
+
+    // upstream: xattrs.c:259-267 - the rsync.%stat fake-super channel is never
+    // part of the -X data set. It must not be copied from the source, and a
+    // fake-super-written %stat already on the destination must survive the
+    // delete pass. Regression guard for the `xattrs` conformance test's
+    // `--fake-super --chmod=a=` leg.
+    #[test]
+    fn sync_xattrs_leaves_rsync_internal_stat_untouched() {
+        let dir = tempdir().expect("create temp dir");
+        let source = dir.path().join("source.txt");
+        let destination = dir.path().join("dest.txt");
+        fs::write(&source, "source").expect("write source");
+        fs::write(&destination, "dest").expect("write dest");
+
+        if !xattrs_supported(&source) {
+            eprintln!("xattrs not supported, skipping test");
+            return;
+        }
+
+        let stat_name: Vec<u8> = if cfg!(target_os = "linux") {
+            b"user.rsync.%stat".to_vec()
+        } else {
+            b"rsync.%stat".to_vec()
+        };
+
+        // Source carries a stale %stat; destination carries the fake-super one.
+        if write_attribute(&source, &stat_name, b"100644 0,0 1:1", false).is_err() {
+            eprintln!("rsync.%stat namespace not writable, skipping");
+            return;
+        }
+        write_attribute(&destination, &stat_name, b"100000 0,0 2:2", false)
+            .expect("write dest %stat");
+
+        sync_xattrs(&source, &destination, false, None).expect("sync");
+
+        // The destination's fake-super %stat must be preserved verbatim - not
+        // overwritten by the source copy nor deleted by the removal pass.
+        assert_eq!(
+            read_attribute(&destination, &stat_name, false)
+                .expect("read")
+                .expect("dest %stat survives"),
+            b"100000 0,0 2:2",
         );
     }
 
