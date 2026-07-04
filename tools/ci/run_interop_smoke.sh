@@ -116,6 +116,52 @@ touch -t 202001010000 "${src}/random.bin"
 pass() { echo "PASS: $*"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+# Run a wire-transfer client command with bounded retry on the daemon's
+# "max connections ... try again later" reply.
+#
+# The rsync daemon caps concurrent clients with `max connections` and holds
+# each slot via a POSIX record lock on its lock file (see upstream
+# connection.c:claim_connection). That lock is released only when the child
+# process serving the previous connection fully exits. This harness fires ~15
+# client scenarios back-to-back against the same max=4 daemon within a
+# sub-second window. On a fast host every child exits inside the inter-scenario
+# gap, but on a slow CI runner a just-finished child can still be tearing down
+# (releasing its lock) when the next scenario connects, so the daemon replies
+# `@ERROR: max connections (4) reached -- try again later` and the client exits
+# non-zero. This is inherent slot-release lag, not a client bug: an upstream
+# rsync client contending for the same slots is rejected identically (verified
+# by running 6 parallel clients against a max=4 daemon - upstream rsync and
+# oc-rsync hit the limit an equal number of times). The "try again later"
+# wording is an explicit invitation to retry, exactly what a real client does,
+# so we retry a few times with a short backoff before failing.
+#
+# Combined stdout+stderr is streamed to this function's stdout so callers that
+# capture output with `$(run_wire ...)` keep working. Returns the command's
+# exit code (0 on eventual success, non-zero on non-retryable failure or after
+# the retry budget is exhausted).
+run_wire() {
+  local attempt=1
+  local max_attempts=5
+  local out rc
+  while true; do
+    out="$("$@" 2>&1)"
+    rc=$?
+    if [[ ${rc} -eq 0 ]]; then
+      printf '%s' "${out}"
+      return 0
+    fi
+    if printf '%s' "${out}" | grep -q 'max connections' \
+       && (( attempt < max_attempts )); then
+      echo "retry ${attempt}/${max_attempts}: daemon slot busy (max connections), backing off" >&2
+      sleep "$(awk "BEGIN{print 0.3 * ${attempt}}")"
+      attempt=$(( attempt + 1 ))
+      continue
+    fi
+    printf '%s' "${out}"
+    return "${rc}"
+  done
+}
+
 # Portable directory-tree diff. macOS/BSD `diff -r` works the same as
 # GNU `diff -r` for content comparison.
 tree_diff() {
@@ -232,7 +278,8 @@ else
 fi
 
 if [[ "${up_daemon_available}" == "true" ]]; then
-  "${OC_RSYNC}" -a "${src}/" "${up_url}/"
+  run_wire "${OC_RSYNC}" -a "${src}/" "${up_url}/" \
+    || fail "oc-rsync client / upstream daemon push failed"
   tree_diff "${src}" "${workdir}/data-up" \
     || fail "oc-rsync client / upstream daemon diverged (push)"
   pass "oc-rsync client -> upstream daemon (push)"
@@ -242,7 +289,8 @@ fi
 
 # --- Scenario 3: oc-rsync client pulls from upstream daemon -------------
 if [[ "${up_daemon_available}" == "true" ]]; then
-  "${OC_RSYNC}" -a "${up_url}/" "${dst_oc_pull}/"
+  run_wire "${OC_RSYNC}" -a "${up_url}/" "${dst_oc_pull}/" \
+    || fail "oc-rsync client / upstream daemon pull failed"
   tree_diff "${src}" "${dst_oc_pull}" \
     || fail "oc-rsync client / upstream daemon diverged (pull)"
   pass "oc-rsync client <- upstream daemon (pull)"
@@ -263,13 +311,15 @@ else
   # --- Scenario 4: upstream client pushes into oc-rsync daemon ----------
   oc_port="$(start_daemon "${OC_RSYNC}" oc oc_pid)"
   oc_url="rsync://127.0.0.1:${oc_port}/data"
-  "${UPSTREAM_RSYNC}" -a "${src}/" "${oc_url}/"
+  run_wire "${UPSTREAM_RSYNC}" -a "${src}/" "${oc_url}/" \
+    || fail "upstream client / oc-rsync daemon push failed"
   tree_diff "${src}" "${workdir}/data-oc" \
     || fail "upstream client / oc-rsync daemon diverged (push)"
   pass "upstream client -> oc-rsync daemon (push)"
 
   # --- Scenario 5: upstream client pulls from oc-rsync daemon -----------
-  "${UPSTREAM_RSYNC}" -a "${oc_url}/" "${dst_oc_push}/"
+  run_wire "${UPSTREAM_RSYNC}" -a "${oc_url}/" "${dst_oc_push}/" \
+    || fail "upstream client / oc-rsync daemon pull failed"
   tree_diff "${src}" "${dst_oc_push}" \
     || fail "upstream client / oc-rsync daemon diverged (pull)"
   pass "upstream client <- oc-rsync daemon (pull)"
@@ -279,7 +329,7 @@ fi
 # Re-running the push should be a no-op. We look at --stats output for
 # `Total transferred file size: 0 bytes` from oc-rsync.
 if [[ "${up_daemon_available}" == "true" ]]; then
-  out="$("${OC_RSYNC}" -a --stats "${src}/" "${up_url}/" 2>&1)"
+  out="$(run_wire "${OC_RSYNC}" -a --stats "${src}/" "${up_url}/")"
   if ! printf '%s\n' "${out}" \
        | grep -qE 'Total transferred file size: 0( bytes)?'; then
     printf '%s\n' "${out}" >&2
@@ -298,7 +348,8 @@ printf 'X' | dd of="${modified}/random.bin" bs=1 count=1 conv=notrunc \
   seek=1024 >/dev/null 2>&1
 
 if [[ "${up_daemon_available}" == "true" ]]; then
-  "${OC_RSYNC}" -a "${modified}/" "${up_url}/"
+  run_wire "${OC_RSYNC}" -a "${modified}/" "${up_url}/" \
+    || fail "delta update push (oc-rsync -> upstream) failed"
   tree_diff "${modified}" "${workdir}/data-up" \
     || fail "delta update push (oc-rsync -> upstream) diverged"
   pass "delta update: oc-rsync client -> upstream daemon"
@@ -309,7 +360,8 @@ fi
 if [[ "${host_os}" == "windows" ]]; then
   echo "SKIP: delta update upstream -> oc-rsync daemon (oc-rsync daemon unsupported on Windows)"
 else
-  "${UPSTREAM_RSYNC}" -a "${modified}/" "${oc_url}/"
+  run_wire "${UPSTREAM_RSYNC}" -a "${modified}/" "${oc_url}/" \
+    || fail "delta update push (upstream -> oc-rsync) failed"
   tree_diff "${modified}" "${workdir}/data-oc" \
     || fail "delta update push (upstream -> oc-rsync) diverged"
   pass "delta update: upstream client -> oc-rsync daemon"
@@ -360,7 +412,7 @@ run_extended_scenario() {
   if [[ "${up_daemon_available}" == "true" ]]; then
     reset_module_data "up"
     # shellcheck disable=SC2086
-    "${OC_RSYNC}" ${flags} "${scenario_src}/" "${up_url}/" 2>&1 || {
+    run_wire "${OC_RSYNC}" ${flags} "${scenario_src}/" "${up_url}/" || {
       fail "${name}: oc-rsync -> upstream daemon (exit $?)"
     }
     if [[ -n "${compare_fn}" ]]; then
@@ -379,7 +431,7 @@ run_extended_scenario() {
   if [[ "${host_os}" != "windows" ]]; then
     reset_module_data "oc"
     # shellcheck disable=SC2086
-    "${UPSTREAM_RSYNC}" ${flags} "${scenario_src}/" "${oc_url}/" 2>&1 || {
+    run_wire "${UPSTREAM_RSYNC}" ${flags} "${scenario_src}/" "${oc_url}/" || {
       fail "${name}: upstream -> oc-rsync daemon (exit $?)"
     }
     if [[ -n "${compare_fn}" ]]; then
@@ -408,7 +460,8 @@ if [[ "${up_daemon_available}" == "true" ]]; then
   reset_module_data "up"
   printf 'stale\n' > "${workdir}/data-up/stale-file.txt"
   # shellcheck disable=SC2086
-  "${OC_RSYNC}" -av --delete "${src}/" "${up_url}/" 2>&1
+  run_wire "${OC_RSYNC}" -av --delete "${src}/" "${up_url}/" \
+    || fail "delete: oc-rsync -> upstream daemon failed"
   if [[ -f "${workdir}/data-up/stale-file.txt" ]]; then
     fail "delete: stale file not removed by oc-rsync -> upstream daemon"
   fi
@@ -422,7 +475,8 @@ fi
 if [[ "${host_os}" != "windows" ]]; then
   reset_module_data "oc"
   printf 'stale\n' > "${workdir}/data-oc/stale-file.txt"
-  "${UPSTREAM_RSYNC}" -av --delete "${src}/" "${oc_url}/" 2>&1
+  run_wire "${UPSTREAM_RSYNC}" -av --delete "${src}/" "${oc_url}/" \
+    || fail "delete: upstream -> oc-rsync daemon failed"
   if [[ -f "${workdir}/data-oc/stale-file.txt" ]]; then
     fail "delete: stale file not removed by upstream -> oc-rsync daemon"
   fi
@@ -437,7 +491,7 @@ fi
 # Dry run should not create any files in the destination.
 if [[ "${up_daemon_available}" == "true" ]]; then
   reset_module_data "up"
-  "${OC_RSYNC}" -avn "${src}/" "${up_url}/" 2>&1 || true
+  run_wire "${OC_RSYNC}" -avn "${src}/" "${up_url}/" || true
   count="$(find "${workdir}/data-up" -type f 2>/dev/null | wc -l | tr -d ' ')"
   if [[ "${count}" -ne 0 ]]; then
     fail "dry-run: oc-rsync -> upstream daemon created files"
@@ -460,7 +514,8 @@ setup_exclude_src "${exclude_src}"
 
 if [[ "${up_daemon_available}" == "true" ]]; then
   reset_module_data "up"
-  "${OC_RSYNC}" -av --exclude='*.log' "${exclude_src}/" "${up_url}/" 2>&1
+  run_wire "${OC_RSYNC}" -av --exclude='*.log' "${exclude_src}/" "${up_url}/" \
+    || fail "exclude: oc-rsync -> upstream daemon failed"
   if [[ -f "${workdir}/data-up/debug.log" ]] || \
      [[ -f "${workdir}/data-up/subdir/access.log" ]]; then
     fail "exclude: *.log files were transferred by oc-rsync -> upstream"
@@ -475,7 +530,8 @@ fi
 
 if [[ "${host_os}" != "windows" ]]; then
   reset_module_data "oc"
-  "${UPSTREAM_RSYNC}" -av --exclude='*.log' "${exclude_src}/" "${oc_url}/" 2>&1
+  run_wire "${UPSTREAM_RSYNC}" -av --exclude='*.log' "${exclude_src}/" "${oc_url}/" \
+    || fail "exclude: upstream -> oc-rsync daemon failed"
   if [[ -f "${workdir}/data-oc/debug.log" ]] || \
      [[ -f "${workdir}/data-oc/subdir/access.log" ]]; then
     fail "exclude: *.log files were transferred by upstream -> oc-rsync"
@@ -495,7 +551,8 @@ if [[ "${host_os}" == "windows" ]]; then
 else
   if [[ "${up_daemon_available}" == "true" ]]; then
     reset_module_data "up"
-    "${OC_RSYNC}" -avR "${src}/./subdir/world.txt" "${up_url}/" 2>&1
+    run_wire "${OC_RSYNC}" -avR "${src}/./subdir/world.txt" "${up_url}/" \
+      || fail "relative: oc-rsync -> upstream daemon failed"
     [[ -f "${workdir}/data-up/subdir/world.txt" ]] \
       || fail "relative: subdir/world.txt missing in upstream module"
     pass "relative: oc-rsync -> upstream daemon"
@@ -504,7 +561,8 @@ else
   fi
 
   reset_module_data "oc"
-  "${UPSTREAM_RSYNC}" -avR "${src}/./subdir/world.txt" "${oc_url}/" 2>&1
+  run_wire "${UPSTREAM_RSYNC}" -avR "${src}/./subdir/world.txt" "${oc_url}/" \
+    || fail "relative: upstream -> oc-rsync daemon failed"
   [[ -f "${workdir}/data-oc/subdir/world.txt" ]] \
     || fail "relative: subdir/world.txt missing in oc-rsync module"
   pass "relative: upstream -> oc-rsync daemon"
@@ -553,7 +611,8 @@ if [[ "${host_os}" != "windows" ]]; then
 
   if [[ "${up_daemon_available}" == "true" ]]; then
     reset_module_data "up"
-    "${OC_RSYNC}" -av "${symlink_src}/" "${up_url}/" 2>&1
+    run_wire "${OC_RSYNC}" -av "${symlink_src}/" "${up_url}/" \
+      || fail "symlinks: oc-rsync -> upstream daemon failed"
     if [[ ! -L "${workdir}/data-up/link.txt" ]]; then
       fail "symlinks: link.txt not a symlink in upstream module"
     fi
@@ -566,7 +625,8 @@ if [[ "${host_os}" != "windows" ]]; then
   fi
 
   reset_module_data "oc"
-  "${UPSTREAM_RSYNC}" -av "${symlink_src}/" "${oc_url}/" 2>&1
+  run_wire "${UPSTREAM_RSYNC}" -av "${symlink_src}/" "${oc_url}/" \
+    || fail "symlinks: upstream -> oc-rsync daemon failed"
   if [[ ! -L "${workdir}/data-oc/link.txt" ]]; then
     fail "symlinks: link.txt not a symlink in oc-rsync module"
   fi
@@ -588,7 +648,8 @@ if [[ "${host_os}" != "windows" ]]; then
 
   if [[ "${up_daemon_available}" == "true" ]]; then
     reset_module_data "up"
-    "${OC_RSYNC}" -avH "${hardlink_src}/" "${up_url}/" 2>&1
+    run_wire "${OC_RSYNC}" -avH "${hardlink_src}/" "${up_url}/" \
+      || fail "hardlinks: oc-rsync -> upstream daemon failed"
     # Verify both files exist with identical content.
     [[ -f "${workdir}/data-up/original.txt" ]] \
       || fail "hardlinks: original.txt missing in upstream module"
@@ -607,7 +668,8 @@ if [[ "${host_os}" != "windows" ]]; then
   fi
 
   reset_module_data "oc"
-  "${UPSTREAM_RSYNC}" -avH "${hardlink_src}/" "${oc_url}/" 2>&1
+  run_wire "${UPSTREAM_RSYNC}" -avH "${hardlink_src}/" "${oc_url}/" \
+    || fail "hardlinks: upstream -> oc-rsync daemon failed"
   ino1="$(stat -f '%i' "${workdir}/data-oc/original.txt" 2>/dev/null \
     || stat -c '%i' "${workdir}/data-oc/original.txt" 2>/dev/null)"
   ino2="$(stat -f '%i' "${workdir}/data-oc/hardlink.txt" 2>/dev/null \
@@ -625,7 +687,8 @@ printf 'hello.txt\nsubdir/world.txt\n' > "${files_list}"
 
 if [[ "${up_daemon_available}" == "true" ]]; then
   reset_module_data "up"
-  "${OC_RSYNC}" -av --files-from="${files_list}" "${src}/" "${up_url}/" 2>&1
+  run_wire "${OC_RSYNC}" -av --files-from="${files_list}" "${src}/" "${up_url}/" \
+    || fail "files-from: oc-rsync -> upstream daemon failed"
   [[ -f "${workdir}/data-up/hello.txt" ]] \
     || fail "files-from: hello.txt missing in upstream module"
   [[ -f "${workdir}/data-up/subdir/world.txt" ]] \
@@ -641,7 +704,8 @@ fi
 
 if [[ "${host_os}" != "windows" ]]; then
   reset_module_data "oc"
-  "${UPSTREAM_RSYNC}" -av --files-from="${files_list}" "${src}/" "${oc_url}/" 2>&1
+  run_wire "${UPSTREAM_RSYNC}" -av --files-from="${files_list}" "${src}/" "${oc_url}/" \
+    || fail "files-from: upstream -> oc-rsync daemon failed"
   [[ -f "${workdir}/data-oc/hello.txt" ]] \
     || fail "files-from: hello.txt missing in oc-rsync module"
   [[ -f "${workdir}/data-oc/subdir/world.txt" ]] \
@@ -662,12 +726,13 @@ cp -R "${src}" "${size_only_src}"
 if [[ "${up_daemon_available}" == "true" ]]; then
   reset_module_data "up"
   # First sync to populate destination.
-  "${OC_RSYNC}" -av "${size_only_src}/" "${up_url}/" 2>&1
+  run_wire "${OC_RSYNC}" -av "${size_only_src}/" "${up_url}/" \
+    || fail "size-only: oc-rsync -> upstream daemon initial sync failed"
   # Modify content but keep the same size.
   printf 'XXXXX\n' > "${size_only_src}/hello.txt"
   # Re-sync with --size-only: since the size matches (6 bytes both ways),
   # the file should NOT be transferred.
-  out="$("${OC_RSYNC}" -av --size-only --stats "${size_only_src}/" "${up_url}/" 2>&1)"
+  out="$(run_wire "${OC_RSYNC}" -av --size-only --stats "${size_only_src}/" "${up_url}/")"
   if ! printf '%s\n' "${out}" \
        | grep -qE 'Total transferred file size: 0( bytes)?'; then
     printf '%s\n' "${out}" >&2
