@@ -108,15 +108,17 @@ fn setup_transfer_streams(
     // socket buffer. The wrapper is a transparent byte pipe, so every wire byte
     // and the multiplex framing are unchanged. The `DrainHandle` is stopped by
     // the orchestrator before the goodbye drain reads the socket via another
-    // clone (`ctx.reader`'s `DaemonStream`, a separate fd), so putting this
-    // drain clone in non-blocking mode cannot affect the goodbye read.
+    // clone (`ctx.reader`'s `DaemonStream`, a separate fd).
     //
-    // `DrainingReader::new` runs this clone in non-blocking mode: an empty
-    // socket returns `WouldBlock` and the drain loop polls the stop flag every
-    // couple of milliseconds instead of parking in a blocking `read()`. That
-    // guarantees `DrainHandle::stop()` can wake and join the thread promptly on
-    // every platform - including Windows, where a read timeout on the cloned
-    // socket fd did not reliably wake the blocked read and wedged `join()`.
+    // `DrainingReader::new` arms only a bounded read timeout on this clone (NOT
+    // non-blocking mode): an idle socket returns `TimedOut` and the drain loop
+    // polls the stop flag instead of parking in a blocking `read()`, so
+    // `DrainHandle::stop()` joins the thread promptly on every platform. It must
+    // NOT use non-blocking mode: `read_stream`/`write_stream` share one open
+    // file description, so a non-blocking flag would leak onto the write clone
+    // and truncate the sender's writes (code 23). A read timeout leaks only
+    // `SO_RCVTIMEO`, harmless to the write-only clone; the drain thread clears it
+    // on exit so the goodbye clone reads a normal blocking socket.
     let (draining_reader, drain_handle) = DrainingReader::new(read_stream);
 
     Ok(Some(TransferStreams {
