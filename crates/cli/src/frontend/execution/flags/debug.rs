@@ -32,6 +32,11 @@ pub(crate) struct DebugFlagSettings {
     pub(crate) recv: Option<u8>,
     pub(crate) send: Option<u8>,
     pub(crate) time: Option<u8>,
+    // oc-specific accelerated-I/O fallback visibility categories.
+    pub(crate) iouring: Option<u8>,
+    pub(crate) clone: Option<u8>,
+    pub(crate) sockopt: Option<u8>,
+    pub(crate) iocp: Option<u8>,
     pub(crate) help_requested: bool,
 }
 
@@ -67,6 +72,10 @@ impl DebugFlagSettings {
             ("recv", self.recv),
             ("send", self.send),
             ("time", self.time),
+            ("iouring", self.iouring),
+            ("clone", self.clone),
+            ("sockopt", self.sockopt),
+            ("iocp", self.iocp),
         ]
         .into_iter()
         .filter_map(|(name, level)| level.filter(|&l| l > 0).map(|l| (name, l)))
@@ -99,6 +108,10 @@ impl DebugFlagSettings {
         self.recv = Some(level);
         self.send = Some(level);
         self.time = Some(level);
+        self.iouring = Some(level);
+        self.clone = Some(level);
+        self.sockopt = Some(level);
+        self.iocp = Some(level);
     }
 
     const fn disable_all(&mut self) {
@@ -126,6 +139,10 @@ impl DebugFlagSettings {
         self.recv = Some(0);
         self.send = Some(0);
         self.time = Some(0);
+        self.iouring = Some(0);
+        self.clone = Some(0);
+        self.sockopt = Some(0);
+        self.iocp = Some(0);
     }
 
     pub(super) fn apply(&mut self, token: &str, display: &str) -> Result<(), Message> {
@@ -181,6 +198,10 @@ impl DebugFlagSettings {
             "recv" => self.recv = Some(level),
             "send" => self.send = Some(level),
             "time" => self.time = Some(level),
+            "iouring" => self.iouring = Some(level),
+            "clone" => self.clone = Some(level),
+            "sockopt" => self.sockopt = Some(level),
+            "iocp" => self.iocp = Some(level),
             _ => return Err(debug_flag_error(display)),
         }
 
@@ -192,7 +213,7 @@ impl DebugFlagSettings {
     const KNOWN_FLAGS: &'static [&'static str] = &[
         "acl", "backup", "bind", "chdir", "connect", "cmd", "del", "deltasum", "dup", "exit",
         "filter", "flist", "fuzzy", "genr", "hash", "hlink", "iconv", "io", "nstr", "own", "proto",
-        "recv", "send", "time",
+        "recv", "send", "time", "iouring", "clone", "sockopt", "iocp",
     ];
 
     pub(super) fn parse_flag_and_level<'a>(&self, input: &'a str) -> (&'a str, u8) {
@@ -303,4 +324,10 @@ Options added at each level of verbosity:\n\
 2) BIND,CONNECT,CMD,DEL,DELTASUM,DUP,FILTER,FLIST,ICONV\n\
 3) ACL,BACKUP,CONNECT2,DEL2,DELTASUM2,EXIT,FILTER2,FLIST2,FUZZY,GENR,OWN,RECV,SEND,TIME\n\
 4) CMD2,DEL3,DELTASUM3,EXIT2,FLIST3,ICONV2,OWN2,PROTO,TIME2\n\
-5) CHDIR,DELTASUM4,FLIST4,FUZZY2,HASH,HLINK\n";
+5) CHDIR,DELTASUM4,FLIST4,FUZZY2,HASH,HLINK\n\
+\n\
+oc-rsync extensions (accelerated-I/O fallback visibility):\n\
+IOURING    Debug io_uring probe and dispatch-vs-fallback decisions\n\
+CLONE      Debug clonefile/reflink/copy_file_range CoW dispatch and fallback\n\
+SOCKOPT    Debug TCP/socket tuning apply-or-skip decisions\n\
+IOCP       Debug Windows IOCP dispatch and fallback\n";

@@ -298,6 +298,35 @@ mod tests {
     }
 
     #[test]
+    fn oc_accelerated_io_debug_flags_gated_off_by_default() {
+        init(VerbosityConfig::default());
+        drain_events();
+
+        // Default config leaves oc-specific categories at level 0, so a
+        // gated debug_log! must be a no-op and emit nothing.
+        for flag in [
+            DebugFlag::Iouring,
+            DebugFlag::Clone,
+            DebugFlag::Sockopt,
+            DebugFlag::Iocp,
+        ] {
+            assert!(!debug_gte(flag, 1));
+        }
+        crate::debug_log!(Iouring, 1, "should not emit");
+        crate::debug_log!(Clone, 1, "should not emit");
+        crate::debug_log!(Sockopt, 1, "should not emit");
+        crate::debug_log!(Iocp, 1, "should not emit");
+        assert!(drain_events().is_empty());
+
+        // Enabling the category makes the same call emit exactly one event.
+        let mut config = VerbosityConfig::default();
+        config.debug.clone = 1;
+        init(config);
+        crate::debug_log!(Clone, 1, "CoW clone succeeded");
+        assert_eq!(drain_events().len(), 1);
+    }
+
+    #[test]
     fn multiple_events_ordering() {
         init(VerbosityConfig::default());
         drain_events();

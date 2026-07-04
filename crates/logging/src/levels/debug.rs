@@ -63,6 +63,14 @@ pub enum DebugFlag {
     Send,
     /// Timing information.
     Time,
+    /// io_uring probe and dispatch-vs-fallback decisions (oc-specific).
+    Iouring,
+    /// clonefile / reflink / copy_file_range CoW dispatch and fallback (oc-specific).
+    Clone,
+    /// TCP/socket tuning apply-or-skip decisions (oc-specific).
+    Sockopt,
+    /// Windows IOCP dispatch and fallback (oc-specific).
+    Iocp,
 }
 
 /// Per-flag debug verbosity levels.
@@ -122,6 +130,14 @@ pub struct DebugLevels {
     pub send: u8,
     /// Timing information level.
     pub time: u8,
+    /// io_uring probe/dispatch level (oc-specific).
+    pub iouring: u8,
+    /// clonefile/reflink/copy_file_range CoW level (oc-specific).
+    pub clone: u8,
+    /// Socket tuning level (oc-specific).
+    pub sockopt: u8,
+    /// Windows IOCP dispatch level (oc-specific).
+    pub iocp: u8,
 }
 
 impl DebugLevels {
@@ -153,6 +169,10 @@ impl DebugLevels {
             DebugFlag::Recv => self.recv,
             DebugFlag::Send => self.send,
             DebugFlag::Time => self.time,
+            DebugFlag::Iouring => self.iouring,
+            DebugFlag::Clone => self.clone,
+            DebugFlag::Sockopt => self.sockopt,
+            DebugFlag::Iocp => self.iocp,
         }
     }
 
@@ -183,6 +203,10 @@ impl DebugLevels {
             DebugFlag::Recv => self.recv = level,
             DebugFlag::Send => self.send = level,
             DebugFlag::Time => self.time = level,
+            DebugFlag::Iouring => self.iouring = level,
+            DebugFlag::Clone => self.clone = level,
+            DebugFlag::Sockopt => self.sockopt = level,
+            DebugFlag::Iocp => self.iocp = level,
         }
     }
 
@@ -212,6 +236,10 @@ impl DebugLevels {
         self.recv = level;
         self.send = level;
         self.time = level;
+        self.iouring = level;
+        self.clone = level;
+        self.sockopt = level;
+        self.iocp = level;
     }
 }
 
@@ -263,6 +291,26 @@ mod tests {
         fn debug_flag_equality() {
             assert_eq!(DebugFlag::Acl, DebugFlag::Acl);
             assert_ne!(DebugFlag::Acl, DebugFlag::Backup);
+        }
+
+        #[test]
+        fn oc_debug_flags_get_set_roundtrip() {
+            let mut levels = DebugLevels::default();
+            for flag in [
+                DebugFlag::Iouring,
+                DebugFlag::Clone,
+                DebugFlag::Sockopt,
+                DebugFlag::Iocp,
+            ] {
+                assert_eq!(levels.get(flag), 0);
+                levels.set(flag, 3);
+                assert_eq!(levels.get(flag), 3);
+            }
+            levels.set_all(5);
+            assert_eq!(levels.get(DebugFlag::Iouring), 5);
+            assert_eq!(levels.get(DebugFlag::Clone), 5);
+            assert_eq!(levels.get(DebugFlag::Sockopt), 5);
+            assert_eq!(levels.get(DebugFlag::Iocp), 5);
         }
     }
 
@@ -325,6 +373,10 @@ mod tests {
                 recv: 22,
                 send: 23,
                 time: 24,
+                iouring: 25,
+                clone: 26,
+                sockopt: 27,
+                iocp: 28,
             };
 
             assert_eq!(levels.get(DebugFlag::Acl), 1);
@@ -351,6 +403,10 @@ mod tests {
             assert_eq!(levels.get(DebugFlag::Recv), 22);
             assert_eq!(levels.get(DebugFlag::Send), 23);
             assert_eq!(levels.get(DebugFlag::Time), 24);
+            assert_eq!(levels.get(DebugFlag::Iouring), 25);
+            assert_eq!(levels.get(DebugFlag::Clone), 26);
+            assert_eq!(levels.get(DebugFlag::Sockopt), 27);
+            assert_eq!(levels.get(DebugFlag::Iocp), 28);
         }
 
         #[test]

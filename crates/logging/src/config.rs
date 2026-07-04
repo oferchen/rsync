@@ -265,6 +265,11 @@ impl VerbosityConfig {
             "recv" => DebugFlag::Recv,
             "send" => DebugFlag::Send,
             "time" => DebugFlag::Time,
+            // oc-specific accelerated-I/O fallback visibility categories.
+            "iouring" => DebugFlag::Iouring,
+            "clone" => DebugFlag::Clone,
+            "sockopt" => DebugFlag::Sockopt,
+            "iocp" => DebugFlag::Iocp,
             _ => return Err(format!("unknown debug flag: {name}")),
         };
 
@@ -380,6 +385,21 @@ mod tests {
         assert_eq!(config.debug.flist, 3);
 
         assert!(config.apply_debug_flag("invalid").is_err());
+    }
+
+    #[test]
+    fn test_apply_oc_accelerated_io_debug_flags() {
+        let mut config = VerbosityConfig::default();
+
+        config.apply_debug_flag("iouring").unwrap();
+        config.apply_debug_flag("clone2").unwrap();
+        config.apply_debug_flag("SOCKOPT").unwrap();
+        config.apply_debug_flag("iocp").unwrap();
+
+        assert_eq!(config.debug.iouring, 1);
+        assert_eq!(config.debug.clone, 2);
+        assert_eq!(config.debug.sockopt, 1);
+        assert_eq!(config.debug.iocp, 1);
     }
 
     #[test]

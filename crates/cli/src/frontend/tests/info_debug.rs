@@ -207,6 +207,32 @@ fn debug_accepts_comma_separated_tokens() {
 }
 
 #[test]
+fn debug_accepts_oc_accelerated_io_categories() {
+    let flags = vec![OsString::from("iouring,clone,sockopt,iocp")];
+    let settings = parse_debug_flags(&flags).expect("flags parse");
+    assert_eq!(settings.iouring, Some(1));
+    assert_eq!(settings.clone, Some(1));
+    assert_eq!(settings.sockopt, Some(1));
+    assert_eq!(settings.iocp, Some(1));
+
+    // Case-insensitive parsing mirrors upstream parse_output_words().
+    let flags = vec![OsString::from("IOURING,CLONE")];
+    let settings = parse_debug_flags(&flags).expect("flags parse");
+    assert_eq!(settings.iouring, Some(1));
+    assert_eq!(settings.clone, Some(1));
+}
+
+#[test]
+fn debug_all_includes_oc_accelerated_io_categories() {
+    let flags = vec![OsString::from("all")];
+    let settings = parse_debug_flags(&flags).expect("flags parse");
+    assert_eq!(settings.iouring, Some(1));
+    assert_eq!(settings.clone, Some(1));
+    assert_eq!(settings.sockopt, Some(1));
+    assert_eq!(settings.iocp, Some(1));
+}
+
+#[test]
 fn debug_flist_levels() {
     let flags = vec![OsString::from("flist")];
     let settings = parse_debug_flags(&flags).expect("flags parse");

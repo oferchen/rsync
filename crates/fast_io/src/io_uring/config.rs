@@ -306,6 +306,11 @@ pub fn is_io_uring_available() -> bool {
     IO_URING_AVAILABLE.store(available, Ordering::Relaxed);
     IO_URING_CHECKED.store(true, Ordering::Relaxed);
     logging::debug_log!(Io, 1, "{reason}");
+    if available {
+        logging::debug_log!(Iouring, 1, "io_uring available: {reason}");
+    } else {
+        logging::debug_log!(Iouring, 1, "io_uring unavailable: {reason}");
+    }
     available
 }
 
