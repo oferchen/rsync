@@ -32,6 +32,20 @@ struct TransferStreams {
     async_socket: Option<TcpStream>,
 }
 
+/// Decides whether the #503 background delta-drain thread should be armed.
+///
+/// The drain thread is anti-deadlock machinery for the bidirectional delta
+/// phase (design doc Approach C). That phase only occurs when the client
+/// actually requested a transfer, which it does by sending a non-empty argument
+/// list after `@RSYNCD: OK`. When the post-`OK` argument read returns an empty
+/// list the peer dropped the socket without requesting a transfer, so no delta
+/// data flows and there is nothing to deadlock. Such a connection must NOT arm
+/// the drain: its background thread would block reading a half-closed socket
+/// clone, which on Windows never unblocks and hangs the daemon worker.
+fn should_arm_delta_drain(client_args: &[String]) -> bool {
+    !client_args.is_empty()
+}
+
 /// Sets up the transfer streams for the transfer engine.
 ///
 /// For TCP/TLS connections, configures TCP_NODELAY and clones the stream to get
@@ -39,9 +53,22 @@ struct TransferStreams {
 /// mode), opens fresh stdin/stdout handles since the original pair is consumed
 /// by the BufReader.
 ///
+/// `arm_drain` gates the #503 background delta-drain thread: it is spawned only
+/// when a real transfer will run (the client sent a non-empty argument list).
+/// A connection whose post-`OK` argument read hit EOF - the peer dropped the
+/// socket without ever requesting a transfer - carries no bidirectional delta
+/// data, so it cannot hit the write-write deadlock the drain thread guards
+/// against. Arming the drain for such a connection would spawn a thread that
+/// blocks reading a half-closed socket clone; on Windows that thread's `recv`
+/// on a `try_clone`d socket handle does not observe the peer's close and never
+/// unblocks, wedging `stop_and_join()` and hanging the daemon worker. Reading
+/// the socket directly on this degenerate path is byte-identical to the
+/// pre-#503 behaviour and returns EOF promptly on every platform.
+///
 /// Returns the transfer streams on success, or sends an error and returns `None`.
 fn setup_transfer_streams(
     ctx: &mut ModuleRequestContext<'_>,
+    arm_drain: bool,
 ) -> io::Result<Option<TransferStreams>> {
     let stream = ctx.reader.get_mut();
     stream.set_nodelay(true)?;
@@ -119,6 +146,23 @@ fn setup_transfer_streams(
     // and truncate the sender's writes (code 23). A read timeout leaks only
     // `SO_RCVTIMEO`, harmless to the write-only clone; the drain thread clears it
     // on exit so the goodbye clone reads a normal blocking socket.
+    //
+    // Armed only for a real transfer (`arm_drain`, i.e. the client sent a
+    // non-empty argument list). An empty-args connection - the peer requested a
+    // module then dropped the socket without sending a transfer request - has no
+    // delta phase to deadlock, so it reads the socket directly and returns EOF
+    // promptly (see the fn-level doc for the Windows wedge this avoids).
+    if !arm_drain {
+        return Ok(Some(TransferStreams {
+            read: Box::new(read_stream),
+            write: Box::new(write_stream),
+            supports_tcp_shutdown: true,
+            drain_handle: None,
+            #[cfg(feature = "tokio-transfer")]
+            async_socket,
+        }));
+    }
+
     let (draining_reader, drain_handle) = DrainingReader::new(read_stream);
 
     Ok(Some(TransferStreams {
@@ -361,5 +405,35 @@ fn execute_transfer(
             }
             1
         }
+    }
+}
+
+#[cfg(test)]
+mod delta_drain_gate_tests {
+    //! Gating tests for the #503 delta-drain thread (`should_arm_delta_drain`).
+
+    use super::should_arm_delta_drain;
+
+    #[test]
+    fn empty_client_args_do_not_arm_the_drain() {
+        // Regression (#503, Windows CI): a peer that requested a module then
+        // dropped the socket sends an empty argument list. That connection has
+        // no delta phase, so it must read the socket directly rather than spawn
+        // a drain thread that hangs on a half-closed socket clone on Windows.
+        assert!(
+            !should_arm_delta_drain(&[]),
+            "empty client args means no transfer requested: the drain must stay off"
+        );
+    }
+
+    #[test]
+    fn non_empty_client_args_arm_the_drain() {
+        // A real transfer request (non-empty argv) can enter the bidirectional
+        // delta phase, so the anti-deadlock drain thread must be armed.
+        let args = vec!["--server".to_owned(), "--sender".to_owned()];
+        assert!(
+            should_arm_delta_drain(&args),
+            "a real transfer request must arm the anti-deadlock drain"
+        );
     }
 }
