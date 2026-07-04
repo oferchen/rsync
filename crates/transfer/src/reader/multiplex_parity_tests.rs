@@ -32,7 +32,7 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, ReadBuf};
 
 use super::{MultiplexReader, MuxSink};
-use crate::reader::{AsyncServerReader, CountingReader, ServerReader};
+use crate::reader::{AsyncCompressedReader, AsyncServerReader, CountingReader, ServerReader};
 
 /// A single observable event on the demux timeline.
 ///
@@ -532,5 +532,153 @@ async fn asyncread_impl_plain_passthrough() {
             data, raw,
             "plain-mode AsyncRead pass-through diverged at read_len {read_len}"
         );
+    }
+}
+
+/// Builds a compressed multiplexed wire: deflate `payload`, then frame the
+/// compressed bytes into one or more `MSG_DATA` frames (split at `frame_split`
+/// so the compressed stream spans multiple demuxed frames, matching a real
+/// multi-frame transfer). The receiver demuxes the frames, concatenates the
+/// compressed bytes, and inflates them back to `payload`.
+fn compressed_multiplex_wire(payload: &[u8], frame_split: usize) -> Vec<u8> {
+    use compress::zlib::{CompressionLevel, compress_to_vec};
+
+    let compressed = compress_to_vec(payload, CompressionLevel::Default).unwrap();
+    let mut wire = Vec::new();
+    let mut off = 0;
+    while off < compressed.len() {
+        let end = (off + frame_split.max(1)).min(compressed.len());
+        protocol::send_msg(
+            &mut wire,
+            protocol::MessageCode::Data,
+            &compressed[off..end],
+        )
+        .unwrap();
+        off = end;
+    }
+    wire
+}
+
+/// Drives the **sync** compressed receiver path over `wire`:
+/// `ServerReader` in multiplex mode, then `activate_compression(Zlib)`, so the
+/// inner `CompressedReader<MultiplexReader<_>>` demuxes and inflates. Returns the
+/// decompressed bytes.
+fn drive_sync_compressed(wire: &[u8], read_len: usize) -> Vec<u8> {
+    use compress::algorithm::CompressionAlgorithm;
+
+    let mut server = ServerReader::new_plain(Cursor::new(wire.to_vec()))
+        .activate_multiplex()
+        .expect("activate multiplex")
+        .activate_compression(CompressionAlgorithm::Zlib)
+        .expect("activate compression");
+
+    let mut data = Vec::new();
+    let mut buf = vec![0u8; read_len];
+    loop {
+        // The multiplex loop surfaces end-of-wire as UnexpectedEof (a frame read
+        // past the last frame), identical for both drivers - see the demux
+        // harness above. Terminating on it preserves parity.
+        match server.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => data.extend_from_slice(&buf[..n]),
+            Err(err) if err.kind() == std::io::ErrorKind::UnexpectedEof => break,
+            Err(err) => panic!("sync compressed read failed: {err}"),
+        }
+    }
+    data
+}
+
+/// Drives the **async** compressed twin over `reader`:
+/// `AsyncServerReader` in multiplex mode (the async demux, whose control-frame
+/// side-effect ordering is parity-proven elsewhere) feeding
+/// `AsyncCompressedReader`, which inflates the demuxed compressed bytes with the
+/// shared sync decoder. Returns the decompressed bytes.
+async fn drive_async_compressed<R: AsyncRead + Unpin + Send + 'static>(
+    reader: R,
+    read_len: usize,
+) -> Vec<u8> {
+    use compress::algorithm::CompressionAlgorithm;
+
+    let mut server = AsyncServerReader::new_plain(reader)
+        .activate_multiplex()
+        .expect("activate multiplex");
+    let mut decompressor = AsyncCompressedReader::new(CompressionAlgorithm::Zlib);
+
+    let mut data = Vec::new();
+    let mut buf = vec![0u8; read_len];
+    loop {
+        match decompressor.read_async(&mut server, &mut buf).await {
+            Ok(0) => break,
+            Ok(n) => data.extend_from_slice(&buf[..n]),
+            Err(err) => panic!("async compressed read failed: {err}"),
+        }
+    }
+    data
+}
+
+/// End-to-end sync-vs-async parity for the compressed reader layer: the async
+/// twin (async multiplex demux -> `AsyncCompressedReader` sync inflate) must
+/// deliver the byte-identical decompressed stream the sync compressed path
+/// delivers, and both must equal the original payload. Covers the required
+/// compressed round-trip across read-buffer sizes and multi-frame splits.
+#[tokio::test(flavor = "current_thread")]
+async fn compressed_round_trip_parity_whole_stream() {
+    // A payload large enough to compress across several demuxed frames and to
+    // span many small decompressed reads.
+    let mut payload = Vec::new();
+    for i in 0..4000u32 {
+        payload.extend_from_slice(format!("line {i} of the compressed corpus\n").as_bytes());
+    }
+
+    for frame_split in [37usize, 512, 65536] {
+        let wire = compressed_multiplex_wire(&payload, frame_split);
+        for read_len in READ_LENS {
+            let sync_data = drive_sync_compressed(&wire, read_len);
+            let async_data = drive_async_compressed(Cursor::new(wire.clone()), read_len).await;
+
+            assert_eq!(
+                sync_data, payload,
+                "sync compressed path lost bytes (frame_split {frame_split}, read_len {read_len})"
+            );
+            assert_eq!(
+                async_data, sync_data,
+                "async compressed twin diverged from sync (frame_split {frame_split}, \
+                 read_len {read_len})"
+            );
+        }
+    }
+}
+
+/// Same compressed round-trip, but the async transport yields bytes in tiny
+/// chunks so the compressed frames reassemble across many `.await` points before
+/// decode. The decompressed output must stay byte-identical to the sync path
+/// regardless of transport fragmentation.
+#[tokio::test(flavor = "current_thread")]
+async fn compressed_round_trip_parity_chunked_delivery() {
+    let mut payload = Vec::new();
+    for i in 0..2000u32 {
+        payload.extend_from_slice(format!("chunk {i} payload data\n").as_bytes());
+    }
+
+    let frame_split = 200usize;
+    let wire = compressed_multiplex_wire(&payload, frame_split);
+    let sync_data = drive_sync_compressed(&wire, 64);
+
+    for chunk in [1usize, 2, 3, 7, 13] {
+        for read_len in READ_LENS {
+            let reader = ChunkedReader {
+                inner: Cursor::new(wire.clone()),
+                chunk,
+            };
+            let async_data = drive_async_compressed(reader, read_len).await;
+            assert_eq!(
+                async_data, payload,
+                "async compressed twin lost bytes (chunk {chunk}, read_len {read_len})"
+            );
+            assert_eq!(
+                async_data, sync_data,
+                "async compressed twin diverged from sync (chunk {chunk}, read_len {read_len})"
+            );
+        }
     }
 }
