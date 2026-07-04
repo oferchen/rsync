@@ -17,6 +17,18 @@ use std::vec::Vec;
 
 use super::config::VersionInfoConfig;
 
+/// Name of the high-performance global allocator linked into the binary.
+///
+/// Unix builds link jemalloc; Windows keeps mimalloc. The `--version` report
+/// advertises whichever allocator is actually active so the capability line is
+/// honest per platform.
+#[cfg(unix)]
+const ACTIVE_ALLOCATOR_LABEL: &str = "jemalloc";
+#[cfg(windows)]
+const ACTIVE_ALLOCATOR_LABEL: &str = "mimalloc";
+#[cfg(not(any(unix, windows)))]
+const ACTIVE_ALLOCATOR_LABEL: &str = "system-allocator";
+
 /// Human-readable `--version` output renderer.
 ///
 /// Instances of this type use [`VersionMetadata`] together with
@@ -471,7 +483,10 @@ impl VersionInfoReport {
             config.supports_openssl_crypto,
         ));
         items.push(capability_entry("asm-MD5", config.supports_asm_md5));
-        items.push(capability_entry("mimalloc", config.supports_mimalloc));
+        items.push(capability_entry(
+            ACTIVE_ALLOCATOR_LABEL,
+            config.supports_fast_allocator,
+        ));
         items.push(capability_entry(
             "copy-file-range",
             config.supports_copy_file_range,
@@ -537,7 +552,7 @@ pub(crate) fn default_daemon_auth_algorithms() -> Vec<Cow<'static, str>> {
 /// (compression, ACL, xattr, iconv, async, embedded SSH, zlib-ng) are
 /// detectable here; bin-only features that do not propagate into `core`
 /// (`parallel`, `io_uring`, `iocp`, `copy_file_range`, `openssl`,
-/// `openssl-vendored`, `mmap-free-basis`, `sd-notify`, `mimalloc`) are
+/// `openssl-vendored`, `mmap-free-basis`, `sd-notify`, allocator) are
 /// surfaced via the existing `Capabilities` / `Optimizations` sections
 /// and the `Platform I/O` line above this one.
 #[must_use]
