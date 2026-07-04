@@ -281,7 +281,15 @@ fn process_approved_module(
     // primary defenses.
     engage_seccomp_sandbox(ctx)?;
 
-    let mut streams = match setup_transfer_streams(ctx)? {
+    // #503: arm the background delta-drain thread only for a real transfer. An
+    // empty client-arg list means the peer requested the module then dropped the
+    // socket without sending a transfer request, so no bidirectional delta data
+    // flows and there is nothing to deadlock. Reading the socket directly on that
+    // degenerate path returns EOF promptly on every platform (see
+    // `setup_transfer_streams`); arming the drain there would spawn a thread that
+    // hangs on a half-closed socket clone on Windows.
+    let arm_drain = should_arm_delta_drain(&client_args);
+    let mut streams = match setup_transfer_streams(ctx, arm_drain)? {
         Some(s) => s,
         None => return Ok(()),
     };
@@ -399,6 +407,18 @@ fn process_approved_module(
         #[cfg(feature = "tokio-transfer")]
         async_socket,
     );
+
+    // #503: stop and join the background delta-drain thread before the TCP
+    // goodbye drain below reads the socket via a different clone. The engine's
+    // own goodbye handshake completed inside `execute_transfer` (it read
+    // through the `DrainingReader`), so stopping here only halts draining of
+    // any post-goodbye trailing bytes, which the drain-until-EOF loop below
+    // discards anyway. Joining before that loop prevents two readers competing
+    // for the same socket. `Drop` on `streams` is a backstop for early-return
+    // paths above that never reach this point.
+    if let Some(drain) = streams.drain_handle.take() {
+        drain.stop();
+    }
 
     // Graceful TCP shutdown: drain peer's goodbye, then linger + close.
     //

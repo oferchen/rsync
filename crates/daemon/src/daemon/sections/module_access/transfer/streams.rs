@@ -10,6 +10,16 @@ struct TransferStreams {
     write: Box<dyn Write + Send>,
     /// Whether the write side supports TCP shutdown (false for stdio/pipes).
     supports_tcp_shutdown: bool,
+    /// Stop handle for the daemon-TCP background drain thread (#503).
+    ///
+    /// Present only for the socket path, where `read` wraps a
+    /// [`DrainingReader`] whose background thread continuously drains the
+    /// peer's send buffer during the delta phase to prevent the full-duplex
+    /// write-write deadlock. `None` for stdio/pipe transports, which read the
+    /// socket directly and cannot wedge. The caller stops this handle after
+    /// the transfer engine returns and before the goodbye drain reads the
+    /// socket via another clone.
+    drain_handle: Option<DrainHandle>,
     /// Pre-erasure socket clone for the tokio driver (ASY sub-rung 2).
     ///
     /// For the daemon module transfer over a real socket this carries an extra
@@ -22,6 +32,35 @@ struct TransferStreams {
     async_socket: Option<TcpStream>,
 }
 
+/// Decides whether the #503 background delta-drain thread should be armed.
+///
+/// The drain thread is anti-deadlock machinery for the bidirectional delta
+/// phase (design doc Approach C). That phase only occurs when the client
+/// actually requested a transfer, which it does by sending a non-empty argument
+/// list after `@RSYNCD: OK`. When the post-`OK` argument read returns an empty
+/// list the peer dropped the socket without requesting a transfer, so no delta
+/// data flows and there is nothing to deadlock. Such a connection must NOT arm
+/// the drain: its background thread would block reading a half-closed socket
+/// clone, which on Windows never unblocks and hangs the daemon worker.
+///
+/// #6297: the drain is additionally gated to Unix. On Windows the drain thread
+/// parks in a blocking `recv()` on the cloned socket that `SO_RCVTIMEO` does not
+/// interrupt, so `stop_and_join()` never returns and every daemon connection
+/// wedges at teardown (all four daemon-negotiation tests time out on the Windows
+/// feature-flag jobs, on every branch commit, but pass on master). The #503
+/// deadlock is a Unix-specific full-socket-buffer wedge, so on non-Unix the
+/// daemon uses the raw read clone - byte-identical to master, which passes these
+/// tests - and never spawns the drain thread.
+#[cfg(unix)]
+fn should_arm_delta_drain(client_args: &[String]) -> bool {
+    !client_args.is_empty()
+}
+
+#[cfg(not(unix))]
+fn should_arm_delta_drain(_client_args: &[String]) -> bool {
+    false
+}
+
 /// Sets up the transfer streams for the transfer engine.
 ///
 /// For TCP connections, configures TCP_NODELAY and clones the stream to get
@@ -29,9 +68,22 @@ struct TransferStreams {
 /// mode), opens fresh stdin/stdout handles since the original pair is consumed
 /// by the BufReader.
 ///
+/// `arm_drain` gates the #503 background delta-drain thread: it is spawned only
+/// when a real transfer will run (the client sent a non-empty argument list).
+/// A connection whose post-`OK` argument read hit EOF - the peer dropped the
+/// socket without ever requesting a transfer - carries no bidirectional delta
+/// data, so it cannot hit the write-write deadlock the drain thread guards
+/// against. Arming the drain for such a connection would spawn a thread that
+/// blocks reading a half-closed socket clone; on Windows that thread's `recv`
+/// on a `try_clone`d socket handle does not observe the peer's close and never
+/// unblocks, wedging `stop_and_join()` and hanging the daemon worker. Reading
+/// the socket directly on this degenerate path is byte-identical to the
+/// pre-#503 behaviour and returns EOF promptly on every platform.
+///
 /// Returns the transfer streams on success, or sends an error and returns `None`.
 fn setup_transfer_streams(
     ctx: &mut ModuleRequestContext<'_>,
+    arm_drain: bool,
 ) -> io::Result<Option<TransferStreams>> {
     let stream = ctx.reader.get_mut();
     stream.set_nodelay(true)?;
@@ -50,6 +102,11 @@ fn setup_transfer_streams(
             read: Box::new(stdin),
             write: Box::new(stdout),
             supports_tcp_shutdown: false,
+            // Stdio/pipe transports have independent read/write pipe buffers
+            // and a peer in a separate process, so they cannot hit the
+            // single-socket write-write deadlock (#503). Read the pipe
+            // directly - no drain thread.
+            drain_handle: None,
             // Stdio/pipe transports have no socket to hand the tokio driver.
             #[cfg(feature = "tokio-transfer")]
             async_socket: None,
@@ -86,10 +143,48 @@ fn setup_transfer_streams(
     #[cfg(feature = "tokio-transfer")]
     let async_socket = tcp.try_clone().ok();
 
+    // #503: wrap the read-clone fd in a `DrainingReader` so a background thread
+    // continuously drains the peer's send buffer during the delta phase. This
+    // is the daemon-TCP-only anti-deadlock mechanism (design doc Approach C):
+    // it keeps the peer's writes flowing so neither direction wedges on a full
+    // socket buffer. The wrapper is a transparent byte pipe, so every wire byte
+    // and the multiplex framing are unchanged. The `DrainHandle` is stopped by
+    // the orchestrator before the goodbye drain reads the socket via another
+    // clone (`ctx.reader`'s `DaemonStream`, a separate fd).
+    //
+    // `DrainingReader::new` arms only a bounded read timeout on this clone (NOT
+    // non-blocking mode): an idle socket returns `TimedOut` and the drain loop
+    // polls the stop flag instead of parking in a blocking `read()`, so
+    // `DrainHandle::stop()` joins the thread promptly on every platform. It must
+    // NOT use non-blocking mode: `read_stream`/`write_stream` share one open
+    // file description, so a non-blocking flag would leak onto the write clone
+    // and truncate the sender's writes (code 23). A read timeout leaks only
+    // `SO_RCVTIMEO`, harmless to the write-only clone; the drain thread clears it
+    // on exit so the goodbye clone reads a normal blocking socket.
+    //
+    // Armed only for a real transfer (`arm_drain`, i.e. the client sent a
+    // non-empty argument list). An empty-args connection - the peer requested a
+    // module then dropped the socket without sending a transfer request - has no
+    // delta phase to deadlock, so it reads the socket directly and returns EOF
+    // promptly (see the fn-level doc for the Windows wedge this avoids).
+    if !arm_drain {
+        return Ok(Some(TransferStreams {
+            read: Box::new(read_stream),
+            write: Box::new(write_stream),
+            supports_tcp_shutdown: true,
+            drain_handle: None,
+            #[cfg(feature = "tokio-transfer")]
+            async_socket,
+        }));
+    }
+
+    let (draining_reader, drain_handle) = DrainingReader::new(read_stream);
+
     Ok(Some(TransferStreams {
-        read: Box::new(read_stream),
+        read: Box::new(draining_reader),
         write: Box::new(write_stream),
         supports_tcp_shutdown: true,
+        drain_handle: Some(drain_handle),
         #[cfg(feature = "tokio-transfer")]
         async_socket,
     }))
@@ -325,5 +420,44 @@ fn execute_transfer(
             }
             1
         }
+    }
+}
+
+#[cfg(test)]
+mod delta_drain_gate_tests {
+    //! Gating tests for the #503 delta-drain thread (`should_arm_delta_drain`).
+
+    use super::should_arm_delta_drain;
+
+    #[test]
+    fn empty_client_args_do_not_arm_the_drain() {
+        // Regression (#503, Windows CI): a peer that requested a module then
+        // dropped the socket sends an empty argument list. That connection has
+        // no delta phase, so it must read the socket directly rather than spawn
+        // a drain thread that hangs on a half-closed socket clone on Windows.
+        assert!(
+            !should_arm_delta_drain(&[]),
+            "empty client args means no transfer requested: the drain must stay off"
+        );
+    }
+
+    #[test]
+    fn non_empty_client_args_arm_the_drain() {
+        // A real transfer request (non-empty argv) can enter the bidirectional
+        // delta phase, so on Unix the anti-deadlock drain thread must be armed.
+        // On non-Unix (Windows) the drain is gated off entirely - its background
+        // thread cannot be reliably stopped - so even a real transfer uses the
+        // raw read clone (the master path).
+        let args = vec!["--server".to_owned(), "--sender".to_owned()];
+        #[cfg(unix)]
+        assert!(
+            should_arm_delta_drain(&args),
+            "a real transfer request must arm the anti-deadlock drain on Unix"
+        );
+        #[cfg(not(unix))]
+        assert!(
+            !should_arm_delta_drain(&args),
+            "the drain is gated off on non-Unix even for a real transfer"
+        );
     }
 }

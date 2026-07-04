@@ -11,6 +11,18 @@ fn apply_module_timeout(stream: &DaemonStream, module: &ModuleDefinition) -> io:
         let duration = Duration::from_secs(timeout.get());
         stream.set_read_timeout(Some(duration))?;
         stream.set_write_timeout(Some(duration))?;
+    } else {
+        // #503 (design doc section 4.4): when the module sets no `timeout`,
+        // clear the leaked 10-second accept-time `SOCKET_TIMEOUT` (armed in
+        // listener.rs) so the data phase matches upstream's `io_timeout = 0`
+        // default (io.c:179 short-circuits the timeout check when unset).
+        // Without this, the accept-time guard persists through the delta phase
+        // and fires on a wedged read as `code 23`. This MUST ship with the
+        // Approach C drain thread: alone it would turn the deadlock's abort
+        // into an indefinite hang; the drain thread guarantees the phase
+        // cannot deadlock, so removing the timeout is safe.
+        stream.set_read_timeout(None)?;
+        stream.set_write_timeout(None)?;
     }
 
     Ok(())

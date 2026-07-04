@@ -16,6 +16,8 @@
 
 include!("transfer/sandbox.rs");
 
+include!("transfer/draining_reader.rs");
+
 include!("transfer/streams.rs");
 
 include!("transfer/orchestration.rs");
