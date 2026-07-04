@@ -356,8 +356,11 @@ fn daemon_negotiation_auth_skipped_for_unprotected_module() {
     );
 
     drop(reader);
-    // Don't assert on result - daemon may fail gracefully when client doesn't send transfer data
-    let _ = handle.join();
+    // Don't assert on result - daemon may fail gracefully when client doesn't
+    // send transfer data. Bound the join: on Windows the daemon's accept loop
+    // can linger past the client disconnect, so detach rather than wedge until
+    // nextest's 360s slow-timeout fires.
+    let _ = finish_daemon(handle);
 }
 
 #[test]
@@ -533,6 +536,8 @@ fn daemon_negotiation_auth_successful_sends_ok() {
     assert_eq!(line, "@RSYNCD: OK\n", "Expected OK after successful auth");
 
     drop(reader);
-    // Don't assert on result - daemon may fail gracefully when client doesn't continue
-    let _ = handle.join();
+    // Don't assert on result - daemon may fail gracefully when client doesn't
+    // continue. Bound the join: on Windows the accept loop can linger past the
+    // disconnect, so detach rather than wedge until nextest's 360s slow-timeout.
+    let _ = finish_daemon(handle);
 }

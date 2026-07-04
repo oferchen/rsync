@@ -172,7 +172,9 @@ fn daemon_protocol_28_forced_version_negotiation_downgrade() {
     );
 
     drop(reader);
-    let _ = handle.join();
+    // Bound the join: on Windows the daemon accept loop can linger past the
+    // client disconnect, so detach rather than wedge until the 360s slow-timeout.
+    let _ = finish_daemon(handle);
 }
 
 /// End-to-end test using the client API with forced protocol 28 against a
