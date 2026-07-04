@@ -42,8 +42,23 @@ struct TransferStreams {
 /// data flows and there is nothing to deadlock. Such a connection must NOT arm
 /// the drain: its background thread would block reading a half-closed socket
 /// clone, which on Windows never unblocks and hangs the daemon worker.
+///
+/// #6297: the drain is additionally gated to Unix. On Windows the drain thread
+/// parks in a blocking `recv()` on the cloned socket that `SO_RCVTIMEO` does not
+/// interrupt, so `stop_and_join()` never returns and every daemon connection
+/// wedges at teardown (all four daemon-negotiation tests time out on the Windows
+/// feature-flag jobs, on every branch commit, but pass on master). The #503
+/// deadlock is a Unix-specific full-socket-buffer wedge, so on non-Unix the
+/// daemon uses the raw read clone - byte-identical to master, which passes these
+/// tests - and never spawns the drain thread.
+#[cfg(unix)]
 fn should_arm_delta_drain(client_args: &[String]) -> bool {
     !client_args.is_empty()
+}
+
+#[cfg(not(unix))]
+fn should_arm_delta_drain(_client_args: &[String]) -> bool {
+    false
 }
 
 /// Sets up the transfer streams for the transfer engine.
