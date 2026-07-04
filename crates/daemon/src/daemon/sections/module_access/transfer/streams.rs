@@ -444,11 +444,20 @@ mod delta_drain_gate_tests {
     #[test]
     fn non_empty_client_args_arm_the_drain() {
         // A real transfer request (non-empty argv) can enter the bidirectional
-        // delta phase, so the anti-deadlock drain thread must be armed.
+        // delta phase, so on Unix the anti-deadlock drain thread must be armed.
+        // On non-Unix (Windows) the drain is gated off entirely - its background
+        // thread cannot be reliably stopped - so even a real transfer uses the
+        // raw read clone (the master path).
         let args = vec!["--server".to_owned(), "--sender".to_owned()];
+        #[cfg(unix)]
         assert!(
             should_arm_delta_drain(&args),
-            "a real transfer request must arm the anti-deadlock drain"
+            "a real transfer request must arm the anti-deadlock drain on Unix"
+        );
+        #[cfg(not(unix))]
+        assert!(
+            !should_arm_delta_drain(&args),
+            "the drain is gated off on non-Unix even for a real transfer"
         );
     }
 }
