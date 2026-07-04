@@ -1,6 +1,6 @@
 # Daemon Tokio Async Listener - Implementation Plan
 
-Status: Design (TODO #1935)
+Status: Implemented (accept path wired; opt-in, default-off)
 Audience: daemon maintainers, transfer-pipeline maintainers, release engineering
 Scope: concrete implementation steps for replacing the synchronous accept loop in
 `crates/daemon` with a Tokio-driven listener that bridges to the existing sync
@@ -116,6 +116,61 @@ Non-goals:
   Mitigation: measured once per connection, negligible against handshake cost.
 - Tokio dependency surface. Mitigation: feature-gated; default builds remain
   Tokio-free.
+
+## 6a. Wired implementation
+
+The accept path is now wired to a real per-connection worker (previously a
+skeleton that dropped each accepted socket):
+
+- `crates/daemon/src/daemon/sections/server_runtime/connection_context.rs`
+  introduces `ConnectionContext`, a cheaply-clonable bundle of the daemon-wide
+  per-connection state (module table, MOTD, log sink, client socket options,
+  bandwidth limits, reverse-lookup / PROXY toggles). Its `serve_session` core
+  runs the full legacy `@RSYNCD:` session under `catch_unwind` and is shared by
+  both accept engines. The synchronous `spawn_connection_worker` builds the same
+  context and calls `serve_session`, so the extract is behaviour-preserving; the
+  async worker calls `serve_one_connection`, which additionally applies the
+  accepted-stream socket tuning and client socket options before delegating to
+  `serve_session`. Only accept + task dispatch differ between the two paths; the
+  wire behaviour is byte-identical.
+
+- `run_async_daemon` builds one shared `ConnectionContext` and passes a
+  `SyncWorker` closure to `run_hybrid_listener`.
+
+### Runtime selection
+
+The shipping binary still runs the synchronous accept loop by default. The TCP
+(non-stdio) daemon dispatch selects the async path only when **both** hold:
+
+- the binary is built with `--features async-daemon` (forwarded from
+  `crates/cli` via its own `async-daemon` feature), and
+- the `OC_RSYNC_ASYNC_DAEMON` environment variable is set at runtime.
+
+When the variable is unset or the feature is off, the sync path is unchanged.
+This gate lives in `crates/daemon/src/cli.rs` and only affects the TCP daemon;
+the stdio (inetd / remote-shell) path is untouched. It exists to enable the
+async-vs-sync daemon concurrency benchmark (ASY-4).
+
+### Admission control
+
+`run_async_daemon` enforces the daemon-level `max connections` cap with a
+`tokio::sync::Semaphore` sized to the configured limit, in addition to any
+per-module `ConnectionLimiter` the session handler already applies. On
+exhaustion it writes the same `@ERROR: max connections (N) reached -- try again
+later` refusal the sync accept loop emits, then drops the connection.
+
+### Limitation: privileged modules unsupported
+
+Privilege drop, chroot, and setuid/setgid are **not** plumbed through the async
+accept path. To avoid a silent security regression, `run_async_daemon` fails
+closed: if any module sets `uid`, `gid`, or `use chroot = true` (the upstream
+default for `use chroot` is `true`), or a global daemon `uid`/`gid`/`chroot` is
+configured, it returns a `DaemonError` with the message
+`async-daemon does not support privileged (uid/gid/chroot) modules; use the
+sync daemon`. Non-privileged modules (`use chroot = false`, no `uid`/`gid`) -
+the benchmark case - run normally. Lifting this limitation requires threading
+the chroot / setuid / setgid sequence through the async dispatch and is tracked
+as a follow-up under #1751.
 
 ## 7. References
 

@@ -416,44 +416,147 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
 
 /// Runs the daemon orchestration using the hybrid tokio listener.
 ///
-/// This is the implementation skeleton tracked under issue #1935. The
-/// configuration is parsed identically to [`run_daemon`], but the accept
+/// The configuration is parsed identically to [`run_daemon`], but the accept
 /// loop is hosted on a tokio multi-thread runtime via
-/// [`crate::async_listener::run_hybrid_listener`]. Each accepted connection
-/// is handed to the existing synchronous session handler through
-/// `tokio::task::spawn_blocking`, preserving the wire protocol, auth, and
-/// transfer pipeline unchanged.
+/// [`crate::async_listener::run_hybrid_listener`]. Each accepted connection is
+/// served by the existing synchronous session handler through
+/// `tokio::task::spawn_blocking` (see
+/// [`ConnectionContext::serve_one_connection`]), so the wire protocol, auth,
+/// and transfer pipeline stay byte-identical with the sync daemon; only the
+/// accept + task dispatch is asynchronous.
 ///
-/// # Status
+/// # Selection
 ///
-/// Skeleton. The default daemon CLI continues to dispatch through
-/// [`run_daemon`]; this entrypoint exists for the gated `async-daemon` CI
-/// builds and for downstream embedders that want to opt in early.
-/// Production rollout requires the trigger conditions documented in
-/// `docs/design/daemon-async-runtime-choice.md` (sustained >1k concurrent
-/// connections, blocking-pool measurements, two release cycles of green
-/// async-daemon CI).
+/// This entrypoint is not the default. The TCP daemon dispatch selects it only
+/// when the `async-daemon` cargo feature is compiled in **and** the
+/// `OC_RSYNC_ASYNC_DAEMON` environment variable is set; otherwise the daemon
+/// runs through [`run_daemon`]. It exists to enable the async-vs-sync daemon
+/// concurrency benchmark and for downstream embedders opting in early.
+///
+/// # Limitation: privileged modules unsupported
+///
+/// Privilege drop, chroot, and setuid/setgid are **not** plumbed through the
+/// async accept path. To avoid a silent security regression, this function
+/// fails closed: if any module sets `uid`, `gid`, or `use chroot = true`
+/// (the upstream default for `use chroot` is `true`), or a global daemon
+/// `uid`/`gid`/`chroot` is configured, it returns a `DaemonError` instructing
+/// the operator to use the synchronous daemon. Non-privileged modules
+/// (`use chroot = false`, no `uid`/`gid`) - the benchmark case - run fine.
 ///
 /// # Errors
 ///
-/// Returns a `DaemonError` if option parsing, config loading, runtime
-/// construction, or the initial socket bind fails.
+/// Returns a `DaemonError` if option parsing, config loading, capability
+/// preflight, runtime construction, or the initial socket bind fails, or when
+/// a privileged module is configured (see the limitation above).
 #[cfg(feature = "async-daemon")]
 #[cfg_attr(docsrs, doc(cfg(feature = "async-daemon")))]
 pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
     let external_signal_flags = config.take_signal_flags();
     let _ = config.take_pre_bound_listener();
-    let options = RuntimeOptions::parse_with_brand(
-        config.arguments(),
-        config.brand(),
-        config.load_default_paths(),
-    )?;
+    let brand = config.brand();
+    let options =
+        RuntimeOptions::parse_with_brand(config.arguments(), brand, config.load_default_paths())?;
 
     apply_verbosity(options.verbosity());
 
+    let max_connections = options.max_connections.map(NonZeroUsize::get);
+    let socket_options_str = options.socket_options().map(str::to_string);
     let RuntimeOptions {
-        bind_address, port, ..
+        bind_address,
+        port,
+        modules,
+        motd_lines,
+        bandwidth_limit,
+        bandwidth_burst,
+        log_file,
+        reverse_lookup,
+        lock_file,
+        proxy_protocol,
+        daemon_uid,
+        daemon_gid,
+        daemon_chroot,
+        ..
     } = options;
+
+    // Fail closed on privileged configuration: the async accept path does not
+    // perform chroot or setuid/setgid, so silently serving a privileged module
+    // would be a security regression. Reject up front with a clear message.
+    if daemon_uid.is_some() || daemon_gid.is_some() || daemon_chroot.is_some() {
+        return Err(async_privileged_module_error());
+    }
+
+    let log_sink = if let Some(path) = log_file {
+        Some(open_log_sink(&path, brand)?)
+    } else {
+        None
+    };
+
+    apply_startup_hardening(log_sink.as_ref());
+
+    let connection_limiter = if let Some(path) = lock_file {
+        Some(Arc::new(ConnectionLimiter::open(path)?))
+    } else {
+        None
+    };
+
+    let modules: Arc<Vec<ModuleRuntime>> = Arc::new(
+        modules
+            .into_iter()
+            .map(|definition| ModuleRuntime::new(definition, connection_limiter.clone()))
+            .collect(),
+    );
+
+    // Reject privileged per-module settings for the same reason as the global
+    // checks above.
+    for module in modules.iter() {
+        if module.definition.uid.is_some()
+            || module.definition.gid.is_some()
+            || module.definition.use_chroot
+        {
+            return Err(async_privileged_module_error());
+        }
+    }
+
+    // Same capability preflight the sync path runs before binding.
+    if let Err(reason) = preflight_required_capabilities(&modules) {
+        return Err(DaemonError::new(
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+            rsync_error!(
+                FEATURE_UNAVAILABLE_EXIT_CODE,
+                format!("oc-rsyncd: error: {reason}")
+            )
+            .with_role(Role::Daemon),
+        ));
+    }
+
+    let client_socket_options: Arc<Vec<SocketOption>> =
+        if let Some(ref opts_str) = socket_options_str {
+            let parsed = parse_socket_options(opts_str).map_err(|msg| {
+                DaemonError::new(
+                    FEATURE_UNAVAILABLE_EXIT_CODE,
+                    rsync_error!(
+                        FEATURE_UNAVAILABLE_EXIT_CODE,
+                        format!("invalid socket options: {msg}")
+                    )
+                    .with_role(Role::Daemon),
+                )
+            })?;
+            Arc::new(parsed)
+        } else {
+            Arc::new(Vec::new())
+        };
+
+    let context = ConnectionContext::new(
+        modules,
+        Arc::new(motd_lines),
+        log_sink,
+        client_socket_options,
+        bandwidth_limit,
+        bandwidth_burst,
+        reverse_lookup,
+        proxy_protocol,
+    );
+
     let bind_addr = std::net::SocketAddr::new(bind_address, port);
     let worker_threads = std::thread::available_parallelism()
         .map(NonZeroUsize::get)
@@ -478,18 +581,28 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
     };
     let shutdown = Arc::clone(&signal_flags.shutdown);
 
-    // Skeleton handler: log the accepted peer and drop the stream. The
-    // real per-connection wiring lives behind a follow-up that exposes the
-    // sync session handler as a callable closure; see #1935 for the rollout
-    // checklist and `docs/design/daemon-tokio-async-listener-impl.md` for
-    // the integration plan.
-    let worker: crate::async_listener::SyncWorker = Arc::new(|stream, peer| {
-        eprintln!(
-            "async-daemon (skeleton): accepted {peer}, closing immediately [daemon={}]",
-            env!("CARGO_PKG_VERSION")
-        );
-        drop(stream);
-        Ok(())
+    // Bound concurrent in-flight connections to `max_connections` in addition
+    // to any per-module `ConnectionLimiter` already enforced inside the
+    // session handler, mirroring the sync path's daemon-level cap. `None`
+    // leaves dispatch unbounded (matching the sync default).
+    let admission = max_connections.map(|limit| Arc::new(tokio::sync::Semaphore::new(limit)));
+
+    let worker: crate::async_listener::SyncWorker = Arc::new(move |stream, peer| {
+        // Enforce the daemon-level connection cap by refusing to serve past
+        // the limit. Acquiring fails only when the semaphore is exhausted; on
+        // exhaustion write the same `@ERROR: max connections` refusal the sync
+        // path emits, then drop the connection.
+        let _permit = match admission.as_ref() {
+            Some(sem) => match Arc::clone(sem).try_acquire_owned() {
+                Ok(permit) => Some(permit),
+                Err(_) => {
+                    refuse_async_connection_at_capacity(stream, peer, max_connections);
+                    return Ok(());
+                }
+            },
+            None => None,
+        };
+        context.serve_one_connection(stream, peer)
     });
 
     crate::async_listener::run_hybrid_listener(bind_addr, worker_threads, shutdown, worker).map_err(
@@ -504,6 +617,47 @@ pub fn run_async_daemon(mut config: DaemonConfig) -> Result<(), DaemonError> {
             )
         },
     )
+}
+
+/// Builds the fail-closed error returned when the async daemon is asked to
+/// serve a privileged (`uid`/`gid`/`use chroot`) module.
+///
+/// The async accept path does not perform chroot or setuid/setgid, so serving
+/// such a module would silently skip the privilege drop. Refusing at startup
+/// keeps the security posture explicit.
+#[cfg(feature = "async-daemon")]
+fn async_privileged_module_error() -> DaemonError {
+    DaemonError::new(
+        FEATURE_UNAVAILABLE_EXIT_CODE,
+        rsync_error!(
+            FEATURE_UNAVAILABLE_EXIT_CODE,
+            "async-daemon does not support privileged (uid/gid/chroot) modules; \
+             use the sync daemon"
+                .to_owned()
+        )
+        .with_role(Role::Daemon),
+    )
+}
+
+/// Writes the upstream-compatible max-connections refusal to an accepted
+/// async socket, then lets it drop.
+///
+/// upstream: clientserver.c:752 - `@ERROR: max connections (%d) reached --
+/// try again later\n`. Mirrors the sync accept loop's `refuse_if_at_capacity`
+/// wording so clients see an identical reply regardless of accept engine.
+#[cfg(feature = "async-daemon")]
+fn refuse_async_connection_at_capacity(
+    mut stream: TcpStream,
+    _peer: SocketAddr,
+    limit: Option<usize>,
+) {
+    let limit = limit.unwrap_or(0);
+    let payload = format!(
+        "{}\n",
+        MODULE_MAX_CONNECTIONS_PAYLOAD.replace("{limit}", &limit.to_string())
+    );
+    let _ = stream.write_all(payload.as_bytes());
+    let _ = stream.flush();
 }
 
 include!("daemon/sections/cli_args.rs");

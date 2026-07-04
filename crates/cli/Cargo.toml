@@ -42,6 +42,15 @@ iconv = ["core/iconv"]
 # Also enables engine optimization features for maximum performance
 parallel = ["engine/lazy-metadata", "checksums/parallel"]
 
+# ============================================================================
+# Daemon Accept Path
+# ============================================================================
+# Compiles the daemon's hybrid tokio accept path. Opt-in and default-off; the
+# shipping binary still runs the synchronous accept loop unless the operator
+# also sets OC_RSYNC_ASYNC_DAEMON at runtime. Enables the async-vs-sync daemon
+# concurrency benchmark.
+async-daemon = ["daemon/async-daemon"]
+
 
 [dependencies]
 clap = { workspace = true }
