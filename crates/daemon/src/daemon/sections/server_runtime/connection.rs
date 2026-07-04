@@ -188,62 +188,29 @@ fn spawn_connection_worker(
     state: &AcceptLoopState<'_>,
 ) -> thread::JoinHandle<WorkerResult> {
     let peer_addr = normalize_peer_address(raw_peer_addr);
-    let modules = Arc::clone(&state.modules);
-    let motd_lines = Arc::clone(&state.motd_lines);
-    let log_for_worker = state.log_sink.as_ref().map(Arc::clone);
+    // Build the shareable per-connection context once; the same context type
+    // and `serve_session` core drive the async accept path, keeping the wire
+    // behaviour byte-identical across both accept engines.
+    let context = ConnectionContext::new(
+        Arc::clone(&state.modules),
+        Arc::clone(&state.motd_lines),
+        state.log_sink.as_ref().map(Arc::clone),
+        Arc::clone(&state.client_socket_options),
+        state.bandwidth_limit,
+        state.bandwidth_burst,
+        state.reverse_lookup,
+        state.proxy_protocol,
+    );
     let conn_guard = state.connection_counter.acquire();
-    let bandwidth_limit = state.bandwidth_limit;
-    let bandwidth_burst = state.bandwidth_burst;
-    let reverse_lookup = state.reverse_lookup;
-    let proxy_protocol = state.proxy_protocol;
 
     thread::spawn(move || {
         let _conn_guard = conn_guard;
-        // upstream rsync forks per connection, so a crash only
-        // kills that child.  We use threads, so catch_unwind
-        // isolates panics to the faulting connection and keeps
-        // the daemon alive.
-        let result = std::panic::catch_unwind(
-            std::panic::AssertUnwindSafe(|| {
-                let modules_vec = modules.as_ref();
-                let motd_vec = motd_lines.as_ref();
-                handle_session(
-                    stream,
-                    peer_addr,
-                    SessionParams {
-                        modules: modules_vec.as_slice(),
-                        motd_lines: motd_vec.as_slice(),
-                        daemon_limit: bandwidth_limit,
-                        daemon_burst: bandwidth_burst,
-                        log_sink: log_for_worker.clone(),
-                        reverse_lookup,
-                        proxy_protocol,
-                    },
-                )
-            }),
-        );
-        match result {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(error)) => {
-                Err((Some(peer_addr), error))
-            }
-            Err(payload) => {
-                let description =
-                    describe_panic_payload(payload);
-                if let Some(log) = log_for_worker.as_ref() {
-                    let text = format!(
-                        "connection handler for {peer_addr} \
-                         panicked: {description}"
-                    );
-                    let message = rsync_error!(
-                        SOCKET_IO_EXIT_CODE,
-                        text
-                    )
-                    .with_role(Role::Daemon);
-                    log_message(log, &message);
-                }
-                Ok(())
-            }
+        // upstream rsync forks per connection, so a crash only kills that
+        // child. `serve_session` isolates panics via `catch_unwind` so a
+        // faulting connection cannot tear down the daemon.
+        match context.serve_session(stream, raw_peer_addr) {
+            Ok(()) => Ok(()),
+            Err(error) => Err((Some(peer_addr), error)),
         }
     })
 }

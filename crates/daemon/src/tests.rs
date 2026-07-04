@@ -243,6 +243,8 @@ include!("tests/chunks/daemon_hardlinks_relative_receive.rs");
 // Daemon itemize end-to-end tests
 include!("tests/chunks/daemon_itemize_push.rs");
 include!("tests/chunks/daemon_itemize_pull.rs");
+// Hybrid async accept path end-to-end tests (feature = "async-daemon")
+include!("tests/chunks/daemon_async_push_pull.rs");
 // Daemon delta transfer end-to-end test
 include!("tests/chunks/daemon_delta_transfer.rs");
 // Daemon mode negotiation tests
