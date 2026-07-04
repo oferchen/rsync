@@ -195,7 +195,20 @@ fn bind_with_backlog(
     // has no equivalent, so the call is skipped there.
     #[cfg(unix)]
     if fast_io::reuse_port_supported() {
-        let _ = socket.set_reuse_port(true);
+        match socket.set_reuse_port(true) {
+            Ok(()) => logging::debug_log!(Sockopt, 1, "SO_REUSEPORT set on listener {addr}"),
+            Err(_) => logging::debug_log!(
+                Sockopt,
+                1,
+                "SO_REUSEPORT apply failed on listener {addr}: single-listener fallback"
+            ),
+        }
+    } else {
+        logging::debug_log!(
+            Sockopt,
+            1,
+            "SO_REUSEPORT unsupported on this platform: skipped for listener {addr}"
+        );
     }
 
     // For IPv6 sockets, set IPV6_V6ONLY to avoid conflicts with the separate
