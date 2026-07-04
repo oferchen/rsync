@@ -127,6 +127,12 @@ pub(super) fn try_clone(
     let Some(clone_method) = clone_method else {
         // clonefile failed (cross-device, non-APFS, etc.) - caller falls
         // through to normal copy path.
+        debug_log!(
+            Clone,
+            1,
+            "CoW clone unavailable for {}: using standard copy",
+            record_path.display()
+        );
         return Ok(false);
     };
 
@@ -135,6 +141,13 @@ pub(super) fn try_clone(
         Send,
         1,
         "cloned {}: {} bytes (CoW)",
+        record_path.display(),
+        file_size
+    );
+    debug_log!(
+        Clone,
+        1,
+        "CoW clone succeeded: dst={} ({} bytes)",
         record_path.display(),
         file_size
     );

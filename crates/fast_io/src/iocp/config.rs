@@ -190,6 +190,11 @@ fn probe_iocp() -> bool {
 
     if handle.is_null() {
         IOCP_STATUS.store(UNAVAILABLE, Ordering::Relaxed);
+        logging::debug_log!(
+            Iocp,
+            1,
+            "IOCP unavailable: CreateIoCompletionPort failed - using standard I/O"
+        );
         return false;
     }
 
@@ -204,6 +209,7 @@ fn probe_iocp() -> bool {
     SKIP_EVENT_AVAILABLE.store(true, Ordering::Relaxed);
 
     IOCP_STATUS.store(AVAILABLE, Ordering::Relaxed);
+    logging::debug_log!(Iocp, 1, "IOCP available (Windows): dispatching IOCP writer");
     true
 }
 

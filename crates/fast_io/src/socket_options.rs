@@ -433,11 +433,17 @@ pub fn set_tcp_quickack(stream: &TcpStream) -> io::Result<bool> {
     #[cfg(target_os = "linux")]
     {
         set_socket_int_option(stream, libc::IPPROTO_TCP, libc::TCP_QUICKACK, 1)?;
+        logging::debug_log!(Sockopt, 1, "TCP_QUICKACK set");
         Ok(true)
     }
     #[cfg(not(target_os = "linux"))]
     {
         let _ = stream;
+        logging::debug_log!(
+            Sockopt,
+            1,
+            "TCP_QUICKACK unsupported on this platform: skipped"
+        );
         Ok(false)
     }
 }
@@ -484,11 +490,17 @@ pub fn set_so_max_pacing_rate(stream: &TcpStream, bytes_per_sec: u32) -> io::Res
             libc::SO_MAX_PACING_RATE,
             bytes_per_sec as i32,
         )?;
+        logging::debug_log!(Sockopt, 1, "SO_MAX_PACING_RATE set: {bytes_per_sec} B/s");
         Ok(true)
     }
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (stream, bytes_per_sec);
+        logging::debug_log!(
+            Sockopt,
+            1,
+            "SO_MAX_PACING_RATE unsupported on this platform: skipped"
+        );
         Ok(false)
     }
 }
@@ -616,16 +628,23 @@ pub fn set_tcp_cork(stream: &TcpStream, cork: bool) -> io::Result<bool> {
     #[cfg(target_os = "linux")]
     {
         set_socket_int_option(stream, libc::IPPROTO_TCP, libc::TCP_CORK, i32::from(cork))?;
+        logging::debug_log!(Sockopt, 1, "TCP_CORK set: cork={cork}");
         Ok(true)
     }
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     {
         set_socket_int_option(stream, libc::IPPROTO_TCP, libc::TCP_NOPUSH, i32::from(cork))?;
+        logging::debug_log!(Sockopt, 1, "TCP_NOPUSH set: cork={cork}");
         Ok(true)
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "freebsd")))]
     {
         let _ = (stream, cork);
+        logging::debug_log!(
+            Sockopt,
+            1,
+            "TCP output corking unsupported on this platform: skipped"
+        );
         Ok(false)
     }
 }
