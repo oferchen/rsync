@@ -15,9 +15,14 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 // jemalloc reads this compile-time configuration static at allocator init,
 // before `main` runs, so no environment variable or process re-exec is
-// needed. `dirty_decay_ms:0,muzzy_decay_ms:0` returns freed pages to the OS
-// promptly instead of retaining them, which bounds resident memory at scale:
-// on a 100k-file local copy this drops Maximum RSS from ~45 MB to ~30 MB.
+// needed. A 250 ms dirty/muzzy decay returns freed pages to the OS promptly
+// instead of retaining them, which bounds resident memory at scale. Measured
+// on a 100k-file local copy: Maximum RSS drops from ~45 MB to ~31 MB, and on
+// a 2 GiB transfer from ~20 MB to ~13 MB. A 250 ms window (rather than 0)
+// batches the page-return `madvise` calls, avoiding the per-free syscall cost
+// of immediate decay: it captures effectively the same RSS reduction while
+// eliminating the throughput regression on I/O-bound transfers and halving it
+// on allocation-heavy small-file workloads.
 //
 // The symbol name matches the default `_rjem_`-prefixed tikv-jemalloc-sys
 // build. Were the crate built with `unprefixed_malloc_on_supported_platforms`,
@@ -25,7 +30,7 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 #[cfg(unix)]
 #[allow(unsafe_code, non_upper_case_globals)]
 #[unsafe(no_mangle)]
-pub static _rjem_malloc_conf: &[u8] = b"dirty_decay_ms:0,muzzy_decay_ms:0\0";
+pub static _rjem_malloc_conf: &[u8] = b"dirty_decay_ms:250,muzzy_decay_ms:250\0";
 
 #[path = "client.rs"]
 mod client;
