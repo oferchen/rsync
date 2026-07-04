@@ -95,8 +95,11 @@ fn daemon_negotiation_auth_challenge_is_unique_per_session() {
         drop(stream);
     }
 
-    // The daemon exits after serving both sessions (max-sessions = 2).
-    let _result = handle.join().expect("daemon thread");
+    // The daemon exits after serving both sessions (max-sessions = 2). On
+    // Windows CI a blocking accept on the re-bound listener can linger past the
+    // client disconnect, so bound the join and detach if it does not finish
+    // rather than wedging the test until nextest's 360s slow-timeout fires.
+    let _ = finish_daemon(handle);
 
     // Challenges should be different
     assert_eq!(challenges.len(), 2);

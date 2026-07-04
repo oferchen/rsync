@@ -225,6 +225,35 @@ pub(super) fn connect_with_retries(port: u16) -> TcpStream {
     connect_to_daemon(port, None)
 }
 
+/// Bounded wait for a daemon thread to finish, detaching it if it lingers.
+///
+/// The negotiation tests spawn an in-process daemon and then `join()` its
+/// thread to surface the daemon-side `Result`. That thread's accept loop
+/// terminates promptly on Unix once the client disconnects, but on Windows a
+/// blocking `accept` on a re-bound listener can linger indefinitely, so an
+/// unconditional `join()` wedges the test until nextest's 360s slow-timeout
+/// fires - a job-level hang. Because nextest runs each test in its own process,
+/// a still-running daemon thread is harmless: it is reaped when the test
+/// process exits. This helper waits up to `DAEMON_JOIN_TIMEOUT` for the thread
+/// to finish and returns its `Result`; if it does not finish it detaches the
+/// thread and returns `None`, letting the caller keep the client-side
+/// assertions that already validated the exchange.
+pub(super) fn finish_daemon(
+    handle: thread::JoinHandle<Result<(), crate::DaemonError>>,
+) -> Option<Result<(), crate::DaemonError>> {
+    const DAEMON_JOIN_TIMEOUT: Duration = Duration::from_secs(20);
+    const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+    let deadline = Instant::now() + DAEMON_JOIN_TIMEOUT;
+    while Instant::now() < deadline {
+        if handle.is_finished() {
+            return Some(handle.join().expect("daemon thread"));
+        }
+        thread::sleep(POLL_INTERVAL);
+    }
+    None
+}
+
 /// Bounded read/write timeout applied to every daemon-test client stream.
 ///
 /// Test clients drive the daemon with blocking `read_line`/`write_all` calls.
