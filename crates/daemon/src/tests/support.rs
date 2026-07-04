@@ -225,6 +225,17 @@ pub(super) fn connect_with_retries(port: u16) -> TcpStream {
     connect_to_daemon(port, None)
 }
 
+/// Bounded read/write timeout applied to every daemon-test client stream.
+///
+/// Test clients drive the daemon with blocking `read_line`/`write_all` calls.
+/// Without a timeout a wedged daemon worker - e.g. an accept-loop stall seen
+/// under heavy concurrent load on Windows CI - leaves the client blocked until
+/// nextest's slow-timeout terminates it 360s later, which reads as a job-level
+/// hang. A generous per-operation timeout turns that hang into a fast,
+/// retryable failure while staying clear of legitimate startup latency on a
+/// loaded runner.
+const CLIENT_IO_TIMEOUT: Duration = Duration::from_secs(30);
+
 fn connect_to_daemon(
     port: u16,
     handle: Option<&thread::JoinHandle<Result<(), crate::DaemonError>>>,
@@ -250,7 +261,17 @@ fn connect_to_daemon(
         }
 
         match TcpStream::connect_timeout(&target, backoff) {
-            Ok(stream) => return stream,
+            Ok(stream) => {
+                // Bound every subsequent blocking read/write so a stalled
+                // daemon worker fails fast and retries instead of hanging.
+                stream
+                    .set_read_timeout(Some(CLIENT_IO_TIMEOUT))
+                    .expect("set client read timeout");
+                stream
+                    .set_write_timeout(Some(CLIENT_IO_TIMEOUT))
+                    .expect("set client write timeout");
+                return stream;
+            }
             Err(error) => {
                 if Instant::now() >= deadline {
                     panic!("failed to connect to daemon within timeout: {error}");
