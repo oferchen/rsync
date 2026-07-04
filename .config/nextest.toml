@@ -30,6 +30,26 @@ retries = 2
 filter = "package(daemon) | test(execute_sparse) | binary_id(~integration_daemon)"
 retries = 2
 
+# Daemon-spawn negotiation tests each start a real daemon thread and drive it
+# over a loopback TCP connection. Under heavy concurrent execution on Windows CI
+# runners the accept/handshake path can stall, leaving a client blocked long
+# enough to trip the 360s slow-timeout (observed as a job-level hang). The
+# client streams now carry a bounded read/write timeout so such a stall fails
+# fast and the package-wide retries above absorb it; serialising these tests in
+# a single-threaded group further removes cross-binary accept contention as a
+# trigger. Mirrored into profile.default so the Windows nextest cells (default
+# profile) get the same grouping.
+[[profile.ci.overrides]]
+filter = "package(daemon) & (test(daemon_negotiation) | test(daemon_protocol_28_forced) | test(run_daemon_records_log_file_entries))"
+test-group = "daemon-spawn-serial"
+
+[[profile.default.overrides]]
+filter = "package(daemon) & (test(daemon_negotiation) | test(daemon_protocol_28_forced) | test(run_daemon_records_log_file_entries))"
+test-group = "daemon-spawn-serial"
+
+[test-groups.daemon-spawn-serial]
+max-threads = 1
+
 # SSH integration tests must run serially - parallel SSH sessions on the CI
 # runner cause pipe corruption (garbled data, zero-length filenames, broken
 # connections). Retries handle transient SSH pipe failures.
