@@ -489,19 +489,24 @@ pub(in crate::local_copy) fn execute_transfer(
         }
     }
 
-    let mut pool_guard = if context.use_buffer_pool() {
-        Some(
-            super::super::super::super::super::BufferPool::acquire_controlled_from(
-                context.buffer_pool(),
-                file_size,
-            ),
-        )
+    // Acquire the copy buffer lazily: paths that move no bytes through it
+    // (empty files, fully-resumed append) never allocate. Files that do read
+    // and write take a pool-default-sized buffer via `acquire_from`, whose
+    // thread-local cache reuses one buffer across sequential files on a worker
+    // thread. This keeps copy-buffer allocations O(worker threads) rather than
+    // O(files), the churn a per-file `acquire_controlled_from` produced by
+    // requesting a file-size-adaptive size that never matched the pool default.
+    let copy_bytes_remaining = file_size.saturating_sub(append_offset);
+    let needs_buffer = copy_bytes_remaining > 0 || delta_signature.is_some();
+    let mut pool_guard = if needs_buffer && context.use_buffer_pool() {
+        Some(super::super::super::super::super::BufferPool::acquire_from(
+            context.buffer_pool(),
+        ))
     } else {
         None
     };
-    let adaptive_size = super::super::super::super::super::adaptive_buffer_size(file_size);
-    let mut direct_buffer = if pool_guard.is_none() {
-        vec![0u8; adaptive_size]
+    let mut direct_buffer = if needs_buffer && pool_guard.is_none() {
+        vec![0u8; super::super::super::super::super::adaptive_buffer_size(file_size)]
     } else {
         Vec::new()
     };
