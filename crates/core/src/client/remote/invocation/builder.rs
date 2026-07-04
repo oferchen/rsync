@@ -404,9 +404,8 @@ impl<'a> RemoteInvocationBuilder<'a> {
         if self.config.size_only() {
             args.push(OsString::from("--size-only"));
         }
-        if self.config.ignore_times() {
-            args.push(OsString::from("--ignore-times"));
-        }
+        // upstream: options.c:2711-2712 - --ignore-times is emitted as the
+        // compact `I` letter in build_flag_string(), not as a long-form arg.
         if self.config.ignore_existing() {
             args.push(OsString::from("--ignore-existing"));
         }
@@ -737,6 +736,14 @@ impl<'a> RemoteInvocationBuilder<'a> {
         // upstream: options.c:2707-2708 - always_checksum.
         if self.config.checksum() {
             flags.push('c');
+        }
+        // upstream: options.c:2711-2712 - ignore_times rides in the compact
+        // flag string as `I`, NOT as a long-form `--ignore-times`. Emitting the
+        // long form lands `--ignore-times` as a positional path on the remote
+        // server's arg parser (link_stat "--ignore-times" failed), so the
+        // compact letter is mandatory here.
+        if self.config.ignore_times() {
+            flags.push('I');
         }
         // upstream: options.c:2713-2714 - relative_paths.
         if effective_relative {
