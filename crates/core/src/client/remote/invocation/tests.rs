@@ -465,7 +465,6 @@ const UPSTREAM_SERVER_LONG_ARGS: &[&str] = &[
     "--trust-sender",
     "--checksum-seed",
     "--size-only",
-    "--ignore-times",
     "--ignore-existing",
     "--existing",
     "--ignore-missing-args",
@@ -1642,13 +1641,22 @@ fn includes_munge_links_long_arg() {
     );
 }
 
+/// upstream: options.c:2711-2712 - `--ignore-times` is emitted as the compact
+/// `I` letter in the flag string, never as a long-form `--ignore-times` arg.
+/// The long form leaks onto the remote server's positional path list
+/// (`link_stat "--ignore-times" failed`), so the compact letter is required.
 #[test]
-fn includes_ignore_times_long_arg() {
+fn ignore_times_rides_compact_flag_not_long_arg() {
     let config = ClientConfig::builder().ignore_times(true).build();
     let args = build_sender_args(&config);
     assert!(
-        args.iter().any(|a| a == "--ignore-times"),
-        "expected --ignore-times in args: {args:?}"
+        args.iter()
+            .any(|a| a.starts_with('-') && !a.starts_with("--") && a.contains('I')),
+        "expected 'I' in the compact flag string: {args:?}"
+    );
+    assert!(
+        !args.iter().any(|a| a == "--ignore-times"),
+        "must not emit long-form --ignore-times: {args:?}"
     );
 }
 
@@ -2258,6 +2266,8 @@ fn all_flags_enabled_produces_valid_invocation() {
         ('r', "recursive"),
         ('z', "compress"),
         ('c', "checksum"),
+        // upstream: options.c:2711-2712 - ignore_times rides as compact 'I'.
+        ('I', "ignore_times"),
         ('H', "hard_links"),
         ('n', "dry_run"),
         ('W', "whole_file"),
@@ -2306,7 +2316,6 @@ fn all_flags_enabled_produces_valid_invocation() {
         "--safe-links",
         "--munge-links",
         "--size-only",
-        "--ignore-times",
         "--ignore-existing",
         "--existing",
         "--remove-source-files",
