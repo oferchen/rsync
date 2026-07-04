@@ -92,6 +92,24 @@ where
         .arguments(parsed.remainder)
         .build();
 
+    // Opt-in async accept path for the TCP (non-stdio) daemon. Selected only
+    // when the `async-daemon` feature is compiled in and the operator sets
+    // `OC_RSYNC_ASYNC_DAEMON`; otherwise the daemon runs the default sync
+    // accept loop unchanged. Enables the async-vs-sync concurrency benchmark.
+    #[cfg(feature = "async-daemon")]
+    if std::env::var_os("OC_RSYNC_ASYNC_DAEMON").is_some() {
+        return match crate::daemon::run_async_daemon(config) {
+            Ok(()) => 0,
+            Err(error) => {
+                if write_message(error.message(), stderr).is_err() {
+                    let message = error.message();
+                    let _ = writeln!(stderr.writer_mut(), "{message}");
+                }
+                error.exit_code()
+            }
+        };
+    }
+
     match run_daemon(config) {
         Ok(()) => 0,
         Err(error) => {
