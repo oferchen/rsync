@@ -58,8 +58,9 @@ pub struct VersionInfoConfig {
     pub supports_openssl_crypto: bool,
     /// Whether assembly acceleration is used for MD5.
     pub supports_asm_md5: bool,
-    /// Whether the mimalloc high-performance allocator is active.
-    pub supports_mimalloc: bool,
+    /// Whether the high-performance global allocator is active (jemalloc on
+    /// Unix, mimalloc on Windows).
+    pub supports_fast_allocator: bool,
     /// Whether `copy_file_range` zero-copy transfers are available (Linux).
     pub supports_copy_file_range: bool,
     /// Whether `io_uring` async I/O batching is available (Linux 5.6+).
@@ -98,7 +99,7 @@ impl VersionInfoConfig {
             supports_asm_roll: false,
             supports_openssl_crypto: false,
             supports_asm_md5: false,
-            supports_mimalloc: true,
+            supports_fast_allocator: true,
             supports_copy_file_range: cfg!(target_os = "linux"),
             supports_io_uring: false,
             supports_parallel: true,
@@ -197,7 +198,7 @@ pub struct VersionInfoConfigBuilder {
     supports_asm_roll: bool,
     supports_openssl_crypto: bool,
     supports_asm_md5: bool,
-    supports_mimalloc: bool,
+    supports_fast_allocator: bool,
     supports_copy_file_range: bool,
     supports_io_uring: bool,
     supports_parallel: bool,
@@ -232,7 +233,7 @@ impl VersionInfoConfigBuilder {
             supports_asm_roll: config.supports_asm_roll,
             supports_openssl_crypto: config.supports_openssl_crypto,
             supports_asm_md5: config.supports_asm_md5,
-            supports_mimalloc: config.supports_mimalloc,
+            supports_fast_allocator: config.supports_fast_allocator,
             supports_copy_file_range: config.supports_copy_file_range,
             supports_io_uring: config.supports_io_uring,
             supports_parallel: config.supports_parallel,
@@ -266,7 +267,7 @@ impl VersionInfoConfigBuilder {
             supports_asm_roll: config.supports_asm_roll,
             supports_openssl_crypto: config.supports_openssl_crypto,
             supports_asm_md5: config.supports_asm_md5,
-            supports_mimalloc: config.supports_mimalloc,
+            supports_fast_allocator: config.supports_fast_allocator,
             supports_copy_file_range: config.supports_copy_file_range,
             supports_io_uring: config.supports_io_uring,
             supports_parallel: config.supports_parallel,
@@ -342,8 +343,8 @@ impl VersionInfoConfigBuilder {
         supports_openssl_crypto: bool,
         /// Enables or disables assembly-accelerated MD5.
         supports_asm_md5: bool,
-        /// Enables or disables the mimalloc allocator.
-        supports_mimalloc: bool,
+        /// Enables or disables the high-performance global allocator.
+        supports_fast_allocator: bool,
         /// Enables or disables copy_file_range zero-copy transfers.
         supports_copy_file_range: bool,
         /// Enables or disables io_uring async I/O batching.
@@ -380,7 +381,7 @@ impl VersionInfoConfigBuilder {
             supports_asm_roll: self.supports_asm_roll,
             supports_openssl_crypto: self.supports_openssl_crypto,
             supports_asm_md5: self.supports_asm_md5,
-            supports_mimalloc: self.supports_mimalloc,
+            supports_fast_allocator: self.supports_fast_allocator,
             supports_copy_file_range: self.supports_copy_file_range,
             supports_io_uring: self.supports_io_uring,
             supports_parallel: self.supports_parallel,
@@ -415,7 +416,7 @@ mod tests {
         assert!(!config.supports_asm_roll);
         assert!(!config.supports_openssl_crypto);
         assert!(!config.supports_asm_md5);
-        assert!(config.supports_mimalloc);
+        assert!(config.supports_fast_allocator);
         assert_eq!(config.supports_copy_file_range, cfg!(target_os = "linux"));
         assert!(!config.supports_io_uring);
         assert!(config.supports_parallel);
@@ -574,11 +575,11 @@ mod tests {
     }
 
     #[test]
-    fn builder_supports_mimalloc_false() {
+    fn builder_supports_fast_allocator_false() {
         let config = VersionInfoConfig::builder()
-            .supports_mimalloc(false)
+            .supports_fast_allocator(false)
             .build();
-        assert!(!config.supports_mimalloc);
+        assert!(!config.supports_fast_allocator);
     }
 
     #[test]

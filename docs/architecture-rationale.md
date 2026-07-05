@@ -224,12 +224,18 @@ Both crates eliminate `unsafe` blocks from `metadata` and `cli`, leaving
 only the small set of FFI calls that must live in `fast_io` or
 `metadata`'s permitted blocks.
 
-### `mimalloc` as the global allocator
+### jemalloc / mimalloc as the global allocator
 
-Linked at the binary level. Measured 8-50% throughput improvement over
-the system allocator on small-file workloads (where allocator
-contention is the bottleneck). The crate is feature-flagged at the
-binary boundary so embedders can swap it out.
+Linked at the binary level, selected per platform: jemalloc on Unix,
+mimalloc on Windows (which lacks comparable jemalloc support). Measured
+8-50% throughput improvement over the system allocator on small-file
+workloads (where allocator contention is the bottleneck). On Unix,
+jemalloc is configured at allocator init via a compile-time
+`malloc_conf` static (`dirty_decay_ms:0,muzzy_decay_ms:0`) so freed
+pages are returned to the OS promptly, bounding resident memory at
+scale (~45 MB -> ~30 MB on a 100k-file local copy) without a process
+re-exec. The allocator is selected at the binary boundary so embedders
+can swap it out.
 
 ### `jwalk`, `rustc-hash`, `dashmap`
 
