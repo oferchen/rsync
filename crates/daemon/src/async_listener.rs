@@ -39,8 +39,8 @@
 
 use std::io;
 use std::net::{SocketAddr, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::net::TcpListener as TokioTcpListener;
 use tokio::runtime::Builder;
