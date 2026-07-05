@@ -408,6 +408,68 @@ fn allocator_accessor_returns_reference() {
     assert_eq!(_alloc.alloc_count(), 0);
 }
 
+/// Regression: the local-copy transfer loop acquires one copy buffer per file
+/// on a worker thread. It must reuse a single pool-default buffer across
+/// sequential files (allocations O(worker threads)), not allocate a fresh
+/// buffer per file (O(files)).
+///
+/// Before the lazy-acquisition fix, the transfer site called
+/// `acquire_controlled_from(pool, file_size)`, which - with no active
+/// controller - derived a *file-size-adaptive* buffer size. For any file
+/// below 1 MB that size (8 KB / 32 KB) never matched the 128 KB pool default,
+/// so every acquire took the fresh-allocation slow path and skipped the
+/// thread-local cache: 20k small files churned 20k * 128 KB. Acquiring at the
+/// pool default via `acquire_from` restores the intended single-buffer reuse.
+#[cfg(not(feature = "thread-slab-pool"))]
+#[test]
+fn acquire_from_reuses_one_buffer_across_sequential_files() {
+    let pool = Arc::new(BufferPool::with_allocator(
+        4,
+        COPY_BUFFER_SIZE,
+        TrackingAllocator::new(),
+    ));
+
+    // Simulate copying many small files back to back on one worker thread:
+    // acquire the copy buffer, use it, drop it, repeat. The single TLS slot
+    // must carry the same buffer forward so only the first iteration allocates.
+    for _ in 0..1_000 {
+        let mut buf = BufferPool::acquire_from(Arc::clone(&pool));
+        buf[0] = 0x5A;
+    }
+
+    // At most one allocation total, not one per file. (A cold worker thread
+    // allocates the first buffer; a thread whose TLS slot already holds a
+    // pool-default buffer from earlier work allocates zero.) This is the
+    // O(threads) vs O(files) invariant the regression protects.
+    assert!(
+        pool.allocator().alloc_count() <= 1,
+        "expected buffer reuse, got {} allocations for 1000 files",
+        pool.allocator().alloc_count()
+    );
+}
+
+/// Documents the churn the fix removed: requesting a sub-pool-default adaptive
+/// size (what the old transfer site did for small files) forces a fresh
+/// allocation on every acquire, defeating the thread-local cache entirely.
+#[cfg(not(feature = "thread-slab-pool"))]
+#[test]
+fn adaptive_small_size_acquire_allocates_per_file() {
+    let pool = Arc::new(BufferPool::with_allocator(
+        4,
+        COPY_BUFFER_SIZE,
+        TrackingAllocator::new(),
+    ));
+
+    // Tiny "files" -> 8 KB adaptive size, never matches the 128 KB default,
+    // so each acquire allocates fresh and the return path reallocates to the
+    // pool size. This is the pathology the transfer site no longer triggers.
+    for _ in 0..8 {
+        let _buf = BufferPool::acquire_adaptive_from(Arc::clone(&pool), 1024);
+    }
+
+    assert_eq!(pool.allocator().alloc_count(), 8);
+}
+
 #[test]
 fn lock_free_acquire_release_under_scoped_concurrency() {
     // Hammers the lock-free ArrayQueue acquire/release path from many
