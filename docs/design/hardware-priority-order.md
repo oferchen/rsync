@@ -590,7 +590,8 @@ Running `oc-rsync --version` prints sections relevant to hardware
 acceleration:
 
 1. **Optimizations** - lists compile-time and runtime capabilities:
-   `SIMD-roll`, `asm-roll`, `openssl-crypto`, `asm-MD5`, `mimalloc`,
+   `SIMD-roll`, `asm-roll`, `openssl-crypto`, `asm-MD5`, the active
+   allocator (`jemalloc` on Unix, `mimalloc` on Windows),
    `copy-file-range`, `io-uring`, `parallel`, `mmap`.
 2. **Platform I/O** - runtime-detected fast I/O paths, e.g.
    `copy_file_range, sendfile, splice, FICLONE, O_TMPFILE, io_uring`.

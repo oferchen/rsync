@@ -555,7 +555,7 @@ over `std`:
 | `crossbeam-channel` | Lower syscall overhead than `std::sync::mpsc` for the SPSC pipeline. |
 | `crossbeam-queue` | Lock-free `ArrayQueue` for the disk-commit channel. |
 | `jwalk` | Parallel directory walking, ~4x faster than sequential `walkdir`. |
-| `mimalloc` | 8-50% faster than system allocator on allocation-heavy workloads. |
+| `tikv-jemallocator` / `mimalloc` | High-performance global allocator (jemalloc on Unix, mimalloc on Windows); 8-50% faster than the system allocator on allocation-heavy workloads. jemalloc is tuned via a compile-time `malloc_conf` static to return freed pages promptly, bounding RSS at scale. |
 | `rustc-hash` | 2-5x faster than `std::collections::HashMap` for integer keys. |
 | `thiserror` | Derives `Display` and `From` for error types without boilerplate. |
 | `clap` | CLI argument parsing with help generation. No `std` equivalent. |

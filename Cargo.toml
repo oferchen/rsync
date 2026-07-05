@@ -153,7 +153,6 @@ engine = { path = "crates/engine", default-features = false }
 checksums = { path = "crates/checksums", default-features = false }
 transfer = { path = "crates/transfer", default-features = false }
 fast_io = { path = "crates/fast_io", default-features = false }
-mimalloc = { workspace = true }
 
 [dev-dependencies]
 assert_cmd = { workspace = true }
@@ -166,6 +165,15 @@ protocol = { path = "crates/protocol" }
 
 [target.'cfg(unix)'.dev-dependencies]
 xattr = { workspace = true }
+
+# High-performance global allocator, selected per platform. Unix uses jemalloc
+# for its compile-time `malloc_conf` page-return tuning (see src/bin/oc-rsync.rs);
+# Windows keeps mimalloc, which lacks comparable jemalloc support.
+[target.'cfg(unix)'.dependencies]
+tikv-jemallocator = "0.6"
+
+[target.'cfg(windows)'.dependencies]
+mimalloc = { workspace = true }
 
 # CSM-8: default-enable OpenSSL EVP MD4/MD5 on glibc Linux and macOS (G1 from
 # CSM-7 synthesis). OpenSSL ships with the system libssl and provides ~2x
