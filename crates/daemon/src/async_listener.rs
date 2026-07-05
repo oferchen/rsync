@@ -1,5 +1,5 @@
-//! Hybrid async listener skeleton: tokio accept + sync workers via
-//! [`tokio::task::spawn_blocking`].
+//! Hybrid async listener skeleton: tokio accept + sync workers on a
+//! dedicated OS thread per connection.
 //!
 //! This is the implementation slice tracked under issue #1935. It satisfies
 //! the design recorded in
@@ -22,10 +22,14 @@
 //!
 //! - `tokio::runtime::Builder::new_multi_thread()` owns the accept loop.
 //! - Each accepted `tokio::net::TcpStream` is converted back to
-//!   `std::net::TcpStream` (blocking mode) and handed to a closure running
-//!   on the blocking pool via [`tokio::task::spawn_blocking`].
-//! - The blocking closure is the caller-supplied sync worker; this module
-//!   does not embed any knowledge of the daemon session state machine.
+//!   `std::net::TcpStream` (blocking mode) and handed to the caller-supplied
+//!   sync worker running on a dedicated OS thread (one per connection).
+//! - A dedicated thread - rather than tokio's reused `spawn_blocking` pool -
+//!   is required because the worker arms a per-thread seccomp filter that must
+//!   die with the connection; a reused thread would leak the filter into the
+//!   next session and SIGSYS-kill its setup syscalls.
+//! - The worker is the caller-supplied sync closure; this module does not
+//!   embed any knowledge of the daemon session state machine.
 //!
 //! # Cross-platform
 //!
@@ -41,23 +45,24 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::net::TcpListener as TokioTcpListener;
 use tokio::runtime::Builder;
 
-/// Sync per-connection worker invoked on the blocking pool.
+/// Sync per-connection worker invoked on a dedicated OS thread.
 ///
 /// The worker owns the converted blocking `TcpStream` for the lifetime of
 /// the connection. Returning an `io::Result` lets the caller surface
-/// transport errors without panicking; panics in the worker are caught by
-/// the tokio join handle and logged by the dispatcher.
+/// transport errors without panicking. Each connection runs on its own
+/// thread so a per-thread seccomp filter armed by the worker cannot leak
+/// into a later session.
 pub type SyncWorker = Arc<dyn Fn(TcpStream, SocketAddr) -> io::Result<()> + Send + Sync + 'static>;
 
 /// Builds and runs the hybrid async listener.
 ///
 /// `bind_addr` is bound via `tokio::net::TcpListener::bind`. Each accepted
-/// stream is dispatched to `worker` through [`tokio::task::spawn_blocking`]
-/// so the existing synchronous transfer machinery runs unchanged on the
-/// blocking pool.
+/// stream is dispatched to `worker` on a dedicated OS thread so the existing
+/// synchronous transfer machinery runs unchanged and any per-thread seccomp
+/// filter it arms dies with the connection.
 ///
 /// `worker_threads` caps the size of the tokio multi-thread runtime. The
-/// hybrid model places the synchronous worker on the blocking pool, so the
+/// hybrid model runs each synchronous worker on its own thread, so the
 /// worker count only governs the accept loop and per-connection async
 /// dispatcher; a small bounded value is sufficient.
 ///
@@ -130,12 +135,32 @@ async fn accept_loop(
                 return;
             }
 
-            let join = tokio::task::spawn_blocking(move || worker(std_stream, peer_addr)).await;
-            match join {
+            // Run the synchronous worker on a dedicated OS thread rather than
+            // tokio's shared `spawn_blocking` pool. The worker installs a
+            // per-thread seccomp filter (LSM-SECCOMP) that is a one-way latch:
+            // once armed, the thread traps every unlisted syscall for the rest
+            // of its life. tokio's blocking pool reuses threads across tasks,
+            // so a filter armed by one session would SIGSYS-kill the *next*
+            // session's pre-seccomp setup syscalls (capability drop `capget`,
+            // socket `FIONBIO` ioctl) - a flaky whole-process kill. A fresh
+            // thread per connection keeps the design invariant documented in
+            // `engage_seccomp_sandbox`: the filter dies with the disposable
+            // worker thread and never leaks into another session.
+            let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+            let spawn = std::thread::Builder::new()
+                .name(String::from("oc-rsyncd-worker"))
+                .spawn(move || {
+                    let _ = done_tx.send(worker(std_stream, peer_addr));
+                });
+            if let Err(error) = spawn {
+                log_dispatch_error(peer_addr, &error);
+                return;
+            }
+            match done_rx.await {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => log_worker_error(peer_addr, &error),
-                Err(join_error) => {
-                    let error = io::Error::other(format!("worker join error: {join_error}"));
+                Err(_recv) => {
+                    let error = io::Error::other("worker thread terminated without result");
                     log_worker_error(peer_addr, &error);
                 }
             }
@@ -215,7 +240,7 @@ mod tests {
             let _ = StdTcpStream::connect(local_addr).expect("connect");
         }
 
-        // Allow the spawn_blocking dispatch to drain.
+        // Allow the per-connection worker threads to drain.
         thread::sleep(Duration::from_millis(200));
 
         shutdown.store(true, Ordering::Release);
