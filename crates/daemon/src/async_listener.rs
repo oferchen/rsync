@@ -54,6 +54,18 @@ use tokio::runtime::Builder;
 /// into a later session.
 pub type SyncWorker = Arc<dyn Fn(TcpStream, SocketAddr) -> io::Result<()> + Send + Sync + 'static>;
 
+/// Upper bound on concurrent per-connection worker threads.
+///
+/// Each connection runs its sync worker on a dedicated OS thread (required for
+/// the seccomp-filter lifetime invariant). Unlike tokio's `spawn_blocking`
+/// pool - which the accept loop used previously and which caps itself at 512
+/// threads, queueing excess tasks - a raw thread-per-connection has no ceiling,
+/// so a connect flood (e.g. slowloris) would spawn unbounded blocked-on-read
+/// threads. This semaphore restores that backpressure: at the cap the accept
+/// task parks until an in-flight worker completes, matching tokio's historical
+/// blocking-pool default.
+const MAX_INFLIGHT_WORKERS: usize = 512;
+
 /// Builds and runs the hybrid async listener.
 ///
 /// `bind_addr` is bound via `tokio::net::TcpListener::bind`. Each accepted
@@ -89,15 +101,19 @@ pub fn run_hybrid_listener(
         .thread_name("oc-rsyncd-async")
         .build()?;
 
-    runtime.block_on(async move { accept_loop(bind_addr, shutdown, worker).await })
+    runtime.block_on(
+        async move { accept_loop(bind_addr, MAX_INFLIGHT_WORKERS, shutdown, worker).await },
+    )
 }
 
 async fn accept_loop(
     bind_addr: SocketAddr,
+    max_inflight: usize,
     shutdown: Arc<AtomicBool>,
     worker: SyncWorker,
 ) -> io::Result<()> {
     let listener = TokioTcpListener::bind(bind_addr).await?;
+    let permits = Arc::new(tokio::sync::Semaphore::new(max_inflight.max(1)));
 
     loop {
         if shutdown.load(Ordering::Acquire) {
@@ -118,6 +134,7 @@ async fn accept_loop(
         };
 
         let worker = Arc::clone(&worker);
+        let permits = Arc::clone(&permits);
         tokio::spawn(async move {
             // Convert the tokio stream back to a blocking std stream so the
             // existing sync worker can use `read`/`write` directly. The
@@ -134,6 +151,19 @@ async fn accept_loop(
                 log_dispatch_error(peer_addr, &error);
                 return;
             }
+
+            // Bound the number of concurrent worker threads (see
+            // `MAX_INFLIGHT_WORKERS`). Acquiring here - after the cheap accept
+            // but before the expensive `thread::spawn` - parks this dispatch
+            // task when at capacity so a connect flood cannot spawn unbounded
+            // blocked-on-read threads. The permit is released when this task
+            // ends, i.e. once the worker thread has signalled completion.
+            let _permit = match permits.acquire_owned().await {
+                Ok(permit) => permit,
+                // The semaphore is never closed in normal operation; treat a
+                // closed semaphore as shutdown and drop the connection.
+                Err(_) => return,
+            };
 
             // Run the synchronous worker on a dedicated OS thread rather than
             // tokio's shared `spawn_blocking` pool. The worker installs a
@@ -229,7 +259,13 @@ mod tests {
         let worker_for_loop = Arc::clone(&worker);
         let server = thread::spawn(move || {
             runtime.block_on(async move {
-                accept_loop(local_addr, shutdown_for_loop, worker_for_loop).await
+                accept_loop(
+                    local_addr,
+                    MAX_INFLIGHT_WORKERS,
+                    shutdown_for_loop,
+                    worker_for_loop,
+                )
+                .await
             })
         });
 
@@ -247,6 +283,74 @@ mod tests {
         let result = server.join().expect("server thread");
         assert!(result.is_ok(), "accept loop error: {result:?}");
         assert!(invocations.load(Ordering::SeqCst) >= 1);
+    }
+
+    #[test]
+    fn worker_thread_cap_bounds_concurrency() {
+        // With a cap of 2, at most two per-connection workers may run at once
+        // even when more connections arrive together. Without the cap (raw
+        // thread-per-connection) all four would overlap.
+        let runtime = tokio::runtime::Runtime::new().expect("build runtime");
+        let local_addr = reserve_port();
+
+        let concurrent = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let total = Arc::new(AtomicUsize::new(0));
+        let shutdown = Arc::new(AtomicBool::new(false));
+
+        let concurrent_w = Arc::clone(&concurrent);
+        let peak_w = Arc::clone(&peak);
+        let total_w = Arc::clone(&total);
+        let worker: SyncWorker = Arc::new(move |mut stream: TcpStream, _peer| {
+            let now = concurrent_w.fetch_add(1, Ordering::SeqCst) + 1;
+            peak_w.fetch_max(now, Ordering::SeqCst);
+            // Hold the worker slot long enough that concurrent connections
+            // would overlap absent the cap.
+            thread::sleep(Duration::from_millis(150));
+            let mut sink = Vec::new();
+            let _ = stream.read_to_end(&mut sink);
+            concurrent_w.fetch_sub(1, Ordering::SeqCst);
+            total_w.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        });
+
+        let shutdown_for_loop = Arc::clone(&shutdown);
+        let worker_for_loop = Arc::clone(&worker);
+        let server = thread::spawn(move || {
+            runtime.block_on(async move {
+                accept_loop(local_addr, 2, shutdown_for_loop, worker_for_loop).await
+            })
+        });
+
+        // Brief settle while the loop reaches the first await.
+        thread::sleep(Duration::from_millis(50));
+
+        // Fire four connections close together so workers would overlap.
+        let mut clients = Vec::new();
+        for _ in 0..4 {
+            clients.push(StdTcpStream::connect(local_addr).expect("connect"));
+        }
+        thread::sleep(Duration::from_millis(50));
+        drop(clients);
+
+        // Allow all four to drain through the 2-permit gate.
+        thread::sleep(Duration::from_millis(900));
+
+        shutdown.store(true, Ordering::Release);
+        let result = server.join().expect("server thread");
+        assert!(result.is_ok(), "accept loop error: {result:?}");
+
+        assert_eq!(
+            total.load(Ordering::SeqCst),
+            4,
+            "all connections should drain"
+        );
+        let observed = peak.load(Ordering::SeqCst);
+        assert!(observed >= 1, "at least one worker ran");
+        assert!(
+            observed <= 2,
+            "cap should bound concurrency to 2, saw {observed}"
+        );
     }
 
     #[test]
