@@ -24,7 +24,8 @@ host):
 
 | Dep | Version | Status | Notes |
 |---|---|---|---|
-| `mimalloc` | 0.1 | used | Imported by `src/bin/oc-rsync.rs` as the global allocator. |
+| `mimalloc` | 0.1 | used | Windows global allocator in `src/bin/oc-rsync.rs` (`#[cfg(windows)]`). Unix uses jemalloc. |
+| `tikv-jemallocator` | 0.6 | used | Unix global allocator in `src/bin/oc-rsync.rs` (`#[cfg(unix)]`); page return tuned via the `_rjem_malloc_conf` static (dirty/muzzy decay 250 ms) to bound RSS at scale. |
 | `rustc-hash` | 2.1 | used | `engine`, `matching`, `protocol`. |
 | `jwalk` | 0.8 | used | `engine/src/walk/walkdir_impl.rs`. |
 | `exacl` | 0.13 | used | `metadata` (acl feature), `daemon` (dev-dep, unix only). |
