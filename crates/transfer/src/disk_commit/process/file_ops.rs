@@ -527,6 +527,16 @@ pub(super) fn make_writer<'a>(
             }
         }
     }
+    // GCD (`dispatch_io`) writer, preferred over the F_NOCACHE + writev
+    // `Macos` writer when the default-off `macos-gcd` feature is enabled.
+    // Sparse and append need Seek, which the channel does not provide, so
+    // they fall back to the buffered writer below.
+    #[cfg(all(target_os = "macos", feature = "macos-gcd"))]
+    {
+        if !use_sparse && append_offset == 0 {
+            return Ok(Writer::MacosGcd(fast_io::GcdWriter::from_file(file)?));
+        }
+    }
     #[cfg(target_os = "macos")]
     {
         if !use_sparse && append_offset == 0 {
