@@ -277,6 +277,17 @@ jobs:
           # Full test suite runs on Linux; Windows validates platform-specific paths
           cargo nextest run --locked -p core -p engine -p cli --all-features
 
+      # Pin the Windows crtime (NTFS creation-time via SetFileTime) and NTFS
+      # sparse (FSCTL_SET_SPARSE) tests on the required Windows cell. These
+      # live in `metadata` (crtime) and `fast_io` (sparse) - crates the main
+      # Test step above does not run - so without this step the Windows
+      # regression signal for those two paths sits only in the separate
+      # windows-acl-xattr / windows-iocp jobs. The filter matches the crtime
+      # conversion and skip-flag tests plus the mark_file_sparse probe.
+      - name: Test crtime + sparse (metadata, fast_io)
+        shell: bash
+        run: cargo nextest run --locked -p metadata -p fast_io -E 'test(crtime) | test(sparse)'
+
       - name: Upload build artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -341,10 +352,21 @@ jobs:
       - name: Build fast_io (--no-default-features --features iocp)
         run: cargo build --locked -p fast_io --no-default-features --features iocp
 
+      # Build fast_io with iocp plus the opt-in `transmitfile` feature. The
+      # Windows `TransmitFile()` zero-copy file-to-socket primitive
+      # (fast_io::iocp::transmit_file, WindowsTransmitFile) depends on `iocp`
+      # but is not in the default feature set, so no other CI cell compiles
+      # it. Pinning it here keeps the TransmitFile path building on
+      # `windows-latest` instead of only ever compiling on a nightly run.
+      - name: Build fast_io (--features iocp,transmitfile)
+        run: cargo build --locked -p fast_io --features iocp,transmitfile
+
       # Run the iocp test suite. fast_io owns the IOCP modules; transfer
-      # exercises the consumer side via fast_io's path dependency.
-      - name: Test fast_io (--features iocp)
-        run: cargo nextest run --locked -p fast_io --no-default-features --features iocp
+      # exercises the consumer side via fast_io's path dependency. The
+      # `transmitfile` feature is enabled so the TransmitFile module's own
+      # tests run alongside the core IOCP suite.
+      - name: Test fast_io (--features iocp,transmitfile)
+        run: cargo nextest run --locked -p fast_io --no-default-features --features iocp,transmitfile
 
       # transfer has no own iocp feature; it picks up iocp transitively
       # through fast_io's default features (which include iocp). Running with
@@ -428,6 +450,63 @@ jobs:
       - name: Test ACL/xattr/ADS filter (workspace)
         shell: bash
         run: cargo nextest run --locked --workspace --features acl,xattr -E 'test(acl) | test(xattr) | test(ads) | test(stream)'
+
+  # ===========================================================================
+  # Windows daemon - Build and test the daemon crate at PR time.
+  # ---------------------------------------------------------------------------
+  # The main `windows-test` job runs only `core`, `engine`, `cli`, so the
+  # `daemon` crate (which carries Windows-specific code in its TCP listener,
+  # name converter, xfer-exec, and module-access paths) never builds on
+  # `windows-latest` at PR time. Daemon Windows coverage lived only in the
+  # nightly `windows-nightly-daemon.yml` schedule, so a Windows-only daemon
+  # regression could merge and sit unnoticed until the next nightly run. This
+  # job promotes that coverage to PR time so it is caught before merge.
+  # ===========================================================================
+  windows-daemon:
+    name: Windows daemon
+    runs-on: windows-latest
+    needs: lint
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Install Rust (stable)
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
+        with:
+          shared-key: ci-windows-daemon-cargo-${{ env.CACHE_VERSION }}-${{ hashFiles('**/Cargo.lock') }}
+          key: windows-daemon
+
+      - name: Install cargo-nextest (Windows direct download)
+        shell: pwsh
+        run: |
+          # Workaround for actions/partner-runner-images#169 on Windows.
+          $ErrorActionPreference = 'Stop'
+          $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+          New-Item -ItemType Directory -Force -Path $cargoBin | Out-Null
+          $zip = Join-Path $env:RUNNER_TEMP 'nextest.zip'
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://get.nexte.st/latest/windows' -OutFile $zip
+          Expand-Archive -Force -Path $zip -DestinationPath $cargoBin
+          & "$cargoBin\cargo-nextest.exe" --version
+
+      # Build the daemon crate first so the nextest step links against an
+      # already-warm build artifact. Default features only; the cross-OS
+      # feature rows in _test-features.yml cover the async, tracing,
+      # concurrent-sessions, and iconv variants.
+      - name: Build daemon crate
+        run: cargo build --locked -p daemon
+
+      # Run the daemon-crate test suite on Windows so the Windows-gated
+      # listener, name-converter, and xfer-exec paths are exercised at PR
+      # time rather than only on the nightly schedule.
+      - name: Test daemon crate
+        run: cargo nextest run --locked -p daemon --no-fail-fast
 
   # ===========================================================================
   # Windows GNU Cross-Check - Validate x86_64-pc-windows-gnu compilation
