@@ -70,7 +70,11 @@ fn is_cross_device_detects_exdev() {
 /// Verifies `make_writer` selects [`Writer::Macos`] when sparse mode is
 /// disabled and `append_offset` is zero, so the `F_NOCACHE` + `writev`
 /// optimization is engaged on the common write path.
-#[cfg(target_os = "macos")]
+///
+/// Gated off when `macos-gcd` is enabled: that feature routes the same
+/// non-sparse/zero-offset path to [`Writer::MacosGcd`] instead (covered by
+/// `make_writer_selects_macos_gcd_when_feature_enabled`).
+#[cfg(all(target_os = "macos", not(feature = "macos-gcd")))]
 #[test]
 fn make_writer_selects_macos_for_non_sparse_zero_offset() {
     let dir = tempfile::tempdir().unwrap();
@@ -138,6 +142,136 @@ fn make_writer_falls_back_to_buffered_when_seek_required() {
     assert!(
         matches!(append_writer, Writer::Buffered(_)),
         "append mode must select Writer::Buffered"
+    );
+}
+
+/// Verifies `make_writer` selects [`Writer::MacosGcd`] for the common
+/// non-sparse, zero-offset path when the `macos-gcd` feature is enabled, so
+/// the GCD (`dispatch_io`) writer replaces the F_NOCACHE + writev writer.
+#[cfg(all(target_os = "macos", feature = "macos-gcd"))]
+#[test]
+fn make_writer_selects_macos_gcd_when_feature_enabled() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("macos_gcd_select.bin");
+    let file = fs::File::create(&path).unwrap();
+    let mut write_buf = Vec::with_capacity(256 * 1024);
+
+    let writer = make_writer(
+        file,
+        &mut write_buf,
+        None,
+        None,
+        /* use_sparse */ false,
+        /* append_offset */ 0,
+        /* size_hint */ 0,
+    )
+    .unwrap();
+
+    assert!(
+        matches!(writer, Writer::MacosGcd(_)),
+        "macOS non-sparse zero-offset writes must select Writer::MacosGcd \
+         when the macos-gcd feature is on"
+    );
+}
+
+/// Verifies the GCD writer falls back to [`Writer::Buffered`] under sparse or
+/// append mode, which both require `Seek` that the channel cannot provide.
+#[cfg(all(target_os = "macos", feature = "macos-gcd"))]
+#[test]
+fn make_writer_macos_gcd_falls_back_to_buffered_for_seek() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let sparse_path = dir.path().join("gcd_sparse.bin");
+    let sparse_file = fs::File::create(&sparse_path).unwrap();
+    let mut sparse_buf = Vec::with_capacity(256 * 1024);
+    let sparse_writer = make_writer(
+        sparse_file,
+        &mut sparse_buf,
+        None,
+        None,
+        /* use_sparse */ true,
+        /* append_offset */ 0,
+        /* size_hint */ 0,
+    )
+    .unwrap();
+    assert!(
+        matches!(sparse_writer, Writer::Buffered(_)),
+        "sparse mode must fall back to Writer::Buffered even with macos-gcd on"
+    );
+
+    let append_path = dir.path().join("gcd_append.bin");
+    let append_file = fs::File::create(&append_path).unwrap();
+    let mut append_buf = Vec::with_capacity(256 * 1024);
+    let append_writer = make_writer(
+        append_file,
+        &mut append_buf,
+        None,
+        None,
+        /* use_sparse */ false,
+        /* append_offset */ 4096,
+        /* size_hint */ 0,
+    )
+    .unwrap();
+    assert!(
+        matches!(append_writer, Writer::Buffered(_)),
+        "append mode must fall back to Writer::Buffered even with macos-gcd on"
+    );
+}
+
+/// Verifies a full write-then-commit through [`Writer::MacosGcd`] produces
+/// byte-for-byte the same on-disk file as the buffered writer, exercising the
+/// real `write_chunk` -> `flush_and_sync` -> `finish` disk-commit lifecycle.
+#[cfg(all(target_os = "macos", feature = "macos-gcd"))]
+#[test]
+fn macos_gcd_writer_matches_buffered_byte_for_byte() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // Representative payload: several chunks spanning the direct-write
+    // threshold so both the small-buffered and large-direct paths are hit on
+    // the buffered side, and the same bytes flow through the GCD channel.
+    let chunks: Vec<Vec<u8>> = vec![
+        (0..1024u32).map(|i| (i % 251) as u8).collect(),
+        (0..64 * 1024u32).map(|i| (i % 239) as u8).collect(),
+        (0..37u32).map(|i| (i % 211) as u8).collect(),
+        (0..256 * 1024u32).map(|i| (i % 193) as u8).collect(),
+    ];
+
+    let write_all = |mut w: Writer<'_>, path: &Path| {
+        for c in &chunks {
+            w.write_chunk(c).unwrap();
+        }
+        w.flush_and_sync(/* do_fsync */ true, path).unwrap();
+        w.finish(/* do_fsync */ true, path).unwrap();
+    };
+
+    // Obtain a `Writer::Buffered` through `make_writer` by requesting sparse
+    // mode, which always falls back to the buffered variant. The stored writer
+    // carries no sparse state, so `write_chunk` writes the bytes verbatim.
+    let buffered_path = dir.path().join("parity_buffered.bin");
+    let buffered_file = fs::File::create(&buffered_path).unwrap();
+    let mut buffered_buf = Vec::with_capacity(256 * 1024);
+    let buffered_writer = make_writer(
+        buffered_file,
+        &mut buffered_buf,
+        None,
+        None,
+        /* use_sparse */ true,
+        /* append_offset */ 0,
+        /* size_hint */ 0,
+    )
+    .unwrap();
+    assert!(matches!(buffered_writer, Writer::Buffered(_)));
+    write_all(buffered_writer, &buffered_path);
+
+    let gcd_path = dir.path().join("parity_gcd.bin");
+    let gcd_file = fs::File::create(&gcd_path).unwrap();
+    let gcd_writer = Writer::MacosGcd(fast_io::GcdWriter::from_file(gcd_file).unwrap());
+    write_all(gcd_writer, &gcd_path);
+
+    assert_eq!(
+        fs::read(&buffered_path).unwrap(),
+        fs::read(&gcd_path).unwrap(),
+        "GCD writer output must be byte-identical to the buffered writer"
     );
 }
 

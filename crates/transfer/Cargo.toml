@@ -112,6 +112,14 @@ vmsplice = ["fast_io/vmsplice"]
 # fallback. Default off until eviction/throughput benchmarks justify promotion.
 dontcache = ["fast_io/dontcache"]
 
+# macOS Grand Central Dispatch (`dispatch_io`) async disk-commit writer
+# (macOS-only). Selected by the disk-commit thread in preference to the
+# F_NOCACHE + writev macOS writer when io_uring/IOCP are not in play and the
+# write is non-sparse/non-append; sparse/append fall back to the buffered
+# writer. Byte content and fsync semantics match the buffered path. Default
+# off until benchmarks justify promotion. Forwards to `fast_io/macos-gcd`.
+macos-gcd = ["fast_io/macos-gcd"]
+
 
 # Per-thread slab pool for buffer returns - forwards to the engine crate.
 # Forwarded so `--all-features` enables it transitively on engine *and* exposes

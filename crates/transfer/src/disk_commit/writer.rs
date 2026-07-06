@@ -138,9 +138,9 @@ impl Seek for ReusableBufWriter<'_> {
 /// [`fast_io::MacosWriter`], which pairs `F_NOCACHE` (for files above 1 MiB)
 /// with `writev(2)` scatter-gather flushes.
 ///
-/// Sparse mode requires `Seek`, which none of `IoUring`, `Iocp`, or `Macos`
-/// provide, so callers must select `Buffered` whenever `use_sparse` is set
-/// or `append_offset` is non-zero.
+/// Sparse mode requires `Seek`, which none of `IoUring`, `Iocp`, `Macos`, or
+/// `MacosGcd` provide, so callers must select `Buffered` whenever `use_sparse`
+/// is set or `append_offset` is non-zero.
 pub(super) enum Writer<'a> {
     Buffered(ReusableBufWriter<'a>),
     #[cfg(all(target_os = "linux", feature = "io_uring"))]
@@ -153,6 +153,15 @@ pub(super) enum Writer<'a> {
     },
     #[cfg(target_os = "macos")]
     Macos(fast_io::MacosWriter),
+    /// Grand Central Dispatch (`dispatch_io`) async writer (macOS + the
+    /// default-off `macos-gcd` feature). Selected in preference to `Macos`
+    /// only for non-sparse, non-append writes; sparse/append need `Seek`,
+    /// which the channel does not provide, so those fall back to `Buffered`.
+    /// Each `write_chunk` submits one `dispatch_io_write` and blocks until it
+    /// drains, so its byte content and fsync semantics match the buffered
+    /// path. See `fast_io::GcdWriter`.
+    #[cfg(all(target_os = "macos", feature = "macos-gcd"))]
+    MacosGcd(fast_io::GcdWriter),
     /// vmsplice zero-copy writer for already-demuxed literal chunks. Selected
     /// only when `io_uring` is not engaged (Linux + `vmsplice` feature, non-
     /// sparse, non-append). Per-chunk it falls back to a buffered write when
@@ -194,6 +203,11 @@ impl<'a> Writer<'a> {
                 debug_assert!(false, "sparse mode must select buffered writer");
                 unreachable!("sparse mode must select buffered writer")
             }
+            #[cfg(all(target_os = "macos", feature = "macos-gcd"))]
+            Writer::MacosGcd(_) => {
+                debug_assert!(false, "sparse mode must select buffered writer");
+                unreachable!("sparse mode must select buffered writer")
+            }
             #[cfg(all(target_os = "linux", feature = "vmsplice"))]
             Writer::Vmsplice(_) => {
                 debug_assert!(false, "sparse mode must select buffered writer");
@@ -217,6 +231,8 @@ impl<'a> Writer<'a> {
             Writer::Iocp { batch } => batch.write_data(data),
             #[cfg(target_os = "macos")]
             Writer::Macos(w) => w.write_all(data),
+            #[cfg(all(target_os = "macos", feature = "macos-gcd"))]
+            Writer::MacosGcd(w) => w.write_all(data),
             #[cfg(all(target_os = "linux", feature = "vmsplice"))]
             Writer::Vmsplice(w) => w.write_chunk(data).map(|_| ()),
             #[cfg(all(target_os = "linux", feature = "dontcache"))]
@@ -256,6 +272,20 @@ impl<'a> Writer<'a> {
                     w.flush().map_err(|e| {
                         io::Error::other(format!("flush failed for {file_path:?}: {e}"))
                     })
+                }
+            }
+            #[cfg(all(target_os = "macos", feature = "macos-gcd"))]
+            Writer::MacosGcd(w) => {
+                // Each `write_chunk` already drove its `dispatch_io_write` to
+                // completion, so there is no userspace buffer to flush; the
+                // non-fsync case is a no-op. The fsync path forces the
+                // durability barrier on the channel-owned descriptor.
+                if do_fsync {
+                    w.sync_all().map_err(|e| {
+                        io::Error::new(e.kind(), format!("fsync failed for {file_path:?}: {e}"))
+                    })
+                } else {
+                    Ok(())
                 }
             }
             #[cfg(all(target_os = "linux", feature = "vmsplice"))]
@@ -320,6 +350,8 @@ impl<'a> Writer<'a> {
             }),
             #[cfg(target_os = "macos")]
             Writer::Macos(_) => Ok(()),
+            #[cfg(all(target_os = "macos", feature = "macos-gcd"))]
+            Writer::MacosGcd(_) => Ok(()),
             #[cfg(all(target_os = "linux", feature = "vmsplice"))]
             Writer::Vmsplice(_) => Ok(()),
             #[cfg(all(target_os = "linux", feature = "dontcache"))]
