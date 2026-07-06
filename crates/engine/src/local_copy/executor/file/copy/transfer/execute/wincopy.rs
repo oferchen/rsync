@@ -253,6 +253,17 @@ fn reconcile_copied_ads(
     flags: TransferFlags,
 ) -> Result<(), LocalCopyError> {
     use crate::local_copy::metadata_sync::map_metadata_error;
+    use std::path::PathBuf;
+
+    // A `--files-from` source can carry a literal `.` path component (e.g.
+    // `dir\.\file`). `strip_source_xattrs`/`sync_xattrs` prepend the `\\?\`
+    // verbatim prefix, which disables the kernel's `.` resolution, so
+    // `FindFirstStreamW` fails `NotFound` - which `is_vanished_error` then
+    // misreads as a vanished source. Re-collect through `components()` to drop
+    // mid-path `.`, matching the resolved path `CopyFileExW` itself used.
+    let source: PathBuf = source.components().collect();
+    let destination: PathBuf = destination.components().collect();
+    let (source, destination) = (source.as_path(), destination.as_path());
 
     if !flags.xattrs_enabled() {
         ::metadata::strip_source_xattrs(source, destination, false).map_err(map_metadata_error)?;
