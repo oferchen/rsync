@@ -4,10 +4,10 @@
 
 use std::path::Path;
 
-#[cfg(all(unix, feature = "xattr"))]
+#[cfg(all(any(unix, windows), feature = "xattr"))]
 use filters::FilterAction;
 use filters::FilterRule;
-#[cfg(all(unix, feature = "xattr"))]
+#[cfg(all(any(unix, windows), feature = "xattr"))]
 use globset::{GlobBuilder, GlobMatcher};
 use thiserror::Error;
 
@@ -53,7 +53,7 @@ pub struct FilterProgram {
     dir_merge_rules: Vec<DirMergeRule>,
     exclude_if_present_rules: Vec<ExcludeIfPresentRule>,
 
-    #[cfg(all(unix, feature = "xattr"))]
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
     xattr_rules: Vec<XattrRule>,
 }
 
@@ -68,13 +68,13 @@ impl FilterProgram {
         let mut exclude_if_present_rules = Vec::new();
         let mut current_segment = FilterSegment::default();
 
-        #[cfg(all(unix, feature = "xattr"))]
+        #[cfg(all(any(unix, windows), feature = "xattr"))]
         let mut xattr_rules = Vec::new();
 
         for entry in entries {
             match entry {
                 FilterProgramEntry::Rule(rule) => {
-                    #[cfg(all(unix, feature = "xattr"))]
+                    #[cfg(all(any(unix, windows), feature = "xattr"))]
                     {
                         if rule.is_xattr_only() {
                             let compiled = XattrRule::new(&rule)?;
@@ -83,7 +83,7 @@ impl FilterProgram {
                             current_segment.push_rule(rule)?;
                         }
                     }
-                    #[cfg(not(all(unix, feature = "xattr")))]
+                    #[cfg(not(all(any(unix, windows), feature = "xattr")))]
                     {
                         current_segment.push_rule(rule)?;
                     }
@@ -93,7 +93,7 @@ impl FilterProgram {
                     instructions.clear();
                     dir_merge_rules.clear();
                     exclude_if_present_rules.clear();
-                    #[cfg(all(unix, feature = "xattr"))]
+                    #[cfg(all(any(unix, windows), feature = "xattr"))]
                     {
                         xattr_rules.clear();
                     }
@@ -127,7 +127,7 @@ impl FilterProgram {
             instructions,
             dir_merge_rules,
             exclude_if_present_rules,
-            #[cfg(all(unix, feature = "xattr"))]
+            #[cfg(all(any(unix, windows), feature = "xattr"))]
             xattr_rules,
         })
     }
@@ -150,11 +150,11 @@ impl FilterProgram {
                     | FilterInstruction::ExcludeIfPresent { .. } => false,
                 });
 
-        #[cfg(all(unix, feature = "xattr"))]
+        #[cfg(all(any(unix, windows), feature = "xattr"))]
         {
             filters_empty && self.xattr_rules.is_empty()
         }
-        #[cfg(not(all(unix, feature = "xattr")))]
+        #[cfg(not(all(any(unix, windows), feature = "xattr")))]
         {
             filters_empty
         }
@@ -275,12 +275,12 @@ impl FilterProgram {
         Ok(false)
     }
 
-    #[cfg(all(unix, feature = "xattr"))]
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
     pub(crate) const fn has_xattr_rules(&self) -> bool {
         !self.xattr_rules.is_empty()
     }
 
-    #[cfg(all(unix, feature = "xattr"))]
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
     pub(crate) fn allows_xattr(&self, name: &str) -> bool {
         if self.xattr_rules.is_empty() {
             return true;
@@ -341,14 +341,14 @@ impl FilterProgramError {
     }
 }
 
-#[cfg(all(unix, feature = "xattr"))]
+#[cfg(all(any(unix, windows), feature = "xattr"))]
 #[derive(Clone, Debug)]
 struct XattrRule {
     action: FilterAction,
     matcher: GlobMatcher,
 }
 
-#[cfg(all(unix, feature = "xattr"))]
+#[cfg(all(any(unix, windows), feature = "xattr"))]
 impl XattrRule {
     fn new(rule: &FilterRule) -> Result<Self, FilterProgramError> {
         debug_assert!(rule.is_xattr_only());

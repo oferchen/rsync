@@ -1,6 +1,6 @@
 impl<'a> CopyContext<'a> {
     /// Returns the filter program used by xattr sync logic.
-    #[cfg(all(unix, feature = "xattr"))]
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
     pub(super) const fn filter_program(
         &self,
     ) -> Option<&crate::local_copy::filter_program::FilterProgram> {

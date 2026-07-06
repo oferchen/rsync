@@ -42,7 +42,7 @@ pub(crate) fn copy_file(
     let mode = context.mode();
     let file_type = metadata.file_type();
 
-    #[cfg(all(unix, feature = "xattr"))]
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
     let preserve_xattrs = context.xattrs_enabled();
     #[cfg(all(any(unix, windows), feature = "acl"))]
     let preserve_acls = context.acls_enabled();
@@ -223,7 +223,7 @@ pub(crate) fn copy_file(
         size_only_enabled,
         ignore_times_enabled,
         checksum_enabled,
-        #[cfg(all(unix, feature = "xattr"))]
+        #[cfg(all(any(unix, windows), feature = "xattr"))]
         preserve_xattrs,
         #[cfg(all(any(unix, windows), feature = "acl"))]
         preserve_acls,

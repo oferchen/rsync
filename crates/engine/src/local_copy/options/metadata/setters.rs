@@ -190,7 +190,7 @@ impl LocalCopyOptions {
     }
 }
 
-#[cfg(all(unix, feature = "xattr"))]
+#[cfg(all(any(unix, windows), feature = "xattr"))]
 impl LocalCopyOptions {
     /// Requests that extended attributes be preserved when copying entries.
     #[must_use]
@@ -200,7 +200,10 @@ impl LocalCopyOptions {
         self.preserve_xattrs = preserve;
         self
     }
+}
 
+#[cfg(all(unix, feature = "xattr"))]
+impl LocalCopyOptions {
     /// Requests that NFSv4 ACLs be preserved when copying entries.
     ///
     /// NFSv4 ACLs are distinct from POSIX ACLs and use an ACE-based model
