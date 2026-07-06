@@ -262,7 +262,7 @@ dashmap = "6.1"
 # 0.60+ retires GHSA-f5v4-2wr6-hqmg / RUSTSEC-2023-0071 (Marvin Attack on rsa
 # 0.9.x) by upgrading to rsa 0.10 with the constant-time rewrite. The keys
 # helpers (formerly russh-keys) are now re-exported under russh::keys.
-russh = { version = "0.61.2", default-features = false, features = ["flate2", "ring", "rsa"] }
+russh = { version = "0.62.2", default-features = false, features = ["flate2", "ring", "rsa"] }
 # URL parsing for ssh:// URIs
 url = "2"
 # Secure password input from terminal
