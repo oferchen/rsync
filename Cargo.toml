@@ -170,7 +170,7 @@ xattr = { workspace = true }
 # for its compile-time `malloc_conf` page-return tuning (see src/bin/oc-rsync.rs);
 # Windows keeps mimalloc, which lacks comparable jemalloc support.
 [target.'cfg(unix)'.dependencies]
-tikv-jemallocator = "0.6"
+tikv-jemallocator = "0.7"
 
 [target.'cfg(windows)'.dependencies]
 mimalloc = { workspace = true }
