@@ -238,6 +238,16 @@ fn ads_zone_identifier_round_trips_through_xattrs() {
         String::from_utf8_lossy(&output.stderr),
     );
 
+    eprintln!(
+        "OC_ADS_DIAG test(zone) oc-rsync stderr:\n{}\nstdout:\n{}\ndst streams: {:?}",
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout),
+        std::fs::read_dir(&dst).ok().map(|rd| rd
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>()),
+    );
+
     let dst_file = dst.join("downloaded.exe");
     assert!(dst_file.is_file(), "dest primary stream missing");
 
