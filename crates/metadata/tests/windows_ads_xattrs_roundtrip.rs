@@ -225,7 +225,7 @@ fn ads_zone_identifier_round_trips_through_xattrs() {
     let src_arg = format!("{}\\", src.display());
     let dst_arg = format!("{}\\", dst.display());
     let output = Command::new(&oc_rsync)
-        .args(["--xattrs", "--archive"])
+        .args(["--xattrs", "--archive", "--debug=all"])
         .arg(&src_arg)
         .arg(&dst_arg)
         .output()
@@ -325,7 +325,7 @@ fn ads_multi_stream_round_trips() {
     let src_arg = format!("{}\\", src.display());
     let dst_arg = format!("{}\\", dst.display());
     let output = Command::new(&oc_rsync)
-        .args(["--xattrs", "--archive"])
+        .args(["--xattrs", "--archive", "--debug=all"])
         .arg(&src_arg)
         .arg(&dst_arg)
         .output()
