@@ -28,7 +28,9 @@ pub(in crate::daemon) use hostname::resolve_peer_hostname;
 pub(crate) use runtime::{ModuleConnectionError, ModuleRuntime};
 
 #[cfg(test)]
-pub(crate) use hostname::{clear_test_hostname_overrides, set_test_hostname_override};
+pub(crate) use hostname::{
+    clear_test_hostname_overrides, set_test_forward_override, set_test_hostname_override,
+};
 #[cfg(test)]
 use runtime::ModuleConnectionGuard;
 #[cfg(test)]

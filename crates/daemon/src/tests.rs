@@ -64,6 +64,7 @@ use crate::daemon::{
     read_trimmed_line,
     render_help,
     sanitize_module_identifier,
+    set_test_forward_override,
     set_test_hostname_override,
 };
 
@@ -157,6 +158,8 @@ include!("tests/chunks/module_definition_wildcard_any_allows_all.rs");
 include!("tests/chunks/module_hostname_allow_fails_closed_under_chroot.rs");
 include!("tests/chunks/module_hostname_deny_fails_closed_when_dns_unresolved.rs");
 include!("tests/chunks/module_ip_deny_unaffected_by_dns_failure.rs");
+include!("tests/chunks/module_peer_hostname_forward_confirm_rejects_spoofed_ptr.rs");
+include!("tests/chunks/module_peer_hostname_forward_lookup_off_restores_ptr_only.rs");
 include!("tests/chunks/module_peer_hostname_missing_resolution_denies_hostname_only_rules.rs");
 include!("tests/chunks/module_peer_hostname_resolution_before_chroot_denies_unknown.rs");
 include!("tests/chunks/module_peer_hostname_skips_lookup_when_disabled.rs");

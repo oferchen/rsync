@@ -2042,7 +2042,7 @@ mod module_access_tests {
     fn resolve_receiver_dest_joins_subpath_with_module_root() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/realdir/".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload").expect("valid dest");
         assert_eq!(dest, std::path::Path::new("/srv/upload/realdir/"));
     }
 
@@ -2050,7 +2050,7 @@ mod module_access_tests {
     fn resolve_receiver_dest_falls_back_to_module_root_for_bare_module() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "upload/".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload").expect("valid dest");
         assert_eq!(dest, std::path::Path::new("/srv/upload"));
     }
 
@@ -2058,7 +2058,7 @@ mod module_access_tests {
     fn resolve_receiver_dest_falls_back_to_module_root_when_no_positional() {
         let module_path = std::path::Path::new("/srv/upload");
         let args: Vec<String> = vec![];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload").expect("valid dest");
         assert_eq!(dest, std::path::Path::new("/srv/upload"));
     }
 
@@ -2073,7 +2073,7 @@ mod module_access_tests {
             "upload/srcB/".to_owned(),
             "upload/destdir/".to_owned(),
         ];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload").expect("valid dest");
         assert_eq!(dest, std::path::Path::new("/srv/upload/destdir/"));
     }
 
@@ -2081,9 +2081,19 @@ mod module_access_tests {
     fn resolve_receiver_dest_rejoins_absolute_path_under_module_root() {
         let module_path = std::path::Path::new("/srv/upload");
         let args = vec![".".to_owned(), "/etc/passwd".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload").expect("valid dest");
         // Absolute path is forced under the module root - no escape.
         assert_eq!(dest, std::path::Path::new("/srv/upload/etc/passwd"));
+    }
+
+    #[test]
+    fn resolve_receiver_dest_rejects_parent_dir_traversal() {
+        // Defense-in-depth: a `..` segment in the receiver destination is
+        // rejected up front, symmetric to `resolve_sender_sources`. Every
+        // valid (dotdot-free) tail is unaffected; this only fails the escape.
+        let module_path = std::path::Path::new("/srv/upload");
+        let args = vec![".".to_owned(), "upload/../../etc/passwd".to_owned()];
+        assert!(resolve_receiver_dest(module_path, &args, "upload").is_none());
     }
 
     // URV-5.b.REOPEN: classify_client_path_against_module is the pure helper
@@ -2667,7 +2677,7 @@ mod module_access_tests {
         // the same way they do on Linux.
         let module_path = std::path::Path::new(r"C:\srv\upload");
         let args = vec![".".to_owned(), "upload/realdir/".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload").expect("valid dest");
         // Path::join uses the host separator on Windows, so a trailing
         // slash on the positional collapses into a backslash-terminated
         // PathBuf. The assertion compares via Path equality so the
@@ -2686,7 +2696,7 @@ mod module_access_tests {
         // containment guarantee on Windows hosts.
         let module_path = std::path::Path::new(r"C:\srv\upload");
         let args = vec![".".to_owned(), "/etc/passwd".to_owned()];
-        let dest = resolve_receiver_dest(module_path, &args, "upload");
+        let dest = resolve_receiver_dest(module_path, &args, "upload").expect("valid dest");
         // After stripping the leading `/`, the resolver hands the bare
         // string `etc/passwd` to Path::join, which prepends the host
         // separator (`\` on Windows) but does not rewrite the embedded
