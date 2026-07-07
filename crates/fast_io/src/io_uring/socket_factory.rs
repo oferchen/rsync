@@ -146,6 +146,60 @@ pub fn socket_writer_from_fd(
     }
 }
 
+/// Creates a socket writer that dispatches `IORING_OP_SEND_ZC` when `policy`
+/// is [`ZeroCopyPolicy::Enabled`](crate::ZeroCopyPolicy::Enabled) and the
+/// running kernel advertises the opcode; otherwise returns a standard `Write`
+/// wrapper over the raw fd.
+///
+/// This is the entry point the daemon-sender uses to opt a plaintext socket
+/// into zero-copy sends via `--zero-copy`. Unlike [`socket_writer_from_fd`],
+/// it is keyed on [`ZeroCopyPolicy`](crate::ZeroCopyPolicy) so the caller
+/// expresses SEND_ZC intent directly rather than through the orthogonal
+/// io_uring on/off axis. `Auto` and `Disabled` both yield the plain fd writer,
+/// keeping the default transfer path byte-identical.
+///
+/// The buffer-lifetime contract of SEND_ZC is upheld inside the returned
+/// writer: `IoUringSocketWriter::submit_send` drains both the transfer and
+/// notification CQEs before returning, so the caller may reuse or drop the
+/// send buffer immediately. This makes it safe behind `MultiplexWriter`,
+/// which clears and reuses its frame buffer after each flush.
+///
+/// The `fd` must be a valid socket file descriptor. The caller retains
+/// ownership - this function does not close the fd.
+///
+/// # Errors
+///
+/// Returns an error only when `policy` is `Enabled` and the per-thread ring
+/// cannot be constructed on the calling thread. `Auto`/`Disabled` never fail.
+pub fn socket_writer_from_fd_zero_copy(
+    fd: RawFd,
+    buffer_capacity: usize,
+    policy: crate::ZeroCopyPolicy,
+) -> io::Result<IoUringOrStdSocketWriter> {
+    if !matches!(policy, crate::ZeroCopyPolicy::Enabled) {
+        let writer = FdWriter(fd);
+        return Ok(IoUringOrStdSocketWriter::Std(Box::new(writer)));
+    }
+
+    // SEND_ZC requested. Build a writer whose config sets
+    // `zero_copy_policy = Enabled` so `IoUringSocketWriter::from_raw_fd`
+    // resolves `send_zc_active` from the kernel probe. If io_uring is
+    // unavailable or the writer cannot be built, fall back to the plain fd
+    // writer so the transfer still proceeds with byte-identical framing.
+    let config = IoUringConfig {
+        buffer_size: buffer_capacity,
+        zero_copy_policy: crate::ZeroCopyPolicy::Enabled,
+        ..IoUringConfig::default()
+    };
+    if is_io_uring_available() {
+        if let Ok(writer) = IoUringSocketWriter::from_raw_fd(fd, &config) {
+            return Ok(IoUringOrStdSocketWriter::IoUring(writer));
+        }
+    }
+    let writer = FdWriter(fd);
+    Ok(IoUringOrStdSocketWriter::Std(Box::new(writer)))
+}
+
 /// Thin Read adapter over a raw fd that does NOT take ownership.
 ///
 /// Used as the fallback reader when io_uring is unavailable. The caller must

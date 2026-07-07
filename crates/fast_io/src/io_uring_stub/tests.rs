@@ -401,6 +401,47 @@ fn socket_enabled_policy_returns_error() {
     }
 }
 
+// Unlike the IoUring-policy factory, the zero-copy factory must NEVER error on
+// this build: SEND_ZC is unavailable (non-Linux or the `io_uring` feature is
+// off), so `--zero-copy` degrades gracefully to the plain fd writer. The
+// daemon-sender relies on this so an opted-in transfer still runs with
+// byte-identical framing when the zero-copy transport is absent.
+#[cfg(unix)]
+#[test]
+fn zero_copy_factory_degrades_to_std_for_every_policy() {
+    use crate::ZeroCopyPolicy;
+
+    let (fd_a, fd_b) = {
+        let mut fds = [0i32; 2];
+        // SAFETY: `fds` is the two-int output slot `socketpair(2)` requires;
+        // the call returns 0 and writes both fds on success.
+        let ret =
+            unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) };
+        assert_eq!(ret, 0);
+        (fds[0], fds[1])
+    };
+
+    for policy in [
+        ZeroCopyPolicy::Auto,
+        ZeroCopyPolicy::Disabled,
+        ZeroCopyPolicy::Enabled,
+    ] {
+        let writer = socket_writer_from_fd_zero_copy(fd_a, 8192, policy)
+            .expect("zero-copy factory never errors on this build");
+        assert!(
+            matches!(writer, IoUringOrStdSocketWriter::Std(_)),
+            "SEND_ZC unavailable here: {policy:?} must yield the Std writer"
+        );
+    }
+
+    // SAFETY: `fd_a` and `fd_b` were just opened by `socketpair`; we close
+    // each exactly once and do not reuse them afterwards.
+    unsafe {
+        libc::close(fd_a);
+        libc::close(fd_b);
+    }
+}
+
 #[test]
 fn stub_backend_reports_unavailable() {
     assert!(!StubIoUringBackend::is_available());

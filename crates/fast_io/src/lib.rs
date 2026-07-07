@@ -477,7 +477,7 @@ pub use iocp::{
 #[cfg(unix)]
 pub use io_uring::{
     IoUringOrStdSocketReader, IoUringOrStdSocketWriter, IoUringSocketReader, IoUringSocketWriter,
-    socket_reader_from_fd, socket_writer_from_fd,
+    socket_reader_from_fd, socket_writer_from_fd, socket_writer_from_fd_zero_copy,
 };
 
 /// Opt-in `IORING_OP_SEND_ZC` transport-send dispatch (Linux + `io_uring`).

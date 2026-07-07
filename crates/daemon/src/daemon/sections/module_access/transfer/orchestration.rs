@@ -289,7 +289,12 @@ fn process_approved_module(
     // `setup_transfer_streams`); arming the drain there would spawn a thread that
     // hangs on a half-closed socket clone on Windows.
     let arm_drain = should_arm_delta_drain(&client_args);
-    let mut streams = match setup_transfer_streams(ctx, arm_drain)? {
+    // The daemon-sender's socket write side opts into io_uring SEND_ZC only when
+    // the client sent `--zero-copy` (parsed into `config.write.zero_copy_policy`
+    // by `apply_long_form_args`). Auto/Disabled keep the current writer, so the
+    // default path is byte- and behavior-identical.
+    let zero_copy_policy = config.write.zero_copy_policy;
+    let mut streams = match setup_transfer_streams(ctx, arm_drain, zero_copy_policy)? {
         Some(s) => s,
         None => return Ok(()),
     };

@@ -104,7 +104,7 @@ pub use shared_ring::SharedRing;
 #[cfg(unix)]
 pub use socket_factory::{
     IoUringOrStdSocketReader, IoUringOrStdSocketWriter, socket_reader_from_fd,
-    socket_writer_from_fd,
+    socket_writer_from_fd, socket_writer_from_fd_zero_copy,
 };
 #[cfg(unix)]
 pub use socket_reader::IoUringSocketReader;

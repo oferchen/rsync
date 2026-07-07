@@ -279,6 +279,20 @@ pub(super) fn build_full_daemon_args(
         }
     }
 
+    // oc-specific: forward `--zero-copy`/`--no-zero-copy` to the daemon-sender
+    // (pull) so its socket write side can opt into io_uring SEND_ZC. This is a
+    // non-upstream flag with no `server_options()` counterpart, forwarded only
+    // when the daemon is the sender (`is_sender`) and the user set a non-Auto
+    // policy - same opt-in precedent as `--io-uring-depth`. Auto is the default
+    // and is never forwarded, so the daemon keeps its byte-identical writer.
+    if is_sender {
+        match config.zero_copy_policy() {
+            fast_io::ZeroCopyPolicy::Enabled => args.push("--zero-copy".to_owned()),
+            fast_io::ZeroCopyPolicy::Disabled => args.push("--no-zero-copy".to_owned()),
+            fast_io::ZeroCopyPolicy::Auto => {}
+        }
+    }
+
     // upstream: options.c:2878-2879
     if config.ignore_errors() {
         args.push("--ignore-errors".to_owned());
@@ -830,5 +844,72 @@ pub(super) mod tests {
         ];
         strip_client_only_batch_flags(&mut args);
         assert_eq!(args, vec!["--server", "--sender", "."]);
+    }
+}
+
+#[cfg(test)]
+mod zero_copy_forwarding_tests {
+    use super::build_full_daemon_args;
+    use crate::client::ClientConfig;
+    use crate::client::remote::daemon_transfer::connection::DaemonTransferRequest;
+    use protocol::ProtocolVersion;
+
+    fn request() -> DaemonTransferRequest {
+        DaemonTransferRequest::parse_rsync_url("rsync://host/mod/path").expect("valid rsync url")
+    }
+
+    fn args_for(policy: fast_io::ZeroCopyPolicy, is_sender: bool) -> Vec<String> {
+        let config = ClientConfig::builder().zero_copy_policy(policy).build();
+        build_full_daemon_args(&config, &request(), ProtocolVersion::V31, is_sender)
+    }
+
+    // The daemon-sender (pull, `is_sender = true`) socket write side is the
+    // only place SEND_ZC helps, so `--zero-copy` is forwarded there when the
+    // user opted in. Both ends must be oc-rsync for the daemon to parse it.
+    #[test]
+    fn enabled_forwards_zero_copy_on_daemon_sender() {
+        let args = args_for(fast_io::ZeroCopyPolicy::Enabled, true);
+        assert!(
+            args.iter().any(|a| a == "--zero-copy"),
+            "daemon-sender pull with --zero-copy must forward the flag: {args:?}"
+        );
+        assert!(!args.iter().any(|a| a == "--no-zero-copy"));
+    }
+
+    // Default (Auto) must never forward the flag: the daemon then keeps its
+    // byte- and behavior-identical writer. This is the HARD default-path
+    // invariant, asserted at the wire-arg boundary.
+    #[test]
+    fn auto_never_forwards_zero_copy() {
+        let args = args_for(fast_io::ZeroCopyPolicy::Auto, true);
+        assert!(
+            !args
+                .iter()
+                .any(|a| a == "--zero-copy" || a == "--no-zero-copy"),
+            "Auto policy must not forward any zero-copy flag: {args:?}"
+        );
+    }
+
+    // `--no-zero-copy` pins the daemon-sender's policy to Disabled explicitly.
+    #[test]
+    fn disabled_forwards_no_zero_copy_on_daemon_sender() {
+        let args = args_for(fast_io::ZeroCopyPolicy::Disabled, true);
+        assert!(
+            args.iter().any(|a| a == "--no-zero-copy"),
+            "Disabled policy must forward --no-zero-copy: {args:?}"
+        );
+        assert!(!args.iter().any(|a| a == "--zero-copy"));
+    }
+
+    // On a push (`is_sender = false`, daemon is the receiver) the daemon's
+    // socket write side carries no bulk data, so SEND_ZC is not forwarded even
+    // when the user opted in - matching the sender-only benefit.
+    #[test]
+    fn enabled_does_not_forward_on_daemon_receiver() {
+        let args = args_for(fast_io::ZeroCopyPolicy::Enabled, false);
+        assert!(
+            !args.iter().any(|a| a == "--zero-copy"),
+            "daemon-receiver push must not forward --zero-copy: {args:?}"
+        );
     }
 }
