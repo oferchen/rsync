@@ -101,6 +101,7 @@ mod adaptive_semaphore;
 mod bounded;
 mod capacity;
 mod capacity_source;
+mod controller;
 mod drain;
 mod iter;
 pub mod limiter;
@@ -115,6 +116,10 @@ pub use bounded::{
     bounded_with_capacity,
 };
 pub use capacity::{adaptive_queue_depth, default_capacity};
+pub use controller::{
+    ADAPTIVE_QUEUE_ENV, AdaptiveQueueController, ControllerStats, TickOutcome,
+    adaptive_queue_enabled,
+};
 pub use iter::WorkQueueIter;
 pub use limiter::{AimdLimiter, LimiterConfig, OverloadReason, Ticket};
 
