@@ -13,10 +13,11 @@
 //!    following the link.
 //! 2. When the entry is a regular file, both the sandbox-anchored and
 //!    path-based stats agree on `dev` / `ino`.
-//! 3. When the relative path has multiple components, the helper falls
-//!    back to `std::fs::symlink_metadata` (the SEC-1.f cutover only
-//!    touches single-component paths today; multi-component descent is
-//!    SEC-1.f's follow-up work).
+//! 3. When the relative path has multiple components, the helper anchors
+//!    its parent under `openat2(RESOLVE_BENEATH)` where the kernel
+//!    supports it (Linux 5.6+) and degrades to
+//!    `std::fs::symlink_metadata` otherwise; either way the reported
+//!    dev/ino match the real entry.
 
 #![cfg(unix)]
 
@@ -93,7 +94,13 @@ fn sandbox_anchored_lstat_dev_ino_matches_path_lstat() {
 }
 
 #[test]
-fn multi_component_path_falls_back_to_path_based_lstat() {
+fn multi_component_path_anchors_or_falls_back_lstat() {
+    // A multi-component relative path now resolves its parent under
+    // openat2(RESOLVE_BENEATH) where the kernel supports it (Linux 5.6+,
+    // the CI runners) and only degrades to the path-based fallback where
+    // it does not (macOS, older kernels). Gate the expected outcome on
+    // the capability probe and confirm dev/ino match the real entry in
+    // both states.
     let (_keep, root) = canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     let file_path = root.join("sub/file");
@@ -105,9 +112,26 @@ fn multi_component_path_falls_back_to_path_based_lstat() {
     let outcome = lstat_via_sandbox_or_fallback(Some(&sandbox), &root, rel, &file_path)
         .expect("multi-comp lstat");
 
-    assert!(
-        matches!(outcome, LstatOutcome::Std(_)),
-        "multi-component paths take the std fallback until the sandbox descent stack is wired"
+    if fast_io::openat2_supported() {
+        assert!(
+            matches!(outcome, LstatOutcome::At(_)),
+            "multi-component paths must anchor via openat2(RESOLVE_BENEATH) when supported"
+        );
+    } else {
+        assert!(
+            matches!(outcome, LstatOutcome::Std(_)),
+            "multi-component paths degrade to the path-based fallback without openat2"
+        );
+    }
+
+    let std_meta = std::fs::symlink_metadata(&file_path).expect("std stat");
+    assert_eq!(
+        std::os::unix::fs::MetadataExt::dev(&std_meta),
+        outcome.dev()
+    );
+    assert_eq!(
+        std::os::unix::fs::MetadataExt::ino(&std_meta),
+        outcome.ino()
     );
 }
 
