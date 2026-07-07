@@ -195,7 +195,7 @@ pub(crate) use self::module_state::{
 #[cfg(test)]
 pub(crate) use self::module_state::{
     TEST_SECRETS_CANDIDATES, TEST_SECRETS_ENV, TestSecretsEnvOverride,
-    clear_test_hostname_overrides, set_test_hostname_override,
+    clear_test_hostname_overrides, set_test_forward_override, set_test_hostname_override,
 };
 
 type SharedLogSink = Arc<Mutex<MessageSink<std::fs::File>>>;
@@ -379,8 +379,10 @@ pub fn run_daemon_stdio(config: DaemonConfig) -> Result<(), DaemonError> {
     let peer_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
 
     // Resolve hostname for the synthetic peer (will resolve localhost).
+    // upstream: clientname.c `client_name` forward-confirms unconditionally;
+    // per-module `forward lookup` governs the access-control match.
     let peer_host = if reverse_lookup {
-        resolve_peer_hostname(peer_addr.ip())
+        resolve_peer_hostname(peer_addr.ip(), true)
     } else {
         None
     };

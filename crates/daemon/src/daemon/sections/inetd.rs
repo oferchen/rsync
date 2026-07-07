@@ -108,8 +108,12 @@ fn serve_inetd_session(options: RuntimeOptions) -> Result<(), DaemonError> {
     // peer address.
     let peer_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
 
+    // upstream: clientname.c `client_name` forward-confirms the reverse-DNS
+    // name unconditionally, so this pre-module log/registry name is confirmed
+    // too. Per-module `forward lookup` still governs the access-control match
+    // in `module_peer_hostname`.
     let peer_host = if reverse_lookup {
-        resolve_peer_hostname(peer_addr.ip())
+        resolve_peer_hostname(peer_addr.ip(), true)
     } else {
         None
     };

@@ -59,22 +59,40 @@ fn extract_module_relative_paths(client_args: &[String], module_name: &str) -> V
 ///
 /// Returns the module path itself when no positional was supplied or when
 /// the stripped tail is empty (push directly into the module root).
+///
+/// Returns `None` when the destination tail contains a `..` traversal
+/// segment, symmetric to `resolve_sender_sources`. Downstream file-list
+/// sanitisation and the `DirSandbox` already confine the write, so this is a
+/// no-op for every currently-valid destination path (a `..`-free tail is
+/// unaffected); the guard rejects the escape up front as defense-in-depth.
+///
+/// upstream: util1.c:1035 `sanitize_path` collapses `..` against the module
+/// root depth on the receiver side, behind the chroot wall. oc-rsync mirrors
+/// the check explicitly because the daemon does not always chroot.
 fn resolve_receiver_dest(
     module_path: &std::path::Path,
     client_args: &[String],
     module_name: &str,
-) -> std::path::PathBuf {
+) -> Option<std::path::PathBuf> {
     let positionals = extract_module_relative_paths(client_args, module_name);
     // upstream: main.c:1203-1204 - `local_name = get_local_name(flist, argv[0])`
     // uses the FIRST remaining positional (after the `.` placeholder has been
     // consumed by `do_server_recv` at line 1166). For a receiver that
     // translates to the last wire positional - the destination.
     let Some(last) = positionals.last() else {
-        return module_path.to_path_buf();
+        return Some(module_path.to_path_buf());
     };
     let tail = last.trim();
     if tail.is_empty() || tail == "." {
-        return module_path.to_path_buf();
+        return Some(module_path.to_path_buf());
+    }
+    // Reject `..` traversal segments so the joined destination cannot escape
+    // the module root, symmetric to the sender-source guard below.
+    let trimmed_for_scan = tail.trim_start_matches(['/', '\\']);
+    for component in std::path::Path::new(trimmed_for_scan).components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            return None;
+        }
     }
     // Defensive: a path arriving here that is absolute on the host OS
     // (Unix `is_absolute()` or a leading `/` that Windows treats as
@@ -84,9 +102,9 @@ fn resolve_receiver_dest(
     let rel = std::path::Path::new(tail);
     if rel.is_absolute() || tail.starts_with('/') || tail.starts_with('\\') {
         let stripped = tail.trim_start_matches(['/', '\\']);
-        return module_path.join(stripped);
+        return Some(module_path.join(stripped));
     }
-    module_path.join(rel)
+    Some(module_path.join(rel))
 }
 
 /// Resolves the sender's on-disk source paths from the client's positional

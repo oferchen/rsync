@@ -65,6 +65,9 @@ fn module_hostname_allow_fails_closed_under_chroot() {
     // so the refusal above is attributable to the DNS failure and not a
     // broken matcher.
     set_test_hostname_override(peer, Some("test-host.example"));
+    // A legitimate peer's PTR name forward-resolves back to its address, so
+    // the module-default `forward lookup = yes` confirmation passes.
+    set_test_forward_override("test-host.example", &[peer]);
     let mut cache = None;
     let resolved = module_peer_hostname(&module, &mut cache, peer, true);
     assert_eq!(
