@@ -87,14 +87,44 @@ pub fn is_supported() -> bool {
     supported
 }
 
-/// One-shot probe: build a tiny ring, register a probe, check the opcode bit.
+/// Kernel-version floor for `IORING_OP_SEND_ZC`.
 ///
-/// Returns `false` whenever the kernel rejects the probe entirely - the
-/// caller treats both "kernel too old" and "probe blocked" as "unsupported"
-/// because both surface as `io::ErrorKind::Unsupported` in the fall-back
-/// path. Diagnostic separation lives in the existing
+/// The opcode landed in Linux 6.0. A handful of 5.x vendor backports advertise
+/// the opcode bit through `IORING_REGISTER_PROBE` but ship incomplete
+/// zero-copy semantics (the notification-CQE path or page release misbehaves),
+/// which corrupts the payload instead of cleanly erroring. The opcode probe
+/// alone therefore false-positives on those kernels, so the probe additionally
+/// requires the mainline version floor. Requiring BOTH the floor AND the opcode
+/// bit means a genuinely-6.0+ kernel that advertises the opcode is the only
+/// configuration that ever submits a real SEND_ZC SQE.
+const SEND_ZC_KERNEL_MIN: (u32, u32) = (6, 0);
+
+/// Returns `true` when the running kernel is at least [`SEND_ZC_KERNEL_MIN`].
+///
+/// When the release string cannot be read or parsed, returns `false` so the
+/// dispatch conservatively falls back to plain `IORING_OP_SEND`.
+fn kernel_meets_send_zc_floor() -> bool {
+    super::config::config_detail::get_kernel_release_string()
+        .as_deref()
+        .and_then(super::config::parse_kernel_version)
+        .map(|(major, minor)| (major, minor) >= SEND_ZC_KERNEL_MIN)
+        .unwrap_or(false)
+}
+
+/// One-shot probe: enforce the 6.0 version floor, then build a tiny ring,
+/// register a probe, and check the opcode bit.
+///
+/// Returns `false` whenever the kernel is below the floor, rejects the probe
+/// entirely, or does not advertise the opcode - the caller treats all three as
+/// "unsupported" because they surface as `io::ErrorKind::Unsupported` in the
+/// fall-back path. Diagnostic separation lives in the existing
 /// `config_detail::io_uring_kernel_info` reporter.
 fn probe_send_zc() -> bool {
+    // Version floor first: it defends against 5.x backports that advertise the
+    // opcode bit but ship broken zero-copy semantics (see SEND_ZC_KERNEL_MIN).
+    if !kernel_meets_send_zc_floor() {
+        return false;
+    }
     let Ok(ring) = RawIoUring::new(4) else {
         return false;
     };
@@ -440,6 +470,33 @@ mod tests {
         let first = is_supported();
         let second = is_supported();
         assert_eq!(first, second);
+    }
+
+    // The version floor is a hard precondition: if `is_supported()` reports the
+    // opcode as usable, the running kernel MUST be >= 6.0. This is what keeps a
+    // 5.x backport that advertises the opcode bit from ever submitting a real
+    // SEND_ZC SQE (the corruption seen on the ubuntu-22.04 ~5.15 CI cell).
+    #[test]
+    fn supported_implies_kernel_floor_met() {
+        if is_supported() {
+            assert!(
+                kernel_meets_send_zc_floor(),
+                "SEND_ZC reported supported but the kernel is below the 6.0 floor"
+            );
+        }
+    }
+
+    // Boundary semantics of the tuple comparison used by the floor: 6.0 and
+    // newer pass; anything 5.x or older fails. Mirrors the `(major, minor) >=
+    // SEND_ZC_KERNEL_MIN` check without depending on the host's real kernel.
+    #[test]
+    fn kernel_floor_tuple_comparison_boundaries() {
+        assert!((6u32, 0u32) >= SEND_ZC_KERNEL_MIN);
+        assert!((6u32, 1u32) >= SEND_ZC_KERNEL_MIN);
+        assert!((7u32, 0u32) >= SEND_ZC_KERNEL_MIN);
+        assert!((5u32, 15u32) < SEND_ZC_KERNEL_MIN);
+        assert!((5u32, 19u32) < SEND_ZC_KERNEL_MIN);
+        assert!((4u32, 19u32) < SEND_ZC_KERNEL_MIN);
     }
 
     #[test]
