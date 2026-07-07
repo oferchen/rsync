@@ -265,16 +265,6 @@ fn reconcile_copied_ads(
     let destination: PathBuf = destination.components().collect();
     let (source, destination) = (source.as_path(), destination.as_path());
 
-    eprintln!(
-        "OC_ADS_DIAG reconcile src={} xattrs_enabled={} program={} has_xattr_rules={}",
-        source.display(),
-        flags.xattrs_enabled(),
-        context.filter_program().is_some(),
-        context
-            .filter_program()
-            .map_or(false, |p| p.has_xattr_rules()),
-    );
-
     if !flags.xattrs_enabled() {
         ::metadata::strip_source_xattrs(source, destination, false).map_err(map_metadata_error)?;
         return Ok(());
