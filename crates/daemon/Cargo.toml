@@ -46,6 +46,15 @@ iconv = ["core/iconv", "protocol/iconv"]
 # in `docs/design/lsm-seccomp-allowlist.md` completes. No-op on non-Linux
 # (the dependency is `cfg(target_os = "linux")`-gated).
 daemon-seccomp = ["dep:seccompiler"]
+# macOS-only, default-off: source accepted connections in the daemon accept
+# loop from a `kqueue(2)` `EVFILT_READ` readiness wait instead of the portable
+# non-blocking-accept-plus-50ms-sleep busy-poll. Event-driven (parks in the
+# kernel until a connection arrives or the signal-check timeout elapses) rather
+# than busy-waiting, dropping first-connection latency on a quiet daemon from up
+# to 50ms to a syscall round-trip. Falls back to the portable engines if kqueue
+# setup fails, so it never breaks connection service. Off by default: the
+# default build uses the portable accept path unchanged. No-op on non-macOS.
+macos-kqueue = []
 
 [dependencies]
 clap = { workspace = true }
