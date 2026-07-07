@@ -614,6 +614,64 @@ impl DeltaSignatureIndex {
         None
     }
 
+    /// Attempts to match a short trailing window against a basis block of the
+    /// same (partial) length.
+    ///
+    /// The full-length matchers reject any window whose length differs from
+    /// `block_length`, and [`populate_index`] deliberately excludes partial
+    /// blocks from the tag/bithash/lookup tables. That leaves the basis file's
+    /// final short block unmatchable through the fast paths, so the sender
+    /// would always emit the source file's trailing partial block as literal
+    /// data. Upstream rsync matches it: `hash_search()` shrinks its final
+    /// window to `l = MIN(blength, len-offset)` and requires `l == s->sums[i].len`
+    /// (`match.c:222-224`), so a same-length short block still matches.
+    ///
+    /// This method mirrors that tail case. The combined length of `first` and
+    /// `second` must be shorter than `block_length` (a full-length window
+    /// belongs on the fast path). It scans for a not-yet-consumed basis block
+    /// whose recorded length equals that combined length and whose rolling and
+    /// strong checksums match, returning its index. Partial blocks only ever
+    /// occur as the final block, so this scan touches at most one candidate in
+    /// practice.
+    #[inline]
+    pub fn find_tail_match(
+        &self,
+        digest: RollingDigest,
+        first: &[u8],
+        second: &[u8],
+        matched: Option<&MatchedBlocks>,
+    ) -> Option<usize> {
+        let tail_len = first.len() + second.len();
+        if tail_len == 0 || tail_len >= self.block_length {
+            return None;
+        }
+
+        let mut strong: Option<signature::DigestBuf> = None;
+        for (index, block) in self.blocks.iter().enumerate() {
+            if block.len() != tail_len {
+                continue;
+            }
+            if matches!(matched, Some(m) if m.is_matched(index)) {
+                continue;
+            }
+            if self.is_consumed(index as u32) {
+                continue;
+            }
+            let block_digest = block.rolling();
+            if digest.sum1() != block_digest.sum1() || digest.sum2() != block_digest.sum2() {
+                continue;
+            }
+            let strong = strong.get_or_insert_with(|| {
+                self.algorithm
+                    .compute_truncated_slices(first, second, self.strong_length)
+            });
+            if strong.as_slice() == block.strong() {
+                return Some(index);
+            }
+        }
+        None
+    }
+
     /// Checks whether a specific block matches the given rolling digest and window data.
     ///
     /// Used by the `want_i` adjacent-match hinting optimization: after a match at
@@ -664,6 +722,32 @@ impl DeltaSignatureIndex {
         scratch.extend_from_slice(front);
         scratch.extend_from_slice(back);
         self.find_match_bytes(digest, scratch.as_slice())
+    }
+
+    /// Attempts to match a short trailing [`VecDeque`] window against a basis
+    /// block of the same partial length.
+    ///
+    /// The [`VecDeque`]-backed companion to [`Self::find_tail_match`], used by
+    /// the local-copy delta matcher. `window` must be shorter than
+    /// `block_length`; a full-length window belongs on
+    /// [`Self::find_match_window`]. See [`Self::find_tail_match`] for the
+    /// upstream reference (`match.c:222-224`).
+    pub fn find_tail_match_window(
+        &self,
+        digest: RollingDigest,
+        window: &VecDeque<u8>,
+        scratch: &mut Vec<u8>,
+    ) -> Option<usize> {
+        let tail_len = window.len();
+        if tail_len == 0 || tail_len >= self.block_length {
+            return None;
+        }
+
+        scratch.clear();
+        let (front, back) = window.as_slices();
+        scratch.extend_from_slice(front);
+        scratch.extend_from_slice(back);
+        self.find_tail_match(digest, scratch.as_slice(), &[], None)
     }
 
     /// Extends a confirmed block match into a run of consecutive matching blocks.

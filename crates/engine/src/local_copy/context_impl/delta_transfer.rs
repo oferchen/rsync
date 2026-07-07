@@ -226,8 +226,104 @@ impl<'a> CopyContext<'a> {
             }
         }
 
-        while let Some(byte) = window.pop_front() {
-            pending_literals.push(byte);
+        // EOF tail match: the window now holds the file's short trailing bytes
+        // (fewer than block_length). Upstream rsync matches this short tail
+        // against the basis's final partial block via `l = MIN(blength,
+        // len-offset)` (`match.c:222-224`). Mirror that: probe the same-length
+        // basis block and, on a hit, flush preceding literals then emit the
+        // short matched block. Without this the trailing partial block is
+        // always sent as literal data, diverging from upstream deltas.
+        let tail_matched_block = {
+            let digest = rolling.digest();
+            index.find_tail_match_window(digest, &window, &mut scratch)
+        };
+        if let Some(block_index) = tail_matched_block {
+            if !pending_literals.is_empty() {
+                let flushed_len = pending_literals.len();
+                if inplace_mode {
+                    writer.seek(SeekFrom::Start(output_position)).map_err(|error| {
+                        LocalCopyError::io(
+                            "seek destination file",
+                            destination.to_path_buf(),
+                            error,
+                        )
+                    })?;
+                }
+                let flushed = self.flush_literal_chunk(
+                    writer,
+                    pending_literals.as_slice(),
+                    sparse,
+                    &mut sparse_state,
+                    compressor.as_mut(),
+                    &mut compressed_progress,
+                    source,
+                    destination,
+                )?;
+                let literal_written = if sparse {
+                    flushed_len as u64
+                } else {
+                    flushed as u64
+                };
+                literal_bytes = literal_bytes.saturating_add(literal_written);
+                total_bytes = total_bytes.saturating_add(flushed_len as u64);
+                output_position = output_position.saturating_add(flushed_len as u64);
+                pending_literals.clear();
+            }
+
+            let block = index.block(block_index);
+            let block_len = block.len();
+            let matched = MatchedBlock::new(block, index.block_length());
+            let basis_offset = matched.offset();
+
+            if inplace_mode && basis_offset == output_position {
+                output_position = output_position.saturating_add(block_len as u64);
+            } else if inplace_mode {
+                writer.seek(SeekFrom::Start(output_position)).map_err(|error| {
+                    LocalCopyError::io(
+                        "seek destination file",
+                        destination.to_path_buf(),
+                        error,
+                    )
+                })?;
+                let matched_bytes = &scratch[..block_len];
+                if sparse {
+                    let _ = write_sparse_chunk(
+                        writer,
+                        &mut sparse_state,
+                        matched_bytes,
+                        destination,
+                    )?;
+                } else {
+                    writer.write_all(matched_bytes).map_err(|error| {
+                        LocalCopyError::io("copy file", destination, error)
+                    })?;
+                }
+                self.capture_batch_block_match(&matched, destination)?;
+                output_position = output_position.saturating_add(block_len as u64);
+            } else {
+                self.copy_matched_block(
+                    destination_reader
+                        .as_mut()
+                        .expect("destination reader is always open"),
+                    writer,
+                    buffer,
+                    destination,
+                    matched,
+                    SparseCopy {
+                        enabled: sparse,
+                        state: &mut sparse_state,
+                    },
+                )?;
+            }
+
+            total_bytes = total_bytes.saturating_add(block_len as u64);
+            let progressed = initial_bytes.saturating_add(total_bytes);
+            self.notify_progress(relative, Some(total_size), progressed, start.elapsed());
+            window.clear();
+        } else {
+            while let Some(byte) = window.pop_front() {
+                pending_literals.push(byte);
+            }
         }
 
         if !pending_literals.is_empty() {
