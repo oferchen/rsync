@@ -10,6 +10,7 @@ use protocol::acl::{
 };
 
 use super::perms::rsync_perms_to_exacl;
+use crate::AclIdMapper;
 use crate::id_lookup::{
     lookup_group_by_name, lookup_group_name, lookup_user_by_name, lookup_user_name,
 };
@@ -80,7 +81,14 @@ pub(super) fn reconstruct_acl(acl: &RsyncAcl, mode: Option<u32>) -> RsyncAcl {
 ///   incoming named entries.
 /// - `uidlist.c:243-294` `recv_add_id` - falls back to the raw wire id when
 ///   the name does not resolve; emits the `DEBUG_GTE(OWN, 2)` mapping line.
-pub(super) fn rsync_acl_to_entries(acl: &RsyncAcl) -> Vec<AclEntry> {
+///
+/// # Cross-host remapping
+///
+/// When `id_map` is present, named entry ids are remapped through the received
+/// id-list plus `--usermap`/`--groupmap`, mirroring upstream `match_acl_ids()`
+/// (`acls.c:1059-1081`). Without a mapper the receiver falls back to the
+/// name-based NSS resolution described above.
+pub(super) fn rsync_acl_to_entries(acl: &RsyncAcl, id_map: Option<&AclIdMapper>) -> Vec<AclEntry> {
     let mut entries = Vec::new();
 
     // upstream: acls.c:866-878 - base entries for POSIX ACLs only (Linux/FreeBSD).
@@ -117,7 +125,7 @@ pub(super) fn rsync_acl_to_entries(acl: &RsyncAcl) -> Vec<AclEntry> {
 
     for ida in acl.names.iter() {
         let perms = rsync_perms_to_exacl(ida.permissions() as u8);
-        let mapped_id = resolve_ida_id(ida);
+        let mapped_id = resolve_ida_id(ida, id_map);
         let name = mapped_id.to_string();
 
         if ida.access & NAME_IS_USER != 0 {
@@ -146,9 +154,35 @@ pub(super) fn rsync_acl_to_entries(acl: &RsyncAcl) -> Vec<AclEntry> {
 ///    falls back to `id2 = id` at `uidlist.c:282` and the receiver still
 ///    calls `sys_acl_set_info()` with whatever id is in `ida->id`
 ///    (`acls.c:404`), so unmappable IDs flow through to the kernel.
-fn resolve_ida_id(ida: &IdAccess) -> u32 {
+///
+/// When `id_map` is present it takes precedence: the id is remapped through the
+/// received id-list plus `--usermap`/`--groupmap`, mirroring upstream
+/// `match_acl_ids()` (`acls.c:1059-1081`). The id-list already folds in the
+/// sender-supplied name resolution, so this is the cross-host path.
+fn resolve_ida_id(ida: &IdAccess, id_map: Option<&AclIdMapper>) -> u32 {
     let is_user = ida.access & NAME_IS_USER != 0;
     let wire = ida.id;
+
+    // upstream: acls.c:1069-1072 match_racl_ids - convert every named entry id
+    // through the same uid/gid table as file owners (match_uid/match_gid).
+    if let Some(mapper) = id_map {
+        let mapped = if is_user {
+            mapper.map_uid(wire)
+        } else {
+            mapper.map_gid(wire)
+        };
+        let name_str = ida
+            .name
+            .as_deref()
+            .map(String::from_utf8_lossy)
+            .unwrap_or_default();
+        if is_user {
+            trace_acl_uid_remap(wire, &name_str, mapped);
+        } else {
+            trace_acl_gid_remap(wire, &name_str, mapped);
+        }
+        return mapped;
+    }
 
     if let Some(name_bytes) = ida.name.as_deref() {
         let name_str = String::from_utf8_lossy(name_bytes);

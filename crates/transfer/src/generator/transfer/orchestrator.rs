@@ -92,6 +92,10 @@ impl GeneratorContext {
             self.send_file_list(writer)?
         };
 
+        // upstream: acls.c:592-595 - named ACL-entry ids join the shared id-list
+        // so the receiver remaps them like file owners. Runs after the file list
+        // is sent (ACL cache complete) and before the id-list is transmitted.
+        self.collect_acl_id_mappings();
         self.send_id_lists(writer)?;
         self.send_io_error_flag(writer)?;
 

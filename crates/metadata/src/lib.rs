@@ -68,6 +68,8 @@
 //! - `core::client` integrates these helpers for local filesystem copies.
 //! - [`filetime`] for lower-level timestamp manipulation utilities.
 
+mod acl_idmap;
+
 #[cfg(all(
     feature = "acl",
     any(target_os = "linux", target_os = "macos", target_os = "freebsd")
@@ -183,6 +185,8 @@ pub fn am_root() -> bool {
         false
     }
 }
+
+pub use acl_idmap::AclIdMapper;
 
 #[cfg(all(
     feature = "acl",

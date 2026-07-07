@@ -105,6 +105,7 @@ pub(in crate::receiver) struct AsyncFileContext<'a> {
     pub(in crate::receiver) checksum_length: std::num::NonZeroU8,
     pub(in crate::receiver) checksum_algorithm: signature::SignatureAlgorithm,
     pub(in crate::receiver) acl_cache: Option<&'a std::sync::Arc<AclCache>>,
+    pub(in crate::receiver) acl_id_map: Option<&'a std::sync::Arc<metadata::AclIdMapper>>,
     #[cfg(unix)]
     pub(in crate::receiver) sandbox: Option<&'a std::sync::Arc<fast_io::DirSandbox>>,
 }
@@ -353,6 +354,7 @@ impl ReceiverContext {
             &file_path,
             file_entry,
             ctx.acl_cache.map(std::sync::Arc::as_ref),
+            ctx.acl_id_map.map(std::sync::Arc::as_ref),
             !file_entry.is_symlink(),
         ) {
             outcome
@@ -586,6 +588,7 @@ mod tests {
                     seed_config: checksums::strong::Md5Seed::none(),
                 },
                 acl_cache: None,
+                acl_id_map: None,
                 #[cfg(unix)]
                 sandbox: None,
             };
@@ -669,6 +672,7 @@ mod tests {
                 seed_config: checksums::strong::Md5Seed::none(),
             },
             acl_cache: None,
+            acl_id_map: None,
             #[cfg(unix)]
             sandbox: None,
         };

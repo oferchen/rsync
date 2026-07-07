@@ -216,6 +216,7 @@ mod create_directory_incremental_tests {
             &opts,
             &mut failed,
             None,
+            None,
             #[cfg(unix)]
             None,
         );
@@ -252,6 +253,7 @@ mod create_directory_incremental_tests {
             &entry,
             &opts,
             &mut failed,
+            None,
             None,
             #[cfg(unix)]
             None,
@@ -293,6 +295,7 @@ mod create_directory_incremental_tests {
             &opts,
             &mut failed,
             None,
+            None,
             #[cfg(unix)]
             None,
         );
@@ -323,6 +326,7 @@ mod create_directory_incremental_tests {
             &entry,
             &opts,
             &mut failed,
+            None,
             None,
             #[cfg(unix)]
             None,
@@ -381,6 +385,7 @@ mod create_directory_incremental_tests {
             &opts,
             &mut failed,
             None,
+            None,
             #[cfg(unix)]
             None,
         );
@@ -438,6 +443,7 @@ mod create_directory_incremental_tests {
             &entry,
             &opts,
             &mut failed,
+            None,
             None,
             #[cfg(unix)]
             None,
@@ -537,6 +543,7 @@ mod incremental_mode_tests {
             &entry,
             &opts,
             &mut failed,
+            None,
             None,
             #[cfg(unix)]
             None,

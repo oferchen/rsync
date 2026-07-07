@@ -78,6 +78,7 @@ impl ReceiverContext {
     /// Optimized for the 100K-file no-change scan path: pre-computes config
     /// flags, skips metadata/ACL/xattr work when the corresponding features are
     /// disabled, and avoids per-file allocations where possible.
+    #[allow(clippy::too_many_arguments)]
     pub(in crate::receiver) fn build_files_to_transfer<
         'a,
         W: Write + crate::writer::MsgInfoSender + ?Sized,
@@ -90,6 +91,7 @@ impl ReceiverContext {
         metadata_errors: &mut Vec<(PathBuf, String)>,
         stats: &mut TransferStats,
         acl_cache: Option<&protocol::acl::AclCache>,
+        acl_id_map: Option<&metadata::AclIdMapper>,
     ) -> Vec<(usize, &'a FileEntry, PathBuf, u32)> {
         // upstream: generator.c:1234-1235 - "recv_generator(%s,%d)" emitted at
         // the top of recv_generator() for every file the generator considers
@@ -289,6 +291,7 @@ impl ReceiverContext {
                         metadata_opts,
                         metadata_errors,
                         acl_cache,
+                        acl_id_map,
                         emit_itemize,
                         unchanged_iflags,
                         has_acls,
@@ -314,6 +317,7 @@ impl ReceiverContext {
                         metadata_opts,
                         metadata_errors,
                         acl_cache,
+                        acl_id_map,
                     )
                 {
                     continue;
@@ -444,6 +448,7 @@ impl ReceiverContext {
         metadata_opts: &MetadataOptions,
         metadata_errors: &mut Vec<(PathBuf, String)>,
         acl_cache: Option<&protocol::acl::AclCache>,
+        acl_id_map: Option<&metadata::AclIdMapper>,
         emit_itemize: bool,
         unchanged_iflags: u32,
         has_acls: bool,
@@ -477,9 +482,13 @@ impl ReceiverContext {
 
         // upstream: rsync.c:set_file_attrs() -> set_acl() for ACL preservation
         if has_acls {
-            if let Err(e) =
-                apply_acls_from_receiver_cache(file_path, entry, acl_cache, !entry.is_symlink())
-            {
+            if let Err(e) = apply_acls_from_receiver_cache(
+                file_path,
+                entry,
+                acl_cache,
+                acl_id_map,
+                !entry.is_symlink(),
+            ) {
                 metadata_errors.push((file_path.to_path_buf(), e.to_string()));
                 return;
             }

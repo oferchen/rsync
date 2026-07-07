@@ -389,6 +389,16 @@ impl ReceiverContext {
             None
         };
 
+        // upstream: uidlist.c:483-484 match_acl_ids() - build the cross-host id
+        // remapper for named ACL entries from the received uid/gid id-lists plus
+        // `--usermap`/`--groupmap`, snapshotted so it can ride the Arc onto the
+        // disk-commit thread that applies cached ACLs.
+        let acl_id_map = if self.config.flags.acls {
+            Some(Arc::new(self.build_acl_id_mapper()))
+        } else {
+            None
+        };
+
         // SEC-1.e: open the destination root as a sandboxed dirfd carrier.
         // The carrier rides through every per-entry operation so the
         // SEC-1.f-j cutover sites can replace path-based syscalls with
@@ -428,6 +438,7 @@ impl ReceiverContext {
                 checksum_length,
                 checksum_algorithm,
                 acl_cache,
+                acl_id_map,
                 #[cfg(unix)]
                 sandbox,
             },
@@ -524,6 +535,34 @@ impl ReceiverContext {
             entry.set_name(PathBuf::from(&target_basename));
         }
         parent.unwrap_or_else(|| PathBuf::from("."))
+    }
+
+    /// Builds the cross-host ACL id remapper from the received id-lists.
+    ///
+    /// Snapshots the resolved remote->local uid/gid maps and, on Unix, the
+    /// parsed `--usermap`/`--groupmap` rules so named ACL entries are remapped
+    /// exactly like file owners.
+    ///
+    /// upstream: uidlist.c:483-484 + acls.c:1059-1081 - `match_acl_ids()`.
+    #[cfg(unix)]
+    fn build_acl_id_mapper(&self) -> metadata::AclIdMapper {
+        metadata::AclIdMapper::new(
+            self.uid_list.resolved_map(),
+            self.gid_list.resolved_map(),
+            self.config.user_mapping.clone(),
+            self.config.group_mapping.clone(),
+            self.config.flags.numeric_ids,
+        )
+    }
+
+    /// Builds the cross-host ACL id remapper (non-Unix: no `--usermap`).
+    #[cfg(not(unix))]
+    fn build_acl_id_mapper(&self) -> metadata::AclIdMapper {
+        metadata::AclIdMapper::new(
+            self.uid_list.resolved_map(),
+            self.gid_list.resolved_map(),
+            self.config.flags.numeric_ids,
+        )
     }
 
     /// Forwards a server-receiver-side `--files-from=<localpath>` file to the

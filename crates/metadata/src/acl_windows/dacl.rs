@@ -26,6 +26,7 @@ use super::common::{
     OwnedSecurityDescriptor, access_mask_to_rsync_perms, is_unsupported,
     rsync_perms_to_access_mask, to_wide, warn_partial_apply, win32_error,
 };
+use crate::AclIdMapper;
 use crate::MetadataError;
 
 /// Reads the DACL for `path` and returns it together with the owning
@@ -271,12 +272,16 @@ pub fn apply_acls_from_cache(
     default_ndx: Option<u32>,
     follow_symlinks: bool,
     mode: Option<u32>,
+    id_map: Option<&AclIdMapper>,
 ) -> Result<(), MetadataError> {
     if !follow_symlinks {
         return Ok(());
     }
 
     let _ = default_ndx; // Default ACLs are POSIX-only; ignored on Windows.
+    // Windows resolves ACL principals by SID/name, not numeric uid/gid, so the
+    // POSIX id-list remapper does not apply here.
+    let _ = id_map;
 
     let Some(acl) = cache.get_access(access_ndx) else {
         return Ok(());

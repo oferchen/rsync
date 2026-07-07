@@ -46,6 +46,7 @@ impl ReceiverContext {
             &setup.dest_dir,
             &setup.metadata_opts,
             setup.acl_cache.as_deref(),
+            setup.acl_id_map.as_deref(),
             writer,
             #[cfg(unix)]
             setup.sandbox.as_deref(),
@@ -98,6 +99,7 @@ impl ReceiverContext {
             &mut metadata_errors,
             &mut stats,
             setup.acl_cache.as_deref(),
+            setup.acl_id_map.as_deref(),
         );
 
         let mut files_transferred: usize = 0;

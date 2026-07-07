@@ -258,6 +258,15 @@ impl GeneratorContext {
     pub(crate) fn build_flist_writer(&self) -> protocol::flist::FileListWriter {
         use crate::shared::ChecksumFactory;
 
+        // upstream: acls.c:597 - ACL entry names are written only under
+        // incremental recursion and when names (not numeric ids) are used.
+        // Without inc_recurse the receiver remaps ACL ids through the id-list
+        // (match_acl_ids), so no per-entry name is needed on the wire.
+        let inc_recurse = self
+            .compat_flags
+            .is_some_and(|f| f.contains(protocol::CompatibilityFlags::INC_RECURSE));
+        let acl_send_names = inc_recurse && !self.config.flags.numeric_ids;
+
         let mut writer = if let Some(flags) = self.compat_flags {
             protocol::flist::FileListWriter::with_compat_flags(self.protocol, flags)
         } else {
@@ -272,6 +281,7 @@ impl GeneratorContext {
         .with_preserve_atimes(self.config.flags.atimes)
         .with_preserve_crtimes(self.config.flags.crtimes)
         .with_preserve_acls(self.config.flags.acls)
+        .with_acl_send_names(acl_send_names)
         .with_preserve_xattrs(self.config.flags.xattrs)
         .with_checksum_seed(self.checksum_seed);
 

@@ -1652,6 +1652,7 @@ mod acl_integration {
             Some(&default_acl),
             true,
             &mut acl_cache,
+            false,
         )
         .unwrap();
 
@@ -1883,6 +1884,7 @@ mod acl_integration {
                 Some(&default_acl),
                 true,
                 &mut acl_cache,
+                false,
             )
             .unwrap();
         }
@@ -1995,6 +1997,7 @@ mod acl_integration {
             Some(&default_acl),
             true,
             &mut acl_cache,
+            false,
         )
         .unwrap();
 

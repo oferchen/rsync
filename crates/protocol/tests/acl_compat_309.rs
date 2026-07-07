@@ -250,13 +250,13 @@ fn acl_send_cache_deduplication() {
     let mut cache = AclCache::new();
 
     // First send: literal ACL data.
-    send_acl(&mut buf_first, &acl, None, false, &mut cache).unwrap();
+    send_acl(&mut buf_first, &acl, None, false, &mut cache, false).unwrap();
     assert!(!buf_first.is_empty(), "ACL data must be written to wire");
     assert_eq!(cache.access_count(), 1, "cache must store the ACL");
 
     // Second send: cache hit (smaller payload).
     let mut buf_second = Vec::new();
-    send_acl(&mut buf_second, &acl, None, false, &mut cache).unwrap();
+    send_acl(&mut buf_second, &acl, None, false, &mut cache, false).unwrap();
     assert!(
         buf_second.len() < buf_first.len(),
         "cache hit ({} bytes) must be smaller than literal ({} bytes)",
@@ -279,13 +279,21 @@ fn directory_acl_includes_default() {
 
     let mut buf_dir = Vec::new();
     let mut cache_dir = AclCache::new();
-    send_acl(&mut buf_dir, &access, Some(&default), true, &mut cache_dir).unwrap();
+    send_acl(
+        &mut buf_dir,
+        &access,
+        Some(&default),
+        true,
+        &mut cache_dir,
+        false,
+    )
+    .unwrap();
     assert_eq!(cache_dir.access_count(), 1);
     assert_eq!(cache_dir.default_count(), 1);
 
     let mut buf_file = Vec::new();
     let mut cache_file = AclCache::new();
-    send_acl(&mut buf_file, &access, None, false, &mut cache_file).unwrap();
+    send_acl(&mut buf_file, &access, None, false, &mut cache_file, false).unwrap();
     assert_eq!(cache_file.access_count(), 1);
     assert_eq!(cache_file.default_count(), 0);
 
@@ -307,11 +315,11 @@ fn different_acl_modes_are_distinct_cache_entries() {
     let mut cache = AclCache::new();
     let mut buf = Vec::new();
 
-    send_acl(&mut buf, &acl_644, None, false, &mut cache).unwrap();
+    send_acl(&mut buf, &acl_644, None, false, &mut cache, false).unwrap();
     assert_eq!(cache.access_count(), 1);
 
     buf.clear();
-    send_acl(&mut buf, &acl_755, None, false, &mut cache).unwrap();
+    send_acl(&mut buf, &acl_755, None, false, &mut cache, false).unwrap();
     assert_eq!(
         cache.access_count(),
         2,

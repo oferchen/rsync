@@ -5,6 +5,7 @@
 //! `acl` feature is disabled, or because the platform has no ACL
 //! implementation (e.g., Windows, Android).
 
+use crate::AclIdMapper;
 use crate::MetadataError;
 use protocol::acl::{AclCache, RsyncAcl};
 use std::path::Path;
@@ -57,6 +58,7 @@ pub fn apply_acls_from_cache(
     _default_ndx: Option<u32>,
     _follow_symlinks: bool,
     _mode: Option<u32>,
+    _id_map: Option<&AclIdMapper>,
 ) -> Result<(), MetadataError> {
     warn_acl_unsupported();
     Ok(())
