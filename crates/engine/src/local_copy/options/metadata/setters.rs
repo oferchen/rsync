@@ -193,6 +193,8 @@ impl LocalCopyOptions {
 #[cfg(all(any(unix, windows), feature = "xattr"))]
 impl LocalCopyOptions {
     /// Requests that extended attributes be preserved when copying entries.
+    ///
+    /// On Windows `-X` maps onto NTFS Alternate Data Streams.
     #[must_use]
     #[doc(alias = "--xattrs")]
     #[doc(alias = "-X")]
