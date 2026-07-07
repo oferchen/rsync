@@ -1360,7 +1360,7 @@ fn relay_accept_item_bails_on_shutdown_when_full() {
     ));
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
 #[test]
 fn kqueue_engine_poll_idle_when_no_connection() {
     // A quiet daemon must yield Idle (not error, not busy-spin): the kevent
@@ -1385,7 +1385,7 @@ fn kqueue_engine_poll_idle_when_no_connection() {
     engine.shutdown();
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
 #[test]
 fn kqueue_engine_poll_returns_connection_with_blocking_reset() {
     // The kqueue engine must accept a real client via EVFILT_READ readiness and
@@ -1434,7 +1434,7 @@ fn kqueue_engine_poll_returns_connection_with_blocking_reset() {
     let _ = client.join();
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
 #[test]
 fn kqueue_engine_level_triggered_backlog_is_not_stranded() {
     // Level-triggered readiness must re-surface a queued backlog on successive
@@ -1475,7 +1475,7 @@ fn kqueue_engine_level_triggered_backlog_is_not_stranded() {
     drop(clients);
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
 #[test]
 fn kqueue_engine_needs_one_poll_per_queued_connection() {
     // Admission-lockstep invariant: the engine must NOT drain and buffer a
@@ -1531,7 +1531,7 @@ fn kqueue_engine_needs_one_poll_per_queued_connection() {
     drop(clients);
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
 #[test]
 fn kqueue_engine_shutdown_is_idempotent() {
     // shutdown() must be safe to call more than once (the accept loop calls it
@@ -1547,4 +1547,42 @@ fn kqueue_engine_shutdown_is_idempotent() {
     // Polling after shutdown has no listeners; wait over an empty kqueue simply
     // times out to Idle without error.
     assert!(matches!(engine.poll().expect("poll"), AcceptOutcome::Idle));
+}
+
+#[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
+#[test]
+fn kqueue_engine_delivers_queued_connection_without_sleep_floor() {
+    // The whole point of the readiness engine: a connection already queued on
+    // the listen backlog must be delivered by an `EVFILT_READ` wake, not after
+    // the portable engine's 50ms `WouldBlock` sleep floor. Connect a client and
+    // let the kernel enqueue it, then assert the very first poll returns the
+    // Connection and does so well under the 50ms busy-poll interval this engine
+    // replaces. A regression to the sleep-then-retry shape would push the first
+    // delivering poll to >= 50ms and trip this bound.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let local = listener.local_addr().expect("local addr");
+
+    let client = TcpStream::connect(local).expect("connect");
+    // Give the kernel a moment to place the connection on the backlog so the
+    // EVFILT_READ registration sees it ready on the first wait.
+    thread::sleep(Duration::from_millis(20));
+
+    let mut engine =
+        KqueueAcceptEngine::new(vec![listener], &[local], None).expect("kqueue engine");
+
+    let start = std::time::Instant::now();
+    let outcome = engine.poll().expect("poll");
+    let elapsed = start.elapsed();
+
+    assert!(
+        matches!(outcome, AcceptOutcome::Connection(_, _)),
+        "an already-queued connection must be delivered on the first poll"
+    );
+    assert!(
+        elapsed < Duration::from_millis(50),
+        "readiness wake must beat the 50ms busy-poll floor, took {elapsed:?}"
+    );
+
+    engine.shutdown();
+    drop(client);
 }
