@@ -178,3 +178,30 @@ impl crate::writer::MsgInfoSender for TestDeletionWriter {
         Ok(())
     }
 }
+
+/// Writer that records every `MSG_INFO` frame so tests can assert the
+/// emitted `*deleting` itemize order.
+#[cfg(unix)]
+#[derive(Default)]
+pub(super) struct CapturingDeletionWriter {
+    pub(super) lines: Vec<String>,
+}
+
+#[cfg(unix)]
+impl Write for CapturingDeletionWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+impl crate::writer::MsgInfoSender for CapturingDeletionWriter {
+    fn send_msg_info(&mut self, data: &[u8]) -> io::Result<()> {
+        self.lines
+            .push(String::from_utf8_lossy(data).trim_end().to_owned());
+        Ok(())
+    }
+}
