@@ -59,7 +59,7 @@ pub(super) fn commit_file(
     // With delay_updates, backup happens during the sweep, not here.
     let backup_notice = if !config.delay_updates {
         if let Some(ref backup_config) = config.backup {
-            make_backup(&begin.file_path, backup_config)?
+            make_backup(&begin.file_path, backup_config, config)?
         } else {
             None
         }
@@ -73,7 +73,7 @@ pub(super) fn commit_file(
         if let Some(parent) = staging_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let result = rename_with_io_uring_fallback(cleanup_guard.path(), &staging_path)?;
+        let result = rename_config_sandboxed(config, cleanup_guard.path(), &staging_path)?;
         CleanupManager::global().unregister_temp_file(cleanup_guard.path());
         cleanup_guard.keep();
         return Ok(CommitOutcome {
@@ -84,7 +84,7 @@ pub(super) fn commit_file(
     }
 
     let was_copy = if needs_rename {
-        let result = rename_with_io_uring_fallback(cleanup_guard.path(), &begin.file_path)?;
+        let result = rename_config_sandboxed(config, cleanup_guard.path(), &begin.file_path)?;
         CleanupManager::global().unregister_temp_file(cleanup_guard.path());
         result
     } else if begin.is_inplace {
@@ -145,18 +145,18 @@ pub(super) fn partial_dir_path(file_path: &Path) -> PathBuf {
 /// - `cleanup.c:130-135` - `keep_partial && got_literal` guard
 /// - `receiver.c:340-345` - `do_rename(partialptr, fname)` for `--partial`
 pub(super) fn retain_partial_file(
-    partial_mode: &PartialMode,
+    config: &DiskCommitConfig,
     cleanup_guard: &mut TempFileGuard,
     dest_path: &Path,
 ) {
-    match partial_mode {
+    match &config.partial_mode {
         PartialMode::None => {}
         PartialMode::Partial => {
             // upstream: cleanup.c:130-135 - rename temp file directly to
             // the destination. The incomplete content replaces any existing
             // file at the destination path.
             let temp_path = cleanup_guard.path().to_path_buf();
-            match rename_with_io_uring_fallback(cleanup_guard.path(), dest_path) {
+            match rename_config_sandboxed(config, cleanup_guard.path(), dest_path) {
                 Ok(_) => {
                     // upstream: cleanup.c:174-178 - stamp modtime=0 on
                     // retained partial files so --update does not skip them
@@ -255,6 +255,66 @@ pub(super) fn rename_with_io_uring_fallback(old_path: &Path, new_path: &Path) ->
     }
 }
 
+/// SEC-1.j: dirfd-anchor the temp→final commit rename against the receiver's
+/// destination sandbox, falling back to [`rename_with_io_uring_fallback`].
+///
+/// When the `config` carries a [`fast_io::DirSandbox`] rooted at its
+/// `dest_dir`, and both the temp leaf and the final leaf are single components
+/// directly under that root (the default in-destination temp pattern also used
+/// by the temp-file create, see `temp_guard::try_create_new`), the rename routes
+/// through [`fast_io::renameat_via_sandbox_or_fallback`]. Both leaves resolve
+/// against the pinned destination dirfd, so a symlink swap on the commit parent
+/// between temp-create and rename cannot redirect the final file outside the
+/// tree.
+///
+/// In every other case (no sandbox, multi-component relative path, or a
+/// `--temp-dir`/partial-dir on a different parent) it falls back to the existing
+/// io_uring / `std::fs::rename` path with the EXDEV copy+remove backstop, so a
+/// working rename is never regressed. The anchored path shares the destination
+/// parent for both leaves, so EXDEV cannot arise there.
+///
+/// Returns `Ok(false)` for an in-place rename, `Ok(true)` when the EXDEV
+/// copy+remove fallback ran.
+#[cfg(unix)]
+pub(super) fn rename_config_sandboxed(
+    config: &DiskCommitConfig,
+    old_path: &Path,
+    new_path: &Path,
+) -> io::Result<bool> {
+    if let (Some(sandbox), Some(dest_dir)) = (config.sandbox.as_ref(), config.dest_dir.as_deref())
+        && let (Some(old_leaf), Some(new_leaf)) = (old_path.file_name(), new_path.file_name())
+        && old_path.parent() == Some(dest_dir)
+        && new_path.parent() == Some(dest_dir)
+    {
+        // Both endpoints are single components under the sandbox root, so the
+        // dirfd anchor applies. `replace = true` matches `fs::rename`'s
+        // overwrite-the-destination semantics (upstream `do_rename`).
+        fast_io::renameat_via_sandbox_or_fallback(
+            Some(sandbox.as_ref()),
+            dest_dir,
+            Path::new(old_leaf),
+            old_path,
+            dest_dir,
+            Path::new(new_leaf),
+            new_path,
+            true,
+        )?;
+        return Ok(false);
+    }
+    rename_with_io_uring_fallback(old_path, new_path)
+}
+
+/// Non-Unix: the `*at` sandbox helpers do not exist, so the commit rename keeps
+/// the path-based [`rename_with_io_uring_fallback`] with no behavior change.
+#[cfg(not(unix))]
+pub(super) fn rename_config_sandboxed(
+    _config: &DiskCommitConfig,
+    old_path: &Path,
+    new_path: &Path,
+) -> io::Result<bool> {
+    rename_with_io_uring_fallback(old_path, new_path)
+}
+
 /// Returns `true` when an I/O error represents a cross-device link (EXDEV).
 ///
 /// On Unix, `raw_os_error() == libc::EXDEV` (errno 18). On Windows,
@@ -271,6 +331,88 @@ pub(super) fn is_cross_device(e: &io::Error) -> bool {
     }
 }
 
+/// SEC-1.j: dirfd-anchor the `--backup` rename against the receiver's
+/// destination sandbox, otherwise `std::fs::rename`.
+///
+/// The backup rename moves an existing destination file to its backup name
+/// (`file~` or `<backup-dir>/...`). When the sandbox is present and both the
+/// original and the backup are single components directly under `dest_dir`, the
+/// rename resolves both leaves against the pinned dirfd so a symlink swap on the
+/// parent cannot redirect the backup outside the tree. Otherwise it falls back
+/// to the original path-based [`std::fs::rename`] with no behavior change (no
+/// io_uring/EXDEV path is introduced on the backup rename, matching prior
+/// semantics).
+#[cfg(unix)]
+fn backup_rename_sandboxed(
+    config: &DiskCommitConfig,
+    old_path: &Path,
+    new_path: &Path,
+) -> io::Result<()> {
+    if let (Some(sandbox), Some(dest_dir)) = (config.sandbox.as_ref(), config.dest_dir.as_deref())
+        && let (Some(old_leaf), Some(new_leaf)) = (old_path.file_name(), new_path.file_name())
+        && old_path.parent() == Some(dest_dir)
+        && new_path.parent() == Some(dest_dir)
+    {
+        return fast_io::renameat_via_sandbox_or_fallback(
+            Some(sandbox.as_ref()),
+            dest_dir,
+            Path::new(old_leaf),
+            old_path,
+            dest_dir,
+            Path::new(new_leaf),
+            new_path,
+            true,
+        );
+    }
+    fs::rename(old_path, new_path)
+}
+
+#[cfg(not(unix))]
+fn backup_rename_sandboxed(
+    _config: &DiskCommitConfig,
+    old_path: &Path,
+    new_path: &Path,
+) -> io::Result<()> {
+    fs::rename(old_path, new_path)
+}
+
+/// SEC-1.j: create the `--backup-dir` parent, dirfd-anchoring the leaf `mkdir`
+/// against the receiver's destination sandbox when possible.
+///
+/// When the sandbox is present and `parent` is a single component directly
+/// under `dest_dir`, the final directory component is created via
+/// [`fast_io::mkdirat_via_sandbox_or_fallback`] so a symlink swap on the
+/// destination root cannot redirect it. Deeper trees, or the no-sandbox case,
+/// keep the original recursive [`std::fs::create_dir_all`] so behavior is
+/// unchanged (`create_dir_all` is idempotent for already-existing ancestors).
+#[cfg(unix)]
+fn create_dir_all_sandboxed(config: &DiskCommitConfig, parent: &Path) -> io::Result<()> {
+    if let (Some(sandbox), Some(dest_dir)) = (config.sandbox.as_ref(), config.dest_dir.as_deref())
+        && parent.parent() == Some(dest_dir)
+        && let Some(leaf) = parent.file_name()
+    {
+        return match fast_io::mkdirat_via_sandbox_or_fallback(
+            Some(sandbox.as_ref()),
+            dest_dir,
+            Path::new(leaf),
+            parent,
+            0o777,
+        ) {
+            Ok(()) => Ok(()),
+            // Match `create_dir_all`'s idempotence: an already-present dir is
+            // not an error.
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+            Err(e) => Err(e),
+        };
+    }
+    fs::create_dir_all(parent)
+}
+
+#[cfg(not(unix))]
+fn create_dir_all_sandboxed(_config: &DiskCommitConfig, parent: &Path) -> io::Result<()> {
+    fs::create_dir_all(parent)
+}
+
 /// Creates a backup of the destination file before overwriting.
 ///
 /// Mirrors upstream `backup.c:make_backup()` which renames the existing file
@@ -283,27 +425,28 @@ pub(super) fn is_cross_device(e: &io::Error) -> bool {
 /// is never seeded with the user's `--info=backup` selection.
 pub(super) fn make_backup(
     file_path: &Path,
-    config: &BackupConfig,
+    backup_config: &BackupConfig,
+    config: &DiskCommitConfig,
 ) -> io::Result<Option<BackupNotice>> {
     if !file_path.exists() {
         return Ok(None);
     }
 
     let backup_path = compute_backup_path(
-        &config.dest_dir,
+        &backup_config.dest_dir,
         file_path,
         None,
-        config.backup_dir.as_deref(),
-        &config.suffix,
+        backup_config.backup_dir.as_deref(),
+        &backup_config.suffix,
     );
 
     if let Some(parent) = backup_path.parent() {
         if !parent.exists() {
-            fs::create_dir_all(parent)?;
+            create_dir_all_sandboxed(config, parent)?;
         }
     }
 
-    fs::rename(file_path, &backup_path)?;
+    backup_rename_sandboxed(config, file_path, &backup_path)?;
     // upstream: backup.c:216-217 - DEBUG_GTE(BACKUP, 1) on the RENAME success
     // branch of link_or_rename. disk_commit always uses rename here.
     trace_make_backup_rename(&file_path.display().to_string());
@@ -313,11 +456,11 @@ pub(super) fn make_backup(
     // actual `info_log!` emission happens on the main thread; see
     // `crate::pipeline::receiver::emit_backup_notice`.
     let file_rel = file_path
-        .strip_prefix(&config.dest_dir)
+        .strip_prefix(&backup_config.dest_dir)
         .unwrap_or(file_path)
         .to_path_buf();
     let backup_rel = backup_path
-        .strip_prefix(&config.dest_dir)
+        .strip_prefix(&backup_config.dest_dir)
         .unwrap_or(&backup_path)
         .to_path_buf();
     Ok(Some(BackupNotice {
