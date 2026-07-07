@@ -13,14 +13,123 @@
 //! relative paths take the documented path-based fallback (see
 //! `crates/fast_io/src/dir_sandbox/at_syscalls/lstat.rs::single_component_leaf`).
 
+use std::cmp::Ordering;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use logging::{debug_log, info_log};
+use protocol::flist::{FileEntry, compare_file_entries};
 use protocol::stats::DeleteStats;
 
 use super::normalize_filename_for_compare;
 use crate::receiver::ReceiverContext;
+
+/// A single deleted destination entry carried out of the parallel scan
+/// workers so its `deleting`/`*deleting` line can be emitted in upstream's
+/// deterministic per-directory sorted order rather than the hash-random
+/// order the `HashMap`-keyed scan set would otherwise produce.
+struct DeletedEntry {
+    /// Path relative to the deletion root, as printed by upstream
+    /// `log_delete()` (top-level entries are bare names, not `./name`).
+    rel: PathBuf,
+    /// Whether the entry is a directory. Directories sort after files at a
+    /// given level (upstream `t_PATH`) and print with a trailing slash.
+    is_dir: bool,
+}
+
+/// Orders deleted entries to match upstream's observable delete stream.
+///
+/// Upstream's generator walks the file list ascending by `f_name_cmp` and
+/// calls `generator.c:delete_in_dir()` once per directory in that order.
+/// Each `delete_in_dir()` scans its directory's dirlist - sorted ascending
+/// by `f_name_cmp` (files before dirs at a given level) - and iterates it in
+/// reverse (`for (i = dirlist->used; i--; )`), so a directory's own
+/// extraneous entries are emitted in descending order.
+///
+/// This deletion pass scans each file-list directory as its own worker and
+/// removes immediate extraneous entries (doomed subdirectories are removed
+/// whole via `recursive_unlinkat`, which emits only the subdirectory's own
+/// line). The observable stream is therefore: directories (the parent of
+/// each deleted entry) processed in ascending `f_name_cmp` order, and within
+/// each directory the entries emitted in descending `f_name_cmp` order.
+/// Deriving the order from the flat deleted set here makes the emitted
+/// sequence deterministic and upstream-matching regardless of the parallel
+/// scan/unlink order.
+///
+/// # Upstream Reference
+///
+/// - `generator.c:delete_in_dir()` - sorted dirlist, reverse iteration
+/// - `generator.c:2328` generate_files loop - one delete_in_dir() per
+///   directory, in ascending file-list order
+/// - `flist.c:fsort()` / `f_name_cmp()` - the ascending comparator
+fn order_deletions_upstream(entries: Vec<DeletedEntry>) -> Vec<DeletedEntry> {
+    use std::collections::BTreeMap;
+
+    // Group entries by parent directory (the directory that was scanned).
+    // A BTreeMap keyed on the f_name_cmp order of the parent directory keeps
+    // the groups in the ascending order upstream's generator visits them.
+    let mut groups: BTreeMap<DirKey, Vec<DeletedEntry>> = BTreeMap::new();
+    for entry in entries {
+        let parent = entry
+            .rel
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
+        groups.entry(DirKey(parent)).or_default().push(entry);
+    }
+
+    let mut ordered = Vec::new();
+    for (_dir, mut group) in groups {
+        // Ascending f_name_cmp, then reverse: descending within the
+        // directory, matching upstream's reverse dirlist iteration.
+        group.sort_by(|a, b| f_name_cmp_full(&a.rel, a.is_dir, &b.rel, b.is_dir));
+        group.reverse();
+        ordered.extend(group);
+    }
+    ordered
+}
+
+/// A scanned-directory key ordered by upstream `f_name_cmp` so the parent
+/// directories are visited in the same ascending order the generator walks
+/// the file list. Directories are always compared as directory entries.
+struct DirKey(PathBuf);
+
+impl PartialEq for DirKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+impl Eq for DirKey {}
+impl PartialOrd for DirKey {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for DirKey {
+    fn cmp(&self, other: &Self) -> Ordering {
+        f_name_cmp_full(&self.0, true, &other.0, true)
+    }
+}
+
+/// Ascending upstream `f_name_cmp` over two relative paths, treating each
+/// as a dir or non-dir entry so the protocol-29 `t_PATH`/`t_ITEM`
+/// files-before-dirs ordering upstream's dirlist sort relies on is
+/// reproduced. `compare_file_entries` is the full comparator (as opposed to
+/// the byte-only `f_name_cmp`), matching `flist.c:f_name_cmp` at
+/// protocol >= 29.
+fn f_name_cmp_full(a: &Path, a_is_dir: bool, b: &Path, b_is_dir: bool) -> Ordering {
+    let ea = make_entry(a, a_is_dir);
+    let eb = make_entry(b, b_is_dir);
+    compare_file_entries(&ea, &eb)
+}
+
+fn make_entry(path: &Path, is_dir: bool) -> FileEntry {
+    if is_dir {
+        FileEntry::new_directory(path.to_path_buf(), 0o755)
+    } else {
+        FileEntry::new_file(path.to_path_buf(), 0, 0o644)
+    }
+}
 
 impl ReceiverContext {
     /// Deletes extraneous files at the destination that are not in the received file list.
@@ -126,7 +235,14 @@ impl ReceiverContext {
         // (possibly empty) keep-set so the root is always a scan target.
         dir_children.entry(PathBuf::from(".")).or_default();
 
-        let dirs_to_scan: Vec<PathBuf> = dir_children.keys().cloned().collect();
+        // Sort the scan set so directory processing is deterministic across
+        // process runs. `HashMap::keys()` yields hash-randomized order, which
+        // would make the emitted `deleting`/`*deleting` stream vary run to run.
+        // The final emission order is re-derived from the deleted set in
+        // `order_deletions_upstream`; sorting here keeps the scan/unlink work
+        // itself reproducible without serializing it.
+        let mut dirs_to_scan: Vec<PathBuf> = dir_children.keys().cloned().collect();
+        dirs_to_scan.sort_unstable();
         logging::debug_log!(
             Del,
             2,
@@ -185,7 +301,7 @@ impl ReceiverContext {
         // every other class (ELOOP from a chdir-symlink swap,
         // EOPNOTSUPP/Unsupported from a sandbox-anchored refusal,
         // ENOTDIR from a planted file on the scan target) is fail-loud.
-        let per_dir_results: Vec<(DeleteStats, Vec<PathBuf>, Option<io::Error>)> =
+        let per_dir_results: Vec<(DeleteStats, Vec<DeletedEntry>, Option<io::Error>)> =
             crate::parallel_io::map_blocking(
                 dirs_to_scan,
                 self.parallel_thresholds
@@ -199,7 +315,7 @@ impl ReceiverContext {
 
                     let keep = match dir_children.get(&dir_relative) {
                         Some(set) => set,
-                        None => return (DeleteStats::new(), Vec::new(), None),
+                        None => return (DeleteStats::new(), Vec::<DeletedEntry>::new(), None),
                     };
 
                     #[cfg(unix)]
@@ -420,21 +536,19 @@ impl ReceiverContext {
                                     dir_relative.join(&name)
                                 };
                                 if is_dir {
-                                    // upstream: log.c:845 log_delete uses one
-                                    // "deleting %n" form; %n (log.c:633-641)
-                                    // appends a trailing slash for directories,
-                                    // so a dir prints "deleting sub/" - no word
-                                    // "directory".
-                                    info_log!(Del, 1, "deleting {}/", path.display());
                                     stats.dirs += 1;
                                 } else if is_symlink {
-                                    info_log!(Del, 1, "deleting {}", path.display());
                                     stats.symlinks += 1;
                                 } else {
-                                    info_log!(Del, 1, "deleting {}", path.display());
                                     stats.files += 1;
                                 }
-                                deleted_paths.push(rel);
+                                // The `deleting`/`*deleting` lines are emitted
+                                // after the parallel pass in the deterministic
+                                // upstream sorted order (see
+                                // `order_deletions_upstream`); workers only
+                                // record what was deleted so the unlinks stay
+                                // parallel.
+                                deleted_paths.push(DeletedEntry { rel, is_dir });
                             }
                             Err(e) => {
                                 debug_log!(Del, 1, "failed to delete {}: {}", path.display(), e);
@@ -462,23 +576,44 @@ impl ReceiverContext {
         // instead of either silently skipping or aborting the whole receiver
         // pass.
         let mut io_err_bits: i32 = 0;
-        for (s, deleted_paths, worker_err) in &per_dir_results {
+        let mut all_deleted: Vec<DeletedEntry> = Vec::new();
+        // (populated below; reordered post-loop by order_deletions_upstream)
+        for (s, deleted_paths, worker_err) in per_dir_results {
             combined.files = combined.files.saturating_add(s.files);
             combined.dirs = combined.dirs.saturating_add(s.dirs);
             combined.symlinks = combined.symlinks.saturating_add(s.symlinks);
             combined.devices = combined.devices.saturating_add(s.devices);
             combined.specials = combined.specials.saturating_add(s.specials);
 
-            // upstream: log.c:log_delete() - emit "*deleting" itemize for each deleted item
-            if self.should_emit_itemize() {
-                for rel_path in deleted_paths {
-                    let line = format!("*deleting   {}\n", rel_path.display());
-                    let _ = writer.send_msg_info(line.as_bytes());
-                }
-            }
+            all_deleted.extend(deleted_paths);
 
             if worker_err.is_some() {
                 io_err_bits |= crate::generator::io_error_flags::IOERR_GENERAL;
+            }
+        }
+
+        // Emit the `deleting`/`*deleting` lines in upstream's deterministic
+        // per-directory sorted order. The parallel workers unlinked (and
+        // recorded) entries in hash-random / read_dir order; re-deriving the
+        // emission order here keeps the observable output byte-for-byte
+        // identical to upstream without serializing the unlinks.
+        // upstream: log.c:log_delete() emits one line per deleted item.
+        let all_deleted = order_deletions_upstream(all_deleted);
+        let emit_itemize = self.should_emit_itemize();
+        for entry in &all_deleted {
+            // upstream: log.c:845 log_delete uses one "deleting %n" form; %n
+            // (log.c:633-641) appends a trailing slash for directories, so a
+            // dir prints "deleting sub/" - no word "directory".
+            if entry.is_dir {
+                info_log!(Del, 1, "deleting {}/", entry.rel.display());
+            } else {
+                info_log!(Del, 1, "deleting {}", entry.rel.display());
+            }
+            // upstream: log.c:log_delete() emits the "*deleting" itemize line
+            // for each deleted item when --itemize-changes is active.
+            if emit_itemize {
+                let line = format!("*deleting   {}\n", entry.rel.display());
+                let _ = writer.send_msg_info(line.as_bytes());
             }
         }
 
@@ -512,7 +647,7 @@ impl ReceiverContext {
 /// - `generator.c:delete_in_dir()` - "delete_in_dir: opendir failed"
 ///   path classifies EACCES as non-fatal (io_error bit only) and every
 ///   other class as a fatal scan failure.
-fn classify_scan_error(e: io::Error) -> (DeleteStats, Vec<std::path::PathBuf>, Option<io::Error>) {
+fn classify_scan_error(e: io::Error) -> (DeleteStats, Vec<DeletedEntry>, Option<io::Error>) {
     match fail_loud_unlink_error(e) {
         Some(err) => (DeleteStats::new(), Vec::new(), Some(err)),
         None => (DeleteStats::new(), Vec::new(), None),
@@ -624,6 +759,102 @@ mod tests {
         assert!(
             worker_err.is_none(),
             "EACCES on scan must take the upstream-parity non-fatal branch",
+        );
+    }
+
+    fn entry(rel: &str, is_dir: bool) -> DeletedEntry {
+        DeletedEntry {
+            rel: PathBuf::from(rel),
+            is_dir,
+        }
+    }
+
+    fn rels(entries: &[DeletedEntry]) -> Vec<String> {
+        entries
+            .iter()
+            .map(|e| e.rel.to_string_lossy().into_owned())
+            .collect()
+    }
+
+    /// #517: within a single directory the deletion stream comes out in
+    /// descending `f_name_cmp` order (upstream `generator.c:delete_in_dir()`
+    /// iterates its ascending-sorted dirlist in reverse). Verified against
+    /// `rsync 3.4.4 -rii --delete` on a flat directory of five files, which
+    /// emits `z, m, c, b, a`.
+    #[test]
+    fn order_deletions_single_dir_is_descending() {
+        // Supplied scrambled to prove ordering does not depend on input order.
+        let entries = vec![
+            entry("m.txt", false),
+            entry("a.txt", false),
+            entry("z.txt", false),
+            entry("c.txt", false),
+            entry("b.txt", false),
+        ];
+        let ordered = order_deletions_upstream(entries);
+        assert_eq!(
+            rels(&ordered),
+            vec!["z.txt", "m.txt", "c.txt", "b.txt", "a.txt"],
+        );
+    }
+
+    /// #517: directories are processed in ascending `f_name_cmp` order (the
+    /// generator visits the file list ascending, one `delete_in_dir()` per
+    /// directory), and within each the entries descend. A doomed subdir in
+    /// the root's group is emitted (as a whole, one line) in the root scan.
+    /// Models the `rsync 3.4.4 -rii --delete` layout:
+    ///   root: `root_extra.txt`, doomed dir `doomed`, kept dir `keep`
+    ///   keep/: `extra1.txt`, `extra2.txt`
+    /// which upstream emits (minus the doomed subtree lines this pass folds
+    /// into the whole-dir removal) as:
+    ///   doomed/, root_extra.txt, keep/extra2.txt, keep/extra1.txt
+    #[test]
+    fn order_deletions_dirs_ascending_entries_descending() {
+        let entries = vec![
+            entry("keep/extra1.txt", false),
+            entry("root_extra.txt", false),
+            entry("keep/extra2.txt", false),
+            entry("doomed", true),
+        ];
+        let ordered = order_deletions_upstream(entries);
+        assert_eq!(
+            rels(&ordered),
+            vec![
+                "doomed",
+                "root_extra.txt",
+                "keep/extra2.txt",
+                "keep/extra1.txt",
+            ],
+        );
+    }
+
+    /// The ordering is deterministic: two independently shuffled inputs
+    /// yield the identical sequence. This is the core #517 property -
+    /// `HashMap`-keyed scan order must not leak into the emitted
+    /// `deleting`/`*deleting` stream.
+    #[test]
+    fn order_deletions_is_deterministic() {
+        let build = || {
+            vec![
+                entry("dir/b", false),
+                entry("z_top", false),
+                entry("dir/a", false),
+                entry("a_top", false),
+                entry("dir/sub", true),
+                entry("dir/c", false),
+            ]
+        };
+        let first = order_deletions_upstream(build());
+        let mut shuffled = build();
+        shuffled.reverse();
+        let second = order_deletions_upstream(shuffled);
+        assert_eq!(rels(&first), rels(&second));
+        // And the concrete order: root group descending (z_top, a_top),
+        // then dir group descending (sub is a dir so sorts after files -
+        // ascending [a, b, c, sub] reversed = sub, c, b, a).
+        assert_eq!(
+            rels(&first),
+            vec!["z_top", "a_top", "dir/sub", "dir/c", "dir/b", "dir/a",],
         );
     }
 }
