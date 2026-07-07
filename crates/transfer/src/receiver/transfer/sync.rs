@@ -53,6 +53,7 @@ impl ReceiverContext {
             checksum_length,
             checksum_algorithm,
             acl_cache,
+            acl_id_map,
             #[cfg(unix)]
             sandbox,
         } = setup;
@@ -67,6 +68,7 @@ impl ReceiverContext {
             &dest_dir,
             &metadata_opts,
             acl_cache.as_deref(),
+            acl_id_map.as_deref(),
             writer,
             #[cfg(unix)]
             sandbox.as_deref(),
@@ -472,6 +474,7 @@ impl ReceiverContext {
                 &file_path,
                 file_entry,
                 acl_cache.as_deref(),
+                acl_id_map.as_deref(),
                 !file_entry.is_symlink(),
             ) {
                 metadata_errors.push((file_path.clone(), acl_err.to_string()));

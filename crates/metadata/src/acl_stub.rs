@@ -3,6 +3,7 @@
     any(target_os = "ios", target_os = "tvos", target_os = "watchos")
 ))]
 
+use crate::AclIdMapper;
 use crate::MetadataError;
 use protocol::acl::{AclCache, RsyncAcl};
 use std::path::Path;
@@ -64,6 +65,7 @@ pub fn apply_acls_from_cache(
     default_ndx: Option<u32>,
     follow_symlinks: bool,
     mode: Option<u32>,
+    id_map: Option<&AclIdMapper>,
 ) -> Result<(), MetadataError> {
     let _ = (
         destination,
@@ -72,6 +74,7 @@ pub fn apply_acls_from_cache(
         default_ndx,
         follow_symlinks,
         mode,
+        id_map,
     );
     warn_acl_unsupported();
     Ok(())
@@ -122,7 +125,7 @@ mod tests {
     fn apply_acls_from_cache_returns_ok() {
         let dst = Path::new("/nonexistent/dst");
         let cache = AclCache::new();
-        let result = apply_acls_from_cache(dst, &cache, 0, None, false, None);
+        let result = apply_acls_from_cache(dst, &cache, 0, None, false, None, None);
         assert!(result.is_ok());
     }
 }

@@ -50,7 +50,7 @@ fn apply_acls_from_cache_skips_when_not_following() {
     let file = dir.path().join("test");
     File::create(&file).expect("file");
     let cache = AclCache::new();
-    let result = apply_acls_from_cache(&file, &cache, 0, None, false, None);
+    let result = apply_acls_from_cache(&file, &cache, 0, None, false, None, None);
     assert!(result.is_ok());
 }
 
@@ -60,7 +60,7 @@ fn apply_acls_from_cache_missing_index_is_noop() {
     let file = dir.path().join("test");
     File::create(&file).expect("file");
     let cache = AclCache::new();
-    let result = apply_acls_from_cache(&file, &cache, 99, None, true, Some(0o644));
+    let result = apply_acls_from_cache(&file, &cache, 99, None, true, Some(0o644), None);
     assert!(result.is_ok());
 }
 
@@ -72,7 +72,7 @@ fn apply_acls_from_cache_empty_cache_no_op() {
     let mut cache = AclCache::new();
     let acl = RsyncAcl::from_mode(0o644);
     let ndx = cache.store_access(acl);
-    let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
+    let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644), None);
     assert!(result.is_ok());
 }
 

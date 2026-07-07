@@ -554,4 +554,13 @@ impl AclCache {
     pub fn default_count(&self) -> usize {
         self.default_acls.len()
     }
+
+    /// Iterates over every cached ACL (access then default).
+    ///
+    /// Used by the sender to feed each named entry's user/group id into the
+    /// shared uid/gid id-list, mirroring upstream `add_uid`/`add_gid` in
+    /// `send_ida_entries` (`acls.c:592-595`).
+    pub fn iter_acls(&self) -> impl Iterator<Item = &RsyncAcl> {
+        self.access_acls.iter().chain(self.default_acls.iter())
+    }
 }

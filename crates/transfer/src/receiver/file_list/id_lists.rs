@@ -44,8 +44,10 @@ impl ReceiverContext {
 
         let protocol_version = self.protocol.as_u8();
 
-        // upstream: uidlist.c:467 - recv_uid_list()
-        if self.config.flags.owner {
+        // upstream: uidlist.c:465 - read the uid list when preserving ownership
+        // OR ACLs (`preserve_uid || preserve_acls`). The sender injects named
+        // ACL-entry ids into this list so the receiver can remap them.
+        if self.config.flags.owner || self.config.flags.acls {
             self.uid_list.read_with_kind(
                 reader,
                 id0_names,
@@ -55,8 +57,8 @@ impl ReceiverContext {
             )?;
         }
 
-        // upstream: uidlist.c:471 - recv_gid_list()
-        if self.config.flags.group {
+        // upstream: uidlist.c:473 - read the gid list under the same condition.
+        if self.config.flags.group || self.config.flags.acls {
             self.gid_list.read_with_kind(
                 reader,
                 id0_names,
@@ -97,7 +99,9 @@ impl ReceiverContext {
 
         let protocol_version = self.protocol.as_u8();
 
-        if self.config.flags.owner {
+        // upstream: uidlist.c:465,473 - `preserve_uid || preserve_acls` /
+        // `preserve_gid || preserve_acls`.
+        if self.config.flags.owner || self.config.flags.acls {
             self.uid_list.read_with_kind(
                 reader,
                 id0_names,
@@ -107,7 +111,7 @@ impl ReceiverContext {
             )?;
         }
 
-        if self.config.flags.group {
+        if self.config.flags.group || self.config.flags.acls {
             self.gid_list.read_with_kind(
                 reader,
                 id0_names,

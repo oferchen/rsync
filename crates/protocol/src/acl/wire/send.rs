@@ -143,6 +143,9 @@ pub fn send_rsync_acl<W: Write>(
 /// * `default_acl` - The directory's default ACL (ignored for non-directories)
 /// * `is_directory` - Whether this entry is a directory
 /// * `cache` - ACL cache for deduplication
+/// * `include_names` - Whether to write user/group name strings after each
+///   named entry. Upstream sends names only when `inc_recurse && !numeric_ids`
+///   (`acls.c:597`); the receiver otherwise remaps ids through the id-list.
 ///
 /// # Upstream Reference
 ///
@@ -153,12 +156,13 @@ pub fn send_acl<W: Write>(
     default_acl: Option<&RsyncAcl>,
     is_directory: bool,
     cache: &mut AclCache,
+    include_names: bool,
 ) -> io::Result<()> {
-    send_rsync_acl(writer, access_acl, AclType::Access, cache, false)?;
+    send_rsync_acl(writer, access_acl, AclType::Access, cache, include_names)?;
 
     if is_directory {
         let def_acl = default_acl.cloned().unwrap_or_default();
-        send_rsync_acl(writer, &def_acl, AclType::Default, cache, false)?;
+        send_rsync_acl(writer, &def_acl, AclType::Default, cache, include_names)?;
     }
 
     Ok(())

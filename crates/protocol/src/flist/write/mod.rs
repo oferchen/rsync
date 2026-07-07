@@ -114,6 +114,11 @@ pub struct FileListWriter {
     ///
     /// Tuple: (access_acl, optional_default_acl_for_dirs).
     pending_acl: Option<(RsyncAcl, Option<RsyncAcl>)>,
+    /// Whether to write user/group name strings for named ACL entries.
+    ///
+    /// Upstream writes ACL names only when `inc_recurse && !numeric_ids`
+    /// (`acls.c:597`); otherwise the receiver remaps ids through the id-list.
+    acl_send_names: bool,
     /// Xattr cache for sender-side deduplication across entries.
     /// upstream: xattrs.c - `find_matching_xattr()` + `rsync_xal_store()`
     xattr_cache: XattrCache,
@@ -140,6 +145,7 @@ impl FileListWriter {
             first_ndx: 0,
             acl_cache: AclCache::new(),
             pending_acl: None,
+            acl_send_names: false,
             xattr_cache: XattrCache::new(),
             checksum_seed: 0,
         }
@@ -163,6 +169,7 @@ impl FileListWriter {
             first_ndx: 0,
             acl_cache: AclCache::new(),
             pending_acl: None,
+            acl_send_names: false,
             xattr_cache: XattrCache::new(),
             checksum_seed: 0,
         }
@@ -245,6 +252,28 @@ impl FileListWriter {
     pub const fn with_preserve_acls(mut self, preserve: bool) -> Self {
         self.preserve.acls = preserve;
         self
+    }
+
+    /// Sets whether user/group name strings are written for named ACL entries.
+    ///
+    /// Upstream sends ACL names only when `inc_recurse && !numeric_ids`
+    /// (`acls.c:597`); otherwise the receiver remaps ids through the id-list.
+    #[inline]
+    #[must_use]
+    pub const fn with_acl_send_names(mut self, send_names: bool) -> Self {
+        self.acl_send_names = send_names;
+        self
+    }
+
+    /// Returns the sender-side ACL cache accumulated across written entries.
+    ///
+    /// Used to feed named-entry user/group ids into the shared uid/gid id-list
+    /// before it is transmitted, mirroring upstream `add_uid`/`add_gid` in
+    /// `send_ida_entries` (`acls.c:592-595`).
+    #[inline]
+    #[must_use]
+    pub const fn acl_cache(&self) -> &AclCache {
+        &self.acl_cache
     }
 
     /// Sets the ACL data for the next `write_entry` call.
@@ -422,6 +451,7 @@ impl FileListWriter {
                 default_acl.as_ref(),
                 entry.is_dir(),
                 &mut self.acl_cache,
+                self.acl_send_names,
             )?;
         } else {
             self.pending_acl = None;

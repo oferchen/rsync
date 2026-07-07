@@ -14,7 +14,7 @@ use protocol::flist::FileEntry;
 use crate::config::{ReferenceDirectory, ReferenceDirectoryKind};
 use crate::delta_apply::ChecksumVerifier;
 
-use metadata::{MetadataOptions, apply_metadata_with_cached_stat};
+use metadata::{AclIdMapper, MetadataOptions, apply_metadata_with_cached_stat};
 use protocol::acl::AclCache;
 
 use super::apply_acls_from_receiver_cache;
@@ -248,6 +248,7 @@ pub(super) fn try_reference_dest(
     metadata_opts: &MetadataOptions,
     metadata_errors: &mut Vec<(PathBuf, String)>,
     acl_cache: Option<&AclCache>,
+    acl_id_map: Option<&AclIdMapper>,
 ) -> bool {
     if reference_directories.is_empty() {
         return false;
@@ -308,6 +309,7 @@ pub(super) fn try_reference_dest(
                         &dest_path,
                         entry,
                         acl_cache,
+                        acl_id_map,
                         !entry.is_symlink(),
                     ) {
                         metadata_errors.push((dest_path, e.to_string()));
@@ -335,6 +337,7 @@ pub(super) fn try_reference_dest(
                             &dest_path,
                             entry,
                             acl_cache,
+                            acl_id_map,
                             !entry.is_symlink(),
                         ) {
                             metadata_errors.push((dest_path, e.to_string()));
@@ -545,6 +548,7 @@ mod info_copy_emission_tests {
             &metadata_opts,
             &mut metadata_errors,
             None,
+            None,
         );
 
         // Restore writable permissions so tempdir cleanup succeeds.
@@ -604,6 +608,7 @@ mod info_copy_emission_tests {
             false,
             &metadata_opts,
             &mut metadata_errors,
+            None,
             None,
         );
 
@@ -695,6 +700,7 @@ mod symlink_basis_tests {
             copy_links,
             &metadata_opts,
             &mut metadata_errors,
+            None,
             None,
         )
     }

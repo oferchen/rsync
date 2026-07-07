@@ -114,6 +114,12 @@ pub struct DiskCommitConfig {
     /// ACL cache from flist reception, shared via `Arc` for thread safety.
     /// When `Some`, the disk thread applies cached ACLs after metadata.
     pub acl_cache: Option<Arc<AclCache>>,
+    /// Cross-host id remapper for named ACL entries, shared via `Arc`. Built
+    /// from the received uid/gid id-lists plus `--usermap`/`--groupmap` so the
+    /// disk thread remaps ACL ids like file owners.
+    ///
+    /// upstream: acls.c:1059-1081 `match_acl_ids()`.
+    pub acl_id_map: Option<Arc<metadata::AclIdMapper>>,
     /// SPSC channel capacity for the disk commit thread.
     ///
     /// Controls how many `FileMessage` items can be buffered between the
@@ -183,6 +189,7 @@ impl Default for DiskCommitConfig {
             metadata_opts: None,
             backup: None,
             acl_cache: None,
+            acl_id_map: None,
             channel_capacity: DEFAULT_CHANNEL_CAPACITY,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
             io_uring_depth: None,
