@@ -13,6 +13,7 @@ use protocol::filters::FilterRuleWireFormat;
 use protocol::flist::FileEntry;
 
 use filters::FilterSet;
+use metadata::AclIdMapper;
 
 /// Shared configuration produced by [`ReceiverContext::setup_transfer`].
 ///
@@ -28,6 +29,13 @@ pub(in crate::receiver) struct PipelineSetup {
     /// thread via `Arc` so cached ACLs can be applied after file metadata.
     /// `None` when `--acls` is not active.
     pub(in crate::receiver) acl_cache: Option<Arc<AclCache>>,
+    /// Cross-host id remapper for named ACL entries, built from the received
+    /// uid/gid id-lists plus `--usermap`/`--groupmap`. Shared with the disk
+    /// commit thread via `Arc`. `None` when `--acls` is not active.
+    ///
+    /// upstream: acls.c:1059-1081 `match_acl_ids()` converts every named ACL
+    /// entry id through the same table as file owners.
+    pub(in crate::receiver) acl_id_map: Option<Arc<AclIdMapper>>,
     /// Parent-dirfd carrier rooted at the destination tree.
     ///
     /// Opened once via [`fast_io::secure_open_dir`] when `setup_transfer`
@@ -61,6 +69,7 @@ pub(in crate::receiver) fn apply_acls_from_receiver_cache(
     destination: &std::path::Path,
     entry: &FileEntry,
     acl_cache: Option<&AclCache>,
+    id_map: Option<&AclIdMapper>,
     follow_symlinks: bool,
 ) -> Result<(), metadata::MetadataError> {
     let cache = match acl_cache {
@@ -78,6 +87,7 @@ pub(in crate::receiver) fn apply_acls_from_receiver_cache(
         entry.def_acl_ndx(),
         follow_symlinks,
         Some(entry.mode()),
+        id_map,
     )
 }
 

@@ -1067,7 +1067,7 @@ mod apply_acls_from_cache_tests {
         let acl = RsyncAcl::from_mode(0o644);
         let ndx = cache.store_access(acl);
 
-        let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
+        let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644), None);
         assert!(result.is_ok());
     }
 
@@ -1081,7 +1081,7 @@ mod apply_acls_from_cache_tests {
         let acl = RsyncAcl::from_mode(0o644);
         let ndx = cache.store_access(acl);
 
-        let result = apply_acls_from_cache(&file, &cache, ndx, None, false, None);
+        let result = apply_acls_from_cache(&file, &cache, ndx, None, false, None, None);
         assert!(result.is_ok());
     }
 
@@ -1095,7 +1095,7 @@ mod apply_acls_from_cache_tests {
         let acl = RsyncAcl::new();
         let ndx = cache.store_access(acl);
 
-        let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
+        let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644), None);
         assert!(result.is_ok());
     }
 
@@ -1106,7 +1106,7 @@ mod apply_acls_from_cache_tests {
         fs::write(&file, b"data").expect("write file");
 
         let cache = AclCache::new();
-        let result = apply_acls_from_cache(&file, &cache, 42, None, true, Some(0o644));
+        let result = apply_acls_from_cache(&file, &cache, 42, None, true, Some(0o644), None);
         assert!(result.is_ok());
     }
 
@@ -1121,7 +1121,7 @@ mod apply_acls_from_cache_tests {
         for i in 0..3 {
             let file = temp.path().join(format!("file_{i}.txt"));
             fs::write(&file, b"data").expect("write file");
-            let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o755));
+            let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o755), None);
             assert!(result.is_ok());
         }
     }
@@ -1146,6 +1146,7 @@ mod apply_acls_from_cache_tests {
             Some(default_ndx),
             true,
             Some(0o755),
+            None,
         );
         assert!(result.is_ok());
     }
@@ -1185,7 +1186,7 @@ mod apply_acls_from_cache_tests {
         let mut cache = AclCache::new();
         let ndx = cache.store_access(acl);
 
-        let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
+        let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644), None);
         match result {
             Ok(()) => {}
             Err(err) => {
@@ -1228,7 +1229,7 @@ mod noop_apply_acls_tests {
         let acl = RsyncAcl::from_mode(0o644);
         let ndx = cache.store_access(acl);
 
-        let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
+        let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644), None);
         assert!(result.is_ok());
     }
 }
@@ -1301,7 +1302,7 @@ mod unmappable_id_remap_tests {
 
         let mut cache = AclCache::new();
         let ndx = cache.store_access(acl);
-        let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
+        let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644), None);
 
         match result {
             Ok(()) => {}
@@ -1333,7 +1334,7 @@ mod unmappable_id_remap_tests {
 
         let mut cache = AclCache::new();
         let ndx = cache.store_access(acl);
-        let _ = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
+        let _ = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644), None);
 
         let messages = drain_own_messages();
         let expected = format!(
@@ -1364,7 +1365,7 @@ mod unmappable_id_remap_tests {
 
         let mut cache = AclCache::new();
         let ndx = cache.store_access(acl);
-        let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
+        let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644), None);
 
         match result {
             Ok(()) => {}

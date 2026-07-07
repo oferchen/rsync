@@ -11,7 +11,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use logging::{debug_log, info_log};
-use metadata::{MetadataOptions, apply_metadata_with_cached_stat};
+use metadata::{AclIdMapper, MetadataOptions, apply_metadata_with_cached_stat};
 use protocol::acl::AclCache;
 use protocol::flist::FileEntry;
 use protocol::xattr::XattrList;
@@ -43,6 +43,7 @@ impl ReceiverContext {
         dest_dir: &Path,
         metadata_opts: &MetadataOptions,
         acl_cache: Option<&AclCache>,
+        acl_id_map: Option<&AclIdMapper>,
         writer: &mut W,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
     ) -> io::Result<Vec<(PathBuf, String)>> {
@@ -267,6 +268,7 @@ impl ReceiverContext {
             .collect();
 
         let acl_cache_clone = acl_cache.cloned();
+        let acl_id_map_clone = acl_id_map.cloned();
         let results = crate::parallel_io::map_blocking(
             entry_snapshots,
             self.parallel_thresholds
@@ -282,6 +284,7 @@ impl ReceiverContext {
                     &dir_path,
                     &entry,
                     acl_cache_clone.as_ref(),
+                    acl_id_map_clone.as_ref(),
                     true, // directories always follow symlinks
                 ) {
                     return Some((dir_path, e.to_string()));
@@ -402,6 +405,7 @@ impl ReceiverContext {
         metadata_opts: &MetadataOptions,
         failed_dirs: &mut FailedDirectories,
         acl_cache: Option<&AclCache>,
+        acl_id_map: Option<&AclIdMapper>,
         #[cfg(unix)] sandbox: Option<&fast_io::DirSandbox>,
     ) -> io::Result<Option<bool>> {
         let relative_path = entry.path();
@@ -528,7 +532,9 @@ impl ReceiverContext {
         }
 
         // Apply cached ACLs after metadata (non-fatal errors)
-        if let Err(e) = apply_acls_from_receiver_cache(&dir_path, entry, acl_cache, true) {
+        if let Err(e) =
+            apply_acls_from_receiver_cache(&dir_path, entry, acl_cache, acl_id_map, true)
+        {
             if self.config.flags.verbose && self.config.connection.client_mode {
                 info_log!(
                     Misc,
@@ -731,6 +737,7 @@ mod touch_up_dirs_tests {
             .create_directories(
                 dest,
                 &opts,
+                None,
                 None,
                 &mut writer,
                 #[cfg(unix)]

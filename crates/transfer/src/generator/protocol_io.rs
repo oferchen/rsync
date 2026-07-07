@@ -74,15 +74,66 @@ impl GeneratorContext {
             .is_some_and(|f| f.contains(CompatibilityFlags::ID0_NAMES));
         let protocol_version = self.protocol.as_u8();
 
-        if self.config.flags.owner {
+        // upstream: uidlist.c:409,412 - send the uid/gid list when preserving
+        // ownership OR ACLs. `--acls` injects named-entry ids into the same
+        // list (see collect_acl_id_mappings), so the receiver can remap them.
+        if self.config.flags.owner || self.config.flags.acls {
             self.uid_list.write(writer, id0_names, protocol_version)?;
         }
-        if self.config.flags.group {
+        if self.config.flags.group || self.config.flags.acls {
             self.gid_list.write(writer, id0_names, protocol_version)?;
         }
 
         writer.flush()
     }
+
+    /// Feeds named ACL-entry user/group ids into the shared uid/gid id-list.
+    ///
+    /// Mirrors upstream `send_ida_entries()` (`acls.c:592-595`), which calls
+    /// `add_uid(ida->id)`/`add_gid(ida->id)` for every named ACL entry (unless
+    /// `numeric_ids`) so the receiver remaps those ids through the same table as
+    /// file owners via `match_acl_ids()` (`uidlist.c:483-484`).
+    ///
+    /// Must run after the file list is sent (so the ACL cache is fully
+    /// populated) and before [`Self::send_id_lists`]. No-op under `numeric_ids`
+    /// or when the sender-side ACL cache is unavailable.
+    #[cfg(unix)]
+    pub(crate) fn collect_acl_id_mappings(&mut self) {
+        use metadata::id_lookup::{lookup_group_name, lookup_user_name};
+
+        if self.config.flags.numeric_ids || !self.config.flags.acls {
+            return;
+        }
+
+        let Some(writer) = self.incremental.flist_writer_cache.as_ref() else {
+            return;
+        };
+
+        // Snapshot the (id, is_user) pairs so the borrow of the cache ends
+        // before we mutate the id-lists.
+        let named: Vec<(u32, bool)> = writer
+            .acl_cache()
+            .iter_acls()
+            .flat_map(|acl| acl.names.iter())
+            .map(|ida| (ida.id, ida.is_user()))
+            .collect();
+
+        for (id, is_user) in named {
+            if is_user {
+                if !self.uid_list.contains(id) {
+                    let name = lookup_user_name(id).ok().flatten();
+                    self.uid_list.add_id(id, name);
+                }
+            } else if !self.gid_list.contains(id) {
+                let name = lookup_group_name(id).ok().flatten();
+                self.gid_list.add_id(id, name);
+            }
+        }
+    }
+
+    /// No-op on non-Unix platforms - ACL ids are not remapped by numeric id.
+    #[cfg(not(unix))]
+    pub(crate) fn collect_acl_id_mappings(&mut self) {}
 
     /// Sends io_error flag for protocol < 30.
     ///

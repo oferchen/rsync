@@ -152,6 +152,19 @@ impl IdList {
             .unwrap_or(remote_id)
     }
 
+    /// Returns an owned `remote id -> local id` snapshot of the resolved list.
+    ///
+    /// Used by the receiver to build a thread-shareable ACL id remapper
+    /// (`AclIdMapper`) that outlives the borrow of the receiver context, since
+    /// cached ACLs are applied on the disk-commit thread.
+    #[must_use]
+    pub fn resolved_map(&self) -> HashMap<u32, u32> {
+        self.entries
+            .iter()
+            .map(|(remote, entry)| (*remote, entry.local_id))
+            .collect()
+    }
+
     /// Writes the ID list to the wire.
     ///
     /// # Wire Format

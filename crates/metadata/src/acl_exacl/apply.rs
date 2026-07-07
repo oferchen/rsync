@@ -8,6 +8,7 @@ use exacl::AclOption;
 use exacl::setfacl;
 use protocol::acl::AclCache;
 
+use crate::AclIdMapper;
 use crate::MetadataError;
 
 use super::error::is_unsupported_error;
@@ -33,6 +34,9 @@ use super::reset::reset_acl_from_mode;
 /// * `access_ndx` - Index into the access ACL cache.
 /// * `default_ndx` - Optional index into the default ACL cache (directories only).
 /// * `follow_symlinks` - Whether to follow symlinks. If `false`, returns immediately.
+/// * `id_map` - Optional cross-host id remapper for named ACL entries. When
+///   present, each named user/group id is remapped through the received id-list
+///   and `--usermap`/`--groupmap`, matching upstream `match_acl_ids()`.
 ///
 /// # Errors
 ///
@@ -51,6 +55,7 @@ pub fn apply_acls_from_cache(
     default_ndx: Option<u32>,
     follow_symlinks: bool,
     mode: Option<u32>,
+    id_map: Option<&AclIdMapper>,
 ) -> Result<(), MetadataError> {
     if !follow_symlinks {
         return Ok(());
@@ -59,7 +64,7 @@ pub fn apply_acls_from_cache(
     if let Some(acl) = cache.get_access(access_ndx) {
         // upstream: acls.c:change_sacl_perms() - reconstruct base entries from mode
         let reconstructed = reconstruct_acl(acl, mode);
-        let entries = rsync_acl_to_entries(&reconstructed);
+        let entries = rsync_acl_to_entries(&reconstructed, id_map);
         if !entries.is_empty() {
             if let Err(e) = setfacl(&[destination], &entries, None) {
                 if !is_unsupported_error(&e) {
@@ -78,7 +83,7 @@ pub fn apply_acls_from_cache(
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     if let Some(def_ndx) = default_ndx {
         if let Some(def_acl) = cache.get_default(def_ndx) {
-            let entries = rsync_acl_to_entries(def_acl);
+            let entries = rsync_acl_to_entries(def_acl, id_map);
             if !entries.is_empty() {
                 if let Err(e) = setfacl(&[destination], &entries, Some(AclOption::DEFAULT_ACL)) {
                     if !is_unsupported_error(&e) {

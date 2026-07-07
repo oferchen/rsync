@@ -122,6 +122,37 @@ fn send_recv_ida_entries_roundtrip() {
 }
 
 #[test]
+fn send_ida_entries_ships_name_only_when_include_names() {
+    // WHY: upstream writes the ACL entry name only under inc_recurse
+    // (acls.c:597 `if (inc_recurse && name)`); otherwise the receiver remaps
+    // the id through the shared id-list (match_acl_ids). The name must travel
+    // when include_names=true so the inc_recurse receiver can resolve it, and
+    // must be dropped when false so the non-inc_recurse wire stays byte-compatible
+    // with upstream.
+    let mut entries = IdaEntries::new();
+    entries.push(IdAccess::user_with_name(1000, 0x07, b"alice".to_vec()));
+
+    // include_names = true: the name rides the wire and round-trips.
+    let mut with_names = Vec::new();
+    send_ida_entries(&mut with_names, &entries, true).unwrap();
+    let mut cursor = Cursor::new(with_names);
+    let (received, _mask) = recv_ida_entries(&mut cursor).unwrap();
+    assert_eq!(received.len(), 1);
+    assert_eq!(
+        received.iter().next().unwrap().name.as_deref(),
+        Some(&b"alice"[..])
+    );
+
+    // include_names = false: no name on the wire (non-inc_recurse default).
+    let mut without_names = Vec::new();
+    send_ida_entries(&mut without_names, &entries, false).unwrap();
+    let mut cursor = Cursor::new(without_names);
+    let (received, _mask) = recv_ida_entries(&mut cursor).unwrap();
+    assert_eq!(received.len(), 1);
+    assert_eq!(received.iter().next().unwrap().name, None);
+}
+
+#[test]
 fn send_recv_directory_acl() {
     let access_acl = {
         let mut acl = RsyncAcl::new();
@@ -142,7 +173,15 @@ fn send_recv_directory_acl() {
     let mut cache = AclCache::new();
     let mut buf = Vec::new();
 
-    send_acl(&mut buf, &access_acl, Some(&default_acl), true, &mut cache).unwrap();
+    send_acl(
+        &mut buf,
+        &access_acl,
+        Some(&default_acl),
+        true,
+        &mut cache,
+        false,
+    )
+    .unwrap();
 
     let mut cursor = Cursor::new(buf);
     let (access_result, default_result) = recv_acl(&mut cursor, true).unwrap();
@@ -393,7 +432,7 @@ fn send_recv_file_acl_no_default() {
     let mut buf = Vec::new();
 
     // File (not directory) - no default ACL sent
-    send_acl(&mut buf, &access_acl, None, false, &mut cache).unwrap();
+    send_acl(&mut buf, &access_acl, None, false, &mut cache, false).unwrap();
 
     let mut cursor = Cursor::new(buf);
     let (access_result, default_result) = recv_acl(&mut cursor, false).unwrap();

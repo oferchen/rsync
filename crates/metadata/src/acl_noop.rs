@@ -5,6 +5,7 @@
 //! `acl` feature is disabled, or because the platform has no ACL
 //! implementation (e.g., Windows, Android).
 
+use crate::AclIdMapper;
 use crate::MetadataError;
 use protocol::acl::{AclCache, RsyncAcl};
 use std::path::Path;
@@ -57,6 +58,7 @@ pub fn apply_acls_from_cache(
     _default_ndx: Option<u32>,
     _follow_symlinks: bool,
     _mode: Option<u32>,
+    _id_map: Option<&AclIdMapper>,
 ) -> Result<(), MetadataError> {
     warn_acl_unsupported();
     Ok(())
@@ -115,7 +117,7 @@ mod tests {
     fn apply_acls_from_cache_returns_ok() {
         let dst = Path::new("/nonexistent/dst");
         let cache = AclCache::new();
-        let result = apply_acls_from_cache(dst, &cache, 0, None, false, None);
+        let result = apply_acls_from_cache(dst, &cache, 0, None, false, None, None);
         assert!(result.is_ok());
     }
 
@@ -123,7 +125,7 @@ mod tests {
     fn apply_acls_from_cache_with_default_ndx_returns_ok() {
         let dst = Path::new("/nonexistent/dst");
         let cache = AclCache::new();
-        let result = apply_acls_from_cache(dst, &cache, 0, Some(1), true, Some(0o644));
+        let result = apply_acls_from_cache(dst, &cache, 0, Some(1), true, Some(0o644), None);
         assert!(result.is_ok());
     }
 }

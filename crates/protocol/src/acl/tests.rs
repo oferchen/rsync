@@ -343,7 +343,7 @@ mod wire_roundtrip_tests {
 
         let mut cache = AclCache::new();
         let mut buf = Vec::new();
-        send_acl(&mut buf, &access_acl, None, false, &mut cache).unwrap();
+        send_acl(&mut buf, &access_acl, None, false, &mut cache, false).unwrap();
 
         let mut cursor = Cursor::new(buf);
         let (access_result, default_result) = recv_acl(&mut cursor, false).unwrap();
@@ -371,7 +371,15 @@ mod wire_roundtrip_tests {
 
         let mut cache = AclCache::new();
         let mut buf = Vec::new();
-        send_acl(&mut buf, &access_acl, Some(&default_acl), true, &mut cache).unwrap();
+        send_acl(
+            &mut buf,
+            &access_acl,
+            Some(&default_acl),
+            true,
+            &mut cache,
+            false,
+        )
+        .unwrap();
 
         let mut cursor = Cursor::new(buf);
         let (access_result, default_result) = recv_acl(&mut cursor, true).unwrap();
@@ -785,7 +793,15 @@ mod wire_format_compatibility {
         let mut cache = AclCache::new();
         let mut buf = Vec::new();
 
-        send_acl(&mut buf, &access_acl, Some(&default_acl), true, &mut cache).unwrap();
+        send_acl(
+            &mut buf,
+            &access_acl,
+            Some(&default_acl),
+            true,
+            &mut cache,
+            false,
+        )
+        .unwrap();
 
         // Should have two ACL transmissions
         let mut cursor = Cursor::new(&buf);
@@ -811,7 +827,7 @@ mod wire_format_compatibility {
         let mut cache = AclCache::new();
         let mut buf = Vec::new();
 
-        send_acl(&mut buf, &access_acl, None, false, &mut cache).unwrap();
+        send_acl(&mut buf, &access_acl, None, false, &mut cache, false).unwrap();
 
         // Only access ACL sent
         let mut cursor = Cursor::new(&buf);
@@ -1004,6 +1020,7 @@ mod receive_acl_cached_tests {
             Some(&default_acl),
             true,
             &mut send_cache,
+            false,
         )
         .unwrap();
 

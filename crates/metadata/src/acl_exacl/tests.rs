@@ -146,7 +146,7 @@ fn rsync_perms_to_exacl_all_bits() {
 #[test]
 fn rsync_acl_to_entries_empty_acl() {
     let acl = RsyncAcl::new();
-    let entries = rsync_acl_to_entries(&acl);
+    let entries = rsync_acl_to_entries(&acl, None);
     assert!(entries.is_empty());
 }
 
@@ -154,7 +154,7 @@ fn rsync_acl_to_entries_empty_acl() {
 #[test]
 fn rsync_acl_to_entries_base_entries() {
     let acl = RsyncAcl::from_mode(0o754);
-    let entries = rsync_acl_to_entries(&acl);
+    let entries = rsync_acl_to_entries(&acl, None);
 
     // user_obj(rwx) + group_obj(r-x) + other_obj(r--)
     assert_eq!(entries.len(), 3);
@@ -177,7 +177,7 @@ fn rsync_acl_to_entries_named_user_and_group() {
     acl.names.push(IdAccess::user(1000, 0x07));
     acl.names.push(IdAccess::group(100, 0x05));
 
-    let entries = rsync_acl_to_entries(&acl);
+    let entries = rsync_acl_to_entries(&acl, None);
 
     // Find named entries (skip base entries on Linux/FreeBSD)
     let named: Vec<_> = entries.iter().filter(|e| !e.name.is_empty()).collect();
@@ -188,6 +188,77 @@ fn rsync_acl_to_entries_named_user_and_group() {
     assert_eq!(named[1].kind, AclEntryKind::Group);
     assert_eq!(named[1].name, "100");
     assert_eq!(named[1].perms, Perm::READ | Perm::EXECUTE);
+}
+
+#[test]
+fn rsync_acl_to_entries_remaps_named_ids_via_id_map() {
+    // WHY: on a cross-host `-A` transfer the sender ships the ACL entry's own
+    // namespace uid/gid (1000). Without the id-list remap the ACL would land on
+    // whatever principal owns 1000 on the receiver. The AclIdMapper (built from
+    // the received uid/gid id-lists) must convert 1000 -> 2000, exactly as
+    // upstream match_acl_ids()/match_uid() do for file owners.
+    // upstream: acls.c:1069-1072, uidlist.c:483-484.
+    use crate::AclIdMapper;
+    use protocol::acl::IdAccess;
+    use std::collections::HashMap;
+
+    let mut uid = HashMap::new();
+    uid.insert(1000u32, 2000u32);
+    let mut gid = HashMap::new();
+    gid.insert(1000u32, 3000u32);
+
+    #[cfg(unix)]
+    let mapper = AclIdMapper::new(uid, gid, None, None, false);
+    #[cfg(not(unix))]
+    let mapper = AclIdMapper::new(uid, gid, false);
+
+    let mut acl = RsyncAcl::from_mode(0o755);
+    // No wire name: the non-inc_recurse path relies entirely on the id-list.
+    acl.names.push(IdAccess::user(1000, 0x07));
+    acl.names.push(IdAccess::group(1000, 0x05));
+
+    let entries = rsync_acl_to_entries(&acl, Some(&mapper));
+    let named: Vec<_> = entries.iter().filter(|e| !e.name.is_empty()).collect();
+    assert_eq!(named.len(), 2);
+    assert_eq!(named[0].kind, AclEntryKind::User);
+    assert_eq!(
+        named[0].name, "2000",
+        "named user id must be remapped through the id-list (1000 -> 2000)"
+    );
+    assert_eq!(named[1].kind, AclEntryKind::Group);
+    assert_eq!(
+        named[1].name, "3000",
+        "named group id must be remapped through the id-list (1000 -> 3000)"
+    );
+}
+
+#[test]
+fn rsync_acl_to_entries_id_map_numeric_ids_passthrough() {
+    // WHY: with --numeric-ids upstream exchanges no id-list and applies ids
+    // verbatim (recv_id_list guard `numeric_ids <= 0`). The mapper must be a
+    // no-op even when a stale table is present.
+    use crate::AclIdMapper;
+    use protocol::acl::IdAccess;
+    use std::collections::HashMap;
+
+    let mut uid = HashMap::new();
+    uid.insert(1000u32, 2000u32);
+
+    #[cfg(unix)]
+    let mapper = AclIdMapper::new(uid, HashMap::new(), None, None, true);
+    #[cfg(not(unix))]
+    let mapper = AclIdMapper::new(uid, HashMap::new(), true);
+
+    let mut acl = RsyncAcl::from_mode(0o755);
+    acl.names.push(IdAccess::user(1000, 0x07));
+
+    let entries = rsync_acl_to_entries(&acl, Some(&mapper));
+    let named: Vec<_> = entries.iter().filter(|e| !e.name.is_empty()).collect();
+    assert_eq!(named.len(), 1);
+    assert_eq!(
+        named[0].name, "1000",
+        "numeric-ids must keep the raw wire id (no remap)"
+    );
 }
 
 #[cfg(unix)]
@@ -206,7 +277,7 @@ fn rsync_acl_to_entries_preserves_unmappable_named_user() {
     acl.names
         .push(IdAccess::user_with_name(unmappable_uid, 0x07, unknown_name));
 
-    let entries = rsync_acl_to_entries(&acl);
+    let entries = rsync_acl_to_entries(&acl, None);
     let named: Vec<_> = entries.iter().filter(|e| !e.name.is_empty()).collect();
     assert_eq!(
         named.len(),
@@ -251,7 +322,7 @@ fn rsync_acl_to_entries_remap_emits_own_debug() {
         b"oc_rsync_test_ghost_group".to_vec(),
     ));
 
-    let _ = rsync_acl_to_entries(&acl);
+    let _ = rsync_acl_to_entries(&acl, None);
 
     let messages: Vec<String> = drain_events()
         .into_iter()
@@ -285,7 +356,7 @@ fn apply_acls_from_cache_skips_symlinks() {
     File::create(&file).expect("create file");
 
     let cache = AclCache::new();
-    let result = apply_acls_from_cache(&file, &cache, 0, None, false, None);
+    let result = apply_acls_from_cache(&file, &cache, 0, None, false, None, None);
     assert!(result.is_ok());
 }
 
@@ -299,7 +370,7 @@ fn apply_acls_from_cache_applies_basic_acl() {
     let acl = RsyncAcl::from_mode(0o644);
     let ndx = cache.store_access(acl);
 
-    let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
+    let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644), None);
     assert!(result.is_ok());
 }
 
@@ -313,7 +384,7 @@ fn apply_acls_from_cache_empty_acl_resets() {
     let acl = RsyncAcl::new();
     let ndx = cache.store_access(acl);
 
-    let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644));
+    let result = apply_acls_from_cache(&file, &cache, ndx, None, true, Some(0o644), None);
     assert!(result.is_ok());
 }
 
@@ -337,6 +408,7 @@ fn apply_acls_from_cache_directory_with_default() {
         Some(default_ndx),
         true,
         Some(0o755),
+        None,
     );
     assert!(result.is_ok());
 }
@@ -348,7 +420,7 @@ fn apply_acls_from_cache_missing_index_is_noop() {
     File::create(&file).expect("create file");
 
     let cache = AclCache::new();
-    let result = apply_acls_from_cache(&file, &cache, 99, None, true, Some(0o644));
+    let result = apply_acls_from_cache(&file, &cache, 99, None, true, Some(0o644), None);
     assert!(result.is_ok());
 }
 

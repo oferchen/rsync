@@ -8,6 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
+use metadata::AclIdMapper;
 use protocol::acl::AclCache;
 
 use crate::delta_apply::ChecksumVerifier;
@@ -41,6 +42,7 @@ pub(super) fn apply_file_metadata(
             file_entry,
             config.metadata_opts.as_ref(),
             config.acl_cache.as_deref(),
+            config.acl_id_map.as_deref(),
             begin.xattr_list.as_ref(),
         )
     }
@@ -60,6 +62,7 @@ fn apply_metadata_acls_and_xattrs(
     file_entry: Option<&protocol::flist::FileEntry>,
     metadata_opts: Option<&metadata::MetadataOptions>,
     acl_cache: Option<&AclCache>,
+    acl_id_map: Option<&AclIdMapper>,
     xattr_list: Option<&protocol::xattr::XattrList>,
 ) -> Option<(PathBuf, String)> {
     let (opts, entry) = match (metadata_opts, file_entry) {
@@ -85,6 +88,7 @@ fn apply_metadata_acls_and_xattrs(
                 entry.def_acl_ndx(),
                 follow,
                 Some(entry.mode()),
+                acl_id_map,
             ) {
                 return Some((file_path.to_path_buf(), e.to_string()));
             }
