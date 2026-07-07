@@ -106,7 +106,12 @@ mod error_helper_tests {
     }
 
     #[test]
-    fn map_local_copy_error_for_delete_limit_handles_pluralisation() {
+    fn map_local_copy_error_for_delete_limit_matches_upstream_generator_wording() {
+        // upstream: generator.c:2431 emits `Deletions stopped due to
+        // --max-delete limit (%d skipped)` verbatim - no pluralized noun - and
+        // the message originates in the generator, so who_am_i() tags it
+        // `[generator]`. oc must reproduce both the exact wording (skip count,
+        // no invented `entry`/`entries` noun) and the generator role trailer.
         let singular = map_local_copy_error(LocalCopyError::delete_limit_exceeded(1));
         let plural = map_local_copy_error(LocalCopyError::delete_limit_exceeded(2));
 
@@ -116,8 +121,19 @@ mod error_helper_tests {
         let singular_rendered = render(&singular);
         let plural_rendered = render(&plural);
 
-        assert!(singular_rendered.contains("1 entry skipped"), "{singular_rendered}");
-        assert!(plural_rendered.contains("2 entries skipped"), "{plural_rendered}");
+        assert!(
+            singular_rendered
+                .contains("Deletions stopped due to --max-delete limit (1 skipped)"),
+            "{singular_rendered}"
+        );
+        assert!(
+            plural_rendered.contains("Deletions stopped due to --max-delete limit (2 skipped)"),
+            "{plural_rendered}"
+        );
+        assert!(singular_rendered.contains("[generator="), "{singular_rendered}");
+        assert!(plural_rendered.contains("[generator="), "{plural_rendered}");
+        assert!(!singular_rendered.contains("entry"), "{singular_rendered}");
+        assert!(!plural_rendered.contains("entries"), "{plural_rendered}");
     }
 
     #[test]
