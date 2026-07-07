@@ -59,6 +59,27 @@ fn dir_child(parent: &str, name: &str) -> FileEntry {
     FileEntry::new_directory(path, 0o755)
 }
 
+/// Collects the leaf name of every recorded delete dispatch.
+///
+/// The production drain now attaches a `DirSandbox` (#506), so on unix the
+/// emitter dispatches through the dirfd-anchored `*_at` trait methods and
+/// `RecordingDeleteFs` records the LEAF name; the path-based fallback (and
+/// non-unix) records the absolute path. `file_name()` normalises both to the
+/// leaf so the deletion-OUTCOME assertions - which entries were deleted -
+/// stay identical across the mechanism switch. The syscall mechanism changed;
+/// the set of entries deleted did not.
+fn deleted_leaves(events: &[engine::delete::DeleteEvent]) -> Vec<OsString> {
+    events
+        .iter()
+        .map(|e| {
+            e.path
+                .file_name()
+                .unwrap_or(e.path.as_os_str())
+                .to_os_string()
+        })
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Per-mode wiring tests
 // ---------------------------------------------------------------------------
@@ -92,9 +113,9 @@ fn during_mode_emits_one_directory_per_work_unit() {
     // single directory varies across platforms (NTFS vs POSIX readdir).
     let events = outcome.fs.events();
     assert_eq!(events.len(), 2);
-    let paths: Vec<_> = events.iter().map(|e| &e.path).collect();
-    assert!(paths.contains(&&dir.join("drop_x")));
-    assert!(paths.contains(&&dir.join("drop_y")));
+    let leaves = deleted_leaves(&events);
+    assert!(leaves.contains(&OsString::from("drop_x")));
+    assert!(leaves.contains(&OsString::from("drop_y")));
     assert_eq!(outcome.stats.files, 2);
 }
 
@@ -130,15 +151,18 @@ fn before_mode_drains_all_plans_in_one_pre_pass() {
     let outcome = ctx
         .emit_all(RecordingDeleteFs::new())
         .expect("drain succeeds");
-    let paths: Vec<PathBuf> = outcome.fs.events().iter().map(|e| e.path.clone()).collect();
+    let leaves = deleted_leaves(&outcome.fs.events());
     // a1, a2 inside a (reversed: a2, a1); b1 inside b. Root has only
     // the two subdirs as extras, but they reappear in the cursor and
     // their per-dir plan handles the contents. The root drain itself
     // will try to rmdir a/b but they have contents - the emitter
-    // recurses via the nested plans, NOT remove_dir_all.
-    assert!(paths.contains(&a.join("a1")));
-    assert!(paths.contains(&a.join("a2")));
-    assert!(paths.contains(&b.join("b1")));
+    // recurses via the nested plans, NOT remove_dir_all. Every planned
+    // leaf must be deleted; leaf names are unique across a/ and b/ so
+    // membership pins the exact entries regardless of the path-vs-leaf
+    // recording (#506 dirfd anchor).
+    assert!(leaves.contains(&OsString::from("a1")));
+    assert!(leaves.contains(&OsString::from("a2")));
+    assert!(leaves.contains(&OsString::from("b1")));
 }
 
 /// DDP-E3 (#2267): --delete-after. Plans accumulate during transfer;
@@ -179,10 +203,13 @@ fn after_mode_accumulates_plans_then_drains_at_end() {
     let outcome = ctx
         .emit_all(RecordingDeleteFs::new())
         .expect("drain succeeds");
-    let paths: Vec<PathBuf> = outcome.fs.events().iter().map(|e| e.path.clone()).collect();
-    assert!(paths.contains(&d1.join("one")));
-    assert!(paths.contains(&d1.join("two")));
-    assert!(paths.contains(&d2.join("three")));
+    // Leaf names are unique across d1/ and d2/, so leaf membership pins the
+    // exact deleted entries regardless of the path-vs-leaf recording that
+    // the #506 dirfd anchor introduces.
+    let leaves = deleted_leaves(&outcome.fs.events());
+    assert!(leaves.contains(&OsString::from("one")));
+    assert!(leaves.contains(&OsString::from("two")));
+    assert!(leaves.contains(&OsString::from("three")));
 }
 
 /// DDP-E4 (#2268): --delete-delay. Identical drain shape to After at the
