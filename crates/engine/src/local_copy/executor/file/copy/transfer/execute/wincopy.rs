@@ -27,8 +27,8 @@ use crate::local_copy::{
     LocalCopyError, LocalCopyExecution, LocalCopyMetadata, LocalCopyRecord,
 };
 
-use super::super::finalize::finalize_guard_and_metadata;
 use super::super::TransferFlags;
+use super::super::finalize::finalize_guard_and_metadata;
 
 /// Returns whether the current transfer satisfies every `CopyFileExW` precondition.
 ///
