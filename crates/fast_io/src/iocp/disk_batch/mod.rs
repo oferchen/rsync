@@ -64,7 +64,10 @@ use buffer::BatchBuffer;
 use writer::{close_overlapped_handle, reopen_overlapped, submit_write_batch};
 
 pub use buffer::{bounce_copies_avoided, reset_bounce_copies_avoided_for_test};
-pub use completion::{clear_injected_write_error_for_test, inject_next_write_error_for_test};
+pub use completion::{
+    clear_injected_completion_faults_for_test, clear_injected_write_error_for_test,
+    inject_completion_faults_for_test, inject_next_write_error_for_test,
+};
 
 /// Default write buffer capacity matching upstream's `wf_writeBufSize`
 /// (`fileio.c:161` -> `WRITE_SIZE * 8` = 256 KB).

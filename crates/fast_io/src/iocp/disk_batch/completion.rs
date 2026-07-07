@@ -74,6 +74,62 @@ pub fn clear_injected_write_error_for_test() {
     FAULT_INJECT_ERROR_CODE.store(0, Ordering::SeqCst);
 }
 
+/// Number of upcoming successfully-dequeued completions that
+/// [`drain_completions`] should treat as faulted. Armed by
+/// [`inject_completion_faults_for_test`]; dormant by default (== 0). When
+/// non-zero, each reaped completion is reported as faulted (bytes not credited,
+/// [`FAULT_INJECT_COMPLETION_CODE`] recorded as the drain error) and the
+/// counter decrements. This exercises the mid-batch completion-error drain
+/// without provoking a real kernel NTSTATUS fault, which cannot be produced
+/// deterministically on an ordinary volume.
+#[doc(hidden)]
+static FAULT_INJECT_COMPLETION_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+/// Win32 error code recorded for an injected completion fault. Paired with
+/// [`FAULT_INJECT_COMPLETION_COUNT`].
+#[doc(hidden)]
+static FAULT_INJECT_COMPLETION_CODE: AtomicI32 = AtomicI32::new(0);
+
+/// Arms the test-only completion-fault injector so the next `count`
+/// successfully-dequeued completions in [`drain_completions`] are reported as
+/// faulted with `os_error`, exercising the mid-batch completion-error drain
+/// (retire the dequeued cohort, drain the residual outstanding ops, surface the
+/// error). Production code must never call it.
+#[doc(hidden)]
+pub fn inject_completion_faults_for_test(count: usize, os_error: i32) {
+    FAULT_INJECT_COMPLETION_CODE.store(os_error, Ordering::SeqCst);
+    FAULT_INJECT_COMPLETION_COUNT.store(count, Ordering::SeqCst);
+}
+
+/// Clears any pending completion-fault-injection state.
+#[doc(hidden)]
+pub fn clear_injected_completion_faults_for_test() {
+    FAULT_INJECT_COMPLETION_COUNT.store(0, Ordering::SeqCst);
+    FAULT_INJECT_COMPLETION_CODE.store(0, Ordering::SeqCst);
+}
+
+/// Returns `Some(os_error)` if the current completion should be reported as
+/// faulted, decrementing the armed count. `None` in the dormant production
+/// case after a single relaxed load.
+fn take_injected_completion_fault() -> Option<i32> {
+    if FAULT_INJECT_COMPLETION_COUNT.load(Ordering::Relaxed) == 0 {
+        return None;
+    }
+    let prev = FAULT_INJECT_COMPLETION_COUNT
+        .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| match n {
+            0 => None,
+            n => Some(n - 1),
+        })
+        .ok()?;
+    if prev >= 1 {
+        let code = FAULT_INJECT_COMPLETION_CODE.load(Ordering::SeqCst);
+        if code != 0 {
+            return Some(code);
+        }
+    }
+    None
+}
+
 /// Returns `Some(os_error)` if the current submission should be faulted, or
 /// `None` to dispatch normally. Atomically decrements the countdown so only
 /// one submission per arm fires.
@@ -99,13 +155,46 @@ pub(super) fn take_injected_write_error() -> Option<i32> {
     None
 }
 
-/// Drains up to `max` completion entries from the port using
-/// `GetQueuedCompletionStatusEx` and returns
-/// `(overlapped_address, bytes_transferred)` pairs.
-pub(super) fn drain_completions(
-    port: &CompletionPort,
-    max: usize,
-) -> io::Result<Vec<(usize, usize)>> {
+/// Outcome of a single completion-drain pass.
+///
+/// Every OVERLAPPED the kernel dequeued in the batch is reported so the caller
+/// can retire it from its in-flight queue. Successful completions carry their
+/// transferred byte count in `completions`; a faulted completion (non-zero
+/// NTSTATUS in `OVERLAPPED::Internal`, or EOF) is reported through `retired`
+/// only - never as a byte-crediting success - and its mapped error is stashed
+/// in `error`.
+///
+/// Reporting faulted completions via `retired` is what closes the mid-batch
+/// use-after-free: the caller must remove those ops from its in-flight queue
+/// (their pinned buffers are done) yet still drain the *remaining* outstanding
+/// ops before dropping any boxes. Abandoning the whole dequeued batch on the
+/// first fault - the previous behaviour - both lost track of already-retired
+/// ops and dropped their pinned buffers while the kernel might still own the
+/// siblings that had not completed yet.
+pub(super) struct DrainOutcome {
+    /// OVERLAPPED addresses that completed successfully, with bytes written.
+    pub(super) completions: Vec<(usize, usize)>,
+    /// OVERLAPPED addresses the kernel dequeued this pass (successful and
+    /// faulted alike). The caller retires every one of these from its
+    /// in-flight queue so the residual count reflects only ops still owned by
+    /// the kernel.
+    pub(super) retired: Vec<usize>,
+    /// First faulted completion mapped to an `io::Error`, if any. When set the
+    /// caller must drain the residual outstanding ops, then surface this error.
+    pub(super) error: Option<io::Error>,
+}
+
+/// Drains one batch of completion entries from the port using
+/// `GetQueuedCompletionStatusEx`.
+///
+/// Processes the *entire* dequeued batch even when a completion reports a
+/// faulted NTSTATUS: successful completions are returned with their byte
+/// counts, every dequeued OVERLAPPED is listed in `retired`, and the first
+/// fault is captured in `DrainOutcome::error`. The caller reconciles `retired`
+/// against its in-flight queue and, if an error is present, drains the
+/// remaining outstanding ops before propagating - never dropping a pinned
+/// buffer while the kernel still owns it.
+pub(super) fn drain_completions(port: &CompletionPort, max: usize) -> io::Result<DrainOutcome> {
     let batch = max.clamp(1, COMPLETION_DRAIN_BATCH);
     let mut entries: Vec<OVERLAPPED_ENTRY> = vec![zeroed_entry(); batch];
 
@@ -134,30 +223,53 @@ pub(super) fn drain_completions(
             return Err(err);
         }
 
-        let mut out = Vec::with_capacity(removed as usize);
-        for entry in entries.iter().take(removed as usize) {
+        let reaped = removed as usize;
+        let mut completions = Vec::with_capacity(reaped);
+        let mut retired = Vec::with_capacity(reaped);
+        let mut error: Option<io::Error> = None;
+        for entry in entries.iter().take(reaped) {
             let overlapped_ptr = entry.lpOverlapped;
             if overlapped_ptr.is_null() {
                 continue;
             }
+            retired.push(overlapped_ptr as usize);
             // SAFETY: entry.lpOverlapped points at the OVERLAPPED structure
             // we submitted; the surrounding pinned op is still alive in
             // the in-flight queue, so reading the Internal field is sound.
             #[allow(unsafe_code)]
             let internal = unsafe { (*overlapped_ptr).Internal };
-            if internal != 0 {
-                let dos_error = ntstatus_to_dos_error(internal as u32);
-                if dos_error == ERROR_HANDLE_EOF {
-                    return Err(io::Error::from(io::ErrorKind::UnexpectedEof));
+            // Test hook: treat a dequeued completion as faulted so the
+            // completion-error drain path is exercised deterministically.
+            // Dormant in production (single relaxed load).
+            let injected = take_injected_completion_fault();
+            if internal != 0 || injected.is_some() {
+                // Record the first fault but keep processing so every
+                // dequeued op is retired and the caller can drain the rest.
+                if error.is_none() {
+                    error = Some(match injected {
+                        Some(code) => io::Error::from_raw_os_error(code),
+                        None => {
+                            let dos_error = ntstatus_to_dos_error(internal as u32);
+                            if dos_error == ERROR_HANDLE_EOF {
+                                io::Error::from(io::ErrorKind::UnexpectedEof)
+                            } else {
+                                io::Error::from_raw_os_error(dos_error as i32)
+                            }
+                        }
+                    });
                 }
-                return Err(io::Error::from_raw_os_error(dos_error as i32));
+                continue;
             }
-            out.push((
+            completions.push((
                 overlapped_ptr as usize,
                 entry.dwNumberOfBytesTransferred as usize,
             ));
         }
-        return Ok(out);
+        return Ok(DrainOutcome {
+            completions,
+            retired,
+            error,
+        });
     }
 }
 
