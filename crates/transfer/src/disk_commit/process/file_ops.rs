@@ -429,7 +429,15 @@ fn open_output_file(
 ) -> io::Result<(fs::File, TempFileGuard, bool)> {
     if begin.is_device_target {
         let file = fs::OpenOptions::new().write(true).open(&begin.file_path)?;
-        Ok((file, TempFileGuard::new(begin.file_path.clone()), false))
+        // The guard wraps the real device node, not a temp file. A
+        // mid-transfer error must NOT unlink it (upstream never unlinks an
+        // inplace/device target - receiver.c:1054 gates on !one_inplace), so
+        // seed it keep-on-drop.
+        Ok((
+            file,
+            TempFileGuard::keep_dest(begin.file_path.clone()),
+            false,
+        ))
     } else if begin.is_inplace {
         // upstream: receiver.c:855 - do_open(fname, O_WRONLY|O_CREAT, 0600)
         let opened = fs::OpenOptions::new()
@@ -455,7 +463,17 @@ fn open_output_file(
             use std::io::Seek;
             file.seek(io::SeekFrom::Start(begin.append_offset))?;
         }
-        Ok((file, TempFileGuard::new(begin.file_path.clone()), false))
+        // The guard wraps the real destination file, not a temp file. On a
+        // mid-transfer error the guard must LEAVE the partial write in place
+        // rather than delete the user's existing file. upstream: receiver.c:1054
+        // gates the destination unlink on !one_inplace, so an inplace target is
+        // never unlinked; a partial inplace write stays. keep_dest() seeds the
+        // guard keep-on-drop so its Drop is a no-op on the error path.
+        Ok((
+            file,
+            TempFileGuard::keep_dest(begin.file_path.clone()),
+            false,
+        ))
     } else {
         // SEC-1.r: when the dest_dir + sandbox carrier is plumbed, route the
         // temp-file create through `openat(dirfd, leaf, O_WRONLY|O_CREAT|
