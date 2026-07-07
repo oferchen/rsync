@@ -1509,3 +1509,230 @@ fn read_dir_view_via_sandbox_matches_std_for_subdir_listing() {
 
     assert_eq!(at_names, std_names, "sandbox and std listings must agree");
 }
+
+// ---------------------------------------------------------------------
+// SEC nested-path parent anchoring (RESOLVE_BENEATH) tests.
+//
+// These cover the interior-directory TOCTOU gap the single-component
+// fast path could not close: for `dest/a/b/leaf` the leaf op must be
+// confined to a parent resolved beneath the sandbox root, so a swapped
+// interior symlink (`a/b -> outside`) cannot redirect the op. On Linux
+// 5.6+ the anchor refuses the escape in-kernel (EXDEV/ELOOP/ENOTDIR);
+// on kernels/platforms without openat2 the helper degrades to today's
+// path-based behaviour, which these tests account for.
+
+/// Returns whether `openat2(RESOLVE_BENEATH)` anchoring is live on this
+/// host. Off implies the graceful path-based fallback is exercised.
+fn nested_anchor_live() -> bool {
+    cfg!(target_os = "linux") && crate::linux_capabilities::openat2_supported()
+}
+
+#[test]
+fn nested_symlinkat_via_sandbox_creates_under_interior_dir() {
+    // Legitimate nested create: `a/b/link` with real interior dirs must
+    // succeed and place the symlink exactly under the resolved parent.
+    let (_keep, root) = canonical_tempdir();
+    std::fs::create_dir_all(root.join("a/b")).expect("mkdir a/b");
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+
+    let rel = Path::new("a/b/link");
+    let link_path = root.join(rel);
+    symlinkat_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &root,
+        rel,
+        &link_path,
+        Path::new("../target"),
+    )
+    .expect("nested symlinkat");
+
+    let meta = std::fs::symlink_metadata(&link_path).expect("stat link");
+    assert!(meta.is_symlink(), "nested symlink must be created");
+}
+
+#[test]
+fn nested_symlinkat_via_sandbox_allows_legit_intree_symlink() {
+    // RESOLVE_BENEATH must NOT reject an in-tree symlink along the path:
+    // `a/blink -> b` (both inside root) is legitimate and the create at
+    // `a/blink/link` must resolve through it to `a/b/link`.
+    let (_keep, root) = canonical_tempdir();
+    std::fs::create_dir_all(root.join("a/b")).expect("mkdir a/b");
+    // In-tree relative symlink a/blink -> b.
+    symlink("b", root.join("a/blink")).expect("plant in-tree symlink");
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+
+    let rel = Path::new("a/blink/link");
+    let link_path = root.join(rel);
+    symlinkat_via_sandbox_or_fallback(Some(&sandbox), &root, rel, &link_path, Path::new("t"))
+        .expect("create through in-tree symlink must succeed");
+
+    // The real entry lands under the resolved directory a/b.
+    let resolved = root.join("a/b/link");
+    assert!(
+        std::fs::symlink_metadata(&resolved).is_ok(),
+        "entry must exist under the symlink target dir a/b"
+    );
+}
+
+#[test]
+fn nested_symlinkat_via_sandbox_refuses_interior_symlink_escape() {
+    // The keystone security assertion: an interior directory swapped for
+    // a symlink pointing OUTSIDE the root must not let the create escape.
+    let (_keep, root) = canonical_tempdir();
+    let outside = root.join("outside");
+    std::fs::create_dir(&outside).expect("mkdir outside");
+    std::fs::create_dir(root.join("a")).expect("mkdir a");
+    // a/evil -> ../outside : an interior-component symlink that escapes
+    // beneath the sandbox root.
+    symlink(&outside, root.join("a/evil")).expect("plant escaping symlink");
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+
+    let rel = Path::new("a/evil/pwned");
+    let link_path = root.join(rel);
+    let result = symlinkat_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &root,
+        rel,
+        &link_path,
+        Path::new("payload"),
+    );
+
+    if nested_anchor_live() {
+        let err = result.expect_err("interior symlink escape must be refused");
+        let raw = err.raw_os_error();
+        assert!(
+            matches!(
+                raw,
+                Some(libc::EXDEV) | Some(libc::ELOOP) | Some(libc::ENOTDIR)
+            ),
+            "expected EXDEV/ELOOP/ENOTDIR, got {raw:?}"
+        );
+        assert!(
+            !outside.join("pwned").exists(),
+            "no entry may be created outside the root"
+        );
+    } else {
+        // Without openat2 the helper degrades to the path-based fallback,
+        // which follows the symlink (today's behaviour). Assert only that
+        // the call is total; the security guarantee is the Linux gate.
+        let _ = result;
+    }
+}
+
+#[test]
+fn nested_unlinkat_via_sandbox_refuses_interior_symlink_escape() {
+    // Deleting `a/evil/victim` where `a/evil -> outside` must not reach
+    // the outside file when anchoring is live.
+    let (_keep, root) = canonical_tempdir();
+    let outside = root.join("outside");
+    std::fs::create_dir(&outside).expect("mkdir outside");
+    let victim = outside.join("victim");
+    std::fs::write(&victim, b"keep me").expect("write victim");
+    std::fs::create_dir(root.join("a")).expect("mkdir a");
+    symlink(&outside, root.join("a/evil")).expect("plant escaping symlink");
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+
+    let rel = Path::new("a/evil/victim");
+    let link_path = root.join(rel);
+    let result =
+        unlink_via_sandbox_or_fallback(Some(&sandbox), &root, rel, &link_path, UnlinkFlags::File);
+
+    if nested_anchor_live() {
+        let err = result.expect_err("unlink through interior symlink escape must be refused");
+        let raw = err.raw_os_error();
+        assert!(
+            matches!(
+                raw,
+                Some(libc::EXDEV) | Some(libc::ELOOP) | Some(libc::ENOTDIR)
+            ),
+            "expected EXDEV/ELOOP/ENOTDIR, got {raw:?}"
+        );
+        assert!(
+            victim.exists(),
+            "outside victim must survive a refused unlink"
+        );
+    } else {
+        let _ = result;
+    }
+}
+
+#[test]
+fn nested_mkdirat_via_sandbox_creates_under_interior_dir() {
+    let (_keep, root) = canonical_tempdir();
+    std::fs::create_dir_all(root.join("a/b")).expect("mkdir a/b");
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+
+    let rel = Path::new("a/b/newdir");
+    let dir_path = root.join(rel);
+    mkdirat_via_sandbox_or_fallback(Some(&sandbox), &root, rel, &dir_path, 0o755)
+        .expect("nested mkdirat");
+
+    assert!(dir_path.is_dir(), "nested directory must be created");
+}
+
+#[test]
+fn nested_lstat_via_sandbox_stats_under_interior_dir() {
+    let (_keep, root) = canonical_tempdir();
+    std::fs::create_dir_all(root.join("a/b")).expect("mkdir a/b");
+    std::fs::write(root.join("a/b/file"), b"hi").expect("write");
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+
+    let rel = Path::new("a/b/file");
+    let full = root.join(rel);
+    let outcome =
+        lstat_via_sandbox_or_fallback(Some(&sandbox), &root, rel, &full).expect("nested lstat");
+    // dev/ino must match the real entry regardless of which path served.
+    let std_meta = std::fs::symlink_metadata(&full).expect("std stat");
+    assert_eq!(outcome.dev(), std_meta.dev());
+    assert_eq!(outcome.ino(), std_meta.ino());
+}
+
+#[test]
+fn nested_renameat_via_sandbox_commits_under_interior_dir() {
+    let (_keep, root) = canonical_tempdir();
+    std::fs::create_dir_all(root.join("a/b")).expect("mkdir a/b");
+    std::fs::write(root.join("a/b/tmp"), b"payload").expect("write tmp");
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+
+    let old_rel = Path::new("a/b/tmp");
+    let new_rel = Path::new("a/b/final");
+    let old_full = root.join(old_rel);
+    let new_full = root.join(new_rel);
+    renameat_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &root,
+        old_rel,
+        &old_full,
+        &root,
+        new_rel,
+        &new_full,
+        true,
+    )
+    .expect("nested renameat");
+
+    assert!(!old_full.exists(), "temp name must be gone after rename");
+    assert_eq!(
+        std::fs::read(&new_full).expect("read final"),
+        b"payload",
+        "final name must hold the renamed payload"
+    );
+}
+
+#[test]
+fn single_component_symlinkat_unchanged_by_nested_path() {
+    // Regression guard: the common single-component case must still take
+    // the existing fast path and behave byte-identically.
+    let (_keep, root) = canonical_tempdir();
+    let sandbox = DirSandbox::open_root(&root).expect("sandbox");
+
+    let rel = Path::new("link");
+    let link_path = root.join(rel);
+    symlinkat_via_sandbox_or_fallback(Some(&sandbox), &root, rel, &link_path, Path::new("target"))
+        .expect("single-component symlinkat");
+    assert!(
+        std::fs::symlink_metadata(&link_path)
+            .expect("stat")
+            .is_symlink(),
+        "single-component symlink must still be created"
+    );
+}

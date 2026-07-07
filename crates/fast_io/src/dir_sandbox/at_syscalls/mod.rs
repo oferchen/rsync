@@ -34,6 +34,7 @@ mod create;
 mod lstat;
 mod metadata;
 mod metadata_ops;
+mod nested;
 mod open;
 mod read_dir;
 mod rename;
