@@ -99,7 +99,12 @@ fn lstat_via_sandbox_takes_at_path_for_single_component() {
 }
 
 #[test]
-fn lstat_via_sandbox_falls_back_for_multi_component() {
+fn lstat_via_sandbox_multi_component_anchors_or_falls_back() {
+    // A multi-component relative path now resolves its parent under
+    // openat2(RESOLVE_BENEATH) where the kernel supports it, and only
+    // degrades to the path-based fallback where it does not. Assert the
+    // correct outcome variant for each capability state and confirm the
+    // reported dev/ino matches the real entry either way.
     let (_keep, root) = canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     std::fs::write(root.join("sub/file"), b"hello").expect("write");
@@ -108,10 +113,22 @@ fn lstat_via_sandbox_falls_back_for_multi_component() {
     let rel = Path::new("sub/file");
     let link = root.join(rel);
     let outcome = lstat_via_sandbox_or_fallback(Some(&sandbox), &root, rel, &link).expect("lstat");
-    assert!(
-        matches!(outcome, LstatOutcome::Std(_)),
-        "multi-component paths must take the fallback until SEC-1.f descent is wired"
-    );
+
+    if crate::linux_capabilities::openat2_supported() {
+        assert!(
+            matches!(outcome, LstatOutcome::At(_)),
+            "multi-component paths must anchor via openat2(RESOLVE_BENEATH) when supported"
+        );
+    } else {
+        assert!(
+            matches!(outcome, LstatOutcome::Std(_)),
+            "multi-component paths degrade to the path-based fallback without openat2"
+        );
+    }
+
+    let std_meta = std::fs::symlink_metadata(&link).expect("std stat");
+    assert_eq!(outcome.dev(), std_meta.dev());
+    assert_eq!(outcome.ino(), std_meta.ino());
 }
 
 #[test]
@@ -280,7 +297,10 @@ fn unlink_via_sandbox_takes_at_path_for_single_component_dir() {
 }
 
 #[test]
-fn unlink_via_sandbox_falls_back_for_multi_component() {
+fn unlink_via_sandbox_removes_multi_component_end_to_end() {
+    // A multi-component path anchors its parent under RESOLVE_BENEATH
+    // where supported and falls back to std::fs::remove_file otherwise;
+    // in both cases the leaf must be removed end-to-end.
     let (_keep, root) = canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     let path = root.join("sub/file");
@@ -289,10 +309,10 @@ fn unlink_via_sandbox_falls_back_for_multi_component() {
 
     let rel = Path::new("sub/file");
     unlink_via_sandbox_or_fallback(Some(&sandbox), &root, rel, &path, UnlinkFlags::File)
-        .expect("unlink fallback");
+        .expect("unlink multi-component");
     assert!(
         !path.exists(),
-        "multi-component path must fall back to std::fs::remove_file"
+        "multi-component leaf must be removed (anchored or fallback)"
     );
 }
 
@@ -782,6 +802,11 @@ fn renameat_via_sandbox_takes_at_path_for_single_component() {
 
 #[test]
 fn renameat_via_sandbox_falls_back_for_multi_component_source() {
+    // A multi-component source paired with a single-component dest must
+    // take the path-based fallback: the nested anchor only engages when
+    // BOTH endpoints resolve their parents, never mixing an anchored and
+    // an ambient endpoint. The dest here is single-component, so the
+    // helper drops to std::fs::rename regardless of openat2 support.
     let (_keep, root) = canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     let src = root.join("sub").join("src");
@@ -1303,10 +1328,11 @@ fn recursive_unlinkat_fallback_treats_missing_root_as_success() {
 }
 
 #[test]
-fn recursive_unlinkat_falls_back_for_multi_component_relative() {
-    // Multi-component relative paths take the path-based fallback
-    // (the SEC-1.f / SEC-1.g family does the same); the helper
-    // must still remove the subtree end-to-end.
+fn recursive_unlinkat_removes_multi_component_relative_end_to_end() {
+    // Multi-component relative paths anchor their parent under
+    // RESOLVE_BENEATH where supported and fall back to the path-based
+    // walk otherwise; either way the helper must remove the subtree
+    // end-to-end while leaving the parent directory intact.
     let (_keep, root) = canonical_tempdir();
     std::fs::create_dir(root.join("outer")).expect("mkdir outer");
     let inner = root.join("outer").join("inner");
