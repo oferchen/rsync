@@ -112,7 +112,7 @@ pub(in crate::disk_commit) fn process_file(
                 let _ = output.finish(false, &begin.file_path);
                 // upstream: cleanup.c - retain partial on unexpected disconnect
                 if bytes_written > 0 && needs_rename {
-                    retain_partial_file(&config.partial_mode, &mut cleanup_guard, &begin.file_path);
+                    retain_partial_file(config, &mut cleanup_guard, &begin.file_path);
                 }
                 drop(cleanup_guard);
                 return Err(io::Error::new(
@@ -215,7 +215,7 @@ pub(in crate::disk_commit) fn process_file(
                 // if any data was written, the transfer made progress worth
                 // retaining for later resume.
                 if bytes_written > 0 && needs_rename {
-                    retain_partial_file(&config.partial_mode, &mut cleanup_guard, &begin.file_path);
+                    retain_partial_file(config, &mut cleanup_guard, &begin.file_path);
                 }
                 drop(cleanup_guard);
                 return Err(io::Error::other(reason));
@@ -229,7 +229,7 @@ pub(in crate::disk_commit) fn process_file(
                 let _ = output.finish(false, &begin.file_path);
                 // upstream: cleanup.c - same partial retention on shutdown
                 if bytes_written > 0 && needs_rename {
-                    retain_partial_file(&config.partial_mode, &mut cleanup_guard, &begin.file_path);
+                    retain_partial_file(config, &mut cleanup_guard, &begin.file_path);
                 }
                 drop(cleanup_guard);
                 return Err(io::Error::new(

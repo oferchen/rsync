@@ -28,11 +28,13 @@ pub(super) use self::file_ops::{process_file, process_whole_file};
 
 // Re-exported for the in-module test suite (`use super::*`), which exercises
 // the rename/cross-device/backup helpers and the writer selector directly.
+#[cfg(all(test, unix))]
+use self::commit::rename_config_sandboxed;
 #[cfg(test)]
 use self::commit::{is_cross_device, make_backup, partial_dir_path, rename_with_io_uring_fallback};
 #[cfg(all(test, target_os = "macos"))]
 use self::file_ops::make_writer;
 #[cfg(test)]
-use super::config::BackupConfig;
+use super::config::{BackupConfig, DiskCommitConfig};
 #[cfg(all(test, target_os = "macos"))]
 use super::writer::Writer;
