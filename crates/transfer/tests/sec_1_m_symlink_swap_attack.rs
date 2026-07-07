@@ -69,9 +69,17 @@ use std::thread;
 use crossbeam_channel::{Receiver, Sender, bounded};
 use fast_io::{
     DirSandbox, LstatOutcome, UnlinkFlags, lstat_via_sandbox_or_fallback,
-    unlink_via_sandbox_or_fallback,
+    symlinkat_via_sandbox_or_fallback, unlink_via_sandbox_or_fallback,
 };
 use tempfile::{TempDir, tempdir};
+
+/// Returns whether `openat2(RESOLVE_BENEATH)` nested-parent anchoring is
+/// live on this host. When off (non-Linux, or Linux < 5.6), the helpers
+/// degrade to the path-based fallback and the interior-symlink guarantee
+/// is not enforced; Linux CI is the runtime gate for the refusal.
+fn nested_anchor_live() -> bool {
+    cfg!(target_os = "linux") && fast_io::openat2_supported()
+}
 
 /// `tempdir()` may sit under a symlink prefix on macOS / some CI
 /// runners; canonicalise so the sandbox open succeeds under
@@ -452,4 +460,71 @@ fn scenario_3_repeated_race_keeps_sensitive_tree_untouched() {
         b"never-touched",
         "sensitive file contents must be byte-identical after the full stress loop"
     );
+}
+
+/// Scenario 4: interior-directory symlink escape (the SEC nested-path
+/// anchoring keystone). The receiver acts on a multi-component path
+/// `dest/a/EVIL/link`. An attacker replaces the *interior* directory
+/// `dest/a/EVIL` with a symlink pointing OUTSIDE the destination root.
+///
+/// Before the nested-parent anchor, the leaf op fell to a path-based
+/// syscall that re-resolved `a/EVIL` through the ambient namespace,
+/// following the symlink and creating the entry outside the root. With
+/// the `openat2(RESOLVE_BENEATH)` parent anchor the interior escape is
+/// refused in-kernel (EXDEV/ELOOP/ENOTDIR) and the outside tree is never
+/// written. This is the exact gap `single_component_leaf` could not
+/// close: the leaf is single-component, but the *parent* path is not.
+#[test]
+fn scenario_4_interior_dir_symlink_escape_is_refused() {
+    let (_keep, parent) = canonical_tempdir();
+
+    // Sensitive tree outside the destination sandbox root.
+    let outside = parent.join("outside");
+    std::fs::create_dir(&outside).expect("mkdir outside");
+
+    let dest = parent.join("dest");
+    let a = dest.join("a");
+    std::fs::create_dir_all(&a).expect("mkdir dest/a");
+    // Interior-component symlink escape: dest/a/EVIL -> ../../outside.
+    symlink(&outside, a.join("EVIL")).expect("plant escaping interior symlink");
+
+    let sandbox = DirSandbox::open_root(&dest).expect("sandbox open");
+
+    let rel = Path::new("a/EVIL/link");
+    let link_path = dest.join(rel);
+    let result = symlinkat_via_sandbox_or_fallback(
+        Some(&sandbox),
+        &dest,
+        rel,
+        &link_path,
+        Path::new("payload"),
+    );
+
+    if nested_anchor_live() {
+        let err = result.expect_err("interior-dir symlink escape must be refused");
+        let raw = err.raw_os_error();
+        assert!(
+            matches!(
+                raw,
+                Some(libc::EXDEV) | Some(libc::ELOOP) | Some(libc::ENOTDIR)
+            ),
+            "expected EXDEV/ELOOP/ENOTDIR from the RESOLVE_BENEATH parent open, got {raw:?}"
+        );
+        assert!(
+            !outside.join("link").exists(),
+            "no entry may be created outside the destination root via the interior symlink"
+        );
+        assert!(
+            std::fs::read_dir(&outside)
+                .expect("read outside")
+                .next()
+                .is_none(),
+            "the outside tree must remain empty after the refused escape"
+        );
+    } else {
+        // No kernel RESOLVE_BENEATH: the helper degrades to the
+        // path-based fallback (today's behaviour). Assert the call is
+        // total; the security refusal is asserted on the Linux gate.
+        let _ = result;
+    }
 }

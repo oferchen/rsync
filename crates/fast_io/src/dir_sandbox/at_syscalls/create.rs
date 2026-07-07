@@ -8,11 +8,12 @@
 
 use std::ffi::{CString, OsStr};
 use std::io;
-use std::os::fd::{AsRawFd, BorrowedFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 use super::lstat::single_component_leaf;
+use super::nested::{ParentAnchor, anchor_parent};
 
 /// Issue `mkdirat(dirfd, name, mode)`.
 ///
@@ -192,6 +193,11 @@ pub fn mkdirat_via_sandbox_or_fallback(
     {
         return mkdirat(sandbox.current_dirfd(), leaf, mode);
     }
+    if let ParentAnchor::Anchored { dirfd, name } =
+        anchor_parent(sandbox, dest_dir, relative_path, dir_path)?
+    {
+        return mkdirat(dirfd.as_fd(), name, mode);
+    }
     std::fs::create_dir(dir_path)
 }
 
@@ -223,6 +229,11 @@ pub fn symlinkat_via_sandbox_or_fallback(
         && let Some(leaf) = single_component_leaf(dest_dir, relative_path, link_path)
     {
         return symlinkat(target, sandbox.current_dirfd(), leaf);
+    }
+    if let ParentAnchor::Anchored { dirfd, name } =
+        anchor_parent(sandbox, dest_dir, relative_path, link_path)?
+    {
+        return symlinkat(target, dirfd.as_fd(), name);
     }
     std::os::unix::fs::symlink(target, link_path)
 }
@@ -282,6 +293,37 @@ pub fn linkat_via_sandbox_or_fallback(
                 libc::AT_FDCWD,
                 leader_c.as_ptr(),
                 sandbox.current_dirfd().as_raw_fd(),
+                new_c.as_ptr(),
+                0,
+            )
+        };
+        return if rc == 0 {
+            Ok(())
+        } else {
+            Err(io::Error::last_os_error())
+        };
+    }
+    if let ParentAnchor::Anchored { dirfd, name } =
+        anchor_parent(sandbox, dest_dir, new_relative, new_path)?
+    {
+        // Same shape as the single-component branch: the new parent is
+        // pinned by the RESOLVE_BENEATH-resolved dirfd, the leader stays
+        // on `AT_FDCWD` because it may live outside `dest_dir`.
+        let leader_c = CString::new(leader_path.as_os_str().as_bytes())
+            .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+        let new_c = CString::new(name.as_bytes())
+            .map_err(|_| io::Error::from_raw_os_error(libc::EINVAL))?;
+        // SAFETY:
+        // - `dirfd.as_fd()` outlives the syscall (owned by `dirfd`).
+        // - Both C strings are valid NUL-terminated and borrowed for
+        //   the duration of the call.
+        // - `flags == 0` matches the standard rsync hardlink shape.
+        #[allow(unsafe_code)]
+        let rc = unsafe {
+            libc::linkat(
+                libc::AT_FDCWD,
+                leader_c.as_ptr(),
+                dirfd.as_fd().as_raw_fd(),
                 new_c.as_ptr(),
                 0,
             )

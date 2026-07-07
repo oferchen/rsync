@@ -9,11 +9,12 @@
 
 use std::ffi::{CString, OsStr};
 use std::io;
-use std::os::fd::{AsRawFd, BorrowedFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 use super::lstat::single_component_leaf;
+use super::nested::{ParentAnchor, anchor_parent};
 
 /// `RENAME_NOREPLACE` from `renameat2(2)`.
 ///
@@ -177,6 +178,34 @@ pub fn renameat_via_sandbox_or_fallback(
     {
         let dirfd = sandbox.current_dirfd();
         return renameat(dirfd, old_leaf, dirfd, new_leaf, replace);
+    }
+    // Nested paths: anchor each endpoint's parent under RESOLVE_BENEATH.
+    // Both must anchor for the rename to be confined; if either endpoint
+    // is single-component or anchoring is unavailable we drop to the
+    // path-based fallback rather than mixing an anchored and an ambient
+    // endpoint (which would leave one side re-resolvable).
+    if sandbox.is_some() {
+        let old_anchor = anchor_parent(sandbox, old_dest_dir, old_relative_path, old_link_path)?;
+        let new_anchor = anchor_parent(sandbox, new_dest_dir, new_relative_path, new_link_path)?;
+        if let (
+            ParentAnchor::Anchored {
+                dirfd: old_dirfd,
+                name: old_leaf,
+            },
+            ParentAnchor::Anchored {
+                dirfd: new_dirfd,
+                name: new_leaf,
+            },
+        ) = (old_anchor, new_anchor)
+        {
+            return renameat(
+                old_dirfd.as_fd(),
+                old_leaf,
+                new_dirfd.as_fd(),
+                new_leaf,
+                replace,
+            );
+        }
     }
     std::fs::rename(old_link_path, new_link_path)
 }

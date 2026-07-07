@@ -120,13 +120,13 @@ fn unlink_via_sandbox_dir_flag_refuses_non_empty_directory() {
     assert!(dir.is_dir(), "directory must survive a failed rmdir");
 }
 
-/// Multi-component paths fall back to `std::fs::remove_file` until the
-/// sandbox descent stack is wired through every executor. This pins
-/// the documented deferral so a future regression does not silently
-/// promote multi-component paths into the path-based fallback without
-/// re-evaluating the TOCTOU exposure.
+/// Multi-component paths anchor their parent under
+/// `openat2(RESOLVE_BENEATH)` where the kernel supports it and degrade
+/// to `std::fs::remove_file` otherwise; either way the leaf is removed
+/// end-to-end. This pins the removal contract across both capability
+/// states so a future regression cannot silently drop the leaf.
 #[test]
-fn unlink_via_sandbox_multi_component_takes_fallback() {
+fn unlink_via_sandbox_multi_component_removes_leaf() {
     let (_keep, root) = canonical_tempdir();
     std::fs::create_dir(root.join("sub")).expect("mkdir sub");
     let path = root.join("sub/file");
@@ -138,6 +138,6 @@ fn unlink_via_sandbox_multi_component_takes_fallback() {
         .expect("unlink");
     assert!(
         !path.exists(),
-        "multi-component fallback must remove the leaf via std::fs::remove_file"
+        "multi-component leaf must be removed (anchored or fallback)"
     );
 }

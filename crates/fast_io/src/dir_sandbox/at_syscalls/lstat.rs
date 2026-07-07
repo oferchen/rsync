@@ -10,10 +10,12 @@
 
 use std::ffi::OsStr;
 use std::io;
+use std::os::fd::AsFd;
 use std::path::Path;
 
 use super::AtMetadata;
 use super::metadata::fstatat_nofollow;
+use super::nested::{ParentAnchor, anchor_parent};
 
 /// Result of [`lstat_via_sandbox_or_fallback`].
 ///
@@ -78,6 +80,11 @@ pub fn lstat_via_sandbox_or_fallback(
         && let Some(leaf) = single_component_leaf(dest_dir, relative_path, link_path)
     {
         return fstatat_nofollow(sandbox.current_dirfd(), leaf).map(LstatOutcome::At);
+    }
+    if let ParentAnchor::Anchored { dirfd, name } =
+        anchor_parent(sandbox, dest_dir, relative_path, link_path)?
+    {
+        return fstatat_nofollow(dirfd.as_fd(), name).map(LstatOutcome::At);
     }
     std::fs::symlink_metadata(link_path).map(LstatOutcome::Std)
 }

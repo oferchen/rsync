@@ -11,6 +11,7 @@
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io;
+use std::os::fd::AsFd;
 use std::os::fd::AsRawFd;
 use std::os::fd::BorrowedFd;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
@@ -19,6 +20,7 @@ use std::path::Path;
 use super::errno_location;
 use super::lstat::single_component_leaf;
 use super::metadata::fstatat_nofollow;
+use super::nested::{ParentAnchor, anchor_parent};
 use super::open::openat;
 use std::ffi::CString;
 
@@ -141,6 +143,11 @@ pub fn unlink_via_sandbox_or_fallback(
     {
         return unlinkat(sandbox.current_dirfd(), leaf, flags);
     }
+    if let ParentAnchor::Anchored { dirfd, name } =
+        anchor_parent(sandbox, dest_dir, relative_path, link_path)?
+    {
+        return unlinkat(dirfd.as_fd(), name, flags);
+    }
     match flags {
         UnlinkFlags::File => std::fs::remove_file(link_path),
         UnlinkFlags::Dir => std::fs::remove_dir(link_path),
@@ -207,6 +214,11 @@ pub fn recursive_unlinkat_via_sandbox_or_fallback(
         && let Some(leaf) = single_component_leaf(dest_dir, relative_path, target_path)
     {
         return recursive_unlinkat(sandbox.current_dirfd(), leaf);
+    }
+    if let ParentAnchor::Anchored { dirfd, name } =
+        anchor_parent(sandbox, dest_dir, relative_path, target_path)?
+    {
+        return recursive_unlinkat(dirfd.as_fd(), name);
     }
     match std::fs::remove_dir_all(target_path) {
         Ok(()) => Ok(()),
