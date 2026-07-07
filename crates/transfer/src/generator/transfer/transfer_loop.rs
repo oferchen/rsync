@@ -406,6 +406,7 @@ impl GeneratorContext {
                 };
                 let config = DeltaGeneratorConfig {
                     block_length,
+                    remainder: sum_head.remainder,
                     sig_blocks,
                     strong_sum_length,
                     protocol: self.protocol,

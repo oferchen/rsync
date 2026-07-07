@@ -167,29 +167,48 @@ pub fn generate_delta_from_signature<R: Read>(
 
     let block_count = config.sig_blocks.len() as u64;
 
-    // Reconstruct signature layout (remainder unknown, set to 0)
+    // The final basis block is `remainder` bytes long when the basis length
+    // is not an exact multiple of `block_length`. Upstream carries this in
+    // `SumHead.remainder` (`read_sum_head()`), and its matcher uses it via
+    // `l = MIN(blength, len-offset)` so the source file's short trailing
+    // block can match the basis's short final block. A `remainder` of 0
+    // means the last block is full length.
+    let last_block_len = if config.remainder != 0 {
+        config.remainder as usize
+    } else {
+        config.block_length as usize
+    };
+    let last_index = block_count.saturating_sub(1);
+
     let layout = SignatureLayout::from_raw_parts(
         block_length_nz,
-        0, // remainder unknown from wire format
+        config.remainder,
         block_count,
         strong_sum_length_nz,
     );
 
-    // Convert wire blocks to engine signature blocks (consumes sig_blocks)
+    // Convert wire blocks to engine signature blocks (consumes sig_blocks).
+    // The trailing block is reconstructed with its true `remainder` length so
+    // the matcher records the correct short-block length for tail matching.
     let engine_blocks: Vec<SignatureBlock> = config
         .sig_blocks
         .into_iter()
         .map(|wire_block| {
+            let len = if u64::from(wire_block.index) == last_index {
+                last_block_len
+            } else {
+                config.block_length as usize
+            };
             SignatureBlock::from_raw_parts(
                 wire_block.index as u64,
-                RollingDigest::from_value(wire_block.rolling_sum, config.block_length as usize),
+                RollingDigest::from_value(wire_block.rolling_sum, len),
                 &wire_block.strong_sum,
             )
         })
         .collect();
 
-    // Calculate total bytes (approximation since we don't know exact remainder)
-    let total_bytes = (block_count.saturating_sub(1)) * u64::from(config.block_length);
+    // Total basis bytes: full-length blocks plus the (possibly short) final block.
+    let total_bytes = last_index * u64::from(config.block_length) + last_block_len as u64;
     let signature = FileSignature::from_raw_parts(layout, engine_blocks, total_bytes);
 
     // Select checksum algorithm using ChecksumFactory (handles negotiated vs default)

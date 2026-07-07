@@ -571,6 +571,72 @@ fn execute_whole_file_vs_delta_transfer_comparison() {
     );
 }
 
+/// A delta transfer whose destination already holds the exact source content
+/// must copy zero literal bytes, even when the file size is not a multiple of
+/// the block size.
+///
+/// Upstream rsync matches the basis's final partial block (`match.c:222-224`
+/// shrinks the last hash-search window to `l = MIN(blength, len-offset)`), so
+/// an identical basis reports `Matched == total`, `Literal == 0`. The local
+/// delta matcher previously refused to probe any window shorter than one full
+/// block and drained the trailing partial block to literals, so an identical
+/// non-block-aligned file always reported a non-zero literal count - the
+/// user-visible symptom that surfaced through `--fuzzy` / `--no-whole-file`.
+/// This guards that the whole file, partial block included, matches.
+#[test]
+fn delta_identical_basis_matches_trailing_partial_block() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source.bin");
+    let destination = temp.path().join("dest.bin");
+
+    // 4700 bytes: with the 700-byte default block size this is 6 full blocks
+    // plus a 500-byte trailing partial block, so the tail-match path is
+    // exercised.
+    let content: Vec<u8> = (0..4700u32).map(|i| (i % 251) as u8).collect();
+    assert_ne!(
+        content.len() % 700,
+        0,
+        "fixture must exercise a non-block-aligned trailing block"
+    );
+
+    fs::write(&source, &content).expect("write source");
+    fs::write(&destination, &content).expect("write destination");
+    // Backdate the destination and force the delta path so the quick-check
+    // skip does not short-circuit the transfer.
+    set_file_mtime(&destination, FileTime::from_unix_time(1, 0)).expect("set dest mtime");
+    set_file_mtime(&source, FileTime::from_unix_time(2, 0)).expect("set source mtime");
+
+    let operands = vec![
+        source.into_os_string(),
+        destination.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let summary = plan
+        .execute_with_options(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .whole_file(false)
+                .ignore_times(true),
+        )
+        .expect("delta copy succeeds");
+
+    assert_eq!(
+        summary.bytes_copied(),
+        0,
+        "identical basis must copy zero literal bytes (trailing partial block must match)"
+    );
+    assert_eq!(
+        summary.matched_bytes(),
+        content.len() as u64,
+        "every source byte must be matched against the basis"
+    );
+    assert_eq!(
+        fs::read(&destination).expect("read dest"),
+        content,
+        "reconstructed destination must equal the source"
+    );
+}
+
 
 #[test]
 fn whole_file_auto_defaults_to_whole_for_local_copy() {

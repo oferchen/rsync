@@ -108,10 +108,6 @@ fn verify_round_trip(basis: &[u8], input: &[u8]) -> DeltaScript {
 /// When basis and input contain the same repeated byte pattern, the delta
 /// algorithm should efficiently match blocks. This tests the rolling
 /// checksum's behavior with low-entropy data.
-///
-/// Note: Even identical files may have some trailing literal bytes if the
-/// file length is not an exact multiple of the block size. This mirrors
-/// upstream rsync behavior where the last partial block cannot be matched.
 #[test]
 fn uniform_data_generates_copy_tokens() {
     let basis = vec![0xAA; 8192];
@@ -130,13 +126,72 @@ fn uniform_data_generates_copy_tokens() {
         "identical uniform data should produce copy tokens"
     );
 
-    // Most bytes should be copied (allowing for trailing partial block as literals)
     let copy_bytes = script.copy_bytes();
     let literal_bytes = script.literal_bytes();
     assert!(
         copy_bytes > literal_bytes,
         "identical data should be mostly copies: copy={copy_bytes}, literal={literal_bytes}"
     );
+}
+
+/// A source file identical to its basis must delta down to zero literal bytes,
+/// including the short trailing block when the file length is not an exact
+/// multiple of the block size.
+///
+/// This encodes a fidelity requirement, not just a round-trip one: upstream
+/// rsync matches the basis's final partial block (`match.c:222-224` shrinks the
+/// hash-search window to `l = MIN(blength, len-offset)` so a same-length short
+/// block still matches). The matcher previously skipped any window shorter than
+/// one full block, so it emitted the trailing partial block as literal data -
+/// producing a strictly worse delta than upstream (`Matched < total`,
+/// `Literal > 0`) for every file whose size is not block-aligned. That surfaced
+/// as `--fuzzy` (and any `--no-whole-file`) transfers of an identical basis
+/// reporting non-zero `Literal data` where upstream reports zero.
+#[test]
+fn identical_basis_matches_trailing_partial_block() {
+    // 8192 is not a multiple of the 700-byte default block size, so the
+    // signature ends with a 492-byte partial block. Regression guard: the
+    // whole file - partial block included - must be matched.
+    let data: Vec<u8> = (0..8192u32).map(|i| (i % 251) as u8).collect();
+    assert_ne!(
+        data.len() % 700,
+        0,
+        "fixture must exercise a non-block-aligned trailing block"
+    );
+
+    let index = build_index(&data).expect("should build index");
+    let script = generate_delta(&data[..], &index).expect("should generate delta");
+
+    assert_eq!(
+        script.literal_bytes(),
+        0,
+        "identical basis must produce zero literal bytes (trailing partial block must match)"
+    );
+    assert_eq!(
+        script.total_bytes(),
+        data.len() as u64,
+        "delta must account for every source byte"
+    );
+
+    // The final token must be a Copy referencing the last basis block with the
+    // short remainder length, mirroring upstream's tail match.
+    let block_len = index.block_length();
+    let remainder = data.len() % block_len;
+    match script.tokens().last() {
+        Some(DeltaToken::Copy { index: idx, len }) => {
+            assert_eq!(*len, remainder, "final Copy must span the partial block");
+            assert_eq!(
+                *idx as usize,
+                index.block_count() - 1,
+                "final Copy must reference the last basis block"
+            );
+        }
+        other => panic!("expected trailing Copy token, got {other:?}"),
+    }
+
+    // Reconstruction must still be byte-exact.
+    let reconstructed = apply_and_reconstruct(&data, &index, &script);
+    assert_eq!(reconstructed, data, "round-trip must reproduce the source");
 }
 
 /// Verifies delta generation with different uniform data produces literals.
@@ -1539,7 +1594,11 @@ mod algorithm_correctness {
         let basis: Vec<u8> = (0..16384).map(|i| (i % 251) as u8).collect();
         let index = build_index(&basis).expect("index");
         let block_len = index.block_length();
-        let num_blocks = basis.len() / block_len;
+        // The signature includes a trailing partial block when the basis length
+        // is not an exact multiple of `block_len`, so take the true block count
+        // from the index rather than a truncating division.
+        let num_blocks = index.block_count();
+        let remainder = basis.len() % block_len;
 
         let input = basis.clone();
         let script = generate_delta(&input[..], &index).expect("delta");
@@ -1554,20 +1613,29 @@ mod algorithm_correctness {
                     (*block_idx as usize) < num_blocks,
                     "copy token should reference valid block index: {block_idx} >= {num_blocks}"
                 );
-                // Seq-match coalesces consecutive matched basis blocks into
-                // a single fat Copy. The token length is therefore an
-                // integer multiple of the canonical block length, and the
-                // run must fit inside the indexed block range.
-                assert_eq!(
-                    *len % block_len,
-                    0,
-                    "copy length should be a multiple of block length"
-                );
-                let run = *len / block_len;
-                assert!(
-                    (*block_idx as usize) + run <= num_blocks,
-                    "copy run extends past last indexed block: index={block_idx} run={run} num_blocks={num_blocks}"
-                );
+                // Seq-match coalesces consecutive matched basis blocks into a
+                // single fat Copy whose length is an integer multiple of the
+                // canonical block length. The one exception is a match of the
+                // basis's short final block (upstream `match.c:222-224`), which
+                // emits a standalone Copy of `remainder` bytes at the last
+                // index. Either way the run must fit inside the block range.
+                if *len % block_len == 0 {
+                    let run = *len / block_len;
+                    assert!(
+                        (*block_idx as usize) + run <= num_blocks,
+                        "copy run extends past last indexed block: index={block_idx} run={run} num_blocks={num_blocks}"
+                    );
+                } else {
+                    assert_eq!(
+                        *len, remainder,
+                        "short copy must equal the basis remainder length"
+                    );
+                    assert_eq!(
+                        *block_idx as usize,
+                        num_blocks - 1,
+                        "short copy must reference the final basis block"
+                    );
+                }
             }
         }
     }
