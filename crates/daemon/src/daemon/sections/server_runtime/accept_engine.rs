@@ -338,7 +338,7 @@ impl AcceptEngine for MultiListenerEngine {
 /// connection service.
 ///
 /// [`submit_read_level`]: fast_io::KqueueLoop::submit_read_level
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
 struct KqueueAcceptEngine {
     /// Registered listeners keyed by their `EVFILT_READ` user-data index.
     listeners: Vec<(TcpListener, SocketAddr)>,
@@ -347,7 +347,7 @@ struct KqueueAcceptEngine {
     log_sink: Option<SharedLogSink>,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
 impl KqueueAcceptEngine {
     /// Signal-check cadence for the `kevent(2)` wait, matching the dual-stack
     /// engine's `recv_timeout` interval so shutdown latency is identical.
@@ -424,7 +424,7 @@ impl KqueueAcceptEngine {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
 impl AcceptEngine for KqueueAcceptEngine {
     fn poll(&mut self) -> Result<AcceptOutcome, DaemonError> {
         let events = match self.kq.wait(Some(Self::WAIT_TIMEOUT)) {
@@ -480,7 +480,7 @@ impl AcceptEngine for KqueueAcceptEngine {
 /// the caller falls back to the portable engines, threading `listeners` back out
 /// unchanged on failure. Any kqueue error is non-fatal: connection service must
 /// continue through the blocking engine.
-#[cfg(target_os = "macos")]
+#[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
 fn try_build_kqueue_engine(
     listeners: Vec<TcpListener>,
     bound_addresses: &[SocketAddr],
@@ -521,7 +521,7 @@ fn build_accept_engine(
     bound_addresses: &[SocketAddr],
     state: &AcceptLoopState<'_>,
 ) -> Result<Box<dyn AcceptEngine>, DaemonError> {
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "macos-kqueue"))]
     let listeners = match try_build_kqueue_engine(listeners, bound_addresses, state) {
         Ok(engine) => return Ok(engine),
         Err(listeners) => listeners,
