@@ -1096,6 +1096,102 @@ mod module_access_tests {
         assert!(!config.write.delay_updates);
     }
 
+    // NSV: the daemon-sender opts its socket write side into io_uring SEND_ZC
+    // only when the client forwarded `--zero-copy`. The flag maps to
+    // `write.zero_copy_policy = Enabled`, which `setup_transfer_streams`
+    // consults to choose the zero-copy writer.
+    #[test]
+    fn apply_long_form_args_parses_zero_copy_enabled() {
+        let args = vec![
+            "--server".to_owned(),
+            "--sender".to_owned(),
+            "--zero-copy".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        let unknown = apply_long_form_args(&args, &mut config);
+        assert!(unknown.is_none(), "--zero-copy must be a known daemon flag");
+        assert_eq!(
+            config.write.zero_copy_policy,
+            fast_io::ZeroCopyPolicy::Enabled
+        );
+    }
+
+    #[test]
+    fn apply_long_form_args_parses_no_zero_copy_disabled() {
+        let args = vec![
+            "--server".to_owned(),
+            "--sender".to_owned(),
+            "--no-zero-copy".to_owned(),
+            ".".to_owned(),
+        ];
+        let mut config = ServerConfig::default();
+        let unknown = apply_long_form_args(&args, &mut config);
+        assert!(unknown.is_none());
+        assert_eq!(
+            config.write.zero_copy_policy,
+            fast_io::ZeroCopyPolicy::Disabled
+        );
+    }
+
+    // HARD default-path invariant at the daemon parse boundary: absent the
+    // flag, the policy stays `Auto`, so the daemon keeps its current writer.
+    #[test]
+    fn apply_long_form_args_zero_copy_defaults_to_auto() {
+        let args = vec!["--server".to_owned(), ".".to_owned()];
+        let mut config = ServerConfig::default();
+        let _ = apply_long_form_args(&args, &mut config);
+        assert_eq!(config.write.zero_copy_policy, fast_io::ZeroCopyPolicy::Auto);
+    }
+
+    // Byte-identical wire-transcript gate: the SEND_ZC writer substitutes the
+    // socket write of the same framed buffer, so the bytes the peer receives
+    // must be identical WITH (`Enabled`) and WITHOUT (`Auto`) `--zero-copy`.
+    // Drives a payload larger than the SEND_ZC dispatch threshold through
+    // `daemon_socket_writer` over a loopback TCP pair under each policy and
+    // asserts the received bytes match exactly. On a kernel without SEND_ZC
+    // both policies use the plain writer, which is the byte-identical baseline;
+    // on a SEND_ZC kernel the `Enabled` bytes must still match `Auto` exactly.
+    #[cfg(unix)]
+    #[test]
+    fn daemon_socket_writer_is_byte_identical_across_policies() {
+        use std::io::{Read, Write};
+        use std::net::{TcpListener, TcpStream};
+
+        fn transcript(policy: fast_io::ZeroCopyPolicy, payload: &[u8]) -> Vec<u8> {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
+            let addr = listener.local_addr().expect("local addr");
+            let payload_owned = payload.to_vec();
+
+            let sender = std::thread::spawn(move || {
+                let write_stream = TcpStream::connect(addr).expect("connect");
+                let mut writer = daemon_socket_writer(write_stream, policy);
+                writer.write_all(&payload_owned).expect("write payload");
+                writer.flush().expect("flush");
+                // Drop closes the socket so the reader sees EOF.
+            });
+
+            let (mut peer, _) = listener.accept().expect("accept");
+            let mut received = Vec::new();
+            peer.read_to_end(&mut received).expect("read to end");
+            sender.join().expect("sender thread");
+            received
+        }
+
+        // 256 KiB - above the 16 KiB / 4 KiB SEND_ZC dispatch thresholds and
+        // the 64 KiB frame buffer, so the write spans multiple submissions.
+        let payload: Vec<u8> = (0..256 * 1024).map(|i| (i % 251) as u8).collect();
+
+        let auto = transcript(fast_io::ZeroCopyPolicy::Auto, &payload);
+        let enabled = transcript(fast_io::ZeroCopyPolicy::Enabled, &payload);
+
+        assert_eq!(auto, payload, "default (Auto) transcript must equal input");
+        assert_eq!(
+            enabled, auto,
+            "SEND_ZC (--zero-copy) transcript must be byte-identical to the default path"
+        );
+    }
+
     // UTS-15.g: the daemon arg parser must fail loud on a client-only batch
     // flag instead of silently dropping it. Upstream rsync at
     // `options.c:1444-1449` emits `rsync: <BAD>: <err> (in daemon mode)` and

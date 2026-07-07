@@ -46,6 +46,17 @@ iconv = ["core/iconv", "protocol/iconv"]
 # in `docs/design/lsm-seccomp-allowlist.md` completes. No-op on non-Linux
 # (the dependency is `cfg(target_os = "linux")`-gated).
 daemon-seccomp = ["dep:seccompiler"]
+# Opt-in (default-off): let the daemon-sender's socket write side dispatch
+# io_uring `IORING_OP_SEND_ZC` when the client sends `--zero-copy` and the
+# running kernel advertises the opcode. Forwards the `iouring-send-zc` group
+# (which pulls `io_uring`) into `fast_io`. Default builds keep io_uring OUT of
+# the daemon's dependency graph, so `socket_writer_from_fd_zero_copy` resolves
+# to the fallback that degrades `--zero-copy` to the plain socket write path -
+# byte- and behavior-identical to the pre-feature daemon. On non-Linux the
+# `io-uring` crate dependency is target-gated, so enabling this feature there is
+# a no-op that still degrades to the plain writer. See
+# docs/design/iouring-send-zc.md for the buffer-lifetime contract.
+daemon-zero-copy = ["fast_io/iouring-send-zc"]
 # macOS-only, default-off: source accepted connections in the daemon accept
 # loop from a `kqueue(2)` `EVFILT_READ` readiness wait instead of the portable
 # non-blocking-accept-plus-50ms-sleep busy-poll. Event-driven (parks in the
