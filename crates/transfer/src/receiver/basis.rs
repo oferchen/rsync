@@ -225,18 +225,91 @@ fn generate_basis_signature(
     };
 
     let parallel = parallel_checksum_enabled();
-    match compute_basis_signature(
+
+    // Large regular baseses read the whole file block-by-block to hash it. A
+    // raw `File` costs one read syscall per block (default block ~700 bytes),
+    // so a multi-GB basis issues millions of syscalls. Memory-mapping the basis
+    // replaces those syscalls with demand-paged access while reading the exact
+    // same bytes in the same order - the per-block rolling and strong sums, and
+    // therefore the wire signature and the resulting delta, are byte-identical.
+    // Small baseses stay on the buffered path (mmap setup is not worth it) and
+    // any mmap failure (NFS/FUSE/procfs, ENOMEM, non-regular file) falls back
+    // to the raw `File` reader.
+    #[cfg(unix)]
+    let signature = if basis_size >= MMAP_BASIS_THRESHOLD_BYTES {
+        match fast_io::MmapReader::from_file(basis_file) {
+            Ok(mapped) => {
+                let _ = mapped.advise_sequential();
+                compute_basis_signature(
+                    mapped,
+                    basis_size,
+                    layout,
+                    config.checksum_algorithm,
+                    parallel,
+                )
+            }
+            Err(_) => match reopen_basis(&basis_path) {
+                Some(file) => compute_basis_signature(
+                    file,
+                    basis_size,
+                    layout,
+                    config.checksum_algorithm,
+                    parallel,
+                ),
+                None => return BasisFileResult::EMPTY,
+            },
+        }
+    } else {
+        compute_basis_signature(
+            basis_file,
+            basis_size,
+            layout,
+            config.checksum_algorithm,
+            parallel,
+        )
+    };
+
+    #[cfg(not(unix))]
+    let signature = compute_basis_signature(
         basis_file,
         basis_size,
         layout,
         config.checksum_algorithm,
         parallel,
-    ) {
+    );
+
+    match signature {
         Ok(sig) => BasisFileResult {
             signature: Some(sig),
             basis_path: Some(basis_path),
         },
         Err(_) => BasisFileResult::EMPTY,
+    }
+}
+
+/// Minimum basis-file size at which the receiver memory-maps the basis for
+/// signature hashing instead of reading it through a raw `File`.
+///
+/// Matches `fast_io::MmapReader`'s own `MMAP_THRESHOLD` (64 KiB). Below this the
+/// buffered read wins because mmap setup and page-fault overhead outweigh the
+/// saved syscalls; above it the syscall-per-block cost dominates. The choice is
+/// a pure local performance knob: the computed signature is byte-identical
+/// either way, so it is never negotiated or sent over the wire.
+#[cfg(unix)]
+const MMAP_BASIS_THRESHOLD_BYTES: u64 = 64 * 1024;
+
+/// Re-opens a basis file through the same hardened, symlink-refusing open used
+/// for the original lookup, so the mmap fallback path never re-introduces a
+/// symlinked-basename window. Returns `None` if the file can no longer be
+/// opened as a regular file, in which case the caller treats the basis as
+/// absent and falls back to whole-file transfer.
+#[cfg(unix)]
+fn reopen_basis(path: &std::path::Path) -> Option<fs::File> {
+    let file = fast_io::open_basis_nofollow(path).ok()?;
+    if file.metadata().ok()?.is_file() {
+        Some(file)
+    } else {
+        None
     }
 }
 
@@ -560,5 +633,135 @@ mod tests {
             try_reference_directories(&rel, &ref_dirs).is_none(),
             "reference-dir lookup must refuse symlinked basename"
         );
+    }
+
+    /// Byte-transparency gate for the default-mmap basis read: the signature
+    /// computed by memory-mapping a large basis (`MmapReader::from_file`) MUST
+    /// be byte-identical to the signature computed by reading the same basis
+    /// through a raw `File`. The signature is what the sender matches against,
+    /// so any divergence between the two read paths would change the delta and
+    /// break interop. Size exceeds `MMAP_BASIS_THRESHOLD_BYTES` so the mmap
+    /// branch is exercised.
+    #[cfg(unix)]
+    #[test]
+    fn mmap_basis_signature_equals_buffered_file_signature() {
+        use std::io::Write;
+
+        let size = (MMAP_BASIS_THRESHOLD_BYTES + 4096) as usize;
+        // Non-trivial, non-repeating bytes so blocks hash distinctly and a
+        // mis-read (wrong offset/length) would surface as a signature diff.
+        let data: Vec<u8> = (0..size).map(|i| ((i * 31 + 7) % 251) as u8).collect();
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("basis.bin");
+        {
+            let mut f = fs::File::create(&path).expect("create basis");
+            f.write_all(&data).expect("write basis");
+            f.flush().expect("flush");
+        }
+
+        let layout = calculate_signature_layout(SignatureLayoutParams::new(
+            size as u64,
+            None,
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        ))
+        .expect("layout");
+
+        let mapped = fast_io::MmapReader::from_file(
+            fast_io::open_basis_nofollow(&path).expect("open basis"),
+        )
+        .expect("mmap basis");
+        let via_mmap =
+            compute_basis_signature(mapped, size as u64, layout, SignatureAlgorithm::Md4, false)
+                .expect("mmap signature");
+
+        let file = fast_io::open_basis_nofollow(&path).expect("open basis");
+        let via_file =
+            compute_basis_signature(file, size as u64, layout, SignatureAlgorithm::Md4, false)
+                .expect("file signature");
+
+        assert_eq!(
+            via_mmap, via_file,
+            "mmap basis signature diverged from buffered-file signature",
+        );
+
+        // Also assert against the parallel path so the mmap read composes with
+        // both signature generators used in production.
+        let mapped_par = fast_io::MmapReader::from_file(
+            fast_io::open_basis_nofollow(&path).expect("open basis"),
+        )
+        .expect("mmap basis");
+        let via_mmap_parallel = compute_basis_signature(
+            mapped_par,
+            size as u64,
+            layout,
+            SignatureAlgorithm::Md4,
+            true,
+        )
+        .expect("mmap parallel signature");
+        assert_eq!(
+            via_mmap_parallel, via_file,
+            "mmap parallel basis signature diverged from buffered-file signature",
+        );
+    }
+
+    /// End-to-end check that `generate_basis_signature` (the production entry
+    /// that now defaults to mmap for large baseses) yields the same signature
+    /// the raw-`File` path produces. Guards against the dispatch wrapper picking
+    /// a divergent branch.
+    #[cfg(unix)]
+    #[test]
+    fn generate_basis_signature_mmap_default_matches_raw_file() {
+        use std::io::Write;
+
+        let size = (MMAP_BASIS_THRESHOLD_BYTES + 1234) as usize;
+        let data: Vec<u8> = (0..size).map(|i| ((i * 17 + 3) % 251) as u8).collect();
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("basis.bin");
+        {
+            let mut f = fs::File::create(&path).expect("create basis");
+            f.write_all(&data).expect("write basis");
+            f.flush().expect("flush");
+        }
+
+        let cfg = SignatureGenerationConfig {
+            protocol: ProtocolVersion::NEWEST,
+            checksum_length: NonZeroU8::new(16).unwrap(),
+            checksum_algorithm: SignatureAlgorithm::Md4,
+        };
+
+        // Production path (mmap default engaged because size >= threshold).
+        let via_default = generate_basis_signature(
+            fast_io::open_basis_nofollow(&path).expect("open basis"),
+            size as u64,
+            path.clone(),
+            cfg,
+        );
+
+        // Reference: hash the same bytes straight through a raw `File`.
+        let layout = calculate_signature_layout(SignatureLayoutParams::new(
+            size as u64,
+            None,
+            ProtocolVersion::NEWEST,
+            NonZeroU8::new(16).unwrap(),
+        ))
+        .expect("layout");
+        let via_raw = compute_basis_signature(
+            fast_io::open_basis_nofollow(&path).expect("open basis"),
+            size as u64,
+            layout,
+            SignatureAlgorithm::Md4,
+            parallel_checksum_enabled(),
+        )
+        .expect("raw signature");
+
+        assert_eq!(
+            via_default.signature.as_ref(),
+            Some(&via_raw),
+            "generate_basis_signature mmap-default diverged from raw-file signature",
+        );
+        assert_eq!(via_default.basis_path.as_deref(), Some(path.as_path()));
     }
 }

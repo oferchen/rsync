@@ -38,6 +38,15 @@ impl MmapReader {
     /// On non-Unix platforms, the file is read entirely into a buffer.
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         let file = File::open(path)?;
+        Self::from_file(file)
+    }
+
+    /// Reads an already-open file handle into memory.
+    ///
+    /// Mirror of the Unix `MmapReader::from_file` API so callers can share one
+    /// code path across platforms. On non-Unix the contents are buffered into a
+    /// `Vec` instead of memory-mapped.
+    pub fn from_file(file: File) -> io::Result<Self> {
         let size = file.metadata()?.len();
         let mut reader = BufReader::new(file);
         let mut data = Vec::with_capacity(size as usize);
