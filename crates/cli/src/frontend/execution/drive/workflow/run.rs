@@ -901,7 +901,7 @@ where
         link_destinations,
         #[cfg(all(any(unix, windows), feature = "acl"))]
         preserve_acls,
-        #[cfg(all(unix, feature = "xattr"))]
+        #[cfg(all(any(unix, windows), feature = "xattr"))]
         xattrs: xattrs.unwrap_or(false),
         skip_compress_list,
         itemize_changes,

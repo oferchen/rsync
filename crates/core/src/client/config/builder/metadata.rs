@@ -9,8 +9,10 @@ impl ClientConfigBuilder {
         self
     }
 
-    #[cfg(all(unix, feature = "xattr"))]
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
     /// Enables or disables extended attribute preservation for the transfer.
+    ///
+    /// On Windows `-X` maps onto NTFS Alternate Data Streams.
     #[must_use]
     #[doc(alias = "--xattrs")]
     #[doc(alias = "-X")]
@@ -19,7 +21,7 @@ impl ClientConfigBuilder {
         self
     }
 
-    #[cfg(not(all(unix, feature = "xattr")))]
+    #[cfg(not(all(any(unix, windows), feature = "xattr")))]
     /// No-op on platforms without xattr support.
     #[must_use]
     pub const fn xattrs(self, _preserve: bool) -> Self {

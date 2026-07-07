@@ -141,7 +141,10 @@ impl ClientConfig {
     }
 
     /// Reports whether extended attributes should be preserved.
-    #[cfg(all(unix, feature = "xattr"))]
+    ///
+    /// On Windows this maps `-X` onto NTFS Alternate Data Streams, so the
+    /// accessor must honour the stored flag there too - not just on Unix.
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
     #[must_use]
     #[doc(alias = "--xattrs")]
     #[doc(alias = "-X")]
@@ -150,7 +153,7 @@ impl ClientConfig {
     }
 
     /// Always returns `false` on platforms without xattr support.
-    #[cfg(not(all(unix, feature = "xattr")))]
+    #[cfg(not(all(any(unix, windows), feature = "xattr")))]
     #[must_use]
     pub const fn preserve_xattrs(&self) -> bool {
         false

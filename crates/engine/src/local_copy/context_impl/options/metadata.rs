@@ -25,8 +25,7 @@ impl<'a> CopyContext<'a> {
         self.options.acls_enabled()
     }
 
-    #[cfg(unix)]
-    #[cfg(all(unix, feature = "xattr"))]
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
     pub(super) const fn xattrs_enabled(&self) -> bool {
         self.options.preserve_xattrs()
     }

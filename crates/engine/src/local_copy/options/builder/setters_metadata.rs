@@ -157,7 +157,7 @@ impl LocalCopyOptionsBuilder {
     }
 
     /// Enables extended attribute preservation.
-    #[cfg(all(unix, feature = "xattr"))]
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
     #[must_use]
     pub fn preserve_xattrs(mut self, enabled: bool) -> Self {
         self.preserve_xattrs = enabled;
@@ -165,7 +165,7 @@ impl LocalCopyOptionsBuilder {
     }
 
     /// Alias for `preserve_xattrs` for rsync compatibility.
-    #[cfg(all(unix, feature = "xattr"))]
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
     #[must_use]
     pub fn xattrs(mut self, enabled: bool) -> Self {
         self.preserve_xattrs = enabled;

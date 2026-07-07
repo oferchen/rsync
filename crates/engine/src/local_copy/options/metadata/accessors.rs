@@ -179,14 +179,21 @@ pub(super) fn is_effective_root() -> bool {
     false
 }
 
-#[cfg(all(unix, feature = "xattr"))]
+#[cfg(all(any(unix, windows), feature = "xattr"))]
 impl LocalCopyOptions {
     /// Reports whether extended attribute preservation has been requested.
+    ///
+    /// On Windows the "extended attributes" surface is NTFS Alternate Data
+    /// Streams; the Windows `CopyFileExW` fast path consults this to decide
+    /// whether the streams the kernel copied must be stripped afterwards.
     #[must_use]
     pub const fn preserve_xattrs(&self) -> bool {
         self.preserve_xattrs
     }
+}
 
+#[cfg(all(unix, feature = "xattr"))]
+impl LocalCopyOptions {
     /// Reports whether NFSv4 ACL preservation has been requested.
     #[must_use]
     pub const fn preserve_nfsv4_acls(&self) -> bool {

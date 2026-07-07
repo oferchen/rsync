@@ -254,7 +254,7 @@ pub struct ClientConfig {
     pub(super) embedded_ssh_config: Option<EmbeddedSshOptions>,
     #[cfg(all(any(unix, windows), feature = "acl"))]
     pub(super) preserve_acls: bool,
-    #[cfg(all(unix, feature = "xattr"))]
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
     pub(super) preserve_xattrs: bool,
 }
 
@@ -427,7 +427,7 @@ impl Default for ClientConfig {
             embedded_ssh_config: None,
             #[cfg(all(any(unix, windows), feature = "acl"))]
             preserve_acls: false,
-            #[cfg(all(unix, feature = "xattr"))]
+            #[cfg(all(any(unix, windows), feature = "xattr"))]
             preserve_xattrs: false,
         }
     }

@@ -220,7 +220,7 @@ pub struct LocalCopyOptions {
     pub(super) timeout: Option<Duration>,
     pub(super) contimeout: Option<Duration>,
     pub(super) stop_at: Option<SystemTime>,
-    #[cfg(all(unix, feature = "xattr"))]
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
     pub(super) preserve_xattrs: bool,
     #[cfg(all(unix, feature = "xattr"))]
     pub(super) preserve_nfsv4_acls: bool,
@@ -350,7 +350,7 @@ impl LocalCopyOptions {
             timeout: None,
             contimeout: None,
             stop_at: None,
-            #[cfg(all(unix, feature = "xattr"))]
+            #[cfg(all(any(unix, windows), feature = "xattr"))]
             preserve_xattrs: false,
             #[cfg(all(unix, feature = "xattr"))]
             preserve_nfsv4_acls: false,

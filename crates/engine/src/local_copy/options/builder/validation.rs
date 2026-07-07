@@ -191,7 +191,7 @@ impl LocalCopyOptionsBuilder {
             timeout: self.timeout,
             contimeout: self.contimeout,
             stop_at: self.stop_at,
-            #[cfg(all(unix, feature = "xattr"))]
+            #[cfg(all(any(unix, windows), feature = "xattr"))]
             preserve_xattrs: self.preserve_xattrs,
             #[cfg(all(unix, feature = "xattr"))]
             preserve_nfsv4_acls: self.preserve_nfsv4_acls,
