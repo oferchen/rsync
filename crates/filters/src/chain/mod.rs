@@ -416,10 +416,18 @@ impl FilterChain {
                 }
             }
 
+            // upstream: exclude.c:200-228 add_rule - FILTRULE_ABS_PATH keeps a
+            // leading `/` anchored to the transfer root, so a dir-merge declared
+            // with the `/` modifier skips the merge-directory re-anchoring.
+            let reanchor_dir = if config.is_anchor_root() {
+                None
+            } else {
+                rel_dir_prefix.as_deref()
+            };
             let mut modified_rules: Vec<FilterRule> = rules
                 .into_iter()
                 .map(|rule| config.apply_modifiers(rule))
-                .map(|rule| reanchor_merge_rule(rule, rel_dir_prefix.as_deref()))
+                .map(|rule| reanchor_merge_rule(rule, reanchor_dir))
                 .map(|rule| apply_merge_implicit_sender_side(rule, delete_excluded))
                 .collect();
 
@@ -472,7 +480,15 @@ impl FilterChain {
                             .with_cvs_mode(descriptor.cvs_mode)
                             .with_inherit(true)
                             .with_sender_only(descriptor.sender_only)
-                            .with_receiver_only(descriptor.receiver_only),
+                            .with_receiver_only(descriptor.receiver_only)
+                            // upstream: exclude.c - FILTRULE_NO_PREFIXES / ABS_PATH
+                            // from the `:`-rule template propagate to the
+                            // registered per-directory config.
+                            .with_no_prefixes(
+                                descriptor.no_prefixes,
+                                descriptor.no_prefixes_include,
+                            )
+                            .with_anchor_root(descriptor.abs_path),
                     );
                 }
                 pushed_count += self.load_inline_dir_merge(directory, depth, &descriptor)?;
@@ -520,7 +536,17 @@ impl FilterChain {
             }
         };
 
-        let rules = if descriptor.cvs_mode {
+        // upstream: exclude.c:1116-1133 - a dir-merge template carrying
+        // FILTRULE_NO_PREFIXES (`-`/`+`) skips the short-prefix dispatch and
+        // consumes each line as a literal exclude (or include for `+`).
+        let rules = if descriptor.no_prefixes {
+            parse_rules_no_prefixes(
+                &content,
+                &merge_path,
+                descriptor.no_prefixes_include,
+                descriptor.cvs_mode,
+            )
+        } else if descriptor.cvs_mode {
             parse_cvs_ignore_tokens(&content)
         } else {
             match parse_rules(&content, &merge_path) {
@@ -719,6 +745,15 @@ struct InlineDirMerge {
     sender_only: bool,
     /// Receiver-side counterpart of [`Self::sender_only`] (`r` modifier).
     receiver_only: bool,
+    /// `-`/`+` modifier (FILTRULE_NO_PREFIXES): each merged line is a literal
+    /// pattern rather than a prefixed rule.
+    no_prefixes: bool,
+    /// Pairs with [`Self::no_prefixes`]: `true` selects the `+` (include)
+    /// variant, `false` the `-` (exclude) variant.
+    no_prefixes_include: bool,
+    /// `/` modifier (FILTRULE_ABS_PATH): anchor merged rules to the transfer
+    /// root rather than the merge file's own directory.
+    abs_path: bool,
 }
 
 /// Splits parsed rules into ordinary entries plus dir-merge descriptors.
@@ -769,12 +804,16 @@ fn split_dir_merge_rules(rules: Vec<FilterRule>) -> (Vec<FilterRule>, Vec<Inline
     let mut dir_merges = Vec::new();
     for rule in rules {
         if matches!(rule.action(), FilterAction::DirMerge) {
+            let (no_prefixes, no_prefixes_include) = rule.no_prefixes();
             dir_merges.push(InlineDirMerge {
                 filename: rule.pattern().to_owned(),
                 cvs_mode: rule.is_cvs_mode(),
                 no_inherit: rule.is_no_inherit(),
                 sender_only: rule.applies_to_sender() && !rule.applies_to_receiver(),
                 receiver_only: rule.applies_to_receiver() && !rule.applies_to_sender(),
+                no_prefixes,
+                no_prefixes_include,
+                abs_path: rule.is_abs_path(),
             });
         } else {
             keep.push(rule);

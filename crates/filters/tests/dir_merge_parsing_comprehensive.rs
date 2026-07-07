@@ -119,12 +119,31 @@ fn dir_merge_with_space_separator() {
 }
 
 #[test]
-fn dir_merge_no_separator() {
+fn dir_merge_requires_separator_before_pattern() {
     let dir = TempDir::new().unwrap();
     let rules_path = dir.path().join("rules.txt");
 
-    // No separator - pattern starts immediately after modifiers
+    // upstream: exclude.c:1226 - without a separator, the modifier loop reads
+    // `.` (after the `n` modifier) as another modifier character and rejects
+    // it. rsync 3.4.4 emits:
+    //   invalid modifier '.' at position 2 in filter rule: :n.rsync-filter
     fs::write(&rules_path, ":n.rsync-filter\n").unwrap();
+
+    let err = filters::merge::read_rules(&rules_path).unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("invalid modifier '.' at position 2 in filter rule: :n.rsync-filter"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn dir_merge_with_separator_parses_no_inherit() {
+    let dir = TempDir::new().unwrap();
+    let rules_path = dir.path().join("rules.txt");
+
+    // The space-separated form is the valid spelling: `:n .rsync-filter`.
+    fs::write(&rules_path, ":n .rsync-filter\n").unwrap();
 
     let rules = filters::merge::read_rules(&rules_path).unwrap();
     assert_eq!(rules.len(), 1);

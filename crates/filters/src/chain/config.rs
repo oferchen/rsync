@@ -127,6 +127,13 @@ impl DirMergeConfig {
         self
     }
 
+    /// Returns whether patterns are anchored to the transfer root (the `/`
+    /// FILTRULE_ABS_PATH modifier on the dir-merge rule).
+    #[must_use]
+    pub(super) const fn is_anchor_root(&self) -> bool {
+        self.anchor_root
+    }
+
     /// Marks parsed rules as perishable.
     #[must_use]
     pub const fn with_perishable(mut self, perishable: bool) -> Self {

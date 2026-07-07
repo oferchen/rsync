@@ -29,11 +29,15 @@ mod include_rules {
     }
 
     #[test]
-    fn short_form_include_no_space() {
-        let rules = parse_rules("+*.txt", Path::new("test")).unwrap();
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].action(), FilterAction::Include);
-        assert_eq!(rules[0].pattern(), "*.txt");
+    fn short_form_include_no_space_errors() {
+        // upstream: exclude.c:1226 - a short-prefix rule requires a separator
+        // before the pattern. `+*.txt` reads `*` as a modifier and rejects it:
+        //   invalid modifier '*' at position 1 in filter rule: +*.txt
+        let err = parse_rules("+*.txt", Path::new("test")).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid modifier '*'"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -169,11 +173,14 @@ mod exclude_rules {
     }
 
     #[test]
-    fn short_form_exclude_no_space() {
-        let rules = parse_rules("-*.bak", Path::new("test")).unwrap();
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].action(), FilterAction::Exclude);
-        assert_eq!(rules[0].pattern(), "*.bak");
+    fn short_form_exclude_no_space_errors() {
+        // upstream: exclude.c:1226 - `-*.bak` reads `*` as a modifier:
+        //   invalid modifier '*' at position 1 in filter rule: -*.bak
+        let err = parse_rules("-*.bak", Path::new("test")).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid modifier '*'"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -523,10 +530,16 @@ mod hide_show_rules {
     }
 
     #[test]
-    fn hide_long_form_case_insensitive() {
-        let rules = parse_rules("HIDE *.secret", Path::new("test")).unwrap();
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].action(), FilterAction::Exclude);
+    fn hide_long_form_uppercase_errors() {
+        // upstream long-form keywords are lowercase only. `HIDE *.secret` is
+        // parsed as the `H` (hide) short prefix followed by an invalid `I`
+        // modifier, matching rsync 3.4.4:
+        //   invalid modifier 'I' at position 1 in filter rule: HIDE *.secret
+        let err = parse_rules("HIDE *.secret", Path::new("test")).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid modifier 'I'"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -549,10 +562,15 @@ mod hide_show_rules {
     }
 
     #[test]
-    fn show_long_form_case_insensitive() {
-        let rules = parse_rules("SHOW *.public", Path::new("test")).unwrap();
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].action(), FilterAction::Include);
+    fn show_long_form_uppercase_errors() {
+        // upstream: `SHOW *.public` parses as the `S` (show) short prefix then
+        // an invalid `H` modifier:
+        //   invalid modifier 'H' at position 1 in filter rule: SHOW *.public
+        let err = parse_rules("SHOW *.public", Path::new("test")).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid modifier 'H'"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -651,10 +669,15 @@ mod protect_risk_rules {
     }
 
     #[test]
-    fn protect_long_form_case_insensitive() {
-        let rules = parse_rules("PROTECT /important", Path::new("test")).unwrap();
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].action(), FilterAction::Protect);
+    fn protect_long_form_uppercase_errors() {
+        // upstream: `PROTECT /important` parses as the `P` (protect) short prefix
+        // then an invalid `R` modifier:
+        //   invalid modifier 'R' at position 1 in filter rule: PROTECT /important
+        let err = parse_rules("PROTECT /important", Path::new("test")).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid modifier 'R'"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
@@ -673,10 +696,15 @@ mod protect_risk_rules {
     }
 
     #[test]
-    fn risk_long_form_case_insensitive() {
-        let rules = parse_rules("RISK /temp", Path::new("test")).unwrap();
-        assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].action(), FilterAction::Risk);
+    fn risk_long_form_uppercase_errors() {
+        // upstream: `RISK /temp` parses as the `R` (risk) short prefix then an
+        // invalid `I` modifier:
+        //   invalid modifier 'I' at position 1 in filter rule: RISK /temp
+        let err = parse_rules("RISK /temp", Path::new("test")).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid modifier 'I'"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

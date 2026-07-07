@@ -6,6 +6,7 @@ use std::path::Path;
 use core::client::{DirMergeEnforcedKind, DirMergeOptions, FilterRuleKind, FilterRuleSpec};
 use core::message::{Message, Role};
 use core::rsync_error;
+use protocol::SUPPORTED_PROTOCOL_BOUNDS;
 
 use crate::frontend::defaults::CVS_EXCLUDE_PATTERNS;
 
@@ -37,9 +38,15 @@ pub(crate) fn append_cvs_exclude_rules(
 /// list from these three sources only; the per-directory merge is the
 /// separate `:C` rule.
 pub(crate) fn cvs_default_exclude_rules() -> Result<Vec<FilterRuleSpec>, Message> {
+    // upstream: exclude.c:1350 get_cvs_excludes() - the built-in default_cvsignore()
+    // list is parsed with the perishable template only when `protocol_version >= 30`.
+    // The `-C` rules are assembled at argument-parse time (before negotiation), so
+    // key the gate on the newest protocol oc negotiates with a modern peer
+    // (SUPPORTED_PROTOCOL_BOUNDS.1 == 32), which is always >= 30.
+    let perishable = SUPPORTED_PROTOCOL_BOUNDS.1 >= 30;
     let mut cvs_rules: Vec<FilterRuleSpec> = CVS_EXCLUDE_PATTERNS
         .iter()
-        .map(|pattern| FilterRuleSpec::exclude((*pattern).to_owned()).with_perishable(true))
+        .map(|pattern| FilterRuleSpec::exclude((*pattern).to_owned()).with_perishable(perishable))
         .collect();
 
     // upstream: exclude.c:1393-1402 scopes FILTRULE_CLEAR_LIST ('!') to the
@@ -99,7 +106,12 @@ where
             continue;
         }
 
-        destination.push(FilterRuleSpec::exclude(trimmed.to_owned()).with_perishable(true));
+        // upstream: exclude.c:1355-1357 get_cvs_excludes() - the `$HOME/.cvsignore`
+        // and `$CVSIGNORE` sources are parsed with a plain `rule_template(rflags)`,
+        // NOT the perishable template. Only the built-in `default_cvsignore()`
+        // list (exclude.c:1350) carries FILTRULE_PERISHABLE, so these rules must
+        // not be perishable.
+        destination.push(FilterRuleSpec::exclude(trimmed.to_owned()));
     }
 }
 

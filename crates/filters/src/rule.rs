@@ -75,6 +75,23 @@ pub struct FilterRule {
     /// (sets `FILTRULE_NO_PREFIXES | FILTRULE_WORD_SPLIT | FILTRULE_NO_INHERIT
     /// | FILTRULE_CVS_IGNORE`).
     pub(crate) cvs_mode: bool,
+    /// `/` modifier on a merge / dir-merge rule: FILTRULE_ABS_PATH. Anchors the
+    /// merged rules to the transfer root rather than the merge file's directory.
+    ///
+    /// upstream: exclude.c:1215-1216 - `case '/': rule->rflags |= FILTRULE_ABS_PATH;`
+    pub(crate) abs_path: bool,
+    /// `-`/`+` modifier on a merge / dir-merge rule: FILTRULE_NO_PREFIXES.
+    /// Consumes the merged file's lines as literal patterns instead of running
+    /// them through the prefix dispatch.
+    ///
+    /// upstream: exclude.c:1197-1213 - `case '-'`/`case '+'`.
+    pub(crate) no_prefixes: bool,
+    /// Pairs with [`Self::no_prefixes`] to select the `+` (include) variant.
+    /// When both are set, literal lines become include rules; the `-` variant
+    /// leaves this false and lines become exclude rules.
+    ///
+    /// upstream: exclude.c:1210-1213 - `+` also sets FILTRULE_INCLUDE.
+    pub(crate) no_prefixes_include: bool,
 }
 
 impl FilterRule {
@@ -106,6 +123,9 @@ impl FilterRule {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         }
     }
 
@@ -137,6 +157,9 @@ impl FilterRule {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         }
     }
 
@@ -168,6 +191,9 @@ impl FilterRule {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         }
     }
 
@@ -189,6 +215,9 @@ impl FilterRule {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         }
     }
 
@@ -211,6 +240,9 @@ impl FilterRule {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         }
     }
 
@@ -236,6 +268,9 @@ impl FilterRule {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         }
     }
 
@@ -261,6 +296,9 @@ impl FilterRule {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         }
     }
 
@@ -290,6 +328,9 @@ impl FilterRule {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         }
     }
 
@@ -319,6 +360,9 @@ impl FilterRule {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         }
     }
 
@@ -466,6 +510,43 @@ impl FilterRule {
     #[must_use]
     pub const fn with_cvs_mode(mut self, cvs_mode: bool) -> Self {
         self.cvs_mode = cvs_mode;
+        self
+    }
+
+    /// Returns whether the rule carries the `/` (FILTRULE_ABS_PATH) modifier.
+    ///
+    /// On merge / dir-merge rules this anchors the merged rules to the transfer
+    /// root instead of the merge file's own directory.
+    ///
+    /// upstream: exclude.c:1215-1216 - `case '/'`
+    #[must_use]
+    pub const fn is_abs_path(&self) -> bool {
+        self.abs_path
+    }
+
+    /// Sets the `/` (FILTRULE_ABS_PATH) modifier on this rule.
+    #[must_use]
+    pub const fn with_abs_path(mut self, abs_path: bool) -> Self {
+        self.abs_path = abs_path;
+        self
+    }
+
+    /// Returns whether the rule carries the `-`/`+` (FILTRULE_NO_PREFIXES)
+    /// modifier and, via the second element, whether it is the `+` (include)
+    /// variant.
+    ///
+    /// upstream: exclude.c:1197-1213 - `case '-'`/`case '+'`
+    #[must_use]
+    pub const fn no_prefixes(&self) -> (bool, bool) {
+        (self.no_prefixes, self.no_prefixes_include)
+    }
+
+    /// Sets the `-`/`+` (FILTRULE_NO_PREFIXES) modifier on this rule. `include`
+    /// selects the `+` variant (literal includes); otherwise literal excludes.
+    #[must_use]
+    pub const fn with_no_prefixes(mut self, no_prefixes: bool, include: bool) -> Self {
+        self.no_prefixes = no_prefixes;
+        self.no_prefixes_include = include;
         self
     }
 

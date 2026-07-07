@@ -31,6 +31,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let mut compiled = CompiledRule::new(rule).unwrap();
         let still_active = compiled.clear_sides(true, false);
@@ -52,6 +55,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let mut compiled = CompiledRule::new(rule).unwrap();
         let still_active = compiled.clear_sides(false, true);
@@ -73,6 +79,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let mut compiled = CompiledRule::new(rule).unwrap();
         let still_active = compiled.clear_sides(true, true);
@@ -101,6 +110,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let mut rules = vec![CompiledRule::new(rule).unwrap()];
         apply_clear_rule(&mut rules, false, false);
@@ -120,6 +132,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let mut rules = vec![CompiledRule::new(rule).unwrap()];
         apply_clear_rule(&mut rules, true, false);
