@@ -61,7 +61,7 @@ use super::config::IocpConfig;
 use crate::page_aligned::{PageAlignedBuffer, round_up_to_page};
 
 use buffer::BatchBuffer;
-use writer::{close_overlapped_handle, reopen_overlapped, submit_write_batch};
+use writer::{OverlappedHandle, reopen_overlapped, submit_write_batch};
 
 pub use buffer::{bounce_copies_avoided, reset_bounce_copies_avoided_for_test};
 pub use completion::{
@@ -116,10 +116,10 @@ struct ActiveFile {
     /// version - returned by [`IocpDiskBatch::commit_file`] so callers can
     /// rename/finalize via the same handle they passed in.
     file: File,
-    /// Handle reopened with `FILE_FLAG_OVERLAPPED` for IOCP submission. Owned
-    /// by the active-file slot and closed when the file is committed or a
-    /// subsequent `begin_file` rotates it out.
-    overlapped_handle: HANDLE,
+    /// Handle reopened with `FILE_FLAG_OVERLAPPED` for IOCP submission. The
+    /// RAII guard closes the handle on drop, so committing the file or a
+    /// subsequent `begin_file` that rotates the slot out cannot leak it.
+    overlapped_handle: OverlappedHandle,
     /// Cumulative bytes successfully written and reaped from the port.
     bytes_written: u64,
     /// Per-file completion key associated with the port.
@@ -200,10 +200,9 @@ impl IocpDiskBatch {
         let key = self.next_completion_key;
         self.next_completion_key = self.next_completion_key.wrapping_add(1).max(1);
 
-        if let Err(e) = self.port.associate(overlapped_handle, key) {
-            close_overlapped_handle(overlapped_handle);
-            return Err(e);
-        }
+        // On failure `overlapped_handle` drops here, closing the reopened
+        // handle - no manual CloseHandle needed on the error path.
+        self.port.associate(overlapped_handle.raw(), key)?;
 
         self.current_file = Some(ActiveFile {
             file,
@@ -292,14 +291,16 @@ impl IocpDiskBatch {
             #[allow(unsafe_code)]
             let ok = unsafe { FlushFileBuffers(raw) };
             if ok != TRUE {
-                let err = io::Error::last_os_error();
-                close_overlapped_handle(active.overlapped_handle);
-                return Err(err);
+                // `active` (including its overlapped-handle RAII guard) drops
+                // on this early return, closing the reopened handle.
+                return Err(io::Error::last_os_error());
             }
         }
 
-        close_overlapped_handle(active.overlapped_handle);
-        Ok((active.file, bytes_written))
+        // Destructure so `overlapped_handle` drops (closing the reopened
+        // handle) while `file` is returned to the caller for finalization.
+        let ActiveFile { file, .. } = active;
+        Ok((file, bytes_written))
     }
 
     /// Returns the bytes successfully written to the current file (drained).
@@ -349,7 +350,7 @@ impl IocpDiskBatch {
         let mut written = 0usize;
         let result = submit_write_batch(
             &self.port,
-            active.overlapped_handle,
+            active.overlapped_handle.raw(),
             &self.buffer.as_slice()[..len],
             base_offset,
             chunk_size,
@@ -370,10 +371,9 @@ impl IocpDiskBatch {
     /// new file mid-stream (the previous file's data has already been
     /// flushed by the caller of `flush_current`).
     fn finalize_current_file(&mut self) {
-        if let Some(active) = self.current_file.take() {
-            close_overlapped_handle(active.overlapped_handle);
-            // `active.file` drops here, closing the original handle.
-        }
+        // Dropping the taken `ActiveFile` closes both the overlapped handle
+        // (via its RAII guard) and the original `File`.
+        drop(self.current_file.take());
     }
 }
 
