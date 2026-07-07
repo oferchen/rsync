@@ -641,7 +641,7 @@ jobs:
         shell: pwsh
         run: |
           $env:OC_RSYNC_PACKAGE_DEFAULT_FEATURES = "0"
-          $env:OC_RSYNC_PACKAGE_FEATURES = "zstd lz4 iconv"
+          $env:OC_RSYNC_PACKAGE_FEATURES = "zstd lz4 iconv xattr acl"
           cargo xtask package --tarball --tarball-target x86_64-pc-windows-msvc --profile dist
 
       - name: Rename tarball with toolchain
