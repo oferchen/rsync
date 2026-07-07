@@ -1,7 +1,7 @@
 //! Unit tests for [`DeleteContext`], [`EmitterTiming`], and the
 //! cursor-channel drain protocol.
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::fs::File;
 use std::io;
@@ -11,7 +11,7 @@ use std::sync::Arc;
 use protocol::flist::FileEntry;
 use tempfile::TempDir;
 
-use super::super::emitter::{DeleteEvent, RecordingDeleteFs};
+use super::super::emitter::RecordingDeleteFs;
 #[cfg(not(feature = "parallel-delete-consumer"))]
 use super::super::error::DeleteError;
 use super::super::plan::DeleteEntryKind;
@@ -214,10 +214,25 @@ fn during_mode_drains_one_directory_through_emitter() {
         .expect("drain succeeds");
     let events = outcome.fs.events();
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].path, dir.join("drop"));
+    // #506: the production emit path now dispatches through the SEC-1.q
+    // dirfd anchor on unix, so `RecordingDeleteFs` records the leaf-only
+    // name; the path-based fallback records the absolute path. Either way
+    // the entry identified is "drop" and the stats/outcome are identical.
+    assert_eq!(recorded_leaf(&events[0].path), OsStr::new("drop"));
     assert_eq!(events[0].kind, DeleteEntryKind::File);
     assert_eq!(outcome.stats.files, 1);
     assert_eq!(outcome.exit_code, 0);
+}
+
+/// Returns the leaf name of a `RecordingDeleteFs` event path.
+///
+/// The production emit path dispatches through the SEC-1.q dirfd anchor on
+/// unix (recording the leaf only) and through the path-based methods on the
+/// fallback and non-unix (recording the absolute path). `file_name()`
+/// normalises both to the leaf so assertions stay mechanism-agnostic while
+/// still pinning WHICH entry was deleted (Rule 9).
+fn recorded_leaf(path: &Path) -> &OsStr {
+    path.file_name().unwrap_or(path.as_os_str())
 }
 
 #[test]
@@ -248,9 +263,16 @@ fn before_mode_drains_pre_walk_pass_across_dirs() {
     let outcome = ctx
         .emit_all(RecordingDeleteFs::new())
         .expect("drain succeeds");
-    let names: Vec<PathBuf> = outcome.fs.events().iter().map(|e| e.path.clone()).collect();
-    assert!(names.iter().any(|p| p == &a.join("x")));
-    assert!(names.iter().any(|p| p == &b.join("y")));
+    // #506: leaf-only under the dirfd anchor, absolute under the path
+    // fallback; compare on leaf names so the assertion is mechanism-agnostic.
+    let leaves: Vec<OsString> = outcome
+        .fs
+        .events()
+        .iter()
+        .map(|e| recorded_leaf(&e.path).to_os_string())
+        .collect();
+    assert!(leaves.iter().any(|n| n == OsStr::new("x")));
+    assert!(leaves.iter().any(|n| n == OsStr::new("y")));
     assert_eq!(outcome.stats.files, 2);
 }
 
@@ -348,13 +370,12 @@ fn record_drain_outcome_carries_recorded_events() {
     ctx.begin_directory(make_segment(&[]));
     ctx.publish_plan_for(&dir).unwrap();
     let outcome = ctx.emit_one(RecordingDeleteFs::new()).unwrap();
-    assert_eq!(
-        outcome.fs.events(),
-        vec![DeleteEvent {
-            path: dir.join("victim"),
-            kind: DeleteEntryKind::File,
-        }]
-    );
+    let events = outcome.fs.events();
+    assert_eq!(events.len(), 1);
+    // #506: leaf-only under the SEC-1.q dirfd anchor, absolute under the
+    // path-based fallback; assert the identified entry and kind.
+    assert_eq!(recorded_leaf(&events[0].path), OsStr::new("victim"));
+    assert_eq!(events[0].kind, DeleteEntryKind::File);
 }
 
 /// ATU-4 (#2381): channel-shutdown drain terminates as soon as every
@@ -454,4 +475,111 @@ fn channel_drain_completes_when_worker_panics_mid_send() {
         outcome.stats.files, 1,
         "the survivor file is deleted exactly once"
     );
+}
+
+/// #506 (production wiring): the drain built by `DeleteContext` now attaches
+/// a `DirSandbox` opened at the delete root, so the emitter dispatches every
+/// unlink through the SEC-1.q dirfd-anchored `*_at` syscalls rather than the
+/// TOCTOU-prone path-based `std::fs::remove_*`. `RecordingDeleteFs` records
+/// the leaf-only name for a `*_at` dispatch and the absolute path for the
+/// path-based fallback, so a leaf-only recording proves the anchor is engaged
+/// on the production path this task wires. WHY it matters: without the anchor,
+/// a parent path component swapped for a symlink between plan-time and
+/// unlink-time could redirect the delete outside the destination tree.
+#[cfg(unix)]
+#[test]
+fn production_drain_dispatches_through_dirfd_anchor() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = tmp.path().join("sub");
+    fs::create_dir(&dir).unwrap();
+    touch(&dir, "drop");
+
+    let ctx = DeleteContext::new(dir.clone(), EmitterTiming::During);
+    ctx.observe_directory(dir.clone(), &[]);
+    ctx.begin_directory(make_segment(&[]));
+    ctx.publish_plan_for(&dir).expect("publish plan");
+
+    let outcome = ctx
+        .emit_one(RecordingDeleteFs::new())
+        .expect("drain succeeds");
+    let events = outcome.fs.events();
+    assert_eq!(events.len(), 1);
+    // A bare leaf ("drop", no separators) can only come from the
+    // dirfd-anchored `unlink_file_at`; the path-based fallback would record
+    // the absolute path. This is the load-bearing proof that the production
+    // drain now rides the sandbox.
+    assert_eq!(events[0].path, PathBuf::from("drop"));
+    assert_eq!(events[0].kind, DeleteEntryKind::File);
+    assert_eq!(outcome.stats.files, 1);
+}
+
+/// #506 (TOCTOU regression): the dirfd anchor the production drain attaches
+/// refuses to delete through a parent component that was swapped for a
+/// symlink pointing outside the destination tree. Proven deterministically
+/// by program order (no threads, no sleeps): the emitter opens the delete
+/// root's dirfd when the drain starts, so a later ancestor-symlink swap
+/// cannot redirect the anchored `unlinkat`. Uses the real `RealDeleteFs` so
+/// the live `unlinkat(2)` runs. The out-of-tree sentinel must survive; only
+/// the in-tree leaf may be removed.
+///
+/// Gated off the parallel feature because it drives the sequential
+/// `into_emitter`/`emit_all` API directly to open the dirfd before the swap;
+/// the parallel consumer's equivalent anchor is covered by the DFD tests in
+/// `parallel_consumer.rs`.
+#[cfg(all(unix, not(feature = "parallel-delete-consumer")))]
+#[test]
+fn production_drain_refuses_ancestor_symlink_escape() {
+    use crate::delete::RealDeleteFs;
+    use std::os::unix::fs::symlink;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    // Delete root is `root`; the plan targets `root/victim`.
+    let root = tmp.path().join("root");
+    fs::create_dir(&root).unwrap();
+    let victim = root.join("victim");
+    touch(&root, "victim");
+
+    // Sentinel OUTSIDE the delete tree; a redirected unlink would try to
+    // remove `outside/victim`. It must be untouched.
+    let outside = tmp.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    let sentinel = outside.join("victim");
+    File::create(&sentinel).expect("write sentinel");
+
+    let ctx = DeleteContext::new(root.clone(), EmitterTiming::During);
+    ctx.observe_directory(root.clone(), &[]);
+    ctx.begin_directory(make_segment(&[]));
+    ctx.publish_plan_for(&root).expect("publish plan");
+
+    // Build the emitter (opens the root dirfd), THEN swap the delete root
+    // for a symlink pointing at `outside`. The dirfd captured at build time
+    // pins the real inode; the path `root/victim` now names `outside/victim`
+    // for any path-based resolver, but the anchored unlink is immune.
+    let emitter = ctx
+        .into_emitter(RealDeleteFs)
+        .expect("emitter built with sandbox");
+    assert!(
+        emitter.sandbox().is_some(),
+        "the production drain must attach a DirSandbox at the delete root",
+    );
+
+    fs::rename(&root, tmp.path().join("root.bak")).expect("move real root aside");
+    symlink(&outside, &root).expect("plant root symlink");
+
+    let mut emitter = emitter;
+    emitter.emit_all().expect("drain returns Ok");
+
+    // The out-of-tree sentinel survives: the anchored unlink refused the
+    // symlink redirect.
+    assert!(
+        sentinel.exists(),
+        "outside sentinel must survive; the dirfd anchor refused the ancestor-symlink redirect",
+    );
+    // The real in-tree victim (now under root.bak, since the anchor points
+    // at the original inode) was removed.
+    assert!(
+        !tmp.path().join("root.bak").join("victim").exists(),
+        "the anchored unlink must remove the real in-tree victim",
+    );
+    let _ = victim; // original in-tree path, documented for clarity
 }

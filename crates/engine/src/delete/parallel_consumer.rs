@@ -134,6 +134,14 @@ pub struct ParallelDeleteEmitter<F: DeleteFs> {
     /// consumer falls back to path-based dispatch (the original behaviour).
     #[cfg(unix)]
     sandbox: Option<Arc<DirSandbox>>,
+    /// Absolute root the attached [`DirSandbox`] was opened at, used to
+    /// resolve absolute cohort directory keys (the local-copy cleanup path
+    /// keys cohorts on the absolute destination directory) relative to the
+    /// sandbox root before the per-cohort `openat` walk. `None` for the
+    /// unit-test convention where cohort keys are already relative to the
+    /// root.
+    #[cfg(unix)]
+    sandbox_root: Option<std::path::PathBuf>,
 }
 
 /// Mutex-protected [`CohortBatcher`] paired with a [`Condvar`] for the
@@ -173,6 +181,8 @@ impl<F: DeleteFs + Sync + Send + 'static> ParallelDeleteEmitter<F> {
             shared: Arc::new(SharedBatcher::default()),
             #[cfg(unix)]
             sandbox: None,
+            #[cfg(unix)]
+            sandbox_root: None,
         }
     }
 
@@ -189,6 +199,22 @@ impl<F: DeleteFs + Sync + Send + 'static> ParallelDeleteEmitter<F> {
     #[must_use]
     pub fn with_sandbox(mut self, sandbox: Arc<DirSandbox>) -> Self {
         self.sandbox = Some(sandbox);
+        self
+    }
+
+    /// Attaches a [`DirSandbox`] together with the absolute `root` it was
+    /// opened at, so absolute cohort directory keys resolve relative to the
+    /// root before the per-cohort `openat` walk. Mirrors
+    /// [`super::emitter::DeleteEmitter::with_sandbox_rooted`].
+    #[cfg(unix)]
+    #[must_use]
+    pub fn with_sandbox_rooted(
+        mut self,
+        sandbox: Arc<DirSandbox>,
+        root: std::path::PathBuf,
+    ) -> Self {
+        self.sandbox = Some(sandbox);
+        self.sandbox_root = Some(root);
         self
     }
 
@@ -276,6 +302,10 @@ impl<F: DeleteFs + Sync + Send + 'static> ParallelDeleteEmitter<F> {
         let consumer_sandbox = self.sandbox.clone();
         #[cfg(not(unix))]
         let consumer_sandbox = None::<()>;
+        #[cfg(unix)]
+        let consumer_sandbox_root = self.sandbox_root.clone();
+        #[cfg(not(unix))]
+        let consumer_sandbox_root = None::<()>;
         let fs = self.fs;
         let policy = self.policy;
         let shared = self.shared;
@@ -284,7 +314,15 @@ impl<F: DeleteFs + Sync + Send + 'static> ParallelDeleteEmitter<F> {
         let consumer_shared = Arc::clone(&shared);
         let consumer_handle = std::thread::Builder::new()
             .name("oc-rsync-del-consumer".into())
-            .spawn(move || consumer_loop(consumer_shared, consumer_fs, policy, consumer_sandbox))
+            .spawn(move || {
+                consumer_loop(
+                    consumer_shared,
+                    consumer_fs,
+                    policy,
+                    consumer_sandbox,
+                    consumer_sandbox_root,
+                )
+            })
             .map_err(|err| {
                 io::Error::other(format!(
                     "failed to spawn parallel delete consumer thread: {err}"
@@ -329,6 +367,8 @@ fn consumer_loop<F: DeleteFs + Sync + Send>(
     policy: EmitterErrorPolicy,
     #[cfg(unix)] sandbox: Option<Arc<DirSandbox>>,
     #[cfg(not(unix))] _sandbox: Option<()>,
+    #[cfg(unix)] sandbox_root: Option<std::path::PathBuf>,
+    #[cfg(not(unix))] _sandbox_root: Option<()>,
 ) -> io::Result<ConsumerSummary> {
     let mut summary = ConsumerSummary::default();
     loop {
@@ -344,12 +384,17 @@ fn consumer_loop<F: DeleteFs + Sync + Send>(
             let sandbox_ref = sandbox.as_ref();
             #[cfg(not(unix))]
             let sandbox_ref = None::<()>;
+            #[cfg(unix)]
+            let sandbox_root_ref = sandbox_root.as_deref();
+            #[cfg(not(unix))]
+            let sandbox_root_ref = None::<()>;
             dispatch_cohort(
                 &fs,
                 &policy,
                 entry.key.path(),
                 &entry.ops,
                 sandbox_ref,
+                sandbox_root_ref,
                 &mut summary,
             )?;
         }
@@ -392,21 +437,30 @@ fn dispatch_cohort<F: DeleteFs + Sync + Send>(
     ops: &[DeleteOperation],
     #[cfg(unix)] sandbox: Option<&Arc<DirSandbox>>,
     #[cfg(not(unix))] _sandbox: Option<()>,
+    #[cfg(unix)] sandbox_root: Option<&std::path::Path>,
+    #[cfg(not(unix))] _sandbox_root: Option<()>,
     summary: &mut ConsumerSummary,
 ) -> io::Result<()> {
     if ops.is_empty() {
         return Ok(());
     }
 
-    // SEC-1.q: open the cohort's destination-relative parent directory once
-    // via the sandbox so every op dispatches through the dirfd-anchored
-    // `*_at` methods. A failed open (vanished parent, or no sandbox
-    // attached) leaves `parent_fd` as `None` and each op transparently
-    // falls back to the path-based method, preserving the original
-    // behaviour.
+    // SEC-1.q: open the cohort's parent directory once via the sandbox so
+    // every op dispatches through the dirfd-anchored `*_at` methods. When
+    // the sandbox root is known and the cohort key is an absolute path
+    // beneath it (the local-copy cleanup path), resolve the cohort dir
+    // relative to that root; otherwise fall back to
+    // `plan_directory_to_relative` (the unit-test convention of relative
+    // cohort keys). A failed open (vanished parent, or no sandbox attached)
+    // leaves `parent_fd` as `None` and each op transparently falls back to
+    // the path-based method, preserving the original behaviour.
     #[cfg(unix)]
-    let parent_handle: Option<std::os::fd::OwnedFd> = sandbox
-        .and_then(|sb| open_dir_at(sb.root_dirfd(), plan_directory_to_relative(cohort_dir)).ok());
+    let parent_handle: Option<std::os::fd::OwnedFd> = sandbox.and_then(|sb| {
+        let relative = sandbox_root
+            .and_then(|root| cohort_dir.strip_prefix(root).ok())
+            .unwrap_or_else(|| plan_directory_to_relative(cohort_dir));
+        open_dir_at(sb.root_dirfd(), relative).ok()
+    });
     #[cfg(unix)]
     let parent_fd = parent_handle.as_ref().map(std::os::fd::AsFd::as_fd);
 

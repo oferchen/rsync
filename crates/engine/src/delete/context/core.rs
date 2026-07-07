@@ -435,8 +435,15 @@ impl DeleteContext {
         use super::super::parallel_consumer::ParallelDeleteEmitter;
         use super::super::reorder_buffer::{DeleteCohortKey, DeleteOperation};
 
-        let (plans, mut cursor, policy) = self.into_drain_parts().map_err(io::Error::from)?;
-        let emitter = ParallelDeleteEmitter::with_policy(fs, policy);
+        let parts = self.into_drain_parts().map_err(io::Error::from)?;
+        let plans = parts.plans;
+        let mut cursor = parts.cursor;
+        let emitter = ParallelDeleteEmitter::with_policy(fs, parts.policy);
+        #[cfg(unix)]
+        let emitter = match parts.sandbox {
+            Some(sandbox) => emitter.with_sandbox_rooted(sandbox, parts.sandbox_root),
+            None => emitter,
+        };
         let mut rank: u64 = 0;
         while let Some(dir) = cursor.next_ready() {
             let Some(plan) = plans.take(&dir) else {
@@ -493,8 +500,14 @@ impl DeleteContext {
     /// only hold sender clones, never `Arc<DirTraversalCursor>`.
     #[cfg(not(feature = "parallel-delete-consumer"))]
     pub(super) fn into_emitter<F: DeleteFs>(self, fs: F) -> Result<DeleteEmitter<F>, DeleteError> {
-        let (plans, cursor, policy) = self.into_drain_parts()?;
-        Ok(DeleteEmitter::with_policy(fs, plans, cursor, policy))
+        let parts = self.into_drain_parts()?;
+        let emitter = DeleteEmitter::with_policy(fs, parts.plans, parts.cursor, parts.policy);
+        #[cfg(unix)]
+        let emitter = match parts.sandbox {
+            Some(sandbox) => emitter.with_sandbox_rooted(sandbox, parts.sandbox_root),
+            None => emitter,
+        };
+        Ok(emitter)
     }
 
     /// Extracts the owned drain inputs (plan map, traversal cursor,
@@ -503,9 +516,7 @@ impl DeleteContext {
     /// path under the `parallel-delete-consumer` feature. The
     /// channel-shutdown semantics and `Arc::try_unwrap` invariant are
     /// preserved exactly because both paths consume `self` by value.
-    fn into_drain_parts(
-        self,
-    ) -> Result<(DeletePlanMap, DirTraversalCursor, EmitterErrorPolicy), DeleteError> {
+    fn into_drain_parts(self) -> Result<DrainParts, DeleteError> {
         let plans = Arc::try_unwrap(self.plans).map_err(|still_shared| {
             DeleteError::PlanMapStillShared {
                 strong_count: Arc::strong_count(&still_shared),
@@ -529,11 +540,74 @@ impl DeleteContext {
             .take()
             .ok_or(DeleteError::CursorReceiverAlreadyTaken)?;
 
+        // SEC-1.q / #506: open the delete root as a `DirSandbox` so the
+        // production emitter dispatches every unlink through the
+        // dirfd-anchored `*_at` syscalls, closing the parent-component
+        // symlink-swap TOCTOU. Open BEFORE `cursor_root` is moved into the
+        // cursor. A failure (root missing, not a directory, non-unix)
+        // yields `None` and the emitter stays on the path-based fallback -
+        // the deletion OUTCOMES are byte-identical either way; only the
+        // syscall mechanism differs.
+        #[cfg(unix)]
+        let sandbox = open_delete_sandbox(&self.cursor_root);
+        #[cfg(unix)]
+        let sandbox_root = self.cursor_root.clone();
+
         let mut cursor = DirTraversalCursor::new(self.cursor_root);
         while let Ok(obs) = rx.recv() {
             cursor.observe_segment(obs.dir, &obs.children);
         }
 
-        Ok((plans, cursor, self.policy))
+        Ok(DrainParts {
+            plans,
+            cursor,
+            policy: self.policy,
+            #[cfg(unix)]
+            sandbox,
+            #[cfg(unix)]
+            sandbox_root,
+        })
+    }
+}
+
+/// Owned inputs the drain needs, extracted from a consumed [`DeleteContext`].
+///
+/// Bundles the plan map, traversal cursor, and emitter policy shared by the
+/// sequential and parallel drain paths, plus the optional SEC-1.q
+/// [`fast_io::DirSandbox`] anchor (and the absolute root it was opened at)
+/// that lets the production emitter dispatch through the dirfd-anchored
+/// `*_at` syscalls.
+struct DrainParts {
+    plans: DeletePlanMap,
+    cursor: DirTraversalCursor,
+    policy: EmitterErrorPolicy,
+    #[cfg(unix)]
+    sandbox: Option<Arc<fast_io::DirSandbox>>,
+    #[cfg(unix)]
+    sandbox_root: PathBuf,
+}
+
+/// Opens `root` as a [`fast_io::DirSandbox`] for the delete emitter.
+///
+/// Returns `Some` when `root` resolves to a real (non-symlink) directory
+/// the process can open. Any failure - the delete root does not exist, is
+/// a symlink, or the platform refuses the open - is logged at debug level
+/// and yields `None` so the emitter transparently falls back to the
+/// path-based syscalls. This mirrors the receiver's
+/// `open_sandbox_for_dest` fallback contract: a sandbox open failure must
+/// never turn a working delete into a failure.
+#[cfg(unix)]
+fn open_delete_sandbox(root: &Path) -> Option<Arc<fast_io::DirSandbox>> {
+    match fast_io::DirSandbox::open_root(root) {
+        Ok(sandbox) => Some(Arc::new(sandbox)),
+        Err(err) => {
+            logging::debug_log!(
+                Del,
+                2,
+                "DirSandbox::open_root({}) failed: {err}; falling back to path-based delete syscalls",
+                root.display()
+            );
+            None
+        }
     }
 }
