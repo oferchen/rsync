@@ -739,92 +739,99 @@ mod incremental_mode_tests {
              the receiver's stats.io_error drives a non-zero exit",
         );
     }
+}
 
-    /// #517: the `*deleting` itemize stream must be deterministic and match
-    /// upstream `generator.c:delete_in_dir()` order across runs. Before the
-    /// fix, the scan set derived from `HashMap::keys()` (hash-randomized per
-    /// process), so a multi-directory `--delete` emitted its `*deleting`
-    /// lines in an arbitrary order that varied run to run. The fix orders
-    /// the emission by parent directory ascending, entries descending -
-    /// upstream's observable order.
-    ///
-    /// This runs the delete pass twice against freshly rebuilt destinations
-    /// and asserts an identical, upstream-sorted line sequence both times.
-    ///
-    /// upstream: generator.c:delete_in_dir() - sorted dirlist, reverse iter
-    #[cfg(unix)]
-    #[test]
-    fn delete_itemize_order_is_deterministic_and_upstream_sorted() {
-        use std::ffi::OsString;
+/// #517: the `*deleting` itemize stream must be deterministic and match
+/// upstream `generator.c:delete_in_dir()` order across runs. Before the
+/// fix, the scan set derived from `HashMap::keys()` (hash-randomized per
+/// process), so a multi-directory `--delete` emitted its `*deleting`
+/// lines in an arbitrary order that varied run to run. The fix orders
+/// the emission by parent directory ascending, entries descending -
+/// upstream's observable order.
+///
+/// This runs the delete pass twice against freshly rebuilt destinations
+/// and asserts an identical, upstream-sorted line sequence both times.
+///
+/// Deletion itemize ordering is feature-independent, so this lives at the
+/// file's top level (only `#[cfg(unix)]`, matching `CapturingDeletionWriter`)
+/// rather than inside the `incremental-flist`-gated submodule - it must run
+/// in every feature combo, including the `--no-default-features` musl cell.
+///
+/// upstream: generator.c:delete_in_dir() - sorted dirlist, reverse iter
+#[cfg(unix)]
+#[test]
+fn delete_itemize_order_is_deterministic_and_upstream_sorted() {
+    use std::ffi::OsString;
 
-        use super::super::super::support::CapturingDeletionWriter;
+    use tempfile::TempDir;
 
-        // Build a multi-directory destination with extraneous entries in the
-        // root and in two kept subdirectories. Ordering must not depend on
-        // read_dir or HashMap iteration order, so exercise many names.
-        let run = || -> Vec<String> {
-            let temp = TempDir::new().unwrap();
-            let dest = temp.path();
+    use super::super::support::CapturingDeletionWriter;
 
-            // Kept directories (present in the sender's flist).
-            std::fs::create_dir(dest.join("alpha")).unwrap();
-            std::fs::create_dir(dest.join("beta")).unwrap();
-            std::fs::write(dest.join("alpha").join("keep.txt"), b"k").unwrap();
-            std::fs::write(dest.join("beta").join("keep.txt"), b"k").unwrap();
+    // Build a multi-directory destination with extraneous entries in the
+    // root and in two kept subdirectories. Ordering must not depend on
+    // read_dir or HashMap iteration order, so exercise many names.
+    let run = || -> Vec<String> {
+        let temp = TempDir::new().unwrap();
+        let dest = temp.path();
 
-            // Extraneous entries: root files, and files in each kept dir.
-            for name in ["r_z.txt", "r_a.txt", "r_m.txt"] {
-                std::fs::write(dest.join(name), b"x").unwrap();
-            }
-            for name in ["e_z.txt", "e_a.txt", "e_m.txt"] {
-                std::fs::write(dest.join("alpha").join(name), b"x").unwrap();
-                std::fs::write(dest.join("beta").join(name), b"x").unwrap();
-            }
+        // Kept directories (present in the sender's flist).
+        std::fs::create_dir(dest.join("alpha")).unwrap();
+        std::fs::create_dir(dest.join("beta")).unwrap();
+        std::fs::write(dest.join("alpha").join("keep.txt"), b"k").unwrap();
+        std::fs::write(dest.join("beta").join("keep.txt"), b"k").unwrap();
 
-            let handshake = test_handshake();
-            let mut config = test_config();
-            config.flags.delete = true;
-            config.flags.info_flags.itemize = true;
-            config.args = vec![OsString::from(dest.to_str().unwrap())];
-            let mut ctx = ReceiverContext::new_for_test(&handshake, config);
+        // Extraneous entries: root files, and files in each kept dir.
+        for name in ["r_z.txt", "r_a.txt", "r_m.txt"] {
+            std::fs::write(dest.join(name), b"x").unwrap();
+        }
+        for name in ["e_z.txt", "e_a.txt", "e_m.txt"] {
+            std::fs::write(dest.join("alpha").join(name), b"x").unwrap();
+            std::fs::write(dest.join("beta").join(name), b"x").unwrap();
+        }
 
-            ctx.file_list
-                .push(FileEntry::new_directory(".".into(), 0o755));
-            ctx.file_list
-                .push(FileEntry::new_directory("alpha".into(), 0o755));
-            ctx.file_list
-                .push(FileEntry::new_directory("beta".into(), 0o755));
-            ctx.file_list
-                .push(FileEntry::new_file("alpha/keep.txt".into(), 1, 0o644));
-            ctx.file_list
-                .push(FileEntry::new_file("beta/keep.txt".into(), 1, 0o644));
+        let handshake = test_handshake();
+        let mut config = test_config();
+        config.flags.delete = true;
+        config.flags.info_flags.itemize = true;
+        config.args = vec![OsString::from(dest.to_str().unwrap())];
+        let mut ctx = ReceiverContext::new_for_test(&handshake, config);
 
-            let mut writer = CapturingDeletionWriter::default();
-            ctx.delete_extraneous_files(dest, None, &mut writer)
-                .unwrap();
-            writer.lines
-        };
+        ctx.file_list
+            .push(FileEntry::new_directory(".".into(), 0o755));
+        ctx.file_list
+            .push(FileEntry::new_directory("alpha".into(), 0o755));
+        ctx.file_list
+            .push(FileEntry::new_directory("beta".into(), 0o755));
+        ctx.file_list
+            .push(FileEntry::new_file("alpha/keep.txt".into(), 1, 0o644));
+        ctx.file_list
+            .push(FileEntry::new_file("beta/keep.txt".into(), 1, 0o644));
 
-        // Directories ascending ("." < "alpha" < "beta"); within each,
-        // entries descending. Verified against `rsync 3.4.4 -rii --delete`.
-        let expected = vec![
-            "*deleting   r_z.txt".to_owned(),
-            "*deleting   r_m.txt".to_owned(),
-            "*deleting   r_a.txt".to_owned(),
-            "*deleting   alpha/e_z.txt".to_owned(),
-            "*deleting   alpha/e_m.txt".to_owned(),
-            "*deleting   alpha/e_a.txt".to_owned(),
-            "*deleting   beta/e_z.txt".to_owned(),
-            "*deleting   beta/e_m.txt".to_owned(),
-            "*deleting   beta/e_a.txt".to_owned(),
-        ];
+        let mut writer = CapturingDeletionWriter::default();
+        ctx.delete_extraneous_files(dest, None, &mut writer)
+            .unwrap();
+        writer.lines
+    };
 
-        let first = run();
-        let second = run();
-        assert_eq!(first, second, "delete itemize order must be deterministic");
-        assert_eq!(
-            first, expected,
-            "delete itemize order must match upstream delete_in_dir() order",
-        );
-    }
+    // Directories ascending ("." < "alpha" < "beta"); within each,
+    // entries descending. Verified against `rsync 3.4.4 -rii --delete`.
+    let expected = vec![
+        "*deleting   r_z.txt".to_owned(),
+        "*deleting   r_m.txt".to_owned(),
+        "*deleting   r_a.txt".to_owned(),
+        "*deleting   alpha/e_z.txt".to_owned(),
+        "*deleting   alpha/e_m.txt".to_owned(),
+        "*deleting   alpha/e_a.txt".to_owned(),
+        "*deleting   beta/e_z.txt".to_owned(),
+        "*deleting   beta/e_m.txt".to_owned(),
+        "*deleting   beta/e_a.txt".to_owned(),
+    ];
+
+    let first = run();
+    let second = run();
+    assert_eq!(first, second, "delete itemize order must be deterministic");
+    assert_eq!(
+        first, expected,
+        "delete itemize order must match upstream delete_in_dir() order",
+    );
 }
