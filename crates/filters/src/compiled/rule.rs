@@ -191,6 +191,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("file.bak"), false, true));
@@ -211,6 +214,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("build"), false, true));
@@ -230,6 +236,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("node_modules"), true, true));
@@ -249,6 +258,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("build"), true, true));
@@ -269,6 +281,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Protect);
@@ -288,6 +303,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Risk);
@@ -306,6 +324,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Include);
@@ -325,6 +346,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("build/main.o"), false, true));
@@ -350,6 +374,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -381,6 +408,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -402,6 +432,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.matches(Path::new("file.txt"), false, true));
@@ -418,6 +451,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled_negated = CompiledRule::new(rule_negated).unwrap();
         assert!(!compiled_negated.matches(Path::new("file.txt"), false, true));
@@ -437,6 +473,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -460,6 +499,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -486,6 +528,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -519,6 +564,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -547,6 +595,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -580,6 +631,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -612,6 +666,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 

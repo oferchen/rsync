@@ -44,6 +44,9 @@ impl CompiledRule {
             exclude_only: _,
             no_inherit: _,
             cvs_mode: _,
+            abs_path: _,
+            no_prefixes: _,
+            no_prefixes_include: _,
         } = rule;
         debug_assert!(
             !xattr_only,
@@ -203,6 +206,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Exclude);
@@ -224,6 +230,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert_eq!(compiled.action, FilterAction::Include);
@@ -242,6 +251,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.perishable);
@@ -265,6 +277,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.directory_only);
@@ -293,6 +308,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.directory_only);
@@ -333,6 +351,9 @@ mod tests {
                 exclude_only: false,
                 no_inherit: false,
                 cvs_mode: false,
+                abs_path: false,
+                no_prefixes: false,
+                no_prefixes_include: false,
             };
             let compiled = CompiledRule::new(rule).unwrap();
             assert!(
@@ -362,6 +383,9 @@ mod tests {
                 exclude_only: false,
                 no_inherit: false,
                 cvs_mode: false,
+                abs_path: false,
+                no_prefixes: false,
+                no_prefixes_include: false,
             };
             let compiled = CompiledRule::new(rule).unwrap();
             assert!(
@@ -388,6 +412,9 @@ mod tests {
                 exclude_only: false,
                 no_inherit: false,
                 cvs_mode: false,
+                abs_path: false,
+                no_prefixes: false,
+                no_prefixes_include: false,
             };
             let compiled = CompiledRule::new(rule).unwrap();
             assert!(
@@ -412,6 +439,9 @@ mod tests {
                 exclude_only: false,
                 no_inherit: false,
                 cvs_mode: false,
+                abs_path: false,
+                no_prefixes: false,
+                no_prefixes_include: false,
             };
             let compiled = CompiledRule::new(rule).unwrap();
             assert!(
@@ -442,6 +472,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
 
@@ -474,6 +507,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         use std::path::Path;
@@ -497,6 +533,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         use std::path::Path;
@@ -555,6 +594,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         })
         .unwrap()
     }
@@ -752,6 +794,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled = CompiledRule::new(rule).unwrap();
         assert!(compiled.negate);
@@ -767,6 +812,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         let compiled2 = CompiledRule::new(rule2).unwrap();
         assert!(!compiled2.negate);

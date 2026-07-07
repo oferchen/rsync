@@ -443,6 +443,9 @@ mod tests {
             exclude_only: false,
             no_inherit: false,
             cvs_mode: false,
+            abs_path: false,
+            no_prefixes: false,
+            no_prefixes_include: false,
         };
         inner
             .include_exclude

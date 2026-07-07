@@ -346,10 +346,26 @@ fn parse_show_with_negate() {
 }
 
 #[test]
-fn parse_modifier_with_no_space() {
-    let rules = parse_rules("-!/path/*.txt", Path::new("test")).unwrap();
+fn parse_modifier_negate_then_pattern() {
+    // upstream requires a space (or `_`) between the modifiers and the pattern.
+    // `-! /path/*.txt` is `-` (exclude) with the `!` (negate) modifier and the
+    // pattern `/path/*.txt`.
+    let rules = parse_rules("-! /path/*.txt", Path::new("test")).unwrap();
     assert_eq!(rules[0].pattern(), "/path/*.txt");
     assert!(rules[0].is_negated());
+}
+
+#[test]
+fn parse_modifier_unknown_char_without_separator_errors() {
+    // upstream: exclude.c:1180-1184 - without a separator the modifier loop
+    // keeps consuming characters, so the `p` in `path` is read as the
+    // perishable modifier and the following `a` hits the `invalid:` label
+    // rather than being treated as the start of the pattern.
+    let err = parse_rules("-!/path/*.txt", Path::new("test")).unwrap_err();
+    assert!(
+        err.to_string().contains("invalid modifier 'a'"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
@@ -364,21 +380,29 @@ fn rule_modifiers_default() {
 
 #[test]
 fn parse_modifiers_empty_string() {
-    let (mods, pattern) = parse_modifiers("");
+    let (mods, pattern) = parse_modifiers("", false, "", Path::new("test"), 1).unwrap();
     assert!(!mods.negate);
     assert_eq!(pattern, "");
 }
 
 #[test]
 fn parse_modifiers_space_only() {
-    let (mods, pattern) = parse_modifiers(" pattern");
+    let (mods, pattern) =
+        parse_modifiers(" pattern", false, " pattern", Path::new("test"), 1).unwrap();
     assert!(!mods.negate);
     assert_eq!(pattern, "pattern");
 }
 
 #[test]
 fn parse_modifiers_all_flags() {
-    let (mods, pattern) = parse_modifiers("!psrxenC pattern");
+    let (mods, pattern) = parse_modifiers(
+        "!psrxenC pattern",
+        false,
+        "-!psrxenC pattern",
+        Path::new("test"),
+        1,
+    )
+    .unwrap();
     assert!(mods.negate);
     assert!(mods.perishable);
     assert!(mods.sender_only);
@@ -479,9 +503,60 @@ fn parse_word_split_include() {
 
 #[test]
 fn parse_cvs_mode_modifier() {
-    let (mods, pattern) = parse_modifiers("C pattern");
+    let (mods, pattern) =
+        parse_modifiers("C pattern", false, "-C pattern", Path::new("test"), 1).unwrap();
     assert!(mods.cvs_mode);
     assert_eq!(pattern, "pattern");
+}
+
+#[test]
+fn parse_dir_merge_no_prefixes_exclude_modifier() {
+    // upstream: exclude.c:1197-1209 - `:- .filt` sets FILTRULE_NO_PREFIXES on a
+    // dir-merge rule (exclude variant).
+    let rules = parse_rules(":- .filt", Path::new("test")).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].action(), FilterAction::DirMerge);
+    assert_eq!(rules[0].pattern(), ".filt");
+    assert_eq!(rules[0].no_prefixes(), (true, false));
+}
+
+#[test]
+fn parse_dir_merge_no_prefixes_include_modifier() {
+    // upstream: exclude.c:1210-1213 - `:+ .filt` sets FILTRULE_NO_PREFIXES and
+    // FILTRULE_INCLUDE (include variant).
+    let rules = parse_rules(":+ .filt", Path::new("test")).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].no_prefixes(), (true, true));
+}
+
+#[test]
+fn parse_dir_merge_abs_path_modifier() {
+    // upstream: exclude.c:1215-1216 - `:/ .filt` sets FILTRULE_ABS_PATH.
+    let rules = parse_rules(":/ .filt", Path::new("test")).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert!(rules[0].is_abs_path());
+}
+
+#[test]
+fn parse_no_prefixes_modifier_on_non_merge_errors() {
+    // upstream: exclude.c:1197-1199 - `-`/`+` require FILTRULE_MERGE_FILE, so a
+    // plain exclude rule with `-` in its modifiers is invalid.
+    let err = parse_rules("-- pattern", Path::new("test")).unwrap_err();
+    assert!(
+        err.to_string().contains("invalid modifier '-'"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn parse_negate_modifier_on_merge_errors() {
+    // upstream: exclude.c:1191-1196 - `!` is meaningless on a merge default and
+    // is rejected on merge / dir-merge rules.
+    let err = parse_rules(":! .filt", Path::new("test")).unwrap_err();
+    assert!(
+        err.to_string().contains("invalid modifier '!'"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
