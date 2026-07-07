@@ -990,6 +990,7 @@ fn partial_mode_relative_partial_dir() {
 /// before exit, removing temp files that never reached the commit+rename step.
 #[test]
 fn cleanup_manager_removes_orphaned_temp_files_on_simulated_signal() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let manager = engine::CleanupManager::global();
     manager.reset_for_testing();
 
@@ -1079,6 +1080,7 @@ fn cleanup_manager_removes_orphaned_temp_files_on_simulated_signal() {
 /// This is the counterpart to the orphan test: committed files must survive.
 #[test]
 fn cleanup_manager_unregisters_on_successful_commit() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let manager = engine::CleanupManager::global();
     manager.reset_for_testing();
 
@@ -1133,6 +1135,7 @@ fn cleanup_manager_unregisters_on_successful_commit() {
 /// orphaned. Only the orphan should be removed by `cleanup()`.
 #[test]
 fn cleanup_manager_mixed_committed_and_orphaned_files() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let manager = engine::CleanupManager::global();
     manager.reset_for_testing();
 
@@ -1247,6 +1250,7 @@ fn cleanup_manager_mixed_committed_and_orphaned_files() {
 /// from `CleanupManager` after commit, matching the chunked path behavior.
 #[test]
 fn cleanup_manager_whole_file_unregisters_on_commit() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let manager = engine::CleanupManager::global();
     manager.reset_for_testing();
 
@@ -1296,6 +1300,7 @@ fn cleanup_manager_whole_file_unregisters_on_commit() {
 /// so there is no orphan temp file to clean up.
 #[test]
 fn cleanup_manager_inplace_skips_registration() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let manager = engine::CleanupManager::global();
     manager.reset_for_testing();
 

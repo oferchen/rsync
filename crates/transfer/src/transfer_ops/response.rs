@@ -107,6 +107,7 @@ pub fn process_file_response<R: Read>(
 
     if needs_rename {
         CleanupManager::global().register_temp_file(cleanup_guard.path().to_path_buf());
+        cleanup_guard.mark_registered();
     }
 
     // upstream: receiver.c:307-308 - in append mode, seek past existing content

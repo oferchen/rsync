@@ -23,10 +23,36 @@ pub use upstream_compat::{
     upstream_compat_enabled,
 };
 
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread;
 use std::time::Duration;
 
 use tempfile::TempDir;
+
+/// Process-global mutex serializing tests that touch the shared
+/// `engine::CleanupManager` registry (a `OnceLock<Mutex<HashSet>>` singleton).
+///
+/// Because the registry is process-global and tests call `reset_for_testing`
+/// / `register_temp_file` on it, concurrent tests otherwise stomp on each
+/// other's state. Acquiring this guard for the duration of such a test
+/// serializes them without hiding any production race: the registry itself is
+/// mutex-protected and thread-safe; only the test-side `reset`/count
+/// expectations are order-sensitive.
+fn cleanup_registry_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+/// Acquires the process-global cleanup-registry test lock, serializing any
+/// test that mutates the shared `engine::CleanupManager`.
+///
+/// Hold the returned guard for the whole test body. The lock is poison-tolerant
+/// so a panicking test does not deadlock the rest of the suite.
+pub fn cleanup_registry_test_guard() -> MutexGuard<'static, ()> {
+    cleanup_registry_lock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 /// Creates a temporary directory with retry logic for transient OS errors.
 ///
