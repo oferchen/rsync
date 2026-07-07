@@ -93,8 +93,13 @@ pub(in crate::local_copy) fn execute_transfer(
         size_only_enabled: _,
         ignore_times_enabled: _,
         checksum_enabled: _,
+        // Consumed by the standard-path finalize call below on Unix; on
+        // Windows the `CopyFileExW` fast path reconciles ADS itself, so this
+        // field is unused in the standard path there.
         #[cfg(all(unix, feature = "xattr"))]
         preserve_xattrs,
+        #[cfg(all(windows, feature = "xattr"))]
+            preserve_xattrs: _,
         #[cfg(all(any(unix, windows), feature = "acl"))]
         preserve_acls,
     } = flags;

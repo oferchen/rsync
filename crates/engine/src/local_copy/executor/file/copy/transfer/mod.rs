@@ -49,8 +49,12 @@ pub(super) struct TransferFlags {
     pub ignore_times_enabled: bool,
     /// Whether to use checksums for comparison.
     pub checksum_enabled: bool,
-    /// Whether to preserve extended attributes (Unix only).
-    #[cfg(all(unix, feature = "xattr"))]
+    /// Whether to preserve extended attributes.
+    ///
+    /// On Unix this is POSIX extended attributes; on Windows it maps `-X`
+    /// onto NTFS Alternate Data Streams so the `CopyFileExW` fast path can
+    /// decide whether to keep or strip the streams the kernel copied.
+    #[cfg(all(any(unix, windows), feature = "xattr"))]
     pub preserve_xattrs: bool,
     /// Whether to preserve ACLs (Unix only).
     #[cfg(all(any(unix, windows), feature = "acl"))]
@@ -62,11 +66,11 @@ impl TransferFlags {
     /// accounting for compile-time feature flags.
     #[inline]
     pub(super) const fn xattrs_enabled(self) -> bool {
-        #[cfg(all(unix, feature = "xattr"))]
+        #[cfg(all(any(unix, windows), feature = "xattr"))]
         {
             self.preserve_xattrs
         }
-        #[cfg(not(all(unix, feature = "xattr")))]
+        #[cfg(not(all(any(unix, windows), feature = "xattr")))]
         {
             false
         }

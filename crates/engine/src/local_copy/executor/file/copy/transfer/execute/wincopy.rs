@@ -20,7 +20,7 @@ use std::time::Instant;
 
 use logging::debug_log;
 
-use ::metadata::MetadataOptions;
+use metadata::MetadataOptions;
 
 use crate::local_copy::{
     CopyContext, CopyMethodKind, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet,
@@ -152,6 +152,14 @@ pub(super) fn try_copy(
     // CopyFileExW must produce identical results.
     normalize_copied_metadata(destination, &metadata_options)?;
 
+    // `CopyFileExW` copies the source's NTFS Alternate Data Streams verbatim,
+    // which upstream rsync exposes as extended attributes. The portable copy
+    // path only carries the streams the user asked for, so bring the fast
+    // path's destination into line with the requested `-X` state and any
+    // selective xattr `--filter`. Mirrors the macOS clonefile fast path.
+    #[cfg(feature = "xattr")]
+    reconcile_copied_ads(context, source, destination, flags)?;
+
     let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
     let total_bytes = Some(metadata_snapshot.len());
     let change_set = LocalCopyChangeSet::for_file(
@@ -219,6 +227,63 @@ fn normalize_copied_metadata(
         filetime::set_file_mtime(destination, now)
             .map_err(|e| LocalCopyError::io("normalize copied mtime", destination, e))?;
     }
+    Ok(())
+}
+
+/// Brings the streams `CopyFileExW` copied into line with the requested `-X`
+/// state and any selective xattr `--filter`.
+///
+/// `CopyFileExW` copies every named NTFS Alternate Data Stream (rsync's
+/// Windows extended attributes) verbatim. The portable copy path only carries
+/// the attributes the user requested, so:
+///
+/// - Without `--xattrs`, strip every source-originated stream, matching a
+///   freshly `open()`ed destination.
+/// - With `--xattrs` and a selective xattr filter, reset to that clean slate
+///   and re-add only the streams whose names pass the filter.
+/// - With `--xattrs` and no selective filter, keep every stream verbatim.
+///
+/// upstream: xattrs.c:rsync_xal_set() - only `--xattrs` transfers attributes,
+/// and per-name include/exclude rules gate which survive.
+#[cfg(feature = "xattr")]
+fn reconcile_copied_ads(
+    context: &CopyContext,
+    source: &Path,
+    destination: &Path,
+    flags: TransferFlags,
+) -> Result<(), LocalCopyError> {
+    use crate::local_copy::metadata_sync::map_metadata_error;
+    use std::path::PathBuf;
+
+    // A `--files-from` source can carry a literal `.` path component (e.g.
+    // `dir\.\file`). `strip_source_xattrs`/`sync_xattrs` prepend the `\\?\`
+    // verbatim prefix, which disables the kernel's `.` resolution, so
+    // `FindFirstStreamW` fails `NotFound` - which `is_vanished_error` then
+    // misreads as a vanished source. Re-collect through `components()` to drop
+    // mid-path `.`, matching the resolved path `CopyFileExW` itself used.
+    let source: PathBuf = source.components().collect();
+    let destination: PathBuf = destination.components().collect();
+    let (source, destination) = (source.as_path(), destination.as_path());
+
+    if !flags.xattrs_enabled() {
+        ::metadata::strip_source_xattrs(source, destination, false).map_err(map_metadata_error)?;
+        return Ok(());
+    }
+
+    let Some(program) = context.filter_program() else {
+        return Ok(());
+    };
+    if !program.has_xattr_rules() {
+        return Ok(());
+    }
+
+    // Reset to a clean slate then re-copy only the streams the selective
+    // filter admits, so a filtered-out source stream `CopyFileExW` pre-copied
+    // does not survive on the destination.
+    ::metadata::strip_source_xattrs(source, destination, false).map_err(map_metadata_error)?;
+    let filter = |name: &str| program.allows_xattr(name);
+    ::metadata::sync_xattrs(source, destination, false, Some(&filter))
+        .map_err(map_metadata_error)?;
     Ok(())
 }
 

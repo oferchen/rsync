@@ -781,9 +781,10 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             options = options.acls(config.preserve_acls());
         }
 
-        // LocalCopyOptions::xattrs is Unix-only; match the engine crate's cfg
-        // so Windows builds with the `xattr` feature do not call a missing method.
-        #[cfg(all(feature = "xattr", unix))]
+        // `LocalCopyOptions::xattrs` is available on Unix and Windows (the
+        // latter maps `-X` onto NTFS Alternate Data Streams); match the engine
+        // crate's cfg so the flag reaches the local-copy executor on both.
+        #[cfg(all(feature = "xattr", any(unix, windows)))]
         {
             options = options.xattrs(config.preserve_xattrs());
         }
