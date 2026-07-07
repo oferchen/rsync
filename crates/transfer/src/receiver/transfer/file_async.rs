@@ -245,6 +245,7 @@ impl ReceiverContext {
             }
         };
         CleanupManager::global().register_temp_file(temp_guard.path().to_path_buf());
+        temp_guard.mark_registered();
 
         let file_verifier = ChecksumVerifier::new(
             self.negotiated_algorithms.as_ref(),

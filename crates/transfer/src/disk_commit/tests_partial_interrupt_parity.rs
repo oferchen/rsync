@@ -458,6 +458,7 @@ fn parity_zero_bytes_suppresses_partial_dir_retention() {
 /// after rename, so cleanup must not try to remove it.
 #[test]
 fn parity_partial_retention_unregisters_from_cleanup_manager() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let manager = engine::CleanupManager::global();
     manager.reset_for_testing();
 
@@ -504,6 +505,7 @@ fn parity_partial_retention_unregisters_from_cleanup_manager() {
 /// into the partial directory. The original temp path must be unregistered.
 #[test]
 fn parity_partial_dir_retention_unregisters_from_cleanup_manager() {
+    let _registry_lock = test_support::cleanup_registry_test_guard();
     let manager = engine::CleanupManager::global();
     manager.reset_for_testing();
 
