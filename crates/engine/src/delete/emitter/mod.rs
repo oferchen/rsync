@@ -119,6 +119,18 @@ pub struct DeleteEmitter<F: DeleteFs> {
     /// pre-SEC-1.q caller contract.
     #[cfg(unix)]
     sandbox: Option<Arc<DirSandbox>>,
+    /// Absolute root the attached [`DirSandbox`] was opened at.
+    ///
+    /// Plan directory keys are absolute in the production local-copy
+    /// cleanup path (they equal the destination directory), but the
+    /// sandbox `openat` walk needs a path relative to the sandbox root.
+    /// When set, [`Self::open_plan_dirfd`] resolves each plan directory by
+    /// stripping this prefix so an absolute key like `/dst/sub` opens as
+    /// `sub` under the root. When `None` (the unit-test convention where
+    /// plan keys are already relative to the sandbox root), the emitter
+    /// falls back to [`plan_directory_to_relative`].
+    #[cfg(unix)]
+    sandbox_root: Option<PathBuf>,
 }
 
 impl<F: DeleteFs> DeleteEmitter<F> {
@@ -148,6 +160,8 @@ impl<F: DeleteFs> DeleteEmitter<F> {
             pending: None,
             #[cfg(unix)]
             sandbox: None,
+            #[cfg(unix)]
+            sandbox_root: None,
         }
     }
 
@@ -164,6 +178,23 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     #[must_use]
     pub fn with_sandbox(mut self, sandbox: Arc<DirSandbox>) -> Self {
         self.sandbox = Some(sandbox);
+        self
+    }
+
+    /// Attaches a [`DirSandbox`] together with the absolute `root` it was
+    /// opened at.
+    ///
+    /// Identical to [`Self::with_sandbox`] except the emitter also records
+    /// the sandbox root so [`Self::open_plan_dirfd`] can resolve absolute
+    /// plan directory keys (the production local-copy cleanup path keys
+    /// plans on the absolute destination directory) relative to that root
+    /// before the `openat` walk. Callers with plan keys already relative
+    /// to the root can keep using [`Self::with_sandbox`].
+    #[cfg(unix)]
+    #[must_use]
+    pub fn with_sandbox_rooted(mut self, sandbox: Arc<DirSandbox>, root: PathBuf) -> Self {
+        self.sandbox = Some(sandbox);
+        self.sandbox_root = Some(root);
         self
     }
 
@@ -342,7 +373,17 @@ impl<F: DeleteFs> DeleteEmitter<F> {
     #[cfg(unix)]
     fn open_plan_dirfd(&self, plan_directory: &Path) -> Option<std::os::fd::OwnedFd> {
         let sandbox = self.sandbox.as_ref()?;
-        let relative = plan_directory_to_relative(plan_directory);
+        // When the sandbox root is known and the plan directory is an
+        // absolute key beneath it (the local-copy cleanup path), resolve
+        // the plan directory relative to that root. `strip_prefix` on the
+        // root's own key yields the empty path, which `open_dir_at`
+        // re-opens as ".". Fall back to `plan_directory_to_relative` for
+        // the unit-test convention where plan keys are already relative.
+        let relative = self
+            .sandbox_root
+            .as_ref()
+            .and_then(|root| plan_directory.strip_prefix(root).ok())
+            .unwrap_or_else(|| plan_directory_to_relative(plan_directory));
         open_dir_at(sandbox.root_dirfd(), relative).ok()
     }
 
