@@ -356,12 +356,15 @@ fn builder_enables_stats() {
 
 #[test]
 fn map_local_copy_error_reports_delete_limit() {
+    // upstream: generator.c:2431 - `Deletions stopped due to --max-delete
+    // limit (%d skipped)` with the generator role and no pluralized noun.
     let mapped = map_local_copy_error(LocalCopyError::delete_limit_exceeded(2));
     assert_eq!(mapped.exit_code(), MAX_DELETE_EXIT_CODE);
     let rendered = mapped.message().to_string();
     assert!(
-        rendered.contains("Deletions stopped due to --max-delete limit (2 entries skipped)"),
+        rendered.contains("Deletions stopped due to --max-delete limit (2 skipped)"),
         "unexpected diagnostic: {rendered}"
     );
+    assert!(rendered.contains("[generator="), "unexpected diagnostic: {rendered}");
 }
 

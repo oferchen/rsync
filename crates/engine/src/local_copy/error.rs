@@ -269,7 +269,9 @@ pub enum LocalCopyErrorKind {
         duration: Duration,
     },
     /// Deletions were halted because the configured limit was exceeded.
-    #[error("Deletions stopped due to --max-delete limit ({skipped} {} skipped)", if *skipped == 1 { "entry" } else { "entries" })]
+    // upstream: generator.c:2431 - `Deletions stopped due to --max-delete
+    // limit (%d skipped)` with no pluralized noun.
+    #[error("Deletions stopped due to --max-delete limit ({skipped} skipped)")]
     DeleteLimitExceeded {
         /// Number of entries that were skipped after reaching the limit.
         skipped: u64,
@@ -400,17 +402,22 @@ mod tests {
     }
 
     #[test]
-    fn local_copy_error_delete_limit_exceeded_message_singular() {
-        let error = LocalCopyError::delete_limit_exceeded(1);
-        let message = error.to_string();
-        assert!(message.contains("1 entry skipped"));
-    }
-
-    #[test]
-    fn local_copy_error_delete_limit_exceeded_message_plural() {
-        let error = LocalCopyError::delete_limit_exceeded(5);
-        let message = error.to_string();
-        assert!(message.contains("5 entries skipped"));
+    fn local_copy_error_delete_limit_exceeded_message_matches_upstream() {
+        // upstream: generator.c:2431 emits `Deletions stopped due to
+        // --max-delete limit (%d skipped)` verbatim with no `entry`/`entries`
+        // noun, so the count renders identically for one or many skips.
+        let one = LocalCopyError::delete_limit_exceeded(1).to_string();
+        let many = LocalCopyError::delete_limit_exceeded(5).to_string();
+        assert!(
+            one.contains("Deletions stopped due to --max-delete limit (1 skipped)"),
+            "{one}"
+        );
+        assert!(
+            many.contains("Deletions stopped due to --max-delete limit (5 skipped)"),
+            "{many}"
+        );
+        assert!(!one.contains("entry"), "{one}");
+        assert!(!many.contains("entries"), "{many}");
     }
 
     #[test]

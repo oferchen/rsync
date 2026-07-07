@@ -222,11 +222,13 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
             ClientError::with_code(code, message)
         }
         LocalCopyErrorKind::DeleteLimitExceeded { skipped } => {
+            // upstream: generator.c:2431 - the generator emits
+            // `Deletions stopped due to --max-delete limit (%d skipped)` via
+            // rprintf(FWARNING, ...) with no pluralized noun, so who_am_i()
+            // yields the `generator` role.
             let code = ExitCode::DeleteLimit;
-            let noun = if skipped == 1 { "entry" } else { "entries" };
-            let text =
-                format!("Deletions stopped due to --max-delete limit ({skipped} {noun} skipped)");
-            let message = rsync_error!(code.as_i32(), text).with_role(Role::Client);
+            let text = format!("Deletions stopped due to --max-delete limit ({skipped} skipped)");
+            let message = rsync_error!(code.as_i32(), text).with_role(Role::Generator);
             ClientError::with_code(code, message)
         }
         LocalCopyErrorKind::StopAtReached { .. } => {
@@ -256,8 +258,11 @@ pub(crate) fn io_error(action: &str, path: &Path, error: io::Error) -> ClientErr
         ExitCode::PartialTransfer
     };
     let path_display = path.display();
-    // upstream: flist.c:1289 - rprintf(c, "file has vanished: %s\n", full_fname(...));
-    // full_fname() wraps the path in double quotes (util1.c:1228).
+    // upstream: flist.c:1317 / sender.c:389 - rprintf(c, "file has vanished: %s\n",
+    // full_fname(...)). full_fname() wraps the path in double quotes (util1.c:1228).
+    // Both call sites (send_file_list building the flist and send_files opening a
+    // source file) run under am_sender, so who_am_i() yields the `sender` role for
+    // vanished (RERR_VANISHED) and per-file read I/O (RERR_PARTIAL) errors alike.
     let text = if error.kind() == io::ErrorKind::NotFound {
         format!("file has vanished: \"{path_display}\"")
     } else {
@@ -266,7 +271,7 @@ pub(crate) fn io_error(action: &str, path: &Path, error: io::Error) -> ClientErr
             upstream_io_error(&error)
         )
     };
-    let message = rsync_error!(code.as_i32(), text).with_role(Role::Client);
+    let message = rsync_error!(code.as_i32(), text).with_role(Role::Sender);
     ClientError::with_code(code, message)
 }
 
@@ -581,9 +586,11 @@ mod tests {
         }
 
         /// upstream: main.c:1338-1345 - non-NotFound I/O errors map to
-        /// RERR_PARTIAL (exit code 23).
+        /// RERR_PARTIAL (exit code 23). The per-file read failure is detected
+        /// by the sender (sender.c:393 send_files), so it carries the
+        /// `[sender]` role, not `[client]`.
         #[test]
-        fn io_error_non_notfound_uses_partial_transfer_code() {
+        fn io_error_non_notfound_uses_partial_transfer_code_and_sender_role() {
             let io_err = io::Error::new(ErrorKind::PermissionDenied, "permission denied");
             let error = io_error("read", Path::new("/test/file.txt"), io_err);
 
@@ -591,12 +598,15 @@ mod tests {
             let msg = error.to_string();
             assert!(msg.contains("failed to read"));
             assert!(msg.contains("/test/file.txt"));
+            assert!(msg.contains("[sender="), "{msg}");
         }
 
         /// upstream: main.c:1338-1345 - NotFound I/O errors map to
-        /// RERR_VANISHED (exit code 24).
+        /// RERR_VANISHED (exit code 24). Upstream emits `file has vanished`
+        /// from the sender (flist.c:1317 / sender.c:389), so who_am_i() tags
+        /// the diagnostic `[sender]`, not `[client]`.
         #[test]
-        fn io_error_notfound_uses_vanished_code() {
+        fn io_error_notfound_uses_vanished_code_and_sender_role() {
             let io_err = io::Error::new(ErrorKind::NotFound, "file not found");
             let error = io_error("read", Path::new("/test/file.txt"), io_err);
 
@@ -604,6 +614,7 @@ mod tests {
             let msg = error.to_string();
             assert!(msg.contains("file has vanished"));
             assert!(msg.contains("/test/file.txt"));
+            assert!(msg.contains("[sender="), "{msg}");
         }
 
         /// upstream: flist.c send_file_list() - a missing source argument
