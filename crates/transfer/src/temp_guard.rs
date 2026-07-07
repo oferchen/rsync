@@ -276,6 +276,13 @@ struct SandboxAnchor {
 pub struct TempFileGuard {
     path: PathBuf,
     keep_on_drop: bool,
+    /// When `true`, this path was registered with the global
+    /// [`engine::CleanupManager`] and Drop must remove it from the registry
+    /// after the file is deleted-or-committed, so an errored transfer does not
+    /// leak its `PathBuf` into the process-global set forever.
+    ///
+    /// [`mark_registered`]: TempFileGuard::mark_registered
+    registered: bool,
     /// SEC-1.r sandbox anchor: when present, Drop routes the unlink through
     /// `unlinkat(sandbox.current_dirfd(), leaf, 0)` so a symlink swap on the
     /// temp parent between create and unlink cannot redirect the cleanup.
@@ -294,6 +301,7 @@ impl TempFileGuard {
         Self {
             path,
             keep_on_drop: false,
+            registered: false,
             #[cfg(unix)]
             anchor: None,
         }
@@ -315,6 +323,7 @@ impl TempFileGuard {
         Self {
             path,
             keep_on_drop: true,
+            registered: false,
             #[cfg(unix)]
             anchor: None,
         }
@@ -350,6 +359,7 @@ impl TempFileGuard {
         Self {
             path,
             keep_on_drop: false,
+            registered: false,
             anchor,
         }
     }
@@ -358,6 +368,24 @@ impl TempFileGuard {
     #[inline]
     pub const fn keep(&mut self) {
         self.keep_on_drop = true;
+    }
+
+    /// Record that this guard's path was registered with the global
+    /// [`engine::CleanupManager`].
+    ///
+    /// Callers that register the temp path for signal-handler cleanup must
+    /// call this so the guard's Drop removes the path from the registry once
+    /// the file has been deleted-or-committed. This closes the leak where an
+    /// errored transfer's `PathBuf` stayed in the process-global set forever
+    /// in a long-running daemon.
+    ///
+    /// The signal-handler contract is preserved: the entry is removed only in
+    /// Drop, after the file is unlinked (error path) or has been committed
+    /// (kept path), so a SIGINT before Drop still finds the in-flight temp
+    /// registered and cleans it up.
+    #[inline]
+    pub const fn mark_registered(&mut self) {
+        self.registered = true;
     }
 
     /// Get the path to the temp file.
@@ -442,7 +470,13 @@ fn is_cross_device_error(e: &io::Error) -> bool {
 
 impl Drop for TempFileGuard {
     fn drop(&mut self) {
+        // Delete the temp file first (unless kept), then remove the path from
+        // the global cleanup registry. Ordering matters: a SIGINT arriving
+        // before this Drop still finds the in-flight temp registered and
+        // cleans it; once the file is unlinked-or-committed here it no longer
+        // needs a registry entry, so leaving it in would leak the PathBuf.
         if self.keep_on_drop {
+            self.unregister();
             return;
         }
         // Best-effort: the file may never have been created, may already be renamed
@@ -459,11 +493,26 @@ impl Drop for TempFileGuard {
                         &self.path,
                         fast_io::UnlinkFlags::File,
                     );
+                    self.unregister();
                     return;
                 }
             }
         }
         let _ = std::fs::remove_file(&self.path);
+        self.unregister();
+    }
+}
+
+impl TempFileGuard {
+    /// Removes this guard's path from the global [`engine::CleanupManager`]
+    /// registry when it was registered. Idempotent: `HashSet::remove` is a
+    /// no-op for an absent key, so a double-unregister (e.g. an explicit
+    /// pre-`keep` unregister followed by this Drop) is harmless.
+    #[inline]
+    fn unregister(&self) {
+        if self.registered {
+            engine::CleanupManager::global().unregister_temp_file(&self.path);
+        }
     }
 }
 
@@ -939,5 +988,99 @@ mod tests {
         let result = guard.rename_to_partial_dir(Path::new("/"), &partial_dir);
 
         assert!(result.is_err());
+    }
+
+    /// Regression (#515): an errored transfer's temp path must be removed from
+    /// the global `CleanupManager` when the guard drops, otherwise a
+    /// long-running daemon leaks a `PathBuf` per errored file forever. The
+    /// guard is registered, then dropped WITHOUT `keep()` (the error path);
+    /// after Drop the registry must no longer contain the path.
+    #[test]
+    fn errored_guard_unregisters_from_cleanup_manager_on_drop() {
+        let _lock = test_support::cleanup_registry_test_guard();
+        let manager = engine::CleanupManager::global();
+        manager.reset_for_testing();
+
+        let dir = tempdir().expect("create temp dir");
+        let temp_path = dir.path().join(".errored.AbCdEf");
+        fs::write(&temp_path, b"partial data").unwrap();
+
+        {
+            let mut guard = TempFileGuard::new(temp_path.clone());
+            manager.register_temp_file(temp_path.clone());
+            guard.mark_registered();
+            assert_eq!(manager.temp_file_count(), 1);
+            // Guard drops here on the error path (no keep()).
+        }
+
+        assert_eq!(
+            manager.temp_file_count(),
+            0,
+            "errored guard must unregister its temp path from CleanupManager on drop"
+        );
+        assert!(
+            !temp_path.exists(),
+            "errored guard must still delete the temp file on drop"
+        );
+    }
+
+    /// The kept (success) path must also leave the registry clean after Drop.
+    /// The guard is registered and marked kept; on Drop it does not delete the
+    /// (committed) file but must remove the stale registry entry.
+    #[test]
+    fn kept_guard_unregisters_from_cleanup_manager_on_drop() {
+        let _lock = test_support::cleanup_registry_test_guard();
+        let manager = engine::CleanupManager::global();
+        manager.reset_for_testing();
+
+        let dir = tempdir().expect("create temp dir");
+        let temp_path = dir.path().join(".kept.XyZ123");
+        fs::write(&temp_path, b"committed data").unwrap();
+
+        {
+            let mut guard = TempFileGuard::new(temp_path.clone());
+            manager.register_temp_file(temp_path.clone());
+            guard.mark_registered();
+            guard.keep();
+        }
+
+        assert_eq!(
+            manager.temp_file_count(),
+            0,
+            "kept guard must unregister its temp path from CleanupManager on drop"
+        );
+        assert!(
+            temp_path.exists(),
+            "kept guard must not delete the committed file on drop"
+        );
+        fs::remove_file(&temp_path).ok();
+    }
+
+    /// An unregistered guard (e.g. an in-place / device target that was never
+    /// registered) must not touch the registry on Drop.
+    #[test]
+    fn unregistered_guard_leaves_cleanup_manager_untouched() {
+        let _lock = test_support::cleanup_registry_test_guard();
+        let manager = engine::CleanupManager::global();
+        manager.reset_for_testing();
+
+        let other = PathBuf::from("/tmp/.unrelated.Aa0000");
+        manager.register_temp_file(other.clone());
+
+        let dir = tempdir().expect("create temp dir");
+        let temp_path = dir.path().join(".never_registered.Zz9999");
+        fs::write(&temp_path, b"data").unwrap();
+
+        {
+            // No mark_registered(): Drop must not remove any registry entry.
+            let _guard = TempFileGuard::new(temp_path);
+        }
+
+        assert_eq!(
+            manager.temp_file_count(),
+            1,
+            "an unregistered guard must not disturb other registry entries on drop"
+        );
+        manager.unregister_temp_file(&other);
     }
 }

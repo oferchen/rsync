@@ -63,16 +63,15 @@ pub(in crate::disk_commit) fn process_file(
             return discard_file_on_open_failure(file_rx, buf_return_tx, open_err);
         }
     };
-    if needs_rename {
-        CleanupManager::global().register_temp_file(cleanup_guard.path().to_path_buf());
-    }
-
     // Register the temp file with the global cleanup manager so a SIGKILL
     // (which bypasses Drop) still removes orphaned temp files on restart.
     // Only temp+rename paths produce actual temp files; inplace and device
-    // writes operate on the final destination.
+    // writes operate on the final destination. The guard records its
+    // registration so its Drop unregisters the path on both success and error,
+    // preventing a per-errored-file PathBuf leak into the global set.
     if needs_rename {
         CleanupManager::global().register_temp_file(cleanup_guard.path().to_path_buf());
+        cleanup_guard.mark_registered();
     }
 
     let mut output = make_writer(
@@ -272,10 +271,7 @@ pub(in crate::disk_commit) fn process_whole_file(
     let (file, mut cleanup_guard, needs_rename) = open_output_file(&begin, config)?;
     if needs_rename {
         CleanupManager::global().register_temp_file(cleanup_guard.path().to_path_buf());
-    }
-
-    if needs_rename {
-        CleanupManager::global().register_temp_file(cleanup_guard.path().to_path_buf());
+        cleanup_guard.mark_registered();
     }
 
     let mut output = make_writer(
