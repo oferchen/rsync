@@ -451,53 +451,20 @@ impl DeltaGenerator {
             }
         }
 
-        // EOF tail match: the window now holds the file's short trailing bytes
-        // (fewer than block_len; a full block would have been probed in the main
-        // loop). Upstream rsync matches this short tail against the basis's
-        // final partial block by shrinking its window to `l = MIN(blength,
-        // len-offset)` (`match.c:222-224`). Mirror that here: recompute the
-        // rolling checksum over exactly the tail bytes and probe the same-length
-        // basis block. On a hit, emit any preceding literals then a Copy token
-        // for the short final block; on a miss, drain the tail as literals.
-        let tail_len = window.len();
-        let mut tail_matched = false;
-        if tail_len > 0 && tail_len < block_len {
-            let (first, second) = window.as_slices();
-            let mut tail_rolling = RollingChecksum::new();
-            tail_rolling.update(first);
-            if !second.is_empty() {
-                tail_rolling.update(second);
-            }
-            let tail_digest = tail_rolling.digest();
-            let tail_filter = prune_matched.then_some(&matched_blocks);
-            if let Some(tail_idx) = index.find_tail_match(tail_digest, first, second, tail_filter) {
-                if !pending_literals.is_empty() {
-                    literal_bytes += pending_literals.len() as u64;
-                    total_bytes += pending_literals.len() as u64;
-                    tokens.push(DeltaToken::Literal(std::mem::take(&mut pending_literals)));
-                }
-                let block_basis_idx = index.block(tail_idx).index();
-                matched_blocks.mark_matched(tail_idx);
-                if prune_matched {
-                    index.mark_consumed(tail_idx as u32);
-                }
-                matches += 1;
-                total_bytes += tail_len as u64;
-                tokens.push(DeltaToken::Copy {
-                    index: block_basis_idx,
-                    len: tail_len,
-                });
-                window.clear();
-                tail_matched = true;
-            }
-        }
-
-        if !tail_matched {
-            // Drain any bytes still in the window as literals (no tail match, so
-            // no further Copy is possible).
-            while let Some(byte) = window.pop_front() {
-                pending_literals.push(byte);
-            }
+        // Drain any bytes still in the window as literals (window held fewer
+        // than block_len bytes at EOF, so no further match is possible).
+        //
+        // Upstream rsync matches the basis's short final block here via
+        // `l = MIN(blength, len-offset)` (`match.c:222-224`), but on the wire
+        // sender path that would (a) fail signature-index construction for
+        // small single-partial-block files and (b) produce a token stream the
+        // upstream compressed-delta receiver rejects (`token.c:665`). The
+        // "trailing partial block emitted as literal" is a pre-existing wire
+        // efficiency gap, not a correctness issue - reconstruction is
+        // byte-exact either way - so the tail match stays confined to the
+        // local-copy delta path (`engine::local_copy`).
+        while let Some(byte) = window.pop_front() {
+            pending_literals.push(byte);
         }
 
         if !pending_literals.is_empty() {

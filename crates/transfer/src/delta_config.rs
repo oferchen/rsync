@@ -31,14 +31,6 @@ pub struct DeltaGeneratorConfig<'a> {
     /// `signature::calculate_signature_layout`.
     pub block_length: u32,
 
-    /// Length in bytes of the final (partial) basis block. Zero when the
-    /// basis file length is an exact multiple of `block_length`. Carried
-    /// from the wire `SumHead` (`remainder`) so the delta matcher can match
-    /// the source file's short trailing block against the basis's short
-    /// final block. Upstream: `read_sum_head()` populates `s->remainder`,
-    /// which `hash_search()` uses via `l = MIN(blength, len-offset)`.
-    pub remainder: u32,
-
     /// Signature blocks received from the wire format. Each block carries a
     /// rolling and a strong checksum.
     pub sig_blocks: Vec<protocol::wire::signature::SignatureBlock>,
@@ -81,7 +73,6 @@ impl<'a> DeltaGeneratorConfig<'a> {
     ) -> Self {
         Self {
             block_length,
-            remainder: 0,
             sig_blocks,
             strong_sum_length,
             protocol,
