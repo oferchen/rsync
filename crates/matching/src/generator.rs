@@ -453,6 +453,16 @@ impl DeltaGenerator {
 
         // Drain any bytes still in the window as literals (window held fewer
         // than block_len bytes at EOF, so no further match is possible).
+        //
+        // Upstream rsync matches the basis's short final block here via
+        // `l = MIN(blength, len-offset)` (`match.c:222-224`), but on the wire
+        // sender path that would (a) fail signature-index construction for
+        // small single-partial-block files and (b) produce a token stream the
+        // upstream compressed-delta receiver rejects (`token.c:665`). The
+        // "trailing partial block emitted as literal" is a pre-existing wire
+        // efficiency gap, not a correctness issue - reconstruction is
+        // byte-exact either way - so the tail match stays confined to the
+        // local-copy delta path (`engine::local_copy`).
         while let Some(byte) = window.pop_front() {
             pending_literals.push(byte);
         }
