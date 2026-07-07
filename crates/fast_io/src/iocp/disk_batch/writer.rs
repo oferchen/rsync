@@ -26,6 +26,32 @@ use super::completion::{
     drain_all_ignoring_completion_errors, drain_completions, take_injected_write_error,
 };
 
+/// RAII guard owning the overlapped handle returned by [`reopen_overlapped`].
+///
+/// The handle is closed exactly once on drop, so every early-return and error
+/// path releases it without a manual `CloseHandle` at each call site. Callers
+/// that must hand the raw handle to a Win32 API borrow it via [`Self::raw`];
+/// the guard retains ownership and the borrowed handle must not be closed by
+/// the caller. The wrapped handle is never null or `INVALID_HANDLE_VALUE`
+/// because [`reopen_overlapped`] rejects those before constructing the guard.
+pub(super) struct OverlappedHandle {
+    handle: HANDLE,
+}
+
+impl OverlappedHandle {
+    /// Borrows the raw handle for use with Win32 APIs. Ownership stays with
+    /// the guard; the returned handle must not be closed by the caller.
+    pub(super) fn raw(&self) -> HANDLE {
+        self.handle
+    }
+}
+
+impl Drop for OverlappedHandle {
+    fn drop(&mut self) {
+        close_overlapped_handle(self.handle);
+    }
+}
+
 /// Reopens an existing file handle with `FILE_FLAG_OVERLAPPED` so it can be
 /// associated with a completion port.
 ///
@@ -36,9 +62,11 @@ use super::completion::{
 /// cache; combined with the page-aligned buffer chunks the writer issues,
 /// the kernel can dispatch each `WriteFile` without a bounce copy.
 /// `config.write_through` similarly maps to `FILE_FLAG_WRITE_THROUGH`.
-/// The returned handle must be closed with `CloseHandle` once no longer
-/// needed.
-pub(super) fn reopen_overlapped(handle: HANDLE, config: &IocpConfig) -> io::Result<HANDLE> {
+/// The returned [`OverlappedHandle`] closes the underlying handle on drop.
+pub(super) fn reopen_overlapped(
+    handle: HANDLE,
+    config: &IocpConfig,
+) -> io::Result<OverlappedHandle> {
     let mut flags = FILE_FLAG_OVERLAPPED;
     if config.unbuffered {
         flags |= FILE_FLAG_NO_BUFFERING;
@@ -65,11 +93,11 @@ pub(super) fn reopen_overlapped(handle: HANDLE, config: &IocpConfig) -> io::Resu
         return Err(io::Error::last_os_error());
     }
 
-    Ok(new_handle)
+    Ok(OverlappedHandle { handle: new_handle })
 }
 
 /// Closes a handle obtained from [`reopen_overlapped`].
-pub(super) fn close_overlapped_handle(handle: HANDLE) {
+fn close_overlapped_handle(handle: HANDLE) {
     if handle.is_null() || handle == INVALID_HANDLE_VALUE {
         return;
     }

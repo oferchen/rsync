@@ -327,6 +327,45 @@ fn no_leaked_overlapped_handles_after_many_rotations() {
 }
 
 #[test]
+fn overlapped_handle_guard_closes_handle_on_drop() {
+    // The RAII guard must close the reopened overlapped handle when it drops,
+    // including on early-return/error paths that never reach commit_file. Drive
+    // the guard directly: reopen a handle, capture its raw value, drop the
+    // guard, and confirm the kernel no longer recognises the handle.
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::GetHandleInformation;
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("guard_drop.bin");
+    let file = open_writable(&path);
+    let raw = file.as_raw_handle() as windows_sys::Win32::Foundation::HANDLE;
+
+    let config = IocpConfig::default();
+    let guard = super::writer::reopen_overlapped(raw, &config).unwrap();
+    let reopened = guard.raw();
+
+    // While the guard is alive the reopened handle is valid.
+    let mut flags: u32 = 0;
+    // SAFETY: `reopened` is a live handle owned by `guard`.
+    #[allow(unsafe_code)]
+    let ok_before = unsafe { GetHandleInformation(reopened, &mut flags) };
+    assert_ne!(ok_before, 0, "reopened handle must be valid before drop");
+
+    drop(guard);
+
+    // After drop the handle value should no longer resolve. GetHandleInformation
+    // returns 0 (with ERROR_INVALID_HANDLE) for a closed handle.
+    // SAFETY: querying a (now closed) handle value is defined; the call only
+    // reads kernel handle-table state and cannot dereference user memory.
+    #[allow(unsafe_code)]
+    let ok_after = unsafe { GetHandleInformation(reopened, &mut flags) };
+    assert_eq!(
+        ok_after, 0,
+        "guard drop must close the reopened overlapped handle"
+    );
+}
+
+#[test]
 fn completion_ordering_independent_of_submission_order() {
     // Multiple in-flight writes may complete out of order. The drain
     // loop must reconcile each completion with its OVERLAPPED pointer
@@ -409,7 +448,7 @@ fn aligned_write_path_increments_bounce_counter() {
     let mut written = 0usize;
     super::writer::submit_write_batch(
         &batch.port,
-        batch.current_file.as_ref().unwrap().overlapped_handle,
+        batch.current_file.as_ref().unwrap().overlapped_handle.raw(),
         &vec![0x42u8; 4096],
         0,
         4096,

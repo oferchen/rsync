@@ -13,8 +13,11 @@
 
 use std::io;
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
-use windows_sys::Win32::Foundation::{ERROR_HANDLE_EOF, FALSE, WAIT_TIMEOUT};
+use windows_sys::Win32::Foundation::{
+    ERROR_HANDLE_EOF, FALSE, RtlNtStatusToDosError, WAIT_TIMEOUT,
+};
 use windows_sys::Win32::System::IO::{GetQueuedCompletionStatusEx, OVERLAPPED_ENTRY};
 
 use crate::iocp::completion_port::CompletionPort;
@@ -30,10 +33,25 @@ use crate::iocp::completion_port::CompletionPort;
 /// constant so a single drain call can reap the entire cohort.
 const COMPLETION_DRAIN_BATCH: usize = 64;
 
-/// Wait timeout for completion drains, in milliseconds. The disk batch
-/// always knows how many completions are outstanding so it waits
-/// indefinitely (`u32::MAX`) until every submitted write has been reaped.
+/// Wait timeout for success-path completion drains, in milliseconds. On the
+/// success path the disk batch always knows how many completions are
+/// outstanding and every op the kernel accepted is guaranteed to post exactly
+/// one packet, so it waits indefinitely (`u32::MAX`) until every submitted
+/// write has been reaped.
 const DRAIN_TIMEOUT_MS: u32 = u32::MAX;
+
+/// Per-wait timeout for the abort-drain path, in milliseconds. Bounds each
+/// individual `GetQueuedCompletionStatusEx` wait so the abort drain wakes up
+/// periodically to re-check the overall deadline instead of parking forever.
+const ABORT_DRAIN_WAIT_MS: u32 = 100;
+
+/// Overall wall-clock budget for the abort-drain path. On the error/abort
+/// path we are cleaning up residual outstanding ops whose completions the
+/// kernel *should* still post, but an unexpectedly wedged port or a miscounted
+/// residual would otherwise hang the disk-commit thread forever. Bounding the
+/// total wait converts a potential hang into a surfaced timeout while still
+/// giving the kernel ample time (seconds) to post the outstanding packets.
+const ABORT_DRAIN_BUDGET: Duration = Duration::from_secs(5);
 
 /// Countdown for the test-only `WriteFile` fault injector. When non-zero,
 /// each submission decrements the counter; once it hits zero the next
@@ -289,12 +307,48 @@ pub(super) fn drain_completions(port: &CompletionPort, max: usize) -> io::Result
 /// does not hide the failure; it only guarantees the buffers outlive the
 /// kernel's writes. The returned byte count preserves partial progress the
 /// same way the success path does.
+///
+/// # Bounded wait
+///
+/// Each `GetQueuedCompletionStatusEx` wait is capped at [`ABORT_DRAIN_WAIT_MS`]
+/// and the loop enforces an overall [`ABORT_DRAIN_BUDGET`] deadline. On the
+/// success path every accepted op is guaranteed to post a completion, but on
+/// this abort path a wedged completion port or a miscounted residual could
+/// otherwise park the disk-commit thread inside the wait forever. When the
+/// budget elapses with ops still outstanding the drain gives up, emits a
+/// throttled `tracing::warn!`, and returns the bytes reaped so far - the caller
+/// is already propagating the original abort error, so a bounded return
+/// converts a potential hang into a surfaced timeout without masking the
+/// primary failure.
 pub(super) fn drain_all_ignoring_completion_errors(
     port: &CompletionPort,
+    outstanding: usize,
+) -> usize {
+    let deadline = Instant::now() + ABORT_DRAIN_BUDGET;
+    drain_all_ignoring_completion_errors_until(port, outstanding, deadline)
+}
+
+/// Deadline-bounded core of [`drain_all_ignoring_completion_errors`], split out
+/// so tests can drive a short deadline against a port that will never post a
+/// completion and assert the drain returns instead of hanging.
+fn drain_all_ignoring_completion_errors_until(
+    port: &CompletionPort,
     mut outstanding: usize,
+    deadline: Instant,
 ) -> usize {
     let mut bytes = 0usize;
     while outstanding > 0 {
+        if Instant::now() >= deadline {
+            // The kernel still owes us `outstanding` completions but the budget
+            // is spent. Surface the timeout diagnostically; the caller returns
+            // the original abort error regardless.
+            tracing::warn!(
+                outstanding,
+                budget_ms = ABORT_DRAIN_BUDGET.as_millis() as u64,
+                "IOCP abort-drain timed out waiting for outstanding completions",
+            );
+            break;
+        }
         let batch = outstanding.min(COMPLETION_DRAIN_BATCH);
         let mut entries: Vec<OVERLAPPED_ENTRY> = vec![zeroed_entry(); batch];
         let mut removed: u32 = 0;
@@ -307,19 +361,20 @@ pub(super) fn drain_all_ignoring_completion_errors(
                 entries.as_mut_ptr(),
                 batch as u32,
                 &mut removed,
-                DRAIN_TIMEOUT_MS,
+                ABORT_DRAIN_WAIT_MS,
                 FALSE,
             )
         };
 
         if ok == FALSE {
             let err = io::Error::last_os_error();
-            // Spurious wake without entries: retry until the outstanding ops
-            // report. Any other failure means the port itself is unusable, so
-            // there is no way left to observe the remaining completions; stop
-            // to avoid spinning forever. This matches the pre-existing posture
-            // of the success path, where `drain_completions` also returns on
-            // such an error and the caller drops the in-flight queue.
+            // Bounded-wait expiry with no entries: loop so the deadline check
+            // at the top can decide whether to keep waiting or give up. Any
+            // other failure means the port itself is unusable, so there is no
+            // way left to observe the remaining completions; stop to avoid
+            // spinning forever. This matches the pre-existing posture of the
+            // success path, where `drain_completions` also returns on such an
+            // error and the caller drops the in-flight queue.
             if matches!(err.raw_os_error(), Some(c) if c as u32 == WAIT_TIMEOUT) {
                 continue;
             }
@@ -348,15 +403,24 @@ pub(super) fn drain_all_ignoring_completion_errors(
     bytes
 }
 
-/// Translates the small set of NTSTATUS codes that overlapped file I/O can
-/// produce into Win32 DOS error codes.
+/// Translates an NTSTATUS from `OVERLAPPED::Internal` into its Win32 DOS error
+/// code so a faulted overlapped completion surfaces the same `errno`/exit code
+/// as an equivalent synchronous Win32 failure (and, in turn, the same
+/// cross-platform mapping the standard and io_uring writers produce).
+///
+/// Delegates to `ntdll!RtlNtStatusToDosError`, the OS's own authoritative and
+/// complete NTSTATUS -> Win32 table, rather than a hand-maintained subset. A
+/// partial table left common disk faults - `STATUS_DISK_FULL` (0xC000007F),
+/// `STATUS_ACCESS_DENIED` (0xC0000022), `STATUS_DEVICE_*` - falling through to
+/// the raw NTSTATUS value, which is not a valid Win32 error and produces
+/// exit-code/message divergence from the other writers.
 fn ntstatus_to_dos_error(status: u32) -> u32 {
-    match status {
-        0xC000_0011 => ERROR_HANDLE_EOF, // STATUS_END_OF_FILE
-        0xC000_0120 => 995,              // STATUS_CANCELLED
-        0xC000_009A => 1450,             // STATUS_INSUFFICIENT_RESOURCES
-        0xC000_00B5 => 121,              // STATUS_IO_TIMEOUT
-        other => other,
+    // SAFETY: `RtlNtStatusToDosError` is a pure translation function in
+    // ntdll.dll with no preconditions on `status`; any NTSTATUS (including
+    // unrecognised ones, which map to ERROR_MR_MID_NOT_FOUND) is valid input.
+    #[allow(unsafe_code)]
+    unsafe {
+        RtlNtStatusToDosError(status as i32)
     }
 }
 
@@ -366,5 +430,76 @@ fn zeroed_entry() -> OVERLAPPED_ENTRY {
     #[allow(unsafe_code)]
     unsafe {
         std::mem::zeroed()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows_sys::Win32::Foundation::{
+        ERROR_ACCESS_DENIED, ERROR_DISK_FULL, ERROR_OPERATION_ABORTED,
+    };
+
+    // Common NTSTATUS values overlapped file I/O can surface, paired with the
+    // Win32 error code the other writers (standard/io_uring) and upstream
+    // rsync produce for the same failure. Verifying the mapping goes through
+    // `RtlNtStatusToDosError` guards against a regression back to the partial
+    // hand table that leaked raw NTSTATUS values for common disk faults.
+    #[test]
+    fn ntstatus_maps_to_matching_win32_error() {
+        // STATUS_END_OF_FILE -> ERROR_HANDLE_EOF (drain_completions relies on
+        // this exact equality to raise UnexpectedEof).
+        assert_eq!(ntstatus_to_dos_error(0xC000_0011), ERROR_HANDLE_EOF);
+        // STATUS_DISK_FULL -> ERROR_DISK_FULL (112). The old partial table
+        // fell through to the raw 0xC000_007F here, diverging from every
+        // other writer's ENOSPC-equivalent exit code.
+        assert_eq!(ntstatus_to_dos_error(0xC000_007F), ERROR_DISK_FULL);
+        // STATUS_ACCESS_DENIED -> ERROR_ACCESS_DENIED (5).
+        assert_eq!(ntstatus_to_dos_error(0xC000_0022), ERROR_ACCESS_DENIED);
+        // STATUS_CANCELLED -> ERROR_OPERATION_ABORTED (995).
+        assert_eq!(ntstatus_to_dos_error(0xC000_0120), ERROR_OPERATION_ABORTED);
+    }
+
+    // A faulted NTSTATUS must round-trip through io::Error as the mapped Win32
+    // code, not the raw status, so callers observe the same errno as a
+    // synchronous failure.
+    #[test]
+    fn faulted_status_round_trips_as_win32_errno() {
+        let dos = ntstatus_to_dos_error(0xC000_007F);
+        let err = io::Error::from_raw_os_error(dos as i32);
+        assert_eq!(err.raw_os_error(), Some(ERROR_DISK_FULL as i32));
+    }
+
+    // The abort-drain must return once its deadline elapses instead of parking
+    // forever when the kernel never posts the outstanding completions. Drive a
+    // fresh port with a residual count but no submitted ops and an
+    // already-expired deadline: the loop must give up promptly and report zero
+    // reaped bytes rather than hang.
+    #[test]
+    fn abort_drain_returns_on_deadline_instead_of_hanging() {
+        let port = CompletionPort::new(1).expect("create completion port");
+        let deadline = Instant::now() - Duration::from_millis(1);
+        let start = Instant::now();
+        let bytes = drain_all_ignoring_completion_errors_until(&port, 4, deadline);
+        assert_eq!(bytes, 0, "no completions were posted, so no bytes reaped");
+        assert!(
+            start.elapsed() < ABORT_DRAIN_BUDGET,
+            "abort-drain must return on the deadline, not run the full budget",
+        );
+    }
+
+    // A short but non-zero budget must also terminate: no ops are outstanding
+    // that will ever complete, so the drain waits at most one bounded wait
+    // slice past the deadline before returning.
+    #[test]
+    fn abort_drain_bounds_total_wait() {
+        let port = CompletionPort::new(1).expect("create completion port");
+        let deadline = Instant::now() + Duration::from_millis(50);
+        let start = Instant::now();
+        let _ = drain_all_ignoring_completion_errors_until(&port, 2, deadline);
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "bounded abort-drain must not approach the full 5s budget here",
+        );
     }
 }
