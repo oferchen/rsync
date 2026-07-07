@@ -154,7 +154,9 @@ fn parse_range_source() {
 
 #[test]
 fn parse_pattern_source() {
-    let mapping = NameMapping::parse(MappingKind::User, "test*:nobody").expect("parse mapping");
+    // `root` is universally present, so the name target resolves and the rule
+    // survives parse-time resolution (upstream uidlist.c:547-561).
+    let mapping = NameMapping::parse(MappingKind::User, "test*:root").expect("parse mapping");
     assert_eq!(mapping.len(), 1);
 }
 
@@ -181,8 +183,54 @@ fn parse_empty_source_maps_nameless_id() {
 
 #[test]
 fn parse_target_as_name() {
-    let mapping = NameMapping::parse(MappingKind::User, "100:nobody").expect("parse mapping");
+    // A known name target (`root`) resolves at parse time and the rule is kept.
+    let mapping = NameMapping::parse(MappingKind::User, "100:root").expect("parse mapping");
     assert_eq!(mapping.len(), 1);
+    // upstream stores the resolved id in the idmap list, so the target is now
+    // numeric: applying the rule maps id 100 to root's uid (0).
+    let mapped = mapping.map_uid(100, false).expect("map uid");
+    assert_eq!(mapped, Some(0));
+}
+
+/// A name that cannot exist as a system account: `:` is not a legal username
+/// character and the string is long enough to never collide with a real entry.
+const UNRESOLVABLE_NAME: &str = "oc_rsync_nonexistent_map_target_00000000";
+
+#[test]
+fn parse_unknown_user_target_drops_rule_non_fatally() {
+    // upstream: uidlist.c:547-561 - an unknown --usermap target name is warned
+    // about once and the rule is skipped; parse still succeeds (non-fatal).
+    let spec = format!("100:{UNRESOLVABLE_NAME}");
+    let mapping = NameMapping::parse(MappingKind::User, &spec).expect("parse must not fail");
+    assert!(
+        mapping.is_empty(),
+        "unknown target rule must be dropped, not retained"
+    );
+    // The dropped rule no longer maps its source id: apply falls through to the
+    // default (unmapped) behaviour instead of aborting the metadata apply.
+    assert_eq!(mapping.map_uid(100, false).expect("map uid"), None);
+}
+
+#[test]
+fn parse_unknown_group_target_drops_rule_non_fatally() {
+    let spec = format!("100:{UNRESOLVABLE_NAME}");
+    let mapping = NameMapping::parse(MappingKind::Group, &spec).expect("parse must not fail");
+    assert!(mapping.is_empty());
+    assert_eq!(mapping.map_gid(100, false).expect("map gid"), None);
+}
+
+#[test]
+fn parse_keeps_valid_rule_alongside_unknown_target() {
+    // A valid rule declared before an unknown-target rule still applies; the
+    // unknown one is silently dropped (after its one-time warning) and the
+    // transfer continues. Mirrors upstream dropping only the offending rule.
+    let spec = format!("100:root, 200:{UNRESOLVABLE_NAME}, 300:0");
+    let mapping = NameMapping::parse(MappingKind::User, &spec).expect("parse must not fail");
+    assert_eq!(mapping.len(), 2, "only the unknown-target rule is dropped");
+    assert_eq!(mapping.map_uid(100, false).expect("map uid"), Some(0));
+    // The dropped rule's source id is now unmapped.
+    assert_eq!(mapping.map_uid(200, false).expect("map uid"), None);
+    assert_eq!(mapping.map_uid(300, false).expect("map uid"), Some(0));
 }
 
 #[test]
