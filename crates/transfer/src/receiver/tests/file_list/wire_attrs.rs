@@ -102,6 +102,84 @@ fn sum_head_read_insufficient_data() {
     assert_eq!(result.unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
 }
 
+/// Encodes a raw 16-byte sum_head wire frame from signed field values.
+fn sum_head_bytes(count: i32, blength: i32, s2length: i32, remainder: i32) -> Vec<u8> {
+    let mut data = Vec::with_capacity(16);
+    data.extend_from_slice(&count.to_le_bytes());
+    data.extend_from_slice(&blength.to_le_bytes());
+    data.extend_from_slice(&s2length.to_le_bytes());
+    data.extend_from_slice(&remainder.to_le_bytes());
+    data
+}
+
+/// A crafted sum_head with an enormous strong-sum length must be rejected with
+/// `InvalidData` (RERR_PROTOCOL) rather than driving a multi-gigabyte `vec!`.
+/// Guards the OOM site at `generator/protocol_io.rs` `vec![0u8; s2length]`.
+#[test]
+fn sum_head_rejects_oversized_s2length() {
+    let data = sum_head_bytes(1, 512, i32::MAX, 0);
+    let err = SumHead::read(&mut Cursor::new(data)).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+}
+
+/// A crafted sum_head with a negative block count must be rejected, mirroring
+/// upstream io.c:2029, so `Vec::with_capacity(count)` never sees garbage.
+#[test]
+fn sum_head_rejects_negative_count() {
+    let data = sum_head_bytes(-1, 512, 16, 0);
+    let err = SumHead::read(&mut Cursor::new(data)).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+}
+
+/// A block length beyond the legacy MAX_BLOCK_SIZE ceiling is rejected
+/// (upstream io.c:2050).
+#[test]
+fn sum_head_rejects_oversized_blength() {
+    let data = sum_head_bytes(1, i32::MAX, 16, 0);
+    let err = SumHead::read(&mut Cursor::new(data)).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+}
+
+/// A zero block length with a non-zero count is nonsense (division-by-zero) and
+/// must be rejected.
+#[test]
+fn sum_head_rejects_zero_blength_with_blocks() {
+    let data = sum_head_bytes(4, 0, 16, 0);
+    let err = SumHead::read(&mut Cursor::new(data)).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+}
+
+/// A remainder larger than the block length is rejected (upstream io.c:2062).
+#[test]
+fn sum_head_rejects_remainder_over_blength() {
+    let data = sum_head_bytes(1, 512, 16, 513);
+    let err = SumHead::read(&mut Cursor::new(data)).unwrap_err();
+    assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+}
+
+/// A legitimate large-file sum_head (SHA1 20-byte strong sums, max block size,
+/// many blocks) must still decode cleanly - the bounds mirror upstream exactly,
+/// so any header upstream accepts, oc accepts.
+#[test]
+fn sum_head_accepts_legit_large_transfer() {
+    // count near the u32 edge, blength at the legacy ceiling, s2length = SHA1.
+    let data = sum_head_bytes(1_000_000, 1 << 29, 20, (1 << 29) - 1);
+    let sum_head = SumHead::read(&mut Cursor::new(data)).unwrap();
+    assert_eq!(sum_head.count, 1_000_000);
+    assert_eq!(sum_head.blength, 1 << 29);
+    assert_eq!(sum_head.s2length, 20);
+    assert_eq!(sum_head.remainder, (1 << 29) - 1);
+}
+
+/// The zero-count whole-file sentinel (`count=0`) with all-zero fields decodes
+/// as an empty header, unaffected by the new bounds.
+#[test]
+fn sum_head_accepts_empty_whole_file() {
+    let data = sum_head_bytes(0, 0, 0, 0);
+    let sum_head = SumHead::read(&mut Cursor::new(data)).unwrap();
+    assert!(sum_head.is_empty());
+}
+
 #[test]
 fn sender_attrs_read_protocol_28_returns_default_iflags() {
     // Protocol 28 just reads the NDX byte, no iflags

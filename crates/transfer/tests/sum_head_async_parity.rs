@@ -58,12 +58,19 @@ impl AsyncRead for ChunkedReader {
 
 #[tokio::test(flavor = "current_thread")]
 async fn sum_head_read_async_matches_sync() {
+    // All fixtures are valid sum_heads: `SumHead::read` now validates the wire
+    // fields (upstream io.c:2025-2067) and rejects out-of-range values, so a
+    // parity fixture must stay within the accepted ranges while still setting
+    // high bytes across all four fields to exercise byte-level decode parity.
     let cases = [
         SumHead::empty(),
         SumHead::new(1, 700, 16, 0),
         SumHead::new(1234, 65536, 2, 511),
-        SumHead::new(u32::MAX, u32::MAX, u32::MAX, u32::MAX),
-        SumHead::new(0, 0, 0, 1),
+        // Large-but-valid: count with three nonzero bytes, blength at the legacy
+        // MAX_BLOCK_SIZE ceiling (1<<29), s2length at the SHA1 cap (20),
+        // remainder just below blength.
+        SumHead::new(0x00FF_FFFF, 1 << 29, 20, (1 << 29) - 1),
+        SumHead::new(2, 1024, 8, 1023),
     ];
 
     for head in cases {
