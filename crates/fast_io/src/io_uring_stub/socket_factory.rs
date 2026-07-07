@@ -133,3 +133,29 @@ pub fn socket_writer_from_fd(
     let writer = FdWriter(fd);
     Ok(IoUringOrStdSocketWriter::Std(Box::new(writer)))
 }
+
+/// Creates a socket writer keyed on [`ZeroCopyPolicy`](crate::ZeroCopyPolicy).
+///
+/// SEND_ZC is unavailable in this build (non-Linux or the `io_uring` cargo
+/// feature is off), so every policy - including
+/// [`ZeroCopyPolicy::Enabled`](crate::ZeroCopyPolicy::Enabled) - gracefully
+/// degrades to a standard `Write` wrapper over the raw fd. This never errors:
+/// the daemon-sender treats `--zero-copy` as a best-effort opt-in that falls
+/// back to the plain socket write path with byte-identical framing when the
+/// zero-copy transport is not present.
+///
+/// The caller retains ownership of `fd`; this wrapper does not close it.
+///
+/// # Errors
+///
+/// Never returns an error on this platform.
+pub fn socket_writer_from_fd_zero_copy(
+    fd: RawFd,
+    buffer_capacity: usize,
+    policy: crate::ZeroCopyPolicy,
+) -> io::Result<IoUringOrStdSocketWriter> {
+    let _ = buffer_capacity;
+    let _ = policy;
+    let writer = FdWriter(fd);
+    Ok(IoUringOrStdSocketWriter::Std(Box::new(writer)))
+}

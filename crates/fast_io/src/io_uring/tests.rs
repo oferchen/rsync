@@ -14,7 +14,7 @@ use super::file_reader::IoUringReader;
 use super::file_writer::IoUringWriter;
 use super::socket_factory::{
     FdReader, FdWriter, IoUringOrStdSocketReader, IoUringOrStdSocketWriter, socket_reader_from_fd,
-    socket_writer_from_fd,
+    socket_writer_from_fd, socket_writer_from_fd_zero_copy,
 };
 use super::{read_file, reader_from_path, write_file, writer_from_file};
 use crate::IoUringPolicy;
@@ -934,6 +934,71 @@ fn test_socket_large_payload_roundtrip() {
     write_thread.join().unwrap();
     assert_eq!(received.len(), payload.len());
     assert_eq!(received, payload);
+}
+
+// NSV data-integrity gate: a >1 MiB payload driven through the zero-copy
+// writer (`ZeroCopyPolicy::Enabled`) must round-trip byte-for-byte. SEND_ZC
+// posts the notification CQE only after the kernel releases its page hold; a
+// buffer-lifetime bug (reusing the frame buffer before the CQE drains) would
+// surface here as corruption. `socket_writer_from_fd_zero_copy` builds a
+// writer whose config sets `zero_copy_policy = Enabled`, so `send_zc_active`
+// is resolved from the kernel probe; on a kernel without SEND_ZC the writer
+// transparently degrades to `IORING_OP_SEND`, which must also round-trip.
+#[test]
+fn zero_copy_large_payload_roundtrip() {
+    let (fd_a, fd_b) = make_socket_pair();
+
+    let mut writer =
+        socket_writer_from_fd_zero_copy(fd_a, 64 * 1024, crate::ZeroCopyPolicy::Enabled).unwrap();
+    let mut reader = socket_reader_from_fd(fd_b, 64 * 1024, crate::IoUringPolicy::Auto).unwrap();
+
+    // 2 MiB payload - well above the SEND_ZC dispatch threshold and the
+    // internal buffer, forcing multiple zero-copy submissions.
+    let payload: Vec<u8> = (0..2 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
+
+    let payload_clone = payload.clone();
+    let write_thread = std::thread::spawn(move || {
+        writer.write_all(&payload_clone).unwrap();
+        writer.flush().unwrap();
+        drop(writer);
+        close_fd(fd_a);
+    });
+
+    let mut received = Vec::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        match reader.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => received.extend_from_slice(&buf[..n]),
+            Err(e) => panic!("read error: {e}"),
+        }
+    }
+    close_fd(fd_b);
+
+    write_thread.join().unwrap();
+    assert_eq!(received.len(), payload.len());
+    assert_eq!(
+        received, payload,
+        "zero-copy round-trip corrupted the payload"
+    );
+}
+
+// Auto/Disabled must NOT engage SEND_ZC: the factory returns the plain fd
+// `Std` writer, preserving the default socket write path. This is the
+// HARD default-path invariant at the fast_io boundary.
+#[test]
+fn zero_copy_auto_and_disabled_yield_std_writer() {
+    for policy in [crate::ZeroCopyPolicy::Auto, crate::ZeroCopyPolicy::Disabled] {
+        let (fd_a, fd_b) = make_socket_pair();
+        let writer = socket_writer_from_fd_zero_copy(fd_a, 16 * 1024, policy).unwrap();
+        assert!(
+            matches!(writer, IoUringOrStdSocketWriter::Std(_)),
+            "{policy:?} must yield the plain Std writer, not a SEND_ZC writer"
+        );
+        drop(writer);
+        close_fd(fd_a);
+        close_fd(fd_b);
+    }
 }
 
 /// Regression test for issue #1872: an `IORING_OP_SEND` on a back-pressured

@@ -192,7 +192,7 @@ pub use session_pool::{
 pub use shared_ring::{OpTag, SharedCompletion, SharedRing, SharedRingConfig};
 pub use socket_factory::{
     IoUringOrStdSocketReader, IoUringOrStdSocketWriter, socket_reader_from_fd,
-    socket_writer_from_fd,
+    socket_writer_from_fd, socket_writer_from_fd_zero_copy,
 };
 pub use socket_reader::IoUringSocketReader;
 pub use socket_writer::IoUringSocketWriter;

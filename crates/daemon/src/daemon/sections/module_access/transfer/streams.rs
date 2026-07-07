@@ -80,10 +80,95 @@ fn should_arm_delta_drain(_client_args: &[String]) -> bool {
 /// the socket directly on this degenerate path is byte-identical to the
 /// pre-#503 behaviour and returns EOF promptly on every platform.
 ///
+/// Wraps a plaintext TCP write clone into the daemon-sender's byte sink.
+///
+/// When `zero_copy_policy` is
+/// [`ZeroCopyPolicy::Enabled`](fast_io::ZeroCopyPolicy::Enabled) on Unix, the
+/// socket fd is handed to [`fast_io::socket_writer_from_fd_zero_copy`], which
+/// returns an `IORING_OP_SEND_ZC` writer when the running kernel advertises the
+/// opcode and otherwise degrades to a plain fd writer. The `TcpStream` is kept
+/// alive alongside the returned writer (the factory borrows the fd but does not
+/// take ownership), so the fd stays valid for the transfer's lifetime.
+///
+/// For every other case - `Auto`/`Disabled`, or non-Unix - the current
+/// `TcpStream` writer is returned unchanged, keeping the default path
+/// byte-identical.
+#[cfg(unix)]
+fn daemon_socket_writer(
+    write_stream: TcpStream,
+    zero_copy_policy: fast_io::ZeroCopyPolicy,
+) -> Box<dyn Write + Send> {
+    use std::os::unix::io::AsRawFd;
+
+    if !matches!(zero_copy_policy, fast_io::ZeroCopyPolicy::Enabled) {
+        return Box::new(write_stream);
+    }
+
+    // 64 KiB matches the `MultiplexWriter` frame buffer; the factory only uses
+    // it to size the fallback writer's internal buffer. The fd is borrowed, not
+    // owned, so `write_stream` is moved into the sink to keep it valid.
+    let fd = write_stream.as_raw_fd();
+    match fast_io::socket_writer_from_fd_zero_copy(fd, 64 * 1024, zero_copy_policy) {
+        Ok(zc) => Box::new(ZeroCopyTcpWriter {
+            writer: zc,
+            _socket: write_stream,
+        }),
+        // A construction failure is non-fatal: fall back to the plain
+        // `TcpStream` writer so the transfer still runs with identical framing.
+        Err(_) => Box::new(write_stream),
+    }
+}
+
+/// Non-Unix: no raw-fd zero-copy path; keep the current `TcpStream` writer.
+#[cfg(not(unix))]
+fn daemon_socket_writer(
+    write_stream: TcpStream,
+    _zero_copy_policy: fast_io::ZeroCopyPolicy,
+) -> Box<dyn Write + Send> {
+    Box::new(write_stream)
+}
+
+/// Pairs the zero-copy socket writer with the `TcpStream` whose fd it borrows.
+///
+/// `fast_io::socket_writer_from_fd_zero_copy` does not take ownership of the fd,
+/// so the `TcpStream` must outlive the writer. Holding both here ties their
+/// lifetimes together: dropping this struct drops the writer first, then closes
+/// the socket. Every `Write` call delegates to the inner zero-copy writer, so
+/// the framed bytes are unchanged.
+#[cfg(unix)]
+struct ZeroCopyTcpWriter {
+    writer: fast_io::IoUringOrStdSocketWriter,
+    _socket: TcpStream,
+}
+
+#[cfg(unix)]
+impl Write for ZeroCopyTcpWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.writer.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.writer.flush()
+    }
+}
+
+/// `zero_copy_policy` opts the daemon-sender's socket write side into the
+/// io_uring `IORING_OP_SEND_ZC` transport when it is
+/// [`ZeroCopyPolicy::Enabled`](fast_io::ZeroCopyPolicy::Enabled) (the client
+/// sent `--zero-copy`) and the write side is a plaintext TCP socket. The
+/// zero-copy writer substitutes the socket write of the same framed buffer, so
+/// the wire bytes are identical; only the syscall path changes. `Auto` and
+/// `Disabled` - and every non-plaintext or stdio transport - keep the current
+/// `TcpStream` writer unchanged, so the default transfer path is byte- and
+/// behavior-identical. On non-Linux, or a build without the `io_uring` cargo
+/// feature, the factory degrades to the plain fd writer; on non-Unix the raw-fd
+/// path is skipped entirely and the current `TcpStream` box is used.
+///
 /// Returns the transfer streams on success, or sends an error and returns `None`.
 fn setup_transfer_streams(
     ctx: &mut ModuleRequestContext<'_>,
     arm_drain: bool,
+    zero_copy_policy: fast_io::ZeroCopyPolicy,
 ) -> io::Result<Option<TransferStreams>> {
     let stream = ctx.reader.get_mut();
     stream.set_nodelay(true)?;
@@ -170,7 +255,10 @@ fn setup_transfer_streams(
     if !arm_drain {
         return Ok(Some(TransferStreams {
             read: Box::new(read_stream),
-            write: Box::new(write_stream),
+            // Plaintext TCP write side: opt into SEND_ZC when the client sent
+            // `--zero-copy`. `supports_tcp_shutdown` is true on every path that
+            // reaches here, so the plaintext gate is already satisfied.
+            write: daemon_socket_writer(write_stream, zero_copy_policy),
             supports_tcp_shutdown: true,
             drain_handle: None,
             #[cfg(feature = "tokio-transfer")]
@@ -182,7 +270,7 @@ fn setup_transfer_streams(
 
     Ok(Some(TransferStreams {
         read: Box::new(draining_reader),
-        write: Box::new(write_stream),
+        write: daemon_socket_writer(write_stream, zero_copy_policy),
         supports_tcp_shutdown: true,
         drain_handle: Some(drain_handle),
         #[cfg(feature = "tokio-transfer")]
