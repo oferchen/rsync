@@ -117,7 +117,7 @@ mod tests {
     fn apply_acls_from_cache_returns_ok() {
         let dst = Path::new("/nonexistent/dst");
         let cache = AclCache::new();
-        let result = apply_acls_from_cache(dst, &cache, 0, None, false, None);
+        let result = apply_acls_from_cache(dst, &cache, 0, None, false, None, None);
         assert!(result.is_ok());
     }
 
@@ -125,7 +125,7 @@ mod tests {
     fn apply_acls_from_cache_with_default_ndx_returns_ok() {
         let dst = Path::new("/nonexistent/dst");
         let cache = AclCache::new();
-        let result = apply_acls_from_cache(dst, &cache, 0, Some(1), true, Some(0o644));
+        let result = apply_acls_from_cache(dst, &cache, 0, Some(1), true, Some(0o644), None);
         assert!(result.is_ok());
     }
 }

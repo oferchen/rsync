@@ -90,12 +90,12 @@ impl AclIdMapper {
         if self.numeric_ids {
             return id;
         }
-        let mut mapped = self.uid_map.get(&id).copied().unwrap_or(id);
+        let mapped = self.uid_map.get(&id).copied().unwrap_or(id);
         #[cfg(unix)]
         if let Some(mapping) = &self.user_mapping
             && let Ok(Some(remapped)) = mapping.map_uid(mapped, self.numeric_ids)
         {
-            mapped = remapped;
+            return remapped;
         }
         mapped
     }
@@ -108,12 +108,12 @@ impl AclIdMapper {
         if self.numeric_ids {
             return id;
         }
-        let mut mapped = self.gid_map.get(&id).copied().unwrap_or(id);
+        let mapped = self.gid_map.get(&id).copied().unwrap_or(id);
         #[cfg(unix)]
         if let Some(mapping) = &self.group_mapping
             && let Ok(Some(remapped)) = mapping.map_gid(mapped, self.numeric_ids)
         {
-            mapped = remapped;
+            return remapped;
         }
         mapped
     }

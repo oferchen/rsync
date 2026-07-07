@@ -125,7 +125,7 @@ mod tests {
     fn apply_acls_from_cache_returns_ok() {
         let dst = Path::new("/nonexistent/dst");
         let cache = AclCache::new();
-        let result = apply_acls_from_cache(dst, &cache, 0, None, false, None);
+        let result = apply_acls_from_cache(dst, &cache, 0, None, false, None, None);
         assert!(result.is_ok());
     }
 }
