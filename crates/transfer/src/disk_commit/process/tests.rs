@@ -336,7 +336,7 @@ fn make_backup_returns_destination_relative_notice() {
         backup_dir: None,
         suffix: OsString::from("~"),
     };
-    let notice = make_backup(&file_path, &config)
+    let notice = make_backup(&file_path, &config, &DiskCommitConfig::default())
         .expect("make_backup succeeds")
         .expect("notice produced when an existing file is backed up");
 
@@ -363,6 +363,103 @@ fn make_backup_missing_file_is_noop() {
         backup_dir: None,
         suffix: OsString::from("~"),
     };
-    let notice = make_backup(&file_path, &config).expect("make_backup succeeds");
+    let notice = make_backup(&file_path, &config, &DiskCommitConfig::default())
+        .expect("make_backup succeeds");
     assert!(notice.is_none(), "no notice when nothing was backed up");
+}
+
+/// #507 (TOCTOU regression): the dirfd anchor on the commit rename refuses to
+/// land the final file through a destination parent that was swapped for a
+/// symlink pointing outside the tree.
+///
+/// Proven deterministically by program order (no threads, no sleeps): the
+/// `DirSandbox` opens the destination root's dirfd before the swap, so a later
+/// symlink swap on the `dest_dir` path cannot redirect the anchored
+/// `renameat`. The out-of-tree location must stay empty; the final file must
+/// land in the real (now-moved-aside) destination directory, never through the
+/// symlink. WHY it matters: without the anchor, `fs::rename(temp, dest/name)`
+/// would follow the swapped symlink and write the received file outside the
+/// destination tree.
+#[cfg(unix)]
+#[test]
+fn commit_rename_refuses_parent_symlink_escape() {
+    use std::sync::Arc;
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let staging = std::fs::canonicalize(tmp.path()).expect("canon");
+
+    // Destination root holds the temp file and the final name.
+    let dest_dir = staging.join("dest");
+    fs::create_dir(&dest_dir).unwrap();
+    let temp_path = dest_dir.join(".tmp.payload");
+    fs::write(&temp_path, b"received content").unwrap();
+    let final_path = dest_dir.join("payload.bin");
+
+    // Out-of-tree location a redirected rename would land the file in. Must
+    // stay empty.
+    let outside = staging.join("outside");
+    fs::create_dir(&outside).unwrap();
+    let dest_aside = staging.join("dest.aside");
+
+    // Open the sandbox at the real dest root BEFORE any swap; the dirfd pins
+    // the real inode.
+    let sandbox = Arc::new(fast_io::DirSandbox::open_root(&dest_dir).expect("open sandbox"));
+    let config = DiskCommitConfig {
+        sandbox: Some(sandbox),
+        dest_dir: Some(dest_dir.clone()),
+        ..DiskCommitConfig::default()
+    };
+
+    // Move the real dest aside and plant a symlink at the original path
+    // pointing at `outside`. Any path-based resolver now routes
+    // `dest/payload.bin` to `outside/payload.bin`; the anchored renameat is
+    // immune because its dirfd still names the moved-aside real directory.
+    fs::rename(&dest_dir, &dest_aside).expect("move dest aside");
+    std::os::unix::fs::symlink(&outside, &dest_dir).expect("plant dest symlink");
+
+    // Pass the ORIGINAL path strings (temp_path, final_path), exactly as
+    // production does: the receiver holds `dest_dir/<leaf>` paths that predate
+    // the swap. The gate resolves both leaves against the pinned dirfd, so the
+    // stale path strings do not follow the symlink.
+    let was_copy = rename_config_sandboxed(&config, &temp_path, &final_path)
+        .expect("anchored commit rename succeeds");
+    assert!(!was_copy, "same-parent rename is never a cross-device copy");
+
+    // The out-of-tree location must be empty: the anchor refused the redirect.
+    assert!(
+        !outside.join("payload.bin").exists(),
+        "final file must not land outside the tree through the swapped symlink",
+    );
+    // The final file landed in the real (moved-aside) destination directory.
+    assert!(
+        dest_aside.join("payload.bin").exists(),
+        "anchored rename must place the final file inside the real destination",
+    );
+    assert_eq!(
+        fs::read(dest_aside.join("payload.bin")).unwrap(),
+        b"received content",
+    );
+}
+
+/// Fallback parity: with no sandbox attached, `rename_config_sandboxed` uses
+/// the path-based [`rename_with_io_uring_fallback`], moving the temp file to
+/// its final destination exactly as before. Proves the sandbox wiring never
+/// regresses a working rename on the common (no-sandbox) path.
+#[cfg(unix)]
+#[test]
+fn commit_rename_without_sandbox_uses_path_fallback() {
+    let dir = tempfile::tempdir().unwrap();
+    let temp_path = dir.path().join(".tmp.payload");
+    let final_path = dir.path().join("payload.bin");
+    fs::write(&temp_path, b"fallback content").unwrap();
+
+    let config = DiskCommitConfig::default();
+    assert!(config.sandbox.is_none());
+
+    let was_copy = rename_config_sandboxed(&config, &temp_path, &final_path)
+        .expect("path-based rename succeeds");
+    assert!(!was_copy);
+    assert!(!temp_path.exists(), "temp file renamed away");
+    assert!(final_path.exists());
+    assert_eq!(fs::read(&final_path).unwrap(), b"fallback content");
 }
