@@ -90,8 +90,15 @@ fn build_server_config(
     // always the module root; legacy tests that push straight into the module
     // root keep that behaviour.
     let positional_args: Vec<OsString> = if role == ServerRole::Receiver {
-        let dest = resolve_receiver_dest(std::path::Path::new(&module.path), client_args, &module.name);
-        vec![OsString::from(dest.as_os_str())]
+        match resolve_receiver_dest(std::path::Path::new(&module.path), client_args, &module.name) {
+            Some(dest) => vec![OsString::from(dest.as_os_str())],
+            None => {
+                let payload =
+                    "@ERROR: requested path resolves outside module root".to_owned();
+                send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+                return Ok(None);
+            }
+        }
     } else {
         match resolve_sender_sources(std::path::Path::new(&module.path), client_args, &module.name) {
             Some(sources) => sources
