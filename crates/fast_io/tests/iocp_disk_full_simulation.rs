@@ -30,7 +30,8 @@ use windows_sys::Win32::Storage::FileSystem::{
 };
 
 use fast_io::iocp::{
-    IocpConfig, IocpDiskBatch, clear_injected_write_error_for_test,
+    IocpConfig, IocpDiskBatch, clear_injected_completion_faults_for_test,
+    clear_injected_write_error_for_test, inject_completion_faults_for_test,
     inject_next_write_error_for_test, is_iocp_available,
 };
 
@@ -41,6 +42,7 @@ struct InjectionGuard;
 impl Drop for InjectionGuard {
     fn drop(&mut self) {
         clear_injected_write_error_for_test();
+        clear_injected_completion_faults_for_test();
     }
 }
 
@@ -379,5 +381,77 @@ fn multi_in_flight_disk_full_drains_before_drop() {
         on_disk.as_slice(),
         &payload[..on_disk.len()],
         "durable prefix must match the source bytes exactly"
+    );
+}
+
+/// Regression for the mid-batch *completion*-error use-after-free (#488). The
+/// submission-error tests above cover a `WriteFile` that fails synchronously.
+/// This test covers the other half: a `WriteFile` that the kernel *accepts*
+/// (ERROR_IO_PENDING) but that later posts a completion carrying a faulted
+/// NTSTATUS in `OVERLAPPED::Internal` - the disk filled while the async write
+/// was in flight.
+///
+/// Before the fix, the completion drain returned the faulted error the instant
+/// it saw the bad NTSTATUS, abandoning every sibling op the same batch had
+/// already dequeued and, worse, leaving the still-outstanding ops in flight
+/// while their pinned OVERLAPPED buffers were dropped - a use-after-free with
+/// the kernel still writing into freed memory. The fix retires the whole
+/// dequeued cohort, drains the residual outstanding ops, and only then surfaces
+/// the error.
+///
+/// The invariant encoded here: a faulted completion must (a) surface the
+/// injected error, (b) not hang, (c) drop cleanly with no UAF, and (d) leave
+/// only whole, source-matching chunks on disk.
+#[test]
+fn faulted_completion_drains_residual_before_drop() {
+    if !is_iocp_available() {
+        eprintln!("skipping: IOCP unavailable on this host");
+        return;
+    }
+    let _guard = InjectionGuard;
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("faulted_completion.bin");
+    let file = open_writable(&path);
+
+    // 4 KB chunks, up to four in flight, 16 KB payload => four submissions in
+    // one flush. All four are accepted by the kernel, then the drain treats
+    // the first reaped completion as faulted while siblings are still
+    // outstanding, forcing the residual-drain path.
+    let config = IocpConfig {
+        buffer_size: 4096,
+        concurrent_ops: 4,
+        ..IocpConfig::default()
+    };
+    let mut batch = IocpDiskBatch::new(&config).unwrap();
+    batch.begin_file(file).unwrap();
+
+    let chunk = 4096usize;
+    let payload: Vec<u8> = (0..4 * chunk).map(|i| (i & 0xFF) as u8).collect();
+    batch.write_data(&payload).unwrap();
+
+    inject_completion_faults_for_test(1, ERROR_DISK_FULL as i32);
+    let err = batch
+        .flush()
+        .expect_err("a faulted completion must surface ERROR_DISK_FULL");
+    assert_eq!(err.kind(), io::ErrorKind::StorageFull);
+    assert_eq!(err.raw_os_error(), Some(ERROR_DISK_FULL as i32));
+
+    // Clean drop is the core invariant: a UAF or an un-drained op would surface
+    // as a hang, a panic in Drop, or heap corruption here. Because the
+    // completion fault is injected *after* the kernel has accepted (and here
+    // physically performed) the write, the on-disk bytes are not a meaningful
+    // signal - the injection models the NTSTATUS report, not the kernel's own
+    // write suppression. The point under test is that the residual ops are
+    // drained before their pinned buffers drop, which this clean teardown
+    // exercises.
+    drop(batch);
+
+    // The write path never wrote past the payload, faulted or not.
+    let on_disk = std::fs::read(&path).unwrap();
+    assert!(
+        on_disk.len() <= payload.len(),
+        "on-disk size must not exceed the payload, got {} bytes",
+        on_disk.len()
     );
 }

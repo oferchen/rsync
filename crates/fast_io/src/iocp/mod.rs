@@ -52,7 +52,8 @@ pub use config::{
 pub use disk_batch::{IocpDiskBatch, bounce_copies_avoided};
 #[doc(hidden)]
 pub use disk_batch::{
-    clear_injected_write_error_for_test, inject_next_write_error_for_test,
+    clear_injected_completion_faults_for_test, clear_injected_write_error_for_test,
+    inject_completion_faults_for_test, inject_next_write_error_for_test,
     reset_bounce_copies_avoided_for_test,
 };
 pub use error::IocpError;

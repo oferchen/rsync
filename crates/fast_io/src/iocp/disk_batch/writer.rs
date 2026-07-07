@@ -145,16 +145,26 @@ pub(super) fn submit_write_batch(
             break;
         }
 
-        // Reap at least one completion. The drain returns a list of bytes
-        // transferred per completed OVERLAPPED pointer; map those back to
-        // the in-flight queue and remove completed entries.
-        let completions = drain_completions(port, in_flight.len())?;
+        // Reap at least one completion. The drain retires every OVERLAPPED the
+        // kernel dequeued this pass (successful or faulted) and reports the
+        // first fault, if any, without abandoning the sibling ops. A drain-side
+        // syscall failure still propagates, but only after we drain the ops
+        // this call could not reap - dropping their pinned buffers while the
+        // kernel still owns them would be a use-after-free.
+        let outcome = match drain_completions(port, in_flight.len()) {
+            Ok(outcome) => outcome,
+            Err(e) => {
+                *bytes_written_out += drain_all_ignoring_completion_errors(port, in_flight.len());
+                return Err(e);
+            }
+        };
         let mut resubmissions: Vec<(u64, Vec<u8>)> = Vec::new();
         let mut zero_byte_completion = false;
 
         in_flight.retain_mut(|op| {
             let ptr = pinned_overlapped_addr(op);
-            if let Some(transferred) = completions
+            if let Some(transferred) = outcome
+                .completions
                 .iter()
                 .find_map(|(p, n)| if *p == ptr { Some(*n) } else { None })
             {
@@ -176,9 +186,21 @@ pub(super) fn submit_write_batch(
                     false
                 }
             } else {
-                true
+                // Retire faulted ops too: the kernel dequeued them, so their
+                // pinned buffers are done. Keeping them in-flight would either
+                // hang the residual drain or free the box while the kernel
+                // still owned it. Retained ops are the ones still outstanding.
+                !outcome.retired.contains(&ptr)
             }
         });
+
+        // A completion reported a faulted NTSTATUS: retire everything this pass
+        // dequeued (done above), then drain the residual outstanding ops before
+        // dropping their pinned buffers, and surface the original error.
+        if let Some(err) = outcome.error {
+            *bytes_written_out += drain_all_ignoring_completion_errors(port, in_flight.len());
+            return Err(err);
+        }
 
         if zero_byte_completion {
             // Reap the ops still outstanding after this partial drain before
