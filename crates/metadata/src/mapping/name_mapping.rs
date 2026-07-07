@@ -6,12 +6,14 @@
 //! concrete UIDs/GIDs. Used as the backing store for both [`super::UserMapping`]
 //! and [`super::GroupMapping`].
 
-use crate::id_lookup::{lookup_group_name, lookup_user_name};
+use crate::id_lookup::{
+    lookup_group_by_name, lookup_group_name, lookup_user_by_name, lookup_user_name,
+};
 use rustix::process::{RawGid, RawUid};
 use std::io;
 
 use super::parse::{parse_matcher, parse_target};
-use super::types::{MappingKind, MappingParseError, MappingRule};
+use super::types::{MappingKind, MappingParseError, MappingRule, MappingTarget};
 
 /// Parsed mapping rules associated with `--usermap` or `--groupmap`.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -72,11 +74,54 @@ impl NameMapping {
             rules.push(MappingRule { matcher, target });
         }
 
+        // upstream: uidlist.c:547-561 parse_name_map - each rule's target name is
+        // resolved on the receiver at parse time via user_to_uid/group_to_gid and
+        // stored as a concrete id in the idmap list. An unknown name prints
+        // "Unknown --usermap name on receiver: NAME" (FERROR) and the rule is
+        // simply not added; the remaining rules and the transfer proceed
+        // non-fatally. Resolving here (rather than lazily per file) both matches
+        // upstream and keeps an unknown target from aborting a per-file metadata
+        // apply.
+        rules.retain_mut(|rule| Self::resolve_target(kind, &mut rule.target));
+
         Ok(Self {
             rules,
             kind,
             spec: trimmed.to_owned(),
         })
+    }
+
+    /// Resolves a rule's target name to a concrete id in place at parse time.
+    ///
+    /// Numeric targets ([`MappingTarget::Id`]) are already resolved and kept as
+    /// is. A name target is looked up on the receiver via the kind-appropriate
+    /// NSS call; on success the target is rewritten to the resolved id, on
+    /// failure the upstream warning is printed and the caller drops the rule.
+    // upstream: uidlist.c:547-561 - user_to_uid/group_to_gid, drop on failure.
+    fn resolve_target(kind: MappingKind, target: &mut MappingTarget) -> bool {
+        let MappingTarget::Name(name) = target else {
+            return true;
+        };
+        let resolved = match kind {
+            MappingKind::User => lookup_user_by_name(name.as_bytes()),
+            MappingKind::Group => lookup_group_by_name(name.as_bytes()),
+        };
+        match resolved {
+            Ok(Some(id)) => {
+                *target = MappingTarget::Id(id);
+                true
+            }
+            // A lookup error (e.g. NSS failure) is treated like an unknown name,
+            // matching upstream where any non-True user_to_uid return drops the rule.
+            Ok(None) | Err(_) => {
+                let flag = match kind {
+                    MappingKind::User => "user",
+                    MappingKind::Group => "group",
+                };
+                eprintln!("Unknown --{flag}map name on receiver: {name}");
+                false
+            }
+        }
     }
 
     /// Returns the original specification string (post-trim) used to construct
