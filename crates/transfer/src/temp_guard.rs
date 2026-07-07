@@ -299,6 +299,27 @@ impl TempFileGuard {
         }
     }
 
+    /// Create a guard for an in-place / device write target that must never
+    /// be unlinked on a mid-transfer error.
+    ///
+    /// Unlike [`new`](TempFileGuard::new), `path` is the real destination
+    /// file (not a temp file), so the guard is constructed already
+    /// keep-on-drop: an aborted `--inplace` or device transfer leaves the
+    /// partial write in place instead of deleting the user's existing file.
+    /// This mirrors upstream `receiver.c:1054`, which gates the destination
+    /// unlink on `!one_inplace` and so never unlinks an in-place target.
+    /// The success path still calls [`keep`](TempFileGuard::keep), which is
+    /// an idempotent no-op here.
+    #[inline]
+    pub const fn keep_dest(path: PathBuf) -> Self {
+        Self {
+            path,
+            keep_on_drop: true,
+            #[cfg(unix)]
+            anchor: None,
+        }
+    }
+
     /// Create a new guard with an optional SEC-1.r sandbox anchor.
     ///
     /// When `sandbox` and `dest_dir` are both `Some` and the temp file lives

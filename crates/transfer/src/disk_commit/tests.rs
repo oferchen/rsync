@@ -1335,6 +1335,148 @@ fn cleanup_manager_inplace_skips_registration() {
     h.file_tx.send(FileMessage::Shutdown).unwrap();
     h.join_handle.join().unwrap();
 }
+
+/// #511 (data-loss regression): a mid-transfer error on an `--inplace`
+/// transfer must LEAVE the pre-existing destination in place, never delete
+/// it. The inplace path writes directly to the real destination (no
+/// temp+rename), so the cleanup guard wraps the live dest. A prior
+/// implementation dropped that guard on the error path, which unlinked the
+/// user's destination - non-adversarial data loss from a network drop.
+///
+/// WHY it matters: upstream `receiver.c:1054` gates the destination unlink
+/// on `!one_inplace`, so an interrupted inplace transfer never removes the
+/// dest; the partial write stays (the documented `--inplace` risk the user
+/// opted into). This test fails if the guard ever unlinks the inplace dest
+/// again.
+#[test]
+fn inplace_abort_does_not_delete_existing_destination() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("inplace_abort_preexisting.dat");
+
+    // Pre-existing destination the user must not lose.
+    fs::write(&file_path, b"the user's existing data").unwrap();
+    assert!(file_path.exists());
+
+    let config = DiskCommitConfig::default();
+    let h = spawn_disk_thread(config).unwrap();
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 100,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: true,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    // Partial bytes land directly in the real destination (inplace).
+    h.file_tx
+        .send(FileMessage::Chunk(b"partial".to_vec()))
+        .unwrap();
+
+    // Simulate a mid-transfer error (network drop) via Abort.
+    h.file_tx
+        .send(FileMessage::Abort {
+            reason: "simulated mid-transfer network drop".into(),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap();
+    assert!(result.is_err(), "abort must surface as an error");
+
+    // The whole fix: the destination must still exist after the aborted
+    // inplace transfer. Upstream leaves the partial write; we must not
+    // delete the user's file.
+    assert!(
+        file_path.exists(),
+        "inplace abort must NOT delete the pre-existing destination"
+    );
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
+/// #511 control: a mid-transfer abort on the default (non-inplace)
+/// temp+rename path with `PartialMode::None` still discards the temp file,
+/// so a pre-existing destination is left exactly as it was - untouched by
+/// the failed new transfer. This proves the fix is scoped to the inplace
+/// guard and does not weaken temp-file cleanup on the error path.
+#[test]
+fn non_inplace_abort_discards_temp_and_leaves_existing_dest() {
+    let dir = test_support::create_tempdir();
+    let file_path = dir.path().join("non_inplace_abort_preexisting.dat");
+
+    // Pre-existing destination. A non-inplace transfer writes to a temp
+    // file and only renames onto this dest on success, so an aborted new
+    // transfer must leave it untouched.
+    fs::write(&file_path, b"prior destination content").unwrap();
+
+    let config = DiskCommitConfig {
+        partial_mode: PartialMode::None,
+        ..DiskCommitConfig::default()
+    };
+    let h = spawn_disk_thread(config).unwrap();
+
+    h.file_tx
+        .send(FileMessage::Begin(Box::new(BeginMessage {
+            file_path: file_path.clone(),
+            target_size: 100,
+            file_entry_index: 0,
+            checksum_verifier: None,
+            is_device_target: false,
+            is_inplace: false,
+            append_offset: 0,
+            xattr_list: None,
+        })))
+        .unwrap();
+
+    h.file_tx
+        .send(FileMessage::Chunk(b"new partial".to_vec()))
+        .unwrap();
+    h.file_tx
+        .send(FileMessage::Abort {
+            reason: "simulated mid-transfer network drop".into(),
+        })
+        .unwrap();
+
+    let result = h.result_rx.recv().unwrap();
+    assert!(result.is_err());
+
+    // The pre-existing destination is untouched: the temp file was discarded
+    // and never renamed over it. The original content survives verbatim.
+    assert!(
+        file_path.exists(),
+        "pre-existing destination must survive a failed non-inplace transfer"
+    );
+    assert_eq!(
+        fs::read(&file_path).unwrap(),
+        b"prior destination content",
+        "pre-existing destination content must be untouched by the aborted temp transfer"
+    );
+
+    // No orphan temp file must remain in the destination directory.
+    let leftover_temps: Vec<_> = fs::read_dir(dir.path())
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with(".non_inplace_abort_preexisting.dat.")
+        })
+        .collect();
+    assert!(
+        leftover_temps.is_empty(),
+        "aborted non-inplace transfer must discard its temp file"
+    );
+
+    h.file_tx.send(FileMessage::Shutdown).unwrap();
+    h.join_handle.join().unwrap();
+}
+
 /// Verifies that aborting a multi-chunk transfer mid-stream with
 /// `PartialMode::PartialDir` moves the partial file to the partial-dir,
 /// not the final destination. The partial file should contain only the
