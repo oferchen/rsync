@@ -109,8 +109,6 @@ pub mod cvs;
 /// Structured tracing for filter rule evaluation and statistics.
 pub mod debug_filter;
 mod decision;
-/// Generic filter evaluation for `FileEntryAccessor` implementors.
-///
 mod error;
 /// Merge-file reader and parser for filter rules.
 pub mod merge;

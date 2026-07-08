@@ -49,7 +49,6 @@ impl CompiledRule {
     /// When `negate` is true, the match result is inverted: returns true when
     /// the pattern does NOT match. This mirrors upstream rsync's `!` modifier
     /// behavior from `exclude.c` line 906.
-    /// Tests whether a path matches this rule's pattern.
     ///
     /// When `check_descendants` is false, only direct matchers are evaluated -
     /// descendant matchers are skipped. This matches upstream rsync's

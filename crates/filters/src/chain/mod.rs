@@ -756,17 +756,6 @@ struct InlineDirMerge {
     abs_path: bool,
 }
 
-/// Splits parsed rules into ordinary entries plus dir-merge descriptors.
-///
-/// Standard [`FilterSet`] compilation discards [`FilterAction::DirMerge`]
-/// rules because they neither match paths nor encode a single decision.
-/// Pull them out here so the caller can load each referenced file inline,
-/// mirroring upstream's `:` directive that registers a fresh per-directory
-/// merge from inside another merge file.
-///
-/// upstream: exclude.c:1419-1428 - `FILTRULE_PERDIR_MERGE` inside
-/// `parse_filter_str()` adds a new per-dir rule rather than expanding the
-/// file at parse time.
 /// Joins a relative path's normal components with `/`, ignoring any leading
 /// `./`, `..`, or root components. Produces the module-root-relative directory
 /// string used to re-anchor merge-file rules.
@@ -799,6 +788,17 @@ fn reanchor_merge_rule(mut rule: FilterRule, rel_dir: Option<&str>) -> FilterRul
     rule
 }
 
+/// Splits parsed rules into ordinary entries plus dir-merge descriptors.
+///
+/// Standard [`FilterSet`] compilation discards [`FilterAction::DirMerge`]
+/// rules because they neither match paths nor encode a single decision.
+/// Pull them out here so the caller can load each referenced file inline,
+/// mirroring upstream's `:` directive that registers a fresh per-directory
+/// merge from inside another merge file.
+///
+/// upstream: exclude.c:1419-1428 - `FILTRULE_PERDIR_MERGE` inside
+/// `parse_filter_str()` adds a new per-dir rule rather than expanding the
+/// file at parse time.
 fn split_dir_merge_rules(rules: Vec<FilterRule>) -> (Vec<FilterRule>, Vec<InlineDirMerge>) {
     let mut keep = Vec::with_capacity(rules.len());
     let mut dir_merges = Vec::new();
