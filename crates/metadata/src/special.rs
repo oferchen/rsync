@@ -195,6 +195,9 @@ fn create_device_node_inner(
     // be handed straight to mknod (matching upstream do_mknod, which forwards
     // the device word verbatim). try_into guards the rare targets where dev_t
     // is narrower than the u64 returned by MetadataExt::rdev.
+    // try_into guards narrow-dev_t targets; on Linux dev_t is u64 so the
+    // conversion is a no-op there, which clippy would otherwise flag.
+    #[allow(clippy::useless_conversion)]
     let device: libc::dev_t = metadata
         .rdev()
         .try_into()
@@ -360,6 +363,9 @@ fn create_device_node_inner(
     // As above, `libc::mode_t` is a `u16` alias on Apple targets,
     // so this is an infallible cast and cannot overflow.
     let permissions: libc::mode_t = perm_bits as libc::mode_t;
+    // try_into guards narrow-dev_t targets; on Linux dev_t is u64 so the
+    // conversion is a no-op there, which clippy would otherwise flag.
+    #[allow(clippy::useless_conversion)]
     let device: libc::dev_t = metadata
         .rdev()
         .try_into()
