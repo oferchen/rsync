@@ -11,7 +11,7 @@ use crate::{LIST_TIMESTAMP_FORMAT, describe_event_kind, format_list_permissions,
 use core::client::{ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind};
 
 use crate::frontend::out_format::tokens::{
-    OutFormatContext, OutFormatPlaceholder, PlaceholderToken,
+    MAX_PLACEHOLDER_WIDTH, OutFormatContext, OutFormatPlaceholder, PlaceholderToken,
 };
 
 use super::checksum::format_full_checksum;
@@ -78,14 +78,26 @@ pub(super) fn render_placeholder_value(
         OutFormatPlaceholder::PermissionString => {
             Some(format_out_format_permissions(event.metadata()))
         }
-        OutFormatPlaceholder::SymlinkTarget => event
+        OutFormatPlaceholder::SymlinkTarget => match event
             .metadata()
             .and_then(ClientEntryMetadata::symlink_target)
-            .map(|target| {
+        {
+            Some(target) => {
                 let mut rendered = String::from(symlink_target_connector(event));
                 rendered.push_str(&target.to_string_lossy());
-                rendered
-            }),
+                Some(rendered)
+            }
+            // upstream: log.c:648-654 - the `case 'L'` else-branch sets n = ""
+            // for a non-link/non-hardlink entry. With no width modifier upstream
+            // breaks with the empty string (matched here by returning None); with
+            // a width modifier it copies four leading spaces then formats the
+            // empty string under the width specifier, emitting `4 + width` spaces
+            // so the empty target aligns under the ` -> ` connector column.
+            None => spec
+                .format
+                .width()
+                .map(|width| " ".repeat(4 + width.min(MAX_PLACEHOLDER_WIDTH))),
+        },
         OutFormatPlaceholder::CurrentTime => Some(format_current_timestamp()),
         OutFormatPlaceholder::OwnerName => Some(format_owner_name(event.metadata())),
         OutFormatPlaceholder::GroupName => Some(format_group_name(event.metadata())),
@@ -95,11 +107,15 @@ pub(super) fn render_placeholder_value(
                 .and_then(ClientEntryMetadata::uid)
                 .map_or_else(|| "0".to_owned(), |value| value.to_string()),
         ),
+        // upstream: log.c:574-576 - `case 'G'` renders the literal "DEFAULT"
+        // when `!gid_ndx || file->flags & FLAG_SKIP_GROUP`; only an available
+        // gid is formatted numerically. This differs from `%U` (log.c:570-573),
+        // which renders 0 for an unavailable uid.
         OutFormatPlaceholder::OwnerGid => Some(
             event
                 .metadata()
                 .and_then(ClientEntryMetadata::gid)
-                .map_or_else(|| "0".to_owned(), |value| value.to_string()),
+                .map_or_else(|| "DEFAULT".to_owned(), |value| value.to_string()),
         ),
         OutFormatPlaceholder::ProcessId => Some(std::process::id().to_string()),
         OutFormatPlaceholder::RemoteHost => Some(remote_placeholder_value(
