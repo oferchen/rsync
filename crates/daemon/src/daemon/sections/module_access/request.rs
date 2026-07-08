@@ -47,7 +47,14 @@ impl<'a> ModuleRequestContext<'a> {
     }
 }
 
-/// Sends an error message and exit marker to the client.
+/// Sends a fatal `@ERROR:` refusal line to the client and closes the session.
+///
+/// Writes exactly `<payload>\n` and nothing more. Upstream never follows an
+/// `@ERROR:` line with `@RSYNCD: EXIT`: the client treats `@ERROR` as fatal
+/// and returns immediately without reading further
+/// (upstream: clientserver.c:381-385 - `strncmp(line, "@ERROR", 6) == 0` ->
+/// `return -1`), so the server just emits the line and lets the socket close.
+/// Only the successful module-listing path emits `@RSYNCD: EXIT`.
 ///
 /// This is the pre-handshake form: the daemon has not yet emitted
 /// `@RSYNCD: OK` so the client still reads raw `@RSYNCD:`-style text.
@@ -55,15 +62,13 @@ impl<'a> ModuleRequestContext<'a> {
 /// and any further raw bytes are mis-parsed as multiplex frame headers
 /// (e.g. the 'T' of "The server..." surfaces as `unexpected tag 77`).
 /// Use [`send_multiplexed_error_and_exit`] once OK has been written.
-fn send_error_and_exit(
+fn send_error(
     stream: &mut DaemonStream,
     limiter: &mut Option<BandwidthLimiter>,
-    messages: &LegacyMessageCache,
     payload: &str,
 ) -> io::Result<()> {
     write_limited(stream, limiter, payload.as_bytes())?;
     write_limited(stream, limiter, b"\n")?;
-    messages.write_exit(stream, limiter)?;
     stream.flush()
 }
 
@@ -111,7 +116,6 @@ fn deny_module(
     peer_ip: IpAddr,
     host: Option<&str>,
     limiter: &mut Option<BandwidthLimiter>,
-    messages: &LegacyMessageCache,
 ) -> io::Result<()> {
     let module_display = sanitize_module_identifier(&module.name);
     let payload = if !module.listable {
@@ -125,7 +129,7 @@ fn deny_module(
             .replace("{host}", host_display)
             .replace("{addr}", &addr_str)
     };
-    send_error_and_exit(stream, limiter, messages, &payload)
+    send_error(stream, limiter, &payload)
 }
 
 /// Sends the "@RSYNCD: OK" acknowledgment to the client.
@@ -150,7 +154,7 @@ fn handle_max_connections_exceeded(
     limit: NonZeroU32,
 ) -> io::Result<()> {
     let payload = MODULE_MAX_CONNECTIONS_PAYLOAD.replace("{limit}", &limit.get().to_string());
-    send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+    send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
     if let Some(log) = ctx.log_sink {
         let current = module
             .active_connections
@@ -171,10 +175,9 @@ fn handle_max_connections_exceeded(
 ///
 /// Sends an error message and logs the lock failure.
 fn handle_lock_error(ctx: &mut ModuleRequestContext<'_>, error: &io::Error) -> io::Result<()> {
-    send_error_and_exit(
+    send_error(
         ctx.reader.get_mut(),
         ctx.limiter,
-        ctx.messages,
         MODULE_LOCK_ERROR_PAYLOAD,
     )?;
     if let Some(log) = ctx.log_sink {
@@ -190,7 +193,7 @@ fn handle_lock_error(ctx: &mut ModuleRequestContext<'_>, error: &io::Error) -> i
 /// `@RSYNCD: OK`; at this point the client still reads raw text.
 fn handle_refused_option(ctx: &mut ModuleRequestContext<'_>, refused: &str) -> io::Result<()> {
     let payload = format!("@ERROR: The server is configured to refuse {refused}");
-    send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+    send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
     if let Some(log) = ctx.log_sink {
         log_module_refused_option(log, ctx.effective_host(), ctx.peer_ip, ctx.request, refused);
     }
@@ -436,7 +439,6 @@ fn handle_authentication(
 fn handle_unknown_module(
     stream: &mut DaemonStream,
     limiter: &mut Option<BandwidthLimiter>,
-    messages: &LegacyMessageCache,
     request: &str,
     peer_ip: IpAddr,
     session_peer_host: Option<&str>,
@@ -449,7 +451,7 @@ fn handle_unknown_module(
         log_unknown_module(log, session_peer_host, peer_ip, request);
     }
 
-    send_error_and_exit(stream, limiter, messages, &payload)
+    send_error(stream, limiter, &payload)
 }
 
 /// Handles a denied module access.
@@ -469,7 +471,6 @@ fn handle_module_denied(
         ctx.peer_ip,
         host,
         ctx.limiter,
-        ctx.messages,
     )
 }
 
@@ -504,7 +505,6 @@ fn respond_with_module_request(
         return handle_unknown_module(
             reader.get_mut(),
             limiter,
-            messages,
             request,
             peer_ip,
             session_peer_host,

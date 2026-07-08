@@ -780,26 +780,31 @@ fn refuse_emits_at_error_raw_pre_handshake() {
     // Pre-handshake path: client has not yet seen `@RSYNCD: OK`, so multiplex
     // IN has not started. The raw `@ERROR: ...\n` text is the correct wire
     // encoding here.
+    //
+    // Upstream emits exactly the `@ERROR: <msg>\n` line and nothing more: the
+    // client treats `@ERROR` as fatal and returns before reading further
+    // (upstream: clientserver.c:381-385 - `strncmp(line, "@ERROR", 6) == 0` ->
+    // `return -1`), so no trailing `@RSYNCD: EXIT` is sent. Matching that
+    // byte-for-byte matters because two interoperating tools must agree on the
+    // exact refusal wire bytes; a stray EXIT line is a divergence from upstream.
     let (mut stream, capture) = build_stdio_stream_with_capture();
     let mut limiter: Option<BandwidthLimiter> = None;
-    let messages = LegacyMessageCache::shared();
-    send_error_and_exit(
+    send_error(
         &mut stream,
         &mut limiter,
-        messages,
         "@ERROR: The server is configured to refuse --delete",
     )
     .expect("send pre-handshake error");
 
     let bytes = capture.lock().unwrap().clone();
     let text = String::from_utf8_lossy(&bytes);
-    assert!(
-        text.starts_with("@ERROR: The server is configured to refuse --delete\n"),
-        "pre-handshake refusal must be raw @ERROR text, got: {text:?}"
+    assert_eq!(
+        text, "@ERROR: The server is configured to refuse --delete\n",
+        "pre-handshake refusal must be exactly the raw @ERROR line with no trailing EXIT, got: {text:?}"
     );
     assert!(
-        text.contains("@RSYNCD: EXIT"),
-        "pre-handshake refusal must end with @RSYNCD: EXIT, got: {text:?}"
+        !text.contains("@RSYNCD: EXIT"),
+        "upstream never follows @ERROR with @RSYNCD: EXIT, got: {text:?}"
     );
 }
 

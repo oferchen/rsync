@@ -114,11 +114,14 @@ fn run_daemon_per_module_cap_overrides_global_max_connections() {
         "@ERROR: max connections (1) reached -- try again later",
     );
 
+    // upstream: clientserver.c:381-385 - the client treats @ERROR as fatal and
+    // returns before reading further, so no @RSYNCD: EXIT follows the refusal;
+    // the socket just closes (next read is EOF).
     line.clear();
-    second_reader
+    let read = second_reader
         .read_line(&mut line)
-        .expect("second exit message");
-    assert_eq!(line, "@RSYNCD: EXIT\n");
+        .expect("eof after error");
+    assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
 
     first_stream
         .write_all(b"\n")
@@ -131,11 +134,14 @@ fn run_daemon_per_module_cap_overrides_global_max_connections() {
         .expect("first denial message");
     assert!(line.starts_with("@ERROR: auth failed on module"));
 
+    // upstream: clientserver.c:381-385 - the client treats @ERROR as fatal and
+    // returns before reading further, so no @RSYNCD: EXIT follows the refusal;
+    // the socket just closes (next read is EOF).
     line.clear();
-    first_reader
+    let read = first_reader
         .read_line(&mut line)
-        .expect("first exit message");
-    assert_eq!(line, "@RSYNCD: EXIT\n");
+        .expect("eof after error");
+    assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
 
     drop(second_reader);
     drop(second_stream);

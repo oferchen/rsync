@@ -206,7 +206,7 @@ fn setup_transfer_streams(
         Ok(s) => s,
         Err(err) => {
             let payload = format!("@ERROR: failed to clone stream: {err}");
-            send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+            send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
             return Ok(None);
         }
     };

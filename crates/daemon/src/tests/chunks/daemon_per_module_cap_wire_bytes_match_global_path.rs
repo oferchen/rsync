@@ -8,7 +8,7 @@
 //
 //   - per-module path (`module_access/request.rs:99`) - substitutes
 //     `{limit}` into `MODULE_MAX_CONNECTIONS_PAYLOAD` and relies on
-//     `send_error_and_exit` to append the trailing `\n`.
+//     `send_error` to append the trailing `\n`.
 //   - daemon-global path (`server_runtime/connection.rs:135`) - uses
 //     `format!("@ERROR: max connections ({limit}) reached -- try again later\n")`
 //     inline.
@@ -28,7 +28,7 @@ fn daemon_per_module_cap_wire_bytes_match_global_path() {
     for &limit in cases {
         // Per-module path: template substitution + appended newline,
         // mirroring `handle_max_connections_exceeded` +
-        // `send_error_and_exit` in `module_access/request.rs`.
+        // `send_error` in `module_access/request.rs`.
         let mut per_module = crate::daemon::MODULE_MAX_CONNECTIONS_PAYLOAD
             .replace("{limit}", &limit.to_string())
             .into_bytes();

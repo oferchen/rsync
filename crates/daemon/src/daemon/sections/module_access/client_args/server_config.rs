@@ -95,7 +95,7 @@ fn build_server_config(
             None => {
                 let payload =
                     "@ERROR: requested path resolves outside module root".to_owned();
-                send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+                send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
                 return Ok(None);
             }
         }
@@ -108,7 +108,7 @@ fn build_server_config(
             None => {
                 let payload =
                     "@ERROR: requested path resolves outside module root".to_owned();
-                send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+                send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
                 return Ok(None);
             }
         }
@@ -143,7 +143,7 @@ fn build_server_config(
                 }
                 let payload =
                     format!("@ERROR: {offender}: unrecognized option (in daemon mode)");
-                send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+                send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
                 return Ok(None);
             }
 
@@ -248,10 +248,9 @@ fn build_server_config(
                 }
                 Err(err) => {
                     let payload = format!("@ERROR: {err}");
-                    send_error_and_exit(
+                    send_error(
                         ctx.reader.get_mut(),
                         ctx.limiter,
-                        ctx.messages,
                         &payload,
                     )?;
                     return Ok(None);
@@ -269,7 +268,7 @@ fn build_server_config(
         }
         Err(err) => {
             let payload = format!("@ERROR: failed to configure server: {err}");
-            send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+            send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
             Ok(None)
         }
     }

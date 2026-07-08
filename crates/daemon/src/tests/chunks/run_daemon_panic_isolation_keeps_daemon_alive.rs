@@ -30,8 +30,8 @@ fn run_daemon_panic_isolation_keeps_daemon_alive() {
     let daemon_handle = thread::spawn(move || run_daemon(config));
 
     // The daemon reads the greeting it sent, parses the garbage as a module
-    // name, replies with @ERROR: and @RSYNCD: EXIT, then keeps the accept
-    // loop running because catch_unwind isolates per-connection errors.
+    // name, replies with @ERROR: and closes the connection, then keeps the
+    // accept loop running because catch_unwind isolates per-connection errors.
     {
         let mut bad = connect_with_retries(port);
         let mut bad_reader = BufReader::new(bad.try_clone().expect("clone bad stream"));
@@ -44,19 +44,20 @@ fn run_daemon_panic_isolation_keeps_daemon_alive() {
 
         // Send an ASCII garbage line in place of a valid @RSYNCD: response.
         // The daemon will interpret this as a module request, discover no
-        // such module exists, and reply with @ERROR: + @RSYNCD: EXIT.
+        // such module exists, reply with @ERROR:, and close the connection.
         bad.write_all(b"NOT_A_VALID_RSYNCD_LINE\n")
             .expect("send garbage line");
         bad.flush().expect("flush garbage");
 
         // Drain the daemon response so the worker thread finishes before
-        // the second connection arrives.
+        // the second connection arrives. Upstream sends only the @ERROR line
+        // then closes (clientserver.c:381-385), so the drain ends at EOF.
         discard.clear();
         loop {
             let n = bad_reader
                 .read_line(&mut discard)
                 .expect("read daemon response to garbage");
-            if n == 0 || discard.contains("@RSYNCD: EXIT") {
+            if n == 0 {
                 break;
             }
             discard.clear();
@@ -98,11 +99,14 @@ fn run_daemon_panic_isolation_keeps_daemon_alive() {
             "expected @ERROR: for unknown module, got: {line:?}"
         );
 
+        // upstream: clientserver.c:381-385 - the client treats @ERROR as fatal
+        // and returns before reading further, so no @RSYNCD: EXIT follows the
+        // refusal; the socket just closes (next read is EOF).
         line.clear();
-        good_reader
+        let read = good_reader
             .read_line(&mut line)
-            .expect("exit from good connection");
-        assert_eq!(line, "@RSYNCD: EXIT\n");
+            .expect("eof after error from good connection");
+        assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
     } // good stream dropped here
 
     let result = daemon_handle.join().expect("daemon thread");

@@ -72,9 +72,12 @@ fn run_daemon_rejects_push_to_default_read_only_module() {
     reader.read_line(&mut line).expect("error message");
     assert_eq!(line.trim_end(), "@ERROR: module is read only");
 
+    // upstream: clientserver.c:381-385 - the client treats @ERROR as fatal and
+    // returns before reading further, so the daemon sends no @RSYNCD: EXIT after
+    // the refusal; the socket just closes (next read is EOF).
     line.clear();
-    reader.read_line(&mut line).expect("exit message");
-    assert_eq!(line, "@RSYNCD: EXIT\n");
+    let read = reader.read_line(&mut line).expect("eof after error");
+    assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
 
     drop(reader);
     let result = handle.join().expect("daemon thread");

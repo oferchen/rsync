@@ -209,7 +209,7 @@ fn read_and_log_client_args(
         Ok(args) => args,
         Err(err) => {
             let payload = format!("@ERROR: failed to read client arguments: {err}");
-            send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+            send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
             return Ok(None);
         }
     };
@@ -250,7 +250,7 @@ fn read_and_log_client_args(
             Ok(full_args) => merge_secluded_args(phase1_args, full_args),
             Err(err) => {
                 let payload = format!("@ERROR: failed to read secluded args: {err}");
-                send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+                send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
                 return Ok(None);
             }
         }

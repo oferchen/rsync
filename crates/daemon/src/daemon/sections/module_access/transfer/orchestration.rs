@@ -41,7 +41,7 @@ fn process_approved_module(
                 Ok(()) => {}
                 Err(err) => {
                     let payload = format!("@ERROR: invalid daemon param: {err}");
-                    send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+                    send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
                     return Ok(());
                 }
             }
@@ -94,7 +94,7 @@ fn process_approved_module(
                 }
                 Ok(Err(error_msg)) => {
                     let payload = format!("@ERROR: {error_msg}");
-                    send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+                    send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
                     return Ok(());
                 }
                 Err(err) => {
@@ -102,7 +102,7 @@ fn process_approved_module(
                         "@ERROR: failed to run early exec command for module '{}': {err}",
                         ctx.request
                     );
-                    send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+                    send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
                     return Ok(());
                 }
             }
@@ -142,19 +142,17 @@ fn process_approved_module(
     // A read-only module must reject pushes; a write-only module must reject pulls.
     let role = determine_server_role(&client_args);
     if module.read_only && matches!(role, ServerRole::Receiver) {
-        send_error_and_exit(
+        send_error(
             ctx.reader.get_mut(),
             ctx.limiter,
-            ctx.messages,
             MODULE_READ_ONLY_PAYLOAD,
         )?;
         return Ok(());
     }
     if module.write_only && matches!(role, ServerRole::Generator) {
-        send_error_and_exit(
+        send_error(
             ctx.reader.get_mut(),
             ctx.limiter,
-            ctx.messages,
             MODULE_WRITE_ONLY_PAYLOAD,
         )?;
         return Ok(());
@@ -205,7 +203,7 @@ fn process_approved_module(
             Ok(nc) => Some(install_name_converter(nc)),
             Err(err) => {
                 let payload = format!("@ERROR: name-converter exec failed: {err}");
-                send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+                send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
                 return Ok(());
             }
         }
@@ -238,7 +236,7 @@ fn process_approved_module(
         Ok(rules) => config.daemon_filter_rules = rules,
         Err(err) => {
             let payload = format!("@ERROR: failed to load module filter rules: {err}");
-            send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+            send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
             return Ok(());
         }
     }
@@ -361,7 +359,7 @@ fn process_approved_module(
                     write_limited(ctx.reader.get_mut(), ctx.limiter, b"\n")?;
                 }
                 let payload = format!("@ERROR: {}", err.message);
-                send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+                send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
                 if let Some(log) = ctx.log_sink {
                     let message = rsync_error!(1, err.message).with_role(Role::Daemon);
                     log_message(log, &message);
@@ -374,7 +372,7 @@ fn process_approved_module(
                     ctx.request
                 );
                 let payload = format!("@ERROR: {error_msg}");
-                send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+                send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
                 if let Some(log) = ctx.log_sink {
                     let message = rsync_error!(1, error_msg).with_role(Role::Daemon);
                     log_message(log, &message);

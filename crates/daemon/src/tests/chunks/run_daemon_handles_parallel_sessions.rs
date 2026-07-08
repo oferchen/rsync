@@ -45,9 +45,12 @@ fn run_daemon_handles_parallel_sessions() {
             reader.read_line(&mut line).expect("error message");
             assert!(line.starts_with("@ERROR:"));
 
+            // upstream: clientserver.c:381-385 - the client treats @ERROR as
+            // fatal and returns before reading further, so no @RSYNCD: EXIT
+            // follows the refusal; the socket just closes (next read is EOF).
             line.clear();
-            reader.read_line(&mut line).expect("exit message");
-            assert_eq!(line, "@RSYNCD: EXIT\n");
+            let read = reader.read_line(&mut line).expect("eof after error");
+            assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
         }));
     }
 

@@ -160,9 +160,10 @@
 //! line.clear();
 //! reader.read_line(&mut line)?;
 //! assert!(line.starts_with("@ERROR:"));
+//! // Upstream never follows @ERROR with @RSYNCD: EXIT: the client treats
+//! // @ERROR as fatal (clientserver.c:381-385), so the socket just closes.
 //! line.clear();
-//! reader.read_line(&mut line)?;
-//! assert_eq!(line, "@RSYNCD: EXIT\n");
+//! assert_eq!(reader.read_line(&mut line)?, 0);
 //!
 //! handle.join().expect("thread").expect("daemon run succeeds");
 //! # Ok(())
