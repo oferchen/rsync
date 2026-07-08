@@ -85,8 +85,8 @@ pub(super) fn apply_symlink_entry_metadata(
 
 /// Create a symlink at `dest_path` pointing to the given `target`.
 ///
-/// On Unix, creates a symbolic link. On other platforms, falls back to
-/// file copy (symlink creation is platform-specific).
+/// Any existing entry at `dest_path` is removed first, mirroring upstream
+/// rsync's replace-on-conflict behavior.
 #[cfg(unix)]
 pub(super) fn create_symlink(target: &Path, dest_path: &Path) -> BatchResult<()> {
     // Remove existing entry if present, to mirror upstream rsync behavior
