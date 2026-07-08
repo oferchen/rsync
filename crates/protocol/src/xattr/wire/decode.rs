@@ -277,17 +277,19 @@ pub fn recv_xattr_values<R: Read>(reader: &mut R, list: &mut XattrList) -> io::R
 
 /// Compares an abbreviated xattr checksum against a local value.
 ///
-/// Computes the seeded MD5 digest of `local_value` using `checksum_seed` and
-/// compares it byte-for-byte with `checksum`. Returns `true` if they match,
-/// indicating the remote and local xattr values are identical and the full
-/// value does not need to be transferred.
+/// Computes the abbreviation digest of `local_value` (see
+/// `compute_xattr_checksum` - the MD5 default of protocol 30-32 is unseeded)
+/// and compares it byte-for-byte with `checksum`. Returns `true` if they
+/// match, indicating the remote and local xattr values are identical and the
+/// full value does not need to be transferred.
 ///
 /// Returns `false` if `checksum` is not exactly [`MAX_XATTR_DIGEST_LEN`] bytes.
 ///
 /// # Upstream Reference
 ///
-/// Used during the abbreviation protocol in `xattrs.c` to determine which
-/// abbreviated values the receiver needs to request from the sender.
+/// `xattrs.c:xattr_diff()` compares the sender's `datum + 1` abbreviation
+/// against the receiver's locally computed digest to decide which values
+/// must be requested from the sender.
 #[must_use]
 pub fn checksum_matches(checksum: &[u8], local_value: &[u8], checksum_seed: i32) -> bool {
     if checksum.len() != MAX_XATTR_DIGEST_LEN {
