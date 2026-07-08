@@ -8,7 +8,7 @@
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
-use logging::{PhaseTimer, info_log};
+use logging::{PhaseTimer, debug_log, info_log};
 use protocol::flist::FileEntry;
 use protocol::stats::DeleteStats;
 
@@ -63,6 +63,9 @@ impl ReceiverContext {
             #[cfg(unix)]
             setup.sandbox.as_deref(),
         )?;
+
+        // upstream: receiver.c:653-654 DEBUG_GTE(RECV, 1)
+        debug_log!(Recv, 1, "recv_files({}) starting", file_count);
 
         let mut delete_stats = DeleteStats::new();
         let mut delete_limit_exceeded = false;

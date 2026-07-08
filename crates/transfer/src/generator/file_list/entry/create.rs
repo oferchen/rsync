@@ -39,6 +39,15 @@ impl GeneratorContext {
         #[cfg(unix)]
         use std::os::unix::fs::MetadataExt;
 
+        // upstream: flist.c:1396-1398 DEBUG_GTE(FLIST, 2)
+        // ALL_FILTERS = 2 is the common filter_level for send_file_list paths.
+        logging::debug_log!(
+            Flist,
+            2,
+            "[sender] make_file({},*,2)",
+            relative_path.display()
+        );
+
         let file_type = metadata.file_type();
 
         // Native Windows reparse-point detection. `std::fs::FileType::is_symlink`
