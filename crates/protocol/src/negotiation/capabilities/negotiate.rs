@@ -270,13 +270,13 @@ pub fn negotiate_capabilities_with_override(
     // choice so negotiate_the_strings sees a single-entry list).
     let checksum_list = match checksum_override {
         Some(algo) => algo.as_str().to_owned(),
-        None => SUPPORTED_CHECKSUMS.join(" "),
+        None => advertised_list(SUPPORTED_CHECKSUMS.iter().copied(), is_server),
     };
     trace_send_list(side, NstrCategory::Checksum, &checksum_list);
     write_vstring(stdout, &checksum_list)?;
 
     if send_compression {
-        let compression_list = supported_compressions().join(" ");
+        let compression_list = advertised_list(supported_compressions(), is_server);
         trace_send_list(side, NstrCategory::Compress, &compression_list);
         write_vstring(stdout, &compression_list)?;
     }
@@ -455,6 +455,36 @@ pub(super) fn choose_compression_algorithm(
 
     // No common algorithm found - use "none"
     Ok(CompressionAlgorithm::None)
+}
+
+/// Builds the space-separated algorithm list a peer advertises during
+/// `negotiate_the_strings()`.
+///
+/// Mirrors upstream `get_default_nno_list()` (compat.c:462-504): names are
+/// joined with a single space with no leading or trailing space, and the
+/// client (`is_server == false`) omits the `none` entry. Upstream skips the
+/// zero-numbered item on the client with
+/// `if (nni->num == 0 && !am_server && !dup_markup) continue;`
+/// (compat.c:485-486); both `CSUM_NONE` and `CPRES_NONE` are `0`
+/// (lib/md-defines.h:26, rsync.h:1177), so `none` is the entry dropped. The
+/// server still advertises `none`. This keeps the emitted vstring byte-for-byte
+/// identical to upstream, which matters because a mismatched client list
+/// changes the wire bytes (length prefix plus payload) exchanged at
+/// protocol >= 30.
+fn advertised_list<'a>(names: impl IntoIterator<Item = &'a str>, is_server: bool) -> String {
+    let mut out = String::new();
+    for name in names {
+        // upstream: compat.c:485-486 - the client drops the num == 0 ("none")
+        // entry; the server keeps it.
+        if !is_server && name == "none" {
+            continue;
+        }
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(name);
+    }
+    out
 }
 
 /// Writes a vstring (variable-length string) using upstream rsync's format.
