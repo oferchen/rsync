@@ -201,11 +201,12 @@ pub(super) async fn handle_async_session(
 
     // Async path only emits an `@ERROR:` placeholder for now; full module
     // handling lives in the sync `legacy_session` path.
+    // upstream: clientserver.c:381-385 - the client treats `@ERROR` as fatal
+    // and returns before reading further, so no `@RSYNCD: EXIT` follows.
     let error_msg = "@ERROR: daemon functionality limited in async mode\n";
     writer.write_all(error_msg.as_bytes()).await?;
-    writer.write_all(b"@RSYNCD: EXIT\n").await?;
     writer.flush().await?;
-    bytes_sent += error_msg.len() as u64 + 14;
+    bytes_sent += error_msg.len() as u64;
 
     #[cfg(feature = "concurrent-sessions")]
     {

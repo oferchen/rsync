@@ -48,10 +48,12 @@ fn daemon_negotiation_error_unknown_module() {
         "Expected unknown module error, got: {line}"
     );
 
-    // Should receive EXIT
+    // upstream: clientserver.c:381-385 - the client treats @ERROR as fatal and
+    // returns before reading further, so the daemon sends no @RSYNCD: EXIT after
+    // the refusal; the socket just closes (next read is EOF).
     line.clear();
-    reader.read_line(&mut line).expect("exit");
-    assert_eq!(line, "@RSYNCD: EXIT\n");
+    let read = reader.read_line(&mut line).expect("eof after error");
+    assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
 
     drop(reader);
     let result = handle.join().expect("daemon thread");
@@ -403,8 +405,13 @@ fn daemon_negotiation_error_sanitizes_module_name_in_response() {
 }
 
 #[test]
-fn daemon_negotiation_error_sends_exit_after_error() {
-    // Verify that EXIT is sent after error messages.
+fn daemon_negotiation_error_no_exit_after_error() {
+    // Verify that no `@RSYNCD: EXIT` follows an `@ERROR:` refusal. Upstream
+    // sends only the `@ERROR: <msg>\n` line and closes the socket: the client
+    // treats `@ERROR` as fatal and returns before reading further
+    // (upstream: clientserver.c:381-385 - `strncmp(line, "@ERROR", 6) == 0`
+    // -> `return -1`). A trailing EXIT would be a byte-level divergence from
+    // upstream that two interoperating tools must not exhibit.
     let _lock = ENV_LOCK.lock().expect("env lock");
     let _primary = EnvGuard::set(DAEMON_FALLBACK_ENV, OsStr::new("0"));
     let _secondary = EnvGuard::set(CLIENT_FALLBACK_ENV, OsStr::new("0"));
@@ -442,12 +449,17 @@ fn daemon_negotiation_error_sends_exit_after_error() {
     reader.read_line(&mut line).expect("error");
     assert!(line.contains("@ERROR:"), "Expected error, got: {line}");
 
-    // Read EXIT
+    // No `@RSYNCD: EXIT` follows: the daemon closes the socket, so the next
+    // read returns EOF (zero bytes) with no further wire text.
     line.clear();
-    reader.read_line(&mut line).expect("exit");
+    let read = reader.read_line(&mut line).expect("eof after error");
     assert_eq!(
-        line, "@RSYNCD: EXIT\n",
-        "Expected EXIT after error, got: {line}"
+        read, 0,
+        "upstream sends only the @ERROR line then closes; got trailing bytes: {line:?}"
+    );
+    assert!(
+        !line.contains("@RSYNCD: EXIT"),
+        "upstream never follows @ERROR with @RSYNCD: EXIT, got: {line:?}"
     );
 
     drop(reader);

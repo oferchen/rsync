@@ -53,9 +53,12 @@ fn run_daemon_records_log_file_entries() {
     reader.read_line(&mut line).expect("module response");
     assert!(line.starts_with("@ERROR:"));
 
+    // upstream: clientserver.c:381-385 - the client treats @ERROR as fatal and
+    // returns before reading further, so the daemon sends no @RSYNCD: EXIT after
+    // the refusal; the socket just closes (next read is EOF).
     line.clear();
-    reader.read_line(&mut line).expect("exit line");
-    assert_eq!(line, "@RSYNCD: EXIT\n");
+    let read = reader.read_line(&mut line).expect("eof after error");
+    assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
 
     drop(reader);
     // Bound the join: on Windows the daemon accept loop can linger past the

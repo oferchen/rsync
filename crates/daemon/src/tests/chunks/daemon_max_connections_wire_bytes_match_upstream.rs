@@ -30,7 +30,7 @@ fn daemon_max_connections_wire_bytes_match_upstream() {
     // Pin the exact wire bytes (template + concrete limit + trailing
     // newline) the daemon writes to the socket. The newline is part of
     // upstream's `io_printf` format and is appended by both call sites:
-    //   - per-module: `send_error_and_exit` writes `payload` then `\n`.
+    //   - per-module: `send_error` writes `payload` then `\n`.
     //   - global cap: `format!("... ({limit}) ... later\n")`.
     let cases: &[(u32, &[u8])] = &[
         (

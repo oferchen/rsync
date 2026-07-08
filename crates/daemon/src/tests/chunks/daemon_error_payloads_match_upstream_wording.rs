@@ -92,32 +92,38 @@ fn daemon_error_payloads_match_upstream_wording() {
     );
 }
 
-/// Verifies that `send_error_and_exit` writes the payload followed by `\n`
-/// and then `@RSYNCD: EXIT\n`, matching upstream's protocol framing.
+/// Verifies that `send_error` writes exactly the payload followed by `\n`
+/// and nothing more, matching upstream's protocol framing.
 ///
 /// upstream: every `io_printf(f_out, "@ERROR: ...\n")` in clientserver.c is
-/// followed by `return -1` which triggers `send_listing` -> `@RSYNCD: EXIT\n`
-/// on the server side, and the client treats `@ERROR` as fatal.
+/// followed by `return -1`; the server then closes the socket without emitting
+/// `@RSYNCD: EXIT`. The client treats `@ERROR` as fatal and returns before
+/// reading further (clientserver.c:381-385), so a trailing EXIT is a
+/// divergence from upstream. Only the successful module-listing path sends
+/// `@RSYNCD: EXIT`.
 #[test]
-fn send_error_and_exit_framing_matches_upstream() {
+fn send_error_framing_matches_upstream() {
     use crate::daemon::UNKNOWN_MODULE_PAYLOAD;
 
     // Build a concrete payload from the template.
     let payload = UNKNOWN_MODULE_PAYLOAD.replace("{module}", "testmod");
     assert_eq!(payload, "@ERROR: Unknown module 'testmod'");
 
-    // Verify the framing invariant: payload + "\n" + "@RSYNCD: EXIT\n"
-    // The send_error_and_exit function writes:
+    // Verify the framing invariant: payload + "\n", with no trailing EXIT.
+    // The send_error function writes:
     //   1. payload bytes
     //   2. b"\n"
-    //   3. @RSYNCD: EXIT (via messages.write_exit)
-    //   4. flush
+    //   3. flush
     // This matches upstream's io_printf(f_out, "@ERROR: ...\n") followed by
-    // the EXIT marker sent when start_daemon/rsync_module returns -1.
+    // a socket close (no EXIT marker) when start_daemon/rsync_module returns -1.
     let expected_wire = format!("{payload}\n");
     assert!(expected_wire.starts_with("@ERROR: "));
     assert!(expected_wire.ends_with('\n'));
     assert!(!expected_wire.ends_with("\n\n"), "must not double-terminate");
+    assert!(
+        !expected_wire.contains("@RSYNCD: EXIT"),
+        "refusal wire must not contain a trailing EXIT marker"
+    );
 }
 
 /// Verifies that `deny_module` for non-listable modules sends
