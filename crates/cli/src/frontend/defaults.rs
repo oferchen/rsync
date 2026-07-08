@@ -36,44 +36,10 @@ pub(super) const SUPPORTED_OPTIONS_LIST: &str = concat!(
 pub(super) const ITEMIZE_CHANGES_FORMAT: &str = "%i %n%L";
 
 /// Default patterns excluded by `--cvs-exclude`.
-pub(super) const CVS_EXCLUDE_PATTERNS: &[&str] = &[
-    "RCS",
-    "SCCS",
-    "CVS",
-    "CVS.adm",
-    "RCSLOG",
-    "cvslog.*",
-    "tags",
-    "TAGS",
-    ".make.state",
-    ".nse_depinfo",
-    "*~",
-    "#*",
-    ".#*",
-    ",*",
-    "_$*",
-    "*$",
-    "*.old",
-    "*.bak",
-    "*.BAK",
-    "*.orig",
-    "*.rej",
-    ".del-*",
-    "*.a",
-    "*.olb",
-    "*.o",
-    "*.obj",
-    "*.so",
-    "*.exe",
-    "*.Z",
-    "*.elc",
-    "*.ln",
-    "core",
-    ".svn/",
-    ".git/",
-    ".hg/",
-    ".bzr/",
-];
+///
+/// Re-exported from the `filters` crate so there is a single canonical
+/// definition of the built-in CVS-ignore list (see [`filters::DEFAULT_CVSIGNORE`]).
+pub(super) use filters::DEFAULT_CVSIGNORE as CVS_EXCLUDE_PATTERNS;
 
 /// Default patterns excluded by `--apple-double-skip` (macOS AppleDouble sidecars).
 ///

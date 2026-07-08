@@ -56,6 +56,7 @@ async-daemon = ["daemon/async-daemon"]
 clap = { workspace = true }
 core = { path = "../core", default-features = false }
 engine = { path = "../engine", default-features = false }
+filters = { path = "../filters" }
 logging = { path = "../logging", features = ["tracing"] }
 logging-sink = { path = "../logging-sink" }
 protocol = { path = "../protocol" }
@@ -97,7 +98,6 @@ predicates = "3.1"
 filetime = { workspace = true }
 tempfile = { workspace = true }
 test-support = { path = "../test-support" }
-filters = { path = "../filters" }
 rustix = { workspace = true, features = ["fs"] }
 base64 = { workspace = true }
 libc = { workspace = true }
