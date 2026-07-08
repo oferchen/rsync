@@ -117,6 +117,17 @@ impl LocalCopyError {
         Self::new(LocalCopyErrorKind::StopAtReached { target })
     }
 
+    /// Constructs a filter syntax error (exit code 1, `RERR_SYNTAX`).
+    ///
+    /// upstream: exclude.c:1212 - unrecognised filter rules exit with
+    /// `RERR_SYNTAX` (1), not `RERR_PARTIAL` (23).
+    #[must_use]
+    pub fn filter_syntax(message: impl Into<String>) -> Self {
+        Self::new(LocalCopyErrorKind::FilterSyntax {
+            message: message.into(),
+        })
+    }
+
     /// Returns the exit code that mirrors upstream rsync's behaviour.
     ///
     /// See the struct-level documentation for mappings to `core::exit_code::ExitCode`.
@@ -144,6 +155,7 @@ impl LocalCopyError {
                 TIMEOUT_EXIT_CODE
             }
             LocalCopyErrorKind::DeleteLimitExceeded { .. } => MAX_DELETE_EXIT_CODE,
+            LocalCopyErrorKind::FilterSyntax { .. } => MISSING_OPERANDS_EXIT_CODE,
         }
     }
 
@@ -167,6 +179,7 @@ impl LocalCopyError {
                 "RERR_TIMEOUT"
             }
             LocalCopyErrorKind::DeleteLimitExceeded { .. } => "RERR_DEL_LIMIT",
+            LocalCopyErrorKind::FilterSyntax { .. } => "RERR_SYNTAX",
         }
     }
 
@@ -281,6 +294,15 @@ pub enum LocalCopyErrorKind {
     StopAtReached {
         /// The requested wall-clock deadline.
         target: SystemTime,
+    },
+    /// A filter rule could not be parsed.
+    ///
+    /// upstream: exclude.c:1212 - `Unknown filter rule: \`%s'` exits with
+    /// `RERR_SYNTAX` (1).
+    #[error("{message}")]
+    FilterSyntax {
+        /// Human-readable error message (already formatted to match upstream).
+        message: String,
     },
 }
 

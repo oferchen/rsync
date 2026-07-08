@@ -1200,7 +1200,7 @@ mod error_handling {
         let result = parse_rules("invalid rule", Path::new("test.rules"));
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(err.message.contains("unrecognized"));
+        assert!(err.message.contains("Unknown filter rule"));
         assert_eq!(err.line, Some(1));
     }
 
