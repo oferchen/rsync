@@ -591,9 +591,7 @@ mod tests {
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::BrokenPipe);
     }
 
-    // -----------------------------------------------------------------------
     // Tests for optimized client config construction.
-    // -----------------------------------------------------------------------
 
     #[test]
     fn build_client_config_enables_nodelay() {
