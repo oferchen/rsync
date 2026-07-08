@@ -419,7 +419,7 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         {
             let mut live =
-                LiveProgress::new(&mut buf, ProgressMode::PerFile, HumanReadableMode::Disabled);
+                LiveProgress::new(&mut buf, ProgressMode::PerFile, HumanReadableMode::Grouped);
             live.on_progress(&make_update(true));
         }
         let output = String::from_utf8(buf).expect("utf8");
@@ -432,7 +432,7 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         {
             let mut live =
-                LiveProgress::new(&mut buf, ProgressMode::PerFile, HumanReadableMode::Disabled);
+                LiveProgress::new(&mut buf, ProgressMode::PerFile, HumanReadableMode::Grouped);
             live.on_progress(&make_update(false));
         }
         let output = String::from_utf8(buf).expect("utf8");
@@ -447,7 +447,7 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         {
             let mut live =
-                LiveProgress::new(&mut buf, ProgressMode::Overall, HumanReadableMode::Disabled);
+                LiveProgress::new(&mut buf, ProgressMode::Overall, HumanReadableMode::Grouped);
             live.on_progress(&make_mid_transfer_update(true));
         }
         let output = String::from_utf8(buf).expect("utf8");
@@ -468,7 +468,7 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         {
             let mut live =
-                LiveProgress::new(&mut buf, ProgressMode::Overall, HumanReadableMode::Disabled);
+                LiveProgress::new(&mut buf, ProgressMode::Overall, HumanReadableMode::Grouped);
             live.on_progress(&make_update(true));
         }
         let output = String::from_utf8(buf).expect("utf8");
@@ -489,7 +489,7 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         {
             let mut live =
-                LiveProgress::new(&mut buf, ProgressMode::Overall, HumanReadableMode::Disabled);
+                LiveProgress::new(&mut buf, ProgressMode::Overall, HumanReadableMode::Grouped);
             // First tick: final with trailer (longer line)
             live.on_progress(&make_update(true));
             // Second tick: mid-transfer without trailer (shorter line, should be padded)
@@ -516,7 +516,7 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         {
             let mut live =
-                LiveProgress::new(&mut buf, ProgressMode::Overall, HumanReadableMode::Disabled);
+                LiveProgress::new(&mut buf, ProgressMode::Overall, HumanReadableMode::Grouped);
             live.on_progress(&make_update(true));
         }
         let output = String::from_utf8(buf).expect("utf8");
@@ -550,7 +550,7 @@ mod tests {
             let mut live = LiveProgress::with_output_config(
                 &mut buf,
                 ProgressMode::PerFile,
-                HumanReadableMode::Disabled,
+                HumanReadableMode::Grouped,
                 piped_config(),
             );
             live.on_progress(&make_mid_transfer_update(true));
@@ -572,7 +572,7 @@ mod tests {
             let mut live = LiveProgress::with_output_config(
                 &mut buf,
                 ProgressMode::PerFile,
-                HumanReadableMode::Disabled,
+                HumanReadableMode::Grouped,
                 terminal_config(),
             );
             live.on_progress(&make_mid_transfer_update(true));
@@ -594,7 +594,7 @@ mod tests {
             let mut live = LiveProgress::with_output_config(
                 &mut buf,
                 ProgressMode::Overall,
-                HumanReadableMode::Disabled,
+                HumanReadableMode::Grouped,
                 piped_config(),
             );
             live.on_progress(&make_update(true));
@@ -615,7 +615,7 @@ mod tests {
             let mut live = LiveProgress::with_output_config(
                 &mut buf,
                 ProgressMode::Overall,
-                HumanReadableMode::Disabled,
+                HumanReadableMode::Grouped,
                 terminal_config(),
             );
             live.on_progress(&make_update(true));
@@ -637,7 +637,7 @@ mod tests {
             let mut live = LiveProgress::with_output_config(
                 &mut buf,
                 ProgressMode::Overall,
-                HumanReadableMode::Disabled,
+                HumanReadableMode::Grouped,
                 piped_config(),
             );
             // First tick: final with trailer (longer line)
@@ -686,7 +686,7 @@ mod tests {
         let live_term = LiveProgress::with_output_config(
             &mut buf,
             ProgressMode::PerFile,
-            HumanReadableMode::Disabled,
+            HumanReadableMode::Grouped,
             terminal_config(),
         );
         assert_eq!(live_term.line_restart(), "\r");
@@ -694,7 +694,7 @@ mod tests {
         let live_pipe = LiveProgress::with_output_config(
             &mut buf,
             ProgressMode::PerFile,
-            HumanReadableMode::Disabled,
+            HumanReadableMode::Grouped,
             piped_config(),
         );
         assert_eq!(live_pipe.line_restart(), "\n");
@@ -731,7 +731,7 @@ mod tests {
             let mut live = LiveProgress::with_output_config(
                 &mut writer,
                 ProgressMode::PerFile,
-                HumanReadableMode::Disabled,
+                HumanReadableMode::Grouped,
                 config,
             );
             // Mid-transfer tick should trigger flush
@@ -775,7 +775,7 @@ mod tests {
             let mut live = LiveProgress::with_output_config(
                 &mut writer,
                 ProgressMode::PerFile,
-                HumanReadableMode::Disabled,
+                HumanReadableMode::Grouped,
                 config,
             );
             live.on_progress(&make_mid_transfer_update(true));
@@ -818,7 +818,7 @@ mod tests {
             let mut live = LiveProgress::with_output_config(
                 &mut writer,
                 ProgressMode::PerFile,
-                HumanReadableMode::Disabled,
+                HumanReadableMode::Grouped,
                 config,
             );
             live.on_progress(&make_mid_transfer_update(true));
