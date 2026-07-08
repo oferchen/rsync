@@ -792,3 +792,41 @@ fn prune_empty_dirs_cascading_after_filter_removes_all_files() {
     // sub1 should be pruned because after excluding .log files, it's empty
     assert!(!ctx.dest.join("source").join("root_dir/sub1").exists(), "sub1 should be pruned (all .log files excluded)");
 }
+
+/// A directory whose only child is a non-regular file that is skipped because
+/// its preservation flag is off (here a symlink without `-l`) must still be
+/// kept, matching upstream `flist.c` prune_empty_dirs: the entry stays in the
+/// flist and reprieves its parent, and the generator only skips transferring
+/// it later (generator.c:1695-1701). Regression guard against over-pruning the
+/// parent directory of a skipped non-regular file.
+#[cfg(unix)]
+#[test]
+fn prune_empty_dirs_keeps_dir_with_only_skipped_symlink() {
+    let ctx = test_helpers::setup_copy_test();
+
+    test_helpers::create_test_tree(
+        &ctx.source,
+        &[("has_link", None), ("real/file.txt", Some(b"content"))],
+    );
+    std::os::unix::fs::symlink("nowhere", ctx.source.join("has_link").join("link"))
+        .expect("create symlink");
+
+    let operands = vec![ctx.source.into_os_string(), ctx.dest.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    // Symlinks are not preserved by default, so `link` is skipped as a
+    // non-regular file; its parent directory must survive the prune pass.
+    let options = LocalCopyOptions::default().prune_empty_dirs(true);
+
+    plan.execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert!(
+        ctx.dest.join("source").join("has_link").is_dir(),
+        "parent of a skipped non-regular file must be kept (upstream prune_empty_dirs)"
+    );
+    assert!(
+        fs::symlink_metadata(ctx.dest.join("source").join("has_link").join("link")).is_err(),
+        "the symlink itself is not preserved without -l"
+    );
+    assert!(ctx.dest.join("source").join("real/file.txt").exists());
+}

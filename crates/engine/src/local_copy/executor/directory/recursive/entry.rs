@@ -44,7 +44,16 @@ pub(super) fn process_planned_entry(
                 context.summary_mut().record_symlink_total();
             }
             context.record_skipped_non_regular(record_relative);
-            return Ok(false);
+            // upstream: flist.c:flist_sort_and_clean() prunes empty dirs against
+            // the built flist, which still holds non-regular entries (symlinks,
+            // FIFOs, devices) even when their preservation flag (-l/-D) is off.
+            // The generator only skips transferring them later
+            // (generator.c:1695-1701 "skipping non-regular file"), so the entry
+            // still reprieves its parent directory from pruning and the (empty)
+            // parent is created. Ensure the directory exists and count it as
+            // kept so `--prune-empty-dirs` does not over-prune the parent.
+            ensure_directory(context)?;
+            return Ok(true);
         }
         EntryAction::SkipMountPoint => {
             // upstream: flist.c:1319 - INFO_GTE(MOUNT, 1) gates
