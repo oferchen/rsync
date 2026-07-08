@@ -6,7 +6,7 @@
 //! flag disables escaping for high-bit characters (0x80-0xFF), leaving
 //! only control characters below 0x20 (except tab) escaped.
 
-use std::fmt::Write;
+use std::io::Write;
 use std::path::Path;
 
 /// Returns `true` when a byte is printable in the C locale.
@@ -16,6 +16,21 @@ use std::path::Path;
 #[inline]
 fn is_c_print(byte: u8) -> bool {
     (0x20..=0x7E).contains(&byte)
+}
+
+/// Decides whether a single byte must be octal-escaped as `\#ooo`.
+///
+/// upstream: log.c:237 `filtered_fwrite` escape condition:
+///   `*in_buf != '\t' && ((use_isprint && !isPrint(in_buf)) || *(uchar*)in_buf < ' ')`
+/// where `use_isprint = !allow_8bit_chars` (log.c:398). Strategy on the
+/// `--8-bit-output` flag:
+///   - default (`eight_bit` false): escape tab-excluded non-printable bytes,
+///     which includes DEL (0x7F) and the high range 0x80-0xFF.
+///   - `-8` (`eight_bit` true): escape only control bytes below 0x20 (except
+///     tab); DEL and high bytes pass through raw for terminal rendering.
+#[inline]
+fn should_escape_byte(byte: u8, eight_bit: bool) -> bool {
+    byte != b'\t' && ((!eight_bit && !is_c_print(byte)) || byte < b' ')
 }
 
 /// Escapes non-printable bytes for display output, matching upstream
@@ -70,9 +85,17 @@ fn has_literal_escape_sequence(input: &[u8]) -> bool {
     false
 }
 
-/// Slow path: escapes bytes one at a time.
+/// Slow path: escapes bytes one at a time into a byte buffer.
+///
+/// Non-escaped bytes are emitted raw (upstream `filtered_fwrite` copies the
+/// input byte verbatim). This matters under `-8`: a multi-byte UTF-8 filename
+/// such as `café` (bytes `63 61 66 c3 a9`) must pass through as the original
+/// bytes `c3 a9`, not be re-encoded. A previous `push(byte as char)` mapped
+/// each byte to a Unicode code point and re-encoded it as UTF-8, producing
+/// mojibake (`c3 83 c2 a9` = `Ã©`). The buffer is converted with
+/// `from_utf8_lossy` at the end so valid UTF-8 sequences round-trip exactly.
 fn escape_bytes_slow(input: &[u8], allow_8bit: bool) -> String {
-    let mut output = String::with_capacity(input.len() + input.len() / 4);
+    let mut output: Vec<u8> = Vec::with_capacity(input.len() + input.len() / 4);
     let len = input.len();
     let mut i = 0;
 
@@ -94,28 +117,15 @@ fn escape_bytes_slow(input: &[u8], allow_8bit: bool) -> String {
             continue;
         }
 
-        // upstream: log.c:237 - the escaping condition is:
-        //   *in_buf != '\t'
-        //   && ((use_isprint && !isPrint(in_buf)) || *(uchar*)in_buf < ' ')
-        //
-        // use_isprint = !allow_8bit_chars, so:
-        //   not tab AND ((!allow_8bit AND not printable) OR byte < space)
-        let needs_escape = byte != b'\t' && ((!allow_8bit && !is_c_print(byte)) || byte < b' ');
-
-        if needs_escape {
+        if should_escape_byte(byte, allow_8bit) {
             let _ = write!(output, "\\#{byte:03o}");
-        } else if byte.is_ascii() {
-            output.push(byte as char);
         } else {
-            // High-bit byte with allow_8bit=true. Emit as the Latin-1
-            // code point - this is the closest Rust equivalent to
-            // upstream's raw byte pass-through.
-            output.push(byte as char);
+            output.push(byte);
         }
         i += 1;
     }
 
-    output
+    String::from_utf8_lossy(&output).into_owned()
 }
 
 /// Escapes a path for display output.
@@ -225,18 +235,43 @@ mod tests {
     }
 
     #[test]
-    fn high_bit_0x80_passes_through_in_8bit_mode() {
-        assert_eq!(escape_for_output(&[0x80], true), "\u{80}");
+    fn lone_high_byte_0x80_is_not_escaped_in_8bit_mode() {
+        // A lone 0x80 is not octal-escaped under -8 (upstream passes it raw),
+        // but it is invalid UTF-8 on its own and cannot live in a Rust String,
+        // so from_utf8_lossy yields U+FFFD. Valid multi-byte UTF-8 filenames
+        // (the realistic case) round-trip exactly - see
+        // `multibyte_utf8_passes_raw_in_8bit_mode`.
+        assert_eq!(escape_for_output(&[0x80], true), "\u{FFFD}");
     }
 
     #[test]
-    fn high_bit_0xff_passes_through_in_8bit_mode() {
-        assert_eq!(escape_for_output(&[0xFF], true), "\u{FF}");
+    fn lone_high_byte_0xff_is_not_escaped_in_8bit_mode() {
+        assert_eq!(escape_for_output(&[0xFF], true), "\u{FFFD}");
     }
 
     #[test]
     fn tab_passes_through_in_8bit_mode() {
         assert_eq!(escape_for_output(b"\t", true), "\t");
+    }
+
+    #[test]
+    fn multibyte_utf8_passes_raw_in_8bit_mode() {
+        // WHY: upstream `filtered_fwrite` copies non-escaped bytes verbatim, so
+        // `-8` on `café` (bytes 63 61 66 c3 a9) must yield the original bytes
+        // c3 a9, matching `rsync -v -8` byte-for-byte. A byte-to-code-point cast
+        // would re-encode to c3 83 c2 a9 (mojibake `Ã©`).
+        let input = b"caf\xc3\xa9";
+        let out = escape_for_output(input, true);
+        assert_eq!(out.as_bytes(), b"caf\xc3\xa9");
+        assert_eq!(out, "café");
+    }
+
+    #[test]
+    fn multibyte_utf8_escaped_octal_in_default_mode() {
+        // WHY: default mode (use_isprint=1) escapes every non-printable byte,
+        // so each UTF-8 continuation byte of `café` becomes its own \#ooo.
+        let input = b"caf\xc3\xa9";
+        assert_eq!(escape_for_output(input, false), "caf\\#303\\#251");
     }
 
     #[test]
