@@ -6,7 +6,7 @@ impl ClientConfigBuilder {
     #[doc(alias = "--delete")]
     pub const fn delete(mut self, delete: bool) -> Self {
         self.delete_mode = if delete {
-            DeleteMode::During
+            DeleteMode::DuringDefault
         } else {
             DeleteMode::Disabled
         };

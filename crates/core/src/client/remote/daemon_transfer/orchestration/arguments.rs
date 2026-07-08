@@ -258,11 +258,18 @@ pub(super) fn build_full_daemon_args(
             }
         }
 
-        // upstream: options.c:2818-2829
+        // upstream: options.c:2818-2829 - explicit timing variants are always
+        // sent; bare --delete (DuringDefault) is suppressed when
+        // --delete-excluded is active.
         match config.delete_mode() {
             DeleteMode::Before => args.push("--delete-before".to_owned()),
             DeleteMode::Delay => args.push("--delete-delay".to_owned()),
             DeleteMode::During => args.push("--delete-during".to_owned()),
+            DeleteMode::DuringDefault => {
+                if !config.delete_excluded() {
+                    args.push("--delete".to_owned());
+                }
+            }
             DeleteMode::After => args.push("--delete-after".to_owned()),
             DeleteMode::Disabled => {}
         }
