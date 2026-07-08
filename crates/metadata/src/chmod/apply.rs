@@ -5,7 +5,11 @@
 //! and the `X` conditional-execute flag. Non-permission bits (the file-type
 //! bits above `CHMOD_BITS`) are preserved unchanged.
 
-use super::spec::{CHMOD_BITS, Clause};
+use super::spec::Clause;
+// CHMOD_BITS is only referenced by the mode-tweaking path, which is gated to
+// unix (or test); importing it unconditionally is an unused import on Windows.
+#[cfg(any(unix, test))]
+use super::spec::CHMOD_BITS;
 
 /// Applies the clause list to `mode`, mirroring `chmod.c:tweak_mode()`.
 #[cfg(unix)]
