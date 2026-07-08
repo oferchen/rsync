@@ -32,7 +32,7 @@
 //! - A closed/EOF async stream surfaces as `Ok(0)` from `read`, matching the
 //!   `std::io::Read` contract.
 //! - A closed downstream receiver surfaces as
-//!   [`std::io::ErrorKind::BrokenPipe`] from `write`.
+//!   `std::io::ErrorKind::BrokenPipe` from `write`.
 //!
 //! # Backpressure
 //!
@@ -45,20 +45,20 @@
 //!
 //! The channel-based variant is driven by a background tokio task spawned in
 //! [`into_sync_halves`]. That task owns the inbound `data_tx` sender; the sync
-//! [`SyncReader`] blocks on the matching receiver. Liveness therefore hinges
+//! `SyncReader` blocks on the matching receiver. Liveness therefore hinges
 //! on the pump task:
 //!
 //! - **Task exits / panics / runtime is dropped**: the captured `data_tx` is
 //!   dropped along with the task, so the blocking `recv` observes
-//!   all-senders-dropped and the [`SyncReader`] surfaces a clean EOF
-//!   (`Ok(0)`) rather than hanging. The outbound [`SyncWriter`] symmetrically
-//!   observes a closed receiver and surfaces [`io::ErrorKind::BrokenPipe`].
+//!   all-senders-dropped and the `SyncReader` surfaces a clean EOF
+//!   (`Ok(0)`) rather than hanging. The outbound `SyncWriter` symmetrically
+//!   observes a closed receiver and surfaces `io::ErrorKind::BrokenPipe`.
 //! - **Task wedged but alive** (deadlocked while still holding `data_tx`):
 //!   the sender is never dropped, so an unbounded blocking `recv` would hang
-//!   the sync side forever. [`SyncReader::read_with_timeout`] bounds this
+//!   the sync side forever. `SyncReader::read_with_timeout` bounds this
 //!   residual case: a wedged runtime surfaces as an
-//!   [`io::ErrorKind::TimedOut`] transport error instead of a silent hang.
-//!   The infallible [`io::Read`] impl keeps the unbounded happy-path
+//!   `io::ErrorKind::TimedOut` transport error instead of a silent hang.
+//!   The infallible `io::Read` impl keeps the unbounded happy-path
 //!   behaviour; callers that need a liveness guarantee opt into the bounded
 //!   helper.
 
