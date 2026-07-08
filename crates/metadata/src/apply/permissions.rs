@@ -584,6 +584,14 @@ pub(super) fn apply_permissions_with_chmod_fd(
 /// resolves symlinks through the OS path walk like upstream
 /// `generator.c:1344`'s `link_stat(fname, &sx.st, keep_dirlinks && is_dir)`.
 ///
+/// Both branches remain visible to `fakeroot`: `secure_chmod_at` performs the
+/// mode change with the libc `fchmodat(2)` symbol (only the parent-directory
+/// walk uses `openat2`/`RESOLVE_BENEATH`, which fakeroot ignores because it
+/// tracks modes per inode on the chmod call, not on directory opens), and
+/// `std::fs::set_permissions` uses the libc `chmod(2)` symbol. Both are
+/// interposed by fakeroot's LD_PRELOAD wrapper, so no raw-syscall path bypasses
+/// the faked mode here.
+///
 /// upstream: rsync.c:set_file_attrs() / generator.c:1344 link_stat
 #[cfg(unix)]
 fn chmod_path_honoring_keep_dirlinks(
