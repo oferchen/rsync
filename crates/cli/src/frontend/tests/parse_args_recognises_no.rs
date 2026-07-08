@@ -66,7 +66,7 @@ fn parse_args_recognises_no_human_readable_flag() {
     ])
     .expect("parse");
 
-    assert_eq!(parsed.human_readable, Some(HumanReadableMode::Disabled));
+    assert_eq!(parsed.human_readable, Some(HumanReadableMode::Raw));
 }
 
 #[test]
@@ -131,7 +131,7 @@ fn parse_args_no_h_alias_disables_human_readable() {
     ])
     .expect("parse");
 
-    assert_eq!(parsed.human_readable, Some(HumanReadableMode::Disabled));
+    assert_eq!(parsed.human_readable, Some(HumanReadableMode::Raw));
 }
 
 #[test]

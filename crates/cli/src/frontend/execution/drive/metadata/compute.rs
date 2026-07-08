@@ -146,9 +146,10 @@ fn parse_chmod_specs(
 ) -> Result<Option<ChmodModifiers>, core::message::Message> {
     let mut modifiers: Option<ChmodModifiers> = None;
     for spec in specs {
+        // upstream: options.c hands the raw --chmod argument to parse_chmod
+        // without trimming, so surrounding whitespace is a parse error.
         let spec_text = spec.to_string_lossy();
-        let trimmed = spec_text.trim();
-        match ChmodModifiers::parse(trimmed) {
+        match ChmodModifiers::parse(&spec_text) {
             Ok(parsed) => {
                 if let Some(existing) = &mut modifiers {
                     existing.extend(parsed);
