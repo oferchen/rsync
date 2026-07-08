@@ -304,8 +304,8 @@ fn update_handles_subsecond_precision() {
     fs::write(&source, b"source").expect("write source");
     fs::write(&destination, b"dest").expect("write dest");
 
-    // Same second but different nanoseconds
-    // Source: .100 seconds, Dest: .200 seconds
+    // Same whole second but different nanoseconds.
+    // Source: .100 seconds, Dest: .200 seconds (dest is sub-second newer).
     let source_time = FileTime::from_unix_time(1_700_000_000, 100_000_000);
     let dest_time = FileTime::from_unix_time(1_700_000_000, 200_000_000);
     set_file_times(&source, source_time, source_time).expect("set source times");
@@ -324,10 +324,16 @@ fn update_handles_subsecond_precision() {
         )
         .expect("copy succeeds");
 
-    // Destination is newer (by nanoseconds), should skip
-    assert_eq!(summary.files_copied(), 0);
-    assert_eq!(summary.regular_files_skipped_newer(), 1);
-    assert_eq!(fs::read(&destination).expect("read"), b"dest");
+    // WHY: upstream generator.c:1721 compares whole-second `time_t` values
+    // (`file->modtime - sx.st.st_mtime < modify_window`), so a dest that is
+    // only sub-second newer within the SAME whole second is NOT treated as
+    // newer and `--update` does not skip it. Because the sizes differ, the
+    // quick-check then copies the source over the destination. This is the
+    // exclude testsuite `same-newness` case, where an equal-second pair must
+    // itemize as unchanged rather than skip as "newer".
+    assert_eq!(summary.files_copied(), 1);
+    assert_eq!(summary.regular_files_skipped_newer(), 0);
+    assert_eq!(fs::read(&destination).expect("read"), b"source");
 }
 
 #[test]
