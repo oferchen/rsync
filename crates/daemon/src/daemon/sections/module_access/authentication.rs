@@ -54,7 +54,7 @@ fn perform_module_authentication(
     let response = if let Some(line) = read_trimmed_line(reader)? {
         line
     } else {
-        send_auth_failed(reader.get_mut(), module, limiter, messages)?;
+        send_auth_failed(reader.get_mut(), module, limiter)?;
         return Ok(AuthenticationStatus::Denied);
     };
 
@@ -65,26 +65,26 @@ fn perform_module_authentication(
     });
 
     if username.is_empty() || digest.is_empty() {
-        send_auth_failed(reader.get_mut(), module, limiter, messages)?;
+        send_auth_failed(reader.get_mut(), module, limiter)?;
         return Ok(AuthenticationStatus::Denied);
     }
 
     let auth_user = match module.get_auth_user(username) {
         Some(user) => user,
         None => {
-            send_auth_failed(reader.get_mut(), module, limiter, messages)?;
+            send_auth_failed(reader.get_mut(), module, limiter)?;
             return Ok(AuthenticationStatus::Denied);
         }
     };
 
     if !verify_secret_response(module, username, &challenge, digest, protocol_version)? {
-        send_auth_failed(reader.get_mut(), module, limiter, messages)?;
+        send_auth_failed(reader.get_mut(), module, limiter)?;
         return Ok(AuthenticationStatus::Denied);
     }
 
     // Check for explicit deny access level
     if auth_user.access_level == UserAccessLevel::Deny {
-        send_auth_failed(reader.get_mut(), module, limiter, messages)?;
+        send_auth_failed(reader.get_mut(), module, limiter)?;
         return Ok(AuthenticationStatus::Denied);
     }
 
@@ -208,9 +208,8 @@ fn send_auth_failed(
     stream: &mut DaemonStream,
     module: &ModuleDefinition,
     limiter: &mut Option<BandwidthLimiter>,
-    messages: &LegacyMessageCache,
 ) -> io::Result<()> {
     let module_display = sanitize_module_identifier(&module.name);
     let payload = AUTH_FAILED_PAYLOAD.replace("{module}", module_display.as_ref());
-    send_error_and_exit(stream, limiter, messages, &payload)
+    send_error(stream, limiter, &payload)
 }

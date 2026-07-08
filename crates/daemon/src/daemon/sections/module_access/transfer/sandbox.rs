@@ -43,7 +43,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
             } else {
                 CHROOT_FAILED_PAYLOAD
             };
-            send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, payload)?;
+            send_error(ctx.reader.get_mut(), ctx.limiter, payload)?;
             return Ok(false);
         }
     }
@@ -60,7 +60,7 @@ fn apply_privilege_restrictions_with_upstream_errors(
             } else {
                 SETGID_FAILED_PAYLOAD
             };
-            send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, payload)?;
+            send_error(ctx.reader.get_mut(), ctx.limiter, payload)?;
             return Ok(false);
         }
     }
@@ -84,7 +84,7 @@ fn validate_module_path(
         sanitize_module_identifier(ctx.request),
         module.path.display()
     );
-    send_error_and_exit(ctx.reader.get_mut(), ctx.limiter, ctx.messages, &payload)?;
+    send_error(ctx.reader.get_mut(), ctx.limiter, &payload)?;
 
     if let Some(log) = ctx.log_sink {
         let text = format!(

@@ -58,10 +58,12 @@ fn daemon_negotiation_error_host_allow_blocks_unlisted() {
         "Expected access denied when hosts allow does not include loopback, got: {line}"
     );
 
-    // Should receive EXIT
+    // upstream: clientserver.c:381-385 - the client treats @ERROR as fatal and
+    // returns before reading further, so the daemon sends no @RSYNCD: EXIT after
+    // the refusal; the socket just closes (next read is EOF).
     line.clear();
-    reader.read_line(&mut line).expect("exit");
-    assert_eq!(line, "@RSYNCD: EXIT\n");
+    let read = reader.read_line(&mut line).expect("eof after error");
+    assert_eq!(read, 0, "no trailing @RSYNCD: EXIT after @ERROR, got: {line:?}");
 
     drop(reader);
     let result = handle.join().expect("daemon thread");
