@@ -14,7 +14,11 @@ pub(super) enum ThresholdMode {
     /// Buffering work items until the threshold is reached.
     Buffering(Vec<DeltaWork>),
     /// Delegating to a parallel pipeline (threshold reached).
-    Parallel(ParallelDeltaPipeline),
+    ///
+    /// Boxed so the enum's size is dominated by the small buffering variant
+    /// rather than the much larger pipeline (which now carries the adaptive
+    /// queue controller), keeping `clippy::large_enum_variant` quiet.
+    Parallel(Box<ParallelDeltaPipeline>),
 }
 
 /// Threshold-gated delta pipeline that auto-selects sequential or parallel mode.
@@ -106,7 +110,7 @@ impl ThresholdDeltaPipeline {
         for item in buffered {
             parallel.submit_work(item)?;
         }
-        self.mode = ThresholdMode::Parallel(parallel);
+        self.mode = ThresholdMode::Parallel(Box::new(parallel));
         Ok(())
     }
 }
@@ -162,7 +166,7 @@ impl ReceiverDeltaPipeline for ThresholdDeltaPipeline {
                 }
                 Box::new(seq).flush()
             }
-            ThresholdMode::Parallel(par) => Box::new(par).flush(),
+            ThresholdMode::Parallel(par) => par.flush(),
         }
     }
 }

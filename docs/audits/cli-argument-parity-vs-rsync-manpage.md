@@ -261,7 +261,6 @@ compatibility (see `crates/core/src/client/remote/invocation/`).
 
 | option | rationale | intentional | cite |
 |--------|-----------|-------------|------|
-| `--adaptive-concurrency` / `--no-adaptive-concurrency` | toggle the adaptive write/disk concurrency heuristic; defaults to enabled on Linux | yes | transfer_behavior_options.rs:354 / :365 |
 | `--aes` / `--no-aes` | force AES-GCM SSH transport when the host CPU has AES-NI / NEON crypto extensions | yes | connection_and_logging_options.rs:129 |
 | `--apple-double-skip` | skip macOS resource-fork metadata files when not using AppleDouble merge | yes | command_builder/sections |
 | `--connect-program` | escape hatch equivalent to `RSYNC_CONNECT_PROG` env var without exporting it | yes | build_base_command/network.rs:30 |

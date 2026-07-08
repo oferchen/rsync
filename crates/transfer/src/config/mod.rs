@@ -54,12 +54,6 @@ pub struct WriteConfig {
     /// - `options.c:2934-2935`: `--delay-updates` option handling
     /// - `receiver.c`: deferred rename sweep at end of transfer
     pub delay_updates: bool,
-    /// Enable AIMD adaptive concurrency for the concurrent delta pipeline.
-    ///
-    /// When true, the work queue uses an additive-increase / multiplicative-
-    /// decrease limiter to adapt in-flight concurrency to disk and I/O
-    /// pressure. Disabled by default (opt-in via `--adaptive-concurrency`).
-    pub adaptive_concurrency: bool,
     /// Policy controlling io_uring usage for file I/O.
     pub io_uring_policy: fast_io::IoUringPolicy,
     /// Optional override for the io_uring submission queue depth (`--io-uring-depth=N`).
@@ -97,7 +91,6 @@ impl Default for WriteConfig {
             inplace_partial: false,
             write_devices: false,
             delay_updates: false,
-            adaptive_concurrency: false,
             io_uring_policy: fast_io::IoUringPolicy::Auto,
             io_uring_depth: None,
             zero_copy_policy: fast_io::ZeroCopyPolicy::Auto,

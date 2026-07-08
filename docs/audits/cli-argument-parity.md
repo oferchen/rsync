@@ -307,7 +307,6 @@ remote invocation so they never appear on the wire.
 | `--cow` / `--no-cow` | - | Toggle copy-on-write reflinks for whole-file copies. |
 | `--zero-copy` / `--no-zero-copy` | - | Toggle I/O-level zero-copy syscalls (`sendfile`, `splice`, `copy_file_range`, `SEND_ZC`). |
 | `--sparse-detect` | - | `auto` / `seek` / `map` / `none` hole-detection strategy. |
-| `--adaptive-concurrency` / `--no-adaptive-concurrency` | - | AIMD adaptive concurrency for delta pipeline. |
 | `--rayon-threads` | - | Cap rayon worker pool to N (1-1024). |
 | `--tokio-threads` | - | Cap tokio runtime to N (1-1024). |
 | `--aes` / `--no-aes` | - | Force AES-GCM cipher selection for SSH. |

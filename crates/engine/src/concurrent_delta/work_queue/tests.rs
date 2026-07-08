@@ -1130,3 +1130,143 @@ proptest! {
         }
     }
 }
+
+/// Draining a dynamic queue through `drain_parallel` must return one admission
+/// permit per item, so a producer can make progress far past the `initial`
+/// depth. This is the load-bearing half of the adaptive default: without the
+/// release, `send` would block forever after `initial` admissions. Completing
+/// the drain - and ending with `in_flight == 0` - proves the acquire/release
+/// pairing is exactly balanced.
+#[test]
+fn dynamic_queue_release_refills_admission_past_initial() {
+    const N: u32 = 100;
+    let dq = bounded_dynamic(2, 1, 4).expect("valid bounds");
+    let DynamicWorkQueue {
+        sender,
+        receiver,
+        semaphore,
+    } = dq;
+
+    let producer = thread::spawn(move || {
+        for i in 0..N {
+            sender
+                .send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 0))
+                .unwrap();
+        }
+    });
+
+    let mut got = receiver.drain_parallel(|w| w.ndx().get());
+    producer.join().expect("producer panicked");
+
+    got.sort_unstable();
+    assert_eq!(
+        got,
+        (0..N).collect::<Vec<_>>(),
+        "every item drained exactly once"
+    );
+    assert_eq!(
+        semaphore.in_flight(),
+        0,
+        "every admission permit was returned"
+    );
+}
+
+/// The bare-iterator consumption path releases on dequeue rather than on task
+/// completion, but must still balance every admission. Draining past `initial`
+/// via `into_iter` proves that path also refills admission and cannot deadlock.
+#[test]
+fn dynamic_queue_iter_release_refills_admission() {
+    const N: u32 = 50;
+    let dq = bounded_dynamic(2, 1, 4).expect("valid bounds");
+    let DynamicWorkQueue {
+        sender,
+        receiver,
+        semaphore,
+    } = dq;
+
+    let producer = thread::spawn(move || {
+        for i in 0..N {
+            sender
+                .send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 0))
+                .unwrap();
+        }
+    });
+
+    let got: Vec<u32> = receiver.into_iter().map(|w| w.ndx().get()).collect();
+    producer.join().expect("producer panicked");
+
+    assert_eq!(got, (0..N).collect::<Vec<_>>());
+    assert_eq!(semaphore.in_flight(), 0, "iterator path balances admission");
+}
+
+/// End-to-end proof that the adaptive default converges without deadlock: an
+/// `AdaptiveQueueController` drives a `bounded_dynamic` queue while a
+/// deliberately slow consumer holds admission at capacity. The producer ticks
+/// the controller exactly as `ParallelDeltaPipeline` does. Under the sustained
+/// admission backpressure the controller must shrink the depth, yet every item
+/// must still drain exactly once and all permits must return - shrinking the
+/// ceiling withholds future admissions but never revokes in-flight work, so the
+/// pipeline always makes forward progress.
+#[test]
+fn adaptive_controller_shrinks_and_still_drains_to_completion() {
+    const N: u32 = 200;
+    let dq = bounded_dynamic(2, 1, 8).expect("valid bounds");
+    let mut controller = AdaptiveQueueController::new(&dq);
+    let DynamicWorkQueue {
+        sender,
+        receiver,
+        semaphore,
+    } = dq;
+
+    // Slow consumer: each task sleeps so the semaphore stays saturated and the
+    // producer blocks on admission, the exact signal the controller reads. The
+    // per-task `PermitGuard` refills admission as each sleep completes.
+    let processed = Arc::new(Mutex::new(Vec::<u32>::new()));
+    let processed_thread = Arc::clone(&processed);
+    let consumer = thread::spawn(move || {
+        let out = receiver.drain_parallel(|w| {
+            thread::sleep(Duration::from_micros(200));
+            w.ndx().get()
+        });
+        *processed_thread.lock().unwrap() = out;
+    });
+
+    // Producer mirrors ParallelDeltaPipeline: send, and tick the controller on
+    // a fixed window. If admission never refilled, `send` would block forever
+    // after two admissions and this join would hang the test.
+    let producer = thread::spawn(move || {
+        for i in 0..N {
+            sender
+                .send(DeltaWork::whole_file(i, PathBuf::from("/dst"), 64))
+                .unwrap();
+            if i % 16 == 15 {
+                controller.tick();
+            }
+        }
+        drop(sender);
+        controller
+    });
+
+    let controller = producer.join().expect("producer panicked");
+    consumer.join().expect("consumer panicked");
+
+    let mut got = processed.lock().unwrap().clone();
+    got.sort_unstable();
+    assert_eq!(
+        got,
+        (0..N).collect::<Vec<_>>(),
+        "every item drained exactly once despite shrinking"
+    );
+    assert_eq!(semaphore.in_flight(), 0, "all admission permits returned");
+
+    let stats = controller.stats();
+    assert!(
+        stats.shrinks >= 1,
+        "sustained backpressure must shrink the depth, stats = {stats:?}"
+    );
+    let depth = controller.current_depth();
+    assert!(
+        (1..=8).contains(&depth),
+        "depth stayed within the configured band, got {depth}"
+    );
+}

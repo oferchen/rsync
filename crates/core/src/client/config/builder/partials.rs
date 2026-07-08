@@ -80,15 +80,6 @@ impl ClientConfigBuilder {
         self
     }
 
-    /// Enables or disables AIMD adaptive concurrency for the delta pipeline.
-    #[must_use]
-    #[doc(alias = "--adaptive-concurrency")]
-    #[doc(alias = "--no-adaptive-concurrency")]
-    pub const fn adaptive_concurrency(mut self, enabled: bool) -> Self {
-        self.adaptive_concurrency = enabled;
-        self
-    }
-
     /// Sets the io_uring usage policy.
     #[must_use]
     #[doc(alias = "--io-uring")]
