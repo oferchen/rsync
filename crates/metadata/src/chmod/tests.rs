@@ -9,7 +9,7 @@ fn parse_symbolic_and_numeric_specifications() {
 #[test]
 fn parse_rejects_invalid_token() {
     let error = ChmodModifiers::parse("a+q").expect_err("invalid token");
-    assert!(error.to_string().contains("unsupported chmod token"));
+    assert!(error.to_string().contains("invalid --chmod specification"));
 }
 
 #[cfg(unix)]
@@ -61,31 +61,16 @@ fn conditional_execute_bit_behaviour_matches_rsync() {
     assert_eq!(dir_mode & 0o777, 0o711);
 }
 
-/// upstream: chmod.c:parse_chmod() STATE_2ND_HALF accepts a single who-letter
-/// on the RHS as a permission-copy source (`copybits`). `g=u` copies the user
-/// bits onto the group; `o=g` copies the (updated) group bits onto other.
-#[cfg(unix)]
+/// upstream: chmod.c:parse_chmod() STATE_2ND_HALF only accepts the literal
+/// permission letters `rwxXst`. A who-letter (`u`/`g`/`o`) on the right-hand
+/// side routes to STATE_ERROR, so rsync rejects GNU-chmod permission-copy forms
+/// that other tools accept. This guards against reintroducing that extension.
 #[test]
-fn user_group_copy_clauses_apply_source_permissions() {
-    let temp = tempfile::tempdir().expect("tempdir");
-    let file_path = temp.path().join("copy.txt");
-    std::fs::write(&file_path, b"payload").expect("write file");
-    let file_type = std::fs::metadata(&file_path)
-        .expect("file metadata")
-        .file_type();
-
-    // Mirrors the upstream chmod-option.test permcopy checks.
-    let modifiers = ChmodModifiers::parse("g=u").expect("parse");
-    // 0o741 (rwxr----x): group := user (rwx) -> 0o771 (rwxrwx--x).
-    assert_eq!(modifiers.apply(0o741, file_type) & 0o777, 0o771);
-
-    // g=o then o= : group := other, then clear other. 0o647 -> 0o670.
-    let modifiers = ChmodModifiers::parse("g=o,o=").expect("parse");
-    assert_eq!(modifiers.apply(0o647, file_type) & 0o777, 0o670);
-
-    // g-o : remove from group the bits set in other. 0o775 -> 0o725.
-    let modifiers = ChmodModifiers::parse("g-o").expect("parse");
-    assert_eq!(modifiers.apply(0o775, file_type) & 0o777, 0o725);
+fn who_letter_copy_forms_are_rejected() {
+    assert!(ChmodModifiers::parse("g=u").is_err());
+    assert!(ChmodModifiers::parse("g=o,o=").is_err());
+    assert!(ChmodModifiers::parse("g-o").is_err());
+    assert!(ChmodModifiers::parse("u+g").is_err());
 }
 
 /// Verifies that `D+w` (no explicit who) applies umask masking.
