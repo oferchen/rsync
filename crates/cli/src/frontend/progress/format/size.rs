@@ -275,7 +275,7 @@ mod tests {
         // upstream: generator.c:1159 size_width = 11 for level 0; the value is
         // right-justified raw digits, matching `-rw-r--r--     1234567 ...`.
         let result = format_list_size(1_234_567, HumanReadableMode::Raw);
-        assert_eq!(result, "     1234567");
+        assert_eq!(result, "    1234567");
         assert_eq!(result.len(), 11);
     }
 
