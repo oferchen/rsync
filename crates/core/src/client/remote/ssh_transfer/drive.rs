@@ -271,17 +271,44 @@ fn run_server_over_ssh_connection(
     let handshake = match crate::server::perform_handshake(&mut reader, &mut writer) {
         Ok(h) => h,
         Err(e) => {
-            // Capture SSH stderr - the remote process likely wrote diagnostic
-            // output (e.g., "Connection refused") that explains the failure.
+            // Close our writer so the remote can finish exiting, then reap the
+            // child to learn its real exit status. The child's raw exit code
+            // (e.g. a remote rsync/command exiting 42, or an SSH connection
+            // failure exiting 255) must survive rather than be masked by the
+            // handshake error.
             drop(writer);
-            let stderr_text = match child_handle.wait_with_stderr() {
-                Ok((_, stderr_bytes)) => format_stderr_context(&stderr_bytes),
-                Err(_) => String::new(),
+            let (child_exit, stderr_text) = match child_handle.wait_with_stderr() {
+                Ok((status, stderr_bytes)) => (
+                    map_child_exit_status(status),
+                    format_stderr_context(&stderr_bytes),
+                ),
+                Err(_) => (ExitCode::WaitChild, String::new()),
             };
-            return Err(invalid_argument_error(
-                &format!("handshake failed: {e}{stderr_text}"),
-                5,
-            ));
+
+            // upstream: io.c:232 whine_about_eof() maps an unexpected EOF
+            // during setup to RERR_STREAMIO (12); other handshake failures keep
+            // the client/server-startup code (5). exit_cleanup() then takes the
+            // worst of that base and the child's raw exit status
+            // (cleanup.c:150), so an arbitrary remote exit code propagates
+            // verbatim.
+            let base = if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                ExitCode::StreamIo
+            } else {
+                ExitCode::StartClient
+            };
+            let worst = if child_exit.as_i32() > base.as_i32() {
+                child_exit
+            } else {
+                base
+            };
+            let detail = if base == ExitCode::StreamIo {
+                // upstream: io.c:228-232 - the EOF whine omits the underlying
+                // error and reports the byte count received so far.
+                format!("connection unexpectedly closed (0 bytes received so far){stderr_text}")
+            } else {
+                format!("handshake failed: {e}{stderr_text}")
+            };
+            return Err(invalid_argument_error_typed(&detail, worst));
         }
     };
 

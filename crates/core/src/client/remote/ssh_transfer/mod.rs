@@ -299,9 +299,14 @@ mod tests {
 
         #[cfg(unix)]
         #[test]
-        fn maps_exit_255_to_command_failed() {
+        fn maps_exit_255_raw_not_command_failed() {
+            // upstream: main.c:221 wait_process_with_flush() returns
+            // WEXITSTATUS raw. An SSH connection failure exits 255, which must
+            // propagate as 255, not collapse to RERR_CMD_FAILED (124).
             let status = exit_status_for_code(255);
-            assert_eq!(map_child_exit_status(status), ExitCode::CommandFailed);
+            let mapped = map_child_exit_status(status);
+            assert_eq!(mapped, ExitCode::Other(255));
+            assert_eq!(mapped.as_i32(), 255);
         }
 
         #[cfg(unix)]
@@ -320,21 +325,28 @@ mod tests {
 
         #[cfg(unix)]
         #[test]
-        fn maps_unknown_exit_code_to_partial_transfer() {
+        fn maps_unknown_exit_code_to_raw_other() {
+            // upstream: main.c:221 - an arbitrary remote status (e.g. a remote
+            // rsync/command exiting 42) is propagated verbatim, not collapsed
+            // to RERR_PARTIAL (23).
             let status = exit_status_for_code(42);
-            assert_eq!(map_child_exit_status(status), ExitCode::PartialTransfer);
+            let mapped = map_child_exit_status(status);
+            assert_eq!(mapped, ExitCode::Other(42));
+            assert_eq!(mapped.as_i32(), 42);
         }
 
         #[cfg(unix)]
         #[test]
-        fn maps_signal_killed_to_command_killed() {
+        fn maps_signal_killed_to_terminated() {
+            // upstream: main.c:213-215 - a child killed by a signal without a
+            // core dump maps to RERR_TERMINATED (16), not RERR_CMD_KILLED.
             let mut child = std::process::Command::new("sh")
                 .arg("-c")
                 .arg("kill -9 $$")
                 .spawn()
                 .expect("spawn");
             let status = child.wait().expect("wait");
-            assert_eq!(map_child_exit_status(status), ExitCode::CommandKilled);
+            assert_eq!(map_child_exit_status(status), ExitCode::Terminated);
         }
     }
 }
