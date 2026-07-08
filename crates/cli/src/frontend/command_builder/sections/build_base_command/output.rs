@@ -33,18 +33,17 @@ pub(super) fn add_output_args(command: ClapCommand) -> ClapCommand {
                 .overrides_with("verbose"),
         )
         .arg(
+            // upstream: options.c:616 `{"human-readable", 'h', POPT_ARG_NONE, ...}`
+            // takes no argument, so `--human-readable=N` is rejected. Each -h
+            // increments the level (options.c:1573): -h => base-1000 units,
+            // -hh => base-1024 units.
             Arg::new("human-readable")
                 .short('h')
                 .long("human-readable")
-                .value_name("LEVEL")
                 .help(
-                    "Output numbers in a human-readable format; optional LEVEL selects 0, 1, or 2. Can be repeated to increase level.",
+                    "Output numbers in a human-readable format; repeat (-hh) to select base-1024 units.",
                 )
-                .num_args(0..=1)
-                .default_missing_value("__h_count__")
-                .require_equals(true)
-                .value_parser(OsStringValueParser::new())
-                .action(ArgAction::Append)
+                .action(ArgAction::Count)
                 .overrides_with("no-human-readable"),
         )
         .arg(

@@ -234,7 +234,7 @@ fn progress2_single_file_final_tick_matches_upstream_format() {
     let (tmp, source_dir) = setup_single_file("fmt_check.dat", 2048);
     let dest_dir = tmp.path().join("dest");
 
-    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::Disabled);
+    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::Grouped);
     let lines = split_progress2_lines(&output);
 
     // There must be at least one final tick with xfr# trailer
@@ -259,7 +259,7 @@ fn progress2_inflight_ticks_have_no_xfr_trailer() {
     let (tmp, source_dir) = setup_single_file("inflight.dat", 4 * 1024 * 1024);
     let dest_dir = tmp.path().join("dest");
 
-    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::Disabled);
+    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::Grouped);
     let lines = split_progress2_lines(&output);
 
     // Collect lines that do NOT contain xfr# (these are in-flight ticks)
@@ -278,7 +278,7 @@ fn progress2_all_lines_match_upstream_format() {
     let (tmp, source_dir) = setup_single_file("all_lines.dat", 2048);
     let dest_dir = tmp.path().join("dest");
 
-    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::Disabled);
+    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::Grouped);
     let lines = split_progress2_lines(&output);
 
     assert!(
@@ -298,7 +298,7 @@ fn progress2_rate_unit_matches_upstream_tiers() {
     let (tmp, source_dir) = setup_single_file("rate_unit.dat", 4096);
     let dest_dir = tmp.path().join("dest");
 
-    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::Disabled);
+    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::Grouped);
     let lines = split_progress2_lines(&output);
 
     for line in &lines {
@@ -317,7 +317,7 @@ fn progress2_time_field_uses_hmmss_format() {
     let (tmp, source_dir) = setup_single_file("time_fmt.dat", 1024);
     let dest_dir = tmp.path().join("dest");
 
-    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::Disabled);
+    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::Grouped);
     let lines = split_progress2_lines(&output);
 
     for line in &lines {
@@ -332,7 +332,7 @@ fn progress2_bytes_field_uses_thousands_separator() {
     let (tmp, source_dir) = setup_single_file("sep.dat", 1_536);
     let dest_dir = tmp.path().join("dest");
 
-    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::Disabled);
+    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::Grouped);
 
     // The final tick should contain "1,536" (thousands separator for 1536 bytes)
     assert!(
@@ -349,7 +349,7 @@ fn progress2_multiple_files_sequential_xfr_indices() {
     let (tmp, source_dir) = setup_multiple_files(&files);
     let dest_dir = tmp.path().join("dest");
 
-    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::Disabled);
+    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::Grouped);
     let lines = split_progress2_lines(&output);
 
     // Collect all xfr indices from final ticks
@@ -399,7 +399,7 @@ fn progress2_multiple_files_all_final_ticks_match_format() {
     let (tmp, source_dir) = setup_multiple_files(&files);
     let dest_dir = tmp.path().join("dest");
 
-    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::Disabled);
+    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::Grouped);
     let lines = split_progress2_lines(&output);
 
     let final_lines: Vec<&&str> = lines.iter().filter(|l| l.contains("xfr#")).collect();
@@ -422,7 +422,7 @@ fn progress2_multiple_files_all_final_ticks_match_format() {
 #[test]
 fn progress2_bytes_field_width_15_chars() {
     for &bytes in &[0u64, 42, 1_536, 1_234_567] {
-        let formatted = format_progress_bytes(bytes, HumanReadableMode::Disabled);
+        let formatted = format_progress_bytes(bytes, HumanReadableMode::Grouped);
         let padded = format!("{formatted:>15}");
         assert_eq!(
             padded.len(),
@@ -532,7 +532,7 @@ fn progress2_rate_unit_tier_boundaries() {
 fn progress2_rate_from_value_matches_cumulative_tiers() {
     for &rate in &[512.0_f64, 1_048_576.0, 1_073_741_824.0] {
         let cumulative = format_progress_rate_decimal(rate);
-        let from_value = format_progress_rate_from_value(rate, HumanReadableMode::Disabled);
+        let from_value = format_progress_rate_from_value(rate, HumanReadableMode::Grouped);
         assert_eq!(
             cumulative, from_value,
             "from_value should match cumulative for rate={rate}"
@@ -552,7 +552,7 @@ fn progress2_human_readable_bytes_use_unit_suffixes() {
     let (tmp, source_dir) = setup_single_file("human.dat", 2_500);
     let dest_dir = tmp.path().join("dest");
 
-    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::Enabled);
+    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::DecimalUnits);
     let lines = split_progress2_lines(&output);
 
     assert!(
@@ -578,7 +578,7 @@ fn progress2_human_readable_structural_parity() {
     let (tmp, source_dir) = setup_single_file("human_struct.dat", 4096);
     let dest_dir = tmp.path().join("dest");
 
-    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::Enabled);
+    let output = run_progress2_transfer(&source_dir, &dest_dir, HumanReadableMode::DecimalUnits);
     let lines = split_progress2_lines(&output);
 
     for line in &lines {
@@ -688,12 +688,12 @@ fn progress2_cli_multiple_files_format_parity() {
 fn progress2_composed_line_field_order_matches_upstream() {
     let bytes_field = format!(
         "{:>15}",
-        format_progress_bytes(1_536, HumanReadableMode::Disabled)
+        format_progress_bytes(1_536, HumanReadableMode::Grouped)
     );
     let percent_field = format!("{:>4}", format_progress_percent(1_536, Some(1_536)));
     let rate_field = format!(
         "{:>11}",
-        format_progress_rate(1_536, Duration::from_secs(1), HumanReadableMode::Disabled)
+        format_progress_rate(1_536, Duration::from_secs(1), HumanReadableMode::Grouped)
     );
     let time_field = format!("{:>10}", format_progress_elapsed(Duration::from_secs(1)));
 
@@ -729,12 +729,12 @@ fn progress2_composed_line_field_order_matches_upstream() {
 fn progress2_composed_inflight_line_field_order_matches_upstream() {
     let bytes_field = format!(
         "{:>15}",
-        format_progress_bytes(512, HumanReadableMode::Disabled)
+        format_progress_bytes(512, HumanReadableMode::Grouped)
     );
     let percent_field = format!("{:>4}", format_progress_percent(512, Some(1_024)));
     let rate_field = format!(
         "{:>11}",
-        format_progress_rate(512, Duration::from_millis(500), HumanReadableMode::Disabled)
+        format_progress_rate(512, Duration::from_millis(500), HumanReadableMode::Grouped)
     );
     let time_field = format!(
         "{:>10}",

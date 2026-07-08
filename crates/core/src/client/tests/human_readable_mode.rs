@@ -3,20 +3,20 @@ use std::str::FromStr;
 
 #[test]
 fn human_readable_mode_parses_numeric_levels() {
-    assert_eq!(HumanReadableMode::parse("0").unwrap(), HumanReadableMode::Disabled);
-    assert_eq!(HumanReadableMode::parse("1").unwrap(), HumanReadableMode::Enabled);
-    assert_eq!(HumanReadableMode::parse("2").unwrap(), HumanReadableMode::Combined);
+    assert_eq!(HumanReadableMode::parse("0").unwrap(), HumanReadableMode::Grouped);
+    assert_eq!(HumanReadableMode::parse("1").unwrap(), HumanReadableMode::DecimalUnits);
+    assert_eq!(HumanReadableMode::parse("2").unwrap(), HumanReadableMode::BinaryUnits);
 }
 
 #[test]
 fn human_readable_mode_trims_ascii_whitespace() {
     assert_eq!(
         HumanReadableMode::parse(" 1 \t").unwrap(),
-        HumanReadableMode::Enabled
+        HumanReadableMode::DecimalUnits
     );
     assert_eq!(
         HumanReadableMode::from_str("\n 2  \r").unwrap(),
-        HumanReadableMode::Combined
+        HumanReadableMode::BinaryUnits
     );
 }
 

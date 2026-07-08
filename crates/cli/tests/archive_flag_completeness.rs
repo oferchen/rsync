@@ -417,7 +417,7 @@ fn combined_avzh_flags() {
     assert!(args.compress);
     assert_eq!(
         args.human_readable,
-        Some(HumanReadableMode::Enabled),
+        Some(HumanReadableMode::DecimalUnits),
         "-h should enable human-readable output"
     );
 }
