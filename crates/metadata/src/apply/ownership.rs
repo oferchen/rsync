@@ -16,7 +16,7 @@ use crate::ownership;
 #[cfg(unix)]
 use protocol::idlist::{trace_set_gid, trace_set_uid};
 #[cfg(unix)]
-use rustix::fs::{self as unix_fs, AtFlags, CWD};
+use rustix::fs::{self as unix_fs};
 #[cfg(unix)]
 use rustix::process::{RawGid, RawUid};
 #[cfg(unix)]
@@ -25,6 +25,58 @@ use std::io;
 use std::os::fd::BorrowedFd;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
+
+/// Applies a path-based `chown`/`lchown` through the `nix` crate, selecting
+/// follow-vs-nofollow via `follow_symlinks` (`AT_SYMLINK_NOFOLLOW` = `lchown`).
+///
+/// `nix` calls the libc `fchownat(2)` symbol rather than issuing a raw syscall.
+/// This is mandatory for `fakeroot` compatibility: fakeroot interposes the libc
+/// `chown`/`lchown`/`fchown` symbols via `LD_PRELOAD` and fakes the ownership
+/// change for a non-root process. rustix's default `linux_raw` backend bypasses
+/// libc entirely, so fakeroot never sees the call and the real kernel returns
+/// `EPERM`, dropping every file to `0:0`. Routing through the libc symbol lets
+/// fakeroot fake it, matching upstream.
+// upstream: syscall.c:do_lchown()/do_chown() call the lchown(2)/chown(2) libc symbols.
+#[cfg(unix)]
+fn chown_path(
+    path: &Path,
+    owner: Option<unix_fs::Uid>,
+    group: Option<unix_fs::Gid>,
+    follow_symlinks: bool,
+) -> Result<(), MetadataError> {
+    let flag = if follow_symlinks {
+        nix::fcntl::AtFlags::empty()
+    } else {
+        nix::fcntl::AtFlags::AT_SYMLINK_NOFOLLOW
+    };
+    nix::unistd::fchownat(
+        nix::fcntl::AT_FDCWD,
+        path,
+        owner.map(|uid| nix::unistd::Uid::from_raw(uid.as_raw())),
+        group.map(|gid| nix::unistd::Gid::from_raw(gid.as_raw())),
+        flag,
+    )
+    .map_err(|errno| MetadataError::new("preserve ownership", path, io::Error::from(errno)))
+}
+
+/// fd-based counterpart to [`chown_path`] using the libc `fchown(2)` symbol via
+/// `nix`. See [`chown_path`] for why the call must go through libc rather than a
+/// raw syscall (fakeroot `LD_PRELOAD` interposition).
+// upstream: syscall.c:do_fchown() calls the fchown(2) libc symbol.
+#[cfg(unix)]
+fn chown_fd(
+    fd: BorrowedFd<'_>,
+    path: &Path,
+    owner: Option<unix_fs::Uid>,
+    group: Option<unix_fs::Gid>,
+) -> Result<(), MetadataError> {
+    nix::unistd::fchown(
+        fd,
+        owner.map(|uid| nix::unistd::Uid::from_raw(uid.as_raw())),
+        group.map(|gid| nix::unistd::Gid::from_raw(gid.as_raw())),
+    )
+    .map_err(|errno| MetadataError::new("preserve ownership", path, io::Error::from(errno)))
+}
 
 /// Emits the upstream level-1 `set uid of`/`set gid of` traces for a chown.
 ///
@@ -61,16 +113,22 @@ fn trace_chown_change(
 /// without privilege: it is the effective gid or one of the supplementary
 /// groups. Mirrors upstream `is_in_group()` (uidlist.c:195-239), the test that
 /// gates `FLAG_SKIP_GROUP` for a non-root sender.
+///
+/// The effective-gid check uses `nix` (libc `getegid`) so the identity matches
+/// upstream's libc-based checks; this fallback is never reached under fakeroot,
+/// where `gate_preserved_group` short-circuits on the faked-root euid.
 #[cfg(unix)]
 #[allow(unsafe_code)]
 fn process_in_group(gid: unix_fs::Gid) -> bool {
-    if rustix::process::getegid() == gid {
+    if nix::unistd::getegid() == nix::unistd::Gid::from_raw(gid.as_raw()) {
         return true;
     }
     let target = gid.as_raw();
     // SAFETY: the first call passes a NULL buffer with size 0 to learn the
     // supplementary-group count; the second fills an exactly-sized buffer.
     // Both are standard POSIX `getgroups` invocations with no aliasing.
+    // (`nix::unistd::getgroups` is unavailable on Apple targets, so the libc
+    // symbol is used directly for cross-platform support.)
     let count = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
     if count <= 0 {
         return false;
@@ -93,7 +151,10 @@ fn process_in_group(gid: unix_fs::Gid) -> bool {
 /// user. Explicit overrides keep their fail-loud behaviour and are not routed here.
 #[cfg(unix)]
 pub(super) fn gate_preserved_owner(owner: Option<unix_fs::Uid>) -> Option<unix_fs::Uid> {
-    owner.filter(|_| rustix::process::geteuid().is_root())
+    // nix (libc `geteuid`) so the euid reflects fakeroot's faked identity,
+    // making `am_root` true under fakeroot exactly like upstream. rustix's raw
+    // syscall would report the real non-root euid and gate the chown away.
+    owner.filter(|_| nix::unistd::geteuid().is_root())
 }
 
 /// Gates a group GID resolved from the *preserve* path (`-g`/`-a`, no explicit
@@ -103,7 +164,9 @@ pub(super) fn gate_preserved_owner(owner: Option<unix_fs::Uid>) -> Option<unix_f
 /// overrides keep their fail-loud behaviour and are not routed here.
 #[cfg(unix)]
 pub(super) fn gate_preserved_group(group: Option<unix_fs::Gid>) -> Option<unix_fs::Gid> {
-    group.filter(|gid| rustix::process::geteuid().is_root() || process_in_group(*gid))
+    // See `gate_preserved_owner`: nix (libc `geteuid`) so fakeroot's faked root
+    // euid is honoured, matching upstream's `am_root` gate.
+    group.filter(|gid| nix::unistd::geteuid().is_root() || process_in_group(*gid))
 }
 
 /// Resolves the target UID and GID after applying overrides, mappings, and
@@ -230,18 +293,10 @@ pub(super) fn set_owner_like(
             }
         }
 
-        let flags = if follow_symlinks {
-            AtFlags::empty()
-        } else {
-            AtFlags::SYMLINK_NOFOLLOW
-        };
-
         // upstream: rsync.c:535-546 - DEBUG_GTE(OWN, 1) fires before do_lchown.
         trace_chown_change(destination, owner, group, existing);
 
-        unix_fs::chownat(CWD, destination, owner, group, flags).map_err(|error| {
-            MetadataError::new("preserve ownership", destination, io::Error::from(error))
-        })?
+        chown_path(destination, owner, group, follow_symlinks)?;
     }
 
     #[cfg(not(unix))]
@@ -294,9 +349,7 @@ pub(super) fn set_owner_like_with_fd(
     // upstream: rsync.c:535-546 - DEBUG_GTE(OWN, 1) fires before do_lchown.
     trace_chown_change(destination, owner, group, existing);
 
-    unix_fs::fchown(fd, owner, group).map_err(|error| {
-        MetadataError::new("preserve ownership", destination, io::Error::from(error))
-    })?;
+    chown_fd(fd, destination, owner, group)?;
 
     Ok(())
 }
@@ -314,7 +367,6 @@ pub(super) fn apply_ownership_from_entry(
     options: &MetadataOptions,
     cached_meta: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
-    use rustix::fs::{AtFlags, CWD, chownat};
     use rustix::process::{RawGid, RawUid};
 
     if !options.owner()
@@ -395,9 +447,7 @@ pub(super) fn apply_ownership_from_entry(
             // upstream: rsync.c:535-546 - DEBUG_GTE(OWN, 1) fires before do_lchown.
             trace_chown_change(destination, owner, group, cached_meta);
 
-            chownat(CWD, destination, owner, group, AtFlags::empty()).map_err(|error| {
-                MetadataError::new("preserve ownership", destination, io::Error::from(error))
-            })?;
+            chown_path(destination, owner, group, true)?;
         }
     }
 
@@ -420,8 +470,6 @@ pub(super) fn apply_symlink_ownership_from_entry(
     options: &MetadataOptions,
     cached_meta: Option<&fs::Metadata>,
 ) -> Result<(), MetadataError> {
-    use rustix::fs::chownat;
-
     if !options.owner()
         && !options.group()
         && options.owner_override().is_none()
@@ -486,9 +534,7 @@ pub(super) fn apply_symlink_ownership_from_entry(
     if needs_chown {
         trace_chown_change(destination, owner, group, cached_meta);
 
-        chownat(CWD, destination, owner, group, AtFlags::SYMLINK_NOFOLLOW).map_err(|error| {
-            MetadataError::new("preserve ownership", destination, io::Error::from(error))
-        })?;
+        chown_path(destination, owner, group, false)?;
     }
 
     Ok(())
