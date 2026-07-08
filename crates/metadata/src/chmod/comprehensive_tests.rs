@@ -182,15 +182,14 @@ mod basic_symbolic_syntax {
         assert!(!modifiers.is_empty());
     }
 
-    // upstream: chmod.c:parse_chmod() STATE_2ND_HALF accepts a single
-    // who-class letter in the RHS as a permission-copy source (`copybits`), so
-    // `g=u`, `o=g`, `o=u` all parse. Mixing a copy source with literal bits
-    // (`g=ur`) is STATE_ERROR.
+    // upstream: chmod.c:parse_chmod() STATE_2ND_HALF only accepts the literal
+    // permission letters `rwxXst`. A who-letter on the RHS routes to
+    // STATE_ERROR, so rsync rejects GNU-chmod permission-copy forms.
     #[test]
-    fn who_letter_copy_source_in_rhs_parses() {
-        assert!(ChmodModifiers::parse("g=u").is_ok());
-        assert!(ChmodModifiers::parse("o=g").is_ok());
-        assert!(ChmodModifiers::parse("o=u").is_ok());
+    fn who_letter_copy_source_in_rhs_rejected() {
+        assert!(ChmodModifiers::parse("g=u").is_err());
+        assert!(ChmodModifiers::parse("o=g").is_err());
+        assert!(ChmodModifiers::parse("o=u").is_err());
         assert!(ChmodModifiers::parse("g=ur").is_err());
     }
 
@@ -432,21 +431,22 @@ mod multiple_rules {
     }
 
     #[test]
-    fn whitespace_around_commas_tolerated() {
-        let modifiers = ChmodModifiers::parse("u+r , g+w").expect("parse with whitespace");
-        assert!(!modifiers.is_empty());
+    fn whitespace_around_commas_rejected() {
+        // upstream: chmod.c - a space is not a who-class, operator, or digit, so
+        // ` g+w` routes to STATE_ERROR. rsync does not trim spaces.
+        assert!(ChmodModifiers::parse("u+r , g+w").is_err());
     }
 
     #[test]
-    fn empty_parts_between_commas_ignored() {
-        let modifiers = ChmodModifiers::parse("u+r,,g+w").expect("parse with empty part");
-        assert!(!modifiers.is_empty());
+    fn empty_parts_between_commas_rejected() {
+        // upstream: chmod.c:61-63 - an empty clause (no operator) is STATE_ERROR.
+        assert!(ChmodModifiers::parse("u+r,,g+w").is_err());
     }
 
     #[test]
-    fn trailing_comma_ignored() {
-        let modifiers = ChmodModifiers::parse("u+r,g+w,").expect("parse with trailing comma");
-        assert!(!modifiers.is_empty());
+    fn trailing_comma_rejected() {
+        // upstream: chmod.c - the empty clause after a trailing comma errors.
+        assert!(ChmodModifiers::parse("u+r,g+w,").is_err());
     }
 }
 
@@ -637,23 +637,22 @@ mod apply_mode {
     }
 
     #[test]
-    fn who_letter_copy_form_applies_source_permissions() {
-        // upstream: chmod.c mode_copy_bits() - `u=g` sets the user triad from
-        // the group triad; `o=u` copies the user triad onto other and (via the
-        // `=` op) clears the destination's special bit. Values mirror the
-        // upstream chmod-option.test permcopy checks.
+    fn assign_preserves_setid_bits() {
+        // upstream: chmod.c:90 - CHMOD_EQ only strips the top set-id bits when
+        // `s`/`t` are present. `u=rx` and `a=rx` keep an existing setuid bit,
+        // unlike GNU chmod. Values verified against rsync 3.4.4.
         let temp = tempfile::tempdir().expect("tempdir");
-        let file_path = temp.path().join("permcopy.txt");
+        let file_path = temp.path().join("setid.txt");
         std::fs::write(&file_path, b"payload").expect("write file");
         let file_type = get_file_type(&file_path);
 
-        // 0o4755: user := group (r-x); setuid cleared by `=`. -> 0o555.
-        let modifiers = ChmodModifiers::parse("u=g").expect("parse");
-        assert_eq!(modifiers.apply(0o4755, file_type) & 0o7777, 0o555);
+        // 0o4755: u=rx keeps setuid -> 0o4555 (r-x for user, setuid retained).
+        let modifiers = ChmodModifiers::parse("u=rx").expect("parse");
+        assert_eq!(modifiers.apply(0o4755, file_type) & 0o7777, 0o4555);
 
-        // 0o2755: group := user (rwx); setgid cleared by `=`. -> 0o775.
-        let modifiers = ChmodModifiers::parse("g=u").expect("parse");
-        assert_eq!(modifiers.apply(0o2755, file_type) & 0o7777, 0o775);
+        // 0o4755: a=rx keeps setuid -> 0o4555.
+        let modifiers = ChmodModifiers::parse("a=rx").expect("parse");
+        assert_eq!(modifiers.apply(0o4755, file_type) & 0o7777, 0o4555);
     }
 
     #[test]
@@ -776,15 +775,18 @@ mod error_cases {
     }
 
     #[test]
-    fn add_without_permissions_fails() {
+    fn add_without_permissions_is_noop() {
+        // upstream: chmod.c - `u+` closes a clause with what=0, yielding a
+        // no-op (ModeAND=CHMOD_BITS, ModeOR=0). rsync 3.4.4 exits 0.
         let result = ChmodModifiers::parse("u+");
-        assert!(result.is_err());
+        assert!(result.is_ok());
     }
 
     #[test]
-    fn remove_without_permissions_fails() {
+    fn remove_without_permissions_is_noop() {
+        // upstream: `g-` is likewise a valid no-op clause.
         let result = ChmodModifiers::parse("g-");
-        assert!(result.is_err());
+        assert!(result.is_ok());
     }
 
     #[test]

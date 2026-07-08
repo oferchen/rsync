@@ -30,50 +30,50 @@
 
 /// Default CVS exclusion patterns.
 ///
-/// These patterns are space-separated and match rsync's built-in defaults
-/// from `exclude.c:get_cvs_excludes()`. The patterns use rsync's filter
-/// syntax:
+/// This is the single canonical definition of rsync's built-in `--cvs-exclude`
+/// defaults from `exclude.c:get_cvs_excludes()`. The patterns use rsync's
+/// filter syntax:
 /// - Simple names match files/directories at any level
 /// - `*` matches any characters except `/`
 /// - Trailing `/` marks directory-only patterns
-pub const DEFAULT_CVSIGNORE: &str = concat!(
-    "RCS ",
-    "SCCS ",
-    "CVS ",
-    "CVS.adm ",
-    "RCSLOG ",
-    "cvslog.* ",
-    "tags ",
-    "TAGS ",
-    ".make.state ",
-    ".nse_depinfo ",
-    "*~ ",
-    "#* ",
-    ".#* ",
-    ",* ",
-    "_$* ",
-    "*$ ",
-    "*.old ",
-    "*.bak ",
-    "*.BAK ",
-    "*.orig ",
-    "*.rej ",
-    ".del-* ",
-    "*.a ",
-    "*.olb ",
-    "*.o ",
-    "*.obj ",
-    "*.so ",
-    "*.exe ",
-    "*.Z ",
-    "*.elc ",
-    "*.ln ",
-    "core ",
-    ".svn/ ",
-    ".git/ ",
-    ".hg/ ",
+pub const DEFAULT_CVSIGNORE: &[&str] = &[
+    "RCS",
+    "SCCS",
+    "CVS",
+    "CVS.adm",
+    "RCSLOG",
+    "cvslog.*",
+    "tags",
+    "TAGS",
+    ".make.state",
+    ".nse_depinfo",
+    "*~",
+    "#*",
+    ".#*",
+    ",*",
+    "_$*",
+    "*$",
+    "*.old",
+    "*.bak",
+    "*.BAK",
+    "*.orig",
+    "*.rej",
+    ".del-*",
+    "*.a",
+    "*.olb",
+    "*.o",
+    "*.obj",
+    "*.so",
+    "*.exe",
+    "*.Z",
+    "*.elc",
+    "*.ln",
+    "core",
+    ".svn/",
+    ".git/",
+    ".hg/",
     ".bzr/",
-);
+];
 
 /// Returns an iterator over the default CVS exclusion patterns.
 ///
@@ -89,9 +89,7 @@ pub const DEFAULT_CVSIGNORE: &str = concat!(
 /// assert!(patterns.contains(&".git/"));
 /// ```
 pub fn default_patterns() -> impl Iterator<Item = &'static str> {
-    DEFAULT_CVSIGNORE
-        .split_whitespace()
-        .filter(|s| !s.is_empty())
+    DEFAULT_CVSIGNORE.iter().copied()
 }
 
 /// Returns the number of default CVS exclusion patterns in

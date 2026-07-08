@@ -114,7 +114,7 @@ fn progress_human_readable_combined_formats_sizes() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--progress"),
-        OsString::from("--human-readable=2"),
+        OsString::from("-hh"),
         source.into_os_string(),
         destination.into_os_string(),
     ]);

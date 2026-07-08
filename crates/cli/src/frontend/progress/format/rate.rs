@@ -153,11 +153,11 @@ mod tests {
         // the default (non -h) summary trailer must be thousands-grouped, the
         // same as oc-rsync's own --stats path.
         assert_eq!(
-            format_summary_rate(1_234_567.89, HumanReadableMode::Disabled),
+            format_summary_rate(1_234_567.89, HumanReadableMode::Grouped),
             "1,234,567.89"
         );
         assert_eq!(
-            format_summary_rate(512.0, HumanReadableMode::Disabled),
+            format_summary_rate(512.0, HumanReadableMode::Grouped),
             "512.00"
         );
     }
@@ -236,26 +236,26 @@ mod tests {
     /// in progress2 mode.
     #[test]
     fn format_progress_rate_from_value_zero() {
-        let result = format_progress_rate_from_value(0.0, HumanReadableMode::Disabled);
+        let result = format_progress_rate_from_value(0.0, HumanReadableMode::Grouped);
         assert_eq!(result, "0.00kB/s");
     }
 
     #[test]
     fn format_progress_rate_from_value_negative() {
-        let result = format_progress_rate_from_value(-1.0, HumanReadableMode::Disabled);
+        let result = format_progress_rate_from_value(-1.0, HumanReadableMode::Grouped);
         assert_eq!(result, "0.00kB/s");
     }
 
     #[test]
     fn format_progress_rate_from_value_kb_range() {
-        let result = format_progress_rate_from_value(512.0, HumanReadableMode::Disabled);
+        let result = format_progress_rate_from_value(512.0, HumanReadableMode::Grouped);
         assert!(result.ends_with("kB/s"), "expected kB/s: {result}");
     }
 
     #[test]
     fn format_progress_rate_from_value_mb_range() {
         let result =
-            format_progress_rate_from_value(2.0 * 1024.0 * 1024.0, HumanReadableMode::Disabled);
+            format_progress_rate_from_value(2.0 * 1024.0 * 1024.0, HumanReadableMode::Grouped);
         assert!(result.ends_with("MB/s"), "expected MB/s: {result}");
     }
 
@@ -263,7 +263,7 @@ mod tests {
     fn format_progress_rate_from_value_gb_range() {
         let result = format_progress_rate_from_value(
             2.0 * 1024.0 * 1024.0 * 1024.0,
-            HumanReadableMode::Disabled,
+            HumanReadableMode::Grouped,
         );
         assert!(result.ends_with("GB/s"), "expected GB/s: {result}");
     }

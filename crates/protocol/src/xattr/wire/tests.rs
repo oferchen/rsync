@@ -448,14 +448,34 @@ fn checksum_verification() {
     assert!(!checksum_matches(&checksum, b"different value", seed));
 }
 
+/// The abbreviation digest of protocol 30-32 is the plain, unseeded MD5 of the
+/// value. Upstream computes it via `sum_init(xattr_sum_nni, checksum_seed)`,
+/// but the `CSUM_MD5` case of `sum_init()` does `md5_begin()` with no seed
+/// (`checksum.c:588`); only the MD4-family cases fold the seed in. A seeded
+/// digest here would never equal the receiver's locally computed value, so
+/// upstream would re-request every large xattr in full. This locks the digest
+/// to seed-independent plain MD5 so oc-rsync stays byte-compatible.
 #[test]
-fn checksum_seed_affects_result() {
+fn abbreviation_checksum_is_unseeded_md5() {
+    use md5::{Digest, Md5};
+
     let value = b"same data different seeds";
+
+    // The seed must not change the digest.
     let checksum_a = compute_xattr_checksum(value, 100);
     let checksum_b = compute_xattr_checksum(value, 200);
-    assert_ne!(checksum_a, checksum_b);
-    assert!(checksum_matches(&checksum_a, value, 100));
-    assert!(!checksum_matches(&checksum_a, value, 200));
+    let checksum_zero = compute_xattr_checksum(value, 0);
+    assert_eq!(checksum_a, checksum_b);
+    assert_eq!(checksum_a, checksum_zero);
+
+    // The digest is exactly the plain MD5 of the value, matching upstream's
+    // unseeded sum_init(CSUM_MD5) over the datum.
+    let expected: [u8; MAX_XATTR_DIGEST_LEN] = Md5::digest(value).into();
+    assert_eq!(checksum_a, expected);
+
+    // Any nonzero seed still verifies, since the seed is ignored.
+    assert!(checksum_matches(&checksum_a, value, 200));
+    assert!(!checksum_matches(&checksum_a, b"different value", 200));
 }
 
 #[test]

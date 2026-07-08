@@ -672,7 +672,6 @@ mod tests {
         assert!(received.is_none(), "sender drop should close the channel");
     }
 
-    // -----------------------------------------------------------------------
     // Wire-byte parity: SyncAsyncBridge (async-native) vs channel-pump
     // (spawn_blocking) bridging strategies (RUSSH-12).
     //
@@ -680,7 +679,6 @@ mod tests {
     // These tests verify that the bytes observed on the sync side are
     // identical regardless of which bridge is used, for payloads ranging
     // from trivial to multi-chunk.
-    // -----------------------------------------------------------------------
 
     /// Sends `payload` through the `SyncAsyncBridge` path and returns the
     /// bytes the sync reader observes after a round-trip through an echo

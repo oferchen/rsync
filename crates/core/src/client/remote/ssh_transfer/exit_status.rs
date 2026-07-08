@@ -76,13 +76,19 @@ pub(in crate::client::remote) fn convert_server_stats_to_summary(
 
 /// Maps an SSH child process exit status to an rsync exit code.
 ///
-/// Mirrors upstream rsync's `wait_process_with_flush()` logic in `main.c`:
-/// - Exit 0: success
-/// - Exit 127: command not found (`RERR_CMD_NOTFOUND`)
-/// - Exit 255: SSH connection failure (`RERR_CMD_FAILED`)
-/// - Killed by signal: `RERR_CMD_KILLED`
-/// - Other rsync exit codes: passed through directly
-/// - Unknown codes: fall back to `PartialTransfer`
+/// Mirrors upstream rsync's `wait_process_with_flush()` in `main.c:194`:
+/// - Normal exit: `WEXITSTATUS(status)` is propagated raw. Known RERR_*
+///   codes keep their named variant; any other status (for example a remote
+///   rsync exit 42 or an SSH connection failure exit 255) round-trips
+///   verbatim via [`ExitCode::Other`].
+/// - Killed by signal with a core dump: `RERR_CRASHED` (15).
+/// - Killed by signal without a core dump: `RERR_TERMINATED` (16).
+/// - `waitpid()` failure / did not exit normally: `RERR_WAITCHILD` (21).
+///
+/// The resulting raw i32 flows unchanged into the worst-wins comparison
+/// (cleanup.c:150) and ultimately to `process::exit`.
+///
+/// upstream: main.c:194 `wait_process_with_flush()`; cleanup.c:150.
 pub(in crate::client::remote) fn map_child_exit_status(
     status: std::process::ExitStatus,
 ) -> ExitCode {
@@ -93,17 +99,21 @@ pub(in crate::client::remote) fn map_child_exit_status(
     #[cfg(unix)]
     {
         use std::os::unix::process::ExitStatusExt;
+        // upstream: main.c:208-217 - a child that did not exit normally maps to
+        // RERR_CRASHED (core dump) or RERR_TERMINATED (killed by signal).
         if status.signal().is_some() {
-            return ExitCode::CommandKilled;
+            return if status.core_dumped() {
+                ExitCode::Crashed
+            } else {
+                ExitCode::Terminated
+            };
         }
     }
 
     match status.code() {
-        // upstream: main.c:1591 - shell exit codes mapped to RERR_CMD_*
-        Some(126) => ExitCode::CommandRun,
-        Some(127) => ExitCode::CommandNotFound,
-        Some(255) => ExitCode::CommandFailed,
-        Some(code) => ExitCode::from_i32(code).unwrap_or(ExitCode::PartialTransfer),
+        // upstream: main.c:221 - WEXITSTATUS is returned raw, never collapsed.
+        Some(code) => ExitCode::from_raw(code),
+        // upstream: main.c:206/218 - a failed waitpid() maps to RERR_WAITCHILD.
         None => ExitCode::WaitChild,
     }
 }
