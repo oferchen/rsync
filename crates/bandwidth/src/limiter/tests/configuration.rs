@@ -428,7 +428,6 @@ fn reset_clears_all_mutable_state() {
     let _ = limiter.register(10000);
     let _ = limiter.register(5000);
 
-    // Reset
     limiter.reset();
 
     // All mutable state should be cleared
