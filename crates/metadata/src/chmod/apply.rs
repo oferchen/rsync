@@ -6,9 +6,9 @@
 //! bits above `CHMOD_BITS`) are preserved unchanged.
 
 use super::spec::Clause;
-// CHMOD_BITS is only referenced by the mode-tweaking path, which is gated to
-// unix (or test); importing it unconditionally is an unused import on Windows.
-#[cfg(any(unix, test))]
+// CHMOD_BITS is only referenced by the unix-only mode-tweaking path; importing
+// it unconditionally is an unused import on Windows.
+#[cfg(unix)]
 use super::spec::CHMOD_BITS;
 
 /// Applies the clause list to `mode`, mirroring `chmod.c:tweak_mode()`.
@@ -28,7 +28,7 @@ pub(crate) fn apply_clauses(_clauses: &[Clause], mode: u32, _file_type: std::fs:
 /// `is_x` is sampled once from the original executable bits and `non_perm`
 /// holds the file-type bits, both restored per upstream. upstream:
 /// chmod.c:218-236.
-#[cfg(any(unix, test))]
+#[cfg(unix)]
 fn tweak_mode(clauses: &[Clause], orig: u32, is_dir: bool) -> u32 {
     let is_x = orig & 0o111;
     let non_perm = orig & !CHMOD_BITS;
