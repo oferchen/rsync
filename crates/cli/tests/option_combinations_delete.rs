@@ -11,8 +11,8 @@ fn test_delete_excluded_enables_delete_during() {
     let args = parse_args(["oc-rsync", "--delete-excluded", "--dirs", "src", "dest"]).unwrap();
     assert_eq!(
         args.delete_mode,
-        DeleteMode::During,
-        "--delete-excluded should implicitly enable delete mode (During)"
+        DeleteMode::DuringDefault,
+        "--delete-excluded should implicitly enable delete mode (DuringDefault)"
     );
     assert!(args.delete_excluded, "--delete-excluded flag should be set");
 }
@@ -22,8 +22,8 @@ fn test_max_delete_enables_delete_during() {
     let args = parse_args(["oc-rsync", "--max-delete=100", "--dirs", "src", "dest"]).unwrap();
     assert_eq!(
         args.delete_mode,
-        DeleteMode::During,
-        "--max-delete should implicitly enable delete mode (During)"
+        DeleteMode::DuringDefault,
+        "--max-delete should implicitly enable delete mode (DuringDefault)"
     );
     assert_eq!(
         args.max_delete,
@@ -113,7 +113,7 @@ fn test_delete_excluded_and_max_delete_together() {
     .unwrap();
     assert_eq!(
         args.delete_mode,
-        DeleteMode::During,
+        DeleteMode::DuringDefault,
         "Both options should enable delete mode"
     );
     assert!(args.delete_excluded);
@@ -125,8 +125,8 @@ fn test_delete_flag_enables_during_mode() {
     let args = parse_args(["oc-rsync", "--delete", "--dirs", "src", "dest"]).unwrap();
     assert_eq!(
         args.delete_mode,
-        DeleteMode::During,
-        "--delete should enable During mode"
+        DeleteMode::DuringDefault,
+        "--delete should enable DuringDefault mode"
     );
 }
 

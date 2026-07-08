@@ -249,12 +249,19 @@ impl<'a> RemoteInvocationBuilder<'a> {
     /// `--key=value` tokens rather than single-character flags. The order mirrors
     /// upstream for predictable interop testing.
     fn append_long_form_args(&self, args: &mut Vec<OsString>) {
-        // upstream: options.c - delete_mode forwarded as
-        // --delete-before/during/after/delay timing variants.
+        // upstream: options.c:2818-2829 - delete timing variants. Explicit
+        // --delete-before/during/after/delay are always sent. Bare --delete
+        // (DuringDefault) is suppressed when --delete-excluded is active,
+        // matching upstream: `else if (delete_mode && !delete_excluded)`.
         match self.config.delete_mode() {
             DeleteMode::Disabled => {}
             DeleteMode::Before => args.push(OsString::from("--delete-before")),
             DeleteMode::During => args.push(OsString::from("--delete-during")),
+            DeleteMode::DuringDefault => {
+                if !self.config.delete_excluded() {
+                    args.push(OsString::from("--delete"));
+                }
+            }
             DeleteMode::After => args.push(OsString::from("--delete-after")),
             DeleteMode::Delay => args.push(OsString::from("--delete-delay")),
         }

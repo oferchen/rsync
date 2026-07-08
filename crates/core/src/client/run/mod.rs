@@ -687,7 +687,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             DeleteMode::Before => options.delete_before(true),
             DeleteMode::After => options.delete_after(true),
             DeleteMode::Delay => options.delete_delay(true),
-            DeleteMode::During | DeleteMode::Disabled => options,
+            DeleteMode::During | DeleteMode::DuringDefault | DeleteMode::Disabled => options,
         };
 
         options

@@ -12,7 +12,7 @@ fn delete_flag_is_parsed() {
     ])
     .expect("parse succeeds");
 
-    assert_eq!(parsed.delete_mode, DeleteMode::During);
+    assert_eq!(parsed.delete_mode, DeleteMode::DuringDefault);
     assert!(!parsed.delete_excluded);
 }
 
