@@ -1476,6 +1476,55 @@ fn execute_fifo_produces_fifo_copied_event() {
     );
 }
 
+/// A special file the receiver newly materialises must carry the creation bit
+/// so its itemize row renders `cS+++++++++` (or `cD+++++++++` for a device),
+/// matching upstream rather than collapsing the attribute slots to spaces.
+///
+/// Without the `was_created` flag the CLI renderer treats the FIFO as an
+/// unchanged entry: at plain `-i` the row is suppressed entirely (upstream
+/// prints `cS+++++++++`) and under `-vv` it degrades to `cS` followed by nine
+/// spaces. The bug surfaced as the upstream `devices` testsuite producing no
+/// output for freshly created device/FIFO nodes.
+///
+/// # Upstream Reference
+///
+/// - `generator.c:1462` - `itemize()` sets `ITEM_IS_NEW` when `statret < 0`
+///   (the destination special file did not exist).
+/// - `log.c:736-738` - `ITEM_IS_NEW` fills itemize slots 2-10 with `+`.
+#[cfg(unix)]
+#[test]
+fn execute_fifo_creation_sets_was_created_for_itemize() {
+    let temp = create_tempdir();
+    let source_fifo = temp.path().join("new.pipe");
+    mkfifo_for_tests(&source_fifo, 0o600).expect("mkfifo");
+
+    let dest_fifo = temp.path().join("dest.pipe");
+    let operands = vec![
+        source_fifo.into_os_string(),
+        dest_fifo.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let report = plan
+        .execute_with_report(
+            LocalCopyExecution::Apply,
+            LocalCopyOptions::default()
+                .specials(true)
+                .collect_events(true),
+        )
+        .expect("copy executes");
+
+    let fifo_record = report
+        .records()
+        .iter()
+        .find(|record| record.action() == &LocalCopyAction::FifoCopied)
+        .expect("FifoCopied record present");
+    assert!(
+        fifo_record.was_created(),
+        "a newly materialised FIFO must flag creation so itemize renders `cS+++++++++`"
+    );
+}
+
 
 #[cfg(unix)]
 #[test]

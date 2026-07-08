@@ -121,14 +121,20 @@ pub(crate) fn copy_fifo(
             } else {
                 LocalCopyAction::FifoCopied
             };
-            context.record(LocalCopyRecord::new(
-                path.clone(),
-                action,
-                0,
-                total_bytes,
-                Duration::default(),
-                Some(metadata_snapshot),
-            ));
+            context.record(
+                LocalCopyRecord::new(
+                    path.clone(),
+                    action,
+                    0,
+                    total_bytes,
+                    Duration::default(),
+                    Some(metadata_snapshot),
+                )
+                // upstream: generator.c:1462 itemize() sets ITEM_IS_NEW
+                // (statret < 0) so log.c:736-738 fills slots 2-10 with `+`
+                // for a FIFO/socket the receiver newly materialises.
+                .with_creation(!destination_previously_existed),
+            );
         }
 
         context.register_progress();
@@ -143,6 +149,14 @@ pub(crate) fn copy_fifo(
 
     // try to hard-link to an earlier FIFO we made
     if let Some(link_source) = existing_hard_link_target.take() {
+        // upstream: log.c:643-654 - the `%L` field renders ` => leader` for a
+        // hard-linked non-symlink. Capture the leader's destination-relative
+        // path before the match may move `link_source` back on EXDEV so the
+        // itemize row can emit `hS+++++++++ alias => leader`.
+        let leader_display = link_source
+            .strip_prefix(context.destination_root())
+            .ok()
+            .map(std::path::Path::to_path_buf);
         match create_hard_link(&link_source, destination) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
@@ -188,16 +202,24 @@ pub(crate) fn copy_fifo(
             context.summary_mut().record_hard_link();
 
             if let Some(path) = &record_path {
-                let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+                let leader_display =
+                    leader_display.filter(|relative| relative.as_path() != path.as_path());
+                let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, leader_display);
                 let total_bytes = Some(metadata_snapshot.len());
-                context.record(LocalCopyRecord::new(
-                    path.clone(),
-                    LocalCopyAction::HardLink,
-                    0,
-                    total_bytes,
-                    Duration::default(),
-                    Some(metadata_snapshot),
-                ));
+                context.record(
+                    LocalCopyRecord::new(
+                        path.clone(),
+                        LocalCopyAction::HardLink,
+                        0,
+                        total_bytes,
+                        Duration::default(),
+                        Some(metadata_snapshot),
+                    )
+                    // upstream: hlink.c:218-222 itemize(..., ITEM_LOCAL_CHANGE, ...)
+                    // ORs in ITEM_IS_NEW when the destination did not exist, so a
+                    // freshly hard-linked FIFO alias renders `hS+++++++++`.
+                    .with_creation(!destination_previously_existed),
+                );
             }
 
             context.register_created_path(
@@ -263,14 +285,20 @@ pub(crate) fn copy_fifo(
     if let Some(path) = &record_path {
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
         let total_bytes = Some(metadata_snapshot.len());
-        context.record(LocalCopyRecord::new(
-            path.clone(),
-            LocalCopyAction::FifoCopied,
-            0,
-            total_bytes,
-            Duration::default(),
-            Some(metadata_snapshot),
-        ));
+        context.record(
+            LocalCopyRecord::new(
+                path.clone(),
+                LocalCopyAction::FifoCopied,
+                0,
+                total_bytes,
+                Duration::default(),
+                Some(metadata_snapshot),
+            )
+            // upstream: generator.c:1462 itemize() sets ITEM_IS_NEW
+            // (statret < 0) so log.c:736-738 fills slots 2-10 with `+`
+            // for a FIFO/socket the receiver newly materialises via do_mknod().
+            .with_creation(!destination_previously_existed),
+        );
     }
 
     context.register_progress();
