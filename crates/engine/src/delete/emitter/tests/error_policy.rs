@@ -65,6 +65,69 @@ fn non_empty_dir_recurses_via_nested_plan() {
 }
 
 #[test]
+fn non_empty_dir_after_peel_reports_notice_without_error() {
+    // The directory `d/sub` still holds filtered/perishable content after
+    // its nested plan drains, so the retried `rmdir` reports ENOTEMPTY a
+    // second time. Upstream (delete.c:117-119 / :197-199) prints
+    // "cannot delete non-empty directory: <dir>" via FINFO and treats the
+    // outcome as DR_NOT_EMPTY: the user must learn the directory survived,
+    // but the run neither counts it as deleted nor records an I/O error, so
+    // the exit code stays 0. Scripting two ENOTEMPTY failures models the
+    // initial rmdir plus the post-peel retry both failing.
+    use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, init};
+
+    // NONREG (info_verbosity[0]) is the only info category present at the
+    // default verbosity, matching upstream's ungated FINFO rendering.
+    init(VerbosityConfig::from_verbose_level(0));
+    let _ = drain_events();
+
+    let fs = ScriptedDeleteFs::new()
+        .fail("d/sub", io::ErrorKind::DirectoryNotEmpty)
+        .fail("d/sub", io::ErrorKind::DirectoryNotEmpty);
+    let plans = DeletePlanMap::new();
+    plans.insert(plan("d", vec![entry("sub", DeleteEntryKind::Dir)]));
+    plans.insert(plan("d/sub", vec![entry("inner", DeleteEntryKind::File)]));
+    let mut cursor = DirTraversalCursor::new(PathBuf::from("d"));
+    cursor.observe_segment(PathBuf::from("d"), &[]);
+
+    let mut emitter = DeleteEmitter::new(fs, plans, cursor);
+    emitter
+        .emit_all()
+        .expect("drain succeeds despite non-empty dir");
+
+    // The peeled entry was unlinked, but the surviving directory is neither
+    // counted nor treated as an error.
+    assert_eq!(
+        emitter.fs().events(),
+        vec![DeleteEvent {
+            path: PathBuf::from("d/sub/inner"),
+            kind: DeleteEntryKind::File,
+        }],
+    );
+    assert_eq!(emitter.stats().dirs, 0);
+    assert_eq!(emitter.io_error(), 0);
+    assert_eq!(emitter.exit_code(), 0);
+
+    let messages: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Info {
+                flag: InfoFlag::Nonreg,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|m| m == "cannot delete non-empty directory: d/sub"),
+        "expected upstream non-empty-directory notice; got {messages:?}"
+    );
+}
+
+#[test]
 fn non_empty_dir_without_plan_falls_back_to_remove_dir_all() {
     // When `d/orphan` has no published plan, ENOTEMPTY must route
     // through `DeleteFs::remove_dir_all`, mirroring upstream's

@@ -51,6 +51,7 @@ use std::sync::Arc;
 #[cfg(unix)]
 use fast_io::DirSandbox;
 
+use logging::info_log;
 use protocol::DeleteStats;
 
 use super::cohort_index::CohortIndex;
@@ -421,6 +422,34 @@ impl<F: DeleteFs> DeleteEmitter<F> {
                 Ok(())
             }
             Err(err) => {
+                if is_not_empty(&err) {
+                    // The directory still holds entries after the recursive
+                    // peel - filtered or perishable content the delete pass
+                    // deliberately left in place - so the retried `rmdir`
+                    // reports ENOTEMPTY. Upstream treats this as DR_NOT_EMPTY:
+                    // it prints an FINFO notice once per such directory and
+                    // neither records an I/O error nor counts the directory as
+                    // deleted, so the exit code stays 0.
+                    // upstream: delete.c:117-119 (delete_dir_contents) and
+                    // delete.c:197-199 (delete_item) both
+                    // `rprintf(FINFO, "cannot delete non-empty directory: %s\n", ...)`.
+                    // FINFO renders at the default verbosity (log.c:317-320,
+                    // shown unless `--quiet`); oc's only info category present
+                    // at verbose level 0 is `NONREG` (info_verbosity[0]), the
+                    // same channel the sibling "skipping non-regular file"
+                    // notice uses.
+                    // Render with forward slashes so the notice matches
+                    // upstream output on every platform (rsync uses `/`
+                    // universally); the cli frontend applies the same
+                    // normalization when itemizing deletion paths.
+                    info_log!(
+                        Nonreg,
+                        1,
+                        "cannot delete non-empty directory: {}",
+                        path.display().to_string().replace('\\', "/")
+                    );
+                    return Ok(());
+                }
                 if Self::is_fatal_error(&err) {
                     // Fatal: abort the drain. Upstream maps these to
                     // RERR_PARTIAL via `rsyserr(FERROR_XFER, ...)` plus
