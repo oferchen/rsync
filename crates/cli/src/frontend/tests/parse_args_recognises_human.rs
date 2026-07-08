@@ -11,13 +11,13 @@ fn parse_args_recognises_human_readable_flag() {
     ])
     .expect("parse");
 
-    assert_eq!(parsed.human_readable, Some(HumanReadableMode::Enabled));
+    assert_eq!(parsed.human_readable, Some(HumanReadableMode::DecimalUnits));
 }
 
 #[test]
 fn parse_args_recognises_double_short_h() {
     // upstream: options.c:1573 - each -h increments; -hh reaches level 3
-    // (base-1024 units, HumanReadableMode::Combined).
+    // (base-1024 units, HumanReadableMode::BinaryUnits).
     let parsed = parse_args([
         OsString::from(RSYNC),
         OsString::from("-hh"),
@@ -26,5 +26,5 @@ fn parse_args_recognises_double_short_h() {
     ])
     .expect("parse");
 
-    assert_eq!(parsed.human_readable, Some(HumanReadableMode::Combined));
+    assert_eq!(parsed.human_readable, Some(HumanReadableMode::BinaryUnits));
 }

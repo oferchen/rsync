@@ -344,19 +344,19 @@ fn aes_default_is_none() {
 #[test]
 fn human_readable_single_short_h_is_enabled() {
     let parsed = parse_test_args(["-h", "src/", "dst/"]).expect("parse");
-    assert_eq!(parsed.human_readable, Some(HumanReadableMode::Enabled));
+    assert_eq!(parsed.human_readable, Some(HumanReadableMode::DecimalUnits));
 }
 
 #[test]
 fn human_readable_double_short_hh_is_combined() {
     let parsed = parse_test_args(["-hh", "src/", "dst/"]).expect("parse");
-    assert_eq!(parsed.human_readable, Some(HumanReadableMode::Combined));
+    assert_eq!(parsed.human_readable, Some(HumanReadableMode::BinaryUnits));
 }
 
 #[test]
 fn human_readable_long_flag_is_enabled() {
     let parsed = parse_test_args(["--human-readable", "src/", "dst/"]).expect("parse");
-    assert_eq!(parsed.human_readable, Some(HumanReadableMode::Enabled));
+    assert_eq!(parsed.human_readable, Some(HumanReadableMode::DecimalUnits));
 }
 
 #[test]
@@ -386,20 +386,20 @@ fn human_readable_no_h_then_h_prefers_h() {
     // upstream: overrides_with semantics - the later flag wins, so -h re-enables
     // suffix formatting after --no-h.
     let parsed = parse_test_args(["--no-h", "-h", "src/", "dst/"]).expect("parse");
-    assert_eq!(parsed.human_readable, Some(HumanReadableMode::Enabled));
+    assert_eq!(parsed.human_readable, Some(HumanReadableMode::DecimalUnits));
 }
 
 #[test]
 fn human_readable_two_bare_long_flags_is_combined() {
     let parsed =
         parse_test_args(["--human-readable", "--human-readable", "src/", "dst/"]).expect("parse");
-    assert_eq!(parsed.human_readable, Some(HumanReadableMode::Combined));
+    assert_eq!(parsed.human_readable, Some(HumanReadableMode::BinaryUnits));
 }
 
 #[test]
 fn human_readable_two_separate_short_flags_is_combined() {
     let parsed = parse_test_args(["-h", "-h", "src/", "dst/"]).expect("parse");
-    assert_eq!(parsed.human_readable, Some(HumanReadableMode::Combined));
+    assert_eq!(parsed.human_readable, Some(HumanReadableMode::BinaryUnits));
 }
 
 #[test]

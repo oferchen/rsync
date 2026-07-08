@@ -1394,7 +1394,7 @@ mod option_values {
     fn human_readable_double_short_is_combined() {
         // -hh increments to level 3 (base-1024 units). upstream: options.c:1573.
         let parsed = parse_test_args(["-hh", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Combined));
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::BinaryUnits));
     }
 
     #[test]
@@ -2530,7 +2530,7 @@ mod human_readable_tests {
     #[test]
     fn human_readable_no_value() {
         let parsed = parse_test_args(["-h", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Enabled));
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::DecimalUnits));
     }
 
     #[test]

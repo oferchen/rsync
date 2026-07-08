@@ -130,7 +130,7 @@ fn multiple_h_flags_enable_combined_mode() {
     ])
     .expect("parse");
 
-    assert_eq!(parsed.human_readable, Some(HumanReadableMode::Combined));
+    assert_eq!(parsed.human_readable, Some(HumanReadableMode::BinaryUnits));
 }
 
 #[test]
@@ -145,7 +145,7 @@ fn three_h_flags_remain_combined_mode() {
     ])
     .expect("parse");
 
-    assert_eq!(parsed.human_readable, Some(HumanReadableMode::Combined));
+    assert_eq!(parsed.human_readable, Some(HumanReadableMode::BinaryUnits));
 }
 
 #[test]

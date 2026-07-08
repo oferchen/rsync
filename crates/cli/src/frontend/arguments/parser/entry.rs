@@ -62,9 +62,9 @@ where
     let h_count = matches.get_count("human-readable");
     if h_count > 0 {
         human_readable = Some(if h_count == 1 {
-            HumanReadableMode::Enabled
+            HumanReadableMode::DecimalUnits
         } else {
-            HumanReadableMode::Combined
+            HumanReadableMode::BinaryUnits
         });
     }
 

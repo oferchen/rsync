@@ -6,7 +6,7 @@ use core::client::HumanReadableMode;
 /// upstream `lib/compat.c:do_big_num`:
 ///
 /// - Level 0 ([`HumanReadableMode::Raw`]): raw digits, no separators (`1234567`).
-/// - Level 1 ([`HumanReadableMode::Disabled`], default): thousands-separated
+/// - Level 1 ([`HumanReadableMode::Grouped`], default): thousands-separated
 ///   digits (`1,234,567`).
 /// - Level 2 (`-h`) / level 3 (`-hh`): unit suffixes such as `K`, `M`, or `G`
 ///   with two fractional digits, dividing by 1000 and 1024 respectively.
@@ -166,14 +166,14 @@ mod tests {
     #[test]
     fn format_list_size_pads_to_14() {
         // upstream: generator.c:1159 size_width = 14 (human_readable defaults to 1).
-        let result = format_list_size(123, HumanReadableMode::Disabled);
+        let result = format_list_size(123, HumanReadableMode::Grouped);
         assert_eq!(result.len(), 14);
         assert!(result.trim_start().starts_with("123"));
     }
 
     #[test]
     fn format_list_size_zero_pads_correctly() {
-        let result = format_list_size(0, HumanReadableMode::Disabled);
+        let result = format_list_size(0, HumanReadableMode::Grouped);
         assert_eq!(result.len(), 14);
         assert_eq!(result.trim(), "0");
         // Should be right-aligned: leading spaces then "0"
@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn format_list_size_large_value_with_separators() {
-        let result = format_list_size(1_234_567, HumanReadableMode::Disabled);
+        let result = format_list_size(1_234_567, HumanReadableMode::Grouped);
         assert_eq!(result.len(), 14);
         assert!(
             result.contains("1,234,567"),
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn format_list_size_very_large_value() {
-        let result = format_list_size(1_234_567_890_123, HumanReadableMode::Disabled);
+        let result = format_list_size(1_234_567_890_123, HumanReadableMode::Grouped);
         assert!(
             result.contains("1,234,567,890,123"),
             "very large value should be formatted with separators: {result:?}"
@@ -202,14 +202,14 @@ mod tests {
     #[test]
     fn format_list_size_human_readable_small() {
         // Values under 1000 should show plain digits
-        let result = format_list_size(500, HumanReadableMode::Enabled);
+        let result = format_list_size(500, HumanReadableMode::DecimalUnits);
         assert_eq!(result.len(), 14);
         assert_eq!(result.trim(), "500");
     }
 
     #[test]
     fn format_list_size_human_readable_kilo() {
-        let result = format_list_size(1_500, HumanReadableMode::Enabled);
+        let result = format_list_size(1_500, HumanReadableMode::DecimalUnits);
         assert_eq!(result.len(), 14);
         assert!(
             result.contains("1.50K"),
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn format_list_size_human_readable_mega() {
-        let result = format_list_size(2_500_000, HumanReadableMode::Enabled);
+        let result = format_list_size(2_500_000, HumanReadableMode::DecimalUnits);
         assert_eq!(result.len(), 14);
         assert!(
             result.contains("2.50M"),
@@ -229,8 +229,8 @@ mod tests {
 
     #[test]
     fn format_list_size_is_right_aligned() {
-        let small = format_list_size(1, HumanReadableMode::Disabled);
-        let large = format_list_size(1_000_000, HumanReadableMode::Disabled);
+        let small = format_list_size(1, HumanReadableMode::Grouped);
+        let large = format_list_size(1_000_000, HumanReadableMode::Grouped);
 
         assert_eq!(small.len(), 14);
         assert_eq!(large.len(), 14);
@@ -258,7 +258,7 @@ mod tests {
     fn format_size_default_level_one_groups_digits() {
         // upstream: default level 1 => comma-grouped digits, no unit suffix.
         assert_eq!(
-            format_size(1_234_567, HumanReadableMode::Disabled),
+            format_size(1_234_567, HumanReadableMode::Grouped),
             "1,234,567"
         );
     }
@@ -266,8 +266,14 @@ mod tests {
     #[test]
     fn format_size_h_and_hh_use_correct_base() {
         // upstream: -h base 1000 => 1.23M; -hh base 1024 => 1.18M.
-        assert_eq!(format_size(1_234_567, HumanReadableMode::Enabled), "1.23M");
-        assert_eq!(format_size(1_234_567, HumanReadableMode::Combined), "1.18M");
+        assert_eq!(
+            format_size(1_234_567, HumanReadableMode::DecimalUnits),
+            "1.23M"
+        );
+        assert_eq!(
+            format_size(1_234_567, HumanReadableMode::BinaryUnits),
+            "1.18M"
+        );
     }
 
     #[test]
@@ -282,7 +288,7 @@ mod tests {
     #[test]
     fn format_list_size_default_is_width_14_with_commas() {
         // upstream: generator.c:1159 size_width = 14 for level 1.
-        let result = format_list_size(1_234_567, HumanReadableMode::Disabled);
+        let result = format_list_size(1_234_567, HumanReadableMode::Grouped);
         assert_eq!(result, "     1,234,567");
         assert_eq!(result.len(), 14);
     }

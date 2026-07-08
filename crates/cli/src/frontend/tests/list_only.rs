@@ -155,7 +155,7 @@ fn list_only_matches_rsync_format_for_regular_file() {
         .expect("file entry present");
 
     let expected_permissions = "-rw-r--r--";
-    let expected_size = format_list_size(1_234, HumanReadableMode::Disabled);
+    let expected_size = format_list_size(1_234, HumanReadableMode::Grouped);
     let system_time = SystemTime::UNIX_EPOCH
         + Duration::from_secs(u64::try_from(timestamp.unix_seconds()).expect("positive timestamp"))
         + Duration::from_nanos(u64::from(timestamp.nanoseconds()));
@@ -184,7 +184,7 @@ fn list_only_matches_rsync_format_for_regular_file() {
         .lines()
         .find(|line| line.ends_with("data.bin"))
         .expect("file entry present");
-    let expected_human_size = format_list_size(1_234, HumanReadableMode::Enabled);
+    let expected_human_size = format_list_size(1_234, HumanReadableMode::DecimalUnits);
     let expected_human =
         format!("{expected_permissions} {expected_human_size} {expected_timestamp} data.bin");
     assert_eq!(human_line, expected_human);
@@ -241,11 +241,11 @@ fn list_only_formats_special_permission_bits_like_rsync() {
 
     let expected_exec = format!(
         "-rwsrwsrwt {} {expected_timestamp} exec-special",
-        format_list_size(4, HumanReadableMode::Disabled)
+        format_list_size(4, HumanReadableMode::Grouped)
     );
     let expected_plain = format!(
         "-rwSrwSrwT {} {expected_timestamp} plain-special",
-        format_list_size(5, HumanReadableMode::Disabled)
+        format_list_size(5, HumanReadableMode::Grouped)
     );
 
     let mut exec_line = None;
@@ -493,7 +493,7 @@ fn list_only_zero_byte_file_shows_zero_size() {
         .expect("empty file entry present");
 
     let expected_permissions = "-rw-r--r--";
-    let expected_size = format_list_size(0, HumanReadableMode::Disabled);
+    let expected_size = format_list_size(0, HumanReadableMode::Grouped);
     let system_time = SystemTime::UNIX_EPOCH
         + Duration::from_secs(u64::try_from(timestamp.unix_seconds()).expect("positive timestamp"));
     let expected_timestamp = format_list_timestamp(Some(system_time));
@@ -735,7 +735,7 @@ fn list_only_large_file_size_has_thousands_separators() {
         .find(|line| line.ends_with("big.bin"))
         .expect("large file entry present");
 
-    let expected_size = format_list_size(1_234_567, HumanReadableMode::Disabled);
+    let expected_size = format_list_size(1_234_567, HumanReadableMode::Grouped);
     assert!(
         file_line.contains(&expected_size),
         "large file should have formatted size with separators: {file_line:?}"
@@ -942,7 +942,7 @@ fn list_only_human_readable_size_format() {
         .find(|line| line.ends_with("hr.bin"))
         .expect("file entry present");
 
-    let expected_hr_size = format_list_size(2_500_000, HumanReadableMode::Enabled);
+    let expected_hr_size = format_list_size(2_500_000, HumanReadableMode::DecimalUnits);
     assert!(
         file_line.contains(&expected_hr_size),
         "human-readable size should be in listing: expected {expected_hr_size:?}, line: {file_line:?}"
@@ -1448,7 +1448,7 @@ fn list_only_renders_atime_and_crtime_columns() {
     emit_list_only(
         &events,
         &mut out,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
         true,
         true,
         false,
