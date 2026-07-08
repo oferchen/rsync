@@ -239,10 +239,14 @@ impl ModuleDefinition {
     }
 
     /// Returns the AuthUser if the username is authorized for this module.
+    ///
+    /// Delegates to [`authorize_auth_user`], which evaluates `auth users`
+    /// tokens in configuration order (wildcard match for plain tokens, group
+    /// membership for `@group` tokens), first match wins.
+    ///
+    /// upstream: authenticate.c:276 `auth_server()`.
     pub(crate) fn get_auth_user(&self, username: &str) -> Option<&AuthUser> {
-        self.auth_users
-            .iter()
-            .find(|auth| auth.username == username)
+        super::authorize_auth_user(&self.auth_users, username, &super::SystemGroupMembership)
     }
 
     /// Returns the maximum number of concurrent connections allowed.

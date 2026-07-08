@@ -20,7 +20,7 @@ mod test_support;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use auth::{AuthUser, UserAccessLevel};
+pub(crate) use auth::{AuthUser, SystemGroupMembership, UserAccessLevel, authorize_auth_user};
 pub(crate) use connection_limiter::{ConnectionLimiter, ConnectionLockGuard};
 pub(crate) use definition::ModuleDefinition;
 pub(crate) use hostname::module_peer_hostname;

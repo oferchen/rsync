@@ -40,7 +40,9 @@ where
 /// Parses a comma/whitespace-separated list of usernames with deduplication.
 ///
 /// Usernames are case-preserved but deduplicated case-insensitively.
-/// Group references using `@group` syntax are expanded to their member usernames.
+/// Group references using `@group` syntax are stored verbatim and resolved to
+/// membership at authentication time (see `authorize_auth_user`), matching
+/// upstream `auth_server`.
 ///
 /// # Access Level Suffixes
 ///
@@ -49,12 +51,13 @@ where
 /// - `:rw` - Read-write access (overrides module's read_only setting)
 /// - `:deny` - Deny access (authentication succeeds but access is blocked)
 ///
-/// # Group Expansion
+/// # Group Tokens
 ///
-/// Entries starting with `@` are treated as system group names. The `@` prefix
-/// is stripped and the group's members are looked up via `getgrnam_r`. All
-/// members are added with the same access level as the @group entry.
-/// Unknown groups are silently skipped (matching upstream rsync behavior).
+/// Entries starting with `@` name a system group. The token is kept verbatim
+/// (`@group`) and, at authentication time, authorizes any connecting user who
+/// is a member of that group. This mirrors upstream `auth_server`, which
+/// resolves group membership per authenticating user rather than expanding the
+/// group to a fixed member list at config load.
 ///
 /// # Examples
 ///
@@ -91,29 +94,17 @@ pub(crate) fn parse_auth_user_list(value: &str) -> Result<Vec<AuthUser>, String>
             continue;
         }
 
-        if let Some(group_name) = name_part.strip_prefix('@') {
-            if group_name.is_empty() {
-                continue;
-            }
-            // upstream: expand @group references to member usernames
-            match lookup_group_members(group_name) {
-                Ok(Some(members)) => {
-                    for member in members {
-                        let key = member.to_ascii_lowercase();
-                        if seen.insert(key) {
-                            result.push(AuthUser::with_access(member, access_level));
-                        }
-                    }
-                }
-                Ok(None) | Err(_) => {
-                    // Group not found - silently skip (upstream behavior)
-                }
-            }
-        } else {
-            let key = name_part.to_ascii_lowercase();
-            if seen.insert(key) {
-                result.push(AuthUser::with_access(name_part.to_owned(), access_level));
-            }
+        // A bare `@` names no group and cannot authorize anyone; skip it.
+        if name_part == "@" {
+            continue;
+        }
+
+        // upstream: authenticate.c:276 keeps each token verbatim (including
+        // `@group`) and matches it at auth time via wildmatch / group
+        // membership. Do not expand `@group` to member usernames here.
+        let key = name_part.to_ascii_lowercase();
+        if seen.insert(key) {
+            result.push(AuthUser::with_access(name_part.to_owned(), access_level));
         }
     }
 

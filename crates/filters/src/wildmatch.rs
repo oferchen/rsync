@@ -249,7 +249,7 @@ fn dowild(p: &[u8], text: &[u8]) -> i32 {
 ///
 /// upstream: `lib/wildmatch.c:288` `int wildmatch(const char *pattern, const
 /// char *text)`.
-pub(crate) fn wildmatch(pattern: &[u8], text: &[u8]) -> bool {
+pub fn wildmatch(pattern: &[u8], text: &[u8]) -> bool {
     dowild(pattern, text) == TRUE
 }
 

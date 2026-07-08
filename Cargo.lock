@@ -977,6 +977,7 @@ dependencies = [
  "exacl",
  "fast_io",
  "filetime",
+ "filters",
  "fs2",
  "libc",
  "logging",
