@@ -56,6 +56,10 @@ pub(crate) struct TransferExecutionInputs<'a> {
     pub(crate) out_format_template: Option<&'a crate::frontend::out_format::OutFormat>,
     pub(crate) name_level: NameOutputLevel,
     pub(crate) name_overridden: bool,
+    /// `--8-bit-output` / `-8`: pass high-bit characters through without
+    /// octal escaping. When false (the default), non-printable bytes in
+    /// filenames are escaped as `\#ooo` matching upstream log.c:filtered_fwrite.
+    pub(crate) eight_bit_output: bool,
     pub(crate) log_file: Option<LogFileConfig>,
 }
 
@@ -88,6 +92,7 @@ where
         out_format_template,
         name_level,
         name_overridden,
+        eight_bit_output,
         log_file,
     } = inputs;
 
@@ -145,7 +150,8 @@ where
             let emit_unchanged = matches!(name_level, NameOutputLevel::UpdatedAndUnchanged);
             let out_format_context = OutFormatContext::with_is_sender(is_sender)
                 .with_emit_unchanged(emit_unchanged)
-                .with_itemize_repeated(itemize_repeated);
+                .with_itemize_repeated(itemize_repeated)
+                .with_eight_bit_output(eight_bit_output);
             if let Err(error) = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
                 emit_transfer_summary(
                     &summary,
@@ -165,6 +171,7 @@ where
                     show_copy_method,
                     show_atimes,
                     show_crtimes,
+                    eight_bit_output,
                     writer,
                 )
             }) {
@@ -190,6 +197,7 @@ where
                     itemize_repeated,
                     show_atimes,
                     show_crtimes,
+                    eight_bit_output,
                 })
             {
                 let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
@@ -243,6 +251,9 @@ struct EmitLogOutputParams<'a> {
     show_atimes: bool,
     /// `--crtimes`: render the CRTIME column in `--list-only` log output.
     show_crtimes: bool,
+    /// `--8-bit-output` / `-8`: pass high-bit characters through without
+    /// octal escaping in log-file output.
+    eight_bit_output: bool,
 }
 
 /// Writes the transfer summary to the configured log file.
@@ -260,6 +271,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         itemize_repeated,
         show_atimes,
         show_crtimes,
+        eight_bit_output,
     } = params;
     // upstream: generator.c:582-583 - mirror the `INFO_GTE(NAME, 2)` arm of
     // the itemize emit gate in the log-file renderer so `-vv` / `--info=name2`
@@ -268,7 +280,8 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
     let emit_unchanged = matches!(name_level, NameOutputLevel::UpdatedAndUnchanged);
     let context = OutFormatContext::with_is_sender(is_sender)
         .with_emit_unchanged(emit_unchanged)
-        .with_itemize_repeated(itemize_repeated);
+        .with_itemize_repeated(itemize_repeated)
+        .with_eight_bit_output(eight_bit_output);
     // The log file already carries the parallel "building file list" line via
     // logging::info_log!(Flist, 1, ...); the FCLIENT "sending incremental file
     // list" banner is for stdout only (upstream: flist.c:2248 vs 2252).
@@ -292,6 +305,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         false,
         show_atimes,
         show_crtimes,
+        eight_bit_output,
         &mut log.file,
     )?;
     log.file.flush()

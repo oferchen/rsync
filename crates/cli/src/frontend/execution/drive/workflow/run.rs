@@ -172,7 +172,7 @@ where
         name_level: initial_name_level,
         name_overridden: initial_name_overridden,
         stats,
-        eight_bit_output: _,
+        eight_bit_output,
         partial,
         preallocate,
         fsync: fsync_option,
@@ -998,6 +998,7 @@ where
             out_format_template: out_format_template.as_ref(),
             name_level,
             name_overridden,
+            eight_bit_output,
             log_file: log_file_for_local,
         },
     )

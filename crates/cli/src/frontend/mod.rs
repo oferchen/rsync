@@ -82,6 +82,7 @@ use std::io::{self, Write};
 /// CLI argument parsing for the rsync frontend.
 pub mod arguments;
 mod command_builder;
+pub(crate) mod escape;
 mod execution;
 pub(crate) mod outbuf;
 
