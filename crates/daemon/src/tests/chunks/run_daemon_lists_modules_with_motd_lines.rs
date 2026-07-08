@@ -54,6 +54,14 @@ fn run_daemon_lists_modules_with_motd_lines() {
     reader.read_line(&mut line).expect("motd line 3");
     assert_eq!(line.trim_end(), "Additional notice");
 
+    // upstream: clientserver.c:169 exchange_protocols() appends a single
+    // unconditional `write_sbuf(f_out, "\n")` after the MOTD body, producing a
+    // blank separator line before the module listing. A daemon that omits it
+    // desynchronises byte-for-byte from upstream's greeting/MOTD framing.
+    line.clear();
+    reader.read_line(&mut line).expect("motd trailing blank");
+    assert_eq!(line, "\n");
+
     // upstream: no @RSYNCD: OK before module listing
 
     line.clear();
