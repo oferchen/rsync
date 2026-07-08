@@ -93,7 +93,9 @@ pub(crate) fn run_pull_transfer(
     .map_err(|e| invalid_argument_error(&format!("transfer failed: {e}"), 23))?;
     let elapsed = start.elapsed();
 
-    Ok(convert_server_stats_to_summary(server_stats, elapsed))
+    let mut summary = convert_server_stats_to_summary(server_stats, elapsed);
+    summary.set_protocol_version(protocol.as_u8());
+    Ok(summary)
 }
 
 /// Executes a push transfer (local to remote).
@@ -166,7 +168,9 @@ pub(crate) fn run_push_transfer(
     match result {
         Ok(server_stats) => {
             let elapsed = start.elapsed();
-            Ok(convert_server_stats_to_summary(server_stats, elapsed))
+            let mut summary = convert_server_stats_to_summary(server_stats, elapsed);
+            summary.set_protocol_version(protocol.as_u8());
+            Ok(summary)
         }
         Err(ref e) if dry_run && is_dry_run_remote_close(e) => {
             // upstream: clientserver.c - during --dry-run push, the daemon closes

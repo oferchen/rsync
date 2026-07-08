@@ -357,6 +357,7 @@ fn run_transfer_over_embedded_ssh(
 
     let handshake = crate::server::perform_handshake(&mut reader, &mut writer)
         .map_err(|e| invalid_argument_error(&format!("handshake failed: {e}"), 5))?;
+    let negotiated_protocol = handshake.protocol.as_u8();
 
     let mut adapter = observer.map(|obs| ServerProgressAdapter::new(obs, start));
     let progress: Option<&mut dyn TransferProgressCallback> = adapter
@@ -388,7 +389,11 @@ fn run_transfer_over_embedded_ssh(
 
     match transfer_result {
         Ok(stats) => match goodbye_outcome {
-            Ok(()) => Ok(convert_server_stats_to_summary(stats, elapsed)),
+            Ok(()) => {
+                let mut summary = convert_server_stats_to_summary(stats, elapsed);
+                summary.set_protocol_version(negotiated_protocol);
+                Ok(summary)
+            }
             Err(e) => Err(invalid_argument_error(
                 &format!("embedded SSH goodbye phase failed: {e}"),
                 ExitCode::Timeout.as_i32(),

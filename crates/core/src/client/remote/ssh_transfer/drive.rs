@@ -167,11 +167,13 @@ fn run_pull_transfer(
     let progress: Option<&mut dyn TransferProgressCallback> = adapter
         .as_mut()
         .map(|a| a as &mut dyn TransferProgressCallback);
-    let server_stats =
+    let (server_stats, negotiated_protocol) =
         run_server_over_ssh_connection(server_config, connection, progress, batch_ctx)?;
     let elapsed = start.elapsed();
 
-    Ok(convert_server_stats_to_summary(server_stats, elapsed))
+    let mut summary = convert_server_stats_to_summary(server_stats, elapsed);
+    summary.set_protocol_version(negotiated_protocol);
+    Ok(summary)
 }
 
 /// Executes a push transfer (local → remote).
@@ -202,11 +204,13 @@ fn run_push_transfer(
     let progress: Option<&mut dyn TransferProgressCallback> = adapter
         .as_mut()
         .map(|a| a as &mut dyn TransferProgressCallback);
-    let server_stats =
+    let (server_stats, negotiated_protocol) =
         run_server_over_ssh_connection(server_config, connection, progress, batch_ctx)?;
     let elapsed = start.elapsed();
 
-    Ok(convert_server_stats_to_summary(server_stats, elapsed))
+    let mut summary = convert_server_stats_to_summary(server_stats, elapsed);
+    summary.set_protocol_version(negotiated_protocol);
+    Ok(summary)
 }
 
 /// Executes a proxy transfer (remote → remote via local).
@@ -249,7 +253,7 @@ fn run_server_over_ssh_connection(
     connection: SshConnection,
     progress: Option<&mut dyn crate::server::TransferProgressCallback>,
     batch_ctx: Option<BatchContext>,
-) -> Result<crate::server::ServerStats, ClientError> {
+) -> Result<(crate::server::ServerStats, u8), ClientError> {
     let (reader, mut writer, mut child_handle) = connection
         .split()
         .map_err(|e| invalid_argument_error(&format!("failed to split SSH connection: {e}"), 23))?;
@@ -289,6 +293,7 @@ fn run_server_over_ssh_connection(
             crate::exit_code::ExitCode::ConnectionTimeout.as_i32(),
         ));
     }
+    let negotiated_protocol = handshake.protocol.as_u8();
     let transfer_result = crate::server::run_server_with_handshake(
         config,
         handshake,
@@ -315,7 +320,7 @@ fn run_server_over_ssh_connection(
         Ok(stats) => {
             // upstream: take MAX of transfer and child exit codes.
             if child_exit_code.is_success() {
-                Ok(stats)
+                Ok((stats, negotiated_protocol))
             } else {
                 Err(invalid_argument_error_typed(
                     &format!(

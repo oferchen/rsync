@@ -46,7 +46,7 @@ use std::time::Duration;
 use engine::local_copy::{LocalCopyReport, LocalCopySummary};
 
 /// Summary of the work performed by a client transfer.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct ClientSummary {
     stats: LocalCopySummary,
     events: Vec<ClientEvent>,
@@ -57,6 +57,26 @@ pub struct ClientSummary {
     /// such as `RERR_PARTIAL` (23), `RERR_VANISHED` (24), or
     /// `RERR_DEL_LIMIT` (25).
     io_error_exit_code: Option<i32>,
+    /// Negotiated protocol version for the transfer.
+    ///
+    /// Defaults to the newest supported version (32) for local copies.
+    /// Set to the actual negotiated version for remote/daemon transfers.
+    /// upstream: main.c:429-433 gates stats lines on protocol version.
+    protocol_version: u8,
+}
+
+/// Newest protocol version, used as default for local copies.
+const DEFAULT_PROTOCOL_VERSION: u8 = 32;
+
+impl Default for ClientSummary {
+    fn default() -> Self {
+        Self {
+            stats: LocalCopySummary::default(),
+            events: Vec::new(),
+            io_error_exit_code: None,
+            protocol_version: DEFAULT_PROTOCOL_VERSION,
+        }
+    }
 }
 
 impl ClientSummary {
@@ -78,6 +98,7 @@ impl ClientSummary {
             stats,
             events,
             io_error_exit_code: None,
+            protocol_version: DEFAULT_PROTOCOL_VERSION,
         }
     }
 
@@ -87,6 +108,7 @@ impl ClientSummary {
             stats: summary,
             events: Vec::new(),
             io_error_exit_code: None,
+            protocol_version: DEFAULT_PROTOCOL_VERSION,
         }
     }
 
@@ -377,6 +399,21 @@ impl ClientSummary {
     /// bitfield values into the process exit code.
     pub(crate) fn set_io_error_exit_code(&mut self, code: i32) {
         self.io_error_exit_code = Some(code);
+    }
+
+    /// Returns the negotiated protocol version for the transfer.
+    ///
+    /// Defaults to the newest supported version (32) for local copies.
+    /// For remote/daemon transfers, reflects the actual negotiated version.
+    /// upstream: main.c:429-433 gates stats lines on this value.
+    #[must_use]
+    pub const fn protocol_version(&self) -> u8 {
+        self.protocol_version
+    }
+
+    /// Records the negotiated protocol version from a remote transfer.
+    pub(crate) fn set_protocol_version(&mut self, version: u8) {
+        self.protocol_version = version;
     }
 }
 
