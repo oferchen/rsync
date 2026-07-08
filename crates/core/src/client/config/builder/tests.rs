@@ -104,9 +104,9 @@ fn default_batch_config_is_none() {
 }
 
 #[test]
-fn delete_sets_during_and_resets_to_disabled() {
+fn delete_sets_during_default_and_resets_to_disabled() {
     let config = ClientConfigBuilder::default().delete(true).build();
-    assert_eq!(config.delete_mode(), DeleteMode::During);
+    assert_eq!(config.delete_mode(), DeleteMode::DuringDefault);
     assert!(config.delete());
 
     let config = ClientConfigBuilder::default()
