@@ -706,6 +706,25 @@ where
         return code;
     }
 
+    // upstream: batch.c:269-298 - the replay script reconstructs the original
+    // command's pass-through options (transfer-affecting flags like -a/-z/
+    // --numeric-ids) from raw_argv, eliding the filename operands. Capture the
+    // raw argv and operands so the batch script generator can re-emit them.
+    let batch_config = batch_config.map(|cfg| {
+        if cfg.is_write_mode() {
+            let replay_args: Vec<String> = std::env::args_os()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect();
+            let operands: Vec<String> = transfer_operands
+                .iter()
+                .map(|op| op.to_string_lossy().into_owned())
+                .collect();
+            cfg.with_replay_args(replay_args).with_operands(operands)
+        } else {
+            cfg
+        }
+    });
+
     // upstream: options.c:2194-2195 - `if (argc < 2 && !read_batch && !am_server)
     // list_only |= 1;`. A single remote source with no destination (e.g.
     // `host::module` or `rsync://host/module`) implies list-only mode: list the

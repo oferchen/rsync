@@ -391,6 +391,24 @@ pub struct BatchConfig {
     /// to the absolute path so the generated `BATCH.sh` runs without
     /// requiring `PATH` setup.
     pub invoker: String,
+
+    /// The raw command-line argument vector (including `argv[0]`) of the
+    /// original `--write-batch` invocation.
+    ///
+    /// Used to reconstruct the pass-through options in the replay script,
+    /// mirroring upstream rsync's `raw_argv` in
+    /// `batch.c:write_batch_shell_file()`. When empty, the script generator
+    /// falls back to emitting only `--read-batch` without any transfer flags.
+    pub replay_args: Vec<String>,
+
+    /// The positional filename operands (sources and destination) of the
+    /// original invocation.
+    ///
+    /// These are elided from the reconstructed replay command, mirroring how
+    /// upstream nulls out the `cooked_argv` filename args
+    /// (`batch.c:269-275`). The destination is re-supplied through the
+    /// `${1:-<dest>}` placeholder instead.
+    pub operands: Vec<String>,
 }
 
 impl BatchConfig {
@@ -441,6 +459,8 @@ impl BatchConfig {
             },
             checksum_seed: 0,
             invoker: String::from("oc-rsync"),
+            replay_args: Vec::new(),
+            operands: Vec::new(),
         }
     }
 
@@ -509,6 +529,61 @@ impl BatchConfig {
     /// ```
     pub fn with_invoker(mut self, invoker: impl Into<String>) -> Self {
         self.invoker = invoker.into();
+        self
+    }
+
+    /// Set the raw command-line arguments used to reconstruct the replay
+    /// script's pass-through options.
+    ///
+    /// Pass the full argument vector including `argv[0]`
+    /// (`std::env::args_os()`). The script generator elides the positional
+    /// operands (see [`BatchConfig::with_operands`]) and converts
+    /// `--write-batch` to `--read-batch`, mirroring upstream
+    /// `batch.c:write_batch_shell_file()`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use batch::{BatchConfig, BatchMode};
+    ///
+    /// let config = BatchConfig::new(BatchMode::Write, "/tmp/batch".to_string(), 31)
+    ///     .with_replay_args(["oc-rsync", "-az", "--write-batch=/tmp/batch", "src/", "dst/"]);
+    ///
+    /// assert_eq!(config.replay_args.len(), 5);
+    /// ```
+    pub fn with_replay_args<I, S>(mut self, args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.replay_args = args.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Set the positional filename operands that are elided from the replay
+    /// command.
+    ///
+    /// These are the source and destination operands of the original
+    /// invocation; the destination is re-supplied via the `${1:-<dest>}`
+    /// placeholder. Mirrors upstream nulling of `cooked_argv` filenames
+    /// (`batch.c:269-275`).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use batch::{BatchConfig, BatchMode};
+    ///
+    /// let config = BatchConfig::new(BatchMode::Write, "/tmp/batch".to_string(), 31)
+    ///     .with_operands(["src/", "dst/"]);
+    ///
+    /// assert_eq!(config.operands.len(), 2);
+    /// ```
+    pub fn with_operands<I, S>(mut self, operands: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.operands = operands.into_iter().map(Into::into).collect();
         self
     }
 
