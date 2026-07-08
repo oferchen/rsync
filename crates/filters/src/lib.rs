@@ -126,6 +126,7 @@ pub use error::FilterError;
 pub use merge::{MergeFileError, parse_rules, read_rules, read_rules_recursive};
 pub use rule::FilterRule;
 pub use set::{FilterSet, FilterSetError, apple_double_exclusion_rules, cvs_exclusion_rules};
+pub use wildmatch::wildmatch;
 
 #[cfg(test)]
 mod tests;
