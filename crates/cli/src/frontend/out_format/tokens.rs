@@ -177,6 +177,14 @@ pub(crate) struct OutFormatContext {
     /// without octal escaping. Only control characters below 0x20 (except
     /// tab) are escaped. Matches upstream `allow_8bit_chars`.
     pub(super) eight_bit_output: bool,
+    /// `--links` / `-l` (also set by `-a`): whether symbolic links are
+    /// preserved.
+    ///
+    /// Controls whether `--list-only` output appends ` -> <target>` to a
+    /// symlink row. Upstream `generator.c:1183` only sets the arrow when
+    /// `preserve_links && S_ISLNK(f->mode)`; without `-l` the symlink is
+    /// still listed (with its target-length size) but no target string.
+    pub(super) preserve_links: bool,
 }
 
 impl OutFormatContext {
@@ -236,6 +244,24 @@ impl OutFormatContext {
     pub(crate) fn with_eight_bit_output(mut self, eight_bit_output: bool) -> Self {
         self.eight_bit_output = eight_bit_output;
         self
+    }
+
+    /// Sets the `--links` / `-l` (preserve-symlinks) flag.
+    ///
+    /// upstream: generator.c:1183 - the ` -> <target>` arrow in `--list-only`
+    /// output is gated on `preserve_links`.
+    #[must_use]
+    pub(crate) fn with_preserve_links(mut self, preserve_links: bool) -> Self {
+        self.preserve_links = preserve_links;
+        self
+    }
+
+    /// Returns whether symbolic links are preserved (`-l` / `-a`), which the
+    /// `--list-only` renderer uses to decide whether to append the symlink
+    /// target arrow.
+    #[must_use]
+    pub(crate) const fn preserve_links(&self) -> bool {
+        self.preserve_links
     }
 }
 
@@ -375,6 +401,7 @@ mod tests {
             emit_unchanged: false,
             itemize_repeated: false,
             eight_bit_output: false,
+            preserve_links: false,
         };
         assert_eq!(ctx.remote_host.as_deref(), Some("server.example.com"));
         assert_eq!(ctx.remote_address.as_deref(), Some("192.168.1.1"));

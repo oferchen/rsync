@@ -120,6 +120,10 @@ where
     // inc_recurse is on, which compat.c:172 disables when `!recurse`. Mirror
     // that gate so single-file (`-v`) transfers don't get a spurious banner.
     let recursive = config.recursive();
+    // Capture the preserve-links state before `config` is consumed so the
+    // `--list-only` renderer knows whether to append the ` -> <target>` arrow
+    // to symlink rows (upstream: generator.c:1183 gates it on preserve_links).
+    let preserve_links = config.links();
 
     let result = {
         let observer = live_progress
@@ -151,7 +155,8 @@ where
             let out_format_context = OutFormatContext::with_is_sender(is_sender)
                 .with_emit_unchanged(emit_unchanged)
                 .with_itemize_repeated(itemize_repeated)
-                .with_eight_bit_output(eight_bit_output);
+                .with_eight_bit_output(eight_bit_output)
+                .with_preserve_links(preserve_links);
             if let Err(error) = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
                 emit_transfer_summary(
                     &summary,
@@ -198,6 +203,7 @@ where
                     show_atimes,
                     show_crtimes,
                     eight_bit_output,
+                    preserve_links,
                 })
             {
                 let _ = with_output_writer(stdout, stderr, msgs_to_stderr, |writer| {
@@ -254,6 +260,9 @@ struct EmitLogOutputParams<'a> {
     /// `--8-bit-output` / `-8`: pass high-bit characters through without
     /// octal escaping in log-file output.
     eight_bit_output: bool,
+    /// `--links` / `-l`: whether symlink rows in `--list-only` log output get
+    /// the ` -> <target>` arrow (upstream: generator.c:1183).
+    preserve_links: bool,
 }
 
 /// Writes the transfer summary to the configured log file.
@@ -272,6 +281,7 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
         show_atimes,
         show_crtimes,
         eight_bit_output,
+        preserve_links,
     } = params;
     // upstream: generator.c:582-583 - mirror the `INFO_GTE(NAME, 2)` arm of
     // the itemize emit gate in the log-file renderer so `-vv` / `--info=name2`
@@ -281,7 +291,8 @@ fn emit_log_output(params: EmitLogOutputParams<'_>) -> io::Result<()> {
     let context = OutFormatContext::with_is_sender(is_sender)
         .with_emit_unchanged(emit_unchanged)
         .with_itemize_repeated(itemize_repeated)
-        .with_eight_bit_output(eight_bit_output);
+        .with_eight_bit_output(eight_bit_output)
+        .with_preserve_links(preserve_links);
     // The log file already carries the parallel "building file list" line via
     // logging::info_log!(Flist, 1, ...); the FCLIENT "sending incremental file
     // list" banner is for stdout only (upstream: flist.c:2248 vs 2252).

@@ -199,6 +199,15 @@ pub struct LocalCopyOptions {
     pub(super) append: bool,
     pub(super) append_verify: bool,
     pub(super) collect_events: bool,
+    /// Mirrors the client's `--list-only` state. When set, the engine runs in
+    /// dry-run mode but lists every enumerated entry - including symlinks,
+    /// devices, FIFOs, and sockets - instead of skipping non-regular files.
+    ///
+    /// upstream: generator.c:1155 `list_file_entry()` lists every flist entry
+    /// regardless of `--links`/`--devices`/`--specials` because list-only mode
+    /// never runs the generator's non-regular skip path (main.c:708
+    /// `get_local_name()` returns NULL for `list_only`).
+    pub(super) list_only: bool,
     pub(super) preserve_hard_links: bool,
     pub(super) relative_paths: bool,
     pub(super) one_file_system: u8,
@@ -334,6 +343,7 @@ impl LocalCopyOptions {
             append: false,
             append_verify: false,
             collect_events: false,
+            list_only: false,
             preserve_hard_links: false,
             relative_paths: false,
             one_file_system: 0,
