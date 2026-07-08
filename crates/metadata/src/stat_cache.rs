@@ -1,28 +1,22 @@
-//! Optimized filesystem metadata operations with caching and statx support.
+//! Optimized filesystem metadata operations with caching.
 //!
 //! This module provides high-performance stat operations that reduce syscall overhead
 //! through several strategies:
 //!
-//! 1. **statx with AT_STATX_DONT_SYNC**: Avoids filesystem cache invalidation on Linux
-//! 2. **Cached metadata results**: Stores recent stat results to avoid redundant syscalls
-//! 3. **Conditional stat operations**: Only fetches metadata when needed
+//! 1. **Cached metadata results**: Stores recent stat results to avoid redundant syscalls
+//! 2. **Conditional stat operations**: Only fetches metadata when needed
 //!
 //! # Performance Impact
 //!
-//! Profiling shows that `std::sys::fs::unix::try_statx` can consume 4-5% of execution
-//! time in metadata-heavy workloads. These optimizations reduce that overhead by:
-//!
-//! - Using AT_STATX_DONT_SYNC flag to skip cache synchronization (safe for rsync)
-//! - Caching recently-accessed metadata to eliminate repeated stat calls
-//! - Providing fast-path comparisons that avoid full stat when possible
+//! Profiling shows stat calls can consume 4-5% of execution time in
+//! metadata-heavy workloads. Caching recently-accessed metadata eliminates
+//! repeated syscalls, and fast-path comparisons avoid a full stat when the
+//! cached mode/ownership already answers the question. The readback goes
+//! through the libc `lstat(2)` symbol so `fakeroot` observes it.
 
 use std::collections::HashMap;
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-
-#[cfg(unix)]
-use std::os::unix::fs::MetadataExt;
 
 /// A cache for filesystem metadata to avoid redundant stat syscalls.
 ///
@@ -77,7 +71,8 @@ impl MetadataCache {
 
     /// Gets cached metadata for a path, or fetches it if not cached.
     ///
-    /// Uses optimized statx on Linux when available, falling back to regular stat.
+    /// Fetches via the libc `lstat(2)` symbol on Linux (fakeroot-visible),
+    /// falling back to `std::fs::metadata` on other Unix targets.
     pub fn get_or_fetch(&mut self, path: &Path) -> io::Result<CachedMetadata> {
         if let Some(cached) = self.cache.get(path) {
             self.hits += 1;
@@ -139,24 +134,20 @@ impl Default for MetadataCache {
     }
 }
 
-/// Fetches metadata using the most efficient method available.
+/// Fetches metadata for the permission/ownership quick-check.
 ///
-/// On Linux 4.11+, uses statx with AT_STATX_DONT_SYNC to avoid cache invalidation.
-/// Falls back to regular stat on other platforms or older kernels.
-#[cfg(unix)]
+/// On Linux, reads through the libc `lstat(2)` symbol (see
+/// [`fetch_metadata_lstat`]) so `fakeroot` observes the readback. On other
+/// Unix targets, uses `std::fs::metadata`, which also routes through libc.
+#[cfg(all(unix, target_os = "linux"))]
 fn fetch_metadata_optimized(path: &Path) -> io::Result<CachedMetadata> {
-    #[cfg(target_os = "linux")]
-    {
-        match try_statx_optimized(path) {
-            Ok(meta) => return Ok(meta),
-            Err(e) if e.raw_os_error() == Some(libc::ENOSYS) => {
-                // statx unavailable (kernel < 4.11), fall through to stat(2)
-            }
-            Err(e) => return Err(e),
-        }
-    }
+    fetch_metadata_lstat(path)
+}
 
-    let metadata = fs::metadata(path)?;
+#[cfg(all(unix, not(target_os = "linux")))]
+fn fetch_metadata_optimized(path: &Path) -> io::Result<CachedMetadata> {
+    use std::os::unix::fs::MetadataExt;
+    let metadata = std::fs::metadata(path)?;
     Ok(CachedMetadata {
         mode: metadata.mode(),
         uid: metadata.uid(),
@@ -166,35 +157,32 @@ fn fetch_metadata_optimized(path: &Path) -> io::Result<CachedMetadata> {
 
 #[cfg(not(unix))]
 fn fetch_metadata_optimized(path: &Path) -> io::Result<CachedMetadata> {
-    let metadata = fs::metadata(path)?;
+    let metadata = std::fs::metadata(path)?;
     Ok(CachedMetadata {
         readonly: metadata.permissions().readonly(),
     })
 }
 
-/// Uses statx with AT_STATX_DONT_SYNC for optimal performance.
+/// Reads mode/uid/gid via the libc `lstat(2)` symbol through `nix`.
 ///
-/// AT_STATX_DONT_SYNC tells the kernel to return cached stat data without
-/// forcing a sync from the underlying storage. This is safe for rsync because:
-/// - We're reading our own writes (cache is coherent)
-/// - Timestamp resolution is already approximate due to filesystem granularity
-/// - Upstream rsync accepts eventual consistency for performance
+/// The readback must go through a libc symbol rather than a rustix raw statx
+/// syscall so `fakeroot`'s LD_PRELOAD interposition observes it. rustix issues
+/// `statx` as a raw syscall, which bypasses the LD_PRELOAD wrapper and returns
+/// the *real* on-disk owner/mode. Under `fakeroot` that makes the batch
+/// applier's `needs_chown` / `needs_chmod` quick-check (via [`MetadataCache`])
+/// wrongly conclude the destination "already matches" and skip a chown/chmod
+/// that fakeroot would have faked. `nix::sys::stat::lstat` calls the libc
+/// `lstat` symbol, which fakeroot interposes, so the faked owner/mode is seen.
+/// `lstat` keeps the `AT_SYMLINK_NOFOLLOW` semantics the old statx path used.
+// upstream: syscall.c:do_lstat() calls the lstat(2) libc symbol.
 #[cfg(all(unix, target_os = "linux"))]
-fn try_statx_optimized(path: &Path) -> io::Result<CachedMetadata> {
-    use rustix::fs::{AtFlags, CWD, StatxFlags, statx};
-
-    let flags = AtFlags::SYMLINK_NOFOLLOW.union(AtFlags::STATX_DONT_SYNC);
-
-    let mask = StatxFlags::MODE
-        .union(StatxFlags::UID)
-        .union(StatxFlags::GID);
-
-    let stat_result = statx(CWD, path, flags, mask).map_err(io::Error::from)?;
+fn fetch_metadata_lstat(path: &Path) -> io::Result<CachedMetadata> {
+    let stat = nix::sys::stat::lstat(path).map_err(io::Error::from)?;
 
     Ok(CachedMetadata {
-        mode: stat_result.stx_mode as u32,
-        uid: stat_result.stx_uid,
-        gid: stat_result.stx_gid,
+        mode: stat.st_mode as u32,
+        uid: stat.st_uid,
+        gid: stat.st_gid,
     })
 }
 
@@ -226,6 +214,7 @@ pub fn check_ownership_matches(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn metadata_cache_new_is_empty() {
@@ -548,22 +537,18 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn try_statx_optimized_works() {
+    fn fetch_metadata_lstat_works() {
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("test.txt");
         fs::write(&path, b"content").expect("write");
 
-        let result = try_statx_optimized(&path);
-        // Kernels older than 4.11 return ENOSYS; either branch is acceptable.
-        if result.is_ok() || result.as_ref().err().unwrap().raw_os_error() == Some(libc::ENOSYS) {
-        } else {
-            panic!("Unexpected error: {result:?}");
-        }
+        let result = fetch_metadata_lstat(&path);
+        assert!(result.is_ok(), "unexpected error: {result:?}");
     }
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn try_statx_optimized_returns_correct_mode() {
+    fn fetch_metadata_lstat_returns_correct_mode() {
         use std::os::unix::fs::PermissionsExt;
 
         let temp = tempfile::tempdir().expect("tempdir");
@@ -571,83 +556,58 @@ mod tests {
         fs::write(&path, b"content").expect("write");
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).expect("chmod");
 
-        let result = try_statx_optimized(&path);
-        match result {
-            Ok(meta) => {
-                assert_eq!(meta.mode & 0o7777, 0o644);
-            }
-            Err(e) if e.raw_os_error() == Some(libc::ENOSYS) => {}
-            Err(e) => panic!("Unexpected error: {e:?}"),
-        }
+        let meta = fetch_metadata_lstat(&path).expect("lstat");
+        assert_eq!(meta.mode & 0o7777, 0o644);
     }
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn try_statx_optimized_returns_correct_ownership() {
+    fn fetch_metadata_lstat_returns_correct_ownership() {
+        use std::os::unix::fs::MetadataExt;
+
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("owner_test.txt");
         fs::write(&path, b"content").expect("write");
 
-        let std_meta = fs::metadata(&path).expect("metadata");
+        let std_meta = fs::symlink_metadata(&path).expect("metadata");
         let expected_uid = std_meta.uid();
         let expected_gid = std_meta.gid();
 
-        let result = try_statx_optimized(&path);
-        match result {
-            Ok(meta) => {
-                assert_eq!(meta.uid, expected_uid);
-                assert_eq!(meta.gid, expected_gid);
-            }
-            Err(e) if e.raw_os_error() == Some(libc::ENOSYS) => {}
-            Err(e) => panic!("Unexpected error: {e:?}"),
-        }
+        let meta = fetch_metadata_lstat(&path).expect("lstat");
+        assert_eq!(meta.uid, expected_uid);
+        assert_eq!(meta.gid, expected_gid);
     }
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn try_statx_optimized_directory() {
+    fn fetch_metadata_lstat_directory() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let dir = temp.path().join("statx_dir");
+        let dir = temp.path().join("lstat_dir");
         fs::create_dir(&dir).expect("mkdir");
 
-        let result = try_statx_optimized(&dir);
-        match result {
-            Ok(_meta) => {}
-            Err(e) if e.raw_os_error() == Some(libc::ENOSYS) => {}
-            Err(e) => panic!("Unexpected error: {e:?}"),
-        }
+        assert!(fetch_metadata_lstat(&dir).is_ok());
     }
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn try_statx_optimized_symlink() {
+    fn fetch_metadata_lstat_symlink() {
+        use std::os::unix::fs::PermissionsExt;
+
         let temp = tempfile::tempdir().expect("tempdir");
-        let target = temp.path().join("statx_target.txt");
-        let link = temp.path().join("statx_link.txt");
+        let target = temp.path().join("lstat_target.txt");
+        let link = temp.path().join("lstat_link.txt");
         fs::write(&target, b"content").expect("write");
+        fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).expect("chmod");
         std::os::unix::fs::symlink(&target, &link).expect("symlink");
 
-        // try_statx_optimized passes SYMLINK_NOFOLLOW, so this stats the link
-        // itself rather than the target.
-        let result = try_statx_optimized(&link);
-        match result {
-            Ok(_meta) => {}
-            Err(e) if e.raw_os_error() == Some(libc::ENOSYS) => {}
-            Err(e) => panic!("Unexpected error: {e:?}"),
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn statx_enosys_fallback_to_regular_stat() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let path = temp.path().join("fallback_test.txt");
-        fs::write(&path, b"content").expect("write");
-
-        // The optimized fetch must always succeed: on kernels that lack statx
-        // (ENOSYS), the helper falls back to plain stat(2).
-        let result = fetch_metadata_optimized(&path);
-        assert!(result.is_ok());
+        // lstat keeps SYMLINK_NOFOLLOW semantics, so this stats the link
+        // itself (mode 0o120xxx) rather than the 0o600 target.
+        let meta = fetch_metadata_lstat(&link).expect("lstat");
+        assert_eq!(
+            meta.mode & 0o170000,
+            0o120000,
+            "must stat the symlink itself"
+        );
     }
 
     #[test]
