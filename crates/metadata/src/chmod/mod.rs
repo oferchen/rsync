@@ -5,14 +5,14 @@
 //! The upstream rsync CLI allows multiple `--chmod=SPEC` occurrences where each
 //! specification may contain comma-separated numeric or symbolic clauses. This
 //! module mirrors upstream rsync's `chmod.c:parse_chmod()` grammar exactly,
-//! including conditional execute bits (`X`), the set-id/sticky bits, and the
-//! permission-copy form where a single who-letter on the right-hand side
-//! (`g=u`, `o=g`) copies that category's permissions onto the addressed
-//! who-classes. A copy source cannot be mixed with literal `rwxXst` bits, so a
-//! spec like `g=ur` is rejected. The [`ChmodModifiers`] type wraps the parsed
-//! clauses and
-//! exposes [`ChmodModifiers::apply`] so higher layers can evaluate modifiers
-//! after the standard metadata preservation step.
+//! reducing every clause to an AND/OR mask pair (`ModeAND`/`ModeOR`) and the
+//! `D`/`F` selectors, then applying them through `chmod.c:tweak_mode()` order:
+//! conditional execute bits (`X`), the set-id/sticky bits driven by the who
+//! letters, and the umask masking applied to an implied who-class. rsync does
+//! not implement GNU-chmod permission-copy forms (`g=u`); those route to a
+//! parse error exactly as upstream does. The [`ChmodModifiers`] type wraps the
+//! parsed clauses and exposes [`ChmodModifiers::apply`] so higher layers can
+//! evaluate modifiers after the standard metadata preservation step.
 
 mod apply;
 mod parse;
@@ -49,13 +49,9 @@ pub struct ChmodModifiers {
 impl ChmodModifiers {
     /// Parses a comma-separated chmod specification.
     pub fn parse(spec: &str) -> Result<Self, ChmodError> {
-        let clauses = parse_spec(spec)?;
-        if clauses.is_empty() {
-            return Err(ChmodError::new(
-                "chmod specification did not contain any clauses",
-            ));
-        }
-        Ok(Self { clauses })
+        Ok(Self {
+            clauses: parse_spec(spec)?,
+        })
     }
 
     /// Appends clauses from another [`ChmodModifiers`] value.

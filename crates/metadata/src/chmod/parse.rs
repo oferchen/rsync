@@ -1,783 +1,402 @@
 //! Parser for `--chmod` specifications.
 //!
-//! Splits comma-separated clauses, recognises optional `D`/`F` target
-//! selectors, and dispatches each clause to the numeric or symbolic
-//! parser. Errors produce [`ChmodError`] with the offending clause text.
+//! Faithful port of upstream rsync's `chmod.c:parse_chmod()` state machine. The
+//! whole modestring is scanned in a single pass so that comma handling, the
+//! `D`/`F` selectors, octal modes, and the symbolic `[ugoa][-+=][rwxXst]` forms
+//! match upstream byte for byte, including the error transitions. Each clause is
+//! reduced to an AND/OR pair consumed by the evaluator in `apply.rs`.
 
-use super::{
-    ChmodError,
-    spec::{
-        Clause, ClauseKind, CopySource, NumericClause, Operation, PermSpec, SymbolicClause,
-        TargetSelector, WhoMask,
-    },
-};
+use super::{ChmodError, spec::CHMOD_BITS, spec::Clause};
 
-pub(crate) fn parse_spec(spec: &str) -> Result<Vec<Clause>, ChmodError> {
-    let mut clauses = Vec::new();
-
-    for part in spec.split(',') {
-        let trimmed = part.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        let clause = parse_clause(trimmed)?;
-        clauses.push(clause);
-    }
-
-    Ok(clauses)
+// upstream: chmod.c CHMOD_ADD / CHMOD_SUB / CHMOD_EQ / CHMOD_SET.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Op {
+    None,
+    Add,
+    Sub,
+    Eq,
+    Set,
 }
 
-fn parse_clause(text: &str) -> Result<Clause, ChmodError> {
-    let mut chars = text.chars().peekable();
-    let mut target = TargetSelector::All;
+// upstream: chmod.c STATE_1ST_HALF / STATE_2ND_HALF / STATE_OCTAL_NUM.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum State {
+    FirstHalf,
+    SecondHalf,
+    OctalNum,
+}
 
-    // upstream: chmod.c:parse_chmod() STATE_1ST_HALF - only uppercase `D`
-    // (dirs-only) and `F` (files-only) are target flags. Lowercase `d`/`f`
-    // are not accepted; upstream routes them to STATE_ERROR.
-    loop {
-        match chars.peek().copied() {
-            Some('D') => {
-                target = TargetSelector::Directories;
-                chars.next();
-            }
-            Some('F') => {
-                target = TargetSelector::Files;
-                chars.next();
-            }
-            _ => break,
-        }
-    }
-
-    let remaining: String = chars.clone().collect();
-    if remaining.chars().all(|ch| ch.is_ascii_digit()) && !remaining.is_empty() {
-        let value = parse_numeric_clause(&remaining)?;
-        return Ok(Clause {
-            kind: ClauseKind::Numeric(NumericClause {
-                target,
-                mode: value,
-            }),
-        });
-    }
-
-    let mut who = WhoMask::new(false, false, false);
-    let mut consumed_who = false;
-
-    // upstream: chmod.c:parse_chmod() STATE_1ST_HALF - the who-class letters
-    // are lowercase only (`u`, `g`, `o`, `a`). Uppercase variants are not
-    // accepted and fall through to STATE_ERROR.
-    loop {
-        match chars.peek().copied() {
-            Some('u') => {
-                who.user = true;
-                consumed_who = true;
-                chars.next();
-            }
-            Some('g') => {
-                who.group = true;
-                consumed_who = true;
-                chars.next();
-            }
-            Some('o') => {
-                who.other = true;
-                consumed_who = true;
-                chars.next();
-            }
-            Some('a') => {
-                who = WhoMask::new(true, true, true);
-                consumed_who = true;
-                chars.next();
-            }
-            _ => break,
-        }
-    }
-
-    let who_implied = !consumed_who;
-    if who_implied {
-        who = WhoMask::new(true, true, true);
-    }
-
-    let op = match chars.next() {
-        Some('+') => Operation::Add,
-        Some('-') => Operation::Remove,
-        Some('=') => Operation::Assign,
-        _ => {
-            return Err(ChmodError::new(format!(
-                "chmod clause '{text}' is missing a valid operator"
-            )));
-        }
-    };
-
-    let perms: String = chars.collect();
-    let spec = parse_perm_spec(&perms, op)?;
-
-    Ok(Clause {
-        kind: ClauseKind::Symbolic(SymbolicClause {
-            target,
-            op,
-            who,
-            perms: spec,
-            who_implied,
-        }),
+/// Returns the process umask, cached for the lifetime of the process.
+///
+/// upstream: `main.c` captures `orig_umask` once at startup and
+/// `chmod.c:parse_chmod()` folds `~orig_umask` into clauses whose who-class is
+/// implied. We read it lazily and cache it so the set-and-restore syscall pair
+/// happens at most once.
+#[cfg(unix)]
+#[allow(unsafe_code)]
+fn orig_umask() -> u32 {
+    use std::sync::OnceLock;
+    static UMASK: OnceLock<u32> = OnceLock::new();
+    *UMASK.get_or_init(|| {
+        // SAFETY: umask is a standard POSIX call. Setting it to 0 reads the
+        // current value, which we immediately restore. The OnceLock guarantees
+        // this pair runs at most once per process, leaving no window for a
+        // concurrent umask change.
+        let old = unsafe { libc::umask(0) };
+        unsafe { libc::umask(old) };
+        old as u32
     })
 }
 
-fn parse_numeric_clause(text: &str) -> Result<u16, ChmodError> {
-    if !(3..=4).contains(&text.len()) {
-        return Err(ChmodError::new(format!(
-            "numeric chmod '{text}' must contain 3 or 4 octal digits"
-        )));
-    }
-
-    u16::from_str_radix(text, 8)
-        .map_err(|_| ChmodError::new(format!("invalid numeric chmod value '{text}'")))
+#[cfg(not(unix))]
+fn orig_umask() -> u32 {
+    0
 }
 
-fn parse_perm_spec(perms: &str, op: Operation) -> Result<PermSpec, ChmodError> {
-    let mut spec = PermSpec::default();
+/// Parses a `--chmod` specification against the process umask.
+pub(crate) fn parse_spec(modestr: &str) -> Result<Vec<Clause>, ChmodError> {
+    parse_with_umask(modestr, orig_umask())
+}
 
-    if perms.is_empty() {
-        if matches!(op, Operation::Assign) {
-            return Ok(spec);
+/// Parses `modestr` using an explicit `umask`, mirroring
+/// `chmod.c:parse_chmod()`.
+pub(crate) fn parse_with_umask(modestr: &str, umask: u32) -> Result<Vec<Clause>, ChmodError> {
+    let bytes = modestr.as_bytes();
+    let mut i = 0usize;
+    let mut clauses = Vec::new();
+
+    let mut state = State::FirstHalf;
+    let mut where_: u32 = 0;
+    let mut what: u32 = 0;
+    let mut op = Op::None;
+    let mut topbits: u32 = 0;
+    let mut topoct: u32 = 0;
+    let mut x_keep = false;
+    let mut dirs_only = false;
+    let mut files_only = false;
+
+    let err = |c: char| ChmodError::new(format!("invalid --chmod specification: '{c}'"));
+
+    loop {
+        let ch = bytes.get(i).copied();
+
+        // upstream: chmod.c:58 - at end-of-string or a comma, close the clause.
+        if ch.is_none() || ch == Some(b',') {
+            if op == Op::None {
+                return Err(ChmodError::new(
+                    "invalid --chmod specification: empty clause",
+                ));
+            }
+
+            // upstream: chmod.c:73-78.
+            let bits = if where_ != 0 {
+                where_ * what
+            } else {
+                where_ = 0o111;
+                (where_ * what) & !umask
+            };
+
+            // upstream: chmod.c:80-97.
+            let (mode_and, mode_or) = match op {
+                Op::Add => (CHMOD_BITS, bits + topoct),
+                Op::Sub => (CHMOD_BITS - bits - topoct, 0),
+                Op::Eq => (
+                    CHMOD_BITS - (where_ * 7) - if topoct != 0 { topbits } else { 0 },
+                    bits + topoct,
+                ),
+                Op::Set => (0, bits),
+                Op::None => unreachable!(),
+            };
+
+            clauses.push(Clause {
+                mode_and,
+                mode_or,
+                x_keep,
+                dirs_only,
+                files_only,
+            });
+
+            if ch.is_none() {
+                break;
+            }
+
+            // upstream: chmod.c:103-106 - consume the comma and reset per-clause
+            // state (the `D`/`F` selector does not carry across a comma).
+            i += 1;
+            state = State::FirstHalf;
+            where_ = 0;
+            what = 0;
+            op = Op::None;
+            topbits = 0;
+            topoct = 0;
+            x_keep = false;
+            dirs_only = false;
+            files_only = false;
+            continue;
         }
-        return Err(ChmodError::new(
-            "chmod symbolic clause must specify permissions",
-        ));
-    }
 
-    // upstream: chmod.c:parse_chmod() STATE_2ND_HALF. Two mutually exclusive
-    // right-hand-side forms exist:
-    //   1. literal permission letters `r`, `w`, `x`, `X`, `s`, `t`;
-    //   2. a single who-letter `u`, `g`, or `o` selecting a "copy permissions"
-    //      source (e.g. `g=u` copies the user bits onto the group).
-    // The two forms cannot be mixed: once literal bits (`what`/`topoct`) are
-    // set, a following who-letter is an error, and once a copy source
-    // (`copybits`) is set, any further letter is an error. Uppercase
-    // `R`/`W`/`S`/`T` are never permission letters. This mirrors the
-    // STATE_ERROR transitions guarded by the `copybits`/`what`/`topoct`
-    // checks in the C source.
-    let mut has_perm_bits = false;
-    for ch in perms.chars() {
-        match ch {
-            'r' | 'w' | 'x' | 'X' | 's' | 't' => {
-                if spec.copy_source.is_some() {
-                    return Err(ChmodError::new(format!("unsupported chmod token '{ch}'")));
-                }
-                match ch {
-                    'r' => spec.read = true,
-                    'w' => spec.write = true,
-                    'x' => spec.exec = true,
-                    'X' => spec.exec_if_conditional = true,
-                    's' => {
-                        spec.setuid = true;
-                        spec.setgid = true;
+        let byte = ch.expect("boundary handled above");
+        let c = byte as char;
+
+        match state {
+            // upstream: chmod.c:110-158.
+            State::FirstHalf => match byte {
+                b'D' => {
+                    if files_only {
+                        return Err(err(c));
                     }
-                    't' => spec.sticky = true,
-                    _ => unreachable!(),
+                    dirs_only = true;
                 }
-                has_perm_bits = true;
-            }
-            'u' | 'g' | 'o' => {
-                if has_perm_bits || spec.copy_source.is_some() {
-                    return Err(ChmodError::new(format!("unsupported chmod token '{ch}'")));
+                b'F' => {
+                    if dirs_only {
+                        return Err(err(c));
+                    }
+                    files_only = true;
                 }
-                spec.copy_source = Some(match ch {
-                    'u' => CopySource::User,
-                    'g' => CopySource::Group,
-                    'o' => CopySource::Other,
-                    _ => unreachable!(),
-                });
+                b'u' => {
+                    where_ |= 0o100;
+                    topbits |= 0o4000;
+                }
+                b'g' => {
+                    where_ |= 0o010;
+                    topbits |= 0o2000;
+                }
+                b'o' => where_ |= 0o001,
+                b'a' => where_ |= 0o111,
+                b'+' => {
+                    op = Op::Add;
+                    state = State::SecondHalf;
+                }
+                b'-' => {
+                    op = Op::Sub;
+                    state = State::SecondHalf;
+                }
+                b'=' => {
+                    op = Op::Eq;
+                    state = State::SecondHalf;
+                }
+                _ => {
+                    // upstream: chmod.c:148-156 - an octal digit (< 8) starts a
+                    // numeric mode only when no who-class has been seen.
+                    if byte.is_ascii_digit() && byte < b'8' && where_ == 0 {
+                        op = Op::Set;
+                        state = State::OctalNum;
+                        where_ = 1;
+                        what = u32::from(byte - b'0');
+                    } else {
+                        return Err(err(c));
+                    }
+                }
+            },
+            // upstream: chmod.c:159-186.
+            State::SecondHalf => match byte {
+                b'r' => what |= 4,
+                b'w' => what |= 2,
+                b'X' => {
+                    x_keep = true;
+                    what |= 1;
+                }
+                b'x' => what |= 1,
+                b's' => {
+                    if topbits != 0 {
+                        topoct |= topbits;
+                    } else {
+                        topoct = 0o4000;
+                    }
+                }
+                b't' => topoct |= 0o1000,
+                _ => return Err(err(c)),
+            },
+            // upstream: chmod.c:187-194.
+            State::OctalNum => {
+                if byte.is_ascii_digit() && byte < b'8' {
+                    what = what * 8 + u32::from(byte - b'0');
+                    if what > CHMOD_BITS {
+                        return Err(err(c));
+                    }
+                } else {
+                    return Err(err(c));
+                }
             }
-            _ => return Err(ChmodError::new(format!("unsupported chmod token '{ch}'"))),
         }
+
+        i += 1;
     }
 
-    Ok(spec)
+    Ok(clauses)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn parse_spec_single_numeric() {
-        let clauses = parse_spec("755").unwrap();
-        assert_eq!(clauses.len(), 1);
-        match &clauses[0].kind {
-            ClauseKind::Numeric(num) => {
-                assert_eq!(num.mode, 0o755);
-                assert_eq!(num.target, TargetSelector::All);
-            }
-            _ => panic!("expected numeric clause"),
-        }
+    // Deterministic umask so folded implied-who bits are reproducible.
+    const UMASK: u32 = 0o022;
+
+    fn parse(spec: &str) -> Result<Vec<Clause>, ChmodError> {
+        parse_with_umask(spec, UMASK)
+    }
+
+    fn one(spec: &str) -> Clause {
+        let clauses = parse(spec).expect("parses");
+        assert_eq!(clauses.len(), 1, "expected one clause for `{spec}`");
+        clauses[0]
     }
 
     #[test]
-    fn parse_spec_multiple_clauses() {
-        let clauses = parse_spec("u+r,g+w,o-x").unwrap();
-        assert_eq!(clauses.len(), 3);
+    fn octal_set_clears_and_sets() {
+        // upstream: chmod.c CHMOD_SET - ModeAND=0, ModeOR=octal value.
+        let c = one("750");
+        assert_eq!(c.mode_and, 0);
+        assert_eq!(c.mode_or, 0o750);
     }
 
     #[test]
-    fn parse_spec_empty_parts_ignored() {
-        let clauses = parse_spec("u+r,,g+w").unwrap();
+    fn octal_accepts_one_to_four_digits_capped_at_chmod_bits() {
+        // upstream: chmod.c:187-194 accumulates octal digits, capping at
+        // CHMOD_BITS. Length is not fixed at 3-4 digits.
+        assert_eq!(one("7").mode_or, 0o7);
+        assert_eq!(one("75").mode_or, 0o75);
+        assert_eq!(one("0644").mode_or, 0o644);
+        assert_eq!(one("00644").mode_or, 0o644);
+        assert_eq!(one("4755").mode_or, 0o4755);
+        // Overflow past CHMOD_BITS is an error.
+        assert!(parse("17777").is_err());
+        // 8/9 are not octal digits.
+        assert!(parse("789").is_err());
+    }
+
+    #[test]
+    fn directory_and_file_selectors() {
+        let d = one("D755");
+        assert!(d.dirs_only && !d.files_only);
+        let f = one("F644");
+        assert!(f.files_only && !f.dirs_only);
+        // upstream: chmod.c:113-120 - mixing D and F in one clause errors.
+        assert!(parse("DF644").is_err());
+        assert!(parse("FD644").is_err());
+    }
+
+    #[test]
+    fn selector_resets_after_comma() {
+        // upstream: chmod.c:106 resets flags after each comma, so the leading
+        // `F` only tags the first clause.
+        let clauses = parse("Fu=rw,go-r").expect("parses");
         assert_eq!(clauses.len(), 2);
+        assert!(clauses[0].files_only);
+        assert!(!clauses[1].files_only && !clauses[1].dirs_only);
     }
 
     #[test]
-    fn parse_spec_whitespace_trimmed() {
-        let clauses = parse_spec(" u+r , g+w ").unwrap();
-        assert_eq!(clauses.len(), 2);
+    fn add_user_exec() {
+        // u+x: ModeAND=CHMOD_BITS, ModeOR=0o100.
+        let c = one("u+x");
+        assert_eq!(c.mode_and, CHMOD_BITS);
+        assert_eq!(c.mode_or, 0o100);
     }
 
     #[test]
-    fn parse_spec_empty_string() {
-        let clauses = parse_spec("").unwrap();
-        assert!(clauses.is_empty());
+    fn remove_group_write() {
+        // g-w: ModeAND=CHMOD_BITS-0o020, ModeOR=0.
+        let c = one("g-w");
+        assert_eq!(c.mode_and, CHMOD_BITS - 0o020);
+        assert_eq!(c.mode_or, 0);
     }
 
     #[test]
-    fn parse_clause_numeric_three_digits() {
-        let clause = parse_clause("644").unwrap();
-        match clause.kind {
-            ClauseKind::Numeric(num) => assert_eq!(num.mode, 0o644),
-            _ => panic!("expected numeric clause"),
-        }
+    fn assign_preserves_setid_when_no_s_present() {
+        // upstream: chmod.c:90 - CHMOD_EQ only strips the top bits (topbits)
+        // when `s`/`t` are present (topoct != 0). `u=rx` keeps setuid.
+        let c = one("u=rx");
+        assert_eq!(c.mode_and, CHMOD_BITS - 0o700);
+        assert_eq!(c.mode_or, 0o500);
     }
 
     #[test]
-    fn parse_clause_numeric_four_digits() {
-        let clause = parse_clause("4755").unwrap();
-        match clause.kind {
-            ClauseKind::Numeric(num) => assert_eq!(num.mode, 0o4755),
-            _ => panic!("expected numeric clause"),
-        }
+    fn setid_default_setuid_without_ug_who() {
+        // upstream: chmod.c:173-178 - `s` sets `topoct = 04000` when no u/g
+        // who-letter contributed to topbits (o/a/implied who).
+        assert_eq!(one("o+s").mode_or, 0o4000);
+        assert_eq!(one("a+s").mode_or, 0o4000);
+        assert_eq!(one("+s").mode_or, 0o4000);
+        // u/g who select their own top bit.
+        assert_eq!(one("u+s").mode_or, 0o4000);
+        assert_eq!(one("g+s").mode_or, 0o2000);
+        assert_eq!(one("ug+s").mode_or, 0o6000);
     }
 
     #[test]
-    fn parse_clause_numeric_with_directory_target() {
-        let clause = parse_clause("D755").unwrap();
-        match clause.kind {
-            ClauseKind::Numeric(num) => {
-                assert_eq!(num.mode, 0o755);
-                assert_eq!(num.target, TargetSelector::Directories);
-            }
-            _ => panic!("expected numeric clause"),
-        }
+    fn sticky_ignores_who() {
+        // upstream: chmod.c:179-181 - `t` always adds 01000 regardless of who.
+        assert_eq!(one("g+t").mode_or, 0o1000);
+        assert_eq!(one("u+t").mode_or, 0o1000);
+        assert_eq!(one("+t").mode_or, 0o1000);
     }
 
     #[test]
-    fn parse_clause_numeric_with_file_target() {
-        let clause = parse_clause("F644").unwrap();
-        match clause.kind {
-            ClauseKind::Numeric(num) => {
-                assert_eq!(num.mode, 0o644);
-                assert_eq!(num.target, TargetSelector::Files);
-            }
-            _ => panic!("expected numeric clause"),
-        }
+    fn conditional_x_flag_recorded() {
+        let c = one("a+rX");
+        assert!(c.x_keep);
+        // r+x bits present in ModeOR (0o555); the evaluator masks x when needed.
+        assert_eq!(c.mode_or, 0o555);
     }
 
     #[test]
-    fn parse_clause_symbolic_user_add_read() {
-        let clause = parse_clause("u+r").unwrap();
-        match clause.kind {
-            ClauseKind::Symbolic(sym) => {
-                assert_eq!(sym.op, Operation::Add);
-                assert!(sym.who.user);
-                assert!(!sym.who.group);
-                assert!(!sym.who.other);
-                assert!(sym.perms.read);
-            }
-            _ => panic!("expected symbolic clause"),
-        }
+    fn implied_who_applies_umask() {
+        // upstream: chmod.c:76-77 - `+w` with no who becomes where=0o111 and is
+        // masked by ~umask. With umask 022, only owner-write survives.
+        let c = one("+w");
+        assert_eq!(c.mode_or, 0o222 & !UMASK);
+        assert_eq!(c.mode_or, 0o200);
     }
 
     #[test]
-    fn parse_clause_symbolic_group_remove_write() {
-        let clause = parse_clause("g-w").unwrap();
-        match clause.kind {
-            ClauseKind::Symbolic(sym) => {
-                assert_eq!(sym.op, Operation::Remove);
-                assert!(!sym.who.user);
-                assert!(sym.who.group);
-                assert!(!sym.who.other);
-                assert!(sym.perms.write);
-            }
-            _ => panic!("expected symbolic clause"),
-        }
+    fn copy_source_forms_rejected() {
+        // upstream: chmod.c STATE_2ND_HALF has no who-letter case; a `u`/`g`/`o`
+        // on the RHS routes to STATE_ERROR. rsync rejects GNU-chmod copy forms.
+        assert!(parse("g=u").is_err());
+        assert!(parse("o=g").is_err());
+        assert!(parse("u+g").is_err());
+        assert!(parse("a=u").is_err());
+        assert!(parse("g-o").is_err());
+        assert!(parse("g=ur").is_err());
     }
 
     #[test]
-    fn parse_clause_symbolic_other_assign_exec() {
-        let clause = parse_clause("o=x").unwrap();
-        match clause.kind {
-            ClauseKind::Symbolic(sym) => {
-                assert_eq!(sym.op, Operation::Assign);
-                assert!(!sym.who.user);
-                assert!(!sym.who.group);
-                assert!(sym.who.other);
-                assert!(sym.perms.exec);
-            }
-            _ => panic!("expected symbolic clause"),
-        }
+    fn empty_and_stray_commas_rejected() {
+        // upstream: chmod.c:61-63 - a clause with no operator errors.
+        assert!(parse("").is_err());
+        assert!(parse("u+r,").is_err());
+        assert!(parse(",u+r").is_err());
+        assert!(parse("u+r,,g+w").is_err());
     }
 
     #[test]
-    fn parse_clause_symbolic_all_add_rwx() {
-        let clause = parse_clause("a+rwx").unwrap();
-        match clause.kind {
-            ClauseKind::Symbolic(sym) => {
-                assert!(sym.who.user);
-                assert!(sym.who.group);
-                assert!(sym.who.other);
-                assert!(sym.perms.read);
-                assert!(sym.perms.write);
-                assert!(sym.perms.exec);
-            }
-            _ => panic!("expected symbolic clause"),
-        }
+    fn whitespace_rejected() {
+        // upstream: a space is neither a who-class, operator, nor digit.
+        assert!(parse(" u+r").is_err());
+        assert!(parse("u+r ").is_err());
     }
 
     #[test]
-    fn parse_clause_symbolic_no_who_defaults_to_all() {
-        let clause = parse_clause("+x").unwrap();
-        match clause.kind {
-            ClauseKind::Symbolic(sym) => {
-                assert!(sym.who.user);
-                assert!(sym.who.group);
-                assert!(sym.who.other);
-            }
-            _ => panic!("expected symbolic clause"),
-        }
+    fn missing_operator_and_who_only_rejected() {
+        assert!(parse("u").is_err());
+        assert!(parse("urw").is_err());
+        assert!(parse("D").is_err());
     }
 
     #[test]
-    fn parse_clause_symbolic_multiple_who() {
-        let clause = parse_clause("ug+r").unwrap();
-        match clause.kind {
-            ClauseKind::Symbolic(sym) => {
-                assert!(sym.who.user);
-                assert!(sym.who.group);
-                assert!(!sym.who.other);
-            }
-            _ => panic!("expected symbolic clause"),
-        }
+    fn uppercase_perm_letters_rejected() {
+        // upstream: only `X` is an uppercase perm letter; R/W/S/T error.
+        assert!(parse("a+R").is_err());
+        assert!(parse("a+W").is_err());
+        assert!(parse("a+S").is_err());
+        assert!(parse("a+T").is_err());
     }
 
     #[test]
-    fn parse_clause_symbolic_with_directory_target() {
-        let clause = parse_clause("Du+x").unwrap();
-        match clause.kind {
-            ClauseKind::Symbolic(sym) => {
-                assert_eq!(sym.target, TargetSelector::Directories);
-            }
-            _ => panic!("expected symbolic clause"),
-        }
-    }
-
-    #[test]
-    fn parse_clause_symbolic_with_file_target() {
-        let clause = parse_clause("Fu-x").unwrap();
-        match clause.kind {
-            ClauseKind::Symbolic(sym) => {
-                assert_eq!(sym.target, TargetSelector::Files);
-            }
-            _ => panic!("expected symbolic clause"),
-        }
-    }
-
-    #[test]
-    fn parse_clause_symbolic_assign_empty_perms() {
-        let clause = parse_clause("u=").unwrap();
-        match clause.kind {
-            ClauseKind::Symbolic(sym) => {
-                assert_eq!(sym.op, Operation::Assign);
-                assert!(!sym.perms.read);
-                assert!(!sym.perms.write);
-                assert!(!sym.perms.exec);
-            }
-            _ => panic!("expected symbolic clause"),
-        }
-    }
-
-    #[test]
-    fn parse_clause_symbolic_add_empty_perms_fails() {
-        let result = parse_clause("u+");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_clause_missing_operator_fails() {
-        let result = parse_clause("urw");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_numeric_clause_valid_three_digits() {
-        assert_eq!(parse_numeric_clause("755").unwrap(), 0o755);
-        assert_eq!(parse_numeric_clause("644").unwrap(), 0o644);
-        assert_eq!(parse_numeric_clause("000").unwrap(), 0);
-        assert_eq!(parse_numeric_clause("777").unwrap(), 0o777);
-    }
-
-    #[test]
-    fn parse_numeric_clause_valid_four_digits() {
-        assert_eq!(parse_numeric_clause("4755").unwrap(), 0o4755);
-        assert_eq!(parse_numeric_clause("2755").unwrap(), 0o2755);
-        assert_eq!(parse_numeric_clause("1777").unwrap(), 0o1777);
-    }
-
-    #[test]
-    fn parse_numeric_clause_too_short() {
-        assert!(parse_numeric_clause("75").is_err());
-        assert!(parse_numeric_clause("7").is_err());
-    }
-
-    #[test]
-    fn parse_numeric_clause_too_long() {
-        assert!(parse_numeric_clause("75555").is_err());
-    }
-
-    #[test]
-    fn parse_numeric_clause_invalid_octal() {
-        assert!(parse_numeric_clause("789").is_err());
-    }
-
-    #[test]
-    fn parse_perm_spec_read() {
-        let spec = parse_perm_spec("r", Operation::Add).unwrap();
-        assert!(spec.read);
-        assert!(!spec.write);
-        assert!(!spec.exec);
-    }
-
-    #[test]
-    fn parse_perm_spec_write() {
-        let spec = parse_perm_spec("w", Operation::Add).unwrap();
-        assert!(spec.write);
-    }
-
-    #[test]
-    fn parse_perm_spec_exec() {
-        let spec = parse_perm_spec("x", Operation::Add).unwrap();
-        assert!(spec.exec);
-        assert!(!spec.exec_if_conditional);
-    }
-
-    #[test]
-    fn parse_perm_spec_exec_conditional() {
-        let spec = parse_perm_spec("X", Operation::Add).unwrap();
-        assert!(!spec.exec);
-        assert!(spec.exec_if_conditional);
-    }
-
-    #[test]
-    fn parse_perm_spec_setuid_setgid() {
-        let spec = parse_perm_spec("s", Operation::Add).unwrap();
-        assert!(spec.setuid);
-        assert!(spec.setgid);
-    }
-
-    #[test]
-    fn parse_perm_spec_sticky() {
-        let spec = parse_perm_spec("t", Operation::Add).unwrap();
-        assert!(spec.sticky);
-    }
-
-    #[test]
-    fn parse_perm_spec_copy_source_letters() {
-        // upstream: chmod.c:parse_chmod() STATE_2ND_HALF accepts a single
-        // `u`/`g`/`o` who-letter on the RHS as a permission-copy source
-        // (`copybits`). `a` is not a valid copy source and errors out.
-        assert_eq!(
-            parse_perm_spec("u", Operation::Add).unwrap().copy_source,
-            Some(CopySource::User)
-        );
-        assert_eq!(
-            parse_perm_spec("g", Operation::Add).unwrap().copy_source,
-            Some(CopySource::Group)
-        );
-        assert_eq!(
-            parse_perm_spec("o", Operation::Add).unwrap().copy_source,
-            Some(CopySource::Other)
-        );
-        assert!(parse_perm_spec("a", Operation::Add).is_err());
-    }
-
-    #[test]
-    fn parse_perm_spec_copy_source_cannot_mix_with_bits() {
-        // upstream: once `copybits` is set, any further letter -> STATE_ERROR;
-        // and once literal bits (`what`) are set, a who-letter -> STATE_ERROR.
-        assert!(parse_perm_spec("ur", Operation::Assign).is_err());
-        assert!(parse_perm_spec("ru", Operation::Assign).is_err());
-        assert!(parse_perm_spec("ug", Operation::Assign).is_err());
-    }
-
-    #[test]
-    fn parse_perm_spec_multiple() {
-        let spec = parse_perm_spec("rwx", Operation::Add).unwrap();
-        assert!(spec.read);
-        assert!(spec.write);
-        assert!(spec.exec);
-    }
-
-    #[test]
-    fn parse_perm_spec_uppercase_rwst_rejected() {
-        // upstream: chmod.c:parse_chmod() STATE_2ND_HALF only accepts uppercase
-        // `X`; uppercase R/W/S/T are not permission letters and error out.
-        assert!(parse_perm_spec("R", Operation::Add).is_err());
-        assert!(parse_perm_spec("W", Operation::Add).is_err());
-        assert!(parse_perm_spec("S", Operation::Add).is_err());
-        assert!(parse_perm_spec("T", Operation::Add).is_err());
-        // `X` remains valid (conditional exec).
-        let spec = parse_perm_spec("X", Operation::Add).unwrap();
-        assert!(spec.exec_if_conditional);
-    }
-
-    #[test]
-    fn parse_perm_spec_empty_assign_ok() {
-        let spec = parse_perm_spec("", Operation::Assign).unwrap();
-        assert!(!spec.read);
-        assert!(!spec.write);
-        assert!(!spec.exec);
-    }
-
-    #[test]
-    fn parse_perm_spec_empty_add_fails() {
-        let result = parse_perm_spec("", Operation::Add);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_perm_spec_empty_remove_fails() {
-        let result = parse_perm_spec("", Operation::Remove);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn parse_perm_spec_invalid_char_fails() {
-        let result = parse_perm_spec("rwz", Operation::Add);
-        assert!(result.is_err());
-    }
-
-    // Upstream chmod-option.test corpus.
-    //
-    // These specs are taken verbatim from
-    // `testsuite/chmod-option.test` so any drift from upstream's
-    // `chmod.c::parse_chmod()` surfaces here instead of in interop.
-
-    #[test]
-    fn upstream_f600_parses_as_files_only_numeric_clause() {
-        // upstream: chmod-option.test - daemon module exercises `Fo-x`
-        // alongside ad-hoc CLI specs like `F600` in interop suites.
-        let clauses = parse_spec("F600").expect("parses");
-        assert_eq!(clauses.len(), 1);
-        match &clauses[0].kind {
-            ClauseKind::Numeric(num) => {
-                assert_eq!(num.mode, 0o600);
-                assert_eq!(num.target, TargetSelector::Files);
-            }
-            _ => panic!("expected numeric clause"),
-        }
-    }
-
-    #[test]
-    fn upstream_d755_parses_as_directories_only_numeric_clause() {
-        let clauses = parse_spec("D755").expect("parses");
-        assert_eq!(clauses.len(), 1);
-        match &clauses[0].kind {
-            ClauseKind::Numeric(num) => {
-                assert_eq!(num.mode, 0o755);
-                assert_eq!(num.target, TargetSelector::Directories);
-            }
-            _ => panic!("expected numeric clause"),
-        }
-    }
-
-    #[test]
-    fn upstream_fu_eq_rw_go_minus_rwx_parses_two_symbolic_clauses() {
-        // upstream: `Fu=rw,go-rwx` produces two clauses. parse_chmod resets
-        // `flags = 0` after each `,` (chmod.c:106), so the leading `F` only
-        // targets the first clause; the second clause defaults to all targets.
-        let clauses = parse_spec("Fu=rw,go-rwx").expect("parses");
-        assert_eq!(clauses.len(), 2);
-        match &clauses[0].kind {
-            ClauseKind::Symbolic(sym) => {
-                assert_eq!(sym.target, TargetSelector::Files);
-                assert_eq!(sym.op, Operation::Assign);
-                assert!(sym.who.user);
-                assert!(!sym.who.group);
-                assert!(!sym.who.other);
-                assert!(sym.perms.read);
-                assert!(sym.perms.write);
-                assert!(!sym.perms.exec);
-            }
-            _ => panic!("expected symbolic clause for u=rw"),
-        }
-        match &clauses[1].kind {
-            ClauseKind::Symbolic(sym) => {
-                assert_eq!(sym.target, TargetSelector::All);
-                assert_eq!(sym.op, Operation::Remove);
-                assert!(!sym.who.user);
-                assert!(sym.who.group);
-                assert!(sym.who.other);
-                assert!(sym.perms.read);
-                assert!(sym.perms.write);
-                assert!(sym.perms.exec);
-            }
-            _ => panic!("expected symbolic clause for go-rwx"),
-        }
-    }
-
-    #[test]
-    fn upstream_dg_plus_s_parses_directory_only_setgid_add() {
-        // upstream: `Dg+s` is the canonical recipe for new directories to
-        // inherit their parent group. Verify the parser tags it as
-        // directories-only, group who-class, add op, with the setgid flag set
-        // so `apply_special_bits` can fold it into the mode.
-        let clauses = parse_spec("Dg+s").expect("parses");
-        assert_eq!(clauses.len(), 1);
-        match &clauses[0].kind {
-            ClauseKind::Symbolic(sym) => {
-                assert_eq!(sym.target, TargetSelector::Directories);
-                assert_eq!(sym.op, Operation::Add);
-                assert!(sym.who.group);
-                assert!(!sym.who.user);
-                assert!(!sym.who.other);
-                assert!(sym.perms.setgid);
-            }
-            _ => panic!("expected symbolic clause"),
-        }
-    }
-
-    #[test]
-    fn upstream_plus_x_parses_as_conditional_exec_for_all() {
-        // upstream: bare `+X` (no who-class) marks the implied-all who and
-        // sets FLAG_X_KEEP via PermSpec::exec_if_conditional.
-        let clauses = parse_spec("+X").expect("parses");
-        assert_eq!(clauses.len(), 1);
-        match &clauses[0].kind {
-            ClauseKind::Symbolic(sym) => {
-                assert_eq!(sym.target, TargetSelector::All);
-                assert_eq!(sym.op, Operation::Add);
-                assert!(sym.who_implied);
-                assert!(sym.perms.exec_if_conditional);
-                assert!(!sym.perms.exec);
-            }
-            _ => panic!("expected symbolic clause"),
-        }
-    }
-
-    #[test]
-    fn upstream_fo_minus_x_parses_files_only_other_remove_exec() {
-        // upstream: chmod-option.test daemon module - `incoming chmod = Fo-x`.
-        let clauses = parse_spec("Fo-x").expect("parses");
-        assert_eq!(clauses.len(), 1);
-        match &clauses[0].kind {
-            ClauseKind::Symbolic(sym) => {
-                assert_eq!(sym.target, TargetSelector::Files);
-                assert_eq!(sym.op, Operation::Remove);
-                assert!(!sym.who.user);
-                assert!(!sym.who.group);
-                assert!(sym.who.other);
-                assert!(sym.perms.exec);
-            }
-            _ => panic!("expected symbolic clause"),
-        }
-    }
-
-    #[test]
-    fn upstream_ug_minus_s_a_plus_rx_d_plus_w_parses_three_clauses() {
-        // upstream: `--chmod ug-s,a+rX,D+w` from chmod-option.test.
-        let clauses = parse_spec("ug-s,a+rX,D+w").expect("parses");
-        assert_eq!(clauses.len(), 3);
-        match &clauses[0].kind {
-            ClauseKind::Symbolic(sym) => {
-                assert_eq!(sym.op, Operation::Remove);
-                assert!(sym.who.user);
-                assert!(sym.who.group);
-                assert!(!sym.who.other);
-                assert!(sym.perms.setuid);
-                assert!(sym.perms.setgid);
-            }
-            _ => panic!("expected symbolic clause for ug-s"),
-        }
-        match &clauses[1].kind {
-            ClauseKind::Symbolic(sym) => {
-                assert_eq!(sym.op, Operation::Add);
-                assert!(sym.who.user && sym.who.group && sym.who.other);
-                assert!(sym.perms.read);
-                assert!(sym.perms.exec_if_conditional);
-            }
-            _ => panic!("expected symbolic clause for a+rX"),
-        }
-        match &clauses[2].kind {
-            ClauseKind::Symbolic(sym) => {
-                assert_eq!(sym.target, TargetSelector::Directories);
-                assert_eq!(sym.op, Operation::Add);
-                assert!(sym.who_implied);
-                assert!(sym.perms.write);
-            }
-            _ => panic!("expected symbolic clause for D+w"),
-        }
-    }
-
-    #[test]
-    fn upstream_eq_with_empty_rhs_is_reset_to_zero() {
-        // upstream: `u=` clears all user-class permission bits (CHMOD_EQ with
-        // empty bits resolves to ModeAND that strips the who-class and
-        // ModeOR of 0).
-        let clauses = parse_spec("u=").expect("parses");
-        assert_eq!(clauses.len(), 1);
-        match &clauses[0].kind {
-            ClauseKind::Symbolic(sym) => {
-                assert_eq!(sym.op, Operation::Assign);
-                assert!(sym.who.user);
-                assert!(!sym.who.group);
-                assert!(!sym.who.other);
-                assert!(!sym.perms.read);
-                assert!(!sym.perms.write);
-                assert!(!sym.perms.exec);
-            }
-            _ => panic!("expected symbolic clause"),
-        }
-    }
-
-    #[test]
-    fn upstream_g_eq_ur_is_rejected() {
-        // upstream: chmod.c:parse_chmod() STATE_2ND_HALF sets `copybits` on the
-        // `u`, then sees `r` while `copybits` is set and transitions to
-        // STATE_ERROR (a copy source cannot be combined with literal bits).
-        // rsync rejects `g=ur` and the `u+ur` variant with exit 1.
-        assert!(parse_spec("g=ur").is_err());
-        assert!(parse_spec("u+ur").is_err());
-    }
-
-    #[test]
-    fn upstream_who_letter_copy_forms_parse() {
-        // upstream: `g=u`, `o=g`, `a=u`, `u+g` are all valid permission-copy
-        // directives accepted by parse_chmod (verified against rsync 3.4.x
-        // which exits 0 for each).
-        for spec in ["g=u", "o=g", "a=u", "u+g", "g=o,o=", "g-o", "o=u"] {
-            parse_spec(spec).unwrap_or_else(|_| panic!("`{spec}` must parse"));
-        }
-    }
-
-    #[test]
-    fn upstream_valid_symbolic_forms_still_parse() {
-        // Guard against over-rejection: the canonical valid specs from
-        // chmod-option.test must continue to parse cleanly.
-        for spec in ["Fugo=rwx", "g-w", "Dg+s", "u+rwx", "Fo-x", "ug-s", "a+rX"] {
-            parse_spec(spec).unwrap_or_else(|_| panic!("`{spec}` must parse"));
-        }
-    }
-
-    #[test]
-    fn upstream_lowercase_target_flags_rejected() {
-        // upstream: only uppercase `D`/`F` are target flags; lowercase `d`/`f`
-        // are not who-class letters, digits, or operators -> STATE_ERROR.
-        assert!(parse_spec("d755").is_err());
-        assert!(parse_spec("fu+x").is_err());
+    fn multiple_who_multiplies_bits() {
+        // ug+r: where=0o110, what=4 -> bits=0o440.
+        assert_eq!(one("ug+r").mode_or, 0o440);
     }
 }
