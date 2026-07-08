@@ -6,11 +6,13 @@ use core::client::{
     HumanReadableMode,
 };
 
+use crate::frontend::escape::escape_path;
+
 /// Renders a path string with any trailing platform path separators trimmed,
 /// mirroring upstream rsync's `*cp = '\0'` slash-lopping in `main.c:789`
 /// before the `created directory %s\n` print.
-fn display_without_trailing_separators(path: &Path) -> String {
-    let mut rendered = path.display().to_string();
+fn display_without_trailing_separators(path: &Path, allow_8bit: bool) -> String {
+    let mut rendered = escape_path(path, allow_8bit);
     while rendered.len() > 1
         && rendered
             .as_bytes()
@@ -50,6 +52,7 @@ pub(crate) fn emit_transfer_summary(
     show_copy_method: bool,
     show_atimes: bool,
     show_crtimes: bool,
+    eight_bit_output: bool,
     writer: &mut dyn Write,
 ) -> io::Result<()> {
     let events = summary.events();
@@ -64,6 +67,7 @@ pub(crate) fn emit_transfer_summary(
                 human_readable_mode,
                 show_atimes,
                 show_crtimes,
+                eight_bit_output,
             )?;
             wrote_listing = true;
         }
@@ -122,7 +126,7 @@ pub(crate) fn emit_transfer_summary(
         writeln!(
             writer,
             "created directory {}",
-            display_without_trailing_separators(dest_root)
+            display_without_trailing_separators(dest_root, eight_bit_output)
         )?;
     }
 
@@ -140,7 +144,7 @@ pub(crate) fn emit_transfer_summary(
     let progress_rendered = if progress_already_rendered {
         true
     } else if matches!(progress_mode, Some(ProgressMode::PerFile)) && !events.is_empty() {
-        emit_progress(events, writer, human_readable_mode)?
+        emit_progress(events, writer, human_readable_mode, eight_bit_output)?
     } else {
         false
     };
@@ -174,6 +178,7 @@ pub(crate) fn emit_transfer_summary(
             name_level,
             name_overridden,
             human_readable_mode,
+            eight_bit_output,
             writer,
         )?;
     }
@@ -248,6 +253,7 @@ pub(crate) fn emit_list_only<W: Write + ?Sized>(
     human_readable: HumanReadableMode,
     show_atimes: bool,
     show_crtimes: bool,
+    eight_bit_output: bool,
 ) -> io::Result<()> {
     for event in events {
         if !list_only_event(event.kind()) {
@@ -271,12 +277,12 @@ pub(crate) fn emit_list_only<W: Write + ?Sized>(
             } else {
                 String::new()
             };
-            let mut rendered = event.relative_path().to_string_lossy().into_owned();
+            let mut rendered = escape_path(event.relative_path(), eight_bit_output);
             if metadata.kind().is_symlink()
                 && let Some(target) = metadata.symlink_target()
             {
                 rendered.push_str(" -> ");
-                rendered.push_str(&target.to_string_lossy());
+                rendered.push_str(&escape_path(target, eight_bit_output));
             }
 
             writeln!(
@@ -284,7 +290,7 @@ pub(crate) fn emit_list_only<W: Write + ?Sized>(
                 "{permissions} {size} {timestamp}{atime_field}{crtime_field} {rendered}"
             )?;
         } else {
-            let rendered = event.relative_path().to_string_lossy().into_owned();
+            let rendered = escape_path(event.relative_path(), eight_bit_output);
             writeln!(
                 stdout,
                 "?????????? {:>width$} {} {rendered}",
@@ -303,6 +309,7 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
     events: &[ClientEvent],
     stdout: &mut W,
     human_readable: HumanReadableMode,
+    eight_bit_output: bool,
 ) -> io::Result<bool> {
     // upstream: progress.c counts every checked file-list entry toward
     // `to-chk=<remaining>/<total>`, but prints a per-file block and advances
@@ -336,7 +343,7 @@ pub(crate) fn emit_progress<W: Write + ?Sized>(
 
         // upstream: flist.c f_name() emits POSIX forward-slash separators
         // regardless of host OS. Normalize Windows native backslashes here.
-        let name = event.relative_path().display().to_string();
+        let name = escape_path(event.relative_path(), eight_bit_output);
         #[cfg(windows)]
         let name = name.replace('\\', "/");
         writeln!(stdout, "{name}")?;
@@ -489,16 +496,22 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
         "Number of files: {}{files_breakdown}",
         format_decimal_bytes(total_entries)
     )?;
-    writeln!(
-        stdout,
-        "Number of created files: {}{created_breakdown}",
-        format_decimal_bytes(created_total)
-    )?;
-    writeln!(
-        stdout,
-        "Number of deleted files: {}{deleted_breakdown}",
-        format_decimal_bytes(deleted)
-    )?;
+    // upstream: main.c:429 - `if (protocol_version >= 29)`
+    if summary.protocol_version() >= 29 {
+        writeln!(
+            stdout,
+            "Number of created files: {}{created_breakdown}",
+            format_decimal_bytes(created_total)
+        )?;
+    }
+    // upstream: main.c:431 - `if (protocol_version >= 31)`
+    if summary.protocol_version() >= 31 {
+        writeln!(
+            stdout,
+            "Number of deleted files: {}{deleted_breakdown}",
+            format_decimal_bytes(deleted)
+        )?;
+    }
     writeln!(
         stdout,
         "Number of regular files transferred: {}",
@@ -634,7 +647,7 @@ fn is_deferred_hardlink_event(event: &ClientEvent) -> bool {
 ///
 /// upstream: log.c:639-640 - the `%n` token strlcat()s a `/` for S_ISDIR
 /// entries; the transfer root is listed as `./`.
-fn verbose_listing_name(event: &ClientEvent) -> String {
+fn verbose_listing_name(event: &ClientEvent, eight_bit_output: bool) -> String {
     let path = event.relative_path();
     let is_dir = matches!(
         event.metadata().map(ClientEntryMetadata::kind),
@@ -643,7 +656,7 @@ fn verbose_listing_name(event: &ClientEvent) -> String {
     if is_dir && path.as_os_str() == "." {
         return String::from("./");
     }
-    let mut rendered = path.to_string_lossy().into_owned();
+    let mut rendered = escape_path(path, eight_bit_output);
     // upstream: flist.c f_name() emits POSIX forward-slash separators
     // regardless of host OS. Normalize Windows native backslashes at the
     // rendering boundary; storage retains the platform-native form.
@@ -664,6 +677,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
     name_level: NameOutputLevel,
     name_overridden: bool,
     _human_readable: HumanReadableMode,
+    eight_bit_output: bool,
     stdout: &mut W,
 ) -> io::Result<()> {
     if matches!(name_level, NameOutputLevel::Disabled) && (verbosity == 0 || name_overridden) {
@@ -714,17 +728,21 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 {
                     continue;
                 }
-                writeln!(stdout, "{} is uptodate", event.relative_path().display())?;
+                writeln!(
+                    stdout,
+                    "{} is uptodate",
+                    escape_path(event.relative_path(), eight_bit_output)
+                )?;
                 continue;
             }
 
-            let mut rendered = verbose_listing_name(event);
+            let mut rendered = verbose_listing_name(event, eight_bit_output);
             if matches!(kind, ClientEventKind::SymlinkCopied)
                 && let Some(metadata) = event.metadata()
                 && let Some(target) = metadata.symlink_target()
             {
                 rendered.push_str(" -> ");
-                rendered.push_str(&target.to_string_lossy());
+                rendered.push_str(&escape_path(target, eight_bit_output));
             }
             writeln!(stdout, "{rendered}")?;
             continue;
@@ -739,14 +757,18 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 // upstream: generator.c:1409 - `rprintf(FINFO, "%s exists\n",
                 // fname)` for an --ignore-existing skip: the bare relative name
                 // followed by " exists", no descriptor and no quotes.
-                writeln!(stdout, "{} exists", event.relative_path().display())?;
+                writeln!(
+                    stdout,
+                    "{} exists",
+                    escape_path(event.relative_path(), eight_bit_output)
+                )?;
                 continue;
             }
             ClientEventKind::SkippedMissingDestination => {
                 writeln!(
                     stdout,
                     "skipping non-existent destination file \"{}\"",
-                    event.relative_path().display()
+                    escape_path(event.relative_path(), eight_bit_output)
                 )?;
                 continue;
             }
@@ -754,7 +776,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 writeln!(
                     stdout,
                     "skipping newer destination file \"{}\"",
-                    event.relative_path().display()
+                    escape_path(event.relative_path(), eight_bit_output)
                 )?;
                 continue;
             }
@@ -762,7 +784,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 writeln!(
                     stdout,
                     "skipping non-regular file \"{}\"",
-                    event.relative_path().display()
+                    escape_path(event.relative_path(), eight_bit_output)
                 )?;
                 continue;
             }
@@ -774,20 +796,20 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 writeln!(
                     stdout,
                     "skipping directory {}",
-                    event.relative_path().display()
+                    escape_path(event.relative_path(), eight_bit_output)
                 )?;
                 continue;
             }
             ClientEventKind::SkippedUnsafeSymlink => {
                 let mut rendered = format!(
                     "ignoring unsafe symlink \"{}\"",
-                    event.relative_path().display()
+                    escape_path(event.relative_path(), eight_bit_output)
                 );
                 if let Some(metadata) = event.metadata()
                     && let Some(target) = metadata.symlink_target()
                 {
                     rendered.push_str(" -> ");
-                    rendered.push_str(&target.to_string_lossy());
+                    rendered.push_str(&escape_path(target, eight_bit_output));
                 }
                 writeln!(stdout, "{rendered}")?;
                 continue;
@@ -796,7 +818,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 writeln!(
                     stdout,
                     "skipping mount point \"{}\"",
-                    event.relative_path().display()
+                    escape_path(event.relative_path(), eight_bit_output)
                 )?;
                 continue;
             }
@@ -826,7 +848,11 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                     continue;
                 }
                 if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
-                    writeln!(stdout, "{} is uptodate", event.relative_path().display())?;
+                    writeln!(
+                        stdout,
+                        "{} is uptodate",
+                        escape_path(event.relative_path(), eight_bit_output)
+                    )?;
                 }
                 continue;
             }
@@ -837,7 +863,11 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 // the bare path. Mirror the same gate so `-vv` without `-i`
                 // matches the upstream `testsuite/itemize.test` golden.
                 if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
-                    writeln!(stdout, "{} is uptodate", event.relative_path().display())?;
+                    writeln!(
+                        stdout,
+                        "{} is uptodate",
+                        escape_path(event.relative_path(), eight_bit_output)
+                    )?;
                 }
                 continue;
             }
@@ -852,7 +882,11 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
             // `was_created`, so they fall through to the bare-path emission.
             ClientEventKind::ReferenceCopied => {
                 if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
-                    writeln!(stdout, "{} is uptodate", event.relative_path().display())?;
+                    writeln!(
+                        stdout,
+                        "{} is uptodate",
+                        escape_path(event.relative_path(), eight_bit_output)
+                    )?;
                 }
                 continue;
             }
@@ -860,7 +894,11 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
             // hard-linked from the basis prints `"%s is uptodate"` at NAME>=2.
             ClientEventKind::HardLink if is_hardlinked_symlink_event(event) => {
                 if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
-                    writeln!(stdout, "{} is uptodate", event.relative_path().display())?;
+                    writeln!(
+                        stdout,
+                        "{} is uptodate",
+                        escape_path(event.relative_path(), eight_bit_output)
+                    )?;
                 }
                 continue;
             }
@@ -868,7 +906,11 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 if !event.was_created() && !event.change_set().has_any_change() =>
             {
                 if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
-                    writeln!(stdout, "{}/ is uptodate", event.relative_path().display())?;
+                    writeln!(
+                        stdout,
+                        "{}/ is uptodate",
+                        escape_path(event.relative_path(), eight_bit_output)
+                    )?;
                 }
                 continue;
             }
@@ -876,20 +918,24 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 if !event.was_created() && !event.change_set().has_any_change() =>
             {
                 if verbosity >= 2 || matches!(name_level, NameOutputLevel::UpdatedAndUnchanged) {
-                    writeln!(stdout, "{} is uptodate", event.relative_path().display())?;
+                    writeln!(
+                        stdout,
+                        "{} is uptodate",
+                        escape_path(event.relative_path(), eight_bit_output)
+                    )?;
                 }
                 continue;
             }
             _ => {}
         }
 
-        let mut rendered = verbose_listing_name(event);
+        let mut rendered = verbose_listing_name(event, eight_bit_output);
         if matches!(kind, ClientEventKind::SymlinkCopied)
             && let Some(metadata) = event.metadata()
             && let Some(target) = metadata.symlink_target()
         {
             rendered.push_str(" -> ");
-            rendered.push_str(&target.to_string_lossy());
+            rendered.push_str(&escape_path(target, eight_bit_output));
         } else if matches!(kind, ClientEventKind::HardLink)
             && let Some(metadata) = event.metadata()
             && let Some(leader) = metadata.symlink_target()
@@ -897,7 +943,7 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
             // upstream: hlink.c:236 - a freshly-linked alias prints
             // `"%s => %s"` with the group leader's relative path.
             rendered.push_str(" => ");
-            rendered.push_str(&leader.to_string_lossy());
+            rendered.push_str(&escape_path(leader, eight_bit_output));
         }
 
         // upstream: log.c:log_formatted() emits the default `%n%L` per-file

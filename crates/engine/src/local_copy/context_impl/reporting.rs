@@ -155,9 +155,10 @@ impl<'a> CopyContext<'a> {
     /// times independently of the generator's delayed-deletion phase.
     // upstream: generator.c:2419 do_delayed_deletions() runs after generate_files()
     pub(super) fn flush_deferred_deletions(&mut self) -> Result<(), LocalCopyError> {
-        if !self.deletions_allowed() {
-            // I/O errors occurred and --ignore-errors is not set;
-            // suppress deletions to prevent data loss.
+        if self.delete_pass_blocked_by_io_error() {
+            // I/O errors occurred and --ignore-errors is not set; suppress
+            // deletions to prevent data loss and emit the one-shot skip
+            // notice. upstream: generator.c:298-305.
             self.deferred_ops.deletions.clear();
             return Ok(());
         }

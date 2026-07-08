@@ -7,6 +7,7 @@
 
 use std::time::SystemTime;
 
+use crate::frontend::escape::escape_path;
 use crate::{LIST_TIMESTAMP_FORMAT, describe_event_kind, format_list_permissions, platform};
 use core::client::{ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind};
 
@@ -44,20 +45,21 @@ pub(super) fn render_placeholder_value(
     context: &OutFormatContext,
     spec: &PlaceholderToken,
 ) -> Option<String> {
+    let allow_8bit = context.eight_bit_output;
     match spec.kind {
-        OutFormatPlaceholder::FileName => Some(render_path(event, true)),
+        OutFormatPlaceholder::FileName => Some(render_path(event, true, allow_8bit)),
         OutFormatPlaceholder::FileNameWithSymlinkTarget => {
-            let mut rendered = render_path(event, true);
+            let mut rendered = render_path(event, true, allow_8bit);
             if let Some(target) = event
                 .metadata()
                 .and_then(ClientEntryMetadata::symlink_target)
             {
                 rendered.push_str(symlink_target_connector(event));
-                rendered.push_str(&target.to_string_lossy());
+                rendered.push_str(&escape_path(target, allow_8bit));
             }
             Some(rendered)
         }
-        OutFormatPlaceholder::FullPath => Some(render_path(event, false)),
+        OutFormatPlaceholder::FullPath => Some(render_path(event, false, allow_8bit)),
         OutFormatPlaceholder::ItemizedChanges => {
             Some(format_itemized_changes(event, context.is_sender))
         }
@@ -84,7 +86,7 @@ pub(super) fn render_placeholder_value(
         {
             Some(target) => {
                 let mut rendered = String::from(symlink_target_connector(event));
-                rendered.push_str(&target.to_string_lossy());
+                rendered.push_str(&escape_path(target, allow_8bit));
                 Some(rendered)
             }
             // upstream: log.c:648-654 - the `case 'L'` else-branch sets n = ""
@@ -183,8 +185,8 @@ fn transfer_byte_count(event: &ClientEvent, is_sender: bool, want_checksum: bool
 }
 
 /// Renders the path from an event, optionally appending a trailing slash for directories.
-fn render_path(event: &ClientEvent, ensure_trailing_slash: bool) -> String {
-    let mut rendered = event.relative_path().to_string_lossy().into_owned();
+fn render_path(event: &ClientEvent, ensure_trailing_slash: bool, allow_8bit: bool) -> String {
+    let mut rendered = escape_path(event.relative_path(), allow_8bit);
     // upstream: flist.c / log.c - itemize and out-format paths use POSIX
     // forward-slash separators regardless of host OS. Normalize Windows
     // native backslashes here at the rendering boundary; storage retains

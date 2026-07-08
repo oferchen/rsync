@@ -420,6 +420,57 @@ fn test_negotiate_nstr_summary_omits_negotiated_when_forced() {
 }
 
 #[test]
+fn test_client_checksum_list_omits_none_matches_upstream() {
+    // WHY: upstream get_default_nno_list drops the num == 0 ("none") entry on
+    // the client (compat.c:485-486, `!am_server`). The advertised list is
+    // framed as a vstring on the wire; an extra " none" token changes the
+    // length prefix and payload bytes, diverging from upstream and risking an
+    // interop desync at protocol >= 30. Assert the exact client checksum list.
+    let protocol = ProtocolVersion::try_from(32).unwrap();
+    let client_response = b"\x03md5\x04zlib";
+    let mut stdin = &client_response[..];
+    let mut stdout = Vec::new();
+
+    // is_server = false (client side).
+    negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, false).unwrap();
+
+    // Decode the first vstring the client emitted: the checksum list.
+    let mut sent = &stdout[..];
+    let checksum_list = read_vstring(&mut sent).unwrap();
+    assert_eq!(checksum_list, "xxh128 xxh3 xxh64 md5 md4 sha1");
+    assert!(
+        !checksum_list.split(' ').any(|n| n == "none"),
+        "client checksum list must omit none: {checksum_list}"
+    );
+
+    // The compression list follows and must also omit "none" on the client.
+    let compression_list = read_vstring(&mut sent).unwrap();
+    assert!(
+        !compression_list.split(' ').any(|n| n == "none"),
+        "client compression list must omit none: {compression_list}"
+    );
+}
+
+#[test]
+fn test_server_checksum_list_includes_none_matches_upstream() {
+    // WHY: the server (am_server == 1) keeps the "none" entry
+    // (compat.c:485-486), so its advertised checksum list ends with " none".
+    // This is the complement of the client case and pins the exact server
+    // wire bytes so both directions stay byte-identical to upstream.
+    let protocol = ProtocolVersion::try_from(32).unwrap();
+    let client_response = b"\x03md5\x04zlib";
+    let mut stdin = &client_response[..];
+    let mut stdout = Vec::new();
+
+    // is_server = true (server side).
+    negotiate_capabilities(protocol, &mut stdin, &mut stdout, true, true, false, true).unwrap();
+
+    let mut sent = &stdout[..];
+    let checksum_list = read_vstring(&mut sent).unwrap();
+    assert_eq!(checksum_list, "xxh128 xxh3 xxh64 md5 md4 sha1 none");
+}
+
+#[test]
 fn test_vstring_two_byte_format() {
     // Test vstring encoding for length > 127
     let test_str = "x".repeat(200); // 200 bytes > 127, needs 2-byte format

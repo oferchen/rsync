@@ -14,6 +14,8 @@ use std::io::{self, Write};
 use core::client::{ClientEntryKind, ClientEntryMetadata, ClientEvent, ClientEventKind};
 use logging::{InfoFlag, info_gte};
 
+use crate::frontend::escape::escape_path;
+
 use super::tokens::{OutFormat, OutFormatContext, OutFormatToken};
 
 use format::apply_placeholder_format;
@@ -156,7 +158,11 @@ pub(crate) fn emit_out_format<W: Write + ?Sized>(
         // of `-i`/`-ii`.
         if matches!(event.kind(), ClientEventKind::SkippedNewerDestination) {
             if info_gte(InfoFlag::Skip, 1) {
-                writeln!(writer, "{} is newer", event.relative_path().display())?;
+                writeln!(
+                    writer,
+                    "{} is newer",
+                    escape_path(event.relative_path(), context.eight_bit_output)
+                )?;
             }
             continue;
         }

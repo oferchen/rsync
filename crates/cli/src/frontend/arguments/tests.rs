@@ -1592,7 +1592,7 @@ mod delete_modes {
     fn delete_with_recursive() {
         let parsed = parse_test_args(["-r", "--delete", "src/", "dst/"]).expect("parse");
         assert!(parsed.delete_mode.is_enabled());
-        assert_eq!(parsed.delete_mode, DeleteMode::During);
+        assert_eq!(parsed.delete_mode, DeleteMode::DuringDefault);
     }
 
     #[test]

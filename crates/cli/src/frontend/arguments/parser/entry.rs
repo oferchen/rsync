@@ -264,17 +264,19 @@ where
         DeleteMode::Delay
     } else if delete_after_flag {
         DeleteMode::After
-    } else if delete_during_flag || delete_flag {
+    } else if delete_during_flag {
         DeleteMode::During
+    } else if delete_flag {
+        DeleteMode::DuringDefault
     } else {
         DeleteMode::Disabled
     };
 
     if delete_excluded && !delete_mode.is_enabled() {
-        delete_mode = DeleteMode::During;
+        delete_mode = DeleteMode::DuringDefault;
     }
     if max_delete.is_some() && !delete_mode.is_enabled() {
-        delete_mode = DeleteMode::During;
+        delete_mode = DeleteMode::DuringDefault;
     }
 
     // Mirror upstream: --delete requires --recursive or --dirs

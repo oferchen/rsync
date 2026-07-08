@@ -81,7 +81,7 @@ fn builder_enables_delete() {
         .build();
 
     assert!(config.delete());
-    assert_eq!(config.delete_mode(), DeleteMode::During);
+    assert_eq!(config.delete_mode(), DeleteMode::DuringDefault);
 }
 
 #[test]
