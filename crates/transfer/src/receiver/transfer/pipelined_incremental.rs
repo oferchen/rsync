@@ -8,7 +8,7 @@
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
-use logging::PhaseTimer;
+use logging::{PhaseTimer, debug_log};
 use protocol::flist::FileEntry;
 use protocol::stats::DeleteStats;
 
@@ -45,6 +45,9 @@ impl ReceiverContext {
                 | self.flist_io_error,
             ..Default::default()
         };
+        // upstream: receiver.c:653-654 DEBUG_GTE(RECV, 1)
+        debug_log!(Recv, 1, "recv_files({}) starting", file_count);
+
         let mut failed_dirs = crate::receiver::directory::FailedDirectories::new();
         let mut metadata_errors: Vec<(PathBuf, String)> = Vec::new();
 

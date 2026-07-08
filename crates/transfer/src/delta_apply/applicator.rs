@@ -797,6 +797,8 @@ impl<'a> DeltaApplicator<'a> {
         let expected_len = self.checksum_verifier.digest_len();
         let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
         reader.read_exact(&mut expected[..expected_len])?;
+        // upstream: receiver.c:516-517 DEBUG_GTE(DELTASUM, 2)
+        debug_log!(Deltasum, 2, "got file_sum");
 
         let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
         let computed_len = self.checksum_verifier.finalize_into(&mut computed);
@@ -946,6 +948,8 @@ impl<'a> DeltaApplicator<'a> {
         let expected_len = self.checksum_verifier.digest_len();
         let mut expected = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
         reader.read_exact(&mut expected[..expected_len]).await?;
+        // upstream: receiver.c:516-517 DEBUG_GTE(DELTASUM, 2)
+        debug_log!(Deltasum, 2, "got file_sum");
 
         let mut computed = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
         let computed_len = self.checksum_verifier.finalize_into(&mut computed);
@@ -1112,6 +1116,8 @@ pub fn discard_delta_stream<R: Read>(
     // NDX / goodbye. On the discard path there is nothing to verify against.
     let mut sink = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
     reader.read_exact(&mut sink[..checksum_len])?;
+    // upstream: receiver.c:516-517 DEBUG_GTE(DELTASUM, 2)
+    debug_log!(Deltasum, 2, "got file_sum");
 
     debug_log!(Deltasum, 2, "recv delta stream discard complete");
     Ok(())
@@ -1180,6 +1186,8 @@ where
     // NDX / goodbye. On the discard path there is nothing to verify against.
     let mut sink = [0u8; ChecksumVerifier::MAX_DIGEST_LEN];
     reader.read_exact(&mut sink[..checksum_len]).await?;
+    // upstream: receiver.c:516-517 DEBUG_GTE(DELTASUM, 2)
+    debug_log!(Deltasum, 2, "got file_sum");
 
     debug_log!(Deltasum, 2, "recv delta stream discard complete");
     Ok(())

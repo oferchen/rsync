@@ -8,7 +8,7 @@
 use std::fs;
 use std::io::{self, Read, Write};
 
-use logging::{PhaseTimer, info_log};
+use logging::{PhaseTimer, debug_log, info_log};
 use protocol::codec::{MonotonicNdxWriter, NdxCodec, create_ndx_codec};
 use protocol::stats::DeleteStats;
 
@@ -57,6 +57,9 @@ impl ReceiverContext {
             #[cfg(unix)]
             sandbox,
         } = setup;
+
+        // upstream: receiver.c:653-654 DEBUG_GTE(RECV, 1)
+        debug_log!(Recv, 1, "recv_files({}) starting", file_count);
 
         let mut files_transferred = 0;
         let mut bytes_received = 0u64;
@@ -117,6 +120,8 @@ impl ReceiverContext {
             }
 
             let relative_path = file_entry.path();
+            // upstream: receiver.c:708-709 DEBUG_GTE(RECV, 1)
+            debug_log!(Recv, 1, "recv_files({})", relative_path.display());
 
             let file_path = if relative_path.as_os_str() == "." {
                 dest_dir.clone()
