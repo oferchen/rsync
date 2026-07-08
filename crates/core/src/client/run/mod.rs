@@ -838,6 +838,7 @@ impl<'a> LocalCopyOptionsBuilder<'a> {
             .append_verify(config.append_verify())
             .partial(config.partial())
             .force_replacements(config.force_replacements())
+            .list_only(config.list_only())
     }
 
     fn apply_paths_and_backups(
