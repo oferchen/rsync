@@ -120,6 +120,7 @@ pub struct LocalCopyOptionsBuilder {
     pub(super) append: bool,
     pub(super) append_verify: bool,
     pub(super) collect_events: bool,
+    pub(super) list_only: bool,
 
     pub(super) preserve_hard_links: bool,
 
@@ -250,6 +251,7 @@ impl LocalCopyOptionsBuilder {
             append: false,
             append_verify: false,
             collect_events: false,
+            list_only: false,
             preserve_hard_links: false,
             relative_paths: false,
             one_file_system: 0,

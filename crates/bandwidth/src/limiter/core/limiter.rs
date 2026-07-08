@@ -110,6 +110,11 @@ impl BandwidthLimiter {
         self.simulated_elapsed_us = 0;
     }
 
+    /// Caps outstanding debt at the configured burst size, if any.
+    ///
+    /// With no burst configured, debt is left unbounded so long idle periods
+    /// can accumulate arbitrary allowance. When a burst cap is set, this bounds
+    /// the debt (and therefore the maximum single sleep) to `burst` bytes.
     #[inline]
     fn clamp_debt_to_burst(&mut self) {
         if let Some(burst) = self.burst_bytes {
@@ -216,6 +221,9 @@ impl BandwidthLimiter {
         let elapsed_us = end
             .checked_duration_since(start)
             .map_or(0, |duration| duration.as_micros().min(u128::from(u64::MAX)));
+        // A short sleep (the backend woke earlier than requested) leaves debt
+        // unpaid. Carry the un-slept remainder forward as simulated elapsed
+        // time so the next register() credits it and pacing stays on target.
         if sleep_us > elapsed_us {
             self.simulated_elapsed_us = sleep_us - elapsed_us;
         }

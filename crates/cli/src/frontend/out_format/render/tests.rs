@@ -1561,14 +1561,17 @@ fn render_percent_u_upper_shows_uid_zero_for_test_metadata() {
 }
 
 #[test]
-fn render_percent_g_upper_shows_gid_zero_for_test_metadata() {
+fn render_percent_g_upper_shows_default_when_gid_unavailable() {
     let event = make_event(
         ClientEventKind::DataCopied,
         true,
         Some(ClientEntryKind::File),
         LocalCopyChangeSet::new(),
     );
-    assert_eq!(render_format("%G", &event), "0\n");
+    // upstream: log.c:574-576 - `case 'G'` renders the literal "DEFAULT" when
+    // the gid is unavailable (`!gid_ndx || FLAG_SKIP_GROUP`). test_metadata
+    // seeds gid = None, so byte fidelity requires "DEFAULT", not "0".
+    assert_eq!(render_format("%G", &event), "DEFAULT\n");
 }
 
 #[test]
@@ -1591,8 +1594,33 @@ fn render_percent_l_upper_shows_nothing_for_regular_file() {
         Some(ClientEntryKind::File),
         LocalCopyChangeSet::new(),
     );
-    // SymlinkTarget yields None for non-symlinks, so %L renders empty.
+    // upstream: log.c:648-651 - `case 'L'` with no width modifier breaks with
+    // n = "" for a non-link entry, so %L renders empty.
     assert_eq!(render_format("%L", &event), "\n");
+}
+
+#[test]
+fn render_percent_l_upper_with_width_pads_spaces_for_regular_file() {
+    let event = make_event(
+        ClientEventKind::DataCopied,
+        true,
+        Some(ClientEntryKind::File),
+        LocalCopyChangeSet::new(),
+    );
+    // upstream: log.c:648-654 - a width modifier on a non-link entry copies 4
+    // leading spaces then formats the empty target under the width specifier,
+    // emitting `4 + width` spaces so the empty target aligns under the ` -> `
+    // connector column. Here width = 10, so 14 spaces.
+    assert_eq!(
+        render_format("%10L", &event),
+        format!("{}\n", " ".repeat(14))
+    );
+    // Left alignment produces the same run of spaces; the empty target has no
+    // content to bias either way.
+    assert_eq!(
+        render_format("%-10L", &event),
+        format!("{}\n", " ".repeat(14))
+    );
 }
 
 #[test]
@@ -1681,6 +1709,7 @@ fn render_remote_host_with_context_populated() {
         emit_unchanged: false,
         itemize_repeated: false,
         eight_bit_output: false,
+        preserve_links: false,
     };
     assert_eq!(
         render_format_with_context("%h", &event, &context),
@@ -1705,6 +1734,7 @@ fn render_remote_address_with_context_populated() {
         emit_unchanged: false,
         itemize_repeated: false,
         eight_bit_output: false,
+        preserve_links: false,
     };
     assert_eq!(
         render_format_with_context("%a", &event, &context),
@@ -1729,6 +1759,7 @@ fn render_module_name_with_context_populated() {
         emit_unchanged: false,
         itemize_repeated: false,
         eight_bit_output: false,
+        preserve_links: false,
     };
     assert_eq!(render_format_with_context("%m", &event, &context), "data\n");
 }
@@ -1750,6 +1781,7 @@ fn render_module_path_with_context_populated() {
         emit_unchanged: false,
         itemize_repeated: false,
         eight_bit_output: false,
+        preserve_links: false,
     };
     assert_eq!(
         render_format_with_context("%P", &event, &context),
@@ -1774,6 +1806,7 @@ fn render_all_remote_placeholders_with_full_context() {
         emit_unchanged: false,
         itemize_repeated: false,
         eight_bit_output: false,
+        preserve_links: false,
     };
     let rendered = render_format_with_context("%h %a %m %P", &event, &context);
     assert_eq!(rendered, "host addr mod /path\n");
