@@ -318,3 +318,89 @@ fn device_round_trip_protocol_28_29() {
         );
     }
 }
+
+/// A special file between two same-major devices must not reset the carried
+/// rdev_major on the sender. Upstream (flist.c:462-472) transmits specials as
+/// MAKEDEV(rdev_major, 0) without advancing rdev_major, so the trailing device
+/// still earns XMIT_SAME_RDEV_MAJOR and omits its major from the wire. If the
+/// sender wrongly reset the carried major to 0 at the special, the trailing
+/// device would re-transmit its major, diverging byte-for-byte from upstream
+/// on the legacy proto 28-30 device paths.
+#[test]
+fn special_file_does_not_reset_carried_rdev_major() {
+    use super::super::super::read::FileListReader;
+    use std::io::Cursor;
+
+    // A large major (5000) makes the omitted varint span multiple bytes so the
+    // saving dominates the extra XMIT_SAME_RDEV_MAJOR flag byte. Both trailing
+    // devices share the same fifo predecessor, so name-prefix compression is
+    // identical and the only byte delta is the presence of the major.
+    let build = |proto_ver: u8, trailing_major: u32| -> Vec<u8> {
+        let protocol = ProtocolVersion::try_from(proto_ver).unwrap();
+        let mut buf = Vec::new();
+        let mut writer = FileListWriter::new(protocol)
+            .with_preserve_devices(true)
+            .with_preserve_specials(true);
+        writer
+            .write_entry(
+                &mut buf,
+                &FileEntry::new_block_device("sda".into(), 0o660, 5000, 0),
+            )
+            .unwrap();
+        writer
+            .write_entry(&mut buf, &FileEntry::new_fifo("myfifo".into(), 0o644))
+            .unwrap();
+        let before = buf.len();
+        writer
+            .write_entry(
+                &mut buf,
+                &FileEntry::new_block_device("sdc".into(), 0o660, trailing_major, 5),
+            )
+            .unwrap();
+        // Prepend the trailing entry length so callers can measure it.
+        let entry_len = (buf.len() - before) as u8;
+        writer.write_end(&mut buf, None).unwrap();
+        let mut out = vec![entry_len];
+        out.extend_from_slice(&buf);
+        out
+    };
+
+    for proto_ver in [28u8, 30u8] {
+        // Trailing device shares the leading device's major (5000): with the
+        // carried major intact across the fifo it must omit the major.
+        let same = build(proto_ver, 5000);
+        // Trailing device has a different major (5001): the major must be sent.
+        let diff = build(proto_ver, 5001);
+        let same_major_len = same[0];
+        let diff_major_len = diff[0];
+
+        assert!(
+            same_major_len < diff_major_len,
+            "proto {proto_ver}: same-major device after a special must omit its \
+             major (got same={same_major_len} bytes, diff={diff_major_len} bytes)"
+        );
+
+        // Round-trip: the carried major must reconstruct the trailing device
+        // correctly through the intervening special.
+        let protocol = ProtocolVersion::try_from(proto_ver).unwrap();
+        let mut cursor = Cursor::new(&same[1..]);
+        let mut reader = FileListReader::new(protocol)
+            .with_preserve_devices(true)
+            .with_preserve_specials(true);
+        let dev1 = reader.read_entry(&mut cursor).unwrap().unwrap();
+        let fifo = reader.read_entry(&mut cursor).unwrap().unwrap();
+        let dev2 = reader.read_entry(&mut cursor).unwrap().unwrap();
+        assert_eq!(
+            dev1.rdev_major(),
+            Some(5000),
+            "proto {proto_ver} dev1 major"
+        );
+        assert!(fifo.is_special(), "proto {proto_ver} fifo is special");
+        assert_eq!(
+            dev2.rdev_major(),
+            Some(5000),
+            "proto {proto_ver} dev2 major"
+        );
+        assert_eq!(dev2.rdev_minor(), Some(5), "proto {proto_ver} dev2 minor");
+    }
+}

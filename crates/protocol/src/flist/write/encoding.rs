@@ -180,7 +180,15 @@ impl FileListWriter {
             }
         }
 
-        self.state.update_rdev_major(major);
+        // upstream: flist.c:453-458 advances the carried rdev_major only for
+        // real devices. Special files (flist.c:462-472) transmit
+        // MAKEDEV(rdev_major, 0) WITHOUT touching rdev_major, so a following
+        // device with the same major still earns XMIT_SAME_RDEV_MAJOR. Updating
+        // the state for a special (major == 0 here) would wrongly reset the
+        // carried major and force the next device to re-send it.
+        if is_device {
+            self.state.update_rdev_major(major);
+        }
 
         Ok(())
     }
