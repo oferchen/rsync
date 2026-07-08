@@ -16,7 +16,7 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use logging::info_log;
+use logging::{debug_log, info_log};
 use protocol::codec::{MonotonicNdxWriter, NdxCodec, create_ndx_codec};
 use protocol::flist::FileEntry;
 
@@ -305,6 +305,9 @@ impl ReceiverContext {
                 flushed_pending = flushed_pending.saturating_sub(1);
                 let (file_idx, file_path, file_entry, base_iflags) =
                     pending_files_info.pop_front().expect("pipeline not empty");
+
+                // upstream: receiver.c:708-709 DEBUG_GTE(RECV, 1)
+                debug_log!(Recv, 1, "recv_files({})", file_entry.path().display());
 
                 let response_ctx = ResponseContext {
                     config: &request_config,
