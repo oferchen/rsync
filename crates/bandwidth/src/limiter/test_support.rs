@@ -407,7 +407,6 @@ mod tests {
     #[test]
     fn recorded_sleep_session_clear_empties_buffer() {
         let mut session = recorded_sleep_session();
-        // Add some durations
         append_recorded_sleeps(vec![Duration::from_secs(1), Duration::from_secs(2)]);
         session.clear();
         assert!(session.is_empty());
@@ -602,7 +601,6 @@ mod tests {
     #[test]
     fn recorded_sleep_session_default() {
         let session: RecordedSleepSession = Default::default();
-        // Should be able to use the session
         let _ = session.is_empty();
     }
 
