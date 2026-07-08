@@ -25,6 +25,9 @@ thiserror = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 fast_io = { path = "../fast_io", default-features = false }
+# Safe wrappers over the libc mknod/mkfifo symbols for special-file creation.
+# Symbol-backed (not raw syscalls), so fakeroot's LD_PRELOAD can intercept them.
+nix = { workspace = true, features = ["fs"] }
 xattr = { workspace = true, optional = true }
 
 # Cross-platform ACL support (Linux, macOS, FreeBSD)
