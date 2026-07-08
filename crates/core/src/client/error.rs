@@ -237,6 +237,11 @@ pub(crate) fn map_local_copy_error(error: LocalCopyError) -> ClientError {
                 rsync_error!(code.as_i32(), "stopping at requested limit").with_role(Role::Client);
             ClientError::with_code(code, message)
         }
+        LocalCopyErrorKind::FilterSyntax { message } => {
+            let code = ExitCode::Syntax;
+            let msg = rsync_error!(code.as_i32(), "{}", message).with_role(Role::Client);
+            ClientError::with_code(code, msg)
+        }
     }
 }
 
