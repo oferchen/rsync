@@ -131,29 +131,25 @@ fn apply_placeholder_mode(_open_options: &mut fs::OpenOptions) {
     ))
 ))]
 fn create_fifo_inner(destination: &Path, metadata: &fs::Metadata) -> Result<(), MetadataError> {
-    use rustix::fs::{CWD, makedev, mknodat};
-    use rustix::fs::{FileType, Mode};
+    use nix::sys::stat::{Mode, SFlag, makedev, mknod};
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
-    let node_type = if metadata.file_type().is_socket() {
-        FileType::Socket
+    let is_socket = metadata.file_type().is_socket();
+    let (kind, context) = if is_socket {
+        // Linux defines MKNOD_CREATES_SOCKETS, so upstream materialises socket
+        // nodes with mknod(S_IFSOCK) here (the Apple path binds instead).
+        (SFlag::S_IFSOCK, "create socket")
     } else {
-        FileType::Fifo
-    };
-
-    let context = if matches!(node_type, FileType::Socket) {
-        "create socket"
-    } else {
-        "create fifo"
+        (SFlag::S_IFIFO, "create fifo")
     };
 
     let mode_bits = permissions_mode(context, destination, metadata.permissions().mode() & 0o777)?;
-    let mode = Mode::from_bits_truncate(mode_bits.into());
+    let perm = Mode::from_bits_truncate(mode_bits.into());
 
-    mknodat(CWD, destination, node_type, mode, makedev(0, 0))
-        .map_err(|error| MetadataError::new(context, destination, io::Error::from(error)))?;
-
-    Ok(())
+    // `nix::sys::stat::mknod` wraps the libc `mknod` symbol, so an LD_PRELOAD
+    // interposer such as fakeroot can fake CAP_MKNOD; see mknod note below.
+    mknod(destination, kind, perm, makedev(0, 0))
+        .map_err(|error| MetadataError::new(context, destination, io::Error::from(error)))
 }
 
 #[cfg(all(
@@ -169,15 +165,14 @@ fn create_device_node_inner(
     destination: &Path,
     metadata: &fs::Metadata,
 ) -> Result<(), MetadataError> {
-    use rustix::fs::{CWD, major, minor};
-    use rustix::fs::{Dev, FileType, Mode, makedev, mknodat};
+    use nix::sys::stat::{Mode, SFlag, mknod};
     use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
 
     let file_type = metadata.file_type();
-    let node_type = if file_type.is_char_device() {
-        FileType::CharacterDevice
+    let kind = if file_type.is_char_device() {
+        SFlag::S_IFCHR
     } else if file_type.is_block_device() {
-        FileType::BlockDevice
+        SFlag::S_IFBLK
     } else {
         return Err(MetadataError::new(
             "create device",
@@ -194,15 +189,31 @@ fn create_device_node_inner(
         destination,
         metadata.permissions().mode() & 0o777,
     )?;
-    let mode = Mode::from_bits_truncate(mode_bits.into());
-    let raw: Dev = metadata.rdev();
-    let device = makedev(major(raw), minor(raw));
+    let perm = Mode::from_bits_truncate(mode_bits.into());
 
-    mknodat(CWD, destination, node_type, mode, device).map_err(|error| {
-        MetadataError::new("create device", destination, io::Error::from(error))
-    })?;
+    // The source rdev already encodes major/minor for this platform, so it can
+    // be handed straight to mknod (matching upstream do_mknod, which forwards
+    // the device word verbatim). try_into guards the rare targets where dev_t
+    // is narrower than the u64 returned by MetadataExt::rdev.
+    // try_into guards narrow-dev_t targets; on Linux dev_t is u64 so the
+    // conversion is a no-op there, which clippy would otherwise flag.
+    #[allow(clippy::useless_conversion)]
+    let device: libc::dev_t = metadata
+        .rdev()
+        .try_into()
+        .map_err(|_| invalid_device_error(destination))?;
 
-    Ok(())
+    // `nix::sys::stat::mknod` calls the libc `mknod` symbol rather than issuing
+    // the raw `mknod`/`mknodat` syscall that rustix emits. This matters under
+    // `fakeroot`/`fakeroot-ng`, which fake privileged operations by
+    // `LD_PRELOAD`-interposing the libc `mknod` symbol: a raw syscall is never
+    // intercepted, so the real kernel rejects it with `EPERM` (the emulated
+    // root uid holds no genuine `CAP_MKNOD`). Upstream `syscall.c:do_mknod()`
+    // likewise calls the libc `mknod()` function, which fakeroot fakes to
+    // success, restoring compatibility for unprivileged rootfs/package builds.
+    // upstream: syscall.c:do_mknod() - libc mknod(), interceptable by fakeroot
+    mknod(destination, kind, perm, device)
+        .map_err(|error| MetadataError::new("create device", destination, io::Error::from(error)))
 }
 
 #[cfg(all(
@@ -352,6 +363,9 @@ fn create_device_node_inner(
     // As above, `libc::mode_t` is a `u16` alias on Apple targets,
     // so this is an infallible cast and cannot overflow.
     let permissions: libc::mode_t = perm_bits as libc::mode_t;
+    // try_into guards narrow-dev_t targets; on Linux dev_t is u64 so the
+    // conversion is a no-op there, which clippy would otherwise flag.
+    #[allow(clippy::useless_conversion)]
     let device: libc::dev_t = metadata
         .rdev()
         .try_into()
@@ -418,15 +432,7 @@ fn permissions_mode(
     u16::try_from(masked).map_err(|_| invalid_mode_error(context, destination))
 }
 
-#[cfg(all(
-    unix,
-    any(
-        target_os = "ios",
-        target_os = "macos",
-        target_os = "tvos",
-        target_os = "watchos"
-    )
-))]
+#[cfg(unix)]
 fn invalid_device_error(destination: &Path) -> MetadataError {
     MetadataError::new(
         "create device",
@@ -572,6 +578,49 @@ mod tests {
         assert_eq!(error.context(), "create device");
         assert_eq!(error.path(), device_path.as_path());
         assert_eq!(error.source_error().kind(), io::ErrorKind::InvalidInput);
+    }
+
+    /// Device creation must route through the libc `mknod` symbol (so an
+    /// LD_PRELOAD interposer such as fakeroot can fake `CAP_MKNOD`), not a raw
+    /// syscall. Using `/dev/null`'s char-device metadata, the call either
+    /// succeeds (root or under fakeroot) or fails with `PermissionDenied` from
+    /// the real kernel when unprivileged. Either outcome proves the syscall was
+    /// actually attempted via libc and its result surfaced rather than swallowed
+    /// - the raw-syscall bug always failed with EPERM even under fakeroot.
+    // upstream: syscall.c:do_mknod() - libc mknod(), interceptable by fakeroot
+    #[cfg(unix)]
+    #[test]
+    fn create_device_node_issues_libc_mknod() {
+        use std::os::unix::fs::FileTypeExt;
+
+        let source = Path::new("/dev/null");
+        let metadata = match fs::symlink_metadata(source) {
+            Ok(metadata) if metadata.file_type().is_char_device() => metadata,
+            // No usable char device on this target (e.g. sandbox); skip.
+            _ => return,
+        };
+
+        let temp = tempdir().expect("create tempdir");
+        let dest = temp.path().join("null");
+
+        match create_device_node(&dest, &metadata) {
+            Ok(()) => {
+                let created = fs::symlink_metadata(&dest).expect("device metadata");
+                assert!(
+                    created.file_type().is_char_device(),
+                    "destination must be a char device node"
+                );
+            }
+            Err(error) => {
+                assert_eq!(error.context(), "create device");
+                assert_eq!(
+                    error.source_error().kind(),
+                    io::ErrorKind::PermissionDenied,
+                    "unprivileged mknod must surface the kernel's EPERM"
+                );
+                assert!(!dest.exists(), "failed mknod must not leave a node behind");
+            }
+        }
     }
 
     #[cfg(unix)]
