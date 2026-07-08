@@ -148,16 +148,16 @@ mod include_rules {
         assert!(!rules[0].applies_to_receiver());
     }
 
+    // upstream: exclude.c:1279-1283 - `w` (word-split) is valid only on a
+    // merge-file rule; on an include rule upstream reports "invalid modifier
+    // 'w'". oc-rsync mirrors the rejection.
     #[test]
-    fn include_with_word_split() {
-        let rules = parse_rules("+w *.rs *.toml *.md", Path::new("test")).unwrap();
-        assert_eq!(rules.len(), 3);
-        assert_eq!(rules[0].pattern(), "*.rs");
-        assert_eq!(rules[1].pattern(), "*.toml");
-        assert_eq!(rules[2].pattern(), "*.md");
-        for rule in &rules {
-            assert_eq!(rule.action(), FilterAction::Include);
-        }
+    fn include_with_word_split_rejected() {
+        let err = parse_rules("+w *.rs *.toml *.md", Path::new("test")).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid modifier 'w'"),
+            "unexpected error: {err}"
+        );
     }
 }
 
@@ -275,33 +275,35 @@ mod exclude_rules {
         );
     }
 
+    // upstream: exclude.c:1261-1264 / 1279-1283 - `n` and `w` are valid only
+    // on a merge-file rule (FILTRULE_MERGE_FILE). On an ordinary exclude rule
+    // upstream jumps to `invalid`; oc-rsync mirrors that syntax error rather
+    // than silently accepting the modifier.
     #[test]
-    fn exclude_with_no_inherit_modifier() {
-        let rules = parse_rules("-n *.tmp", Path::new("test")).unwrap();
-        assert_eq!(rules.len(), 1);
-        assert!(rules[0].is_no_inherit());
+    fn exclude_with_no_inherit_modifier_rejected() {
+        let err = parse_rules("-n *.tmp", Path::new("test")).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid modifier 'n'"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
-    fn exclude_with_word_split() {
-        let rules = parse_rules("-w *.tmp *.bak *.swp", Path::new("test")).unwrap();
-        assert_eq!(rules.len(), 3);
-        assert_eq!(rules[0].pattern(), "*.tmp");
-        assert_eq!(rules[1].pattern(), "*.bak");
-        assert_eq!(rules[2].pattern(), "*.swp");
-        for rule in &rules {
-            assert_eq!(rule.action(), FilterAction::Exclude);
-        }
+    fn exclude_with_word_split_rejected() {
+        let err = parse_rules("-w *.tmp *.bak *.swp", Path::new("test")).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid modifier 'w'"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
-    fn exclude_with_combined_modifiers_and_word_split() {
-        let rules = parse_rules("-!pw *.o *.obj", Path::new("test")).unwrap();
-        assert_eq!(rules.len(), 2);
-        for rule in &rules {
-            assert!(rule.is_negated());
-            assert!(rule.is_perishable());
-        }
+    fn exclude_with_combined_modifiers_and_word_split_rejected() {
+        let err = parse_rules("-!pw *.o *.obj", Path::new("test")).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid modifier 'w'"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]

@@ -380,7 +380,7 @@ fn rule_modifiers_default() {
 
 #[test]
 fn parse_modifiers_empty_string() {
-    let (mods, pattern) = parse_modifiers("", false, "", Path::new("test"), 1).unwrap();
+    let (mods, pattern) = parse_modifiers("", false, false, "", Path::new("test"), 1).unwrap();
     assert!(!mods.negate);
     assert_eq!(pattern, "");
 }
@@ -388,17 +388,45 @@ fn parse_modifiers_empty_string() {
 #[test]
 fn parse_modifiers_space_only() {
     let (mods, pattern) =
-        parse_modifiers(" pattern", false, " pattern", Path::new("test"), 1).unwrap();
+        parse_modifiers(" pattern", false, false, " pattern", Path::new("test"), 1).unwrap();
     assert!(!mods.negate);
     assert_eq!(pattern, "pattern");
 }
 
+/// The merge-only modifiers (`e`, `n`, `w`, plus `C`) parse together on a
+/// merge-file rule. `!` is excluded because upstream rejects negation on a
+/// merge rule (exclude.c:1241-1246); it is covered by the non-merge test.
 #[test]
 fn parse_modifiers_all_flags() {
     let (mods, pattern) = parse_modifiers(
-        "!psrxenC pattern",
+        "psrxenwC pattern",
+        true,
         false,
-        "-!psrxenC pattern",
+        ":psrxenwC pattern",
+        Path::new("test"),
+        1,
+    )
+    .unwrap();
+    assert!(mods.perishable);
+    assert!(mods.sender_only);
+    assert!(mods.receiver_only);
+    assert!(mods.xattr_only);
+    assert!(mods.exclude_self);
+    assert!(mods.no_inherit);
+    assert!(mods.word_split);
+    assert!(mods.cvs_mode);
+    assert_eq!(pattern, "pattern");
+}
+
+/// The non-merge modifiers (`!`, `p`, `s`, `r`, `x`, `C`) parse together on
+/// an ordinary rule; the merge-only `e`/`n`/`w` are rejected separately.
+#[test]
+fn parse_modifiers_non_merge_flags() {
+    let (mods, pattern) = parse_modifiers(
+        "!psrxC pattern",
+        false,
+        false,
+        "-!psrxC pattern",
         Path::new("test"),
         1,
     )
@@ -408,8 +436,6 @@ fn parse_modifiers_all_flags() {
     assert!(mods.sender_only);
     assert!(mods.receiver_only);
     assert!(mods.xattr_only);
-    assert!(mods.exclude_self);
-    assert!(mods.no_inherit);
     assert!(mods.cvs_mode);
     assert_eq!(pattern, "pattern");
 }
@@ -460,51 +486,77 @@ fn parse_exclude_self_modifier_accepted_on_merge_rule() {
     assert_eq!(rules[0].pattern(), "rules.txt");
 }
 
+/// `n` (FILTRULE_NO_INHERIT) is valid only on a merge-file rule. On an
+/// ordinary exclude/include rule upstream jumps to `invalid`
+/// (exclude.c:1261-1264: `case 'n': if (!(rule->rflags &
+/// FILTRULE_MERGE_FILE)) goto invalid;`). oc-rsync previously accepted
+/// `-n *.tmp` and stored a no-inherit flag no path honoured, so a malformed
+/// rule silently diverged from upstream's syntax error.
 #[test]
-fn parse_no_inherit_modifier() {
-    let rules = parse_rules("-n *.tmp", Path::new("test")).unwrap();
+fn parse_no_inherit_modifier_rejected_on_non_merge_rule() {
+    let err = parse_rules("-n *.tmp", Path::new("test")).unwrap_err();
+    assert!(
+        err.to_string().contains("invalid modifier 'n'"),
+        "unexpected error: {err}"
+    );
+}
+
+/// `n` parses on a dir-merge rule, where it maps to FILTRULE_NO_INHERIT.
+#[test]
+fn parse_no_inherit_modifier_accepted_on_dir_merge_rule() {
+    let rules = parse_rules(":n .rsync-filter", Path::new("test")).unwrap();
     assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].action(), FilterAction::DirMerge);
     assert!(rules[0].is_no_inherit());
 }
 
+/// `w` (FILTRULE_WORD_SPLIT) is valid only on a merge-file rule
+/// (exclude.c:1279-1283: `case 'w': if (!(rule->rflags &
+/// FILTRULE_MERGE_FILE)) goto invalid;`). oc-rsync previously expanded
+/// `-w foo bar baz` into three excludes, but upstream rejects `w` on an
+/// exclude rule as a syntax error; word-split applies only to merge-file
+/// bodies. Verified: `rsync -rn --filter='-w foo bar baz'` exits 1 with
+/// "invalid modifier 'w'".
 #[test]
-fn parse_word_split_modifier() {
-    let rules = parse_rules("-w foo bar baz", Path::new("test")).unwrap();
-    assert_eq!(rules.len(), 3);
-    assert_eq!(rules[0].pattern(), "foo");
-    assert_eq!(rules[1].pattern(), "bar");
-    assert_eq!(rules[2].pattern(), "baz");
-    for rule in &rules {
-        assert_eq!(rule.action(), FilterAction::Exclude);
-    }
+fn parse_word_split_modifier_rejected_on_non_merge_rule() {
+    let err = parse_rules("-w foo bar baz", Path::new("test")).unwrap_err();
+    assert!(
+        err.to_string().contains("invalid modifier 'w'"),
+        "unexpected error: {err}"
+    );
 }
 
+/// `w` on an include rule is equally invalid.
 #[test]
-fn parse_word_split_with_other_modifiers() {
-    let rules = parse_rules("-!pw one two", Path::new("test")).unwrap();
-    assert_eq!(rules.len(), 2);
-    assert_eq!(rules[0].pattern(), "one");
-    assert_eq!(rules[1].pattern(), "two");
-    for rule in &rules {
-        assert!(rule.is_negated());
-        assert!(rule.is_perishable());
-    }
+fn parse_word_split_include_rejected_on_non_merge_rule() {
+    let err = parse_rules("+w *.rs *.toml", Path::new("test")).unwrap_err();
+    assert!(
+        err.to_string().contains("invalid modifier 'w'"),
+        "unexpected error: {err}"
+    );
 }
 
+/// `w` parses on a dir-merge rule (FILTRULE_WORD_SPLIT), the only context
+/// upstream permits it.
 #[test]
-fn parse_word_split_include() {
-    let rules = parse_rules("+w *.rs *.toml", Path::new("test")).unwrap();
-    assert_eq!(rules.len(), 2);
-    assert_eq!(rules[0].action(), FilterAction::Include);
-    assert_eq!(rules[1].action(), FilterAction::Include);
-    assert_eq!(rules[0].pattern(), "*.rs");
-    assert_eq!(rules[1].pattern(), "*.toml");
+fn parse_word_split_modifier_accepted_on_dir_merge_rule() {
+    let rules = parse_rules(":w .rsync-filter", Path::new("test")).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].action(), FilterAction::DirMerge);
+    assert_eq!(rules[0].pattern(), ".rsync-filter");
 }
 
 #[test]
 fn parse_cvs_mode_modifier() {
-    let (mods, pattern) =
-        parse_modifiers("C pattern", false, "-C pattern", Path::new("test"), 1).unwrap();
+    let (mods, pattern) = parse_modifiers(
+        "C pattern",
+        false,
+        false,
+        "-C pattern",
+        Path::new("test"),
+        1,
+    )
+    .unwrap();
     assert!(mods.cvs_mode);
     assert_eq!(pattern, "pattern");
 }

@@ -23,12 +23,14 @@
 //! - `r` - Receiver-side only
 //! - `x` - Xattr filtering only
 //! - `e` - Exclude-self (merge rules only: exclude the merge file's own name)
-//! - `n` - No-inherit (for merge rules, don't inherit parent rules)
-//! - `w` - Word-split (split pattern on whitespace into multiple rules)
+//! - `n` - No-inherit (merge rules only: don't inherit parent rules)
+//! - `w` - Word-split (merge rules only: split the merge file at whitespace)
 //! - `C` - CVS mode (add CVS exclusion patterns)
 //!
+//! The `e`, `n`, and `w` modifiers are valid only on a merge / dir-merge rule
+//! (upstream `FILTRULE_MERGE_FILE`); on any other rule they are a syntax error.
+//!
 //! Example: `-!p *.tmp` excludes files NOT matching `*.tmp`, marked perishable.
-//! Example: `-w foo bar baz` creates three exclude rules for "foo", "bar", "baz".
 //!
 //! Lines starting with `#` or `;` are comments. Empty lines are ignored.
 //!
