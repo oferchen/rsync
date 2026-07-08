@@ -68,6 +68,7 @@ pub(crate) fn emit_transfer_summary(
                 show_atimes,
                 show_crtimes,
                 eight_bit_output,
+                out_format_context.preserve_links(),
             )?;
             wrote_listing = true;
         }
@@ -247,6 +248,7 @@ fn format_list_time_column(time: Option<std::time::SystemTime>, blank: bool) -> 
     format!("{value:>width$}")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_list_only<W: Write + ?Sized>(
     events: &[ClientEvent],
     stdout: &mut W,
@@ -254,6 +256,7 @@ pub(crate) fn emit_list_only<W: Write + ?Sized>(
     show_atimes: bool,
     show_crtimes: bool,
     eight_bit_output: bool,
+    preserve_links: bool,
 ) -> io::Result<()> {
     for event in events {
         if !list_only_event(event.kind()) {
@@ -278,7 +281,12 @@ pub(crate) fn emit_list_only<W: Write + ?Sized>(
                 String::new()
             };
             let mut rendered = escape_path(event.relative_path(), eight_bit_output);
-            if metadata.kind().is_symlink()
+            // upstream: generator.c:1183 list_file_entry() - the ` -> <target>`
+            // arrow is emitted only when `preserve_links && S_ISLNK(f->mode)`.
+            // Without `--links`/`-l` the symlink is still listed (with its
+            // target-length size) but no target string.
+            if preserve_links
+                && metadata.kind().is_symlink()
                 && let Some(target) = metadata.symlink_target()
             {
                 rendered.push_str(" -> ");

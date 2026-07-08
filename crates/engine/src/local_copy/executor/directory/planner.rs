@@ -138,8 +138,14 @@ fn decide_entry_action(
     // (i.e., --copy-links did NOT resolve it to the referent).  When
     // --copy-links is active and the target is a FIFO or device, we must
     // fall through to the FIFO / device branches below.
+    // upstream: generator.c:1155 list_file_entry() lists every flist entry, so
+    // `--list-only` records symlinks, FIFOs, and devices (dry-run only reports
+    // them) even without `--links`/`--specials`/`--devices`; a real transfer
+    // without those flags still skips the non-regular entry.
+    let list_only = context.list_only_enabled();
+
     if entry_type.is_symlink() && effective_type.is_symlink() {
-        if context.links_enabled() {
+        if context.links_enabled() || list_only {
             return Ok(EntryAction::CopySymlink);
         }
         *keep_name = false;
@@ -147,7 +153,7 @@ fn decide_entry_action(
     }
 
     if is_fifo(effective_type) {
-        if context.specials_enabled() {
+        if context.specials_enabled() || list_only {
             return Ok(EntryAction::CopyFifo);
         }
         *keep_name = false;
@@ -158,7 +164,7 @@ fn decide_entry_action(
         if context.copy_devices_as_files_enabled() {
             return Ok(EntryAction::CopyDeviceAsFile);
         }
-        if context.devices_enabled() {
+        if context.devices_enabled() || list_only {
             return Ok(EntryAction::CopyDevice);
         }
         *keep_name = false;

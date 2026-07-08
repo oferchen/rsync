@@ -1709,6 +1709,7 @@ fn render_remote_host_with_context_populated() {
         emit_unchanged: false,
         itemize_repeated: false,
         eight_bit_output: false,
+        preserve_links: false,
     };
     assert_eq!(
         render_format_with_context("%h", &event, &context),
@@ -1733,6 +1734,7 @@ fn render_remote_address_with_context_populated() {
         emit_unchanged: false,
         itemize_repeated: false,
         eight_bit_output: false,
+        preserve_links: false,
     };
     assert_eq!(
         render_format_with_context("%a", &event, &context),
@@ -1757,6 +1759,7 @@ fn render_module_name_with_context_populated() {
         emit_unchanged: false,
         itemize_repeated: false,
         eight_bit_output: false,
+        preserve_links: false,
     };
     assert_eq!(render_format_with_context("%m", &event, &context), "data\n");
 }
@@ -1778,6 +1781,7 @@ fn render_module_path_with_context_populated() {
         emit_unchanged: false,
         itemize_repeated: false,
         eight_bit_output: false,
+        preserve_links: false,
     };
     assert_eq!(
         render_format_with_context("%P", &event, &context),
@@ -1802,6 +1806,7 @@ fn render_all_remote_placeholders_with_full_context() {
         emit_unchanged: false,
         itemize_repeated: false,
         eight_bit_output: false,
+        preserve_links: false,
     };
     let rendered = render_format_with_context("%h %a %m %P", &event, &context);
     assert_eq!(rendered, "host addr mod /path\n");

@@ -223,7 +223,10 @@ pub(super) fn handle_symlink_copy(
     destination_behaves_like_directory: bool,
     prefer_root_destination: bool,
 ) -> Result<(), LocalCopyError> {
-    if context.links_enabled() {
+    // upstream: generator.c:1155 list_file_entry() lists every flist entry,
+    // so `--list-only` must record the symlink (dry-run only reports it) even
+    // when `--links` is off; a real transfer without `--links` still skips it.
+    if context.links_enabled() || context.list_only_enabled() {
         let target = compute_special_target_path(
             destination_path,
             destination_base,
@@ -263,7 +266,10 @@ pub(super) fn handle_fifo_copy(
     destination_behaves_like_directory: bool,
     prefer_root_destination: bool,
 ) -> Result<bool, LocalCopyError> {
-    if !context.specials_enabled() {
+    // upstream: generator.c:1155 list_file_entry() lists FIFOs/sockets in
+    // `--list-only` output regardless of `--specials`; a real transfer without
+    // `--specials` still skips them.
+    if !context.specials_enabled() && !context.list_only_enabled() {
         context.record_skipped_non_regular(record_path);
         return Ok(true);
     }
@@ -316,7 +322,10 @@ pub(super) fn handle_device_copy(
 
     if context.copy_devices_as_files_enabled() {
         let _ = copy_file(context, source_path, &target, metadata, record_path)?;
-    } else if !context.devices_enabled() {
+    } else if !context.devices_enabled() && !context.list_only_enabled() {
+        // upstream: generator.c:1155 list_file_entry() lists devices in
+        // `--list-only` output regardless of `--devices`; a real transfer
+        // without `--devices` still skips them.
         context.record_skipped_non_regular(record_path);
         return Ok(true);
     } else {

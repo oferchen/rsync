@@ -36,22 +36,27 @@ impl LocalCopyFileKind {
         if file_type.is_file() {
             return Self::File;
         }
-        if is_fifo(file_type) {
-            return Self::Fifo;
-        }
+        // Sockets and devices must be classified before the `is_fifo` helper,
+        // which deliberately treats sockets as FIFOs for CopyFifo routing
+        // (support.rs). Distinguishing the kind here keeps `--list-only`
+        // permission strings faithful to upstream (`s` for sockets, `c`/`b`
+        // for devices) rather than collapsing them to `p`.
         #[cfg(unix)]
         {
             use std::os::unix::fs::FileTypeExt;
 
+            if file_type.is_socket() {
+                return Self::Socket;
+            }
             if file_type.is_char_device() {
                 return Self::CharDevice;
             }
             if file_type.is_block_device() {
                 return Self::BlockDevice;
             }
-            if file_type.is_socket() {
-                return Self::Socket;
-            }
+        }
+        if is_fifo(file_type) {
+            return Self::Fifo;
         }
         Self::Other
     }

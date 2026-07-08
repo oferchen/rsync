@@ -571,6 +571,204 @@ fn list_only_shows_device_nodes_when_enabled() {
     assert!(!collector.records.is_empty());
 }
 
+/// upstream: generator.c:1155 list_file_entry() lists every flist entry, so
+/// `--list-only` must record a symlink even without `--links`; a real transfer
+/// without `--links` skips it. This encodes WHY the two modes differ: listing
+/// enumerates the flist, transfer applies the generator's skip logic.
+#[cfg(unix)]
+#[test]
+fn list_only_lists_symlink_without_links_flag() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    let dest = temp.path().join("dest");
+
+    fs::create_dir(&source).expect("create source");
+    fs::create_dir(&dest).expect("create dest");
+
+    fs::write(source.join("target.txt"), b"target").expect("write target");
+    symlink("target.txt", source.join("link.txt")).expect("create symlink");
+
+    let mut source_operand = source.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR_STR);
+
+    let operands = vec![source_operand, dest.into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let mut collector = RecordCollector::new();
+
+    // list_only is set but links is NOT: without list_only this symlink is
+    // skipped as non-regular.
+    plan.execute_with_options_and_handler(
+        LocalCopyExecution::DryRun,
+        LocalCopyOptions::default().recursive(true).list_only(true),
+        Some(&mut collector),
+    )
+    .expect("dry run succeeds");
+
+    let link_record = collector
+        .records
+        .iter()
+        .find(|r| r.relative_path().to_string_lossy() == "link.txt")
+        .expect("symlink must be listed in list-only mode");
+
+    assert_eq!(link_record.action(), &LocalCopyAction::SymlinkCopied);
+    let metadata = link_record.metadata().expect("metadata present");
+    assert_eq!(metadata.kind(), LocalCopyFileKind::Symlink);
+    assert_eq!(
+        metadata
+            .symlink_target()
+            .expect("symlink target captured")
+            .to_string_lossy(),
+        "target.txt"
+    );
+}
+
+/// upstream: generator.c:1155 list_file_entry() lists FIFOs regardless of
+/// `--specials`. `--list-only` records the FIFO; a real transfer without
+/// `--specials` skips it.
+#[cfg(unix)]
+#[test]
+fn list_only_lists_fifo_without_specials_flag() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    let dest = temp.path().join("dest");
+
+    fs::create_dir(&source).expect("create source");
+    fs::create_dir(&dest).expect("create dest");
+
+    mkfifo_for_tests(&source.join("pipe"), 0o644).expect("mkfifo");
+
+    let mut source_operand = source.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR_STR);
+
+    let operands = vec![source_operand, dest.into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let mut collector = RecordCollector::new();
+
+    plan.execute_with_options_and_handler(
+        LocalCopyExecution::DryRun,
+        LocalCopyOptions::default().recursive(true).list_only(true),
+        Some(&mut collector),
+    )
+    .expect("dry run succeeds");
+
+    let fifo_record = collector
+        .records
+        .iter()
+        .find(|r| r.relative_path().to_string_lossy() == "pipe")
+        .expect("FIFO must be listed in list-only mode");
+
+    assert_eq!(fifo_record.action(), &LocalCopyAction::FifoCopied);
+    assert_eq!(
+        fifo_record.metadata().expect("metadata present").kind(),
+        LocalCopyFileKind::Fifo
+    );
+}
+
+/// A socket must classify as `Socket`, not `Fifo`, so `--list-only` renders it
+/// with the `s` permission char (upstream permstring). The `is_fifo` routing
+/// helper deliberately treats sockets as FIFOs for CopyFifo dispatch, so the
+/// kind derivation must distinguish them independently.
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "macos",
+        target_os = "ios",
+        target_os = "tvos",
+        target_os = "watchos"
+    ))
+))]
+#[test]
+fn list_only_reports_socket_kind_not_fifo() {
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    let dest = temp.path().join("dest");
+
+    fs::create_dir(&source).expect("create source");
+    fs::create_dir(&dest).expect("create dest");
+
+    mksocket_for_tests(&source.join("sock")).expect("mksocket");
+
+    let mut source_operand = source.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR_STR);
+
+    let operands = vec![source_operand, dest.into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let mut collector = RecordCollector::new();
+
+    plan.execute_with_options_and_handler(
+        LocalCopyExecution::DryRun,
+        LocalCopyOptions::default().recursive(true).list_only(true),
+        Some(&mut collector),
+    )
+    .expect("dry run succeeds");
+
+    let sock_record = collector
+        .records
+        .iter()
+        .find(|r| r.relative_path().to_string_lossy() == "sock")
+        .expect("socket must be listed in list-only mode");
+
+    assert_eq!(
+        sock_record.metadata().expect("metadata present").kind(),
+        LocalCopyFileKind::Socket,
+        "socket must not collapse to Fifo kind"
+    );
+}
+
+/// A normal (non-list-only) transfer without `--links`/`--specials` must still
+/// skip non-regular entries as upstream's generator does, guarding against the
+/// list-only relaxation leaking into real transfers.
+#[cfg(unix)]
+#[test]
+fn transfer_without_list_only_skips_symlink_and_fifo() {
+    use std::os::unix::fs::symlink;
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    let dest = temp.path().join("dest");
+
+    fs::create_dir(&source).expect("create source");
+    fs::create_dir(&dest).expect("create dest");
+
+    fs::write(source.join("target.txt"), b"target").expect("write target");
+    symlink("target.txt", source.join("link.txt")).expect("create symlink");
+    mkfifo_for_tests(&source.join("pipe"), 0o644).expect("mkfifo");
+
+    let mut source_operand = source.into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR_STR);
+
+    let operands = vec![source_operand, dest.into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let mut collector = RecordCollector::new();
+
+    // Default options: no list_only, no links, no specials.
+    plan.execute_with_options_and_handler(
+        LocalCopyExecution::DryRun,
+        LocalCopyOptions::default().recursive(true),
+        Some(&mut collector),
+    )
+    .expect("dry run succeeds");
+
+    for name in ["link.txt", "pipe"] {
+        let record = collector
+            .records
+            .iter()
+            .find(|r| r.relative_path().to_string_lossy() == name)
+            .unwrap_or_else(|| panic!("{name} record present"));
+        assert_eq!(
+            record.action(),
+            &LocalCopyAction::SkippedNonRegular,
+            "{name} must be skipped in a non-list-only transfer"
+        );
+    }
+}
+
 #[test]
 fn list_only_handles_size_zero_files() {
     let temp = tempdir().expect("tempdir");

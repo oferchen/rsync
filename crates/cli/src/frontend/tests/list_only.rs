@@ -1403,6 +1403,79 @@ fn list_only_mixed_file_types_in_single_listing() {
 /// entry types. Both fields are right-justified in a width of `1 +
 /// strlen(timestamp)` (20 for the 19-char "YYYY/MM/DD HH:MM:SS" form), so a
 /// value carries one leading space and a blank fills the whole column.
+/// upstream: generator.c:1183 list_file_entry() - the ` -> <target>` arrow is
+/// gated on `preserve_links`. Without `-l` the symlink is still listed (perms
+/// start with `l`, size is the target length) but no target string is shown.
+/// FIFOs, sockets, and devices render their own permstring type char.
+#[test]
+fn list_only_renders_specials_and_symlink_arrow_gate() {
+    use core::client::{ClientEntryMetadata, ClientEvent, ListOnlyEntryFields};
+    use std::path::PathBuf;
+
+    use crate::frontend::progress::emit_list_only;
+
+    fn fields(mode: u32, size: u64, target: Option<&str>) -> ListOnlyEntryFields {
+        ListOnlyEntryFields {
+            mode,
+            size,
+            mtime: 1_700_000_000,
+            mtime_nsec: 0,
+            atime: 0,
+            atime_nsec: 0,
+            crtime: 0,
+            crtime_nsec: 0,
+            symlink_target: target.map(PathBuf::from),
+            is_symlink: target.is_some(),
+        }
+    }
+
+    fn render(fields: &ListOnlyEntryFields, name: &str, preserve_links: bool) -> String {
+        let meta = ClientEntryMetadata::from_list_only_entry(fields);
+        let event = ClientEvent::from_list_only_entry(PathBuf::from(name), meta);
+        let mut out = Vec::new();
+        emit_list_only(
+            std::slice::from_ref(&event),
+            &mut out,
+            HumanReadableMode::Disabled,
+            false,
+            false,
+            false,
+            preserve_links,
+        )
+        .expect("render");
+        String::from_utf8(out).expect("utf8").trim_end().to_owned()
+    }
+
+    // Symlink: target length is the size column (6 = len("target")).
+    let link = fields(0o120_777, 6, Some("target"));
+
+    let with_links = render(&link, "link.txt", true);
+    assert!(
+        with_links.starts_with('l') && with_links.ends_with("link.txt -> target"),
+        "preserve_links must render the arrow: {with_links:?}"
+    );
+
+    let without_links = render(&link, "link.txt", false);
+    assert!(
+        without_links.starts_with('l') && without_links.ends_with("link.txt"),
+        "symlink still listed without -l: {without_links:?}"
+    );
+    assert!(
+        !without_links.contains("->"),
+        "no arrow without preserve_links: {without_links:?}"
+    );
+
+    // FIFO / socket / char device carry distinct permstring type chars.
+    let fifo = render(&fields(0o010_644, 0, None), "pipe", false);
+    assert!(fifo.starts_with('p'), "FIFO renders as 'p': {fifo:?}");
+
+    let sock = render(&fields(0o140_755, 0, None), "sock", false);
+    assert!(sock.starts_with('s'), "socket renders as 's': {sock:?}");
+
+    let chr = render(&fields(0o020_644, 0, None), "chr", false);
+    assert!(chr.starts_with('c'), "char device renders as 'c': {chr:?}");
+}
+
 #[test]
 fn list_only_renders_atime_and_crtime_columns() {
     use core::client::{ClientEntryMetadata, ClientEvent, ListOnlyEntryFields};
@@ -1452,6 +1525,7 @@ fn list_only_renders_atime_and_crtime_columns() {
         true,
         true,
         false,
+        true,
     )
     .expect("render");
     let rendered = String::from_utf8(out).expect("utf8");
