@@ -32,18 +32,19 @@ fn is_c_print(byte: u8) -> bool {
 /// Literal `\#ddd` sequences (where each `d` is an ASCII digit) in the
 /// input are also escaped to prevent ambiguity with the escape notation.
 pub(crate) fn escape_for_output(input: &[u8], allow_8bit: bool) -> String {
-    // Fast path: if all bytes are ASCII printable or tab, return as-is.
-    if !allow_8bit {
-        let all_safe = input.iter().all(|&b| is_c_print(b) || b == b'\t');
-        if all_safe && !has_literal_escape_sequence(input) {
-            // SAFETY: all bytes are in 0x09 or 0x20-0x7E, which is valid ASCII/UTF-8
-            return String::from_utf8(input.to_vec())
-                .unwrap_or_else(|_| escape_bytes_slow(input, allow_8bit));
-        }
-    } else {
-        let all_safe = input.iter().all(|&b| b >= b' ' || b == b'\t');
-        if all_safe && !has_literal_escape_sequence(input) {
-            return String::from_utf8_lossy(input).into_owned();
+    // Fast path: all bytes ASCII-printable or tab (0x09, 0x20-0x7E) -> already
+    // valid UTF-8 with no byte needing escaping in either mode, so return as-is.
+    //
+    // DEL (0x7F) and high bytes (0x80-0xFF) are deliberately excluded here so
+    // they always take the slow path, which applies the correct per-mode
+    // handling: escape as \#ooo when !allow_8bit, or pass through as the Latin-1
+    // code point when allow_8bit. A previous `from_utf8_lossy` 8-bit fast path
+    // was wrong - it replaced high bytes with U+FFFD instead of preserving them.
+    let all_safe = input.iter().all(|&b| is_c_print(b) || b == b'\t');
+    if all_safe && !has_literal_escape_sequence(input) {
+        // SAFETY: all bytes are 0x09 or 0x20-0x7E, which is valid ASCII/UTF-8.
+        if let Ok(s) = String::from_utf8(input.to_vec()) {
+            return s;
         }
     }
 
