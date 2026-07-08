@@ -236,7 +236,7 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         &OutFormatContext::default(),
         NameOutputLevel::Disabled,
         false,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
         false,
         false, // emit_flist_banner
         false, // show_copy_method
@@ -260,7 +260,7 @@ fn out_format_suppresses_verbose_listing_in_summary() {
         &OutFormatContext::default(),
         NameOutputLevel::UpdatedOnly,
         false,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
         false,
         false, // emit_flist_banner
         false, // show_copy_method

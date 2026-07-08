@@ -212,19 +212,19 @@ fn format_progress_rate_human_giga() {
 
 #[test]
 fn format_progress_rate_zero_elapsed_returns_zero() {
-    let rate_str = format_progress_rate(0, Duration::ZERO, HumanReadableMode::Disabled);
+    let rate_str = format_progress_rate(0, Duration::ZERO, HumanReadableMode::Grouped);
     assert_eq!(rate_str, "0.00kB/s");
 }
 
 #[test]
 fn format_progress_rate_zero_bytes_returns_zero() {
-    let rate_str = format_progress_rate(0, Duration::from_secs(1), HumanReadableMode::Disabled);
+    let rate_str = format_progress_rate(0, Duration::from_secs(1), HumanReadableMode::Grouped);
     assert_eq!(rate_str, "0.00kB/s");
 }
 
 #[test]
 fn format_progress_rate_zero_bytes_human_returns_zero() {
-    let rate_str = format_progress_rate(0, Duration::from_secs(1), HumanReadableMode::Enabled);
+    let rate_str = format_progress_rate(0, Duration::from_secs(1), HumanReadableMode::DecimalUnits);
     assert_eq!(rate_str, "0.00B/s");
 }
 
@@ -531,7 +531,7 @@ fn progress_bytes_field_is_right_aligned_15_chars() {
     // The bytes field in progress output should be right-aligned in a 15-char field
     let small = format!(
         "{:>15}",
-        format_progress_bytes(11, HumanReadableMode::Disabled)
+        format_progress_bytes(11, HumanReadableMode::Grouped)
     );
     assert_eq!(small.len(), 15);
     assert!(
@@ -541,7 +541,7 @@ fn progress_bytes_field_is_right_aligned_15_chars() {
 
     let large = format!(
         "{:>15}",
-        format_progress_bytes(1_234_567, HumanReadableMode::Disabled)
+        format_progress_bytes(1_234_567, HumanReadableMode::Grouped)
     );
     assert_eq!(large.len(), 15);
 }

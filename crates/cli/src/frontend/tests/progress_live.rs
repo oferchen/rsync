@@ -84,7 +84,7 @@ fn live_progress_per_file_renders_file_path() {
         &source_dir,
         &dest_dir,
         ProgressMode::PerFile,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
     );
 
     assert!(
@@ -106,7 +106,7 @@ fn live_progress_per_file_renders_xfr_and_to_chk() {
         &source_dir,
         &dest_dir,
         ProgressMode::PerFile,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
     );
 
     assert!(
@@ -128,7 +128,7 @@ fn live_progress_per_file_renders_percentage() {
         &source_dir,
         &dest_dir,
         ProgressMode::PerFile,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
     );
 
     assert!(
@@ -146,7 +146,7 @@ fn live_progress_per_file_renders_rate() {
         &source_dir,
         &dest_dir,
         ProgressMode::PerFile,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
     );
 
     assert!(
@@ -164,7 +164,7 @@ fn live_progress_per_file_renders_elapsed_time() {
         &source_dir,
         &dest_dir,
         ProgressMode::PerFile,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
     );
 
     // Elapsed format is H:MM:SS; for a fast transfer it should start with "0:00:0"
@@ -183,7 +183,7 @@ fn live_progress_per_file_renders_byte_count() {
         &source_dir,
         &dest_dir,
         ProgressMode::PerFile,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
     );
 
     assert!(
@@ -202,7 +202,7 @@ fn live_progress_per_file_multiple_files_renders_all_xfr() {
         &source_dir,
         &dest_dir,
         ProgressMode::PerFile,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
     );
 
     assert!(output.contains("xfr#1"), "should contain xfr#1: {output:?}");
@@ -236,7 +236,7 @@ fn live_progress_per_file_finish_completes_without_error() {
     let mut live = LiveProgress::new(
         &mut buffer,
         ProgressMode::PerFile,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
     );
     let _summary =
         run_client_with_observer(config, Some(&mut live as &mut dyn ClientProgressObserver))
@@ -255,7 +255,7 @@ fn live_progress_overall_renders_xfr_and_to_chk() {
         &source_dir,
         &dest_dir,
         ProgressMode::Overall,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
     );
 
     assert!(rendered, "rendered() should return true in overall mode");
@@ -278,7 +278,7 @@ fn live_progress_overall_does_not_print_filename() {
         &source_dir,
         &dest_dir,
         ProgressMode::Overall,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
     );
 
     // Overall mode should NOT print the individual file name as a separate line
@@ -302,7 +302,7 @@ fn live_progress_overall_renders_percentage_and_rate() {
         &source_dir,
         &dest_dir,
         ProgressMode::Overall,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
     );
 
     assert!(
@@ -325,7 +325,7 @@ fn live_progress_overall_multiple_files() {
         &source_dir,
         &dest_dir,
         ProgressMode::Overall,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
     );
 
     assert!(
@@ -347,7 +347,7 @@ fn live_progress_human_readable_formats_bytes() {
         &source_dir,
         &dest_dir,
         ProgressMode::PerFile,
-        HumanReadableMode::Enabled,
+        HumanReadableMode::DecimalUnits,
     );
 
     // Human-readable mode should show K/M/G suffixes instead of thousands separators
@@ -366,7 +366,7 @@ fn live_progress_combined_human_readable_uses_base_1024() {
         &source_dir,
         &dest_dir,
         ProgressMode::PerFile,
-        HumanReadableMode::Combined,
+        HumanReadableMode::BinaryUnits,
     );
 
     // upstream: lib/compat.c:183 - `-hh` (Combined) divides by 1024 and never
@@ -383,7 +383,7 @@ fn live_progress_rendered_returns_false_before_events() {
     let live = LiveProgress::new(
         &mut buffer,
         ProgressMode::PerFile,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
     );
     assert!(
         !live.rendered(),
@@ -401,7 +401,7 @@ fn live_progress_rendered_returns_true_after_transfer() {
         &source_dir,
         &dest_dir,
         ProgressMode::PerFile,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
     );
 
     assert!(
@@ -612,7 +612,7 @@ fn live_progress_output_matches_upstream_format_pattern() {
         &source_dir,
         &dest_dir,
         ProgressMode::PerFile,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
     );
 
     let normalized = output.replace('\r', "\n");
@@ -661,7 +661,7 @@ fn live_progress_per_file_prints_filename_before_progress_line() {
         &source_dir,
         &dest_dir,
         ProgressMode::PerFile,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
     );
 
     let normalized = output.replace('\r', "\n");
@@ -679,18 +679,18 @@ fn live_progress_per_file_prints_filename_before_progress_line() {
 
 #[test]
 fn format_progress_bytes_zero_disabled() {
-    assert_eq!(format_progress_bytes(0, HumanReadableMode::Disabled), "0");
+    assert_eq!(format_progress_bytes(0, HumanReadableMode::Grouped), "0");
 }
 
 #[test]
 fn format_progress_bytes_small_disabled() {
-    assert_eq!(format_progress_bytes(42, HumanReadableMode::Disabled), "42");
+    assert_eq!(format_progress_bytes(42, HumanReadableMode::Grouped), "42");
 }
 
 #[test]
 fn format_progress_bytes_thousands_disabled() {
     assert_eq!(
-        format_progress_bytes(1_234, HumanReadableMode::Disabled),
+        format_progress_bytes(1_234, HumanReadableMode::Grouped),
         "1,234"
     );
 }
@@ -698,7 +698,7 @@ fn format_progress_bytes_thousands_disabled() {
 #[test]
 fn format_progress_bytes_millions_disabled() {
     assert_eq!(
-        format_progress_bytes(1_234_567, HumanReadableMode::Disabled),
+        format_progress_bytes(1_234_567, HumanReadableMode::Grouped),
         "1,234,567"
     );
 }
@@ -706,20 +706,23 @@ fn format_progress_bytes_millions_disabled() {
 #[test]
 fn format_progress_bytes_gigabytes_disabled() {
     assert_eq!(
-        format_progress_bytes(1_234_567_890, HumanReadableMode::Disabled),
+        format_progress_bytes(1_234_567_890, HumanReadableMode::Grouped),
         "1,234,567,890"
     );
 }
 
 #[test]
 fn format_progress_bytes_zero_human() {
-    assert_eq!(format_progress_bytes(0, HumanReadableMode::Enabled), "0");
+    assert_eq!(
+        format_progress_bytes(0, HumanReadableMode::DecimalUnits),
+        "0"
+    );
 }
 
 #[test]
 fn format_progress_bytes_kilo_human() {
     assert_eq!(
-        format_progress_bytes(2_500, HumanReadableMode::Enabled),
+        format_progress_bytes(2_500, HumanReadableMode::DecimalUnits),
         "2.50K"
     );
 }
@@ -727,7 +730,7 @@ fn format_progress_bytes_kilo_human() {
 #[test]
 fn format_progress_bytes_mega_human() {
     assert_eq!(
-        format_progress_bytes(5_000_000, HumanReadableMode::Enabled),
+        format_progress_bytes(5_000_000, HumanReadableMode::DecimalUnits),
         "5.00M"
     );
 }
@@ -735,7 +738,7 @@ fn format_progress_bytes_mega_human() {
 #[test]
 fn format_progress_bytes_giga_human() {
     assert_eq!(
-        format_progress_bytes(3_000_000_000, HumanReadableMode::Enabled),
+        format_progress_bytes(3_000_000_000, HumanReadableMode::DecimalUnits),
         "3.00G"
     );
 }
@@ -745,7 +748,7 @@ fn format_progress_rate_nonzero_bytes_nonzero_elapsed() {
     let rate = format_progress_rate(
         1_048_576,
         Duration::from_secs(1),
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
     );
     assert!(
         rate.contains("MB/s"),
@@ -758,14 +761,18 @@ fn format_progress_rate_large_bytes_short_duration() {
     let rate = format_progress_rate(
         10_737_418_240,
         Duration::from_secs(10),
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
     );
     assert!(rate.contains("GB/s"), "~1GB/s should show GB/s: {rate:?}");
 }
 
 #[test]
 fn format_progress_rate_human_nonzero() {
-    let rate = format_progress_rate(5_000, Duration::from_secs(1), HumanReadableMode::Enabled);
+    let rate = format_progress_rate(
+        5_000,
+        Duration::from_secs(1),
+        HumanReadableMode::DecimalUnits,
+    );
     assert!(
         rate.contains("kB/s"),
         "5000 B/s in human mode should show kB/s: {rate:?}"

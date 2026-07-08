@@ -52,7 +52,7 @@ fn emit_transfer_summary_list_only_emits_listing_and_stats() {
         &OutFormatContext::default(),
         NameOutputLevel::UpdatedAndUnchanged,
         false,
-        HumanReadableMode::Enabled,
+        HumanReadableMode::DecimalUnits,
         false,
         false, // emit_flist_banner (list_only path)
         false, // show_copy_method
@@ -87,7 +87,7 @@ fn emit_transfer_summary_with_progress_and_verbose_listing() {
         &OutFormatContext::default(),
         NameOutputLevel::UpdatedAndUnchanged,
         false,
-        HumanReadableMode::Enabled,
+        HumanReadableMode::DecimalUnits,
         false,
         true,  // emit_flist_banner
         false, // show_copy_method
@@ -130,7 +130,7 @@ fn emit_transfer_summary_out_format_adds_separator_before_stats() {
         &OutFormatContext::default(),
         NameOutputLevel::Disabled,
         false,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
         false,
         false, // emit_flist_banner (out_format path: starts_with assertion)
         false, // show_copy_method

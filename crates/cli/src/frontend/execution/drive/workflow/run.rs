@@ -252,7 +252,7 @@ where
 
     let password_file = password_file.map(PathBuf::from);
     let human_readable_setting = human_readable;
-    let human_readable_mode = human_readable_setting.unwrap_or(HumanReadableMode::Disabled);
+    let human_readable_mode = human_readable_setting.unwrap_or(HumanReadableMode::Grouped);
     let human_readable_enabled = human_readable_mode.is_enabled();
     let stderr_mode_setting = stderr_mode
         .as_ref()

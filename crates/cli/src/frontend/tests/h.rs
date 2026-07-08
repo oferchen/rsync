@@ -11,5 +11,5 @@ fn short_h_flag_enables_human_readable_mode() {
     ])
     .expect("parse");
 
-    assert_eq!(parsed.human_readable, Some(HumanReadableMode::Enabled));
+    assert_eq!(parsed.human_readable, Some(HumanReadableMode::DecimalUnits));
 }

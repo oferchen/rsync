@@ -130,7 +130,7 @@ fn multiple_h_flags_enable_combined_mode() {
     ])
     .expect("parse");
 
-    assert_eq!(parsed.human_readable, Some(HumanReadableMode::Combined));
+    assert_eq!(parsed.human_readable, Some(HumanReadableMode::BinaryUnits));
 }
 
 #[test]
@@ -145,7 +145,7 @@ fn three_h_flags_remain_combined_mode() {
     ])
     .expect("parse");
 
-    assert_eq!(parsed.human_readable, Some(HumanReadableMode::Combined));
+    assert_eq!(parsed.human_readable, Some(HumanReadableMode::BinaryUnits));
 }
 
 #[test]
@@ -189,7 +189,7 @@ fn combined_mode_long_form_uses_base_1024() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--stats"),
-        OsString::from("--human-readable=2"),
+        OsString::from("-hh"),
         source.into_os_string(),
         dest.into_os_string(),
     ]);
@@ -424,7 +424,7 @@ fn human_readable_combined_works_with_progress() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--progress"),
-        OsString::from("--human-readable=2"),
+        OsString::from("-hh"),
         source.into_os_string(),
         dest.into_os_string(),
     ]);
@@ -495,18 +495,18 @@ fn human_readable_with_verbose_output() {
 }
 
 #[test]
-fn human_readable_disabled_shows_exact_values() {
+fn no_human_readable_shows_raw_digits() {
     use tempfile::tempdir;
 
     let tmp = tempdir().expect("tempdir");
     let source = tmp.path().join("exact.bin");
-    std::fs::write(&source, vec![0u8; 1_536]).expect("write source");
+    std::fs::write(&source, vec![0u8; 1_234_567]).expect("write source");
 
     let dest = tmp.path().join("exact.out");
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--stats"),
-        OsString::from("--human-readable=0"),
+        OsString::from("--no-h"),
         source.into_os_string(),
         dest.into_os_string(),
     ]);
@@ -515,13 +515,20 @@ fn human_readable_disabled_shows_exact_values() {
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("stats output utf8");
 
+    // upstream: --no-h => level 0 (do_big_num flag 0) emits raw digits with no
+    // thousands separators. `rsync --stats --no-h` prints `Total file size:
+    // 1234567 bytes`, not `1,234,567`.
     assert!(
-        rendered.contains("1,536"),
-        "expected comma-separated decimal, got: {rendered}"
+        rendered.contains("Total file size: 1234567 bytes"),
+        "expected raw digits without separators, got: {rendered}"
     );
     assert!(
-        !rendered.contains("1.54K"),
-        "should not have K suffix when disabled, got: {rendered}"
+        !rendered.contains("1,234,567"),
+        "level 0 must not group digits with commas, got: {rendered}"
+    );
+    assert!(
+        !rendered.contains("1.18M") && !rendered.contains("1.23M"),
+        "level 0 must not use a unit suffix, got: {rendered}"
     );
 }
 

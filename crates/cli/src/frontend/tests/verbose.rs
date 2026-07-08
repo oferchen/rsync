@@ -291,7 +291,7 @@ fn verbose_human_readable_combined_formats_sizes() {
         OsString::from(RSYNC),
         OsString::from("-vv"),
         OsString::from("--stats"),
-        OsString::from("--human-readable=2"),
+        OsString::from("-hh"),
         source.into_os_string(),
         destination.into_os_string(),
     ]);
@@ -299,7 +299,7 @@ fn verbose_human_readable_combined_formats_sizes() {
     assert_eq!(code, 0);
     assert!(stderr.is_empty());
     let rendered = String::from_utf8(stdout).expect("verbose output utf8");
-    // upstream: `-hh` (--human-readable=2) divides by 1024 (1536/1024 = 1.50K)
+    // upstream: `-hh` divides by 1024 (1536/1024 = 1.50K)
     // and never appends an exact-value component.
     assert!(rendered.contains("1.50K bytes") && !rendered.contains("(1,536)"));
 }

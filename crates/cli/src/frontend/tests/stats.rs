@@ -61,7 +61,7 @@ fn stats_human_readable_combined_formats_totals() {
     let (code, stdout, stderr) = run_with_args([
         OsString::from(RSYNC),
         OsString::from("--stats"),
-        OsString::from("--human-readable=2"),
+        OsString::from("-hh"),
         source.into_os_string(),
         dest_combined.into_os_string(),
     ]);

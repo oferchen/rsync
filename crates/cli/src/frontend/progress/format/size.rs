@@ -2,19 +2,30 @@
 
 use core::client::HumanReadableMode;
 
-/// Formats a byte count using thousands separators when human-readable formatting is disabled. When
-/// enabled, the output uses unit suffixes such as `K`, `M`, or `G` with two fractional digits.
-/// `-h` (Enabled) divides by 1000; `-hh` (Combined) divides by 1024, mirroring upstream `do_big_num`.
+/// Formats a byte count according to the active human-readable level, mirroring
+/// upstream `lib/compat.c:do_big_num`:
+///
+/// - Level 0 ([`HumanReadableMode::Raw`]): raw digits, no separators (`1234567`).
+/// - Level 1 ([`HumanReadableMode::Grouped`], default): thousands-separated
+///   digits (`1,234,567`).
+/// - Level 2 (`-h`) / level 3 (`-hh`): unit suffixes such as `K`, `M`, or `G`
+///   with two fractional digits, dividing by 1000 and 1024 respectively.
 pub(crate) fn format_progress_bytes(bytes: u64, human_readable: HumanReadableMode) -> String {
     format_size(bytes, human_readable)
 }
 
 pub(crate) fn format_size(bytes: u64, human_readable: HumanReadableMode) -> String {
-    if !human_readable.is_enabled() {
-        return format_decimal_bytes(bytes);
+    if human_readable.is_enabled() {
+        return format_human_bytes(bytes, human_readable.unit_base());
     }
 
-    format_human_bytes(bytes, human_readable.unit_base())
+    // upstream: lib/compat.c:231 inserts the separator only when human_flag != 0
+    // (level 1); level 0 (--no-h) emits the raw digit run.
+    if human_readable.uses_separators() {
+        format_decimal_bytes(bytes)
+    } else {
+        bytes.to_string()
+    }
 }
 
 pub(crate) fn format_decimal_bytes(bytes: u64) -> String {
@@ -71,18 +82,10 @@ pub(crate) fn format_human_bytes(bytes: u64, base: f64) -> String {
     bytes.to_string()
 }
 
-/// Width of the size column in `--list-only` output.
-///
-/// upstream: generator.c:1159 `list_file_entry` - `size_width = human_readable
-/// ? 14 : 11`. `human_readable` defaults to 1 (options.c:111), so every oc
-/// rendering mode (all of which print thousands-separated values like upstream's
-/// default `human_num`) uses the 14-wide field; the 11-wide field only applies
-/// to upstream's `--no-human-readable`, which oc does not distinctly model.
-pub(crate) const LIST_SIZE_WIDTH: usize = 14;
-
 pub(crate) fn format_list_size(size: u64, human_readable: HumanReadableMode) -> String {
     let value = format_size(size, human_readable);
-    format!("{value:>LIST_SIZE_WIDTH$}")
+    let width = human_readable.size_width();
+    format!("{value:>width$}")
 }
 
 #[cfg(test)]
@@ -163,14 +166,14 @@ mod tests {
     #[test]
     fn format_list_size_pads_to_14() {
         // upstream: generator.c:1159 size_width = 14 (human_readable defaults to 1).
-        let result = format_list_size(123, HumanReadableMode::Disabled);
+        let result = format_list_size(123, HumanReadableMode::Grouped);
         assert_eq!(result.len(), 14);
         assert!(result.trim_start().starts_with("123"));
     }
 
     #[test]
     fn format_list_size_zero_pads_correctly() {
-        let result = format_list_size(0, HumanReadableMode::Disabled);
+        let result = format_list_size(0, HumanReadableMode::Grouped);
         assert_eq!(result.len(), 14);
         assert_eq!(result.trim(), "0");
         // Should be right-aligned: leading spaces then "0"
@@ -179,7 +182,7 @@ mod tests {
 
     #[test]
     fn format_list_size_large_value_with_separators() {
-        let result = format_list_size(1_234_567, HumanReadableMode::Disabled);
+        let result = format_list_size(1_234_567, HumanReadableMode::Grouped);
         assert_eq!(result.len(), 14);
         assert!(
             result.contains("1,234,567"),
@@ -189,7 +192,7 @@ mod tests {
 
     #[test]
     fn format_list_size_very_large_value() {
-        let result = format_list_size(1_234_567_890_123, HumanReadableMode::Disabled);
+        let result = format_list_size(1_234_567_890_123, HumanReadableMode::Grouped);
         assert!(
             result.contains("1,234,567,890,123"),
             "very large value should be formatted with separators: {result:?}"
@@ -199,14 +202,14 @@ mod tests {
     #[test]
     fn format_list_size_human_readable_small() {
         // Values under 1000 should show plain digits
-        let result = format_list_size(500, HumanReadableMode::Enabled);
+        let result = format_list_size(500, HumanReadableMode::DecimalUnits);
         assert_eq!(result.len(), 14);
         assert_eq!(result.trim(), "500");
     }
 
     #[test]
     fn format_list_size_human_readable_kilo() {
-        let result = format_list_size(1_500, HumanReadableMode::Enabled);
+        let result = format_list_size(1_500, HumanReadableMode::DecimalUnits);
         assert_eq!(result.len(), 14);
         assert!(
             result.contains("1.50K"),
@@ -216,7 +219,7 @@ mod tests {
 
     #[test]
     fn format_list_size_human_readable_mega() {
-        let result = format_list_size(2_500_000, HumanReadableMode::Enabled);
+        let result = format_list_size(2_500_000, HumanReadableMode::DecimalUnits);
         assert_eq!(result.len(), 14);
         assert!(
             result.contains("2.50M"),
@@ -226,8 +229,8 @@ mod tests {
 
     #[test]
     fn format_list_size_is_right_aligned() {
-        let small = format_list_size(1, HumanReadableMode::Disabled);
-        let large = format_list_size(1_000_000, HumanReadableMode::Disabled);
+        let small = format_list_size(1, HumanReadableMode::Grouped);
+        let large = format_list_size(1_000_000, HumanReadableMode::Grouped);
 
         assert_eq!(small.len(), 14);
         assert_eq!(large.len(), 14);
@@ -238,5 +241,55 @@ mod tests {
             small_spaces > large_spaces,
             "smaller value should have more leading spaces: small={small_spaces}, large={large_spaces}"
         );
+    }
+
+    // The following tests pin upstream rsync 3.4.4's four human-readable levels
+    // byte-for-byte for a 1,234,567-byte value, so a regression that collapses
+    // level 0 (--no-h) back into level 1 (default) is caught. Verified against
+    // the reference binary: `rsync --list-only [--no-h|-h|-hh]`.
+
+    #[test]
+    fn format_size_raw_level_zero_has_no_separators() {
+        // upstream: --no-h => do_big_num(x, 0, NULL) emits raw digits.
+        assert_eq!(format_size(1_234_567, HumanReadableMode::Raw), "1234567");
+    }
+
+    #[test]
+    fn format_size_default_level_one_groups_digits() {
+        // upstream: default level 1 => comma-grouped digits, no unit suffix.
+        assert_eq!(
+            format_size(1_234_567, HumanReadableMode::Grouped),
+            "1,234,567"
+        );
+    }
+
+    #[test]
+    fn format_size_h_and_hh_use_correct_base() {
+        // upstream: -h base 1000 => 1.23M; -hh base 1024 => 1.18M.
+        assert_eq!(
+            format_size(1_234_567, HumanReadableMode::DecimalUnits),
+            "1.23M"
+        );
+        assert_eq!(
+            format_size(1_234_567, HumanReadableMode::BinaryUnits),
+            "1.18M"
+        );
+    }
+
+    #[test]
+    fn format_list_size_raw_is_width_11_no_commas() {
+        // upstream: generator.c:1159 size_width = 11 for level 0; the value is
+        // right-justified raw digits, matching `-rw-r--r--     1234567 ...`.
+        let result = format_list_size(1_234_567, HumanReadableMode::Raw);
+        assert_eq!(result, "    1234567");
+        assert_eq!(result.len(), 11);
+    }
+
+    #[test]
+    fn format_list_size_default_is_width_14_with_commas() {
+        // upstream: generator.c:1159 size_width = 14 for level 1.
+        let result = format_list_size(1_234_567, HumanReadableMode::Grouped);
+        assert_eq!(result, "     1,234,567");
+        assert_eq!(result.len(), 14);
     }
 }

@@ -95,7 +95,7 @@ fn render_verbose(summary: &ClientSummary, verbosity: u8) -> String {
         &OutFormatContext::default(),
         NameOutputLevel::UpdatedAndUnchanged,
         false,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
         false,
         true,  // emit_flist_banner
         false, // show_copy_method
@@ -120,7 +120,7 @@ fn render_itemize(event: &ClientEvent) -> String {
 #[test]
 fn parity_stats_output_contains_all_upstream_field_labels() {
     let (summary, _temp) = create_known_summary(&[("file.txt", b"hello world")]);
-    let output = render_stats(&summary, HumanReadableMode::Disabled);
+    let output = render_stats(&summary, HumanReadableMode::Grouped);
 
     // Verify all upstream rsync --stats labels are present
     assert!(
@@ -183,7 +183,7 @@ fn parity_stats_output_contains_all_upstream_field_labels() {
 #[test]
 fn parity_stats_output_field_order_matches_upstream() {
     let (summary, _temp) = create_known_summary(&[("order.txt", b"test content")]);
-    let output = render_stats(&summary, HumanReadableMode::Disabled);
+    let output = render_stats(&summary, HumanReadableMode::Grouped);
 
     // Upstream rsync emits stats in a fixed order. The File-list timing
     // lines are conditional on `stats.flist_buildtime > 0` (main.c:437);
@@ -226,7 +226,7 @@ fn parity_stats_output_field_order_matches_upstream() {
 #[test]
 fn parity_stats_total_file_size_uses_bytes_suffix() {
     let (summary, _temp) = create_known_summary(&[("size.txt", b"payload data")]);
-    let output = render_stats(&summary, HumanReadableMode::Disabled);
+    let output = render_stats(&summary, HumanReadableMode::Grouped);
 
     // Upstream: "Total file size: N bytes"
     for line in output.lines() {
@@ -243,7 +243,7 @@ fn parity_stats_total_file_size_uses_bytes_suffix() {
 #[test]
 fn parity_stats_literal_data_uses_bytes_suffix() {
     let (summary, _temp) = create_known_summary(&[("literal.txt", b"data")]);
-    let output = render_stats(&summary, HumanReadableMode::Disabled);
+    let output = render_stats(&summary, HumanReadableMode::Grouped);
 
     for line in output.lines() {
         if line.starts_with("Literal data:") {
@@ -259,7 +259,7 @@ fn parity_stats_literal_data_uses_bytes_suffix() {
 #[test]
 fn parity_stats_matched_data_uses_bytes_suffix() {
     let (summary, _temp) = create_known_summary(&[("matched.txt", b"data")]);
-    let output = render_stats(&summary, HumanReadableMode::Disabled);
+    let output = render_stats(&summary, HumanReadableMode::Grouped);
 
     for line in output.lines() {
         if line.starts_with("Matched data:") {
@@ -275,7 +275,7 @@ fn parity_stats_matched_data_uses_bytes_suffix() {
 #[test]
 fn parity_stats_file_list_generation_time_uses_seconds_suffix() {
     let (summary, _temp) = create_known_summary(&[("gen.txt", b"data")]);
-    let output = render_stats(&summary, HumanReadableMode::Disabled);
+    let output = render_stats(&summary, HumanReadableMode::Grouped);
 
     for line in output.lines() {
         if line.starts_with("File list generation time:") {
@@ -291,7 +291,7 @@ fn parity_stats_file_list_generation_time_uses_seconds_suffix() {
 #[test]
 fn parity_stats_file_list_transfer_time_uses_seconds_suffix() {
     let (summary, _temp) = create_known_summary(&[("xfer.txt", b"data")]);
-    let output = render_stats(&summary, HumanReadableMode::Disabled);
+    let output = render_stats(&summary, HumanReadableMode::Grouped);
 
     for line in output.lines() {
         if line.starts_with("File list transfer time:") {
@@ -307,7 +307,7 @@ fn parity_stats_file_list_transfer_time_uses_seconds_suffix() {
 #[test]
 fn parity_stats_file_list_time_format_has_three_decimal_places() {
     let (summary, _temp) = create_known_summary(&[("decimal.txt", b"data")]);
-    let output = render_stats(&summary, HumanReadableMode::Disabled);
+    let output = render_stats(&summary, HumanReadableMode::Grouped);
 
     for line in output.lines() {
         if line.starts_with("File list generation time:") {
@@ -332,7 +332,7 @@ fn parity_stats_file_list_time_format_has_three_decimal_places() {
 #[test]
 fn parity_stats_number_of_files_includes_category_breakdown() {
     let (summary, _temp) = create_known_summary(&[("breakdown.txt", b"content")]);
-    let output = render_stats(&summary, HumanReadableMode::Disabled);
+    let output = render_stats(&summary, HumanReadableMode::Grouped);
 
     for line in output.lines() {
         if line.starts_with("Number of files:") {
@@ -350,7 +350,7 @@ fn parity_stats_number_of_files_includes_category_breakdown() {
 #[test]
 fn parity_stats_number_of_deleted_files_shows_zero_without_breakdown() {
     let (summary, _temp) = create_known_summary(&[("del.txt", b"data")]);
-    let output = render_stats(&summary, HumanReadableMode::Disabled);
+    let output = render_stats(&summary, HumanReadableMode::Grouped);
 
     for line in output.lines() {
         if line.starts_with("Number of deleted files:") {
@@ -366,7 +366,7 @@ fn parity_stats_number_of_deleted_files_shows_zero_without_breakdown() {
 #[test]
 fn parity_stats_includes_totals_after_blank_line() {
     let (summary, _temp) = create_known_summary(&[("totals.txt", b"data")]);
-    let output = render_stats(&summary, HumanReadableMode::Disabled);
+    let output = render_stats(&summary, HumanReadableMode::Grouped);
 
     // Upstream: stats block ends with "Total bytes received: N", then a blank line,
     // then "sent X bytes  received Y bytes  Z bytes/sec"
@@ -379,7 +379,7 @@ fn parity_stats_includes_totals_after_blank_line() {
 #[test]
 fn parity_totals_sent_received_line_format() {
     let (summary, _temp) = create_known_summary(&[("total.txt", b"test content")]);
-    let output = render_stats(&summary, HumanReadableMode::Disabled);
+    let output = render_stats(&summary, HumanReadableMode::Grouped);
 
     // Upstream: "sent X bytes  received Y bytes  Z bytes/sec"
     let totals_line = output
@@ -400,7 +400,7 @@ fn parity_totals_sent_received_line_format() {
 #[test]
 fn parity_totals_sent_line_uses_double_space_separator() {
     let (summary, _temp) = create_known_summary(&[("space.txt", b"test")]);
-    let output = render_stats(&summary, HumanReadableMode::Disabled);
+    let output = render_stats(&summary, HumanReadableMode::Grouped);
 
     let totals_line = output
         .lines()
@@ -422,7 +422,7 @@ fn parity_totals_sent_line_uses_double_space_separator() {
 #[test]
 fn parity_totals_speedup_line_format() {
     let (summary, _temp) = create_known_summary(&[("speed.txt", b"test content for speedup")]);
-    let output = render_stats(&summary, HumanReadableMode::Disabled);
+    let output = render_stats(&summary, HumanReadableMode::Grouped);
 
     // Upstream: "total size is X  speedup is Y"
     let speedup_line = output
@@ -439,7 +439,7 @@ fn parity_totals_speedup_line_format() {
 #[test]
 fn parity_totals_speedup_has_two_decimal_places() {
     let (summary, _temp) = create_known_summary(&[("decimal_speed.txt", b"test")]);
-    let output = render_stats(&summary, HumanReadableMode::Disabled);
+    let output = render_stats(&summary, HumanReadableMode::Grouped);
 
     let speedup_line = output
         .lines()
@@ -481,7 +481,7 @@ fn parity_totals_only_without_stats_flag() {
         &OutFormatContext::default(),
         NameOutputLevel::UpdatedAndUnchanged,
         false,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
         false,
         true,  // emit_flist_banner
         false, // show_copy_method
@@ -510,7 +510,7 @@ fn parity_totals_only_without_stats_flag() {
 #[test]
 fn parity_totals_human_readable_mode_uses_units() {
     let (summary, _temp) = create_known_summary(&[("hr.txt", &[0u8; 2048])]);
-    let output = render_stats(&summary, HumanReadableMode::Enabled);
+    let output = render_stats(&summary, HumanReadableMode::DecimalUnits);
 
     // With human-readable enabled, sizes should use unit suffixes
     let totals_line = output
@@ -525,12 +525,37 @@ fn parity_totals_human_readable_mode_uses_units() {
     );
 }
 
+#[test]
+fn parity_totals_raw_level_zero_omits_separators() {
+    // upstream: --no-h (level 0) renders byte counters as raw digits with no
+    // thousands separators, unlike the default level 1 which groups them.
+    // A 1,234,567-byte file must print `Total file size: 1234567 bytes`.
+    let (summary, _temp) = create_known_summary(&[("raw.bin", &[0u8; 1_234_567])]);
+    let output = render_stats(&summary, HumanReadableMode::Raw);
+
+    assert!(
+        output.contains("Total file size: 1234567 bytes"),
+        "level 0 must emit raw digits without separators:\n{output}"
+    );
+    assert!(
+        !output.contains("1,234,567"),
+        "level 0 must not group digits with commas:\n{output}"
+    );
+
+    // Contrast with the default level 1, which groups the same value.
+    let grouped = render_stats(&summary, HumanReadableMode::Grouped);
+    assert!(
+        grouped.contains("Total file size: 1,234,567 bytes"),
+        "default level 1 must group digits with commas:\n{grouped}"
+    );
+}
+
 // upstream: main.c output_summary (rsync-3.4.2:416-465) and handle_stats
 // (rsync-3.4.2:325-385) - --info=stats1/2/3 gating
 #[test]
 fn parity_stats_level_1_emits_only_summary_lines() {
     let (summary, _temp) = create_known_summary(&[("lvl1.txt", b"level one")]);
-    let output = render_stats_at_level(&summary, HumanReadableMode::Disabled, 1);
+    let output = render_stats_at_level(&summary, HumanReadableMode::Grouped, 1);
 
     // Level 1 emits only the "sent X bytes received Y bytes" + "total size"
     // pair, matching upstream's INFO_GTE(STATS, 1) block (main.c:451-461).
@@ -571,7 +596,7 @@ fn parity_stats_level_1_emits_only_summary_lines() {
 #[test]
 fn parity_stats_level_2_emits_full_detail_block_plus_summary() {
     let (summary, _temp) = create_known_summary(&[("lvl2.txt", b"level two")]);
-    let output = render_stats_at_level(&summary, HumanReadableMode::Disabled, 2);
+    let output = render_stats_at_level(&summary, HumanReadableMode::Grouped, 2);
 
     // Level 2 emits the full INFO_GTE(STATS, 2) detail block (main.c:418-449)
     // followed by the level-1 summary (main.c:451-461).
@@ -620,8 +645,8 @@ fn parity_stats_level_3_matches_level_2_plus_summary() {
     // platforms. Asserting parity of the user-visible block is the relevant
     // contract for wire-compatible scripting consumers.
     let (summary, _temp) = create_known_summary(&[("lvl3.txt", b"level three")]);
-    let level_2 = render_stats_at_level(&summary, HumanReadableMode::Disabled, 2);
-    let level_3 = render_stats_at_level(&summary, HumanReadableMode::Disabled, 3);
+    let level_2 = render_stats_at_level(&summary, HumanReadableMode::Grouped, 2);
+    let level_3 = render_stats_at_level(&summary, HumanReadableMode::Grouped, 3);
 
     assert_eq!(
         level_3, level_2,
@@ -632,7 +657,7 @@ fn parity_stats_level_3_matches_level_2_plus_summary() {
 #[test]
 fn parity_stats_level_0_emits_nothing() {
     let (summary, _temp) = create_known_summary(&[("lvl0.txt", b"silent")]);
-    let output = render_stats_at_level(&summary, HumanReadableMode::Disabled, 0);
+    let output = render_stats_at_level(&summary, HumanReadableMode::Grouped, 0);
 
     assert!(
         output.is_empty(),
@@ -726,7 +751,7 @@ fn parity_verbose_v2_emits_bare_name_per_upstream() {
         &OutFormatContext::default(),
         NameOutputLevel::UpdatedAndUnchanged,
         false,
-        HumanReadableMode::Disabled,
+        HumanReadableMode::Grouped,
         false,
         true,  // emit_flist_banner
         false, // show_copy_method
@@ -1229,7 +1254,7 @@ fn parity_end_to_end_verbose_output_via_run() {
 #[test]
 fn parity_stats_human_readable_disabled_uses_comma_separators() {
     let (summary, _temp) = create_known_summary(&[("comma.txt", &[0u8; 1500])]);
-    let output = render_stats(&summary, HumanReadableMode::Disabled);
+    let output = render_stats(&summary, HumanReadableMode::Grouped);
 
     // With human-readable disabled, sizes should use comma-separated decimal notation
     // For values >= 1000
@@ -1255,7 +1280,7 @@ fn parity_stats_human_readable_disabled_uses_comma_separators() {
 #[test]
 fn parity_stats_human_readable_enabled_uses_unit_suffixes() {
     let (summary, _temp) = create_known_summary(&[("units.txt", &[0u8; 2000])]);
-    let output = render_stats(&summary, HumanReadableMode::Enabled);
+    let output = render_stats(&summary, HumanReadableMode::DecimalUnits);
 
     // With human-readable enabled, sizes >= 1000 should use K/M/G suffixes
     let has_unit_suffix = output.lines().any(|line| {

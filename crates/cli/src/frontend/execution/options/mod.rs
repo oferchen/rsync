@@ -18,8 +18,8 @@ mod size;
 
 pub(crate) use iconv::resolve_iconv_setting;
 pub(crate) use numeric::{
-    parse_checksum_seed_argument, parse_human_readable_level, parse_max_delete_argument,
-    parse_modify_window_argument, parse_timeout_argument,
+    parse_checksum_seed_argument, parse_max_delete_argument, parse_modify_window_argument,
+    parse_timeout_argument,
 };
 pub(crate) use protocol::parse_protocol_version_arg;
 #[cfg(test)]
@@ -33,7 +33,7 @@ mod tests {
     use super::*;
     use std::ffi::OsString;
 
-    use core::client::{HumanReadableMode, TransferTimeout};
+    use core::client::TransferTimeout;
 
     fn os(s: &str) -> OsString {
         OsString::from(s)
@@ -169,29 +169,5 @@ mod tests {
     #[test]
     fn parse_modify_window_argument_invalid() {
         assert!(parse_modify_window_argument(&os("foo")).is_err());
-    }
-
-    #[test]
-    fn parse_human_readable_level_zero() {
-        let result = parse_human_readable_level(&os("0")).unwrap();
-        assert_eq!(result, HumanReadableMode::Disabled);
-    }
-
-    #[test]
-    fn parse_human_readable_level_one() {
-        let result = parse_human_readable_level(&os("1")).unwrap();
-        assert_eq!(result, HumanReadableMode::Enabled);
-    }
-
-    #[test]
-    fn parse_human_readable_level_two() {
-        let result = parse_human_readable_level(&os("2")).unwrap();
-        assert_eq!(result, HumanReadableMode::Combined);
-    }
-
-    #[test]
-    fn parse_human_readable_level_invalid() {
-        let result = parse_human_readable_level(&os("invalid"));
-        assert!(result.is_err());
     }
 }
