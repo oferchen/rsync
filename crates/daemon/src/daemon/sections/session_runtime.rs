@@ -240,6 +240,20 @@ fn handle_legacy_session(
         cached_legacy_daemon_greeting(),
     )?;
 
+    // upstream: clientserver.c:158-170 exchange_protocols() - immediately after
+    // the greeting the daemon dumps the MOTD file verbatim and appends a single
+    // trailing newline (write_sbuf(f_out, "\n")), before reading the client's
+    // version/module request. Emitting it here (rather than only in the module
+    // listing) mirrors upstream: the MOTD precedes every response, including an
+    // @ERROR refusal for an unknown module.
+    if !motd_lines.is_empty() {
+        for line in motd_lines {
+            write_limited(reader.get_mut(), &mut limiter, line.as_bytes())?;
+            write_limited(reader.get_mut(), &mut limiter, b"\n")?;
+        }
+        write_limited(reader.get_mut(), &mut limiter, b"\n")?;
+    }
+
     let mut request = None;
     let mut refused_options = Vec::new();
     let mut negotiated_protocol = None;
@@ -316,7 +330,6 @@ fn handle_legacy_session(
             reader.get_mut(),
             &mut limiter,
             modules,
-            motd_lines,
             peer_addr.ip(),
             reverse_lookup,
             messages,
