@@ -25,14 +25,12 @@ thiserror = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 fast_io = { path = "../fast_io", default-features = false }
-# Safe wrappers over the libc mknod/mkfifo symbols for special-file creation.
-# Symbol-backed (not raw syscalls), so fakeroot's LD_PRELOAD can intercept them.
-nix = { workspace = true, features = ["fs"] }
-xattr = { workspace = true, optional = true }
-# chown/lchown/fchown must go through libc symbols (not rustix raw syscalls) so
-# fakeroot's LD_PRELOAD interposition can fake ownership for a non-root process.
-# `user` gates Uid/Gid; `fs` gates fchown/fchownat.
+# Safe wrappers over the libc mknod/mkfifo/chown/chmod symbols. Symbol-backed
+# (not rustix raw syscalls), so fakeroot's LD_PRELOAD can intercept them and
+# fake privileged ops for a non-root process. `user` gates Uid/Gid/geteuid;
+# `fs` gates mknod/fchown/fchownat/fchmod.
 nix = { workspace = true, features = ["user", "fs"] }
+xattr = { workspace = true, optional = true }
 
 # Cross-platform ACL support (Linux, macOS, FreeBSD)
 # Replaces custom FFI bindings for cleaner, safer implementation
