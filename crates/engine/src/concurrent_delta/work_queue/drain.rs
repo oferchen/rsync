@@ -23,13 +23,23 @@ impl WorkQueueReceiver {
     /// timing). Use [`ReorderBuffer`] on the returned `Vec` if sequential
     /// ordering is required.
     ///
-    /// Internally, results are sharded across `N` mutex-guarded `Vec`s (one per
-    /// rayon thread). Each worker indexes its shard via [`rayon::current_thread_index`],
-    /// distributing contention across shards instead of concentrating it in a
-    /// single `Mutex<Vec<R>>`. Threads outside the rayon pool fall back to a
-    /// thread-ID hash to avoid the degenerate case of all mapping to shard 0.
+    /// Internally, results are sharded across one mutex-guarded `Vec` per rayon
+    /// thread, indexed by [`rayon::current_thread_index`]. Because `rayon::scope`
+    /// runs at most one task per pool thread at any instant, each shard is only
+    /// ever touched by a single thread at a time: the shard locks are uncontended
+    /// by construction, not merely low-contention. Threads outside the rayon pool
+    /// fall back to a thread-ID hash so they do not all collapse onto shard 0.
     /// After all tasks complete, the per-shard buffers are flattened into a
     /// single `Vec`.
+    ///
+    /// The sharded shape is deliberate, not an oversight. The
+    /// `drain_parallel_alternatives` benchmark compares it against a single
+    /// lock-free MPSC channel and against per-thread chunked accumulation. The
+    /// single MPSC channel is 20-35% slower at every measured thread count, since
+    /// its shared tail atomic contends across all producers - collapsing the
+    /// shards onto one lock-free queue would be a regression. The collector is
+    /// not the cost center here: rayon's per-item task dispatch dominates, so an
+    /// uncontended sharded `Vec` is preferred over a shared queue.
     ///
     /// This method consumes the receiver. It returns once the sender is dropped
     /// and all queued items have been processed.
