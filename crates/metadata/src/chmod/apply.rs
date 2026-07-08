@@ -1,41 +1,16 @@
 //! Evaluator that applies parsed [`Clause`] modifiers to a mode value.
 //!
-//! Implements both numeric and symbolic chmod semantics matching GNU `chmod`,
-//! including conditional-exec (`X`), copy directives (e.g. `g=u`), and the
-//! upstream-defined target selectors (`F`, `D`).
+//! Faithful port of upstream rsync's `chmod.c:tweak_mode()`: each clause is a
+//! `mode = (mode & ModeAND) | ModeOR` transform, gated by the `D`/`F` selector
+//! and the `X` conditional-execute flag. Non-permission bits (the file-type
+//! bits above `CHMOD_BITS`) are preserved unchanged.
 
-use super::spec::Clause;
+use super::spec::{CHMOD_BITS, Clause};
 
+/// Applies the clause list to `mode`, mirroring `chmod.c:tweak_mode()`.
 #[cfg(unix)]
-use super::spec::{ClauseKind, CopySource, Operation, PermSpec, SymbolicClause};
-
-#[cfg(unix)]
-pub(crate) fn apply_clauses(
-    clauses: &[Clause],
-    mut mode: u32,
-    file_type: std::fs::FileType,
-) -> u32 {
-    for clause in clauses {
-        match &clause.kind {
-            ClauseKind::Numeric(numeric) => {
-                if !numeric.target.matches(file_type) {
-                    continue;
-                }
-
-                let preserved = mode & !0o7777;
-                mode = preserved | u32::from(numeric.mode & 0o7777);
-            }
-            ClauseKind::Symbolic(symbolic) => {
-                if !symbolic.target.matches(file_type) {
-                    continue;
-                }
-
-                mode = apply_symbolic_clause(mode, symbolic, file_type.is_dir());
-            }
-        }
-    }
-
-    mode
+pub(crate) fn apply_clauses(clauses: &[Clause], mode: u32, file_type: std::fs::FileType) -> u32 {
+    tweak_mode(clauses, mode, file_type.is_dir())
 }
 
 #[cfg(not(unix))]
@@ -44,367 +19,119 @@ pub(crate) fn apply_clauses(_clauses: &[Clause], mode: u32, _file_type: std::fs:
     mode
 }
 
-/// Returns the process umask, cached for thread safety.
+/// Core of `chmod.c:tweak_mode()`.
 ///
-/// upstream: `main.c` stores `orig_umask` once at startup. We query it
-/// the first time a chmod clause with an implied who-specifier is applied
-/// and cache the result so the double set-and-restore syscall happens at
-/// most once per process.
-#[cfg(unix)]
-#[allow(unsafe_code)]
-fn cached_umask() -> u32 {
-    use std::sync::OnceLock;
-    static UMASK: OnceLock<u32> = OnceLock::new();
-    *UMASK.get_or_init(|| {
-        // SAFETY: umask is a standard POSIX call. We set it to 0 to read
-        // the current value, then immediately restore it. This is a
-        // well-known pattern (used by upstream rsync main.c, GNU coreutils,
-        // etc.). The OnceLock ensures this pair of calls happens at most
-        // once per process, eliminating any window for concurrent umask
-        // modifications.
-        let old = unsafe { libc::umask(0) };
-        unsafe { libc::umask(old) };
-        old as u32
-    })
-}
+/// `is_x` is sampled once from the original executable bits and `non_perm`
+/// holds the file-type bits, both restored per upstream. upstream:
+/// chmod.c:218-236.
+#[cfg(any(unix, test))]
+fn tweak_mode(clauses: &[Clause], orig: u32, is_dir: bool) -> u32 {
+    let is_x = orig & 0o111;
+    let non_perm = orig & !CHMOD_BITS;
+    let mut mode = orig & CHMOD_BITS;
 
-/// Extracts a copy source's three rwx permission bits, normalised to the low
-/// three bits (`0b_rwx`).
-///
-/// upstream: chmod.c mode_copy_bits() shifts the selected category down by 6
-/// (user), 3 (group), or 0 (other) and masks with `7`.
-#[cfg(unix)]
-const fn copy_source_bits(mode: u32, src: CopySource) -> u32 {
-    let shifted = match src {
-        CopySource::User => mode >> 6,
-        CopySource::Group => mode >> 3,
-        CopySource::Other => mode,
-    };
-    shifted & 0o7
-}
-
-#[cfg(unix)]
-fn apply_symbolic_clause(mut mode: u32, clause: &SymbolicClause, is_dir: bool) -> u32 {
-    let before = mode;
-
-    // upstream: chmod.c - when no who-specifier is given, the computed
-    // permission bits are masked by ~orig_umask. This prevents `+w` from
-    // granting world-writable when the umask forbids it.
-    let umask_mask = if clause.who_implied {
-        !cached_umask() & 0o777
-    } else {
-        0o777
-    };
-
-    // upstream: chmod.c mode_copy_bits() - a copy directive (`g=u`) reads the
-    // source category's rwx bits from the *original* mode and replicates them
-    // into every destination who-class. The source bits are sampled once,
-    // before any destination is mutated.
-    let copy_src_bits = clause
-        .perms
-        .copy_source
-        .map(|src| copy_source_bits(before, src));
-
-    for dest in [Dest::User, Dest::Group, Dest::Other] {
-        if !dest.includes(clause) {
+    for clause in clauses {
+        // upstream: chmod.c:224-227 - honour the D/F selector.
+        if clause.dirs_only && !is_dir {
+            continue;
+        }
+        if clause.files_only && is_dir {
             continue;
         }
 
-        let mask = dest.permission_mask();
-        let mut bits = mode & mask;
+        mode &= clause.mode_and;
 
-        if matches!(clause.op, Operation::Assign) {
-            bits = 0;
+        // upstream: chmod.c:229-232 - a conditional `X` only sets the execute
+        // bits when the file was already executable or is a directory.
+        if clause.x_keep && is_x == 0 && !is_dir {
+            mode |= clause.mode_or & !0o111;
+        } else {
+            mode |= clause.mode_or;
         }
-
-        let add_bits = match copy_src_bits {
-            Some(src_bits) => (dest.spread_exec(src_bits) & mask) & umask_mask,
-            None => permission_bits(&clause.perms, dest, is_dir, before) & umask_mask,
-        };
-        match clause.op {
-            Operation::Add | Operation::Assign => {
-                bits |= add_bits & mask;
-            }
-            Operation::Remove => {
-                bits &= !(add_bits & mask);
-            }
-        }
-
-        mode = (mode & !mask) | (bits & mask);
     }
 
-    mode = apply_special_bits(mode, clause);
-    mode
+    mode | non_perm
 }
 
-#[cfg(unix)]
-const fn apply_special_bits(mode: u32, clause: &SymbolicClause) -> u32 {
-    let mut result = mode;
-
-    if clause.who.includes_user() {
-        result = update_special_bit(result, clause.op, clause.perms.setuid, 0o4000);
-    }
-
-    if clause.who.includes_group() {
-        result = update_special_bit(result, clause.op, clause.perms.setgid, 0o2000);
-    }
-
-    if clause.who.includes_other() || clause.who.covers_all() {
-        result = update_special_bit(result, clause.op, clause.perms.sticky, 0o1000);
-    }
-
-    result
-}
-
-#[cfg(unix)]
-const fn update_special_bit(current: u32, op: Operation, flag_requested: bool, bit: u32) -> u32 {
-    match op {
-        Operation::Add => {
-            if flag_requested {
-                current | bit
-            } else {
-                current
-            }
-        }
-        Operation::Remove => {
-            if flag_requested {
-                current & !bit
-            } else {
-                current
-            }
-        }
-        Operation::Assign => {
-            if flag_requested {
-                (current & !bit) | bit
-            } else {
-                current & !bit
-            }
-        }
-    }
-}
-
-#[cfg(unix)]
-#[derive(Clone, Copy)]
-enum Dest {
-    User,
-    Group,
-    Other,
-}
-
-#[cfg(unix)]
-impl Dest {
-    const fn includes(self, clause: &SymbolicClause) -> bool {
-        match self {
-            Self::User => clause.who.includes_user(),
-            Self::Group => clause.who.includes_group(),
-            Self::Other => clause.who.includes_other(),
-        }
-    }
-
-    const fn permission_mask(self) -> u32 {
-        match self {
-            Self::User => 0o700,
-            Self::Group => 0o070,
-            Self::Other => 0o007,
-        }
-    }
-
-    const fn read_mask(self) -> u32 {
-        match self {
-            Self::User => 0o400,
-            Self::Group => 0o040,
-            Self::Other => 0o004,
-        }
-    }
-
-    const fn write_mask(self) -> u32 {
-        match self {
-            Self::User => 0o200,
-            Self::Group => 0o020,
-            Self::Other => 0o002,
-        }
-    }
-
-    const fn exec_mask(self) -> u32 {
-        match self {
-            Self::User => 0o100,
-            Self::Group => 0o010,
-            Self::Other => 0o001,
-        }
-    }
-
-    /// Shifts a normalised low-three-bit rwx value (`0b_rwx`) into this
-    /// destination's permission triad. upstream: chmod.c mode_copy_bits()
-    /// multiplies `copy_bits` by `copy_dst` (0100/0010/0001).
-    const fn spread_exec(self, low_bits: u32) -> u32 {
-        match self {
-            Self::User => low_bits << 6,
-            Self::Group => low_bits << 3,
-            Self::Other => low_bits,
-        }
-    }
-}
-
-#[cfg(unix)]
-const fn permission_bits(spec: &PermSpec, dest: Dest, is_dir: bool, before: u32) -> u32 {
-    let mut bits = 0u32;
-
-    if spec.read {
-        bits |= dest.read_mask();
-    }
-    if spec.write {
-        bits |= dest.write_mask();
-    }
-    if spec.exec {
-        bits |= dest.exec_mask();
-    }
-    if spec.exec_if_conditional {
-        let should_apply = is_dir || (before & 0o111) != 0;
-        if should_apply {
-            bits |= dest.exec_mask();
-        }
-    }
-
-    bits
-}
-
-#[cfg(unix)]
 #[cfg(all(test, unix))]
 mod tests {
+    use super::super::parse::parse_with_umask;
     use super::*;
 
-    #[test]
-    fn dest_permission_masks() {
-        assert_eq!(Dest::User.permission_mask(), 0o700);
-        assert_eq!(Dest::Group.permission_mask(), 0o070);
-        assert_eq!(Dest::Other.permission_mask(), 0o007);
+    const UMASK: u32 = 0o022;
+
+    fn apply(spec: &str, mode: u32, is_dir: bool) -> u32 {
+        let clauses = parse_with_umask(spec, UMASK).expect("parses");
+        tweak_mode(&clauses, mode, is_dir) & CHMOD_BITS
     }
 
     #[test]
-    fn dest_read_masks() {
-        assert_eq!(Dest::User.read_mask(), 0o400);
-        assert_eq!(Dest::Group.read_mask(), 0o040);
-        assert_eq!(Dest::Other.read_mask(), 0o004);
+    fn octal_sets_exact_mode() {
+        assert_eq!(apply("750", 0o644, false), 0o750);
+        assert_eq!(apply("0644", 0o777, false), 0o644);
     }
 
     #[test]
-    fn dest_write_masks() {
-        assert_eq!(Dest::User.write_mask(), 0o200);
-        assert_eq!(Dest::Group.write_mask(), 0o020);
-        assert_eq!(Dest::Other.write_mask(), 0o002);
+    fn directory_and_file_selectors_route_by_type() {
+        // D755,F644: dir -> 755, file -> 644.
+        assert_eq!(apply("D755,F644", 0o600, true), 0o755);
+        assert_eq!(apply("D755,F644", 0o600, false), 0o644);
     }
 
     #[test]
-    fn dest_exec_masks() {
-        assert_eq!(Dest::User.exec_mask(), 0o100);
-        assert_eq!(Dest::Group.exec_mask(), 0o010);
-        assert_eq!(Dest::Other.exec_mask(), 0o001);
+    fn add_and_remove_are_relative() {
+        assert_eq!(apply("u+x", 0o644, false), 0o744);
+        assert_eq!(apply("g-w,o-rwx", 0o666, false), 0o640);
     }
 
     #[test]
-    fn update_special_bit_add_setuid() {
-        let result = update_special_bit(0o755, Operation::Add, true, 0o4000);
-        assert_eq!(result, 0o4755);
+    fn assign_resets_class_but_keeps_setid() {
+        // upstream: `u=rx` on 04755 keeps setuid -> 04555.
+        assert_eq!(apply("u=rx", 0o4755, false), 0o4555);
+        assert_eq!(apply("a=rx", 0o4755, false), 0o4555);
     }
 
     #[test]
-    fn update_special_bit_add_no_request() {
-        let result = update_special_bit(0o755, Operation::Add, false, 0o4000);
-        assert_eq!(result, 0o755);
+    fn setid_defaults_to_setuid_without_ug_who() {
+        // upstream: o+s / a+s / +s all set setuid only.
+        assert_eq!(apply("o+s", 0o644, false), 0o4644);
+        assert_eq!(apply("a+s", 0o644, false), 0o4644);
+        assert_eq!(apply("+s", 0o644, false), 0o4644);
+        assert_eq!(apply("g+s", 0o644, false), 0o2644);
     }
 
     #[test]
-    fn update_special_bit_remove() {
-        let result = update_special_bit(0o4755, Operation::Remove, true, 0o4000);
-        assert_eq!(result, 0o755);
+    fn sticky_applies_for_any_who() {
+        assert_eq!(apply("g+t", 0o644, false), 0o1644);
+        assert_eq!(apply("+t", 0o644, true), 0o1644);
     }
 
     #[test]
-    fn update_special_bit_assign_true() {
-        let result = update_special_bit(0o755, Operation::Assign, true, 0o2000);
-        assert_eq!(result, 0o2755);
+    fn conditional_x_only_on_dir_or_executable() {
+        // upstream: +X adds exec on dirs and already-executable files only.
+        assert_eq!(apply("a+X", 0o644, false), 0o644);
+        assert_eq!(apply("a+X", 0o744, false), 0o755);
+        assert_eq!(apply("a+X", 0o600, true), 0o711);
     }
 
     #[test]
-    fn update_special_bit_assign_false() {
-        let result = update_special_bit(0o2755, Operation::Assign, false, 0o2000);
-        assert_eq!(result, 0o755);
+    fn clauses_apply_left_to_right() {
+        assert_eq!(apply("000,u+rwx", 0o777, false), 0o700);
+        assert_eq!(apply("644,755", 0o000, false), 0o755);
     }
 
     #[test]
-    fn permission_bits_read_only() {
-        let spec = PermSpec {
-            read: true,
-            write: false,
-            exec: false,
-            exec_if_conditional: false,
-            setuid: false,
-            setgid: false,
-            sticky: false,
-            copy_source: None,
-        };
-        assert_eq!(permission_bits(&spec, Dest::User, false, 0), 0o400);
-        assert_eq!(permission_bits(&spec, Dest::Group, false, 0), 0o040);
-        assert_eq!(permission_bits(&spec, Dest::Other, false, 0), 0o004);
+    fn implied_who_masked_by_umask() {
+        // +w with umask 022 grants owner-write only.
+        assert_eq!(apply("+w", 0o644, false) & 0o022, 0);
     }
 
     #[test]
-    fn permission_bits_rwx() {
-        let spec = PermSpec {
-            read: true,
-            write: true,
-            exec: true,
-            exec_if_conditional: false,
-            setuid: false,
-            setgid: false,
-            sticky: false,
-            copy_source: None,
-        };
-        assert_eq!(permission_bits(&spec, Dest::User, false, 0), 0o700);
-    }
-
-    #[test]
-    fn permission_bits_exec_conditional_on_dir() {
-        let spec = PermSpec {
-            read: false,
-            write: false,
-            exec: false,
-            exec_if_conditional: true,
-            setuid: false,
-            setgid: false,
-            sticky: false,
-            copy_source: None,
-        };
-        assert_eq!(permission_bits(&spec, Dest::User, true, 0), 0o100);
-    }
-
-    #[test]
-    fn permission_bits_exec_conditional_on_executable_file() {
-        let spec = PermSpec {
-            read: false,
-            write: false,
-            exec: false,
-            exec_if_conditional: true,
-            setuid: false,
-            setgid: false,
-            sticky: false,
-            copy_source: None,
-        };
-        assert_eq!(permission_bits(&spec, Dest::User, false, 0o111), 0o100);
-    }
-
-    #[test]
-    fn permission_bits_exec_conditional_on_nonexecutable_file() {
-        let spec = PermSpec {
-            read: false,
-            write: false,
-            exec: false,
-            exec_if_conditional: true,
-            setuid: false,
-            setgid: false,
-            sticky: false,
-            copy_source: None,
-        };
-        assert_eq!(permission_bits(&spec, Dest::User, false, 0o644), 0);
+    fn file_type_bits_preserved() {
+        // Non-permission bits above CHMOD_BITS survive unchanged.
+        let clauses = parse_with_umask("644", UMASK).expect("parses");
+        let out = tweak_mode(&clauses, 0o100_0777, false);
+        assert_eq!(out & !CHMOD_BITS, 0o100_0000);
+        assert_eq!(out & CHMOD_BITS, 0o644);
     }
 }
