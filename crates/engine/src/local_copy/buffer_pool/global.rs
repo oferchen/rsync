@@ -221,12 +221,33 @@ pub fn init_global_buffer_pool(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
     use std::thread;
 
-    // NOTE: Because `OnceLock` is process-wide, tests that call
-    // `init_global_buffer_pool` or `global_buffer_pool` share state.
-    // Nextest serializes these via the `global-pool-serial` test-group
-    // in `.config/nextest.toml` (max-threads = 1).
+    // Because `GLOBAL_BUFFER_POOL` is a process-wide `OnceLock`, every test
+    // that calls `global_buffer_pool` or `init_global_buffer_pool` shares one
+    // pool. `global_pool_buffers_are_reusable` samples that pool's
+    // `available()` count twice and asserts it did not shrink; a sibling test
+    // that concurrently acquires or releases buffers on the same pool would
+    // perturb the count and make the assertion flaky.
+    //
+    // `SINGLETON_GUARD` serializes those tests in-process, independently of
+    // the test name, so the invariant holds even under a shared-process test
+    // runner. This complements (and does not rely on) the `global-pool-serial`
+    // nextest group in `.config/nextest.toml`, which selects tests by name
+    // substring and would silently drop a renamed test.
+    static SINGLETON_GUARD: Mutex<()> = Mutex::new(());
+
+    /// Serializes the tests that touch the process-wide global buffer pool.
+    ///
+    /// Recovers from a prior test's panic-poison via `into_inner` so a single
+    /// failing test does not cascade into spurious failures in the others. The
+    /// returned guard must be held for the whole test body.
+    fn serialize_singleton() -> MutexGuard<'static, ()> {
+        SINGLETON_GUARD
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
 
     #[test]
     fn config_default_matches_hardware_parallelism() {
@@ -255,6 +276,7 @@ mod tests {
 
     #[test]
     fn global_pool_returns_arc() {
+        let _serial = serialize_singleton();
         // This exercises the lazy init path. Since tests share the
         // process-wide OnceLock, the pool may already be initialized
         // by another test - that is fine, we just verify the Arc works.
@@ -265,6 +287,7 @@ mod tests {
 
     #[test]
     fn global_pool_returns_same_instance() {
+        let _serial = serialize_singleton();
         let a = global_buffer_pool();
         let b = global_buffer_pool();
         // Both Arcs point to the same allocation.
@@ -273,6 +296,7 @@ mod tests {
 
     #[test]
     fn global_pool_is_thread_safe() {
+        let _serial = serialize_singleton();
         let handles: Vec<_> = (0..8)
             .map(|_| {
                 thread::spawn(|| {
@@ -290,6 +314,7 @@ mod tests {
 
     #[test]
     fn global_pool_buffers_are_reusable() {
+        let _serial = serialize_singleton();
         let pool = global_buffer_pool();
         let initial_available = pool.available();
 
@@ -338,6 +363,7 @@ mod tests {
 
     #[test]
     fn init_after_lazy_init_returns_err() {
+        let _serial = serialize_singleton();
         // Ensure the pool is initialized (may already be from other tests).
         let _pool = global_buffer_pool();
 

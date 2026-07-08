@@ -78,6 +78,15 @@ impl LocalCopyOptionsBuilder {
         self
     }
 
+    /// Enables `--list-only` listing semantics.
+    ///
+    /// upstream: generator.c:1155 `list_file_entry()`.
+    #[must_use]
+    pub fn list_only(mut self, enabled: bool) -> Self {
+        self.list_only = enabled;
+        self
+    }
+
     /// Enables hard link preservation.
     #[must_use]
     pub fn hard_links(mut self, enabled: bool) -> Self {

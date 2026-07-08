@@ -175,6 +175,7 @@ impl LocalCopyOptionsBuilder {
             append: self.append,
             append_verify: self.append_verify,
             collect_events: self.collect_events,
+            list_only: self.list_only,
             preserve_hard_links: self.preserve_hard_links,
             relative_paths: self.relative_paths,
             one_file_system: self.one_file_system,

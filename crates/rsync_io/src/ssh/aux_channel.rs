@@ -471,6 +471,17 @@ pub(super) fn configure_stderr_channel(command: &mut Command) -> Option<UnixStre
 #[cfg(not(unix))]
 pub(super) fn configure_stderr_channel(command: &mut Command) -> Option<()> {
     command.stderr(Stdio::piped());
+    // The socketpair-backed async drain fast path is Unix-only, so it
+    // compiles out entirely here. Emit a diagnostic once at the stderr
+    // setup point so a debug run on non-Unix targets shows that the
+    // pipe-based fallback was taken rather than leaving the downgrade
+    // invisible (the Unix arm above traces the equivalent runtime
+    // fallback via `debug_log!`).
+    debug_log!(
+        Connect,
+        2,
+        "ssh stderr: socketpair async drain unavailable on this platform; using pipe-based stderr"
+    );
     None
 }
 

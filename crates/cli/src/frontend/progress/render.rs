@@ -68,6 +68,7 @@ pub(crate) fn emit_transfer_summary(
                 show_atimes,
                 show_crtimes,
                 eight_bit_output,
+                out_format_context.preserve_links(),
             )?;
             wrote_listing = true;
         }
@@ -247,6 +248,7 @@ fn format_list_time_column(time: Option<std::time::SystemTime>, blank: bool) -> 
     format!("{value:>width$}")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn emit_list_only<W: Write + ?Sized>(
     events: &[ClientEvent],
     stdout: &mut W,
@@ -254,6 +256,7 @@ pub(crate) fn emit_list_only<W: Write + ?Sized>(
     show_atimes: bool,
     show_crtimes: bool,
     eight_bit_output: bool,
+    preserve_links: bool,
 ) -> io::Result<()> {
     for event in events {
         if !list_only_event(event.kind()) {
@@ -278,7 +281,12 @@ pub(crate) fn emit_list_only<W: Write + ?Sized>(
                 String::new()
             };
             let mut rendered = escape_path(event.relative_path(), eight_bit_output);
-            if metadata.kind().is_symlink()
+            // upstream: generator.c:1183 list_file_entry() - the ` -> <target>`
+            // arrow is emitted only when `preserve_links && S_ISLNK(f->mode)`.
+            // Without `--links`/`-l` the symlink is still listed (with its
+            // target-length size) but no target string.
+            if preserve_links
+                && metadata.kind().is_symlink()
                 && let Some(target) = metadata.symlink_target()
             {
                 rendered.push_str(" -> ");
@@ -789,9 +797,13 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
                 continue;
             }
             ClientEventKind::SkippedDirectory => {
+                // upstream: flist.c:1338 and flist.c:2452 -
+                // `rprintf(FINFO, "skipping directory %s\n", ...)`: the bare
+                // relative name with no surrounding quotes and no trailing
+                // "(no recursion)" suffix.
                 writeln!(
                     stdout,
-                    "skipping directory \"{}\" (no recursion)",
+                    "skipping directory {}",
                     escape_path(event.relative_path(), eight_bit_output)
                 )?;
                 continue;
@@ -950,4 +962,42 @@ pub(crate) fn emit_verbose<W: Write + ?Sized>(
         writeln!(stdout, "{rendered}")?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use engine::local_copy::LocalCopyChangeSet;
+    use std::path::PathBuf;
+
+    fn render_verbose(event: ClientEvent) -> String {
+        let mut out = Vec::new();
+        emit_verbose(
+            &[event],
+            1,
+            NameOutputLevel::UpdatedAndUnchanged,
+            false,
+            HumanReadableMode::Disabled,
+            false,
+            &mut out,
+        )
+        .expect("emit_verbose writes to an in-memory buffer");
+        String::from_utf8(out).expect("output is valid UTF-8")
+    }
+
+    #[test]
+    fn skipped_directory_matches_upstream_bare_message() {
+        let event = ClientEvent::for_test(
+            PathBuf::from("subdir"),
+            ClientEventKind::SkippedDirectory,
+            false,
+            Some(ClientEntryMetadata::for_test(ClientEntryKind::Directory)),
+            LocalCopyChangeSet::new(),
+        );
+        // upstream: flist.c:1338 and flist.c:2452 emit
+        // `rprintf(FINFO, "skipping directory %s\n", ...)` - a bare relative
+        // name with no surrounding quotes and no "(no recursion)" suffix. Byte
+        // fidelity with upstream requires exactly this form.
+        assert_eq!(render_verbose(event), "skipping directory subdir\n");
+    }
 }

@@ -340,20 +340,16 @@ impl ParallelDeltaApplier {
         }
     }
 
-    /// Applies one chunk, dispatching the CPU-bound verify step to rayon.
+    /// Applies one chunk, running the CPU-bound verify step inline.
     ///
-    /// The verify step runs on a rayon worker via [`rayon::join`] so the
-    /// ambient pool (or the worker that owns the current thread) handles
-    /// the work without spinning up a new pool. The serial write step then
+    /// The verify step runs on the calling thread, then the serial write step
     /// runs under the per-file mutex so per-file byte order is preserved.
     ///
     /// # Scheduling shape
     ///
-    /// This entry point schedules a single chunk's verify on a rayon worker
-    /// via `rayon::join(verify, || ())`. The second closure is a no-op, so
-    /// the caller still blocks until that one verify returns. This is a
-    /// single-chunk scheduling primitive, **not** cross-chunk parallelism.
-    /// For multi-chunk parallel verify across the rayon pool use
+    /// This entry point verifies a single chunk and blocks until that verify
+    /// returns. It is a single-chunk primitive, **not** cross-chunk
+    /// parallelism. For multi-chunk parallel verify across the rayon pool use
     /// [`apply_batch_parallel`](Self::apply_batch_parallel), which collects a
     /// `Vec<DeltaChunk>` through `into_par_iter` and fans the verifies out
     /// subject to [`Self::concurrency`].
@@ -378,12 +374,12 @@ impl ParallelDeltaApplier {
         // `flush_workers`-visible decrement once this call returns.
         let ndx = chunk.ndx;
         let handle = self.slot_for(ndx)?;
-        // `rayon::join` schedules the verify on a worker thread when the
-        // caller is inside the rayon pool; outside the pool it falls back
-        // to the calling thread, which keeps single-threaded callers cheap.
+        // The verify runs inline on the calling thread. The caller blocks on
+        // this single chunk either way, so there is no parallelism to gain by
+        // dispatching it through the rayon pool. Cross-chunk fan-out lives in
+        // `apply_batch_parallel`.
         let strategy = Arc::clone(&self.strategy);
-        let (verified, _) = rayon::join(|| Self::verify_chunk(strategy.as_ref(), chunk), || ());
-        let verified = verified?;
+        let verified = Self::verify_chunk(strategy.as_ref(), chunk)?;
 
         let mut slot = handle.lock_slot(ndx, "apply_one_chunk")?;
         let _ = verified.digest; // reserved for future stats wiring

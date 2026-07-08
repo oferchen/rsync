@@ -83,6 +83,10 @@ impl<'a> CopyContext<'a> {
         self.options.specials_enabled()
     }
 
+    pub(super) const fn list_only_enabled(&self) -> bool {
+        self.options.list_only_enabled()
+    }
+
     pub(super) const fn force_replacements_enabled(&self) -> bool {
         self.options.force_replacements_enabled()
     }
