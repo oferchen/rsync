@@ -1436,7 +1436,7 @@ fn list_only_renders_specials_and_symlink_arrow_gate() {
         emit_list_only(
             std::slice::from_ref(&event),
             &mut out,
-            HumanReadableMode::Disabled,
+            HumanReadableMode::Grouped,
             false,
             false,
             false,

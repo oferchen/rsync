@@ -977,7 +977,7 @@ mod tests {
             1,
             NameOutputLevel::UpdatedAndUnchanged,
             false,
-            HumanReadableMode::Disabled,
+            HumanReadableMode::Grouped,
             false,
             &mut out,
         )
