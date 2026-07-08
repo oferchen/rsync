@@ -17,7 +17,7 @@ use rsync_io::ssh::SshConnection;
 
 use super::super::super::config::ClientConfig;
 use super::super::super::error::{
-    ClientError, invalid_argument_error, invalid_argument_error_typed,
+    ClientError, invalid_argument_error, invalid_argument_error_typed_with_role, remote_exit_error,
 };
 use super::super::super::progress::ClientProgressObserver;
 use super::super::super::summary::ClientSummary;
@@ -33,7 +33,22 @@ use super::parse::{parse_remote_operands, parse_single_remote};
 use super::progress::ServerProgressAdapter;
 use super::server_config::{build_server_config_for_generator, build_server_config_for_receiver};
 use crate::exit_code::ExitCode;
+use crate::message::Role;
 use crate::server::{ServerConfig, ServerRole, TransferProgressCallback};
+
+/// Maps the local client's server-infrastructure role to its trailer role.
+///
+/// upstream: who_am_i() (rsync.c:823) - a client push runs under `am_sender`
+/// (`[sender]`), a client pull is the pre-forked receiver (`[Receiver]`). The
+/// client drives the server flow as a `ServerRole::Generator` on a push (local
+/// sends) and as a `ServerRole::Receiver` on a pull (local receives), matching
+/// the `is_sender = role == Generator` split used for batch recording.
+const fn local_client_role(server_role: ServerRole) -> Role {
+    match server_role {
+        ServerRole::Generator => Role::Sender,
+        ServerRole::Receiver => Role::Receiver,
+    }
+}
 
 /// Executes a transfer over SSH transport.
 ///
@@ -263,6 +278,11 @@ fn run_server_over_ssh_connection(
     // on the SSH pipe.
     let mut reader = BufReader::with_capacity(32768, reader);
 
+    // upstream: who_am_i() (rsync.c:823) - the local client's role for any exit
+    // diagnostic. Captured before `config` is consumed by the handshake so both
+    // the handshake-failure and post-transfer child-exit paths can tag it.
+    let local_role = local_client_role(config.role);
+
     let batch_recording = batch_ctx.as_ref().map(|ctx| {
         let is_sender = config.role == ServerRole::Generator;
         build_batch_recording(ctx, is_sender)
@@ -296,11 +316,15 @@ fn run_server_over_ssh_connection(
             } else {
                 ExitCode::StartClient
             };
-            let worst = if child_exit.as_i32() > base.as_i32() {
-                child_exit
-            } else {
-                base
-            };
+            let child_overrides = child_exit.as_i32() > base.as_i32();
+            if child_overrides {
+                // upstream: log.c:912 log_exit() - when the remote/child's raw
+                // exit status outranks the local base code (cleanup.c:150-152),
+                // the final `rsync error:` line reports that winning code by its
+                // rerr_name, or "unexplained error" for an unknown raw code
+                // (log.c:903-905), not the EOF whine text.
+                return Err(remote_exit_error(child_exit, local_role, &stderr_text));
+            }
             let detail = if base == ExitCode::StreamIo {
                 // upstream: io.c:228-232 - the EOF whine omits the underlying
                 // error and reports the byte count received so far.
@@ -308,7 +332,9 @@ fn run_server_over_ssh_connection(
             } else {
                 format!("handshake failed: {e}{stderr_text}")
             };
-            return Err(invalid_argument_error_typed(&detail, worst));
+            return Err(invalid_argument_error_typed_with_role(
+                &detail, base, local_role,
+            ));
         }
     };
 
@@ -349,25 +375,15 @@ fn run_server_over_ssh_connection(
             if child_exit_code.is_success() {
                 Ok((stats, negotiated_protocol))
             } else {
-                Err(invalid_argument_error_typed(
-                    &format!(
-                        "remote process exited with error: {}{stderr_text}",
-                        child_exit_code.description()
-                    ),
-                    child_exit_code,
-                ))
+                // upstream: log.c:912 log_exit() renders the winning child code
+                // by its rerr_name tagged with the local role, not "client".
+                Err(remote_exit_error(child_exit_code, local_role, &stderr_text))
             }
         }
         Err(transfer_error) => {
             let transfer_exit = ExitCode::from_io_error(&transfer_error);
             if child_exit_code.as_i32() > transfer_exit.as_i32() {
-                Err(invalid_argument_error_typed(
-                    &format!(
-                        "transfer failed and remote process exited with error: {}{stderr_text}",
-                        child_exit_code.description()
-                    ),
-                    child_exit_code,
-                ))
+                Err(remote_exit_error(child_exit_code, local_role, &stderr_text))
             } else {
                 Err(invalid_argument_error(
                     &format!("transfer failed: {transfer_error}{stderr_text}"),
