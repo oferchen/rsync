@@ -78,8 +78,16 @@ pub fn generate_script_with_filters(
         }
     }
 
-    // upstream: batch.c:292-294 - write --read-batch with the batch file path
-    write!(file, " --read-batch={}", shell_quote(&batch_name))?;
+    // upstream: batch.c:269-298 - reconstruct the pass-through options from
+    // the original invocation (transfer-affecting flags like -a/-z/
+    // --numeric-ids) and convert --write-batch to --read-batch. When the raw
+    // argv was not captured (legacy callers), fall back to emitting just the
+    // --read-batch option so the script still replays the batch file.
+    if config.replay_args.is_empty() {
+        write!(file, " --read-batch={}", shell_quote(&batch_name))?;
+    } else {
+        write_replay_options(&mut file, &config.replay_args, &config.operands)?;
+    }
 
     // upstream: batch.c:300-304 - destination placeholder
     // write_opt("${1:-", NULL) + write_arg(dest) + "}"
@@ -219,6 +227,87 @@ pub fn generate_script_with_args(
     // upstream: batch.c:232 batch_sh_fd opened with S_IRUSR | S_IWUSR | S_IXUSR (0o700)
     set_script_permissions(&script_path)?;
 
+    Ok(())
+}
+
+/// Reconstruct the `--read-batch` pass-through options into the replay script.
+///
+/// This is the single source of truth for which options a batch replay must
+/// re-apply. It mirrors the argument-reconstruction loop in upstream rsync's
+/// `batch.c:write_batch_shell_file()` (batch.c:269-298):
+///
+/// - Elides the positional filename operands (`operands`) by reverse-matching
+///   them against `replay_args`, exactly as upstream nulls out the trailing
+///   `cooked_argv` filenames (batch.c:269-275). The destination is re-supplied
+///   by the caller through the `${1:-<dest>}` placeholder.
+/// - Strips `--files-from`, `--filter`, `--include`, `--exclude`, and `-f`
+///   together with their value arguments; their rules are replayed via the
+///   heredoc instead (batch.c:280-291).
+/// - Converts `--write-batch`/`--only-write-batch` to `--read-batch`
+///   (batch.c:292-294).
+/// - Passes through every remaining transfer-affecting flag verbatim (`-a`,
+///   `-z`, `--numeric-ids`, ...) so the replay applies identical options
+///   (batch.c:295-298).
+fn write_replay_options(
+    file: &mut File,
+    replay_args: &[String],
+    operands: &[String],
+) -> io::Result<()> {
+    // upstream: batch.c:269-275 - null out the trailing filename operands so
+    // they are not re-emitted; the destination returns via ${1:-<dest>}.
+    let mut elide = vec![false; replay_args.len()];
+    let mut oi = operands.len();
+    let mut i = replay_args.len();
+    while i > 1 && oi > 0 {
+        i -= 1;
+        if replay_args[i] == operands[oi - 1] {
+            elide[i] = true;
+            oi -= 1;
+        }
+    }
+
+    // upstream: batch.c:277-298 - emit the surviving options.
+    let mut i = 1;
+    while i < replay_args.len() {
+        if elide[i] {
+            i += 1;
+            continue;
+        }
+        let p = replay_args[i].as_str();
+        // upstream: batch.c:280-286 - skip filter/include/exclude/files-from
+        // options and their value argument (unless attached with '=').
+        if p.starts_with("--files-from")
+            || p.starts_with("--filter")
+            || p.starts_with("--include")
+            || p.starts_with("--exclude")
+        {
+            if !p.contains('=') {
+                i += 1;
+            }
+            i += 1;
+            continue;
+        }
+        // upstream: batch.c:288-290 - skip -f and its value argument.
+        if p == "-f" {
+            i += 2;
+            continue;
+        }
+        // upstream: batch.c:292-294 - convert write-batch to read-batch.
+        if let Some(name) = p.strip_prefix("--write-batch=") {
+            write!(file, " --read-batch={}", shell_quote(name))?;
+        } else if let Some(name) = p.strip_prefix("--only-write-batch=") {
+            write!(file, " --read-batch={}", shell_quote(name))?;
+        } else if p == "--write-batch" || p == "--only-write-batch" {
+            // Bare form: the following (non-elided) arg carries the batch name
+            // and is passed through on the next iteration, matching upstream's
+            // write_opt("--read-batch", NULL).
+            write!(file, " --read-batch")?;
+        } else {
+            // upstream: batch.c:295-298 - pass through all other arguments.
+            write!(file, " {}", shell_quote(p))?;
+        }
+        i += 1;
+    }
     Ok(())
 }
 
@@ -791,6 +880,77 @@ mod tests {
         assert!(
             content.contains("${1:-.}"),
             "Without a destination, the script must default to '.': {content}"
+        );
+    }
+
+    /// Verify the replay script re-emits the transfer-affecting pass-through
+    /// options from the original invocation.
+    ///
+    /// The generated `BATCH.sh` must reconstruct the same options the batch was
+    /// recorded with (`-a`, `-z`, `--numeric-ids`, ...); otherwise replaying
+    /// the batch applies a different set of transfer semantics than the capture
+    /// used, diverging from upstream `batch.c:write_batch_shell_file()`
+    /// (batch.c:269-298). Filename operands and filter options must be elided
+    /// (the destination returns via `${1:-<dest>}`; filter rules via the
+    /// heredoc).
+    #[test]
+    fn test_generate_script_reconstructs_pass_through_options() {
+        let temp_dir = TempDir::new().unwrap();
+        let batch_path = temp_dir.path().join("test.batch");
+        let batch_name = batch_path.to_string_lossy().into_owned();
+
+        let config = BatchConfig::new(BatchMode::Write, batch_name.clone(), 31)
+            .with_invoker("oc-rsync")
+            .with_replay_args([
+                "oc-rsync".to_owned(),
+                "-az".to_owned(),
+                "--numeric-ids".to_owned(),
+                "--filter=- *.tmp".to_owned(),
+                format!("--write-batch={batch_name}"),
+                "src/".to_owned(),
+                "dst/".to_owned(),
+            ])
+            .with_operands(["src/".to_owned(), "dst/".to_owned()]);
+
+        generate_script_with_filters(&config, Some("- *.tmp\n"), Some("dst/")).unwrap();
+
+        let content = fs::read_to_string(config.script_file_path()).unwrap();
+
+        // Transfer-affecting flags must be preserved for replay.
+        assert!(
+            content.contains(" -az"),
+            "replay script must re-apply -az: {content}"
+        );
+        assert!(
+            content.contains(" --numeric-ids"),
+            "replay script must re-apply --numeric-ids: {content}"
+        );
+        // --write-batch is converted to --read-batch.
+        assert!(
+            content.contains(&format!("--read-batch={batch_name}")),
+            "replay script must convert --write-batch to --read-batch: {content}"
+        );
+        assert!(
+            !content.contains("--write-batch"),
+            "replay script must not retain --write-batch: {content}"
+        );
+        // Filter options are stripped from the option list (replayed via heredoc).
+        assert!(
+            !content.contains("--filter=- *.tmp"),
+            "raw --filter option must be elided from the command line: {content}"
+        );
+        assert!(
+            content.contains("--filter=._-"),
+            "heredoc filter option must be present: {content}"
+        );
+        // Filename operands are elided; the destination returns via ${1:-<dest>}.
+        assert!(
+            content.contains("${1:-dst/}"),
+            "destination must be re-supplied via placeholder: {content}"
+        );
+        assert!(
+            !content.contains(" src/"),
+            "source operand must be elided from the command line: {content}"
         );
     }
 
