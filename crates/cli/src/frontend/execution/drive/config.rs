@@ -380,7 +380,7 @@ pub(crate) fn build_base_config(mut inputs: ConfigInputs) -> ClientConfigBuilder
         DeleteMode::Before => builder.delete_before(true),
         DeleteMode::After => builder.delete_after(true),
         DeleteMode::Delay => builder.delete_delay(true),
-        DeleteMode::During | DeleteMode::Disabled => builder,
+        DeleteMode::During | DeleteMode::DuringDefault | DeleteMode::Disabled => builder,
     };
 
     builder = builder.itemize_changes(inputs.itemize_changes);
