@@ -914,18 +914,23 @@ mod rule_modifiers_from_file {
         assert!(!rules[0].applies_to_receiver());
     }
 
-    /// Test: Word-split modifier from file.
+    /// Test: the `w` word-split modifier is valid only on a merge-file rule.
+    ///
+    /// upstream: exclude.c:1279-1283 - `case 'w': if (!(rule->rflags &
+    /// FILTRULE_MERGE_FILE)) goto invalid;`. On an ordinary exclude rule
+    /// upstream reports "invalid modifier 'w'"; oc-rsync mirrors the error
+    /// rather than expanding the line into per-word excludes.
     #[test]
-    fn word_split_modifier() {
+    fn word_split_modifier_rejected_on_non_merge_rule() {
         let dir = create_tempdir();
         let path = dir.path().join("excludes.txt");
         fs::write(&path, "-w *.tmp *.bak *.log\n").expect("write");
 
-        let rules = read_rules(&path).expect("read rules");
-        assert_eq!(rules.len(), 3);
-        assert_eq!(rules[0].pattern(), "*.tmp");
-        assert_eq!(rules[1].pattern(), "*.bak");
-        assert_eq!(rules[2].pattern(), "*.log");
+        let err = read_rules(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("invalid modifier 'w'"),
+            "unexpected error: {err}"
+        );
     }
 }
 

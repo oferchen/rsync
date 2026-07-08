@@ -46,8 +46,7 @@ pub fn parse_rules(content: &str, source_path: &Path) -> Result<Vec<FilterRule>,
             continue;
         }
 
-        let line_rules = parse_rule_line_expanded(line, source_path, line_num)?;
-        rules.extend(line_rules);
+        rules.push(parse_rule_line(line, source_path, line_num)?);
     }
 
     Ok(rules)
@@ -98,71 +97,6 @@ pub(crate) fn parse_rules_no_prefixes(
     rules
 }
 
-/// Parses a single filter rule line, potentially expanding into multiple rules.
-///
-/// The `w` (word-split) modifier causes the pattern to be split on whitespace,
-/// creating multiple rules with the same action and modifiers.
-fn parse_rule_line_expanded(
-    line: &str,
-    source_path: &Path,
-    line_num: usize,
-) -> Result<Vec<FilterRule>, MergeFileError> {
-    let (action_char, rest) = if let Some(rest) = line.strip_prefix('+') {
-        ('+', rest)
-    } else if let Some(rest) = line.strip_prefix('-') {
-        ('-', rest)
-    } else if let Some(rest) = line.strip_prefix('P') {
-        ('P', rest)
-    } else if let Some(rest) = line.strip_prefix('R') {
-        ('R', rest)
-    } else if let Some(rest) = line.strip_prefix('H') {
-        ('H', rest)
-    } else if let Some(rest) = line.strip_prefix('S') {
-        ('S', rest)
-    } else {
-        return Ok(vec![parse_rule_line(line, source_path, line_num)?]);
-    };
-
-    // These action characters are never merge-file rules, so `is_merge` is false.
-    let (mods, pattern) = parse_modifiers(rest, false, line, source_path, line_num)?;
-
-    if mods.word_split && !pattern.is_empty() {
-        validate_side_modifiers(action_char, &mods, line, source_path, line_num)?;
-        // These prefixes are never merge-file rules, so `e` is always invalid.
-        validate_exclude_self_modifier(false, &mods, line, source_path, line_num)?;
-        let patterns: Vec<&str> = pattern.split_whitespace().collect();
-        if patterns.is_empty() {
-            return Err(MergeFileError::parse_error(
-                source_path,
-                line_num,
-                "word-split pattern is empty",
-            ));
-        }
-
-        let mods_for_expanded = RuleModifiers {
-            word_split: false,
-            ..mods
-        };
-
-        let mut rules = Vec::with_capacity(patterns.len());
-        for pat in patterns {
-            let base_rule = match action_char {
-                '+' => FilterRule::include(pat),
-                '-' => FilterRule::exclude(pat),
-                'P' => FilterRule::protect(pat),
-                'R' => FilterRule::risk(pat),
-                'H' => FilterRule::hide(pat),
-                'S' => FilterRule::show(pat),
-                _ => unreachable!(),
-            };
-            rules.push(mods_for_expanded.apply(base_rule));
-        }
-        return Ok(rules);
-    }
-
-    Ok(vec![parse_rule_line(line, source_path, line_num)?])
-}
-
 /// Modifiers parsed from a rule prefix.
 ///
 /// These mirror upstream rsync's rule modifiers from `exclude.c` (lines 1220-1288).
@@ -178,8 +112,8 @@ fn parse_rule_line_expanded(
 /// | `r` | `receiver_only` | Apply on receiver side only |
 /// | `x` | `xattr_only` | Match xattr names only |
 /// | `e` | `exclude_self` | Exclude the merge file's own name (merge rules only) |
-/// | `n` | `no_inherit` | Don't inherit parent rules (merge) |
-/// | `w` | `word_split` | Split pattern on whitespace |
+/// | `n` | `no_inherit` | Don't inherit rules into subdirectories (merge rules only) |
+/// | `w` | `word_split` | Split the merge file at whitespace (merge rules only) |
 /// | `C` | `cvs_mode` | Add CVS exclusion patterns |
 /// | `/` | `abs_path` | Anchor merged rules to the transfer root (merge rules only) |
 /// | `-` | `no_prefixes` | Merged lines are literal excludes (merge rules only) |
@@ -234,87 +168,29 @@ impl RuleModifiers {
     }
 }
 
-/// Rejects `s` or `r` modifiers when the rule prefix already implies a side.
-///
-/// Matches upstream's `prefix_specifies_side` guard: prefixes `H`/`S`
-/// (sender-side hide/show) and `P`/`R` (receiver-side protect/risk) bind the
-/// rule to a single side, so combining them with the modifier counterpart is a
-/// syntax error.
-///
-/// upstream: exclude.c parse_filter_str (rsync-3.4.2) lines 1269-1278
-fn validate_side_modifiers(
-    action_char: char,
-    mods: &RuleModifiers,
-    line: &str,
-    source_path: &Path,
-    line_num: usize,
-) -> Result<(), MergeFileError> {
-    let prefix_side = matches!(action_char, 'H' | 'S' | 'P' | 'R');
-    if !prefix_side {
-        return Ok(());
-    }
-    let conflict = if mods.sender_only {
-        Some('s')
-    } else if mods.receiver_only {
-        Some('r')
-    } else {
-        None
-    };
-    if let Some(ch) = conflict {
-        return Err(MergeFileError::parse_error(
-            source_path,
-            line_num,
-            format!("invalid modifier '{ch}' on side-specific filter rule: {line}"),
-        ));
-    }
-    Ok(())
-}
-
-/// Rejects the `e` (exclude-self) modifier on a non-merge rule.
-///
-/// Upstream only permits `e` on a merge-file rule (`.`/`:`/`merge`/`dir-merge`),
-/// where it sets `FILTRULE_EXCLUDE_SELF` so the merge file's own basename is
-/// excluded. On an include/exclude/protect/risk/hide/show rule upstream jumps to
-/// the `invalid` label and reports a parse error; oc-rsync previously accepted
-/// it silently and stored it in a flag no matching logic read, so the modifier
-/// was a no-op that diverged from upstream on malformed input.
-///
-/// upstream: exclude.c:1256-1259 - `case 'e': if (!(rule->rflags &
-/// FILTRULE_MERGE_FILE)) goto invalid;`
-fn validate_exclude_self_modifier(
-    is_merge: bool,
-    mods: &RuleModifiers,
-    line: &str,
-    source_path: &Path,
-    line_num: usize,
-) -> Result<(), MergeFileError> {
-    if mods.exclude_self && !is_merge {
-        return Err(MergeFileError::parse_error(
-            source_path,
-            line_num,
-            format!("invalid modifier 'e' on non-merge filter rule: {line}"),
-        ));
-    }
-    Ok(())
-}
-
 /// Parses modifiers from a string following the action character.
 ///
 /// Returns the parsed modifiers and the remaining string (pattern). Modifiers
 /// are single characters that can appear in any order before the pattern.
 ///
 /// `is_merge` indicates whether the rule is a merge / dir-merge rule
-/// (`FILTRULE_MERGE_FILE`), which gates the `/`, `-`, and `+` modifiers.
-/// `full_line` and `line_num`/`source_path` are used only for error messages.
+/// (`FILTRULE_MERGE_FILE`), which gates the `e`, `n`, `w`, `/`, `-`, and `+`
+/// modifiers. `prefix_specifies_side` indicates the rule prefix already binds a
+/// side (H/S/P/R), which gates the `s` and `r` modifiers. `full_line` and
+/// `line_num`/`source_path` are used only for error messages.
+///
+/// Modifiers are validated left-to-right in a single pass, so the first invalid
+/// modifier is the one reported - matching upstream's single `switch` loop.
 ///
 /// Any character that is not a recognised modifier is a syntax error, matching
 /// upstream's `invalid:` label rather than silently treating it as the start of
 /// the pattern.
 ///
-/// upstream: exclude.c:1175-1227 - the modifier loop and its `invalid:` label.
+/// upstream: exclude.c:1215-1289 - the modifier loop and its `invalid:` label.
 pub(crate) fn parse_modifiers<'a>(
     s: &'a str,
     is_merge: bool,
+    prefix_specifies_side: bool,
     full_line: &str,
     source_path: &Path,
     line_num: usize,
@@ -332,12 +208,49 @@ pub(crate) fn parse_modifiers<'a>(
                 mods.negate = true;
             }
             'p' => mods.perishable = true,
-            's' => mods.sender_only = true,
-            'r' => mods.receiver_only = true,
+            // upstream: exclude.c:1269-1277 - `s`/`r` are invalid when the rule
+            // prefix already binds a side (H/S sender, P/R receiver), i.e.
+            // `prefix_specifies_side`.
+            's' => {
+                if prefix_specifies_side {
+                    return Err(invalid_modifier(ch, idx, full_line, source_path, line_num));
+                }
+                mods.sender_only = true;
+            }
+            'r' => {
+                if prefix_specifies_side {
+                    return Err(invalid_modifier(ch, idx, full_line, source_path, line_num));
+                }
+                mods.receiver_only = true;
+            }
             'x' => mods.xattr_only = true,
-            'e' => mods.exclude_self = true,
-            'n' => mods.no_inherit = true,
-            'w' => mods.word_split = true,
+            // upstream: exclude.c:1256-1260 - `e` (FILTRULE_EXCLUDE_SELF) is
+            // valid only on a merge-file rule; on any other rule upstream
+            // jumps to `invalid`.
+            'e' => {
+                if !is_merge {
+                    return Err(invalid_modifier(ch, idx, full_line, source_path, line_num));
+                }
+                mods.exclude_self = true;
+            }
+            // upstream: exclude.c:1261-1264 - `n` (FILTRULE_NO_INHERIT) is
+            // valid only on a merge-file rule; on any other rule upstream
+            // jumps to `invalid`.
+            'n' => {
+                if !is_merge {
+                    return Err(invalid_modifier(ch, idx, full_line, source_path, line_num));
+                }
+                mods.no_inherit = true;
+            }
+            // upstream: exclude.c:1279-1283 - `w` (FILTRULE_WORD_SPLIT) is
+            // valid only on a merge-file rule; on any other rule upstream
+            // jumps to `invalid`.
+            'w' => {
+                if !is_merge {
+                    return Err(invalid_modifier(ch, idx, full_line, source_path, line_num));
+                }
+                mods.word_split = true;
+            }
             'C' => mods.cvs_mode = true,
             // upstream: exclude.c:1215-1216 - `/` sets FILTRULE_ABS_PATH.
             '/' => mods.abs_path = true,
@@ -470,22 +383,28 @@ fn try_parse_short_form(
         return Ok(None);
     };
 
-    let (mods, pattern) = parse_modifiers(rest, action.is_merge(), line, source_path, line_num)?;
+    // upstream: exclude.c:1136 - `prefix_specifies_side` is set for the H/S
+    // (sender) and P/R (receiver) prefixes, gating the `s`/`r` modifiers.
+    let prefix_specifies_side = matches!(prefix_char, 'H' | 'S' | 'P' | 'R');
+    let (mods, pattern) = parse_modifiers(
+        rest,
+        action.is_merge(),
+        prefix_specifies_side,
+        line,
+        source_path,
+        line_num,
+    )?;
     if pattern.is_empty() {
         // upstream: exclude.c:1404-1408 - a merge / dir-merge rule with the
         // `C` (CVS-ignore) modifier and an empty pattern defaults to the
         // filename `.cvsignore`. Without `C`, an empty pattern remains
         // unrecognised here and falls through to long-form parsing.
         if mods.cvs_mode && matches!(action, ShortFormAction::Merge | ShortFormAction::DirMerge) {
-            validate_side_modifiers(prefix_char, &mods, line, source_path, line_num)?;
-            validate_exclude_self_modifier(action.is_merge(), &mods, line, source_path, line_num)?;
             let rule = action.to_rule(".cvsignore");
             return Ok(Some(mods.apply(rule)));
         }
         return Ok(None);
     }
-    validate_side_modifiers(prefix_char, &mods, line, source_path, line_num)?;
-    validate_exclude_self_modifier(action.is_merge(), &mods, line, source_path, line_num)?;
 
     let rule = action.to_rule(pattern);
     Ok(Some(if action.supports_mods() {

@@ -771,27 +771,34 @@ fn cvs_exclusion_rules_are_all_valid() {
     assert!(result.is_ok());
 }
 
+// upstream: exclude.c:1279-1283 - `w` (word-split) is valid only on a
+// merge-file rule. On an exclude rule upstream reports "invalid modifier
+// 'w'"; oc-rsync mirrors that rejection regardless of the trailing pattern.
 #[test]
-fn parse_word_split_empty_pattern() {
-    // -w with only whitespace after
-    let _ = parse_rules("-w   ", Path::new("<test>"));
+fn parse_word_split_empty_pattern_rejected() {
+    let err = parse_rules("-w   ", Path::new("<test>")).unwrap_err();
+    assert!(
+        err.to_string().contains("invalid modifier 'w'"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
-fn parse_word_split_single_word() {
-    let result = parse_rules("-w single", Path::new("<test>"));
-    assert!(result.is_ok());
-    let rules = result.unwrap();
-    assert_eq!(rules.len(), 1);
-    assert_eq!(rules[0].pattern(), "single");
+fn parse_word_split_single_word_rejected() {
+    let err = parse_rules("-w single", Path::new("<test>")).unwrap_err();
+    assert!(
+        err.to_string().contains("invalid modifier 'w'"),
+        "unexpected error: {err}"
+    );
 }
 
 #[test]
-fn parse_word_split_many_words() {
+fn parse_word_split_many_words_rejected() {
     let words: Vec<String> = (0..100).map(|i| format!("word{i}")).collect();
     let input = format!("-w {}", words.join(" "));
-    let result = parse_rules(&input, Path::new("<test>"));
-    assert!(result.is_ok());
-    let rules = result.unwrap();
-    assert_eq!(rules.len(), 100);
+    let err = parse_rules(&input, Path::new("<test>")).unwrap_err();
+    assert!(
+        err.to_string().contains("invalid modifier 'w'"),
+        "unexpected error: {err}"
+    );
 }
