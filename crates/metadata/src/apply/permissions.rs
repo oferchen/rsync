@@ -10,11 +10,33 @@ use std::fs;
 use std::path::Path;
 
 #[cfg(unix)]
-use rustix::fs as unix_fs;
-#[cfg(unix)]
 use std::io;
 #[cfg(unix)]
 use std::os::fd::BorrowedFd;
+
+/// Applies an fd-based `fchmod` through the `nix` crate (libc `fchmod(2)`).
+///
+/// Like ownership's chown helper, the mode change must go through the libc
+/// symbol rather than a rustix raw syscall so `fakeroot`'s LD_PRELOAD
+/// interposition observes it. With a raw-syscall chmod, fakeroot never sees the
+/// mode; once a (libc-routed) chown records the inode in fakeroot's database,
+/// its stat wrapper reports a stale mode and silently drops preserved
+/// permission bits. Routing chmod through libc keeps it consistent with chown,
+/// matching upstream (which drives every attribute through libc symbols).
+// upstream: syscall.c:do_fchmod() calls the fchmod(2) libc symbol.
+#[cfg(unix)]
+fn fchmod_libc(
+    fd: BorrowedFd<'_>,
+    mode: u32,
+    destination: &Path,
+    action: &'static str,
+) -> Result<(), MetadataError> {
+    nix::sys::stat::fchmod(
+        fd,
+        nix::sys::stat::Mode::from_bits_truncate(mode as libc::mode_t),
+    )
+    .map_err(|errno| MetadataError::new(action, destination, io::Error::from(errno)))
+}
 
 /// Returns the process umask, cached for thread safety.
 ///
@@ -498,13 +520,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
         }
 
         if let Some(fd) = fd {
-            unix_fs::fchmod(
-                fd,
-                unix_fs::Mode::from_raw_mode(mode as rustix::fs::RawMode),
-            )
-            .map_err(|error| {
-                MetadataError::new("preserve permissions", destination, io::Error::from(error))
-            })?;
+            fchmod_libc(fd, mode, destination, "preserve permissions")?;
         } else {
             // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant.
             chmod_path_honoring_keep_dirlinks(destination, mode, options, "preserve permissions")?;
@@ -522,13 +538,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
         }
 
         if let Some(fd) = fd {
-            unix_fs::fchmod(
-                fd,
-                unix_fs::Mode::from_raw_mode(mode as rustix::fs::RawMode),
-            )
-            .map_err(|error| {
-                MetadataError::new("preserve permissions", destination, io::Error::from(error))
-            })?;
+            fchmod_libc(fd, mode, destination, "preserve permissions")?;
         } else {
             set_permissions_like(metadata, destination, options)?;
         }
@@ -550,13 +560,7 @@ pub(super) fn apply_permissions_with_chmod_fd(
         destination.parent(),
     ) {
         if let Some(fd) = fd {
-            unix_fs::fchmod(
-                fd,
-                unix_fs::Mode::from_raw_mode(new_mode as rustix::fs::RawMode),
-            )
-            .map_err(|error| {
-                MetadataError::new("apply dest_mode", destination, io::Error::from(error))
-            })?;
+            fchmod_libc(fd, new_mode, destination, "apply dest_mode")?;
         } else {
             // upstream: syscall.c:do_chmod_at() - symlink-race-safe variant.
             chmod_path_honoring_keep_dirlinks(destination, new_mode, options, "apply dest_mode")?;

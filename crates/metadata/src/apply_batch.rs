@@ -14,8 +14,6 @@ use std::path::Path;
 #[cfg(unix)]
 use crate::id_lookup::{map_gid, map_uid};
 #[cfg(unix)]
-use rustix::fs::{chownat, AtFlags, CWD};
-#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -123,8 +121,19 @@ impl BatchMetadataContext {
                 None
             };
 
-            chownat(CWD, destination, owner, group, AtFlags::empty()).map_err(|error| {
-                MetadataError::new("preserve ownership", destination, io::Error::from(error))
+            // Route chown through the libc `fchownat(2)` symbol via `nix` so
+            // fakeroot's LD_PRELOAD interposition can fake ownership for a
+            // non-root process; a raw syscall would bypass libc and hit EPERM.
+            // upstream: syscall.c:do_chown() calls the chown(2) libc symbol.
+            nix::unistd::fchownat(
+                nix::fcntl::AT_FDCWD,
+                destination,
+                owner.map(|uid| nix::unistd::Uid::from_raw(uid.as_raw())),
+                group.map(|gid| nix::unistd::Gid::from_raw(gid.as_raw())),
+                nix::fcntl::AtFlags::empty(),
+            )
+            .map_err(|errno| {
+                MetadataError::new("preserve ownership", destination, io::Error::from(errno))
             })?;
 
             self.cache.invalidate(destination);
