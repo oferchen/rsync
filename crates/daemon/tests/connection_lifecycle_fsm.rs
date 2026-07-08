@@ -154,7 +154,8 @@ fn lifecycle_list_modules() {
 ///
 /// The daemon receives the version (Greeting -> ModuleSelect), then the
 /// client requests a non-existent module. The daemon sends @ERROR and
-/// @RSYNCD: EXIT, transitioning ModuleSelect -> Closing.
+/// closes with no @RSYNCD: EXIT (upstream clientserver.c:381-385: the client
+/// treats @ERROR as fatal), transitioning ModuleSelect -> Closing.
 #[test]
 fn lifecycle_unknown_module() {
     let (port, listener) = allocate_listener();
@@ -190,7 +191,10 @@ fn lifecycle_unknown_module() {
         }
     }
     assert!(saw_error, "daemon should send @ERROR for unknown module");
-    assert!(saw_exit, "daemon should send @RSYNCD: EXIT after error");
+    assert!(
+        !saw_exit,
+        "upstream sends no @RSYNCD: EXIT after @ERROR (clientserver.c:381)"
+    );
 
     drop(writer);
     drop(reader);
@@ -283,7 +287,7 @@ fn lifecycle_multiple_sequential_connections() {
         writer.write_all(module.as_bytes()).expect("send module");
         writer.flush().expect("flush module");
 
-        let mut saw_exit = false;
+        let mut saw_error = false;
         loop {
             let mut line = String::new();
             match reader.read_line(&mut line) {
@@ -291,12 +295,21 @@ fn lifecycle_multiple_sequential_connections() {
                 Err(_) => break,
                 Ok(_) => {}
             }
-            if line.trim() == "@RSYNCD: EXIT" {
-                saw_exit = true;
-                break;
+            if line.starts_with("@ERROR") {
+                saw_error = true;
             }
+            // upstream clientserver.c:381-385: the client treats @ERROR as fatal
+            // and returns, so the daemon sends no @RSYNCD: EXIT after a refusal.
+            assert_ne!(
+                line.trim(),
+                "@RSYNCD: EXIT",
+                "connection {i}: no @RSYNCD: EXIT after @ERROR"
+            );
         }
-        assert!(saw_exit, "connection {i}: daemon should send @RSYNCD: EXIT");
+        assert!(
+            saw_error,
+            "connection {i}: daemon should send @ERROR for unknown module"
+        );
 
         drop(writer);
         drop(reader);
@@ -354,7 +367,7 @@ fn lifecycle_max_connections_sequential_no_leak() {
         writer.write_all(module.as_bytes()).expect("send module");
         writer.flush().expect("flush module");
 
-        let mut saw_exit = false;
+        let mut saw_error = false;
         loop {
             let mut line = String::new();
             match reader.read_line(&mut line) {
@@ -362,12 +375,21 @@ fn lifecycle_max_connections_sequential_no_leak() {
                 Err(_) => break,
                 Ok(_) => {}
             }
-            if line.trim() == "@RSYNCD: EXIT" {
-                saw_exit = true;
-                break;
+            if line.starts_with("@ERROR") {
+                saw_error = true;
             }
+            // upstream clientserver.c:381-385: the client treats @ERROR as fatal
+            // and returns, so the daemon sends no @RSYNCD: EXIT after a refusal.
+            assert_ne!(
+                line.trim(),
+                "@RSYNCD: EXIT",
+                "connection {i}: no @RSYNCD: EXIT after @ERROR"
+            );
         }
-        assert!(saw_exit, "connection {i}: daemon should send @RSYNCD: EXIT");
+        assert!(
+            saw_error,
+            "connection {i}: daemon should send @ERROR for unknown module"
+        );
 
         drop(writer);
         drop(reader);
