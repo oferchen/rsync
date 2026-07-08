@@ -28,6 +28,7 @@
 //!     total_bytes_received: 67_890,
 //!     num_created_files: 56,
 //!     num_deleted_files: 0,
+//!     protocol_version: 32,
 //! };
 //!
 //! let formatter = StatsFormatter::new(data);
@@ -69,6 +70,9 @@ pub struct StatsData {
     pub num_created_files: u64,
     /// Number of deleted files.
     pub num_deleted_files: u64,
+    /// Negotiated protocol version - gates display of certain stats lines.
+    /// upstream: main.c:429-433
+    pub protocol_version: u8,
 }
 
 impl Default for StatsData {
@@ -87,6 +91,7 @@ impl Default for StatsData {
             total_bytes_received: 0,
             num_created_files: 0,
             num_deleted_files: 0,
+            protocol_version: 32,
         }
     }
 }
@@ -126,6 +131,7 @@ impl StatsFormatter {
     ///     total_bytes_received: 67_890,
     ///     num_created_files: 56,
     ///     num_deleted_files: 0,
+    ///     protocol_version: 32,
     /// };
     ///
     /// let formatter = StatsFormatter::new(data);
@@ -143,19 +149,25 @@ impl StatsFormatter {
         )
         .unwrap();
 
-        writeln!(
-            output,
-            "Number of created files: {}",
-            format_number(self.data.num_created_files)
-        )
-        .unwrap();
+        // upstream: main.c:429 - `if (protocol_version >= 29)`
+        if self.data.protocol_version >= 29 {
+            writeln!(
+                output,
+                "Number of created files: {}",
+                format_number(self.data.num_created_files)
+            )
+            .unwrap();
+        }
 
-        writeln!(
-            output,
-            "Number of deleted files: {}",
-            format_number(self.data.num_deleted_files)
-        )
-        .unwrap();
+        // upstream: main.c:431 - `if (protocol_version >= 31)`
+        if self.data.protocol_version >= 31 {
+            writeln!(
+                output,
+                "Number of deleted files: {}",
+                format_number(self.data.num_deleted_files)
+            )
+            .unwrap();
+        }
 
         writeln!(
             output,
@@ -512,6 +524,7 @@ mod tests {
             total_bytes_received: 67_890,
             num_created_files: 56,
             num_deleted_files: 0,
+            protocol_version: 32,
         };
 
         let formatter = StatsFormatter::new(data);
@@ -564,6 +577,7 @@ mod tests {
             total_bytes_received: 3_333_333_333,
             num_created_files: 222_222_222,
             num_deleted_files: 111_111_111,
+            protocol_version: 32,
         };
 
         let formatter = StatsFormatter::new(data);
