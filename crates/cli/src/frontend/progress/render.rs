@@ -970,6 +970,7 @@ mod tests {
             NameOutputLevel::UpdatedAndUnchanged,
             false,
             HumanReadableMode::Disabled,
+            false,
             &mut out,
         )
         .expect("emit_verbose writes to an in-memory buffer");
