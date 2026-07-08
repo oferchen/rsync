@@ -1,18 +1,7 @@
 use std::path::Path;
 
+use compress::DEFAULT_SKIP_COMPRESS_SUFFIXES;
 use thiserror::Error;
-
-/// Default suffixes that should not be compressed when compression is enabled.
-const DEFAULT_SKIP_SUFFIXES: &[&str] = &[
-    "3g2", "3gp", "7z", "aac", "ace", "apk", "avi", "bz2", "deb", "dmg", "ear", "f4v", "flac",
-    "flv", "gpg", "gz", "iso", "jar", "jpeg", "jpg", "lrz", "lz", "lz4", "lzma", "lzo", "m1a",
-    "m1v", "m2a", "m2ts", "m2v", "m4a", "m4b", "m4p", "m4r", "m4v", "mka", "mkv", "mov", "mp1",
-    "mp2", "mp3", "mp4", "mpa", "mpeg", "mpg", "mpv", "mts", "odb", "odf", "odg", "odi", "odm",
-    "odp", "ods", "odt", "oga", "ogg", "ogm", "ogv", "ogx", "opus", "otg", "oth", "otp", "ots",
-    "ott", "oxt", "png", "qt", "rar", "rpm", "rz", "rzip", "spx", "squashfs", "sxc", "sxd", "sxg",
-    "sxm", "sxw", "sz", "tbz", "tbz2", "tgz", "tlz", "ts", "txz", "tzo", "vob", "war", "webm",
-    "webp", "xz", "z", "zip", "zst",
-];
 
 /// Errors that can occur when parsing a `--skip-compress` specification.
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
@@ -85,7 +74,7 @@ impl SkipCompressList {
 
 impl Default for SkipCompressList {
     fn default() -> Self {
-        let patterns = DEFAULT_SKIP_SUFFIXES
+        let patterns = DEFAULT_SKIP_COMPRESS_SUFFIXES
             .iter()
             .filter_map(|suffix| SkipCompressPattern::parse(suffix).ok())
             .collect();

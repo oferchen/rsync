@@ -55,6 +55,7 @@ mod types;
 
 pub use adaptive::AdaptiveCompressor;
 pub use decider::CompressionDecider;
+pub use defaults::DEFAULT_SKIP_COMPRESS_SUFFIXES;
 pub use magic::{KNOWN_SIGNATURES, MagicSignature};
 pub use types::{CompressionDecision, FileCategory, Suffix};
 
