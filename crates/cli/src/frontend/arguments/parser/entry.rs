@@ -10,9 +10,7 @@ use std::path::PathBuf;
 
 use crate::frontend::arguments::short_options::expand_short_options;
 use crate::frontend::command_builder::clap_command;
-use crate::frontend::execution::{
-    parse_checksum_seed_argument, parse_compress_level_argument, parse_human_readable_level,
-};
+use crate::frontend::execution::{parse_checksum_seed_argument, parse_compress_level_argument};
 use crate::frontend::filter_rules::{collect_filter_arguments, locate_filter_arguments};
 use crate::frontend::progress::{NameOutputLevel, ProgressSetting};
 use core::client::{
@@ -55,39 +53,23 @@ where
     let show_io_uring_status = matches.get_flag("io-uring-status");
     let show_lsm_status = matches.get_flag("lsm-status");
 
-    // Handle human-readable: bare flags (-h, --human-readable) count occurrences
-    // while explicit values (--human-readable=2) set the level directly.
-    // The sentinel "__h_count__" distinguishes bare flags from explicit values.
-    // upstream: options.c - human_readable starts at 1, each -h increments,
-    // --no-human-readable sets to 0.
+    // Handle human-readable: `-h`/`--human-readable` take no argument and are
+    // repeatable, so we count occurrences. upstream: options.c:111 defaults
+    // `human_readable` to 1 (rendered as the None case here), options.c:1573
+    // increments it per -h, and options.c:617 resets it to 0 for --no-h. A
+    // single -h selects base-1000 units; -hh (or more) selects base-1024.
     let mut human_readable = None;
-    if let Some(values) = matches.remove_many::<OsString>("human-readable") {
-        let values: Vec<OsString> = values.collect();
-        let sentinel = OsString::from("__h_count__");
-
-        let mut bare_flag_count: u32 = 0;
-        let mut last_explicit_level: Option<HumanReadableMode> = None;
-
-        for value in &values {
-            if *value == sentinel {
-                bare_flag_count += 1;
-            } else {
-                last_explicit_level = Some(parse_human_readable_level(value.as_os_str())?);
-            }
-        }
-
-        if let Some(level) = last_explicit_level {
-            human_readable = Some(level);
+    let h_count = matches.get_count("human-readable");
+    if h_count > 0 {
+        human_readable = Some(if h_count == 1 {
+            HumanReadableMode::Enabled
         } else {
-            human_readable = Some(match bare_flag_count {
-                1 => HumanReadableMode::Enabled,
-                _ => HumanReadableMode::Combined,
-            });
-        }
+            HumanReadableMode::Combined
+        });
     }
 
     if matches.get_flag("no-human-readable") {
-        human_readable = Some(HumanReadableMode::Disabled);
+        human_readable = Some(HumanReadableMode::Raw);
     }
     let mut dry_run = matches.get_flag("dry-run");
     let list_only = matches.get_flag("list-only");

@@ -1391,8 +1391,9 @@ mod option_values {
     }
 
     #[test]
-    fn human_readable_with_level() {
-        let parsed = parse_test_args(["--human-readable=2", "src/", "dst/"]).expect("parse");
+    fn human_readable_double_short_is_combined() {
+        // -hh increments to level 3 (base-1024 units). upstream: options.c:1573.
+        let parsed = parse_test_args(["-hh", "src/", "dst/"]).expect("parse");
         assert_eq!(parsed.human_readable, Some(HumanReadableMode::Combined));
     }
 
@@ -2533,33 +2534,24 @@ mod human_readable_tests {
     }
 
     #[test]
-    fn human_readable_level_0() {
-        let parsed = parse_test_args(["--human-readable=0", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Disabled));
+    fn human_readable_rejects_explicit_argument() {
+        // upstream: options.c:616 POPT_ARG_NONE - `--human-readable=N` errors.
+        assert!(parse_test_args(["--human-readable=0", "src/", "dst/"]).is_err());
+        assert!(parse_test_args(["--human-readable=1", "src/", "dst/"]).is_err());
+        assert!(parse_test_args(["--human-readable=2", "src/", "dst/"]).is_err());
     }
 
     #[test]
-    fn human_readable_level_1() {
-        let parsed = parse_test_args(["--human-readable=1", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Enabled));
-    }
-
-    #[test]
-    fn human_readable_level_2() {
-        let parsed = parse_test_args(["--human-readable=2", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Combined));
-    }
-
-    #[test]
-    fn no_human_readable_flag() {
+    fn no_human_readable_flag_is_raw() {
+        // upstream: options.c:617 sets human_readable = 0 (raw digits, width 11).
         let parsed = parse_test_args(["--no-human-readable", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Disabled));
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Raw));
     }
 
     #[test]
-    fn no_h_alias() {
+    fn no_h_alias_is_raw() {
         let parsed = parse_test_args(["--no-h", "src/", "dst/"]).expect("parse");
-        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Disabled));
+        assert_eq!(parsed.human_readable, Some(HumanReadableMode::Raw));
     }
 }
 

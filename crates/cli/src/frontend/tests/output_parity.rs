@@ -525,6 +525,31 @@ fn parity_totals_human_readable_mode_uses_units() {
     );
 }
 
+#[test]
+fn parity_totals_raw_level_zero_omits_separators() {
+    // upstream: --no-h (level 0) renders byte counters as raw digits with no
+    // thousands separators, unlike the default level 1 which groups them.
+    // A 1,234,567-byte file must print `Total file size: 1234567 bytes`.
+    let (summary, _temp) = create_known_summary(&[("raw.bin", &[0u8; 1_234_567])]);
+    let output = render_stats(&summary, HumanReadableMode::Raw);
+
+    assert!(
+        output.contains("Total file size: 1234567 bytes"),
+        "level 0 must emit raw digits without separators:\n{output}"
+    );
+    assert!(
+        !output.contains("1,234,567"),
+        "level 0 must not group digits with commas:\n{output}"
+    );
+
+    // Contrast with the default level 1, which groups the same value.
+    let grouped = render_stats(&summary, HumanReadableMode::Disabled);
+    assert!(
+        grouped.contains("Total file size: 1,234,567 bytes"),
+        "default level 1 must group digits with commas:\n{grouped}"
+    );
+}
+
 // upstream: main.c output_summary (rsync-3.4.2:416-465) and handle_stats
 // (rsync-3.4.2:325-385) - --info=stats1/2/3 gating
 #[test]

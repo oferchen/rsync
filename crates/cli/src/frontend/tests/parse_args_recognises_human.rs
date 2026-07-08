@@ -15,10 +15,12 @@ fn parse_args_recognises_human_readable_flag() {
 }
 
 #[test]
-fn parse_args_recognises_human_readable_level_two() {
+fn parse_args_recognises_double_short_h() {
+    // upstream: options.c:1573 - each -h increments; -hh reaches level 3
+    // (base-1024 units, HumanReadableMode::Combined).
     let parsed = parse_args([
         OsString::from(RSYNC),
-        OsString::from("--human-readable=2"),
+        OsString::from("-hh"),
         OsString::from("source"),
         OsString::from("dest"),
     ])

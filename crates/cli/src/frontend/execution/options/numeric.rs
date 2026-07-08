@@ -7,7 +7,7 @@ use std::ffi::OsStr;
 use std::num::{IntErrorKind, NonZeroU64};
 
 use core::{
-    client::{HumanReadableMode, TransferTimeout},
+    client::TransferTimeout,
     message::{Message, Role},
     rsync_error,
 };
@@ -62,15 +62,6 @@ pub(crate) fn parse_timeout_argument(value: &OsStr) -> Result<TransferTimeout, M
             )
         }
     }
-}
-
-/// Parses the `--human-readable` level argument.
-///
-/// Delegates to `HumanReadableMode::parse` and converts errors to `clap::Error`.
-pub(crate) fn parse_human_readable_level(value: &OsStr) -> Result<HumanReadableMode, clap::Error> {
-    let text = value.to_string_lossy();
-    HumanReadableMode::parse(text.as_ref())
-        .map_err(|error| clap::Error::raw(clap::error::ErrorKind::InvalidValue, error.to_string()))
 }
 
 /// Parses the `--max-delete` argument as a non-negative `u64` deletion limit.

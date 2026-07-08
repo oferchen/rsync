@@ -25,10 +25,10 @@ fn display_without_trailing_separators(path: &Path, allow_8bit: bool) -> String 
 }
 
 use super::format::{
-    LIST_SIZE_WIDTH, event_matches_name_level, format_decimal_bytes, format_list_permissions,
-    format_list_size, format_list_timestamp, format_progress_bytes, format_progress_elapsed,
-    format_progress_percent, format_progress_rate, format_size, format_stat_categories,
-    format_summary_rate, is_progress_event, list_only_event,
+    event_matches_name_level, format_decimal_bytes, format_list_permissions, format_list_size,
+    format_list_timestamp, format_progress_bytes, format_progress_elapsed, format_progress_percent,
+    format_progress_rate, format_size, format_stat_categories, format_summary_rate,
+    is_progress_event, list_only_event,
 };
 use super::mode::{NameOutputLevel, ProgressMode};
 use crate::{OutFormat, OutFormatContext, emit_out_format};
@@ -296,7 +296,7 @@ pub(crate) fn emit_list_only<W: Write + ?Sized>(
                 "?????????? {:>width$} {} {rendered}",
                 "?",
                 format_list_timestamp(None),
-                width = LIST_SIZE_WIDTH,
+                width = human_readable.size_width(),
             )?;
         }
     }
