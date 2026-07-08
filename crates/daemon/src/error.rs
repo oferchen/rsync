@@ -106,6 +106,9 @@ impl ErrorCodification for DaemonError {
             ExitCode::CommandKilled => 22500,
             ExitCode::CommandRun => 22600,
             ExitCode::CommandNotFound => 22700,
+            // A raw child/remote status with no named RERR_* code; encode the
+            // raw value into a distinct diagnostic range.
+            ExitCode::Other(code) => 910_000u32.wrapping_add(code as u32),
         }
     }
 
@@ -142,6 +145,8 @@ impl ErrorCodification for DaemonError {
             ExitCode::CommandKilled => "RERR_CMD_KILLED",
             ExitCode::CommandRun => "RERR_CMD_RUN",
             ExitCode::CommandNotFound => "RERR_CMD_NOTFOUND",
+            // upstream: log.c:905 - an unrecognized code has no RERR_* name.
+            ExitCode::Other(_) => "RERR_UNKNOWN",
         }
     }
 }

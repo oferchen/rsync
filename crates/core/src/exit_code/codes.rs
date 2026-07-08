@@ -131,13 +131,53 @@ pub enum ExitCode {
     ///
     /// Returned when the remote shell or rsync binary is not found.
     CommandNotFound = 127,
+
+    /// A raw exit status that does not map to a named RERR_* code.
+    ///
+    /// Upstream rsync propagates a child or remote process exit status
+    /// verbatim (`WEXITSTATUS`) rather than collapsing unrecognized values.
+    /// This variant preserves that raw code so it survives round-trips to
+    /// `process::exit` and worst-wins comparisons unchanged.
+    ///
+    /// upstream: main.c:221 `wait_process_with_flush()` returns
+    /// `WEXITSTATUS(status)` raw for a normally-exited child.
+    Other(i32),
 }
 
 impl ExitCode {
     /// Returns the numeric exit code value.
     #[must_use]
     pub const fn as_i32(self) -> i32 {
-        self as i32
+        match self {
+            Self::Ok => 0,
+            Self::Syntax => 1,
+            Self::Protocol => 2,
+            Self::FileSelect => 3,
+            Self::Unsupported => 4,
+            Self::StartClient => 5,
+            Self::LogFileAppend => 6,
+            Self::SocketIo => 10,
+            Self::FileIo => 11,
+            Self::StreamIo => 12,
+            Self::MessageIo => 13,
+            Self::Ipc => 14,
+            Self::Crashed => 15,
+            Self::Terminated => 16,
+            Self::Signal1 => 19,
+            Self::Signal => 20,
+            Self::WaitChild => 21,
+            Self::Malloc => 22,
+            Self::PartialTransfer => 23,
+            Self::Vanished => 24,
+            Self::DeleteLimit => 25,
+            Self::Timeout => 30,
+            Self::ConnectionTimeout => 35,
+            Self::CommandFailed => 124,
+            Self::CommandKilled => 125,
+            Self::CommandRun => 126,
+            Self::CommandNotFound => 127,
+            Self::Other(code) => code,
+        }
     }
 
     /// Returns a human-readable description of this exit code.
@@ -173,6 +213,9 @@ impl ExitCode {
             Self::CommandKilled => "remote shell killed",
             Self::CommandRun => "remote command could not be run",
             Self::CommandNotFound => "remote command not found",
+            // upstream: log.c:905 log_exit() - an unrecognized code renders as
+            // "unexplained error" (rerr_name() returned NULL).
+            Self::Other(_) => "unexplained error",
         }
     }
 
@@ -243,6 +286,30 @@ impl ExitCode {
             126 => Some(Self::CommandRun),
             127 => Some(Self::CommandNotFound),
             _ => None,
+        }
+    }
+
+    /// Maps a raw process exit status to an `ExitCode`, preserving
+    /// unrecognized values verbatim via [`ExitCode::Other`].
+    ///
+    /// Unlike [`from_i32`](Self::from_i32), which answers "is this a known
+    /// RERR_* code?" and returns `None` for anything else, this converter
+    /// never discards the numeric value. Known codes keep their named
+    /// variant; any other status (for example a remote rsync exit 42 or an
+    /// SSH connection failure exit 255) round-trips unchanged.
+    ///
+    /// Use this at the child/remote process boundary, where upstream rsync
+    /// propagates the status verbatim. Internal error construction should keep
+    /// using [`from_i32`](Self::from_i32) so a genuinely invalid code still
+    /// falls back to a defined RERR_* value rather than leaking out raw.
+    ///
+    /// upstream: main.c:221 `wait_process_with_flush()` returns
+    /// `WEXITSTATUS(status)` raw; cleanup.c:150 propagates the worst raw code.
+    #[must_use]
+    pub const fn from_raw(value: i32) -> Self {
+        match Self::from_i32(value) {
+            Some(code) => code,
+            None => Self::Other(value),
         }
     }
 

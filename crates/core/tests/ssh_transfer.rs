@@ -99,9 +99,15 @@ fn run_client_with_retry(config_fn: impl Fn() -> ClientConfig) -> Result<(), Cli
             Err(e) => {
                 let code = e.code();
                 // Only retry on transient connection failures.
+                // ssh exits 255 on a transient connection failure, which now
+                // propagates raw as ExitCode::Other(255) instead of the old
+                // collapsed CommandFailed (124).
                 let is_transient = matches!(
                     code,
-                    ExitCode::SocketIo | ExitCode::CommandFailed | ExitCode::Ipc
+                    ExitCode::SocketIo
+                        | ExitCode::CommandFailed
+                        | ExitCode::Ipc
+                        | ExitCode::Other(255)
                 );
                 if is_transient && attempt < MAX_SSH_RETRIES {
                     eprintln!(
@@ -330,11 +336,14 @@ fn ssh_command_not_found_exit_code() {
     });
 }
 
-/// Verify that SSH connection failure produces a connection-related exit code.
+/// Verify that SSH connection failure propagates ssh's raw exit code.
 ///
-/// Uses a deliberately unreachable host to trigger a connection timeout or
-/// refused error. The exit code should map to `CommandFailed` (124) or
-/// `SocketIo` (10).
+/// Uses a deliberately unreachable host to trigger a connection refused or
+/// timeout. ssh exits 255 on any connection failure, which upstream rsync
+/// propagates verbatim: the setup read hits EOF (RERR_STREAMIO = 12) and
+/// exit_cleanup() takes the worst of that base and ssh's raw 255
+/// (main.c:194 wait_process_with_flush, cleanup.c:150). The result must be
+/// 255, not the old collapsed RERR_CMD_FAILED (124).
 #[test]
 fn ssh_connection_failure_exit_code() {
     run_with_timeout(SSH_TIMEOUT, || {
@@ -367,14 +376,13 @@ fn ssh_connection_failure_exit_code() {
 
         let err = result.expect_err("transfer to unreachable host should fail");
         let code = err.code().as_i32();
-        // SSH connection failure can surface as CommandFailed (124 - exit 255 from ssh),
-        // SocketIo (10), Ipc (14), or StartClient (5).
+        // upstream: ssh exits 255 on any connection failure; that raw code wins
+        // the worst-wins comparison against the RERR_STREAMIO (12) EOF base and
+        // propagates verbatim. RERR_SOCKETIO (10) is accepted for the direct
+        // rsync:// TCP path when no ssh child is involved.
         assert!(
-            code == ExitCode::CommandFailed.as_i32()
-                || code == ExitCode::SocketIo.as_i32()
-                || code == ExitCode::Ipc.as_i32()
-                || code == ExitCode::StartClient.as_i32(),
-            "expected connection-failure exit code (124, 10, 14, or 5); got {code}: {err}"
+            code == ExitCode::Other(255).as_i32() || code == ExitCode::SocketIo.as_i32(),
+            "expected raw ssh connection-failure exit code (255 or 10); got {code}: {err}"
         );
     });
 }

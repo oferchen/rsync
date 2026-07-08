@@ -57,6 +57,32 @@ fn from_i32_returns_none_for_unknown() {
 }
 
 #[test]
+fn from_raw_preserves_unknown_codes() {
+    // upstream: main.c:221 wait_process_with_flush() returns WEXITSTATUS raw.
+    // A recognized code keeps its named variant; anything else round-trips
+    // verbatim through ExitCode::Other so the raw value survives to
+    // process::exit and worst-wins comparisons.
+    assert_eq!(ExitCode::from_raw(23), ExitCode::PartialTransfer);
+    assert_eq!(ExitCode::from_raw(127), ExitCode::CommandNotFound);
+    assert_eq!(ExitCode::from_raw(255), ExitCode::Other(255));
+    assert_eq!(ExitCode::from_raw(42), ExitCode::Other(42));
+    assert_eq!(ExitCode::from_raw(200), ExitCode::Other(200));
+    assert_eq!(ExitCode::from_raw(42).as_i32(), 42);
+    assert_eq!(ExitCode::from_raw(255).as_i32(), 255);
+}
+
+#[test]
+fn other_renders_as_unexplained_error() {
+    // upstream: log.c:905 log_exit() - a code with no RERR_* name renders as
+    // "unexplained error" while keeping its raw value in the "(code N)" suffix.
+    assert_eq!(ExitCode::Other(42).description(), "unexplained error");
+    assert_eq!(ExitCode::Other(42).as_i32(), 42);
+    assert!(!ExitCode::Other(42).is_success());
+    assert!(!ExitCode::Other(42).is_fatal());
+    assert!(!ExitCode::Other(42).is_partial());
+}
+
+#[test]
 fn is_success_only_for_ok() {
     assert!(ExitCode::Ok.is_success());
     assert!(!ExitCode::Syntax.is_success());
