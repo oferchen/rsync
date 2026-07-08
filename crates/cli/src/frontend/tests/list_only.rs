@@ -1445,7 +1445,15 @@ fn list_only_renders_atime_and_crtime_columns() {
     let events = vec![file_event, dir_event];
 
     let mut out = Vec::new();
-    emit_list_only(&events, &mut out, HumanReadableMode::Disabled, true, true).expect("render");
+    emit_list_only(
+        &events,
+        &mut out,
+        HumanReadableMode::Disabled,
+        true,
+        true,
+        false,
+    )
+    .expect("render");
     let rendered = String::from_utf8(out).expect("utf8");
 
     let file_line = rendered
