@@ -17,8 +17,11 @@ use crate::xattr::{MAX_FULL_DATUM, MAX_XATTR_DIGEST_LEN, XattrList};
 
 /// Sends xattr data to the wire.
 ///
-/// The `checksum_seed` is mixed into the hash for abbreviated xattr values,
-/// matching upstream rsync's `sum_init(xattr_sum_nni, checksum_seed)` behavior.
+/// Abbreviated values (larger than `MAX_FULL_DATUM`) are replaced by the
+/// checksum computed via `compute_xattr_checksum`. For the MD5 default of
+/// protocol 30-32 this digest is unseeded, matching upstream's
+/// `sum_init(xattr_sum_nni, checksum_seed)` whose `CSUM_MD5` path ignores the
+/// seed (`checksum.c:588`).
 ///
 /// # Wire Format
 ///
@@ -31,7 +34,7 @@ use crate::xattr::{MAX_FULL_DATUM, MAX_XATTR_DIGEST_LEN, XattrList};
 ///     datum_len  : varint  // original value length
 ///     name       : bytes[name_len]
 ///     If datum_len > MAX_FULL_DATUM:
-///       checksum : bytes[MAX_XATTR_DIGEST_LEN]  // seeded hash of value
+///       checksum : bytes[MAX_XATTR_DIGEST_LEN]  // unseeded MD5 of value
 ///     Else:
 ///       value    : bytes[datum_len]
 /// ```
@@ -197,22 +200,38 @@ pub fn send_sender_xattr_response<W: Write>(
     Ok(())
 }
 
-/// Computes the seeded MD5 checksum for an xattr value.
+/// Computes the abbreviation checksum for a large xattr value.
 ///
-/// Includes the `checksum_seed` in the hash to match upstream rsync's
-/// `sum_init(xattr_sum_nni, checksum_seed)` + `sum_update()` + `sum_end()`
-/// pattern. The seed bytes are hashed before the data.
+/// Upstream abbreviates values larger than `MAX_FULL_DATUM` with
+/// `sum_init(xattr_sum_nni, checksum_seed)` + `sum_update(value)` +
+/// `sum_end()`. For protocol versions 30-32 the negotiated `xattr_sum_nni`
+/// is always MD5 (`compat.c:824` hardcodes `parse_csum_name(NULL, 0)`, which
+/// returns md5 for protocol >= 30), and the streaming `sum_init()` path for
+/// `CSUM_MD5` does `md5_begin()` only - it does NOT fold `checksum_seed` into
+/// the digest. Only the MD4-family cases feed the seed via
+/// `SIVAL(s, 0, seed); sum_update(s, 4)`. The result is therefore the plain
+/// MD5 of the value bytes, and it must be computed unseeded to interoperate
+/// with upstream: a seeded digest would never match the receiver's locally
+/// computed abbreviation, forcing a redundant full-value transfer on every
+/// large xattr.
+///
+/// `checksum_seed` is retained to mirror upstream's `sum_init(nni, seed)`
+/// signature and to leave room for a future negotiated MD4-family algorithm;
+/// the MD5 default deliberately ignores it, exactly as `sum_init()` does.
 ///
 /// # Upstream Reference
 ///
-/// See `xattrs.c` - large xattr values are abbreviated using a seeded hash.
+/// - `xattrs.c:275-281` - `sum_init(xattr_sum_nni, checksum_seed)` over the datum.
+/// - `checksum.c:588-597` - `sum_init()` `CSUM_MD5` case: `md5_begin()`, no seed.
+/// - `compat.c:824-825` - `xattr_sum_nni` / `xattr_sum_len` fixed to md5 (16 bytes).
 pub(super) fn compute_xattr_checksum(
     data: &[u8],
     checksum_seed: i32,
 ) -> [u8; MAX_XATTR_DIGEST_LEN] {
+    // upstream: the CSUM_MD5 branch of sum_init() ignores the seed; only the
+    // MD4-family branches fold it in. Keep the parameter for signature parity.
+    let _ = checksum_seed;
     let mut hasher = Md5::new();
-    // upstream: sum_init() feeds the seed into the hash first
-    hasher.update(checksum_seed.to_le_bytes());
     hasher.update(data);
     let result = hasher.finalize();
     let mut checksum = [0u8; MAX_XATTR_DIGEST_LEN];
