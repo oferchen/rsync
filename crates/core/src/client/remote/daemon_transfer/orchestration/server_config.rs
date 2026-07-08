@@ -98,7 +98,6 @@ fn apply_common_daemon_config(
     server_config.file_selection.size_only = config.size_only();
 
     server_config.write.fsync = config.fsync();
-    server_config.write.adaptive_concurrency = config.adaptive_concurrency();
     server_config.write.io_uring_policy = config.io_uring_policy();
     server_config.write.io_uring_depth = config.io_uring_depth();
     server_config.write.zero_copy_policy = config.zero_copy_policy();

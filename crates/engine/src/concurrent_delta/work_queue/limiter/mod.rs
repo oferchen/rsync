@@ -1,9 +1,11 @@
 //! AIMD adaptive-concurrency limiter.
 //!
 //! Implements the Additive-Increase / Multiplicative-Decrease control law
-//! described in `docs/design/aimd-concurrency-limiter.md`. The limiter is
-//! exposed to users via `--adaptive-concurrency` / `--no-adaptive-concurrency`
-//! and wired through `ClientConfig` into the concurrent delta pipeline.
+//! described in `docs/design/aimd-concurrency-limiter.md`. It backs the
+//! [`AdaptiveQueueController`](super::controller::AdaptiveQueueController),
+//! which drives the dynamic work-queue depth as internal autotuning - there is
+//! no user-facing flag; the `OC_RSYNC_ADAPTIVE_QUEUE` env var only pins the
+//! deterministic static depth for debugging.
 //!
 //! Design references:
 //! - RFC 5681 section 3.1 (TCP congestion avoidance, AIMD law).

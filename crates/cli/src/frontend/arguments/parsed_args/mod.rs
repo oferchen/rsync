@@ -614,13 +614,6 @@ pub struct ParsedArgs {
     /// `--jump-host` - comma-separated proxy-jump hosts (forwarded as `ssh -J`).
     pub jump_host: Option<OsString>,
 
-    /// `--adaptive-concurrency` / `--no-adaptive-concurrency` - AIMD limiter.
-    ///
-    /// When enabled, the concurrent delta pipeline uses an additive-increase /
-    /// multiplicative-decrease control law to adapt in-flight concurrency to
-    /// disk and I/O pressure. Disabled by default (opt-in).
-    pub adaptive_concurrency: bool,
-
     /// `--rayon-threads` - cap rayon worker pool to N threads (1-1024).
     ///
     /// `None` keeps rayon's default (one worker per logical CPU).

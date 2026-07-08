@@ -8,7 +8,7 @@
 
 use crossbeam_channel::Sender;
 
-use super::bounded::WorkQueueReceiver;
+use super::bounded::{PermitGuard, WorkQueueReceiver};
 use crate::concurrent_delta::DeltaWork;
 
 impl WorkQueueReceiver {
@@ -69,16 +69,21 @@ impl WorkQueueReceiver {
         F: Fn(DeltaWork) -> R + Send + Sync,
         R: Send,
     {
+        let WorkQueueReceiver { rx, release } = self;
         let num_shards = rayon::current_num_threads();
         let shards: Vec<std::sync::Mutex<Vec<R>>> = (0..num_shards)
             .map(|_| std::sync::Mutex::new(Vec::new()))
             .collect();
 
         rayon::scope(|s| {
-            for work in self.into_iter() {
+            while let Ok(work) = rx.recv() {
                 let f = &f;
                 let shards = &shards;
+                // One permit per admitted item; released when this task
+                // completes or unwinds (see `PermitGuard`).
+                let permit = PermitGuard(release.clone());
                 s.spawn(move |_| {
+                    let _permit = permit;
                     let result = f(work);
                     let idx = rayon::current_thread_index().unwrap_or_else(|| {
                         // Outside rayon pool: hash thread ID to distribute
@@ -148,11 +153,19 @@ impl WorkQueueReceiver {
         F: Fn(DeltaWork) -> R + Send + Sync,
         R: Send,
     {
+        let WorkQueueReceiver { rx, release } = self;
         rayon::scope(|s| {
-            for work in self.into_iter() {
+            while let Ok(work) = rx.recv() {
                 let f = &f;
                 let tx = tx.clone();
+                // One permit per admitted item. The guard drops at the end of
+                // the task closure - after `tx.send` - so admission stays
+                // closed while a worker blocks on a saturated result channel,
+                // giving the controller a true backpressure signal. Releasing
+                // on unwind keeps the pairing exact even if `f` panics.
+                let permit = PermitGuard(release.clone());
                 s.spawn(move |_| {
+                    let _permit = permit;
                     let result = f(work);
                     // If the receiver is dropped, silently stop - the consumer
                     // has decided it doesn't need more results.
