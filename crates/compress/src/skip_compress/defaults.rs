@@ -17,9 +17,13 @@ use super::Suffix;
 /// Upstream default suffixes that skip compression.
 ///
 /// This is the exact set from upstream `default-dont-compress.h`
-/// (`DEFAULT_DONT_COMPRESS`), stored without the leading `*.` and lowercased to
-/// match upstream's case-insensitive suffix comparison.
-const DEFAULT_DONT_COMPRESS: &[&str] = &[
+/// (`DEFAULT_DONT_COMPRESS`, generated from the `--skip-compress` default list
+/// documented in `rsync.1.md`; loaded via `token.c:init_set_compression()`),
+/// stored without the leading `*.` and lowercased to match upstream's
+/// case-insensitive suffix comparison. This is the single source of truth for
+/// the default skip-compress suffixes across the workspace - other crates
+/// reference this const rather than maintaining their own copy.
+pub const DEFAULT_SKIP_COMPRESS_SUFFIXES: &[&str] = &[
     "3g2", "3gp", "7z", "aac", "ace", "apk", "avi", "bz2", "deb", "dmg", "ear", "f4v", "flac",
     "flv", "gpg", "gz", "iso", "jar", "jpeg", "jpg", "lrz", "lz", "lz4", "lzma", "lzo", "m1a",
     "m1v", "m2a", "m2ts", "m2v", "m4a", "m4b", "m4p", "m4r", "m4v", "mka", "mkv", "mov", "mp1",
@@ -36,8 +40,8 @@ const DEFAULT_DONT_COMPRESS: &[&str] = &[
 /// upstream `DEFAULT_DONT_COMPRESS` set.
 #[must_use]
 pub fn default_skip_extensions() -> HashSet<Suffix> {
-    let mut set = HashSet::with_capacity(DEFAULT_DONT_COMPRESS.len());
-    for ext in DEFAULT_DONT_COMPRESS {
+    let mut set = HashSet::with_capacity(DEFAULT_SKIP_COMPRESS_SUFFIXES.len());
+    for ext in DEFAULT_SKIP_COMPRESS_SUFFIXES {
         set.insert(Suffix::new(ext));
     }
     set
@@ -55,9 +59,9 @@ mod tests {
         let exts = default_skip_extensions();
         assert_eq!(
             exts.len(),
-            DEFAULT_DONT_COMPRESS.len(),
-            "default skip set must equal upstream DEFAULT_DONT_COMPRESS ({} suffixes)",
-            DEFAULT_DONT_COMPRESS.len(),
+            DEFAULT_SKIP_COMPRESS_SUFFIXES.len(),
+            "default skip set must equal upstream DEFAULT_SKIP_COMPRESS_SUFFIXES ({} suffixes)",
+            DEFAULT_SKIP_COMPRESS_SUFFIXES.len(),
         );
     }
 
@@ -66,7 +70,7 @@ mod tests {
     #[test]
     fn default_set_contains_every_upstream_suffix() {
         let exts = default_skip_extensions();
-        for expected in DEFAULT_DONT_COMPRESS {
+        for expected in DEFAULT_SKIP_COMPRESS_SUFFIXES {
             assert!(
                 exts.contains(*expected),
                 "missing upstream suffix: {expected}"
@@ -86,7 +90,7 @@ mod tests {
         ] {
             assert!(
                 !exts.contains(*unexpected),
-                "suffix {unexpected} is not in upstream DEFAULT_DONT_COMPRESS and must not be skipped",
+                "suffix {unexpected} is not in upstream DEFAULT_SKIP_COMPRESS_SUFFIXES and must not be skipped",
             );
         }
     }
