@@ -61,6 +61,8 @@ impl ReceiverContext {
             // upstream: generator.c:2355-2357 - phase++ then "generate_files phase=%d"
             // The first `phase++` after the per-segment loop advances 0 -> 1.
             let mut phase: i32 = 1;
+            // upstream: receiver.c:692-693 DEBUG_GTE(RECV, 1)
+            debug_log!(Recv, 1, "recv_files phase={}", phase);
             debug_log!(Genr, 1, "generate_files phase={}", phase);
 
             for _phase_step in 2..=max_phase {
@@ -70,6 +72,8 @@ impl ReceiverContext {
                 // upstream: generator.c:2366-2368 - phase++ on each additional
                 // iteration (covers the redo phase).
                 phase += 1;
+                // upstream: receiver.c:692-693 DEBUG_GTE(RECV, 1)
+                debug_log!(Recv, 1, "recv_files phase={}", phase);
                 debug_log!(Genr, 1, "generate_files phase={}", phase);
             }
 
@@ -89,6 +93,8 @@ impl ReceiverContext {
                 ndx_write_codec.write_ndx_done(&mut *writer)?;
                 writer.flush()?;
                 phase += 1;
+                // upstream: receiver.c:692-693 DEBUG_GTE(RECV, 1)
+                debug_log!(Recv, 1, "recv_files phase={}", phase);
                 // upstream: generator.c:2355-2357, 2366-2368, 2392-2394
                 // "generate_files phase=%d" emitted after each phase++.
                 debug_log!(Genr, 1, "generate_files phase={}", phase);
@@ -204,6 +210,8 @@ impl ReceiverContext {
 
             // upstream: generator.c:2355-2357 - phase++ then "generate_files phase=%d"
             let mut phase: i32 = 1;
+            // upstream: receiver.c:692-693 DEBUG_GTE(RECV, 1)
+            debug_log!(Recv, 1, "recv_files phase={}", phase);
             debug_log!(Genr, 1, "generate_files phase={}", phase);
 
             for _phase_step in 2..=max_phase {
@@ -212,6 +220,8 @@ impl ReceiverContext {
                 self.read_expected_ndx_done_async(ndx_read_codec, reader, "phase transition")
                     .await?;
                 phase += 1;
+                // upstream: receiver.c:692-693 DEBUG_GTE(RECV, 1)
+                debug_log!(Recv, 1, "recv_files phase={}", phase);
                 debug_log!(Genr, 1, "generate_files phase={}", phase);
             }
 
@@ -229,6 +239,8 @@ impl ReceiverContext {
                 ndx_write_codec.write_ndx_done(&mut *writer)?;
                 writer.flush()?;
                 phase += 1;
+                // upstream: receiver.c:692-693 DEBUG_GTE(RECV, 1)
+                debug_log!(Recv, 1, "recv_files phase={}", phase);
                 debug_log!(Genr, 1, "generate_files phase={}", phase);
                 if phase > max_phase {
                     break;
@@ -506,6 +518,9 @@ impl ReceiverContext {
             }
         }
 
+        // upstream: receiver.c:1114-1115 DEBUG_GTE(RECV, 1)
+        debug_log!(Recv, 1, "recv_files finished");
+
         // upstream: generator.c:2436-2437 - "generate_files finished" emitted at
         // the bottom of generate_files() after the final goodbye handshake.
         debug_log!(Genr, 1, "generate_files finished");
@@ -591,6 +606,9 @@ impl ReceiverContext {
                 return Err(e);
             }
         }
+
+        // upstream: receiver.c:1114-1115 DEBUG_GTE(RECV, 1)
+        debug_log!(Recv, 1, "recv_files finished");
 
         // upstream: generator.c:2436-2437 - "generate_files finished".
         debug_log!(Genr, 1, "generate_files finished");
