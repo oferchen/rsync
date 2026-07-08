@@ -51,7 +51,7 @@ pub(crate) fn parse_size_limit_argument(value: &OsStr, flag: &str) -> Result<u64
         Err(SizeParseError::Invalid) => Err(rsync_error!(
             1,
             format!(
-                "invalid {flag} '{display}': expected a size with an optional K/M/G/T/P/E suffix"
+                "invalid {flag} '{display}': expected a size with an optional K/M/G/T/P suffix"
             )
         )
         .with_role(Role::Client)),
@@ -159,41 +159,30 @@ pub(crate) fn pow_u128_for_size(base: u32, exponent: u32) -> Result<u128, SizePa
 
 /// Parses a size specification string into a byte count.
 ///
-/// Supports:
+/// Mirrors upstream rsync's `options.c:parse_size_arg()` exactly. Supports:
 /// - Plain integers: `"1024"` -> 1024
 /// - Fractional values with `.` or `,`: `"1.5K"` -> 1536
-/// - Binary suffixes (powers of 1024): K, M, G, T, P, E
-/// - Decimal suffixes (powers of 1000): KB, MB, GB, TB, PB, EB
-/// - Explicit binary suffixes: KiB, MiB, GiB, TiB, PiB, EiB
+/// - Binary suffixes (powers of 1024): K, M, G, T, P
+/// - Decimal suffixes (powers of 1000): KB, MB, GB, TB, PB
+/// - Explicit binary suffixes: KiB, MiB, GiB, TiB, PiB
 /// - Byte suffix: B (no scaling)
+/// - A single trailing `+1`/`-1` byte adjustment: `"1K-1"` -> 1023
+///
+/// A leading `+` is rejected and there is no exa (`E`) suffix, matching
+/// upstream's suffix switch which stops at `p`/`P`.
 fn parse_size_spec(text: &str) -> Result<u64, SizeParseError> {
     if text.is_empty() {
         return Err(SizeParseError::Empty);
     }
 
-    let mut unsigned = text;
-    let mut negative = false;
-
-    if let Some(first) = unsigned.chars().next() {
-        match first {
-            '+' => {
-                unsigned = &unsigned[first.len_utf8()..];
-            }
-            '-' => {
-                negative = true;
-                unsigned = &unsigned[first.len_utf8()..];
-            }
-            _ => {}
-        }
-    }
-
-    if unsigned.is_empty() {
-        return Err(SizeParseError::Empty);
-    }
-
-    if negative {
-        return Err(SizeParseError::Negative);
-    }
+    // upstream: options.c:parse_size_arg() never strips a leading '+', so
+    // "+100" is rejected. A leading '-' is a negative size, which we reject
+    // with a dedicated diagnostic rather than a generic parse error.
+    let unsigned = match text.strip_prefix('-') {
+        Some("") => return Err(SizeParseError::Empty),
+        Some(_) => return Err(SizeParseError::Negative),
+        None => text,
+    };
 
     let mut digits_seen = false;
     let mut decimal_seen = false;
@@ -223,25 +212,28 @@ fn parse_size_spec(text: &str) -> Result<u64, SizeParseError> {
 
     let (integer_part, fractional_part, denominator) = parse_decimal_components(numeric_part)?;
 
-    let (exponent, mut remainder_after_suffix) = if remainder.is_empty() {
-        (0u32, remainder)
-    } else {
-        let mut chars = remainder.chars();
-        let ch = chars.next().unwrap();
-        (
-            match ch.to_ascii_lowercase() {
-                'b' => 0,
-                'k' => 1,
-                'm' => 2,
-                'g' => 3,
-                't' => 4,
-                'p' => 5,
-                'e' => 6,
-                _ => return Err(SizeParseError::Invalid),
-            },
-            chars.as_str(),
-        )
-    };
+    // upstream: options.c:parse_size_arg() suffix switch stops at 'p' (no exa)
+    // and, because it excludes '+'/'-' from the suffix, treats a trailing sign
+    // as "no suffix" so the default byte scaling applies before the adjustment.
+    let (exponent, mut remainder_after_suffix) =
+        if remainder.is_empty() || remainder.starts_with(['+', '-']) {
+            (0u32, remainder)
+        } else {
+            let mut chars = remainder.chars();
+            let ch = chars.next().unwrap();
+            (
+                match ch.to_ascii_lowercase() {
+                    'b' => 0,
+                    'k' => 1,
+                    'm' => 2,
+                    'g' => 3,
+                    't' => 4,
+                    'p' => 5,
+                    _ => return Err(SizeParseError::Invalid),
+                },
+                chars.as_str(),
+            )
+        };
 
     let mut base = 1024u32;
 
@@ -266,6 +258,21 @@ fn parse_size_spec(text: &str) -> Result<u64, SizeParseError> {
         }
     }
 
+    // upstream: options.c:parse_size_arg() honours exactly one trailing
+    // "+1"/"-1" byte adjustment after the suffix, e.g. "1K-1" == 1023. Any
+    // other trailing text (including "+2" or "-10") is invalid.
+    let adjust: i8 = match remainder_after_suffix.as_bytes() {
+        [b'+', b'1'] => {
+            remainder_after_suffix = "";
+            1
+        }
+        [b'-', b'1'] => {
+            remainder_after_suffix = "";
+            -1
+        }
+        _ => 0,
+    };
+
     if !remainder_after_suffix.is_empty() {
         return Err(SizeParseError::Invalid);
     }
@@ -281,6 +288,12 @@ fn parse_size_spec(text: &str) -> Result<u64, SizeParseError> {
         .ok_or(SizeParseError::TooLarge)?;
 
     let value = product / denominator;
+    // upstream rejects a resulting negative size (`0-1` reports "too large").
+    let value = match adjust {
+        1 => value.checked_add(1).ok_or(SizeParseError::TooLarge)?,
+        -1 => value.checked_sub(1).ok_or(SizeParseError::TooLarge)?,
+        _ => value,
+    };
     if value > u64::MAX as u128 {
         return Err(SizeParseError::TooLarge);
     }
@@ -346,7 +359,8 @@ mod tests {
 
     #[test]
     fn parse_size_spec_just_sign() {
-        assert_eq!(parse_size_spec("+"), Err(SizeParseError::Empty));
+        // upstream: options.c:parse_size_arg() rejects a bare leading '+'.
+        assert_eq!(parse_size_spec("+"), Err(SizeParseError::Invalid));
         assert_eq!(parse_size_spec("-"), Err(SizeParseError::Empty));
     }
 
@@ -365,9 +379,35 @@ mod tests {
     }
 
     #[test]
-    fn parse_size_spec_positive_prefix() {
-        assert_eq!(parse_size_spec("+100"), Ok(100));
-        assert_eq!(parse_size_spec("+1K"), Ok(1024));
+    fn parse_size_spec_leading_plus_rejected() {
+        // upstream rsync rejects a leading '+' for size args: `--max-size=+100
+        // is invalid`. Only bare digits (optionally with a suffix) are valid.
+        assert_eq!(parse_size_spec("+100"), Err(SizeParseError::Invalid));
+        assert_eq!(parse_size_spec("+1K"), Err(SizeParseError::Invalid));
+    }
+
+    #[test]
+    fn parse_size_spec_trailing_adjustment() {
+        // upstream: a single trailing "+1"/"-1" adjusts the byte count so that
+        // "--max-size=1K-1" (1023) or "1K+1" (1025) can target a boundary.
+        assert_eq!(parse_size_spec("1K-1"), Ok(1023));
+        assert_eq!(parse_size_spec("1K+1"), Ok(1025));
+        assert_eq!(parse_size_spec("1-1"), Ok(0));
+        assert_eq!(parse_size_spec("1KB-1"), Ok(999));
+        assert_eq!(parse_size_spec("1.5K-1"), Ok(1535));
+    }
+
+    #[test]
+    fn parse_size_spec_rejects_non_unit_adjustment() {
+        // Only exactly "+1"/"-1" is accepted; anything else is invalid, and a
+        // "-1" that would drive the size negative is rejected too.
+        assert_eq!(parse_size_spec("1K-2"), Err(SizeParseError::Invalid));
+        assert_eq!(parse_size_spec("1K+2"), Err(SizeParseError::Invalid));
+        assert_eq!(parse_size_spec("1K-10"), Err(SizeParseError::Invalid));
+        assert_eq!(parse_size_spec("1K-0"), Err(SizeParseError::Invalid));
+        assert_eq!(parse_size_spec("1K+0"), Err(SizeParseError::Invalid));
+        assert_eq!(parse_size_spec("1K-1x"), Err(SizeParseError::Invalid));
+        assert_eq!(parse_size_spec("0-1"), Err(SizeParseError::TooLarge));
     }
 
     #[test]
@@ -423,8 +463,10 @@ mod tests {
     }
 
     #[test]
-    fn parse_size_spec_exbibytes() {
-        assert_eq!(parse_size_spec("1E"), Ok(1024u64.pow(6)));
+    fn parse_size_spec_exa_suffix_rejected() {
+        // upstream's suffix switch stops at 'p'/'P'; there is no exa suffix.
+        assert_eq!(parse_size_spec("1E"), Err(SizeParseError::Invalid));
+        assert_eq!(parse_size_spec("1e"), Err(SizeParseError::Invalid));
     }
 
     #[test]
