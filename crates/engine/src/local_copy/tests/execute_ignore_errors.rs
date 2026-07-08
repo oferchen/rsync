@@ -303,6 +303,135 @@ fn delete_suppressed_when_io_errors_and_ignore_errors_not_set() {
 
 #[cfg(unix)]
 #[test]
+fn io_error_skip_deletion_emits_upstream_notice() {
+    // The user must be told that deletions were skipped: silently keeping
+    // extraneous files after a partial read would look like a no-op run, so
+    // upstream prints "IO error encountered -- skipping file deletion" once
+    // before abandoning the delete pass. This asserts the notice reaches the
+    // diagnostic queue, not merely that the extra file survives.
+    // upstream: generator.c:298-305 delete_in_dir().
+    use logging::{DiagnosticEvent, InfoFlag, VerbosityConfig, drain_events, init};
+    use std::os::unix::fs::PermissionsExt;
+
+    // NONREG (info_verbosity[0]) is enabled at verbose level 0, matching
+    // upstream's ungated FINFO rendering of the notice.
+    init(VerbosityConfig::from_verbose_level(0));
+    let _ = drain_events();
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    let dest = temp.path().join("dest");
+    fs::create_dir_all(source.join("baddir")).expect("create baddir");
+    fs::create_dir_all(source.join("zsub")).expect("create zsub");
+    fs::create_dir_all(dest.join("zsub")).expect("create dest zsub");
+
+    fs::write(source.join("baddir/inner.txt"), b"inner").expect("write inner");
+    fs::write(source.join("zsub/keep.txt"), b"keep").expect("write keep");
+    fs::write(dest.join("zsub/keep.txt"), b"keep").expect("write dest keep");
+    fs::write(dest.join("zsub/extra.txt"), b"should survive").expect("write extra");
+
+    fs::set_permissions(source.join("baddir"), fs::Permissions::from_mode(0o000))
+        .expect("make baddir unreadable");
+
+    let mut source_operand = source.clone().into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default().recursive(true).delete(true);
+    let result = plan.execute_with_options(LocalCopyExecution::Apply, options);
+
+    let _ = fs::set_permissions(source.join("baddir"), fs::Permissions::from_mode(0o755));
+
+    assert!(result.is_err(), "copy should report I/O error");
+    assert!(
+        dest.join("zsub/extra.txt").exists(),
+        "zsub/extra.txt must survive when the delete pass is skipped"
+    );
+
+    let messages: Vec<String> = drain_events()
+        .into_iter()
+        .filter_map(|event| match event {
+            DiagnosticEvent::Info {
+                flag: InfoFlag::Nonreg,
+                message,
+                ..
+            } => Some(message),
+            _ => None,
+        })
+        .collect();
+    let notice = "IO error encountered -- skipping file deletion";
+    assert!(
+        messages.iter().any(|m| m == notice),
+        "expected the upstream skip notice {notice:?}; got {messages:?}"
+    );
+    // Upstream guards the notice with a static `already_warned`, so it is
+    // printed at most once even across several suppressed directories.
+    assert_eq!(
+        messages.iter().filter(|m| m.as_str() == notice).count(),
+        1,
+        "skip notice must be emitted exactly once; got {messages:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn ignore_errors_suppresses_io_error_skip_notice() {
+    // With --ignore-errors the delete pass runs to completion, so the skip
+    // notice must NOT appear and the extraneous file must be deleted. The
+    // flag both silences the warning and re-enables deletion upstream.
+    // upstream: generator.c:298 `io_error & IOERR_GENERAL && !ignore_errors`.
+    use logging::{DiagnosticEvent, drain_events, init, VerbosityConfig};
+    use std::os::unix::fs::PermissionsExt;
+
+    init(VerbosityConfig::from_verbose_level(0));
+    let _ = drain_events();
+
+    let temp = tempdir().expect("tempdir");
+    let source = temp.path().join("source");
+    let dest = temp.path().join("dest");
+    fs::create_dir_all(source.join("baddir")).expect("create baddir");
+    fs::create_dir_all(source.join("zsub")).expect("create zsub");
+    fs::create_dir_all(dest.join("zsub")).expect("create dest zsub");
+
+    fs::write(source.join("baddir/inner.txt"), b"inner").expect("write inner");
+    fs::write(source.join("zsub/keep.txt"), b"keep").expect("write keep");
+    fs::write(dest.join("zsub/keep.txt"), b"keep").expect("write dest keep");
+    fs::write(dest.join("zsub/extra.txt"), b"delete me").expect("write extra");
+
+    fs::set_permissions(source.join("baddir"), fs::Permissions::from_mode(0o000))
+        .expect("make baddir unreadable");
+
+    let mut source_operand = source.clone().into_os_string();
+    source_operand.push(std::path::MAIN_SEPARATOR.to_string());
+    let operands = vec![source_operand, dest.clone().into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .delete(true)
+        .ignore_errors(true);
+    let _ = plan.execute_with_options(LocalCopyExecution::Apply, options);
+
+    let _ = fs::set_permissions(source.join("baddir"), fs::Permissions::from_mode(0o755));
+
+    assert!(
+        !dest.join("zsub/extra.txt").exists(),
+        "extra.txt should be deleted when --ignore-errors re-enables the delete pass"
+    );
+
+    let notice = "IO error encountered -- skipping file deletion";
+    let saw_notice = drain_events().into_iter().any(|event| {
+        matches!(event, DiagnosticEvent::Info { ref message, .. } if message == notice)
+    });
+    assert!(
+        !saw_notice,
+        "--ignore-errors must suppress the skip notice"
+    );
+}
+
+#[cfg(unix)]
+#[test]
 fn delete_proceeds_when_io_errors_and_ignore_errors_set() {
     // This test is the counterpart: with --ignore-errors, deletions should
     // proceed even when I/O errors occurred during transfer.

@@ -57,8 +57,9 @@ pub(super) fn apply_during_transfer_deletions(
     }
 
     // When I/O errors occurred and --ignore-errors is not set, suppress
-    // deletions to prevent data loss (upstream rsync behavior).
-    if !context.deletions_allowed() {
+    // deletions to prevent data loss (upstream rsync behavior) and emit the
+    // one-shot skip notice. upstream: generator.c:298-305.
+    if context.delete_pass_blocked_by_io_error() {
         return Ok(());
     }
 
@@ -93,8 +94,9 @@ pub(super) fn handle_post_transfer_deletions(
     }
 
     // When I/O errors occurred and --ignore-errors is not set, suppress
-    // deletions to prevent data loss (upstream rsync behavior).
-    if !context.deletions_allowed() {
+    // deletions to prevent data loss (upstream rsync behavior) and emit the
+    // one-shot skip notice. upstream: generator.c:298-305.
+    if context.delete_pass_blocked_by_io_error() {
         return Ok(());
     }
 

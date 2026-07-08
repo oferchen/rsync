@@ -142,6 +142,7 @@ impl<'a> CopyContext<'a> {
             deferred_sync,
             checksum_cache: None,
             io_errors_occurred: false,
+            io_error_delete_warning_emitted: false,
             multi_source: false,
             verified_parents: HashSet::new(),
             batch_flist_writer,
@@ -953,5 +954,31 @@ impl<'a> CopyContext<'a> {
     /// - `--ignore-errors` is enabled
     pub(super) const fn deletions_allowed(&self) -> bool {
         !self.io_errors_occurred || self.options.ignore_errors_enabled()
+    }
+
+    /// Returns `true` when the delete pass must be skipped because a general
+    /// I/O error occurred and `--ignore-errors` was not given, emitting the
+    /// upstream skip notice exactly once.
+    ///
+    /// The message renders at the default verbosity through the `NONREG`
+    /// info category (info_verbosity[0], enabled at verbose level 0), the
+    /// same channel oc uses for the sibling "skipping non-regular file"
+    /// notice. `--ignore-errors` keeps [`Self::deletions_allowed`] true, so
+    /// neither the warning nor the skip fires in that case - matching
+    /// upstream, where the flag both suppresses the notice and lets the
+    /// delete pass run.
+    // upstream: generator.c:298-305 delete_in_dir() prints "IO error
+    // encountered -- skipping file deletion" once (guarded by a static
+    // `already_warned`) and returns without deleting whenever
+    // `io_error & IOERR_GENERAL && !ignore_errors`.
+    pub(super) fn delete_pass_blocked_by_io_error(&mut self) -> bool {
+        if self.deletions_allowed() {
+            return false;
+        }
+        if !self.io_error_delete_warning_emitted {
+            self.io_error_delete_warning_emitted = true;
+            info_log!(Nonreg, 1, "IO error encountered -- skipping file deletion");
+        }
+        true
     }
 }

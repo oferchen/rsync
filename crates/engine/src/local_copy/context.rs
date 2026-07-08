@@ -135,6 +135,12 @@ pub(crate) struct CopyContext<'a> {
     /// When set to `true` and `--ignore-errors` is not enabled, deletions
     /// are suppressed to prevent data loss.
     io_errors_occurred: bool,
+    /// Guards the one-shot "IO error encountered -- skipping file deletion"
+    /// notice. Upstream prints it exactly once (guarded by a static
+    /// `already_warned`) the first time the delete pass is skipped because a
+    /// general I/O error occurred without `--ignore-errors`.
+    // upstream: generator.c:299 static int already_warned
+    io_error_delete_warning_emitted: bool,
     /// `true` when the active plan carries more than one source operand.
     /// Used to switch `--delete-during` to a deferred sweep so the per-source
     /// keep lists can be merged before any extraneous unlink fires; upstream
