@@ -2913,3 +2913,68 @@ fn compression_override_none_falls_through_to_normal_negotiation() {
         "without override, legacy protocol defaults to Zlib"
     );
 }
+
+/// The client must omit the "none" entry from both advertised lists while the
+/// server retains it, mirroring upstream `get_default_nno_list` (compat.c:485:
+/// `if (nni->num == 0 && !am_server && !dup_markup) continue;`). Verifies the
+/// exact bytes written to the wire, not just the negotiated result.
+#[test]
+fn test_client_drops_none_server_keeps_it() {
+    let protocol = ProtocolVersion::try_from(32).unwrap();
+
+    // Expected default lists with the client-side "none" drop applied.
+    let filter = |names: &[&str], is_server: bool| -> String {
+        names
+            .iter()
+            .copied()
+            .filter(|&n| is_server || n != "none")
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let compressions = supported_compressions();
+
+    for is_server in [false, true] {
+        // Peer offers a full list so the exchange completes cleanly.
+        let peer = test_peer_data(true);
+        let mut stdin = &peer[..];
+        let mut stdout = Vec::new();
+
+        negotiate_capabilities(
+            protocol,
+            &mut stdin,
+            &mut stdout,
+            true, // do_negotiation
+            true, // send_compression
+            false,
+            is_server,
+        )
+        .unwrap();
+
+        let mut sent = &stdout[..];
+        let checksum_sent = read_vstring(&mut sent).unwrap();
+        let compress_sent = read_vstring(&mut sent).unwrap();
+
+        assert_eq!(
+            checksum_sent,
+            filter(SUPPORTED_CHECKSUMS, is_server),
+            "checksum list mismatch (is_server={is_server})"
+        );
+        assert_eq!(
+            compress_sent,
+            filter(&compressions, is_server),
+            "compress list mismatch (is_server={is_server})"
+        );
+
+        // The client must never advertise "none"; the server always must.
+        assert_eq!(
+            checksum_sent.split(' ').any(|n| n == "none"),
+            is_server,
+            "checksum 'none' presence must track is_server"
+        );
+        assert_eq!(
+            compress_sent.split(' ').any(|n| n == "none"),
+            is_server,
+            "compress 'none' presence must track is_server"
+        );
+    }
+}

@@ -268,15 +268,30 @@ pub fn negotiate_capabilities_with_override(
     // When --checksum-choice overrides the selection, advertise only that
     // algorithm (upstream options.c replaces valid_checksums with the user's
     // choice so negotiate_the_strings sees a single-entry list).
+    //
+    // upstream: compat.c:485 get_default_nno_list drops the "none" entry
+    // (num == 0) from the *client* default list; only the server advertises it
+    // (`if (nni->num == 0 && !am_server && !dup_markup) continue;`). "none" is
+    // the sole num == 0 name in both the checksum and compression tables, so
+    // filtering by name mirrors upstream exactly.
+    let default_nno_list = |names: &[&str]| -> String {
+        names
+            .iter()
+            .copied()
+            .filter(|&name| is_server || name != "none")
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+
     let checksum_list = match checksum_override {
         Some(algo) => algo.as_str().to_owned(),
-        None => SUPPORTED_CHECKSUMS.join(" "),
+        None => default_nno_list(SUPPORTED_CHECKSUMS),
     };
     trace_send_list(side, NstrCategory::Checksum, &checksum_list);
     write_vstring(stdout, &checksum_list)?;
 
     if send_compression {
-        let compression_list = supported_compressions().join(" ");
+        let compression_list = default_nno_list(&supported_compressions());
         trace_send_list(side, NstrCategory::Compress, &compression_list);
         write_vstring(stdout, &compression_list)?;
     }
