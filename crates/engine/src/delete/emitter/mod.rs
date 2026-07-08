@@ -438,11 +438,15 @@ impl<F: DeleteFs> DeleteEmitter<F> {
                     // at verbose level 0 is `NONREG` (info_verbosity[0]), the
                     // same channel the sibling "skipping non-regular file"
                     // notice uses.
+                    // Render with forward slashes so the notice matches
+                    // upstream output on every platform (rsync uses `/`
+                    // universally); the cli frontend applies the same
+                    // normalization when itemizing deletion paths.
                     info_log!(
                         Nonreg,
                         1,
                         "cannot delete non-empty directory: {}",
-                        path.display()
+                        path.display().to_string().replace('\\', "/")
                     );
                     return Ok(());
                 }
