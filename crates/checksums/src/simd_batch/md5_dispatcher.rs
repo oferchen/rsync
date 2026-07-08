@@ -496,7 +496,6 @@ impl Dispatcher {
     /// NEON batched digest implementation.
     ///
     /// Processes inputs in batches of 4 using NEON SIMD.
-    /// Currently falls back to scalar while NEON MD5 is implemented.
     #[cfg(target_arch = "aarch64")]
     fn digest_batch_neon<T: AsRef<[u8]>>(&self, inputs: &[T]) -> Vec<Digest> {
         let mut results = Vec::with_capacity(inputs.len());
