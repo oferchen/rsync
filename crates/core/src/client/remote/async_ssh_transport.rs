@@ -417,7 +417,11 @@ fn run_async_session(
         let _ = inbound.await;
 
         match server_outcome {
-            Ok((stats, elapsed)) => Ok(convert_server_stats_to_summary(stats, elapsed)),
+            Ok((stats, elapsed, proto_version)) => {
+                let mut summary = convert_server_stats_to_summary(stats, elapsed);
+                summary.set_protocol_version(proto_version);
+                Ok(summary)
+            }
             Err(err) => Err(err),
         }
     })
@@ -555,7 +559,7 @@ fn run_blocking_server(
     mut writer: SyncWriter,
     batch_ctx: Option<BatchContext>,
     start: Instant,
-) -> Result<(ServerStats, Duration), ClientError> {
+) -> Result<(ServerStats, Duration, u8), ClientError> {
     let batch_recording = batch_ctx.as_ref().map(|ctx| {
         let is_sender = config.role == ServerRole::Generator;
         build_batch_recording(ctx, is_sender)
@@ -563,6 +567,7 @@ fn run_blocking_server(
 
     let handshake = crate::server::perform_handshake(&mut reader, &mut writer)
         .map_err(|e| invalid_argument_error(&format!("async SSH handshake failed: {e}"), 5))?;
+    let negotiated_protocol = handshake.protocol.as_u8();
 
     let transfer_result = crate::server::run_server_with_handshake(
         config,
@@ -579,7 +584,7 @@ fn run_blocking_server(
     drop(writer);
 
     match transfer_result {
-        Ok(stats) => Ok((stats, start.elapsed())),
+        Ok(stats) => Ok((stats, start.elapsed(), negotiated_protocol)),
         Err(err) => {
             let exit = ExitCode::from_io_error(&err);
             Err(invalid_argument_error_typed(

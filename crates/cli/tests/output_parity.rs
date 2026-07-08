@@ -206,6 +206,7 @@ fn stats_full_output_format() {
         file_list_transfer_time: 0.0,
         total_bytes_sent: 12_345,
         total_bytes_received: 67_890,
+        protocol_version: 32,
     };
 
     let formatter = StatsFormatter::new(data);
