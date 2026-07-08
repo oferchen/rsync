@@ -185,7 +185,36 @@ pub(crate) fn invalid_argument_error(text: &str, exit_code: i32) -> ClientError 
 /// Creates an invalid argument error with a typed exit code.
 #[cold]
 pub(crate) fn invalid_argument_error_typed(text: &str, exit_code: ExitCode) -> ClientError {
-    let message = rsync_error!(exit_code.as_i32(), "{}", text).with_role(Role::Client);
+    invalid_argument_error_typed_with_role(text, exit_code, Role::Client)
+}
+
+/// Creates a typed-exit-code error tagged with an explicit trailer role.
+///
+/// upstream: log.c:912 log_exit() tags the diagnostic with who_am_i()
+/// (rsync.c:823), the local process role, never a bare "client". Remote SSH
+/// paths pass the direction-derived role so a push reports `[sender]` and a
+/// pull `[receiver]`.
+#[cold]
+pub(crate) fn invalid_argument_error_typed_with_role(
+    text: &str,
+    exit_code: ExitCode,
+    role: Role,
+) -> ClientError {
+    let message = rsync_error!(exit_code.as_i32(), "{}", text).with_role(role);
+    ClientError::with_code(exit_code, message)
+}
+
+/// Builds the final `rsync error:` line for a remote/child process exit.
+///
+/// upstream: log.c:890-914 log_exit() renders the winning exit code by its
+/// rerr_name (log.c:903) - or "unexplained error" for an unknown raw code
+/// (log.c:904-905) - as `rsync error: <name> (code N) at ... [<role>=<ver>]`.
+/// The role is who_am_i() (rsync.c:823): the local process role, not "client".
+/// `context` carries any captured remote stderr and is appended verbatim.
+#[cold]
+pub(crate) fn remote_exit_error(exit_code: ExitCode, role: Role, context: &str) -> ClientError {
+    let text = format!("{}{context}", exit_code.description());
+    let message = rsync_error!(exit_code.as_i32(), "{}", text).with_role(role);
     ClientError::with_code(exit_code, message)
 }
 
@@ -710,6 +739,62 @@ mod tests {
             let rendered = error.to_string();
             assert!(rendered.contains("(42 bytes received so far)"));
             assert!(rendered.contains("[sender="));
+        }
+
+        /// A raw remote/child exit (`ExitCode::Other`) must render upstream's
+        /// canonical `log_exit()` line: the rerr_name fallback "unexplained
+        /// error" plus the raw `(code N)` suffix, tagged with the local process
+        /// role - never a bare `[client]`.
+        ///
+        /// upstream: log.c:912 - `rsync error: %s (code %d) at %s(%d) [%s=%s]`
+        /// where the name comes from rerr_name()/"unexplained error" (log.c:903)
+        /// and the role from who_am_i() (rsync.c:823).
+        #[test]
+        fn remote_exit_error_renders_unexplained_error_with_sender_role() {
+            let error = remote_exit_error(ExitCode::Other(42), Role::Sender, "");
+
+            assert_eq!(error.exit_code(), 42);
+            assert_eq!(error.code(), ExitCode::Other(42));
+
+            let rendered = error.to_string();
+            assert!(
+                rendered.contains("unexplained error (code 42)"),
+                "missing upstream phrasing: {rendered}"
+            );
+            assert!(
+                rendered.contains("[sender="),
+                "must carry the local role, not [client]: {rendered}"
+            );
+            assert!(
+                !rendered.contains("connection unexpectedly closed"),
+                "must not merge the EOF whine into the error line: {rendered}"
+            );
+        }
+
+        /// A pull tags the diagnostic with the receiver role, and a named exit
+        /// code (here RERR_STREAMIO) renders its rerr_name, mirroring
+        /// `log_exit()` for both winning-code paths.
+        #[test]
+        fn remote_exit_error_uses_receiver_role_and_named_rerr() {
+            let error = remote_exit_error(ExitCode::StreamIo, Role::Receiver, "");
+            let rendered = error.to_string();
+            assert!(
+                rendered.contains("error in rsync protocol data stream (code 12)"),
+                "missing rerr_name: {rendered}"
+            );
+            assert!(rendered.contains("[receiver="), "missing role: {rendered}");
+        }
+
+        /// Captured remote stderr context is appended after the rerr_name so
+        /// the leading upstream phrasing still matches.
+        #[test]
+        fn remote_exit_error_appends_stderr_context() {
+            let error = remote_exit_error(ExitCode::Other(42), Role::Sender, ": boom");
+            let rendered = error.to_string();
+            assert!(
+                rendered.contains("unexplained error: boom (code 42)"),
+                "context must trail the rerr_name: {rendered}"
+            );
         }
 
         #[test]
