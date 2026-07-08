@@ -173,6 +173,10 @@ pub(crate) struct OutFormatContext {
     /// all-dot rows even without `-vv`. The render path uses this to bypass
     /// the empty-change-set suppression independently of `emit_unchanged`.
     pub(super) itemize_repeated: bool,
+    /// `--8-bit-output` / `-8`: when true, high-bit characters pass through
+    /// without octal escaping. Only control characters below 0x20 (except
+    /// tab) are escaped. Matches upstream `allow_8bit_chars`.
+    pub(super) eight_bit_output: bool,
 }
 
 impl OutFormatContext {
@@ -224,6 +228,14 @@ impl OutFormatContext {
     #[must_use]
     pub(crate) const fn itemize_repeated(&self) -> bool {
         self.itemize_repeated
+    }
+
+    /// Sets the `--8-bit-output` flag for filename escaping in the
+    /// out-format renderer.
+    #[must_use]
+    pub(crate) fn with_eight_bit_output(mut self, eight_bit_output: bool) -> Self {
+        self.eight_bit_output = eight_bit_output;
+        self
     }
 }
 
@@ -362,6 +374,7 @@ mod tests {
             is_sender: false,
             emit_unchanged: false,
             itemize_repeated: false,
+            eight_bit_output: false,
         };
         assert_eq!(ctx.remote_host.as_deref(), Some("server.example.com"));
         assert_eq!(ctx.remote_address.as_deref(), Some("192.168.1.1"));
