@@ -489,16 +489,22 @@ fn emit_stats_detail_block<W: Write + ?Sized>(
         "Number of files: {}{files_breakdown}",
         format_decimal_bytes(total_entries)
     )?;
-    writeln!(
-        stdout,
-        "Number of created files: {}{created_breakdown}",
-        format_decimal_bytes(created_total)
-    )?;
-    writeln!(
-        stdout,
-        "Number of deleted files: {}{deleted_breakdown}",
-        format_decimal_bytes(deleted)
-    )?;
+    // upstream: main.c:429 - `if (protocol_version >= 29)`
+    if summary.protocol_version() >= 29 {
+        writeln!(
+            stdout,
+            "Number of created files: {}{created_breakdown}",
+            format_decimal_bytes(created_total)
+        )?;
+    }
+    // upstream: main.c:431 - `if (protocol_version >= 31)`
+    if summary.protocol_version() >= 31 {
+        writeln!(
+            stdout,
+            "Number of deleted files: {}{deleted_breakdown}",
+            format_decimal_bytes(deleted)
+        )?;
+    }
     writeln!(
         stdout,
         "Number of regular files transferred: {}",
