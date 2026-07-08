@@ -664,48 +664,6 @@ fn simd_rejects_unknown_levels() {
 }
 
 #[test]
-fn adaptive_concurrency_default_is_disabled() {
-    let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
-    assert!(!parsed.adaptive_concurrency);
-}
-
-#[test]
-fn adaptive_concurrency_flag_enables() {
-    let parsed = parse_test_args(["--adaptive-concurrency", "src/", "dst/"]).expect("parse");
-    assert!(parsed.adaptive_concurrency);
-}
-
-#[test]
-fn no_adaptive_concurrency_flag_disables() {
-    let parsed = parse_test_args(["--no-adaptive-concurrency", "src/", "dst/"]).expect("parse");
-    assert!(!parsed.adaptive_concurrency);
-}
-
-#[test]
-fn adaptive_concurrency_then_no_last_wins() {
-    let parsed = parse_test_args([
-        "--adaptive-concurrency",
-        "--no-adaptive-concurrency",
-        "src/",
-        "dst/",
-    ])
-    .expect("parse");
-    assert!(!parsed.adaptive_concurrency);
-}
-
-#[test]
-fn no_adaptive_concurrency_then_yes_last_wins() {
-    let parsed = parse_test_args([
-        "--no-adaptive-concurrency",
-        "--adaptive-concurrency",
-        "src/",
-        "dst/",
-    ])
-    .expect("parse");
-    assert!(parsed.adaptive_concurrency);
-}
-
-#[test]
 fn spill_dir_flag_default_is_none() {
     let parsed = parse_test_args(["src/", "dst/"]).expect("parse");
     assert!(parsed.spill_dir.is_none());

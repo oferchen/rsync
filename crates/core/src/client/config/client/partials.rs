@@ -57,13 +57,6 @@ impl ClientConfig {
         self.fsync
     }
 
-    /// Returns whether AIMD adaptive concurrency is enabled.
-    #[must_use]
-    #[doc(alias = "--adaptive-concurrency")]
-    pub const fn adaptive_concurrency(&self) -> bool {
-        self.adaptive_concurrency
-    }
-
     /// Returns the io_uring usage policy.
     #[must_use]
     #[doc(alias = "--io-uring")]

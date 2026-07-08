@@ -1,4 +1,4 @@
-//! Opt-in AIMD grow/shrink controller for the dynamic work-queue depth.
+//! AIMD grow/shrink controller for the dynamic work-queue depth.
 //!
 //! The static `2 * thread_count` queue depth cannot adapt to a slow
 //! destination: on high-latency filesystems (NFS, FUSE) or a saturated disk
@@ -23,15 +23,17 @@
 //!   deeper queue only buffers more work behind the bottleneck. The controller
 //!   feeds the limiter an overload signal, halving the target down to `min`.
 //!
-//! # Opt-in
+//! # Default-on, with a deterministic escape hatch
 //!
-//! This controller is entirely opt-in and default-off. Construct it only from a
-//! [`bounded_dynamic`](super::bounded_dynamic) queue, which itself is never used
-//! by the default production pipeline (that path stays on the static
-//! `2 * thread_count` [`bounded`](super::bounded) queue). [`from_env`] returns
-//! `None` unless `OC_RSYNC_ADAPTIVE_QUEUE` is set, so wiring the controller in
-//! is a no-op unless the operator explicitly enables it. Flipping the default on
-//! is a separate, benchmark-gated decision and is out of scope here.
+//! The adaptive path is the default: the parallel receive-delta pipeline builds
+//! a [`bounded_dynamic`](super::bounded_dynamic) queue governed by this
+//! controller, initialised at the same `2 * thread_count` depth the old static
+//! queue used, and adapts from there. Adaptation is internal autotuning, not a
+//! user-facing knob. The single environment escape hatch
+//! `OC_RSYNC_ADAPTIVE_QUEUE` exists only for reproducibility and debugging:
+//! setting it to a disabling value (`0`/`false`/`off`/`no`) pins the
+//! deterministic static [`bounded`](super::bounded) queue with no controller.
+//! [`adaptive_queue_enabled`] reports the resulting choice.
 //!
 //! # Invariants
 //!
@@ -42,8 +44,6 @@
 //!   [`AdaptiveSemaphore::resize`]); already-admitted work always completes.
 //! - The ceiling is always clamped to the `[min, max]` configured on the queue,
 //!   so a controller arithmetic mistake cannot push depth out of range.
-//!
-//! [`from_env`]: AdaptiveQueueController::from_env
 
 use std::sync::Arc;
 
@@ -51,8 +51,12 @@ use super::adaptive_semaphore::{AdaptiveSemaphore, SemStats};
 use super::bounded::DynamicWorkQueue;
 use super::limiter::{AimdLimiter, LimiterConfig, OverloadReason};
 
-/// Environment variable that opts a transfer into the adaptive work-queue depth
-/// controller. Any non-empty value other than `0`/`false`/`off`/`no` enables it.
+/// Environment escape hatch pinning the deterministic static work-queue depth.
+///
+/// The adaptive controller is the default. Setting this to a disabling value
+/// (`0`/`false`/`off`/`no`, case-insensitive) forces the fixed static depth for
+/// reproducible, controller-free behaviour; any other value (or leaving it
+/// unset) keeps adaptation on.
 pub const ADAPTIVE_QUEUE_ENV: &str = "OC_RSYNC_ADAPTIVE_QUEUE";
 
 /// Block-rate threshold at or above which the controller treats the window as
@@ -136,27 +140,12 @@ pub struct AdaptiveQueueController {
 }
 
 impl AdaptiveQueueController {
-    /// Builds a controller for `queue` if the opt-in env var is set.
+    /// Builds a controller for `queue`.
     ///
-    /// Returns `None` when `OC_RSYNC_ADAPTIVE_QUEUE` is unset or disabled
-    /// (`0`, `false`, `off`, `no`, empty), leaving the caller on the queue's
-    /// static initial depth. This is the gate that keeps the default path
-    /// unchanged.
-    #[must_use]
-    pub fn from_env(queue: &DynamicWorkQueue) -> Option<Self> {
-        if !adaptive_queue_enabled() {
-            return None;
-        }
-        Some(Self::new(queue))
-    }
-
-    /// Builds a controller for `queue` unconditionally (test / explicit-opt-in
-    /// entry point).
-    ///
-    /// Prefer [`from_env`](Self::from_env) in production so the controller stays
-    /// behind the opt-in gate. The initial AIMD target and `[min, max]` clamp
-    /// are taken from the queue's current ceiling and configured bounds, so the
-    /// controller can only move depth within the range the queue already allows.
+    /// The initial AIMD target and `[min, max]` clamp are taken from the
+    /// queue's current ceiling and configured bounds, so the controller starts
+    /// at today's static baseline depth and can only move within the range the
+    /// queue already allows.
     #[must_use]
     pub fn new(queue: &DynamicWorkQueue) -> Self {
         let semaphore = Arc::clone(&queue.semaphore);
@@ -283,12 +272,12 @@ impl AdaptiveQueueController {
     }
 }
 
-/// Returns `true` if the opt-in adaptive-queue env var is set to an enabled
-/// value.
+/// Returns `true` when the adaptive work-queue controller should run.
 ///
-/// Enabled for any value except empty, `0`, `false`, `off`, or `no`
-/// (case-insensitive). This keeps the gate strict: the default (unset) and
-/// common "disable" spellings all leave the static path in effect.
+/// Adaptive is the default, so this returns `true` unless
+/// [`ADAPTIVE_QUEUE_ENV`] is set to a disabling value (`0`, `false`, `off`,
+/// `no`, or empty, case-insensitive), which pins the deterministic static
+/// depth. Every other value - and the unset default - keeps adaptation on.
 #[must_use]
 pub fn adaptive_queue_enabled() -> bool {
     match std::env::var(ADAPTIVE_QUEUE_ENV) {
@@ -300,7 +289,8 @@ pub fn adaptive_queue_enabled() -> bool {
                     "0" | "false" | "off" | "no"
                 )
         }
-        Err(_) => false,
+        // Unset: adaptation is the default.
+        Err(_) => true,
     }
 }
 
@@ -394,41 +384,36 @@ mod tests {
     }
 
     #[test]
-    fn from_env_gate_off_by_default() {
+    fn adaptive_enabled_by_default_when_unset() {
         let _lock = env_lock();
         let _guard = EnvGuard::unset();
-        let dq = bounded_dynamic(4, 2, 16).unwrap();
         assert!(
-            AdaptiveQueueController::from_env(&dq).is_none(),
-            "controller must be absent when the env var is unset"
+            adaptive_queue_enabled(),
+            "adaptation must be the default when the env var is unset"
         );
     }
 
     #[test]
-    fn from_env_disabled_spellings_stay_off() {
+    fn disabling_spellings_pin_static_depth() {
         let _lock = env_lock();
         for val in ["", "0", "false", "off", "no", "FALSE", "Off"] {
             let _guard = EnvGuard::set(val);
             assert!(
                 !adaptive_queue_enabled(),
-                "value {val:?} must not enable the controller"
+                "value {val:?} must pin the deterministic static depth"
             );
-            let dq = bounded_dynamic(4, 2, 16).unwrap();
-            assert!(AdaptiveQueueController::from_env(&dq).is_none());
         }
     }
 
     #[test]
-    fn from_env_enabled_when_set() {
+    fn other_values_keep_adaptation_on() {
         let _lock = env_lock();
-        for val in ["1", "true", "yes", "on"] {
+        for val in ["1", "true", "yes", "on", "auto"] {
             let _guard = EnvGuard::set(val);
             assert!(
                 adaptive_queue_enabled(),
-                "value {val:?} must enable the controller"
+                "value {val:?} must keep adaptation on"
             );
-            let dq = bounded_dynamic(4, 2, 16).unwrap();
-            assert!(AdaptiveQueueController::from_env(&dq).is_some());
         }
     }
 

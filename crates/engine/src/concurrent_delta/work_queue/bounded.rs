@@ -67,6 +67,43 @@ pub struct WorkQueueSender {
 /// pattern into a single method call.
 pub struct WorkQueueReceiver {
     pub(super) rx: Receiver<DeltaWork>,
+    /// Admission semaphore to return a permit to when a work item finishes
+    /// draining, completing the dynamic queue's acquire/release protocol.
+    ///
+    /// [`WorkQueueSender::send`] acquires exactly one permit per item on the
+    /// [`CapacitySource::Dynamic`] path; the consumer must return exactly one
+    /// permit per drained item or the single producer eventually blocks
+    /// forever on admission. `None` for a [`CapacitySource::Fixed`] queue,
+    /// whose backpressure comes solely from the bounded channel and therefore
+    /// needs no explicit release.
+    pub(super) release: Option<Arc<AdaptiveSemaphore>>,
+}
+
+/// RAII guard that returns exactly one admission permit to a dynamic work
+/// queue's [`AdaptiveSemaphore`] when dropped.
+///
+/// Completes the dynamic queue's acquire/release protocol: for every item
+/// [`WorkQueueSender::send`] admits, the consumer moves one guard into the
+/// rayon task that processes that item. Releasing on `Drop` makes the pairing
+/// exception-safe - a panic in the delta-dispatch closure, an early return, or
+/// a dropped result channel still returns the permit as the task unwinds, so a
+/// failed item can never leak admission capacity and wedge the producer. A
+/// `None` inner is a no-op, so the fixed-capacity path pays nothing.
+///
+/// The guard drops at the end of the task closure, i.e. after the result has
+/// been forwarded downstream. Holding the permit across that forward is
+/// deliberate: while a worker is blocked handing its result to a saturated
+/// consumer, admission stays closed, which is exactly the backpressure signal
+/// the [`AdaptiveQueueController`](super::controller::AdaptiveQueueController)
+/// reads to shrink the queue.
+pub(super) struct PermitGuard(pub(super) Option<Arc<AdaptiveSemaphore>>);
+
+impl Drop for PermitGuard {
+    fn drop(&mut self) {
+        if let Some(semaphore) = &self.0 {
+            semaphore.release();
+        }
+    }
 }
 
 /// Error returned when the receiver has been dropped and the queue is closed.
@@ -149,7 +186,7 @@ pub fn bounded_with_capacity(capacity: usize) -> (WorkQueueSender, WorkQueueRece
             tx,
             capacity: CapacitySource::Fixed,
         },
-        WorkQueueReceiver { rx },
+        WorkQueueReceiver { rx, release: None },
     )
 }
 
@@ -157,9 +194,11 @@ pub fn bounded_with_capacity(capacity: usize) -> (WorkQueueSender, WorkQueueRece
 ///
 /// Bundles the [`WorkQueueSender`]/[`WorkQueueReceiver`] pair produced by
 /// [`bounded_dynamic`] with a shared reference to the backing
-/// [`AdaptiveSemaphore`]. A later change wires a controller to this handle to
-/// grow or shrink the queue's admission ceiling between `min` and `max` in
-/// response to observed backpressure; until then it is exercised only by tests.
+/// [`AdaptiveSemaphore`]. An
+/// [`AdaptiveQueueController`](super::controller::AdaptiveQueueController) grows
+/// or shrinks the admission ceiling between `min` and `max` in response to the
+/// observed block rate; the shared semaphore is also exposed directly so tests
+/// can drive resizes without a controller.
 pub struct DynamicWorkQueue {
     /// Producer half of the dynamic work queue.
     pub sender: WorkQueueSender,
@@ -178,12 +217,14 @@ pub struct DynamicWorkQueue {
 /// in-flight work; shrinking it withholds future admissions without revoking
 /// permits already granted.
 ///
-/// This is the additive foundation for dynamic work-queue capacity. It does not
-/// wire any controller to move the ceiling, nor does it release a permit when a
-/// consumed item drains - those are deliberately left to a later change. The
-/// returned [`DynamicWorkQueue`] exposes the semaphore so that later wiring, and
-/// current tests, can drive resizes directly. Fixed-bound queues built via
-/// [`bounded`] / [`bounded_with_capacity`] are entirely unaffected.
+/// The returned [`WorkQueueReceiver`] carries a clone of the semaphore and
+/// returns one permit per drained item (see [`PermitGuard`] and the drain
+/// methods), so admission refills as work completes. An
+/// [`AdaptiveQueueController`](super::controller::AdaptiveQueueController) can
+/// then move the ceiling within `[min, max]` in response to the observed block
+/// rate. The returned [`DynamicWorkQueue`] also exposes the semaphore directly
+/// so tests can drive resizes without a controller. Fixed-bound queues built
+/// via [`bounded`] / [`bounded_with_capacity`] are entirely unaffected.
 ///
 /// # Errors
 ///
@@ -231,7 +272,10 @@ pub fn bounded_dynamic(
     };
     Ok(DynamicWorkQueue {
         sender,
-        receiver: WorkQueueReceiver { rx },
+        receiver: WorkQueueReceiver {
+            rx,
+            release: Some(Arc::clone(&semaphore)),
+        },
         semaphore,
     })
 }

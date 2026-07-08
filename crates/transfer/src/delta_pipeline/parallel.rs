@@ -3,7 +3,9 @@
 use std::io;
 
 use engine::concurrent_delta::consumer::DeltaConsumer;
-use engine::concurrent_delta::work_queue::{self, WorkQueueSender};
+use engine::concurrent_delta::work_queue::{
+    self, AdaptiveQueueController, DynamicWorkQueue, WorkQueueSender, adaptive_queue_enabled,
+};
 use engine::concurrent_delta::{DeltaResult, DeltaWork};
 
 use super::ReceiverDeltaPipeline;
@@ -51,7 +53,37 @@ pub struct ParallelDeltaPipeline {
     /// Consumer thread that drains the work queue, reorders results, and
     /// delivers them in sequence order through its internal channel.
     consumer: Option<DeltaConsumer>,
+    /// AIMD controller that grows/shrinks the dynamic queue's admission depth.
+    ///
+    /// `Some` on the default adaptive path; `None` when
+    /// `OC_RSYNC_ADAPTIVE_QUEUE` pins the deterministic static depth.
+    controller: Option<AdaptiveQueueController>,
+    /// Submits observed since the controller last ticked. Ticking every
+    /// [`CONTROLLER_TICK_WINDOW`] submits keeps each block-rate sample wide
+    /// enough to clear the controller's `MIN_SAMPLES` floor.
+    submits_since_tick: u32,
 }
+
+/// Hard floor for the adaptive admission depth.
+///
+/// Matches the `.max(2)` floor of the static capacity heuristics, so the
+/// controller can throttle a saturated consumer hard without ever collapsing
+/// admission below two in-flight items.
+const ADAPTIVE_MIN_DEPTH: usize = 2;
+
+/// Multiplier applied to the baseline depth to derive the adaptive ceiling.
+///
+/// Bounds worst-case in-flight work - and the reorder window sized to match -
+/// to twice today's static baseline, so a fast consumer that keeps the
+/// controller in slow-start cannot grow memory beyond a predictable cap.
+const ADAPTIVE_MAX_FACTOR: usize = 2;
+
+/// Number of submitted items between controller ticks.
+///
+/// Comfortably above the controller's `MIN_SAMPLES` floor so each tick reads a
+/// stable block-rate window. The parallel path only engages past the 64-item
+/// threshold, so a real transfer always ticks several times.
+const CONTROLLER_TICK_WINDOW: u32 = 32;
 
 impl std::fmt::Debug for ParallelDeltaPipeline {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -96,14 +128,7 @@ impl ParallelDeltaPipeline {
     }
 
     fn with_capacity(capacity: usize) -> Self {
-        let (work_tx, work_rx) = work_queue::bounded_with_capacity(capacity);
-        let consumer = DeltaConsumer::spawn(work_rx, capacity);
-
-        Self {
-            next_sequence: 0,
-            work_tx: Some(work_tx),
-            consumer: Some(consumer),
-        }
+        Self::build(capacity, false)
     }
 
     /// Creates a parallel pipeline that bypasses reorder buffering.
@@ -126,13 +151,95 @@ impl ParallelDeltaPipeline {
     }
 
     fn with_bypass_capacity(capacity: usize) -> Self {
-        let (work_tx, work_rx) = work_queue::bounded_with_capacity(capacity);
-        let consumer = DeltaConsumer::spawn_bypass(work_rx);
+        Self::build(capacity, true)
+    }
 
+    /// Builds a pipeline sized at `capacity`, choosing the adaptive dynamic
+    /// queue by default and falling back to the deterministic static queue when
+    /// `OC_RSYNC_ADAPTIVE_QUEUE` disables adaptation (or, defensively, if the
+    /// dynamic-queue bounds are somehow rejected).
+    fn build(capacity: usize, bypass: bool) -> Self {
+        if adaptive_queue_enabled() {
+            if let Some(pipeline) = Self::try_adaptive(capacity, bypass) {
+                return pipeline;
+            }
+        }
+        Self::with_static_capacity(capacity, bypass)
+    }
+
+    /// Attempts to build the adaptive pipeline: a [`bounded_dynamic`] admission
+    /// queue governed by an [`AdaptiveQueueController`], initialised at
+    /// `capacity` (today's static baseline) and free to move within
+    /// `[ADAPTIVE_MIN_DEPTH, capacity * ADAPTIVE_MAX_FACTOR]`.
+    ///
+    /// Returns `None` on the practically impossible bounds error so the caller
+    /// degrades cleanly to the static path rather than failing the transfer.
+    ///
+    /// [`bounded_dynamic`]: work_queue::bounded_dynamic
+    fn try_adaptive(capacity: usize, bypass: bool) -> Option<Self> {
+        let min = ADAPTIVE_MIN_DEPTH.min(capacity);
+        let max = capacity
+            .saturating_mul(ADAPTIVE_MAX_FACTOR)
+            .clamp(capacity, work_queue::MAX_CAPACITY);
+        let queue = work_queue::bounded_dynamic(capacity, min, max).ok()?;
+        // Construct the controller before splitting the queue: it clones the
+        // shared semaphore and reads the `[min, max]` clamp from the sender.
+        let controller = AdaptiveQueueController::new(&queue);
+        let DynamicWorkQueue {
+            sender, receiver, ..
+        } = queue;
+        // Size the reorder window to the admission ceiling so a controller that
+        // grows depth to `max` never forces the reorder buffer past capacity.
+        let consumer = if bypass {
+            DeltaConsumer::spawn_bypass(receiver)
+        } else {
+            DeltaConsumer::spawn(receiver, max)
+        };
+        Some(Self {
+            next_sequence: 0,
+            work_tx: Some(sender),
+            consumer: Some(consumer),
+            controller: Some(controller),
+            submits_since_tick: 0,
+        })
+    }
+
+    /// Builds the deterministic static pipeline: a fixed `capacity` admission
+    /// bound with no controller. Used when adaptation is disabled via
+    /// `OC_RSYNC_ADAPTIVE_QUEUE`.
+    fn with_static_capacity(capacity: usize, bypass: bool) -> Self {
+        let (work_tx, work_rx) = work_queue::bounded_with_capacity(capacity);
+        let consumer = if bypass {
+            DeltaConsumer::spawn_bypass(work_rx)
+        } else {
+            DeltaConsumer::spawn(work_rx, capacity)
+        };
         Self {
             next_sequence: 0,
             work_tx: Some(work_tx),
             consumer: Some(consumer),
+            controller: None,
+            submits_since_tick: 0,
+        }
+    }
+
+    /// Advances the adaptive controller once per [`CONTROLLER_TICK_WINDOW`]
+    /// submits. A no-op on the static path.
+    ///
+    /// Ticking from the single producer is deliberate: the producer's own
+    /// blocking on admission is the backpressure signal, recorded in the
+    /// semaphore counters and folded into the depth by
+    /// [`AdaptiveQueueController::tick`] on the next submit after it unblocks.
+    fn maybe_tick(&mut self) {
+        if self.controller.is_none() {
+            return;
+        }
+        self.submits_since_tick += 1;
+        if self.submits_since_tick >= CONTROLLER_TICK_WINDOW {
+            self.submits_since_tick = 0;
+            if let Some(controller) = self.controller.as_mut() {
+                controller.tick();
+            }
         }
     }
 }
@@ -169,7 +276,9 @@ impl ReceiverDeltaPipeline for ParallelDeltaPipeline {
             .as_ref()
             .ok_or_else(|| io::Error::other("parallel pipeline work queue already closed"))?;
         tx.send(work)
-            .map_err(|_| io::Error::other("parallel pipeline consumer thread has shut down"))
+            .map_err(|_| io::Error::other("parallel pipeline consumer thread has shut down"))?;
+        self.maybe_tick();
+        Ok(())
     }
 
     fn poll_result(&mut self) -> Option<DeltaResult> {

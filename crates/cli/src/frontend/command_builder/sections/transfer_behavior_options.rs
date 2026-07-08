@@ -418,24 +418,6 @@ pub(crate) fn add_transfer_behavior_options(command: ClapCommand) -> ClapCommand
                     .value_parser(OsStringValueParser::new()),
             )
             .arg(
-                Arg::new("adaptive-concurrency")
-                    .long("adaptive-concurrency")
-                    .help(
-                        "Enable AIMD adaptive concurrency for the delta \
-                         pipeline. The limiter grows in-flight slots on \
-                         sustained success and halves them on overload.",
-                    )
-                    .action(ArgAction::SetTrue)
-                    .overrides_with("no-adaptive-concurrency"),
-            )
-            .arg(
-                Arg::new("no-adaptive-concurrency")
-                    .long("no-adaptive-concurrency")
-                    .help("Disable AIMD adaptive concurrency (default).")
-                    .action(ArgAction::SetTrue)
-                    .overrides_with("adaptive-concurrency"),
-            )
-            .arg(
                 Arg::new("rayon-threads")
                     .long("rayon-threads")
                     .value_name("N")
