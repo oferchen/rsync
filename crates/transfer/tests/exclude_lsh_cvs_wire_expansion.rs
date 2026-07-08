@@ -27,7 +27,7 @@
 //!   `exclude.c:get_cvs_excludes()`.
 //! - A wire `:C .cvsignore` dir-merge switches the `DirMergeConfig` into
 //!   CVS-mode so the chain parses each whitespace token in `.cvsignore` as
-//!   an exclude rule instead of failing on `unrecognized filter rule:
+//!   an exclude rule instead of failing on `Unknown filter rule:
 //!   one-in-one-out`.
 
 use std::path::Path;

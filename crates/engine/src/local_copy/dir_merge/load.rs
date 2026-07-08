@@ -226,13 +226,9 @@ pub(crate) fn load_dir_merge_rules_recursive(
         .map_err(|error| LocalCopyError::io("read filter file", path, error))?;
     let mut entries = DirMergeEntries::default();
 
-    let map_error = |error: FilterParseError| {
-        LocalCopyError::io(
-            "parse filter file",
-            path.to_path_buf(),
-            io::Error::new(io::ErrorKind::InvalidData, error.to_string()),
-        )
-    };
+    // upstream: exclude.c:1212 - unrecognised filter rules exit with
+    // RERR_SYNTAX (1), not RERR_PARTIAL (23).
+    let map_error = |error: FilterParseError| LocalCopyError::filter_syntax(error.to_string());
 
     let mut contents = String::new();
     io::BufReader::new(file)

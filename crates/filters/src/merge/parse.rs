@@ -549,6 +549,6 @@ fn parse_rule_line(
     Err(MergeFileError::parse_error(
         source_path,
         line_num,
-        format!("unrecognized filter rule: {line}"),
+        format!("Unknown filter rule: `{line}'"),
     ))
 }

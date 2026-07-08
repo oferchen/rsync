@@ -353,7 +353,7 @@ impl FilterChain {
             // `:C` (FILTRULE_CVS_IGNORE) parse their content as whitespace
             // separated tokens with every token implicitly an exclude.
             // Standard parse_rules would reject names like `one-in-one-out`
-            // as "unrecognized filter rule", aborting the walk.
+            // as "Unknown filter rule", aborting the walk.
             let rules = if config.no_prefixes() {
                 // upstream: exclude.c:1116-1133 - the `-`/`+` modifier on the
                 // dir-merge template skips short-prefix dispatch, so each
