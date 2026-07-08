@@ -296,40 +296,35 @@ fn compression_ratio_varies_by_data_type() {
 }
 
 #[test]
-fn compression_speed_generally_decreases_with_level() {
+fn compression_size_decreases_with_level() {
+    // Deterministic replacement for a former wall-clock speed comparison across
+    // levels. Timing was measured with `Instant::now()` and asserted level 9 was
+    // not much faster than level 1; CPU contention and scheduling on shared CI
+    // runners made higher levels occasionally measure faster, so the assertion
+    // flaked. Compressed-size monotonicity is the deterministic property that
+    // encodes the same intent: spending more effort (higher level) never yields a
+    // larger stream for compressible input, and every level round-trips.
     let data = test_data::english_text(100_000);
-    let iterations = 3;
 
-    let mut avg_times: Vec<(u32, Duration)> = Vec::new();
-
+    let mut sizes: Vec<(u32, usize)> = Vec::new();
     for level in 1..=9 {
         let compression_level = CompressionLevel::from_numeric(level).expect("valid level");
-        let mut total_time = Duration::ZERO;
+        let compressed = compress_to_vec(&data, compression_level).expect("compress");
 
-        for _ in 0..iterations {
-            let start = Instant::now();
-            let _ = compress_to_vec(&data, compression_level).expect("compress");
-            total_time += start.elapsed();
-        }
+        let decompressed = decompress_to_vec(&compressed).expect("decompress");
+        assert_eq!(decompressed, data, "level {level} round-trip failed");
 
-        avg_times.push((level, total_time / iterations as u32));
+        sizes.push((level, compressed.len()));
     }
 
-    // Level 1 should generally be faster than level 9
-    // We use a relaxed check because timing can be noisy
-    let level_1_time = avg_times[0].1;
-    let level_9_time = avg_times[8].1;
-
-    // Only assert if there's a significant difference (level 9 is at least 20% slower)
-    // This accounts for measurement noise in fast operations
-    if level_9_time > Duration::from_micros(100) {
-        // Skip assertion for very fast operations where noise dominates
-        let ratio = level_9_time.as_nanos() as f64 / level_1_time.as_nanos().max(1) as f64;
-        assert!(
-            ratio >= 0.5,
-            "Level 9 ({level_9_time:?}) was unexpectedly much faster than level 1 ({level_1_time:?})"
-        );
-    }
+    // Endpoint inequality only: deflate internals permit local non-monotonicity
+    // between adjacent levels even when the 1-vs-9 relationship always holds.
+    let level_1_size = sizes[0].1;
+    let level_9_size = sizes[8].1;
+    assert!(
+        level_9_size <= level_1_size,
+        "level 9 ({level_9_size}) should compress at least as well as level 1 ({level_1_size})"
+    );
 }
 
 #[test]
