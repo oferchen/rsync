@@ -26,6 +26,10 @@ thiserror = { workspace = true }
 [target.'cfg(unix)'.dependencies]
 fast_io = { path = "../fast_io", default-features = false }
 xattr = { workspace = true, optional = true }
+# chown/lchown/fchown must go through libc symbols (not rustix raw syscalls) so
+# fakeroot's LD_PRELOAD interposition can fake ownership for a non-root process.
+# `user` gates Uid/Gid; `fs` gates fchown/fchownat.
+nix = { workspace = true, features = ["user", "fs"] }
 
 # Cross-platform ACL support (Linux, macOS, FreeBSD)
 # Replaces custom FFI bindings for cleaner, safer implementation
