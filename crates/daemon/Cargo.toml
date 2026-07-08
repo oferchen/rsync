@@ -73,6 +73,7 @@ base64 = { workspace = true }
 dns-lookup = "3.0"
 compress = { path = "../compress" }
 core = { path = "../core", default-features = false }
+filters = { path = "../filters" }
 metadata = { path = "../metadata", default-features = false }
 platform = { path = "../platform" }
 protocol = { path = "../protocol" }
