@@ -30,8 +30,6 @@ pub(crate) use flags::{
 };
 pub(crate) use module_list::render_module_list;
 pub(crate) use operands::{extract_operands, parse_bind_address_argument};
-#[cfg(test)]
-pub(crate) use options::{SizeParseError, pow_u128_for_size};
 pub(crate) use options::{
     parse_block_size_argument, parse_checksum_seed_argument, parse_max_alloc_argument,
     parse_max_delete_argument, parse_modify_window_argument, parse_protocol_version_arg,

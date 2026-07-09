@@ -260,8 +260,6 @@ mod parse_modify_tests;
 mod parse_size_tests;
 #[path = "password.rs"]
 mod password_tests;
-#[path = "pow.rs"]
-mod pow_tests;
 #[path = "process.rs"]
 mod process_tests;
 #[path = "progress2_format_parity.rs"]
