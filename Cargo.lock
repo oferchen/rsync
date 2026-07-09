@@ -618,6 +618,7 @@ version = "0.6.3"
 dependencies = [
  "apple-fs",
  "assert_cmd",
+ "bandwidth",
  "base64",
  "checksums",
  "clap",
