@@ -255,14 +255,17 @@ fn cvs_with_wildcard_exclude() {
 }
 
 #[test]
-fn perishable_cvs_ignored_for_deletion_context() {
+fn perishable_cvs_protects_deletion_context() {
     let set = FilterSet::from_rules_with_cvs(vec![], true).unwrap();
 
     // For transfer (sender context): perishable patterns apply
     assert!(!set.allows(Path::new("main.o"), false));
 
-    // For deletion (receiver context): perishable patterns ignored
-    assert!(set.allows_deletion(Path::new("main.o"), false));
+    // For deletion (receiver context): the top-level scan runs with
+    // `ignore_perishable` unset (upstream exclude.c:1044 / delete.c:147), so
+    // perishable CVS patterns protect a matching entry - `--cvs-exclude
+    // --delete` preserves a pre-existing `*.o` at the transfer root.
+    assert!(!set.allows_deletion(Path::new("main.o"), false));
 }
 
 #[test]
@@ -284,7 +287,7 @@ fn perishable_cvs_with_explicit_protect() {
     // Transfer: excluded by perishable CVS
     assert!(!set.allows(Path::new("main.o"), false));
 
-    // Deletion: perishable ignored, but protected
+    // Deletion: protected by the explicit protect rule
     assert!(!set.allows_deletion(Path::new("main.o"), false));
 }
 
@@ -311,7 +314,8 @@ fn perishable_cvs_delete_excluded_behavior() {
     // Transfer: .o excluded
     assert!(!set.allows(Path::new("main.o"), false));
 
-    // Delete-excluded: should allow (perishable ignored)
+    // Delete-excluded removes an excluded entry: the excluded-removed decision
+    // already considers perishable rules, so `--delete-excluded` clears it.
     assert!(set.allows_deletion_when_excluded_removed(Path::new("main.o"), false));
 }
 

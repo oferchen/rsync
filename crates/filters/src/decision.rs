@@ -21,7 +21,11 @@ impl FilterSetInner {
     ///
     /// The evaluation context determines which side's rules are consulted:
     /// - `Transfer` checks sender-side include/exclude rules.
-    /// - `Deletion` checks receiver-side rules with perishable rules excluded.
+    /// - `Deletion` checks receiver-side rules. Perishable rules are honoured
+    ///   here because the top-level delete scan runs with `ignore_perishable`
+    ///   unset (upstream delete.c:147); they are only skipped inside a
+    ///   directory being wholly removed, which the receiver deletes en masse
+    ///   without re-filtering.
     ///
     /// upstream: exclude.c:check_filter()
     pub(crate) fn decision(
@@ -86,7 +90,7 @@ impl FilterSetInner {
                 path,
                 is_dir,
                 |rule| rule.applies_to_receiver,
-                false,
+                true,
                 check_descendants,
                 true,
             ),
@@ -146,7 +150,7 @@ impl FilterSetInner {
                 path,
                 is_dir,
                 |rule| rule.applies_to_receiver,
-                false,
+                true,
                 check_descendants,
                 true,
             ),
@@ -189,7 +193,12 @@ impl FilterSetInner {
             DecisionContext::Transfer => |rule| rule.applies_to_sender,
             DecisionContext::Deletion => |rule| rule.applies_to_receiver,
         };
-        let include_perishable = matches!(context, DecisionContext::Transfer);
+        // upstream: exclude.c:1044 check_filter() only skips perishable rules
+        // when `ignore_perishable` is set, which happens exclusively inside a
+        // directory being wholly deleted (delete.c:147). The receiver's
+        // top-level delete scan runs with `ignore_perishable == 0`, so a
+        // perishable rule still matches (and therefore protects) a candidate.
+        let include_perishable = true;
         let for_deletion = matches!(context, DecisionContext::Deletion);
         if first_matching_rule(
             &self.include_exclude,
@@ -292,9 +301,10 @@ where
 
 /// Whether a filter evaluation is for the transfer or deletion phase.
 ///
-/// Transfer checks use sender-side rules and include perishable rules.
-/// Deletion checks use receiver-side rules and skip perishable rules,
-/// matching upstream rsync's `--delete` semantics.
+/// Transfer checks use sender-side rules; Deletion checks use receiver-side
+/// rules. Both honour perishable rules: the top-level delete scan runs with
+/// upstream's `ignore_perishable` unset (delete.c:147), so a perishable rule
+/// still protects a matching destination entry from `--delete`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DecisionContext {
     Transfer,
