@@ -695,6 +695,25 @@ pub(in crate::local_copy) fn execute_transfer(
         flags.checksum_enabled,
         context.options().modify_window(),
     );
+    // upstream: generator.c itemizes a recreated --fake-super device with
+    // ITEM_REPORT_CHANGE ('c') when its %stat rdev/type differs from the
+    // destination's, even though the placeholder bytes are identical. The node
+    // is recreated, so ITEM_REPORT_TIME is set too - rendered 'T' when times
+    // are not preserved (the mtime is reset to the transfer time).
+    #[cfg(all(unix, feature = "xattr"))]
+    let change_set = if metadata_options.fake_super_enabled()
+        && destination_previously_existed
+        && super::super::super::comparison::fake_super_stat_differs(source, destination)
+    {
+        let change_set = change_set.with_checksum_changed(true);
+        if metadata_options.times() {
+            change_set
+        } else {
+            change_set.with_time_change(Some(crate::local_copy::TimeChange::TransferTime))
+        }
+    } else {
+        change_set
+    };
     let action = if is_reference_copy {
         LocalCopyAction::ReferenceCopied
     } else {
