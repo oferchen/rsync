@@ -50,10 +50,23 @@ pub(super) fn set_timestamp_like(
         }
     }
 
-    let result = if follow_symlinks {
-        set_file_times(destination, accessed, modified)
-    } else {
+    // upstream: rsync.c:set_file_attrs() applies times through `utimensat` on
+    // the path, never opening the target. filetime's follow variant
+    // (`set_file_times`) opens the file first (`File::open`) before calling
+    // `File::set_times`, which blocks indefinitely on a real FIFO that has no
+    // reader/writer peer. Route special files (and symlinks) through the
+    // `AT_SYMLINK_NOFOLLOW` `utimensat` variant, which sets the node's times
+    // without opening it. For a non-symlink special file NOFOLLOW is
+    // semantically identical to a follow, since the node is not a symlink.
+    #[cfg(unix)]
+    let open_free_path = !follow_symlinks || is_special_file(metadata);
+    #[cfg(not(unix))]
+    let open_free_path = !follow_symlinks;
+
+    let result = if open_free_path {
         set_symlink_file_times(destination, accessed, modified)
+    } else {
+        set_file_times(destination, accessed, modified)
     };
 
     if let Err(error) = result {

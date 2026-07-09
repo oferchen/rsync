@@ -158,6 +158,17 @@ jobs:
   # it green. The 3.4.4 shell suite has no --use-tcp support (that is a
   # runtests.py flag added on master), so this gate is privilege-only; the
   # transport dimension applies solely to the 3.5.0dev tracker.
+  #
+  # Status: the root `devices` test now passes end to end (create cD+++++++++,
+  # replace cDc.T., hardlink hD, fifo cS, --link-dest hD/hS all byte-match
+  # upstream 3.4.4). A full sudo run of this suite is 54 pass / 2 skip
+  # (crtimes, simd-checksum) / 1 FAIL: `xattrs` (a `--fake-super --link-dest`
+  # hard-link divergence that also fails on master, i.e. pre-existing and
+  # unrelated to the device/special work). The leg therefore stays masked so a
+  # pre-existing xattrs failure does not block the merge queue; drop
+  # `continue-on-error` and the run-step `|| true` (capturing the harness rc,
+  # running the chown cleanup unconditionally, then `exit $rc`) once `xattrs`
+  # is green under root.
   # ===========================================================================
   upstream-testsuite-root:
     name: upstream testsuite (root, informational)
