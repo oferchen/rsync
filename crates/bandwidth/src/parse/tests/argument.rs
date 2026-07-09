@@ -52,15 +52,13 @@ fn parse_bandwidth_accepts_trailing_decimal_point() {
 }
 
 #[test]
-fn parse_bandwidth_accepts_exponent_notation() {
-    let bytes = parse_bandwidth_argument("1e3b").expect("parse succeeds");
-    assert_eq!(bytes, NonZeroU64::new(1_000));
-
-    let kibibytes = parse_bandwidth_argument("2.5e2K").expect("parse succeeds");
-    assert_eq!(kibibytes, NonZeroU64::new(256_000));
-
-    let decimal = parse_bandwidth_argument("1e3MB").expect("parse succeeds");
-    assert_eq!(decimal, NonZeroU64::new(1_000_000_000));
+fn parse_bandwidth_rejects_exponent_notation() {
+    // upstream: options.c:parse_size_arg() has no scientific notation; a
+    // trailing 'e'/'E' hits the suffix switch's default case and fails.
+    for text in ["1e3b", "2.5e2K", "1e3MB"] {
+        let error = parse_bandwidth_argument(text).unwrap_err();
+        assert_eq!(error, BandwidthParseError::Invalid, "input: {text}");
+    }
 }
 
 #[test]
@@ -176,24 +174,31 @@ fn parse_bandwidth_rejects_incomplete_iec_suffix() {
 }
 
 #[test]
-fn parse_bandwidth_accepts_scientific_notation_without_suffix() {
-    let limit = parse_bandwidth_argument("1e3").expect("parse succeeds");
-    assert_eq!(limit, NonZeroU64::new(1_024_000));
-
-    let uppercase = parse_bandwidth_argument("1E3").expect("parse succeeds");
-    assert_eq!(uppercase, limit);
+fn parse_bandwidth_rejects_scientific_notation_without_suffix() {
+    assert_eq!(
+        parse_bandwidth_argument("1e3").unwrap_err(),
+        BandwidthParseError::Invalid
+    );
+    assert_eq!(
+        parse_bandwidth_argument("1E3").unwrap_err(),
+        BandwidthParseError::Invalid
+    );
 }
 
 #[test]
-fn parse_bandwidth_accepts_scientific_notation_with_suffix() {
-    let limit = parse_bandwidth_argument("2.5e2M").expect("parse succeeds");
-    assert_eq!(limit, NonZeroU64::new(262_144_000));
+fn parse_bandwidth_rejects_scientific_notation_with_suffix() {
+    assert_eq!(
+        parse_bandwidth_argument("2.5e2M").unwrap_err(),
+        BandwidthParseError::Invalid
+    );
 }
 
 #[test]
-fn parse_bandwidth_accepts_negative_scientific_notation() {
-    let limit = parse_bandwidth_argument("1e-1M").expect("parse succeeds");
-    assert_eq!(limit, NonZeroU64::new(104_448));
+fn parse_bandwidth_rejects_negative_scientific_notation() {
+    assert_eq!(
+        parse_bandwidth_argument("1e-1M").unwrap_err(),
+        BandwidthParseError::Invalid
+    );
 }
 
 #[test]
@@ -265,9 +270,10 @@ fn parse_bandwidth_rejects_overflow() {
 }
 
 #[test]
-fn parse_bandwidth_rejects_excessive_exponent() {
+fn parse_bandwidth_rejects_exponent_marker() {
+    // No scientific notation: 'e' is an invalid suffix, not an exponent marker.
     let error = parse_bandwidth_argument("1e2000M").unwrap_err();
-    assert_eq!(error, BandwidthParseError::TooLarge);
+    assert_eq!(error, BandwidthParseError::Invalid);
 }
 
 #[test]
@@ -384,11 +390,12 @@ proptest! {
 }
 
 #[test]
-fn parse_bandwidth_handles_adjustment_when_product_less_than_denominator() {
-    // 0.0001K = 0.1024 bytes; with `-1` adjustment the value rounds to zero,
-    // which the parser reports as unlimited (None) rather than TooSmall.
-    let result = parse_bandwidth_argument("0.0001K-1");
-    assert_eq!(result.expect("should parse"), None);
+fn parse_bandwidth_negative_adjustment_below_zero_is_too_large() {
+    // 0.0001K truncates to 0 bytes; the `-1` adjustment drives the size below
+    // zero, which upstream (and now oc) reports as "too large", not unlimited.
+    // upstream: options.c:parse_size_arg() -> `size += atoi; if (size < 0) fail`.
+    let error = parse_bandwidth_argument("0.0001K-1").unwrap_err();
+    assert_eq!(error, BandwidthParseError::TooLarge);
 }
 
 #[test]
@@ -515,10 +522,10 @@ fn parse_bandwidth_handles_zero_fractional() {
 }
 
 #[test]
-fn parse_bandwidth_handles_exponent_with_explicit_positive_sign() {
-    // Test e+N format
-    let result = parse_bandwidth_argument("1e+3K").expect("parse succeeds");
-    assert_eq!(result, NonZeroU64::new(1024000));
+fn parse_bandwidth_rejects_exponent_with_explicit_positive_sign() {
+    // "1e+3K": no scientific notation, so 'e' is an invalid suffix.
+    let error = parse_bandwidth_argument("1e+3K").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
 }
 
 #[test]
@@ -529,10 +536,10 @@ fn parse_bandwidth_rejects_double_exponent() {
 }
 
 #[test]
-fn parse_bandwidth_accepts_exponent_after_trailing_decimal() {
-    // "1.e2K" is valid: 1.0 * 10^2 * 1024 = 100 * 1024 = 102400 bytes
-    let result = parse_bandwidth_argument("1.e2K").expect("parse succeeds");
-    assert_eq!(result, NonZeroU64::new(102400));
+fn parse_bandwidth_rejects_exponent_after_trailing_decimal() {
+    // "1.e2K": the trailing decimal is fine, but 'e' is an invalid suffix.
+    let error = parse_bandwidth_argument("1.e2K").unwrap_err();
+    assert_eq!(error, BandwidthParseError::Invalid);
 }
 
 #[test]
@@ -552,8 +559,7 @@ fn parse_bandwidth_adjustment_overflow_at_max() {
 
 #[test]
 fn parse_bandwidth_rejects_exponent_marker_followed_by_non_digit_non_sign() {
-    // "1eK" - the `e` is the exponent marker, `K` would be the suffix, but
-    // there are no exponent digits, so the parser must reject the input.
+    // "1eK" - 'e' is not a recognised suffix, so the parser rejects the input.
     let error = parse_bandwidth_argument("1eK").unwrap_err();
     assert_eq!(error, BandwidthParseError::Invalid);
 }

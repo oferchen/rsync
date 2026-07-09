@@ -134,19 +134,16 @@ fn parse_bandwidth_argument_adjust_minus_one() {
 }
 
 #[test]
-fn parse_bandwidth_argument_scientific_notation() {
-    // Scientific notation: "1e3" = 1000
-    let result = parse_bandwidth_argument("1e3").unwrap();
-    // 1000K = 1024000
-    assert_eq!(result, Some(nz(1024 * 1000)));
+fn parse_bandwidth_argument_scientific_notation_rejected() {
+    // No scientific notation: 'e' is an invalid suffix (upstream parse_size_arg).
+    let result = parse_bandwidth_argument("1e3");
+    assert_eq!(result.unwrap_err(), BandwidthParseError::Invalid);
 }
 
 #[test]
-fn parse_bandwidth_argument_scientific_negative_exponent() {
-    // "1e-1" = 0.1K = 102.4 -> rounds to 0 (below minimum)
+fn parse_bandwidth_argument_scientific_negative_exponent_rejected() {
     let result = parse_bandwidth_argument("1e-1");
-    assert!(result.is_err());
-    assert_eq!(result.unwrap_err(), BandwidthParseError::TooSmall);
+    assert_eq!(result.unwrap_err(), BandwidthParseError::Invalid);
 }
 
 #[test]
@@ -429,44 +426,16 @@ fn boundary_u64_max_doesnt_overflow() {
 }
 
 #[test]
-fn scientific_notation_positive_small_exponent() {
-    let result = parse_bandwidth_argument("5e2").unwrap();
-    // 5 * 10^2 = 500K = 512000
-    assert_eq!(result, Some(nz(512000)));
-}
-
-#[test]
-fn scientific_notation_large_exponent() {
-    let result = parse_bandwidth_argument("1e9b").unwrap();
-    // 1 * 10^9 bytes = 1GB (decimal)
-    assert_eq!(result, Some(nz(1_000_000_000)));
-}
-
-#[test]
-fn scientific_notation_uppercase_e() {
-    let result1 = parse_bandwidth_argument("1e3").unwrap();
-    let result2 = parse_bandwidth_argument("1E3").unwrap();
-    assert_eq!(result1, result2);
-}
-
-#[test]
-fn scientific_notation_explicit_plus() {
-    let result = parse_bandwidth_argument("1e+3").unwrap();
-    assert!(result.is_some());
-}
-
-#[test]
-fn scientific_notation_negative_exponent_rounds_to_zero() {
-    let result = parse_bandwidth_argument("5e-10");
-    // Very small value rounds to zero, which means unlimited
-    assert_eq!(result.unwrap(), None);
-}
-
-#[test]
-fn complex_decimal_with_exponent() {
-    let result = parse_bandwidth_argument("1.5e3").unwrap();
-    // 1.5 * 10^3 = 1500K
-    assert!(result.is_some());
+fn scientific_notation_is_rejected() {
+    // upstream parse_size_arg() has no scientific notation; 'e'/'E' is an
+    // unrecognised suffix, so every exponent spelling is invalid.
+    for text in ["5e2", "1e9b", "1e3", "1E3", "1e+3", "5e-10", "1.5e3"] {
+        assert_eq!(
+            parse_bandwidth_argument(text).unwrap_err(),
+            BandwidthParseError::Invalid,
+            "input: {text}"
+        );
+    }
 }
 
 #[test]

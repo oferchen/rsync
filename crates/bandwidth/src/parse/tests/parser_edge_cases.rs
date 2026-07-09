@@ -40,15 +40,16 @@ fn parse_extremely_large_number_overflows() {
 }
 
 #[test]
-fn parse_large_exponent_overflows() {
+fn parse_large_exponent_marker_rejected() {
+    // No scientific notation: 'e' is an invalid suffix, not an exponent.
     let result = parse_bandwidth_argument("1e100");
-    assert_eq!(result, Err(BandwidthParseError::TooLarge));
+    assert_eq!(result, Err(BandwidthParseError::Invalid));
 }
 
 #[test]
-fn parse_large_base_with_large_exponent() {
+fn parse_large_base_with_exponent_marker_rejected() {
     let result = parse_bandwidth_argument("999999e50");
-    assert_eq!(result, Err(BandwidthParseError::TooLarge));
+    assert_eq!(result, Err(BandwidthParseError::Invalid));
 }
 
 #[test]
@@ -198,16 +199,15 @@ fn parse_exponent_with_decimal() {
 }
 
 #[test]
-fn parse_uppercase_e_exponent() {
+fn parse_uppercase_e_exponent_rejected() {
     let result = parse_bandwidth_argument("1E3");
-    assert!(result.is_ok());
+    assert_eq!(result, Err(BandwidthParseError::Invalid));
 }
 
 #[test]
-fn parse_mixed_case_exponent() {
-    // Only 'e' or 'E' at the start of exponent, not both
+fn parse_lowercase_e_exponent_rejected() {
     let result = parse_bandwidth_argument("1e3");
-    assert!(result.is_ok());
+    assert_eq!(result, Err(BandwidthParseError::Invalid));
 }
 
 #[test]
@@ -531,10 +531,10 @@ fn parse_comma_as_decimal() {
 }
 
 #[test]
-fn parse_comma_and_exponent() {
-    let result = parse_bandwidth_argument("1,5e2").unwrap();
-    // 1.5 * 100 = 150K
-    assert!(result.is_some());
+fn parse_comma_and_exponent_rejected() {
+    // The comma decimal is fine, but 'e' is an invalid suffix.
+    let result = parse_bandwidth_argument("1,5e2");
+    assert_eq!(result, Err(BandwidthParseError::Invalid));
 }
 
 #[test]

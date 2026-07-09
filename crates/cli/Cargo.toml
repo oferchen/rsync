@@ -53,6 +53,7 @@ async-daemon = ["daemon/async-daemon"]
 
 
 [dependencies]
+bandwidth = { path = "../bandwidth" }
 clap = { workspace = true }
 core = { path = "../core", default-features = false }
 engine = { path = "../engine", default-features = false }

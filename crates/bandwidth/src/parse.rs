@@ -12,12 +12,10 @@ use std::num::NonZeroU64;
 use thiserror::Error;
 
 mod components;
-mod numeric;
 
 pub use components::BandwidthLimitComponents;
-pub(crate) use numeric::pow_u128;
 
-use numeric::parse_decimal_with_exponent;
+use crate::size_arg::{SizeArgError, parse_size_arg};
 
 /// Errors returned when parsing a bandwidth limit fails.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
@@ -31,6 +29,15 @@ pub enum BandwidthParseError {
     /// The requested rate overflowed the supported range.
     #[error("bandwidth limit exceeds the supported range")]
     TooLarge,
+}
+
+impl From<SizeArgError> for BandwidthParseError {
+    fn from(error: SizeArgError) -> Self {
+        match error {
+            SizeArgError::Invalid => BandwidthParseError::Invalid,
+            SizeArgError::TooLarge => BandwidthParseError::TooLarge,
+        }
+    }
 }
 
 /// Parses a `--bwlimit` style argument into an optional byte-per-second limit.
@@ -47,11 +54,13 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         return Err(BandwidthParseError::Invalid);
     }
 
-    let bytes = text.as_bytes();
+    // oc's --bwlimit historically accepts a leading '+'/'-'; a negative rate is
+    // rejected once the magnitude is known. Everything after the sign is a plain
+    // size argument with a default suffix of 'K', matching upstream's
+    // `parse_size_arg(bwlimit_arg, 'K', ...)`.
     let mut start = 0usize;
     let mut negative = false;
-
-    if let Some(&first) = bytes.first() {
+    if let Some(&first) = text.as_bytes().first() {
         match first {
             b'+' => start = 1,
             b'-' => {
@@ -62,174 +71,17 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         }
     }
 
-    if start == bytes.len() {
+    if start == text.len() {
         return Err(BandwidthParseError::Invalid);
     }
 
-    let unsigned = &text[start..];
-    let unsigned_bytes = unsigned.as_bytes();
-    let mut digits_seen = false;
-    let mut decimal_seen = false;
-    let mut exponent_seen = false;
-    let mut exponent_digits_seen = false;
-    let mut exponent_sign_allowed = false;
-    let mut numeric_end = unsigned_bytes.len();
-
-    for (index, &byte) in unsigned_bytes.iter().enumerate() {
-        match byte {
-            b'0'..=b'9' => {
-                digits_seen = true;
-                if exponent_seen {
-                    exponent_digits_seen = true;
-                    exponent_sign_allowed = false;
-                }
-            }
-            b'.' | b',' if !decimal_seen && !exponent_seen => {
-                decimal_seen = true;
-            }
-            b'e' | b'E' if digits_seen && !exponent_seen => {
-                exponent_seen = true;
-                exponent_sign_allowed = true;
-            }
-            b'+' | b'-' if exponent_sign_allowed => {
-                exponent_sign_allowed = false;
-            }
-            _ => {
-                numeric_end = index;
-                break;
-            }
-        }
-    }
-
-    let numeric_part = &unsigned[..numeric_end];
-    let remainder = &unsigned[numeric_end..];
-
-    if !digits_seen || numeric_part == "." || numeric_part == "," {
-        return Err(BandwidthParseError::Invalid);
-    }
-
-    if exponent_seen && !exponent_digits_seen {
-        return Err(BandwidthParseError::Invalid);
-    }
-
-    if exponent_sign_allowed {
-        return Err(BandwidthParseError::Invalid);
-    }
-
-    let (integer_part, fractional_part, denominator, decimal_exponent) =
-        parse_decimal_with_exponent(numeric_part)?;
-
-    let (suffix, mut remainder_after_suffix) =
-        if remainder.is_empty() || remainder.starts_with('+') || remainder.starts_with('-') {
-            (b'K', remainder)
-        } else {
-            let first = remainder.as_bytes()[0];
-            if !first.is_ascii() || !remainder.is_char_boundary(1) {
-                return Err(BandwidthParseError::Invalid);
-            }
-            (first, &remainder[1..])
-        };
-
-    let normalized_suffix = suffix.to_ascii_lowercase();
-    let repetitions = match normalized_suffix {
-        b'b' => 0,
-        b'k' => 1,
-        b'm' => 2,
-        b'g' => 3,
-        b't' => 4,
-        b'p' => 5,
-        _ => return Err(BandwidthParseError::Invalid),
-    };
-
-    let mut base: u32 = 1024;
-    let mut alignment: u128 = if normalized_suffix == b'b' { 1 } else { 1024 };
-
-    if !remainder_after_suffix.is_empty() {
-        let bytes = remainder_after_suffix.as_bytes();
-        match bytes[0] {
-            b'b' | b'B' => {
-                base = 1000;
-                alignment = 1000;
-                remainder_after_suffix = &remainder_after_suffix[1..];
-            }
-            b'i' | b'I' => {
-                if bytes.len() < 2 {
-                    return Err(BandwidthParseError::Invalid);
-                }
-                if matches!(bytes[1], b'b' | b'B') {
-                    base = 1024;
-                    remainder_after_suffix = &remainder_after_suffix[2..];
-                } else {
-                    return Err(BandwidthParseError::Invalid);
-                }
-            }
-            b'+' | b'-' => {}
-            _ => return Err(BandwidthParseError::Invalid),
-        }
-    }
-
-    let mut adjust = 0i8;
-    if !remainder_after_suffix.is_empty() {
-        let parse_adjust = |text: &[u8]| -> Option<i8> {
-            match text {
-                [b'+', b'1'] => Some(1),
-                [b'-', b'1'] => Some(-1),
-                _ => None,
-            }
-        };
-
-        if let Some(delta) =
-            parse_adjust(remainder_after_suffix.as_bytes()).filter(|_| numeric_end > 0)
-        {
-            adjust = delta;
-            remainder_after_suffix = "";
-        }
-    }
-
-    if !remainder_after_suffix.is_empty() {
-        return Err(BandwidthParseError::Invalid);
-    }
-
-    let scale = pow_u128(base, repetitions)?;
-
-    let mut numerator = integer_part
-        .checked_mul(denominator)
-        .and_then(|value| value.checked_add(fractional_part))
-        .ok_or(BandwidthParseError::TooLarge)?;
-    let mut denominator = denominator;
-
-    if decimal_exponent > 0 {
-        let factor = pow_u128(10, decimal_exponent.unsigned_abs())?;
-        numerator = numerator
-            .checked_mul(factor)
-            .ok_or(BandwidthParseError::TooLarge)?;
-    } else if decimal_exponent < 0 {
-        let factor = pow_u128(10, decimal_exponent.unsigned_abs())?;
-        denominator = denominator
-            .checked_mul(factor)
-            .ok_or(BandwidthParseError::TooLarge)?;
-    }
-
-    let product = numerator
-        .checked_mul(scale)
-        .ok_or(BandwidthParseError::TooLarge)?;
-
-    let mut bytes = product / denominator;
-
-    if adjust == -1 {
-        if product >= denominator {
-            bytes = bytes.checked_sub(1).ok_or(BandwidthParseError::TooLarge)?;
-        } else {
-            bytes = 0;
-        }
-    } else if adjust == 1 {
-        bytes = bytes.checked_add(1).ok_or(BandwidthParseError::TooLarge)?;
-    }
+    let parsed = parse_size_arg(&text[start..], b'K').map_err(BandwidthParseError::from)?;
 
     if negative {
         return Err(BandwidthParseError::Invalid);
     }
 
+    let bytes = parsed.bytes;
     if bytes == 0 {
         return Ok(None);
     }
@@ -238,6 +90,9 @@ pub fn parse_bandwidth_argument(text: &str) -> Result<Option<NonZeroU64>, Bandwi
         return Err(BandwidthParseError::TooSmall);
     }
 
+    // upstream rounds bwlimit to whole KiB via `(size + 512) / 1024`; oc rounds
+    // to the granularity implied by the suffix (bytes/decimal/binary).
+    let alignment = parsed.unit;
     let rounded = bytes
         .checked_add(alignment / 2)
         .ok_or(BandwidthParseError::TooLarge)?

@@ -265,10 +265,10 @@ mod negative_values {
     }
 
     #[test]
-    fn negative_exponent_is_allowed() {
-        // Negative exponent is valid (scientific notation)
-        let result = parse_bandwidth_argument("1e-1M").expect("parse succeeds");
-        assert!(result.is_some());
+    fn negative_exponent_is_rejected() {
+        // No scientific notation: 'e' is an invalid suffix.
+        let error = parse_bandwidth_argument("1e-1M").unwrap_err();
+        assert_eq!(error, BandwidthParseError::Invalid);
     }
 }
 
@@ -282,9 +282,10 @@ mod overflow {
     }
 
     #[test]
-    fn excessive_exponent_overflows() {
+    fn exponent_marker_is_rejected() {
+        // No scientific notation: 'e' is an invalid suffix, not an exponent.
         let error = parse_bandwidth_argument("1e2000M").unwrap_err();
-        assert_eq!(error, BandwidthParseError::TooLarge);
+        assert_eq!(error, BandwidthParseError::Invalid);
     }
 
     #[test]
@@ -652,10 +653,15 @@ mod case_sensitivity {
     }
 
     #[test]
-    fn exponent_notation_case_insensitive() {
-        let lower = parse_bandwidth_argument("1e3").expect("parse succeeds");
-        let upper = parse_bandwidth_argument("1E3").expect("parse succeeds");
-        assert_eq!(lower, upper);
+    fn exponent_notation_rejected_case_insensitive() {
+        assert_eq!(
+            parse_bandwidth_argument("1e3").unwrap_err(),
+            BandwidthParseError::Invalid
+        );
+        assert_eq!(
+            parse_bandwidth_argument("1E3").unwrap_err(),
+            BandwidthParseError::Invalid
+        );
     }
 }
 
@@ -748,54 +754,18 @@ mod minimum_values {
 mod scientific_notation {
     use super::*;
 
+    // upstream: options.c:parse_size_arg() has no scientific-notation support.
+    // The suffix switch treats a trailing 'e'/'E' as an unknown suffix and
+    // fails, so every scientific-notation spelling is rejected as invalid.
     #[test]
-    fn basic_positive_exponent() {
-        // 1e3 = 1000, default unit is K, so 1000K = 1,024,000 bytes
-        let result = parse_bandwidth_argument("1e3").expect("parse succeeds");
-        assert_eq!(result, NonZeroU64::new(1_024_000));
-    }
-
-    #[test]
-    fn exponent_with_suffix() {
-        // 1e3b = 1000 bytes
-        let result = parse_bandwidth_argument("1e3b").expect("parse succeeds");
-        assert_eq!(result, NonZeroU64::new(1000));
-    }
-
-    #[test]
-    fn fractional_with_exponent() {
-        // 2.5e2K = 250K = 256,000 bytes
-        let result = parse_bandwidth_argument("2.5e2K").expect("parse succeeds");
-        assert_eq!(result, NonZeroU64::new(256_000));
-    }
-
-    #[test]
-    fn negative_exponent() {
-        // 1e-1M = 0.1M = ~104,857 bytes
-        let result = parse_bandwidth_argument("1e-1M").expect("parse succeeds");
-        assert!(result.is_some());
-    }
-
-    #[test]
-    fn explicit_positive_exponent_sign() {
-        // 1e+3 should work the same as 1e3
-        let with_sign = parse_bandwidth_argument("1e+3").expect("parse succeeds");
-        let without_sign = parse_bandwidth_argument("1e3").expect("parse succeeds");
-        assert_eq!(with_sign, without_sign);
-    }
-
-    #[test]
-    fn decimal_with_exponent_and_suffix() {
-        // 1e3MB = 1000MB = 1,000,000,000 bytes
-        let result = parse_bandwidth_argument("1e3MB").expect("parse succeeds");
-        assert_eq!(result, NonZeroU64::new(1_000_000_000));
-    }
-
-    #[test]
-    fn uppercase_e_in_exponent() {
-        let lower = parse_bandwidth_argument("1e3").expect("parse succeeds");
-        let upper = parse_bandwidth_argument("1E3").expect("parse succeeds");
-        assert_eq!(lower, upper);
+    fn all_exponent_spellings_rejected() {
+        for text in ["1e3", "1e3b", "2.5e2K", "1e-1M", "1e+3", "1e3MB", "1E3"] {
+            assert_eq!(
+                parse_bandwidth_argument(text).unwrap_err(),
+                BandwidthParseError::Invalid,
+                "input: {text}"
+            );
+        }
     }
 }
 

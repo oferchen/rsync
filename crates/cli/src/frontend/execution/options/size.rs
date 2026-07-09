@@ -8,6 +8,7 @@
 use std::ffi::OsStr;
 use std::num::NonZeroU32;
 
+use bandwidth::{SizeArgError, parse_size_arg};
 use core::{
     message::{Message, Role},
     rsync_error,
@@ -24,6 +25,15 @@ pub(crate) enum SizeParseError {
     Invalid,
     /// Parsed value exceeds representable range.
     TooLarge,
+}
+
+impl From<SizeArgError> for SizeParseError {
+    fn from(error: SizeArgError) -> Self {
+        match error {
+            SizeArgError::Invalid => SizeParseError::Invalid,
+            SizeArgError::TooLarge => SizeParseError::TooLarge,
+        }
+    }
 }
 
 /// Parses a size argument with an optional unit suffix (K/M/G/T/P/E).
@@ -150,26 +160,16 @@ pub(crate) fn parse_block_size_argument(value: &OsStr) -> Result<NonZeroU32, Mes
     })
 }
 
-/// Computes `base^exponent` as `u128`, returning `TooLarge` on overflow.
-pub(crate) fn pow_u128_for_size(base: u32, exponent: u32) -> Result<u128, SizeParseError> {
-    u128::from(base)
-        .checked_pow(exponent)
-        .ok_or(SizeParseError::TooLarge)
-}
-
 /// Parses a size specification string into a byte count.
 ///
-/// Mirrors upstream rsync's `options.c:parse_size_arg()` exactly. Supports:
-/// - Plain integers: `"1024"` -> 1024
-/// - Fractional values with `.` or `,`: `"1.5K"` -> 1536
-/// - Binary suffixes (powers of 1024): K, M, G, T, P
-/// - Decimal suffixes (powers of 1000): KB, MB, GB, TB, PB
-/// - Explicit binary suffixes: KiB, MiB, GiB, TiB, PiB
-/// - Byte suffix: B (no scaling)
-/// - A single trailing `+1`/`-1` byte adjustment: `"1K-1"` -> 1023
-///
-/// A leading `+` is rejected and there is no exa (`E`) suffix, matching
-/// upstream's suffix switch which stops at `p`/`P`.
+/// Delegates the numeric-and-suffix grammar to the shared
+/// [`bandwidth::parse_size_arg`] (upstream's single `options.c:parse_size_arg()`)
+/// with the byte default suffix used by the size limits, and layers the CLI's
+/// sign diagnostics and 64-bit narrowing on top. Supports plain integers,
+/// fractional values (`.`/`,`), binary suffixes (K/M/G/T/P), decimal suffixes
+/// (KB/MB/...), explicit binary suffixes (KiB/...), the byte suffix `B`, and a
+/// single trailing `+1`/`-1` adjustment. A leading `+` is rejected and there is
+/// no exa (`E`) suffix, matching upstream's suffix switch which stops at `P`.
 fn parse_size_spec(text: &str) -> Result<u64, SizeParseError> {
     if text.is_empty() {
         return Err(SizeParseError::Empty);
@@ -184,163 +184,8 @@ fn parse_size_spec(text: &str) -> Result<u64, SizeParseError> {
         None => text,
     };
 
-    let mut digits_seen = false;
-    let mut decimal_seen = false;
-    let mut numeric_end = unsigned.len();
-
-    for (index, ch) in unsigned.char_indices() {
-        if ch.is_ascii_digit() {
-            digits_seen = true;
-            continue;
-        }
-
-        if (ch == '.' || ch == ',') && !decimal_seen {
-            decimal_seen = true;
-            continue;
-        }
-
-        numeric_end = index;
-        break;
-    }
-
-    let numeric_part = &unsigned[..numeric_end];
-    let remainder = &unsigned[numeric_end..];
-
-    if !digits_seen || numeric_part == "." || numeric_part == "," {
-        return Err(SizeParseError::Invalid);
-    }
-
-    let (integer_part, fractional_part, denominator) = parse_decimal_components(numeric_part)?;
-
-    // upstream: options.c:parse_size_arg() suffix switch stops at 'p' (no exa)
-    // and, because it excludes '+'/'-' from the suffix, treats a trailing sign
-    // as "no suffix" so the default byte scaling applies before the adjustment.
-    let (exponent, mut remainder_after_suffix) =
-        if remainder.is_empty() || remainder.starts_with(['+', '-']) {
-            (0u32, remainder)
-        } else {
-            let mut chars = remainder.chars();
-            let ch = chars.next().unwrap();
-            (
-                match ch.to_ascii_lowercase() {
-                    'b' => 0,
-                    'k' => 1,
-                    'm' => 2,
-                    'g' => 3,
-                    't' => 4,
-                    'p' => 5,
-                    _ => return Err(SizeParseError::Invalid),
-                },
-                chars.as_str(),
-            )
-        };
-
-    let mut base = 1024u32;
-
-    if !remainder_after_suffix.is_empty() {
-        let bytes = remainder_after_suffix.as_bytes();
-        match bytes[0] {
-            b'b' | b'B' => {
-                base = 1000;
-                remainder_after_suffix = &remainder_after_suffix[1..];
-            }
-            b'i' | b'I' => {
-                if bytes.len() < 2 {
-                    return Err(SizeParseError::Invalid);
-                }
-                if matches!(bytes[1], b'b' | b'B') {
-                    remainder_after_suffix = &remainder_after_suffix[2..];
-                } else {
-                    return Err(SizeParseError::Invalid);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    // upstream: options.c:parse_size_arg() honours exactly one trailing
-    // "+1"/"-1" byte adjustment after the suffix, e.g. "1K-1" == 1023. Any
-    // other trailing text (including "+2" or "-10") is invalid.
-    let adjust: i8 = match remainder_after_suffix.as_bytes() {
-        [b'+', b'1'] => {
-            remainder_after_suffix = "";
-            1
-        }
-        [b'-', b'1'] => {
-            remainder_after_suffix = "";
-            -1
-        }
-        _ => 0,
-    };
-
-    if !remainder_after_suffix.is_empty() {
-        return Err(SizeParseError::Invalid);
-    }
-
-    let scale = pow_u128_for_size(base, exponent)?;
-
-    let numerator = integer_part
-        .checked_mul(denominator)
-        .and_then(|value| value.checked_add(fractional_part))
-        .ok_or(SizeParseError::TooLarge)?;
-    let product = numerator
-        .checked_mul(scale)
-        .ok_or(SizeParseError::TooLarge)?;
-
-    let value = product / denominator;
-    // upstream rejects a resulting negative size (`0-1` reports "too large").
-    let value = match adjust {
-        1 => value.checked_add(1).ok_or(SizeParseError::TooLarge)?,
-        -1 => value.checked_sub(1).ok_or(SizeParseError::TooLarge)?,
-        _ => value,
-    };
-    if value > u64::MAX as u128 {
-        return Err(SizeParseError::TooLarge);
-    }
-
-    Ok(value as u64)
-}
-
-/// Splits a decimal number string into integer, fractional, and denominator components.
-///
-/// For `"1.5"`: returns `(1, 5, 10)` so the value is `1 + 5/10`.
-/// Supports both `.` and `,` as decimal separators.
-fn parse_decimal_components(text: &str) -> Result<(u128, u128, u128), SizeParseError> {
-    let mut integer = 0u128;
-    let mut fraction = 0u128;
-    let mut denominator = 1u128;
-    let mut saw_decimal = false;
-
-    for ch in text.chars() {
-        match ch {
-            '0'..='9' => {
-                let digit = u128::from(ch as u8 - b'0');
-                if saw_decimal {
-                    denominator = denominator
-                        .checked_mul(10)
-                        .ok_or(SizeParseError::TooLarge)?;
-                    fraction = fraction
-                        .checked_mul(10)
-                        .and_then(|value| value.checked_add(digit))
-                        .ok_or(SizeParseError::TooLarge)?;
-                } else {
-                    integer = integer
-                        .checked_mul(10)
-                        .and_then(|value| value.checked_add(digit))
-                        .ok_or(SizeParseError::TooLarge)?;
-                }
-            }
-            '.' | ',' => {
-                if saw_decimal {
-                    return Err(SizeParseError::Invalid);
-                }
-                saw_decimal = true;
-            }
-            _ => return Err(SizeParseError::Invalid),
-        }
-    }
-
-    Ok((integer, fraction, denominator))
+    let parsed = parse_size_arg(unsigned, b'b').map_err(SizeParseError::from)?;
+    u64::try_from(parsed.bytes).map_err(|_| SizeParseError::TooLarge)
 }
 
 #[cfg(test)]
@@ -502,24 +347,6 @@ mod tests {
     #[test]
     fn parse_size_spec_incomplete_binary_suffix() {
         assert_eq!(parse_size_spec("1Ki"), Err(SizeParseError::Invalid));
-    }
-
-    #[test]
-    fn pow_u128_for_size_zero_exponent() {
-        assert_eq!(pow_u128_for_size(1024, 0), Ok(1));
-        assert_eq!(pow_u128_for_size(1000, 0), Ok(1));
-    }
-
-    #[test]
-    fn pow_u128_for_size_one_exponent() {
-        assert_eq!(pow_u128_for_size(1024, 1), Ok(1024));
-        assert_eq!(pow_u128_for_size(1000, 1), Ok(1000));
-    }
-
-    #[test]
-    fn pow_u128_for_size_small_exponents() {
-        assert_eq!(pow_u128_for_size(1024, 2), Ok(1_048_576));
-        assert_eq!(pow_u128_for_size(1000, 3), Ok(1_000_000_000));
     }
 
     #[test]
@@ -746,43 +573,5 @@ mod tests {
     #[test]
     fn parse_block_size_argument_negative() {
         assert!(parse_block_size_argument(&os("-1")).is_err());
-    }
-
-    #[test]
-    fn parse_decimal_components_integer_only() {
-        let (integer, fraction, denominator) = parse_decimal_components("123").unwrap();
-        assert_eq!(integer, 123);
-        assert_eq!(fraction, 0);
-        assert_eq!(denominator, 1);
-    }
-
-    #[test]
-    fn parse_decimal_components_with_fraction() {
-        let (integer, fraction, denominator) = parse_decimal_components("1.5").unwrap();
-        assert_eq!(integer, 1);
-        assert_eq!(fraction, 5);
-        assert_eq!(denominator, 10);
-    }
-
-    #[test]
-    fn parse_decimal_components_with_comma() {
-        let (integer, fraction, denominator) = parse_decimal_components("2,25").unwrap();
-        assert_eq!(integer, 2);
-        assert_eq!(fraction, 25);
-        assert_eq!(denominator, 100);
-    }
-
-    #[test]
-    fn parse_decimal_components_zero_fraction() {
-        let (integer, fraction, denominator) = parse_decimal_components("10.0").unwrap();
-        assert_eq!(integer, 10);
-        assert_eq!(fraction, 0);
-        assert_eq!(denominator, 10);
-    }
-
-    #[test]
-    fn parse_decimal_components_multiple_decimal_points() {
-        let result = parse_decimal_components("1.2.3");
-        assert!(result.is_err());
     }
 }
