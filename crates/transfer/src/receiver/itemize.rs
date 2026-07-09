@@ -11,12 +11,12 @@ impl ReceiverContext {
     ///
     /// Whether itemize-changes output should be produced for this transfer.
     ///
-    /// Emitted whenever the user requested `--itemize-changes` (`-i`). The
-    /// destination of each line depends on the role (see [`Self::emit_info_line`]):
-    /// a server receiver multiplexes it as a `MSG_INFO` frame to the client,
-    /// while a client receiver (a pull, where oc is the generator) writes it to
-    /// its own stdout - mirroring upstream `log.c:rwrite()` which sends
-    /// `MSG_INFO` only when `am_server` and otherwise writes to the client fd.
+    /// Emitted whenever the user requested `--itemize-changes` (`-i`). Only a
+    /// client receiver (a pull, where oc is the generator/receiver on the
+    /// client) writes the row to its own stdout (see [`Self::emit_itemize`]); a
+    /// server receiver (the remote end of a push) produces no client-visible
+    /// row, since upstream `log.c:822` gates the `FCLIENT` write on `!am_server`
+    /// and the push row is printed by the client's sender instead.
     #[must_use]
     pub(in crate::receiver) const fn should_emit_itemize(&self) -> bool {
         self.config.flags.info_flags.itemize
@@ -56,30 +56,25 @@ impl ReceiverContext {
         }
     }
 
-    /// Emits a MSG_INFO frame with itemize output for a file entry.
+    /// Renders the itemize line for a file entry, or `None` when the entry is
+    /// completely unchanged and the itemize level does not request unchanged
+    /// rows.
     ///
-    /// Formats the itemize string (`"%i %n%L\n"`) and sends it as a MSG_INFO
-    /// multiplexed message. Uses `is_sender: false` since the daemon is receiving
-    /// files (producing `>` direction indicator).
-    ///
-    /// Suppresses output when `iflags` has no significant flags set (the file is
-    /// completely unchanged), matching upstream's gate in `itemize()` at
-    /// `generator.c:574-576`.
+    /// Pure formatting: applies the created-root-directory override and the
+    /// significance gate, then formats via `format_itemize_line`. Routing to a
+    /// sink (stdout vs MSG_INFO vs suppression) is the caller's concern - see
+    /// [`Self::emit_itemize`].
     ///
     /// # Upstream Reference
     ///
     /// - `generator.c:574-576` - `iflags & (SIGNIFICANT_ITEM_FLAGS|ITEM_REPORT_XATTR)`
-    /// - `generator.c:2260` - `itemize()` in receiver's generator context
-    /// - `log.c:330-340` - `rwrite()` converts to `send_msg(MSG_INFO)` when `am_server`
-    pub(in crate::receiver) fn emit_itemize<W: crate::writer::MsgInfoSender + ?Sized>(
+    /// - `main.c:794-796` - `FLAG_DIR_CREATED` for a pre-flight-mkdir'd root
+    /// - `log.c:707-710` - direction glyph selection
+    pub(in crate::receiver) fn render_itemize_line(
         &self,
-        writer: &mut W,
         iflags: &crate::generator::ItemFlags,
         entry: &protocol::flist::FileEntry,
-    ) -> std::io::Result<()> {
-        if !self.should_emit_itemize() {
-            return Ok(());
-        }
+    ) -> Option<String> {
         // upstream: main.c:794-796 - when the receiver pre-flight-mkdirs the
         // destination root, `flist->files[0]->flags |= FLAG_DIR_CREATED`. The
         // generator's `itemize()` then sees `statret < 0` for the root entry,
@@ -99,7 +94,7 @@ impl ReceiverContext {
         let show_unchanged =
             self.config.flags.info_flags.itemize_unchanged || self.config.flags.verbose_level > 1;
         if !is_created_root_dir && !show_unchanged && !iflags.has_significant_flags() {
-            return Ok(());
+            return None;
         }
         let effective_iflags = if is_created_root_dir && !iflags.has_significant_flags() {
             // upstream: generator.c:1468-1471 + generator.c:566-572 - itemize()
@@ -114,8 +109,55 @@ impl ReceiverContext {
             *iflags
         };
         let ctx = self.itemize_context();
-        let line =
-            crate::generator::itemize::format_itemize_line(&effective_iflags, entry, false, &ctx);
-        self.emit_info_line(writer, &line)
+        // upstream: log.c:707-710 - the direction glyph is `<` when
+        // `!local_server && *op == 's'` (this side's peer is the sender's
+        // client) and `>` otherwise. `op` is `am_sender ? "send" : "recv"`
+        // (log.c:820), and the client-visible itemize is always produced by the
+        // non-`am_server` side. A server-mode receiver is only ever the remote
+        // end of a push (the client is the sender), so it renders `<`; a
+        // client-mode receiver is a local pull and renders `>`.
+        let is_sender = !self.config.connection.client_mode;
+        Some(crate::generator::itemize::format_itemize_line(
+            &effective_iflags,
+            entry,
+            is_sender,
+            &ctx,
+        ))
+    }
+
+    /// Emits itemize output for a file entry to the client-visible sink.
+    ///
+    /// A client-mode receiver (a pull, where oc is the generator/receiver on the
+    /// client) writes the row to its own stdout. A server-mode receiver (the
+    /// remote end of a push) writes NOTHING: upstream `log.c:822` gates the
+    /// `FCLIENT` write on `!am_server`, so the remote receiver's generator never
+    /// prints the client-visible row. Instead it writes the iflags over the wire
+    /// (`generator.c:583-599 write_shortint(sock_f_out, iflags)`) and the
+    /// client's SENDER prints them (`sender.c:461 log_item(FCLIENT)`). Forwarding
+    /// a pre-rendered MSG_INFO row from here would double every pushed file
+    /// against the client sender's own row.
+    ///
+    /// # Upstream Reference
+    ///
+    /// - `log.c:818-826` - `log_item()` only writes `FCLIENT` when `!am_server`
+    /// - `generator.c:583-599` - the generator forwards iflags over the wire
+    /// - `sender.c:461` - the sender prints the push itemize row
+    pub(in crate::receiver) fn emit_itemize<W: crate::writer::MsgInfoSender + ?Sized>(
+        &self,
+        writer: &mut W,
+        iflags: &crate::generator::ItemFlags,
+        entry: &protocol::flist::FileEntry,
+    ) -> std::io::Result<()> {
+        if !self.should_emit_itemize() {
+            return Ok(());
+        }
+        let Some(line) = self.render_itemize_line(iflags, entry) else {
+            return Ok(());
+        };
+        if self.config.connection.client_mode {
+            self.emit_info_line(writer, &line)
+        } else {
+            Ok(())
+        }
     }
 }

@@ -10,15 +10,16 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use super::link_special_from_link_dest;
 use crate::local_copy::remove_existing_destination;
 #[cfg(all(any(unix, windows), feature = "acl"))]
 use crate::local_copy::sync_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
 use crate::local_copy::{
-    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyArgumentError, LocalCopyError,
-    LocalCopyMetadata, LocalCopyRecord, map_metadata_error, overrides::create_hard_link,
-    remove_source_entry_if_requested,
+    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyArgumentError, LocalCopyChangeSet,
+    LocalCopyError, LocalCopyMetadata, LocalCopyRecord, map_metadata_error,
+    overrides::create_hard_link, remove_source_entry_if_requested,
 };
 #[cfg(unix)]
 use ::metadata::create_device_node_with_fake_super;
@@ -48,6 +49,19 @@ pub(crate) fn copy_device(
     let _ = context;
     #[cfg(not(all(any(unix, windows), feature = "acl")))]
     let _ = mode;
+
+    // upstream: generator.c:558-563 / 550-556 - a replace itemize reports
+    // ITEM_REPORT_XATTR / ITEM_REPORT_ACL when those features are active and the
+    // basis differs. Mirror the enabled flags across all platforms so the
+    // recreate change-set is derivable without cfg branching at the record site.
+    #[cfg(all(unix, feature = "xattr"))]
+    let itemize_xattrs = preserve_xattrs;
+    #[cfg(not(all(unix, feature = "xattr")))]
+    let itemize_xattrs = false;
+    #[cfg(all(any(unix, windows), feature = "acl"))]
+    let itemize_acls = preserve_acls;
+    #[cfg(not(all(any(unix, windows), feature = "acl")))]
+    let itemize_acls = false;
 
     let record_path = relative
         .map(Path::to_path_buf)
@@ -97,6 +111,28 @@ pub(crate) fn copy_device(
         return Ok(());
     }
 
+    // upstream: generator.c:1627-1630 - a device whose destination already
+    // holds another device (same FT_DEVICE bucket) is recreated rather than
+    // treated as new; quick_check_ok() (generator.c:661-671) compares st_rdev
+    // to decide. Snapshot the existing device and its rdev-difference before
+    // removal so the itemize change-set renders `cDc.T.` for a replace instead
+    // of `cD+++++++++` for a genuine create. A non-device existing entry
+    // (regular file, symlink) matches upstream's statret = -1 path and stays a
+    // fresh creation.
+    #[cfg(unix)]
+    let (replaced_device, replaced_content_differs) = {
+        use std::os::unix::fs::{FileTypeExt, MetadataExt};
+        match existing_metadata.as_ref().filter(|existing| {
+            let existing_type = existing.file_type();
+            existing_type.is_block_device() || existing_type.is_char_device()
+        }) {
+            Some(existing) => (Some(existing.clone()), metadata.rdev() != existing.rdev()),
+            None => (None, false),
+        }
+    };
+    #[cfg(not(unix))]
+    let (replaced_device, replaced_content_differs): (Option<fs::Metadata>, bool) = (None, false);
+
     // hard-link dedupe source (from earlier copies)
     let mut existing_hard_link_target = context.existing_hard_link_target(metadata);
 
@@ -119,14 +155,36 @@ pub(crate) fn copy_device(
             } else {
                 LocalCopyAction::DeviceCopied
             };
-            context.record(LocalCopyRecord::new(
+            let record = LocalCopyRecord::new(
                 path.clone(),
-                action,
+                action.clone(),
                 0,
                 total_bytes,
                 Duration::default(),
                 Some(metadata_snapshot),
-            ));
+            );
+            // upstream: generator.c:1462 itemize() sets ITEM_IS_NEW (statret < 0)
+            // so log.c:736-738 fills slots 2-10 with `+` for a device the
+            // receiver newly materialises. A device replacing another device is
+            // itemized as a local change (`cDc.T.`) instead; the generator runs
+            // itemize() even under --dry-run.
+            let record = if matches!(action, LocalCopyAction::DeviceCopied)
+                && let Some(existing) = replaced_device.as_ref()
+            {
+                let change_set = LocalCopyChangeSet::for_recreated_device(
+                    metadata,
+                    existing,
+                    metadata_options,
+                    context.options().modify_window(),
+                    replaced_content_differs,
+                    itemize_xattrs,
+                    itemize_acls,
+                );
+                record.with_creation(false).with_change_set(change_set)
+            } else {
+                record.with_creation(!destination_previously_existed)
+            };
+            context.record(record);
         }
 
         context.register_progress();
@@ -139,8 +197,43 @@ pub(crate) fn copy_device(
         remove_existing_destination(destination)?;
     }
 
+    // upstream: generator.c:1643-1658 try_dests_non() - a `--link-dest` basis
+    // device matching the source (same FT_DEVICE bucket, same st_rdev, unchanged
+    // attrs) is hard-linked into place and itemized `hD` + blank rather than
+    // recreated. Only applies when creating fresh (no device is being replaced).
+    if !destination_previously_existed {
+        let link_relative = relative
+            .or(record_path.as_deref())
+            .unwrap_or_else(|| Path::new(""));
+        if !link_relative.as_os_str().is_empty()
+            && let Some(basis) =
+                context.link_dest_special_target(link_relative, metadata, metadata_options)?
+        {
+            link_special_from_link_dest(
+                context,
+                source,
+                destination,
+                metadata,
+                &basis,
+                record_path.as_deref(),
+                file_type,
+                destination_previously_existed,
+                true,
+            )?;
+            return Ok(());
+        }
+    }
+
     // try to materialise as hard link to an earlier device we created
     if let Some(link_source) = existing_hard_link_target.take() {
+        // upstream: log.c:643-654 - the `%L` field renders ` => leader` for a
+        // hard-linked non-symlink. Capture the leader's destination-relative
+        // path before the match may move `link_source` back on EXDEV so the
+        // itemize row can emit `hD+++++++++ alias => leader`.
+        let leader_display = link_source
+            .strip_prefix(context.destination_root())
+            .ok()
+            .map(std::path::Path::to_path_buf);
         match create_hard_link(&link_source, destination) {
             Ok(()) => {}
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
@@ -185,16 +278,24 @@ pub(crate) fn copy_device(
             context.record_hard_link(metadata, destination);
             context.summary_mut().record_hard_link();
             if let Some(path) = &record_path {
-                let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+                let leader_display =
+                    leader_display.filter(|relative| relative.as_path() != path.as_path());
+                let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, leader_display);
                 let total_bytes = Some(metadata_snapshot.len());
-                context.record(LocalCopyRecord::new(
-                    path.clone(),
-                    LocalCopyAction::HardLink,
-                    0,
-                    total_bytes,
-                    Duration::default(),
-                    Some(metadata_snapshot),
-                ));
+                context.record(
+                    LocalCopyRecord::new(
+                        path.clone(),
+                        LocalCopyAction::HardLink,
+                        0,
+                        total_bytes,
+                        Duration::default(),
+                        Some(metadata_snapshot),
+                    )
+                    // upstream: hlink.c:218-222 itemize(..., ITEM_LOCAL_CHANGE, ...)
+                    // ORs in ITEM_IS_NEW when the destination did not exist, so a
+                    // freshly hard-linked device alias renders `hD+++++++++`.
+                    .with_creation(!destination_previously_existed),
+                );
             }
             context.register_created_path(
                 destination,
@@ -278,14 +379,38 @@ pub(crate) fn copy_device(
         if let Some(path) = &record_path {
             let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
             let total_bytes = Some(metadata_snapshot.len());
-            context.record(LocalCopyRecord::new(
+            let record = LocalCopyRecord::new(
                 path.clone(),
                 LocalCopyAction::DeviceCopied,
                 0,
                 total_bytes,
                 Duration::default(),
                 Some(metadata_snapshot),
-            ));
+            );
+            let record = if let Some(existing) = replaced_device.as_ref() {
+                // upstream: generator.c:1665-1669 - a device replacing another
+                // device of the same FT_DEVICE bucket recreates it and itemizes
+                // via ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE (`cDc.T.`), not
+                // ITEM_IS_NEW. Derive the change-set from the rdev comparison.
+                let change_set = LocalCopyChangeSet::for_recreated_device(
+                    metadata,
+                    existing,
+                    metadata_options,
+                    context.options().modify_window(),
+                    replaced_content_differs,
+                    itemize_xattrs,
+                    itemize_acls,
+                );
+                record.with_creation(false).with_change_set(change_set)
+            } else {
+                // upstream: generator.c:1462 itemize() sets ITEM_IS_NEW
+                // (statret < 0) so log.c:736-738 fills slots 2-10 with `+` for a
+                // device the receiver newly materialises via do_mknod(). A
+                // non-device existing entry hits upstream's statret = -1 path and
+                // is likewise itemized as new.
+                record.with_creation(true)
+            };
+            context.record(record);
         }
 
         context.register_progress();

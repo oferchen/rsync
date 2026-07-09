@@ -148,22 +148,30 @@ jobs:
           retention-days: 14
 
   # ===========================================================================
-  # Root leg (informational). The non-root job above is the REQUIRED gate; it
-  # stays untouched so its `upstream testsuite` check context and green status
-  # are preserved. This job re-runs the SAME 3.4.4 shell suite under sudo so
+  # Root leg (FAILS LOUD; not yet a required gate). The non-root job above is
+  # the REQUIRED gate. This job re-runs the SAME 3.4.4 shell suite under sudo so
   # the root-only tests (chown/devices/xattrs/dir-sgid/protected-regular) that
-  # self-skip as the runner user actually RUN. It is `continue-on-error` so a
-  # root-only divergence surfaces here (job summary + non-green leg) without
-  # wedging the required gate. Promote to required only after a CI run proves
-  # it green. The 3.4.4 shell suite has no --use-tcp support (that is a
-  # runtests.py flag added on master), so this gate is privilege-only; the
-  # transport dimension applies solely to the 3.5.0dev tracker.
+  # self-skip as the runner user actually RUN. A non-zero harness exit now FAILS
+  # this job - there is no `continue-on-error` and no run-step `|| true`, so a
+  # root-only regression surfaces as a RED check instead of a silently-masked
+  # green. This job is deliberately NOT in the required status checks, so a red
+  # leg does not block the merge queue; it is a visible signal. Promote it to a
+  # required gate once it is reliably green. The 3.4.4 shell suite has no
+  # --use-tcp support (a runtests.py flag added on master), so this gate is
+  # privilege-only; the transport dimension applies solely to the 3.5.0dev tracker.
+  #
+  # Status: the root `devices` test passes end to end (create/replace/hardlink/
+  # fifo/--link-dest all byte-match upstream 3.4.4). A full sudo run is 54 pass /
+  # 2 skip (crtimes, simd-checksum) / 1 FAIL: `xattrs` (a `--fake-super
+  # --link-dest` hard-link divergence that also fails on master - pre-existing,
+  # tracked separately). This leg will therefore show RED on that xattrs failure
+  # until it is fixed; that is intended (fail loud), not a regression of this
+  # change, and it does not block merges.
   # ===========================================================================
   upstream-testsuite-root:
-    name: upstream testsuite (root, informational)
+    name: upstream testsuite (root)
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    continue-on-error: true
 
     env:
       CARGO_TERM_COLOR: always
@@ -216,8 +224,9 @@ jobs:
           mkdir -p target/interop
           # Passwordless sudo re-exec so root-only tests RUN. Forward the env
           # the harness reads (a bare `sudo` scrubs it) plus the GHA summary
-          # sink. Informational: never fail the step - the job status carries
-          # the signal and continue-on-error keeps the leg green.
+          # sink. Fail loud: a non-zero harness exit fails this job so a root-only
+          # test regression (devices/chown/xattrs/...) surfaces as red, not a
+          # silently-masked green.|
           sudo env \
             "PATH=$PATH" \
             "OC_RSYNC_BIN=$OC_RSYNC_BIN" \
@@ -225,9 +234,11 @@ jobs:
             "GITHUB_ACTIONS=${GITHUB_ACTIONS:-}" \
             "GITHUB_STEP_SUMMARY=${GITHUB_STEP_SUMMARY:-}" \
             bash tools/ci/run_upstream_testsuite.sh 2>&1 \
-            | tee target/interop/upstream-testsuite-root-output.log || true
+            | tee target/interop/upstream-testsuite-root-output.log
+          rc=${PIPESTATUS[0]}
           # Reclaim root-owned scratch/logs for the upload + post-job cache.
           sudo chown -R "$(id -u):$(id -g)" target/interop 2>/dev/null || true
+          exit "$rc"
 
       - name: Upload testsuite logs
         if: always()

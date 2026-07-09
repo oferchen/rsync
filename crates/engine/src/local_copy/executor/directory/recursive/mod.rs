@@ -21,8 +21,8 @@ use std::time::{Duration, Instant};
 
 use crate::local_copy::overrides::device_identifier;
 use crate::local_copy::{
-    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyChangeSet, LocalCopyError,
-    LocalCopyMetadata, LocalCopyRecord,
+    CopyContext, CreatedEntryKind, DeleteTiming, LocalCopyAction, LocalCopyChangeSet,
+    LocalCopyError, LocalCopyMetadata, LocalCopyRecord,
 };
 
 pub(crate) use batch::capture_batch_file_entry;
@@ -287,6 +287,7 @@ fn copy_directory_recursive_inner(
                 context.omit_dir_times_enabled(),
                 false,
                 false,
+                context.options().modify_window(),
             ))
         } else {
             record.with_creation(true)
@@ -309,6 +310,23 @@ fn copy_directory_recursive_inner(
     // the context flags `emit_unchanged` (mirroring `INFO_GTE(NAME, 2)`), so
     // non-verbose runs continue to omit unchanged dirs while `-vv` surfaces
     // them as `.d` rows.
+    // upstream: generator.c:1480-1535 - for an existing directory the itemize
+    // row precedes the child transfer rows, but a `--delete-before`/`during`
+    // sweep of that directory's extraneous entries is emitted BEFORE the
+    // directory's own row (do_delete_pass runs first for `before`;
+    // delete_in_dir() prints `*deleting` ahead of the `.d` row for `during`).
+    // A deferred sweep (`--delete-after`/`--delete-delay`, or the multi-source
+    // `during`->`after` downgrade) runs at cleanup, so its row order is
+    // unaffected. Stash the existing-directory record here and emit it after
+    // the pre/during delete passes when the sweep is immediate; emit inline
+    // otherwise so ordering relative to children is unchanged.
+    let mut pending_existing_dir_record: Option<LocalCopyRecord> = None;
+    let defer_dir_record_for_delete = context.options().delete_extraneous()
+        && match context.delete_timing() {
+            Some(DeleteTiming::Before) => true,
+            Some(DeleteTiming::During) => !context.multi_source(),
+            _ => false,
+        };
     if !record_emitted
         && let Some((ref rel_path, ref snapshot)) = metadata_record
         && let Some(existing_meta) = existing_destination_metadata.as_deref()
@@ -326,19 +344,26 @@ fn copy_directory_recursive_inner(
             context.omit_dir_times_enabled(),
             false,
             false,
+            context.options().modify_window(),
         );
-        context.record(
-            LocalCopyRecord::new(
-                rel_path.clone(),
-                LocalCopyAction::MetadataReused,
-                0,
-                Some(snapshot.len()),
-                Duration::default(),
-                Some(snapshot.clone()),
-            )
-            .with_change_set(change_set),
-        );
+        let record = LocalCopyRecord::new(
+            rel_path.clone(),
+            LocalCopyAction::MetadataReused,
+            0,
+            Some(snapshot.len()),
+            Duration::default(),
+            Some(snapshot.clone()),
+        )
+        .with_change_set(change_set);
+        // Suppress the `ensure_directory` closure's `DirectoryCreated` emission
+        // either way; defer the row past an immediate delete sweep so the
+        // `*deleting` rows print first (upstream generator.c ordering).
         record_emitted = true;
+        if defer_dir_record_for_delete {
+            pending_existing_dir_record = Some(record);
+        } else {
+            context.record(record);
+        }
     }
 
     let mut kept_any = !prune_enabled;
@@ -394,6 +419,7 @@ fn copy_directory_recursive_inner(
                     context.omit_dir_times_enabled(),
                     false,
                     false,
+                    context.options().modify_window(),
                 ))
             } else {
                 record.with_creation(true)
@@ -411,6 +437,9 @@ fn copy_directory_recursive_inner(
     // upstream's `(xfer_dirs && name_type != NORMAL_NAME)` semantics hold.
     if !context.recursive_enabled() && !force_walk_one_level {
         ensure_directory(context)?;
+        if let Some(record) = pending_existing_dir_record.take() {
+            context.record(record);
+        }
         record_directory_completion(context, creation_record_pending, None);
         if !context.mode().is_dry_run() {
             apply_final_directory_metadata(
@@ -464,6 +493,13 @@ fn copy_directory_recursive_inner(
             deferred_delete_limit_error = Some(error);
         }
         Err(error) => return Err(error),
+    }
+
+    // upstream: generator.c ordering - the existing-directory `.d` row follows
+    // any immediate `--delete-before`/`during` sweep of this directory but
+    // precedes its child transfer rows. Emit the deferred row now.
+    if let Some(record) = pending_existing_dir_record.take() {
+        context.record(record);
     }
 
     {

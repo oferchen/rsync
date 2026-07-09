@@ -220,11 +220,17 @@ pub(super) fn build_full_daemon_args(
 
     let we_are_sender = !is_sender;
 
-    // upstream: options.c:2750-2762 - server needs the log-format to generate
-    // itemize output via MSG_INFO frames. Only sent when client is sender
-    // (push), matching upstream am_sender guard.
+    // upstream: options.c:164-175 server_options - the server needs the
+    // log-format to generate itemize output. Only sent when the client is the
+    // sender (push), matching upstream's `stdout_format && am_sender` guard.
+    // `%i%I` is the `-ii` form (stdout_format_has_i > 1) that itemizes
+    // unchanged entries too; `%i` alone is the `-i` form.
     if we_are_sender && config.itemize_changes() {
-        args.push("--log-format=%i".to_owned());
+        if config.itemize_unchanged() {
+            args.push("--log-format=%i%I".to_owned());
+        } else {
+            args.push("--log-format=%i".to_owned());
+        }
     }
 
     // upstream: options.c:2800-2805 - compress choice is only forwarded when

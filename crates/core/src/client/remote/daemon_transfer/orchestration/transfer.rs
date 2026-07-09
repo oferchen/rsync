@@ -142,8 +142,16 @@ pub(crate) fn run_push_transfer(
         .as_mut()
         .map(|a| a as &mut dyn TransferProgressCallback);
 
-    // upstream: log.c:330-340 - when !am_server, rwrite() sends itemize to
-    // FCLIENT (stdout); the callback writes directly to process stdout.
+    // upstream: sender.c:461 log_item(FCLIENT) - on a push the client is the
+    // sender, and the client-visible itemize row is printed by the SENDER from
+    // the iflags the remote receiver's generator writes over the wire
+    // (generator.c:583-599 write_shortint(sock_f_out, iflags) for protocol >=
+    // 29). The remote generator's own log_item never reaches the client because
+    // log.c:822 gates the FCLIENT write on `!am_server`. So the local sender is
+    // the single source of push itemize; the remote receiver must not forward a
+    // pre-rendered MSG_INFO line (see receiver::emit_itemize). This restores
+    // output for oc-client -> upstream-daemon pushes, where upstream never
+    // forwards oc's itemize.
     let wants_itemize = config.itemize_changes();
     let stdout_handle = std::io::stdout();
     let mut itemize_cb = move |line: &str| {
