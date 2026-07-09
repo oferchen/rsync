@@ -300,7 +300,8 @@ fn complex_explicit_rules_with_cvs() {
     assert!(!set.allows(Path::new(".git/config"), false));
 }
 
-/// Verifies perishable CVS rules affect transfer but not deletion.
+/// Verifies perishable CVS rules affect transfer and also protect a matching
+/// entry from the top-level `--delete` scan.
 #[test]
 fn perishable_cvs_rules_transfer_vs_deletion() {
     let set = FilterSet::from_rules_with_cvs(vec![], true).unwrap();
@@ -309,9 +310,12 @@ fn perishable_cvs_rules_transfer_vs_deletion() {
     assert!(!set.allows(Path::new("main.o"), false));
     assert!(!set.allows(Path::new("file.bak"), false));
 
-    // Deletion: perishable rules ignored, defaults to allow
-    assert!(set.allows_deletion(Path::new("main.o"), false));
-    assert!(set.allows_deletion(Path::new("file.bak"), false));
+    // Deletion: the top-level scan runs with `ignore_perishable` unset
+    // (upstream delete.c:147), so perishable CVS rules protect a matching
+    // destination entry from `--delete` exactly like `--cvs-exclude --delete`
+    // preserves a pre-existing `*.o` at the transfer root.
+    assert!(!set.allows_deletion(Path::new("main.o"), false));
+    assert!(!set.allows_deletion(Path::new("file.bak"), false));
 }
 
 /// Verifies non-perishable CVS rules affect both transfer and deletion.

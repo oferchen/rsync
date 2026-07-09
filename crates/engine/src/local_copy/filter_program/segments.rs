@@ -82,6 +82,13 @@ impl FilterSegment {
         // deletion-only descendant matchers; the Transfer path must NOT see
         // those (it would re-trip the #6015 `foo/*/` over-exclusion).
         let for_deletion = matches!(context, FilterContext::Deletion);
+        // upstream: exclude.c:1044 check_filter() only skips a perishable rule
+        // when `ignore_perishable` is set, which happens exclusively while
+        // deleting the contents of a directory being wholly removed
+        // (delete.c:147). The top-level delete scan runs with it unset, so a
+        // perishable rule still matches and protects a candidate here; the
+        // wholly-deleted-directory case never reaches this evaluator because
+        // the local-copy delete pass removes such directories en masse.
         let rule_matches = |rule: &CompiledRule, path: &Path, is_dir: bool| {
             if for_deletion {
                 rule.matches_for_deletion(path, is_dir, check_descendants)
@@ -96,9 +103,6 @@ impl FilterSegment {
             if rule_matches(rule, path, is_dir) {
                 if matches!(context, FilterContext::Deletion) && rule.applies_to_receiver {
                     outcome.set_delete_excluded(matches!(rule.action, FilterAction::Exclude));
-                }
-                if matches!(context, FilterContext::Deletion) && rule.perishable {
-                    continue;
                 }
                 match context {
                     FilterContext::Transfer => {
@@ -128,9 +132,6 @@ impl FilterSegment {
             // overwrite it (last-match-wins).
             if outcome.protection_decided() {
                 break;
-            }
-            if matches!(context, FilterContext::Deletion) && rule.perishable {
-                continue;
             }
             if rule_matches(rule, path, is_dir) {
                 let applies = match context {
@@ -305,7 +306,6 @@ struct CompiledRule {
     deletion_descendant_matchers: Vec<GlobMatcher>,
     applies_to_sender: bool,
     applies_to_receiver: bool,
-    perishable: bool,
     /// upstream: exclude.c:906 - `ret_match = ex->rflags & FILTRULE_NEGATE ? 0 : 1`.
     /// When set, the rule fires on paths that do NOT match the pattern.
     negate: bool,
@@ -384,7 +384,6 @@ impl CompiledRule {
             deletion_descendant_matchers: compile_patterns(deletion_descendant_patterns, &pattern)?,
             applies_to_sender,
             applies_to_receiver,
-            perishable: rule.is_perishable(),
             negate,
             pattern,
         })

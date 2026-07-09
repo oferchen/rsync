@@ -10606,6 +10606,172 @@ CONF
   return 0
 }
 
+# Parameterised filter-modifier matrix: exercises the -, +, s, r, p, C rule
+# modifiers and the e / n / w per-directory merge modifiers over BOTH pull and
+# push, comparing the oc-rsync client against the upstream client byte-for-byte
+# (diff -r of the produced trees). An upstream daemon is the fixed peer in every
+# case, so only the client under test varies. This has teeth: any divergence in
+# transfer inclusion OR --delete protection fails the case.
+#
+# upstream references:
+#   exclude.c:1200-1216 - r->FILTRULE_RECEIVER_SIDE, s->SENDER_SIDE,
+#                         p->PERISHABLE, C/e/n/w modifier parsing
+#   exclude.c:1044      - perishable rules honoured unless ignore_perishable
+#   delete.c:147        - ignore_perishable set only inside a wholly-deleted dir
+#   generator.c:delete_in_dir() - dest candidates filtered through the same list
+#   rsync.1.md:4191-4206 - receiver-side rules affect deletion, not transfer
+test_filter_modifier_matrix() {
+  local upstream_binary=$1 oc_bin=$2 src_dir=$3 work=$4 log=$5 \
+        oc_port=$6 upstream_port=$7
+
+  local base="${work}/fmm"
+  rm -rf "$base"
+  mkdir -p "$base"
+
+  # Canonical source tree shared by every case. `main.o` gives the -C
+  # (cvs-exclude) case teeth via the default `*.o` CVS pattern.
+  fmm_seed_src() {
+    local d=$1
+    rm -rf "$d"
+    mkdir -p "$d/sub"
+    echo keep    > "$d/keep.txt"
+    echo drop    > "$d/drop.txt"
+    echo a       > "$d/a.txt"
+    echo b       > "$d/b.txt"
+    echo obj     > "$d/main.o"
+    echo nested  > "$d/sub/keep2.txt"
+    echo ndrop   > "$d/sub/drop.txt"
+  }
+
+  # Pre-existing destination: carries an extraneous file (never matched by any
+  # rule, must always be deleted), plus files that a matching exclude/perishable
+  # rule must protect from --delete.
+  fmm_seed_dst() {
+    local d=$1
+    rm -rf "$d"
+    mkdir -p "$d/sub"
+    echo old       > "$d/drop.txt"
+    echo old       > "$d/sub/drop.txt"
+    echo extraneous > "$d/extra.txt"
+  }
+
+  # The upstream daemon serves a single writable module whose backing directory
+  # we rewrite before each client run (no restart needed).
+  local fmm_mod="${base}/module"
+  mkdir -p "$fmm_mod"
+  local fmm_conf="${base}/up.conf"
+  local fmm_pid="${base}/up.pid"
+  local fmm_log="${base}/up.log"
+  cat > "$fmm_conf" <<CONF
+pid file = ${fmm_pid}
+port = ${upstream_port}
+use chroot = false
+munge symlinks = false
+${up_identity}numeric ids = yes
+[interop]
+    path = ${fmm_mod}
+    comment = filter-modifier matrix
+    read only = false
+CONF
+
+  start_upstream_daemon "$upstream_binary" "$fmm_conf" "$fmm_log" "$fmm_pid"
+
+  local fail=0
+
+  # Compare oc vs upstream client for one modifier case.
+  #   $1 label   remaining args: rsync filter/option flags (applied verbatim)
+  fmm_case() {
+    local label=$1; shift
+    local rules=("$@")
+
+    # --- PULL: source lives in the daemon module, client pulls with --delete ---
+    fmm_seed_src "$fmm_mod"
+    local d_oc="${base}/pull-oc" d_up="${base}/pull-up"
+    fmm_seed_dst "$d_oc"; fmm_seed_dst "$d_up"
+    timeout "$hard_timeout" "$oc_bin" -a --delete --timeout=10 "${rules[@]}" \
+      "rsync://127.0.0.1:${upstream_port}/interop/" "$d_oc/" \
+      >"${log}.fmm.${label}.pull-oc.out" 2>&1
+    timeout "$hard_timeout" "$upstream_binary" -a --delete --timeout=10 "${rules[@]}" \
+      "rsync://127.0.0.1:${upstream_port}/interop/" "$d_up/" \
+      >"${log}.fmm.${label}.pull-up.out" 2>&1
+    if ! diff -r "$d_oc" "$d_up" >"${log}.fmm.${label}.pull.diff" 2>&1; then
+      echo "    [$label] PULL tree diverges from upstream:"
+      sed 's/^/      /' "${log}.fmm.${label}.pull.diff" | head -8
+      fail=1
+    fi
+
+    # --- PUSH: dest lives in the daemon module, client pushes with --delete ---
+    local src="${base}/push-src"
+    fmm_seed_src "$src"
+    fmm_seed_dst "$fmm_mod"
+    timeout "$hard_timeout" "$oc_bin" -a --delete --timeout=10 "${rules[@]}" \
+      "$src/" "rsync://127.0.0.1:${upstream_port}/interop/" \
+      >"${log}.fmm.${label}.push-oc.out" 2>&1
+    local t_oc; t_oc=$(cd "$fmm_mod" && find . | LC_ALL=C sort && echo "--content--" && \
+      find . -type f | LC_ALL=C sort | xargs -r md5sum 2>/dev/null | sed "s#  .*/#  #")
+    fmm_seed_dst "$fmm_mod"
+    timeout "$hard_timeout" "$upstream_binary" -a --delete --timeout=10 "${rules[@]}" \
+      "$src/" "rsync://127.0.0.1:${upstream_port}/interop/" \
+      >"${log}.fmm.${label}.push-up.out" 2>&1
+    local t_up; t_up=$(cd "$fmm_mod" && find . | LC_ALL=C sort && echo "--content--" && \
+      find . -type f | LC_ALL=C sort | xargs -r md5sum 2>/dev/null | sed "s#  .*/#  #")
+    if [[ "$t_oc" != "$t_up" ]]; then
+      echo "    [$label] PUSH tree diverges from upstream:"
+      diff <(echo "$t_up") <(echo "$t_oc") | sed 's/^/      /' | head -8
+      fail=1
+    fi
+  }
+
+  # Rule-modifier matrix. Each case is independently upstream-compared in both
+  # push and pull with --delete, so it exercises transfer inclusion AND deletion
+  # protection. The `s`/`r` cases pin the send_rules elision (exclude.c:1605) and
+  # the receiver-side-affects-deletion-only rule (rsync.1.md:4191); `p` pins the
+  # perishable-honoured-at-top-level fix (exclude.c:1044 / delete.c:147).
+  fmm_case "exclude"        --filter='- drop.txt'
+  fmm_case "include-then-x" --filter='+ keep.txt' --filter='- *.txt'
+  fmm_case "sender-side"    --filter='-s drop.txt'
+  fmm_case "receiver-side"  --filter='-r drop.txt'
+  fmm_case "perishable"     --filter='-p drop.txt'
+  fmm_case "cvs-exclude"    -C
+  fmm_case "dironly"        --filter='- sub/'
+
+  # Per-directory merge modifiers n / e / w are exercised in the pull direction:
+  # the merge file lives in the daemon module, the upstream daemon applies the
+  # dir-merge, and the oc client must land the same tree as the upstream client.
+  fmm_case_merge() {
+    local label=$1 mergefile=$2 mergebody=$3 dirmerge=$4
+
+    fmm_seed_src "$fmm_mod"; printf '%s\n' "$mergebody" > "$fmm_mod/$mergefile"
+    local d_oc="${base}/pm-oc" d_up="${base}/pm-up"
+    fmm_seed_dst "$d_oc"; fmm_seed_dst "$d_up"
+    timeout "$hard_timeout" "$oc_bin" -a --delete --timeout=10 --filter="$dirmerge" \
+      "rsync://127.0.0.1:${upstream_port}/interop/" "$d_oc/" \
+      >"${log}.fmm.${label}.pull-oc.out" 2>&1
+    timeout "$hard_timeout" "$upstream_binary" -a --delete --timeout=10 --filter="$dirmerge" \
+      "rsync://127.0.0.1:${upstream_port}/interop/" "$d_up/" \
+      >"${log}.fmm.${label}.pull-up.out" 2>&1
+    if ! diff -r "$d_oc" "$d_up" >"${log}.fmm.${label}.pull.diff" 2>&1; then
+      echo "    [$label] merge PULL tree diverges from upstream:"
+      sed 's/^/      /' "${log}.fmm.${label}.pull.diff" | head -8
+      fail=1
+    fi
+  }
+
+  # n: per-dir merge without inheritance. e: merge file excludes itself.
+  # w: whitespace-split rules. The positive `w` case pairs word-split with the
+  # `-` no-prefix modifier so the bare tokens "a.txt b.txt" become two separate
+  # excludes (a plain "- a.txt b.txt" is a syntax error under word-split because
+  # the "-" splits off as an empty rule - upstream exclude.c:1326).
+  fmm_case_merge "merge-n" ".rules" "- b.txt"      ":n .rules"
+  fmm_case_merge "merge-e" ".rules" "- b.txt"      ":e .rules"
+  fmm_case_merge "merge-w" ".rules" "a.txt b.txt"  ":w- .rules"
+
+  stop_upstream_daemon
+
+  unset -f fmm_seed_src fmm_seed_dst fmm_case fmm_case_merge
+  return $fail
+}
+
 # Run all standalone interop tests.
 # Uses globals: $oc_client, $up_identity, $hard_timeout, $comp_src, $workdir.
 run_standalone_interop_tests() {
@@ -10687,6 +10853,7 @@ run_standalone_interop_tests() {
     "link-dest"
     "copy-dest"
     "numeric-ids-standalone"
+    "filter-modifier-matrix"
   )
   local test_funcs=(
     "test_write_batch_read_batch"
@@ -10761,6 +10928,7 @@ run_standalone_interop_tests() {
     "test_link_dest"
     "test_copy_dest"
     "test_numeric_ids_standalone"
+    "test_filter_modifier_matrix"
   )
 
   for i in "${!test_names[@]}"; do
@@ -10950,6 +11118,9 @@ run_standalone_interop_tests() {
         test_args+=("$oc_port" "$upstream_port")
         ;;
       numeric-ids-standalone)
+        test_args+=("$oc_port" "$upstream_port")
+        ;;
+      filter-modifier-matrix)
         test_args+=("$oc_port" "$upstream_port")
         ;;
     esac

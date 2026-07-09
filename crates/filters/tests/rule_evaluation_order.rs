@@ -436,7 +436,7 @@ fn mixed_sides_order() {
     assert!(!set.allows_deletion(Path::new("app.log"), false));
 }
 
-/// Verifies perishable rules are skipped in deletion context.
+/// Verifies perishable rules are honoured (first-match-wins) in deletion.
 #[test]
 fn perishable_order_in_deletion() {
     let rules = [
@@ -448,8 +448,10 @@ fn perishable_order_in_deletion() {
     // Transfer: perishable exclude matches first
     assert!(!set.allows(Path::new("scratch.tmp"), false));
 
-    // Deletion: perishable rule skipped, include matches
-    assert!(set.allows_deletion(Path::new("scratch.tmp"), false));
+    // Deletion: the top-level scan honours perishable rules (upstream
+    // exclude.c:1044 / delete.c:147), so the perishable exclude matches first
+    // and protects the entry.
+    assert!(!set.allows_deletion(Path::new("scratch.tmp"), false));
 }
 
 /// Verifies non-perishable followed by perishable.
@@ -468,8 +470,9 @@ fn perishable_after_non_perishable() {
 
     // other.tmp: excluded by perishable rule for transfer
     assert!(!set.allows(Path::new("other.tmp"), false));
-    // For deletion, perishable skipped, include matches
-    assert!(set.allows_deletion(Path::new("other.tmp"), false));
+    // For deletion the perishable exclude matches first (before the include),
+    // so the entry is protected.
+    assert!(!set.allows_deletion(Path::new("other.tmp"), false));
 }
 
 /// Verifies clear removes all previous rules.

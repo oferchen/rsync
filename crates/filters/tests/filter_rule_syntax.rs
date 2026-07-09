@@ -1137,15 +1137,17 @@ mod rule_ordering {
     }
 
     #[test]
-    fn perishable_rules_skipped_for_deletion() {
+    fn perishable_rules_protect_top_level_deletion() {
         let rules = parse_rules("-p *.tmp\n+ keep/**", Path::new("test")).unwrap();
         let set = FilterSet::from_rules(rules).unwrap();
 
         // Transfer: perishable exclude applies
         assert!(!set.allows(Path::new("file.tmp"), false));
 
-        // Deletion: perishable exclude skipped, defaults to allow
-        assert!(set.allows_deletion(Path::new("file.tmp"), false));
+        // Deletion: the top-level scan runs with `ignore_perishable` unset
+        // (upstream exclude.c:1044 / delete.c:147), so the perishable exclude
+        // protects a matching entry exactly like a plain exclude.
+        assert!(!set.allows_deletion(Path::new("file.tmp"), false));
     }
 }
 

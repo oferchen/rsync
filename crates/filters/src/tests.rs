@@ -163,13 +163,56 @@ fn protect_rule_blocks_deletion_without_affecting_transfer() {
 }
 
 #[test]
-fn perishable_rule_ignored_for_deletion_checks() {
+fn perishable_rule_protects_from_deletion_at_top_level() {
+    // upstream: exclude.c:1044 check_filter() only skips perishable rules when
+    // `ignore_perishable` is set (delete.c:147), which happens exclusively
+    // inside a directory being wholly deleted. The top-level delete scan runs
+    // with it unset, so a perishable exclude protects a matching destination
+    // entry from `--delete` exactly like a plain exclude. `--delete-excluded`
+    // still removes it.
     let rule = FilterRule::exclude("*.tmp").with_perishable(true);
     let set = FilterSet::from_rules([rule]).expect("compiled");
 
     assert!(!set.allows(Path::new("note.tmp"), false));
-    assert!(set.allows_deletion(Path::new("note.tmp"), false));
+    assert!(!set.allows_deletion(Path::new("note.tmp"), false));
     assert!(set.allows_deletion_when_excluded_removed(Path::new("note.tmp"), false));
+}
+
+/// Regression (D2): a plain exclude that matches a destination entry protects
+/// it from `--delete`, mirroring upstream generator.c:delete_in_dir() where an
+/// excluded name never enters the get_dirlist() candidate set. It is still
+/// excluded from transfer on the sender side.
+#[test]
+fn plain_exclude_protects_matching_dest_from_deletion() {
+    let set = FilterSet::from_rules([FilterRule::exclude("drop.txt")]).expect("compiled");
+    assert!(!set.allows(Path::new("drop.txt"), false));
+    assert!(!set.allows_deletion(Path::new("drop.txt"), false));
+    // An unmatched extraneous entry is still deletable (upstream parity: only
+    // filter-matched names are protected).
+    assert!(set.allows_deletion(Path::new("extra.txt"), false));
+}
+
+/// Regression (D1): a receiver-side (`r`) rule affects DELETION only. Upstream
+/// rsync.1.md:4191-4206 - a receiver-side rule must not exclude a file from the
+/// transfer, but it does protect a matching destination entry from `--delete`.
+#[test]
+fn receiver_side_rule_gates_deletion_not_transfer() {
+    let set = FilterSet::from_rules([FilterRule::exclude("drop.txt").with_sides(false, true)])
+        .expect("compiled");
+    // Transfer: receiver-side rule is inert on the sender, so the file transfers.
+    assert!(set.allows(Path::new("drop.txt"), false));
+    // Deletion: the receiver-side rule protects the matching dest entry.
+    assert!(!set.allows_deletion(Path::new("drop.txt"), false));
+}
+
+/// Counterpart of the above (regression guard): a sender-side (`s`) rule
+/// excludes from transfer but does NOT protect the dest entry from `--delete`.
+#[test]
+fn sender_side_rule_gates_transfer_not_deletion() {
+    let set = FilterSet::from_rules([FilterRule::exclude("drop.txt").with_sides(true, false)])
+        .expect("compiled");
+    assert!(!set.allows(Path::new("drop.txt"), false));
+    assert!(set.allows_deletion(Path::new("drop.txt"), false));
 }
 
 #[test]

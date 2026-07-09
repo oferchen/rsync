@@ -106,13 +106,15 @@ fn explicit_include_overrides_apple_double() {
     assert!(!set.allows(Path::new("._other"), false));
 }
 
-/// Perishable rules continue to apply during transfers but are skipped during
-/// deletion passes, matching `--cvs-exclude` semantics.
+/// Perishable rules apply during transfers and also protect a matching entry
+/// from the top-level `--delete` scan, matching `--cvs-exclude` semantics
+/// (upstream exclude.c:1044 only skips perishable rules once `ignore_perishable`
+/// is set inside a wholly-deleted directory, delete.c:147).
 #[test]
-fn perishable_rules_skip_deletion_pass() {
+fn perishable_rules_protect_top_level_deletion() {
     let set = FilterSet::from_rules_with_apple_double(Vec::<FilterRule>::new(), true).unwrap();
     assert!(!set.allows(Path::new("._notes.txt"), false));
-    assert!(set.allows_deletion(Path::new("._notes.txt"), false));
+    assert!(!set.allows_deletion(Path::new("._notes.txt"), false));
 }
 
 /// Non-perishable rules apply to both transfer and deletion passes.

@@ -172,13 +172,30 @@ impl ReceiverContext {
 
         let max_delete = self.config.deletion.max_delete;
 
+        // The deletion decision must consult the chain that actually carries
+        // the filter rules for this role. A server-side receiver reads the
+        // client's rules off the wire into `filter_chain` (setup/context.rs
+        // branch A). A client-side pull never receives the wire filter list,
+        // so its rules live in the dedicated `deletion_filter_chain` built from
+        // the local CLI rules (branch B) and `filter_chain` is empty there.
+        // Pick whichever is populated so a plain `- name`, a receiver-side
+        // `-r name`, or a perishable `-p name` rule protects a matching
+        // destination entry from --delete on both sides, mirroring upstream
+        // generator.c:delete_in_dir() which filters the get_dirlist()
+        // candidates through the same rule list regardless of transfer role.
+        let deletion_chain = if self.deletion_filter_chain.is_empty() {
+            &self.filter_chain
+        } else {
+            &self.deletion_filter_chain
+        };
+
         // Whether the deletion chain carries per-directory merge configs
         // (`.rsync-filter`, dir-merge `.filt`/`.filt2`). Computed up front so it
         // can gate both the scan-target expansion below and the per-worker
         // reload further down. When there are no per-dir merge configs the
         // deletion pass behaves exactly as before: dirs_to_scan is keyed off
         // parents-with-a-visible-child and the flat global chain decides.
-        let needs_perdir_merge = self.deletion_filter_chain.has_per_dir_merge();
+        let needs_perdir_merge = deletion_chain.has_per_dir_merge();
 
         // Build directory -> children map from the file list.
         // Use owned OsString keys so the map can be shared across threads.
@@ -271,9 +288,9 @@ impl ReceiverContext {
         // per-directory merge configs exist so workers only pay the reload cost
         // when the chain actually has per-dir merges.
         let dir_children = Arc::new(dir_children);
-        let flat_chain = Arc::new(self.filter_chain.clone());
+        let flat_chain = Arc::new(deletion_chain.clone());
         let merge_chain = Arc::new({
-            let mut chain = self.deletion_filter_chain.clone();
+            let mut chain = deletion_chain.clone();
             chain.set_transfer_root(dest_dir.to_path_buf());
             chain
         });
