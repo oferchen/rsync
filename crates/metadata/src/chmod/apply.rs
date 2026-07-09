@@ -23,6 +23,27 @@ pub(crate) fn apply_clauses(_clauses: &[Clause], mode: u32, _file_type: std::fs:
     mode
 }
 
+/// Resolves the copy-from-category bits for a clause against the live mode.
+///
+/// upstream: chmod.c `mode_copy_bits()` - extracts the three rwx bits of each
+/// selected source class, then distributes them across the destination
+/// classes, finally masking with the clause's copy AND (`CHMOD_BITS` or
+/// `~umask`).
+#[cfg(unix)]
+fn mode_copy_bits(mode: u32, copy_src: u32, copy_dst: u32, copy_and: u32) -> u32 {
+    let mut copy_bits = 0;
+    if copy_src & 0o100 != 0 {
+        copy_bits |= (mode >> 6) & 7;
+    }
+    if copy_src & 0o010 != 0 {
+        copy_bits |= (mode >> 3) & 7;
+    }
+    if copy_src & 0o001 != 0 {
+        copy_bits |= mode & 7;
+    }
+    (copy_dst * copy_bits) & copy_and
+}
+
 /// Core of `chmod.c:tweak_mode()`.
 ///
 /// `is_x` is sampled once from the original executable bits and `non_perm`
@@ -43,6 +64,9 @@ fn tweak_mode(clauses: &[Clause], orig: u32, is_dir: bool) -> u32 {
             continue;
         }
 
+        // upstream: chmod.c - copy bits are resolved against the pre-AND mode.
+        let copy_bits = mode_copy_bits(mode, clause.copy_src, clause.copy_dst, clause.copy_and);
+
         mode &= clause.mode_and;
 
         // upstream: chmod.c:229-232 - a conditional `X` only sets the execute
@@ -51,6 +75,15 @@ fn tweak_mode(clauses: &[Clause], orig: u32, is_dir: bool) -> u32 {
             mode |= clause.mode_or & !0o111;
         } else {
             mode |= clause.mode_or;
+        }
+
+        // upstream: chmod.c - a `-` copy clause clears the copied bits; every
+        // other operator sets them. Non-copy clauses have `copy_bits == 0`,
+        // leaving both branches a no-op.
+        if clause.is_sub {
+            mode &= CHMOD_BITS - copy_bits;
+        } else {
+            mode |= copy_bits;
         }
     }
 

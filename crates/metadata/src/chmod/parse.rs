@@ -2,9 +2,11 @@
 //!
 //! Faithful port of upstream rsync's `chmod.c:parse_chmod()` state machine. The
 //! whole modestring is scanned in a single pass so that comma handling, the
-//! `D`/`F` selectors, octal modes, and the symbolic `[ugoa][-+=][rwxXst]` forms
-//! match upstream byte for byte, including the error transitions. Each clause is
-//! reduced to an AND/OR pair consumed by the evaluator in `apply.rs`.
+//! `D`/`F` selectors, octal modes, the symbolic `[ugoa][-+=][rwxXst]` forms, and
+//! the copy-from-category forms (`[ugoa][-+=][ugo]`, e.g. `g=u`) match upstream
+//! byte for byte, including the error transitions. Each clause is reduced to an
+//! AND/OR pair plus a deferred copy-from-category transform consumed by the
+//! evaluator in `apply.rs`.
 
 use super::{ChmodError, spec::CHMOD_BITS, spec::Clause};
 
@@ -53,6 +55,25 @@ fn orig_umask() -> u32 {
     0
 }
 
+/// Returns the set-id/sticky bits implied by a copy-from-category destination.
+///
+/// upstream: chmod.c `mode_dest_special_bits()` - a copy-from-category `=`
+/// clause must also clear the destination class's top bit so the assignment
+/// does not leave a stale setuid/setgid/sticky bit behind.
+fn mode_special_bits(where_: u32) -> u32 {
+    let mut bits = 0;
+    if where_ & 0o100 != 0 {
+        bits |= 0o4000;
+    }
+    if where_ & 0o010 != 0 {
+        bits |= 0o2000;
+    }
+    if where_ & 0o001 != 0 {
+        bits |= 0o1000;
+    }
+    bits
+}
+
 /// Parses a `--chmod` specification against the process umask.
 pub(crate) fn parse_spec(modestr: &str) -> Result<Vec<Clause>, ChmodError> {
     parse_with_umask(modestr, orig_umask())
@@ -71,6 +92,7 @@ pub(crate) fn parse_with_umask(modestr: &str, umask: u32) -> Result<Vec<Clause>,
     let mut op = Op::None;
     let mut topbits: u32 = 0;
     let mut topoct: u32 = 0;
+    let mut copybits: u32 = 0;
     let mut x_keep = false;
     let mut dirs_only = false;
     let mut files_only = false;
@@ -88,6 +110,10 @@ pub(crate) fn parse_with_umask(modestr: &str, umask: u32) -> Result<Vec<Clause>,
                 ));
             }
 
+            // upstream: chmod.c - the pre-fallback who selects whether copied
+            // bits are masked by ~umask (implied who) or kept whole.
+            let where_specified = where_;
+
             // upstream: chmod.c:73-78.
             let bits = if where_ != 0 {
                 where_ * what
@@ -96,21 +122,41 @@ pub(crate) fn parse_with_umask(modestr: &str, umask: u32) -> Result<Vec<Clause>,
                 (where_ * what) & !umask
             };
 
-            // upstream: chmod.c:80-97.
-            let (mode_and, mode_or) = match op {
-                Op::Add => (CHMOD_BITS, bits + topoct),
-                Op::Sub => (CHMOD_BITS - bits - topoct, 0),
-                Op::Eq => (
-                    CHMOD_BITS - (where_ * 7) - if topoct != 0 { topbits } else { 0 },
-                    bits + topoct,
-                ),
-                Op::Set => (0, bits),
+            let copy_and = if where_specified != 0 {
+                CHMOD_BITS
+            } else {
+                !umask
+            };
+
+            // upstream: chmod.c:80-97 plus the ModeCOPY_* fields.
+            let (mode_and, mode_or, copy_src, is_sub) = match op {
+                Op::Add => (CHMOD_BITS, bits + topoct, copybits, false),
+                Op::Sub => (CHMOD_BITS - bits - topoct, 0, copybits, true),
+                Op::Eq => {
+                    let special = if topoct != 0 { topbits } else { 0 };
+                    let copy_special = if copybits != 0 {
+                        mode_special_bits(where_)
+                    } else {
+                        0
+                    };
+                    (
+                        CHMOD_BITS - (where_ * 7) - special - copy_special,
+                        bits + topoct,
+                        copybits,
+                        false,
+                    )
+                }
+                Op::Set => (0, bits, 0, false),
                 Op::None => unreachable!(),
             };
 
             clauses.push(Clause {
                 mode_and,
                 mode_or,
+                copy_src,
+                copy_dst: if op == Op::Set { 0 } else { where_ },
+                copy_and: if op == Op::Set { CHMOD_BITS } else { copy_and },
+                is_sub,
                 x_keep,
                 dirs_only,
                 files_only,
@@ -129,6 +175,7 @@ pub(crate) fn parse_with_umask(modestr: &str, umask: u32) -> Result<Vec<Clause>,
             op = Op::None;
             topbits = 0;
             topoct = 0;
+            copybits = 0;
             x_keep = false;
             dirs_only = false;
             files_only = false;
@@ -188,23 +235,29 @@ pub(crate) fn parse_with_umask(modestr: &str, umask: u32) -> Result<Vec<Clause>,
                     }
                 }
             },
-            // upstream: chmod.c:159-186.
+            // upstream: chmod.c STATE_2ND_HALF. A literal permission set and a
+            // copy-from-category letter are mutually exclusive: once `copybits`
+            // is set, any `rwxXst` errors, and a `u`/`g`/`o` copy letter errors
+            // if any permission bit or a prior copy letter was already seen.
             State::SecondHalf => match byte {
-                b'r' => what |= 4,
-                b'w' => what |= 2,
-                b'X' => {
+                b'r' if copybits == 0 => what |= 4,
+                b'w' if copybits == 0 => what |= 2,
+                b'X' if copybits == 0 => {
                     x_keep = true;
                     what |= 1;
                 }
-                b'x' => what |= 1,
-                b's' => {
+                b'x' if copybits == 0 => what |= 1,
+                b's' if copybits == 0 => {
                     if topbits != 0 {
                         topoct |= topbits;
                     } else {
                         topoct = 0o4000;
                     }
                 }
-                b't' => topoct |= 0o1000,
+                b't' if copybits == 0 => topoct |= 0o1000,
+                b'u' if what == 0 && topoct == 0 && copybits == 0 => copybits = 0o100,
+                b'g' if what == 0 && topoct == 0 && copybits == 0 => copybits = 0o010,
+                b'o' if what == 0 && topoct == 0 && copybits == 0 => copybits = 0o001,
                 _ => return Err(err(c)),
             },
             // upstream: chmod.c:187-194.
@@ -351,15 +404,46 @@ mod tests {
     }
 
     #[test]
-    fn copy_source_forms_rejected() {
-        // upstream: chmod.c STATE_2ND_HALF has no who-letter case; a `u`/`g`/`o`
-        // on the RHS routes to STATE_ERROR. rsync rejects GNU-chmod copy forms.
-        assert!(parse("g=u").is_err());
-        assert!(parse("o=g").is_err());
-        assert!(parse("u+g").is_err());
-        assert!(parse("a=u").is_err());
-        assert!(parse("g-o").is_err());
+    fn copy_from_category_eq_clause() {
+        // upstream: chmod.c STATE_2ND_HALF `u`/`g`/`o` set ModeCOPY_SRC; the `=`
+        // clause clears the destination class (and its top bit) then copies.
+        let c = one("g=u");
+        assert_eq!(c.mode_and, CHMOD_BITS - 0o070 - 0o2000);
+        assert_eq!(c.mode_or, 0);
+        assert_eq!(c.copy_src, 0o100);
+        assert_eq!(c.copy_dst, 0o010);
+        assert_eq!(c.copy_and, CHMOD_BITS);
+        assert!(!c.is_sub);
+    }
+
+    #[test]
+    fn copy_from_category_sub_clause() {
+        // upstream: chmod.c - a `-` copy clause records ModeOP == CHMOD_SUB so
+        // the evaluator clears the copied bits instead of setting them.
+        let c = one("g-o");
+        assert_eq!(c.mode_and, CHMOD_BITS);
+        assert_eq!(c.copy_src, 0o001);
+        assert_eq!(c.copy_dst, 0o010);
+        assert!(c.is_sub);
+    }
+
+    #[test]
+    fn copy_from_category_forms_accepted() {
+        // upstream: chmod.c accepts a single who-letter as the copy source for
+        // any of the +/-/= operators.
+        for spec in ["g=u", "o=g", "u+g", "a=u", "g-o", "o=u"] {
+            assert!(parse(spec).is_ok(), "`{spec}` should parse");
+        }
+    }
+
+    #[test]
+    fn mixed_copy_and_perm_rejected() {
+        // upstream: chmod.c - a copy letter and a literal permission letter are
+        // mutually exclusive within one clause.
         assert!(parse("g=ur").is_err());
+        assert!(parse("g=ru").is_err());
+        assert!(parse("g=uu").is_err());
+        assert!(parse("g=us").is_err());
     }
 
     #[test]

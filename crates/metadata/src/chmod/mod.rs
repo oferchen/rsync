@@ -5,14 +5,14 @@
 //! The upstream rsync CLI allows multiple `--chmod=SPEC` occurrences where each
 //! specification may contain comma-separated numeric or symbolic clauses. This
 //! module mirrors upstream rsync's `chmod.c:parse_chmod()` grammar exactly,
-//! reducing every clause to an AND/OR mask pair (`ModeAND`/`ModeOR`) and the
-//! `D`/`F` selectors, then applying them through `chmod.c:tweak_mode()` order:
-//! conditional execute bits (`X`), the set-id/sticky bits driven by the who
-//! letters, and the umask masking applied to an implied who-class. rsync does
-//! not implement GNU-chmod permission-copy forms (`g=u`); those route to a
-//! parse error exactly as upstream does. The [`ChmodModifiers`] type wraps the
-//! parsed clauses and exposes [`ChmodModifiers::apply`] so higher layers can
-//! evaluate modifiers after the standard metadata preservation step.
+//! reducing every clause to an AND/OR mask pair (`ModeAND`/`ModeOR`), the copy-
+//! from-category transform (`ModeCOPY_*`), and the `D`/`F` selectors, then
+//! applying them through `chmod.c:tweak_mode()` order: conditional execute bits
+//! (`X`), the set-id/sticky bits driven by the who letters, the copy-from-
+//! category distribution (`g=u`), and the umask masking applied to an implied
+//! who-class. The [`ChmodModifiers`] type wraps the parsed clauses and exposes
+//! [`ChmodModifiers::apply`] so higher layers can evaluate modifiers after the
+//! standard metadata preservation step.
 
 mod apply;
 mod parse;
