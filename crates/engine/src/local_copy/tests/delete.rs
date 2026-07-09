@@ -749,7 +749,7 @@ fn delete_during_itemizes_deletion_before_directory_row() {
         ctx.dest.clone().into_os_string(),
     ];
     let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
-    let options = LocalCopyOptions::default().delete_during();
+    let options = LocalCopyOptions::default().delete_during().collect_events(true);
 
     let report = plan
         .execute_with_report(LocalCopyExecution::Apply, options)
