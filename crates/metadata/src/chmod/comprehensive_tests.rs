@@ -182,14 +182,14 @@ mod basic_symbolic_syntax {
         assert!(!modifiers.is_empty());
     }
 
-    // upstream: chmod.c:parse_chmod() STATE_2ND_HALF only accepts the literal
-    // permission letters `rwxXst`. A who-letter on the RHS routes to
-    // STATE_ERROR, so rsync rejects GNU-chmod permission-copy forms.
+    // upstream: chmod.c:parse_chmod() STATE_2ND_HALF accepts a single who-letter
+    // on the RHS as a copy-from-category source. Mixing a copy letter with a
+    // literal permission letter in the same clause still routes to STATE_ERROR.
     #[test]
-    fn who_letter_copy_source_in_rhs_rejected() {
-        assert!(ChmodModifiers::parse("g=u").is_err());
-        assert!(ChmodModifiers::parse("o=g").is_err());
-        assert!(ChmodModifiers::parse("o=u").is_err());
+    fn who_letter_copy_source_in_rhs_accepted() {
+        assert!(ChmodModifiers::parse("g=u").is_ok());
+        assert!(ChmodModifiers::parse("o=g").is_ok());
+        assert!(ChmodModifiers::parse("o=u").is_ok());
         assert!(ChmodModifiers::parse("g=ur").is_err());
     }
 
