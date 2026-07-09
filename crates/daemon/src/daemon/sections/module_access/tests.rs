@@ -775,9 +775,16 @@ mod module_access_tests {
             ..Default::default()
         };
 
-        let err = verify_secret_response(&module, "alice", "challenge", "response", None)
-            .expect_err("strict modes should reject other-accessible secrets");
-        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        // upstream: authenticate.c:119-131 check_secret() - a strict-modes
+        // violation is an auth denial, not a fatal error: verify returns
+        // Ok(false) so the daemon emits `@ERROR: auth failed on module X`
+        // rather than dropping the socket mid-handshake.
+        let result = verify_secret_response(&module, "alice", "challenge", "response", None)
+            .expect("strict-modes violation must be a denial, not an io error");
+        assert!(
+            !result,
+            "other-accessible secrets under strict modes must deny auth"
+        );
     }
 
     #[cfg(unix)]
