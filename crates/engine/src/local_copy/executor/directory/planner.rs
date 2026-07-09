@@ -341,26 +341,21 @@ pub(crate) fn plan_directory_entries<'a>(
         }
 
         if deletion_enabled && keep_name {
-            let preserve_name = match delete_timing {
-                Some(DeleteTiming::Before) => matches!(
-                    action,
-                    EntryAction::CopyDirectory
-                        | EntryAction::SkipExcluded
-                        | EntryAction::SkipMountPoint
-                ),
-                _ => true,
-            };
-
-            if preserve_name {
-                // upstream: flist.c:1579-1603 + flist.c:738-754 - the
-                // receiver hits the filesystem with the iconv-converted
-                // name; align the keep-list so deletion does not wipe
-                // freshly-written entries when --iconv is configured.
-                keep_names.push(transcode_filename_component(
-                    file_name.as_os_str(),
-                    context.options().iconv(),
-                ));
-            }
+            // upstream: generator.c:340 delete_in_dir() keeps any destination
+            // entry found in the source file list via
+            // flist_find_ignore_dirness(), regardless of file type or delete
+            // timing. --delete-before shares that keep decision with
+            // --delete-during/-after (all drive delete_in_dir), so an in-source
+            // regular file must stay in the keep-set. Restricting
+            // --delete-before to directories deleted then re-transferred every
+            // in-source file. upstream: flist.c:1579-1603 + flist.c:738-754 -
+            // the receiver hits the filesystem with the iconv-converted name;
+            // align the keep-list so deletion does not wipe freshly-written
+            // entries when --iconv is configured.
+            keep_names.push(transcode_filename_component(
+                file_name.as_os_str(),
+                context.options().iconv(),
+            ));
         }
 
         planned_entries.push(PlannedEntry {
@@ -617,26 +612,21 @@ fn plan_directory_entries_with_prefetch<'a>(
         }
 
         if deletion_enabled && keep_name {
-            let preserve_name = match delete_timing {
-                Some(DeleteTiming::Before) => matches!(
-                    action,
-                    EntryAction::CopyDirectory
-                        | EntryAction::SkipExcluded
-                        | EntryAction::SkipMountPoint
-                ),
-                _ => true,
-            };
-
-            if preserve_name {
-                // upstream: flist.c:1579-1603 + flist.c:738-754 - the
-                // receiver hits the filesystem with the iconv-converted
-                // name; align the keep-list so deletion does not wipe
-                // freshly-written entries when --iconv is configured.
-                keep_names.push(transcode_filename_component(
-                    file_name.as_os_str(),
-                    context.options().iconv(),
-                ));
-            }
+            // upstream: generator.c:340 delete_in_dir() keeps any destination
+            // entry found in the source file list via
+            // flist_find_ignore_dirness(), regardless of file type or delete
+            // timing. --delete-before shares that keep decision with
+            // --delete-during/-after (all drive delete_in_dir), so an in-source
+            // regular file must stay in the keep-set. Restricting
+            // --delete-before to directories deleted then re-transferred every
+            // in-source file. upstream: flist.c:1579-1603 + flist.c:738-754 -
+            // the receiver hits the filesystem with the iconv-converted name;
+            // align the keep-list so deletion does not wipe freshly-written
+            // entries when --iconv is configured.
+            keep_names.push(transcode_filename_component(
+                file_name.as_os_str(),
+                context.options().iconv(),
+            ));
         }
 
         planned_entries.push(PlannedEntry {
