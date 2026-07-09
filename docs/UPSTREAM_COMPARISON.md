@@ -786,13 +786,13 @@ struct SparseWriteState {
 |-----------|--------|-------|
 | CF_INC_RECURSE flag | ✅ Defined | Bit 0 |
 | NDX_FLIST_OFFSET | ✅ Defined | -101 |
-| Flag negotiation | ✅ Implemented | Exchanged but gated |
-| Directory queue | ❌ Not implemented | Requires segmented flist |
-| Segmented transmission | ❌ Not implemented | Single flist only |
+| Flag negotiation | ✅ Implemented | 'i' advertised for sender + receiver |
+| Directory queue | ✅ Implemented | Per-directory segments (`PendingSegment`) |
+| Segmented transmission | ✅ Implemented | Depth-first per-directory sub-lists |
 
-**Current behavior:** `allow_inc_recurse=false` gates the feature. File lists are sent as a single batch.
+**Current behavior:** Incremental recursion is enabled by default (`allow_inc_recurse=true`), matching upstream rsync 3.4.x. File lists are partitioned into per-directory segments and sent incrementally for both sender and receiver roles. `--no-inc-recursive` overrides to a single batch.
 
-**Source:** `crates/transfer/src/setup.rs` (search for `allow_inc_recurse`)
+**Source:** `crates/transfer/src/setup/capability.rs` (capability string), `crates/transfer/src/generator/file_list/inc_recurse.rs` (segmentation), `crates/core/src/client/config/builder/mod.rs` (`inc_recursive_send` default)
 
 ---
 
@@ -844,7 +844,7 @@ The Rust rsync implementation achieves **full wire protocol compatibility** with
 |-----------|--------|--------|
 | SIMD optimization | Performance only | Identical results |
 | Pure Rust crypto | No C dependencies | RustCrypto ecosystem |
-| Incremental recursion | Not enabled | Gate set to false |
+| Incremental recursion | Enabled by default | Matches upstream (sender + receiver advertise 'i') |
 
 ### Why Custom Implementations?
 
