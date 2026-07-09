@@ -497,7 +497,13 @@ pub(super) fn process_links(
         // status alongside the freshly-linked alias.
         info_log!(Name, 2, "{} is uptodate", record_path.display());
 
-        context.record_hard_link(metadata, destination);
+        // upstream: hlink.c:474-521 finish_hard_link() - every alias in a cohort
+        // is linked against the group's data-holder (`our_name` stays fixed for
+        // the whole `F_HL_PREV` walk), so all aliases itemize `=> <holder>` (a
+        // star), never chaining to the most recently created alias. The holder is
+        // already recorded in the tracker (it was transferred first), so a
+        // follower must NOT overwrite that mapping with its own path; doing so
+        // would point later followers at this alias instead of the holder.
         context.summary_mut().record_hard_link();
         // upstream: hlink.c:237 + log.c:643-654 - thread the leader's
         // relative path through the snapshot's `symlink_target` slot so the
