@@ -1,107 +1,217 @@
 use std::collections::VecDeque;
 use std::ffi::OsString;
 
-pub(crate) fn locate_filter_arguments(args: &[OsString]) -> (Vec<usize>, Vec<usize>) {
-    let mut filter_indices = Vec::new();
-    let mut rsync_filter_indices = Vec::new();
+use clap::ArgMatches;
+
+/// A single filter directive captured in command-line (argv) order.
+///
+/// upstream: options.c feeds each `--include`/`--exclude`/`--filter`/
+/// `--include-from`/`--exclude-from`/`-C`/`-F` to `parse_filter_str`,
+/// `parse_filter_file`, or the CVS defaults at the argv position where it
+/// appears. Rule evaluation is strictly first-match-wins over encounter order
+/// (exclude.c:parse_filter_str appends each rule to the tail of the list), so
+/// the CLI must preserve command-line order across every filter-producing
+/// option rather than grouping includes ahead of excludes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FilterOrderToken {
+    /// `--exclude PATTERN`
+    Exclude(OsString),
+    /// `--include PATTERN`
+    Include(OsString),
+    /// `--exclude-from FILE`
+    ExcludeFrom(OsString),
+    /// `--include-from FILE`
+    IncludeFrom(OsString),
+    /// `--filter RULE` / `-f RULE` (also the directive an `-F` expands to)
+    Filter(OsString),
+    /// `--cvs-exclude` / `-C`
+    CvsExclude,
+    /// `--apple-double-skip`
+    AppleDoubleSkip,
+}
+
+/// Builds the filter directive stream in true command-line (argv) order.
+///
+/// The argv scan runs over the short-option-expanded arguments and records
+/// every filter-producing option in the order it appears. Parsed values come
+/// from clap (so `--opt=VALUE`, `-f VALUE`, and non-UTF-8 paths are handled
+/// exactly as clap parsed them); the scan supplies only the ordering, which
+/// clap cannot express for the repeatable `-F` flag. The resulting stream is
+/// evaluated first-match-wins, mirroring how upstream options.c dispatches each
+/// option at its argv position.
+pub(crate) fn build_filter_order(matches: &ArgMatches, args: &[OsString]) -> Vec<FilterOrderToken> {
+    let mut excludes = value_queue(matches, "exclude");
+    let mut includes = value_queue(matches, "include");
+    let mut exclude_from = value_queue(matches, "exclude-from");
+    let mut include_from = value_queue(matches, "include-from");
+    let mut filters = value_queue(matches, "filter");
+
+    let mut tokens = Vec::new();
+    let mut f_occurrence = 0usize;
     let mut after_double_dash = false;
-    let mut expect_filter_value = false;
+    let mut expect_value = false;
 
-    for (index, arg) in args.iter().enumerate().skip(1) {
+    for arg in args.iter().skip(1) {
         if after_double_dash {
+            break;
+        }
+        if expect_value {
+            expect_value = false;
             continue;
         }
 
-        if expect_filter_value {
-            expect_filter_value = false;
-            continue;
-        }
+        // Option names are ASCII; only values (which are skipped via
+        // `expect_value` or the inline `=VALUE`) can be non-UTF-8, so a lossy
+        // conversion is safe for recognizing which option a token is.
+        let text = arg.to_string_lossy();
 
-        if arg == "--" {
+        if text == "--" {
             after_double_dash = true;
             continue;
         }
 
-        if arg == "--filter" || arg == "-f" {
-            filter_indices.push(index);
-            expect_filter_value = true;
+        if let Some(token) = long_value_option(&text, &mut excludes, &mut includes)
+            .or_else(|| long_from_option(&text, &mut exclude_from, &mut include_from))
+        {
+            expect_value = true;
+            if let Some(token) = token {
+                tokens.push(token);
+            }
             continue;
         }
 
-        let value = arg.to_string_lossy();
-
-        if value.starts_with("--filter=") {
-            filter_indices.push(index);
+        if text == "--filter" || text == "-f" {
+            expect_value = true;
+            if let Some(value) = filters.pop_front() {
+                tokens.push(FilterOrderToken::Filter(value));
+            }
             continue;
         }
 
-        if value.starts_with('-') && !value.starts_with("--") && value.len() > 1 {
-            for ch in value[1..].chars() {
-                if ch == 'F' {
-                    rsync_filter_indices.push(index);
+        if let Some(token) = long_inline_option(&text, &mut excludes, &mut includes)
+            .or_else(|| inline_from_option(&text, &mut exclude_from, &mut include_from))
+            .or_else(|| inline_filter_option(&text, &mut filters))
+        {
+            if let Some(token) = token {
+                tokens.push(token);
+            }
+            continue;
+        }
+
+        if text == "--cvs-exclude" {
+            tokens.push(FilterOrderToken::CvsExclude);
+            continue;
+        }
+        if text == "--apple-double-skip" {
+            tokens.push(FilterOrderToken::AppleDoubleSkip);
+            continue;
+        }
+
+        // Short-option cluster: `-F` and `-C` may ride alongside other flags.
+        // upstream: options.c:1589-1598 - each `-F` expands to a filter
+        // directive (first: dir-merge, second: exclude) at its argv position.
+        if text.starts_with('-') && !text.starts_with("--") && text.len() > 1 {
+            for ch in text[1..].chars() {
+                match ch {
+                    'F' => {
+                        if let Some(directive) = rsync_filter_shortcut_directive(f_occurrence) {
+                            tokens.push(FilterOrderToken::Filter(directive));
+                        }
+                        f_occurrence += 1;
+                    }
+                    'C' => tokens.push(FilterOrderToken::CvsExclude),
+                    _ => {}
                 }
             }
         }
     }
 
-    (filter_indices, rsync_filter_indices)
+    tokens
 }
 
-pub(crate) fn collect_filter_arguments(
-    filters: &[OsString],
-    filter_indices: &[usize],
-    rsync_filter_indices: &[usize],
-) -> Vec<OsString> {
-    if rsync_filter_indices.is_empty() {
-        return filters.to_vec();
-    }
-
-    let mut raw_queue: VecDeque<(usize, &OsString)> =
-        filter_indices.iter().copied().zip(filters.iter()).collect();
-    let mut alias_queue: VecDeque<(usize, usize)> = rsync_filter_indices
-        .iter()
-        .copied()
-        .enumerate()
-        .map(|(occurrence, position)| (position, occurrence))
-        .collect();
-    let mut merged = Vec::with_capacity(raw_queue.len() + alias_queue.len() * 2);
-
-    while !raw_queue.is_empty() || !alias_queue.is_empty() {
-        match (raw_queue.front(), alias_queue.front()) {
-            (Some((raw_index, _)), Some((alias_index, _))) => {
-                if alias_index <= raw_index {
-                    let (_, occurrence) = alias_queue.pop_front().unwrap();
-                    push_rsync_filter_shortcut(&mut merged, occurrence);
-                } else {
-                    let (_, value) = raw_queue.pop_front().unwrap();
-                    merged.push(value.clone());
-                }
-            }
-            (Some(_), None) => {
-                let (_, value) = raw_queue.pop_front().unwrap();
-                merged.push(value.clone());
-            }
-            (None, Some(_)) => {
-                let (_, occurrence) = alias_queue.pop_front().unwrap();
-                push_rsync_filter_shortcut(&mut merged, occurrence);
-            }
-            (None, None) => break,
-        }
-    }
-
-    merged
+/// Collects a value-bearing option's parsed values in argv order.
+fn value_queue(matches: &ArgMatches, id: &str) -> VecDeque<OsString> {
+    matches
+        .get_many::<OsString>(id)
+        .map(|values| values.cloned().collect())
+        .unwrap_or_default()
 }
 
-/// Pushes filter rules for the `-F` shortcut flag.
+/// Recognizes `--exclude`/`--include` (value in the following token).
+fn long_value_option(
+    text: &str,
+    excludes: &mut VecDeque<OsString>,
+    includes: &mut VecDeque<OsString>,
+) -> Option<Option<FilterOrderToken>> {
+    match text {
+        "--exclude" => Some(excludes.pop_front().map(FilterOrderToken::Exclude)),
+        "--include" => Some(includes.pop_front().map(FilterOrderToken::Include)),
+        _ => None,
+    }
+}
+
+/// Recognizes `--exclude-from`/`--include-from` (value in the following token).
+fn long_from_option(
+    text: &str,
+    exclude_from: &mut VecDeque<OsString>,
+    include_from: &mut VecDeque<OsString>,
+) -> Option<Option<FilterOrderToken>> {
+    match text {
+        "--exclude-from" => Some(exclude_from.pop_front().map(FilterOrderToken::ExcludeFrom)),
+        "--include-from" => Some(include_from.pop_front().map(FilterOrderToken::IncludeFrom)),
+        _ => None,
+    }
+}
+
+/// Recognizes `--exclude=VALUE`/`--include=VALUE` (inline value).
+fn long_inline_option(
+    text: &str,
+    excludes: &mut VecDeque<OsString>,
+    includes: &mut VecDeque<OsString>,
+) -> Option<Option<FilterOrderToken>> {
+    if text.starts_with("--exclude=") {
+        Some(excludes.pop_front().map(FilterOrderToken::Exclude))
+    } else if text.starts_with("--include=") {
+        Some(includes.pop_front().map(FilterOrderToken::Include))
+    } else {
+        None
+    }
+}
+
+/// Recognizes `--exclude-from=VALUE`/`--include-from=VALUE` (inline value).
+fn inline_from_option(
+    text: &str,
+    exclude_from: &mut VecDeque<OsString>,
+    include_from: &mut VecDeque<OsString>,
+) -> Option<Option<FilterOrderToken>> {
+    if text.starts_with("--exclude-from=") {
+        Some(exclude_from.pop_front().map(FilterOrderToken::ExcludeFrom))
+    } else if text.starts_with("--include-from=") {
+        Some(include_from.pop_front().map(FilterOrderToken::IncludeFrom))
+    } else {
+        None
+    }
+}
+
+/// Recognizes `--filter=VALUE` (inline value).
+fn inline_filter_option(
+    text: &str,
+    filters: &mut VecDeque<OsString>,
+) -> Option<Option<FilterOrderToken>> {
+    text.starts_with("--filter=")
+        .then(|| filters.pop_front().map(FilterOrderToken::Filter))
+}
+
+/// Maps an `-F` occurrence to the filter directive it expands to.
 ///
-/// upstream: options.c:1589-1598 - first `-F` adds `: /.rsync-filter`
-/// (dir-merge), second `-F` adds `- .rsync-filter` (exclude). Third+
+/// upstream: options.c:1589-1598 - the first `-F` adds `: /.rsync-filter`
+/// (dir-merge), the second adds `- .rsync-filter` (exclude); third and later
 /// occurrences are ignored.
-fn push_rsync_filter_shortcut(target: &mut Vec<OsString>, occurrence: usize) {
+fn rsync_filter_shortcut_directive(occurrence: usize) -> Option<OsString> {
     match occurrence {
-        0 => target.push(OsString::from("dir-merge /.rsync-filter")),
-        1 => target.push(OsString::from("exclude .rsync-filter")),
-        _ => {}
+        0 => Some(OsString::from("dir-merge /.rsync-filter")),
+        1 => Some(OsString::from("exclude .rsync-filter")),
+        _ => None,
     }
 }
 
@@ -109,133 +219,16 @@ fn push_rsync_filter_shortcut(target: &mut Vec<OsString>, occurrence: usize) {
 mod tests {
     use super::*;
 
-    fn os(s: &str) -> OsString {
-        OsString::from(s)
-    }
-
     #[test]
-    fn locate_filter_arguments_empty() {
-        let args: Vec<OsString> = vec![os("rsync")];
-        let (filter_indices, rsync_filter_indices) = locate_filter_arguments(&args);
-        assert!(filter_indices.is_empty());
-        assert!(rsync_filter_indices.is_empty());
-    }
-
-    #[test]
-    fn locate_filter_arguments_finds_filter() {
-        let args = vec![os("rsync"), os("--filter"), os("- *.bak")];
-        let (filter_indices, rsync_filter_indices) = locate_filter_arguments(&args);
-        assert_eq!(filter_indices, vec![1]);
-        assert!(rsync_filter_indices.is_empty());
-    }
-
-    #[test]
-    fn locate_filter_arguments_finds_filter_equals() {
-        let args = vec![os("rsync"), os("--filter=- *.bak")];
-        let (filter_indices, _) = locate_filter_arguments(&args);
-        assert_eq!(filter_indices, vec![1]);
-    }
-
-    #[test]
-    fn locate_filter_arguments_finds_short_f() {
-        let args = vec![os("rsync"), os("-avF")];
-        let (filter_indices, rsync_filter_indices) = locate_filter_arguments(&args);
-        assert!(filter_indices.is_empty());
-        assert_eq!(rsync_filter_indices, vec![1]);
-    }
-
-    #[test]
-    fn locate_filter_arguments_multiple_f() {
-        let args = vec![os("rsync"), os("-F"), os("-F")];
-        let (_, rsync_filter_indices) = locate_filter_arguments(&args);
-        assert_eq!(rsync_filter_indices, vec![1, 2]);
-    }
-
-    #[test]
-    fn locate_filter_arguments_stops_at_double_dash() {
-        let args = vec![os("rsync"), os("--"), os("--filter"), os("pattern")];
-        let (filter_indices, _) = locate_filter_arguments(&args);
-        assert!(filter_indices.is_empty());
-    }
-
-    #[test]
-    fn locate_filter_arguments_mixed() {
-        let args = vec![
-            os("rsync"),
-            os("-avF"),
-            os("--filter"),
-            os("- *.tmp"),
-            os("-F"),
-        ];
-        let (filter_indices, rsync_filter_indices) = locate_filter_arguments(&args);
-        assert_eq!(filter_indices, vec![2]);
-        assert_eq!(rsync_filter_indices, vec![1, 4]);
-    }
-
-    #[test]
-    fn collect_filter_arguments_no_aliases() {
-        let filters = vec![os("- *.bak"), os("+ *.txt")];
-        let filter_indices = vec![1, 2];
-        let rsync_filter_indices: Vec<usize> = vec![];
-        let result = collect_filter_arguments(&filters, &filter_indices, &rsync_filter_indices);
-        assert_eq!(result, filters);
-    }
-
-    #[test]
-    fn collect_filter_arguments_first_f_alias() {
-        let filters: Vec<OsString> = vec![];
-        let filter_indices: Vec<usize> = vec![];
-        let rsync_filter_indices = vec![1];
-        let result = collect_filter_arguments(&filters, &filter_indices, &rsync_filter_indices);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0], os("dir-merge /.rsync-filter"));
-    }
-
-    #[test]
-    fn collect_filter_arguments_second_f_alias() {
-        // upstream: options.c:1589-1598 - first -F adds dir-merge, second adds exclude
-        let filters: Vec<OsString> = vec![];
-        let filter_indices: Vec<usize> = vec![];
-        let rsync_filter_indices = vec![1, 2];
-        let result = collect_filter_arguments(&filters, &filter_indices, &rsync_filter_indices);
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0], os("dir-merge /.rsync-filter"));
-        assert_eq!(result[1], os("exclude .rsync-filter"));
-    }
-
-    #[test]
-    fn collect_filter_arguments_interleaved() {
-        let filters = vec![os("- *.bak")];
-        let filter_indices = vec![3];
-        let rsync_filter_indices = vec![1];
-        let result = collect_filter_arguments(&filters, &filter_indices, &rsync_filter_indices);
-        // -F at position 1 comes before --filter at position 3
-        assert_eq!(result.len(), 2);
-        assert_eq!(result[0], os("dir-merge /.rsync-filter"));
-        assert_eq!(result[1], os("- *.bak"));
-    }
-
-    #[test]
-    fn push_rsync_filter_shortcut_first() {
-        let mut target = Vec::new();
-        push_rsync_filter_shortcut(&mut target, 0);
-        assert_eq!(target.len(), 1);
-        assert_eq!(target[0], os("dir-merge /.rsync-filter"));
-    }
-
-    #[test]
-    fn push_rsync_filter_shortcut_second() {
-        let mut target = Vec::new();
-        push_rsync_filter_shortcut(&mut target, 1);
-        assert_eq!(target.len(), 1);
-        assert_eq!(target[0], os("exclude .rsync-filter"));
-    }
-
-    #[test]
-    fn push_rsync_filter_shortcut_third_ignored() {
-        // upstream: options.c:1589 - only first two -F flags have effect
-        let mut target = Vec::new();
-        push_rsync_filter_shortcut(&mut target, 2);
-        assert!(target.is_empty());
+    fn rsync_filter_shortcut_directive_maps_first_two_occurrences() {
+        assert_eq!(
+            rsync_filter_shortcut_directive(0),
+            Some(OsString::from("dir-merge /.rsync-filter"))
+        );
+        assert_eq!(
+            rsync_filter_shortcut_directive(1),
+            Some(OsString::from("exclude .rsync-filter"))
+        );
+        assert_eq!(rsync_filter_shortcut_directive(2), None);
     }
 }
