@@ -205,6 +205,40 @@ pub(crate) struct CopyComparison<'a> {
     pub(crate) prefetched_match: Option<bool>,
 }
 
+/// Returns `true` when a `--fake-super` source placeholder and its
+/// destination describe different device/special nodes.
+///
+/// Under `--fake-super` a device/FIFO/socket is stored as a regular
+/// placeholder whose `user.rsync.%stat` xattr carries the real mode and rdev.
+/// The placeholder contents (and hence size/mtime) can be identical while the
+/// encoded device numbers differ, so upstream's `unchanged_file()` compares
+/// the virtualised `st_mode`/`st_rdev` rather than the on-disk file. This
+/// helper reproduces that comparison so the quick-check and itemize columns
+/// react to an rdev/type change. Regular `%stat` shims fall back to the normal
+/// size+time check by returning `false`.
+///
+/// # Upstream Reference
+///
+/// - `generator.c:unchanged_file()` - compares `st_rdev` for `IS_DEVICE`.
+/// - `xattrs.c:1135 get_stat_xattr()` - source of the virtualised stat.
+#[cfg(all(unix, feature = "xattr"))]
+pub(crate) fn fake_super_stat_differs(source: &Path, destination: &Path) -> bool {
+    let Ok(Some(src)) = ::metadata::load_fake_super(source) else {
+        return false;
+    };
+    // Only devices and special files use the rdev/type comparison; a regular
+    // (or type-less) placeholder keeps the standard size+time quick-check.
+    let src_ifmt = src.mode & 0o170000;
+    if src_ifmt == 0 || src_ifmt == 0o100000 {
+        return false;
+    }
+    match ::metadata::load_fake_super(destination) {
+        Ok(Some(dst)) => src.mode != dst.mode || src.rdev != dst.rdev,
+        // A destination lacking the shim cannot match the encoded node.
+        _ => true,
+    }
+}
+
 /// Determines whether a file copy should be skipped.
 ///
 /// Returns `true` if the destination file is already in sync with the source

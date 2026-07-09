@@ -164,11 +164,23 @@ fn verify_secret_response(
         None => return Ok(false),
     };
 
-    if module.strict_modes {
-        check_secrets_file_permissions(secrets_path)?;
+    // upstream: authenticate.c:119-131 check_secret() - a strict-modes
+    // violation (other-accessible secrets, or non-root ownership when
+    // running as root) sets `ok = 0` and returns the "ignoring secrets file"
+    // error string; an unreadable secrets file returns "no secrets file".
+    // In every case auth_server() reports an auth failure and the client
+    // still receives `@ERROR: auth failed on module X`. check_secret() never
+    // aborts the connection. Treat these as a denial (Ok(false)) rather than
+    // propagating an io::Error, so the daemon emits the @ERROR line via
+    // send_auth_failed() instead of dropping the socket mid-handshake.
+    if module.strict_modes && check_secrets_file_permissions(secrets_path).is_err() {
+        return Ok(false);
     }
 
-    let contents = fs::read_to_string(secrets_path)?;
+    let contents = match fs::read_to_string(secrets_path) {
+        Ok(contents) => contents,
+        Err(_) => return Ok(false),
+    };
 
     for raw_line in contents.lines() {
         let line = raw_line.trim_end_matches('\r');

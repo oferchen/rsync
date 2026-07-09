@@ -130,7 +130,8 @@ pub(crate) fn copy_file(
 
     if context.existing_only_enabled() && existing_metadata.is_none() {
         context.summary_mut().record_regular_file_skipped_missing();
-        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+        let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
+            .virtualize_fake_super(source, metadata_options.fake_super_enabled());
         let total_bytes = Some(metadata_snapshot.len());
         context.record(LocalCopyRecord::new(
             record_path.clone(),
