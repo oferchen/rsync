@@ -52,6 +52,14 @@ impl ReceiverContext {
             count += 1;
         }
 
+        // upstream: flist.c:757-759 recv_file_entry() - a filename that cannot
+        // be strictly transcoded under --iconv sets io_error |= IOERR_GENERAL on
+        // the receiver. Fold the reader's accumulated flag into the receiver's
+        // so the transfer exits 23, unless --ignore-errors suppresses it.
+        if !self.config.deletion.ignore_errors {
+            self.flist_io_error |= flist_reader.io_error();
+        }
+
         // upstream: flist.c:2726-2727 - recv_id_list() called when !inc_recurse
         let inc_recurse = self
             .compat_flags
