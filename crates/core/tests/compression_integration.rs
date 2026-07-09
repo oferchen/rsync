@@ -300,9 +300,13 @@ fn local_copy_emits_nstr_summaries_under_debug_nstr() {
         // Checksum summary always fires. oc's default strong checksum choice
         // (`Auto`) resolves to the strongest mutually negotiated checksum,
         // which for a modern local copy is xxh128 - matching upstream's
-        // negotiated `file_sum_nni` (checksum.c parse_checksum_choice).
+        // negotiated `file_sum_nni` (checksum.c parse_checksum_choice). No
+        // --checksum-choice was forced, so upstream's local child negotiates
+        // the algorithm and renders the " negotiated" qualifier (checksum.c:209).
         assert!(
-            messages.iter().any(|m| m == "Client checksum: xxh128"),
+            messages
+                .iter()
+                .any(|m| m == "Client negotiated checksum: xxh128"),
             "expected NSTR checksum summary for local copy: {messages:?}"
         );
         // Compress fires because -z is active. upstream calls
@@ -320,7 +324,7 @@ fn local_copy_emits_nstr_summaries_under_debug_nstr() {
             CompressionAlgorithm::Lz4 => 0,
         };
         let expected = format!(
-            "Client compress: {} (level {default_level})",
+            "Client negotiated compress: {} (level {default_level})",
             default_algo.name(),
         );
         assert!(
@@ -361,7 +365,7 @@ fn local_copy_nstr_compress_summary_renders_explicit_level() {
         assert!(
             messages
                 .iter()
-                .any(|m| m.starts_with("Client compress: ") && m.ends_with("(level 9)")),
+                .any(|m| m.starts_with("Client negotiated compress: ") && m.ends_with("(level 9)")),
             "expected compress summary to render level 9: {messages:?}"
         );
     });

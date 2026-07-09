@@ -370,8 +370,10 @@ fn test_negotiate_nstr_summary_omits_negotiated_when_forced() {
     let _ = drain_events();
 
     let protocol = ProtocolVersion::try_from(32).unwrap();
-    // Peer advertises md5 so the forced choice succeeds.
-    let client_response = b"\x03md5\x04zlib";
+    // With --checksum-choice forced, no checksum vstring is exchanged
+    // (upstream compat.c:541 skips send, compat.c:547 skips recv). The peer
+    // sends only the compression vstring.
+    let client_response = b"\x04zlib";
     let mut stdin = &client_response[..];
     let mut stdout = Vec::new();
 
@@ -416,6 +418,48 @@ fn test_negotiate_nstr_summary_omits_negotiated_when_forced() {
             .iter()
             .any(|m| m == "Client negotiated checksum: md5"),
         "forced-choice summary must not include ' negotiated': {messages:?}"
+    );
+}
+
+/// Confirms an explicit `--checksum-choice=xxh128` override forces the
+/// negotiated checksum to xxh128 regardless of automatic list selection.
+/// upstream: checksum.c:178-184 - when `checksum_choice` is set,
+/// `parse_checksum_choice` resolves the algorithm directly from the name
+/// instead of `valid_checksums.negotiated_nni`.
+#[test]
+fn test_checksum_override_forces_chosen_algorithm() {
+    let protocol = ProtocolVersion::try_from(32).unwrap();
+    // A forced checksum skips the checksum vstring exchange entirely
+    // (upstream compat.c:541/547). With compression also off, nothing is read
+    // from the peer, so `stdin` is empty and `stdout` must carry no checksum
+    // vstring.
+    let mut stdin = &b""[..];
+    let mut stdout = Vec::new();
+
+    let result = negotiate_capabilities_with_override(
+        protocol,
+        &mut stdin,
+        &mut stdout,
+        &NegotiationConfig {
+            do_negotiation: true,
+            send_compression: false,
+            is_daemon_mode: false,
+            is_server: false,
+            checksum_override: Some(ChecksumAlgorithm::XXH128),
+            compression_override: None,
+            compression_level: crate::nstr::CLVL_NOT_SPECIFIED,
+        },
+    )
+    .unwrap();
+
+    assert_eq!(
+        result.checksum,
+        ChecksumAlgorithm::XXH128,
+        "checksum_override=xxh128 must force the chosen algorithm"
+    );
+    assert!(
+        stdout.is_empty(),
+        "a forced checksum must not send a checksum vstring: {stdout:?}"
     );
 }
 

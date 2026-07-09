@@ -264,16 +264,20 @@ pub fn negotiate_capabilities_with_override(
         NstrSide::Client
     };
 
-    // Send our supported algorithm lists. upstream: compat.c:541-544
-    // When --checksum-choice overrides the selection, advertise only that
-    // algorithm (upstream options.c replaces valid_checksums with the user's
-    // choice so negotiate_the_strings sees a single-entry list).
-    let checksum_list = match checksum_override {
-        Some(algo) => algo.as_str().to_owned(),
-        None => advertised_list(SUPPORTED_CHECKSUMS.iter().copied(), is_server),
-    };
-    trace_send_list(side, NstrCategory::Checksum, &checksum_list);
-    write_vstring(stdout, &checksum_list)?;
+    // Send our supported algorithm lists. upstream: compat.c:541-544 - the
+    // checksum vstring is sent only when `!checksum_choice`. When
+    // --checksum-choice forces the algorithm, the exchange is skipped
+    // entirely: `send_negotiate_str` is not called, so `valid_checksums.saw`
+    // stays NULL and the matching recv (compat.c:547) is also skipped. The
+    // peer forwards the same --checksum-choice, so both sides skip
+    // symmetrically. Sending a single-entry list here would desync against an
+    // upstream peer that sends nothing.
+    let send_checksum = checksum_override.is_none();
+    if send_checksum {
+        let checksum_list = advertised_list(SUPPORTED_CHECKSUMS.iter().copied(), is_server);
+        trace_send_list(side, NstrCategory::Checksum, &checksum_list);
+        write_vstring(stdout, &checksum_list)?;
+    }
 
     if send_compression {
         let compression_list = advertised_list(supported_compressions(), is_server);
@@ -283,10 +287,17 @@ pub fn negotiate_capabilities_with_override(
 
     stdout.flush()?;
 
-    // Read the remote side's algorithm lists. upstream: compat.c:373-378
+    // Read the remote side's algorithm lists. upstream: compat.c:547 - the
+    // checksum recv is gated on `valid_checksums.saw`, which is only set by the
+    // send above, so it mirrors the send gating exactly. compat.c:373-378
     // recv_negotiate_str emits "<remote> <type> list (on <local>): <list>".
-    let remote_checksum_list = read_vstring(stdin)?;
-    trace_recv_list(side, NstrCategory::Checksum, &remote_checksum_list);
+    let remote_checksum_list = if send_checksum {
+        let list = read_vstring(stdin)?;
+        trace_recv_list(side, NstrCategory::Checksum, &list);
+        Some(list)
+    } else {
+        None
+    };
 
     let remote_compression_list = if send_compression {
         let list = read_vstring(stdin)?;
@@ -304,26 +315,15 @@ pub fn negotiate_capabilities_with_override(
     // Client iterates local list, picks first item also in server's list (remote).
     // Both sides converge on the same result: first client item in server's list.
     //
-    // When the user forced a checksum via --checksum-choice, verify the remote
-    // advertises it and use it unconditionally.
+    // When the user forced a checksum via --checksum-choice, upstream's
+    // parse_checksum_choice resolves the name directly (checksum.c:178-184) with
+    // no wire exchange, so use it unconditionally.
     let checksum = match checksum_override {
-        Some(forced) => {
-            let forced_name = forced.as_str();
-            if remote_checksum_list
-                .split_whitespace()
-                .any(|name| name == forced_name)
-            {
-                forced
-            } else {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "--checksum-choice '{forced_name}' is not supported by the remote side (remote offers: {remote_checksum_list})"
-                    ),
-                ));
-            }
+        Some(forced) => forced,
+        None => {
+            let list = remote_checksum_list.as_deref().unwrap_or("");
+            choose_checksum_algorithm(list, is_server)?
         }
-        None => choose_checksum_algorithm(&remote_checksum_list, is_server)?,
     };
 
     // upstream: compat.c:819 parse_compress_choice(1) - when the user

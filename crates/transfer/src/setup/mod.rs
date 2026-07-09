@@ -148,7 +148,11 @@ pub fn setup_protocol_with<'a>(
                     send_compression,
                     is_daemon_mode: config.is_daemon_mode,
                     is_server: config.is_server,
-                    checksum_override: None,
+                    // upstream: compat.c:819 parse_checksum_choice(1) - an
+                    // explicit --checksum-choice=ALGO forces the algorithm and
+                    // skips the checksum vstring exchange (compat.c:541). Mirror
+                    // the compress_choice threading directly above.
+                    checksum_override: config.checksum_choice,
                     compression_override: config.compress_choice,
                     compression_level: config.compression_level,
                 },
