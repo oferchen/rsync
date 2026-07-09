@@ -465,7 +465,7 @@ impl SenderAttrs {
     /// Reads the receiver's per-file sender-response header
     /// (NDX + iflags + optional basis-type / xname / xattr-abbreviation data)
     /// off an [`AsyncRead`](tokio::io::AsyncRead), driving the same
-    /// [`NdxCodecEnum::read_ndx_async`] and [`read_varint_async`] leaves plus
+    /// `NdxCodecEnum::read_ndx_async` and `read_varint_async` leaves plus
     /// the shared sans-io decode helpers ([`parse_fnamecmp_type`],
     /// [`xname_len_from_bytes`], [`check_xname_len`], [`want_xattr_read`]) as
     /// the sync leaf. For the same wire bytes it yields the same
@@ -750,7 +750,7 @@ fn check_xattr_datum_len(raw_len: i32) -> io::Result<usize> {
 ///
 /// Reads the identical `(rel_pos, datum_len, value)` sequence (`.await`-driven)
 /// through the same shared bounds helpers ([`accumulate_xattr_num`],
-/// [`check_xattr_datum_len`]) and [`read_varint_async`], so it returns the same
+/// [`check_xattr_datum_len`]) and `read_varint_async`, so it returns the same
 /// `(num, value)` pairs and consumes the same bytes as the sync leaf. Gated on
 /// `tokio-transfer`.
 #[cfg(feature = "tokio-transfer")]
