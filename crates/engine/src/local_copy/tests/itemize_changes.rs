@@ -502,6 +502,114 @@ fn itemize_new_hard_link_follower_marked_created() {
     );
 }
 
+// upstream: hlink.c:match_gnums / generator.c:1803-1806 / hlink.c:474-521
+// finish_hard_link() - the LAST name-sorted member of a hard-link cohort is the
+// transferred data-holder; every earlier member is deferred and then linked to
+// the holder, so the itemize stream is `>f <last>` followed by the remaining
+// members in descending name order, each pointing at the holder
+// (`hf ... => <last>`). Regression guard: oc previously made the first-processed
+// (first name-sorted) member the data-holder and chained aliases to the most
+// recent one (`c => b`, `b => a`) instead of the star `b => c`, `a => c`.
+#[cfg(unix)]
+#[test]
+fn itemize_hard_link_data_holder_is_last_name_sorted_member() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let dest_dir = temp.path().join("dest");
+
+    fs::create_dir(&source_dir).expect("create source dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    // Three-member cohort {a, b, c} sharing one inode, created into an empty
+    // destination.
+    let a = source_dir.join("a");
+    let b = source_dir.join("b");
+    let c = source_dir.join("c");
+    fs::write(&a, b"shared content").expect("write a");
+    fs::hard_link(&a, &b).expect("hard link b -> a");
+    fs::hard_link(&a, &c).expect("hard link c -> a");
+
+    // A trailing slash on the source keeps the records at bare `a`/`b`/`c`
+    // instead of a `source/`-prefixed relative path.
+    let mut source_operand = source_dir.into_os_string();
+    source_operand.push("/");
+    let operands = vec![source_operand, dest_dir.into_os_string()];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .hard_links(true)
+        .collect_events(true);
+    let report = plan
+        .execute_with_report(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let records = report.records();
+
+    let base = |r: &LocalCopyRecord| -> String {
+        r.relative_path()
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("utf8 basename")
+            .to_string()
+    };
+
+    // The data-holder is the last name-sorted member `c`, itemized as a new
+    // data copy (`>f+++++++++`).
+    let holder = records
+        .iter()
+        .find(|r| r.action() == &LocalCopyAction::DataCopied)
+        .expect("data-holder record");
+    assert_eq!(
+        base(holder),
+        "c",
+        "data-holder must be the last name-sorted member"
+    );
+    assert!(holder.was_created(), "holder must itemize as created");
+
+    // The remaining members `b` and `a` are followers, both pointing at the
+    // holder `c` (a star, not a chain), and each itemized `hf+++++++++`.
+    let followers: Vec<&_> = records
+        .iter()
+        .filter(|r| r.action() == &LocalCopyAction::HardLink)
+        .collect();
+    assert_eq!(followers.len(), 2, "two hard-link followers expected");
+    for follower in &followers {
+        assert!(
+            matches!(base(follower).as_str(), "a" | "b"),
+            "unexpected follower name: {:?}",
+            follower.relative_path()
+        );
+        assert!(
+            follower.was_created(),
+            "new hard-link follower must itemize hf+++++++++"
+        );
+        let leader = follower
+            .metadata()
+            .and_then(|m| m.symlink_target())
+            .expect("follower carries a => holder trailer");
+        assert_eq!(
+            leader.file_name().and_then(|n| n.to_str()),
+            Some("c"),
+            "every follower must point at the data-holder `c`, not a chained alias"
+        );
+    }
+
+    // Emission order mirrors upstream: holder first, then followers in
+    // descending name order (`c`, `b`, `a`).
+    let order: Vec<String> = records
+        .iter()
+        .filter(|r| {
+            matches!(
+                r.action(),
+                LocalCopyAction::DataCopied | LocalCopyAction::HardLink
+            )
+        })
+        .map(base)
+        .collect();
+    assert_eq!(order, ["c", "b", "a"], "holder-then-descending order");
+}
+
 // upstream: hlink.c:385-414 hard_link_check() + generator.c:995-1052
 // try_dests_reg() - when a hard-link follower's destination is absent but its
 // name matches a --copy-dest basis (quick_check_ok), statret is bumped from < 0
