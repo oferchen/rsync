@@ -542,17 +542,27 @@ pub(super) fn process_links(
             change_set =
                 change_set.with_time_change(Some(crate::local_copy::TimeChange::TransferTime));
         }
-        context.record(
-            LocalCopyRecord::new(
-                record_path.to_path_buf(),
-                LocalCopyAction::HardLink,
-                0,
-                total_bytes,
-                Duration::default(),
-                Some(metadata_snapshot),
-            )
-            .with_change_set(change_set),
-        );
+        let mut record = LocalCopyRecord::new(
+            record_path.to_path_buf(),
+            LocalCopyAction::HardLink,
+            0,
+            total_bytes,
+            Duration::default(),
+            Some(metadata_snapshot),
+        )
+        .with_change_set(change_set);
+        // upstream: hlink.c:228-234 maybe_hard_link() - a freshly linked
+        // follower is itemized through atomic_create() with the follower's
+        // *own* statret, which is < 0 when its destination did not yet exist.
+        // log.c:736-738 then sets ITEM_IS_NEW, filling attribute slots 2-10
+        // with '+' so the row renders `hf+++++++++`. The already-shared-inode
+        // (uptodate) alias is handled by the `is_already_hardlinked` branch
+        // above and stays blank, so only a genuinely new follower is marked
+        // created here.
+        if !destination_previously_existed {
+            record = record.with_creation(true);
+        }
+        context.record(record);
         context.register_created_path(
             destination,
             CreatedEntryKind::HardLink,

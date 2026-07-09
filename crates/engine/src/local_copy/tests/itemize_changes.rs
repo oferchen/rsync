@@ -445,6 +445,63 @@ fn itemize_hard_link_shows_correct_action() {
     assert!(hard_link_record.is_some(), "should have hard link record");
 }
 
+// upstream: hlink.c:228-234 maybe_hard_link() + log.c:736-738 - a hard-link
+// follower whose destination does not yet exist is itemized through
+// atomic_create() with the follower's own negative statret, which sets
+// ITEM_IS_NEW and renders `hf+++++++++`. Regression guard for the follower
+// that previously collapsed to blank attribute slots when created into an
+// empty destination.
+#[cfg(unix)]
+#[test]
+fn itemize_new_hard_link_follower_marked_created() {
+    let temp = tempdir().expect("tempdir");
+    let source_dir = temp.path().join("source");
+    let dest_dir = temp.path().join("dest");
+
+    fs::create_dir(&source_dir).expect("create source dir");
+    fs::create_dir(&dest_dir).expect("create dest dir");
+
+    let file1 = source_dir.join("a");
+    let file2 = source_dir.join("b");
+    fs::write(&file1, b"linked content").expect("write a");
+    fs::hard_link(&file1, &file2).expect("hard link b -> a");
+
+    let operands = vec![
+        source_dir.into_os_string(),
+        dest_dir.into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+
+    let options = LocalCopyOptions::default()
+        .recursive(true)
+        .hard_links(true)
+        .collect_events(true);
+    let report = plan
+        .execute_with_report(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let records = report.records();
+
+    // The data-holder leader is a genuinely new file (`>f+++++++++`).
+    let leader = records
+        .iter()
+        .find(|r| r.action() == &LocalCopyAction::DataCopied)
+        .expect("leader data-copy record");
+    assert!(leader.was_created(), "leader must itemize as created");
+
+    // The follower is hard-linked into a previously empty destination, so
+    // its own destination did not exist: upstream marks ITEM_IS_NEW and it
+    // must render `hf+++++++++`, not a blank attribute run.
+    let follower = records
+        .iter()
+        .find(|r| r.action() == &LocalCopyAction::HardLink)
+        .expect("follower hard-link record");
+    assert!(
+        follower.was_created(),
+        "new hard-link follower must be marked created so it itemizes hf+++++++++"
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn itemize_size_change_detected_correctly() {
