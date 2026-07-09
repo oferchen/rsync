@@ -145,7 +145,7 @@ impl<'a> CopyContext<'a> {
             io_error_delete_warning_emitted: false,
             iconv_conversion_error: false,
             multi_source: false,
-            verified_parents: HashSet::new(),
+            verified_parents: HashMap::new(),
             batch_flist_writer,
             batch_delta_buf,
             batch_delta_entries: Vec::new(),
