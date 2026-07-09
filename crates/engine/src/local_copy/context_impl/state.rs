@@ -143,6 +143,7 @@ impl<'a> CopyContext<'a> {
             checksum_cache: None,
             io_errors_occurred: false,
             io_error_delete_warning_emitted: false,
+            iconv_conversion_error: false,
             multi_source: false,
             verified_parents: HashSet::new(),
             batch_flist_writer,
@@ -1047,6 +1048,23 @@ impl<'a> CopyContext<'a> {
     /// deletion operations are suppressed to prevent data loss.
     pub(super) fn record_io_error(&mut self) {
         self.io_errors_occurred = true;
+    }
+
+    /// Records that an `--iconv` filename could not be strictly transcoded and
+    /// its entry was skipped.
+    ///
+    /// Also suppresses deletions like any other general I/O error, matching
+    /// upstream where `io_error |= IOERR_GENERAL` gates the delete pass.
+    // upstream: flist.c:1631 send_file1() sets io_error |= IOERR_GENERAL.
+    pub(super) fn record_iconv_conversion_error(&mut self) {
+        self.iconv_conversion_error = true;
+        self.io_errors_occurred = true;
+    }
+
+    /// Reports whether any `--iconv` filename conversion was skipped, so the
+    /// transfer can finish with exit code 23 (`RERR_PARTIAL`).
+    pub(super) const fn iconv_conversion_error_occurred(&self) -> bool {
+        self.iconv_conversion_error
     }
 
     /// Reports whether deletions should proceed despite I/O errors.

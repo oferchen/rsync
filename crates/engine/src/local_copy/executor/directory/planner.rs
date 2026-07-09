@@ -16,7 +16,10 @@ use crate::local_copy::{
     follow_symlink_metadata,
 };
 
-use super::super::{non_empty_path, symlink_target_is_safe, transcode_filename_component};
+use super::super::{
+    emit_cannot_convert_filename, name_is_convertible, non_empty_path, symlink_target_is_safe,
+    transcode_filename_component,
+};
 use super::support::{DirectoryEntry, is_device, is_fifo};
 
 /// Action to take for a directory entry during recursive copy.
@@ -249,6 +252,21 @@ pub(crate) fn plan_directory_entries<'a>(
         } else {
             PathBuf::from(Path::new(&file_name))
         };
+
+        // upstream: flist.c:1614-1638 send_file1() - a name that cannot be
+        // strictly transcoded under --iconv is dropped from the flist with a
+        // diagnostic and io_error |= IOERR_GENERAL. Detecting it during planning
+        // sets io_error before this directory's delete pass runs, so deletions
+        // are suppressed exactly as upstream's build-then-generate order does;
+        // the entry never enters the plan (no copy, no keep-name, no ndx).
+        if !name_is_convertible(file_name.as_os_str(), context.options().iconv()) {
+            emit_cannot_convert_filename(relative_path.as_os_str());
+            context.record_iconv_conversion_error();
+            if let Some(buf) = &mut relative_buf {
+                buf.pop();
+            }
+            continue;
+        }
         context.record_file_list_entry(non_empty_path(relative_path.as_path()));
 
         let mut keep_name = true;
@@ -500,6 +518,21 @@ fn plan_directory_entries_with_prefetch<'a>(
         } else {
             PathBuf::from(Path::new(&file_name))
         };
+
+        // upstream: flist.c:1614-1638 send_file1() - a name that cannot be
+        // strictly transcoded under --iconv is dropped from the flist with a
+        // diagnostic and io_error |= IOERR_GENERAL. Detecting it during planning
+        // sets io_error before this directory's delete pass runs, so deletions
+        // are suppressed exactly as upstream's build-then-generate order does;
+        // the entry never enters the plan (no copy, no keep-name, no ndx).
+        if !name_is_convertible(file_name.as_os_str(), context.options().iconv()) {
+            emit_cannot_convert_filename(relative_path.as_os_str());
+            context.record_iconv_conversion_error();
+            if let Some(buf) = &mut relative_buf {
+                buf.pop();
+            }
+            continue;
+        }
         context.record_file_list_entry(non_empty_path(relative_path.as_path()));
 
         let mut keep_name = true;

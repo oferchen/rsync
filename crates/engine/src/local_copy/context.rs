@@ -141,6 +141,12 @@ pub(crate) struct CopyContext<'a> {
     /// general I/O error occurred without `--ignore-errors`.
     // upstream: generator.c:299 static int already_warned
     io_error_delete_warning_emitted: bool,
+    /// Set when an `--iconv` filename could not be strictly transcoded to the
+    /// remote charset and its entry was skipped. Drives the final
+    /// `RERR_PARTIAL` (exit 23) exit code, mirroring upstream's
+    /// `io_error |= IOERR_GENERAL` on a failed `iconvbufs(ic_send, ...)`.
+    // upstream: flist.c:1631 send_file1()
+    iconv_conversion_error: bool,
     /// `true` when the active plan carries more than one source operand.
     /// Used to switch `--delete-during` to a deferred sweep so the per-source
     /// keep lists can be merged before any extraneous unlink fires; upstream
