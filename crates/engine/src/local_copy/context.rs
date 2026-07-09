@@ -1,7 +1,7 @@
 //! Execution context and helper types for local filesystem copies.
 
 use std::cell::RefCell;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -51,6 +51,9 @@ use compress::zlib::CompressionLevel;
 use filters::FilterRule;
 use logging::info_log;
 use protocol::flist::FileListWriter;
+
+#[cfg(target_os = "linux")]
+use super::overrides::{cached_parent_device, same_filesystem};
 
 /// Aggregated result of a local copy operation, containing the transfer
 /// summary, optional per-file event records, and the destination root path.
@@ -152,10 +155,15 @@ pub(crate) struct CopyContext<'a> {
     /// keep lists can be merged before any extraneous unlink fires; upstream
     /// achieves the same result by sharing a single flist across sources.
     multi_source: bool,
-    /// Cache of parent directories whose existence has been verified.
-    /// Eliminates redundant `statx` syscalls when many files share the
-    /// same parent (e.g. 10K files in one directory → 1 stat instead of 10K).
-    verified_parents: HashSet<PathBuf>,
+    /// Cache of parent directories whose existence has been verified, mapping
+    /// each verified parent to its filesystem device id once resolved.
+    /// Eliminates redundant `statx` syscalls when many files share the same
+    /// parent (e.g. 10K files in one directory → 1 stat instead of 10K): the
+    /// existence check is skipped on cache hit, and the parent's device id -
+    /// invariant across sibling files - is memoized for the Linux FICLONE fast
+    /// path's same-filesystem gate. `None` means verified but device not yet
+    /// resolved.
+    verified_parents: HashMap<PathBuf, Option<u64>>,
     /// Protocol flist encoder for batch mode.
     ///
     /// When batch mode is active, file entries are encoded using the protocol
