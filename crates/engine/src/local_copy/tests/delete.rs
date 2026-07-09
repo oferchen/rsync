@@ -671,3 +671,105 @@ fn delete_during_deletes_directory_before_transferring_its_children() {
     );
 }
 
+
+#[test]
+fn delete_before_keeps_in_source_file() {
+    // upstream: generator.c:279-351 delete_in_dir() / do_delete_pass() - a
+    // destination entry is deleted only when flist_find_ignore_dirness() fails
+    // to find it in the source file list. --delete-before shares that keep
+    // decision with --delete-during/-after, so a file that exists in the
+    // source must survive the pre-transfer sweep and must not be re-sent.
+    // Regression for the pre-scan that deleted every not-yet-generated entry.
+    let ctx = test_helpers::setup_copy_test();
+    let target_root = ctx.dest.join("source");
+    fs::create_dir_all(&target_root).expect("create target root");
+
+    fs::write(ctx.source.join("keep"), b"same-content").expect("write source keep");
+    fs::write(target_root.join("keep"), b"same-content").expect("write dest keep");
+    fs::write(target_root.join("gone"), b"extraneous").expect("write extraneous");
+
+    // Equalize size + mtime so the generator's quick-check skips `keep`; the
+    // bug (delete then re-send) would recreate it and bump files_copied.
+    let mtime = FileTime::from_unix_time(1_000_000, 0);
+    set_file_mtime(ctx.source.join("keep"), mtime).expect("set source mtime");
+    set_file_mtime(target_root.join("keep"), mtime).expect("set dest mtime");
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().delete_before(true);
+
+    let summary = plan
+        .execute_with_options(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    assert!(
+        target_root.join("keep").exists(),
+        "in-source file must survive --delete-before"
+    );
+    assert_eq!(
+        fs::read(target_root.join("keep")).expect("read keep"),
+        b"same-content",
+        "in-source file must keep its content (not re-created)"
+    );
+    assert!(
+        !target_root.join("gone").exists(),
+        "extraneous file must be deleted"
+    );
+    assert_eq!(
+        summary.items_deleted(),
+        1,
+        "only the extraneous entry is deleted, not the in-source file"
+    );
+    assert_eq!(
+        summary.files_copied(),
+        0,
+        "the in-source file must not be re-transferred"
+    );
+}
+
+#[test]
+fn delete_during_itemizes_deletion_before_directory_row() {
+    // upstream: generator.c:1480-1535 - the generator itemizes a directory's
+    // extraneous `*deleting` rows before that directory's own `.d` itemize
+    // row. Assert the EntryDeleted record precedes the containing directory's
+    // MetadataReused row so `-ii` output matches upstream ordering.
+    let ctx = test_helpers::setup_copy_test();
+    let target_root = ctx.dest.join("source");
+    fs::create_dir_all(&target_root).expect("create target root");
+
+    fs::write(ctx.source.join("keep"), b"content").expect("write source keep");
+    fs::write(target_root.join("keep"), b"content").expect("write dest keep");
+    fs::write(target_root.join("gone"), b"extraneous").expect("write extraneous");
+
+    let operands = vec![
+        ctx.source.clone().into_os_string(),
+        ctx.dest.clone().into_os_string(),
+    ];
+    let plan = LocalCopyPlan::from_operands(&operands).expect("plan");
+    let options = LocalCopyOptions::default().delete_during().collect_events(true);
+
+    let report = plan
+        .execute_with_report(LocalCopyExecution::Apply, options)
+        .expect("copy succeeds");
+
+    let records = report.records();
+    let delete_index = records
+        .iter()
+        .position(|record| {
+            record.action() == &LocalCopyAction::EntryDeleted
+                && record.relative_path().ends_with("gone")
+        })
+        .expect("gone deletion must be recorded");
+    let dir_index = records
+        .iter()
+        .position(|record| record.action() == &LocalCopyAction::MetadataReused)
+        .expect("existing-directory itemize row must be recorded");
+    assert!(
+        delete_index < dir_index,
+        "the *deleting row must precede the containing directory's itemize row \
+         (delete idx {delete_index}, dir idx {dir_index})"
+    );
+}

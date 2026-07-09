@@ -99,22 +99,31 @@ pub(crate) fn copy_file(
     if let Some(existing) = existing_metadata.as_ref()
         && existing.file_type().is_dir()
     {
-        if context.force_replacements_enabled() {
+        // upstream: generator.c:1734-1739 recv_generator() - a regular file is
+        // arriving over a destination directory. Upstream calls
+        // delete_item(fname, mode, del_opts | DEL_FOR_FILE) to make room, with
+        // del_opts carrying DEL_RECURSE only under --delete/--force. So a
+        // conflicting destination directory is removed to make way for the file
+        // under those modes and the file is created in its place.
+        //
+        // Multi-source merges are the exception: flist.c:3067-3081
+        // flist_sort_and_clean() drops the colliding regular file and keeps the
+        // directory, so a file contributed by one source must never blow away a
+        // directory contributed by another. Guard the delete-mode removal on
+        // !multi_source to preserve that, keeping the explicit --force override.
+        let replace_conflicting_directory = context.force_replacements_enabled()
+            || (!context.multi_source() && context.options().delete_extraneous());
+        if replace_conflicting_directory {
             context.force_remove_destination(destination, relative, existing)?;
-            destination_previously_existed = true;
+            // The conflicting directory is gone, so the incoming file is created
+            // fresh: upstream sets statret = -1 after the make-room delete
+            // (generator.c:1737), so dest_mode() applies new-file permissions and
+            // the itemize row reports a creation (`>f+++++++++`) rather than an
+            // update against the removed directory.
+            destination_previously_existed = false;
             existing_metadata = None;
         } else {
-            // upstream: flist.c:3067-3081 flist_sort_and_clean() resolves
-            // duplicate entries by keeping the directory and dropping the
-            // colliding regular file. Multi-source merge
-            // (`rsync src1/ src2/ dest/`) relies on this: a file in one source
-            // must not blow away a directory contributed by another. Upstream's
-            // generator.c:1734 fallback also bails via `goto cleanup` when
-            // delete_item() refuses to recurse without --force or --delete*,
-            // leaving the existing directory in place. Mirror that here by
-            // silently skipping the conflicting file - no error, no destination
-            // mutation. The explicit `--force` branch above is retained for the
-            // documented override.
+            // Mirror upstream's goto cleanup: no error, no destination mutation.
             return Ok(true);
         }
     }
