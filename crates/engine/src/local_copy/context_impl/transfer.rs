@@ -1,21 +1,19 @@
 impl<'a> CopyContext<'a> {
-    /// Returns an `Interrupted` error once a shutdown signal has been received.
+    /// Returns an interrupt-signal error once a shutdown signal has been
+    /// received.
     ///
     /// Polled inside the per-chunk copy loops so a large single-file transfer
     /// stops promptly mid-file. Unwinding then runs the destination guard's
     /// finalisation (moving the temp onto its `--partial`/`--partial-dir`
     /// destination) in normal, non-signal context. upstream: receiver.c's
     /// per-block loop checks for a pending signal via `io_flush`/`check_timeout`.
-    fn check_shutdown(&self, path: &Path) -> Result<(), LocalCopyError> {
+    ///
+    /// The abort is reported as [`LocalCopyError::interrupted`] (exit code 20,
+    /// `RERR_SIGNAL`), not a per-file `RERR_PARTIAL`, so the single diagnostic
+    /// matches upstream's `received SIGINT, SIGTERM, or SIGHUP (code 20)` line.
+    fn check_shutdown(&self) -> Result<(), LocalCopyError> {
         if fast_io::signal::shutdown_requested() {
-            return Err(LocalCopyError::io(
-                "copy file",
-                path,
-                io::Error::new(
-                    io::ErrorKind::Interrupted,
-                    "transfer interrupted by signal",
-                ),
-            ));
+            return Err(LocalCopyError::interrupted());
         }
         Ok(())
     }
@@ -594,7 +592,7 @@ impl<'a> CopyContext<'a> {
             if total_bytes >= expected_remaining {
                 break;
             }
-            self.check_shutdown(destination)?;
+            self.check_shutdown()?;
             if bytes_since_timeout_check >= TIMEOUT_CHECK_INTERVAL {
                 self.enforce_timeout()?;
                 bytes_since_timeout_check = 0;
@@ -702,7 +700,7 @@ impl<'a> CopyContext<'a> {
             if total_bytes >= expected_remaining {
                 break;
             }
-            self.check_shutdown(destination)?;
+            self.check_shutdown()?;
             if bytes_since_timeout_check >= TIMEOUT_CHECK_INTERVAL {
                 self.enforce_timeout()?;
                 bytes_since_timeout_check = 0;

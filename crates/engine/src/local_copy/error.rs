@@ -5,8 +5,8 @@ use std::time::{Duration, SystemTime};
 use thiserror::Error;
 
 use super::filter_program::{
-    INVALID_OPERAND_EXIT_CODE, MAX_DELETE_EXIT_CODE, MISSING_OPERANDS_EXIT_CODE, TIMEOUT_EXIT_CODE,
-    VANISHED_EXIT_CODE,
+    INVALID_OPERAND_EXIT_CODE, MAX_DELETE_EXIT_CODE, MISSING_OPERANDS_EXIT_CODE, SIGNAL_EXIT_CODE,
+    TIMEOUT_EXIT_CODE, VANISHED_EXIT_CODE,
 };
 
 /// Formats an [`io::Error`] the way upstream rsync's `rsyserr()` does:
@@ -105,6 +105,21 @@ impl LocalCopyError {
         })
     }
 
+    /// Constructs an error representing an interrupt-signal abort (exit code
+    /// 20, `RERR_SIGNAL`).
+    ///
+    /// Raised when the per-chunk copy loop observes a pending SIGINT/SIGTERM/
+    /// SIGHUP and stops mid-file so the destination guard can finalise its
+    /// `--partial` file during normal unwinding.
+    ///
+    /// upstream: `rsync.c:sig_int()` calls `exit_cleanup(RERR_SIGNAL)`, which
+    /// `log.c:log_exit()` renders as `received SIGINT, SIGTERM, or SIGHUP`
+    /// (the fixed `rerr_names` entry for `RERR_SIGNAL`, log.c:95).
+    #[must_use]
+    pub const fn interrupted() -> Self {
+        Self::new(LocalCopyErrorKind::Interrupted)
+    }
+
     /// Constructs a partial-transfer error (exit code 23, `RERR_PARTIAL`).
     ///
     /// Raised at the end of a copy that skipped one or more entries without a
@@ -172,6 +187,7 @@ impl LocalCopyError {
             LocalCopyErrorKind::DeleteLimitExceeded { .. } => MAX_DELETE_EXIT_CODE,
             LocalCopyErrorKind::FilterSyntax { .. } => MISSING_OPERANDS_EXIT_CODE,
             LocalCopyErrorKind::PartialTransfer => INVALID_OPERAND_EXIT_CODE,
+            LocalCopyErrorKind::Interrupted => SIGNAL_EXIT_CODE,
         }
     }
 
@@ -197,6 +213,7 @@ impl LocalCopyError {
             LocalCopyErrorKind::DeleteLimitExceeded { .. } => "RERR_DEL_LIMIT",
             LocalCopyErrorKind::FilterSyntax { .. } => "RERR_SYNTAX",
             LocalCopyErrorKind::PartialTransfer => "RERR_PARTIAL",
+            LocalCopyErrorKind::Interrupted => "RERR_SIGNAL",
         }
     }
 
@@ -329,6 +346,14 @@ pub enum LocalCopyErrorKind {
     /// (see previous errors)` when `io_error` is set at exit.
     #[error("some files/attrs were not transferred (see previous errors)")]
     PartialTransfer,
+    /// The transfer was aborted by an interrupt signal (SIGINT/SIGTERM/SIGHUP),
+    /// exiting `RERR_SIGNAL` (20). The copy loop stopped mid-file so the
+    /// destination guard could finalise its `--partial` file.
+    ///
+    /// upstream: `log.c:95` maps `RERR_SIGNAL` to the fixed diagnostic
+    /// `received SIGINT, SIGTERM, or SIGHUP`, emitted once by `log.c:log_exit()`.
+    #[error("received SIGINT, SIGTERM, or SIGHUP")]
+    Interrupted,
 }
 
 impl LocalCopyErrorKind {
@@ -482,6 +507,20 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("read"));
         assert!(message.contains("/test/file.txt"));
+    }
+
+    #[test]
+    fn local_copy_error_interrupted_is_signal_exit() {
+        // upstream: rsync.c:sig_int -> exit_cleanup(RERR_SIGNAL) (20); the
+        // diagnostic is log.c:95's fixed `received SIGINT, SIGTERM, or SIGHUP`,
+        // not a per-file RERR_PARTIAL (23).
+        let error = LocalCopyError::interrupted();
+        assert_eq!(error.exit_code(), SIGNAL_EXIT_CODE);
+        assert_eq!(error.exit_code(), 20);
+        assert_eq!(error.code_name(), "RERR_SIGNAL");
+        assert_eq!(error.to_string(), "received SIGINT, SIGTERM, or SIGHUP");
+        assert!(matches!(error.kind(), LocalCopyErrorKind::Interrupted));
+        assert!(!error.is_io_error());
     }
 
     #[test]
