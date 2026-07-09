@@ -395,13 +395,16 @@ impl GeneratorContext {
         }
         // upstream: generator.c:582-583 - the gate is the OR of four
         // conditions. Significant flags is the common case; INFO_GTE(NAME, 2)
-        // makes `-vv` surface unchanged entries; ITEM_XNAME_FOLLOWS forces
-        // emission when an alternate basis name trails. `stdout_format_has_i
-        // > 1` is the `-ii` "show even unchanged" knob; oc-rsync does not
-        // distinguish single vs double `-i` yet, so that fourth condition is
-        // omitted here and the other three are honored.
-        let force_emit =
-            info_gte(InfoFlag::Name, 2) || iflags.raw() & ItemFlags::ITEM_XNAME_FOLLOWS != 0;
+        // makes `-vv` surface unchanged entries; `stdout_format_has_i > 1` is
+        // the `-ii` "show even unchanged" knob (tracked as
+        // `info_flags.itemize_unchanged`); ITEM_XNAME_FOLLOWS forces emission
+        // when an alternate basis name trails. On a push the sender owns the
+        // client-visible itemize (the remote generator forwards iflags over the
+        // wire, generator.c:583-599), so honoring `itemize_unchanged` here keeps
+        // `-ii` unchanged rows on the sole client-side print path.
+        let force_emit = info_gte(InfoFlag::Name, 2)
+            || self.config.flags.info_flags.itemize_unchanged
+            || iflags.raw() & ItemFlags::ITEM_XNAME_FOLLOWS != 0;
         if !iflags.has_significant_flags() && !force_emit {
             return Ok(());
         }

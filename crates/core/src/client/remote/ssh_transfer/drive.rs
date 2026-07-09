@@ -5,7 +5,7 @@
 //! server over the SSH pipes and reaps the remote child. This mirrors the flow
 //! in upstream `main.c:do_cmd()` / `main.c:client_run()`.
 
-use std::io::BufReader;
+use std::io::{BufReader, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -347,6 +347,21 @@ fn run_server_over_ssh_connection(
         ));
     }
     let negotiated_protocol = handshake.protocol.as_u8();
+
+    // upstream: sender.c:461 log_item(FCLIENT) - on an SSH push the local side
+    // is the sender (ServerRole::Generator) and prints the client-visible
+    // itemize row from the iflags the remote receiver's generator writes over
+    // the wire (generator.c:583-599). The remote generator never forwards the
+    // row itself (log.c:822 gates FCLIENT on `!am_server`). On a pull the local
+    // side is the receiver, which itemizes to its own stdout via
+    // receiver::emit_itemize, so no sender callback is needed there.
+    let wants_itemize = config.role == ServerRole::Generator && config.flags.info_flags.itemize;
+    let stdout_handle = std::io::stdout();
+    let mut itemize_cb = move |line: &str| {
+        let mut out = stdout_handle.lock();
+        let _ = out.write_all(line.as_bytes());
+    };
+
     let transfer_result = crate::server::run_server_with_handshake(
         config,
         handshake,
@@ -354,7 +369,11 @@ fn run_server_over_ssh_connection(
         &mut writer,
         progress,
         batch_recording,
-        None,
+        if wants_itemize {
+            Some(&mut itemize_cb as &mut dyn crate::server::ItemizeCallback)
+        } else {
+            None
+        },
     );
 
     // Close the writer to signal EOF so the remote process can exit.
