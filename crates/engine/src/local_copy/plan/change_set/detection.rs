@@ -242,6 +242,95 @@ impl LocalCopyChangeSet {
         // itemize line never reports symlink perm changes in those slots.
         change_set
     }
+
+    /// Computes a change set for a device or special file whose existing
+    /// destination is being recreated because it differs from the source.
+    ///
+    /// Mirrors upstream `generator.c:1665-1670`: after `atomic_create()`
+    /// recreates the node, `itemize()` runs with
+    /// `ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE` and `statret == 0`.
+    /// `ITEM_REPORT_CHANGE` lights the position-2 `c` glyph; its source is the
+    /// `st_rdev` mismatch (for devices) or the `_S_IFMT` mismatch (for
+    /// specials) that made `quick_check_ok()` return false at
+    /// `generator.c:657-671`, so the caller passes that comparison in via
+    /// `content_differs`. `itemize()` (`generator.c:508-549`) then derives the
+    /// remaining glyphs exactly as for a regular file: `ITEM_REPORT_TIME`
+    /// (rendered `t` when preserving mtimes and they differ, `T` when mtimes
+    /// are not preserved because `ITEM_LOCAL_CHANGE` marks a fresh recreate),
+    /// `ITEM_REPORT_PERMS`, and owner/group. Size is never reported because
+    /// `S_ISREG` is false for device and special nodes (`generator.c:514`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn for_recreated_device(
+        source: &fs::Metadata,
+        existing: &fs::Metadata,
+        metadata_options: &MetadataOptions,
+        modify_window: Duration,
+        content_differs: bool,
+        xattrs_enabled: bool,
+        acls_enabled: bool,
+    ) -> Self {
+        let mut change_set = Self::new();
+
+        // upstream: generator.c:1668-1669 - the recreate path passes
+        // ITEM_REPORT_CHANGE, but it is only reached because quick_check_ok()
+        // found a differing device number / special type. Light the `c` glyph
+        // from that same comparison.
+        if content_differs {
+            change_set = change_set.with_checksum_changed(true);
+        }
+
+        // upstream: generator.c:519-523 - with preserve_mtimes (`keep_time`),
+        // ITEM_REPORT_TIME fires only when the mtime differs (rendered `t`).
+        // Without preserve_mtimes, the ITEM_LOCAL_CHANGE branch sets
+        // ITEM_REPORT_TIME unconditionally for a freshly recreated node
+        // (rendered `T` via log.c:716-717). When the node is not being
+        // recreated (`content_differs == false`, i.e. the upstream identical
+        // branch that passes iflags 0) the time is reported only under
+        // preserve_mtimes when it differs.
+        if metadata_options.times() {
+            let new_mtime = metadata_modified_time(source);
+            let old_mtime = metadata_modified_time(existing);
+            match (new_mtime, old_mtime) {
+                (Some(new_value), Some(old_value))
+                    if system_time_within_window(new_value, old_value, modify_window) => {}
+                _ => change_set = change_set.with_time_change(Some(TimeChange::Modified)),
+            }
+        } else if content_differs {
+            change_set = change_set.with_time_change(Some(TimeChange::TransferTime));
+        }
+
+        // upstream: generator.c:540-545 - perms compared via BITS_EQUAL under
+        // preserve_perms; an explicit --chmod always reports.
+        if metadata_options.permissions() && permissions_changed(source, Some(existing), true) {
+            change_set = change_set.with_permissions_changed(true);
+        }
+        if metadata_options.chmod().is_some() {
+            change_set = change_set.with_permissions_changed(true);
+        }
+
+        // upstream: generator.c:546-549 - owner/group flags.
+        if owner_changed(metadata_options, source, Some(existing), true) {
+            change_set = change_set.with_owner_changed(true);
+        }
+        if group_changed(metadata_options, source, Some(existing), true) {
+            change_set = change_set.with_group_changed(true);
+        }
+        if metadata_options.user_mapping().is_some() {
+            change_set = change_set.with_owner_changed(true);
+        }
+        if metadata_options.group_mapping().is_some() {
+            change_set = change_set.with_group_changed(true);
+        }
+
+        if xattrs_enabled {
+            change_set = change_set.with_xattr_changed(true);
+        }
+        if acls_enabled {
+            change_set = change_set.with_acl_changed(true);
+        }
+
+        change_set
+    }
 }
 
 /// Determines the appropriate time-change variant based on metadata options

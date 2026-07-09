@@ -517,6 +517,110 @@ impl<'a> CopyContext<'a> {
         Ok(None)
     }
 
+    /// Locates a `--link-dest` basis device or special file at `relative` that
+    /// exactly matches the source node, returning its path so the receiver can
+    /// hard-link it into place (`hD`/`hS` + blank) instead of recreating it.
+    ///
+    /// Mirrors upstream `generator.c:1052-1140` try_dests_non(): a `LINK_DEST`
+    /// basis entry of the same file-type bucket (`FT_DEVICE`/`FT_SPECIAL`) whose
+    /// device number (devices) or `_S_IFMT` (specials) matches
+    /// (`generator.c:657-671` quick_check_ok) AND whose preserved attributes are
+    /// unchanged (`generator.c:461-500` unchanged_attrs) reaches match_level 3
+    /// and is hard-linked, itemizing as an exact match. `CAN_HARDLINK_SPECIAL`
+    /// is defined on Linux, so devices and specials participate.
+    #[cfg(unix)]
+    pub(super) fn link_dest_special_target(
+        &self,
+        relative: &Path,
+        metadata: &fs::Metadata,
+        metadata_options: &MetadataOptions,
+    ) -> Result<Option<PathBuf>, LocalCopyError> {
+        use std::os::unix::fs::{FileTypeExt, MetadataExt};
+
+        if self.options.link_dest_entries().is_empty() {
+            return Ok(None);
+        }
+
+        let source_type = metadata.file_type();
+        let source_is_device = source_type.is_block_device() || source_type.is_char_device();
+        let source_is_special = source_type.is_fifo() || source_type.is_socket();
+        if !source_is_device && !source_is_special {
+            return Ok(None);
+        }
+
+        let modify_window = self.options.modify_window();
+
+        for entry in self.options.link_dest_entries() {
+            let candidate = entry.resolve(self.destination_root(), relative);
+            let candidate_metadata = match fs::symlink_metadata(&candidate) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(LocalCopyError::io(
+                        "inspect link-dest special",
+                        candidate,
+                        error,
+                    ));
+                }
+            };
+
+            let cand_type = candidate_metadata.file_type();
+
+            // upstream: generator.c:1076 - the basis must share the source's
+            // file-type bucket, and generator.c:657-671 quick_check_ok compares
+            // st_rdev (devices) or _S_IFMT (specials, i.e. fifo vs socket).
+            if source_is_device {
+                if !(cand_type.is_block_device() || cand_type.is_char_device()) {
+                    continue;
+                }
+                if metadata.rdev() != candidate_metadata.rdev() {
+                    continue;
+                }
+            } else {
+                if source_type.is_fifo() != cand_type.is_fifo()
+                    || source_type.is_socket() != cand_type.is_socket()
+                {
+                    continue;
+                }
+            }
+
+            // upstream: generator.c:461-500 unchanged_attrs - preserved mtime,
+            // perms and ownership must match for the match_level-3 hard-link.
+            if metadata_options.times()
+                && !mtimes_within_window(metadata, &candidate_metadata, modify_window)
+            {
+                continue;
+            }
+            if metadata_options.permissions()
+                && (metadata.mode() & 0o7777) != (candidate_metadata.mode() & 0o7777)
+            {
+                continue;
+            }
+            if metadata_options.owner() && metadata.uid() != candidate_metadata.uid() {
+                continue;
+            }
+            if metadata_options.group() && metadata.gid() != candidate_metadata.gid() {
+                continue;
+            }
+
+            return Ok(Some(candidate));
+        }
+
+        Ok(None)
+    }
+
+    /// Non-Unix stub: device and special nodes cannot be materialised, so no
+    /// `--link-dest` basis can ever match one.
+    #[cfg(not(unix))]
+    pub(super) fn link_dest_special_target(
+        &self,
+        _relative: &Path,
+        _metadata: &fs::Metadata,
+        _metadata_options: &MetadataOptions,
+    ) -> Result<Option<PathBuf>, LocalCopyError> {
+        Ok(None)
+    }
+
     /// Returns the configured `--link-dest` / `--copy-dest` / `--compare-dest`
     /// reference directories.
     pub(super) fn reference_directories(&self) -> &[ReferenceDirectory] {
@@ -980,5 +1084,28 @@ impl<'a> CopyContext<'a> {
             info_log!(Nonreg, 1, "IO error encountered -- skipping file deletion");
         }
         true
+    }
+}
+
+/// Returns `true` when two nodes' modification times are equal within
+/// `--modify-window`.
+///
+/// upstream: util1.c:1478 same_time() - a whole-second delta within
+/// `modify_window` counts as unchanged; with a zero window the sub-second
+/// component must also match.
+#[cfg(unix)]
+fn mtimes_within_window(
+    source: &fs::Metadata,
+    candidate: &fs::Metadata,
+    modify_window: Duration,
+) -> bool {
+    use std::os::unix::fs::MetadataExt;
+
+    let delta = source.mtime().abs_diff(candidate.mtime());
+    let window = modify_window.as_secs();
+    if window == 0 {
+        delta == 0 && source.mtime_nsec() == candidate.mtime_nsec()
+    } else {
+        delta <= window
     }
 }

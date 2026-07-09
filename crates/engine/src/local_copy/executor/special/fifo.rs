@@ -15,10 +15,11 @@ use crate::local_copy::remove_existing_destination;
 use crate::local_copy::sync_acls_if_requested;
 #[cfg(all(unix, feature = "xattr"))]
 use crate::local_copy::sync_xattrs_if_requested;
+use super::link_special_from_link_dest;
 use crate::local_copy::{
-    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyArgumentError, LocalCopyError,
-    LocalCopyMetadata, LocalCopyRecord, map_metadata_error, overrides::create_hard_link,
-    remove_source_entry_if_requested,
+    CopyContext, CreatedEntryKind, LocalCopyAction, LocalCopyArgumentError, LocalCopyChangeSet,
+    LocalCopyError, LocalCopyMetadata, LocalCopyRecord, map_metadata_error,
+    overrides::create_hard_link, remove_source_entry_if_requested,
 };
 #[cfg(unix)]
 use ::metadata::create_fifo_with_fake_super;
@@ -50,6 +51,19 @@ pub(crate) fn copy_fifo(
     let _ = context;
     #[cfg(not(all(any(unix, windows), feature = "acl")))]
     let _ = mode;
+
+    // upstream: generator.c:558-563 / 550-556 - a replace itemize reports
+    // ITEM_REPORT_XATTR / ITEM_REPORT_ACL when those features are active and the
+    // basis differs. Surface the enabled flags on all platforms so the recreate
+    // change-set is derivable without cfg branching at the record site.
+    #[cfg(all(unix, feature = "xattr"))]
+    let itemize_xattrs = preserve_xattrs;
+    #[cfg(not(all(unix, feature = "xattr")))]
+    let itemize_xattrs = false;
+    #[cfg(all(any(unix, windows), feature = "acl"))]
+    let itemize_acls = preserve_acls;
+    #[cfg(not(all(any(unix, windows), feature = "acl")))]
+    let itemize_acls = false;
 
     let record_path = relative
         .map(Path::to_path_buf)
@@ -99,6 +113,34 @@ pub(crate) fn copy_fifo(
         return Ok(());
     }
 
+    // upstream: generator.c:1615-1630 - a special file (FIFO/socket) whose
+    // destination already holds another special of the same FT_SPECIAL bucket is
+    // recreated rather than treated as new; quick_check_ok() (generator.c:657-660)
+    // compares the `_S_IFMT` bits (FIFO vs socket). Snapshot the existing special
+    // and whether its type differs before removal so the itemize change-set can
+    // render `cSc.T.` for a differing replace instead of `cS+++++++++` for a
+    // create. A non-special existing entry matches upstream's statret = -1 path
+    // and stays a fresh creation.
+    #[cfg(unix)]
+    let (replaced_special, replaced_content_differs) = {
+        use std::os::unix::fs::FileTypeExt;
+        let source_type = metadata.file_type();
+        match existing_metadata.as_ref().filter(|existing| {
+            let existing_type = existing.file_type();
+            existing_type.is_fifo() || existing_type.is_socket()
+        }) {
+            Some(existing) => {
+                let existing_type = existing.file_type();
+                let differs = source_type.is_fifo() != existing_type.is_fifo()
+                    || source_type.is_socket() != existing_type.is_socket();
+                (Some(existing.clone()), differs)
+            }
+            None => (None, false),
+        }
+    };
+    #[cfg(not(unix))]
+    let (replaced_special, replaced_content_differs): (Option<fs::Metadata>, bool) = (None, false);
+
     // could be deduped to an earlier FIFO we created
     let mut existing_hard_link_target = context.existing_hard_link_target(metadata);
 
@@ -121,20 +163,36 @@ pub(crate) fn copy_fifo(
             } else {
                 LocalCopyAction::FifoCopied
             };
-            context.record(
-                LocalCopyRecord::new(
-                    path.clone(),
-                    action,
-                    0,
-                    total_bytes,
-                    Duration::default(),
-                    Some(metadata_snapshot),
-                )
-                // upstream: generator.c:1462 itemize() sets ITEM_IS_NEW
-                // (statret < 0) so log.c:736-738 fills slots 2-10 with `+`
-                // for a FIFO/socket the receiver newly materialises.
-                .with_creation(!destination_previously_existed),
+            let record = LocalCopyRecord::new(
+                path.clone(),
+                action.clone(),
+                0,
+                total_bytes,
+                Duration::default(),
+                Some(metadata_snapshot),
             );
+            // upstream: generator.c:1462 itemize() sets ITEM_IS_NEW (statret < 0)
+            // so log.c:736-738 fills slots 2-10 with `+` for a FIFO/socket the
+            // receiver newly materialises. A special replacing a differing
+            // special is itemized as a local change instead; the generator runs
+            // itemize() even under --dry-run.
+            let record = if matches!(action, LocalCopyAction::FifoCopied)
+                && let Some(existing) = replaced_special.as_ref()
+            {
+                let change_set = LocalCopyChangeSet::for_recreated_device(
+                    metadata,
+                    existing,
+                    metadata_options,
+                    context.options().modify_window(),
+                    replaced_content_differs,
+                    itemize_xattrs,
+                    itemize_acls,
+                );
+                record.with_creation(false).with_change_set(change_set)
+            } else {
+                record.with_creation(!destination_previously_existed)
+            };
+            context.record(record);
         }
 
         context.register_progress();
@@ -145,6 +203,33 @@ pub(crate) fn copy_fifo(
     if let Some(existing) = existing_metadata.take() {
         context.backup_existing_entry(destination, relative, existing.file_type())?;
         remove_existing_destination(destination)?;
+    }
+
+    // upstream: generator.c:1643-1658 try_dests_non() - a `--link-dest` basis
+    // special matching the source (same FT_SPECIAL bucket, same `_S_IFMT`,
+    // unchanged attrs) is hard-linked into place and itemized `hS` + blank
+    // rather than recreated. Only applies when creating fresh.
+    if !destination_previously_existed {
+        let link_relative = relative
+            .or(record_path.as_deref())
+            .unwrap_or_else(|| Path::new(""));
+        if !link_relative.as_os_str().is_empty()
+            && let Some(basis) =
+                context.link_dest_special_target(link_relative, metadata, metadata_options)?
+        {
+            link_special_from_link_dest(
+                context,
+                source,
+                destination,
+                metadata,
+                &basis,
+                record_path.as_deref(),
+                file_type,
+                destination_previously_existed,
+                false,
+            )?;
+            return Ok(());
+        }
     }
 
     // try to hard-link to an earlier FIFO we made
@@ -285,20 +370,37 @@ pub(crate) fn copy_fifo(
     if let Some(path) = &record_path {
         let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
         let total_bytes = Some(metadata_snapshot.len());
-        context.record(
-            LocalCopyRecord::new(
-                path.clone(),
-                LocalCopyAction::FifoCopied,
-                0,
-                total_bytes,
-                Duration::default(),
-                Some(metadata_snapshot),
-            )
-            // upstream: generator.c:1462 itemize() sets ITEM_IS_NEW
-            // (statret < 0) so log.c:736-738 fills slots 2-10 with `+`
-            // for a FIFO/socket the receiver newly materialises via do_mknod().
-            .with_creation(!destination_previously_existed),
+        let record = LocalCopyRecord::new(
+            path.clone(),
+            LocalCopyAction::FifoCopied,
+            0,
+            total_bytes,
+            Duration::default(),
+            Some(metadata_snapshot),
         );
+        let record = if let Some(existing) = replaced_special.as_ref() {
+            // upstream: generator.c:1665-1669 - a special replacing a differing
+            // special of the same FT_SPECIAL bucket recreates it and itemizes via
+            // ITEM_LOCAL_CHANGE|ITEM_REPORT_CHANGE, not ITEM_IS_NEW. Derive the
+            // change-set from the `_S_IFMT` comparison.
+            let change_set = LocalCopyChangeSet::for_recreated_device(
+                metadata,
+                existing,
+                metadata_options,
+                context.options().modify_window(),
+                replaced_content_differs,
+                itemize_xattrs,
+                itemize_acls,
+            );
+            record.with_creation(false).with_change_set(change_set)
+        } else {
+            // upstream: generator.c:1462 itemize() sets ITEM_IS_NEW (statret < 0)
+            // so log.c:736-738 fills slots 2-10 with `+` for a FIFO/socket the
+            // receiver newly materialises via do_mknod(). A non-special existing
+            // entry hits upstream's statret = -1 path and is likewise new.
+            record.with_creation(true)
+        };
+        context.record(record);
     }
 
     context.register_progress();
