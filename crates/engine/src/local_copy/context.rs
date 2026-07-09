@@ -37,9 +37,8 @@ use super::{
     SparseWriteState, compute_backup_path, copy_entry_to_backup, delete_extraneous_entries,
     filter_program_local_error, follow_symlink_metadata, load_dir_merge_rules_recursive,
     map_metadata_error, record_directory_subtree, remove_source_entry_if_requested,
-    resolve_dir_merge_path, should_skip_copy,
-    symlink_target_is_safe, trace_make_backup_copy, trace_make_backup_rename,
-    trace_make_backup_symlink, write_sparse_chunk,
+    resolve_dir_merge_path, should_skip_copy, symlink_target_is_safe, trace_make_backup_copy,
+    trace_make_backup_rename, trace_make_backup_symlink, write_sparse_chunk,
 };
 use crate::delta::DeltaSignatureIndex;
 use crate::signature::SignatureBlock;
