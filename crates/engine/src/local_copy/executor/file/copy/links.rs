@@ -567,17 +567,52 @@ pub(super) fn process_links(
             change_set =
                 change_set.with_time_change(Some(crate::local_copy::TimeChange::TransferTime));
         }
-        context.record(
-            LocalCopyRecord::new(
-                record_path.to_path_buf(),
-                LocalCopyAction::HardLink,
-                0,
-                total_bytes,
-                Duration::default(),
-                Some(metadata_snapshot),
-            )
-            .with_change_set(change_set),
-        );
+        let mut record = LocalCopyRecord::new(
+            record_path.to_path_buf(),
+            LocalCopyAction::HardLink,
+            0,
+            total_bytes,
+            Duration::default(),
+            Some(metadata_snapshot),
+        )
+        .with_change_set(change_set);
+        // upstream: hlink.c:228-234 maybe_hard_link() - a freshly linked
+        // follower is itemized through atomic_create() with the follower's
+        // *own* statret, which is < 0 when its destination did not yet exist.
+        // log.c:736-738 then sets ITEM_IS_NEW, filling attribute slots 2-10
+        // with '+' so the row renders `hf+++++++++`. The already-shared-inode
+        // (uptodate) alias is handled by the `is_already_hardlinked` branch
+        // above and stays blank, so only a genuinely new follower is marked
+        // created here.
+        //
+        // upstream: hlink.c:385-414 hard_link_check() - before that itemize,
+        // when the follower's own destination is absent (statret < 0) and an
+        // alt-dest basis is configured (`basis_dir[0] != NULL`), the follower's
+        // name is quick_check_ok()'d against the --copy-dest/--link-dest tree.
+        // A match bumps statret to 1, so the itemize above never sets
+        // ITEM_IS_NEW and the follower renders blank (`hf          `) - mirroring
+        // the leader that was itself satisfied from the alt-dest tree
+        // (generator.c:995-1052 try_dests_reg). Mark the follower created only
+        // when its destination is new AND no alt-dest basis satisfies it, so a
+        // fresh local group still renders `hf+++++++++`.
+        let matched_from_dests = !context.reference_directories().is_empty()
+            && find_reference_action(
+                context,
+                ReferenceQuery {
+                    destination,
+                    relative: record_path,
+                    source,
+                    metadata,
+                    size_only: size_only_enabled,
+                    ignore_times: ignore_times_enabled,
+                    checksum: checksum_enabled,
+                },
+            )?
+            .is_some();
+        if !destination_previously_existed && !matched_from_dests {
+            record = record.with_creation(true);
+        }
+        context.record(record);
         context.register_created_path(
             destination,
             CreatedEntryKind::HardLink,
