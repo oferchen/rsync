@@ -439,7 +439,7 @@ fn apply_delete_side_effects(
 ///
 /// Uses `PathBuf::push`/`pop` on reusable buffers to avoid per-entry
 /// allocations from `Path::join` in the recursive traversal.
-fn record_directory_subtree(
+pub(crate) fn record_directory_subtree(
     context: &mut CopyContext,
     path_buf: &mut PathBuf,
     relative_buf: &mut PathBuf,

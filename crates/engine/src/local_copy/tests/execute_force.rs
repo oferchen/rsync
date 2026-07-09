@@ -286,7 +286,7 @@ fn force_dry_run_does_not_modify_directory() {
 }
 
 #[test]
-fn force_dry_run_reports_deletion_for_replaced_directory() {
+fn force_dry_run_make_room_for_empty_directory_is_silent() {
     let temp = tempdir().expect("tempdir");
     let source = temp.path().join("item");
     fs::write(&source, b"replacement").expect("write source");
@@ -308,7 +308,15 @@ fn force_dry_run_reports_deletion_for_replaced_directory() {
         .expect("dry-run succeeds");
 
     let summary = report.summary();
-    assert_eq!(summary.items_deleted(), 1, "should report one deletion");
+    // upstream: generator.c:1240 clears the conflicting directory with
+    // DEL_FOR_FILE; delete.c:179 delete_item() removes the make-room target
+    // silently and uncounted. An empty directory has no contents to recurse
+    // over, so no deletion is itemized or counted.
+    assert_eq!(
+        summary.items_deleted(),
+        0,
+        "make-room removal of an empty directory is silent and uncounted"
+    );
     assert_eq!(summary.files_copied(), 1, "should report one file copy");
 }
 
@@ -546,7 +554,14 @@ fn force_replacement_counts_deletion() {
         .expect("forced replacement succeeds");
 
     let summary = report.summary();
-    assert!(summary.items_deleted() >= 1, "should count at least one deletion for the replaced directory");
+    // upstream: the make-room removal of the conflicting directory node is
+    // silent (DEL_FOR_FILE), but delete.c:83 delete_dir_contents() recurses
+    // with DEL_MAKE_ROOM stripped, so its non-empty contents are counted like
+    // ordinary deletions.
+    assert!(
+        summary.items_deleted() >= 1,
+        "should count the conflicting directory's contents as deletions"
+    );
     assert_eq!(summary.files_copied(), 1, "should count the file copy");
 }
 

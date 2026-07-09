@@ -271,7 +271,11 @@ fn execute_with_delete_before_removes_conflicting_entries() {
     assert_eq!(fs::read(&target).expect("read copied file"), b"fresh");
     assert!(target.is_file());
     assert_eq!(summary.files_copied(), 1);
-    assert!(summary.items_deleted() >= 1);
+    // upstream: generator.c:1240 clears the conflicting (empty) directory with
+    // DEL_FOR_FILE, which delete.c:179 delete_item() removes silently and
+    // without a stats.deleted_files bump. The directory has no contents to
+    // recurse over, so no deletions are counted for the make-room replacement.
+    assert_eq!(summary.items_deleted(), 0);
 }
 
 #[test]
