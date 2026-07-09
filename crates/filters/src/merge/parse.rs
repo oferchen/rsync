@@ -64,37 +64,71 @@ pub fn parse_rules(content: &str, source_path: &Path) -> Result<Vec<FilterRule>,
 /// template), a bare `!` line tentatively clears the list, matching upstream's
 /// FILTRULE_CLEAR_LIST escape hatch at `exclude.c:1123-1124`. Without
 /// CVS_IGNORE, `!` is just another literal pattern.
+///
+/// When `word_split` is true (the `w` modifier, e.g. `:w-`), the whole file is
+/// tokenised on any whitespace instead of one pattern per line, mirroring
+/// upstream's `parse_filter_file()` token loop (`exclude.c:1499`). Comments are
+/// not stripped in word-split mode (`exclude.c:1514`), so every token becomes a
+/// literal pattern.
 pub(crate) fn parse_rules_no_prefixes(
     content: &str,
     _source_path: &Path,
     force_include: bool,
     cvs_ignore: bool,
+    word_split: bool,
 ) -> Vec<FilterRule> {
     let mut rules = Vec::new();
 
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
-            continue;
-        }
-
+    let mut push_token = |token: &str| {
         // upstream: exclude.c:1123-1124 - when FILTRULE_CVS_IGNORE is set on
         // the template, a bare `!` becomes FILTRULE_CLEAR_LIST. Without
         // CVS_IGNORE the `!` is taken literally per the no-prefixes contract.
-        if cvs_ignore && trimmed == "!" {
+        if cvs_ignore && token == "!" {
             rules.push(FilterRule::clear());
-            continue;
-        }
-
-        let rule = if force_include {
-            FilterRule::include(trimmed)
+        } else if force_include {
+            rules.push(FilterRule::include(token));
         } else {
-            FilterRule::exclude(trimmed)
-        };
-        rules.push(rule);
+            rules.push(FilterRule::exclude(token));
+        }
+    };
+
+    if word_split {
+        // upstream: exclude.c:1499 - word_split splits on any whitespace and
+        // parses every non-empty token; comments are not skipped (line 1514).
+        for token in content.split_whitespace() {
+            push_token(token);
+        }
+    } else {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with(';') {
+                continue;
+            }
+            push_token(trimmed);
+        }
     }
 
     rules
+}
+
+/// Parses a per-dir merge file whose template carries FILTRULE_WORD_SPLIT (the
+/// `w` modifier) but not FILTRULE_NO_PREFIXES.
+///
+/// Upstream `parse_filter_file()` tokenises the file on any whitespace when
+/// word-split is active (`exclude.c:1499`) and runs each non-empty token
+/// through the normal rule parser; comments are not stripped in this mode
+/// (`exclude.c:1514`). A token that is not a valid rule (for example a bare
+/// pattern with no `-`/`+` prefix) is an error, matching upstream's
+/// `parse_rule_tok()` "Unknown filter rule" / "unexpected end of filter rule".
+pub(crate) fn parse_rules_word_split(
+    content: &str,
+    source_path: &Path,
+) -> Result<Vec<FilterRule>, MergeFileError> {
+    let mut rules = Vec::new();
+    for token in content.split_whitespace() {
+        rules.push(parse_rule_line(token, source_path, 0)?);
+    }
+    Ok(rules)
 }
 
 /// Modifiers parsed from a rule prefix.
@@ -156,6 +190,7 @@ impl RuleModifiers {
             .with_no_inherit(no_inherit)
             .with_cvs_mode(self.cvs_mode)
             .with_abs_path(self.abs_path)
+            .with_word_split(self.word_split)
             .with_no_prefixes(self.no_prefixes, self.no_prefixes_include);
 
         if self.sender_only && !self.receiver_only {

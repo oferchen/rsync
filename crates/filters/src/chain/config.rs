@@ -57,6 +57,11 @@ pub struct DirMergeConfig {
     /// When `no_prefixes && no_prefixes_include`, each literal line becomes
     /// an include rule; otherwise it becomes an exclude rule.
     no_prefixes_include: bool,
+    /// upstream: exclude.c:1279-1283 - FILTRULE_WORD_SPLIT (`w` modifier on a
+    /// dir-merge rule). When set, the per-directory merge file is tokenised on
+    /// any whitespace with each token parsed as its own rule, rather than one
+    /// rule per line.
+    word_split: bool,
 }
 
 impl DirMergeConfig {
@@ -77,6 +82,7 @@ impl DirMergeConfig {
             cvs_mode: false,
             no_prefixes: false,
             no_prefixes_include: false,
+            word_split: false,
         }
     }
 
@@ -173,6 +179,25 @@ impl DirMergeConfig {
     #[must_use]
     pub const fn cvs_mode(&self) -> bool {
         self.cvs_mode
+    }
+
+    /// Sets the `w` (word-split) modifier on this dir-merge.
+    ///
+    /// When enabled, the per-directory merge file is tokenised on any
+    /// whitespace (space, tab, newline) with each token parsed as its own
+    /// rule, mirroring upstream rsync's FILTRULE_WORD_SPLIT.
+    ///
+    /// upstream: exclude.c:1279-1283 - `w` modifier sets FILTRULE_WORD_SPLIT.
+    #[must_use]
+    pub const fn with_word_split(mut self, word_split: bool) -> Self {
+        self.word_split = word_split;
+        self
+    }
+
+    /// Returns whether this dir-merge tokenises its merge file on whitespace.
+    #[must_use]
+    pub const fn word_split(&self) -> bool {
+        self.word_split
     }
 
     /// Marks this dir-merge as having FILTRULE_NO_PREFIXES set (the `-`/`+`

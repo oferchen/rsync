@@ -6,7 +6,9 @@ use tempfile::{NamedTempFile, TempDir};
 
 use crate::FilterAction;
 
-use super::parse::{RuleModifiers, parse_modifiers, parse_rules};
+use super::parse::{
+    RuleModifiers, parse_modifiers, parse_rules, parse_rules_no_prefixes, parse_rules_word_split,
+};
 use super::read::{read_rules, read_rules_recursive};
 
 #[test]
@@ -907,4 +909,69 @@ fn parse_dot_c_empty_pattern_defaults_to_cvsignore() {
     assert_eq!(rules[0].action(), FilterAction::Merge);
     assert_eq!(rules[0].pattern(), ".cvsignore");
     assert!(rules[0].is_cvs_mode());
+}
+
+// upstream: exclude.c:1279-1283 - a `:w` dir-merge sets FILTRULE_WORD_SPLIT on
+// its FilterRule so the chain later tokenises the merge file on whitespace.
+#[test]
+fn parse_dir_merge_w_modifier_sets_word_split_on_rule() {
+    let rules = parse_rules(":w .filt\n", Path::new("test")).unwrap();
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].action(), FilterAction::DirMerge);
+    assert_eq!(rules[0].pattern(), ".filt");
+    assert!(rules[0].is_word_split());
+}
+
+// upstream: exclude.c:1499 - word-split tokenises on any whitespace and parses
+// each token as a rule; `_` separates a token's prefix from its pattern.
+#[test]
+fn parse_rules_word_split_splits_on_any_whitespace() {
+    let rules = parse_rules_word_split("-_*.log\t-_*.tmp -_*.bak\n", Path::new("test")).unwrap();
+    assert_eq!(rules.len(), 3);
+    for rule in &rules {
+        assert_eq!(rule.action(), FilterAction::Exclude);
+    }
+    assert_eq!(rules[0].pattern(), "*.log");
+    assert_eq!(rules[1].pattern(), "*.tmp");
+    assert_eq!(rules[2].pattern(), "*.bak");
+}
+
+// upstream: exclude.c:1211-1213 - a bare token with no valid prefix is an
+// "Unknown filter rule" error, same as the non-word-split parser.
+#[test]
+fn parse_rules_word_split_rejects_bare_token() {
+    assert!(parse_rules_word_split("*.log", Path::new("test")).is_err());
+}
+
+// upstream: exclude.c:1122-1133, 1499 - `:w-` tokenises on whitespace with each
+// token a literal exclude (no prefix dispatch).
+#[test]
+fn parse_rules_no_prefixes_word_split_literal_tokens() {
+    let rules = parse_rules_no_prefixes(
+        "*.log\t*.tmp *.bak\n",
+        Path::new("test"),
+        false,
+        false,
+        true,
+    );
+    assert_eq!(rules.len(), 3);
+    assert_eq!(rules[0].pattern(), "*.log");
+    assert_eq!(rules[1].pattern(), "*.tmp");
+    assert_eq!(rules[2].pattern(), "*.bak");
+    assert!(rules.iter().all(|r| r.action() == FilterAction::Exclude));
+}
+
+// Without word-split, the no-prefixes parser keeps its one-pattern-per-line
+// behaviour so a whitespace-separated line is a single literal pattern.
+#[test]
+fn parse_rules_no_prefixes_line_mode_keeps_whole_line() {
+    let rules = parse_rules_no_prefixes(
+        "*.log *.tmp *.bak\n",
+        Path::new("test"),
+        false,
+        false,
+        false,
+    );
+    assert_eq!(rules.len(), 1);
+    assert_eq!(rules[0].pattern(), "*.log *.tmp *.bak");
 }
