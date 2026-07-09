@@ -123,7 +123,8 @@ pub(super) fn try_dispatch(
         .summary_mut()
         .record_copy_method(CopyMethodKind::IoUring);
     context.summary_mut().record_elapsed(elapsed);
-    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None);
+    let metadata_snapshot = LocalCopyMetadata::from_metadata(metadata, None)
+        .virtualize_fake_super(source, metadata_options.fake_super_enabled());
     let total_bytes = Some(metadata_snapshot.len());
     let change_set = LocalCopyChangeSet::for_file(
         metadata,

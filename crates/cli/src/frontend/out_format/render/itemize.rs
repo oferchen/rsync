@@ -22,15 +22,40 @@ pub(super) fn format_itemized_changes(event: &ClientEvent, is_sender: bool) -> S
 
     let mut fields = ['.'; 11];
 
+    let entry_kind = event
+        .metadata()
+        .map(ClientEntryMetadata::kind)
+        .unwrap_or_else(|| match event.kind() {
+            DirectoryCreated => ClientEntryKind::Directory,
+            SymlinkCopied => ClientEntryKind::Symlink,
+            FifoCopied => ClientEntryKind::Fifo,
+            DeviceCopied => ClientEntryKind::CharDevice,
+            HardLink
+            | DataCopied
+            | ReferenceCopied
+            | MetadataReused
+            | SkippedExisting
+            | SkippedMissingDestination
+            | SkippedNewerDestination => ClientEntryKind::File,
+            _ => ClientEntryKind::Other,
+        });
+    let is_regular = matches!(entry_kind, ClientEntryKind::File);
+
     // upstream: log.c:704 - '<' when am_sender && !am_server, '>' otherwise
     fields[0] = match event.kind() {
-        DataCopied => {
+        // upstream: log.c:704-710 - the transfer direction ('<'/'>') is only
+        // emitted for a regular-file data transfer (ITEM_TRANSFER). A
+        // non-regular entry - including a --fake-super device/FIFO/socket
+        // placeholder whose real type comes from the `%stat` xattr - carries
+        // no data and itemizes as a local change ('c', ITEM_LOCAL_CHANGE).
+        DataCopied if is_regular => {
             if is_sender {
                 '<'
             } else {
                 '>'
             }
         }
+        DataCopied => 'c',
         HardLink => 'h',
         // upstream: generator.c:1039 - copy-dest reconstruction itemizes with
         // ITEM_LOCAL_CHANGE, rendered as 'c' by log.c:707-708.
@@ -47,23 +72,7 @@ pub(super) fn format_itemized_changes(event: &ClientEvent, is_sender: bool) -> S
         _ => '.',
     };
 
-    fields[1] = match event
-        .metadata()
-        .map(ClientEntryMetadata::kind)
-        .unwrap_or_else(|| match event.kind() {
-            DirectoryCreated => ClientEntryKind::Directory,
-            SymlinkCopied => ClientEntryKind::Symlink,
-            FifoCopied => ClientEntryKind::Fifo,
-            DeviceCopied => ClientEntryKind::CharDevice,
-            HardLink
-            | DataCopied
-            | ReferenceCopied
-            | MetadataReused
-            | SkippedExisting
-            | SkippedMissingDestination
-            | SkippedNewerDestination => ClientEntryKind::File,
-            _ => ClientEntryKind::Other,
-        }) {
+    fields[1] = match entry_kind {
         ClientEntryKind::File => 'f',
         ClientEntryKind::Directory => 'd',
         ClientEntryKind::Symlink => 'L',
@@ -78,7 +87,6 @@ pub(super) fn format_itemized_changes(event: &ClientEvent, is_sender: bool) -> S
         return fields.iter().collect();
     }
 
-    let is_symlink = fields[1] == 'L';
     let change_set = event.change_set();
 
     // upstream: log.c:730-734 - ITEM_MISSING_DATA fills attribute positions with '?'
@@ -94,8 +102,10 @@ pub(super) fn format_itemized_changes(event: &ClientEvent, is_sender: bool) -> S
         attr[0] = 'c';
     }
 
-    // upstream: log.c:706 - symlinks never report size changes
-    if !is_symlink && change_set.size_changed() {
+    // upstream: log.c:706 - only regular files report size changes; symlinks,
+    // devices, FIFOs, and sockets (including --fake-super placeholders that
+    // virtualise to those types) never set the 's' column.
+    if is_regular && change_set.size_changed() {
         attr[1] = 's';
     }
 
