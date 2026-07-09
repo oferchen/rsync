@@ -454,7 +454,8 @@ fn perishable_in_precedence() {
     // Other files: excluded from transfer (perishable exclude matches)
     assert!(!set.allows(Path::new("other.txt"), false));
 
-    // For deletion: perishable exclude is skipped, so no rule matches,
-    // defaults to include (transfer_allowed = true), so deletable
-    assert!(set.allows_deletion(Path::new("other.txt"), false));
+    // For deletion: the top-level scan runs with `ignore_perishable` unset
+    // (upstream delete.c:147), so the perishable exclude `*` matches and
+    // protects other.txt from --delete.
+    assert!(!set.allows_deletion(Path::new("other.txt"), false));
 }
